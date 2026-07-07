@@ -422,18 +422,38 @@ async def get_serenity_opportunities(
 @router.post("/serenity/opportunities")
 async def create_serenity_opportunity(payload: SerenityOpportunityCreate):
     _ensure_db()
-    # Manual operator-created opportunities: the human IS the independent evaluator,
-    # so the submitted tier is authoritative (assessed_by="operator"). Normalize into
-    # the canonical ladder so it gates scoring identically to agent-produced records (D2).
+    # #100 fix: manual operator-created opportunities used to copy
+    # `payload.evidence_tier` directly into `assessed_tier` and label the
+    # assessment `operator`, bypassing the serenity_contract §5 rule that
+    # scoring/promotion tier must be derived from independently assessed
+    # supporting evidence. A manual submission with NO evidence could then
+    # score as `disclosed` instead of the documented `speculative` floor.
+    # Now the manual path calls the same `assess_opportunity_tier(...)` the
+    # research pipeline uses (with the theme's existing evidence corpus). If
+    # the operator's submitted `evidence_tier` is STRONGER than the
+    # evidence-derived value, we KEEP the evidence-derived value — the human
+    # is trusted to add evidence via the /serenity/evidence route, not to
+    # skip the assessment step.
+    from aletheia.trading.serenity_evidence import assess_opportunity_tier
     normalized_tier = normalize_tier(payload.evidence_tier)
+    theme_evidence = repo.list_serenity_evidence(theme_id=payload.theme_id, limit=200)
+    derived_tier, derived_by = assess_opportunity_tier({}, theme_evidence)
     opp = SerenityOpportunity(
         theme_id=payload.theme_id,
         symbol=payload.symbol,
         direction=payload.direction,
         thesis=payload.thesis,
         evidence_tier=normalized_tier,
-        assessed_tier=normalized_tier,
-        assessed_by="operator",
+        # The operator's `evidence_tier` submission stays advisory (mirrors
+        # LLM-produced opportunities). Authority sits in the evidence-derived
+        # `assessed_tier`; if that's `speculative` because there's no
+        # supporting evidence, the manual submission is floored — the
+        # operator must add evidence via /serenity/evidence to lift the tier.
+        assessed_tier=derived_tier,
+        # Preserve traceability: the assessment came from the pipeline (not
+        # the operator's own claim), but the opportunity itself is
+        # operator-authored — expose both in one field.
+        assessed_by=f"pipeline+operator({derived_by})",
         stage=payload.stage,
         average_mode=payload.average_mode,
         action_intent=payload.action_intent,
