@@ -1,5 +1,36 @@
 # Development Log
 
+## 2026-07-07 — B7-io-honesty：proposal-pack 过滤 + import 校验/冲突诚实（4 findings / 1 commit）
+
+### 触发
+接 B7-broker 后 owner「继续推进」。选 sync 层的三条诚实性 gap —— #62/#162 是同一件事的重复登记，#63/#64 是 import 静默跳过。
+
+### 做法
+1. **#62/#162 proposal-pack 过滤**：`sync/exporter.py::_export_proposal` 之前 raise 缺 proposal_id，然后 `where_clause=None` 直接落 —— 结果：一条 pack 命令导出**所有** trade_proposals + 所有 serenity_themes/evidence/claims。重写为：先按 `id=?` fetch 目标 proposal（不存在则 ValueError 明确报错），然后经 `opportunity_id → theme_id` 链条只导出关联的 serenity_opportunities/themes/evidence/claims；没有 opportunity 时直接省略 serenity 子表（不是导出空文件，也不是导出全表）。新增 `_export_by_id` + `_write_rows` 助手。
+2. **#63 import 校验缺件静默**：`_verify_checksums` line 116 `if file_path.exists():` 分支缺 else，manifest 列的但归档里没有的文件直接跳过 —— 破损/被裁剪的 bundle 被当作干净的接受。现在缺件 → `result.errors.append("Checksum manifest lists missing file: ...")`。
+3. **#64 import 冲突未实现**：`ImportConflict` 类定义了但从没实例化。现有 PK + 载荷不同的行被计为 `skipped_duplicates`。改为：SELECT * 拿本地行，逐列对比；差异列非空 → 追加 `ImportConflict`（含 local_hash / remote_hash / diff 列名的 message）；完全相同 → 保留 `skipped_duplicates`（不倒退）。新增 `_row_fingerprint` 生成规范 JSON SHA-256 指纹。
+
+### 交付
+- 4 findings（3 独立 + 1 duplicate 登记合并）。1 提交。
+- **新增回归** `tests/test_io_honesty_fixes.py`（6 tests / 6 passed）：
+  - `test_proposal_pack_exports_only_the_named_proposal` — 种两个 proposal，pack 只含被点名的。
+  - `test_proposal_pack_omits_serenity_when_proposal_has_no_opportunity` — 无 opportunity 时 pack 不带任何 serenity 文件（不是空文件也不是全表）。
+  - `test_proposal_pack_rejects_unknown_proposal` — 未知 proposal_id → ValueError。
+  - `test_import_dry_run_flags_missing_files_from_checksums` — 缺件 → `result.errors` 有条目。
+  - `test_import_diverged_row_recorded_as_conflict_not_skipped_duplicate` — 差异行 → `conflicts` 1 条，`skipped_duplicates=0`，message 含差异列名 `summary`。
+  - `test_import_identical_duplicate_still_counted_as_skipped` — 相同行 → `conflicts=[]`，`skipped_duplicates=1`（不倒退）。
+- **验证**：`tests/specs/` 562 passed / 0 failed；本会话新增 6 tests / 6 passed。
+
+### 剩余
+- B7 剩：backup 完整性 (#58 audit.jsonl 未入 backup、#59 raw-copy WAL 未 checkpoint)、capital 审计 (#87)、trades/export docstring 漂移 (#65) —— 分别有独立成本；下一批候选 #87 + #65（都是单点小改）。
+- B8/B9/B10 仍留。
+- 市场类型数据模型迁移仍暂缓。
+
+### 边界
+只改 sync 层三条 finding + 焦点回归；未推 / 未 restart / 未 enable live。旧 `_export_db_tables` 通用接口保留（其它 export 模式仍用，signature 未变）。
+
+---
+
 ## 2026-07-07 — B7-broker：跨 broker averaging + trailed-stop 三联（3 findings + #142 核对 / 1 commit）
 
 ### 触发
