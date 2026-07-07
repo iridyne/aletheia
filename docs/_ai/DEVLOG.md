@@ -1,5 +1,26 @@
 # Development Log
 
+## 2026-07-07 — B8-risk-mixed：RiskControls 同名 spot+perp 可见性（2 findings / 1 commit）
+
+### 触发
+接 B8-charts-pred 后 owner「继续推进」。挑一条 RiskControls 显示层的信号丢失。
+
+### 做法
+- **#47/#53 marketTypeBySymbol 覆盖**：`marketTypeBySymbol[p.symbol] = p.market_type` 循环里，同 symbol 的 spot + perp 互相覆盖。改成 `Record<symbol, Set<market_type>>` 收集全部；显示用 `_preferPerp(set)` 选出 derivative 类型（perp / usdt_futures / futures / swap 优先，spot 兜底），保证渲染一致（不会随 positions 更新顺序摆动）。加 `hasMixedMarketType(sym)` 判定 —— 同 symbol 同时有 spot + perp/futures 时在 exposure 行旁边显示「(spot+perp)」小灰字 + title「Both spot and perp open — exposure is combined」，告诉操作员这条 exposure 是**合并的**（backend `exposure_by_symbol` 键只有 symbol，`#52` deferred 与 market_type 迁移耦合暂无法拆）—— 前端只做显示诚实，不能修 backend 的合并。
+
+### 交付
+- 2 findings。1 提交（RiskControls.tsx + Fix Progress 表）。
+- 验证：Python `tests/specs/` 554 passed / 0 failed。
+
+### 剩余
+- **B8 剩 ~6 finding**（session B8 累计 29）：CausalChain fill/position 源不对 (#122/#123)、Settings coverage matrix 18 字段错标 (#163)、几处零星（Overview scheduler，AgentActivity strategies_designer，SettingsBanner setup 等已修）+ 已 deferred 与 market_type 迁移耦合的 (#52/#57/#96)。
+- 已 deferred 项不变。
+
+### 边界
+仅 1 前端文件（RiskControls.tsx）；未推 / 未 restart / 未 enable live / 未跑 npm。
+
+---
+
 ## 2026-07-07 — B8-charts-pred：PredictionsTab 类型化 + market_type fallback 顺序（2 findings / 1 commit）
 
 ### 触发
