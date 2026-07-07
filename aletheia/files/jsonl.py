@@ -308,12 +308,21 @@ def verify_audit_chain() -> dict:
     count = 0
     reanchors = 0
 
-    for current_path in paths:
+    # #43 fix: "first record in file" was previously treated as an unconditional
+    # benign reanchor. That masked HEAD TRUNCATION of the oldest file — an
+    # attacker (or accidental `head -c`) could lop off the beginning of the
+    # first audit file and the verifier would silently reanchor from the new
+    # first line as if it were normal rotation. Only allow the reanchor when
+    # there IS a prior file in the chronological list, i.e. when this really is
+    # a rotation boundary. The oldest file's first record must chain from
+    # _GENESIS_HASH; anything else is a real head-truncation error.
+    for path_index, current_path in enumerate(paths):
         try:
             line_iter = current_path.open("r", encoding="utf-8")
         except OSError:
             continue
         is_first_in_file = True
+        is_oldest_file = path_index == 0
         with line_iter as f:
             for i, raw_line in enumerate(f, 1):
                 raw_line = raw_line.strip()
@@ -340,8 +349,11 @@ def verify_audit_chain() -> dict:
 
                 if record_prev != prev_hash:
                     benign = False
-                    # Pattern 1: first record after file rotation boundary
-                    if is_first_in_file:
+                    # Pattern 1: first record AFTER a real file rotation
+                    # boundary. Only benign when there's a prior file — the
+                    # oldest file's first line must chain from _GENESIS_HASH
+                    # or it means the head was truncated (#43).
+                    if is_first_in_file and not is_oldest_file:
                         benign = True
                     # Pattern 2: concurrent-writer race — this record shares
                     # the same _prev_hash as the previous record
