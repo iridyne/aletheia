@@ -364,6 +364,15 @@ _PI_DAEMON_BOUNDS: dict[str, tuple[float, float]] = {
 
 @router.post("/pi_daemon")
 async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
+    """Update System Operator daemon configuration.
+
+    #97 note: the path `/pi_daemon`, the audit event `pi_daemon_config_changed`,
+    and the entity type `pi_daemon_config` are LEGACY names preserved for
+    backwards-compat with existing configs and audit trails. The subsystem is
+    the System Operator daemon (see PiDaemonConfig docstring for the full
+    naming registry). Any consumer parsing audit events must accept the legacy
+    keys; new UI copy uses "System Operator daemon".
+    """
     cfg = load_config()
     old = cfg.pi_daemon.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -378,7 +387,7 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
     write_audit({"actor": "human", "source": "dashboard", "event_type": "pi_daemon_config_changed",
                  "entity_type": "pi_daemon_config", "before": old,
                  "after": cfg.pi_daemon.model_dump(mode="json"),
-                 "message": f"PI daemon config updated: {list(updates.keys())}"})
+                 "message": f"System Operator daemon config updated: {list(updates.keys())}"})
     return {"updated": updates}
 
 

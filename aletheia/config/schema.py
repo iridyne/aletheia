@@ -740,6 +740,24 @@ class NetworkConfig(BaseModel):
 
 
 class PiDaemonConfig(BaseModel):
+    """System Operator daemon configuration.
+
+    #97 note (2026-07-07): the class name and the top-level config field
+    `pi_daemon` are LEGACY — the subsystem is the System Operator daemon
+    (per discussion.md renaming, "PI Agent" → "System Operator"). The
+    legacy `pi_daemon` field name is preserved as a backwards-compatible
+    key so existing config.yaml files, audit trails, and API contracts
+    keep working. New UI copy and prose docs must use "System Operator
+    daemon"; the frontend/api translation layer treats `pi_daemon` as
+    the on-the-wire key that carries this class's fields.
+
+    Naming registry (single source of truth):
+        legacy config field:   cfg.pi_daemon
+        legacy audit event:    pi_daemon_config_changed / pi_daemon_config
+        legacy REST path:      POST /api/settings/pi_daemon
+        current product name:  "System Operator daemon"
+    """
+
     enabled: bool = True
     debounce_sec: float = 2.0      # collect burst signals before evaluating
     cooldown_sec: float = 45.0     # minimum gap between evaluation cycles
