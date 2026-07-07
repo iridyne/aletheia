@@ -691,6 +691,12 @@ class EventTriggerConfig(BaseModel):
     price_move_pct_threshold: float = 3.0
     volume_surge_multiplier: float = 3.0
     watch_universe_members: bool = True
+    # #26 note (2026-07-08): `trigger_strategy_design` +
+    # `strategy_design_min_move_pct` are DEAD CONFIG — the strategy_designer
+    # subsystem was removed with Position C (2026-07-02), so no code consumes
+    # these fields. Kept as legacy keys so existing config.yaml files don't
+    # error on the extra=forbid pass. Do not add new consumers; new
+    # event-driven wiring lives in the operator/serenity path.
     trigger_strategy_design: bool = True
     strategy_design_min_move_pct: float = 5.0
 
