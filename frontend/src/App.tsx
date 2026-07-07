@@ -119,6 +119,12 @@ function StatusBar() {
   const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000 })
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: api.getHealth, refetchInterval: 10000 })
   const { data: infraEvents } = useQuery({ queryKey: ['infra-events'], queryFn: api.getInfraEvents, refetchInterval: 10000 })
+  // #174 fix: /status doesn't carry risk_status — the topbar used to read
+  // `data?.risk_status || data?.risk?.status` and always got '', so
+  // deriveMasterState never saw CAUTION/OPERATIONAL and defaulted to
+  // STANDBY-with-green even when risk was actively warning. Mirror
+  // RiskControls.tsx:83-86 and query getRiskStatus directly.
+  const { data: risk } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
 
   // Code drift = disk HEAD has moved past the boot commit. Surfaces the
   // "code updated, restart needed" signal that build_info.code_drift_issue
@@ -238,7 +244,15 @@ function StatusBar() {
   // (If absent the helper falls through to STANDBY, which matches old behavior at boot.)
   const operatorStatus = String((operator as any)?.status || 'offline')
   const operatorMode = String((operator as any)?.mode || (paused ? 'Paused' : 'Observing'))
-  const riskState = String((data as any)?.risk_status || (data as any)?.risk?.status || '')
+  // #174 fix: pull real risk state from the dedicated /risk/status query
+  // (matches RiskControls.tsx). Fall back to any inline value on /status
+  // for backwards-compat, else '' so deriveMasterState reads STANDBY at boot.
+  const riskState = String(
+    (risk as any)?.status
+      || (data as any)?.risk_status
+      || (data as any)?.risk?.status
+      || ''
+  )
   const master = deriveMasterState({
     gatewayRunning: running, killed, paused, riskState, operatorStatus,
   })

@@ -27,9 +27,18 @@ export default function Overview() {
   const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
   const exchangeMode = String((status as any)?.exchange_mode || '')
+  // #171 fix: pick the exchange-test endpoint by the CONFIGURED exchange, not
+  // always Bitget. Previously an OKX/Binance deployment saw a stale Bitget
+  // probe (false-red if bitget creds absent, false-green if bitget was up
+  // while the real exchange was down).
+  const exchangeName = String((status as any)?.exchange || 'bitget').toLowerCase()
+  const testExchangeConnection =
+    exchangeName === 'okx' ? api.testOkx :
+    exchangeName === 'binance' ? api.testBinance :
+    api.testBitget
   const { data: exchangeHealth } = useQuery({
-    queryKey: ['bitget-test', exchangeMode],
-    queryFn: () => api.testBitget(exchangeMode),
+    queryKey: ['exchange-test', exchangeName, exchangeMode],
+    queryFn: () => testExchangeConnection(exchangeMode),
     refetchInterval: 15000,
     enabled: !!exchangeMode,
   })
