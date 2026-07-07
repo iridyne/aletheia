@@ -7,9 +7,20 @@ provider from a previous loop raises "Event loop is closed" on the next fetch. E
 caller therefore constructs a provider, uses it, and ``await``s ``close()`` in a finally.
 
 Primary/fallback: each fetch tries the primary exchange, and on failure retries once on
-the configured fallback. xStocks (ON-series) are the one site that constructs
-``CCXTProvider(exchange="bitget", fallback_exchange="bitget")`` directly, because only
-Bitget lists those tokens and the config fallback (bybit) would not find them.
+the configured fallback. Documented direct-construction sites (routing through the
+factory would either be wrong or lack the CCXT-native surface they need — 2026-07-07
+audit, #49):
+
+- xStocks (ON-series): builds ``CCXTProvider(exchange="bitget", fallback_exchange="bitget")``
+  because only Bitget lists those tokens and the config fallback (bybit) would not find them.
+- ``universe/registry.py::sync_registry`` and ``universe/features.py::collect_features``: use
+  ``CCXTProvider(exchange=md.ccxt_exchange, fallback_exchange=md.ccxt_fallback)`` — same
+  config resolution as the factory, but the factory returns a ``FallbackChainProvider``
+  whose surface lacks ``_ensure_primary`` + ``load_markets`` these callers need. #91 fix
+  aligned the fallback exchange resolution with the factory so the two agree.
+
+Any NEW direct construction site should be added here with its reason; a bare
+``CCXTProvider(...)`` outside this list is a review-flagged deviation.
 
 Symbols enter as canonical ``BTC/USDT`` strings or ``InstrumentId`` objects and are
 resolved to the CCXT unified symbol (with perp settle suffix when needed) at the boundary.

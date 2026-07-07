@@ -35,10 +35,15 @@ Rules:
 - Every `orders.risk_decision_id` must reference the risk decision that approved
   or rejected execution for that proposal.
 - Every `fills.order_id` must reference the order that produced the fill.
-- A `positions` row is a portfolio-state projection from orders/fills. The
-  current schema does not directly link a position to proposal/order/fill. Do not
-  fake this link in text, UI, or audit logs. If direct traceability is required,
-  add an explicit schema migration and tests.
+- A `positions` row is a portfolio-state projection from orders/fills, but the
+  schema NOW carries direct causal back-links (2026-07-07 update, #30):
+  `positions.proposal_id`, `positions.order_id`, and `positions.opportunity_id`
+  are all set at open time by every broker (paper + bitget + okx + binance),
+  and by `adopt_position()` for reconciler-adopted rows (with a synthetic-but-
+  honest proposal/order chain marked `source='adopted'`). Do not treat the
+  fields as advisory — the risk engine's sector-concentration check (#16) and
+  Serenity's post-mortem attribution both rely on them being non-null on live
+  positions. Historical rows may still have NULL links (pre-schema-migration).
 - The `trade_proposals` table additionally carries a `commit_hash` / `parent_hash`
   hash chain (TaG P0-1, 2026-06-29). This is a **tamper-evidence layer on top of
   the ID-foreign-key causal chain** — not a replacement. `commit_hash` is the

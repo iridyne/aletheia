@@ -21,7 +21,7 @@ trade_proposals.id
   → risk_decisions.proposal_id
   → orders.proposal_id + orders.risk_decision_id
   → fills.order_id
-  → positions (从 orders/fills 投影,当前 schema 不直接链 proposal)
+  → positions (从 orders/fills 投影;schema 现直接携带 `proposal_id` + `order_id` + `opportunity_id`,新 position 开仓即写,adopt 也走同一路径 — #30/#50)
 ```
 
 **契约**:一个 proposed trade 只创建一次 `trade_proposals` 行。批准/拒绝/风控/执行**绝不**创建第二行。所有订单**必须**经 Execution Gateway——agent/dashboard/telegram 不得直接调交易所下单([trust §6.3](../governance/trust_and_change_control.md))。
