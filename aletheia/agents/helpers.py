@@ -18,13 +18,22 @@ async def llm_complete(system: str, user: str, *, max_tokens: int = 800, provide
     record a clean error and still complete its run.
     provider: explicit provider name (or None → use default_provider).
     """
+    # #161 fix: preserve the provider NAME so complete_with_fallback keys health
+    # tracking + cooldown + candidate-model resolution against the tier the
+    # caller actually asked for (e.g. get_provider_for_tier("deep") →
+    # "anthropic"), not cfg.models.default_provider. Without this, a tier
+    # provider's cooldown state was being tracked under default_provider's
+    # name, so a deep-tier failure would (a) never trip its own model's
+    # cooldown, and (b) fall back through default_provider's candidate list —
+    # not the tier's.
+    provider_name = provider
     try:
-        provider = get_provider(provider)
+        provider = get_provider(provider_name)
         resp = await complete_with_fallback(ModelRequest(
             messages=[{"role": "user", "content": user}],
             system=system,
             max_tokens=max_tokens,
-        ), provider=provider)
+        ), provider=provider, provider_name=provider_name)
         _record_llm(True)
         return resp.content, None
     except Exception as e:
@@ -98,8 +107,12 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 10
     `schema` is a Pydantic model class (uses model_json_schema()).
     provider: explicit provider name (or None → use default_provider).
     """
+    # #161 fix (mirrors llm_complete): thread the tier's provider name into
+    # complete_with_fallback so its fallback/health/cooldown keying matches the
+    # provider actually in use, not cfg.models.default_provider.
+    provider_name = provider
     try:
-        provider = get_provider(provider)
+        provider = get_provider(provider_name)
         schema_json = json.dumps(schema.model_json_schema() if hasattr(schema, "model_json_schema") else {})
         base_messages = [
             {"role": "user", "content": user},
@@ -133,6 +146,7 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 10
                     temperature=0.3 if attempt == 0 else 0.0, max_tokens=max_tokens,
                 ),
                 provider=provider,
+                provider_name=provider_name,
             )
             content = (resp.content or "").strip()
             if not content:
