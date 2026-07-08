@@ -535,10 +535,26 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
             return 1.0
 
         if execution_mode == "paper_internal":
-            mode_snapshots = [
-                s for s in snapshots
-                if s.get("execution_mode") in ("paper_internal", "bitget_demo")
+            # #143 fix: paper_internal's total_value_usdt is position NOTIONAL
+            # (mark-to-market), not true equity — it swings with open-position
+            # size, so closing a good trade looks like a 90%+ "drawdown" even
+            # though the account is profitable. Use the `exchange_account` rows
+            # for drawdown when they exist (they capture real account equity);
+            # only fall back to the paper_internal mark-to-market rows when no
+            # exchange_account rows are available (pure-paper-simulation mode).
+            exchange_snapshots = [
+                s for s in snapshots if s.get("execution_mode") == "exchange_account"
             ]
+            if len(exchange_snapshots) >= 3:
+                mode_snapshots = exchange_snapshots
+            else:
+                # Pure paper: no exchange to measure against. Notional is all we
+                # have — accept the imprecision and document it explicitly. The
+                # cap itself ($max_demo_position_notional_usdt) still bounds size.
+                mode_snapshots = [
+                    s for s in snapshots
+                    if s.get("execution_mode") in ("paper_internal", "bitget_demo")
+                ]
         else:
             # Real account equity lives in the exchange_account rows.
             mode_snapshots = [

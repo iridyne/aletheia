@@ -145,3 +145,79 @@ def test_lesson_hard_block_requires_risk_category(tmp_path, monkeypatch):
     # A risk-category applied lesson with the same action DOES hard-block.
     _applied_block_lesson("risk")
     assert any("lesson_block_symbol" in v for v in _eval_btc())
+
+
+def test_paper_internal_drawdown_uses_exchange_equity_when_available(monkeypatch):
+    """#143: paper_internal snapshots store position NOTIONAL, not equity.
+
+    Closing a winning position collapses notional (e.g. $272 → $16) while
+    account equity is unchanged at ~$88k. The old code treated this as a 94%
+    "drawdown" and zeroed the size cap. After the fix, the function should
+    prefer exchange_account snapshots (real equity) when ≥3 exist.
+    """
+    from aletheia.risk.engine import _portfolio_drawdown_scale
+
+    # Scenario: paper_internal notional collapsed from 272→16, but the real
+    # exchange_account equity is steady at ~88k (no true drawdown).
+    fake_snapshots = (
+        # paper_internal rows (notional — misleading)
+        [{"execution_mode": "paper_internal", "total_value_usdt": "272.0"}]
+        + [{"execution_mode": "paper_internal", "total_value_usdt": "16.0"}] * 4
+        # exchange_account rows (real equity — steady)
+        + [{"execution_mode": "exchange_account", "total_value_usdt": "88000.0"}] * 5
+    )
+    monkeypatch.setattr(
+        "aletheia.storage.repositories.list_portfolio_snapshots",
+        lambda limit=50: fake_snapshots,
+    )
+    # Patch exchange sync check — pretend the broker is fine.
+    monkeypatch.setattr(
+        "aletheia.portfolio.exchange_sync.active_broker_view_complete",
+        lambda: (True, ""),
+    )
+
+    scale = _portfolio_drawdown_scale("paper_internal")
+    # Exchange equity is flat → no drawdown → scale must be 1.0
+    assert scale == 1.0
+
+
+def test_paper_internal_drawdown_falls_back_when_no_exchange_snapshots(monkeypatch):
+    """#143 fallback: in pure-paper mode with no exchange_account rows,
+    the function still uses paper_internal rows (best available)."""
+    from aletheia.risk.engine import _portfolio_drawdown_scale
+
+    # Pure paper: only paper_internal rows exist, steady at ~100 (no drawdown)
+    fake_snapshots = [
+        {"execution_mode": "paper_internal", "total_value_usdt": "100.0"}
+    ] * 10
+    monkeypatch.setattr(
+        "aletheia.storage.repositories.list_portfolio_snapshots",
+        lambda limit=50: fake_snapshots,
+    )
+
+    scale = _portfolio_drawdown_scale("paper_internal")
+    assert scale == 1.0
+
+
+def test_paper_internal_drawdown_detects_real_equity_drop(monkeypatch):
+    """#143: when exchange_account equity truly drops, drawdown scaling kicks in."""
+    from aletheia.risk.engine import _portfolio_drawdown_scale
+
+    # Exchange equity peaked at 100k, now at 85k → 15% DD → scale ~0.25
+    fake_snapshots = (
+        [{"execution_mode": "paper_internal", "total_value_usdt": "50.0"}] * 3
+        + [{"execution_mode": "exchange_account", "total_value_usdt": "100000.0"}] * 3
+        + [{"execution_mode": "exchange_account", "total_value_usdt": "85000.0"}] * 2
+    )
+    monkeypatch.setattr(
+        "aletheia.storage.repositories.list_portfolio_snapshots",
+        lambda limit=50: fake_snapshots,
+    )
+    monkeypatch.setattr(
+        "aletheia.portfolio.exchange_sync.active_broker_view_complete",
+        lambda: (True, ""),
+    )
+
+    scale = _portfolio_drawdown_scale("paper_internal")
+    # 15% drawdown: in the 10-20% band → scale = 0.5 - (15-10)/10 * 0.5 = 0.25
+    assert abs(scale - 0.25) < 0.01
