@@ -98,7 +98,9 @@ async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
     import aletheia.agent_runtime.health as health
     import aletheia.agent_runtime.build_info as build_info
     import aletheia.update.git_ops as git_ops
+    import aletheia.server.routes.health as health_routes
 
+    monkeypatch.setattr(health_routes, "_cached_head_commit", lambda ttl_sec=60.0: "new")
     monkeypatch.setattr(
         scheduler,
         "status_snapshot",
