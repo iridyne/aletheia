@@ -173,12 +173,12 @@ class CCXTProvider:
         limit: int = 100,
         since: int | None = None,
     ) -> list[Candle]:
-        ccxt_symbol, canon, _ = _resolve_ccxt_symbol(symbol)
+        ccxt_symbol, canon, mkt = _resolve_ccxt_symbol(symbol)
 
         from aletheia.data.cache import get_cache
         cache = get_cache()
         if since is None:
-            cached = cache.get(canon, timeframe, limit)
+            cached = cache.get(canon, timeframe, limit, market_type=mkt)
             if cached is not None:
                 return cached
 
@@ -204,7 +204,7 @@ class CCXTProvider:
                 ]
                 self._persist(canon, timeframe, candles, name)
                 if since is None and candles:
-                    cache.set(canon, timeframe, limit, candles)
+                    cache.set(canon, timeframe, limit, candles, market_type=mkt)
                 return candles
             except Exception as e:  # noqa: BLE001 — try fallback, then re-raise
                 last_err = e

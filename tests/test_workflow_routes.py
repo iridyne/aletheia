@@ -91,6 +91,16 @@ async def test_reject_proposal(client):
 
 
 @pytest.mark.anyio
+async def test_reject_executed_proposal_returns_409(client):
+    """#112: cannot reject a proposal after it has been executed."""
+    p = TradeProposal(symbol="BTCUSDT", market_type="usdt_futures", direction="long")
+    repo.insert_trade_proposal(p)
+    repo.update_trade_proposal(p.id, status="executed")
+    resp = await client.post(f"/api/proposals/{p.id}/reject")
+    assert resp.status_code == 409
+
+
+@pytest.mark.anyio
 async def test_approve_missing_proposal_404(client):
     resp = await client.post("/api/proposals/nonexistent/approve-paper")
     assert resp.status_code == 404
