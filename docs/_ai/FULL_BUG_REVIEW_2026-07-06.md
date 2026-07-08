@@ -77,9 +77,10 @@ Fixes land on branch `fix/bug-review-fixes` (off `iridite/bug_fix` HEAD), one co
 
 **Deferred items being tracked** (not dropped — grouped by what they need):
 - **Market-type data-model sub-batch** (#9, #10, #11/#68/#106, #13, #14): these are coupled — `market_snapshots` has NO `market_type` column, so fixing #14 (perp dynamic instruments) without #13 (market_type on snapshots) would *create* a spot/perp snapshot collision. Needs a holistic pass: a `market_snapshots.market_type` migration + collection/query threading + dedupe/close keys. Doing them piecemeal is unsafe, so regrouped for a dedicated focused batch (also avoids the board-asset-class-vs-instrument-market_type confusion of #46/#170).
-- **Operator auth** (#40, #41): need the operator permission / TS-bridge auth model.
-- **#109** (broker partial-fill state, cross-broker), **#143** (paper_internal drawdown → pnl snapshot writer), **#102 pending-branch** (needs a `pi_decisions.market_type` migration), **#17** (dreaming case-study extraction needs a persistent processed-cursor / dedup mechanism).
-- **Runtime-perf follow-up** (assessed, deferred with reasons — see B6c commit): **#90** (tpsl fill-check timeout — live trading-close path, needs careful timeout-wrapper integration), **#147** (config-cache partial-mutation — LOW/narrow, per-route validate-all-then-apply), **#134** (frontdoor route-file read — LOW; a cache adds backend-routing staleness risk > the microsecond gain, left as-is).
+- **#102 pending-branch** (needs a `pi_decisions.market_type` migration — part of market-type sub-batch above).
+- **#134** (frontdoor route-file read — LOW; a cache adds backend-routing staleness risk > the microsecond gain, left as-is).
+
+**Previously deferred, now FIXED:** #40 (`37eea98`), #41 (`f11b53a`), #109 (`45268da`), #143 (`3203264`), #17 (`c600b5b`), #90 (`7874bf3`), #147 (`3586f6e`).
 
 ## Finding Index (navigation + verification status)
 
