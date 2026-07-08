@@ -256,7 +256,8 @@ class TestConformanceStructure:
         # bumping downward means a fix landed and someone should ratchet
         # this budget down accordingly.
         MAX_MISSING = 5
-        MAX_PARTIAL = 1
+        # #153: 5 self-heal specs moved to partial (OL-C08, OL-S13, SH-S01, SH-C02, SH-B03)
+        MAX_PARTIAL = 6
         MAX_SUPERSEDED = 1
 
         missing = counts.get("missing", 0)
