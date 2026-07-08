@@ -239,6 +239,34 @@ async def test_tunnel_guard_protects_risk_config_mutation(client):
     assert r2.status_code != 401
 
 
+@pytest.mark.anyio
+async def test_tunnel_guard_protects_operator_command_surfaces(client):
+    """Regression #42: operator command/pause/resume/wake/trigger and capital
+    events must be protected by the tunnel token when the tunnel is enabled."""
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.secrets import set_secret
+    cfg = load_config()
+    cfg.tunnel.enabled = True
+    save_config(cfg)
+    set_secret("tunnel_api_token", "TUNNELTOKEN42")
+
+    protected_posts = [
+        "/api/operator/command",
+        "/api/operator/pause",
+        "/api/operator/resume",
+        "/api/operator/wake",
+        "/api/capital/events",
+    ]
+    for path in protected_posts:
+        r = await client.post(path, json={})
+        assert r.status_code == 401, f"{path} should be blocked without token, got {r.status_code}"
+
+    # With correct token, the auth guard passes (downstream may 422/400/403, but not 401).
+    for path in protected_posts:
+        r = await client.post(path, json={}, headers={"X-Aletheia-Token": "TUNNELTOKEN42"})
+        assert r.status_code != 401, f"{path} should pass auth guard with token, got {r.status_code}"
+
+
 def test_restart_audit_actor_source_maps_automated_triggers():
     """Regression #132: automated restart triggers are not recorded as actor='human'."""
     from aletheia.server.routes.gateway import _restart_audit_actor_source

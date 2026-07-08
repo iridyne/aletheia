@@ -437,6 +437,29 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Aletheia Trading OS", version=__version__, lifespan=lifespan)
 
+
+# #3 fix: FastAPI's default RequestValidationError handler echoes the rejected
+# input value in the 422 body (under "input": <raw_value>). With extra="forbid"
+# on settings models, an attacker/fuzzer can probe for field names and see their
+# payloads reflected verbatim — XSS-safe (JSON) but still unnecessary information
+# exposure. Strip the raw `input` from each error entry and keep only field
+# location + message.
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+
+@app.exception_handler(RequestValidationError)
+async def _sanitized_validation_error(_request, exc: RequestValidationError):
+    safe_errors = []
+    for err in exc.errors():
+        safe_errors.append({
+            "loc": err.get("loc"),
+            "msg": err.get("msg"),
+            "type": err.get("type"),
+        })
+    return JSONResponse(status_code=422, content={"detail": safe_errors})
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173",
@@ -457,6 +480,15 @@ _PROTECTED_PATHS = {
     # protection on /api/risk/kill-switch is trivially bypassed via /settings/risk.
     "/api/settings/risk", "/api/settings/exchange-mode", "/api/settings/permission-mode",
     "/api/gateway/restart", "/api/gateway/stop",
+    # #42 completion: operator command surfaces can trigger the AI to execute trades
+    # (even under permission-gate #40, the gate only checks the configured mode —
+    # if mode is PaperAuto, an unauthenticated tunnel caller can inject commands).
+    "/api/operator/command", "/api/operator/command-preview",
+    "/api/operator/pause", "/api/operator/resume", "/api/operator/wake",
+    "/api/operator/loop/trigger",
+    # Capital events (deposit/withdraw) alter the capital baseline used by drawdown
+    # and kill-switch calculations — fabricating one lowers the safety net.
+    "/api/capital/events",
 }
 
 # #41 fix: whole path PREFIXES that must require the tunnel token when the tunnel

@@ -677,6 +677,16 @@ async def reject_proposal(proposal_id: str):
     p = repo.get_trade_proposal(proposal_id)
     if p is None:
         raise HTTPException(404, "Proposal not found")
+    # #112 fix: only pending/submitted proposals may be rejected; once executed,
+    # the downstream order+position records exist and the proposal status must
+    # reflect that reality. Rejecting an executed proposal would create a
+    # contradictory state (proposal says rejected, order/position say it ran).
+    _REJECTABLE = {"pending", "submitted", "approved"}
+    current = p.get("status") if isinstance(p, dict) else getattr(p, "status", None)
+    if current not in _REJECTABLE:
+        raise HTTPException(
+            409, f"Proposal is '{current}' and cannot be rejected (only {sorted(_REJECTABLE)} are rejectable)"
+        )
     repo.update_trade_proposal(proposal_id, status="rejected")
     write_audit({"actor": "human", "source": "dashboard", "event_type": "proposal_rejected",
                  "entity_type": "trade_proposal", "entity_id": proposal_id,
