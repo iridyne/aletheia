@@ -277,7 +277,7 @@ function ReasoningStepsSection({ runId, fallback }: { runId: string; fallback: s
         <span className="text-muted text-sm">No tool calls recorded</span>
       )}
       {(steps as any[]).length > 0 && (
-        <table className="drawer-table" style={{ marginTop: 8 }}>
+        <table className="drawer-table mt-2">
           <thead>
             <tr><th>#</th><th>Action</th><th>Input</th><th>Output</th></tr>
           </thead>

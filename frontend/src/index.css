@@ -1770,6 +1770,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .risk-dot-block { background: var(--red); box-shadow: 0 0 6px var(--red); }
 .risk-dot-warn { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
 .risk-dot-ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.risk-dot-muted { background: var(--muted); }
 
 .risk-clear { display: flex; align-items: center; gap: var(--space-2); }
 .risk-clear .risk-dot { margin-top: 0; }

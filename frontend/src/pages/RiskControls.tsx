@@ -264,7 +264,7 @@ export default function RiskControls() {
             // "no data" mislabels itself as "all clear". Only claim clear
             // when the backend actually says riskState === 'healthy'.
             <div className="risk-clear">
-              <span className="risk-dot" style={{ background: 'var(--muted)' }} />
+              <span className="risk-dot risk-dot-muted" />
               <span className="text-muted text-sm">
                 Risk state <span className="mono">{riskState}</span> — not confirming clear until the risk engine reports "healthy".
               </span>

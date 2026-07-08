@@ -287,13 +287,21 @@ def _integrated_audits(hours: int) -> dict[str, Any]:
     except Exception as exc:  # pragma: no cover - defensive read-only boundary
         audits["sizing_trace"] = {"error": str(exc)}
     try:
-        from aletheia.agent_shell.operator_store import list_events
+        from aletheia.storage.sqlite import get_db
         from aletheia.analytics.candidate_supply import (
             evaluate_candidate_supply_drought,
             latest_candidate_supply_snapshot,
         )
 
-        events = list_events(limit=20)
+        db = get_db()
+        rows = db.execute(
+            "SELECT * FROM agent_shell_events "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 20",
+        ).fetchall()
+        events = [
+            {**dict(r), "payload": json.loads(r["payload"]) if r["payload"] else {}}
+            for r in rows
+        ]
         audits["candidate_supply"] = {
             "latest_snapshot": latest_candidate_supply_snapshot(events),
             "drought": evaluate_candidate_supply_drought(events),

@@ -1704,7 +1704,7 @@ def _probe_content_proposal_bias(report: Report) -> None:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         rows = list(db.execute(
             "SELECT direction, COUNT(*) n FROM trade_proposals "
-            "WHERE created_at >= ? AND source != 'adopted' "
+            "WHERE created_at >= ? AND (source IS NULL OR source != 'adopted') "
             "GROUP BY direction ORDER BY n DESC",
             (cutoff,),
         ))

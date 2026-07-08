@@ -763,6 +763,9 @@ class TestContentHealthSelfSupervision:
         # 20 one-directional (short) proposals in 24h → content.proposal_bias warn.
         # (The strategy-FSM zombie WARN was removed with the rules engine, Position C
         # 2026-07-02; proposal_bias is a still-live content probe that WARNs.)
+        # Disable the direction brake so the probe emits "warn" (unmitigated bias).
+        import aletheia.agent_shell.trading_decision as td
+        monkeypatch.setattr(td, "_proposal_direction_overheated", lambda *a, **kw: None)
         now = datetime.now(timezone.utc).isoformat()
         for i in range(20):
             sq._db_conn.execute(
