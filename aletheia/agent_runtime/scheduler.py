@@ -1547,9 +1547,10 @@ def _run_universe_refresh():
 
 async def _async_settle_outcomes():
     from aletheia.universe.outcome_recorder import settle_due
+    # settle_due() now drains the full queue within a 100s time budget (safe under
+    # the 120s job timeout). It logs internally per batch; the total is returned.
     settled = await settle_due()
-    if settled:
-        logger.info("outcome_settler: settled %d forward outcomes", settled)
+    logger.debug("outcome_settler: %d outcomes settled this cycle", settled)
 
 
 def _run_outcome_settler():
@@ -1790,6 +1791,30 @@ async def _async_data_collectors(cfg, tick: int) -> None:
 
     # --- Phase B: macro + volume scanner + CoinGecko top (every 5th tick = ~10 min) ---
     if tick % 5 == 1:
+        # Volume scanner runs FIRST in Phase B — it drives universe ordering and is
+        # the most critical output of this phase. Previously it ran after CoinGecko
+        # (15s cap) + macro (15s cap), which left ≤ 0s budget on slow ticks and caused
+        # the volume_ranking snapshot to silently stall (doctor: "volume ranking stale").
+        # Running it first guarantees it gets its 12s cap regardless of what follows.
+        try:
+            from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+            vol_scanner = VolumeScannerCollector(top_n=30)
+            vol_result = await _bounded(vol_scanner.collect(symbols[:200]), "volume_scanner", 12.0, _deadline) or {}
+            if vol_result.get("top_symbols"):
+                _latest_volume_ranking.update({
+                    "symbols": vol_result["top_symbols"],
+                    "observed_at": vol_result["observed_at"],
+                })
+                try:
+                    from aletheia.storage import repositories as _repo
+                    _repo.save_volume_ranking_snapshot(
+                        vol_result["top_symbols"], vol_result["observed_at"]
+                    )
+                except Exception as _e:
+                    logger.debug("volume_ranking persist failed: %s", _e)
+        except Exception as e:
+            logger.debug("volume_scanner collection failed: %s", e)
+
         # CoinGecko top-N runs BEFORE macro persist so its movers_summary can be
         # folded into the same MacroSnapshot row (single insert, no UPDATE chase).
         cg_movers_summary: str | None = None
@@ -1820,25 +1845,6 @@ async def _async_data_collectors(cfg, tick: int) -> None:
                 repo.insert_macro_snapshot(snap.model_dump())
             except Exception as e:
                 logger.debug("macro persist failed: %s", e)
-
-        try:
-            from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
-            vol_scanner = VolumeScannerCollector(top_n=30)
-            vol_result = await _bounded(vol_scanner.collect(symbols[:200]), "volume_scanner", 12.0, _deadline) or {}
-            if vol_result.get("top_symbols"):
-                _latest_volume_ranking.update({
-                    "symbols": vol_result["top_symbols"],
-                    "observed_at": vol_result["observed_at"],
-                })
-                try:
-                    from aletheia.storage import repositories as _repo
-                    _repo.save_volume_ranking_snapshot(
-                        vol_result["top_symbols"], vol_result["observed_at"]
-                    )
-                except Exception as _e:
-                    logger.debug("volume_ranking persist failed: %s", _e)
-        except Exception as e:
-            logger.debug("volume_scanner collection failed: %s", e)
 
         # Coinalyze cross-exchange aggregated OI + liquidations (requires API key).
         # Replaces dead CoinGlass/CCXT/Bitget-OI paths. Skips gracefully when no key.

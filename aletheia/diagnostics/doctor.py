@@ -1888,8 +1888,8 @@ def _probe_content_signal_settlement(report: Report) -> None:
         return
     if overdue > 0:
         oldest_age = _age_minutes(oldest_due)
-        # settle_due() runs every 10 min — tolerate up to 15 min before alarming
-        if oldest_age is not None and oldest_age > 15:
+        # outcome_settler runs every 15 min — tolerate up to 20 min before alarming
+        if oldest_age is not None and oldest_age > 20:
             report.add("content.signal_settlement", "warn",
                        f"{overdue} forward outcomes past due_at, oldest {_fmt_age(oldest_age)} — settler stalled",
                        "outcome settler job is not closing due outcomes; check its scheduler cadence")
