@@ -673,32 +673,40 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 
 ---
 
-### 🟡 [OPEN] IB-24-11: debate_downgraded 导致高分机会丢失（missed_alpha_suspect）
+### 🔴 [IN PROGRESS — workflow] IB-24-11: debate 方向无关 bug 导致 SHORT 机会被错误降级
 
 **现象**: flow audit 报 `debate_impact: missed_alpha_suspect`，24h 内 2 个机会被 debate 降级后 TTL 到期：
 - LDO/USDT short（score=51，15m 收益 +0.42%）
 - SLX/USDT short（score=53，15m 收益 +0.60%）
 
-**现象**: 机会进入 `signal_pending` 后在 TTL 内未被 PI 处理（operator loop 评估时间 > TTL 窗口，或 debate 降级后不再进入队列）。  
-**影响**: 错过小幅但有效的短线机会。  
-**待分析**: debate 降级的条件是否合理？TTL 窗口是否过短？operator loop 频率是否匹配 signal 生成速度？
+**根因（已确认）**: `trading_decision.py` debate 调整公式方向无关：
+```python
+advantage = debate.bull_confidence - debate.bear_confidence  # ← BUG
+```
+对于 SHORT 机会，bear > bull 是支持做空的看空信号，但公式把它算作负分：
+- bear=75, bull=25 → advantage = -50 → conviction 58 → 43 → SKIP
+- 正确应为：SHORT 时 advantage = bear - bull = +50 → conviction 73 → TRADE
+
+**影响**: 所有进入 debate（conviction 40-80）的 SHORT 机会，只要 bear > bull（即市场看空），就会被错误降级到 43 以下触发 skip。这是系统性偏向做多、压制做空的设计缺陷。  
+**当前状态**: workflow 进行中（audit → fix → verify + commit）。
 
 ---
 
-### 🟡 [OPEN] IB-24-12: ranker_excluded 大量 neutral_or_missing_direction（46/154）
+### 🟠 [IN PROGRESS — sub agent] IB-24-12: ranker_excluded 大量 neutral_or_missing_direction（46/154）
 
 **现象**: 24h 内 154 个 opportunity 中 46 个因 `neutral_or_missing_direction` 被 ranker 过滤。  
 **根因**: scanner 数据间隙（26 天 pause）导致技术指标不完整，direction_bias 无法确定。  
 **当前趋势**: 相比上次审计（28/93 = 30%）略有改善（46/154 = 30%），gap 恢复中。  
-**预期**: 随数据积累（OHLCV 已补充 +1426 根），未来 1-2 天 neutral 比例应下降。
+**预期**: 随数据积累（OHLCV 已补充 +1426 根），未来 1-2 天 neutral 比例应下降。  
+**当前状态**: sub agent 分析中（ttl-direction-analysis agent）。
 
 ---
 
-### 🟡 [OPEN] IB-24-13: ttl_expired 是最大漏斗损耗（69/154 = 45%）
+### 🟠 [IN PROGRESS — sub agent] IB-24-13: ttl_expired 是最大漏斗损耗（69/154 = 45%）
 
 **现象**: 154 个 opportunity 中 69 个（45%）因 TTL 到期直接丢弃，未进入 ranker。  
 **可能原因**: TTL 设置与 operator loop 评估频率不匹配，或 universe 刷新过于频繁产生重复 opportunity。  
-**待分析**: TTL 分布（family 维度）vs operator 处理速度，是否需要延长特定 family 的 TTL。
+**当前状态**: sub agent 分析中（ttl-direction-analysis agent）。
 
 ---
 
@@ -706,12 +714,12 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 
 | 优先级 | ID | 问题 | 状态 |
 |--------|----|----|------|
-| P0 | IB-24-07 | FTS 索引 89/5011，1336 条有 content 未被索引，原因待查 | 🔍 待查 |
-| P0 | IB-24-08 | signal_settlement 12,827 条逾期未结算 | 🔧 诊断中 |
-| P0 | IB-24-09 | volume_scanner 2.6 天未运行 | 🔧 诊断中 |
-| P1 | IB-24-11 | debate_downgraded 导致 missed_alpha | 📋 待分析 |
-| P1 | IB-24-12 | 30% neutral_or_missing_direction | ⏳ 随数据恢复 |
-| P1 | IB-24-13 | 45% TTL 到期 | 📋 待分析 |
+| P0 | IB-24-07 | FTS 索引 89/5011，1336 条有 content 未被索引，原因待查 | 🔧 agent 分析中 |
+| P0 | IB-24-08 | signal_settlement 12,827 条逾期未结算 | 🔧 agent 诊断中 |
+| P0 | IB-24-09 | volume_scanner 2.6 天未运行 | 🔧 agent 诊断中 |
+| P1 | IB-24-11 | debate 方向无关 bug — SHORT 被系统性压制 | 🔧 workflow 修复中 |
+| P1 | IB-24-12 | 30% neutral_or_missing_direction | 🔧 agent 分析中 |
+| P1 | IB-24-13 | 45% TTL 到期 | 🔧 agent 分析中 |
 | P2 | IB-24-10 | Bitget 独有标的无 OHLCV 数据源 | 🗓 长期 |
 
 ---
