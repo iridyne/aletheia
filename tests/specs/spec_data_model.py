@@ -709,3 +709,26 @@ def test_migrations_define_learning_tables():
     assert "CREATE TABLE IF NOT EXISTS ps_policy_versions" in migrations_src, (
         "migrations.py missing ps_policy_versions CREATE TABLE"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-S22", "data_model", "§2 perp structure expansion", "L2a",
+        "perp_structure_snapshots carries Position X expansion fields for compact "
+        "structure bias/composite and structured dimension/risk JSON payloads.",
+    ),
+)
+def test_perp_structure_expansion_fields_registered():
+    from aletheia.storage.migrations import _ADDITIVE_COLUMNS
+
+    cols = {(col, table) for col, table, _t in _ADDITIVE_COLUMNS}
+    required = {
+        ("structure_bias", "perp_structure_snapshots"),
+        ("composite_z", "perp_structure_snapshots"),
+        ("structure_rank", "perp_structure_snapshots"),
+        ("universe_size", "perp_structure_snapshots"),
+        ("dimension_scores_json", "perp_structure_snapshots"),
+        ("risk_context_json", "perp_structure_snapshots"),
+    }
+    missing = required - cols
+    assert not missing, f"missing Position X perp-structure columns: {missing}"

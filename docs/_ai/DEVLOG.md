@@ -1,5 +1,45 @@
 # Development Log
 
+## 2026-07-07 — Position X 离线材料接入（advisory-only 第二阶段）
+
+### 触发
+最小版 Vergex 结构快照已经能进 `market_observer`，但还缺三层东西：
+授权研究材料的安全提炼、可验证的离线结构公式、以及给 market_observer / System Operator
+看的压缩结构证据。
+
+### 交付
+- 新增 `aletheia/data/position_x.py`：
+  - `extract_position_x_knowledge_cards()`：把授权样本中的维度说明、prompt 组织方式、
+    边界约束提炼成安全 knowledge cards，不保留 raw prompt / token / credential / wallet / balance。
+  - `extract_position_x_material_bundle()`：可直接读取 `04_evidence/` 或同类离线目录，
+    一次性产出 structure snapshots + knowledge cards。
+  - `extract_position_x_snapshot()`：把 `sndk_intelligence_signals` 风格 payload 归一化成
+    `PerpStructureSnapshot`。
+  - `compute_position_x_features()` / `compute_position_x_composite_z()`：
+    离线计算 LFA、POC、Value Area、convexity、cascade、research_prior_v1 composite。
+  - `composite_z_fit_data` / `dim_internal_fit` / `analysis_*.json` 现在也会提炼成公式提示卡和
+    agent 表达样式卡，仍只保留摘要与 source hash。
+  - `build_position_x_agent_context()`：生成 `Position X (advisory only)` 压缩证据块。
+- 扩展 `perp_structure_snapshots` 字段：
+  `structure_bias` / `composite_z` / `structure_rank` / `universe_size` /
+  `dimension_scores_json` / `risk_context_json`。
+- `VergexStructureCollector` 现在可直接吃 Position X 风格原始 signal payload。
+- `context_builder` 在旧的 `Perp structure` 段里追加压缩后的 `Position X` 证据。
+- `trading_context` / `trading_decision` 把同一压缩证据带给 System Operator，
+  仍保持 advisory-only。
+- `docs/design/data_utilization.md` / `data_model.md` 和对应 spec 已登记第二阶段路径。
+
+### 验证
+- `uv run pytest tests/test_position_x_knowledge.py tests/test_position_structure_features.py tests/test_data_collectors.py tests/test_market_context.py tests/test_doctor.py -q -k "position_x or perp_structure or compact_position_x or test_position_structure_features or test_position_x_knowledge"`
+- `uv run pytest tests/specs/spec_data_utilization.py tests/specs/spec_data_model.py -q`
+- `git diff --check`
+
+### 边界
+不接真实 partner API，不引入地址级持仓库，不把外部分数直接当交易开关，
+不改 risk/execution/live，不让 Position X 证据单独触发开仓/平仓/加杠杆。
+
+---
+
 ## 2026-07-07 — Vergex 永续结构信号 observation-only 最小接入
 
 ### 触发

@@ -93,12 +93,14 @@ thesis / reasoning / evidence，缺字段就标 missing/insufficient_data，不�
 修复是否有效，只用修复后新增行判断；历史缺口中无法确定性回填的部分保留为历史债务，
 不要用 LLM 或 symbol/time 猜测回写。
 
-**Vergex 永续结构信号（2026-07-07）**：当前只完成 observation-only 最小接入：
-`perp_structure_snapshots`、白名单 fixture collector、doctor 新鲜度、market_observer prompt
-证据块。它不接真实 Vergex API，不导入地址/账户/prompt/credential，不影响下单、排序、风控或
-执行。下一步如果要接 partner feed，必须先补默认关闭的配置字段、Settings 控件、fixture-only
-collector 测试和无 key/无 endpoint 诚实跳过路径；在 2 周本地观察证明有边际价值前，不允许进入
-交易排序、仓位或风控。
+**Vergex / Position X 永续结构信号（2026-07-07）**：advisory-only 第二阶段已收口：
+除了最小版 `perp_structure_snapshots`、白名单 fixture collector、doctor 新鲜度、market_observer
+prompt 证据块外，现在还包括 Position X 目录式离线材料提取（快照 + knowledge cards）、拟合文件公式提示、
+`analysis_*.json` 表达样式卡、压缩后的 `Position X (advisory only)` 证据，以及这块上下文进入
+System Operator。它仍不接真实 Vergex API，不导入地址/账户/raw prompt/credential，不影响下单、
+排序、风控或执行。下一步如果要接 partner feed，必须先补默认关闭的配置字段、Settings 控件、
+fixture-only collector 测试和无 key/无 endpoint 诚实跳过路径；在 2 周本地观察证明有边际价值前，
+不允许进入交易排序、仓位或风控。
 
 **Learning 闭环当前边界（2026-07-03）**:交易历史 → case study → lesson → policy →
 draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降权。draft skill 仍需

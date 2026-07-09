@@ -51,7 +51,7 @@
 | 新闻+情绪 | NewsCollector + analyzer | `news_items` | market_observer 新闻块 + research_worker | ✅ |
 | 官方公告/监管 RSS（SEC/CFTC/Ethereum Foundation） | NewsCollector（默认 news.feeds） | `news_items` | market_observer 新闻块 + research_worker | ✅ |
 | **Hyperliquid OI/资金费率/预测** | HyperliquidCollector | `funding/OI` (exchange=hyperliquid*) | **market_observer→跨venue资金费率对比→LLM** (本次新增路由) | ✅ |
-| 永续持仓结构/清算墙 | VergexStructureCollector fixture / 后续 Vergex feed（当前不直连 API） | `perp_structure_snapshots` | market_observer→Perp structure 块→LLM；doctor 新鲜度检查 | 🟡 observation-only（聚合信号，不参与风控/执行） |
+| 永续持仓结构/清算墙 | VergexStructureCollector fixture / 后续 Vergex feed（当前不直连 API） + Position X 离线材料解析器 | `perp_structure_snapshots` + 运行时 knowledge cards | market_observer→Perp structure / Position X advisory 块→LLM；System Operator 上下文→结构证据；doctor 新鲜度检查 | 🟡 observation-only（聚合信号，不参与风控/执行） |
 | **DefiLlama 链上(稳定币/TVL/DEX)** | DefiLlamaCollector | `onchain_snapshots` | market_observer→macro 链上块→LLM | ✅ |
 | 预测市场 | PolymarketProvider | prediction 表 | market_observer 预测块→LLM (启用时) | ✅ |
 | 美股/xStocks (ON-series, 15 tokens) | equity_observer | equity 表 | **observation-only（不交易，仅交叉验证/溢价监测）** | 🟡 |
@@ -68,7 +68,8 @@
 
 - **Hyperliquid（曾 ❌ orphan）→ 已闭合 ✅**：本次新增 `market_observer` 读 `latest_funding_rate(sym, exchange="hyperliquid"/"hyperliquid_predicted")` → `render_enriched_context_md(xvenue_funding=...)` 渲染"跨venue资金费率对比"（**annualized 比较**，因 HL 1h vs 主所 8h 间隔，原始费率不可比）。揭示基差/情绪背离。锁定于 DU-S01/S02/B01/B02。
   - OI 暂作为 funding 信号的伴随数据存储（cross-venue OI 聚合可作后续宏观杠杆景气信号，未纳入本次以免 prompt 膨胀，遵 R3）。
-- **永续持仓结构（🟡）**：当前只支持离线/后续 feed 写入聚合结果，不直连 Vergex API，不导入报告原文或地址明细。消费路径是 `market_observer` 读取 60 分钟内最新行并渲染 POC、价值区间、清算墙、集中度；`doctor` 暴露空/旧/可用状态。它是观察信号，不参与风控或执行。
+- **永续持仓结构（🟡）**：当前只支持离线/后续 feed 写入聚合结果，不直连 Vergex API，不导入报告原文或地址明细。消费路径是 `market_observer` 读取 60 分钟内最新行并渲染 POC、价值区间、清算墙、集中度；当行里带 Position X 扩展字段时，再压缩成 `Position X (advisory only)` 结构证据。System Operator 也读取同一行的压缩结构证据，用于持仓/机会判断；`doctor` 暴露空/旧/可用状态。它是观察信号，不参与风控或执行。
+- **Position X 离线材料（🟡）**：`aletheia.data.position_x` 只读授权样本中的维度说明、结构总结、拟合结果、`analysis_*.json` 的表达样式和 prompt 组织方式；`extract_position_x_material_bundle()` 可一次性把目录中的授权材料提炼成安全 knowledge cards 与结构化快照。原始 prompt、账户、地址、余额、credential、token 不进入运行时卡片、日志或 prompt；拟合文件只保留公式提示、相关性结论和 source hash。
 - **清算 + OI 历史（✅ key-guard 接通）**：CoinGlass 全面 paywall、Glassnode 无免费 tier、Bitget OI 历史死代码已确认（2026-06-30 产品定义）。CCXT 清算死代码（`_fetch_liquidations_ccxt` + `_CCXTLiquidationsUnsupported`）已从 `derivatives.py` 删除（GAP-DU-C02，锁定于 DU-C02）。`CoinalyzeCollector` 已建并接入 `data_collectors` Phase B；有 `coinalyze_api_key` 时写入 `open_interest_snapshots(exchange='coinalyze')` 与 `liquidation_events(exchange='coinalyze')`，无 key 时返回 `errors=["no_key"]` 并诚实跳过。持久化路径锁定于 DU-T01。
 - **美股/xStocks（🟡）**：owner 明确 observation-only（不交易），符合 R1 的"显式标注"分支，非违反。
 
@@ -82,6 +83,7 @@
 | DU-S02 | L2c | market_observer 读 hyperliquid 行 **且** 传 `xvenue_funding` 进 render（Hyperliquid 真达决策，非仅 collector/doctor） |
 | DU-S03 | L2c | market_observer 读 `latest_onchain_snapshots` 且传 `onchain=`（DefiLlama 被消费） |
 | DU-S13 | L2a | `perp_structure_snapshots` 已登记，存在白名单 fixture collector，market_observer 读 `latest_perp_structure` 并传 `perp_structure=`，doctor 暴露 `data.perp_structure` 新鲜度 |
+| DU-S14 | L2a | `Position X` 离线解析器存在，能通过目录式 bundle 提取安全 knowledge cards / 结构快照；market_observer 与 System Operator 只消费压缩后的 advisory 结构证据 |
 | DU-B01 | L2b | 给定 HL+主所 annualized funding，render 产出"Cross-venue funding"段、divergence 以 pp 计、含 predicted |
 | DU-B02 | L2b | 某 symbol 无 HL 数据时，跨venue段整体省略（不漏空行噪音，遵 R3） |
 | DU-C01 | L2a | `CoinalyzeCollector` 存在，有 `collect()` 方法和 `domain` 属性（Coinalyze 清算+OI 采集入口） |

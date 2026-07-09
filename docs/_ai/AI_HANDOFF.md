@@ -7,7 +7,37 @@
 
 ## Last Updated
 
-2026-07-07 (Vergex 永续结构信号 observation-only 最小接入)
+2026-07-07 (Position X 离线材料接入，advisory-only 第二阶段)
+
+---
+
+## Recent Change (Position X 离线材料接入，advisory-only 第二阶段 — 2026-07-07)
+
+在最小版 Vergex 结构快照之上，又补了一层 Position X 离线材料接入。目标仍然不是让外部材料驱动交易，
+而是把可用研究内容压缩成 Aletheia 自己的安全证据和结构公式。
+
+- 新增 `aletheia/data/position_x.py`：
+  - 把授权样本中的维度解释、结构总结、prompt 组织方式提炼成 knowledge cards。
+  - 直接把 `sndk_intelligence_signals` 风格 payload 归一化成 `PerpStructureSnapshot`。
+  - 离线计算 LFA、POC、Value Area、convexity、cascade、research_prior_v1 composite。
+  - `extract_position_x_material_bundle()` 现在能一次性读取 `04_evidence/` 或同类离线目录，输出结构快照 + knowledge cards。
+  - `composite_z_fit_data` / `dim_internal_fit` / `analysis_*.json` 现在会额外提炼成公式提示卡和 agent 表达样式卡，仍然只保留摘要与 source hash。
+  - 输出压缩后的 `Position X (advisory only)` 证据块。
+- `perp_structure_snapshots` 扩展字段：
+  `structure_bias` / `composite_z` / `structure_rank` / `universe_size` /
+  `dimension_scores_json` / `risk_context_json`。
+- `market_observer` 现在会把带 Position X 扩展字段的结构快照压缩后送进 prompt；
+  旧的 POC / Value Area / 清算墙渲染继续兼容。
+- System Operator 上下文也会读取同一压缩结构证据，用于持仓/机会判断；仍然是 advisory-only。
+- `docs/design/data_utilization.md` / `data_model.md` 和对应 spec 已同步登记第二阶段路径。
+
+边界：不接真实 partner feed，不导入 raw prompt / wallet / balance / token / credential，不把外部
+composite_z 直接当交易开关，不改 risk/execution/live，不允许单靠这块证据开仓/平仓/加杠杆。
+
+验证：
+- `uv run pytest tests/test_position_x_knowledge.py tests/test_position_structure_features.py tests/test_data_collectors.py tests/test_market_context.py tests/test_doctor.py -q -k "position_x or perp_structure or compact_position_x or test_position_structure_features or test_position_x_knowledge"`
+- `uv run pytest tests/specs/spec_data_utilization.py tests/specs/spec_data_model.py -q`
+- `git diff --check`
 
 ---
 

@@ -22,6 +22,7 @@ from aletheia.data.models import (
     MarketContextSnapshot,
     TradabilityScore,
 )
+from aletheia.data.position_x import build_position_x_agent_context
 
 logger = logging.getLogger("aletheia.data.context_builder")
 
@@ -192,6 +193,9 @@ def render_enriched_context_md(
                 conc.append(f"top50 {row['top50_concentration'] * 100:.0f}%")
             if conc:
                 parts.append("concentration " + ", ".join(conc))
+            px = build_position_x_agent_context(row)
+            if px["status"] == "ok":
+                parts.append(px["rendered"])
             if parts:
                 src = row.get("source") or "unknown"
                 venue = row.get("venue") or "unknown"

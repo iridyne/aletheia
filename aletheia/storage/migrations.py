@@ -1217,6 +1217,12 @@ CREATE TABLE IF NOT EXISTS perp_structure_snapshots (
     vendor_bias TEXT,
     vendor_rank INTEGER,
     vendor_universe_size INTEGER,
+    structure_bias TEXT,
+    composite_z REAL,
+    structure_rank INTEGER,
+    universe_size INTEGER,
+    dimension_scores_json TEXT NOT NULL DEFAULT '{}',
+    risk_context_json TEXT NOT NULL DEFAULT '{}',
     raw_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_perp_structure_sym_ts
@@ -1596,6 +1602,12 @@ _ADDITIVE_COLUMNS = [
     # NULL on legacy rows → treat as "crypto" / "spot" (safe default).
     ("asset_class", "serenity_opportunities", "TEXT NOT NULL DEFAULT 'crypto'"),
     ("market_type", "serenity_opportunities", "TEXT NOT NULL DEFAULT 'spot'"),
+    ("structure_bias", "perp_structure_snapshots", "TEXT"),
+    ("composite_z", "perp_structure_snapshots", "REAL"),
+    ("structure_rank", "perp_structure_snapshots", "INTEGER"),
+    ("universe_size", "perp_structure_snapshots", "INTEGER"),
+    ("dimension_scores_json", "perp_structure_snapshots", "TEXT NOT NULL DEFAULT '{}'"),
+    ("risk_context_json", "perp_structure_snapshots", "TEXT NOT NULL DEFAULT '{}'"),
 ]
 
 

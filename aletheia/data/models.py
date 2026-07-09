@@ -98,6 +98,12 @@ class PerpStructureSnapshot(BaseModel):
     vendor_bias: str | None = None
     vendor_rank: int | None = None
     vendor_universe_size: int | None = None
+    structure_bias: str | None = None
+    composite_z: float | None = None
+    structure_rank: int | None = None
+    universe_size: int | None = None
+    dimension_scores_json: str = "{}"
+    risk_context_json: str = "{}"
     raw_json: str = "{}"
 
 
