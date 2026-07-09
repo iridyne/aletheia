@@ -707,7 +707,7 @@ else:
 
 **影响**: 所有进入 debate（conviction 40-80）的 SHORT 机会，只要 bear > bull（即市场看空），就会被错误降级到 43 以下触发 skip。这是系统性偏向做多、压制做空的设计缺陷。  
 **当前状态**: 已修复，19 项测试全部通过（含 10 项新增方向感知场景）。  
-**commit**: 见 fix/layered-pause 分支（IB-24-11 commit）。
+**commit**: `27c67cb`
 
 ---
 
@@ -754,5 +754,5 @@ else:
 | IB-24-05 | execution_eligible 无实时价格门控（allocator + signal_emitter） | `acbf7c6` |
 | IB-24-06 | Databricks endpoint URL 更新（旧机器→新机器） | config 更新 |
 | IB-24-07 | FTS reindex 包含 medium_confidence（89→1507 条索引） | `4bc3707` |
-| IB-24-11 | debate 公式方向感知 — SHORT 不再被 bear>bull 信号错误降级 | fix/layered-pause |
+| IB-24-11 | debate 公式方向感知 — SHORT 不再被 bear>bull 信号错误降级 | `27c67cb` |
 
