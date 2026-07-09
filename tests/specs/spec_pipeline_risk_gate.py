@@ -334,7 +334,7 @@ def test_risk_gate_stale_market_data_for_live(tmp_path, monkeypatch):
     # Return no market snapshot — simulates completely absent/stale data
     monkeypatch.setattr(
         "aletheia.risk.engine._market_data_age_seconds",
-        lambda symbol: None,
+        lambda symbol, market_type=None: None,
     )
 
     p = TradeProposal(
