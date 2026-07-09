@@ -17,7 +17,7 @@ def reindex():
 
     run_migrations()
     count = reindex_all()
-    typer.echo(f"Reindexed {count} high-confidence knowledge item(s) into the search index.")
+    typer.echo(f"Reindexed {count} knowledge item(s) into the search index.")
 
 
 @knowledge_app.command()
