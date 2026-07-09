@@ -396,9 +396,9 @@ def _proposal_direction_overheated(
     conviction: int,
     *,
     window_hours: int = 24,
-    min_sample: int = 5,
-    max_share: float = 0.80,
-    override_conviction: int = 85,
+    min_sample: int = 15,
+    max_share: float = 0.95,
+    override_conviction: int = 75,
 ) -> str | None:
     """Return a skip reason when native proposals are one-sided.
 

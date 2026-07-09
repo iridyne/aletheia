@@ -288,6 +288,16 @@ async def lifespan(app: FastAPI):
             logger.warning("git-hook install skipped (non-fatal): %s", e)
     logger.info("Aletheia Trading OS v%s starting", __version__)
     logger.info("Dashboard: http://%s:%d", cfg.app.bind_host, runtime_context["port"] or cfg.app.dashboard_port)
+    # Migrate keyring secrets to the encrypted file store so that CLI / service
+    # processes (which may run under a different Windows logon session and cannot
+    # reach the OS keyring) always find secrets in the file fallback path.
+    try:
+        from aletheia.config.secrets import migrate_keyring_to_file
+        n = migrate_keyring_to_file()
+        if n:
+            logger.info("Migrated %d secret(s) from keyring to file store", n)
+    except Exception as _e:
+        logger.debug("Keyring-to-file migration skipped: %s", _e)
     # Ensure DB schema + register agents/tools, then start the scheduler.
     from aletheia.storage.migrations import run_migrations
     from aletheia.agent_runtime.tool_registry import init_tool_registry

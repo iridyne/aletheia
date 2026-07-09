@@ -21,14 +21,20 @@ def _fallback_path() -> Path:
 
 
 def set_secret(key: str, value: str) -> None:
-    """Store a secret. Tries keyring first, falls back to encrypted file."""
+    """Store a secret. Writes to encrypted file always; also tries keyring."""
     value = value.strip()
+    # Always write to the encrypted file so non-interactive sessions (services,
+    # CLI running under a different Windows logon session) can read the secret
+    # even when the OS keyring is inaccessible (WinError 1312).
+    _file_set(key, value)
+    # Best-effort keyring write for GUI credential managers; failure is silent
+    # because the file copy is the reliable source of truth.
     kr = _get_keyring()
     if kr:
-        kr.set_password(_SERVICE_NAME, key, value)
-        return
-    # Fallback: simple Fernet-encrypted JSON file
-    _file_set(key, value)
+        try:
+            kr.set_password(_SERVICE_NAME, key, value)
+        except Exception:
+            pass
 
 
 def get_secret(key: str) -> str | None:
@@ -76,6 +82,68 @@ def _file_get(key: str) -> str | None:
         return data.get(key)
     except Exception:
         return None
+
+
+def migrate_keyring_to_file() -> int:
+    """Copy all secrets from the OS keyring into the encrypted file store.
+
+    Called once at gateway startup so that secrets saved via the Web UI
+    (which runs inside the gateway's interactive Windows session and can
+    reach the keyring) are also available to CLI / service processes that
+    run under a different logon session (WinError 1312) and can only reach
+    the file store.  Returns the number of secrets migrated.
+    """
+    import json
+    kr = _get_keyring()
+    if kr is None:
+        return 0
+    try:
+        # Windows Credential Manager exposes enumerate via win32cred;
+        # fall back to a known-key list when enumeration is unavailable.
+        import keyring.backends.Windows as _wb
+        import win32cred  # type: ignore[import]
+        creds = win32cred.CredEnumerate(None, 0) or []
+        our_creds = [
+            c for c in creds
+            if c.get("TargetName", "").startswith(_SERVICE_NAME + "/")
+        ]
+        pairs = [
+            (c["TargetName"].removeprefix(_SERVICE_NAME + "/"),
+             c["CredentialBlob"].decode("utf-16-le").rstrip("\x00"))
+            for c in our_creds
+            if c.get("CredentialBlob")
+        ]
+    except Exception:
+        # Enumeration unavailable — read using known key list instead.
+        _KNOWN_KEYS = [
+            "bitget.api_key", "bitget.api_secret", "bitget.passphrase",
+            "bitget.demo.api_key", "bitget.demo.api_secret", "bitget.demo.passphrase",
+            "bitget.live.api_key", "bitget.live.api_secret", "bitget.live.passphrase",
+            "binance.api_key", "binance.api_secret",
+            "binance.testnet.api_key", "binance.testnet.api_secret",
+            "okx.api_key", "okx.api_secret", "okx.passphrase",
+            "okx.demo.api_key", "okx.demo.api_secret", "okx.demo.passphrase",
+            "model.databricks.api_key", "model.anthropic.api_key",
+            "model.openai.api_key", "coinalyze_api_key",
+        ]
+        pairs = []
+        for k in _KNOWN_KEYS:
+            try:
+                v = kr.get_password(_SERVICE_NAME, k)
+                if v:
+                    pairs.append((k, v))
+            except Exception:
+                pass
+
+    migrated = 0
+    for key, value in pairs:
+        if not value:
+            continue
+        # Only write if the file store doesn't already have this value.
+        if _file_get(key) != value:
+            _file_set(key, value)
+            migrated += 1
+    return migrated
 
 
 def redact(value: str | None) -> str:

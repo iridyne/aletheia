@@ -11,11 +11,13 @@ Called at the end of every universe refresh cycle (source_agent="universe_scanne
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone, timedelta
 
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     insert_opportunity,
     find_open_opportunity_by_symbol_snapshot,
+    list_market_snapshots,
 )
 from aletheia.trading.instruments import instrument_market_to_db_market
 from aletheia.analytics.factor_feedback import lookup_factor_signal
@@ -140,6 +142,26 @@ def emit_deterministic_opportunities(
             else f"[{family}] score={total_score:.0f}"
         )
 
+        # Guard: only set execution_eligible if there is live price data within the
+        # last 2 hours. Symbols with zero snapshots would otherwise reach PI Agent as
+        # tradeable but fail silently at proposal submission (price=0 → proposal_id=None).
+        _snapshot_cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+        _snaps = list_market_snapshots(symbol=symbol, limit=1)
+        _exec_eligible = False
+        if _snaps:
+            _snap_at_str = _snaps[0].get("snapshot_at") or ""
+            try:
+                _snap_dt = datetime.fromisoformat(_snap_at_str.replace("Z", "+00:00"))
+                if _snap_dt.tzinfo is None:
+                    _snap_dt = _snap_dt.replace(tzinfo=timezone.utc)
+                _exec_eligible = _snap_dt >= _snapshot_cutoff
+            except (ValueError, AttributeError):
+                _exec_eligible = False
+        if not _exec_eligible:
+            logger.warning(
+                "no_live_price_for_symbol: %s — execution_eligible set to False", symbol
+            )
+
         opp = Opportunity(
             symbol=symbol,
             market=instrument_market_to_db_market(market_type),
@@ -150,7 +172,7 @@ def emit_deterministic_opportunities(
             source_agent="universe_scanner",
             linked_strategy_id=linked_strategy_id,
             asset_class="crypto",
-            execution_eligible=True,
+            execution_eligible=_exec_eligible,
             universe_snapshot_id=snapshot_id,
             universe_member_id=member_id,
             scanner_family=family,
