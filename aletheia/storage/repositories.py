@@ -1638,6 +1638,34 @@ def mark_outlier_outcomes_failed(max_abs_return_pct: float = 1_000_000) -> int:
     return result.rowcount
 
 
+# --- Filter feedback controller (shadow recommendations) ---
+
+def insert_controller_recommendation(rec: dict) -> None:
+    """Append one shadow recommendation row. Never updates existing rows."""
+    _insert("controller_recommendations", rec)
+
+
+def list_controller_recommendations(limit: int = 200, run_id: str | None = None) -> list[dict]:
+    """Most recent recommendations, optionally scoped to one observe run."""
+    if run_id:
+        return _select_all(
+            "controller_recommendations",
+            where="run_id = ?", params=(run_id,),
+            order="created_at DESC", limit=limit,
+        )
+    return _select_all("controller_recommendations", order="created_at DESC", limit=limit)
+
+
+def latest_controller_run_id() -> str | None:
+    """run_id of the most recent observe cycle, or None if the table is empty."""
+    db = get_db()
+    row = db.execute(
+        "SELECT run_id FROM controller_recommendations "
+        "WHERE run_id IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+    return row["run_id"] if row else None
+
+
 def calibration_stats() -> list[dict]:
     """Aggregate forward return stats grouped by scanner_family + horizon.
 

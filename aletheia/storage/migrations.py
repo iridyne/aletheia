@@ -1836,6 +1836,30 @@ CREATE TABLE IF NOT EXISTS volume_ranking_snapshots (
 CREATE INDEX IF NOT EXISTS idx_volume_ranking_ts ON volume_ranking_snapshots(observed_at DESC);
 """
 
+# Filter feedback controller — append-only shadow log of per-filter × scanner_family
+# loosen/hold/tighten recommendations. Phase 1 is observe-only: rows never advance
+# past status='shadow_only'. Immutable audit trail (see filter_controller.py).
+_CONTROLLER_RECOMMENDATIONS_DDL = """
+CREATE TABLE IF NOT EXISTS controller_recommendations (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    filter_name TEXT NOT NULL,
+    scanner_family TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    current_value TEXT,
+    suggested_direction TEXT NOT NULL CHECK (suggested_direction IN ('loosen','hold','tighten','n/a')),
+    verdict TEXT NOT NULL CHECK (verdict IN ('loosen','hold','tighten','insufficient_data')),
+    error_signal REAL,
+    n_samples INTEGER NOT NULL DEFAULT 0,
+    reasoning TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'shadow_only' CHECK (status IN ('shadow_only','proposed','approved','applied','rejected')),
+    run_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_controller_recs_created ON controller_recommendations(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_controller_recs_filter ON controller_recommendations(filter_name, scanner_family);
+CREATE INDEX IF NOT EXISTS idx_controller_recs_run ON controller_recommendations(run_id);
+"""
+
 
 
 def _ensure_knowledge_fts_outcome_column(db) -> None:
@@ -1864,6 +1888,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_PI_DECISIONS_DDL)
     db.executescript(_CAPITAL_EVENTS_DDL)
     db.executescript(_VOLUME_RANKING_DDL)
+    db.executescript(_CONTROLLER_RECOMMENDATIONS_DDL)
     _ensure_columns(db)
     _ensure_runtime_baseline(db)
     _ensure_knowledge_fts_outcome_column(db)
