@@ -703,21 +703,45 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 
 ---
 
-### 🟠 [IN PROGRESS — sub agent] IB-24-12: ranker_excluded 大量 neutral_or_missing_direction（46/154）
+### ✅ [FIXED] IB-24-12: ranker_excluded 大量 neutral_or_missing_direction（~14-30%）
 
-**现象**: 24h 内 154 个 opportunity 中 46 个因 `neutral_or_missing_direction` 被 ranker 过滤。  
-**根因**: scanner 数据间隙（26 天 pause）导致技术指标不完整，direction_bias 无法确定。  
-**当前趋势**: 相比上次审计（28/93 = 30%）略有改善（46/154 = 30%），gap 恢复中。  
-**预期**: 随数据积累（OHLCV 已补充 +1426 根），未来 1-2 天 neutral 比例应下降。  
-**当前状态**: sub agent 分析中（ttl-direction-analysis agent）。
+**现象**: 7 天内 ~14-30% 的 opportunity 因 `neutral_or_missing_direction` 被 ranker 过滤。按 source_agent 细分：全部来自 `market_observer`（LLM 路径），signal_emitter 从不产生 neutral（direction=None 时直接跳过，不入库）。
+
+**根因**: `market_observer` 在没有 universe 对应的现有 opp 时，会创建 `direction_bias='neutral'` 的独立 opportunity。这些 opp 在 ranker 的 direction gate（`paper_trader_ranker.py:148`）被立即过滤，从未进入信号链。
+
+**数据（7天）**:
+- momentum neutral: 284/2231 = 12.7%（全部来自 market_observer 标注/创建）
+- mean_reversion neutral: 55/317 = 17.3%
+- volatility neutral: 46/214 = 21.5%
+- equity_observer（scanner_family=None）: 40 neutral，全部因 equity_shadow_track 跳过
+
+**修复**: `aletheia/agents/market_observer.py` — 在创建独立 opportunity 前检查 `direction == "neutral"`，若是则记录 step 并直接返回（不入库）。标注现有 deterministic opp 时已有此保护（`if direction != "neutral": updates["direction_bias"] = direction`），standalone 路径补齐了这一检查。
+
+**commit**: 本次修复
 
 ---
 
-### 🟠 [IN PROGRESS — sub agent] IB-24-13: ttl_expired 是最大漏斗损耗（69/154 = 45%）
+### ✅ [FIXED] IB-24-13: ttl_expired 是最大漏斗损耗（45-58% for momentum/mean_reversion）
 
-**现象**: 154 个 opportunity 中 69 个（45%）因 TTL 到期直接丢弃，未进入 ranker。  
-**可能原因**: TTL 设置与 operator loop 评估频率不匹配，或 universe 刷新过于频繁产生重复 opportunity。  
-**当前状态**: sub agent 分析中（ttl-direction-analysis agent）。
+**现象**: 7 天内 momentum 58%、mean_reversion 52% 的 opportunity 最终 status='expired'。
+
+**根因**: 双层 TTL 设计不同步：
+1. Universe member TTL（momentum=30min, mean_reversion=60min, volatility=2h）由 `allocator._FAMILY_TTL` 设置，写入 `universe_members.expires_at`。
+2. Ranker 检查 `expires_at < now` 并返回 `skip_reason="ttl_expired"`，但**不修改** opportunity 的 status。
+3. Opportunity 的 `valid_until` 字段从 `m.get("expires_at")` 继承 universe member 的 TTL，**但 `expire_stale_opportunities()` 只看 `created_at < now - 48h`**，完全忽略 `valid_until`。
+4. 结果：30 分钟 TTL 的 momentum opp 入库后最多等待 48 小时，才被 cleanup job（3:17am 每日一次）标记为 expired。这些 opp 对 ranker 和 PI daemon 均不可用（已过 valid_until），却长期占据 status='open'。
+
+**数据验证**:
+- momentum: avg_ttl_min=29，1295 个 expired（全部 TTL=29min，cleanup 前一直是 open）
+- mean_reversion: avg_ttl_min=59，164 个 expired
+- volatility: avg_ttl_min=119，78 个 expired
+- `valid_until IS NOT NULL` 的 opps 中 expired 比例远高于 `valid_until IS NULL` 的
+
+**修复**: `aletheia/storage/repositories.py` — `expire_stale_opportunities()` 的 UPDATE 语句增加 `OR (valid_until IS NOT NULL AND valid_until < now)` 条件，使已过 valid_until 的 opp 在下次 cleanup 时立即被标记 expired，不再等 48h。
+
+**注**: pi_operator_loop 每 4 小时（cron: 0,4,8,12,16,20:15 CST）运行，pi_daemon 为事件驱动（信号即触发）。TTL 过期问题不影响 daemon 的实时评估，但会造成 DB 中大量虚假 open 状态，影响漏斗统计分析。
+
+**commit**: 本次修复
 
 ---
 
@@ -729,8 +753,8 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 | P0 | IB-24-08 | signal_settlement 12,827 条逾期未结算 | 🔧 agent 诊断中 |
 | P0 | IB-24-09 | volume_scanner 2.6 天未运行 | 🔧 agent 诊断中 |
 | P1 | IB-24-11 | debate 方向无关 bug — SHORT 被系统性压制 | ✅ 已修复 |
-| P1 | IB-24-12 | 30% neutral_or_missing_direction | 🔧 agent 分析中 |
-| P1 | IB-24-13 | 45% TTL 到期 | 🔧 agent 分析中 |
+| P1 | IB-24-12 | 30% neutral_or_missing_direction | ✅ 已修复（market_observer 跳过 neutral standalone opp） |
+| P1 | IB-24-13 | 45% TTL 到期 | ✅ 已修复（expire_stale_opportunities 增加 valid_until 检查） |
 | P2 | IB-24-10 | Bitget 独有标的无 OHLCV 数据源 | 🗓 长期 |
 
 ---
@@ -747,4 +771,6 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 | IB-24-06 | Databricks endpoint URL 更新（旧机器→新机器） | config 更新 |
 | IB-24-07 | FTS reindex 包含 medium_confidence（89→1507 条索引） | `4bc3707` |
 | IB-24-11 | debate 公式方向感知 — SHORT 不再被 bear>bull 信号错误降级 | `27c67cb` |
+| IB-24-12 | market_observer 跳过 neutral standalone opp（不入库）| 本次 commit |
+| IB-24-13 | expire_stale_opportunities 增加 valid_until < now 条件 | 本次 commit |
 

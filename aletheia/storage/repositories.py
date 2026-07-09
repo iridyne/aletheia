@@ -2182,15 +2182,21 @@ def prune_agent_shell_artifacts(days: int = 30) -> int:
 def expire_stale_opportunities(ttl_hours: int = 48) -> int:
     """Mark open opportunities older than ttl_hours as 'expired'.
 
-    Prevents indefinite accumulation of stale signals that the paper_trader
-    never acted on. Traded/reviewed opportunities are not affected.
+    Also expires any opportunity whose valid_until has passed, regardless of
+    age — IB-24-13: short-TTL families (e.g. momentum 30 min) were piling up
+    as 'open' for 48h before the age cutoff fired.
+
+    Traded/reviewed opportunities are not affected.
     """
+    now_iso = datetime.now(timezone.utc).isoformat()
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=ttl_hours)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
     cur = db.execute(
-        "UPDATE opportunities SET status = 'expired' WHERE status = 'open' AND created_at < ?",
-        (cutoff,),
+        "UPDATE opportunities SET status = 'expired'"
+        " WHERE status = 'open'"
+        " AND (created_at < ? OR (valid_until IS NOT NULL AND valid_until < ?))",
+        (cutoff, now_iso),
     )
     if not was_in_tx:
         db.commit()
