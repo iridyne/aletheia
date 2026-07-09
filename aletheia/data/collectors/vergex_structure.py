@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from aletheia.data.models import PerpStructureSnapshot
+from aletheia.data.position_x import extract_position_x_snapshot
 
 
 _ALLOWED_FIELDS = {
@@ -46,6 +47,12 @@ _ALLOWED_FIELDS = {
     "vendor_bias",
     "vendor_rank",
     "vendor_universe_size",
+    "structure_bias",
+    "composite_z",
+    "structure_rank",
+    "universe_size",
+    "dimension_scores_json",
+    "risk_context_json",
 }
 
 _DIRECTION_VALUES = {"bullish", "bearish", "neutral", "conflict"}
@@ -149,6 +156,10 @@ class VergexStructureCollector:
 
 
 def _snapshot_from_payload(payload: dict[str, Any]) -> PerpStructureSnapshot:
+    if isinstance(payload.get("data"), dict) and (
+        payload["data"].get("dimensions") or payload["data"].get("metrics")
+    ):
+        return extract_position_x_snapshot(payload)
     cleaned = _clean_payload(payload)
     now = datetime.now(timezone.utc).isoformat()
     cleaned.setdefault("venue", "hyperliquid")

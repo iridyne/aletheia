@@ -356,6 +356,9 @@ async def _analyze_symbol(
                     "primary_ann": fr.get("funding_rate_annualized") if fr else None,
                 }
 
+            # Position X / perp-structure evidence stays advisory-only: we pass the
+            # freshest compact row into render_enriched_context_md(), which handles
+            # old-style perp structure plus the newer Position X compression.
             perp_structure = {symbol: ps} if _is_perp_structure_fresh(ps) else {}
 
             enriched = render_enriched_context_md(

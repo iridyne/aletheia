@@ -29,6 +29,7 @@ _MARKET_OBS = _ROOT / "aletheia" / "agents" / "market_observer.py"
 _CONTEXT_BUILDER = _ROOT / "aletheia" / "data" / "context_builder.py"
 _DOCTOR = _ROOT / "aletheia" / "diagnostics" / "doctor.py"
 _VERGEX_STRUCTURE = _ROOT / "aletheia" / "data" / "collectors" / "vergex_structure.py"
+_POSITION_X = _ROOT / "aletheia" / "data" / "position_x.py"
 
 _CONTRACT = "data_utilization_contract"
 
@@ -128,6 +129,46 @@ def test_perp_structure_registered_and_consumed():
         "market_observer must read and pass perp structure into render"
     )
     assert "data.perp_structure" in doctor, "doctor must expose perp structure freshness"
+
+
+# ---------------------------------------------------------------------------
+# DU-S14 — Position X safe-material parser + compact advisory consumer path
+# ---------------------------------------------------------------------------
+
+@spec_claim(
+    SpecClaim(
+        "DU-S14", _CONTRACT, "§position x advisory path", "L2a",
+        "Position X safe-material parsing lives in aletheia.data.position_x, "
+        "extracts compact knowledge cards / snapshots from authorized offline "
+        "materials only, and the resulting advisory-only structure block is "
+        "consumed by both market_observer and the System Operator context.",
+    ),
+)
+def test_position_x_parser_and_consumers_exist():
+    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(encoding="utf-8")
+    px = _POSITION_X.read_text(encoding="utf-8")
+    obs = _MARKET_OBS.read_text(encoding="utf-8")
+    tc = (_ROOT / "aletheia" / "agent_shell" / "trading_context.py").read_text(encoding="utf-8")
+
+    assert "Position X" in doc, (
+        "data_utilization.md must register the Position X offline-material path"
+    )
+    assert (
+        "extract_position_x_knowledge_cards" in px
+        and "extract_position_x_snapshot" in px
+        and "extract_position_x_material_bundle" in px
+    ), (
+        "aletheia.data.position_x must expose the offline bundle/card/snapshot extractors"
+    )
+    assert "build_position_x_agent_context" in px, (
+        "Position X module must expose a compact advisory context builder"
+    )
+    assert "Position X" in obs or "build_position_x_agent_context" in obs, (
+        "market_observer must consume compact Position X structure evidence"
+    )
+    assert "build_position_x_agent_context" in tc or "position_x" in tc, (
+        "System Operator context must consume compact Position X structure evidence"
+    )
 
 
 # ---------------------------------------------------------------------------

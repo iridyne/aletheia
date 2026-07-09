@@ -296,6 +296,7 @@ def test_doctor_perp_structure_missing_table_reports_no_rows(tmp_path, monkeypat
     assert "no such table" not in checks["data.perp_structure"].detail
 
 
+
 def test_deep_diagnostics_includes_log_policy_redacted_tails_and_attention(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     (tmp_path / "logs" / "errors.log").write_text(

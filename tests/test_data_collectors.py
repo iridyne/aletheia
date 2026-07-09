@@ -423,3 +423,78 @@ def test_perp_structure_repository_roundtrip_and_prune():
 
     assert repo.prune_perp_structure_snapshots(days=30) == 1
     assert repo.latest_perp_structure("BTC/USDT")["id"] == "ps-fresh"
+
+
+
+def test_extract_position_x_signal_payload_into_snapshot():
+    from aletheia.data.position_x import extract_position_x_snapshot
+
+    snap = extract_position_x_snapshot(
+        {
+            "symbol": "SNDK/USDT",
+            "data": {
+                "bias": "bearish",
+                "structureRead": "Supply-led with overhead resistance.",
+                "dimensions": [
+                    {
+                        "key": "cgo",
+                        "direction": "bearish",
+                        "strength": "medium",
+                        "percentile": 13.333333333333334,
+                        "detail": "support below $5.69M vs overhead above $30.44M",
+                    },
+                    {
+                        "key": "lfa",
+                        "direction": "bearish",
+                        "strength": "flat",
+                        "percentile": 63.33333333333333,
+                        "detail": "short above $5.91M vs long below $12.58M",
+                    },
+                    {
+                        "key": "convexity",
+                        "direction": "neutral",
+                        "detail": "23% of band fuel at densest cluster",
+                    },
+                    {
+                        "key": "cascade",
+                        "direction": "neutral",
+                        "detail": "0.4% of OI within ±5% of liquidation",
+                    },
+                ],
+                "levels": {
+                    "poc": 1960.2759,
+                    "support": 1811.4711,
+                    "resistance": 1875.2446,
+                    "valueAreaLow": 1811.4711,
+                    "valueAreaHigh": 2002.7916,
+                },
+                "metrics": {
+                    "shortLiqAbove": 5_909_524.00,
+                    "longLiqBelow": 12_584_565.05,
+                    "longOverhangPnl": -64_987.32,
+                    "shortOverhangPnl": 1_548_924.16,
+                    "cascadeVulnPct": 0.0042413245,
+                    "top10Pct": 0.4843475373,
+                    "convexity": 0.2279036709,
+                    "includedPositions": 2249,
+                    "state": "complete",
+                },
+                "compositeZ": -0.9,
+                "rank": 25,
+                "universeSize": 30,
+            },
+            "wallets": ["must-not-survive"],
+            "credential": "must-not-survive",
+        }
+    )
+
+    assert snap.symbol == "SNDK/USDT"
+    assert snap.structure_bias == "bearish"
+    assert snap.composite_z == -0.9
+    assert snap.structure_rank == 25
+    assert snap.universe_size == 30
+    assert snap.value_area_low == 1811.4711
+    assert snap.value_area_high == 2002.7916
+    assert snap.top10_concentration == 0.4843475373
+    assert '"wallets"' not in snap.raw_json
+    assert '"credential"' not in snap.raw_json

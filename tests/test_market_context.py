@@ -445,6 +445,75 @@ def test_observer_includes_fresh_perp_structure_context(tmp_path, monkeypatch):
     _release_run_counter("run-mo-struct")
 
 
+def test_observer_includes_compact_position_x_structure_context(tmp_path, monkeypatch):
+    """Fresh Position X structure evidence must be compressed before prompt injection."""
+    _setup_env(tmp_path, monkeypatch)
+    import aletheia.agents.market_observer as mo
+    from aletheia.storage import repositories as repo
+
+    repo.insert_perp_structure_snapshot({
+        "id": "perp-struct-observer-2",
+        "symbol": "BTC/USDT",
+        "venue": "hyperliquid",
+        "source": "position_x",
+        "as_of_time": datetime.now(timezone.utc).isoformat(),
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "data_quality": "degraded",
+        "poc": 62267.64,
+        "value_area_low": 60000.0,
+        "value_area_high": 65000.0,
+        "short_liq_above_usd": 335_141_283.44,
+        "long_liq_below_usd": 220_161_274.01,
+        "structure_bias": "bearish",
+        "composite_z": -0.9,
+        "structure_rank": 25,
+        "universe_size": 30,
+        "dimension_scores_json": (
+            '{"cgo":{"direction":"bearish","strength":"medium","percentile":13.3},'
+            '"lfa":{"direction":"bearish","strength":"flat","percentile":60.0}}'
+        ),
+        "risk_context_json": '{"convexity":{"detail":"23% of band fuel"},'
+        '"cascade":{"detail":"0.4% of OI within ±5%"}}',
+    })
+
+    captured = []
+
+    async def fake_llm_structured(*, system, user, schema, max_tokens=1024, provider=None):
+        captured.append(user)
+        return ({
+            "direction_bias": "neutral",
+            "confidence": "speculative",
+            "confidence_score": 50,
+            "rationale": "structure context inspected",
+            "key_observations": ["Compact Position X block present"],
+        }, None)
+
+    monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
+    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
+
+    async def fake_builder(symbols, market_type="spot", **kw):
+        return ("snapshot", {"fallback": False, "errors": [], "symbols": {}})
+
+    import aletheia.trading.market_context as mc
+    monkeypatch.setattr(mc, "build_market_context", fake_builder)
+
+    from aletheia.agents.market_observer import run_market_observer
+    asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-struct-compact"))
+
+    btc_prompt = next(p for p in captured if "Market data for BTC/USDT" in p)
+    assert "Position X" in btc_prompt
+    assert "bias bearish" in btc_prompt
+    assert "composite_z -0.90" in btc_prompt
+    assert "rank 25/30" in btc_prompt
+    assert "cgo bearish" in btc_prompt
+    assert "advisory only" in btc_prompt
+    assert "degraded" in btc_prompt
+
+    from aletheia.agents.helpers import _release_run_counter
+    _release_run_counter("run-mo-struct-compact")
+
+
+
 def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
     """When LLM returns empty rationale + observations, thesis must NOT dump
     the raw markdown snapshot (which used to leak through and look broken on

@@ -610,6 +610,13 @@ def _fmt_family_edge(edge: dict | None) -> str:
     return f" {{edge:{n}T {wr_s} {ar_s}{weak}}}"
 
 
+def _fmt_position_x_context(context: dict | None) -> str:
+    if not context or context.get("status") != "ok":
+        return ""
+    rendered = str(context.get("rendered") or "").strip()
+    return f" | {rendered}" if rendered else ""
+
+
 def _direction_skew_note(rows: list[dict], label: str) -> str:
     dirs = [
         str(r.get("direction") or r.get("direction_bias") or "").lower()
@@ -688,6 +695,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
     pos_lines = "\n".join(
         f"  {p['symbol']} {p['direction']} qty={p['quantity']} entry={p['entry_price']} "
         f"uPnL={p.get('unrealized_pnl', '?')} hold={p.get('hold_hours', '?')}h"
+        f"{_fmt_position_x_context(p.get('structure_context'))}"
         for p in positions[:5]
     ) or "  (none)"
 
@@ -856,6 +864,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
             f"conf={o.get('confidence_score', '?')} "
             f"[{o.get('scanner_family', '')}]{_fmt_family_edge(o.get('family_edge'))}: {o.get('thesis', '')}"
             f"{(' | obs: ' + '; '.join(o['key_observations'])) if o.get('key_observations') else ''}"
+            f"{_fmt_position_x_context(o.get('structure_context'))}"
             for o in opps[:8]
         )
         parts += ["## Open Opportunities (market_observer output)", opp_lines, ""]

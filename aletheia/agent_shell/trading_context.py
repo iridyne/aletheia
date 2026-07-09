@@ -15,6 +15,8 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from aletheia.data.position_x import build_position_x_agent_context
+
 logger = logging.getLogger("aletheia.agent_shell.trading_context")
 
 
@@ -144,7 +146,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
 
     # Portfolio: open positions
     try:
-        from aletheia.storage.repositories import list_positions
+        from aletheia.storage.repositories import list_positions, latest_perp_structure
         open_pos = list_positions(status="open", limit=10)
         layer["positions"] = [
             {
@@ -163,6 +165,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 # Futures telemetry for the leverage/margin context + near-liquidation alerts.
                 "leverage": p.get("leverage"),
                 "liquidation_price": p.get("liquidation_price"),
+                "structure_context": build_position_x_agent_context(latest_perp_structure(p.get("symbol"))),
             }
             for p in open_pos
         ]
@@ -255,7 +258,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
 
     # Open opportunities (what market_observer has flagged — System Operator was blind to these)
     try:
-        from aletheia.storage.repositories import _select_all
+        from aletheia.storage.repositories import _select_all, latest_perp_structure
         opps = _select_all(
             "opportunities",
             where="status = 'open' AND asset_class = 'crypto'",
@@ -309,6 +312,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 # here; the PI was previously blind to it (only the truncated thesis
                 # surfaced). Expose the top observations so the decision can cite them.
                 "key_observations": _top_observations(o.get("key_observations")),
+                "structure_context": build_position_x_agent_context(latest_perp_structure(o.get("symbol"))),
             }
             for o in opps
         ]
