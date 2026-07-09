@@ -1,5 +1,31 @@
 # Development Log
 
+## 2026-07-10 — Filter Feedback Controller Phase 1（shadow / observe-only，分支 feat/filter-feedback-controller）
+
+**背景**：`ato opportunity audit` 显示 72h 漏斗 523 机会创建 → 仅 2 个开仓（0.38% 通过率）。每个流失点都是一个用固定阈值筛选机会的 filter，没人根据结果回调。目标：把整条机会管道变成负反馈控制系统——丢掉了本该盈利机会的 filter 应放松，放过了亏损机会的 filter 应收紧。
+
+**关键发现**：这个模式在代码里已有三个局部实现，本期是**统一泛化**而非另起炉灶：
+- `allocator.get_family_multipliers()`（生产在跑）——按 scanner_family 用前向收益 hit-rate 做有界校准，但只作用于评分乘子
+- `operator_loop.PARAM_REGISTRY`——有界 config 调参（neutral/floor/ceiling/step/cooldown/audit/热重载），但只 3 个全局参数、由账户整体健康驱动
+- `factor_feedback`——按 factor 分类 watch→blocked→active→preferred，但作用于 factor 非 filter
+
+**本期交付（Phase 1，纯观测，零交易行为改动）**：
+- `filter_registry.py`——10 个 FilterSpec 声明式清单（逐条对源码核实），标注每个 filter 的 drop_reason、config 路径/硬编码位置、松紧方向、反馈信号源、是否可调
+- `filter_controller.py`——`compute_filter_feedback()` 按 (filter × scanner_family) 用 `calibration_stats` 前向收益 hit-rate 映射 loosen/hold/tighten/insufficient_data 判据（有界 + 样本门控，泛化自 get_family_multipliers）；`run_controller_observe()` 追加写 `controller_recommendations`（status='shadow_only'），**永不写 config**
+- `controller_recommendations` 迁移（append-only）；`ControllerConfig` + Web 设置 UI + `/api/analytics/filter-controller` 只读端点 + `ato opportunity audit --view controller`
+- 每 6h 的 `filter_controller_observe` 调度 job（read-only，受 `controller.shadow_enabled` 门控）
+- `tests/filter_eval/` 新增 9 个测试，含"shadow 模式绝不改 config"不变量断言
+
+**路线图（本期未做，已文档化）**：Phase 2 有界自动调参（3 档审批 + 抽屉回滚 + 抖动退避，先从 scanner_weights/family_quota 起）；Phase 3 变更受控风控参数（人工门控）；补 shadow-trade PnL 校准层 + 因果/反事实分析（owner 要求）；补 observer 预过滤 `pre_filter_rejections` 观测缺口。
+
+### 验证
+- `tests/filter_eval/` 27 passed（+1 预存的日期敏感 flake `signal_runaway_extreme` 与本期无关：direction_brake 场景硬编码 2026-07-09 时间戳，24h 窗口相对 now 已过期）；config/settings 131 passed；前端 `tsc --noEmit` 通过；CLI + 设置 API 端到端手测通过。
+
+### 边界
+新增分析模块 + 一个只读调度 job + 一个 config 子节 + UI；不改 ranker/debate/risk/execution 决策路径；observe job 只 append 到新表，不碰 config.yaml。commit 单条于 feat 分支，未推送、未合并、未重启 gateway。
+
+---
+
 ## 2026-07-10 — 运行时行为问题批次修复 IB-24-07～13（6 issues / 5 commits）
 
 本次修复的 6 个问题均为**静默劣化**类——系统表面正常运行，但核心决策质量、数据采集、结算统计在后台持续退化。详见 `docs/issues/RUNTIME_BEHAVIOR_ISSUES.md` 及 `docs/_ai/RUNTIME_BUG_LESSONS_2026-07-10.md`。
