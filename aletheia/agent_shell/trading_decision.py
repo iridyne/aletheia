@@ -217,13 +217,12 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
             # advantage is a correction term, not a fresh verdict (2026-06-23
             # profit-loop freeze exception). 0.3 weight keeps debate meaningful
             # without letting it override a confident initial read.
-            # For SHORT trades, bear > bull supports the thesis (market is going
-            # down). Invert the sign so a bearish debate result raises conviction
-            # for shorts rather than incorrectly downgrading it.
-            if decision.direction == "short":
-                advantage = debate.bear_confidence - debate.bull_confidence
-            else:
-                advantage = debate.bull_confidence - debate.bear_confidence
+            # bull_confidence = P(this trade succeeds), bear_confidence = P(this
+            # trade fails) — the prompts are direction-aware ("make the case FOR
+            # {symbol} {direction}" vs "why {direction} is a BAD idea"). So
+            # bull - bear is correctly signed for both long and short: a short
+            # with high bear_confidence (trade will fail) should reduce conviction.
+            advantage = debate.bull_confidence - debate.bear_confidence
             adjusted = int(round(initial_conviction + advantage * 0.3))
             decision.conviction = max(0, min(100, adjusted))
             decision.debate_adjustment = decision.conviction - initial_conviction
@@ -1150,11 +1149,16 @@ def _build_bull_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
     oi_div = snap.get("oi_price_divergence")
     deriv_extras = f" OI_Δ={snap.get('oi_delta_1h', '?')} taker={snap.get('taker_buy_ratio', '?')} RS24h={snap.get('relative_strength_24h', '?')}%"
     div_note = f" [{_OI_DIV_LABEL[oi_div]}]" if oi_div else ""
-    return f"""You are a bull analyst. Make the STRONGEST case for {symbol} {direction or 'long'} RIGHT NOW.
+    _dir = direction or "long"
+    if _dir == "short":
+        note = "Note: FR>+0.01% = crowded longs → supports short; taker<0.8 = seller aggression → supports short; OI_div=weak_rally = distribution → supports short."
+    else:
+        note = "Note: FR<-0.01% = crowded shorts → bullish; taker>1.2 = buyer aggression; OI_div=hidden_acc = potential reversal long."
+    return f"""You are a bull analyst. Make the STRONGEST case for {symbol} {_dir} RIGHT NOW.
 
 Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}{deriv_extras}{div_note}
 {regime_str}
-Note: FR<-0.01% = crowded shorts → bullish; taker>1.2 = buyer aggression; OI_div=hidden_acc = potential reversal long.
+{note}
 
 Be specific: technical setup, regime alignment, risk/reward.
 Return confidence (0-100) where 100 = near-certain win. Provide 3-5 evidence points."""
@@ -1169,11 +1173,16 @@ def _build_bear_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
     oi_div = snap.get("oi_price_divergence")
     deriv_extras = f" OI_Δ={snap.get('oi_delta_1h', '?')} taker={snap.get('taker_buy_ratio', '?')} RS24h={snap.get('relative_strength_24h', '?')}%"
     div_note = f" [{_OI_DIV_LABEL[oi_div]}]" if oi_div else ""
-    return f"""You are a bear analyst. Find every reason why {symbol} {direction or 'long'} RIGHT NOW is a BAD idea.
+    _dir = direction or "long"
+    if _dir == "short":
+        note = "Note: FR<-0.01% = crowded shorts → fade risk (short squeeze); taker>1.2 = buyer aggression → challenges short; OI_div=hidden_acc = potential reversal → challenges short."
+    else:
+        note = "Note: FR>+0.01% = crowded longs → bearish; taker<0.8 = seller aggression; OI_div=weak_rally = distribution risk."
+    return f"""You are a bear analyst. Find every reason why {symbol} {_dir} RIGHT NOW is a BAD idea.
 
 Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}{deriv_extras}{div_note}
 {regime_str}
-Note: FR>+0.01% = crowded longs → bearish; taker<0.8 = seller aggression; OI_div=weak_rally = distribution risk.
+{note}
 
 Challenge aggressively: overbought/oversold, adverse regime, funding cost, better entry timing.
 Return confidence (0-100) where 100 = trade will definitely fail. Provide 3-5 counter-evidence points."""

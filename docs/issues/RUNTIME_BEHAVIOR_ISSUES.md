@@ -682,32 +682,24 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 
 ---
 
-### ✅ [FIXED] IB-24-11: debate 方向无关 bug 导致 SHORT 机会被错误降级
+### ✅ [FIXED] IB-24-11: debate 信号提示偏向 LONG 导致 SHORT 机会被误判
 
 **现象**: flow audit 报 `debate_impact: missed_alpha_suspect`，24h 内 2 个机会被 debate 降级后 TTL 到期：
 - LDO/USDT short（score=51，15m 收益 +0.42%）
 - SLX/USDT short（score=53，15m 收益 +0.60%）
 
-**根因**: `trading_decision.py` debate 调整公式方向无关 — SHORT 机会因 bear > bull 信号被错误惩罚：
-```python
-# BUG（已修复）
-advantage = debate.bull_confidence - debate.bear_confidence  # SHORT 时方向错误
-```
-对于 SHORT 机会，bear > bull 是支持做空的看空信号，但公式把它算作负分：
-- bear=75, bull=25 → advantage = -50 → conviction 58 → 43 → SKIP（错误）
-- 正确应为：SHORT 时 advantage = bear - bull = +50 → conviction 73 → TRADE
+**根因（最终确认）**: `_build_bull_prompt` / `_build_bear_prompt` 内的市场信号解读提示硬编码为 LONG 视角：
+- bull prompt 中：`FR<-0.01% = crowded shorts → bullish`（LONG 视角正确，SHORT 视角反了）
+- bear prompt 中：`FR>+0.01% = crowded longs → bearish`（LONG 视角正确，SHORT 视角反了）
+- 当评估 SHORT 机会时，LLM 收到错误的信号解读方向 → bull/bear confidence 被反向校准 → debate adjustment 偏负 → conviction 被不合理地压低
 
-**修复**: `trading_decision.py` 公式改为方向感知：SHORT 使用 (bear-bull)，LONG/None 使用 (bull-bear)：
-```python
-if decision.direction == "short":
-    advantage = debate.bear_confidence - debate.bull_confidence
-else:
-    advantage = debate.bull_confidence - debate.bear_confidence
-```
+**注**: debate 公式 `advantage = bull_confidence - bear_confidence` 本身是正确的（prompt 已承载方向，bull = "trade 会成功"，bear = "trade 会失败"），公式无需改变。
 
-**影响**: 所有进入 debate（conviction 40-80）的 SHORT 机会，只要 bear > bull（即市场看空），就会被错误降级到 43 以下触发 skip。这是系统性偏向做多、压制做空的设计缺陷。  
-**当前状态**: 已修复，19 项测试全部通过（含 10 项新增方向感知场景）。  
-**commit**: `27c67cb`
+**修复**:
+- `_build_bull_prompt`：根据 `direction` 选择正确的信号解读提示（SHORT：FR>+0.01%/taker<0.8 → 支持做空）
+- `_build_bear_prompt`：SHORT 时提示做空风险（crowded short squeeze / buyer aggression 危险）
+- 新增 `tests/filter_eval/scenarios/debate_direction.py` 5 个评估场景，覆盖 short/long × bullish/bearish debate 组合
+- **commit**: `(本次 reverted-fix commit)`
 
 ---
 
