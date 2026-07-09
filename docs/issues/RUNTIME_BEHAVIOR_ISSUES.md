@@ -770,7 +770,7 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 | IB-24-05 | execution_eligible 无实时价格门控（allocator + signal_emitter） | `acbf7c6` |
 | IB-24-06 | Databricks endpoint URL 更新（旧机器→新机器） | config 更新 |
 | IB-24-07 | FTS reindex 包含 medium_confidence（89→1507 条索引） | `4bc3707` |
-| IB-24-11 | debate 公式方向感知 — SHORT 不再被 bear>bull 信号错误降级 | `27c67cb` |
-| IB-24-12 | market_observer 跳过 neutral standalone opp（不入库）| 本次 commit |
-| IB-24-13 | expire_stale_opportunities 增加 valid_until < now 条件 | 本次 commit |
+| IB-24-11 | debate 信号提示方向感知 — SHORT 评估不再使用 LONG 视角信号 | `a747f19` |
+| IB-24-12 | market_observer 跳过 neutral standalone opp（不入库）| `96f6275` |
+| IB-24-13 | expire_stale_opportunities 增加 valid_until < now 条件 | `96f6275` |
 
