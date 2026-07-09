@@ -21,6 +21,7 @@ from aletheia.analytics.trade_funnel import build_trade_funnel_audit
 
 _FORWARD_HORIZONS = ("15m", "1h", "4h", "24h")
 _TRADE_ACTIONS = {"trade", "scale_in", "flip"}
+_CANDIDATE_SUPPLY_EVENT_LIMIT = 100
 
 
 def build_opportunity_flow_ledger(
@@ -293,10 +294,14 @@ def _integrated_audits(hours: int) -> dict[str, Any]:
             latest_candidate_supply_snapshot,
         )
 
+        # Read-model purity (test_opportunity_flow_read_model_*): analytics/ must
+        # NOT import aletheia.agent_shell (list_events lives there). Query the
+        # events table directly. Uses master's _CANDIDATE_SUPPLY_EVENT_LIMIT.
         db = get_db()
         rows = db.execute(
             "SELECT * FROM agent_shell_events "
-            "ORDER BY created_at DESC, rowid DESC LIMIT 20",
+            "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (_CANDIDATE_SUPPLY_EVENT_LIMIT,),
         ).fetchall()
         events = [
             {**dict(r), "payload": json.loads(r["payload"]) if r["payload"] else {}}

@@ -1,5 +1,20 @@
 # Development Log
 
+## 2026-07-09 — 市场类型数据模型子批 B12 + 合并 master（4 findings / 6 commits）
+
+- **同名币现货/合约混淆一组问题**（bug 审查台账 #9/#13/#14/#102）：`market_snapshots` 本来就有 `market_type` 列（推迟理由过时，无需迁移）。`list_market_snapshots` 加可选 `market_type` 过滤；`latest_snapshot(symbol, market_type)` 优先按类型精确匹配、无则退回按符号（#13，触风控信任边界，配 PL-MD-06/07）；`_build_dynamic_instruments` 按标的/持仓自身 market_type 采集（#14）；`_make_candidate` 带上 market_type（#9）；Serenity 待决信号从源机会补回 market_type（#102，不用给 pi_decisions 加列）。
+- **#10 判为不修**：spec OD-S01（提交 `db3c3f8`）明确方向分析与合约/现货无关、每个符号只出一个标的，按符号去重符合设计；#11/#68/#106 确认 `034d4c8` 已修。
+- **顺带修一个预存的假绿测试**：`test_broker_averaging_and_trail_fixes.py` 的 order-dependent flake（凭证桩打错命名空间 + okx demo-symbol 缓存未重置），在合并前的 `1f9ec16d` 上也复现，确认非本批引入。
+- **合并 master**：本分支落后 master 26 提交，merge 解决 4 冲突（1 代码 opportunity_flow.py 按读模型纯度保留直查 DB + 采用 master 常量；3 文档取并集）。
+
+### 验证
+- 全量 `tests/` → 2477 passed / 0 failed / 10 skipped / 6 xfailed。
+
+### 边界
+只碰风控数据新鲜度辅助函数一处信任边界（配回归）；无 schema/迁移；不改 live/凭证/下单路径；不重启 gateway。
+
+---
+
 ## 2026-07-08 — 尾扫延续：prune_system_actions 审计豁免 + gateway API 错误脱敏（2 findings / 2 commits）
 
 - **#44 prune_system_actions 硬删破 no-hard-delete 规则**：知识条目按规矩不 hard-delete，但 `system_action` 是 ~1200 rows/day 的纯 telemetry 噪声，保留反而淹没审计路径。保持 hard delete，但 docstring 显式声明这是 knowledge_items 里**唯一记录的例外**，并在实际删除时 emit `knowledge_items_pruned` audit event 记 deleted_count + cutoff_days —— 保住问责链条不至于失踪。→ `6b9cc40`
@@ -846,6 +861,55 @@ Owner 要求从 SDD 文档和 `discussion.md` 出发做完整代码域 bug 审�
 
 ---
 
+## 2026-07-07 — Vergex 永续结构信号 observation-only 最小接入
+
+### 触发
+当前分支要把 Vergex 报告里可合作的“永续持仓成本结构 / 清算燃料 / 集中度”转成
+Aletheia 可消费证据，但不能导入敏感明细，也不能影响 live/risk/execution。
+
+### 交付
+- 新增 `perp_structure_snapshots` 表和 `PerpStructureSnapshot` 模型。
+- 新增 `insert_perp_structure_snapshot`、`latest_perp_structure`、`prune_perp_structure_snapshots`。
+- 新增 `VergexStructureCollector` fixture 入口，白名单接受聚合字段，丢弃地址、prompt、账户、credential 形态字段。
+- `render_enriched_context_md(perp_structure=...)` 渲染 POC、Value Area、清算燃料、集中度、data_quality、as_of_time。
+- `market_observer` 只消费 60 分钟内的新鲜结构快照，作为 prompt 证据，不改变交易行为。
+- `doctor` 增加 `data.perp_structure` 新鲜度探针。
+- 数据利用和数据模型文档登记该 observation-only 数据域。
+
+### 验证
+- `uv run pytest tests/test_data_collectors.py tests/test_doctor.py tests/test_market_context.py tests/specs/spec_data_utilization.py tests/specs/spec_data_model.py -q`
+- `git diff --check`
+- `uv run aletheia doctor`（只读诊断）
+
+### 边界
+不接真实 Vergex API、不新增交易所、不导入地址库/账户/prompt/credential、不改 risk/execution/live、
+不让该信号单独触发开仓或提高杠杆。
+
+---
+
+## 2026-07-05 — Opportunity CLI consolidation
+
+### 触发
+`inspect`、`flow`、`alpha`、`funnel`、`sizing`、`thesis` 在机会排查上职责重叠，owner 日常
+不知道应该先敲哪个命令。
+
+### 交付
+- 新增主入口 `uv run aletheia opportunity audit`，用于分析机会从生成到放弃或执行的完整生命周期。
+- 新增 `uv run aletheia opportunity trace --id <opportunity_id>`，用于追踪单个机会。
+- `opportunity audit --view funnel|sizing|alpha|thesis` 统一承接四个细分视角。
+- `flow` 保留为隐藏兼容别名，执行时提示改用 `opportunity`。
+- `alpha`、`funnel`、`sizing` 顶层命令从根帮助菜单隐藏；人类输出提示改用 `opportunity --view ...`。
+- `thesis audit` 隐藏为兼容命令；`thesis snapshot/snapshots/records` 保留，用于观察留档和明细导出。
+
+### 验证
+- `uv run pytest tests/test_cli.py::test_help -q`
+- `uv run pytest tests/test_opportunity_flow_ledger.py::test_opportunity_cli_outputs_audit_and_trace tests/test_opportunity_flow_ledger.py::test_legacy_flow_cli_remains_hidden_compatibility_alias tests/test_opportunity_flow_ledger.py::test_opportunity_cli_outputs_specialized_views -q`
+
+### 边界
+只改 CLI 入口和只读分析路由；不改 risk、execution、scheduler、agent 决策、DB schema、配置或 live 行为。
+
+---
+
 ## 2026-07-04 — Executable Candidate Supply Floor V1
 
 ### 触发
@@ -938,9 +1002,6 @@ System Operator 持续 skip 后，下一步需要判断 active blocking guards �
 ### 边界
 只读 DB + guard markdown/frontmatter + existing shadow/forward outcomes；不禁用/修改 guard，
 不改 ranker / System Operator / risk / execution / live，不调用 LLM / HTTP / exchange。
-
----
-
 ## 2026-07-04 — Thesis Lineage 链路完整性修复
 
 ### 触发

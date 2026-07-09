@@ -1,0 +1,812 @@
+direction: down
+
+classes: {
+  source: {
+    style.fill: "#EEF6FF"
+    style.stroke: "#5B8DEF"
+  }
+  collector: {
+    style.fill: "#F8FBFF"
+    style.stroke: "#7A9FD6"
+  }
+  store: {
+    shape: cylinder
+    style.fill: "#F7F7F7"
+    style.stroke: "#555555"
+  }
+  view: {
+    style.fill: "#FFFFFF"
+    style.stroke: "#999999"
+    style.stroke-dash: 4
+  }
+  signal: {
+    style.fill: "#ECFFF1"
+    style.stroke: "#4AA564"
+  }
+  agent: {
+    style.fill: "#F3EFFF"
+    style.stroke: "#8B6FE8"
+  }
+  ranker: {
+    style.fill: "#FFF8E8"
+    style.stroke: "#D6A63A"
+  }
+  decision: {
+    style.fill: "#EEE6FF"
+    style.stroke: "#7D55D9"
+  }
+  risk: {
+    style.fill: "#FFE2E2"
+    style.stroke: "#D33"
+    style.stroke-width: 3
+  }
+  execution: {
+    style.fill: "#FFF0F0"
+    style.stroke: "#D65F5F"
+  }
+  learning: {
+    style.fill: "#EAFFFB"
+    style.stroke: "#4BB5A8"
+  }
+  human: {
+    style.fill: "#FFF2B8"
+    style.stroke: "#C89B00"
+  }
+}
+
+raw: {
+  label: "0. Raw Inputs / 外部信息源"
+  style.fill: "#EEF6FF"
+
+  market_info: {
+    label: "market_info\n- multi TF K-line\n- TA indicators\n- price feed"
+    class: source
+  }
+
+  microstructure: {
+    label: "market_microstructure\n- orderbook\n- funding\n- OI\n- liquidations"
+    class: source
+  }
+
+  news_social: {
+    label: "News / Social / Macro\n- RSS news\n- political / economical\n- trend info"
+    class: source
+  }
+
+  us_indices: {
+    label: "US Stocks / Macro Indices\n- VIX\n- SPY\n- QQQ\n- risk regime"
+    class: source
+  }
+
+  xstocks: {
+    label: "US Stocks / X Stocks\n- yfinance\n- Bitget stock tokens\n- token deviation"
+    class: source
+  }
+
+  prediction_markets: {
+    label: "Prediction Markets\n- active markets\n- probability momentum"
+    class: source
+  }
+
+  serenity_sources: {
+    label: "Serenity Research Sources\n- internet research\n- evidence materials\n- industry-chain info"
+    class: source
+  }
+
+  account_state: {
+    label: "Account / Exchange State\n- balance\n- open positions\n- fills\n- PnL"
+    class: source
+  }
+}
+
+collect: {
+  label: "1. Data Collection / 数据采集层"
+  style.fill: "#F4F8FF"
+
+  market_data_job: {
+    label: "market_data job\nOHLCV / snapshot"
+    class: collector
+  }
+
+  price_feed: {
+    label: "price_feed\ncached latest price"
+    class: collector
+  }
+
+  data_collectors: {
+    label: "data_collectors\n- orderbook\n- funding\n- OI\n- liquidation\n- macro"
+    class: collector
+  }
+
+  news_fetch: {
+    label: "news_fetch\nRSS collector"
+    class: collector
+  }
+
+  news_analyzer: {
+    label: "news_analyzer\n- sentiment\n- symbols\n- relevance\n- impact"
+    class: collector
+  }
+
+  equity_observer: {
+    label: "equity_observer\n- yfinance daily bars\n- xStock live price\n- deviation check"
+    class: collector
+  }
+
+  prediction_observer: {
+    label: "prediction_observer\nprediction claims"
+    class: collector
+  }
+
+  research_load_context: {
+    label: "research_worker.load_context"
+    class: collector
+  }
+
+  research_collect_evidence: {
+    label: "collect_evidence"
+    class: collector
+  }
+
+  research_extract_claims: {
+    label: "extract_claims"
+    class: collector
+  }
+
+  research_cluster_themes: {
+    label: "cluster_themes"
+    class: collector
+  }
+
+  research_generate_opps: {
+    label: "generate_opportunities"
+    class: collector
+  }
+
+  exchange_sync: {
+    label: "exchange_sync"
+    class: collector
+  }
+
+  reconciliation: {
+    label: "reconciliation"
+    class: collector
+  }
+}
+
+store: {
+  label: "2. Local Truth Store / 本地真相源"
+  style.fill: "#F7F7F7"
+
+  market_tables: {
+    label: "market tables\n- market_ohlcv\n- market_snapshots\n- price cache"
+    class: store
+  }
+
+  micro_tables: {
+    label: "micro / macro tables\n- orderbook\n- funding_rate\n- open_interest\n- liquidation\n- macro"
+    class: store
+  }
+
+  info_tables: {
+    label: "info tables\n- news_items\n- prediction_markets"
+    class: store
+  }
+
+  equity_records: {
+    label: "equity / xStock records\n- equity opportunities\n- token metadata"
+    class: store
+  }
+
+  serenity_tables: {
+    label: "serenity_* tables\n- runs\n- evidence\n- claims\n- themes\n- opportunities"
+    class: store
+  }
+
+  opportunities: {
+    label: "opportunities\n- symbol\n- market\n- direction_bias\n- confidence\n- scanner_family"
+    class: store
+  }
+
+  pi_decisions: {
+    label: "pi_decisions\n- signal_pending\n- trade / skip / watch"
+    class: store
+  }
+
+  execution_tables: {
+    label: "execution tables\n- proposals\n- risk_decisions\n- orders\n- fills\n- positions"
+    class: store
+  }
+
+  learning_store: {
+    label: "learning / knowledge\n- trade_case_study\n- lessons\n- memo\n- guards\n- factor feedback"
+    class: store
+  }
+
+  market_view: {
+    label: "market read view"
+    class: view
+  }
+
+  info_view: {
+    label: "info read view"
+    class: view
+  }
+
+  serenity_view: {
+    label: "serenity read view"
+    class: view
+  }
+
+  opp_view: {
+    label: "open opportunity view"
+    class: view
+  }
+
+  pending_view: {
+    label: "pending signal view"
+    class: view
+  }
+
+  exec_view: {
+    label: "portfolio / trade result view"
+    class: view
+  }
+
+  learn_view: {
+    label: "learning context view"
+    class: view
+  }
+}
+
+opportunity_generation: {
+  label: "3. Opportunity Generation / 机会生成层"
+  style.fill: "#EFFAF3"
+
+  feature_collection: {
+    label: "universe feature collection"
+    class: signal
+  }
+
+  tradability_filter: {
+    label: "tradability filter"
+    class: signal
+  }
+
+  scanner_scoring: {
+    label: "scanner scoring\n- momentum\n- mean_reversion\n- volatility\n- derivatives\n- event\n- short_bias"
+    class: signal
+  }
+
+  family_allocation: {
+    label: "family allocation\n+ total_score"
+    class: signal
+  }
+
+  universe_signal_emitter: {
+    label: "universe_signal_emitter\nLLM-free deterministic opportunity"
+    class: signal
+  }
+
+  market_context_builder: {
+    label: "market_context builder\n- market\n- microstructure\n- news\n- prediction\n- memory"
+    class: agent
+  }
+
+  market_observer: {
+    label: "market_observer\nLLM market read"
+    class: agent
+  }
+
+  market_read_output: {
+    label: "market read output\n- direction_bias\n- confidence\n- key_observations"
+    class: agent
+  }
+
+  equity_read: {
+    label: "equity read\n- daily TA\n- token deviation"
+    class: signal
+  }
+
+  equity_opportunity: {
+    label: "equity opportunity\nobservation / shadow first"
+    class: signal
+  }
+
+  serenity_theme_read: {
+    label: "Serenity theme / opportunity read"
+    class: signal
+  }
+
+  serenity_promote: {
+    label: "Serenity promote\ntheme -> signal_pending"
+    class: signal
+  }
+}
+
+candidate_selection: {
+  label: "4. Candidate Selection / 候选筛选层"
+  style.fill: "#FFF8E8"
+
+  list_open_opps: {
+    label: "list_open_opportunities"
+    class: ranker
+  }
+
+  candidate_gates: {
+    label: "candidate gates\n- asset_class\n- status=open\n- execution_eligible\n- symbol filter\n- direction\n- confidence\n- TTL"
+    class: ranker
+  }
+
+  candidate_enrichment: {
+    label: "candidate enrichment\n- universe_member\n- factor_signal\n- guard_eval\n- lessons / memo\n- regime"
+    class: ranker
+  }
+
+  score_candidates: {
+    label: "trade_score computation"
+    class: ranker
+  }
+
+  ranked_candidates: {
+    label: "ranked candidates"
+    class: ranker
+  }
+
+  shadow_trades: {
+    label: "shadow_trades\ntop-N counterfactuals"
+    class: ranker
+    style.stroke-dash: 5
+  }
+
+  select_topn: {
+    label: "select top candidates\ndedupe symbol / direction"
+    class: ranker
+  }
+
+  write_signal_pending: {
+    label: "write PiDecision\naction=signal_pending"
+    class: ranker
+  }
+}
+
+system_operator: {
+  label: "5. System Operator / AI 决策层"
+  style.fill: "#F3EFFF"
+
+  layer1: {
+    label: "Layer 1\nEnvironment Snapshot\n- positions\n- balance\n- regime\n- features\n- opportunities\n- risk"
+    class: decision
+  }
+
+  layer2: {
+    label: "Layer 2\nShort-term Memory\n- 7d outcomes\n- trade analytics\n- memo\n- ranker candidates\n- pending signals"
+    class: decision
+  }
+
+  layer3: {
+    label: "Layer 3\nLong-term Wisdom\n- trade cases\n- lessons\n- guard candidates\n- Serenity opportunities"
+    class: decision
+  }
+
+  trading_context: {
+    label: "trading_context builder"
+    class: decision
+  }
+
+  read_pending_signal: {
+    label: "read signal_pending"
+    class: decision
+  }
+
+  llm_assessment: {
+    label: "LLM structured assessment\ntrade / skip / watch / scale_in / flip"
+    class: decision
+  }
+
+  bull_bear_debate: {
+    label: "bull / bear debate\nif conviction 40-80"
+    class: decision
+  }
+
+  conviction_sizing: {
+    label: "conviction sizing\nmarket_type / leverage"
+    class: decision
+  }
+
+  trading_decision: {
+    label: "TradingDecision"
+    class: decision
+  }
+}
+
+risk_execution: {
+  label: "6. Risk & Execution / 风控执行层"
+  style.fill: "#FFF0F0"
+
+  proposal_builder: {
+    label: "proposal builder\n- entry\n- stop\n- take profit\n- R:R\n- quantity"
+    class: execution
+  }
+
+  paper_tool: {
+    label: "create_paper_proposal\npaper/demo only"
+    class: execution
+  }
+
+  trade_proposal: {
+    label: "TradeProposal"
+    class: execution
+  }
+
+  execution_gateway: {
+    label: "Execution Gateway\nall orders flow here"
+    class: execution
+  }
+
+  risk_engine: {
+    label: "Risk Engine\n- kill switch\n- daily loss\n- max positions\n- leverage\n- liquidation buffer\n- symbol constraints"
+    class: risk
+  }
+
+  risk_rejected: {
+    label: "risk_decision=rejected"
+    class: risk
+  }
+
+  risk_approved: {
+    label: "risk_decision=approved"
+    class: risk
+  }
+
+  symbol_check: {
+    label: "symbol availability check\nvenue / market_type aware"
+    class: execution
+  }
+
+  paper_broker: {
+    label: "paper_internal broker"
+    class: execution
+  }
+
+  demo_broker: {
+    label: "exchange demo broker\nBitget / OKX / Binance testnet"
+    class: execution
+  }
+
+  live_broker: {
+    label: "live_limited broker\nrequires explicit unlock"
+    class: execution
+  }
+
+  orders: {
+    label: "orders"
+    class: execution
+  }
+
+  fills: {
+    label: "fills"
+    class: execution
+  }
+
+  positions: {
+    label: "positions"
+    class: execution
+  }
+
+  position_manager: {
+    label: "position_manager\n- TP/SL\n- close / reduce\n- reconcile"
+    class: execution
+  }
+}
+
+learning: {
+  label: "7. Feedback & Learning / 反馈学习层"
+  style.fill: "#EEFCFB"
+
+  closed_position_reader: {
+    label: "closed position reader"
+    class: learning
+  }
+
+  trade_attribution: {
+    label: "trade_attribution\n- scanner_family\n- symbol\n- direction\n- exit_reason\n- PnL"
+    class: learning
+  }
+
+  factor_feedback: {
+    label: "factor_feedback\n- preferred\n- blocked_candidate\n- hard_blocked"
+    class: learning
+  }
+
+  outcome_settler: {
+    label: "outcome_settler\nforward outcome"
+    class: learning
+  }
+
+  post_trade_reviewer: {
+    label: "post_trade_reviewer"
+    class: learning
+  }
+
+  risk_critic: {
+    label: "risk_critic"
+    class: learning
+  }
+
+  trade_case_study: {
+    label: "trade_case_study / lesson"
+    class: learning
+  }
+
+  guard_candidate: {
+    label: "guard_candidate"
+    class: learning
+  }
+
+  guard_promotion: {
+    label: "guard_promotion\ncandidate -> active guard"
+    class: learning
+  }
+
+  insight_synthesizer: {
+    label: "insight_synthesizer\ntrading memo"
+    class: learning
+  }
+}
+
+human_control: {
+  label: "8. Human Control / 人类控制面"
+  style.fill: "#FFF9DF"
+
+  dashboard: {
+    label: "Dashboard"
+    class: human
+  }
+
+  inspect: {
+    label: "inspect\n- opportunities\n- proposals\n- positions\n- Serenity"
+    class: human
+  }
+
+  settings: {
+    label: "settings\n- credentials\n- model provider\n- risk config"
+    class: human
+  }
+
+  command_center: {
+    label: "Command Center"
+    class: human
+  }
+
+  live_unlock: {
+    label: "live unlock\nexplicit human action"
+    class: human
+  }
+}
+
+# =========================
+# Raw Inputs -> Collectors
+# =========================
+raw.market_info -> collect.market_data_job: "OHLCV / indicators"
+raw.market_info -> collect.price_feed: "latest price"
+
+raw.microstructure -> collect.data_collectors: "orderbook / funding / OI / liquidation"
+raw.news_social -> collect.news_fetch: "RSS / headlines"
+raw.us_indices -> collect.data_collectors: "macro / risk context"
+raw.xstocks -> collect.equity_observer: "equity + token prices"
+raw.prediction_markets -> collect.prediction_observer: "prediction market data"
+raw.serenity_sources -> collect.research_load_context: "research context"
+raw.account_state -> collect.exchange_sync: "exchange/account state"
+
+# =========================
+# Collector Internal Flow
+# =========================
+collect.news_fetch -> collect.news_analyzer: "new news_items"
+collect.research_load_context -> collect.research_collect_evidence
+collect.research_collect_evidence -> collect.research_extract_claims
+collect.research_extract_claims -> collect.research_cluster_themes
+collect.research_cluster_themes -> collect.research_generate_opps
+collect.exchange_sync -> collect.reconciliation: "exchange state -> local sync"
+
+# =========================
+# Collectors -> Store
+# =========================
+collect.market_data_job -> store.market_tables: "OHLCV / snapshots"
+collect.price_feed -> store.market_tables: "cached prices"
+collect.data_collectors -> store.micro_tables: "micro / macro rows"
+collect.news_analyzer -> store.info_tables: "analyzed news_items"
+collect.prediction_observer -> store.info_tables: "prediction rows"
+collect.equity_observer -> store.equity_records: "equity read + token deviation"
+collect.equity_observer -> store.opportunities: "equity opportunities"
+collect.research_generate_opps -> store.serenity_tables: "serenity artifacts"
+collect.research_generate_opps -> store.learning_store: "research evidence / claims"
+collect.reconciliation -> store.execution_tables: "orders / fills / positions"
+
+# =========================
+# Store Read Views
+# =========================
+store.market_tables -> store.market_view
+store.micro_tables -> store.market_view
+store.info_tables -> store.info_view
+store.equity_records -> store.equity_records
+store.serenity_tables -> store.serenity_view
+store.opportunities -> store.opp_view
+store.pi_decisions -> store.pending_view
+store.execution_tables -> store.exec_view
+store.learning_store -> store.learn_view
+
+# =========================
+# Store -> Opportunity Generation
+# =========================
+store.market_view -> opportunity_generation.feature_collection: "features"
+store.market_view -> opportunity_generation.market_context_builder: "market context"
+store.market_view -> opportunity_generation.equity_read: "price/TA context"
+store.info_view -> opportunity_generation.market_context_builder: "news / prediction context"
+store.learn_view -> opportunity_generation.market_context_builder: "memory / lessons"
+store.equity_records -> opportunity_generation.equity_read: "equity state"
+store.serenity_view -> opportunity_generation.serenity_theme_read: "themes / opps"
+
+# =========================
+# Opportunity Generation Internal Flow
+# =========================
+opportunity_generation.feature_collection -> opportunity_generation.tradability_filter
+opportunity_generation.tradability_filter -> opportunity_generation.scanner_scoring
+opportunity_generation.scanner_scoring -> opportunity_generation.family_allocation
+opportunity_generation.family_allocation -> opportunity_generation.universe_signal_emitter
+
+opportunity_generation.market_context_builder -> opportunity_generation.market_observer
+opportunity_generation.market_observer -> opportunity_generation.market_read_output
+
+opportunity_generation.equity_read -> opportunity_generation.equity_opportunity
+opportunity_generation.serenity_theme_read -> opportunity_generation.serenity_promote
+
+# =========================
+# Opportunity Generation -> Store
+# =========================
+opportunity_generation.universe_signal_emitter -> store.opportunities: "deterministic opportunities"
+opportunity_generation.market_read_output -> store.opportunities: "LLM market opportunities"
+opportunity_generation.equity_opportunity -> store.opportunities: "equity opportunity rows"
+opportunity_generation.serenity_promote -> store.pi_decisions: "signal_pending / serenity"
+
+# =========================
+# Store -> Candidate Selection
+# =========================
+store.opp_view -> candidate_selection.list_open_opps: "open opportunities"
+store.learn_view -> candidate_selection.candidate_enrichment: "factor / guard / memo"
+store.market_view -> candidate_selection.candidate_enrichment: "regime / price"
+store.micro_tables -> candidate_selection.candidate_enrichment: "funding / OI / tradability"
+
+# =========================
+# Candidate Selection Internal Flow
+# =========================
+candidate_selection.list_open_opps -> candidate_selection.candidate_gates
+candidate_selection.candidate_gates -> candidate_selection.candidate_enrichment
+candidate_selection.candidate_enrichment -> candidate_selection.score_candidates
+candidate_selection.score_candidates -> candidate_selection.ranked_candidates
+candidate_selection.ranked_candidates -> candidate_selection.shadow_trades: "top-N"
+candidate_selection.ranked_candidates -> candidate_selection.select_topn: "eligible candidates"
+candidate_selection.select_topn -> candidate_selection.write_signal_pending
+
+# =========================
+# Candidate Selection -> Store
+# =========================
+candidate_selection.shadow_trades -> store.learning_store: "counterfactual top-N"
+candidate_selection.write_signal_pending -> store.pi_decisions: "signal_pending"
+
+# =========================
+# Store -> System Operator Context
+# =========================
+store.pending_view -> system_operator.read_pending_signal
+
+store.market_view -> system_operator.layer1: "features / prices"
+store.micro_tables -> system_operator.layer1: "funding / OI / liquidation"
+store.opp_view -> system_operator.layer1: "open opportunities"
+store.exec_view -> system_operator.layer1: "positions / balance / risk"
+
+store.exec_view -> system_operator.layer2: "7d outcomes"
+store.learn_view -> system_operator.layer2: "memo / feedback"
+store.pending_view -> system_operator.layer2: "pending signals"
+
+store.learn_view -> system_operator.layer3: "lessons / guards"
+store.serenity_view -> system_operator.layer3: "Serenity opportunities"
+
+# =========================
+# System Operator Internal Flow
+# =========================
+system_operator.layer1 -> system_operator.trading_context
+system_operator.layer2 -> system_operator.trading_context
+system_operator.layer3 -> system_operator.trading_context
+system_operator.read_pending_signal -> system_operator.llm_assessment
+system_operator.trading_context -> system_operator.llm_assessment
+system_operator.llm_assessment -> system_operator.bull_bear_debate: "if conviction 40-80"
+system_operator.bull_bear_debate -> system_operator.conviction_sizing
+system_operator.llm_assessment -> system_operator.conviction_sizing: "if no debate"
+system_operator.conviction_sizing -> system_operator.trading_decision
+
+# =========================
+# System Operator -> Risk & Execution
+# =========================
+system_operator.trading_decision -> risk_execution.proposal_builder: "trade / scale_in / flip"
+risk_execution.proposal_builder -> risk_execution.paper_tool: "paper/demo proposal"
+risk_execution.paper_tool -> risk_execution.trade_proposal
+
+# =========================
+# Risk & Execution Internal Flow
+# =========================
+risk_execution.trade_proposal -> risk_execution.execution_gateway
+risk_execution.execution_gateway -> risk_execution.risk_engine
+risk_execution.risk_engine -> risk_execution.risk_rejected: "not approved"
+risk_execution.risk_engine -> risk_execution.risk_approved: "approved"
+risk_execution.risk_approved -> risk_execution.symbol_check
+risk_execution.symbol_check -> risk_execution.paper_broker: "paper_internal"
+risk_execution.symbol_check -> risk_execution.demo_broker: "demo/testnet"
+risk_execution.symbol_check -> risk_execution.live_broker: "live_limited"
+risk_execution.paper_broker -> risk_execution.orders
+risk_execution.demo_broker -> risk_execution.orders
+risk_execution.live_broker -> risk_execution.orders
+risk_execution.orders -> risk_execution.fills
+risk_execution.fills -> risk_execution.positions
+risk_execution.positions -> risk_execution.position_manager
+
+# =========================
+# Risk & Execution -> Store
+# =========================
+risk_execution.trade_proposal -> store.execution_tables: "proposal row"
+risk_execution.risk_rejected -> store.execution_tables: "risk decision / rejected"
+risk_execution.risk_approved -> store.execution_tables: "risk decision / approved"
+risk_execution.orders -> store.execution_tables
+risk_execution.fills -> store.execution_tables
+risk_execution.position_manager -> store.execution_tables: "position updates"
+
+# =========================
+# Store -> Learning
+# =========================
+store.exec_view -> learning.closed_position_reader: "closed positions"
+store.opp_view -> learning.outcome_settler: "forward outcomes"
+store.market_view -> learning.outcome_settler: "future price"
+
+# =========================
+# Learning Internal Flow
+# =========================
+learning.closed_position_reader -> learning.trade_attribution
+learning.trade_attribution -> learning.factor_feedback
+learning.closed_position_reader -> learning.post_trade_reviewer
+learning.post_trade_reviewer -> learning.trade_case_study
+learning.closed_position_reader -> learning.risk_critic
+learning.risk_critic -> learning.guard_candidate
+learning.guard_candidate -> learning.guard_promotion
+learning.outcome_settler -> learning.factor_feedback
+learning.trade_attribution -> learning.insight_synthesizer
+learning.trade_case_study -> learning.insight_synthesizer
+
+# =========================
+# Learning -> Store
+# =========================
+learning.factor_feedback -> store.learning_store
+learning.trade_case_study -> store.learning_store
+learning.guard_promotion -> store.learning_store
+learning.insight_synthesizer -> store.learning_store
+
+# =========================
+# Feedback Back Into Active Path
+# =========================
+store.learn_view -> candidate_selection.candidate_enrichment: "factor / guard / memo feedback"
+store.learn_view -> system_operator.layer2: "trading memo"
+store.learn_view -> system_operator.layer3: "lessons / guards"
+
+# =========================
+# Human Control
+# =========================
+human_control.dashboard -> human_control.inspect
+human_control.dashboard -> human_control.settings
+human_control.dashboard -> human_control.command_center
+human_control.settings -> human_control.live_unlock
+
+human_control.inspect -> store.opportunities: "inspect opportunities"
+human_control.inspect -> store.execution_tables: "inspect proposals / positions"
+human_control.inspect -> store.serenity_tables: "inspect Serenity"
+human_control.settings -> store.learning_store: "config / model / risk setting records"
+human_control.settings -> risk_execution.risk_engine: "risk config"
+human_control.command_center -> system_operator.read_pending_signal: "manual inspection / command"
+human_control.live_unlock -> risk_execution.live_broker: "enable live_limited path"

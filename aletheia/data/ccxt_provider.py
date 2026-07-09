@@ -114,23 +114,16 @@ class CCXTProvider:
         self._sessions: list = []
 
     def _client(self, name: str):
-        import ccxt.async_support as ccxt
-        from aletheia.net import aiohttp_session
+        # Build via the managed factory (aletheia.net.make_ccxt), which injects a
+        # proxy-aware aiohttp session using aiohttp's OS-resolver (getaddrinfo)
+        # instead of the c-ares AsyncResolver that aiohttp auto-selects when aiodns
+        # is installed — on Windows/locked-down hosts c-ares can't read DNS config
+        # and every fetch dies with ClientConnectorDNSError. We own the injected
+        # session (own_session=False) and close it in close().
+        from aletheia.net import make_ccxt
 
-        if not hasattr(ccxt, name):
-            raise ValueError(f"unknown ccxt exchange: {name}")
-        # Force aiohttp's OS-resolver (getaddrinfo) instead of the c-ares
-        # AsyncResolver that aiohttp auto-selects when aiodns is installed. On
-        # Windows/locked-down hosts c-ares can't read DNS config and every fetch
-        # dies with ClientConnectorDNSError ("Could not contact DNS servers"),
-        # even though plain urllib (OS resolver) reaches the same host fine. We
-        # inject our own session so ccxt uses it (own_session=False), which means
-        # WE are responsible for closing it — done in close().
-        # aiohttp_session() also applies proxy from config via apply_proxy_env().
-        from aletheia.net import ccxt_timeout_options
-        session = aiohttp_session()
+        exchange, session = make_ccxt(name)
         self._sessions.append(session)
-        exchange = getattr(ccxt, name)({**ccxt_timeout_options(), "enableRateLimit": True, "session": session})
         return _install_market_id_guard(exchange, name)
 
     def _ensure_primary(self):

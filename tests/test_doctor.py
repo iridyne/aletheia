@@ -98,6 +98,204 @@ def test_report_severity_partitions():
     assert [c.name for c in r.warns] == ["b"]
 
 
+def test_doctor_warns_when_coinalyze_enabled_without_rows(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    report = dx.Report(generated_at="t")
+
+    dx._probe_coinalyze(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.coinalyze"].severity == "warn"
+    assert "enabled but no OI rows" in checks["data.coinalyze"].detail
+    assert checks["data.liquidations"].severity == "warn"
+
+
+def test_doctor_coinalyze_ok_when_oi_rows_are_fresh(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    db.execute(
+        "INSERT INTO open_interest_snapshots "
+        "(id, symbol, exchange, open_interest_usd, observed_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("oi-doctor-1", "BTC/USDT", "coinalyze", 123456.0, now),
+    )
+    db.commit()
+    report = dx.Report(generated_at="t")
+
+    dx._probe_coinalyze(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.coinalyze"].severity == "ok"
+    assert "BTC/USDT" in checks["data.coinalyze"].detail
+    assert checks["data.liquidations"].severity == "info"
+
+
+def test_doctor_warns_when_orderbook_rows_are_missing(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    report = dx.Report(generated_at="t")
+
+    dx._probe_orderbook(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.orderbook"].severity == "warn"
+    assert "no orderbook rows" in checks["data.orderbook"].detail
+
+
+def test_doctor_orderbook_ok_when_rows_are_fresh(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    db.execute(
+        "INSERT INTO orderbook_snapshots "
+        "(id, symbol, exchange, bid_price, ask_price, spread_bps, "
+        "bid_depth_10bps_usd, ask_depth_10bps_usd, total_depth_10bps_usd, "
+        "imbalance_ratio, observed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "ob-doctor-1",
+            "BTC/USDT",
+            "bitget",
+            100.0,
+            100.1,
+            10.0,
+            12000.0,
+            11000.0,
+            23000.0,
+            0.04,
+            now,
+        ),
+    )
+    db.commit()
+    report = dx.Report(generated_at="t")
+
+    dx._probe_orderbook(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.orderbook"].severity == "ok"
+    assert "BTC/USDT" in checks["data.orderbook"].detail
+    assert "depth10=$23,000" in checks["data.orderbook"].detail
+
+
+def test_doctor_prediction_markets_disabled_is_informational(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    report = dx.Report(generated_at="t")
+
+    dx._probe_prediction_markets(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.prediction_markets"].severity == "info"
+    assert "disabled" in checks["data.prediction_markets"].detail
+
+
+def test_doctor_prediction_markets_warns_when_enabled_data_is_stale(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.market_data.prediction_enabled = True
+    save_config(cfg)
+
+    stale = _iso_ago(120)
+    db = get_db()
+    db.execute(
+        "INSERT INTO prediction_markets "
+        "(id, source, external_market_id, question, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("pm-doctor-1", "polymarket", "ext-1", "Will BTC close higher this week?", stale),
+    )
+    db.execute(
+        "INSERT INTO prediction_market_claims "
+        "(id, market_id, claim_text, created_at) VALUES (?, ?, ?, ?)",
+        ("pc-doctor-1", "pm-doctor-1", "Stale probability momentum", stale),
+    )
+    db.commit()
+    report = dx.Report(generated_at="t")
+
+    dx._probe_prediction_markets(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.prediction_markets"].severity == "warn"
+    assert "newest stored signal" in checks["data.prediction_markets"].detail
+    assert "stale data is ignored" in checks["data.prediction_markets"].fix_hint
+
+
+def test_doctor_perp_structure_ok_when_rows_are_fresh(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+
+    now = datetime.now(timezone.utc).isoformat()
+    repo.insert_perp_structure_snapshot({
+        "id": "perp-struct-doctor-1",
+        "symbol": "BTC/USDT",
+        "venue": "hyperliquid",
+        "source": "vergex",
+        "as_of_time": now,
+        "observed_at": now,
+        "data_quality": "complete",
+        "poc": 62267.64,
+        "short_liq_above_usd": 335_141_283.44,
+        "long_liq_below_usd": 220_161_274.01,
+    })
+    report = dx.Report(generated_at="t")
+
+    dx._probe_perp_structure(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.perp_structure"].severity == "ok"
+    assert "BTC/USDT" in checks["data.perp_structure"].detail
+    assert "complete" in checks["data.perp_structure"].detail
+
+
+def test_doctor_perp_structure_warns_when_rows_are_stale(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=90)).isoformat()
+    repo.insert_perp_structure_snapshot({
+        "id": "perp-struct-doctor-stale",
+        "symbol": "ETH/USDT",
+        "venue": "hyperliquid",
+        "source": "vergex",
+        "as_of_time": stale,
+        "observed_at": stale,
+        "data_quality": "partial",
+        "poc": 2000.0,
+    })
+    report = dx.Report(generated_at="t")
+
+    dx._probe_perp_structure(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.perp_structure"].severity == "warn"
+    assert "stale" in checks["data.perp_structure"].fix_hint
+
+
+def test_doctor_perp_structure_missing_table_reports_no_rows(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    sq.reset_db()
+    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    sq._db_conn = conn
+    report = dx.Report(generated_at="t")
+
+    dx._probe_perp_structure(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.perp_structure"].severity == "info"
+    assert checks["data.perp_structure"].detail == "no perp structure rows yet"
+    assert "no such table" not in checks["data.perp_structure"].detail
+
+
 def test_deep_diagnostics_includes_log_policy_redacted_tails_and_attention(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     (tmp_path / "logs" / "errors.log").write_text(

@@ -6,6 +6,7 @@ from aletheia.knowledge.guards import (
     GuardAppliesTo,
     GuardEvaluation,
     evaluate_guards,
+    _applies_to_from_meta,
     _predicates_match,
     _eval_predicate,
     ALLOWED_GUARD_FIELDS,
@@ -89,6 +90,19 @@ class TestPredicatesMatch:
 
 
 class TestEvaluateGuards:
+    def test_flat_auto_guard_metadata_scopes_to_symbol(self):
+        applies_to = _applies_to_from_meta({
+            "symbol": "SOL/USDT",
+            "scanner_family": "momentum",
+            "direction": "long",
+        })
+
+        assert applies_to == {
+            "symbol": ["SOL/USDT"],
+            "scanner_family": ["momentum"],
+            "direction": ["long"],
+        }
+
     def test_scoring_guard_produces_penalty(self):
         guard = _make_guard(
             predicates=[GuardPredicate(field="late_entry_penalty", op="gte", value=20)],

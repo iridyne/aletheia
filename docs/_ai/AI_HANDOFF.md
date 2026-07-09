@@ -7,7 +7,7 @@
 
 ## Last Updated
 
-2026-07-09 (Full bug review — fix phase: market-type sub-batch B12 done)
+2026-07-09 (Full bug review — fix phase: market-type sub-batch B12 done; merged master)
 
 ---
 
@@ -50,6 +50,69 @@ Full-project bug/SDD review is **complete** (`#1`–`#180`, coverage marked "ful
 Owner preference for future records: use short, structured Markdown rather than long prose. Suggested fields: domain, impact, document expectation, code evidence, reproduction/verification, expected fix direction.
 
 Next AI should read the ledger's Fix Progress table first, then continue the next batch instead of re-checking already-fixed or already-recorded findings.
+
+---
+
+## Recent Change (Vergex 永续结构信号 observation-only 最小接入 — 2026-07-07)
+
+完成 Vergex/Hyperliquid 永续持仓结构信号的最小安全接入。目标是让系统能消费聚合后的
+结构证据，不导入地址明细、他人 prompt、账户/资产/credential，也不让该信号直接影响下单。
+
+- 新增 `perp_structure_snapshots` 表，存 POC、Value Area、上下方清算燃料、集中度、
+  data_quality、as_of_time 等聚合字段。
+- 新增 `PerpStructureSnapshot` 模型、repository 写入/最新读取/30 天清理函数。
+- 新增 `VergexStructureCollector` fixture 写入入口：只接受白名单聚合字段；拒收/丢弃
+  钱包地址、prompt、账户、credential 形态字段；当前不调用真实 Vergex API。
+- `market_observer` 只读取 60 分钟内的新鲜结构快照，拼进 `Perp structure` 证据块；
+  该块只进 prompt，不改 proposal 阈值、不改排序、不碰风控/执行。
+- `doctor` 新增 `data.perp_structure` 新鲜度探针；无数据/旧数据只做可观测提示。
+- `docs/design/data_utilization.md` 和 `docs/design/data_model.md` 已登记该 observation-only 数据域。
+
+边界：不改 live/risk/execution/credentials，不接真实 Vergex endpoint，不建地址库，不接 marketplace
+prompt，不复刻 Vergex composite score，不让结构信号单独触发开仓。
+
+验证：
+- `uv run pytest tests/test_data_collectors.py tests/test_doctor.py tests/test_market_context.py tests/specs/spec_data_utilization.py tests/specs/spec_data_model.py -q`
+- `git diff --check`
+- `uv run aletheia doctor`（只读诊断；运行态结果以执行机器为准，本文不记录为共享事实）
+
+后续如果要从 fixture 进入真实 partner feed，先补配置 + Settings 控件 + collector fixture 测试，
+继续保持默认关闭和 observation-only。
+
+---
+
+## Recent Change (Opportunity CLI consolidation — 2026-07-05)
+
+机会/假说排查入口已收口到 `opportunity`，避免 `flow`、`alpha`、`funnel`、`sizing`、
+`thesis audit` 平级抢入口。
+
+新的 owner 日常入口：
+
+```powershell
+uv run aletheia opportunity audit --hours 24
+uv run aletheia opportunity trace --id <opportunity_id>
+uv run aletheia opportunity audit --view funnel
+uv run aletheia opportunity audit --view sizing
+uv run aletheia opportunity audit --view alpha
+uv run aletheia opportunity audit --view thesis
+```
+
+语义边界：
+- `inspect opportunities`：只列出机会原始记录。
+- `opportunity audit`：分析机会整体生命周期。
+- `opportunity trace`：追踪单个机会的一生。
+
+兼容策略：
+- `flow` 是隐藏兼容别名，继续可执行但提示改用 `opportunity`。
+- `alpha`、`funnel`、`sizing` 顶层命令从根帮助菜单隐藏，human 输出提示改用 `opportunity --view ...`。
+- `thesis audit` 隐藏为兼容入口；`thesis snapshot/snapshots/records` 保留用于观察留档和明细导出。
+
+边界：只改 CLI 入口和只读分析路由；不改 risk、execution、scheduler、agent 决策、DB schema、
+配置或 live 行为。
+
+验证：
+- `uv run pytest tests/test_cli.py::test_help -q`
+- `uv run pytest tests/test_opportunity_flow_ledger.py::test_opportunity_cli_outputs_audit_and_trace tests/test_opportunity_flow_ledger.py::test_legacy_flow_cli_remains_hidden_compatibility_alias tests/test_opportunity_flow_ledger.py::test_opportunity_cli_outputs_specialized_views -q`
 
 ---
 
@@ -158,9 +221,6 @@ uv run aletheia inspect guard-impact --hours 24 --json
 - `uv run pytest tests/test_guard_impact_audit.py tests/test_paper_trader_guards.py tests/test_paper_trader_ranker.py tests/test_trade_funnel_audit.py -q`
 - `uv run aletheia inspect guard-impact --hours 24`
 - `uv run aletheia inspect guard-impact --hours 24 --json`
-
----
-
 ## Recent Change (Thesis Lineage 链路完整性修复 — 2026-07-04)
 
 完成一轮 Thesis Lineage V1.1 数据链路完整性修复（commit `7df8889f`）。

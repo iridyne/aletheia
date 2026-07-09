@@ -825,8 +825,8 @@ export const api = {
   }>) => post<any>('/settings/event_triggers', body),
 
   // Network / proxy config
-  updateNetworkConfig: (body: Partial<{ proxy_url: string; no_proxy: string }>) =>
-    post<{ updated: Record<string, any>; network: { proxy_url: string; no_proxy: string } }>('/settings/network', body),
+  updateNetworkConfig: (body: Partial<{ proxy_protocol: string; proxy_host: string; proxy_port: number; enforce: boolean; no_proxy: string; proxy_url: string }>) =>
+    post<{ updated: Record<string, any>; network: Record<string, any> }>('/settings/network', body),
   testNetworkProxy: () =>
     post<{ reachable: boolean; latency_ms: number; error: string | null }>('/settings/network/test'),
 

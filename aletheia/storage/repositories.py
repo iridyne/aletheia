@@ -323,7 +323,12 @@ def insert_prediction_claim(data: dict) -> None:
     _insert("prediction_market_claims", data)
 
 
-def list_prediction_claims(market_id: str | None = None, claim_type: str | None = None, limit: int = 100) -> list[dict]:
+def list_prediction_claims(
+    market_id: str | None = None,
+    claim_type: str | None = None,
+    since: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
     parts = []
     params: list = []
     if market_id:
@@ -332,6 +337,9 @@ def list_prediction_claims(market_id: str | None = None, claim_type: str | None 
     if claim_type:
         parts.append("claim_type = ?")
         params.append(claim_type)
+    if since:
+        parts.append("datetime(created_at) >= datetime(?)")
+        params.append(since)
     where = " AND ".join(parts) if parts else None
     return _select_all("prediction_market_claims", where=where, params=tuple(params), order="created_at DESC", limit=limit)
 
@@ -1720,7 +1728,7 @@ def guard_candidate_exists_recent(symbol: str, scanner_family: str, within_days:
 
 
 # ---------------------------------------------------------------------------
-# Data Collectors (9-domain market data)
+# Data Collectors (market data)
 # ---------------------------------------------------------------------------
 
 def insert_orderbook_snapshot(data: dict) -> None:
@@ -1820,6 +1828,37 @@ def recent_liquidations(symbol: str, hours: int = 1) -> list[dict]:
     )
 
 
+def insert_perp_structure_snapshot(data: dict) -> None:
+    """Persist one observation-only perp structure snapshot."""
+    from aletheia.storage.models import new_id
+    if "id" not in data:
+        data["id"] = new_id()
+    if "raw_json" not in data:
+        data["raw_json"] = "{}"
+    _insert("perp_structure_snapshots", data)
+
+
+def latest_perp_structure(symbol: str, source: str | None = None) -> dict | None:
+    """Return the newest perp structure row for a symbol."""
+    if source is not None:
+        rows = _select_all(
+            "perp_structure_snapshots",
+            where="symbol = ? AND source = ?",
+            params=(symbol, source),
+            order="as_of_time DESC, observed_at DESC",
+            limit=1,
+        )
+    else:
+        rows = _select_all(
+            "perp_structure_snapshots",
+            where="symbol = ?",
+            params=(symbol,),
+            order="as_of_time DESC, observed_at DESC",
+            limit=1,
+        )
+    return rows[0] if rows else None
+
+
 def insert_macro_snapshot(data: dict) -> None:
     from aletheia.storage.models import new_id
     if "id" not in data:
@@ -1906,6 +1945,16 @@ def prune_orderbook_snapshots(days: int = 7) -> int:
     db = get_db()
     was_in_tx = db.in_transaction
     cur = db.execute("DELETE FROM orderbook_snapshots WHERE observed_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_perp_structure_snapshots(days: int = 30) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM perp_structure_snapshots WHERE observed_at < ?", (cutoff,))
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0

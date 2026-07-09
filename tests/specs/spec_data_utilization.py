@@ -27,6 +27,8 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 _ROOT = Path(__file__).parent.parent.parent
 _MARKET_OBS = _ROOT / "aletheia" / "agents" / "market_observer.py"
 _CONTEXT_BUILDER = _ROOT / "aletheia" / "data" / "context_builder.py"
+_DOCTOR = _ROOT / "aletheia" / "diagnostics" / "doctor.py"
+_VERGEX_STRUCTURE = _ROOT / "aletheia" / "data" / "collectors" / "vergex_structure.py"
 
 _CONTRACT = "data_utilization_contract"
 
@@ -90,6 +92,42 @@ def test_onchain_routed_to_decision_context():
     src = _MARKET_OBS.read_text(encoding="utf-8")
     assert "latest_onchain_snapshots" in src, "market_observer must read onchain snapshots"
     assert "onchain=" in src, "market_observer must pass onchain= into render"
+
+
+# ---------------------------------------------------------------------------
+# DU-S13 — perp structure rows are registered and consumed as observation data
+# ---------------------------------------------------------------------------
+
+@spec_claim(
+    SpecClaim(
+        "DU-S13", _CONTRACT, "§perp structure observation path", "L2a",
+        "perp_structure_snapshots is registered in data_utilization.md, has a "
+        "whitelisted fixture collector, and reaches market_observer via "
+        "render_enriched_context_md(perp_structure=...), while doctor exposes "
+        "freshness. It stays observation-only until a real feed is added.",
+    ),
+)
+def test_perp_structure_registered_and_consumed():
+    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(encoding="utf-8")
+    assert "perp_structure_snapshots" in doc, (
+        "data_utilization.md §3 must register the perp structure observation path"
+    )
+    assert "market_observer" in doc and "doctor" in doc, (
+        "perp structure registration must declare the prompt consumer and freshness check"
+    )
+
+    collector = _VERGEX_STRUCTURE.read_text(encoding="utf-8")
+    ctx = _CONTEXT_BUILDER.read_text(encoding="utf-8")
+    obs = _MARKET_OBS.read_text(encoding="utf-8")
+    doctor = _DOCTOR.read_text(encoding="utf-8")
+    assert "VergexStructureCollector" in collector and "_ALLOWED_FIELDS" in collector, (
+        "perp structure must have a whitelisted fixture collector"
+    )
+    assert "perp_structure" in ctx, "context_builder must render perp structure"
+    assert "latest_perp_structure" in obs and "perp_structure=" in obs, (
+        "market_observer must read and pass perp structure into render"
+    )
+    assert "data.perp_structure" in doctor, "doctor must expose perp structure freshness"
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +357,40 @@ def test_market_context_timeframes_cover_all_three_periods():
     )
     assert "'1d'" in src or '"1d"' in src, (
         "_TIMEFRAMES must include '1d' (DU-S07)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# DU-S12 — official RSS news feeds are registered and consumed
+# ---------------------------------------------------------------------------
+
+@spec_claim(
+    SpecClaim(
+        "DU-S12", _CONTRACT, "§official RSS feeds", "L2a",
+        "Default news feeds include SEC/CFTC/Ethereum Foundation official RSS "
+        "sources, and data_utilization.md §3 registers them as NewsCollector -> "
+        "news_items -> market_observer/research_worker consumers.",
+    ),
+)
+def test_official_news_feeds_registered_and_consumed():
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    feed_sources = {feed.source for feed in cfg.news.feeds}
+    for source in ("sec-press", "cftc-press", "ethereum-foundation"):
+        assert source in feed_sources, (
+            f"default news feeds must include official source {source!r} (DU-S12)"
+        )
+
+    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(encoding="utf-8")
+    assert "官方公告/监管 RSS" in doc, (
+        "data_utilization.md §3 must register official RSS feeds (DU-S12)"
+    )
+    assert "NewsCollector" in doc and "news_items" in doc, (
+        "official RSS registration must declare collector and storage (DU-S12)"
+    )
+    assert "market_observer" in doc and "research_worker" in doc, (
+        "official RSS registration must declare consumers (DU-S12)"
     )
 
 

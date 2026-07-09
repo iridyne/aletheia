@@ -11,6 +11,11 @@ def test_help():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "Aletheia Trading OS" in result.output
+    assert "opportunity" in result.output
+    assert "flow" not in result.output
+    assert "alpha" not in result.output
+    assert "funnel" not in result.output
+    assert "sizing" not in result.output
 
 
 def test_version():

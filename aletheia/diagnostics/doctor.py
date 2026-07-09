@@ -673,6 +673,92 @@ def _probe_market_data(report: Report) -> None:
         report.add("data.market", "ok", detail)
 
 
+def _probe_orderbook(report: Report) -> None:
+    """Expose whether L2 orderbook snapshots are actually reaching storage."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT symbol, observed_at, spread_bps, total_depth_10bps_usd "
+            "FROM orderbook_snapshots "
+            "ORDER BY observed_at DESC LIMIT 1"
+        ).fetchone()
+    except Exception as e:
+        report.add("data.orderbook", "info", f"could not read orderbook snapshots: {e}")
+        return
+
+    if not row:
+        report.add(
+            "data.orderbook",
+            "warn",
+            "no orderbook rows yet",
+            "check microstructure collector logs and exchange orderbook support",
+        )
+        return
+
+    age = _age_minutes(row["observed_at"])
+    sev = "warn" if age is not None and age > 15 else "ok"
+    spread = row["spread_bps"]
+    depth = row["total_depth_10bps_usd"]
+    detail = (
+        f"newest orderbook {row['symbol']} ({_fmt_age(age)}), "
+        f"spread={spread:.2f}bps, depth10=${depth:,.0f}"
+    )
+    report.add(
+        "data.orderbook",
+        sev,
+        detail,
+        "check data_collectors microstructure job if stale > 15m"
+        if sev == "warn" else None,
+    )
+
+
+def _probe_perp_structure(report: Report) -> None:
+    """Expose whether observation-only perp structure rows are fresh."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT symbol, source, venue, as_of_time, observed_at, data_quality "
+            "FROM perp_structure_snapshots "
+            "ORDER BY as_of_time DESC, observed_at DESC LIMIT 1"
+        ).fetchone()
+    except Exception as e:
+        if "no such table: perp_structure_snapshots" in str(e):
+            report.add(
+                "data.perp_structure",
+                "info",
+                "no perp structure rows yet",
+                "no action unless this observation-only feed is expected to be populated",
+            )
+            return
+        report.add("data.perp_structure", "info", f"could not read perp structure: {e}")
+        return
+
+    if not row:
+        report.add(
+            "data.perp_structure",
+            "info",
+            "no perp structure rows yet",
+            "no action unless this observation-only feed is expected to be populated",
+        )
+        return
+
+    age = _age_minutes(row["as_of_time"] or row["observed_at"])
+    sev = "warn" if age is None or age > 60 else "ok"
+    detail = (
+        f"newest perp structure {row['symbol']} "
+        f"{row['source']}/{row['venue']} quality={row['data_quality']} ({_fmt_age(age)})"
+    )
+    report.add(
+        "data.perp_structure",
+        sev,
+        detail,
+        "perp structure stale > 60m; check the offline importer/feed job"
+        if sev == "warn" else None,
+    )
+
+
 def _probe_macro_signals(report: Report) -> None:
     """Round 2 macro signal freshness probes — LSR / F&G / CoinGecko top.
 
@@ -797,6 +883,126 @@ def _probe_macro_signals(report: Report) -> None:
 
     except Exception as e:
         report.add("data.macro_signals", "info", f"macro signals probe failed: {e}")
+
+
+def _probe_coinalyze(report: Report) -> None:
+    """Expose whether the optional Coinalyze OI/liquidation feed is actually live."""
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        enabled = bool(getattr(cfg.market_data, "enable_coinalyze", False))
+        if not enabled:
+            report.add("data.coinalyze", "info", "Coinalyze disabled in settings")
+            return
+
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        oi_row = db.execute(
+            "SELECT symbol, observed_at FROM open_interest_snapshots "
+            "WHERE exchange = 'coinalyze' "
+            "ORDER BY observed_at DESC LIMIT 1"
+        ).fetchone()
+        liq_row = db.execute(
+            "SELECT symbol, observed_at FROM liquidation_events "
+            "WHERE exchange = 'coinalyze' "
+            "ORDER BY observed_at DESC LIMIT 1"
+        ).fetchone()
+
+        if oi_row:
+            age = _age_minutes(oi_row["observed_at"])
+            sev = "warn" if age is not None and age > 60 else "ok"
+            report.add(
+                "data.coinalyze",
+                sev,
+                f"newest Coinalyze OI {oi_row['symbol']} ({_fmt_age(age)})",
+                "check Coinalyze key/quota or scheduler if stale > 60m"
+                if sev == "warn" else None,
+            )
+        else:
+            report.add(
+                "data.coinalyze",
+                "warn",
+                "Coinalyze enabled but no OI rows yet",
+                "configure coinalyze_api_key or COINALYZE_API_KEY, then wait for the data_collectors tick",
+            )
+
+        if liq_row:
+            age = _age_minutes(liq_row["observed_at"])
+            report.add(
+                "data.liquidations",
+                "info",
+                f"newest Coinalyze liquidation {liq_row['symbol']} ({_fmt_age(age)})",
+            )
+        else:
+            report.add(
+                "data.liquidations",
+                "warn" if not oi_row else "info",
+                "no Coinalyze liquidation rows yet",
+                "same key path as Coinalyze OI; no rows is expected until a real liquidation occurs"
+                if oi_row else "Coinalyze has not produced any OI/liquidation rows yet",
+            )
+    except Exception as e:
+        report.add("data.coinalyze", "info", f"could not read Coinalyze state: {e}")
+
+
+def _probe_prediction_markets(report: Report) -> None:
+    """Expose whether prediction-market data is enabled and fresh enough to use."""
+    try:
+        from aletheia.config.loader import load_config
+        from aletheia.storage.sqlite import get_db
+
+        cfg = load_config()
+        enabled = bool(getattr(cfg.market_data, "prediction_enabled", False))
+        db = get_db()
+        market_row = db.execute(
+            "SELECT question, updated_at FROM prediction_markets "
+            "ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+        claim_row = db.execute(
+            "SELECT claim_text, created_at FROM prediction_market_claims "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+    except Exception as e:
+        report.add("data.prediction_markets", "info", f"could not read prediction market state: {e}")
+        return
+
+    market_age = _age_minutes(market_row["updated_at"]) if market_row else None
+    claim_age = _age_minutes(claim_row["created_at"]) if claim_row else None
+    newest_age = min(age for age in (market_age, claim_age) if age is not None) if (
+        market_age is not None or claim_age is not None
+    ) else None
+    newest_detail = _fmt_age(newest_age)
+
+    if not enabled:
+        report.add(
+            "data.prediction_markets",
+            "info",
+            f"prediction markets disabled in settings; newest stored signal {newest_detail}",
+        )
+        return
+
+    if not market_row and not claim_row:
+        report.add(
+            "data.prediction_markets",
+            "warn",
+            "prediction markets enabled but no rows yet",
+            "wait for prediction_observer or trigger a manual prediction refresh",
+        )
+        return
+
+    sev = "warn" if newest_age is None or newest_age > 90 else "ok"
+    detail = f"prediction markets enabled; newest stored signal {newest_detail}"
+    if market_row:
+        detail += f"; latest market={market_row['question'][:80]}"
+    if claim_row:
+        detail += f"; latest claim={claim_row['claim_text'][:80]}"
+    report.add(
+        "data.prediction_markets",
+        sev,
+        detail,
+        "prediction_observer runs every 30m; stale data is ignored by agent context"
+        if sev == "warn" else None,
+    )
 
 
 def _probe_data_quality(report: Report) -> None:
@@ -1737,34 +1943,81 @@ def _probe_content_proposal_bias(report: Report) -> None:
         report.add("content.proposal_bias", "ok", detail)
 
 
+def _egress_ip(opener) -> str | None:
+    """Best-effort external egress IP via an opener. None on any failure."""
+    import urllib.request  # noqa: F401 — opener carries its own handlers
+
+    try:
+        return opener.open("https://api.ipify.org", timeout=6).read().decode("utf-8").strip()
+    except Exception:
+        return None
+
+
 def _probe_network(report: Report) -> None:
     try:
         from aletheia.config.loader import load_config
-        cfg = load_config()
-        proxy_url = cfg.network.proxy_url
+        net = load_config().network
+        proxy_url = net.proxy_url
+        enforce = bool(getattr(net, "enforce", False))
+        protocol = getattr(net, "proxy_protocol", "http")
     except Exception as e:
         report.add("network.proxy", "info", f"could not read config: {e}")
         return
 
+    mode = "ENFORCE/fail-closed" if enforce else "fail-open"
+
     if not proxy_url:
-        report.add("network.proxy", "ok", "not configured (direct connection)")
+        if enforce:
+            report.add("network.proxy", "warn",
+                       "enforce is ON but no proxy is configured — all outbound traffic is blocked",
+                       "set a proxy host in Settings → Network, or turn enforce off")
+        else:
+            report.add("network.proxy", "ok", "not configured (direct connection)")
         return
 
     import time
     import urllib.request
-    url = "https://api.binance.com/api/v3/ping"
+
+    # SOCKS can't be probed with urllib's ProxyHandler — defer reachability to the
+    # exchange connectivity monitor (which rides the aiohttp_socks path).
+    if str(protocol).startswith("socks"):
+        report.add("network.proxy", "info",
+                   f"{protocol} proxy configured [{mode}] — {proxy_url}; "
+                   "reachability verified by the exchange connectivity monitor")
+        return
+
+    proxy_opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({"https": proxy_url, "http": proxy_url})
+    )
     t0 = time.monotonic()
     try:
-        import os
-        proxies = {"https": proxy_url, "http": proxy_url}
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
-        opener.open(url, timeout=8).read()
+        proxy_opener.open("https://api.binance.com/api/v3/ping", timeout=8).read()
         latency_ms = int((time.monotonic() - t0) * 1000)
-        report.add("network.proxy", "ok", f"proxy configured, reachable ({latency_ms}ms) — {proxy_url}")
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
-        report.add("network.proxy", "warn", f"proxy configured but unreachable ({latency_ms}ms): {e}",
-                   "check proxy is running and proxy_url is correct in Settings → Infrastructure → Network")
+        hint = "check the proxy is running and host/port are correct in Settings → Network"
+        if enforce:
+            hint += "; enforce is ON, so trading auto-pauses until the proxy recovers"
+        report.add("network.proxy", "warn",
+                   f"proxy configured but unreachable [{mode}] ({latency_ms}ms): {type(e).__name__}",
+                   hint)
+        return
+
+    # Leak check: confirm traffic actually egresses via the proxy (exit IP differs
+    # from a direct connection). A match means requests may NOT be routed through
+    # the proxy despite it being reachable.
+    proxy_ip = _egress_ip(proxy_opener)
+    direct_ip = _egress_ip(urllib.request.build_opener(urllib.request.ProxyHandler({})))
+    if proxy_ip and direct_ip and proxy_ip == direct_ip:
+        report.add("network.proxy", "warn",
+                   f"proxy reachable [{mode}] ({latency_ms}ms) but egress IP == direct IP "
+                   f"({proxy_ip}) — traffic may NOT be routed through the proxy",
+                   "verify the proxy forwards to an upstream with a different exit IP")
+        return
+
+    leak_note = f"; egress {proxy_ip} ≠ direct {direct_ip}" if (proxy_ip and direct_ip) else ""
+    report.add("network.proxy", "ok",
+               f"proxy reachable [{mode}] ({latency_ms}ms) — {proxy_url}{leak_note}")
 
 
 def _probe_audit_chain(report: Report) -> None:
@@ -2144,7 +2397,11 @@ def build_report() -> Report:
         _probe_config_consistency,
         _probe_credentials,
         _probe_market_data,
+        _probe_orderbook,
+        _probe_perp_structure,
         _probe_macro_signals,
+        _probe_coinalyze,
+        _probe_prediction_markets,
         _probe_serenity_pipeline,
         _probe_volume_ranking,
         _probe_data_quality,

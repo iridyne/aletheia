@@ -7,7 +7,7 @@ Windows by registering a per-user scheduled task that runs the SAME gated
 `gateway start` a human runs:
 
   - ONLOGON trigger  → starts the gateway when the user logs on (boot autostart).
-  - Repeat every 2m  → because `do_start` is idempotent (no-op when already
+  - Repeat every 1m  → because `do_start` is idempotent (no-op when already
     running), each tick resurrects a dead supervisor. This is the OS-level
     watchdog over the supervisor.
 
@@ -38,7 +38,9 @@ from aletheia.gateway.pidfile import _no_window_kwargs
 TASK_NAME = "Aletheia Trading OS Gateway"
 
 # How often the task re-checks the gateway (and resurrects a dead supervisor).
-WATCHDOG_INTERVAL = "PT30S"
+# Windows Task Scheduler enforces a minimum repetition interval of PT1M;
+# PT30S is rejected with "Interval value out of range" on registration.
+WATCHDOG_INTERVAL = "PT1M"
 
 _XML_NS = "http://schemas.microsoft.com/windows/2004/02/mit/task"
 
@@ -152,7 +154,7 @@ def _build_task_xml() -> str:
         "  <RegistrationInfo>\n"
         f"    <Author>{user}</Author>\n"
         "    <Description>Aletheia Trading OS gateway autostart (on logon) plus a "
-        "30-second watchdog that restarts the supervisor if it dies.</Description>\n"
+        "1-minute watchdog that restarts the supervisor if it dies.</Description>\n"
         "  </RegistrationInfo>\n"
         "  <Triggers>\n"
         "    <LogonTrigger>\n"
@@ -209,9 +211,10 @@ def _not_supported(reason: str = "not_windows") -> dict:
 
 def _classify_stderr(stderr: str) -> str:
     low = (stderr or "").lower()
-    if "access is denied" in low or "denied" in low:
+    if "access is denied" in low or "denied" in low or "拒绝" in stderr:
         return "access_denied"
-    if "cannot find" in low or "does not exist" in low or "no mapping" in low:
+    if ("cannot find" in low or "does not exist" in low or "no mapping" in low
+            or "找不到" in stderr or "不存在" in stderr):
         return "not_found"
     return "schtasks_error"
 

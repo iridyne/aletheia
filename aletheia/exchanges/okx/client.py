@@ -108,17 +108,14 @@ class OKXClient:
         """
         if self._exchange is not None:
             return self._exchange
-        from aletheia.net import aiohttp_session, ccxt_timeout_options
-        self._session = aiohttp_session()
-        self._exchange = ccxt.okx({
-            **ccxt_timeout_options(),
-            "apiKey": self._api_key,
-            "secret": self._api_secret,
-            "password": self._passphrase,
-            "enableRateLimit": True,
-            "options": {"defaultType": "swap"},
-            "session": self._session,
-        })
+        from aletheia.net import make_ccxt
+        self._exchange, self._session = make_ccxt(
+            "okx",
+            apiKey=self._api_key,
+            secret=self._api_secret,
+            password=self._passphrase,
+            options={"defaultType": "swap"},
+        )
         if self._mode == "demo":
             self._exchange.set_sandbox_mode(True)
         return self._exchange
@@ -382,14 +379,8 @@ class OKXClient:
         Keeping the sets separate lets the pre-flight check be market-type-aware:
         a symbol available only as spot (e.g. WLD) must not pass a perp order.
         """
-        from aletheia.net import aiohttp_session, ccxt_timeout_options
-        session = aiohttp_session()
-        exchange = ccxt.okx({
-            **ccxt_timeout_options(),
-            "enableRateLimit": True,
-            "options": {"defaultType": "swap"},
-            "session": session,
-        })
+        from aletheia.net import make_ccxt
+        exchange, session = make_ccxt("okx", options={"defaultType": "swap"})
         exchange.set_sandbox_mode(True)
         try:
             await exchange.load_markets()

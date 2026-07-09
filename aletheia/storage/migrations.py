@@ -1126,7 +1126,7 @@ CREATE TABLE IF NOT EXISTS universe_policies (
 
 _DATA_COLLECTORS_DDL = """
 -- ====================================================================
--- Data Collectors Layer (9-domain market data)
+-- Data Collectors Layer (market data)
 -- ====================================================================
 
 CREATE TABLE IF NOT EXISTS orderbook_snapshots (
@@ -1184,6 +1184,43 @@ CREATE TABLE IF NOT EXISTS liquidation_events (
 );
 CREATE INDEX IF NOT EXISTS idx_liquidation_sym_ts
     ON liquidation_events (symbol, event_time DESC);
+
+CREATE TABLE IF NOT EXISTS perp_structure_snapshots (
+    id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    venue TEXT NOT NULL DEFAULT 'hyperliquid',
+    source TEXT NOT NULL DEFAULT 'vergex',
+    as_of_time TEXT NOT NULL,
+    observed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    data_quality TEXT NOT NULL DEFAULT 'unknown',
+    coverage_note TEXT,
+    poc REAL,
+    value_area_low REAL,
+    value_area_high REAL,
+    support REAL,
+    resistance REAL,
+    magnet REAL,
+    short_liq_above_usd REAL,
+    long_liq_below_usd REAL,
+    long_unrealized_pnl_usd REAL,
+    short_unrealized_pnl_usd REAL,
+    top10_concentration REAL,
+    top50_concentration REAL,
+    holder_count INTEGER,
+    long_holder_count INTEGER,
+    short_holder_count INTEGER,
+    cgo_direction TEXT,
+    vap_direction TEXT,
+    lfa_direction TEXT,
+    cascade_risk REAL,
+    convexity REAL,
+    vendor_bias TEXT,
+    vendor_rank INTEGER,
+    vendor_universe_size INTEGER,
+    raw_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_perp_structure_sym_ts
+    ON perp_structure_snapshots (symbol, as_of_time DESC);
 
 CREATE TABLE IF NOT EXISTS macro_snapshots (
     id TEXT PRIMARY KEY,

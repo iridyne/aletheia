@@ -1,8 +1,6 @@
-"""`aletheia flow` - read-only opportunity lifecycle ledger."""
+"""Deprecated `aletheia flow` compatibility commands."""
 
 from __future__ import annotations
-
-import json
 
 import typer
 
@@ -18,20 +16,18 @@ def audit(
     symbol: str | None = typer.Option(None, "--symbol", help="Only show opportunities for this canonical symbol."),
     json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
 ):
-    """Print the read-only opportunity flow ledger."""
-    from aletheia.analytics.opportunity_flow import build_opportunity_flow_ledger, render_flow_audit
+    """Compatibility alias for `aletheia opportunity audit`."""
+    from aletheia.cli.opportunity import _echo_audit
 
-    report = build_opportunity_flow_ledger(
+    _echo_audit(
         hours=hours,
         limit=limit,
         stage=stage,
         verdict=verdict,
         symbol=symbol,
+        json_output=json_output,
+        deprecated_from="uv run aletheia flow audit",
     )
-    if json_output:
-        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
-        return
-    typer.echo(render_flow_audit(report))
 
 
 @flow_app.command("trace")
@@ -39,11 +35,11 @@ def trace(
     opportunity_id: str = typer.Option(..., "--opportunity-id", help="Opportunity id to trace."),
     json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
 ):
-    """Print one opportunity's reconstructed lifecycle."""
-    from aletheia.analytics.opportunity_flow import render_flow_trace, trace_opportunity_flow
+    """Compatibility alias for `aletheia opportunity trace`."""
+    from aletheia.cli.opportunity import _echo_trace
 
-    record = trace_opportunity_flow(opportunity_id)
-    if json_output:
-        typer.echo(json.dumps(record, ensure_ascii=False, indent=2))
-        return
-    typer.echo(render_flow_trace(record))
+    _echo_trace(
+        opportunity_id=opportunity_id,
+        json_output=json_output,
+        deprecated_from="uv run aletheia flow trace",
+    )

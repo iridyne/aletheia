@@ -70,7 +70,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `news_items` | External news signals | source, headline, sentiment, symbols (JSON) |
 | `market_ohlcv` | Historical candlestick data | symbol, timeframe, open, high, low, close, volume |
 
-### D. Market Data Collection (8 tables)
+### D. Market Data Collection (9 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
@@ -79,6 +79,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `funding_rate_snapshots` | Perpetual funding rates (multi-venue via **exchange** tag) | symbol, exchange, funding_rate, next_funding_time; `exchange="hyperliquid"` / `"hyperliquid_predicted"` are cross-venue feeds **excluded from the primary per-symbol read** (see `latest_funding_rate(exchange=...)`) |
 | `open_interest_snapshots` | Open interest data (multi-venue via **exchange** tag) | symbol, exchange, open_interest, oi_change_pct, **long_short_ratio** (Round 2 Step 1 — Binance globalLongShortAccountRatio); Hyperliquid writes cross-venue OI here, excluded from the primary per-symbol read |
 | `liquidation_events` | Large liquidation events | symbol, side, quantity, price |
+| `perp_structure_snapshots` | Observation-only perp positioning map | symbol, venue, source, as_of_time, data_quality, poc, value_area_low/high, liquidation walls, concentration; consumed by market_observer prompt and doctor freshness only |
 | `macro_snapshots` | Macro economic indicators | indicator, value, source; **fng_value / fng_classification** (Round 2 Step 2 — Alt.me Fear & Greed) + **top_movers_summary** (Round 2 Step 3 — CoinGecko top movers, pre-formatted string folded into LLM macro block) |
 | `coingecko_top_snapshots` (Round 2 Step 3) | Top-N coins by market cap pulled every Phase B tick | coin_id, symbol, price_usd, market_cap_usd, market_cap_rank, volume_24h_usd, price_change_1h_pct, price_change_24h_pct, price_change_7d_pct, observed_at |
 | `onchain_snapshots` (datasrc overhaul) | DefiLlama on-chain regime (zero-key); folded into the LLM macro block | source, metric_type (`stablecoin_mcap` / `chain_tvl` / `dex_volume`), total_usd, change_24h_pct, top_entries (JSON), raw_summary (JSON), observed_at |
@@ -292,7 +293,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | `market_snapshots` | 30d | yes | `repositories.py:1002` |
 | `portfolio_snapshots` | 90d | yes | `repositories.py:1006` |
 | `orderbook_snapshots` / `liquidation_events` | 7d | hardcoded | `repositories.py:1539-1556` |
-| `funding_rate_snapshots` / `open_interest_snapshots` / `universe_feature_snapshots` | 30d | hardcoded | `repositories.py:1559-1585` |
+| `funding_rate_snapshots` / `open_interest_snapshots` / `perp_structure_snapshots` / `universe_feature_snapshots` | 30d | hardcoded | `repositories.py` prune functions |
 | `macro_snapshots` | 90d | hardcoded | `repositories.py:1587` |
 | `coingecko_top_snapshots` (Round 2 Step 3) | 14d | hardcoded | `repositories.py:prune_coingecko_top_snapshots` |
 | `universe_forward_outcomes` | 30d | hardcoded | `repositories.py:prune_universe_forward_outcomes` |

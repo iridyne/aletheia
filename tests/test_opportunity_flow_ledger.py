@@ -146,6 +146,8 @@ def test_opportunity_flow_read_model_has_no_llm_ranker_guard_or_execution_calls(
     }
 
     def forbidden_root(name: str) -> str | None:
+        if name == "aletheia.agent_shell.operator_store":
+            return None
         for root in forbidden_import_roots:
             if name == root or name.startswith(f"{root}."):
                 return root
@@ -176,6 +178,53 @@ def test_opportunity_flow_empty_db_does_not_crash(monkeypatch):
     assert report["summary"]["total_opportunities"] == 0
     assert report["opportunities"] == []
     assert report["read_only"] is True
+
+
+def test_opportunity_flow_candidate_supply_uses_wide_event_window(monkeypatch):
+    # Read-model purity (test_opportunity_flow_read_model_*): opportunity_flow must
+    # NOT import aletheia.agent_shell, so it queries the agent_shell_events table
+    # directly rather than calling operator_store.list_events. This test therefore
+    # seeds the real table and asserts on the audit OUTPUT (same intent as the
+    # master-side version that mocked list_events with limit=100).
+    import aletheia.storage.sqlite as sq
+    import aletheia.analytics.opportunity_flow as flow
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    from aletheia.storage.migrations import run_migrations
+    sq._db_conn = conn
+    run_migrations()
+
+    for eid, created_at, ec, count in [
+        ("supply-1", "2026-07-04T12:01:00+00:00", 2, 5),
+        ("supply-2", "2026-07-04T12:02:00+00:00", 1, 7),
+    ]:
+        conn.execute(
+            "INSERT INTO agent_shell_events (id, event_type, payload, created_at) "
+            "VALUES (?, 'candidate_supply_snapshot', ?, ?)",
+            (
+                eid,
+                json.dumps({
+                    "executable_count": ec,
+                    "main_reason": "ttl_expired",
+                    "excluded_candidates_summary": [{"reason": "ttl_expired", "count": count}],
+                }),
+                created_at,
+            ),
+        )
+    conn.commit()
+
+    monkeypatch.setattr(flow, "build_trade_funnel_audit", lambda **_: {})
+    monkeypatch.setattr(flow, "build_debate_impact_audit", lambda **_: {})
+    monkeypatch.setattr(flow, "build_thesis_lineage_audit", lambda **_: {})
+    monkeypatch.setattr(flow, "compact_thesis_lineage_summary", lambda report: report)
+    monkeypatch.setattr(flow, "build_sizing_trace_audit", lambda **_: {})
+    monkeypatch.setattr(flow, "compact_sizing_trace_summary", lambda report: report)
+
+    audits = flow._integrated_audits(hours=24)
+
+    assert audits["candidate_supply"]["latest_snapshot"]["main_reason"] == "ttl_expired"
+    assert audits["candidate_supply"]["drought"]["main_reason"] == "ttl_expired"
 
 
 def test_opportunity_flow_debate_skip_with_positive_forward_outcome_is_missed_alpha():
@@ -292,7 +341,7 @@ def test_opportunity_flow_success_path_reaches_closed_position():
     assert "position_closed" in stages
 
 
-def test_opportunity_flow_cli_outputs_audit_and_trace():
+def test_opportunity_cli_outputs_audit_and_trace():
     from aletheia.main import app
     from aletheia.storage.sqlite import get_db
 
@@ -304,7 +353,7 @@ def test_opportunity_flow_cli_outputs_audit_and_trace():
     audit = runner.invoke(
         app,
         [
-            "flow",
+            "opportunity",
             "audit",
             "--hours",
             "24",
@@ -318,7 +367,7 @@ def test_opportunity_flow_cli_outputs_audit_and_trace():
             "BTC/USDT",
         ],
     )
-    trace = runner.invoke(app, ["flow", "trace", "--opportunity-id", "opp-flow-1", "--json"])
+    trace = runner.invoke(app, ["opportunity", "trace", "--id", "opp-flow-1", "--json"])
 
     assert audit.exit_code == 0
     assert "Opportunity Flow Ledger" in audit.output
@@ -328,3 +377,45 @@ def test_opportunity_flow_cli_outputs_audit_and_trace():
     payload = json.loads(trace.output)
     assert payload["opportunity_id"] == "opp-flow-1"
     assert payload["final_stage"] == "debate_downgraded"
+
+
+def test_legacy_flow_cli_remains_hidden_compatibility_alias():
+    from aletheia.main import app
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db)
+    _insert_decision(db)
+
+    runner = CliRunner()
+    audit = runner.invoke(app, ["flow", "audit", "--hours", "24", "--limit", "5"])
+    trace = runner.invoke(app, ["flow", "trace", "--opportunity-id", "opp-flow-1", "--json"])
+
+    assert audit.exit_code == 0
+    assert "Deprecated: use `uv run aletheia opportunity audit`" in audit.output
+    assert "Opportunity Flow Ledger" in audit.output
+    assert trace.exit_code == 0
+    payload = json.loads(trace.output)
+    assert payload["opportunity_id"] == "opp-flow-1"
+
+
+def test_opportunity_cli_outputs_specialized_views():
+    from aletheia.main import app
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db)
+    _insert_decision(db)
+
+    runner = CliRunner()
+    expected_titles = {
+        "funnel": "Trade Funnel Audit",
+        "sizing": "Sizing Trace Audit",
+        "alpha": "Alpha Attribution Audit",
+        "thesis": "Thesis Lineage Audit",
+    }
+
+    for view, title in expected_titles.items():
+        result = runner.invoke(app, ["opportunity", "audit", "--view", view, "--hours", "24"])
+        assert result.exit_code == 0
+        assert title in result.output

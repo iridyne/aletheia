@@ -1,7 +1,9 @@
 """Config schema using Pydantic v2 models."""
 
 import logging
-from pydantic import BaseModel, Field, field_validator
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _logger = logging.getLogger("aletheia.config")
 
@@ -738,11 +740,63 @@ class TunnelConfig(BaseModel):
 
 
 class NetworkConfig(BaseModel):
-    # Default to 7890 (Clash/Mihomo common port). Set to "" to disable.
-    # On machines without a proxy the reachability check in net.py falls back to
-    # direct connection automatically — so this default is safe on all machines.
+    # Structured proxy definition (source of truth). ``proxy_url`` below is
+    # recomposed from these three parts by the model validator; every consumer
+    # (aletheia.net) still reads ``proxy_url``. Default 7890 (Clash/Mihomo common
+    # port). Set proxy_host="" to disable (direct). On machines without a proxy the
+    # reachability check in net.py falls back to direct automatically (unless
+    # ``enforce`` is on) — so this default is safe on all machines.
+    proxy_protocol: Literal["http", "https", "socks5"] = "http"
+    proxy_host: str = "127.0.0.1"
+    proxy_port: int = 7890
+    # Composed URL, kept for backward compatibility with existing consumers and
+    # legacy config files. Recomputed from the parts on every load/save.
     proxy_url: str = "http://127.0.0.1:7890"
     no_proxy: str = ""    # comma-separated bypass list, e.g. "127.0.0.1,localhost"
+    # Fail-closed policy. When True, outbound traffic MUST go through the proxy: if
+    # the proxy is unreachable the request fails rather than silently connecting
+    # direct (which would leak the real IP to exchanges / providers). When False,
+    # an unreachable proxy falls back to a direct connection (availability first).
+    # Default False for portability — a fresh install / CI box without a proxy must
+    # not be bricked by a strict default. Enable it in Settings for production.
+    enforce: bool = False
+
+    @model_validator(mode="after")
+    def _sync_proxy_url(self) -> "NetworkConfig":
+        fields_set = self.model_fields_set
+        structured_set = bool(
+            {"proxy_protocol", "proxy_host", "proxy_port"} & fields_set
+        )
+        # Legacy migration: a config predating the structured fields carries only
+        # proxy_url. Parse it back into the parts so the UI reflects reality.
+        if "proxy_url" in fields_set and not structured_set and self.proxy_url:
+            self.parse_proxy_url()
+        # Recompose the canonical URL from the parts (empty host = disabled/direct).
+        self.recompose_proxy_url()
+        return self
+
+    def recompose_proxy_url(self) -> None:
+        """Rebuild proxy_url from protocol/host/port. Empty host = disabled (direct).
+
+        Shared by the model validator and the /settings/network route (setattr does
+        not re-run the validator, so the route calls this explicitly after mutating).
+        """
+        host = (self.proxy_host or "").strip()
+        self.proxy_url = f"{self.proxy_protocol}://{host}:{self.proxy_port}" if host else ""
+
+    def parse_proxy_url(self) -> None:
+        """Decompose an externally-set proxy_url back into protocol/host/port."""
+        from urllib.parse import urlparse
+
+        parsed = urlparse(self.proxy_url)
+        scheme = (parsed.scheme or "http").lower()
+        if scheme in ("socks", "socks5h"):
+            scheme = "socks5"
+        self.proxy_protocol = scheme if scheme in ("http", "https", "socks5") else "http"
+        if parsed.hostname:
+            self.proxy_host = parsed.hostname
+        if parsed.port:
+            self.proxy_port = parsed.port
 
 
 class PiDaemonConfig(BaseModel):
@@ -782,6 +836,9 @@ _DEFAULT_NEWS_FEEDS: list[dict] = [
     {"name": "CoinDesk", "url": "https://www.coindesk.com/arc/outboundfeeds/rss/", "source": "coindesk", "categories": ["crypto"], "enabled": True},
     {"name": "CoinTelegraph", "url": "https://cointelegraph.com/rss", "source": "cointelegraph", "categories": ["crypto"], "enabled": True},
     {"name": "Federal Reserve Press", "url": "https://www.federalreserve.gov/feeds/press_all.xml", "source": "fed", "categories": ["macro"], "enabled": True},
+    {"name": "SEC Press Releases", "url": "https://www.sec.gov/news/pressreleases.rss", "source": "sec-press", "categories": ["regulatory", "official"], "enabled": True},
+    {"name": "CFTC Press Releases", "url": "https://www.cftc.gov/RSS/RSSGP/rssgp.xml", "source": "cftc-press", "categories": ["regulatory", "official"], "enabled": True},
+    {"name": "Ethereum Foundation Blog", "url": "https://blog.ethereum.org/feed.xml", "source": "ethereum-foundation", "categories": ["crypto", "protocol", "official"], "enabled": True},
     {"name": "MarketWatch Top Stories", "url": "http://feeds.marketwatch.com/marketwatch/topstories/", "source": "marketwatch", "categories": ["markets"], "enabled": True},
     {"name": "CNBC Economy", "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258", "source": "cnbc-economy", "categories": ["macro"], "enabled": True},
     {"name": "The Block", "url": "https://www.theblock.co/rss.xml", "source": "theblock", "categories": ["crypto"], "enabled": False},
