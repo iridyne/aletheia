@@ -630,18 +630,27 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 
 ---
 
-### 🟠 [IN PROGRESS] IB-24-07: FTS 知识库索引严重不足（89/5011 = 1.8%）
+### 🟢 [FIXED] IB-24-07: FTS 知识库索引严重不足（89/5011 = 1.8%）
 
 **现象**: doctor 报 `fts.coverage=89/604 (15%)`（实际 DB 查询：89/5011 = 1.8%）。  
-**根因**: 5011 条 knowledge_items 中：
-- 3586 条（71%）`content` 字段为空（file_path 指向的文件不存在或未被回填）
-- 1425 条有 content，但 `reindex` 只索引了 89 条（1336 条有 content 但未被索引的原因待查）
-- `reindex` 日志：`skipped 515 high_confidence items with empty body`
+**根因（已确认）**: `aletheia/knowledge/retrieval.py:32` 中 `_ALLOWED_CONFIDENCE = "high_confidence"`（单字符串）。  
+`reindex_all` 过滤条件 `row.get("confidence") != _ALLOWED_CONFIDENCE` 排除了所有非 `high_confidence` 条目。  
+实际上有 **1,405 条** `medium_confidence / active` 有效 content 被完全跳过：
+- `system_action`: 1,362 条
+- `reasoning_feedback`: 15 条
+- `trading_memo`: 15 条
+- `calibration_report`: 13 条
 
-**影响**: PI Agent knowledge retrieval 几乎失效，experience loop 严重降级，无法检索历史案例。  
-**当前状态**: `uv run aletheia knowledge reindex` 已执行，FTS 仍为 89 条。  
-**待查**: 为何 1425 条有 content 的记录只有 89 条被索引——检查 `reindex` 的筛选条件（status filter? confidence threshold? item_type filter?）  
-**待修**: content 为空的 3586 条是真正丢失（文件删除）还是可以重建？
+同时 `retrieve_lessons` SQL 也用 `AND confidence = ?`（单值查询），即使已索引的 medium 条目也无法被检索。
+
+**影响**: PI Agent knowledge retrieval 几乎失效，experience loop 严重降级，无法检索 95% 的历史案例。  
+**修复**:
+- `aletheia/knowledge/retrieval.py`：`_ALLOWED_CONFIDENCE` 改为 tuple `("high_confidence", "medium_confidence")`；`reindex_all` 过滤改为 `not in`；`retrieve_lessons` SQL 改为 `AND confidence IN (?, ?)`
+- `aletheia/cli/knowledge_cmd.py`：更新 echo/log 提示文字
+- **修复后**: `ato knowledge reindex` 索引 **1,507 条**（原 89 条，提升 16.9 倍）
+- **commit**: `4bc3707` — "fix: FTS reindex includes medium-confidence and all active items (IB-24-07)"
+
+**备注**: 仍有 ~1,030 条 content 为空（文件丢失，非本次引入）属已知限制（IB-24-10 关联）。
 
 ---
 
@@ -714,7 +723,7 @@ advantage = debate.bull_confidence - debate.bear_confidence  # ← BUG
 
 | 优先级 | ID | 问题 | 状态 |
 |--------|----|----|------|
-| P0 | IB-24-07 | FTS 索引 89/5011，1336 条有 content 未被索引，原因待查 | 🔧 agent 分析中 |
+| P0 | IB-24-07 | FTS 索引 89→1507，medium_confidence 过滤 bug 已修复 | ✅ 已修复 `4bc3707` |
 | P0 | IB-24-08 | signal_settlement 12,827 条逾期未结算 | 🔧 agent 诊断中 |
 | P0 | IB-24-09 | volume_scanner 2.6 天未运行 | 🔧 agent 诊断中 |
 | P1 | IB-24-11 | debate 方向无关 bug — SHORT 被系统性压制 | 🔧 workflow 修复中 |
@@ -734,4 +743,5 @@ advantage = debate.bull_confidence - debate.bear_confidence  # ← BUG
 | IB-24-04 | 方向熔断参数放宽（min_sample=15, max_share=0.95, override=75） | `acbf7c6` |
 | IB-24-05 | execution_eligible 无实时价格门控（allocator + signal_emitter） | `acbf7c6` |
 | IB-24-06 | Databricks endpoint URL 更新（旧机器→新机器） | config 更新 |
+| IB-24-07 | FTS reindex 包含 medium_confidence（89→1507 条索引） | `4bc3707` |
 
