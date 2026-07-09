@@ -403,6 +403,10 @@ class HealthConfig(BaseModel):
     exchange_auto_resume_interval_sec: int = 60
     exchange_auto_resume_success_threshold: int = 2
     exchange_stall_threshold: int = 30
+    # Layered pause: when True, pause only AI-dependent jobs (observer, trader,
+    # operator) while keeping data-collection jobs running. This prevents data
+    # gaps during LLM outages. When False, all jobs are halted (legacy behavior).
+    layered_pause_enabled: bool = True
 
 
 class RetentionConfig(BaseModel):
