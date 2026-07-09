@@ -1310,6 +1310,18 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
             continue
         decision.opportunity_id = oid
         decision.signal_source = "serenity"
+        # #102: pending_signals don't carry market_type (the pi_decisions query
+        # omits it and PiDecision has no such column), so a promoted serenity pick
+        # would fall through to the short->perp default. Recover it from the source
+        # serenity_opportunity. Defensive: a lookup miss must not break attribution.
+        if not decision.market_type:
+            try:
+                from aletheia.storage.repositories import get_serenity_opportunity
+                src_opp = get_serenity_opportunity(oid)
+                if src_opp and src_opp.get("market_type"):
+                    decision.market_type = src_opp["market_type"]
+            except Exception:
+                pass
         return
 
     # Serenity fallback (Phase 2): the pick matched no market_observer opportunity

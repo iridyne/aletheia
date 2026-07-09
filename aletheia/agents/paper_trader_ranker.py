@@ -566,6 +566,9 @@ def _make_candidate(
         # Opportunity fields
         "opportunity_id": opp.get("id"),
         "symbol": opp.get("symbol"),
+        # #9: carry the instrument type so trading_decision can distinguish the
+        # same symbol on spot vs perp. opportunities store it under "market".
+        "market_type": opp.get("market") or opp.get("market_type"),
         "direction_bias": opp.get("direction_bias"),
         "confidence": opp.get("confidence"),
         "confidence_score": opp.get("confidence_score"),

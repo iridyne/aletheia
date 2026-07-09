@@ -5,6 +5,9 @@
      when a matching-direction ranker candidate exists.
 #21/#102 serenity opportunities store the instrument under "market_type" — the
      decision path must read that key (not "market").
+#9   _make_candidate must carry the opportunity's market_type into the candidate.
+#102 (pending) promoted serenity pending-signals recover market_type from the
+     source serenity_opportunity (pending_signals don't carry it).
 """
 
 from aletheia.agent_shell.trading_decision import (
@@ -56,3 +59,43 @@ def test_serenity_opportunity_market_type_key():
     assert dec.opportunity_id == "ser-1"
     assert dec.signal_source == "serenity"
     assert dec.market_type == "usdt_futures"
+
+
+def test_make_candidate_emits_market_type():
+    """#9: _make_candidate must carry the opportunity's instrument type."""
+    from aletheia.agents.paper_trader_ranker import _make_candidate
+
+    cand = _make_candidate(
+        {"id": "opp-1", "symbol": "BTC/USDT", "market": "usdt_futures"},
+        direction="long",
+    )
+    assert cand.get("market_type") == "usdt_futures", (
+        "candidate dropped market_type — trading_decision ranker branch reads "
+        "c.get('market_type') and would get None (#9)"
+    )
+    # Legacy opps that already used the market_type key still work.
+    cand2 = _make_candidate({"id": "o2", "symbol": "ETH/USDT", "market_type": "spot"})
+    assert cand2.get("market_type") == "spot"
+
+
+def test_serenity_pending_signal_recovers_market_type(monkeypatch):
+    """#102: a promoted serenity pending-signal recovers market_type from the source opp."""
+    import aletheia.storage.repositories as repo
+    monkeypatch.setattr(
+        repo, "get_serenity_opportunity",
+        lambda oid: {"market_type": "usdt_futures"} if oid == "ser-pending" else None,
+    )
+    dec = TradingDecision(action="trade", symbol="TAO/USDT", direction="long",
+                          conviction=60, reasoning="")
+    ctx = {
+        "layer2": {"pending_signals": [
+            {"symbol": "TAO/USDT", "direction": "long",
+             "opportunity_id": "ser-pending", "signal_source": "serenity"},
+        ]},
+    }
+    _attach_opportunity_context(dec, ctx)
+    assert dec.opportunity_id == "ser-pending"
+    assert dec.signal_source == "serenity"
+    assert dec.market_type == "usdt_futures", (
+        "pending-signal branch returned without recovering market_type (#102)"
+    )
