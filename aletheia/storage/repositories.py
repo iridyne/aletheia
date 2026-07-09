@@ -929,8 +929,15 @@ def list_market_snapshots(
     symbol: str | None = None,
     limit: int = 100,
     exchange: str = "",
+    market_type: str | None = None,
 ) -> list[dict]:
-    """Return market snapshots, optionally filtered by symbol and/or exchange."""
+    """Return market snapshots, optionally filtered by symbol, exchange, and/or market_type.
+
+    ``market_type`` uses the snapshot-storage vocabulary ("spot"/"perp"/"futures"),
+    which is the InstrumentId physical vocabulary — NOT the DB/execution string
+    "usdt_futures". Callers holding a proposal/DB market_type must map it first
+    (see ``market_data._snapshot_market_type``). None preserves prior behavior.
+    """
     conditions: list[str] = []
     params: list = []
     if symbol:
@@ -939,6 +946,9 @@ def list_market_snapshots(
     if exchange:
         conditions.append("exchange = ?")
         params.append(exchange)
+    if market_type:
+        conditions.append("market_type = ?")
+        params.append(market_type)
     where = " AND ".join(conditions) if conditions else None
     return _select_all(
         "market_snapshots",
