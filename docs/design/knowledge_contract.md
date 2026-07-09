@@ -137,9 +137,12 @@ advisory 标签是**负载关键**的——标明这些是建议而非指令，�
 
 上层路由，为每个 agent role 组合检索上下文：
 - 按 role 过滤 `item_types`（`router.py:22-29`）：
-  - `market_observer`: trade_case_study / research_note / post_trade_review / dreaming_log / trading_guard
-  - `equity_observer`: research_note / trade_case_study / post_trade_review
-  - `paper_trader`: trade_case_study / post_trade_review / trading_guard
+  - `market_observer`: trade_case_study / research_note / dreaming_log / trading_guard
+  - `equity_observer`: research_note / trade_case_study
+  - `paper_trader`: trade_case_study / trading_guard
+  - (#176) `post_trade_review` is DELIBERATELY excluded from every retrieval role — it
+    is medium_confidence LLM narrative that once flooded retrieval ~1900:16; `router.py`
+    forbids it and a test locks that. Do NOT re-add it here.
 - 附加 guard advisory 块（若 `guard_context` 提供）
 - 超过 `max_chars=2000` 截断
 
@@ -288,7 +291,7 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 | 消费方 | 检索方式 | 代码锚点 |
 |--------|---------|---------|
-| `paper_trader_ranker` | `retrieve_lessons(query, k=3, item_types=["trade_case_study","post_trade_review"])` | `agents/paper_trader_ranker.py:405-412` |
+| `paper_trader_ranker` | `retrieve_lessons(query, k=3, item_types=["trade_case_study"])` | `agents/paper_trader_ranker.py:398-405` |
 | `market_observer` | `build_advisory_context(role="market_observer", guard_context=..., ...)` | `agents/market_observer.py:386-393` |
 | System Operator (trading_context Layer 3) | `trade_case_study` + `guard_candidate` + applied `ps_lessons` | `agent_shell/trading_context.py` Layer 3 |
 | `dreaming_agent` | `list_knowledge_items(item_type="trade_case_study", ...)` → proposed `ps_lessons` | `agents/dreaming_agent.py` |

@@ -88,6 +88,10 @@ async def analyze_news(news_id: str, req: AnalyzeRequest = AnalyzeRequest()):
     title = item.get("title", "")
     summary = item.get("summary", "")
 
+    # #85 fix: llm_complete returns a (content, error) tuple. The previous
+    # code assigned the whole tuple to `analysis` and serialized it as a JSON
+    # array in the response — ugly and misleading. Unpack and surface the
+    # content OR a friendly error string.
     try:
         from aletheia.agents.helpers import llm_complete
         prompt = (
@@ -97,14 +101,25 @@ async def analyze_news(news_id: str, req: AnalyzeRequest = AnalyzeRequest()):
             f"Provide a brief (2-3 sentence) impact assessment for crypto markets. "
             f"Focus on: affected assets, direction of impact, and confidence level."
         )
-        analysis = await llm_complete("Market impact analysis", prompt)
+        content, error = await llm_complete("Market impact analysis", prompt)
+        if error:
+            logger.info("news analysis: llm returned error: %s", error)
+            analysis = f"Analysis unavailable — {error}"
+        else:
+            analysis = content or "Analysis unavailable — model returned empty response."
     except Exception as e:
         logger.warning("LLM analysis failed: %s", e)
         analysis = "Analysis unavailable — model provider not configured or unreachable."
 
+    # #110 fix: research_worker consumes news_items with status='analyzed'
+    # (aletheia/agents/research_worker.py:102). Setting status='reviewed' here
+    # meant the LLM's impact analysis never reached the research pipeline. The
+    # user-facing status column stays honest — a row that was auto-analysed by
+    # the LLM IS the 'analyzed' state; NewsIntel UI already knows this filter
+    # bucket after #168.
     db.execute(
         "UPDATE news_items SET status = ? WHERE id = ?",
-        ("reviewed", news_id),
+        ("analyzed", news_id),
     )
     db.commit()
 

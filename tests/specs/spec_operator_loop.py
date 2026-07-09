@@ -502,7 +502,7 @@ def test_observers_do_not_insert_pi_decisions():
         "Self-heal L1 actions (clean_stale_heartbeats / restart_collector / "
         "rebuild_sqlite_index) must not execute without a prior PI approval record "
         "— operator_layer.md §不变式1.",
-        status="implemented",
+        status="partial",
     ),
 )
 def test_l1_selfheal_requires_pi_approval():
@@ -575,7 +575,7 @@ def test_l2_proposal_requires_human_confirmation():
         "_LEVEL_1_ACTIONS must include data-maintenance self-heal types: "
         "clean_stale_heartbeats, restart_collector, rebuild_sqlite_index "
         "(operator_layer.md §自愈档位 L1行).",
-        status="implemented",
+        status="partial",
     ),
 )
 def test_l1_selfheal_action_types_exist():
@@ -774,7 +774,7 @@ def test_knowledge_item_is_structured_selfheal_store():
         "modify_prompt_fragment、modify_config_fragment——对应产品定义 D6 §L2人工确认行。"
         "三个动作须在集合中注册，operator layer dispatcher 才能路由到正确 handler，"
         "人工确认门控才能接管。",
-        status="implemented",
+        status="partial",
     ),
 )
 def test_l2_selfheal_action_types_registered():
@@ -809,7 +809,7 @@ def test_l2_selfheal_action_types_registered():
         "clean_stale_heartbeats / restart_collector / rebuild_sqlite_index 三个自愈动作，"
         "必须在 dispatch 前调用含 'pi_approval' 或 'approve_l1' 字样的门控函数。"
         "无批准记录则不执行（operator_layer.md §不变式1）。",
-        status="implemented",
+        status="partial",
     ),
 )
 def test_l1_selfheal_pi_approval_gate_in_execute():
@@ -858,7 +858,7 @@ def test_l1_selfheal_pi_approval_gate_in_execute():
         "写入 create_artifact 的 content dict 必须含 human_confirm_required 键且值为 True。"
         "operator_layer.md §不变式3 要求 L2 操作即使 PI 批准也必须等人确认；"
         "该字段是前端/通知路径的识别依据。",
-        status="implemented",
+        status="partial",
     ),
 )
 def test_l2_proposal_artifact_carries_human_confirm_required():

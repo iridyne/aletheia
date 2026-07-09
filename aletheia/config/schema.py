@@ -1,7 +1,9 @@
 """Config schema using Pydantic v2 models."""
 
 import logging
-from pydantic import BaseModel, Field, field_validator
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _logger = logging.getLogger("aletheia.config")
 
@@ -390,11 +392,21 @@ class HealthConfig(BaseModel):
     # and auto-resume when connectivity is restored.
     auto_resume_enabled: bool = True
     auto_resume_interval_sec: int = 300
+    # Stall detection: after this many consecutive failed probes, escalate to
+    # operator with root-cause classification (secret_missing vs network vs auth).
+    auto_resume_stall_threshold: int = 6
+    auto_resume_stall_backoff_factor: float = 2.0
+    auto_resume_max_interval_sec: int = 1800
     # Exchange connectivity monitor: detect network outages and auto-pause/resume.
     exchange_probe_interval_sec: int = 30
     exchange_probe_failure_threshold: int = 3
     exchange_auto_resume_interval_sec: int = 60
     exchange_auto_resume_success_threshold: int = 2
+    exchange_stall_threshold: int = 30
+    # Layered pause: when True, pause only AI-dependent jobs (observer, trader,
+    # operator) while keeping data-collection jobs running. This prevents data
+    # gaps during LLM outages. When False, all jobs are halted (legacy behavior).
+    layered_pause_enabled: bool = True
 
 
 class RetentionConfig(BaseModel):
@@ -691,6 +703,12 @@ class EventTriggerConfig(BaseModel):
     price_move_pct_threshold: float = 3.0
     volume_surge_multiplier: float = 3.0
     watch_universe_members: bool = True
+    # #26 note (2026-07-08): `trigger_strategy_design` +
+    # `strategy_design_min_move_pct` are DEAD CONFIG — the strategy_designer
+    # subsystem was removed with Position C (2026-07-02), so no code consumes
+    # these fields. Kept as legacy keys so existing config.yaml files don't
+    # error on the extra=forbid pass. Do not add new consumers; new
+    # event-driven wiring lives in the operator/serenity path.
     trigger_strategy_design: bool = True
     strategy_design_min_move_pct: float = 5.0
 
@@ -732,14 +750,84 @@ class TunnelConfig(BaseModel):
 
 
 class NetworkConfig(BaseModel):
-    # Default to 7890 (Clash/Mihomo common port). Set to "" to disable.
-    # On machines without a proxy the reachability check in net.py falls back to
-    # direct connection automatically — so this default is safe on all machines.
+    # Structured proxy definition (source of truth). ``proxy_url`` below is
+    # recomposed from these three parts by the model validator; every consumer
+    # (aletheia.net) still reads ``proxy_url``. Default 7890 (Clash/Mihomo common
+    # port). Set proxy_host="" to disable (direct). On machines without a proxy the
+    # reachability check in net.py falls back to direct automatically (unless
+    # ``enforce`` is on) — so this default is safe on all machines.
+    proxy_protocol: Literal["http", "https", "socks5"] = "http"
+    proxy_host: str = "127.0.0.1"
+    proxy_port: int = 7890
+    # Composed URL, kept for backward compatibility with existing consumers and
+    # legacy config files. Recomputed from the parts on every load/save.
     proxy_url: str = "http://127.0.0.1:7890"
     no_proxy: str = ""    # comma-separated bypass list, e.g. "127.0.0.1,localhost"
+    # Fail-closed policy. When True, outbound traffic MUST go through the proxy: if
+    # the proxy is unreachable the request fails rather than silently connecting
+    # direct (which would leak the real IP to exchanges / providers). When False,
+    # an unreachable proxy falls back to a direct connection (availability first).
+    # Default False for portability — a fresh install / CI box without a proxy must
+    # not be bricked by a strict default. Enable it in Settings for production.
+    enforce: bool = False
+
+    @model_validator(mode="after")
+    def _sync_proxy_url(self) -> "NetworkConfig":
+        fields_set = self.model_fields_set
+        structured_set = bool(
+            {"proxy_protocol", "proxy_host", "proxy_port"} & fields_set
+        )
+        # Legacy migration: a config predating the structured fields carries only
+        # proxy_url. Parse it back into the parts so the UI reflects reality.
+        if "proxy_url" in fields_set and not structured_set and self.proxy_url:
+            self.parse_proxy_url()
+        # Recompose the canonical URL from the parts (empty host = disabled/direct).
+        self.recompose_proxy_url()
+        return self
+
+    def recompose_proxy_url(self) -> None:
+        """Rebuild proxy_url from protocol/host/port. Empty host = disabled (direct).
+
+        Shared by the model validator and the /settings/network route (setattr does
+        not re-run the validator, so the route calls this explicitly after mutating).
+        """
+        host = (self.proxy_host or "").strip()
+        self.proxy_url = f"{self.proxy_protocol}://{host}:{self.proxy_port}" if host else ""
+
+    def parse_proxy_url(self) -> None:
+        """Decompose an externally-set proxy_url back into protocol/host/port."""
+        from urllib.parse import urlparse
+
+        parsed = urlparse(self.proxy_url)
+        scheme = (parsed.scheme or "http").lower()
+        if scheme in ("socks", "socks5h"):
+            scheme = "socks5"
+        self.proxy_protocol = scheme if scheme in ("http", "https", "socks5") else "http"
+        if parsed.hostname:
+            self.proxy_host = parsed.hostname
+        if parsed.port:
+            self.proxy_port = parsed.port
 
 
 class PiDaemonConfig(BaseModel):
+    """System Operator daemon configuration.
+
+    #97 note (2026-07-07): the class name and the top-level config field
+    `pi_daemon` are LEGACY — the subsystem is the System Operator daemon
+    (per discussion.md renaming, "PI Agent" → "System Operator"). The
+    legacy `pi_daemon` field name is preserved as a backwards-compatible
+    key so existing config.yaml files, audit trails, and API contracts
+    keep working. New UI copy and prose docs must use "System Operator
+    daemon"; the frontend/api translation layer treats `pi_daemon` as
+    the on-the-wire key that carries this class's fields.
+
+    Naming registry (single source of truth):
+        legacy config field:   cfg.pi_daemon
+        legacy audit event:    pi_daemon_config_changed / pi_daemon_config
+        legacy REST path:      POST /api/settings/pi_daemon
+        current product name:  "System Operator daemon"
+    """
+
     enabled: bool = True
     debounce_sec: float = 2.0      # collect burst signals before evaluating
     cooldown_sec: float = 45.0     # minimum gap between evaluation cycles

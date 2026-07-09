@@ -425,6 +425,7 @@ def test_perp_structure_repository_roundtrip_and_prune():
     assert repo.latest_perp_structure("BTC/USDT")["id"] == "ps-fresh"
 
 
+
 def test_extract_position_x_signal_payload_into_snapshot():
     from aletheia.data.position_x import extract_position_x_snapshot
 

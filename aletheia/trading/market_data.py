@@ -7,14 +7,53 @@ Degrades gracefully if the exchange is unreachable.
 import logging
 
 from aletheia.config.loader import load_config
-from aletheia.data.symbols import InstrumentId, MARKET_SPOT, to_canonical, to_bitget
+from aletheia.data.symbols import InstrumentId, MARKET_SPOT, MARKET_PERP, to_canonical, to_bitget
 from aletheia.storage.models import MarketSnapshot
 from aletheia.storage.repositories import insert_market_snapshot
-from aletheia.trading.instruments import observed_instruments_from_config, xstocks_instruments_from_config
+from aletheia.trading.instruments import (
+    MARKET_USDT_FUTURES,
+    observed_instruments_from_config,
+    xstocks_instruments_from_config,
+)
 
 logger = logging.getLogger("aletheia.market_data")
 
 _MAX_DYNAMIC_INSTRUMENTS = 60
+
+# Snapshots are stored under the InstrumentId physical vocabulary (spot/perp/
+# futures). Proposals / DB rows use the execution vocabulary (spot/usdt_futures).
+# This maps the latter to the former so a typed snapshot lookup hits the right rows.
+_SNAPSHOT_MARKET_TYPE = {
+    MARKET_USDT_FUTURES: MARKET_PERP,  # "usdt_futures" -> "perp"
+    MARKET_SPOT: MARKET_SPOT,
+    MARKET_PERP: MARKET_PERP,
+    "futures": "futures",
+}
+
+
+def _snapshot_market_type(mt: str | None) -> str | None:
+    """Map a proposal/DB market_type to the snapshot-storage vocabulary.
+
+    Returns None when mt is falsy or unmapped, so ``latest_snapshot`` falls back
+    to the symbol-only lookup rather than querying for a value that can't exist.
+    """
+    if not mt:
+        return None
+    return _SNAPSHOT_MARKET_TYPE.get(mt)
+
+
+def _instrument_market_from_row(mt: str | None) -> str:
+    """Map a DB row's market_type to the InstrumentId physical vocabulary.
+
+    Positions/universe members store the execution string "usdt_futures";
+    ``InstrumentId.from_parts`` only accepts spot/perp/futures. Falls back to
+    spot for None/unknown so callers keep the pre-#14 default.
+    """
+    if mt == MARKET_USDT_FUTURES:
+        return MARKET_PERP
+    if mt in (MARKET_SPOT, MARKET_PERP, "futures"):
+        return mt
+    return MARKET_SPOT
 
 # Consecutive xStock fetch failure counter per symbol.
 # Triggers infra_event after XSTOCK_FAILURE_THRESHOLD consecutive failures.
@@ -47,7 +86,10 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
             if not sym or sym in seen:
                 continue
             try:
-                seen[sym] = InstrumentId.from_parts(exchange, sym, MARKET_SPOT)
+                # #14: honour the member's own market_type instead of forcing spot,
+                # so a perp universe member gets its perp ticker collected.
+                mt = _instrument_market_from_row(m.get("market_type"))
+                seen[sym] = InstrumentId.from_parts(exchange, sym, mt)
             except (ValueError, Exception):
                 pass
     except Exception:
@@ -60,7 +102,9 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
             if not sym or sym in seen:
                 continue
             try:
-                seen[sym] = InstrumentId.from_parts(exchange, sym, MARKET_SPOT)
+                # #14: a futures position must refresh its futures ticker, not spot.
+                mt = _instrument_market_from_row(pos.get("market_type"))
+                seen[sym] = InstrumentId.from_parts(exchange, sym, mt)
             except (ValueError, Exception):
                 pass
     except Exception:
@@ -161,15 +205,28 @@ async def collect_market_snapshots() -> dict:
     return {"collected": collected, "errors": errors}
 
 
-def latest_snapshot(symbol: str) -> dict | None:
+def latest_snapshot(symbol: str, market_type: str | None = None) -> dict | None:
     """Return the most recent stored snapshot for a symbol.
 
     Accepts any symbol format (canonical, bitget, yfinance).
     Tries canonical first, then bitget format for backwards compatibility
     with snapshots written before the CCXT migration.
+
+    When ``market_type`` is given (proposal/DB vocabulary, e.g. "usdt_futures"),
+    a typed snapshot is preferred so a futures decision does not read a spot row
+    for the same symbol (#13). If no typed snapshot exists it FALLS BACK to the
+    symbol-only lookup — old DBs stored futures snapshots as "spot" (the #14 bug),
+    and the risk freshness check fails closed on None, so falling back keeps
+    behaviour strictly more correct with no new rejections.
     """
     from aletheia.storage.repositories import list_market_snapshots
     canon = to_canonical(symbol)
+    snap_mt = _snapshot_market_type(market_type)
+    if snap_mt:
+        rows = list_market_snapshots(symbol=canon, market_type=snap_mt, limit=1)
+        if rows:
+            return rows[0]
+        # fall through to symbol-only lookup below
     rows = list_market_snapshots(symbol=canon, limit=1)
     if rows:
         return rows[0]

@@ -46,6 +46,10 @@ export default function CommandPalette() {
     { id: 'nav-prediction', label: 'Go to Prediction Markets', group: 'Navigation', keywords: 'prediction polymarket probability events', action: () => navigate('/prediction-markets') },
     { id: 'nav-proposals', label: 'Go to Approval Desk', group: 'Navigation', keywords: 'proposals approve', action: () => navigate('/proposals') },
     { id: 'nav-agent-activity', label: 'Go to Agent Activity', group: 'Navigation', keywords: 'agent runs opportunities transparency', action: () => navigate('/agent-activity') },
+    // #125 fix: /universe was reachable via the NAV bar but missing from the
+    // command palette — an operator using the keyboard shortcut couldn't
+    // navigate to the Universe Board.
+    { id: 'nav-universe', label: 'Go to Universe Board', group: 'Navigation', keywords: 'universe scanner instruments', action: () => navigate('/universe') },
     { id: 'nav-trades', label: 'Go to Trades & Positions', group: 'Navigation', keywords: 'paper orders fills positions blotter', action: () => navigate('/trades') },
     { id: 'nav-learning', label: 'Go to Learning', group: 'Navigation', keywords: 'dreaming knowledge base reports memory consolidation', action: () => navigate('/learning') },
     { id: 'nav-risk', label: 'Go to Risk & Controls', group: 'Navigation', action: () => navigate('/risk') },
@@ -71,9 +75,17 @@ export default function CommandPalette() {
       <div className="cmd-dialog" onClick={e => e.stopPropagation()}>
         <Command
           onKeyDown={(e) => {
+            // #126 fix: previously ANY non-empty input intercepted Enter and
+            // drafted a Command Center message — even a 3-char search that
+            // happened to match a suggestion. cmdk couldn't fire its own
+            // Enter selection because our handler had already navigated
+            // away. Only hijack for LONG inputs that look like a real
+            // freeform prompt (≥20 chars), matching the placeholder's
+            // "20+ chars for AI" hint. Short inputs fall through to cmdk
+            // so the highlighted suggestion selects normally.
             if (e.key === 'Enter') {
-              const input = (e.target as HTMLInputElement)?.value?.trim()
-              if (input) {
+              const input = (e.target as HTMLInputElement)?.value?.trim() || ''
+              if (input.length >= 20) {
                 e.preventDefault()
                 setOpen(false)
                 navigate(`/command-center?draft=${encodeURIComponent(input)}`)

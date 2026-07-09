@@ -73,3 +73,51 @@ def place_exchange_protective_orders(position: dict) -> dict:
             execution_mode=mode,
         )
     return {}
+
+
+def replace_exchange_protective_stop(position_id: str, new_stop_price: float) -> None:
+    """Broker-agnostic dispatch: replace the exchange-side protective SL for a
+    position whose trailed stop just tightened.
+
+    #139 fix: the trail loop previously only reached Bitget — okx_demo and
+    binance_testnet positions could see their DB stop_price tighten while the
+    exchange bracket stayed at the OLD level, so a gateway outage would let the
+    original (looser) stop close them. The trail feature is gated behind the
+    default-off `exchange_tpsl_enabled` flag; when the operator opts in, all
+    three brokers must honour it consistently. Non-fatal.
+
+    Gating repeats the same rules as `place_exchange_protective_orders`:
+      1. cfg.trading.exchange_tpsl_enabled True (default False)
+      2. execution_mode is a DEMO/TESTNET mode (never an autonomous live order).
+    """
+    from aletheia.config.loader import load_config
+    from aletheia.storage import repositories as _repo
+
+    row = _repo._select_one("positions", position_id)
+    if row is None:
+        return
+    cfg = load_config()
+    if not cfg.trading.exchange_tpsl_enabled:
+        return
+
+    mode = row.get("execution_mode") or ""
+    if mode in ("bitget_demo", "bitget_live_limited"):
+        from aletheia.execution.bitget_broker import replace_exchange_stop
+        replace_exchange_stop(position_id, new_stop_price)
+    elif mode == "okx_demo":
+        from aletheia.execution.okx_broker import replace_okx_exchange_stop
+        replace_okx_exchange_stop(position_id, new_stop_price)
+    elif mode == "binance_testnet":
+        # Binance USDT-M client currently exposes only place_order (no
+        # place_stop / cancel_algo yet). The DB stop_price is still tightened by
+        # the caller — the exchange bracket just can't be replaced until the
+        # client grows a stop-order surface. Log so this doesn't fail silently
+        # if a user opts into exchange_tpsl_enabled on a Binance testnet account.
+        import logging as _log
+        _log.getLogger("aletheia.execution.stops").warning(
+            "Binance trailed-stop exchange replacement not implemented "
+            "(position %s); DB stop_price tightened but exchange bracket unchanged.",
+            position_id,
+        )
+    # Live modes (okx_live_limited / binance_live_limited): deliberately no-op —
+    # placing an exchange order from an autonomous trail update is forbidden.

@@ -252,10 +252,24 @@ class OperatorAction:
     reason: str = ""
 
 
-# Level classification
+# Level classification.
+#
+# #27 note (2026-07-08): a few names in this set do not execute the operation
+# their name suggests. Kept only for backwards-compat with existing operator
+# telemetry / expected-action rubrics:
+#   - retire_strategy / demote_strategy: Phase 4d shift writes a
+#     `pi_decisions` recommendation row instead of retiring the strategy
+#     directly. The LLM sees the action as available; the effect is a
+#     recommendation queued for review, not an immediate state change.
+#   - trigger_optuna_sweep: returns status='not_implemented' — no
+#     sweep-job queue exists (tracked as OL-2 in
+#     docs/research/CODE_AUDIT_REPORT_2026-06-23.md). Kept in the set so
+#     the operator's rubric doesn't red-flag it as an unknown intent.
+# Owner should either wire the underlying queue or remove these before
+# claiming the action set is fully executable.
 _LEVEL_1_ACTIONS = {
-    "retire_strategy", "demote_strategy",
-    "trigger_optuna_sweep",
+    "retire_strategy", "demote_strategy",  # advisory-only under Phase 4d — see note above
+    "trigger_optuna_sweep",                # status='not_implemented' at runtime — see note above
     "tighten_confidence", "reduce_sizing", "tighten_stop_loss",
     "adjust_scanner_weight", "request_backfill", "notify_operator",
     "trigger_strategy_research",

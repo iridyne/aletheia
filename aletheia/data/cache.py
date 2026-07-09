@@ -38,12 +38,14 @@ class OHLCVCache:
         self._lock = threading.Lock()
 
     @staticmethod
-    def _key(symbol: str, timeframe: str, limit: int) -> tuple:
-        return (symbol, timeframe, limit)
+    def _key(symbol: str, timeframe: str, limit: int, market_type: str = "spot") -> tuple:
+        # #155 fix: include market_type so spot and perp candles for the same
+        # symbol don't collide (they share the canonical BTC/USDT name).
+        return (symbol, timeframe, limit, market_type)
 
-    def get(self, symbol: str, timeframe: str, limit: int):
+    def get(self, symbol: str, timeframe: str, limit: int, market_type: str = "spot"):
         """Return the cached value or None if absent / expired."""
-        key = self._key(symbol, timeframe, limit)
+        key = self._key(symbol, timeframe, limit, market_type)
         with self._lock:
             entry = self._store.get(key)
             if entry is None:
@@ -55,8 +57,8 @@ class OHLCVCache:
                 return None
             return value
 
-    def set(self, symbol: str, timeframe: str, limit: int, value) -> None:
-        key = self._key(symbol, timeframe, limit)
+    def set(self, symbol: str, timeframe: str, limit: int, value, market_type: str = "spot") -> None:
+        key = self._key(symbol, timeframe, limit, market_type)
         with self._lock:
             self._store[key] = (_now(), value)
 

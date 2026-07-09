@@ -184,6 +184,7 @@ def execute_live_order(
     update_order(order.id, exchange_order_id=exchange_order_id, status=resolved_status)
 
     filled = order_resp.status in ("filled", "partially_filled")
+    partial = order_resp.status == "partially_filled"
     fill_price = order_resp.fill_price if (filled and order_resp.fill_price) else price
     fill_qty = order_resp.filled_quantity if (filled and order_resp.filled_quantity) else quantity
 
@@ -197,13 +198,25 @@ def execute_live_order(
                 fee=fill_qty * fill_price * fee_rate,
             )
             insert_fill(fill)
-            update_order(order.id, status="filled", filled_at=datetime.now(timezone.utc).isoformat())
+            # #109 fix: preserve partial state — see bitget_broker for rationale.
+            order_status = "partially_filled" if partial else "filled"
+            update_order(order.id, status=order_status, filled_at=datetime.now(timezone.utc).isoformat())
 
             existing = _find_open_position(symbol, market_type, direction, execution_mode, strategy_id)
             if existing:
                 new_qty = existing["quantity"] + fill_qty
                 new_entry = (existing["entry_price"] * existing["quantity"] + fill_price * fill_qty) / new_qty
                 update_kwargs = {"quantity": new_qty, "entry_price": new_entry, "current_price": fill_price}
+                # #140 fix: accumulate entry_fee across averaging-in legs (see paper_broker).
+                new_entry_fee_leg = round(fill_price * fill_qty * fee_rate, 8)
+                existing_entry_fee = existing.get("entry_fee")
+                update_kwargs["entry_fee"] = round((existing_entry_fee or 0.0) + new_entry_fee_leg, 8)
+                # #141 fix: recompute liquidation for the new weighted-average entry.
+                existing_lev = existing.get("leverage")
+                if existing_lev and existing_lev > 1:
+                    update_kwargs["liquidation_price"] = liquidation_price_for(
+                        new_entry, direction, existing_lev, symbol,
+                    )
                 # Tighten (never loosen) the protective stop when averaging in.
                 merged_stop = merge_protective_stop(direction, stop_price, existing.get("stop_price"))
                 if merged_stop is not None:
@@ -310,6 +323,64 @@ def place_okx_protective_orders(
         update_position(position_id, exchange_tpsl_order_id=_json.dumps(ids))
         logger.info("OKX protective orders placed for %s %s: %s", symbol, direction, ids)
     return ids
+
+
+def replace_okx_exchange_stop(position_id: str, new_stop_price: float) -> None:
+    """Cancel the existing OKX SL algo order and place a new one at the tightened
+    stop price. Mirrors bitget_broker.replace_exchange_stop.
+
+    #139 fix (OKX side): the trail loop previously only reached Bitget. Non-fatal;
+    a failure here is logged and the DB stop stays as-is on the row (the outer
+    caller has already updated positions.stop_price for the local check path).
+    """
+    import json as _json
+    from aletheia.storage import repositories as repo
+
+    row = repo._select_one("positions", position_id)
+    if not row or not row.get("exchange_tpsl_order_id"):
+        return
+    try:
+        tpsl_ids = _json.loads(row["exchange_tpsl_order_id"])
+    except (ValueError, TypeError):
+        return
+    if not isinstance(tpsl_ids, dict):
+        tpsl_ids = {}
+
+    execution_mode = row.get("execution_mode") or ""
+    mode = "demo" if execution_mode == "okx_demo" else "live"
+    close_side = "sell" if row["direction"] in ("long", "buy") else "buy"
+
+    try:
+        client = OKXClient(mode=mode)
+        try:
+            old_sl = tpsl_ids.get("sl")
+            if old_sl:
+                try:
+                    _run_coro(client.cancel_algo_order(
+                        symbol=row["symbol"],
+                        market_type=row.get("market_type") or "usdt_futures",
+                        algo_id=old_sl,
+                    ))
+                except Exception as e:
+                    logger.warning("cancel old OKX SL %s failed: %s", old_sl, e)
+            new_ids = _run_coro(client.place_algo_order(
+                symbol=row["symbol"],
+                market_type=row.get("market_type") or "usdt_futures",
+                close_side=close_side,
+                quantity=float(row["quantity"]),
+                stop_price=new_stop_price,
+                take_profit_price=None,
+            )) or {}
+            if new_ids.get("sl"):
+                tpsl_ids["sl"] = new_ids["sl"]
+                update_position(position_id, exchange_tpsl_order_id=_json.dumps(tpsl_ids))
+        finally:
+            try:
+                _run_coro(client.close())
+            except Exception:
+                pass
+    except Exception as e:  # noqa: BLE001 — never raise from a trail update
+        logger.warning("OKX replace_exchange_stop for %s failed: %s", position_id, e)
 
 
 # ---------------------------------------------------------------------------

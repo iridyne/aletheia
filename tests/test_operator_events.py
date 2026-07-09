@@ -517,6 +517,82 @@ async def test_operator_recommendations_include_market_scan_refresh_due_for_stal
 
 
 @pytest.mark.anyio
+async def test_operator_recommendations_do_not_flag_candidate_supply_when_executable_floor_is_met(client):
+    from aletheia.agent_shell.operator_store import create_event
+
+    create_event(
+        event_type="candidate_supply_snapshot",
+        severity="warning",
+        source="trading_context",
+        payload={
+            "executable_count": 1,
+            "floor": 3,
+            "below_floor": True,
+            "main_reason": "ttl_expired",
+            "excluded_candidates_summary": [{"reason": "ttl_expired", "count": 4}],
+        },
+    )
+    create_event(
+        event_type="candidate_supply_snapshot",
+        severity="info",
+        source="trading_context",
+        payload={
+            "executable_count": 3,
+            "floor": 3,
+            "below_floor": False,
+            "main_reason": "insufficient_executable_candidates",
+            "excluded_candidates_summary": [],
+        },
+    )
+
+    recommendations = await client.get("/api/operator/recommendations")
+    assert recommendations.status_code == 200
+
+    kinds = {item["kind"] for item in recommendations.json()}
+    assert "candidate_supply_drought" not in kinds
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_include_candidate_supply_drought_for_consecutive_low_cycles(client):
+    from aletheia.agent_shell.operator_store import create_event
+
+    payload = {
+        "executable_count": 1,
+        "floor": 3,
+        "below_floor": True,
+        "main_reason": "ttl_expired",
+        "excluded_candidates_summary": [{"reason": "ttl_expired", "count": 5}],
+    }
+    create_event(
+        event_type="candidate_supply_snapshot",
+        severity="warning",
+        source="trading_context",
+        payload=payload,
+    )
+    create_event(
+        event_type="candidate_supply_snapshot",
+        severity="warning",
+        source="trading_context",
+        payload=payload,
+    )
+
+    recommendations = await client.get("/api/operator/recommendations")
+    assert recommendations.status_code == 200
+
+    drought = [
+        item for item in recommendations.json()
+        if item["kind"] == "candidate_supply_drought"
+    ]
+    assert len(drought) == 1
+    assert drought[0]["taskType"] == "run_market_scan"
+    assert drought[0]["metadata"]["task_type"] == "run_market_scan"
+    assert drought[0]["metadata"]["main_reason"] == "ttl_expired"
+    assert drought[0]["metadata"]["executable_count"] == 1
+    assert drought[0]["metadata"]["floor"] == 3
+    assert drought[0]["metadata"]["consecutive_cycles"] == 2
+
+
+@pytest.mark.anyio
 async def test_operator_recommendations_include_failed_agent_rerun_due_for_unrecovered_recent_failure(client):
     from datetime import datetime, timedelta, timezone
 

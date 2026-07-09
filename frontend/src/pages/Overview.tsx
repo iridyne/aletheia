@@ -27,9 +27,18 @@ export default function Overview() {
   const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
   const exchangeMode = String((status as any)?.exchange_mode || '')
+  // #171 fix: pick the exchange-test endpoint by the CONFIGURED exchange, not
+  // always Bitget. Previously an OKX/Binance deployment saw a stale Bitget
+  // probe (false-red if bitget creds absent, false-green if bitget was up
+  // while the real exchange was down).
+  const exchangeName = String((status as any)?.exchange || 'bitget').toLowerCase()
+  const testExchangeConnection =
+    exchangeName === 'okx' ? api.testOkx :
+    exchangeName === 'binance' ? api.testBinance :
+    api.testBitget
   const { data: exchangeHealth } = useQuery({
-    queryKey: ['bitget-test', exchangeMode],
-    queryFn: () => api.testBitget(exchangeMode),
+    queryKey: ['exchange-test', exchangeName, exchangeMode],
+    queryFn: () => testExchangeConnection(exchangeMode),
     refetchInterval: 15000,
     enabled: !!exchangeMode,
   })
@@ -168,7 +177,19 @@ export default function Overview() {
             <table className="status-board">
               <tbody>
                 <StatusRow label="Gateway" light={running ? 'green' : 'red'} value={running ? 'up' : 'down'} />
-                <StatusRow label="Scheduler" light={paused ? 'yellow' : 'green'} value={paused ? 'paused' : 'active'} />
+                {/* #118 fix: previously the Scheduler light was green whenever
+                    !paused, ignoring `scheduler_running` and `scheduler_state`
+                    from /status — so a scheduler that had actually stopped
+                    (state != 'running') still read green. Prefer the real
+                    running flag when the backend supplies it, falling back to
+                    the paused heuristic only when it's absent. */}
+                {(() => {
+                  const hasReal = typeof s?.scheduler_running === 'boolean'
+                  const isRunning = hasReal ? !!s.scheduler_running : !paused
+                  const state = String(s?.scheduler_state || (paused ? 'paused' : (isRunning ? 'active' : 'stopped')))
+                  const light = paused ? 'yellow' : (isRunning ? 'green' : 'red')
+                  return <StatusRow label="Scheduler" light={light} value={state} />
+                })()}
                 <StatusRow
                   label="Exchange"
                   light={exchangeHealth?.connected ? 'green' : exchangeHealth ? 'red' : 'yellow'}

@@ -100,7 +100,8 @@ def _patch_llm(monkeypatch_obj, responses):
     from aletheia.agents import helpers
     calls = {"n": 0}
 
-    async def fake_complete(req, provider=None):
+    # helpers now forwards provider_name= too (#161 fix) — accept and ignore.
+    async def fake_complete(req, provider=None, provider_name=None):
         i = min(calls["n"], len(responses) - 1)
         calls["n"] += 1
         return responses[i]

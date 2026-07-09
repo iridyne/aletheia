@@ -72,6 +72,9 @@ def test_lesson_block_in_dry_run_window_is_advisory(tmp_path, monkeypatch):
                           category="risk", severity="high",
                           recommendation={"action": "block_symbol", "symbol": "BTC/USDT"})
     store.accept(lesson.lesson_id)  # activated_at = now, dry_run_until = now+24h
+    # #19 fix: _check_lesson_constraints filters on status='applied', not 'accepted'.
+    # Without mark_applied, the lesson is invisible and the test passes vacuously.
+    store.mark_applied(lesson.lesson_id, "pv-test-dry-run")
 
     proposal = MagicMock()
     proposal.symbol = "BTC/USDT"
@@ -103,6 +106,8 @@ def test_expired_lesson_does_not_block(tmp_path, monkeypatch):
                           category="risk", severity="medium",
                           recommendation={"action": "block_direction", "direction": "short"})
     store.accept(lesson.lesson_id)
+    # #19 fix: _check_lesson_constraints reads status='applied', not 'accepted'.
+    store.mark_applied(lesson.lesson_id, "pv-test-expired")
 
     # Manually expire the lesson by setting expires_at to the past
     db = get_db()

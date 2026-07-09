@@ -327,8 +327,12 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
     from aletheia.data.ccxt_provider import CCXTProvider
     from aletheia.data.symbols import to_ccxt_perp
 
-    venue = cfg.market_data.ccxt_exchange
-    provider = CCXTProvider(exchange=venue, fallback_exchange=venue)
+    # #91 fix (features.py counterpart to registry.py): use market_data.ccxt_fallback
+    # instead of same-exchange fallback so a primary outage falls through cleanly.
+    md = cfg.market_data
+    venue = md.ccxt_exchange
+    fallback_venue = md.ccxt_fallback or venue
+    provider = CCXTProvider(exchange=venue, fallback_exchange=fallback_venue)
     results = []
 
     try:

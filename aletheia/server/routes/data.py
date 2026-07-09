@@ -422,18 +422,38 @@ async def get_serenity_opportunities(
 @router.post("/serenity/opportunities")
 async def create_serenity_opportunity(payload: SerenityOpportunityCreate):
     _ensure_db()
-    # Manual operator-created opportunities: the human IS the independent evaluator,
-    # so the submitted tier is authoritative (assessed_by="operator"). Normalize into
-    # the canonical ladder so it gates scoring identically to agent-produced records (D2).
+    # #100 fix: manual operator-created opportunities used to copy
+    # `payload.evidence_tier` directly into `assessed_tier` and label the
+    # assessment `operator`, bypassing the serenity_contract §5 rule that
+    # scoring/promotion tier must be derived from independently assessed
+    # supporting evidence. A manual submission with NO evidence could then
+    # score as `disclosed` instead of the documented `speculative` floor.
+    # Now the manual path calls the same `assess_opportunity_tier(...)` the
+    # research pipeline uses (with the theme's existing evidence corpus). If
+    # the operator's submitted `evidence_tier` is STRONGER than the
+    # evidence-derived value, we KEEP the evidence-derived value — the human
+    # is trusted to add evidence via the /serenity/evidence route, not to
+    # skip the assessment step.
+    from aletheia.trading.serenity_evidence import assess_opportunity_tier
     normalized_tier = normalize_tier(payload.evidence_tier)
+    theme_evidence = repo.list_serenity_evidence(theme_id=payload.theme_id, limit=200)
+    derived_tier, derived_by = assess_opportunity_tier({}, theme_evidence)
     opp = SerenityOpportunity(
         theme_id=payload.theme_id,
         symbol=payload.symbol,
         direction=payload.direction,
         thesis=payload.thesis,
         evidence_tier=normalized_tier,
-        assessed_tier=normalized_tier,
-        assessed_by="operator",
+        # The operator's `evidence_tier` submission stays advisory (mirrors
+        # LLM-produced opportunities). Authority sits in the evidence-derived
+        # `assessed_tier`; if that's `speculative` because there's no
+        # supporting evidence, the manual submission is floored — the
+        # operator must add evidence via /serenity/evidence to lift the tier.
+        assessed_tier=derived_tier,
+        # Preserve traceability: the assessment came from the pipeline (not
+        # the operator's own claim), but the opportunity itself is
+        # operator-authored — expose both in one field.
+        assessed_by=f"pipeline+operator({derived_by})",
         stage=payload.stage,
         average_mode=payload.average_mode,
         action_intent=payload.action_intent,
@@ -657,6 +677,16 @@ async def reject_proposal(proposal_id: str):
     p = repo.get_trade_proposal(proposal_id)
     if p is None:
         raise HTTPException(404, "Proposal not found")
+    # #112 fix: only pending/submitted proposals may be rejected; once executed,
+    # the downstream order+position records exist and the proposal status must
+    # reflect that reality. Rejecting an executed proposal would create a
+    # contradictory state (proposal says rejected, order/position say it ran).
+    _REJECTABLE = {"pending", "submitted", "approved"}
+    current = p.get("status") if isinstance(p, dict) else getattr(p, "status", None)
+    if current not in _REJECTABLE:
+        raise HTTPException(
+            409, f"Proposal is '{current}' and cannot be rejected (only {sorted(_REJECTABLE)} are rejectable)"
+        )
     repo.update_trade_proposal(proposal_id, status="rejected")
     write_audit({"actor": "human", "source": "dashboard", "event_type": "proposal_rejected",
                  "entity_type": "trade_proposal", "entity_id": proposal_id,
@@ -672,13 +702,22 @@ async def get_trades():
 
 @router.get("/trades/export")
 async def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit: int = Query(default=5000, le=50000)):
-    """Export trade history as CSV for tax/PnL reporting."""
+    """Export closed positions as CSV for tax/PnL reporting.
+
+    #65 fix: previously exported OPEN orders — no realized PnL, no fills, no fees,
+    no closed_at. That contradicted the docstring's tax/PnL claim; a user
+    downloading this file would need to reconstruct realized PnL themselves.
+    Now emits one row per CLOSED position with entry/exit prices, quantities,
+    fees, realized PnL, close reason, and BTC benchmark — the fields a tax
+    report actually needs. Still CSV, still under the same URL, only the
+    columns change.
+    """
     from fastapi.responses import StreamingResponse
     import csv
     import io
 
     _ensure_db()
-    rows = repo.list_orders(limit=limit)
+    rows = repo.list_positions(status="closed", limit=limit)
     if not rows:
         return StreamingResponse(
             iter(["no data\n"]),
@@ -686,13 +725,31 @@ async def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit:
             headers={"Content-Disposition": "attachment; filename=trades_export.csv"},
         )
 
-    columns = ["created_at", "symbol", "direction", "order_type", "quantity", "price",
-               "execution_mode", "status", "filled_at", "market_type", "exchange_order_id"]
+    columns = [
+        "opened_at", "closed_at", "symbol", "market_type", "direction",
+        "quantity", "entry_price", "current_price", "realized_pnl",
+        "entry_fee", "exit_fee", "slippage_cost",
+        "execution_mode", "close_reason", "btc_entry_price", "btc_exit_price",
+        "trade_school", "position_id",
+    ]
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(columns)
     for row in rows:
-        writer.writerow([row.get(c, "") for c in columns])
+        # `current_price` on a closed position is the exit price (pnl.close_position
+        # writes exit_price into current_price at close). Keep the column labelled
+        # `current_price` so we don't invent a schema, but the semantic is exit.
+        writer.writerow([
+            row.get("opened_at", ""), row.get("closed_at", ""),
+            row.get("symbol", ""), row.get("market_type", ""),
+            row.get("direction", ""), row.get("quantity", ""),
+            row.get("entry_price", ""), row.get("current_price", ""),
+            row.get("realized_pnl", ""),
+            row.get("entry_fee", ""), row.get("exit_fee", ""), row.get("slippage_cost", ""),
+            row.get("execution_mode", ""), row.get("close_reason", ""),
+            row.get("btc_entry_price", ""), row.get("btc_exit_price", ""),
+            row.get("trade_school", ""), row.get("id", ""),
+        ])
 
     buf.seek(0)
     return StreamingResponse(

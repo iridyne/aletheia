@@ -51,9 +51,22 @@ function toUtc(ts: string): string {
 }
 
 function formatTime(ts: string): string {
+  // #173 fix: previously rendered HH:MM only, so a stale timeline (last event
+  // from 3 days ago) looked as if it happened at that clock time today. When
+  // the event is from a past date, prefix the month/day so staleness is
+  // visible at a glance; same-day events keep the tight HH:MM to avoid noise.
   try {
     const d = new Date(toUtc(ts))
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const now = new Date()
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    if (sameDay) {
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+      ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   } catch { return '—' }
 }
 

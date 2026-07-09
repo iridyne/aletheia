@@ -27,6 +27,13 @@ const MODE_KEY = 'aletheia.feedMode'
 const MODES: FeedMode[] = ['narrative', 'ops', 'both']
 const MODE_LABEL: Record<FeedMode, string> = { narrative: 'Narrative', ops: 'Ops', both: 'Both' }
 
+// #120 fix: the run/proposal status vocabulary carries several failure
+// values that used to slip through as accent/yellow — collect them so the
+// feed row and its badge agree on what counts as a failure to highlight.
+const FAILURE_STATUSES = new Set<string>([
+  'error', 'failed', 'timed_out', 'stale', 'completed_with_errors', 'rejected',
+])
+
 type FeedItem = {
   key: string
   ts: string
@@ -189,7 +196,10 @@ export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
           {visible.map(it => (
             <button key={it.key} className="feed-row" onClick={() => setSelected(it)}>
               <span className="feed-ts mono">{relTime(it.ts)}</span>
-              <span className="feed-icon" style={{ color: it.status === 'error' ? 'var(--red)' : 'var(--accent)' }}>{it.icon}</span>
+              {/* #120 fix: only status=='error' was rendered red; failed /
+                  timed_out / stale / completed_with_errors used to slip
+                  through as accent-blue (looks fine) despite being failures. */}
+              <span className="feed-icon" style={{ color: FAILURE_STATUSES.has(String(it.status)) ? 'var(--red)' : 'var(--accent)' }}>{it.icon}</span>
               <span className="feed-body">
                 <span className="feed-headline">{it.headline}</span>
                 {(mode === 'narrative' || mode === 'both') && it.detail && (
@@ -205,7 +215,7 @@ export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
                 )}
               </span>
               {it.status && (
-                <span className={`badge ${it.status === 'completed' || it.status === 'approved' ? 'badge-green' : it.status === 'error' || it.status === 'rejected' ? 'badge-red' : 'badge-yellow'}`}>
+                <span className={`badge ${it.status === 'completed' || it.status === 'approved' ? 'badge-green' : FAILURE_STATUSES.has(String(it.status)) ? 'badge-red' : 'badge-yellow'}`}>
                   {it.status}
                 </span>
               )}

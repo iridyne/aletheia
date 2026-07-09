@@ -88,26 +88,37 @@ docs/design/*_contract.md  →  tests/specs/spec_*.py  →  Conformance Matrix
      (人类可读 spec)          (@spec_claim 装饰器)       (claim_id → test → pass/fail)
 ```
 
-| Spec 文件 | 对应契约 | Claims |
-|-----------|---------|--------|
-| `spec_risk_engine.py` | risk_engine_contract | 7 |
-| `spec_execution.py` | execution_contract | 7 |
-| `spec_live_unlock.py` | live_unlock_contract | 5 |
-| `spec_promotion_gates.py` | promotion_gates_contract | 7 |
-| `spec_data_model.py` | data_model | 18 (含 P0-1 TaG hash chain 新增 4: DM-S08/S09/B06/C02) |
-| `spec_agent_contracts.py` | agent_contracts | 8 |
-| `spec_api_reference.py` | api_reference | 7 |
-| `spec_data_layer.py` | data_layer | 10 |
-| `spec_operator_loop.py` | operator_layer + PI_OPERATOR_DESIGN_DECISIONS | 7 |
-| `spec_subsystem_observers.py` | EQUITY_INTEGRATION_DESIGN + PREDICTION_MARKET_DESIGN | 8 |
-| `spec_audit_chain.py` | audit_chain_contract | 5 |
-| `spec_pipeline_adopted_position.py` | pipeline_adopted_position | 9 (含 P1-2 PL-ADOPT-09 audit hash chain-in) |
-| `spec_decision_lifecycle.py` | decision_lifecycle_contract | 5 (DL-S01/S02/S03/S04/C01 — 横切 seam 契约) |
-| `spec_persistence.py` | persistence_recovery_contract | 5 (PR-S01~S04 + PR-C01 恢复未接 runtime tripwire；非 REQUIRED,🟡 部分实现) |
+**#76 修订（2026-07-07）**: 手写枚举表已废弃 —— 曾列 14 条、含不存在的 `spec_promotion_gates.py`、以及旧的 claim 数（如 risk_engine=7，真实为 34+）。当前 `tests/specs/` 有 **59 个** `spec_*.py` 文件横跨风险 / 执行 / 学习 / 决策 / 持久化 / 数据模型 / 代理契约 / API 参考 / Serenity 多镜头 / 管道端到端等域。
+
+**权威列表 / 计数**（不再手抄，会漂）：
+
+```bash
+ls tests/specs/spec_*.py | wc -l          # spec 文件总数
+uv run pytest tests/test_spec_conformance.py -q   # claim 汇总 + pass/fail
+```
+
+Conformance Matrix (`test_spec_conformance` 输出 + `docs/status/CONFORMANCE_MATRIX.md`
+若在维护) 是每个 claim → spec_file → 状态的唯一 live 索引。README 只保留跳转指针，不再重复枚举。
+
+代表性 spec（用于快速定位入口，不是全量）:
+
+- 契约类：`spec_risk_engine.py`, `spec_execution.py`, `spec_live_unlock.py`,
+  `spec_data_model.py`, `spec_agent_contracts.py`, `spec_api_reference.py`,
+  `spec_audit_chain.py`, `spec_decision_lifecycle.py`, `spec_persistence.py`
+- 管道端到端类：`spec_pipeline_execution_chain.py`,
+  `spec_pipeline_adopted_position.py`, `spec_pipeline_operator_loop.py`,
+  `spec_pipeline_paper_trade.py`, `spec_pipeline_risk_gate.py`,
+  `spec_pipeline_stop_propagation.py`
+- Serenity 类：`spec_serenity_verdict.py`, `spec_serenity_promote.py`,
+  `spec_serenity_holding.py`, `spec_serenity_multi_lens.py`,
+  `spec_serenity_researchability.py`, `spec_serenity_xstock_execution.py`
+- 学习类：`spec_learning_pipeline.py`, `spec_factor_feedback.py`,
+  `spec_insight_feedback_loop.py`, `spec_lesson_guards.py`,
+  `spec_knowledge_fts.py`
 
 另有 `test_architecture_fitness.py`（依赖方向 fitness functions）独立于 claim 体系。
 
-**验证命令**: `uv run pytest tests/specs/ tests/test_architecture_fitness.py -q`（< 2s）
+**验证命令**: `uv run pytest tests/specs/ tests/test_architecture_fitness.py -q`（约 60s）
 
 ---
 

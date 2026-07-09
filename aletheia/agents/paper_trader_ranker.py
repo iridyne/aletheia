@@ -37,6 +37,8 @@ logger = logging.getLogger("aletheia.agents.paper_trader_ranker")
 
 _CONFIDENCE_RANK = {"speculative": 0, "medium": 1, "high": 2}
 _CONFIDENCE_SCORE_DEFAULT = {"speculative": 20, "medium": 50, "high": 75}
+_DEFAULT_CANDIDATE_LIMIT = 50
+_MAX_OPPORTUNITY_SCAN_LIMIT = 500
 
 # Evidence-based strategy gates (not_executable is NOT a block — strategies
 # without a RuleSet can still trade from LLM signals; the entry validation
@@ -70,8 +72,11 @@ def build_paper_candidates(limit: int = 50) -> list[dict]:
 
     min_conf = cfg.trading.min_confidence_to_trade
 
+    requested_limit = max(1, int(limit or _DEFAULT_CANDIDATE_LIMIT))
+    scan_limit = min(_MAX_OPPORTUNITY_SCAN_LIMIT, max(requested_limit, requested_limit * 5))
+
     candidates: list[dict] = []
-    opportunities = list_opportunities(limit=limit)
+    opportunities = list_opportunities(limit=scan_limit)
 
     for opp in opportunities:
         candidate = _evaluate_candidate(opp, cfg, now_iso, _symbol_allowed, min_conf, global_venue)
@@ -80,7 +85,7 @@ def build_paper_candidates(limit: int = 50) -> list[dict]:
 
     # Sort by trade_score descending
     candidates.sort(key=lambda c: c.get("trade_score", -999), reverse=True)
-    return candidates
+    return candidates[:requested_limit]
 
 
 def select_best_candidate(candidates: list[dict]) -> dict | None:
@@ -468,6 +473,11 @@ def _memo_scoring(symbol: str | None, direction: str | None, regime: MarketRegim
                     adj -= 15
                     break
 
+        # #131: fade the memo's influence by its age using the same 7-day half-life
+        # the prompt renderer applies (memo_half_life_weight), so a nearly-decayed memo
+        # no longer moves candidate ranking at full strength while the UI shows it faded.
+        from aletheia.analytics.memo_effectiveness import memo_half_life_weight
+        adj *= memo_half_life_weight(memo.get("generated_at"))
         return max(-45.0, min(45.0, adj))
     except Exception:
         return 0.0
@@ -561,6 +571,9 @@ def _make_candidate(
         # Opportunity fields
         "opportunity_id": opp.get("id"),
         "symbol": opp.get("symbol"),
+        # #9: carry the instrument type so trading_decision can distinguish the
+        # same symbol on spot vs perp. opportunities store it under "market".
+        "market_type": opp.get("market") or opp.get("market_type"),
         "direction_bias": opp.get("direction_bias"),
         "confidence": opp.get("confidence"),
         "confidence_score": opp.get("confidence_score"),

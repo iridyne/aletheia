@@ -54,6 +54,16 @@ Use the same URL for daily use and UI iteration:
 Do not use `:5173` as the normal dashboard entrypoint; the gateway's `:8787`
 origin is the canonical API + UI surface.
 
+## Contributing
+
+This project can be co-built by human contributors and AI agents, but trading
+safety and audit honesty come first. Before contributing, read:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md): workflow, scope, tests, and PR checklist
+- [AGENTS.md](AGENTS.md): mandatory rules for AI agents and high-sensitivity changes
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): collaboration expectations
+- [SECURITY.md](SECURITY.md): private reporting and secret-handling rules
+
 ## Architecture
 
 - Python 3.12 backend (FastAPI + Typer CLI), Bitget spot + USDT futures (BTC/ETH/SOL)

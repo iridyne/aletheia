@@ -197,6 +197,45 @@ def test_execution_not_eligible_skipped():
     assert candidates[0]["skip_reason"] == "execution_eligible=False"
 
 
+def test_candidate_builder_overfetches_past_skipped_front_page():
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates, select_best_candidate
+
+    opps = [
+        _make_opp(
+            oid=f"skipped-{i}",
+            symbol="ETH/USDT",
+            confidence="speculative",
+            confidence_score=20,
+        )
+        for i in range(10)
+    ]
+    opps.append(_make_opp(oid="executable-1", symbol="BTC/USDT", confidence="high", confidence_score=90))
+
+    def list_page(*, limit):
+        return opps[:limit]
+
+    cfg = _mock_config()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+
+    with patch("aletheia.agents.paper_trader_ranker.load_config", return_value=cfg), \
+         patch("aletheia.agents.paper_trader_ranker.list_opportunities", side_effect=list_page) as list_mock, \
+         patch("aletheia.agents.paper_trader_ranker.get_universe_member", return_value=None), \
+         patch("aletheia.agents.paper_trader_ranker.tradable_symbols_from_config", return_value=["BTC/USDT", "ETH/USDT"]), \
+         patch("aletheia.agents.paper_trader_ranker.lookup_factor_signal", return_value={
+             "factor_key": "test", "status": "active",
+             "expectancy": 0.5, "win_rate": 0.6, "trade_count": 5, "reason": "test",
+         }), \
+         patch("aletheia.agents.paper_trader_ranker._evaluate_guards_safe", return_value=None):
+        candidates = build_paper_candidates(limit=10)
+
+    best = select_best_candidate(candidates)
+
+    assert list_mock.call_args.kwargs["limit"] > 10
+    assert len(candidates) <= 10
+    assert best is not None
+    assert best["opportunity_id"] == "executable-1"
+
+
 # ---------------------------------------------------------------------------
 # Regime scoring (Position C: strategy-evidence gate/scoring removed — the
 # rules engine is deleted. Regime affinity survives as a scanner-family signal.)

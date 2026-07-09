@@ -1,13 +1,13 @@
 # Agent Contracts
 
-> Input/output contracts for all 12 registered agent functions and 32 scheduler jobs.
+> Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-07-03 (Position C / Learning SDD alignment)
+> Last updated: 2026-07-07 (#29 scheduler drift sweep)
 
 ---
 
-## 1. Scheduler Job Overview (31 jobs)
+## 1. Scheduler Job Overview (33 jobs)
 
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
@@ -23,22 +23,27 @@
 | 10 | post_trade_reviewer | 4h | agents | Review closed trades for lessons |
 | 11 | risk_critic | 6h | agents | Evaluate risk exposure, flag violations |
 | 12 | dreaming_daily | cron 02:00 CST | agents | Synthesize daily knowledge summary |
-| 16 | insight_synthesizer | cron 02:30 CST | agents | Cross-agent insight synthesis |
-| 17 | confidence_calibration | 6h | io | Compute ECE calibration metrics |
-| 18 | pi_operator_loop | cron 每4h:15 CST | agents | High-level operator assessment loop |
-| 19 | health_check | 10min | io | Doctor health probe |
-| 20 | cleanup | cron 03:17 CST | io | Data retention cleanup |
-| 21 | exchange_sync | 5min | io | Refresh exchange account cache |
-| 22 | portfolio_snapshot | 10min | default | Store portfolio equity snapshot |
-| 23 | reconciliation | 2min (live only) | io | Full state reconciliation |
-| 24 | price_feed | 30s | fast_io | In-memory price cache refresh |
-| 25 | daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
-| 26 | data_collectors | 2min | io | Funding rate, OI, liquidation, orderbook |
-| 27 | okx_demo_symbols | 4h | io | Refresh OKX demo symbol list |
-| 28 | guard_promotion | cron 04:00 CST | io | Promote candidate trading guards to active (learning; re-homed from deleted backtest_orchestrator, Position C) |
-| 29 | universe_refresh | 10min | io | Universe composition refresh |
-| 30 | ohlcv_nightly_backfill | cron (configurable) CST | io | Historical OHLCV gap fill |
-| 31 | persona_rollout | 8h | io | Advance dynamic-sizing rollout ladder one health-gated step (no-op unless persona_auto_advance_enabled) |
+| 13 | lesson_reviewer | cron 03:00 CST | agents | Overturn/renew accepted lessons after outcome review |
+| 14 | insight_synthesizer | cron 02:30 CST | agents | Cross-agent insight synthesis |
+| 15 | confidence_calibration | 6h | io | Compute ECE calibration metrics |
+| 16 | pi_operator_loop | cron 每4h:15 CST | agents | High-level operator assessment loop |
+| 17 | health_check | 10min | io | Doctor health probe |
+| 18 | cleanup | cron 03:17 CST | io | Data retention cleanup |
+| 19 | exchange_sync | 5min | io | Refresh exchange account cache |
+| 20 | portfolio_snapshot | 10min | default | Store portfolio equity snapshot |
+| 21 | reconciliation | 2min (live only) | io | Full state reconciliation |
+| 22 | price_feed | 30s | fast_io | In-memory price cache refresh |
+| 23 | daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
+| 24 | data_collectors | 2min | io | Funding rate, OI, liquidation, orderbook |
+| 25 | okx_demo_symbols | 4h | io | Refresh OKX demo symbol list |
+| 26 | guard_promotion | cron 04:00 CST | io | Promote candidate trading guards to active (learning; re-homed from deleted backtest_orchestrator, Position C) |
+| 27 | universe_refresh | 10min | io | Universe composition refresh |
+| 28 | ohlcv_nightly_backfill | cron (configurable) CST | io | Historical OHLCV gap fill |
+| 29 | persona_rollout | 8h | io | Advance dynamic-sizing rollout ladder one health-gated step (no-op unless persona_auto_advance_enabled) |
+| 30 | connectivity_monitor | interval `health.exchange_probe_interval_sec` | fast_io | Probe exchange connectivity; auto-pause on outage; auto-resume when recovered |
+| 31 | shadow_resolver | 6h | io | Resolve shadow trades against realised outcomes |
+| 32 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
+| 33 | outcome_settler | 15min | io | Settle outstanding prediction / universe forward outcomes |
 
 ---
 

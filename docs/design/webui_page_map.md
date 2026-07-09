@@ -91,10 +91,12 @@ new array, not a markup rewrite.
 
 ## Causal-chain inspector (cross-cutting, not a page)
 Lives primarily in Trades & Positions; reachable by clicking any proposal/order/position ID
-anywhere. Shows the full proposal → risk_decision → order → fill → position chain. Backend causal
-IDs already exist (trust §1.1); positions→proposal link is the one gap (trust §1.1 says don't fake
-it — show what exists, mark the missing direct link). No backend change required for the existing
-links; the position→proposal direct link is a parked schema item if we want it tight.
+anywhere. Shows the full proposal → risk_decision → order → fill → position chain. All causal IDs
+already exist end-to-end — including `positions.proposal_id`, `positions.order_id`, and
+`positions.opportunity_id` (2026-07-07 update, #30: the earlier "positions→proposal is the one gap"
+note is stale; the schema now carries these fields and every broker writes them at open time,
+including `adopt_position()` which builds a synthetic-but-honest chain marked `source='adopted'`).
+No backend change required for the causal-chain inspector — read what's there, no gap to mark.
 
 ## Build order (proposed, after structure confirmed)
 1. ✅ DONE (2026-06-07) Nav regroup (App.tsx NAV array → 5 phases: Observe/Decide/Execute/

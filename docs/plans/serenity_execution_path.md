@@ -162,7 +162,7 @@ Position(trade_school='serenity')
    - **不修改 Risk Engine #13**（信任边界 change-controlled）。Serenity 仍提供数值 stop，但用更宽的 thesis-based 止损：新增 `serenity.stop_loss_pct`（远大于短线 `default_stop_loss_pct`），在 `submit_decision_as_proposal`（`trading_decision.py:237-243`）按 trade_school 选择止损 pct。
 3. **退出机制按 trade_school 分流**（`position_manager._decide_exit` / `_maybe_update_trailing_stop`）：
    - `serenity`：禁用 72h `max_hold`（改用 `serenity.max_hold_days`，默认很大或 0=不限）；禁用 ATR 追踪止损（`_maybe_update_trailing_stop` 对 serenity 直接 return）。
-   - **论点失效退出（thesis-invalidation）**：MVP 最小实现——当 Serenity 仓位关联的 opp `status != active`（被研究循环重估下线）或显式 `thesis_invalidated` 标记时平仓；自动失效检测（research 重评打分跌破地板）列 roadmap。短线仓位完全不受影响。
+   - **论点失效退出（thesis-invalidation）**：MVP 最小实现——**当且仅当** Serenity 仓位关联的 opp `status != active`（被研究循环重估下线）时平仓（`position_manager.py:247-253`）。**#104 修订（2026-07-07）**：原计划里提到的「显式 `thesis_invalidated` 标记」**未实现**（`SerenityOpportunity` 模型 + 迁移都无此字段），本计划描述过承诺；status 是唯一控制轴，"invalidated" 语义通过将 opp status 从 `active` 迁到 `dismissed`/`expired` 表达（`test_serenity_p0_p3_e2e.py:212-232` 覆盖这两态）。若未来确要独立布尔 marker，须加 `SerenityOpportunity.thesis_invalidated` 字段 + 迁移 + spec_serenity_holding claim。自动失效检测（research 重评打分跌破地板）列 roadmap。短线仓位完全不受影响。
 4. **kill_switch / daily-loss**：Serenity 仓位仍受全局熔断保护（不豁免），符合「必须经 PI 做风控」。
 
 ### 5.3 信任边界与 SDD

@@ -180,6 +180,104 @@ async def test_settings_response_covers_sanitized_config_schema(client):
 
 
 @pytest.mark.anyio
+async def test_get_settings_masks_inline_secret_fields(client):
+    """Regression #1: GET /api/settings must not return coinalyze_api_key or proxy credentials raw."""
+    from aletheia.config.loader import save_config
+    cfg = AletheiaConfig()
+    cfg.market_data.coinalyze_api_key = "COINALYZESECRET12345"
+    cfg.network.proxy_url = "http://myuser:mypassword@127.0.0.1:7890"
+    save_config(cfg)
+
+    resp = await client.get("/api/settings")
+    assert resp.status_code == 200
+    raw = resp.text
+    assert "COINALYZESECRET12345" not in raw
+    assert "mypassword" not in raw and "myuser" not in raw
+
+    data = resp.json()
+    # Key stays present (UI reads the section) but the value is masked.
+    assert "coinalyze_api_key" in data["market_data"]
+    assert data["market_data"]["coinalyze_api_key"] != "COINALYZESECRET12345"
+    # Proxy host/port kept for diagnostics; only the user:pass is stripped.
+    assert "127.0.0.1:7890" in data["network"]["proxy_url"]
+
+
+@pytest.mark.anyio
+async def test_settings_post_does_not_echo_secrets(client):
+    """Regression #2/#4: webhook/network POST responses must not echo the submitted secret/creds."""
+    r = await client.post("/api/settings/webhook", json={"secret": "WEBHOOKSECRET999"})
+    assert r.status_code == 200
+    assert "WEBHOOKSECRET999" not in r.text
+
+    r2 = await client.post("/api/settings/network", json={"proxy_url": "http://uu:ppw@10.0.0.9:1080"})
+    assert r2.status_code == 200
+    assert "ppw" not in r2.text and "uu:ppw" not in r2.text
+    # host still surfaced
+    assert "10.0.0.9:1080" in r2.text
+
+
+@pytest.mark.anyio
+async def test_tunnel_guard_protects_risk_config_mutation(client):
+    """Regression #137: with the tunnel enabled, POST /settings/risk requires the token."""
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.secrets import set_secret
+    cfg = load_config()
+    cfg.tunnel.enabled = True
+    save_config(cfg)
+    set_secret("tunnel_api_token", "TUNNELTOKEN123")
+
+    # No token -> blocked (401): risk config cannot be mutated over a public tunnel.
+    r = await client.post("/api/settings/risk", json={"max_leverage_major_live": 3})
+    assert r.status_code == 401
+
+    # Correct token -> the auth guard passes (route then handles it, not a 401).
+    r2 = await client.post(
+        "/api/settings/risk",
+        json={"max_leverage_major_live": 3},
+        headers={"X-Aletheia-Token": "TUNNELTOKEN123"},
+    )
+    assert r2.status_code != 401
+
+
+@pytest.mark.anyio
+async def test_tunnel_guard_protects_operator_command_surfaces(client):
+    """Regression #42: operator command/pause/resume/wake/trigger and capital
+    events must be protected by the tunnel token when the tunnel is enabled."""
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.secrets import set_secret
+    cfg = load_config()
+    cfg.tunnel.enabled = True
+    save_config(cfg)
+    set_secret("tunnel_api_token", "TUNNELTOKEN42")
+
+    protected_posts = [
+        "/api/operator/command",
+        "/api/operator/pause",
+        "/api/operator/resume",
+        "/api/operator/wake",
+        "/api/capital/events",
+    ]
+    for path in protected_posts:
+        r = await client.post(path, json={})
+        assert r.status_code == 401, f"{path} should be blocked without token, got {r.status_code}"
+
+    # With correct token, the auth guard passes (downstream may 422/400/403, but not 401).
+    for path in protected_posts:
+        r = await client.post(path, json={}, headers={"X-Aletheia-Token": "TUNNELTOKEN42"})
+        assert r.status_code != 401, f"{path} should pass auth guard with token, got {r.status_code}"
+
+
+def test_restart_audit_actor_source_maps_automated_triggers():
+    """Regression #132: automated restart triggers are not recorded as actor='human'."""
+    from aletheia.server.routes.gateway import _restart_audit_actor_source
+    assert _restart_audit_actor_source("git_hook") == ("system", "git_hook")
+    assert _restart_audit_actor_source("file_change") == ("dev_watcher", "dev_watcher")
+    assert _restart_audit_actor_source("manual") == ("human", "dashboard")
+    # unknown reasons default to human/dashboard (dashboard-originated)
+    assert _restart_audit_actor_source("whatever")[0] == "human"
+
+
+@pytest.mark.anyio
 async def test_settings_update_controls_persist_new_config_fields(client):
     resp = await client.post(
         "/api/settings/exchange-markets",

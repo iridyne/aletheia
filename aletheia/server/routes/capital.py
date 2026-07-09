@@ -8,9 +8,17 @@ from aletheia.storage import repositories as repo
 
 router = APIRouter(prefix="/api/capital", tags=["capital"])
 
+_migrated = False
+
 
 def _ensure_db():
-    run_migrations()
+    # #88: run migrations once per process, not on every request. run_migrations() does
+    # a batch of DDL + column checks; calling it inside every async capital handler
+    # added avoidable latency on a hot-ish path (migrations are idempotent + global).
+    global _migrated
+    if not _migrated:
+        run_migrations()
+        _migrated = True
 
 
 class CapitalEventRequest(BaseModel):
@@ -50,4 +58,28 @@ async def create_event(body: CapitalEventRequest):
         note=body.note or "manual",
     )
     repo.insert_capital_event(event)
+
+    # #87 fix: capital deposits/withdrawals shift the equity-curve baseline (they
+    # drive net_deposits which analytics/equity_curve subtracts before rendering
+    # returns). The row was persisted but no audit event was written — the change
+    # was invisible in the audit hash chain, so a later "why did the baseline
+    # jump?" investigation had no trace. Emit an audit event now.
+    from aletheia.files.jsonl import write_audit
+    write_audit({
+        "actor": "human",
+        "source": "capital_events_route",
+        "event_type": f"capital_{body.event_type}",
+        "entity_type": "capital_event",
+        "entity_id": event.id,
+        "after": {
+            "broker_id": body.broker_id,
+            "event_type": body.event_type,
+            "amount_usdt": body.amount_usdt,
+            "note": body.note or "manual",
+        },
+        "message": (
+            f"Capital {body.event_type} recorded: {body.amount_usdt} USDT on "
+            f"{body.broker_id} ({body.note or 'manual'})"
+        ),
+    })
     return {"id": event.id, "status": "created"}

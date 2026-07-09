@@ -34,13 +34,20 @@ def _is_live(execution_mode: str) -> bool:
     return execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited")
 
 
-def _market_data_age_seconds(symbol: str) -> float | None:
-    """Age in seconds of the latest market snapshot for symbol, or None if absent."""
-    from aletheia.storage.repositories import list_market_snapshots
-    rows = list_market_snapshots(symbol=symbol, limit=1)
-    if not rows:
+def _market_data_age_seconds(symbol: str, market_type: str | None = None) -> float | None:
+    """Age in seconds of the latest market snapshot for symbol, or None if absent.
+
+    When ``market_type`` (proposal vocabulary, e.g. "usdt_futures") is given, a
+    typed snapshot is preferred so a futures freshness check does not pass on a
+    spot snapshot for the same symbol (#13). ``latest_snapshot`` falls back to
+    the symbol-only lookup when no typed snapshot exists, so this stays fail-closed
+    on genuinely absent data without introducing new stale rejections.
+    """
+    from aletheia.trading.market_data import latest_snapshot
+    row = latest_snapshot(symbol, market_type=market_type)
+    if not row:
         return None
-    ts = rows[0].get("snapshot_at")
+    ts = row.get("snapshot_at")
     if not ts:
         return None
     try:
@@ -115,10 +122,23 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
             _missing.append("risk_reward")
         if _missing:
             violations.append(f"incomplete_entry_plan:{'+'.join(_missing)}")
+        else:
+            # 2c. Side-of-entry geometry (#98): all four numbers are present, but they
+            #     must sit on the correct side of entry, else the "plan" is inverted
+            #     (e.g. a long whose stop is ABOVE entry). Presence != a valid bet.
+            entry = proposal.price
+            if proposal.direction == "long" and not (proposal.stop_price < entry < proposal.take_profit):
+                violations.append("entry_plan_geometry:expected_stop<entry<tp_for_long")
+            elif proposal.direction == "short" and not (proposal.take_profit < entry < proposal.stop_price):
+                violations.append("entry_plan_geometry:expected_tp<entry<stop_for_short")
 
-    # 3. Live state
+    # 3. Live state — fail CLOSED. A *_live_limited order is permitted ONLY when the
+    #    live state is the explicit unlocked value ("live_limited", set by human
+    #    confirmation). Any other value (default "live_disabled", a typo, or an
+    #    unknown/future state) must BLOCK — the previous `== "live_disabled"` check
+    #    let every non-disabled value through, permitting live orders by accident (#7).
     live_state = cfg.live.state
-    if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited") and live_state == "live_disabled":
+    if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited") and live_state != "live_limited":
         violations.append("live_disabled")
 
     # 4. Permission mode
@@ -179,6 +199,13 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
         elif not _is_live(proposal.execution_mode) and not risk.allow_short_demo:
             violations.append("short_not_allowed_demo")
 
+    # 7b. Spot cannot be shorted (#24). A short is only expressible on a futures/perp
+    #     instrument; a spot+short would reach the broker as a spot SELL of an asset
+    #     the account may not hold. Reject at the risk boundary regardless of
+    #     allow_short_* (which only gate direction, not instrument type).
+    if proposal.direction == "short" and proposal.market_type == "spot":
+        violations.append("spot_short_not_allowed")
+
     # 8. Max daily loss — global brake. If today's realized loss breaches the limit,
     #    reject and auto-trip the kill switch (guide §21.3, §2.4).
     #    Respects kill_switch_enabled_live / kill_switch_enabled_demo toggles:
@@ -234,7 +261,7 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     # Live-only checks: data freshness, single-trade risk, strategy lifecycle.
     if _is_live(proposal.execution_mode):
         # 11. Data freshness
-        age = _market_data_age_seconds(proposal.symbol)
+        age = _market_data_age_seconds(proposal.symbol, market_type=proposal.market_type)
         if age is None or age > _MAX_DATA_AGE_SECONDS:
             violations.append(f"stale_market_data:age={age}")
 
@@ -295,7 +322,7 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
         # no exchange-side price and runs even when collection is paused. Looser bound
         # than live (see _MAX_DEMO_DATA_AGE_SECONDS).
         if proposal.execution_mode in ("bitget_demo", "okx_demo"):
-            demo_age = _market_data_age_seconds(proposal.symbol)
+            demo_age = _market_data_age_seconds(proposal.symbol, market_type=proposal.market_type)
             if demo_age is None or demo_age > _MAX_DEMO_DATA_AGE_SECONDS:
                 violations.append(f"stale_market_data_demo:age={demo_age}")
 
@@ -426,6 +453,15 @@ def _check_lesson_constraints(proposal) -> list[str]:
                 )
 
             action = rec.get("action")
+            # Contract (#93): hard blocks (block_symbol/direction/scanner) are only
+            # valid from category='risk' lessons — the docstring says so but the code
+            # never checked. A non-risk lesson carrying a block_* action must NOT hard
+            # reject (that gates trades outside the documented risk-lesson boundary).
+            # Advisory actions (reduce_size) are unaffected.
+            if action in ("block_symbol", "block_direction", "block_scanner") and getattr(lesson, "category", None) != "risk":
+                logger.debug("lesson %s action=%s skipped: category=%s is not 'risk'",
+                             lesson.lesson_id, action, getattr(lesson, "category", None))
+                continue
             if action == "block_symbol":
                 blocked_sym = to_canonical(rec.get("symbol", ""))
                 if blocked_sym and blocked_sym == sym_canonical:
@@ -506,10 +542,26 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
             return 1.0
 
         if execution_mode == "paper_internal":
-            mode_snapshots = [
-                s for s in snapshots
-                if s.get("execution_mode") in ("paper_internal", "bitget_demo")
+            # #143 fix: paper_internal's total_value_usdt is position NOTIONAL
+            # (mark-to-market), not true equity — it swings with open-position
+            # size, so closing a good trade looks like a 90%+ "drawdown" even
+            # though the account is profitable. Use the `exchange_account` rows
+            # for drawdown when they exist (they capture real account equity);
+            # only fall back to the paper_internal mark-to-market rows when no
+            # exchange_account rows are available (pure-paper-simulation mode).
+            exchange_snapshots = [
+                s for s in snapshots if s.get("execution_mode") == "exchange_account"
             ]
+            if len(exchange_snapshots) >= 3:
+                mode_snapshots = exchange_snapshots
+            else:
+                # Pure paper: no exchange to measure against. Notional is all we
+                # have — accept the imprecision and document it explicitly. The
+                # cap itself ($max_demo_position_notional_usdt) still bounds size.
+                mode_snapshots = [
+                    s for s in snapshots
+                    if s.get("execution_mode") in ("paper_internal", "bitget_demo")
+                ]
         else:
             # Real account equity lives in the exchange_account rows.
             mode_snapshots = [

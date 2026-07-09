@@ -87,7 +87,7 @@ def test_enable_builds_correct_argv_and_xml(tmp_path, monkeypatch):
     assert 'xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"' in xml
     assert "<LogonTrigger>" in xml
     assert "<TimeTrigger>" in xml
-    assert "<Interval>PT30S</Interval>" in xml
+    assert "<Interval>PT1M</Interval>" in xml
     assert "<StopAtDurationEnd>false</StopAtDurationEnd>" in xml
     assert "<LogonType>InteractiveToken</LogonType>" in xml
     assert "<RunLevel>LeastPrivilege</RunLevel>" in xml
@@ -418,18 +418,18 @@ def test_parse_xml_status_disabled():
     assert result["task_enabled"] is False
 
 
-# --- 13. Watchdog interval changed to 30 seconds ---
+# --- 13. Watchdog interval is 1 minute (minimum allowed by Task Scheduler) ---
 
-def test_watchdog_interval_is_30_seconds():
+def test_watchdog_interval_is_1_minute():
     from aletheia.gateway.autostart import WATCHDOG_INTERVAL
-    assert WATCHDOG_INTERVAL == "PT30S"
+    assert WATCHDOG_INTERVAL == "PT1M"
 
 
-def test_xml_contains_30s_interval(monkeypatch):
+def test_xml_contains_1m_interval(monkeypatch):
     from aletheia.gateway import autostart
     _force_windows(monkeypatch, autostart)
     xml = autostart._build_task_xml()
-    assert "<Interval>PT30S</Interval>" in xml
+    assert "<Interval>PT1M</Interval>" in xml
 
 
 # --- 14. write_watchdog_tick ---

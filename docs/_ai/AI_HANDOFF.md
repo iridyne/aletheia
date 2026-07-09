@@ -7,37 +7,49 @@
 
 ## Last Updated
 
-2026-07-07 (Position X 离线材料接入，advisory-only 第二阶段)
+2026-07-09 (Full bug review — fix phase: market-type sub-batch B12 done; merged master)
 
 ---
 
-## Recent Change (Position X 离线材料接入，advisory-only 第二阶段 — 2026-07-07)
+## Recent Change (Market-type data-model sub-batch — B12, 2026-07-09)
 
-在最小版 Vergex 结构快照之上，又补了一层 Position X 离线材料接入。目标仍然不是让外部材料驱动交易，
-而是把可用研究内容压缩成 Aletheia 自己的安全证据和结构公式。
+最后一块成批的遗留 bug（同一个币在现货和合约上被搞混）已修完。这批之前被推迟，理由是
+"要先给行情快照表加一列再动"——但核查发现那一列**本来就有**，所以根本不用改表结构，
+真正要做的只是把"这是现货还是合约"这个信息一路传下去。
 
-- 新增 `aletheia/data/position_x.py`：
-  - 把授权样本中的维度解释、结构总结、prompt 组织方式提炼成 knowledge cards。
-  - 直接把 `sndk_intelligence_signals` 风格 payload 归一化成 `PerpStructureSnapshot`。
-  - 离线计算 LFA、POC、Value Area、convexity、cascade、research_prior_v1 composite。
-  - `extract_position_x_material_bundle()` 现在能一次性读取 `04_evidence/` 或同类离线目录，输出结构快照 + knowledge cards。
-  - `composite_z_fit_data` / `dim_internal_fit` / `analysis_*.json` 现在会额外提炼成公式提示卡和 agent 表达样式卡，仍然只保留摘要与 source hash。
-  - 输出压缩后的 `Position X (advisory only)` 证据块。
-- `perp_structure_snapshots` 扩展字段：
-  `structure_bias` / `composite_z` / `structure_rank` / `universe_size` /
-  `dimension_scores_json` / `risk_context_json`。
-- `market_observer` 现在会把带 Position X 扩展字段的结构快照压缩后送进 prompt；
-  旧的 POC / Value Area / 清算墙渲染继续兼容。
-- System Operator 上下文也会读取同一压缩结构证据，用于持仓/机会判断；仍然是 advisory-only。
-- `docs/design/data_utilization.md` / `data_model.md` 和对应 spec 已同步登记第二阶段路径。
+- **#13**（风控用错快照）：合约决策不再拿同名现货的快照来判断数据新鲜度/入场价。查快照时
+  优先按市场类型精确匹配，找不到再退回按符号查（旧库里合约快照被存成了现货，退回保证不会
+  凭空多拒单）。触风控信任边界，配 PL-MD-06/07 两条回归。
+- **#14**：行情采集不再把合约标的当现货抓，改成读标的/持仓自己的市场类型。
+- **#9**：候选生成把市场类型带上，决策层不再拿到 None。
+- **#102**：Serenity 促成的待决信号从源机会里补回市场类型（不用给 pi_decisions 加列）。
+- **#10 判为"不修"**：设计上（spec OD-S01 / 提交 `db3c3f8`）方向分析与合约/现货无关，
+  流水线本就每个符号只出一个标的，按符号去重是**符合设计**的；加市场类型去重反而会把当初
+  故意去掉的"同币重复观察"放回来。已在代码里加注释说明。
+- **#11/#68/#106 确认早已修好**（`034d4c8` 的渐进匹配平仓）。
 
-边界：不接真实 partner feed，不导入 raw prompt / wallet / balance / token / credential，不把外部
-composite_z 直接当交易开关，不改 risk/execution/live，不允许单靠这块证据开仓/平仓/加杠杆。
+提交：`df2fa5c`→`02421c0`（5 个：repo 过滤参数 / market_data / risk+specs / 候选+决策链 /
+风控网关测试桩）。验证：spec 全套 + risk + ranker + runtime → 633 passed / 0 failed。
+未 push、未 restart gateway（按交接约定，由 owner 触发）。台账权威记录见
+`FULL_BUG_REVIEW_2026-07-06.md` 的 B12 行。
 
-验证：
-- `uv run pytest tests/test_position_x_knowledge.py tests/test_position_structure_features.py tests/test_data_collectors.py tests/test_market_context.py tests/test_doctor.py -q -k "position_x or perp_structure or compact_position_x or test_position_structure_features or test_position_x_knowledge"`
-- `uv run pytest tests/specs/spec_data_utilization.py tests/specs/spec_data_model.py -q`
-- `git diff --check`
+---
+
+## Recent Handoff (Full Bug Review — fix phase, 2026-07-07)
+
+Full-project bug/SDD review is **complete** (`#1`–`#180`, coverage marked "full-project pass complete"). The **fix phase is underway** on branch `fix/bug-review-fixes` (off `iridite/bug_fix` HEAD, pushed to origin).
+
+- Detailed finding ledger + authoritative Fix Progress table: `docs/_ai/FULL_BUG_REVIEW_2026-07-06.md`
+- Short takeover guide: `docs/_ai/BUG_REVIEW_HANDOFF_2026-07-06.md`
+- Findings recorded: `#1` through `#180` (9 HIGH / 99 MED / 72 LOW; + 9 refuted, do not re-report).
+- **Fixed so far: 42 findings across 11 commits** (batches B1–B6 + B10a). All 9 HIGH findings addressed.
+- Verification: full SDD spec suite **588 passed / 0 failed** + 15 new focused regression test files. Trust-boundary changes (`risk`/`execution`/secrets/live/gateway lifecycle) each carry a focused regression per AGENTS.md.
+- Remaining (batched, ledger Fix Progress is source of truth): **B7** portfolio/PnL/reconciliation/broker/persistence · **B8** frontend honesty (needs `npm run build`) · **B9** data/analytics/doctor/cli · **B10** doc-drift tail. Plus ~15 deferred coupled/infra items (market-type data-model migration, operator auth #40/#41, #109/#143/#102-pending/#17, runtime-perf #90/#147/#134) — each recorded with its reason in the ledger.
+- Merge note: `origin/master` has advanced 5 commits since this branch forked (concurrent session; incl. `c945110f "Scope auto guards to their source symbol"` which may overlap B5 guard changes) — reconcile at PR time, not on this branch.
+
+Owner preference for future records: use short, structured Markdown rather than long prose. Suggested fields: domain, impact, document expectation, code evidence, reproduction/verification, expected fix direction.
+
+Next AI should read the ledger's Fix Progress table first, then continue the next batch instead of re-checking already-fixed or already-recorded findings.
 
 ---
 
@@ -69,6 +81,146 @@ prompt，不复刻 Vergex composite score，不让结构信号单独触发开仓
 
 ---
 
+## Recent Change (Opportunity CLI consolidation — 2026-07-05)
+
+机会/假说排查入口已收口到 `opportunity`，避免 `flow`、`alpha`、`funnel`、`sizing`、
+`thesis audit` 平级抢入口。
+
+新的 owner 日常入口：
+
+```powershell
+uv run aletheia opportunity audit --hours 24
+uv run aletheia opportunity trace --id <opportunity_id>
+uv run aletheia opportunity audit --view funnel
+uv run aletheia opportunity audit --view sizing
+uv run aletheia opportunity audit --view alpha
+uv run aletheia opportunity audit --view thesis
+```
+
+语义边界：
+- `inspect opportunities`：只列出机会原始记录。
+- `opportunity audit`：分析机会整体生命周期。
+- `opportunity trace`：追踪单个机会的一生。
+
+兼容策略：
+- `flow` 是隐藏兼容别名，继续可执行但提示改用 `opportunity`。
+- `alpha`、`funnel`、`sizing` 顶层命令从根帮助菜单隐藏，human 输出提示改用 `opportunity --view ...`。
+- `thesis audit` 隐藏为兼容入口；`thesis snapshot/snapshots/records` 保留用于观察留档和明细导出。
+
+边界：只改 CLI 入口和只读分析路由；不改 risk、execution、scheduler、agent 决策、DB schema、
+配置或 live 行为。
+
+验证：
+- `uv run pytest tests/test_cli.py::test_help -q`
+- `uv run pytest tests/test_opportunity_flow_ledger.py::test_opportunity_cli_outputs_audit_and_trace tests/test_opportunity_flow_ledger.py::test_legacy_flow_cli_remains_hidden_compatibility_alias tests/test_opportunity_flow_ledger.py::test_opportunity_cli_outputs_specialized_views -q`
+
+---
+
+## Recent Change (Executable Candidate Supply Floor V1 — 2026-07-04)
+
+新增候选供给枯竭诊断，用来在 System Operator 连续面对贫瘠可执行候选池时提示刷新机会池，而不是继续反复 skip。
+
+- `trading_context` 在构建 `executable_candidates` / `excluded_candidates_summary` 后写入
+  `candidate_supply_snapshot` operator event，并把 `candidate_supply` 摘要放入 layer2。
+- 连续 2 个 snapshot 的 `executable_count < 3` 时，`/api/operator/recommendations` 输出
+  `candidate_supply_drought`。
+- recommendation metadata 包含 `main_reason`（例如 `ttl_expired`）、`executable_count`、
+  `floor`、`consecutive_cycles`、`task_type=run_market_scan`。
+- `flow audit` 的 integrated signals 增加 candidate supply 摘要，方便 OFL 也能看到当前供给是否枯竭。
+- 暂停状态下只给 recommendation，不带可执行 `taskType`。
+
+边界：不改 trading threshold、不改 debate、不改 guard、不改 risk、不改 execution、
+不调用 LLM、不创建 proposal、不下单；只是候选供给 telemetry + recommendation。
+
+验证：
+- `uv run pytest tests/test_candidate_supply_floor.py tests/test_operator_events.py tests/test_anti_hallucination_e2e.py tests/test_agent_shell.py -q`
+- `uv run pytest tests/specs/spec_decision_lifecycle.py tests/specs/spec_data_model.py tests/test_architecture_fitness.py -q`
+
+---
+
+## Recent Change (Opportunity Flow CLI polish — 2026-07-04)
+
+`aletheia flow audit` 增加三个只读过滤参数，方便直接看可疑机会：
+
+```powershell
+uv run aletheia flow audit --hours 24 --stage debate_downgraded
+uv run aletheia flow audit --hours 24 --verdict missed_alpha_suspect
+uv run aletheia flow audit --hours 24 --symbol TRX/USDT
+```
+
+Flow human output 新增 `Debate signal` 区块，直接展示 debated decisions、debated skips、
+trade-like decisions、trace_complete / trace_missing、missed_alpha_suspect 和下一步需要的证据。
+
+`inspect debate-impact` 和 `inspect guard-impact` 的人工输出末尾增加软提示，指向
+`uv run aletheia flow audit --hours <n>`；JSON 输出保持不变。
+
+边界：只读 CLI/read-model 输出增强；不改 debate 公式、ranker、guard、risk、execution，
+不新增 LLM 调用，不建表。
+
+验证：
+- `uv run pytest tests/test_opportunity_flow_ledger.py tests/test_debate_impact_audit.py tests/test_guard_impact_audit.py tests/specs/spec_analytics_contracts.py tests/test_architecture_fitness.py -q`
+- `uv run aletheia flow audit --hours 24 --limit 5 --stage debate_downgraded --verdict missed_alpha_suspect --symbol BTC/USDT`
+
+---
+
+## Recent Change (Opportunity Flow Ledger V1 — 2026-07-04)
+
+新增统一的只读机会流账本入口：
+
+```powershell
+uv run aletheia flow audit --hours 24
+uv run aletheia flow trace --opportunity-id <id>
+```
+
+目标：把一个 opportunity 从出现到最终状态的生命周期串起来，回答“为什么这个机会没有变成交易”。
+
+- 每条记录输出 root opportunity、`final_state`、`final_stage`、`final_reason`、timeline、
+  shadow/forward counterfactual outcome。
+- 覆盖成功和失败路径：created、ranker_excluded、guard_blocked、venue_unsupported、
+  ttl_expired、signal_pending、operator_skip、debate_downgraded、proposal_created、
+  risk_rejected、order_executed、position_opened、position_closed、shadow_resolved、
+  forward_outcome_resolved。
+- 复用已有只读审计摘要：Trade Funnel、Debate Impact、Thesis Lineage、Sizing Trace。
+- Guard Impact V1 保持专项入口；flow 只在已有持久化 reasoning/skip reason 明确写出
+  guard_blocked 时标记该 stage，不重新跑 guard 规则。
+- 旧 audit 命令暂不硬路由，兼容计划见 `docs/_ai/OPPORTUNITY_FLOW_LEDGER_V1.md`。
+
+边界：不调用 LLM，不跑 ranker，不重跑 guard/debate/risk/execution，不建新表，不改交易行为。
+旧数据缺字段时保持 `insufficient_data`，不事后补写理由。
+
+验证：
+- `uv run pytest tests/test_opportunity_flow_ledger.py tests/test_trade_funnel_audit.py tests/test_debate_impact_audit.py tests/test_sizing_trace_audit.py tests/test_thesis_lineage.py -q`
+- `uv run pytest tests/specs/spec_analytics_contracts.py tests/test_architecture_fitness.py -q`
+- `uv run aletheia flow audit --hours 24 --limit 5`
+- `uv run aletheia flow trace --opportunity-id missing-flow-id`
+
+---
+
+## Recent Change (Guard Impact Audit — 2026-07-04)
+
+新增一个窄范围、只读的 guard impact 诊断入口，用来判断 active blocking guards 是否正在压制
+候选流：
+
+```powershell
+uv run aletheia inspect guard-impact --hours 24
+uv run aletheia inspect guard-impact --hours 24 --json
+```
+
+- 读取 active blocking guard markdown/frontmatter、最近窗口内本地可评估的 open opportunities、
+  existing shadow / forward outcomes。
+- 输出 active blocking guards 总数、按 scanner_family / direction / symbol 的聚合、
+  被 guard 命中的候选、每个候选命中的 guard、guard 作用范围分类、已有 outcome 和 verdict。
+- verdict 只来自已有 outcome：`protective`、`overbroad_suspect`、`insufficient_data`。
+- 本地已知的 pre-guard skip（如 TTL 过期、execution_eligible=False）不计入 guard impact；
+  demo unsupported symbol 不在这里过滤，因为该诊断禁止调用 exchange/HTTP。
+
+边界：不禁用/修改 guard，不改 ranker，不改 System Operator，不动 risk/execution/live，
+不调用 LLM/HTTP/exchange，不写 DB，不修改 guard 文件。
+
+验证：
+- `uv run pytest tests/test_guard_impact_audit.py tests/test_paper_trader_guards.py tests/test_paper_trader_ranker.py tests/test_trade_funnel_audit.py -q`
+- `uv run aletheia inspect guard-impact --hours 24`
+- `uv run aletheia inspect guard-impact --hours 24 --json`
 ## Recent Change (Thesis Lineage 链路完整性修复 — 2026-07-04)
 
 完成一轮 Thesis Lineage V1.1 数据链路完整性修复（commit `7df8889f`）。
@@ -973,7 +1125,7 @@ Lessons 列表行可点击展开 DetailDrawer，正文超 120 字符显示 "…"
 
 ## Recent Change (负反馈闭环：高维 + 可推翻 self-evolve — 2026-06-28)
 
-分支 `worktree-neg-feedback-loop-fix`。审计发现"用交易结果调整未来交易"的 4 条通路 3 条坏；owner 定调（记忆 [[aletheia-negfeedback-high-dimensional-evolve]]）：**要高维模式归因 + 可被后续证据推翻的 self-evolve + 全自动，摒弃低维 symbol/direction/scanner 硬拦截**。设计见 `docs/plans/round2_negative_feedback_loop_closure.md`。
+分支 `worktree-neg-feedback-loop-fix`。审计发现"用交易结果调整未来交易"的 4 条通路 3 条坏；owner 定调（记忆 `aletheia-negfeedback-high-dimensional-evolve`）：**要高维模式归因 + 可被后续证据推翻的 self-evolve + 全自动，摒弃低维 symbol/direction/scanner 硬拦截**。设计见 `docs/plans/round2_negative_feedback_loop_closure.md`。
 
 **根因 + 修复（5 项核心）**：
 - **Path 6 反思**：`reflection.py:62/65` 重复 `opportunity_id=` kwarg → 整模块 `SyntaxError`，被调用方 `try/except` 静默吞 → record_decision/get_last_reflection 双失效、doctor 不报警。提交 5be7826（A13）引入。修=删重复行 + `test_agent_shell::test_reflection_module_imports_cleanly` import smoke 锁回归。
@@ -1026,7 +1178,7 @@ Lessons 列表行可点击展开 DetailDrawer，正文超 120 字符显示 "…"
 **spec 覆盖**：303 claims GREEN（ML-S01~S03/B01~B02 + SE-S06/I06 + SV-S03/S04/B02 + 迁移修正）。
 
 **待合并主仓**：分支 `worktree-lazy-drifting-clarke`。合并后须在主仓 `gateway restart`
-才能生效（worktree data/ 为空，见记忆 [[aletheia-worktree-gateway-empty-data-trap]]）。
+才能生效（worktree data/ 为空，见记忆 `aletheia-worktree-gateway-empty-data-trap`）。
 
 **剩余 P3 项（数据积累后再推）**：
 - D1: xStock 可研究性数据质量管理（等 researchability_grade 数据积累后再做）
@@ -1045,7 +1197,7 @@ curve." + Retry 按钮。
 走系统代理被转坏",并建议用户"代理软件绕过列表加 127.0.0.1"。用户当场指出
 后实测纠正:WinINET 系统代理 `ProxyEnable=0` 且 127.* 已 DIRECT,浏览器直连
 无碍;只是**环境变量代理** `HTTP_PROXY=127.0.0.1:7897`+NO_PROXY 空,导致 curl
-误把 localhost 丢给代理产生 502 假象。记忆 [[aletheia-localhost-probe-proxy-trap]]
+误把 localhost 丢给代理产生 502 假象。记忆 `aletheia-localhost-probe-proxy-trap`
 已写入。以后诊断:curl 探活 localhost 必须 `--noproxy '*'`;后端死活以 gateway
 status + /api/health 的 status 字段为准。
 

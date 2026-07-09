@@ -724,6 +724,14 @@ def _probe_perp_structure(report: Report) -> None:
             "ORDER BY as_of_time DESC, observed_at DESC LIMIT 1"
         ).fetchone()
     except Exception as e:
+        if "no such table: perp_structure_snapshots" in str(e):
+            report.add(
+                "data.perp_structure",
+                "info",
+                "no perp structure rows yet",
+                "no action unless this observation-only feed is expected to be populated",
+            )
+            return
         report.add("data.perp_structure", "info", f"could not read perp structure: {e}")
         return
 
@@ -1880,8 +1888,8 @@ def _probe_content_signal_settlement(report: Report) -> None:
         return
     if overdue > 0:
         oldest_age = _age_minutes(oldest_due)
-        # settle_due() runs every 10 min — tolerate up to 15 min before alarming
-        if oldest_age is not None and oldest_age > 15:
+        # outcome_settler runs every 15 min — tolerate up to 20 min before alarming
+        if oldest_age is not None and oldest_age > 20:
             report.add("content.signal_settlement", "warn",
                        f"{overdue} forward outcomes past due_at, oldest {_fmt_age(oldest_age)} — settler stalled",
                        "outcome settler job is not closing due outcomes; check its scheduler cadence")
@@ -1902,7 +1910,7 @@ def _probe_content_proposal_bias(report: Report) -> None:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         rows = list(db.execute(
             "SELECT direction, COUNT(*) n FROM trade_proposals "
-            "WHERE created_at >= ? AND source != 'adopted' "
+            "WHERE created_at >= ? AND (source IS NULL OR source != 'adopted') "
             "GROUP BY direction ORDER BY n DESC",
             (cutoff,),
         ))
@@ -1935,34 +1943,81 @@ def _probe_content_proposal_bias(report: Report) -> None:
         report.add("content.proposal_bias", "ok", detail)
 
 
+def _egress_ip(opener) -> str | None:
+    """Best-effort external egress IP via an opener. None on any failure."""
+    import urllib.request  # noqa: F401 — opener carries its own handlers
+
+    try:
+        return opener.open("https://api.ipify.org", timeout=6).read().decode("utf-8").strip()
+    except Exception:
+        return None
+
+
 def _probe_network(report: Report) -> None:
     try:
         from aletheia.config.loader import load_config
-        cfg = load_config()
-        proxy_url = cfg.network.proxy_url
+        net = load_config().network
+        proxy_url = net.proxy_url
+        enforce = bool(getattr(net, "enforce", False))
+        protocol = getattr(net, "proxy_protocol", "http")
     except Exception as e:
         report.add("network.proxy", "info", f"could not read config: {e}")
         return
 
+    mode = "ENFORCE/fail-closed" if enforce else "fail-open"
+
     if not proxy_url:
-        report.add("network.proxy", "ok", "not configured (direct connection)")
+        if enforce:
+            report.add("network.proxy", "warn",
+                       "enforce is ON but no proxy is configured — all outbound traffic is blocked",
+                       "set a proxy host in Settings → Network, or turn enforce off")
+        else:
+            report.add("network.proxy", "ok", "not configured (direct connection)")
         return
 
     import time
     import urllib.request
-    url = "https://api.binance.com/api/v3/ping"
+
+    # SOCKS can't be probed with urllib's ProxyHandler — defer reachability to the
+    # exchange connectivity monitor (which rides the aiohttp_socks path).
+    if str(protocol).startswith("socks"):
+        report.add("network.proxy", "info",
+                   f"{protocol} proxy configured [{mode}] — {proxy_url}; "
+                   "reachability verified by the exchange connectivity monitor")
+        return
+
+    proxy_opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({"https": proxy_url, "http": proxy_url})
+    )
     t0 = time.monotonic()
     try:
-        import os
-        proxies = {"https": proxy_url, "http": proxy_url}
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
-        opener.open(url, timeout=8).read()
+        proxy_opener.open("https://api.binance.com/api/v3/ping", timeout=8).read()
         latency_ms = int((time.monotonic() - t0) * 1000)
-        report.add("network.proxy", "ok", f"proxy configured, reachable ({latency_ms}ms) — {proxy_url}")
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
-        report.add("network.proxy", "warn", f"proxy configured but unreachable ({latency_ms}ms): {e}",
-                   "check proxy is running and proxy_url is correct in Settings → Infrastructure → Network")
+        hint = "check the proxy is running and host/port are correct in Settings → Network"
+        if enforce:
+            hint += "; enforce is ON, so trading auto-pauses until the proxy recovers"
+        report.add("network.proxy", "warn",
+                   f"proxy configured but unreachable [{mode}] ({latency_ms}ms): {type(e).__name__}",
+                   hint)
+        return
+
+    # Leak check: confirm traffic actually egresses via the proxy (exit IP differs
+    # from a direct connection). A match means requests may NOT be routed through
+    # the proxy despite it being reachable.
+    proxy_ip = _egress_ip(proxy_opener)
+    direct_ip = _egress_ip(urllib.request.build_opener(urllib.request.ProxyHandler({})))
+    if proxy_ip and direct_ip and proxy_ip == direct_ip:
+        report.add("network.proxy", "warn",
+                   f"proxy reachable [{mode}] ({latency_ms}ms) but egress IP == direct IP "
+                   f"({proxy_ip}) — traffic may NOT be routed through the proxy",
+                   "verify the proxy forwards to an upstream with a different exit IP")
+        return
+
+    leak_note = f"; egress {proxy_ip} ≠ direct {direct_ip}" if (proxy_ip and direct_ip) else ""
+    report.add("network.proxy", "ok",
+               f"proxy reachable [{mode}] ({latency_ms}ms) — {proxy_url}{leak_note}")
 
 
 def _probe_audit_chain(report: Report) -> None:
@@ -1989,22 +2044,42 @@ def _probe_audit_chain(report: Report) -> None:
         EFFECTIVE_CHAIN_FIX_TS = "2026-07-03T08:00:00+00:00"
         effective_ts = _parse_iso_datetime(EFFECTIVE_CHAIN_FIX_TS)
         ts_padded = list(error_timestamps) + [""] * len(errors)
-        post_fix = [
-            e
-            for e, t in zip(errors, ts_padded)
-            if (parsed := _parse_iso_datetime(t)) is not None
-            and effective_ts is not None
-            and parsed > effective_ts
-        ]
-        if not post_fix:
+        # #179 fix: undateable breaks (no parseable timestamp on the surrounding
+        # audit event) used to be silently excluded from `post_fix`; when every
+        # break was undateable the code declared "all historical, info" and
+        # masked a real post-fix corruption that happened to also break the
+        # timestamp. Now we split into three bins so an undateable break can't
+        # hide behind the historical label.
+        post_fix: list[str] = []
+        undateable: list[str] = []
+        pre_fix_count = 0
+        for e, t in zip(errors, ts_padded):
+            parsed = _parse_iso_datetime(t)
+            if parsed is None:
+                undateable.append(e)
+            elif effective_ts is not None and parsed > effective_ts:
+                post_fix.append(e)
+            else:
+                pre_fix_count += 1
+
+        if not post_fix and not undateable:
             report.add("trust.audit_chain", "info",
                        f"{len(errors)} historical chain break(s), all before current "
                        f"cross-process cache fix ({EFFECTIVE_CHAIN_FIX_TS}); "
                        f"zero post-lock breaks ({records} records{reanchor_extra})")
-        else:
+        elif post_fix:
             detail = f"chain BROKEN — {len(post_fix)} post-fix error(s) in {records} records: {post_fix[:3]}"
             report.add("trust.audit_chain", "warn", detail,
                        "audit log may have been tampered with or corrupted (post hash-cache fix)")
+        else:
+            # Only undateable breaks — can't confirm they're historical, so
+            # surface them as warn (not info) rather than hiding them.
+            detail = (
+                f"{len(undateable)} chain break(s) with unparseable timestamp — "
+                f"cannot confirm historical vs post-fix; treat as WARN: {undateable[:3]}"
+            )
+            report.add("trust.audit_chain", "warn", detail,
+                       "inspect audit log manually; missing timestamps prevent automatic classification")
 
 
 def _probe_config_consistency(report: Report) -> None:
@@ -2016,8 +2091,15 @@ def _probe_config_consistency(report: Report) -> None:
     if not findings:
         report.add("config.consistency", "ok", "no cross-field inconsistencies")
         return
+    # #178 fix: config_consistency emits three severities — "info", "warning",
+    # "blocker" — but this branch previously mapped only "warning"→"warn" and
+    # collapsed everything else (including the info-severity ones) to "blocker".
+    # An info finding (e.g. a hint about optional demo credentials) escalated
+    # to a doctor BLOCKER drove `doctor` exit code 1, which downstream tooling
+    # reads as "system is broken". Three-way map matches source severity honestly.
+    _SEV_MAP: dict[str, Severity] = {"info": "info", "warning": "warn", "blocker": "blocker"}
     for f in findings:
-        sev: Severity = "warn" if f.severity == "warning" else "blocker"  # type: ignore[assignment]
+        sev: Severity = _SEV_MAP.get(f.severity, "blocker")
         report.add(f"config.consistency.{f.field_path}", sev, f.message, f.fix_hint)
 
 

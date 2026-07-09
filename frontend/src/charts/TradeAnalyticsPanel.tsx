@@ -3,7 +3,12 @@
  *
  * Four sections:
  *   1. Totals row — trade count, win rate, avg/median hold time, total PnL
- *   2. By Strategy Source — RuleSet vs Opportunity (CSS bar chart)
+ *   2. By Strategy Source — dimension of the trade's origin. The union type
+ *      still carries `ruleset` for legacy rows, but the rules engine was
+ *      removed with Position C (2026-07-02) — new trades are all
+ *      `opportunity`. #128 fix: `ruleset` rows now render as
+ *      "RuleSet (legacy)" so the label matches reality; the section keeps
+ *      the value for historical attribution and drops it into a muted tone.
  *   3. By Scanner Family — per-family breakdown (CSS bar chart)
  *   4. Hold Time Distribution — 6 duration buckets (CSS bar chart)
  *
@@ -78,11 +83,11 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 function SourceSection({ rows }: { rows: TradeStatsSource[] }) {
   const maxCount = Math.max(...rows.map(r => r.trade_count), 1)
   const colors: Record<string, string> = {
-    ruleset: 'var(--accent)',
+    ruleset: 'var(--muted)',   // #128: legacy source; muted so it doesn't compete for attention
     opportunity: 'var(--green)',
   }
   const labels: Record<string, string> = {
-    ruleset: 'RuleSet',
+    ruleset: 'RuleSet (legacy)',  // #128: rules engine removed 2026-07-02; kept for historical attribution only
     opportunity: 'Opportunity',
   }
   return (

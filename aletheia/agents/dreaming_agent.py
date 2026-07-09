@@ -163,6 +163,35 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
     if not reviews:
         return
 
+    # #17 fix: previously the dreaming agent re-processed the SAME case study
+    # every day for its 24h post-close window — no processed-ID tracking meant
+    # a case study created within 24h could feed the extractor multiple times
+    # (each daily cron run), producing duplicate/near-duplicate lessons that
+    # then compete in downstream ranking. Skip case studies that already have
+    # a lesson row citing them as source_id. Cheap query — ps_lessons is small
+    # relative to knowledge_items.
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        review_ids = [r.get("id") for r in reviews if r.get("id")]
+        if review_ids:
+            placeholders = ",".join("?" for _ in review_ids)
+            processed_rows = db.execute(
+                f"SELECT DISTINCT source_id FROM ps_lessons "
+                f"WHERE source_type = 'trade_case_study' AND source_id IN ({placeholders})",
+                tuple(review_ids),
+            ).fetchall()
+            processed = {row["source_id"] for row in processed_rows}
+            if processed:
+                reviews = [r for r in reviews if r.get("id") not in processed]
+    except Exception:
+        # Defensive — a query failure must NOT block the extractor; better to
+        # re-process (previous behavior) than to skip everything.
+        pass
+
+    if not reviews:
+        return
+
     # Build rich case lines including PnL metrics so the LLM has something
     # concrete to summarise and the evidence_json is populated for lesson_reviewer.
     case_lines = []

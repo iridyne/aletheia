@@ -11,7 +11,7 @@ import typer
 thesis_app = typer.Typer(no_args_is_help=True)
 
 
-@thesis_app.command("audit")
+@thesis_app.command("audit", hidden=True)
 def audit(
     days: int = typer.Option(7, "--days", help="Lookback window in days."),
     json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
@@ -23,6 +23,7 @@ def audit(
     if json_output:
         typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
         return
+    typer.echo("Deprecated: use `uv run aletheia opportunity audit --view thesis` instead.\n")
     typer.echo(render_thesis_lineage_audit(report))
 
 

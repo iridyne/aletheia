@@ -1,9 +1,9 @@
 # Vergex 持仓结构信号整合实施计划
 
-> 制定日期：2026-07-06  
-> 当前分支：`iridite/data_source_enhance`  
-> 输入材料：`C:\Users\ollama\Documents\vergex-security-report.zip`（只读分析，未运行 PoC 脚本）  
-> 目标：把 Vergex 可合作的数据和理论转成 Aletheia 可消费、可验证、可审计的交易证据。  
+> 制定日期：2026-07-06
+> 当前分支：`iridite/data_source_enhance`
+> 输入材料：`C:\Users\ollama\Documents\vergex-security-report.zip`（只读分析，未运行 PoC 脚本）
+> 目标：把 Vergex 可合作的数据和理论转成 Aletheia 可消费、可验证、可审计的交易证据。
 > 边界：本计划不要求修改 live trading、risk limits、execution gateway、credentials、交易所 signer；第一阶段只做 observation/shadow，不直接改变下单权限。
 
 ---
@@ -415,4 +415,3 @@ uv run pytest tests/test_market_context.py -q
 5. 所有信号只 observation，不影响下单。
 
 这版就足够开始 2 周 observation window。
-

@@ -1,6 +1,6 @@
 """Settings API routes."""
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -14,6 +14,57 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 # AllowEditing/Auto) — this endpoint correctly governs only the worker side, so
 # the 3-value allowlist is intentional, not a bug (CR-AR-02 was a false positive).
 VALID_PERMISSION_MODES = {"Observe", "Paper", "Full"}
+
+
+# --- Inline-secret redaction ---------------------------------------------------
+# Secrets must never leave the backend via a GET response, an echoed POST body,
+# or an audit record. `config.yaml` can hold credential-bearing fields (a proxy
+# URL with user:pass, or the legacy market_data.coinalyze_api_key), so every
+# surface that serializes those config sections runs them through these helpers.
+def _mask_secret(value):
+    """Mask a secret-bearing string for display, keeping only the last 4 chars."""
+    if not value:
+        return value
+    s = str(value)
+    return f"***{s[-4:]}" if len(s) > 4 else "***"
+
+
+def _redact_proxy_url(url):
+    """Strip embedded credentials from a proxy URL: scheme://user:pass@host -> scheme://***@host."""
+    if not url:
+        return url
+    try:
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(str(url))
+        if parts.username or parts.password:
+            host = parts.hostname or ""
+            if parts.port:
+                host = f"{host}:{parts.port}"
+            return urlunsplit((parts.scheme, f"***@{host}", parts.path, parts.query, parts.fragment))
+    except Exception:  # noqa: BLE001 — never let redaction raise into a response
+        return "***"
+    return url
+
+
+def _redacted_market_data(md: dict) -> dict:
+    md = dict(md)
+    if md.get("coinalyze_api_key"):
+        md["coinalyze_api_key"] = _mask_secret(md["coinalyze_api_key"])
+    return md
+
+
+def _redacted_network(net: dict) -> dict:
+    net = dict(net)
+    if net.get("proxy_url"):
+        net["proxy_url"] = _redact_proxy_url(net["proxy_url"])
+    return net
+
+
+def _redacted_webhook(wh: dict) -> dict:
+    wh = dict(wh)
+    if wh.get("secret"):
+        wh["secret"] = _mask_secret(wh["secret"])
+    return wh
 
 
 class SettingsRequest(BaseModel):
@@ -76,13 +127,13 @@ async def get_settings():
         "retention": cfg.retention.model_dump(mode="json"),
         "telegram": cfg.telegram.model_dump(mode="json"),
         "webhook": {k: v for k, v in cfg.webhook.model_dump(mode="json").items() if k != "secret"},
-        "market_data": cfg.market_data.model_dump(mode="json"),
+        "market_data": _redacted_market_data(cfg.market_data.model_dump(mode="json")),
         "universe": cfg.universe.model_dump(mode="json"),
         "guard": cfg.guard.model_dump(mode="json"),
         "tunnel": {k: v for k, v in cfg.tunnel.model_dump(mode="json").items()
                    if k != "credentials_path"},
         "regime": cfg.regime.model_dump(mode="json"),
-        "network": cfg.network.model_dump(mode="json"),
+        "network": _redacted_network(cfg.network.model_dump(mode="json")),
         "strategy_factory": cfg.strategy_factory.model_dump(mode="json"),
         "historical_data": cfg.historical_data.model_dump(mode="json"),
         "event_triggers": cfg.event_triggers.model_dump(mode="json"),
@@ -313,6 +364,15 @@ _PI_DAEMON_BOUNDS: dict[str, tuple[float, float]] = {
 
 @router.post("/pi_daemon")
 async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
+    """Update System Operator daemon configuration.
+
+    #97 note: the path `/pi_daemon`, the audit event `pi_daemon_config_changed`,
+    and the entity type `pi_daemon_config` are LEGACY names preserved for
+    backwards-compat with existing configs and audit trails. The subsystem is
+    the System Operator daemon (see PiDaemonConfig docstring for the full
+    naming registry). Any consumer parsing audit events must accept the legacy
+    keys; new UI copy uses "System Operator daemon".
+    """
     cfg = load_config()
     old = cfg.pi_daemon.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -327,7 +387,7 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
     write_audit({"actor": "human", "source": "dashboard", "event_type": "pi_daemon_config_changed",
                  "entity_type": "pi_daemon_config", "before": old,
                  "after": cfg.pi_daemon.model_dump(mode="json"),
-                 "message": f"PI daemon config updated: {list(updates.keys())}"})
+                 "message": f"System Operator daemon config updated: {list(updates.keys())}"})
     return {"updated": updates}
 
 
@@ -618,10 +678,10 @@ async def update_webhook_config(req: WebhookConfigUpdate):
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "webhook_config_changed",
-                 "entity_type": "webhook_config", "before": old,
-                 "after": cfg.webhook.model_dump(mode="json"),
+                 "entity_type": "webhook_config", "before": _redacted_webhook(old),
+                 "after": _redacted_webhook(cfg.webhook.model_dump(mode="json")),
                  "message": f"Webhook config updated: {list(updates.keys())}"})
-    return {"updated": updates}
+    return {"updated": _redacted_webhook(updates)}
 
 
 # ---------------------------------------------------------------------------
@@ -978,13 +1038,32 @@ class MarketDataConfigUpdate(SettingsRequest):
     # Free zero-key data sources (datasrc overhaul).
     enable_hyperliquid: Optional[bool] = None
     enable_defillama: Optional[bool] = None
+    # #35 fix: fields present in MarketDataConfig but previously missing from
+    # the update surface — a settings-page save silently dropped edits to
+    # these because the API model didn't accept them. Adding the safe
+    # scalars here; `coinalyze_api_key` is a SECRET and stays with the
+    # dedicated credential route, never in bulk-update payloads.
+    provider: Optional[str] = None
+    enable_crypto_fallback: Optional[bool] = None
+    enable_coinalyze: Optional[bool] = None
+    prediction_enabled: Optional[bool] = None
+    price_divergence_threshold_pct: Optional[float] = None
+    price_divergence_alert_enabled: Optional[bool] = None
+    observed_equities: Optional[list[str]] = None
 
 
 _MARKET_DATA_BOUNDS: dict[str, tuple[float, float]] = {
     "ohlcv_cache_ttl_min": (1, 60),
     "coingecko_top_n": (10, 250),  # CoinGecko per_page hard ceiling is 250
     "derivatives_history_hours": (0, 168),  # 0 = disabled, up to 7 days backfill
+    # #35 fix: divergence-alert threshold percent — 0 disables alerts,
+    # 25% is a generous ceiling (anything larger is noise, not a divergence).
+    "price_divergence_threshold_pct": (0.0, 25.0),
 }
+
+# #35 fix: `provider` must resolve to a known data-source label. Kept in a
+# separate set (not part of the numeric bounds) so validation stays explicit.
+_MARKET_DATA_PROVIDERS = {"ccxt", "bitget"}
 
 
 @router.post("/market-data")
@@ -1003,7 +1082,12 @@ async def update_market_data_config(req: MarketDataConfigUpdate):
             value = str(value).strip().lower()
             if value not in _SUPPORTED_EXCHANGES:
                 raise HTTPException(400, f"'{field}' must be one of: {sorted(_SUPPORTED_EXCHANGES)}")
-        if field in {"observed_stocks", "observed_stock_tokens", "observed_xstocks", "observed_prediction_markets"}:
+        # #35 fix: validate `provider` against the known label set.
+        if field == "provider":
+            value = str(value).strip().lower()
+            if value not in _MARKET_DATA_PROVIDERS:
+                raise HTTPException(400, f"'provider' must be one of: {sorted(_MARKET_DATA_PROVIDERS)}")
+        if field in {"observed_stocks", "observed_stock_tokens", "observed_xstocks", "observed_prediction_markets", "observed_equities"}:
             value = list(dict.fromkeys(str(s).strip() for s in value if str(s).strip()))
         setattr(cfg.market_data, field, value)
 
@@ -1209,8 +1293,14 @@ async def stop_tunnel_api():
 # ---------------------------------------------------------------------------
 
 class NetworkConfigUpdate(SettingsRequest):
-    proxy_url: Optional[str] = None
+    # Structured proxy definition — the panel drives these; proxy_url is derived.
+    proxy_protocol: Optional[Literal["http", "https", "socks5"]] = None
+    proxy_host: Optional[str] = None
+    proxy_port: Optional[int] = None
+    enforce: Optional[bool] = None
     no_proxy: Optional[str] = None
+    # Legacy: accepted for backward compatibility (older clients sent only this).
+    proxy_url: Optional[str] = None
 
 
 @router.post("/network")
@@ -1221,6 +1311,14 @@ async def update_network_config(req: NetworkConfigUpdate):
     updates = req.model_dump(exclude_none=True)
     for field, value in updates.items():
         setattr(cfg.network, field, value)
+    # setattr does not re-run the model validator, so keep proxy_url and the
+    # structured parts consistent explicitly (structured inputs win; a legacy
+    # proxy_url-only update is decomposed back into the parts).
+    if {"proxy_protocol", "proxy_host", "proxy_port"} & set(updates):
+        cfg.network.recompose_proxy_url()
+    elif "proxy_url" in updates and cfg.network.proxy_url:
+        cfg.network.parse_proxy_url()
+        cfg.network.recompose_proxy_url()
     save_config(cfg)
 
     # Apply immediately: set env vars so trust_env=True clients pick them up.
@@ -1230,10 +1328,10 @@ async def update_network_config(req: NetworkConfigUpdate):
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard",
                  "event_type": "network_config_changed",
-                 "entity_type": "network_config", "before": old,
-                 "after": cfg.network.model_dump(mode="json"),
+                 "entity_type": "network_config", "before": _redacted_network(old),
+                 "after": _redacted_network(cfg.network.model_dump(mode="json")),
                  "message": f"Network config updated: {list(updates.keys())}"})
-    return {"updated": updates, "network": cfg.network.model_dump(mode="json")}
+    return {"updated": _redacted_network(updates), "network": _redacted_network(cfg.network.model_dump(mode="json"))}
 
 
 @router.post("/network/test")

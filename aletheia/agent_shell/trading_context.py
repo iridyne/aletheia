@@ -11,6 +11,7 @@ Token budget target: ~2200 tokens total (vs ~800 in the old thin context).
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -32,6 +33,75 @@ def _dedupe_symbol_direction(items: list[dict[str, Any]], limit: int) -> list[di
         if len(out) >= limit:
             break
     return out
+
+
+def _excluded_candidates_summary(items: list[dict[str, Any]], *, examples_per_reason: int = 3) -> list[dict[str, Any]]:
+    """Summarize skipped ranker candidates without letting them occupy prompt slots."""
+    counts: Counter[str] = Counter()
+    examples: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        raw_reason = str(item.get("skip_reason") or "unknown")
+        reason = _candidate_skip_bucket(raw_reason)
+        counts[reason] += 1
+        bucket_examples = examples.setdefault(reason, [])
+        if len(bucket_examples) < examples_per_reason:
+            bucket_examples.append({
+                "symbol": item.get("symbol"),
+                "direction": item.get("direction"),
+                "trade_score": item.get("trade_score"),
+                "scanner_family": item.get("scanner_family"),
+                "skip_reason": raw_reason,
+            })
+    return [
+        {"reason": reason, "count": count, "examples": examples.get(reason, [])}
+        for reason, count in counts.most_common()
+    ]
+
+
+def _candidate_skip_bucket(reason: str) -> str:
+    if reason == "okx_demo_symbol_not_supported" or "demo_symbol_not_supported" in reason:
+        return "unsupported_demo_symbol"
+    if reason.startswith("guard_blocked:"):
+        return "guard_blocked"
+    if reason.startswith("confidence_below_"):
+        return "confidence_below"
+    return reason or "unknown"
+
+
+def _record_candidate_supply_snapshot(layer: dict[str, Any]) -> None:
+    """Record candidate supply telemetry for recommendations without changing decisions."""
+    try:
+        from aletheia.analytics.candidate_supply import build_candidate_supply_snapshot
+
+        snapshot = build_candidate_supply_snapshot(
+            executable_candidates=layer.get("executable_candidates") or [],
+            excluded_candidates_summary=layer.get("excluded_candidates_summary") or [],
+        )
+    except Exception as exc:
+        logger.debug("candidate supply snapshot build failed: %s", exc)
+        layer["candidate_supply"] = {
+            "executable_count": len(layer.get("executable_candidates") or []),
+            "below_floor": None,
+            "main_reason": "insufficient_data",
+        }
+        return
+
+    layer["candidate_supply"] = snapshot
+    try:
+        from aletheia.agent_shell.operator_store import create_event
+
+        event_id = create_event(
+            event_type="candidate_supply_snapshot",
+            severity="warning" if snapshot.get("below_floor") else "info",
+            source="trading_context",
+            related_entity_type="candidate_supply",
+            related_entity_id="system_operator",
+            payload=snapshot,
+        )
+        snapshot["event_id"] = event_id
+    except Exception as exc:
+        logger.debug("candidate supply snapshot skipped: %s", exc)
+        snapshot["event_status"] = "not_persisted"
 
 
 def build_enriched_trading_context() -> dict[str, Any]:
@@ -549,9 +619,18 @@ def _build_layer2_short_term() -> dict[str, Any]:
             }
             for c in candidates
         ]
-        layer["ranker_candidates"] = _dedupe_symbol_direction(ranker_candidates, limit=8)
+        executable_candidates = [c for c in ranker_candidates if not c.get("skip_reason")]
+        excluded_candidates = [c for c in ranker_candidates if c.get("skip_reason")]
+        layer["executable_candidates"] = _dedupe_symbol_direction(executable_candidates, limit=8)
+        layer["excluded_candidates_summary"] = _excluded_candidates_summary(excluded_candidates)
+        # Compatibility alias for older consumers; new prompt rendering should use
+        # executable_candidates so skipped rows cannot consume the main candidate slots.
+        layer["ranker_candidates"] = layer["executable_candidates"]
     except Exception:
+        layer["executable_candidates"] = []
+        layer["excluded_candidates_summary"] = []
         layer["ranker_candidates"] = []
+    _record_candidate_supply_snapshot(layer)
 
     # Phase 4b: Pending signals awaiting System Operator evaluation
     try:
@@ -758,7 +837,14 @@ def _build_layer3_wisdom() -> dict[str, Any]:
     # These lessons have passed: deterministic floor (≥20 settled outcomes) + LLM judge.
     try:
         from aletheia.learning.lessons import LessonStore
-        ps = LessonStore().list_all(status="applied", limit=5)
+        from datetime import datetime, timezone
+        _now_iso = datetime.now(timezone.utc).isoformat()
+        # #18: exclude expired lessons — the risk engine skips them (engine.py:416),
+        # so the prompt must not present a stale lesson as active guidance. Fetch a
+        # wider set, drop expired, then cap at 5 (matches the previous surface size).
+        _applied = LessonStore().list_all(status="applied", limit=20)
+        ps = [l for l in _applied
+              if not (getattr(l, "expires_at", None) and _now_iso > l.expires_at)][:5]
         layer["ps_lessons"] = [
             {"summary": l.summary, "severity": l.severity, "category": l.category}
             for l in ps

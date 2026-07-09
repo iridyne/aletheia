@@ -38,6 +38,14 @@ def _output(data, json_output: bool) -> None:
                 typer.echo(f"{k}: {v}")
 
 
+def _with_flow_hint(text: str, hours: int) -> str:
+    return (
+        f"{text}\n\n"
+        "Also summarized in the opportunity ledger:\n"
+        f"  uv run aletheia flow audit --hours {max(1, int(hours or 24))}"
+    )
+
+
 def _parse_age(snapshot_at: str) -> tuple:
     """Return (age_seconds, is_stale) for a snapshot_at ISO string."""
     try:
@@ -356,9 +364,18 @@ def config(
             "scheduler_enabled": cfg.runtime.scheduler_enabled,
         },
         "agent": {
-            "permission_mode": cfg.operator.permission_mode,
+            # #180 fix: the "agent" block was printing cfg.operator.permission_mode
+            # instead of the trading-agent's cfg.agent.permission_mode — the
+            # operator namespace is a separate permission surface for the human
+            # System Operator LLM, so this misled every `aletheia inspect config`
+            # reader about which mode was gating trading. Print both explicitly
+            # so no future reader has to remember the namespace boundary.
+            "permission_mode": cfg.agent.permission_mode,
             "autonomous_learning": cfg.agent.autonomous_learning,
             "bypass_distress_gate": cfg.agent.bypass_distress_gate,
+        },
+        "operator": {
+            "permission_mode": cfg.operator.permission_mode,
         },
         "exchange": {
             "mode": cfg.exchange.mode,
@@ -414,6 +431,44 @@ def guards(
             "tags": list(g.tags) if g.tags else [],
         })
     _output(result, json_output)
+
+
+# ---------------------------------------------------------------------------
+# 11b. guard-impact
+# ---------------------------------------------------------------------------
+
+@inspect_app.command("guard-impact")
+def guard_impact(
+    hours: int = typer.Option(24, "--hours", "-h", help="Lookback window for recent open opportunities"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Read-only audit of active blocking guard impact on recent candidates."""
+    from aletheia.analytics.guard_impact import build_guard_impact_audit, render_guard_impact_audit
+
+    report = build_guard_impact_audit(hours=hours)
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+        return
+    typer.echo(_with_flow_hint(render_guard_impact_audit(report), hours))
+
+
+# ---------------------------------------------------------------------------
+# 11c. debate-impact
+# ---------------------------------------------------------------------------
+
+@inspect_app.command("debate-impact")
+def debate_impact(
+    hours: int = typer.Option(24, "--hours", "-h", help="Lookback window for System Operator decisions"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Read-only audit of debated skips versus existing forward outcomes."""
+    from aletheia.analytics.debate_impact import build_debate_impact_audit, render_debate_impact_audit
+
+    report = build_debate_impact_audit(hours=hours)
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+        return
+    typer.echo(_with_flow_hint(render_debate_impact_audit(report), hours))
 
 
 # ---------------------------------------------------------------------------

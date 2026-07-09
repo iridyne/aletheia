@@ -16,7 +16,11 @@ from aletheia.gateway.pidfile import _no_window_kwargs
 from aletheia.update import git_ops
 from aletheia.update.smoke import run_smoke_check
 
-_SECRET_PREFIXES = ("BITGET_", "OPENAI_", "ANTHROPIC_", "LLM_", "TELEGRAM_BOT_TOKEN")
+# #136: strip every exchange/API credential prefix the app reads from os.environ,
+# not just BITGET_. COINALYZE_/FRED_ are read from os.environ directly (coinalyze.py,
+# macro.py); OKX_/BINANCE_ are included for cross-broker parity.
+_SECRET_PREFIXES = ("BITGET_", "OKX_", "BINANCE_", "OPENAI_", "ANTHROPIC_", "LLM_",
+                    "TELEGRAM_BOT_TOKEN", "COINALYZE_", "FRED_")
 
 
 def _safe_env() -> dict:
@@ -120,9 +124,28 @@ def apply_update() -> dict:
     # bad update can never brick the gateway. Never auto-restarts.
     smoke = run_smoke_check()
     if not smoke.get("ok"):
-        git_ops.reset_hard(old)
+        rollback = git_ops.reset_hard(old)
         if pyproject_changed:
             _reinstall_deps()  # restore old deps to match the reverted code
+        if not rollback.get("ok"):
+            # #135: reset_hard failed — on-disk HEAD is still the broken NEW commit.
+            # Do NOT claim a clean revert (UI honesty): surface the true failed state
+            # so the operator knows the box may be on unverified code (config/audit
+            # must not disagree with the real HEAD).
+            write_audit({
+                "actor": "human", "source": "api", "event_type": "update_rollback_failed",
+                "entity_type": "system_update", "entity_id": new,
+                "before": {"commit": old}, "after": {"commit": new},
+                "message": (f"Rollback FAILED after smoke failure at {smoke.get('stage')}: "
+                            f"{rollback.get('reason')}; on-disk HEAD may still be {new}"),
+            })
+            return {
+                "applied": False, "rolled_back": False, "reason": "rollback_failed",
+                "smoke_stage": smoke.get("stage"), "old_commit": old, "attempted_commit": new,
+                "rollback_error": rollback.get("reason"),
+                "message": ("Smoke check failed AND rollback failed — the gateway may be "
+                            "on unverified code. Manual intervention required."),
+            }
         cfg.update.current_commit = old
         save_config(cfg)
         write_audit({

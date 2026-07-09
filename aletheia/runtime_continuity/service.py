@@ -143,6 +143,21 @@ class RuntimeContinuityService:
     def _db(self):
         return get_db()
 
+    def _require_enabled(self, op_name: str) -> None:
+        """Guard mutating operations behind the runtime_continuity_enabled kill switch.
+
+        #82 fix: settings UI + config schema present runtime continuity as opt-in
+        (default False, "Experimental"), but the write methods previously ran
+        regardless — an owner who kept the switch off could still have candidate /
+        shadow / promote / drain / rollback mutations happen via the API. Now they
+        raise RuntimeTransitionError with detail 'runtime_continuity_disabled:<op>'
+        which the routes surface as HTTP 409. Read paths (status, list_events,
+        current_runtime_id) stay unguarded so the dashboard can render recorded
+        state even when the feature is off.
+        """
+        if not self.enabled:
+            raise RuntimeTransitionError(f"runtime_continuity_disabled:{op_name}")
+
     def _record_event(
         self,
         *,
@@ -453,6 +468,7 @@ class RuntimeContinuityService:
         owner: str,
         force: bool = False,
     ) -> str:
+        self._require_enabled("acquire_lock")
         db = self._db()
         now = _utc_now()
         expires = (datetime.now(timezone.utc) + timedelta(seconds=self.lock_ttl_sec)).isoformat().replace("+00:00", "Z")
@@ -495,6 +511,7 @@ class RuntimeContinuityService:
         return token
 
     def release_lock(self, lock_name: str, token: str | None = None, *, actor: str = "system") -> None:
+        self._require_enabled("release_lock")
         db = self._db()
         row = db.execute(
             "SELECT * FROM runtime_exclusive_lock WHERE lock_name = ? AND released_at IS NULL",
@@ -549,6 +566,7 @@ class RuntimeContinuityService:
         artifact_path: str | None = None,
         metadata: dict | None = None,
     ) -> dict:
+        self._require_enabled("prepare_candidate")
         bundle_hash = (release_bundle_hash or build_git_sha or uuid4().hex[:12]).strip()
         runtime_id = f"runtime-{bundle_hash[:12].replace('/', '-')}"
         db = self._db()
@@ -604,6 +622,7 @@ class RuntimeContinuityService:
         return record
 
     def start_shadow(self, runtime_id: str, *, actor: str, cause: str) -> dict:
+        self._require_enabled("start_shadow")
         db = self._db()
         runtime = self._runtime(runtime_id)
         if runtime is None:
@@ -679,6 +698,7 @@ class RuntimeContinuityService:
         return record
 
     def validate_shadow(self, runtime_id: str, *, actor: str, cause: str) -> dict:
+        self._require_enabled("validate_shadow")
         db = self._db()
         runtime = self._runtime(runtime_id)
         if runtime is None:
@@ -764,6 +784,7 @@ class RuntimeContinuityService:
         }
 
     def promote(self, runtime_id: str, *, actor: str, cause: str) -> dict:
+        self._require_enabled("promote")
         runtime = self._runtime(runtime_id)
         if runtime is None:
             raise RuntimeTransitionError(f"runtime_not_found:{runtime_id}")
@@ -837,6 +858,7 @@ class RuntimeContinuityService:
             raise
 
     def drain(self, runtime_id: str, *, actor: str, cause: str, force: bool = False) -> dict:
+        self._require_enabled("drain")
         runtime = self._runtime(runtime_id)
         if runtime is None:
             raise RuntimeTransitionError(f"runtime_not_found:{runtime_id}")
@@ -864,6 +886,7 @@ class RuntimeContinuityService:
         return record
 
     def rollback(self, *, actor: str, cause: str) -> dict:
+        self._require_enabled("rollback")
         checkpoint = self._latest_checkpoint("pre_promote")
         if checkpoint is None:
             raise RuntimeTransitionError("rollback_checkpoint_missing")

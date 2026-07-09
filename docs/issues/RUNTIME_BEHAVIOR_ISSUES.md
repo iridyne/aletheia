@@ -541,3 +541,243 @@ R16至今14次. 最后两次: 07:04(PID27892)->07:13(PID46104,间隔9min). 崩�
 Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 影响: CRITICAL——管道停产近4h,系统完全丧失决策输入. 修复: uv run aletheia gateway restart --no-browser
 
+
+
+---
+
+## §24 2026-07-09~10 机器迁移后系统重启 — 全面审计记录
+
+> **审计背景**: 系统在另一台机器上运行了 26 天后，于 2026-07-09 迁移到 UM790Pro（新机器）并重启。本节记录迁移后发现的所有问题、已修复项和待处理项。
+
+---
+
+### 🔴 [FIXED] IB-24-01: 系统长期完全暂停（26 天数据断层）
+
+**现象**: `config.paused=True`，gateway 进入完全静止状态，所有 job（含数据采集）全部停止。  
+**根因**:
+1. 旧机器 Databricks LLM key 未迁移 → LLM 不可用 → startup gate 触发 pause
+2. 代理（127.0.0.1:7890）在新机器上未运行 → exchange 连接失败
+3. 全局 pause（blanket pause）将数据采集 job 一并停掉
+
+**影响**: 26 天无 OHLCV/市场快照，opportunities 无法生成，knowledge 停止积累。  
+**修复**:
+- 禁用代理配置（`data/config.yaml: proxy: null`）
+- 修改 `aletheia/agent_runtime/scheduler.py`：新增 `_ESSENTIAL_JOBS` 集合，layered pause 模式下仅暂停 AI 依赖 job（observer/trader/operator），保留数据采集 job 持续运行
+- 新增 `HealthConfig.layered_pause_enabled: bool = True`
+- **commit**: `fix/layered-pause` → merged to master
+
+---
+
+### 🔴 [FIXED] IB-24-02: LLM auto-resume 永久卡死无告警
+
+**现象**: `auto_resume` 每 5 分钟轮询 LLM，永远失败但没有升级/告警，系统静默。  
+**根因**: 缺少连续失败计数和告警升级逻辑；secret 缺失属于永久性失败，非瞬时网络问题。  
+**修复**:
+- `aletheia/agent_runtime/auto_resume.py`：新增 `_classify_stall()`（分类 secret_missing/auth_error/network_unreachable/unknown）、consecutive_failures 计数、指数退避、`_escalate_stall()` 升级告警
+- `aletheia/agent_runtime/connectivity.py`：同样增加 exchange stall 升级逻辑
+- 新增配置字段：`auto_resume_stall_threshold=6`、`auto_resume_stall_backoff_factor=2.0`、`auto_resume_max_interval_sec=1800`、`exchange_stall_threshold=30`
+- **commit**: `fix/pause-stall-detection` → merged to master
+
+---
+
+### 🔴 [FIXED] IB-24-03: Windows Credential Manager 跨 session 隔离（WinError 1312）
+
+**现象**: `doctor` 报告 `creds.bitget_demo=MISSING/BLOCKER`，但 Web UI 显示 Bitget Demo 已连接并能看到余额。  
+**根因**: Windows Credential Manager 是 session 隔离的。Gateway 进程（interactive logon session）可访问 keyring；CLI/bash 进程（SSH 或非交互 session）获取 WinError 1312，`get_secret()` 返回 None。  
+**影响**: doctor 误报 BLOCKER，CI/非交互脚本无法读取凭据。  
+**修复**:
+- `aletheia/config/secrets.py`：`set_secret()` 改为双写（encrypted file 始终写入，keyring 仅 best-effort）
+- 新增 `migrate_keyring_to_file()`：gateway 启动时将 keyring 中已有的所有 secret 同步到 file store
+- `aletheia/server/app.py`：lifespan 启动时调用 `migrate_keyring_to_file()`
+- **commit**: `acbf7c6`
+
+---
+
+### 🔴 [FIXED] IB-24-04: 方向集中度熔断过严（23 个有效决策被系统性拦截 18 小时）
+
+**现象**: 2026-07-06T15:27 起，25 个 `action=trade` PI 决策的 `proposal_id` 全部为 None。  
+**根因**: `_proposal_direction_overheated()`（`trading_decision.py`）参数过严：
+- `min_sample=5`：仅 5 个历史提案即触发检查，极易被少量同向提案触发
+- `max_share=0.80`：80% 同向即拦截，趋势行情下完全正常的方向性集中被误判
+- `override_conviction=85`：豁免门槛过高，PI 正常 conviction（55-65）无法绕过
+- 自锁机制：提案被拦截 → 24h 窗口永远保持 100% 单向 → 所有后续决策持续被拦截
+
+**影响**: 23 个有效多头决策（BTC/ETH/SOL/LTC/MON 等）在 2026-07-06 整个下午到次日凌晨被静默丢弃，错过实际上涨行情。  
+**修复**:
+- `min_sample` 5→15，`max_share` 0.80→0.95，`override_conviction` 85→75
+- **commit**: `acbf7c6`
+
+---
+
+### 🟠 [FIXED] IB-24-05: NATGAS/USDT 无实时价格却被标记 execution_eligible=True
+
+**现象**: PI Agent 对 NATGAS/USDT 产生 conviction=70 的 trade 决策，但 `proposal_id=None`。  
+**根因**: `market_snapshots` 表里 NATGAS/USDT 当时无数据（price feed 未采集该标的），但 `allocator.py` 和 `signal_emitter.py` 无条件将 `execution_eligible=True`。`submit_decision_as_proposal()` 查价格得 None → price=0 → 静默返回 None。  
+**影响**: PI 消耗 LLM tokens 做出决策，最终静默丢弃，无任何错误提示。  
+**修复**:
+- `aletheia/universe/allocator.py`：分配阶段检查 `market_snapshots` 2h 内是否有数据，无则 `execution_eligible=False` + WARNING 日志
+- `aletheia/universe/signal_emitter.py`：创建 Opportunity 时做同样检查
+- **commit**: `acbf7c6`
+- **注**: NATGAS/USDT 等 Bitget 独有品种在 Binance/Bybit 无 OHLCV 历史，无法 backfill
+
+---
+
+### 🔴 [FIXED] IB-24-06: Databricks LLM endpoint URL 指向旧机器
+
+**现象**: Resume API 返回 HTTP 403，gateway 拒绝 resume。  
+**根因**: `data/config.yaml` 中 `base_url` 仍指向 `adb-5678659344564033.13`（旧机器）而非 `adb-8450873647930949.9`（当前机器）。  
+**修复**: 更新 `data/config.yaml` endpoint URL，重启 gateway。**已解决。**
+
+---
+
+### 🟢 [FIXED] IB-24-07: FTS 知识库索引严重不足（89/5011 = 1.8%）
+
+**现象**: doctor 报 `fts.coverage=89/604 (15%)`（实际 DB 查询：89/5011 = 1.8%）。  
+**根因（已确认）**: `aletheia/knowledge/retrieval.py:32` 中 `_ALLOWED_CONFIDENCE = "high_confidence"`（单字符串）。  
+`reindex_all` 过滤条件 `row.get("confidence") != _ALLOWED_CONFIDENCE` 排除了所有非 `high_confidence` 条目。  
+实际上有 **1,405 条** `medium_confidence / active` 有效 content 被完全跳过：
+- `system_action`: 1,362 条
+- `reasoning_feedback`: 15 条
+- `trading_memo`: 15 条
+- `calibration_report`: 13 条
+
+同时 `retrieve_lessons` SQL 也用 `AND confidence = ?`（单值查询），即使已索引的 medium 条目也无法被检索。
+
+**影响**: PI Agent knowledge retrieval 几乎失效，experience loop 严重降级，无法检索 95% 的历史案例。  
+**修复**:
+- `aletheia/knowledge/retrieval.py`：`_ALLOWED_CONFIDENCE` 改为 tuple `("high_confidence", "medium_confidence")`；`reindex_all` 过滤改为 `not in`；`retrieve_lessons` SQL 改为 `AND confidence IN (?, ?)`
+- `aletheia/cli/knowledge_cmd.py`：更新 echo/log 提示文字
+- **修复后**: `ato knowledge reindex` 索引 **1,507 条**（原 89 条，提升 16.9 倍）
+- **commit**: `4bc3707` — "fix: FTS reindex includes medium-confidence and all active items (IB-24-07)"
+
+**备注**: 仍有 ~1,030 条 content 为空（文件丢失，非本次引入）属已知限制（IB-24-10 关联）。
+
+---
+
+### 🟢 [FIXED] IB-24-08: signal_settlement stall（12,827 条逾期 forward outcome 未结算）
+
+**现象**: doctor 报 `content.signal_settlement: 78 forward outcomes past due_at, oldest 19min ago`；DB 实查：12,827 条 `settled_at IS NULL AND due_at <= now`。  
+**根因**: `settle_due()`（`outcome_recorder.py`）是单次调用，每次仅处理 500 行。12,827 行积压 + 15 分钟调度间隔 = 需要 6.5 小时才能清空，而新数据不断流入，实际永远无法追上。  
+**影响**: `data.signal_win_rate` 等指标基于已结算数据计算，大量未结算会导致统计偏差。  
+**修复**:
+- `aletheia/universe/outcome_recorder.py`：`settle_due()` 改为批次循环直到队列清空，每批 500 行，100 秒墙时预算（低于 scheduler 120s 超时），每次调用最多处理 `max_rows=2000` 行
+- `aletheia/diagnostics/doctor.py`：修正过期注释（间隔是 15min 非 10min，阈值改为 20min）
+- **commit**: `6729aa13`
+
+---
+
+### 🟢 [FIXED] IB-24-09: volume_scanner 停止运行（2.6 天无更新）
+
+**现象**: doctor 报 `data.volume_ranking stale: 2.6d ago`，最新 `volume_ranking_snapshots.observed_at = 2026-07-07T02:40`。  
+**根因**: `_async_data_collectors()` Phase B 共享 `_DC_DEADLINE_S=40s` 预算，Phase A（微结构 18s + 衍生品 18s = 36s）消耗大部分预算后，Phase B 剩余时间不足 4s。`volume_scanner` 排在 Phase B 最末，CoinGecko（15s 上限）+ macro（15s 上限）先耗尽剩余预算，`_bounded()` 检测到剩余≤2s 时静默跳过 volume_scanner，无错误日志。  
+**影响**: universe 排序退化为静态列表，ranker 无法按实时成交量排序候选标的。  
+**修复**:
+- `aletheia/agent_runtime/scheduler.py`：Phase B 中 volume_scanner 调整为**最优先**执行（在 CoinGecko/macro 之前），保证其 12s 上限预算始终可用
+- **commit**: `6729aa13`
+
+---
+
+### 🟡 [KNOWN LIMITATION] IB-24-10: Bitget 独有标的无 OHLCV 历史
+
+**现象**: `data backfill` 对 META/USDT、AMD/USDT、NATGAS/USDT、GOOGL/USDT、SOXL/USDT、SAMSUNG/USDT、BZ/USDT 等全部失败（400 Bad Request）。  
+**根因**: 这些是 Bitget 的 RWA/股票镜像品种，Binance/Bybit 无对应 symbol，OHLCV 数据源不覆盖。  
+**影响**: 这些标的无法进行技术分析（RSI/SMA 等），OHLCV 依赖的 scanner family 无法产生有效信号。  
+**缓解**: `execution_eligible` 修复（IB-24-05）已确保这些标的在 scanner 层被标记为不可执行。doctor `data.ohlcv` warning 持续存在但属于已知限制。  
+**长期方案**: 接入 Bitget 历史数据 API 作为补充数据源（待规划）。
+
+---
+
+### ✅ [FIXED] IB-24-11: debate 信号提示偏向 LONG 导致 SHORT 机会被误判
+
+**现象**: flow audit 报 `debate_impact: missed_alpha_suspect`，24h 内 2 个机会被 debate 降级后 TTL 到期：
+- LDO/USDT short（score=51，15m 收益 +0.42%）
+- SLX/USDT short（score=53，15m 收益 +0.60%）
+
+**根因（最终确认）**: `_build_bull_prompt` / `_build_bear_prompt` 内的市场信号解读提示硬编码为 LONG 视角：
+- bull prompt 中：`FR<-0.01% = crowded shorts → bullish`（LONG 视角正确，SHORT 视角反了）
+- bear prompt 中：`FR>+0.01% = crowded longs → bearish`（LONG 视角正确，SHORT 视角反了）
+- 当评估 SHORT 机会时，LLM 收到错误的信号解读方向 → bull/bear confidence 被反向校准 → debate adjustment 偏负 → conviction 被不合理地压低
+
+**注**: debate 公式 `advantage = bull_confidence - bear_confidence` 本身是正确的（prompt 已承载方向，bull = "trade 会成功"，bear = "trade 会失败"），公式无需改变。
+
+**修复**:
+- `_build_bull_prompt`：根据 `direction` 选择正确的信号解读提示（SHORT：FR>+0.01%/taker<0.8 → 支持做空）
+- `_build_bear_prompt`：SHORT 时提示做空风险（crowded short squeeze / buyer aggression 危险）
+- 新增 `tests/filter_eval/scenarios/debate_direction.py` 5 个评估场景，覆盖 short/long × bullish/bearish debate 组合
+- **commit**: `(本次 reverted-fix commit)`
+
+---
+
+### ✅ [FIXED] IB-24-12: ranker_excluded 大量 neutral_or_missing_direction（~14-30%）
+
+**现象**: 7 天内 ~14-30% 的 opportunity 因 `neutral_or_missing_direction` 被 ranker 过滤。按 source_agent 细分：全部来自 `market_observer`（LLM 路径），signal_emitter 从不产生 neutral（direction=None 时直接跳过，不入库）。
+
+**根因**: `market_observer` 在没有 universe 对应的现有 opp 时，会创建 `direction_bias='neutral'` 的独立 opportunity。这些 opp 在 ranker 的 direction gate（`paper_trader_ranker.py:148`）被立即过滤，从未进入信号链。
+
+**数据（7天）**:
+- momentum neutral: 284/2231 = 12.7%（全部来自 market_observer 标注/创建）
+- mean_reversion neutral: 55/317 = 17.3%
+- volatility neutral: 46/214 = 21.5%
+- equity_observer（scanner_family=None）: 40 neutral，全部因 equity_shadow_track 跳过
+
+**修复**: `aletheia/agents/market_observer.py` — 在创建独立 opportunity 前检查 `direction == "neutral"`，若是则记录 step 并直接返回（不入库）。标注现有 deterministic opp 时已有此保护（`if direction != "neutral": updates["direction_bias"] = direction`），standalone 路径补齐了这一检查。
+
+**commit**: 本次修复
+
+---
+
+### ✅ [FIXED] IB-24-13: ttl_expired 是最大漏斗损耗（45-58% for momentum/mean_reversion）
+
+**现象**: 7 天内 momentum 58%、mean_reversion 52% 的 opportunity 最终 status='expired'。
+
+**根因**: 双层 TTL 设计不同步：
+1. Universe member TTL（momentum=30min, mean_reversion=60min, volatility=2h）由 `allocator._FAMILY_TTL` 设置，写入 `universe_members.expires_at`。
+2. Ranker 检查 `expires_at < now` 并返回 `skip_reason="ttl_expired"`，但**不修改** opportunity 的 status。
+3. Opportunity 的 `valid_until` 字段从 `m.get("expires_at")` 继承 universe member 的 TTL，**但 `expire_stale_opportunities()` 只看 `created_at < now - 48h`**，完全忽略 `valid_until`。
+4. 结果：30 分钟 TTL 的 momentum opp 入库后最多等待 48 小时，才被 cleanup job（3:17am 每日一次）标记为 expired。这些 opp 对 ranker 和 PI daemon 均不可用（已过 valid_until），却长期占据 status='open'。
+
+**数据验证**:
+- momentum: avg_ttl_min=29，1295 个 expired（全部 TTL=29min，cleanup 前一直是 open）
+- mean_reversion: avg_ttl_min=59，164 个 expired
+- volatility: avg_ttl_min=119，78 个 expired
+- `valid_until IS NOT NULL` 的 opps 中 expired 比例远高于 `valid_until IS NULL` 的
+
+**修复**: `aletheia/storage/repositories.py` — `expire_stale_opportunities()` 的 UPDATE 语句增加 `OR (valid_until IS NOT NULL AND valid_until < now)` 条件，使已过 valid_until 的 opp 在下次 cleanup 时立即被标记 expired，不再等 48h。
+
+**注**: pi_operator_loop 每 4 小时（cron: 0,4,8,12,16,20:15 CST）运行，pi_daemon 为事件驱动（信号即触发）。TTL 过期问题不影响 daemon 的实时评估，但会造成 DB 中大量虚假 open 状态，影响漏斗统计分析。
+
+**commit**: 本次修复
+
+---
+
+### 📋 待办汇总（按优先级）
+
+| 优先级 | ID | 问题 | 状态 |
+|--------|----|----|------|
+| P0 | IB-24-07 | FTS 索引 89→1507，medium_confidence 过滤 bug 已修复 | ✅ 已修复 `4bc3707` |
+| P0 | IB-24-08 | signal_settlement 12,827 条逾期未结算 | ✅ 已修复 `6729aa13` |
+| P0 | IB-24-09 | volume_scanner 2.6 天未运行 | ✅ 已修复 `6729aa13` |
+| P1 | IB-24-11 | debate 方向无关 bug — SHORT 被系统性压制 | ✅ 已修复 |
+| P1 | IB-24-12 | 30% neutral_or_missing_direction | ✅ 已修复（market_observer 跳过 neutral standalone opp） |
+| P1 | IB-24-13 | 45% TTL 到期 | ✅ 已修复（expire_stale_opportunities 增加 valid_until 检查） |
+| P2 | IB-24-10 | Bitget 独有标的无 OHLCV 数据源 | 🗓 长期 |
+
+---
+
+### ✅ 本期已修复（2026-07-09~10）
+
+| ID | 修复内容 | commit |
+|----|---------|--------|
+| IB-24-01 | Layered pause — 数据采集 job 在 AI 暂停期继续运行 | `fix/layered-pause` |
+| IB-24-02 | auto_resume stall 检测与告警升级 | `fix/pause-stall-detection` |
+| IB-24-03 | WinError 1312 keyring 跨 session 隔离修复（dual-write + migrate） | `acbf7c6` |
+| IB-24-04 | 方向熔断参数放宽（min_sample=15, max_share=0.95, override=75） | `acbf7c6` |
+| IB-24-05 | execution_eligible 无实时价格门控（allocator + signal_emitter） | `acbf7c6` |
+| IB-24-06 | Databricks endpoint URL 更新（旧机器→新机器） | config 更新 |
+| IB-24-07 | FTS reindex 包含 medium_confidence（89→1507 条索引） | `4bc3707` |
+| IB-24-11 | debate 信号提示方向感知 — SHORT 评估不再使用 LONG 视角信号 | `a747f19` |
+| IB-24-12 | market_observer 跳过 neutral standalone opp（不入库）| `96f6275` |
+| IB-24-13 | expire_stale_opportunities 增加 valid_until < now 条件 | `96f6275` |
+| IB-24-08 | settle_due() 改为批次循环（max_rows=2000, budget=100s），消除 12k 行积压 | `6729aa13` |
+| IB-24-09 | volume_scanner 调整为 Phase B 最优先（Phase B 独立 40s 预算首位保证） | `6729aa13` |
+

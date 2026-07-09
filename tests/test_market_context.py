@@ -513,6 +513,7 @@ def test_observer_includes_compact_position_x_structure_context(tmp_path, monkey
     _release_run_counter("run-mo-struct-compact")
 
 
+
 def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
     """When LLM returns empty rationale + observations, thesis must NOT dump
     the raw markdown snapshot (which used to leak through and look broken on

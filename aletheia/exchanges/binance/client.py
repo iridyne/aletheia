@@ -66,18 +66,22 @@ class BinanceClient:
         self._api_key = api_key
         self._api_secret = api_secret
         self._exchange = None
+        self._session = None
 
     def _ensure_exchange(self):
         """Lazily build the ccxt exchange in the CURRENT loop. Call only from inside an
         async method (running loop that drives every subsequent await)."""
         if self._exchange is not None:
             return self._exchange
-        self._exchange = ccxt.binanceusdm({
-            "apiKey": self._api_key,
-            "secret": self._api_secret,
-            "enableRateLimit": True,
-            "options": {"defaultType": "future"},
-        })
+        # Build via the managed factory so the aiohttp session carries the
+        # configured proxy — a bare ccxt.binanceusdm() would bypass it (proxy leak).
+        from aletheia.net import make_ccxt
+        self._exchange, self._session = make_ccxt(
+            "binanceusdm",
+            apiKey=self._api_key,
+            secret=self._api_secret,
+            options={"defaultType": "future"},
+        )
         if self._mode == "testnet":
             self._exchange.set_sandbox_mode(True)
         return self._exchange
@@ -190,9 +194,12 @@ class BinanceClient:
             raise RuntimeError(f"Binance {self._mode} time: {e}") from e
 
     async def close(self):
-        """Close the underlying CCXT session."""
+        """Close the underlying CCXT client and the injected proxy session."""
         if self._exchange is not None:
             await self._exchange.close()
+        # ccxt won't close the session we injected (own_session=False) — do it here.
+        if self._session is not None:
+            await self._session.close()
 
     @staticmethod
     def _map_status(raw: str) -> str:

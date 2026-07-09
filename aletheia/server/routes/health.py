@@ -67,6 +67,36 @@ def _llm_model_health_snapshot() -> list[dict]:
         return []
 
 
+_head_commit_cache: "tuple[float, str | None] | None" = None
+_head_commit_lock = threading.Lock()
+
+
+def _cached_head_commit(ttl_sec: float = 60.0) -> str | None:
+    """Short TTL cache for `git rev-parse HEAD`.
+
+    #6 fix: /api/status polls run every 10s; each one used to shell out to git
+    on the event loop. HEAD only changes on restart / self-update, so a 60s
+    cache is safe. On a self-update the app restarts anyway (invalidating this
+    cache), and the boot_commit field next to head_commit already captures the
+    startup value for reference. Returns None on git failure (never raises).
+    """
+    global _head_commit_cache
+    now = time.monotonic()
+    with _head_commit_lock:
+        if _head_commit_cache is not None:
+            ts, cached = _head_commit_cache
+            if now - ts < ttl_sec:
+                return cached
+    try:
+        from aletheia.update.git_ops import current_commit
+        commit = current_commit() or None
+    except Exception:
+        commit = None
+    with _head_commit_lock:
+        _head_commit_cache = (now, commit)
+    return commit
+
+
 def _cached_compute_health(ttl_sec: float = 5.0) -> dict:
     """Short TTL cache for dashboard polling.
 
@@ -218,11 +248,13 @@ async def status():
     except Exception:
         boot_commit = None
 
-    try:
-        from aletheia.update.git_ops import current_commit
-        head_commit = current_commit() or None
-    except Exception:
-        head_commit = None
+    # #6 fix: /api/status is polled by the topbar every 10s. `current_commit()`
+    # shells out to `git rev-parse HEAD` which blocks the event loop while the
+    # subprocess runs. In a heavy-scheduler moment that ~30ms shell has been
+    # observed to spike to 500ms+ and starve other async tasks. HEAD only
+    # changes on restart / self-update, so a 60s TTL cache is more than fresh
+    # enough — the boot_commit next to it never changes at all.
+    head_commit = _cached_head_commit()
 
     return {
         "gateway_running": True,  # if we can respond, we are running

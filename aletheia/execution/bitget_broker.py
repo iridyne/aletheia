@@ -124,6 +124,7 @@ def execute_live_order(
     # fabricate. Fall back to the requested values only when detail is absent (the
     # order is still effectively at the requested level until reconciliation refines).
     filled = order_resp.status in ("filled", "partially_filled")
+    partial = order_resp.status == "partially_filled"
     fill_price = order_resp.fill_price if (filled and order_resp.fill_price) else price
     fill_qty = order_resp.filled_quantity if (filled and order_resp.filled_quantity) else quantity
 
@@ -139,7 +140,15 @@ def execute_live_order(
                 fee=fill_qty * fill_price * fee_rate,
             )
             insert_fill(fill)
-            update_order(order.id, status="filled", filled_at=datetime.now(timezone.utc).isoformat())
+            # #109 fix: preserve partial state — the previous code always wrote
+            # status='filled' even when the exchange returned 'partially_filled'.
+            # A downstream `WHERE status='filled'` query then treated a partial
+            # as a full fill, and averaging-in / close paths saw the position
+            # as complete when it was still being filled. Now the row keeps
+            # 'partially_filled' until a follow-up fetch flips it to 'filled'
+            # (or the reconciler observes the exchange marking it complete).
+            order_status = "partially_filled" if partial else "filled"
+            update_order(order.id, status=order_status, filled_at=datetime.now(timezone.utc).isoformat())
 
             existing = _find_open_position(symbol, market_type, direction, execution_mode, strategy_id)
             if existing:
@@ -150,6 +159,22 @@ def execute_live_order(
                 merged_stop = merge_protective_stop(direction, stop_price, existing.get("stop_price"))
                 if merged_stop is not None:
                     update_kwargs["stop_price"] = merged_stop
+                # #140 fix: accumulate entry_fee across averaging-in legs. Without this,
+                # a NULL/0.0 stored fee is kept while realized-PnL closeout re-derives the
+                # (single-leg) fee from the schedule → overstated realized PnL feeds the
+                # learning loop. Paper_broker already does this; the three live brokers
+                # were clones that missed it.
+                new_entry_fee_leg = round(fill_price * fill_qty * fee_rate, 8)
+                existing_entry_fee = existing.get("entry_fee")
+                update_kwargs["entry_fee"] = round((existing_entry_fee or 0.0) + new_entry_fee_leg, 8)
+                # #141 fix: recompute liquidation for the new weighted-average entry.
+                # Display/LLM only — real risk-gate uses the exchange's own liquidation,
+                # this is what surfaces on the UI and in trading_context.
+                existing_lev = existing.get("leverage")
+                if existing_lev and existing_lev > 1:
+                    update_kwargs["liquidation_price"] = liquidation_price_for(
+                        new_entry, direction, existing_lev, symbol,
+                    )
                 update_position(existing["id"], **update_kwargs)
                 position_id = existing["id"]
             else:

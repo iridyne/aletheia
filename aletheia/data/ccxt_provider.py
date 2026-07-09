@@ -7,9 +7,20 @@ provider from a previous loop raises "Event loop is closed" on the next fetch. E
 caller therefore constructs a provider, uses it, and ``await``s ``close()`` in a finally.
 
 Primary/fallback: each fetch tries the primary exchange, and on failure retries once on
-the configured fallback. xStocks (ON-series) are the one site that constructs
-``CCXTProvider(exchange="bitget", fallback_exchange="bitget")`` directly, because only
-Bitget lists those tokens and the config fallback (bybit) would not find them.
+the configured fallback. Documented direct-construction sites (routing through the
+factory would either be wrong or lack the CCXT-native surface they need — 2026-07-07
+audit, #49):
+
+- xStocks (ON-series): builds ``CCXTProvider(exchange="bitget", fallback_exchange="bitget")``
+  because only Bitget lists those tokens and the config fallback (bybit) would not find them.
+- ``universe/registry.py::sync_registry`` and ``universe/features.py::collect_features``: use
+  ``CCXTProvider(exchange=md.ccxt_exchange, fallback_exchange=md.ccxt_fallback)`` — same
+  config resolution as the factory, but the factory returns a ``FallbackChainProvider``
+  whose surface lacks ``_ensure_primary`` + ``load_markets`` these callers need. #91 fix
+  aligned the fallback exchange resolution with the factory so the two agree.
+
+Any NEW direct construction site should be added here with its reason; a bare
+``CCXTProvider(...)`` outside this list is a review-flagged deviation.
 
 Symbols enter as canonical ``BTC/USDT`` strings or ``InstrumentId`` objects and are
 resolved to the CCXT unified symbol (with perp settle suffix when needed) at the boundary.
@@ -103,23 +114,16 @@ class CCXTProvider:
         self._sessions: list = []
 
     def _client(self, name: str):
-        import ccxt.async_support as ccxt
-        from aletheia.net import aiohttp_session
+        # Build via the managed factory (aletheia.net.make_ccxt), which injects a
+        # proxy-aware aiohttp session using aiohttp's OS-resolver (getaddrinfo)
+        # instead of the c-ares AsyncResolver that aiohttp auto-selects when aiodns
+        # is installed — on Windows/locked-down hosts c-ares can't read DNS config
+        # and every fetch dies with ClientConnectorDNSError. We own the injected
+        # session (own_session=False) and close it in close().
+        from aletheia.net import make_ccxt
 
-        if not hasattr(ccxt, name):
-            raise ValueError(f"unknown ccxt exchange: {name}")
-        # Force aiohttp's OS-resolver (getaddrinfo) instead of the c-ares
-        # AsyncResolver that aiohttp auto-selects when aiodns is installed. On
-        # Windows/locked-down hosts c-ares can't read DNS config and every fetch
-        # dies with ClientConnectorDNSError ("Could not contact DNS servers"),
-        # even though plain urllib (OS resolver) reaches the same host fine. We
-        # inject our own session so ccxt uses it (own_session=False), which means
-        # WE are responsible for closing it — done in close().
-        # aiohttp_session() also applies proxy from config via apply_proxy_env().
-        from aletheia.net import ccxt_timeout_options
-        session = aiohttp_session()
+        exchange, session = make_ccxt(name)
         self._sessions.append(session)
-        exchange = getattr(ccxt, name)({**ccxt_timeout_options(), "enableRateLimit": True, "session": session})
         return _install_market_id_guard(exchange, name)
 
     def _ensure_primary(self):
@@ -162,12 +166,12 @@ class CCXTProvider:
         limit: int = 100,
         since: int | None = None,
     ) -> list[Candle]:
-        ccxt_symbol, canon, _ = _resolve_ccxt_symbol(symbol)
+        ccxt_symbol, canon, mkt = _resolve_ccxt_symbol(symbol)
 
         from aletheia.data.cache import get_cache
         cache = get_cache()
         if since is None:
-            cached = cache.get(canon, timeframe, limit)
+            cached = cache.get(canon, timeframe, limit, market_type=mkt)
             if cached is not None:
                 return cached
 
@@ -193,7 +197,7 @@ class CCXTProvider:
                 ]
                 self._persist(canon, timeframe, candles, name)
                 if since is None and candles:
-                    cache.set(canon, timeframe, limit, candles)
+                    cache.set(canon, timeframe, limit, candles, market_type=mkt)
                 return candles
             except Exception as e:  # noqa: BLE001 — try fallback, then re-raise
                 last_err = e

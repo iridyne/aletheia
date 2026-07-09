@@ -58,6 +58,16 @@ def _trigger_reload_via_touch() -> None:
     touch_reload_sentinel("restart_endpoint")
 
 
+def _restart_audit_actor_source(reason: str) -> tuple[str, str]:
+    """Map a restart trigger to (actor, source). Automated callers (git post-merge
+    hook, dev file-watcher) must NOT be recorded as actor='human' (#132)."""
+    if reason == "git_hook":
+        return "system", "git_hook"
+    if reason == "file_change":
+        return "dev_watcher", "dev_watcher"
+    return "human", "dashboard"
+
+
 @router.post("/restart")
 async def restart_gateway(request: Request, body: Optional[RestartRequest] = Body(default=None)):
     """Restart the gateway worker.
@@ -78,10 +88,11 @@ async def restart_gateway(request: Request, body: Optional[RestartRequest] = Bod
 
     reason = body.reason if body else "manual"
     changed = body.changed_files[:10] if body and body.changed_files else []
-    source = "dev_watcher" if reason == "file_change" else "dashboard"
+    # Derive actor/source from the trigger, not a hardcoded "human" (#132).
+    actor, source = _restart_audit_actor_source(reason)
 
     write_audit({
-        "actor": "human", "source": source, "event_type": "gateway_restart",
+        "actor": actor, "source": source, "event_type": "gateway_restart",
         "entity_type": "gateway", "entity_id": "gateway",
         "message": f"Restart requested ({reason})",
         "after": {"reason": reason, "changed_files": changed} if changed else {"reason": reason},

@@ -149,6 +149,14 @@ async def test_auto_resume_on_connectivity_restored(tmp_path, monkeypatch):
 
     monkeypatch.setattr("aletheia.agent_runtime.connectivity.probe_exchange", fake_probe)
 
+    # #146: connectivity resume now also verifies the LLM is up before clearing the
+    # shared paused flag — mock it usable so this test isolates the connectivity path.
+    async def _llm_ok(cfg, max_retries=1):
+        return {"any_usable": True, "checked": 1, "results": []}
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.startup_gate.probe_llm_providers_at_startup", _llm_ok
+    )
+
     # Patch sleep at the module level so the loop doesn't actually wait
     import aletheia.agent_runtime.connectivity as conn_mod
     monkeypatch.setattr(conn_mod.asyncio, "sleep", AsyncMock(return_value=None))

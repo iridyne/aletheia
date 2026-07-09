@@ -128,9 +128,14 @@ def _import_all_specs():
         # Quant-review paper attribution replay (2026-07-01, QR-04): proposal-time
         # attribution snapshot threads into paper_broker position fields.
         spec_pipeline_paper_attribution,
-        spec_pi_decision_chain,
         spec_operator_contract_parity,
         spec_operator_single_source,
+        # #34: these spec files existed but were never imported here, so their claims
+        # (skill store, universe distribution audit) were absent from the conformance
+        # matrix — register them so they are actually loaded and counted. Also removed a
+        # duplicate spec_pi_decision_chain import that was in this list twice.
+        spec_skill_store,
+        spec_universe_distribution_audit,
         # Lesson block guards (LG-*): dry-run window + TTL expiry before block takes effect.
         # Attaches to risk_engine_contract (trust boundary, already REQUIRED). 2026-06-29.
         spec_lesson_guards,
@@ -172,6 +177,12 @@ def _import_all_specs():
         # canonical symbol when both spot and usdt_futures are enabled; LLM is not
         # called twice for the same directional read. Reuses data_layer_contract.
         spec_market_type_dedup,
+        # Managed network egress / system proxy (NET-*): every outbound interaction
+        # routes through the aletheia.net choke point; structured proxy config
+        # (protocol/host/port) + enforce fail-closed policy; ccxt single-constructor
+        # invariant; NO_PROXY/ALL_PROXY wiring. New "network_egress_contract"
+        # (cross-cutting infra — not in REQUIRED_CONTRACTS). 2026-07-04.
+        spec_network_egress,
     )
 
 
@@ -227,6 +238,52 @@ class TestConformanceStructure:
                 f"{contract} has no L2a (structural) claims"
             )
 
+    def test_non_implemented_claim_budget(self):
+        """#75 fix: `test_print_conformance_matrix` is informational-only
+        and passes green even when the matrix contains missing/partial/
+        superseded claims. An owner reading "green tests" then believes the
+        contracts are all wired up. Anchor the current baseline as a budget
+        — new missing/partial claims can only be added by consciously
+        updating this test's expectation, matching what happened when
+        contracts were paused or new claims added without wiring.
+
+        If this test fails, either:
+          - flip the newly-broken claim's status to 'implemented' (the fix), OR
+          - if the gap is intentional, update the counts below and note why.
+        """
+        counts: dict[str, int] = {}
+        for entries in SPEC_REGISTRY.values():
+            for claim, _ in entries:
+                counts[claim.status] = counts.get(claim.status, 0) + 1
+
+        # Baseline anchored 2026-07-08 from the review's own count:
+        #   missing=5, partial=1, superseded=1.
+        # Bumping any of these upward is a signal that a new gap opened;
+        # bumping downward means a fix landed and someone should ratchet
+        # this budget down accordingly.
+        MAX_MISSING = 5
+        # #153: 5 self-heal specs moved to partial (OL-C08, OL-S13, SH-S01, SH-C02, SH-B03)
+        MAX_PARTIAL = 6
+        MAX_SUPERSEDED = 1
+
+        missing = counts.get("missing", 0)
+        partial = counts.get("partial", 0)
+        superseded = counts.get("superseded", 0)
+
+        assert missing <= MAX_MISSING, (
+            f"CONFORMANCE REGRESSION: {missing} missing claims exceed the "
+            f"documented budget of {MAX_MISSING}. New missing claim(s) landed — "
+            "either implement them or consciously bump the budget with a reason."
+        )
+        assert partial <= MAX_PARTIAL, (
+            f"CONFORMANCE REGRESSION: {partial} partial claims exceed the "
+            f"documented budget of {MAX_PARTIAL}."
+        )
+        assert superseded <= MAX_SUPERSEDED, (
+            f"CONFORMANCE REGRESSION: {superseded} superseded claims exceed the "
+            f"documented budget of {MAX_SUPERSEDED}."
+        )
+
 
 def test_print_conformance_matrix(capsys):
     """Print the full matrix (always passes — informational output)."""
@@ -242,6 +299,11 @@ def test_print_conformance_matrix(capsys):
                 "implemented": "+",
                 "partial": "~",
                 "missing": "-",
+                # #74 fix: "superseded" claims (older contract clauses replaced
+                # by a newer one) get their own icon so the matrix doesn't render
+                # them as "?" (unknown). Not a failure — a legitimate lifecycle
+                # state next to implemented/partial/missing.
+                "superseded": "s",
             }.get(claim.status, "?")
             if claim.status == "implemented":
                 implemented += 1

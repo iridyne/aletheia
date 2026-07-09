@@ -65,7 +65,11 @@ def _write_knowledge_file(subdir: str, title: str, content: str, metadata: dict 
     base.mkdir(parents=True, exist_ok=True)
     safe_name = "".join(c if c.isalnum() or c in "-_ " else "" for c in title).strip().replace(" ", "-").lower()
     timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    filename = f"{timestamp}-{safe_name}.md"
+    # #129 fix: add 4-char hex suffix so multiple writes within the same second
+    # don't overwrite each other (e.g. batch evidence extraction).
+    import secrets as _sec
+    suffix = _sec.token_hex(2)
+    filename = f"{timestamp}-{suffix}-{safe_name}.md"
     path = base / filename
 
     header = f"# {title}\n\n"

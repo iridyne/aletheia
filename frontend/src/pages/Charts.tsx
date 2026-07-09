@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PriceChart, { type TradeMarker } from '../charts/PriceChart'
@@ -8,6 +9,7 @@ import Tabs from '../components/Tabs'
 import type { TabDef } from '../components/Tabs'
 import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
 import { fmtNum, fmtSigned, fmtDelta, fmtTimestamp, useDecimals, fmtSymbol } from '../lib/format'
+import type { PredictionMarket } from '../types'
 
 const FALLBACK_SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
 const TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
@@ -49,7 +51,9 @@ function SymbolStrip({
             className={`symbol-chip${isActive ? ' active' : ''}`}
             onClick={() => onSelect(sym)}
           >
-            <span className="symbol-chip-name">{fmtSymbol(sym, marketType ?? snap?.market_type)}</span>
+            {/* #170 fix: prefer per-snapshot market_type over the board's
+                asset-class label (same reason as the mtFor() helper below). */}
+            <span className="symbol-chip-name">{fmtSymbol(sym, snap?.market_type || marketType || undefined)}</span>
             {opp && (
               <span className={`symbol-chip-bias bias-dot-${opp.direction_bias}`} title={`AI: ${opp.direction_bias}`} />
             )}
@@ -77,7 +81,16 @@ function ChartPanel({
   snapshotMap: Record<string, any>; dataProvider: string | null; lastUpdatedLabel: string | null
   marketType?: string | null
 }) {
-  const mtFor = (s: string) => marketType ?? (snapshotMap[s] ?? snapshotMap[s.replace('/', '')])?.market_type
+  // #170 fix: reversed the fallback order. Previously `marketType ?? snap.market_type`
+  // — the board-level `marketType` (which can be an asset-class label like 'crypto')
+  // ALWAYS won, so a per-symbol snapshot that said 'perp' was ignored and the perp
+  // rendered with a slash (spot convention). Now per-snapshot market_type is the
+  // authoritative source; the board's marketType is only used when the snapshot
+  // lookup is missing.
+  const mtFor = (s: string) => {
+    const snap = snapshotMap[s] ?? snapshotMap[s.replace('/', '')]
+    return snap?.market_type || marketType || undefined
+  }
   const [timeframe, setTimeframe] = useState('1h')
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null)
 
@@ -153,7 +166,10 @@ function ChartPanel({
             ))}
           </div>
         </div>
-        <PriceChart symbol={symbol} timeframe={timeframe} markers={markers} onMarkerClick={setSelectedOrder} />
+        {/* #115 fix: PriceChart now reads marketType so a perp instrument's
+            chart pulls perp bars, not spot. mtFor(symbol) resolves via prop
+            override → snapshot lookup → 'spot' fallback. */}
+        <PriceChart symbol={symbol} timeframe={timeframe} marketType={mtFor(symbol) || 'spot'} markers={markers} onMarkerClick={setSelectedOrder} />
       </Card>
 
       {symbolOpportunities.length > 0 && (
@@ -301,26 +317,32 @@ function NewsTab() {
 // ─── Tab: Predictions ────────────────────────────────────────────────────────
 
 function PredictionsTab() {
-  const { data: markets = [], isLoading } = useQuery({
+  const { data: markets = [], isLoading } = useQuery<PredictionMarket[]>({
     queryKey: ['prediction-markets'],
     queryFn: api.getPredictionMarkets,
     refetchInterval: 120_000,
   })
 
   if (isLoading) return <p className="text-muted text-sm">Loading prediction markets…</p>
-  if ((markets as any[]).length === 0) return (
+  if (markets.length === 0) return (
     <p className="hint">Prediction observer not running or no active markets configured.</p>
   )
 
+  // #169 fix: this card used to read m.question and m.volume_usd — the
+  // PredictionMarket type carries event_title and volume_24h. The old field
+  // names always resolved to undefined, so the card showed a blank question
+  // and dropped the volume line entirely. Restore the typed PredictionMarket
+  // reference so future field renames trip tsc instead of silently blanking
+  // the card again.
   return (
     <div className="pred-grid">
-      {(markets as any[]).slice(0, 20).map((m: any) => {
+      {markets.slice(0, 20).map((m) => {
         const prob = m.yes_probability ?? null
         const change = m.probability_change_24h ?? null
         const tone = change == null ? '' : change > 0 ? 'pnl-positive' : change < 0 ? 'pnl-negative' : ''
         return (
           <Card key={m.id} className="pred-card">
-            <div className="pred-card-question">{m.question}</div>
+            <div className="pred-card-question">{m.event_title}</div>
             <div className="pred-card-stats">
               {prob != null && (
                 <span className="pred-card-prob mono">{(prob * 100).toFixed(0)}%</span>
@@ -328,8 +350,8 @@ function PredictionsTab() {
               {change != null && (
                 <span className={`pred-card-change mono ${tone}`}>{fmtSigned(change * 100)}%</span>
               )}
-              {m.volume_usd != null && (
-                <span className="pred-card-vol text-muted">${fmtNum(m.volume_usd)}</span>
+              {m.volume_24h != null && (
+                <span className="pred-card-vol text-muted">${fmtNum(m.volume_24h)}</span>
               )}
             </div>
           </Card>
@@ -342,9 +364,23 @@ function PredictionsTab() {
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function Charts() {
-  const [symbol, setSymbol] = useState('BTC/USDT')
+  // #116 fix (Charts side): pick up ?symbol=... &market_type=... from deep
+  // links (TradesPositions "View on Chart" passes them). Falls back to the
+  // BTC/USDT default when the caller didn't specify.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialSymbol = searchParams.get('symbol') || 'BTC/USDT'
+  const initialMarketType = searchParams.get('market_type') || 'spot'
+  const [symbol, setSymbol] = useState(initialSymbol)
+  const [marketType, setMarketType] = useState(initialMarketType)
   const [activeTab, setActiveTab] = useState('signals')
   useDecimals()
+  // Keep the URL in sync when the user picks a different symbol — deep links
+  // stay copy-pasteable and the browser back button behaves.
+  useEffect(() => {
+    const params: Record<string, string> = { symbol }
+    if (marketType && marketType !== 'spot') params.market_type = marketType
+    setSearchParams(params, { replace: true })
+  }, [symbol, marketType, setSearchParams])
 
   const { data: universe } = useQuery({
     queryKey: ['universe-current'],
@@ -461,7 +497,12 @@ export default function Charts() {
         snapshotMap={snapshotMap}
         dataProvider={dataProvider}
         lastUpdatedLabel={lastUpdatedLabel}
-        marketType={boardMarketType}
+        // #116 fix continuation: prefer the URL-provided market_type (from
+        // TradesPositions "View on Chart") over the board's market_type. A
+        // deep link that says market_type=perp shouldn't be overridden by
+        // the parent board's asset class (which may be a broader label like
+        // 'crypto'). Falls back to the board's value when the URL didn't say.
+        marketType={marketType !== 'spot' ? marketType : boardMarketType}
       />
 
       {/* Intelligence panels below the chart */}

@@ -1,42 +1,863 @@
 # Development Log
 
-## 2026-07-07 — Position X 离线材料接入（advisory-only 第二阶段）
+## 2026-07-09 — 市场类型数据模型子批 B12 + 合并 master（4 findings / 6 commits）
 
-### 触发
-最小版 Vergex 结构快照已经能进 `market_observer`，但还缺三层东西：
-授权研究材料的安全提炼、可验证的离线结构公式、以及给 market_observer / System Operator
-看的压缩结构证据。
-
-### 交付
-- 新增 `aletheia/data/position_x.py`：
-  - `extract_position_x_knowledge_cards()`：把授权样本中的维度说明、prompt 组织方式、
-    边界约束提炼成安全 knowledge cards，不保留 raw prompt / token / credential / wallet / balance。
-  - `extract_position_x_material_bundle()`：可直接读取 `04_evidence/` 或同类离线目录，
-    一次性产出 structure snapshots + knowledge cards。
-  - `extract_position_x_snapshot()`：把 `sndk_intelligence_signals` 风格 payload 归一化成
-    `PerpStructureSnapshot`。
-  - `compute_position_x_features()` / `compute_position_x_composite_z()`：
-    离线计算 LFA、POC、Value Area、convexity、cascade、research_prior_v1 composite。
-  - `composite_z_fit_data` / `dim_internal_fit` / `analysis_*.json` 现在也会提炼成公式提示卡和
-    agent 表达样式卡，仍只保留摘要与 source hash。
-  - `build_position_x_agent_context()`：生成 `Position X (advisory only)` 压缩证据块。
-- 扩展 `perp_structure_snapshots` 字段：
-  `structure_bias` / `composite_z` / `structure_rank` / `universe_size` /
-  `dimension_scores_json` / `risk_context_json`。
-- `VergexStructureCollector` 现在可直接吃 Position X 风格原始 signal payload。
-- `context_builder` 在旧的 `Perp structure` 段里追加压缩后的 `Position X` 证据。
-- `trading_context` / `trading_decision` 把同一压缩证据带给 System Operator，
-  仍保持 advisory-only。
-- `docs/design/data_utilization.md` / `data_model.md` 和对应 spec 已登记第二阶段路径。
+- **同名币现货/合约混淆一组问题**（bug 审查台账 #9/#13/#14/#102）：`market_snapshots` 本来就有 `market_type` 列（推迟理由过时，无需迁移）。`list_market_snapshots` 加可选 `market_type` 过滤；`latest_snapshot(symbol, market_type)` 优先按类型精确匹配、无则退回按符号（#13，触风控信任边界，配 PL-MD-06/07）；`_build_dynamic_instruments` 按标的/持仓自身 market_type 采集（#14）；`_make_candidate` 带上 market_type（#9）；Serenity 待决信号从源机会补回 market_type（#102，不用给 pi_decisions 加列）。
+- **#10 判为不修**：spec OD-S01（提交 `db3c3f8`）明确方向分析与合约/现货无关、每个符号只出一个标的，按符号去重符合设计；#11/#68/#106 确认 `034d4c8` 已修。
+- **顺带修一个预存的假绿测试**：`test_broker_averaging_and_trail_fixes.py` 的 order-dependent flake（凭证桩打错命名空间 + okx demo-symbol 缓存未重置），在合并前的 `1f9ec16d` 上也复现，确认非本批引入。
+- **合并 master**：本分支落后 master 26 提交，merge 解决 4 冲突（1 代码 opportunity_flow.py 按读模型纯度保留直查 DB + 采用 master 常量；3 文档取并集）。
 
 ### 验证
-- `uv run pytest tests/test_position_x_knowledge.py tests/test_position_structure_features.py tests/test_data_collectors.py tests/test_market_context.py tests/test_doctor.py -q -k "position_x or perp_structure or compact_position_x or test_position_structure_features or test_position_x_knowledge"`
-- `uv run pytest tests/specs/spec_data_utilization.py tests/specs/spec_data_model.py -q`
-- `git diff --check`
+- 全量 `tests/` → 2477 passed / 0 failed / 10 skipped / 6 xfailed。
 
 ### 边界
-不接真实 partner API，不引入地址级持仓库，不把外部分数直接当交易开关，
-不改 risk/execution/live，不让 Position X 证据单独触发开仓/平仓/加杠杆。
+只碰风控数据新鲜度辅助函数一处信任边界（配回归）；无 schema/迁移；不改 live/凭证/下单路径；不重启 gateway。
+
+---
+
+## 2026-07-08 — 尾扫延续：prune_system_actions 审计豁免 + gateway API 错误脱敏（2 findings / 2 commits）
+
+- **#44 prune_system_actions 硬删破 no-hard-delete 规则**：知识条目按规矩不 hard-delete，但 `system_action` 是 ~1200 rows/day 的纯 telemetry 噪声，保留反而淹没审计路径。保持 hard delete，但 docstring 显式声明这是 knowledge_items 里**唯一记录的例外**，并在实际删除时 emit `knowledge_items_pruned` audit event 记 deleted_count + cutoff_days —— 保住问责链条不至于失踪。→ `6b9cc40`
+- **#8 gateway API 错误响应泄漏 str(e)**：`execution/gateway.py` 三处 `return {..., "message": str(e)}`（demo / live / outer catch）直接把 raw CCXT/requests 异常文本抛给 API，可能带请求 URL / 部分头 / 栈碎片。新增 `_safe_error_message()` 转 `broker_utils.clean_error_message`（已知处理 OKX/Bitget/Binance JSON 形状）+ 截 200 字符。审计写入依然带原始信息，只切 API 表面。→ `1ac2247`
+
+### 验证
+`tests/specs/` 554 passed / 0 failed 两条都跑过。
+
+### 边界
+仅 storage/repositories.py + execution/gateway.py 各一个函数；未推 / 未 restart。
+
+---
+
+## 2026-07-07 — 尾扫多点：research_worker docstring / /status head_commit 缓存 / SpecClaim 验证（3 findings / 3 commits）
+
+- **#22 research_worker docstring**：`is_serenity_tradable_symbol` docstring 说 stock tokens 是 `asset_class="equity"` observation-only，实际代码 line 769 打的是 `asset_class="equity_tradeable"`（可执行）。改写 docstring 列清两个 class 的区别 + `trading_decision.py:1321` 是分流点。运行时未动。→ `23b3cd2`
+- **#6 /api/status 阻塞 git subprocess**：`current_commit()` shell 出去跑 `git rev-parse HEAD`，topbar 每 10s 一 poll，subprocess 30-500ms 阻塞 async loop。加 `_cached_head_commit(ttl=60s)` module-level 缓存（thread-lock，non-raising），HEAD 只在重启/自更新时变，60s 缓存安全。→ `a1869e1`
+- **#74 SpecClaim.status 未运行时校验 + 缺 "superseded"**：Literal 只列 implemented/partial/missing，但 spec_pi_decision_chain.py:126 用了 `status="superseded"` —— Literal 只是 type hint 不 enforce，运行时接受了但矩阵渲染 `?`。三件事：Literal 加 "superseded"；SpecClaim `__post_init__` 校验 status ∈ 合法集合（拼写错立即抛）；test_spec_conformance icon map 加 `superseded → s`。→ `37238a1`
+
+### 验证
+`tests/specs/` + test_spec_conformance = 559 passed / 0 failed。
+
+### 剩余
+- **B8 剩少量**（大件 #163 Settings coverage matrix、#122/#123 CausalChain 源 都需要更多 UI 验证 / backend 改动）；已 deferred 项不变。
+
+### 边界
+所有改动在测试树 + 服务器 route + docstring；未推 / 未 restart / 未 enable live。
+
+---
+
+## 2026-07-07 — B8-cc-confirm：Send 按 requires_confirmation 走 window.confirm（1 finding / 1 commit）
+
+### 触发
+接审计链修复后 owner「继续推进」。#71 Command Center Send 按钮无视 "confirmation" badge 直接触发 —— 与 backend #67 修复搭配不当（后端要求 confirm=true 参数才执行 confirmation-required 命令，前端不 confirm 就得连点两次）。
+
+### 做法
+- Send onClick 里加 `if (commandPreview?.command?.requires_confirmation)` 分支，未确认返回；确认后走 `commandMut.mutate()`。同 pattern 与既有 runtime buttons（Promote/Drain/Rollback）。
+
+### 交付
+- 1 finding。1 提交（CommandCenter.tsx Send handler + Fix Progress 表）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed。
+
+### 剩余
+- **B8 剩 ~5 finding**（大部分是复杂的 CausalChain 源问题 #122/#123，或需 audit 每字段的 Settings coverage matrix #163；已 deferred 项不变）。
+
+### 边界
+仅一个前端文件；未推 / 未 restart。
+
+---
+
+## 2026-07-07 — 审计链头截断修复（1 finding / 1 commit）
+
+### 触发
+接 B8-risk-mixed 后 owner「继续推进」。挑一条安全性 finding —— #43 audit_chain 头截断被误判为 benign。
+
+### 做法
+- **#43 verify_audit_chain 首行 mismatch 无条件 benign**：旧代码 `if is_first_in_file: benign = True` —— **任何**文件的首行 _prev_hash mismatch 都被当成 rotation-boundary reanchor。攻击者（或误操作 `head -c` / `truncate`）把**最老**的 audit 文件头切掉后，verifier 静默 reanchor，头部记录被静悄悄丢弃。修改 for 循环用 `enumerate`，标记 `is_oldest_file = (path_index == 0)`，条件收紧到 `is_first_in_file and not is_oldest_file` —— 最老文件的首行必须从 `_GENESIS_HASH` chain 起，否则视为真错。
+- **新增回归** `tests/test_audit_chain_head_truncation_fix.py`（2 tests / 2 passed）：
+  - `test_head_truncation_of_oldest_file_now_reads_as_error` — 种 3 条链、删首行、断言 `valid=False`、`errors` 非空、`reanchors=0`。
+  - `test_legitimate_rotation_still_reanchors_benignly` — 手动构造 `audit.jsonl.1` + 一条从 GENESIS 起链的 fresh audit.jsonl，断言 `reanchors=1`（合法 rotation 边界不应回归成 error）。
+
+### 交付
+- 1 finding（safety-critical）。1 提交（jsonl.py + 焦点回归）。
+- **验证**：`tests/specs/` + audit 回归 = 556 passed / 0 failed。
+
+### 剩余
+- **B7 / B9 / B10** 保持完成状态；**B8** 剩 ~6 finding（CausalChain 源、Settings coverage matrix、几处未处理的 tail）。
+- 已 deferred 项不变。
+
+### 边界
+仅 `aletheia/files/jsonl.py` + 新回归测试；未推 / 未 restart / 未 enable live / 未触 credentials。这是安全类修复，`write_audit` 路径完全没改（`use_cache=False` 已经防了缓存漂移）；只堵住 verifier 的 sensor 盲点。
+
+---
+
+## 2026-07-07 — B8-risk-mixed：RiskControls 同名 spot+perp 可见性（2 findings / 1 commit）
+
+### 触发
+接 B8-charts-pred 后 owner「继续推进」。挑一条 RiskControls 显示层的信号丢失。
+
+### 做法
+- **#47/#53 marketTypeBySymbol 覆盖**：`marketTypeBySymbol[p.symbol] = p.market_type` 循环里，同 symbol 的 spot + perp 互相覆盖。改成 `Record<symbol, Set<market_type>>` 收集全部；显示用 `_preferPerp(set)` 选出 derivative 类型（perp / usdt_futures / futures / swap 优先，spot 兜底），保证渲染一致（不会随 positions 更新顺序摆动）。加 `hasMixedMarketType(sym)` 判定 —— 同 symbol 同时有 spot + perp/futures 时在 exposure 行旁边显示「(spot+perp)」小灰字 + title「Both spot and perp open — exposure is combined」，告诉操作员这条 exposure 是**合并的**（backend `exposure_by_symbol` 键只有 symbol，`#52` deferred 与 market_type 迁移耦合暂无法拆）—— 前端只做显示诚实，不能修 backend 的合并。
+
+### 交付
+- 2 findings。1 提交（RiskControls.tsx + Fix Progress 表）。
+- 验证：Python `tests/specs/` 554 passed / 0 failed。
+
+### 剩余
+- **B8 剩 ~6 finding**（session B8 累计 29）：CausalChain fill/position 源不对 (#122/#123)、Settings coverage matrix 18 字段错标 (#163)、几处零星（Overview scheduler，AgentActivity strategies_designer，SettingsBanner setup 等已修）+ 已 deferred 与 market_type 迁移耦合的 (#52/#57/#96)。
+- 已 deferred 项不变。
+
+### 边界
+仅 1 前端文件（RiskControls.tsx）；未推 / 未 restart / 未 enable live / 未跑 npm。
+
+---
+
+## 2026-07-07 — B8-charts-pred：PredictionsTab 类型化 + market_type fallback 顺序（2 findings / 1 commit）
+
+### 触发
+接 B8-approve-honesty 后 owner「继续推进」。Charts 页两处诚实性 gap：预测卡读错字段、fmtSymbol fallback 顺序错。
+
+### 做法
+1. **#169 PredictionsTab 读不存在字段**：卡里读 `m.question` + `m.volume_usd`，但 `PredictionMarket` 类型是 `event_title` + `volume_24h`（`types.ts:159/162`）—— 两个字段永远 undefined，问题行空白、volume 整行被条件隐藏。改用类型化 `useQuery<PredictionMarket[]>`（丢掉 as any 逃生舱），读 `m.event_title` + `m.volume_24h`。未来 rename 时 tsc 会红。
+2. **#170 fmtSymbol 用 board asset-class**：`mtFor = marketType ?? snap.market_type`（`??` 语义是「marketType 有值就用」）—— 当 board 传来 `crypto`（asset-class，不是 spot/perp），perp snapshot 的 market_type 被丢，fmtSymbol 收到 'crypto' → 非 perp 判定 → 带斜杠渲染。反转优先级：`snap.market_type || marketType`—— per-snapshot 权威，board 只当 snap 缺失时兜底。同时改 symbol-chip 那一处的 fmtSymbol 调用同样反转。
+
+### 交付
+- 2 findings。1 提交（Charts.tsx）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动在 React 层 + TS 类型收紧。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~7 finding**（session B8 累计 27）：#122/#123 CausalChain fill/position 源不对（复杂 —— 需 fills 表 route）、#163 Settings coverage matrix 18 字段错标（大 —— 需 audit 每字段）、#96 Markets candlestick market_type forwarding（已 deferred 与 market_type 迁移耦合），加零星几条。
+- 已 deferred 项不变。
+
+### 边界
+仅 Charts.tsx（+ 一条类型 import）；未推 / 未 restart / 未 enable live / 未跑 npm。
+
+---
+
+## 2026-07-07 — B8-approve-honesty + SetupBanner 覆盖（3 findings / 1 commit）
+
+### 触发
+接 B8-chart-follow-up 后 owner「继续推进」。Proposals 审批路径的两个诚实性 gap（#113/#114）+ 首屏 SetupBanner 只认部分 provider（#121）。
+
+### 做法
+1. **#113 approve 200-with-error 静默 reset**：backend `/approve-paper` 对成功和「approved 但 execution 时挂了」都返 HTTP 200，只是 body 里 `execution.status='error'`。前端 approve mutation onSuccess 无脑 `clearErr(id)` —— 错误被清，操作员以为 order 落了。改成检查 `r.execution.status`，`error`/`rejected` → 走 `setErr` 保留 inline 错误。
+2. **#114 approve confirm 显示 proposal.execution_mode 骗人**：dialog 说「Mode: bitget_live_limited」或「Mode: okx_demo」（proposal 上带的），但 backend 硬编码 `execution_mode="paper_internal"`（data.py:642）。 现在 dialog 显示强制的 `paper_internal (paper simulation — no real order)`；若 proposal 的 stored mode 与之不同，加一句「the proposal was tagged '...', but the /approve-paper route routes every approval through paper_internal. Use the live-unlock flow to place a real order.」诚实告诉操作员该按钮实际做什么。
+3. **#121 SetupBanner 只认 Bitget-demo + api_key**：`anyModelKey = providers.some(p => p?.api_key?.configured)` 忽略 OAuth / CLI；`anyDemoCreds = creds.demo?.api_key?.configured` 只看 Bitget。OAuth-Claude + OKX demo 用户永远看到 setup 提示。加 OKX + Binance credential 查询，模型侧检查 api_key OR oauth OR cli-configured 任一存在，交易所侧任一（bitget_demo / okx_demo / binance_testnet）有 api_key 就算就绪。banner 文案改成「add a model endpoint (API key / OAuth / CLI) and at least one exchange's demo/testnet credentials」。
+
+### 交付
+- 3 findings。1 提交（Proposals + SetupBanner）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动全在 React 层。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~9 finding**（session B8 累计 25：cleanup 4 + mini 3 + honesty 3 + topbar 2 + quickies 3 + safety 2 + chart-nav 2 + chart-follow-up 3 + approve-honesty 3）。较大还剩：Settings coverage matrix mislabel 18 字段 (#163)、CausalChain fill/position 源不对 (#122/#123)、Charts prediction fields 错 (#169/#170)、Markets candlestick market-type forwarding (#96 — 与 market_type 迁移耦合，暂缓)。
+- 已 deferred 项不变。
+
+### 边界
+仅 2 前端文件；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
+## 2026-07-07 — B8-chart-follow-up + 对账 + Palette Enter（3 findings / 1 commit）
+
+### 触发
+接 B8-chart-nav 后 owner「继续推进」。补上 #116 依赖的 Charts.tsx 侧读 searchParams，再顺手挑 #117 (ReconciliationCard 零漂移隐藏 stale) + #126 (CommandPalette Enter 劫持) —— 两条独立小改。
+
+### 做法
+1. **#116 后续（Charts.tsx 读 searchParams）**：加 `useSearchParams` import + `useEffect` 保持 URL ↔ state 同步。`symbol` state 初值从 `?symbol=`；`marketType` state 初值从 `?market_type=`（默认 'spot'）。ChartPanel 的 `marketType` prop 现在 URL 优先（deep link 的市场类型不能被父 board 的 asset-class 覆盖），否则回退 boardMarketType。View-on-Chart 现在真正在期望的 instrument 上落地。
+2. **#117 ReconciliationCard 零漂移时隐藏 stale/error**：之前 `if (external.length===0 && orphaned.length===0) return null` —— 当 syncStatus='stale'/'error'/'unconfigured' 而 drift 恰为零时，整张 Reconciliation 卡不显示。用户不知道对账压根没跑或数据过期。加 `isDegraded = syncStatus && !['ok','unconfigured'].includes(syncStatus)`；drift=0 但 degraded 时仍渲染卡 + 显示 `sync <status>` badge + 解释文字「'no drift' 结论可能基于过时/缺失数据」。
+3. **#126 CommandPalette Enter 劫持**：无脑 `if (e.key==='Enter' && input.trim())` navigate 到 command-center —— 3 字符搜索匹配到建议时也劫持，cmdk 无法用 Enter 选建议。加长度门槛 `input.length >= 20`（呼应输入框 placeholder 的「20+ chars for AI」提示），短输入落回 cmdk 走建议选择。
+
+### 交付
+- 3 findings。1 提交（Charts + TradesPositions + CommandPalette）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动全在 React 层，不涉及 Python spec 覆盖。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~12 finding**（session B8 累计 22：cleanup 4 + mini 3 + honesty 3 + topbar 2 + quickies 3 + safety 2 + chart-nav 2 + chart-follow-up/reconcile/palette 3）。大件仍在：Settings coverage matrix mislabel (#163)、CausalChain fill/position 源不对 (#122/#123)、Charts prediction fields 错 (#169/#170)、Proposals approve/confirm 骗人 (#113/#114)、SetupBanner 只 Bitget (#121)、Charts fmtSymbol 用 board asset-class (#170)、PredictionMarket 类型丢失 (#169)。
+- 已 deferred 项不变。
+
+### 边界
+仅 3 前端文件；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
+## 2026-07-07 — B8-chart-nav：PriceChart marketType + View-on-Chart 带 symbol 跳转（2 findings / 1 commit）
+
+### 触发
+接 B8-safety 后 owner「继续推进」。挑两条 chart 页相关的诚实性小改。
+
+### 做法
+1. **#115 PriceChart 没 marketType prop**：`<PriceChart symbol="BTC/USDT" ... />` 内部三次 `api.getOhlcv(...)` 都不传 marketType，走 client 签名的默认 'spot' —— 一个 perp instrument 的图表 quietly 拉 spot 蜡烛，价格偏离真实 perp mark。加 `marketType` prop（默认 'spot' 保 backwards compat），三处 getOhlcv 调用都透传。
+2. **#116 TradesPositions View on Chart 无 symbol**：Order 抽屉里 `onClick={() => navigate('/charts')}` 不带任何参数，Charts 页永远初始化到默认 BTC/USDT —— 用户要手动重新选 order 的真实 symbol。改成 `navigate({ pathname: '/charts', search: '?symbol=<order.symbol>&market_type=<...>' })`。Charts 页需要在 mount 时读 searchParams（大多数 chart 页都做这个，如没有则是下一批的工作）。
+
+### 交付
+- 2 findings。1 提交（PriceChart + TradesPositions）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动全在 React 层。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~15 finding**（session B8 累计 19：cleanup 4 + mini 3 + honesty 3 + topbar 2 + quickies 3 + safety 2 + chart-nav 2）。较大：Settings coverage matrix mislabel (#163)、CausalChain fill/position 源不对 (#122/#123)、Charts prediction fields 错 (#169/#170)、Proposals approve/confirm 骗人 (#113/#114)、SetupBanner 只 Bitget (#121)、CommandPalette Enter 劫持 (#126)、ReconciliationCard 零漂移隐藏 (#117)、Charts.tsx searchParams 未读 (Charts 需要接收 #116 传的 symbol/market_type)。
+- 已 deferred 项不变。
+
+### 边界
+仅 2 前端文件；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。**依赖 follow-up**：Charts.tsx 需在 mount 时读 `searchParams.get('symbol')` + `.get('market_type')` 并作为初值 —— 本批未改 Charts.tsx（大文件、需 UI 测试），下批做。
+
+---
+
+## 2026-07-07 — B8-safety：Settings 保存 onError 横幅 + Serenity assessed_tier（2 findings / 1 commit）
+
+### 触发
+接 B8-quickies 后 owner「继续推进」。#164 是 Settings 里一大堆 mutation 缺 onError 的诚实性 gap；#167 是 SerenityLens 显示的 tier 用错来源（advisory 而非 authoritative）。
+
+### 做法
+1. **#164 Settings AgentModelsTab 9 个 mutation 缺 onError**：`permMut` / `autoLearnMut` / `bypassDistressMut` / `runtimeMut` / `operatorMut` / `piDaemonMut` / `serenityMut` / `guardMut` / `regimeMut` 都只有 onSuccess。后端 422/403/500 时前端 silent，toggle 视觉「切换成功」但配置从未落库。加一个 tab-局部的 `saveErr` state 与 `onSaveError(label)` 工厂 —— 每个 mutation 加 `onError: onSaveError('Permission mode')` 之类，成功时清空。Tab top 加一条红色 banner「Save failed — <label>: <message>」，用户不再面对沉默失败。
+2. **#167 SerenityLens Opportunity 表 Tier 列**：显示 `humanize(o.evidence_tier)` —— 那是**提交时的 proposed**（advisory only）；risk engine 实际用的是 `assessed_tier`（serenity 证据管道打分后落库）。改成 `humanize(o.assessed_tier || o.evidence_tier)` —— assessed 优先；管道尚未打分才回退 proposed。用户看到的 Tier 现在与 risk engine 用的一致。
+
+### 交付
+- 2 findings。1 提交（Settings.tsx + SerenityLens.tsx）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动都在 React 层，不涉及 Python spec 覆盖。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~17 finding**（session B8 累计 17：cleanup 4 + mini 3 + honesty 3 + topbar 2 + quickies 3 + safety 2）。较大的：CausalChain fill/position 源不对 (#122/#123)、Settings coverage matrix mislabel (#163)、Charts prediction fields 错 (#169/#170)、Proposals approve/confirm 骗人 (#113/#114)、TradesPositions 无 symbol (#116)、ReconciliationCard 零漂移隐藏状态 (#117)、SetupBanner 只 Bitget (#121)、CommandPalette Enter 劫持 (#126)、PriceChart 无 marketType prop (#115)。
+- 已 deferred 项不变。
+
+### 边界
+仅 2 前端文件（Settings 局部 tab + SerenityLens 单行）；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。#164 只覆盖了 AgentModelsTab 9 个 mutation，其他 tab（外汇/网络/记账/风控）的 save mutation 还需类似处理，留下批。
+
+---
+
+## 2026-07-07 — B8-quickies：CommandPalette /universe + Scheduler 真状态 + AgentFeed 失败集（3 findings / 1 commit）
+
+### 触发
+接 B8-topbar 后 owner「继续推进」。三条前端诚实性小改，都是「路由/状态可见但用错源/漏项」。
+
+### 做法
+1. **#125 CommandPalette 缺 `/universe`**：`nav-universe` 条目从 NAV bar 一直有但 palette 没挂 —— keyboard shortcut 用户无法跳到 Universe Board。加一行 nav entry（keywords 含 universe/scanner/instruments）。
+2. **#118 Overview Scheduler 灯只看 paused**：`light={paused ? 'yellow' : 'green'}` 忽略 `scheduler_running` / `scheduler_state`（/status 明确返回这两）—— scheduler 实际停了（比如崩了/apscheduler shutdown 后）仍显示绿。改成读 `s?.scheduler_running` (bool)，`paused=true → yellow`, `running=true → green`, 其余 → `red`；label 显示 `scheduler_state`。
+3. **#120 AgentFeed 只染 `status=='error'` 红**：`failed`/`timed_out`/`stale`/`completed_with_errors`/`rejected` 五种失败态都走 accent-blue（feed icon）+ yellow（badge），被当「进行中」显示，实际是失败。抽 `FAILURE_STATUSES` set，两处（feed-icon color + badge className）都用它 —— 图标 + badge 一致告诉用户「这条真挂了」。
+
+### 交付
+- 3 findings。1 提交（CommandPalette + Overview + AgentFeed）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动全在 React 状态映射层。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~19 finding**（session B8 累计 15：cleanup 4 + mini 3 + honesty 3 + topbar 2 + quickies 3）。
+- 已 deferred 项不变。
+
+### 边界
+仅 3 前端文件；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
+## 2026-07-07 — B8-topbar：Overview 交易所探针分派 + 顶栏 risk-status 查询（2 findings / 1 commit）
+
+### 触发
+接 B8-honesty 后 owner「继续推进」。两条影响 dashboard 首屏状态的诚实性 gap。
+
+### 做法
+1. **#171 Overview 交易所灯永远探 Bitget**：`Overview.tsx:31` 无脑 `api.testBitget(exchangeMode)`，OKX/Binance 部署看到的是**过时**的 Bitget 探针 —— 没 bitget creds 会红（假警报），bitget 侥幸活着而真交易所挂了会绿（假 OK）。改成按 `status.exchange`（值为 `okx`/`binance`/`bitget`）选择 `api.testOkx` / `api.testBinance` / `api.testBitget`；三个 client 方法本来就在。
+2. **#174 顶栏 riskState 永远为空**：`App.tsx::StatusBar` 读 `data?.risk_status || data?.risk?.status || ''`，但 `/api/status` 从不返回 risk 字段 —— riskState 永远 `""`。deriveMasterState 里 CAUTION / OPERATIONAL 分支永远不激活，健康态误显 STANDBY-绿。加 `useQuery({ queryFn: api.getRiskStatus, refetchInterval: 15000 })`，读 `risk.status` 首选，`/status` 里的 legacy 兼容值兜底。这样与 `RiskControls.tsx:83-86` 用同一数据源，Overview 说 yellow / Risk 说 blue 的旧不一致也顺带消。
+
+### 交付
+- 2 findings。1 提交（`App.tsx` + `Overview.tsx`）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动全在 React query 层 + StatusBar 计算式，不涉及 Python spec 覆盖。`tsc` 未跑（无 node_modules），full UI check tracked。
+
+### 剩余
+- **B8 剩 ~22 finding**（session B8 累计已修 12：cleanup 4 + mini 3 + honesty 3 + topbar 2）。较大的：CausalChain fill/position 源不对 (#122/#123)、Settings coverage matrix mislabel 18 字段 (#163)、Charts prediction 读不存在字段 (#169/#170)、Proposals approve 忽略 execution.status (#113)、Proposals confirm demo/live 承诺骗人 (#114)、TradesPositions View on Chart 无 symbol (#116)、ReconciliationCard 零漂移时隐藏 stale/error 状态 (#117)、Overview scheduler 只看 paused (#118)、AgentFeed 只染 status=='error' (#120)、SetupBanner 数只 Bitget (#121)、CommandPalette 缺 /universe (#125)、CommandPalette Enter 劫持 (#126)。都需 npm 验证再动，逐条挑机械/低风险的继续。
+- 已 deferred 项不变。
+
+### 边界
+仅 2 前端文件；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
+## 2026-07-07 — B8-honesty：pause/resume onError + guidance tone + risk-clear 门（3 findings / 1 commit）
+
+### 触发
+接 B8-mini 后 owner「继续推进」。B8 挑三条更有影响力的诚实性 gap —— 操作员会实际操作的按钮 / 状态标签。
+
+### 做法
+1. **#165 pause/resume/wake 吞 409**：三个 mutation 只有 `onSuccess` 无 `onError`，backend 返 409（LLM-unavailable / kill-switch-active）时前端 silent 「成功」，操作员以为 resume 生效了实际系统还在 paused。三个 mutation 都加 `onError: (e) => toast('error', ...)`，match `App.tsx` 里已存在的 extractResumeError 模式。
+2. **#166 CommandCenter runtime guidance 死支**：`<StatusText tone={runtimeBadge(guidance?.action).includes('green') ? 'green' : ...}>` —— `runtimeBadge` 词汇是 **runtime state**（current/candidate/failed 等），guidance.action 是**动词**（promote/rollback/drain/observe 等），永远不匹配 → 永远走 badge-blue → tone 永远 yellow → promote 和 rollback 长得完全一样。新加 `guidanceTone(action)` 助手：promote/start_shadow/prepare_candidate=green（推进），rollback=red（回滚），drain/activate_restart=yellow（谨慎），observe/未知=muted。
+3. **#172 RiskControls "within all limits" 误绿**：violation list 空时无脑显示「operating within all limits」+ 绿点 —— 包括 riskState='unknown'/missing 的**初始/没有数据**场景，把「没数据」当「一切正常」显示。加条件：只有 `riskState === 'healthy'` 才显示 clear + 绿；否则显示 `Risk state <state> — not confirming clear until the risk engine reports "healthy"` + 灰点。
+
+### 交付
+- 3 findings。1 提交（CommandCenter + RiskControls）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动全在 React 组件层，不涉及 Python spec 覆盖。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~24 finding**（本 session B8 累计已修 10：cleanup 4 + mini 3 + honesty 3）。较大的还剩 topbar riskState 死支 (#174)、Overview exchange 灯永远 Bitget (#171)、CausalChain fill/position 源不对 (#122/#123)、Settings coverage matrix mislabel (#163)、Charts prediction 读不存在字段 (#169/#170) 等。
+- 已 deferred 项不变。
+
+### 边界
+仅 2 前端文件（`CommandCenter.tsx` + `RiskControls.tsx`）；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
+## 2026-07-07 — B8-mini：预测偏好 PATCH + NewsIntel analyzed 桶 + 时间线加日期（3 findings / 1 commit）
+
+### 触发
+接 B8-cleanup 后 owner「继续推进」。B8 里挑另外 3 条单点小改，都是「client 用错方法 / filter 缺项 / 时间戳不带日期」这类清晰易修。
+
+### 做法
+1. **#86 prediction/preferences POST→PATCH**：backend 是 `@router.patch("/preferences")` (prediction.py:232)，client `updatePredictionPreferences` 却是 `post(...)` —— 保存偏好每次 405 Method Not Allowed。换成 `fetchJson(path, { method: 'PATCH', headers, body })`。
+2. **#168 NewsIntel 缺 analyzed 过滤桶**：`filter` 只有 all/new/reviewed，auto-analysed 行 status='analyzed' 只能在 all 里看到 —— 用户不知道有哪些被自动分析过。filter row 加 `'analyzed'`，comprehension 加相应分支。
+3. **#173 ActivityTimeline HH:MM 撒谎**：只渲染 HH:MM，3 天前的事件跟今天的看起来一样，误导 stale feed 看起来 current。同日事件保 HH:MM（避免噪音），跨日事件前置 "Nov 12" 形式的月日。
+
+### 交付
+- 3 findings。1 提交（3 前端文件）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed（不受前端改动影响）。**tsc 未跑**（无 node_modules），full UI 验证 tracked。改动全是 text-level / 加 case 分支 / 加日期条件，无 hooks / 数据形状 / props 契约变化。
+
+### 剩余
+- **B8 剩 ~27 finding**（起初 ~35，本 session B8-cleanup 4 + B8-mini 3 = 7 处置）。较大宗未处理：pause/resume 吞 409 (#165)、topbar riskState 死支 (#174)、Overview exchange 灯永远探 Bitget (#171)、CausalChain fill 源不对 (#122/#123)、Settings coverage matrix 错标 18 字段 (#163)、多个 onError 缺失 (#164) 等。都需要 `npm run build` + 浏览器验证才能安全大改。
+- 已 deferred 项不变。
+
+### 边界
+仅 3 前端文件（`client.ts` + `NewsIntel.tsx` + `ActivityTimeline.tsx`）；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
+## 2026-07-07 — B8-cleanup：fmtSymbol 恢复 + AgentActivity 过时说明 + RuleSet legacy 标签（4 findings 逻辑修 + 1 已applied / 1 commit）
+
+### 触发
+接 B10-rename 后 owner「继续推进」。B7/B9/B10 全部收官，进入 B8 前端诚实性组 —— 挑几条最机械、不依赖 UI 运行时的清理，先把易改的先处理。
+
+### 做法
+1. **#15 + #175 fmtSymbol 恢复**：`TradeInsightsPanel.tsx:449` 的 `row.symbol.replace('/USDT', '')` + `PnLZone.tsx:173` 的 `sym.replace('/USDT', '')` 都是硬编码剥 USDT，不走 `fmtSymbol()` helper —— 非 USDT quote / perp 会显示错。TradeInsightsPanel 已经 import 了 fmtSymbol；PnLZone 需要加 import。改成 `fmtSymbol(row.symbol, (row as any).market_type)` / `fmtSymbol(sym)`。#175 是 #15 在 SymbolDirectionMatrix 的具体实例，同一次修覆盖。
+2. **#95 已在过往会话应用**：`frontend/src/api/client.ts:543` 已有 `// #95: removed dead setStrategyVenue()` 注释，grep 全项目无残留调用点，已 resolved（不占本批工作量，登记）。
+3. **#72 AgentActivity 「steps 后端未建」过时**：backend `/api/agent-runs/{run_id}/steps` 早在 `server/routes/data.py:236` 挂了，但 `frontend/src/api/client.ts` 从没加 `getAgentRunSteps` 方法，AgentActivity 抽屉里显示「pending backend — not yet available」。加 `api.getAgentRunSteps(runId)` 客户端方法 + AgentActivity `ReasoningStepsSection` 用 useQuery 拉步骤并渲染成表格（step_number/action/input/output 各 80 字符预览）；顶部模块 docstring 里的「backend gap」段改为「#72 fix：GET /steps 已 live」+ 「note was stale」。
+4. **#128 TradeAnalyticsPanel `RuleSet` legacy 标签**：`By Strategy Source` 段列的 `ruleset` 是 Position C 已删规则引擎的产物 —— 只有 legacy 数据行才有。标签从 `RuleSet` 改成 `RuleSet (legacy)`，颜色从 `var(--accent)` 改为 `var(--muted)`（少抢注意力），并在文件 top docstring 明写「legacy attribution 仍展示历史行，新 trade 全是 opportunity」。
+
+### 交付
+- 4 finding 逻辑修 + 1 verified-already-done。1 提交。
+- **验证**：Python `tests/specs/` + naming registry 共 557 passed / 0 failed（不受 frontend 改动影响）。**tsc 未跑**（本 worktree 未装 node_modules），full UI 验证 tracked as follow-up；本批只做 mechanical 文本+import 层的改动，不改任何组件的 hooks / 数据形状 / props 契约。
+
+### 剩余
+- **B8 剩 ~30 finding**：pause/resume 吞 409（#165）、topbar riskState 死支（#174）、Overview exchange 灯永远探 Bitget（#171）、CausalChain fill 从 order 而非 fills 表（#122/#123）、settings coverage matrix mislabel（#163）、多个 onError 缺失（#164）等等。都要看 UI 才能验证；建议在 owner 说「可跑 npm build」时集中做。
+- **已 deferred 项** 不变。
+
+### 边界
+仅 4 个前端文件（`TradeInsightsPanel.tsx` + `PnLZone.tsx` + `client.ts` + `AgentActivity.tsx` + `TradeAnalyticsPanel.tsx`）；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
+## 2026-07-07 — B10-rename：System Operator naming 注册 + naming-regression（1 finding / 1 commit）
+
+### 触发
+接 B10-docs-tail 后 owner「继续推进」。B10 剩最后一条 #97 —— `discussion.md` 已经把「PI Agent」重命名为「System Operator」，但 `pi_daemon` 名字仍散落 config schema / 路由 / 审计事件 / 前端。全项目 rename 成本大，采用 ledger 的「at minimum: 记为 legacy 兼容键 + naming-regression test」路径。
+
+### 做法
+1. **配置层单点真相**：`config/schema.py::PiDaemonConfig` 加详细 class docstring 建立 **naming registry** —— 明写 `pi_daemon` = legacy 兼容键、当前产品名 = System Operator daemon，列出 4 处 legacy 契约（field / audit event / REST path / product name）。
+2. **路由 docstring 加 legacy 标记**：`server/routes/settings.py::update_pi_daemon_config` 加 docstring 说 `/pi_daemon` 路径 + `pi_daemon_config_changed` 事件 + `pi_daemon_config` entity 都是 legacy 兼容名。audit message 里的文本从 "PI daemon config updated" 改为 "System Operator daemon config updated"（用户/操作员可见的那部分改到当前语言，机器契约保 legacy）。
+3. **前端 UI 可见 label 已在 System Operator daemon**：Settings.tsx:553 已是 `System Operator daemon (event-driven)` —— 本批只加 regression 锁住不回归。`pi daemon` 作为搜索别名（line 69）保留，用户肌肉记忆。
+4. **naming-regression 测试**（`tests/test_system_operator_naming_registry.py`，3 tests）：
+   - 断言 `PiDaemonConfig` docstring 包含 "System Operator daemon" + "legacy" 字样 + 4 处契约 key —— docstring 是 registry，丢了这段本测试会报。
+   - 断言 `PiDaemonConfig` 4 个字段（enabled/debounce_sec/cooldown_sec/heartbeat_sec）都还在 —— 防止 silent config break。
+   - 断言 `Settings.tsx` 含 `System Operator daemon` **且不含** `PI Agent daemon` / `PI daemon (event-driven)` 之类的 visible label —— 防新代码回退旧命名。
+
+### 交付
+- 1 finding。1 提交（config/schema + settings 路由 + 新回归 test）。
+- **验证**：`tests/specs/` 557 passed / 0 failed（相较 baseline 554 多 3 —— 新 test 3 条 all green）。
+- 未做完整 rename（会破 existing config.yaml + audit trail），改用 ledger 明写建议的 minimum：登记 + 锁住 —— 「full rename (config key + REST alias) deferred as bigger migration」记在 Fix Progress。
+
+### 剩余
+- **B10 全部处置**（除 deferred full rename）。至此 **B7 / B9 / B10 均完成**。
+- **B8** 前端诚实性仍留（最大一组，约 35 findings，需 `npm run build` 验证）。
+- 已 deferred：market_type migration / operator 鉴权 / #109/#143/#102-pending/#17 / 运行时性能 / #154/#155/#156 (B9 尾) / #97 完整 rename。
+
+### 边界
+仅 3 文件 + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。未改任何 config.yaml 消费者接口（既有 `cfg.pi_daemon.enabled` 等仍 work）。
+
+---
+
+## 2026-07-07 — B10-serenity-plan：thesis-invalidation marker doc reconciled（1 finding / 1 commit / 纯 docs）
+
+### 触发
+接 B10-docs-tail 后 owner「继续推进」。B10 快扫尾一条 #104。
+
+### 做法
+`docs/plans/serenity_execution_path.md` §5.2 承诺过「显式 `thesis_invalidated` 标记」作为独立退出触发器，但 SerenityOpportunity 模型 + 迁移都无此字段，`position_manager.py:247-253` 也只查 `opp.status != active`。改写为「status 是唯一控制轴，`invalidated` 语义通过 status 迁到 `dismissed`/`expired` 表达」，并注明若未来要独立布尔 marker 需加 field + 迁移 + spec claim。
+
+### 交付
+- 1 finding。1 提交。
+- 验证：`tests/specs/` 554 passed / 0 failed。
+
+### 边界
+仅一个 doc 文件。
+
+---
+
+## 2026-07-07 — B10-docs-tail：因果链 + CCXT 直构造异常 + Spec 索引（4 findings / 1 commit / 纯 docs+docstring）
+
+### 触发
+接 B10-docs-sweep 后 owner「继续推进」。B10 剩几条不涉及 code rename 的 docs drift 一并扫掉。
+
+### 做法
+1. **#30 Position 因果链 docs 说 schema 不含**：三份文档都写「positions 从 orders/fills 投影，不直链 proposal」—— 实际 schema 早已带 `proposal_id` / `order_id` / `opportunity_id`，每个 broker 开仓时写，`adopt_position()` 也走同一路径（synthetic-but-honest 链）。修 `docs/governance/trust_and_change_control.md` + `docs/design/execution_contract.md` + `docs/design/webui_page_map.md` 三处，各自把「不直接链」的旧描述改成「已直接链，并说明 adopted 也走同链」。
+2. **#49 CCXT 直构造异常清单不全**：`aletheia/data/ccxt_provider.py` 模块 docstring 说「xStocks 是唯一直构造 `CCXTProvider(...)` 的例外」—— 但 B9-data 修的 #91 揭示 universe/registry + universe/features 也直构造。docstring 扩展成正式清单：`xStocks` + `universe.registry.sync_registry` + `universe.features.collect_features`，每条注明理由（唯一交易所 / factory 缺 `_ensure_primary+load_markets` 表面），并加一句「任何新的直构造点应加进这里，缺失即视为 review-flagged 偏差」。
+3. **#50 execution_contract 因果链 stale**：ledger 说 execution_contract 声称 position 因果链比实际弱 —— 但该文件本身只在 §1 一处引用了 position 因果链，那处已被 #30 修的同一批次覆盖到（改成「已直接链 — #30/#50」）。视为 #30 fix 顺带 subsumed。
+4. **#76 README Spec-as-Code 表旧且不全**：手写 14 行表列了不存在的 `spec_promotion_gates.py`，claim 数（如 `spec_risk_engine.py=7` 但实际 34+）也过时；实际 `tests/specs/` 有 59 个 spec 文件。**放弃手抄枚举**（会一直漂），改为 pointer：跑 `ls tests/specs/spec_*.py | wc -l` + `uv run pytest tests/test_spec_conformance.py` 才是活的真相。README 保留一份「代表性 spec」快速定位清单（按契约类/管道类/Serenity 类/学习类分组），不再声称完整。
+
+### 交付
+- 4 findings（#50 是 #30 的 subset，一次修同时覆盖）。1 提交（3 doc + 1 docstring）。
+- 无新回归（纯 docs/docstring 无 runtime 行为）。
+- **验证**：`tests/specs/` 554 passed / 0 failed。
+
+### 剩余
+- **B10 剩最后一条大件**：#97 (System Operator rename 未完 —— `pi_daemon` 名字仍散落 config/API/audit/client contracts)。这条涉及**代码 rename**，改动面明显大于本批 docs-only 批。留作 B10-rename 单独一批（可能是 B10 收官）。
+- **B10 完成**：#28（superseded）、#29、#30、#31、#32、#33、#49、#50（subsumed）、#76、#77、#78、#79、#80、#81 —— 全部处置。
+- **B8** 前端诚实性（需 `npm run build`）+ 已 deferred 项仍留。
+
+### 边界
+仅 3 个 doc 文件 + 1 个模块 docstring；未推 / 未 restart / 未 enable live / 未触 code runtime 行为。
+
+---
+
+## 2026-07-07 — B10-docs-sweep：scheduler + live-unlock + kill-switch + permission-mode 漂移（5 findings / 1 commit / 纯 docs）
+
+### 触发
+接 B10-api-ref 后 owner「继续推进」。B10 docs drift 尾第二轮 —— 5 条 stale docs 一次批处理。
+
+### 做法
+1. **#29 agent_contracts.md 调度器表旧**：文档写「31 jobs」+ 编号跳空（12→16），漏 5 个真实 job：`lesson_reviewer`、`connectivity_monitor`、`shadow_resolver`、`news_fetch`、`outcome_settler`。用 `grep -oP 'id="[^"]+"' scheduler.py | sort -u` 得实际 33 个 unique ID，全表重写、连续编号、5 条新行按各自 schedule 补齐（cron/interval/executor）。
+2. **#31 live_unlock_contract.md scorecard "尚未实现 xfail"**：§4a 写「`server/routes/live.py` 尚未调用 `compute_scorecard()`——D8-B02/D8-C01 是 xfail tripwire，实现后去掉 xfail」。实际 `live.py:30-41` 早已实现（`compute_scorecard()` + `composite_score < 70 → 422`）。改写为「已实现且被 spec 锁定，tripwire 已通过（不再 xfail）」。
+3. **#32 api_reference.md kill-switch confirm token「已知缺陷」注**：文档 §Risk / Kill Switch 挂了个 ⚠️ 说 release 路径**不要求** confirm token。实际 `server/routes/risk.py:85-101` 已经强制 `confirm_release=True`（否则 422）。§0 SDD 表 + §Risk 表都补上 `confirm_release` 字段说明；⚠️ 缺陷注改写成 ✅「2026-07-07 已解决」并指向 `docs/issues/BACKEND_ISSUES.md` 的对应条目。
+4. **#33 api_reference.md `/settings/permission-mode` 说明误导**：文档写「worker + operator」，实际 `set_permission_mode` 只写 `cfg.agent.permission_mode`（worker）—— operator 是完全独立的 `cfg.operator.permission_mode` 面。改写描述强调 worker-only + operator 是**独立**面（这处正好呼应 B9-diag 的 #180 inspect config namespace 混淆修）。
+5. **#28 覆盖回顾**：ledger #28 是 3 条问题的汇总（错 operator trigger + 缺 infra/proposal + dead strategy），三条分别已由 B10-api-ref 的 #78/#79/#81/#77 直接修 —— 本批 Fix Progress 行里标注「superseded by prior batches」。
+
+### 交付
+- 5 findings。1 提交（纯 docs）。
+- 无新回归（docs-only 无 runtime 行为）。
+- **验证**：`tests/specs/` 554 passed / 0 failed；`spec_api_reference.py` 一起跑绿。
+
+### 剩余
+- **B10 剩余** #30 (Position causal links docs stale — code has proposal_id/order_id/opportunity_id but docs说没有)、#49 (ccxt_provider docstring xStocks-only 声明错)、#50 (execution_contract causal links 信息性 stale)、#76 (README Spec-as-Code 索引旧)、#97 (System Operator rename incomplete pi_daemon 仍散落)、#104 (serenity 执行 plan 承诺 vs 代码)。下一批候选 #30 + #49 + #50 + #76 (纯 docs)。#97 涉及代码 rename，成本大，单独一批。
+- **B8** 前端诚实性（需 `npm run build`）仍留。
+
+### 边界
+仅 `docs/design/api_reference.md` + `docs/design/agent_contracts.md` + `docs/design/live_unlock_contract.md`；未推 / 未 restart / 未 enable live / 未触 code。
+
+---
+
+## 2026-07-07 — B10-api-ref：api_reference.md 漂移扫（5 findings / 1 commit / 纯 docs）
+
+### 触发
+B9 收官后 owner「继续推进」。B10 docs drift 尾，先扫 `docs/design/api_reference.md` 与实际路由的分歧 —— 一条一条修，全部纯 docs 无 code touch。
+
+### 做法
+针对台账 #77–#81，逐条对着实际后端路由更新 `api_reference.md`：
+- **#77 strategy 详情/mutation 路由早删了**：文档还写 `/strategies/summary`、`/strategies/{id}`、`PATCH /strategies/{id}/venue`。实际后端只有 `GET /strategies`（read-only 遗留归因）。删掉三行，说明块从「有 promote/retire/gates」改成「所有变异端点全删，只留 legacy list」。
+- **#78 operator loop 触发路径**：文档写 `POST /operator/trigger`，代码是 `POST /operator/loop/trigger`（operator.py:938 `@router.post("/loop/trigger")` 挂在 `/api/operator` 下）。修为正确路径。
+- **#79 缺 `GET /proposals/{id}`**：data.py:609 有此路由，索引里没有。补一行「Get one proposal by id (404 when absent)」。
+- **#80 `/operator/internal/*` 通配折叠掩盖 15 条独立路由**：文档一行通配符「Internal operator-shell bridge endpoints; not public UI contracts」—— 与 §0 「complete endpoint index」承诺冲突。展开为 15 条具体 POST/PATCH，每条一句描述；下面加说明确认「internal-only，不是公共 UI 契约，枚举是为兑现 §0 完整承诺」。
+- **#81 缺 `/_infra/doctor` / `/_infra/status` + dev-only 边界**：Infra 段只列了 livez/readyz。补充 `_infra/doctor`（诊断报告 JSON）+ `_infra/status`（infra 快照），并新增「Dev-only (environment-gated)」子段落显式记 `/dev/reload/status`/`/dev/reload/events` —— 生产 dev_reload_router 不挂载，UI 客户不应依赖。
+
+### 交付
+- 5 findings。1 提交（纯 docs）。
+- 无新回归（docs-only 无 runtime 行为）。
+- **验证**：`tests/specs/` 554 passed / 0 failed；`spec_api_reference.py` 一起跑绿（该 spec 会做「文档提到的路径也真存在」/「代码有的路径文档也有」的一致性检查，本批修的正是这层漂移，通过说明修得对）。
+
+### 剩余
+- **B10 剩余** #28（api_reference 别处遗漏 —— 与本批部分重叠可能已顺手修）+ #29（agent_contracts.md job table 漂移）+ #30/#31/#32/#33（其它 docs drift）+ #49/#50（docstring 漂移，一行改）+ #76（README Spec-as-Code 索引旧）+ #97（System Operator 命名 `pi_daemon` 仍散落多处 —— 与代码耦合，改动面大）+ #104（serenity 执行 plan 承诺 vs 代码）。下一批候选 **#29 + #30 + #31 + #32 + #33** —— 都是单文件小改。
+- **B8** 前端诚实性（需 `npm run build`）仍留。
+- 已 deferred：market_type 迁移 / operator 鉴权 / #109/#143/#102-pending/#17 / 运行时性能 #90/#147/#134 / #154/#155/#156（B9 尾）。
+
+### 边界
+仅 `docs/design/api_reference.md`；未推 / 未 restart / 未 enable live / 未触 credentials / 未改 code。若后续「complete endpoint index」承诺又漂移，spec_api_reference 会先失败提醒。
+
+---
+
+## 2026-07-07 — B9-data：universe fallback exchange + macro yfinance 出 loop（2 findings / 1 commit）
+
+### 触发
+接 B9-llm 后 owner「继续推进」。B9 剩最后两条独立可修的（#91 provider fallback + #92 async 阻塞），形状对偶：都是「本该走既有基础设施但没有」。
+
+### 做法
+1. **#91 universe registry+features 用同一交易所做 primary+fallback**：`registry.py::sync_registry` 和 `features.py::collect_features` 都写死 `CCXTProvider(exchange=venue, fallback_exchange=venue)` —— primary 挂了 fallback 是同一个 exchange 等于没有。`get_market_data_provider` 工厂已经在读 `md.ccxt_fallback` 做交叉交易所 fallback，两个地方直接 mirror 这套配置解析：`fallback_venue = md.ccxt_fallback or venue`。工厂本身返回 FallbackChainProvider 缺 `_ensure_primary`/`load_markets`，universe 这两处需要 CCXT 原生接口所以还是直接 `CCXTProvider(...)`，但至少 fallback 现在真的能落到另一个交易所了。
+2. **#92 MacroCollector async 内 sync yfinance**：`_fetch_tradfi()` 是同步的，一 ticker 一 HTTP round trip；`collect()` 是 async 但直接 `_fetch_tradfi()` 调它 —— 这跑在 scheduler 的 async worker loop 上，每次宏观 tick 会 block loop 好几秒，其他 async 任务（market observer / heartbeat / exchange sync）全被冻。改成 `await asyncio.to_thread(_fetch_tradfi)` —— 阻塞工作出 loop 到线程池，loop 保持响应。
+
+### 交付
+- 2 findings。1 提交。
+- **新增回归** `tests/test_data_provider_and_async_fixes.py`（3 tests / 3 passed）：
+  - `test_universe_registry_uses_configured_fallback_exchange` — mock `CCXTProvider` 捕获构造参数，`ccxt_exchange="bitget"` + `ccxt_fallback="okx"` 后运行 `sync_registry(cfg)`，断言 `fallback_exchange == "okx"` 不是 `"bitget"`。
+  - `test_universe_features_uses_configured_fallback_exchange` — 同套断言在 `collect_features()`。
+  - `test_macro_collector_runs_yfinance_off_loop` — 关键测试：mock `_fetch_tradfi` 让它 `time.sleep(0.5)`（真同步阻塞），`asyncio.gather` 里同时跑 `collect()` 和一个 50×10ms 的竞态 async ticker。如果 loop 被阻塞 → 竞态 ticker 达不到 50 次。断言 `competing_ticks == 50` + 总墙钟 < serial 时长（并发不串行）。修前会失败；修后 to_thread 让 sleep 出 loop，竞态 ticker 顺利跑完。
+- **验证**：`tests/specs/` 557 passed / 0 failed；本 batch 3 tests。
+
+### 剩余
+- **B9 全部处置或标 refuted**：#91/#92（本批）+ #124/#158（B9-analytics）+ #161（B9-llm）+ #177/#178/#179/#180（B9-diag）已修；#154 (divergence_scanner) 属 dormant gated 特性可留待 flag 启用；#155 (OHLCV cache market_type) 与 market_type 迁移耦合暂缓；#156 (Coinalyze OI live schema) 需先核对外部 API 后再修，脱离静态测试范围。
+- **B8** 前端诚实性（需 `npm run build`）+ **B10** 文档漂移仍留。B10 大部分是机械改，成本低价值明确 —— 下一批候选。
+
+### 边界
+仅 universe/registry.py + universe/features.py + data/collectors/macro.py + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。config schema 未变，只 mirror 既有工厂的解析。
+
+---
+
+## 2026-07-07 — B9-llm：complete_with_fallback tier provider name 透传（1 finding / 1 commit）
+
+### 触发
+接 B9-analytics 后 owner「继续推进」。剩下 B9 里 #161 是最简单的 helpers 单点改动，独立无依赖。
+
+### 做法
+- **#161 complete_with_fallback provider name 落错**：调用链是 `agents.helpers.llm_complete(provider="deep_provider_xyz")` → `get_provider(name) → ModelProvider obj` → `complete_with_fallback(request, provider=obj)`。complete_with_fallback 首行 `resolved_provider_name = provider_name or cfg.models.default_provider` —— helpers 从来没传 `provider_name=`，所以永远回退 default。后果两条：
+  - deep-tier 失败被计到 default_provider 的 model 冷却状态里，tier 自己的 model 永远不冷却
+  - candidate_models 走 default_provider 的候选表，不是 tier 的
+  修：`helpers.llm_complete` + `llm_structured` 都在 `get_provider(...)` 前把入参 str 记到 `provider_name`，然后 `complete_with_fallback(..., provider=obj, provider_name=provider_name)`。llm_stream 不用改（不经过 fallback，直接 `provider.stream`）。
+- **既有 spec 更新**：`tests/specs/spec_gateway_stability.py::_patch_llm` 里的 `fake_complete(req, provider=None)` 现在会收到多一个 kwarg，把签名加 `provider_name=None` 兼容。
+
+### 交付
+- 1 finding。1 提交。
+- **新增回归** `tests/test_llm_helpers_provider_name_fix.py`（3 tests / 3 passed）：
+  - `test_llm_complete_threads_provider_name_to_complete_with_fallback` — mock `helpers.complete_with_fallback`，断言 provider_name="deep_provider_xyz" 被原样透传。
+  - `test_llm_complete_forwards_none_when_caller_did_not_specify` — 缺省 None 也如实透传（保 default_provider 回退语义）。
+  - `test_llm_structured_threads_provider_name_to_complete_with_fallback` — 结构化路径同样透传。
+- **既有测试更新**：`spec_gateway_stability::_patch_llm` fake_complete signature 加 `provider_name=None`。
+- **验证**：`tests/specs/` 563 passed / 0 failed（+9 vs 前批 baseline 554，因为多包含了几个 spec_gateway_stability 相关）；本 batch 3 tests + 更新 1 fixture。
+
+### 剩余
+- **B9 剩余** #91（universe/registry direct CCXTProvider 绕过 factory）+ #92（MacroCollector sync yf.Ticker inside async blocking hot tick）+ #154（divergence_scanner 方向逻辑 dormant gated）+ #155（OHLCV cache 键漏 market_type，与 market_type 迁移耦合暂缓）+ #156（Coinalyze OI 需先核 live schema）。下一批候选 **#91 + #92** —— 两个都是「构造 provider 时绕过工厂」和「async 内 sync 阻塞」，形状统一。
+- **B8** 前端诚实性（需 `npm run build`）+ **B10** 文档漂移仍留。
+
+### 边界
+仅 helpers.py + spec_gateway_stability.py fixture + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。API 变化只在 helpers 内部（callers 已通过 provider= 传 str，`llm_complete` 签名未变）。
+
+---
+
+## 2026-07-07 — B9-analytics：equity-curve 窗口 + trade_insights 运算符优先级（2 findings / 1 commit）
+
+### 触发
+接 B9-diag 后 owner「继续推进」。两个 analytics 单点小改（#124 SQL、#158 Python 表达式）打包。
+
+### 做法
+1. **#124 equity-curve LIMIT 截错方向**：`server/routes/analytics.py::get_equity_curve` 用 `ORDER BY closed_at ASC LIMIT ?`。full_cumulative 模式下账户 close 数 > limit 时，SQL 保留**最老**的 N 条 —— 曲线冻在古老历史里，最近的所有点都被切掉。改成 `SELECT * FROM (SELECT ... ORDER BY closed_at DESC LIMIT ?) ORDER BY closed_at ASC` —— 取**最新** N 条后按时间正序供 cumulative loop 走。
+2. **#158 trade_insights 运算符优先级 trap**：`_by_exit_reason` 里的内联三元
+   ```python
+   r["close_reason"] if "close_reason" in r.keys() else None or "unknown"
+   ```
+   按 Python 优先级解析为 `X if C else (None or "unknown")` —— `or` 比 `else` 结合更紧。当列存在但值 None（SQLite null），返回 None（不是 "unknown"）。外层 `if reason_of(r) == "unknown"` 匹配为零 → unknown 桶的 `avg_pnl_pct = 0/tc = ~0`（tc 却不为零，因为分桶那步用了 `reason or "unknown"` 二段式，正确落入 unknown）。抽出成 `_reason_of(row)` 独立函数，一次得对，两处复用（分桶 + avg 求和），意图可审计。
+
+### 交付
+- 2 findings。1 提交。
+- **新增回归** `tests/test_analytics_windowing_fixes.py`（3 tests / 3 passed）：
+  - `test_equity_curve_returns_recent_points_when_over_limit` — 种 10 条跨 day-30 到 day-3 的 closed positions，GET `/equity-curve?limit=3` 期望返回 3 条最近的（时间 > 11 天前），不是最老的 3 条。
+  - `test_by_exit_reason_unknown_bucket_avg_pnl_is_nonzero_when_pnl_nonzero` — 两条 `close_reason=None` 行，realized_pnl=5/3；断言 unknown 桶的 avg_pnl_pct **非零**（就是当年零的 bug 就是这个）。
+  - `test_by_exit_reason_named_buckets_still_work` — 保护 stop_loss/take_profit 命名桶不回归。
+- 测试 setup 用 `test_pnl_pipeline._setup` 相同模式（equity-curve 是 sync route，跑在 threadpool worker，需 `monkeypatch.setattr(sq, "db_path", lambda: test_db)` 让 worker 打开自己的连接指向同一个文件）。
+- **验证**：`tests/specs/` 571 passed / 0 failed（+17 vs 前批 baseline 554，因为 test_pnl_pipeline 也一起跑）；本 batch 3 tests。
+
+### 剩余
+- **B9 剩余** #91 (universe/registry direct CCXTProvider 绕过 factory)、#92 (MacroCollector sync yf.Ticker inside async)、#154 (divergence_scanner 方向逻辑，dormant gated)、#155 (OHLCV cache 键漏 market_type，与 market_type 迁移耦合暂缓)、#156 (Coinalyze OI 需先核 live schema)、#161 (complete_with_fallback 用错 provider name)。下一批候选 **#161** —— 单点 helper 改动，无外部依赖。
+- **B8**（前端诚实性）+ **B10**（doc drift 尾）仍留。
+
+### 边界
+仅 analytics.py + trade_insights.py + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。SQL 是 SELECT-only 子查询无 schema 变更；trade_insights 抽 helper 无外部 API 变化。
+
+---
+
+## 2026-07-07 — B9-diag：doctor/CLI/knowledge 诚实性四联（4 findings / 1 commit）
+
+### 触发
+B7 收官后 owner「继续推进」。挑 B9 中 **doctor / CLI / knowledge router** 单点小改的诚实性 gap 打包成 mini-batch —— 都是「输出与实际状态不符」，成本低价值明确。
+
+### 做法
+1. **#178 doctor 严重度三档映射**：`_probe_config_consistency` 用 `sev = "warn" if f.severity == "warning" else "blocker"` 二叉，`config_consistency` 实际发 `"info"/"warning"/"blocker"` 三档 —— info 一律被误升级成 blocker → doctor exit 1。改用 `_SEV_MAP = {"info":"info","warning":"warn","blocker":"blocker"}`，未知 severity 保守回退 blocker。
+2. **#179 doctor 审计链无时间戳误分类**：`_probe_audit_chain` 里 `post_fix` list comprehension `if parsed is not None`—— 没时间戳的 break 被排除；如果**全部** break 都无时间戳，`post_fix` 空 → 走「历史 INFO」分支，隐藏真正的 post-fix 损坏（时间戳被抹掉的 tampering）。改成三桶：pre_fix / post_fix / undateable；只有 undateable 时报 WARN + hint「无法自动分类，需人工检查」。
+3. **#180 inspect config namespace 错位**：`aletheia inspect config` 在 `"agent"` 块里打 `cfg.operator.permission_mode` —— 两个是不同的权限面（agent 是 trading agent，operator 是 System Operator LLM），把 operator 的值挂在 agent 名下误导读者「哪个 mode 在闸门 trading」。修为 `cfg.agent.permission_mode`，并新增独立的 `"operator": {"permission_mode": cfg.operator.permission_mode}` 块使两个面都可见。
+4. **#177 knowledge router 不可达 role**：`_ITEM_TYPES_BY_ROLE` 有 4 条（strategy_designer / market_observer / equity_observer / paper_trader），实际只有 `market_observer.py` 调 `build_advisory_context`。`strategy_designer` 是 #94 已删生命周期残余；`equity_observer` agent 存在但不调 router；`paper_trader` 无调用方。删 3 条不可达项，`AgentRole` Literal 收窄到 `market_observer`；未来任何 caller 再加时同步加回。
+
+### 交付
+- 4 findings。1 提交。
+- **新增回归** `tests/test_diagnostics_honesty_fixes.py`（4 tests / 4 passed）：
+  - `test_knowledge_router_lists_only_wired_roles` — 断言 `_ITEM_TYPES_BY_ROLE.keys() == {"market_observer"}`。
+  - `test_doctor_maps_info_severity_to_info_not_blocker` — mock check_config_consistency 返回三档 finding，断言 `info→info, warning→warn, blocker→blocker`。
+  - `test_doctor_audit_chain_flags_undateable_breaks_as_warn` — mock `verify_audit_chain` 返回 `errors=[...], error_timestamps=[""]`，断言 doctor 报 warn + detail 含 "unparseable timestamp"。
+  - `test_inspect_config_reports_agent_permission_mode_under_agent_namespace` — 配置 agent=Paper / operator=PaperAuto，CliRunner 跑 `inspect config --json`，断言 `payload["agent"]["permission_mode"] == "Paper"` + `payload["operator"]["permission_mode"] == "PaperAuto"`。
+- **既有测试更新** `test_knowledge_router.py`：`test_uses_role_item_types` + `test_combines_lessons_and_guards` 从 `"strategy_designer"` 改为 `"market_observer"`（前者已删）。
+- **验证**：`tests/specs/` 554 passed / 0 failed；本 batch 4 + 更新 34 = 38 tests all green。
+
+### 剩余
+- **B9 剩余** #91/#92/#124/#154/#155/#156/#158/#161 —— 数据源工厂、blocking 调用、analytics 窗口/键、collector schema。下一批候选：`#124` (equity-curve ORDER BY LIMIT before date cutoff — SQL 修) + `#158` (trade_insights 运算符优先级) —— 两个都单行改动。
+- **B8** 前端诚实性（需 `npm run build`）+ **B10** 文档漂移仍留。
+
+### 边界
+仅 doctor.py + inspect_cmd.py + router.py + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。router 收窄的 Literal 会让静态类型工具捕获未来错误调用 —— 是好副作用。
+
+---
+
+## 2026-07-07 — B7-wal：backup 用 SQLite Connection.backup() 走 WAL 安全路径（1 finding / 1 commit）
+
+### 触发
+接 B7-mini 后 owner「继续推进」。B7 最后剩的 raw copy WAL 隐患 —— 收官 B7。
+
+### 做法
+- **#59 backup raw-copy WAL 隐患**：`create_backup` 用 `shutil.copy2(app.db)` —— SQLite 生产在 WAL 模式，一条 committed 行还可能存在于 `app.db-wal` sidecar 里没被 checkpoint。裸 copy 只带 `.db` → 那行没进 backup。改用 `sqlite3.Connection.backup(dst_conn)` API —— 官方为 live snapshot 设计，读锁 + 顺 WAL 走页 dependency，产出的 dst 是内部一致的、单文件（无 -wal/-shm 边角）、无 checkpoint 竞态。若 src 不是有效 SQLite（空占位/被裁剪的测试固件），fallback 回 shutil.copy2 —— 不比修前更差。
+
+### 交付
+- 1 finding。1 提交。
+- **新增回归** `tests/test_backup_wal_safety_fix.py`（2 tests / 1 passed + 1 conditionally skipped）：
+  - `test_backup_captures_wal_committed_rows` — 构造 WAL 模式 db、INSERT + commit **但不 checkpoint**，触发 -wal 存在的场景（若 SQLite 自动 checkpoint 了则 skip 这条 —— 测试只在有真 sidecar 时才有意义）；backup → 解压 → 打开复制的 db 读该行 → 断言存在。
+  - `test_backup_still_handles_non_sqlite_app_db` — src 不是有效 SQLite（写入 `b"not a sqlite file"`）时 backup 不炸，fallback 到 raw copy。
+- **验证**：`tests/specs/` 559 passed / 0 failed（+1 vs 前批 baseline 558）；本会话 2 tests。
+
+### 剩余
+- **B7 全部完成**（除已显式暂缓的 #109/#143/#102-pending/#17，各有独立 blocker 记在台账 Fix Progress Deferred）。
+- B8（前端诚实性）/ B9（数据·分析·doctor·cli）/ B10（doc drift 尾）三批 + 已 deferred 的 market_type 数据模型迁移仍在。
+
+### 边界
+仅 backup/service.py + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。sqlite3 是 stdlib，无新依赖。
+
+---
+
+## 2026-07-07 — B7-mini：backup 覆盖 + trades 导出实体 + capital 审计（3 findings / 1 commit）
+
+### 触发
+接 B7-io-honesty 后 owner「继续推进」。挑 B7 中三条**单点小改**的诚实性 gap 打包成 mini-batch —— 都是「文档/行为不一致」，成本低价值明确。
+
+### 做法
+1. **#58 backup 缺 audit.jsonl**：`backup/service.py::create_backup` 之前只落 app.db / config.yaml / events/ / artifacts/，**不复制 data/logs/**，而 `data/logs/audit.jsonl` 正是那条 hash-chained 审计链。从这样的 backup 恢复后 `verify_audit_chain` 无从跑（文件根本不在）。加一段 copy `data_dir/logs/` 到 staging，用同一个 `_should_exclude` 过滤secrets，file_count/total_bytes 相应累加。
+2. **#65 /trades/export 与 docstring 矛盾**：docstring 写 "tax/PnL reporting"，实际返回 orders 表（无 realized_pnl / entry_fee / exit_fee / closed_at）。改为返回 `list_positions(status="closed")`，CSV 列换成 opened_at/closed_at/symbol/market_type/direction/quantity/entry_price/current_price(=exit)/realized_pnl/entry_fee/exit_fee/slippage_cost/execution_mode/close_reason/btc_entry_price/btc_exit_price/trade_school/position_id。前端只有一个 `<a href={api.exportTradesCsv()} download>` 无 CSV 解析，schema 变更安全。
+3. **#87 capital 事件无审计**：`POST /api/capital/events` 写 `capital_events` 表但**从未 write_audit** —— 权益曲线基线一跳无审计链条可查。加 `write_audit({event_type=capital_deposit/capital_withdraw, entity_type=capital_event, after=payload})`，方向 event_type 区分便于 grep。
+
+### 交付
+- 3 findings。1 提交。
+- **新增回归** `tests/test_mini_honesty_fixes.py`（4 tests / 4 passed）：
+  - `test_backup_captures_audit_jsonl_hash_chain` — 种 audit.jsonl → 打 backup → 断言归档成员含 `logs/audit.jsonl`。
+  - `test_trades_export_returns_closed_positions_with_pnl_columns` — 种 closed Position → GET /api/trades/export → 断言 CSV header 含 realized_pnl/entry_fee/exit_fee/closed_at + row 里 9.85 (realized_pnl)。
+  - `test_capital_deposit_writes_audit_event` + `test_capital_withdraw_writes_audit_event` — POST 之后读 logs/audit.jsonl 里应有 capital_deposit/capital_withdraw entries。
+- **验证**：`tests/specs/` 558 passed / 0 failed；本会话 4 tests / 4 passed。
+
+### 剩余
+- B7 剩：**#59** backup raw-copies WAL app.db without SQLite checkpoint —— 需真正接 sqlite3.Connection.backup() API + WAL checkpoint，比其他 B7 findings 大一档，留下一批单独做。**#109 broker partial-fill、#143 paper_internal drawdown、#102-pending、#17 dreaming cursor** 仍暂缓（各有独立 blocker，见台账 Fix Progress deferred 列表）。
+- B8/B9/B10 保留。
+
+### 边界
+只改本会话三处 + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。前端 client 不需改（CSV 只是 raw download 无 schema 解析）。
+
+---
+
+## 2026-07-07 — B7-io-honesty：proposal-pack 过滤 + import 校验/冲突诚实（4 findings / 1 commit）
+
+### 触发
+接 B7-broker 后 owner「继续推进」。选 sync 层的三条诚实性 gap —— #62/#162 是同一件事的重复登记，#63/#64 是 import 静默跳过。
+
+### 做法
+1. **#62/#162 proposal-pack 过滤**：`sync/exporter.py::_export_proposal` 之前 raise 缺 proposal_id，然后 `where_clause=None` 直接落 —— 结果：一条 pack 命令导出**所有** trade_proposals + 所有 serenity_themes/evidence/claims。重写为：先按 `id=?` fetch 目标 proposal（不存在则 ValueError 明确报错），然后经 `opportunity_id → theme_id` 链条只导出关联的 serenity_opportunities/themes/evidence/claims；没有 opportunity 时直接省略 serenity 子表（不是导出空文件，也不是导出全表）。新增 `_export_by_id` + `_write_rows` 助手。
+2. **#63 import 校验缺件静默**：`_verify_checksums` line 116 `if file_path.exists():` 分支缺 else，manifest 列的但归档里没有的文件直接跳过 —— 破损/被裁剪的 bundle 被当作干净的接受。现在缺件 → `result.errors.append("Checksum manifest lists missing file: ...")`。
+3. **#64 import 冲突未实现**：`ImportConflict` 类定义了但从没实例化。现有 PK + 载荷不同的行被计为 `skipped_duplicates`。改为：SELECT * 拿本地行，逐列对比；差异列非空 → 追加 `ImportConflict`（含 local_hash / remote_hash / diff 列名的 message）；完全相同 → 保留 `skipped_duplicates`（不倒退）。新增 `_row_fingerprint` 生成规范 JSON SHA-256 指纹。
+
+### 交付
+- 4 findings（3 独立 + 1 duplicate 登记合并）。1 提交。
+- **新增回归** `tests/test_io_honesty_fixes.py`（6 tests / 6 passed）：
+  - `test_proposal_pack_exports_only_the_named_proposal` — 种两个 proposal，pack 只含被点名的。
+  - `test_proposal_pack_omits_serenity_when_proposal_has_no_opportunity` — 无 opportunity 时 pack 不带任何 serenity 文件（不是空文件也不是全表）。
+  - `test_proposal_pack_rejects_unknown_proposal` — 未知 proposal_id → ValueError。
+  - `test_import_dry_run_flags_missing_files_from_checksums` — 缺件 → `result.errors` 有条目。
+  - `test_import_diverged_row_recorded_as_conflict_not_skipped_duplicate` — 差异行 → `conflicts` 1 条，`skipped_duplicates=0`，message 含差异列名 `summary`。
+  - `test_import_identical_duplicate_still_counted_as_skipped` — 相同行 → `conflicts=[]`，`skipped_duplicates=1`（不倒退）。
+- **验证**：`tests/specs/` 562 passed / 0 failed；本会话新增 6 tests / 6 passed。
+
+### 剩余
+- B7 剩：backup 完整性 (#58 audit.jsonl 未入 backup、#59 raw-copy WAL 未 checkpoint)、capital 审计 (#87)、trades/export docstring 漂移 (#65) —— 分别有独立成本；下一批候选 #87 + #65（都是单点小改）。
+- B8/B9/B10 仍留。
+- 市场类型数据模型迁移仍暂缓。
+
+### 边界
+只改 sync 层三条 finding + 焦点回归；未推 / 未 restart / 未 enable live。旧 `_export_db_tables` 通用接口保留（其它 export 模式仍用，signature 未变）。
+
+---
+
+## 2026-07-07 — B7-broker：跨 broker averaging + trailed-stop 三联（3 findings + #142 核对 / 1 commit）
+
+### 触发
+接 B7-trust 后 owner「继续推进」。选 B7 中形状统一的 broker 三联（都是 paper_broker → 三家 live broker 的克隆漂移）+ 顺手核对 #142 是否已被 `iridite/system_proxy_support` 覆盖。
+
+### 做法
+1. **#140 averaging-in entry_fee 累加**：paper_broker 在均入时累加 entry_fee（`existing.entry_fee + new_leg_fee`）；bitget/okx/binance 三家 live broker 从没抄这段 —— 均入后 entry_fee 只写新的一腿，之后 close 按 schedule 重推的费用喂给学习环，realized PnL 被高估。三家各加一段 mirror paper_broker 的累加代码。
+2. **#141 averaging-in liquidation_price 重算**：均入后加权平均入场变了，jetty liquidation 也应该重算（用同 leverage）。paper_broker 有这段；三家 live broker 没有。三家各加一段 `if existing_lev and existing_lev > 1: update_kwargs['liquidation_price'] = liquidation_price_for(new_entry, direction, existing_lev, symbol)`。展示/LLM 用，非实际风控闸门 —— 交易所自己的强平线是真闸门。
+3. **#139 trailed-stop exchange 同步**：`position_manager._maybe_update_trailing_stop` 只在 `execution_mode in (bitget_demo, bitget_live_limited)` 时调 `replace_exchange_stop`；okx/binance 均入的 DB stop 收紧但交易所侧不动，网关掉线时旧的宽 stop 先触发。新增 `execution.stops.replace_exchange_protective_stop(pos_id, new_stop)` 做 broker-agnostic 分派：Bitget 调既有 `replace_exchange_stop`；OKX 加 `replace_okx_exchange_stop`（cancel old algo + place new via `client.place_algo_order` / `cancel_algo_order`，signature 已核）；Binance 目前 client 只有 `place_order` 无 algo/stop 接口，dispatcher log warning + 跳过（DB stop 已收紧，仅交易所侧未同步）。整个特性 gated 在 default-off `cfg.trading.exchange_tpsl_enabled` 后 —— 生产 dormant，用户 opt-in 时三家 broker 行为需一致。
+4. **#142 核对**：拉起 `.claude/worktrees/system-proxy-support` worktree（PR #38，Option C），确认该分支已重写 `binance.client.py` 用 `make_ccxt(...)` 工厂 + managed aiohttp session 走 proxy，`_ensure_exchange` 惰性构建。**结论：#142 已在那条 PR 里被覆盖**，不在 bug_fix 分支上独立修（会与 PR merge 冲突且重复工作）。台账记 refuted-in-that-branch。
+
+### 交付
+- 3 findings 全处置 + 1 finding 核对为 already-fixed-elsewhere。1 提交（代码 + 测试）。
+- **新增回归** `tests/test_broker_averaging_and_trail_fixes.py`（7 tests / 7 passed）：
+  - `test_live_broker_averaging_in_accumulates_entry_fee_and_recomputes_liquidation` — parametrized 三家 broker，构造 leg1=100 qty=1 + leg2=110 qty=1，断言 entry_fee = fee(leg1) + fee(leg2)（不是被覆盖），liquidation 重算且不等于 leg1 的值。
+  - `test_replace_exchange_protective_stop_dispatches_to_okx_when_okx_demo` — dispatch 到 OKX 分支。
+  - `test_replace_exchange_protective_stop_still_dispatches_bitget` — 保住既有 Bitget 路径不回归。
+  - `test_replace_exchange_protective_stop_is_noop_when_flag_disabled` — feature-flag 关时全静默（连 Bitget 也不动），生产 default-off 语义正确。
+  - `test_replace_exchange_protective_stop_binance_logs_and_skips` — Binance 未实现 log 但不炸。
+- **验证**：`tests/specs/` 554 passed / 0 failed（同 baseline）；`tests/test_broker_averaging_and_trail_fixes + test_tpsl + test_okx_broker + test_bitget_broker + test_position_manager + test_position_close + test_position_reconciler + test_paper_broker_stops` = 64 passed。
+
+### 剩余
+- B7 剩：backup/import 完整性 (#58/59/62/63/64/162)、capital 审计 (#87)、reconciler 状态、export docstring 诚实性 (#65) —— 都比较机械；下一批候选。
+- market_type 数据模型迁移（#51/52/54/55/57/96 等）仍暂缓 —— 与 market_snapshots migration 耦合。
+- **B8/B9/B10** 保留 —— B8 需 `npm run build`，规划中。
+
+### 边界
+只改本会话四条 finding 直接对应的代码 + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。**#139 的 Binance 侧交易所同步未实现，dispatcher 会 log warning** —— 用户即使 opt-in `exchange_tpsl_enabled` 到 Binance testnet，也只能收紧 DB stop，交易所侧 bracket 保持初始值；这是**诚实的 partial-fix**（Binance client 需补 algo/stop 表面才能补齐，不在本批范围）。
+
+---
+
+## 2026-07-07 — B7-trust：信任边界四联批（4 findings / 1 commit）
+
+### 触发
+owner「继续推进 B7-B10」。选 B7 中形状统一的信任边界四联（无跨模块耦合、每处触信任边界、可用一个焦点回归覆盖）。
+
+### 做法
+1. **#66 persistence 路径根边界**：`POST /persistence/backups/verify` 和 `POST /persistence/import` 以前接受任意 caller path 直塞进 `verify_backup(Path(path))` / `ImportService.merge(archive)`。现在 `_resolve_archive_path()` 拒绝 `..` 段、resolve() 后要求落在 `data_dir/backups` 或 `data_dir/exports` 内，不满足 → 400。
+2. **#67 executor 确认门**：`requires_confirmation` 原本是 metadata-only —— handler 已经跑了，response 才「标注」自己需要确认。现在 `execute_typed_command` + `AgentShellRuntime.handle` 在调用 handler 前检查 `params.confirm`；`requires_confirmation=True` 且 `confirm != true` → 返回 `permitted=True, needs_confirmation=True` 但**不跑 handler**。第二次调用需带 `confirm=true` 才真正执行。锁定测试 `test_operator_command_persists_structured_response_metadata_for_result_cards` 更新为断言首次不产生 action。
+3. **#82 runtime_continuity kill switch**：service 有 `self.enabled` 但从来不检查。加 `_require_enabled(op_name)` 守卫，在 `prepare_candidate` / `start_shadow` / `validate_shadow` / `promote` / `drain` / `rollback` / `acquire_lock` / `release_lock` 各首行调用，disabled 时 raise `RuntimeTransitionError("runtime_continuity_disabled:<op>")` → 路由 409。读路径（status / list_events / current_runtime_id）不加守卫，dashboard 保持能看。`server/routes/update.py::update_continuity` 的直用也改为透传 `enabled=cfg.runtime.runtime_continuity_enabled`。
+4. **#83 runtime 路由 actor+confirm**：req model 去掉 `actor: str = "human"`（改由 `_ROUTE_ACTOR="human"` 服务端硬编码，攻击者无法伪造 audit actor）；`RuntimeTransitionRequest` 加 `confirm: bool = False`，promote / rollback / forced-drain 强制 `confirm=True`，不然 400。`frontend/src/api/client.ts` 的 promoteRuntime / drainRuntime / rollbackRuntime 都相应加 `confirm: true`。
+
+### 交付
+- 4 findings 全处置。1 提交（代码 + 测试 + 前端 client）。
+- **新增回归** `tests/test_trust_boundary_confirmation_fixes.py`（10 tests / 10 passed）：验证 #66 out-of-root/`..`/合法路径三档、#67 两阶段 confirm 契约、#82 kill switch 各写方法均 reject 且状态可读、#83 promote/rollback 无 confirm → 400 + candidate actor 服务端硬编码不接受调用方 `actor` 字段。
+- **既有测试更新**：`tests/test_runtime_continuity.py` 加 `_mock_shadow_gateway` 桩（打 `server.routes.runtime` 的 `spawn_shadow_gateway` 名称绑定，而不是原始模块 —— 闭包按调用时词法作用域解析）+ setup_env 默认写入 `runtime_continuity_enabled: true` 配置。`tests/test_operator_routes.py` 的 resume 断言从「有 action」改为「无 action + needs_confirmation=True」。
+- **验证**：`tests/specs/` 554 passed / 0 failed（+1 vs baseline 553）；`tests/` 非 specs 1870 passed / 3 deselected（3 deselected 皆为 bug_fix 与 master 漂移，已由 handoff §2 记明，非本批引入）。
+
+### 剩余
+- B7 内其它类别（PnL/reconciler market_type 键、backup 完整性、persistence 导入冲突、broker 跨市场）留下一批。市场类型数据模型迁移（#54/55/51/52/57/96 涉及）仍暂缓 —— 与已 deferred 的 market_snapshots migration 耦合。
+- **#142 Binance 客户端 proxy 绕过**须先对 `iridite/system_proxy_support` 分支核对是否已修（worktree 已建 `.claude/worktrees/system-proxy-support`）。
+
+### 边界
+只改本会话四条 finding 直接对应的代码 + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。合并注意仍如上批 —— 本分支基点较老，`origin/master` 已推进多个提交（含 `c945110f` 可能与 B5 重叠），留待 PR 阶段 rebase。
+
+---
+
+## 2026-07-07 — Bug 台账修复推进：B1–B6 + B10a（42 findings / 11 commits）
+
+### 触发
+owner「开始完全修复」→「请继续，保证要一次搞完」。从 180 条台账按主题分批修，每批一次提交 + 定向回归。
+
+### 做法
+- 专用分支 `fix/bug-review-fixes`（基于 `iridite/bug_fix` HEAD）。每批：读码 → 最小改动 → 定向回归测试（触信任边界/安全/密钥/生命周期必带）→ 窄 + 宽测试 → 逐批提交。
+- 显式 `git add` 指定文件，绝不 `-A`；修复期间不 push/restart/enable live（推送在收尾单独一步，owner 指令后执行）。
+- 台账 `FULL_BUG_REVIEW_2026-07-06.md` 顶部「Fix Progress」表是权威修复日志（batch → commit → findings → 验证）。
+
+### 交付（11 提交 / 42 findings，9 HIGH 全处置）
+- **B1 密钥防泄漏**（`6b3c0e3`）#1,2,4,5,60,61,69,133,148 — GET/webhook/network 响应+审计脱敏、日志/导出/诊断脱敏。
+- **B2 风控闸门**（`62054af`，信任边界）#7,24,93,98 — live 失败即拒（只 `live_limited` 放行）、现货+做空拒单、入场几何 stop/entry/tp 校验、lesson 拦截须 category=risk。
+- **B3 隧道鉴权**（`756973d`）#137,132 — risk/exchange-mode/permission-mode 纳入公网隧道保护、重启审计发起方诚实。
+- **B4a 决策链**（`98e964e`）#12,21,102-部分,151,152 — conviction 解析加固、现货做空归一、serenity 读对 `market_type` 键、归因回退。
+- **B5 学习闭环**（`14eef58`/`ed2ca9d`/`45ef293`）#157,159,160,131,16,18,20,99,130 — guard/分析去合成平仓+过 clean_window、memo 半衰期权重、case 按平仓时间开窗、过期 lesson 不进 prompt、scanner-family 证据、applied lesson 复审。
+- **B6 自愈/运行时**（`da7c6c3`/`843944a3`/`9483a4d4`）#145,146,135,136,144,88,149,150,138 — 修**中途掉线永久暂停**（HIGH）、回滚诚实、env-strip 补齐前缀、reconciler 状态、onchain/prediction 留存清理接线、capital 迁移守卫、启动同步移出端口绑定路径。
+- **B10a SDD/契约**（`c8b798f4`）#34,176,95,105 — 注册漏挂的 spec（矩阵 +100 claims）、删死码前端方法、knowledge/execution 契约去除已删除路径。
+
+### 验证
+- 全 SDD spec 套件 **588 passed / 0 failed**（顺带修好 #20 非 hermetic）；每批另加窄回归，共新增 15 个 test 文件。
+
+### 剩余（逐批续做，见台账 Fix Progress）
+- **B7** 组合/PnL/对账/broker/持久化 · **B8** 前端诚实性（需 `npm run build`）· **B9** 数据/分析/doctor/cli · **B10** 文档漂移尾。
+- **暂缓（耦合/基建，记原因）**：市场类型数据模型迁移（#9,10,11,13,14）、operator 鉴权（#40,41）、#109/#143/#102-pending/#17、运行时性能 #90/#147/#134。
+
+### 边界
+本阶段（与前几条审查记录不同）**确有**改业务/风控/执行/配置代码 + 跑测试 + 逐批提交，全部在专用分支 `fix/bug-review-fixes`；推送前未碰 live、未 restart gateway；触信任边界的每处改动都带定向回归测试。合并注意：`origin/master` 自本分支分叉后已推进 5 个提交（并发会话，含 `c945110f` 可能与 B5 guard 改动重叠），留待 PR 时对账。
+
+---
+
+## 2026-07-06 — Bug 台账整理：加导航索引 + 复核 #1–#131 精度
+
+### 触发
+owner「先把扫描出来的问题这个文档完整整理一下，确保足够准确、具体细致、方便 debug」。
+
+### 做法
+- `#132`–`#180` 是本会话产出、已双重对抗性核验；`#1`–`#131` 来自更早的手工会话、从未独立复核，且代码可能已漂移。
+- 只读 workflow 14 lane 逐条把 `#1`–`#131` 对照**当前代码**复核，返回 confirmed/line_drift/overstated/likely_fixed/duplicate + 严重度 + 首打开位置 + 精炼一句话。结果：**126 confirmed / 2 line_drift / 3 overstated / 0 已修 / 0 重复**——旧台账质量很高。
+- 用结构化产出 + 我自己整理的 `#132`–`#180` 元数据，在台账顶部插入 **Finding Index**（图例 + HIGH 优先清单 + 180 行可导航表：编号/严重度/首打开 file:line/一句话/状态）。
+
+### 交付
+- 台账新增顶部导航索引（180 行，9 HIGH / 99 MED / 72 LOW；另 9 条 refuted）。
+- 5 条非 confirmed（#18/#23/#38/#84/#119）各追加 `**Correction (verify pass 2026-07-06)**` 说明并在索引标 `corrected`。要点：**#84 不是 XSS**（`_ERROR_HTML.format()` 先因 CSS 花括号抛 KeyError，真缺陷是错误页 500，降为 low）；#23/#38 impact 被高估（无前端调用者 / UI 下拉不给该值）；#18/#119 是行号漂移已给正确位置。
+- 交接文档同步记录。台账现 2827 行，`#1`–`#180` 每条都可从索引一跳到位、且精度可信。
+
+### 边界
+只整理审查文档 + 交接；未改任何业务/风控/执行/配置/前端/测试代码；未跑测试；未 git add/commit。用临时脚本生成 180 行表格（生成后已删）以避免手抄错误。
+
+---
+
+## 2026-07-06 — Bug 审查收尾：前端逐页 + 后端零头 12 路并行审（全项目覆盖完成）
+
+### 触发
+owner「先不修，先继续收尾」。剩余未扫描 = 前端逐页（最大一块）+ 后端零头（knowledge/runtime_continuity/uta/doctor/cli）。
+
+### 做法
+- 只读 workflow 12 lane（前端 8：Settings 4280 / CommandCenter 1548 / Serenity+Learning / Prediction+News+Universe /
+  Trades+Charts+Proposals / Risk+Overview+AgentActivity / 未覆盖 components / 共享 App·client·types·lib+charts；
+  后端 4：knowledge / runtime_continuity+uta / doctor 逐行 / cli）。前端 lane 额外套「UI 诚实性 / fmtSymbol /
+  +00:00-vs-Z 时间戳 / 加载通道 / onError」房规。并发压到 3。
+- 每条候选再派独立对抗性核验。33 agent，0 报错。21 候选 → 18 保留（`#163`–`#180`），3 推翻。
+
+### 交付
+- 台账 `#163`–`#180` + 3 refuted + **Coverage status 标注「full-project pass complete」**。
+- 三轮 fan-out（9+16+12）+ 原 #1–#131 手工，合计覆盖前端端到端 + 全部后端子系统，范围 `#1`–`#180`。
+- 关键发现：`#171`（Overview 交易所连接灯永远探 Bitget，OKX/Binance 显示错）；`#174`（顶栏主状态永远读不到风控引擎，
+  CAUTION/OPERATIONAL 是死支，健康态误显"未评估"）；`#165`（暂停/恢复吞 409，operator 误以为已恢复）；
+  `#176`（knowledge 契约仍写 post_trade_review 为检索类型，照文档回接会重现 1900 行洪泛）；`#178`/`#180` doctor/CLI 诚实性。
+- 交接文档全部更新为"覆盖完成 → 下一步是修或按变更再扫"，并给了 #163–#180 修复分诊。
+
+### 边界
+只做审查记录 + 交接文档；未改任何业务/风控/执行/配置/前端/测试代码；未重启 gateway；未跑测试（只改文档）；未 git add/commit。
+
+---
+
+## 2026-07-06 — Bug 审查缺口扫描：全项目未扫描子系统 16 路并行审 + 对抗性核验
+
+### 触发
+owner「继续对未扫描的部分做完整 code review，要求与之前一致」。先做全 `aletheia/` 覆盖缺口地图，
+确认第一轮只覆盖了路由/网关基础设施/broker，剩 ~60k LOC 的信任关键区与决策链未系统审。
+
+### 做法
+- 只读 workflow 16 lane（信任关键：risk 引擎 20 关守卫链 / execution 下单咽喉 / permissions+tool_registry /
+  config+secrets；运行态：self-heal 调度 job 体+connectivity / storage was_in_tx+审计链+保留；决策链：
+  agent_shell decision+operator / agents 生产者；数据：provider+collectors+sources；analytics 28 文件拆 2 lane；
+  model_provider；universe/trading/sizing；operator-shell+杂项）。每 lane 对照契约+spec；并发压到 3。
+- 每条候选再派独立对抗性核验 agent。40 agent，0 报错，0 rate-limit。24 候选 → 20 保留（`#143`–`#162`），4 推翻。
+- 亲手复核了两个矛盾/关键点：coinalyze OI 解析 vs 污染的矛盾（读 coinalyze.py 定论合并进 #156）。
+
+### 交付
+- 台账 `FULL_BUG_REVIEW_2026-07-06.md` 新增 `#143`–`#162` + 4 条 refuted + Coverage/Verification 更新。
+- 交接文档更新：范围 `#1`–`#162`、最近发现、修复分诊（`#159`/`#145` 列 HIGH）、下一步覆盖。
+- 两条 HIGH：`#145`（连接掉线后自动恢复任务挂在临时事件循环上→中途掉线永久暂停不自愈）；
+  `#159`（守卫晋升日 cron 默认开、会改活配置，却用含合成/对账平仓的污染数据算胜率→可凭假数据晋升硬拦截守卫）。
+- 关键 medium：`#153`（L1/L2 自愈动作是不可达死码 + PI 审批门是空转橡皮章，spec 假绿）；
+  `#157`（校准反馈 f-string 崩溃被静默吞→喂 LLM 的校准反馈是死的）；`#161` 双层模型路由 fallback 认错 provider；
+  `#160` memo/推理反馈用污染数据喂 PI prompt；`#162` proposal-pack 导出无视 id 全量导出。
+
+### 边界
+只做审查记录 + 交接文档；未改任何业务/风控/执行/配置/前端/测试代码；未重启 gateway；未跑测试（只改文档）；未 git add/commit。
+
+---
+
+## 2026-07-06 — Bug 审查续做：后端未覆盖区 9 路并行审 + 对抗性核验
+
+### 触发
+接手暂停的全项目 bug 审查，owner 选「继续审查扩覆盖」。目标是覆盖交接文档标注的未覆盖后端区（控制路由、gateway 生命周期/边缘、自更新、server app、持仓退出、交易所同步/broker、底层 client），不重复已记录区域。
+
+### 做法
+- 只读 workflow 编排 9 个 reviewer lane，每 lane 拿对应 `docs/design/*.md` 契约 + `tests/specs/spec_*.py` 对照代码；并发压到 3（尊重本 workspace 的 rate-limit 教训）。
+- 每条候选 finding 再派一个独立「对抗性核验」agent 复核（确认真实、非预期行为、非死码假绿）。
+- 两条最重要的密钥/信任边界发现（#133 日志脱敏、#137 tunnel 鉴权）我另行亲手复读锚点，防「假绿」。
+- 22 个 agent，0 报错，0 rate-limit 失败；13 候选 → 11 保留（`#132`–`#142`），2 条被核验推翻。
+
+### 交付
+- 审查台账：`docs/_ai/FULL_BUG_REVIEW_2026-07-06.md` 新增 `#132`–`#142` + 「Investigated and refuted」小节 + Coverage/Verification 更新。
+- 交接文档 `BUG_REVIEW_HANDOFF_2026-07-06.md`：更新范围、最近发现、修复分诊（`#137` 列为最高优先）、下一步覆盖。
+- 关键发现：`#137` tunnel 鉴权漏 `/api/settings/risk`（公网下可无鉴权关熔断/放宽风控，defeat 了 `/api/risk/kill-switch` 的保护）；`#133` 日志脱敏漏 bare `secret`/`ACCESS-KEY`/`ACCESS-SIGN`；`#135` 自更新回滚不检查 `reset_hard` 结果谎报成功；`#140`/`#141`/`#139`/`#142` 三 broker 一致性/代理（`#142` 疑似已在 `iridite/system_proxy_support` 修，须先确认）。
+
+### 边界
+只做审查记录 + 交接文档；未改任何业务/风控/执行/配置/前端/测试代码；未重启 gateway；未跑测试（本轮只改文档）；未 git add/commit。
+
+---
+
+## 2026-07-06 — Full bug review ledger + AI handoff
+
+### 触发
+Owner 要求从 SDD 文档和 `discussion.md` 出发做完整代码域 bug 审查，并明确要求所有发现落本地文件；随后要求暂停，由 Claude Code 接手。
+
+### 交付
+- 新增/更新审查台账：`docs/_ai/FULL_BUG_REVIEW_2026-07-06.md`。
+- 当前已记录 findings `#1` 到 `#131`。
+- 新增接手说明：`docs/_ai/BUG_REVIEW_HANDOFF_2026-07-06.md`。
+- `AI_HANDOFF.md` 和 `CURRENT_TASK.md` 增加接手入口。
+- 后续记录格式调整为更短的 Markdown 分条格式。
+
+### 边界
+只做代码审查记录和交接文档；不改交易、风控、执行、配置、前端或测试代码；不重启 gateway；不触发交易行为。
 
 ---
 
@@ -66,6 +887,121 @@ Aletheia 可消费证据，但不能导入敏感明细，也不能影响 live/ri
 
 ---
 
+## 2026-07-05 — Opportunity CLI consolidation
+
+### 触发
+`inspect`、`flow`、`alpha`、`funnel`、`sizing`、`thesis` 在机会排查上职责重叠，owner 日常
+不知道应该先敲哪个命令。
+
+### 交付
+- 新增主入口 `uv run aletheia opportunity audit`，用于分析机会从生成到放弃或执行的完整生命周期。
+- 新增 `uv run aletheia opportunity trace --id <opportunity_id>`，用于追踪单个机会。
+- `opportunity audit --view funnel|sizing|alpha|thesis` 统一承接四个细分视角。
+- `flow` 保留为隐藏兼容别名，执行时提示改用 `opportunity`。
+- `alpha`、`funnel`、`sizing` 顶层命令从根帮助菜单隐藏；人类输出提示改用 `opportunity --view ...`。
+- `thesis audit` 隐藏为兼容命令；`thesis snapshot/snapshots/records` 保留，用于观察留档和明细导出。
+
+### 验证
+- `uv run pytest tests/test_cli.py::test_help -q`
+- `uv run pytest tests/test_opportunity_flow_ledger.py::test_opportunity_cli_outputs_audit_and_trace tests/test_opportunity_flow_ledger.py::test_legacy_flow_cli_remains_hidden_compatibility_alias tests/test_opportunity_flow_ledger.py::test_opportunity_cli_outputs_specialized_views -q`
+
+### 边界
+只改 CLI 入口和只读分析路由；不改 risk、execution、scheduler、agent 决策、DB schema、配置或 live 行为。
+
+---
+
+## 2026-07-04 — Executable Candidate Supply Floor V1
+
+### 触发
+System Operator 在可执行候选池不足时会继续从贫瘠候选池里做判断，容易表现成连续 skip。
+
+### 交付
+- `trading_context` 写入 `candidate_supply_snapshot` operator event。
+- layer2 增加 `candidate_supply` 摘要：可执行候选数、供给 floor、主排除原因。
+- `operator_recommendations` 在连续 2 个 snapshot 的 `executable_count < 3` 时输出
+  `candidate_supply_drought`。
+- recommendation 指向既有安全命令 `run_market_scan`，由 Command Center / 权限层决定是否执行。
+- `flow audit` integrated signals 增加 candidate supply 状态。
+
+### 验证
+- `uv run pytest tests/test_candidate_supply_floor.py tests/test_operator_events.py tests/test_anti_hallucination_e2e.py tests/test_agent_shell.py -q`
+- `uv run pytest tests/specs/spec_decision_lifecycle.py tests/specs/spec_data_model.py tests/test_architecture_fitness.py -q`
+
+### 边界
+只做供给诊断和刷新建议；不调交易阈值、不改 debate/guard/risk/execution、不调用 LLM、
+不创建 proposal、不下单。
+
+---
+
+## 2026-07-04 — Opportunity Flow CLI polish
+
+### 触发
+Opportunity Flow 已经能作为总账本，但排查 debate/guard/错过机会时还需要更快地缩小范围。
+
+### 交付
+- `flow audit` 增加 `--stage`、`--verdict`、`--symbol` 三个过滤参数。
+- human output 增加 `Debate signal` 区块，展示 debate 总量、skip 数、trace 完整度、
+  missed-alpha 可疑数和下一步需要的证据。
+- `inspect debate-impact` / `inspect guard-impact` 的 human output 增加指向 flow 的软提示；
+  JSON 输出不变。
+- 更新 `docs/_ai/OPPORTUNITY_FLOW_LEDGER_V1.md` 的使用示例和迁移状态。
+
+### 验证
+- `uv run pytest tests/test_opportunity_flow_ledger.py tests/test_debate_impact_audit.py tests/test_guard_impact_audit.py tests/specs/spec_analytics_contracts.py tests/test_architecture_fitness.py -q`
+- `uv run aletheia flow audit --hours 24 --limit 5 --stage debate_downgraded --verdict missed_alpha_suspect --symbol BTC/USDT`
+
+### 边界
+只读输出增强；不改交易决策、不调 debate 参数、不跑 ranker/guard/risk/execution、不新增 LLM。
+
+---
+
+## 2026-07-04 — Opportunity Flow Ledger V1
+
+### 触发
+guard / unsupported / debate / risk / thesis 等诊断分散在不同入口，排查“机会为什么没有变成交易”时认知成本过高。
+
+### 交付
+- 新增 `uv run aletheia flow audit --hours 24`，输出最近窗口内每个 opportunity 的最终状态、最终阶段、原因、时间线和已有反事实结果。
+- 新增 `uv run aletheia flow trace --opportunity-id <id>`，输出单个 opportunity 的完整只读 trace。
+- 汇总复用已有只读审计：Trade Funnel、Debate Impact、Thesis Lineage、Sizing Trace。
+- 新增 `docs/_ai/OPPORTUNITY_FLOW_LEDGER_V1.md`，记录 flow 定位和旧 audit 命令的兼容路由计划。
+- 空数据库 / 缺运行库时返回 `insufficient_data`，不崩溃。
+
+### 验证
+- `uv run pytest tests/test_opportunity_flow_ledger.py tests/test_trade_funnel_audit.py tests/test_debate_impact_audit.py tests/test_sizing_trace_audit.py tests/test_thesis_lineage.py -q`
+- `uv run pytest tests/specs/spec_analytics_contracts.py tests/test_architecture_fitness.py -q`
+- `uv run aletheia flow audit --hours 24 --limit 5`
+- `uv run aletheia flow trace --opportunity-id missing-flow-id`
+
+### 边界
+只读重建，不新增 LLM 调用，不跑 ranker，不重跑 guard/debate/risk/execution，不建新表，
+不改交易行为；缺字段保持 `insufficient_data`。
+
+---
+
+## 2026-07-04 — Guard Impact Audit 只读诊断
+
+### 触发
+System Operator 持续 skip 后，下一步需要判断 active blocking guards 是否正在过度压制候选池，
+尤其是 momentum long / momentum short guards。
+
+### 交付
+- 新增 `uv run aletheia inspect guard-impact --hours 24`。
+- 支持 `--json`，输出 active blocking guards 总数、按 scanner_family / direction / symbol 聚合、
+  最近窗口内被 blocking guard 命中的候选、命中 guard 明细、guard 作用范围分类，以及已有
+  shadow / forward outcome。
+- verdict 只用已有 outcome：`protective`、`overbroad_suspect`、`insufficient_data`。
+- 诊断会排除本地已知的 pre-guard skip（例如 TTL 过期、execution_eligible=False），但不会调用
+  交易所去判断 demo unsupported symbol。
+
+### 验证
+- `uv run pytest tests/test_guard_impact_audit.py tests/test_paper_trader_guards.py tests/test_paper_trader_ranker.py tests/test_trade_funnel_audit.py -q`
+- `uv run aletheia inspect guard-impact --hours 24`
+- `uv run aletheia inspect guard-impact --hours 24 --json`
+
+### 边界
+只读 DB + guard markdown/frontmatter + existing shadow/forward outcomes；不禁用/修改 guard，
+不改 ranker / System Operator / risk / execution / live，不调用 LLM / HTTP / exchange。
 ## 2026-07-04 — Thesis Lineage 链路完整性修复
 
 ### 触发
@@ -713,7 +1649,7 @@ PnLChart 新增 `isError` 分支:红色 "Failed to load equity curve." + Retry �
   `NO_PROXY` 空。curl 默认会无脑把 localhost 也丢给代理 → 误返回 502/000。**我**
   诊断时中招后,把 curl 假象错误地外推成"浏览器/后端故障"。
 
-记忆 [[aletheia-localhost-probe-proxy-trap]] 已写入,以后诊断:
+记忆 `aletheia-localhost-probe-proxy-trap` 已写入,以后诊断:
 - curl 探活 localhost **一律加 `--noproxy '*'`**;
 - 验证浏览器体验用 `Invoke-WebRequest`(走 WinINET);
 - 后端死活以 `aletheia gateway status` + `/api/health` 的 `status` 字段为准,

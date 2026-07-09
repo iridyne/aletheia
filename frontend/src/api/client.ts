@@ -220,20 +220,26 @@ export const api = {
       runtime_id: runtimeId,
       cause: 'command_center_shadow',
     }),
+  // #83 fix: promote/rollback/forced-drain now require an explicit confirm=true.
+  // The Command Center already surfaces these as human-driven pivots, so we can
+  // hardcode confirm=true here; a follow-up UI batch can lift it into a modal.
   promoteRuntime: (runtimeId?: string) =>
     post<any>('/operator/runtime/promote', {
       runtime_id: runtimeId,
       cause: 'command_center_promote',
+      confirm: true,
     }),
   drainRuntime: (runtimeId?: string, force = true) =>
     post<any>('/operator/runtime/drain', {
       runtime_id: runtimeId,
       force,
       cause: 'command_center_drain',
+      confirm: force,
     }),
   rollbackRuntime: () =>
     post<any>('/operator/runtime/rollback', {
       cause: 'command_center_rollback',
+      confirm: true,
     }),
   getRuntimeEvents: (limit = 100) => fetchJson<any[]>(`/operator/runtime/events?limit=${limit}`),
   getSettings: () => fetchJson<Record<string, unknown>>('/settings'),
@@ -519,6 +525,11 @@ export const api = {
   // Data
   getAgentRuns: () => fetchJson<any[]>('/agent-runs'),
   getAgentRunToolCalls: (runId: string) => fetchJson<any[]>(`/agent-runs/${runId}/tool-calls`),
+  // #72 fix: the per-step reasoning trace backend endpoint exists at
+  // /api/agent-runs/{run_id}/steps (server/routes/data.py:236). The
+  // client method was missing so AgentActivity was displaying the
+  // "not yet available" placeholder. Frontend surface can now consume it.
+  getAgentRunSteps: (runId: string) => fetchJson<any[]>(`/agent-runs/${runId}/steps`),
   startAgentRun: (agent_name: string) => post('/agent-runs/start', { agent_name }),
   getDreamingSummary: () => fetchJson<Record<string, any[]>>('/dreaming/summary'),
   getOpportunities: () => fetchJson<any[]>('/opportunities'),
@@ -534,8 +545,8 @@ export const api = {
   getPortfolio: () => fetchJson<Record<string, any>>('/portfolio'),
   getUtaState: () => fetchJson<Record<string, any>>('/uta/state'),
   getStrategies: () => fetchJson<any[]>('/strategies'),
-  setStrategyVenue: (id: string, execution_venue: string | null) =>
-    fetchJson<any>(`/strategies/${id}/venue`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ execution_venue }) }),
+  // #95: removed dead setStrategyVenue() — it PATCHed /strategies/{id}/venue, a route
+  // deleted with the rules engine (Position C); no backend handler, no TSX caller.
   getKnowledge: (type = 'research_note') => fetchJson<any[]>(`/knowledge?type=${encodeURIComponent(type)}`),
   getStrategyMemory: () => fetchJson<any[]>('/knowledge/strategy-memory'),
   getDreamingLogs: () => fetchJson<any[]>('/knowledge/dreaming-logs'),
@@ -554,7 +565,14 @@ export const api = {
   getPredictionMarketHistory: (id: string) => fetchJson<{ source: string; points: import('../types').ProbabilitySnapshot[] }>(`/prediction/markets/${id}/history`),
   getPredictionMarketClaims: (id: string) => fetchJson<import('../types').PredictionClaim[]>(`/prediction/markets/${id}/claims`),
   getPredictionPreferences: () => fetchJson<import('../types').PredictionPreferences>('/prediction/preferences'),
-  updatePredictionPreferences: (body: { categories?: string[] }) => post<any>('/prediction/preferences', body),
+  // #86 fix: backend is @router.patch("/preferences") (prediction.py:232),
+  // client was POSTing → 405 Method Not Allowed on every save. Use PATCH.
+  updatePredictionPreferences: (body: { categories?: string[] }) =>
+    fetchJson<any>('/prediction/preferences', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
   togglePrediction: (enabled: boolean) => post<{ enabled: boolean }>('/prediction/toggle', { enabled }),
 
   // Serenity Lens endpoints (research-first investigation pipeline)
@@ -807,8 +825,8 @@ export const api = {
   }>) => post<any>('/settings/event_triggers', body),
 
   // Network / proxy config
-  updateNetworkConfig: (body: Partial<{ proxy_url: string; no_proxy: string }>) =>
-    post<{ updated: Record<string, any>; network: { proxy_url: string; no_proxy: string } }>('/settings/network', body),
+  updateNetworkConfig: (body: Partial<{ proxy_protocol: string; proxy_host: string; proxy_port: number; enforce: boolean; no_proxy: string; proxy_url: string }>) =>
+    post<{ updated: Record<string, any>; network: Record<string, any> }>('/settings/network', body),
   testNetworkProxy: () =>
     post<{ reachable: boolean; latency_ms: number; error: string | null }>('/settings/network/test'),
 

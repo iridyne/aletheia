@@ -61,8 +61,16 @@ def _with_status_fields(
     }
 
 
+# #83 fix: request models no longer accept `actor` — audit `actor` is server-derived
+# (constant "human" for operator routes; automation must use the update/continuity
+# route which hardcodes actor/source itself). Callers can still supply `cause` for
+# free-form context. `confirm` is now required for the state-changing transitions
+# (promote, rollback, forced drain) — the routes reject without it as 400.
+_ROUTE_ACTOR = "human"
+_ROUTE_SOURCE = "operator_runtime_route"
+
+
 class RuntimeCandidateRequest(BaseModel):
-    actor: str = "human"
     cause: str = "operator_runtime_candidate"
     code_version: str | None = None
     config_version: str | None = None
@@ -75,9 +83,21 @@ class RuntimeCandidateRequest(BaseModel):
 
 class RuntimeTransitionRequest(BaseModel):
     runtime_id: str | None = None
-    actor: str = "human"
     cause: str = "operator_runtime_transition"
     force: bool = False
+    confirm: bool = False
+
+
+def _require_confirm(payload: RuntimeTransitionRequest, op: str) -> None:
+    """#83 fix: promote / rollback / forced drain change the current-runtime pointer
+    and are at least as stateful as update.apply — mirror update.update_continuity's
+    confirm=True requirement. Non-forced drain stays permissive (it only observes an
+    existing drain progression, no state pivot)."""
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail=f"runtime_{op}_requires_confirm",
+        )
 
 
 @router.get("")
@@ -91,7 +111,7 @@ async def runtime_candidate(payload: RuntimeCandidateRequest):
     return _handle_transition(
         lambda: _with_status_fields(
             svc.prepare_candidate(
-                actor=payload.actor,
+                actor=_ROUTE_ACTOR,
                 cause=payload.cause,
                 code_version=payload.code_version,
                 config_version=payload.config_version,
@@ -102,7 +122,7 @@ async def runtime_candidate(payload: RuntimeCandidateRequest):
                 metadata=payload.metadata,
             ),
             svc=svc,
-            actor=payload.actor,
+            actor=_ROUTE_ACTOR,
             cause=payload.cause,
         )
     )
@@ -116,7 +136,7 @@ async def runtime_shadow(payload: RuntimeTransitionRequest):
         raise HTTPException(status_code=404, detail="candidate_runtime_missing")
 
     def _run():
-        started = svc.start_shadow(runtime_id, actor=payload.actor, cause=payload.cause)
+        started = svc.start_shadow(runtime_id, actor=_ROUTE_ACTOR, cause=payload.cause)
         launch = {"attempted": False, "started": False}
         try:
             from aletheia.gateway.operator_shell import spawn_shadow_operator_shell
@@ -129,24 +149,25 @@ async def runtime_shadow(payload: RuntimeTransitionRequest):
             }
         except Exception as exc:
             launch = {"attempted": True, "started": False, "error": str(exc)}
-        validated = svc.validate_shadow(started["runtime_id"], actor=payload.actor, cause=payload.cause)
+        validated = svc.validate_shadow(started["runtime_id"], actor=_ROUTE_ACTOR, cause=payload.cause)
         validated["shadow_process"] = launch
-        return _with_status_fields(validated, svc=svc, actor=payload.actor, cause=payload.cause)
+        return _with_status_fields(validated, svc=svc, actor=_ROUTE_ACTOR, cause=payload.cause)
 
     return _handle_transition(_run)
 
 
 @router.post("/promote")
 async def runtime_promote(payload: RuntimeTransitionRequest):
+    _require_confirm(payload, "promote")
     svc = _service()
     runtime_id = payload.runtime_id or (svc.status().get("candidate") or {}).get("runtime_id")
     if not runtime_id:
         raise HTTPException(status_code=404, detail="candidate_runtime_missing")
     return _handle_transition(
         lambda: _with_status_fields(
-            svc.promote(runtime_id, actor=payload.actor, cause=payload.cause),
+            svc.promote(runtime_id, actor=_ROUTE_ACTOR, cause=payload.cause),
             svc=svc,
-            actor=payload.actor,
+            actor=_ROUTE_ACTOR,
             cause=payload.cause,
         )
     )
@@ -154,15 +175,17 @@ async def runtime_promote(payload: RuntimeTransitionRequest):
 
 @router.post("/drain")
 async def runtime_drain(payload: RuntimeTransitionRequest):
+    if payload.force:
+        _require_confirm(payload, "drain_force")
     svc = _service()
     runtime_id = payload.runtime_id or (svc.status().get("draining") or {}).get("runtime_id")
     if not runtime_id:
         raise HTTPException(status_code=404, detail="draining_runtime_missing")
     return _handle_transition(
         lambda: _with_status_fields(
-            svc.drain(runtime_id, actor=payload.actor, cause=payload.cause, force=payload.force),
+            svc.drain(runtime_id, actor=_ROUTE_ACTOR, cause=payload.cause, force=payload.force),
             svc=svc,
-            actor=payload.actor,
+            actor=_ROUTE_ACTOR,
             cause=payload.cause,
         )
     )
@@ -170,12 +193,13 @@ async def runtime_drain(payload: RuntimeTransitionRequest):
 
 @router.post("/rollback")
 async def runtime_rollback(payload: RuntimeTransitionRequest):
+    _require_confirm(payload, "rollback")
     svc = _service()
     return _handle_transition(
         lambda: _with_status_fields(
-            svc.rollback(actor=payload.actor, cause=payload.cause),
+            svc.rollback(actor=_ROUTE_ACTOR, cause=payload.cause),
             svc=svc,
-            actor=payload.actor,
+            actor=_ROUTE_ACTOR,
             cause=payload.cause,
         )
     )

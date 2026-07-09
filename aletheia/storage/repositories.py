@@ -937,8 +937,15 @@ def list_market_snapshots(
     symbol: str | None = None,
     limit: int = 100,
     exchange: str = "",
+    market_type: str | None = None,
 ) -> list[dict]:
-    """Return market snapshots, optionally filtered by symbol and/or exchange."""
+    """Return market snapshots, optionally filtered by symbol, exchange, and/or market_type.
+
+    ``market_type`` uses the snapshot-storage vocabulary ("spot"/"perp"/"futures"),
+    which is the InstrumentId physical vocabulary — NOT the DB/execution string
+    "usdt_futures". Callers holding a proposal/DB market_type must map it first
+    (see ``market_data._snapshot_market_type``). None preserves prior behavior.
+    """
     conditions: list[str] = []
     params: list = []
     if symbol:
@@ -947,6 +954,9 @@ def list_market_snapshots(
     if exchange:
         conditions.append("exchange = ?")
         params.append(exchange)
+    if market_type:
+        conditions.append("market_type = ?")
+        params.append(market_type)
     where = " AND ".join(conditions) if conditions else None
     return _select_all(
         "market_snapshots",
@@ -1191,13 +1201,45 @@ def prune_system_actions(days: int = 7) -> int:
     system_action is pure telemetry noise (~1200 rows/day) that used to flood
     the limit-30 window before the A2 fix added explicit item_type filters.
     Safe to prune because no learning/PI path queries system_action anymore.
+
+    #44 note (2026-07-08): knowledge_items is otherwise governed by the
+    no-hard-delete rule (audit reconstruction). This function is the ONE
+    documented exception — telemetry rows are not causal/knowledge content
+    and their unbounded growth would swamp the audit path itself. To keep
+    the accountability trail honest despite the hard delete, we emit an
+    audit event summarising the sweep (row count + oldest cutoff) so an
+    operator can grep pruning history without keeping the row bodies.
     """
-    return _delete_old_rows(
+    deleted = _delete_old_rows(
         "knowledge_items",
         days,
         extra_where="item_type = ?",
         extra_params=("system_action",),
     )
+    if deleted > 0:
+        try:
+            from aletheia.files.jsonl import write_audit
+            write_audit({
+                "actor": "system",
+                "source": "retention",
+                "event_type": "knowledge_items_pruned",
+                "entity_type": "knowledge_items",
+                "message": (
+                    f"prune_system_actions: hard-deleted {deleted} system_action rows "
+                    f"older than {days} days (documented exception to no-hard-delete)"
+                ),
+                "after": {
+                    "deleted_count": deleted,
+                    "cutoff_days": days,
+                    "item_type": "system_action",
+                },
+            })
+        except Exception:
+            # Retention MUST NOT crash if the audit write fails — the point of
+            # the audit hook is best-effort observability, not the retention
+            # decision itself.
+            pass
+    return deleted
 
 
 # ---------------------------------------------------------------------------
@@ -1979,6 +2021,19 @@ def prune_onchain_snapshots(days: int = 30) -> int:
     return cur.rowcount or 0
 
 
+def prune_prediction_probability_snapshots(days: int = 90) -> int:
+    """#150: prune prediction_probability_snapshots older than `days`. Observation-only
+    telemetry (prediction_observer, 30-min cadence, gated on prediction_enabled) that
+    previously had no retention path."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM prediction_probability_snapshots WHERE ts < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
 def prune_liquidation_events(days: int = 7) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
@@ -2127,15 +2182,21 @@ def prune_agent_shell_artifacts(days: int = 30) -> int:
 def expire_stale_opportunities(ttl_hours: int = 48) -> int:
     """Mark open opportunities older than ttl_hours as 'expired'.
 
-    Prevents indefinite accumulation of stale signals that the paper_trader
-    never acted on. Traded/reviewed opportunities are not affected.
+    Also expires any opportunity whose valid_until has passed, regardless of
+    age — IB-24-13: short-TTL families (e.g. momentum 30 min) were piling up
+    as 'open' for 48h before the age cutoff fired.
+
+    Traded/reviewed opportunities are not affected.
     """
+    now_iso = datetime.now(timezone.utc).isoformat()
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=ttl_hours)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
     cur = db.execute(
-        "UPDATE opportunities SET status = 'expired' WHERE status = 'open' AND created_at < ?",
-        (cutoff,),
+        "UPDATE opportunities SET status = 'expired'"
+        " WHERE status = 'open'"
+        " AND (created_at < ? OR (valid_until IS NOT NULL AND valid_until < ?))",
+        (cutoff, now_iso),
     )
     if not was_in_tx:
         db.commit()

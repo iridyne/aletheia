@@ -276,6 +276,27 @@ def test_doctor_perp_structure_warns_when_rows_are_stale(tmp_path, monkeypatch):
     assert "stale" in checks["data.perp_structure"].fix_hint
 
 
+def test_doctor_perp_structure_missing_table_reports_no_rows(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    sq.reset_db()
+    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    sq._db_conn = conn
+    report = dx.Report(generated_at="t")
+
+    dx._probe_perp_structure(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.perp_structure"].severity == "info"
+    assert checks["data.perp_structure"].detail == "no perp structure rows yet"
+    assert "no such table" not in checks["data.perp_structure"].detail
+
+
+
 def test_deep_diagnostics_includes_log_policy_redacted_tails_and_attention(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     (tmp_path / "logs" / "errors.log").write_text(

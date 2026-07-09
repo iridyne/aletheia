@@ -111,8 +111,11 @@ def _applies_to_from_meta(meta: dict) -> dict:
     """
     applies_to = dict(meta.get("applies_to") or {})
     if not applies_to:
+        symbol = meta.get("symbol")
         fam = meta.get("scanner_family")
         direction = meta.get("direction")
+        if symbol:
+            applies_to["symbol"] = [symbol] if isinstance(symbol, str) else symbol
         if fam:
             applies_to["scanner_family"] = [fam] if isinstance(fam, str) else fam
         if direction:

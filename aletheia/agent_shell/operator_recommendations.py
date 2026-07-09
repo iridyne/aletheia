@@ -228,6 +228,48 @@ def _suggested_schedule_for(agent_name: str) -> str | None:
     return None
 
 
+def _candidate_supply_drought_recommendation(recent_events: list[dict], cfg) -> dict | None:
+    try:
+        from aletheia.analytics.candidate_supply import evaluate_candidate_supply_drought
+
+        drought = evaluate_candidate_supply_drought(recent_events)
+    except Exception:
+        return None
+    if drought is None:
+        return None
+    main_reason = drought.get("main_reason") or "unknown"
+    executable_count = int(drought.get("executable_count") or 0)
+    floor = int(drought.get("floor") or 3)
+    consecutive = int(drought.get("consecutive_cycles") or 2)
+    recommendation = {
+        "id": "candidate-supply-drought",
+        "kind": "candidate_supply_drought",
+        "severity": "medium",
+        "summary": (
+            f"Executable candidate supply stayed below {floor} for {consecutive} consecutive cycles "
+            f"(latest={executable_count}, main_reason={main_reason}). Refresh the opportunity pool "
+            "before asking System Operator to keep deciding from a thin candidate set."
+        ),
+        "metadata": {
+            "task_type": "run_market_scan",
+            "refresh_available": True,
+            "main_reason": main_reason,
+            "executable_count": executable_count,
+            "floor": floor,
+            "consecutive_cycles": consecutive,
+            "latest_snapshot_event_id": drought.get("latest_snapshot_event_id"),
+            "recent_snapshot_event_ids": drought.get("recent_snapshot_event_ids") or [],
+            "excluded_candidates_summary": drought.get("excluded_candidates_summary") or [],
+        },
+    }
+    if not getattr(cfg.runtime, "paused", False):
+        recommendation["taskType"] = "run_market_scan"
+    else:
+        recommendation["summary"] += " Gateway is paused, so this is a recommendation only."
+        recommendation["metadata"]["refresh_available"] = False
+    return recommendation
+
+
 def _parse_numeric_threshold_violation(violation: str, prefix: str) -> tuple[float, float] | None:
     if not violation.startswith(prefix):
         return None
@@ -846,7 +888,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     failed_tasks = list_tasks(limit=10, status="failed")
     running_tasks = list_tasks(limit=20, status="running")
     queued_tasks = list_tasks(limit=20, status="queued")
-    recent_events = list_events(limit=20)
+    recent_events = list_events(limit=100)
     recent_artifacts = list_artifacts(limit=500)
 
     if heartbeat is None or heartbeat.get("status") == "offline":
@@ -877,6 +919,10 @@ def build_recommendations(limit: int = 10) -> list[dict]:
                 "summary": "Gateway is paused. Resume it when background monitoring and scheduled work should continue.",
             }
         )
+
+    supply_drought = _candidate_supply_drought_recommendation(recent_events, cfg)
+    if supply_drought is not None:
+        recommendations.append(supply_drought)
 
     health_snapshot = compute_health()
     health_issues = [

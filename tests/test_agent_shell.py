@@ -358,6 +358,43 @@ async def test_trading_decision_bias_brake_allows_high_conviction(tmp_path, monk
     assert decision.position_size_usdt is not None
 
 
+@pytest.mark.asyncio
+async def test_trading_decision_records_debate_trace(tmp_path, monkeypatch):
+    _init_agent_shell_db(tmp_path, monkeypatch)
+
+    from aletheia.agent_shell import trading_decision as td
+
+    monkeypatch.setattr(td, "_assess_opportunity", AsyncMock(return_value={
+        "action": "trade",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "conviction": 60,
+        "reasoning": "uncertain breakout",
+    }))
+    monkeypatch.setattr(
+        td,
+        "_run_debate",
+        AsyncMock(return_value=td.DebateResult(
+            bull_confidence=40,
+            bull_thesis="some upside",
+            bull_evidence=["support"],
+            bear_confidence=80,
+            bear_thesis="bad entry",
+            bear_evidence=["resistance"],
+        )),
+    )
+
+    decision = await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
+
+    assert decision.action == "skip"
+    assert decision.conviction == 48
+    assert decision.debate_ran is True
+    assert decision.debate_initial_conviction == 60
+    assert decision.debate_bull_confidence == 40
+    assert decision.debate_bear_confidence == 80
+    assert decision.debate_adjustment == -12
+
+
 # --- Synthesis fallback tests ---
 
 def test_fallback_error():

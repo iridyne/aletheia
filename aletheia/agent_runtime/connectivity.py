@@ -18,13 +18,41 @@ logger = logging.getLogger("aletheia.connectivity")
 _consecutive_failures: int = 0
 _consecutive_successes: int = 0
 _last_probe_result: dict | None = None
-_active_resume_task: asyncio.Task | None = None
+_active_resume_task = None  # asyncio.Task | concurrent.futures.Future | None
+_uvicorn_loop: asyncio.AbstractEventLoop | None = None  # persistent loop, captured at startup (#145)
 
 _EXCHANGE_ENDPOINTS: dict[str, str] = {
     "okx": "https://www.okx.com/api/v5/public/time",
     "bitget": "https://api.bitget.com/api/v2/public/time",
     "binance": "https://api.binance.com/api/v3/ping",
 }
+
+
+def set_uvicorn_loop(loop) -> None:
+    """Capture the persistent uvicorn event loop so the auto-resume task can be
+    scheduled onto it (#145). The periodic connectivity check runs on an ephemeral
+    per-job loop that is torn down as soon as the job returns, so a resume task
+    created there would be destroyed pending and never fire — only a startup-time
+    pause (already on the uvicorn loop) auto-resumed."""
+    global _uvicorn_loop
+    _uvicorn_loop = loop
+
+
+def _choose_resume_scheduling(uvicorn_loop, running_loop) -> str:
+    """Decide how to schedule the auto-resume loop so it survives (#145).
+
+    - "threadsafe": a distinct, running persistent loop is captured — schedule onto
+      it from this (ephemeral/worker) loop via run_coroutine_threadsafe.
+    - "create_task": we are already on a persistent loop (startup gate) or no loop
+      was captured — create the task on the current loop.
+    - "none": no loop available at all.
+    """
+    if uvicorn_loop is not None and uvicorn_loop is not running_loop \
+            and getattr(uvicorn_loop, "is_running", lambda: False)():
+        return "threadsafe"
+    if running_loop is not None:
+        return "create_task"
+    return "none"
 
 
 async def probe_exchange(cfg=None) -> dict:
@@ -164,13 +192,27 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
     except Exception:
         pass
 
-    # Start auto-resume loop (independent of paused scheduler)
+    # Start auto-resume loop on a loop that SURVIVES (#145). The periodic connectivity
+    # check runs on an ephemeral per-job loop torn down right after the job returns, so
+    # asyncio.get_running_loop().create_task() here would orphan the resume task. Schedule
+    # onto the captured persistent uvicorn loop when we are not already running on it.
     if _active_resume_task is None or _active_resume_task.done():
         interval = cfg.health.exchange_auto_resume_interval_sec
-        _active_resume_task = asyncio.get_running_loop().create_task(
-            _exchange_auto_resume_loop(interval),
-            name="exchange_auto_resume",
-        )
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        mode = _choose_resume_scheduling(_uvicorn_loop, running)
+        if mode == "threadsafe":
+            _active_resume_task = asyncio.run_coroutine_threadsafe(
+                _exchange_auto_resume_loop(interval), _uvicorn_loop,
+            )
+        elif mode == "create_task":
+            _active_resume_task = running.create_task(
+                _exchange_auto_resume_loop(interval), name="exchange_auto_resume",
+            )
+        else:
+            logger.error("connectivity auto-resume: no event loop available to schedule resume task")
 
 
 async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
@@ -178,6 +220,8 @@ async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
     global _consecutive_failures, _consecutive_successes
 
     successes_needed = 2  # default, overridden from config below
+    loop_failures = 0
+    last_escalation_at = 0
 
     while True:
         await asyncio.sleep(interval_sec)
@@ -190,11 +234,13 @@ async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
             return
 
         successes_needed = cfg.health.exchange_auto_resume_success_threshold
+        stall_threshold = cfg.health.exchange_stall_threshold
 
         result = await probe_exchange(cfg)
         if result["reachable"]:
             _consecutive_successes += 1
             _consecutive_failures = 0
+            loop_failures = 0
             logger.info(
                 "exchange_auto_resume: probe OK (%d/%d)",
                 _consecutive_successes, successes_needed,
@@ -205,14 +251,75 @@ async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
         else:
             _consecutive_successes = 0
             _consecutive_failures += 1
-            logger.info(
-                "exchange_auto_resume: still unreachable (%s), retry in %ds",
-                result.get("error", "?"), interval_sec,
-            )
+            loop_failures += 1
+
+            if loop_failures >= stall_threshold and (
+                loop_failures - last_escalation_at >= stall_threshold
+            ):
+                _escalate_exchange_stall(cfg, result, loop_failures)
+                last_escalation_at = loop_failures
+            else:
+                logger.info(
+                    "exchange_auto_resume: still unreachable (%s), retry in %ds",
+                    result.get("error", "?"), interval_sec,
+                )
+
+
+def _escalate_exchange_stall(cfg, last_result: dict, consecutive: int) -> None:
+    """Notify operator about exchange connectivity stall."""
+    error = last_result.get("error", "unknown")
+    exchange = cfg.exchange.name
+    message = (
+        f"Exchange {exchange} unreachable for {consecutive} consecutive probes "
+        f"({consecutive}min+). Last error: {error}. "
+        f"Check network and proxy settings in Settings -> Network."
+    )
+    logger.warning("exchange_auto_resume stall: %s", message)
+    try:
+        from aletheia.notifications import notify_operator
+        notify_operator(
+            "Exchange Auto-Resume Stalled",
+            message,
+            source="connectivity_monitor",
+            event_type=None,
+            audit=False,
+            error_log=True,
+        )
+    except Exception:
+        pass
+    try:
+        from aletheia.files.jsonl import write_audit
+        write_audit({
+            "actor": "system",
+            "source": "connectivity_monitor",
+            "event_type": "exchange_auto_resume_stall_escalated",
+            "entity_type": "gateway",
+            "entity_id": "gateway",
+            "message": message,
+            "metadata": {"exchange": exchange, "consecutive_failures": consecutive},
+        })
+    except Exception:
+        pass
 
 
 async def _resume_from_network(cfg) -> None:
     """Resume scheduler after exchange connectivity is restored."""
+    # #146: the paused flag is shared with the LLM startup gate. If the LLM is still
+    # unavailable, do NOT clear paused on exchange recovery — that would un-pause a
+    # system the LLM gate still requires paused, and the LLM auto-resume loop would
+    # then exit early seeing paused=False. Stay paused; the LLM auto-resume clears it
+    # once the LLM is back (exchange is already up by then). Fail-safe: on any probe
+    # error we proceed (pre-existing behaviour), never blocking a legitimate resume.
+    try:
+        if cfg.health.require_llm_at_startup:
+            from aletheia.agent_runtime.startup_gate import probe_llm_providers_at_startup
+            _llm = await probe_llm_providers_at_startup(cfg, max_retries=1)
+            if not _llm.get("any_usable"):
+                logger.info("exchange reachable again but LLM still unavailable — staying paused")
+                return
+    except Exception:
+        pass  # intentional: a probe failure must not block a legitimate resume
+
     from aletheia.agent_runtime.scheduler import resume_scheduler
     from aletheia.config.loader import save_config
     from aletheia.infra.events import emit_infra_event

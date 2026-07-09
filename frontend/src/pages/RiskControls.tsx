@@ -87,10 +87,31 @@ export default function RiskControls() {
 
   // Exposure: largest magnitude first; bars scale to the biggest absolute exposure.
   const exposureRaw = (portfolio as any)?.exposure_by_symbol as Record<string, number> | undefined
-  const marketTypeBySymbol: Record<string, string> = {}
+  // #47/#53 fix: previously `marketTypeBySymbol[p.symbol] = p.market_type`
+  // — a same-symbol spot+perp pair overwrote each other, so the last row
+  // won and the display could flip between spot slash and perp concat
+  // rendering on every position update. Track BOTH; when a symbol has
+  // more than one market_type prefer the derivative (perp/futures/swap)
+  // for display consistency — the exposure_by_symbol key from the backend
+  // is currently symbol-only (#52 deferred, coupled with market_type
+  // migration), so this is a display-honesty best-effort until the
+  // backend groups by (symbol, market_type).
+  const marketTypesForSymbol: Record<string, Set<string>> = {}
   for (const p of positions as any[]) {
-    if (p?.symbol && p?.market_type) marketTypeBySymbol[p.symbol] = p.market_type
+    if (!p?.symbol || !p?.market_type) continue
+    ;(marketTypesForSymbol[p.symbol] ??= new Set()).add(p.market_type)
   }
+  const _preferPerp = (types: Set<string>): string => {
+    for (const derivative of ['perp', 'usdt_futures', 'futures', 'swap']) {
+      if (types.has(derivative)) return derivative
+    }
+    return Array.from(types)[0] ?? ''
+  }
+  const marketTypeBySymbol: Record<string, string> = Object.fromEntries(
+    Object.entries(marketTypesForSymbol).map(([sym, types]) => [sym, _preferPerp(types)])
+  )
+  // A quick lookup so the row can flag "spot+perp merged" visually.
+  const hasMixedMarketType = (sym: string) => (marketTypesForSymbol[sym]?.size ?? 0) > 1
   const exposure = exposureRaw
     ? Object.entries(exposureRaw).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
     : []
@@ -230,10 +251,23 @@ export default function RiskControls() {
                 )
               })}
             </ul>
-          ) : (
+          ) : riskState === 'healthy' ? (
             <div className="risk-clear">
               <span className="risk-dot risk-dot-ok" />
               <span className="text-muted text-sm">No active violations — operating within all limits.</span>
+            </div>
+          ) : (
+            // #172 fix: "within all limits" used to render whenever the
+            // violation list was empty — including when riskState was
+            // 'unknown' / missing / never-evaluated (the API returned no
+            // status yet). That's the WORST case to render as green:
+            // "no data" mislabels itself as "all clear". Only claim clear
+            // when the backend actually says riskState === 'healthy'.
+            <div className="risk-clear">
+              <span className="risk-dot risk-dot-muted" />
+              <span className="text-muted text-sm">
+                Risk state <span className="mono">{riskState}</span> — not confirming clear until the risk engine reports "healthy".
+              </span>
             </div>
           )}
 
@@ -317,7 +351,19 @@ export default function RiskControls() {
               <ul className="exposure-list">
                 {exposure.map(([sym, val]) => (
                   <li key={sym} className="exposure-row">
-                    <span className="exposure-sym mono">{fmtSymbol(sym, marketTypeBySymbol[sym])}</span>
+                    <span className="exposure-sym mono">
+                      {fmtSymbol(sym, marketTypeBySymbol[sym])}
+                      {/* #47/#53 fix: flag when this symbol has BOTH spot and
+                          perp/futures locally. The backend exposure figure
+                          groups them under one key (#52 deferred), so this
+                          note tells the operator the number is not a pure-
+                          market-type slice — no silent lie. */}
+                      {hasMixedMarketType(sym) && (
+                        <span className="text-muted text-sm" title="Both spot and perp open — exposure is combined">
+                          {' '}(spot+perp)
+                        </span>
+                      )}
+                    </span>
                     <span className="exposure-bar-track">
                       <Meter
                         pct={Math.max(2, (Math.abs(val) / exposureMax) * 100)}

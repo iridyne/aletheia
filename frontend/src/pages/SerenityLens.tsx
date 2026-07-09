@@ -697,7 +697,13 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
                       direction={humanize(o.direction)}
                       rec={rec}
                       grade={grade}
-                      evidenceTier={humanize(o.evidence_tier)}
+                      // #167 fix: previously showed `evidence_tier` — that's the
+                      // PROPOSED tier the caller submitted, advisory only. The
+                      // authoritative tier the risk engine actually uses is
+                      // `assessed_tier` (set by the serenity evidence pipeline).
+                      // Prefer assessed; fall back to proposed when the pipeline
+                      // hasn't scored it yet.
+                      evidenceTier={humanize((o.assessed_tier as string | undefined) || (o.evidence_tier as string | undefined))}
                       status={o.status}
                       bearCase={bearCase}
                     />

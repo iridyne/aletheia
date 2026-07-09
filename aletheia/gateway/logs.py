@@ -26,6 +26,12 @@ _SECRET_PATTERNS = [
     re.compile(r"(?i)(api[_-]?key|api[_-]?secret|passphrase|token|authorization|x-api-key)(['\"\s:=]+)([^'\"\s,}]+)"),
     re.compile(r"(?i)(bearer\s+)([a-z0-9._~+/=-]{12,})"),
     re.compile(r"(?i)(access[_-]?token|refresh[_-]?token)(['\"\s:=]+)([^'\"\s,}]+)"),
+    # Bare `secret` field (the CCXT credential attribute used to build every exchange
+    # client) — \b avoids matching api_secret (already covered above).
+    re.compile(r"(?i)(\bsecret)(['\"\s:=]+)([^'\"\s,}]+)"),
+    # Exchange auth headers ACCESS-KEY / ACCESS-SIGN (bitget/okx/coinbase HMAC signing).
+    # ACCESS-PASSPHRASE value is already covered by the `passphrase` token above.
+    re.compile(r"(?i)(access[_-]?(?:key|sign))(['\"\s:=]+)([^'\"\s,}]+)"),
 ]
 
 

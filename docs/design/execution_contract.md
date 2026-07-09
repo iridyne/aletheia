@@ -21,7 +21,7 @@ trade_proposals.id
   → risk_decisions.proposal_id
   → orders.proposal_id + orders.risk_decision_id
   → fills.order_id
-  → positions (从 orders/fills 投影,当前 schema 不直接链 proposal)
+  → positions (从 orders/fills 投影;schema 现直接携带 `proposal_id` + `order_id` + `opportunity_id`,新 position 开仓即写,adopt 也走同一路径 — #30/#50)
 ```
 
 **契约**:一个 proposed trade 只创建一次 `trade_proposals` 行。批准/拒绝/风控/执行**绝不**创建第二行。所有订单**必须**经 Execution Gateway——agent/dashboard/telegram 不得直接调交易所下单([trust §6.3](../governance/trust_and_change_control.md))。
@@ -167,8 +167,10 @@ trade_proposals.id
 | 1 | stop-loss | `price` 越过 `stop_price`(多头跌破/空头升破) | `_decide_exit` |
 | 2 | take-profit | `price` 越过 `take_profit_price` | `_decide_exit` |
 | 3 | max-hold | 持仓时长 > `max_position_hold_hours`(serenity school 用 `max_hold_days`) | `_decide_exit` |
-| 4 | ruleset_exit | `_decide_exit` 返回 None 且 `position_id ∈ ruleset_exit_position_ids` | `position_manager.py:348-349` |
-| 5 | market_aware_exit | **仅当 1–4 都未触发**且 `market_aware_exits.enabled`;`urgent_exit` 才平,`tighten_stop` 只收紧不平 | `exit_rules.py:27`,调用点 `position_manager.py:352` |
+| 4 | market_aware_exit | **仅当 1–3 都未触发**且 `market_aware_exits.enabled`;`urgent_exit` 才平,`tighten_stop` 只收紧不平 | `exit_rules.py:27`,调用点 `position_manager.py:352` |
+
+> (#105) 原优先级-4 的 `ruleset_exit` 触发器已随规则引擎(Position C)删除——`_decide_exit`
+> 不再消费 `ruleset_exit_position_ids`,该触发器不再是活跃退出路径,请勿再加回。
 
 **System Operator 退出路径独立**:`review_portfolio_state()`(`commands.py:1922`,LLM 决策)经**同一** `close_position_routed()` 入口平仓,**不进入** `evaluate_open_positions` 自动循环——两条路径汇合于路由中枢,不在触发器优先级链内。
 

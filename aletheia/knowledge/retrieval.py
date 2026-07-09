@@ -29,7 +29,7 @@ from aletheia.storage.sqlite import get_db
 logger = logging.getLogger("aletheia.retrieval")
 
 # Only these reach a decision. The quality gate that stops noise becoming "experience".
-_ALLOWED_CONFIDENCE = "high_confidence"
+_ALLOWED_CONFIDENCE = ("high_confidence", "medium_confidence")
 
 # Recency half-life: a lesson loses half its recency weight every N days.
 _RECENCY_HALF_LIFE_DAYS = 30.0
@@ -134,7 +134,7 @@ def reindex_all() -> int:
             count = 0
             skipped_empty = 0
             for row in list_knowledge_items(limit=100000, status="active"):
-                if row.get("confidence") != _ALLOWED_CONFIDENCE:
+                if row.get("confidence") not in _ALLOWED_CONFIDENCE:
                     continue
                 body = _read_body(row.get("file_path"))
                 if not body.strip():
@@ -163,7 +163,7 @@ def reindex_all() -> int:
                     count += 1
             if skipped_empty:
                 logger.warning(
-                    "reindex_all: skipped %d high_confidence items with empty body "
+                    "reindex_all: skipped %d items with empty body "
                     "(file missing or deleted — these items are unrecoverable from FTS)",
                     skipped_empty,
                 )
@@ -284,13 +284,14 @@ def retrieve_lessons(
         if not match:
             return []
 
+        _conf_placeholders = ", ".join("?" for _ in _ALLOWED_CONFIDENCE)
         sql = (
             "SELECT item_id, item_type, title, confidence, created_at, "
             "snippet(knowledge_fts, 1, '', '', ' … ', 48) AS snip, bm25(knowledge_fts) AS bm, "
             "outcome "
-            "FROM knowledge_fts WHERE knowledge_fts MATCH ? AND confidence = ?"
+            f"FROM knowledge_fts WHERE knowledge_fts MATCH ? AND confidence IN ({_conf_placeholders})"
         )
-        params: list = [match, _ALLOWED_CONFIDENCE]
+        params: list = [match, *_ALLOWED_CONFIDENCE]
         if item_types:
             placeholders = ", ".join("?" for _ in item_types)
             sql += f" AND item_type IN ({placeholders})"

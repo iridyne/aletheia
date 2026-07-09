@@ -158,7 +158,11 @@ def render_calibration_for_pi(report: dict) -> str:
     ece = report.get("ece")
     grade = report.get("ece_grade", "?")
     total = report.get("total_executed", 0)
-    lines = [f"\n## Conviction Calibration ({total} executed trades, ECE={ece:.3f if ece else '?'} {grade})"]
+    # #157: the ECE format must be precomputed — `{ece:.3f if ece else '?'}` is an
+    # invalid format spec that raised ValueError on every real (numeric-ece) report,
+    # which the caller silently swallowed, killing the calibration feedback entirely.
+    ece_str = f"{ece:.3f}" if isinstance(ece, (int, float)) else "?"
+    lines = [f"\n## Conviction Calibration ({total} executed trades, ECE={ece_str} {grade})"]
     lines.append(report.get("calibration_summary", ""))
 
     overconf = report.get("overconfident_buckets", [])

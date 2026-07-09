@@ -135,7 +135,15 @@ def _recent_signal_pairs(window_minutes: int = _RECENT_SIGNAL_COOLDOWN_MINUTES) 
 
 
 def _select_signal_candidates(candidates: list[dict], limit: int = 3) -> list[dict]:
-    """Pick a compact signal batch without duplicate symbols or pairs."""
+    """Pick a compact signal batch without duplicate symbols or pairs.
+
+    Dedup is intentionally symbol-only (not market_type-aware): per spec
+    OD-S01 (spec_market_type_dedup.py, commit db3c3f8), directional analysis is
+    instrument-agnostic and the upstream pipeline already emits at most one
+    instrument per canonical symbol (auto→perp). Adding a market_type key here
+    would re-enable the same-symbol spot+perp double-observation OD-S01 removed.
+    (Bug-review #10 reclassified as won't-fix / design-consistent.)
+    """
     selected: list[dict] = []
     seen_symbols: set[str] = set()
     seen_pairs: set[tuple[str, str]] = set()

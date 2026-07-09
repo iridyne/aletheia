@@ -1542,8 +1542,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "conviction": decision.conviction,
         "reasoning": decision.reasoning[:300],
         "debate_ran": decision.debate_ran,
+        "debate_initial_conviction": decision.debate_initial_conviction,
         "debate_bull": decision.debate_bull_confidence,
         "debate_bear": decision.debate_bear_confidence,
+        "debate_adjustment": decision.debate_adjustment,
         # R0/attribution: carry the source opportunity_id through to record_decision
         # so the pi_decisions(action='trade') row links back to its opportunity.
         "opportunity_id": decision.opportunity_id,
@@ -1609,18 +1611,30 @@ async def review_portfolio_state(params: dict) -> dict:
     if not open_positions:
         return {"action": "none", "reason": "no_open_positions"}
 
+    # #106 fix: previously the schema only exposed `target_symbol`, so the
+    # close path matched `p['symbol'] == sym` and grabbed matching[:1] — a
+    # spot BTC/USDT + perp BTC/USDT pair could see the WRONG position closed
+    # (the first-in-list wins). Now the LLM can also emit `target_position_id`,
+    # `target_market_type`, and `target_direction`; the matcher tightens
+    # progressively — position_id > (symbol + market_type + direction) >
+    # (symbol + market_type) > (symbol + direction) > (symbol only, legacy).
     schema = {
         "type": "object",
         "properties": {
             "action": {"type": "string", "enum": ["hold", "close_one", "reduce_exposure"]},
             "target_symbol": {"type": "string"},
+            "target_market_type": {"type": "string", "description": "spot | perp | usdt_futures — required when both spot and perp of the same symbol are open"},
+            "target_direction": {"type": "string", "enum": ["long", "short"]},
+            "target_position_id": {"type": "string", "description": "the exact position id from open_positions; disambiguates any collision"},
             "reasoning": {"type": "string"},
         },
         "required": ["action", "reasoning"],
     }
 
+    # Include position_id + market_type + direction in the summary so the LLM
+    # has the disambiguators it needs to fill target_position_id / target_market_type.
     pos_summary = "\n".join(
-        f"  {p['symbol']} {p['direction']} qty={p['quantity']} upnl={p.get('unrealized_pnl', '?')}"
+        f"  id={p['id']} {p['symbol']} ({p.get('market_type', 'spot')}) {p['direction']} qty={p['quantity']} upnl={p.get('unrealized_pnl', '?')}"
         for p in open_positions
     )
     system = "You are a portfolio risk reviewer for an autonomous paper trading system."
@@ -1657,9 +1671,24 @@ Return JSON: {_json.dumps(schema)}"""
         "target_symbol": review.get("target_symbol"),
     }
 
-    if action in ("close_one", "reduce_exposure") and review.get("target_symbol"):
-        sym = review["target_symbol"]
-        matching = [p for p in list_positions(status="open") if p["symbol"] == sym]
+    if action in ("close_one", "reduce_exposure") and (
+        review.get("target_position_id") or review.get("target_symbol")
+    ):
+        sym = review.get("target_symbol") or ""
+        mkt = review.get("target_market_type")
+        direction = review.get("target_direction")
+        target_id = review.get("target_position_id")
+        # #106 fix: progressive tightening. position_id trumps everything;
+        # otherwise combine symbol + whatever disambiguators the LLM gave.
+        candidates = list_positions(status="open")
+        if target_id:
+            matching = [p for p in candidates if p["id"] == target_id]
+        else:
+            matching = [p for p in candidates if p["symbol"] == sym]
+            if mkt:
+                matching = [p for p in matching if p.get("market_type") == mkt]
+            if direction:
+                matching = [p for p in matching if p["direction"] == direction]
         closed_count = 0
         for pos in matching[:1]:
             price = _latest_price(sym)

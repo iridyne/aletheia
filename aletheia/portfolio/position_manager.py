@@ -208,12 +208,16 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
     if updates:
         from aletheia.storage.repositories import update_position
         update_position(position["id"], **updates)
-        # Sync the exchange TPSL bracket when the stop price changes
+        # Sync the exchange TPSL bracket when the stop price changes.
+        # #139 fix: dispatch broker-agnostically through execution.stops so OKX
+        # and (eventually) Binance also honour the trailed stop, not just Bitget.
+        # `replace_exchange_protective_stop` re-checks exchange_tpsl_enabled +
+        # mode gating internally so the trail path stays honest per broker.
         new_stop = updates.get("stop_price")
-        if new_stop and cfg.trading.exchange_tpsl_enabled and position.get("execution_mode") in ("bitget_demo", "bitget_live_limited"):
+        if new_stop:
             try:
-                from aletheia.execution.bitget_broker import replace_exchange_stop
-                replace_exchange_stop(position["id"], float(new_stop))
+                from aletheia.execution.stops import replace_exchange_protective_stop
+                replace_exchange_protective_stop(position["id"], float(new_stop))
             except Exception as e:
                 logger.warning("exchange stop sync failed pos=%s: %s", position["id"], e)
 

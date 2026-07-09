@@ -19,6 +19,22 @@ class TypedCommandExecutionResult(BaseModel):
     session_id: str
 
 
+def _params_confirm(params: dict[str, Any] | None) -> bool:
+    """Return True when the caller supplied an explicit confirm=true parameter.
+
+    Accepts bool True or the case-insensitive strings 'true'/'yes'/'1'. Anything
+    else — including missing, None, or the string 'false' — is not a confirmation.
+    """
+    if not params:
+        return False
+    val = params.get("confirm")
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.strip().lower() in {"true", "yes", "1"}
+    return False
+
+
 def _build_action(command: str, result: dict[str, Any]) -> dict[str, Any] | None:
     if command == "pause_agents":
         return {"type": "state_change", "key": "paused", "value": True}
@@ -114,6 +130,35 @@ async def execute_typed_command(
             risk_level=cmd_def.risk_level,
             response=response,
             needs_confirmation=cmd_def.requires_confirmation,
+            session_id=session_id,
+        )
+
+    # #67 fix: confirmation gate. requires_confirmation was previously metadata-only —
+    # the handler ran regardless of any confirm flag, so pause_agents/resume_agents/
+    # run_market_scan/rerun_failed_agent_task/set_symbol_observe_only/reconcile_positions
+    # mutated state on the first call while the response merely *labelled* itself
+    # `needs_confirmation=True`. Now the first call is non-executing when confirmation
+    # is required; callers must re-send with `confirm=True` in params to actually run.
+    if cmd_def.requires_confirmation and not _params_confirm(params):
+        response = (
+            f"'{command_name}' requires confirmation. Re-send the command with "
+            f"parameter confirm=true to execute."
+        )
+        record_command(session_id, command_name, params, False, response)
+        close_session(
+            session_id,
+            intent=command_name,
+            command=command_name,
+            response=response,
+            permitted=True,
+            start_time=start_time,
+        )
+        return TypedCommandExecutionResult(
+            command=command_name,
+            permitted=True,
+            risk_level=cmd_def.risk_level,
+            response=response,
+            needs_confirmation=True,
             session_id=session_id,
         )
 

@@ -233,6 +233,29 @@ function runtimeBadge(state: string | null | undefined): string {
   }
 }
 
+// #166 fix: guidance.action uses a DIFFERENT vocabulary than runtime state
+// (promote / rollback / drain / start_shadow / prepare_candidate /
+// activate_restart / observe). Reusing runtimeBadge() collapsed every action
+// to badge-blue which then landed as tone='yellow', so promote and rollback
+// rendered identically yellow — the "runtime guidance" tone was dead. Map
+// actions to their honest tones: green = proceed, red = undo/danger,
+// yellow = careful, muted = observe/no-op.
+function guidanceTone(action: string | null | undefined): 'green' | 'red' | 'yellow' | 'muted' {
+  switch (action) {
+    case 'promote':
+    case 'start_shadow':
+    case 'prepare_candidate':
+      return 'green'
+    case 'rollback':
+      return 'red'
+    case 'drain':
+    case 'activate_restart':
+      return 'yellow'
+    default:
+      return 'muted'  // 'observe' or unknown → no action needed
+  }
+}
+
 function RuntimeSlot({ title, record }: { title: string; record: RuntimeRecord | null | undefined }) {
   return (
     <div className="runtime-slot">
@@ -375,7 +398,7 @@ function RuntimeContinuityPanel({
             <span className="mono text-muted">{guidance?.action || 'observe'}</span>
           </div>
           <div className="runtime-guidance">
-            <StatusText tone={runtimeBadge(guidance?.action).includes('green') ? 'green' : runtimeBadge(guidance?.action).includes('red') ? 'red' : 'yellow'}>{guidance?.action || 'observe'}</StatusText>
+            <StatusText tone={guidanceTone(guidance?.action)}>{guidance?.action || 'observe'}</StatusText>
             <span>{guidance?.reason ? humanize(guidance.reason) : 'No runtime action suggested.'}</span>
             {guidance?.runtime_id && <span className="mono">{guidance.runtime_id}</span>}
           </div>
@@ -759,12 +782,18 @@ export default function CommandCenter() {
     },
   })
 
+  // #165 fix: pause/resume/wake used to swallow the backend's error responses
+  // (LLM-unavailable → 409, kill-switch-active → 409, etc.) — the button
+  // silently "succeeded" from the UI while the system stayed paused. Route
+  // every failure through toast so the operator sees the real reason
+  // (matches the pattern in App.tsx that already extracts extractResumeError).
   const pauseMut = useMutation({
     mutationFn: api.pauseOperator,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['status'] })
       qc.invalidateQueries({ queryKey: ['operator-status'] })
     },
+    onError: (e: any) => toast('error', `Pause failed: ${e?.message || 'request failed'}`),
   })
   const resumeMut = useMutation({
     mutationFn: api.resumeOperator,
@@ -772,6 +801,7 @@ export default function CommandCenter() {
       qc.invalidateQueries({ queryKey: ['status'] })
       qc.invalidateQueries({ queryKey: ['operator-status'] })
     },
+    onError: (e: any) => toast('error', `Resume failed: ${e?.message || 'request failed'}`),
   })
   const wakeMut = useMutation({
     mutationFn: api.wakeOperator,
@@ -779,6 +809,7 @@ export default function CommandCenter() {
       qc.invalidateQueries({ queryKey: ['status'] })
       qc.invalidateQueries({ queryKey: ['operator-status'] })
     },
+    onError: (e: any) => toast('error', `Wake failed: ${e?.message || 'request failed'}`),
   })
   const runtimeCandidateMut = useMutation({
     mutationFn: () => {
@@ -1215,7 +1246,25 @@ export default function CommandCenter() {
               <Button
                 className="btn-control"
                 disabled={commandMut.isPending || input.trim().length === 0}
-                onClick={() => commandMut.mutate()}
+                onClick={() => {
+                  // #71 fix: the preview shows a "confirmation" badge when the
+                  // resolved command requires it, but Send used to fire
+                  // mutate() unconditionally — the badge was cosmetic. Now
+                  // gate the Send with a real window.confirm mirror of the
+                  // pattern the runtime buttons already use. This matches the
+                  // backend contract from #67 (execute_typed_command with
+                  // requires_confirmation returns a non-executing response
+                  // unless params.confirm=true is set); the wrapper here
+                  // catches the intent BEFORE that round-trip so a confirmed
+                  // command actually executes on the first send.
+                  if (commandPreview?.command?.requires_confirmation) {
+                    const label = commandPreview?.command?.name || commandPreview?.intent || 'this command'
+                    if (!window.confirm(`Confirm: run ${label}?\n\nThis is marked as requiring confirmation. Cancel to review the preview above.`)) {
+                      return
+                    }
+                  }
+                  commandMut.mutate()
+                }}
               >
                 {commandMut.isPending ? 'Sending…' : 'Send'}
               </Button>

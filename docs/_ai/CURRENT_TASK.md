@@ -13,6 +13,77 @@
 
 ---
 
+## 当前任务:全项目 Bug/SDD 审查 — 修复阶段进行中
+
+全项目 bug/SDD 审查**已完成**（`#1`–`#180`）；现处于**修复阶段**，分支 `fix/bug-review-fixes`（已推送 origin）。
+
+接手入口：
+
+- 详细问题台账 + 权威「Fix Progress」修复日志：`docs/_ai/FULL_BUG_REVIEW_2026-07-06.md`
+- 短交接说明：`docs/_ai/BUG_REVIEW_HANDOFF_2026-07-06.md`
+
+修复进度（2026-07-09）：B1–B12 全部落地，9 个 HIGH 全处置。**最后一块成批遗留——市场类型数据模型子批（B12）已修完**：同名币现货/合约混淆的一组问题（#9/#13/#14/#102）修复，#10 判为"不修"（设计上方向分析与合约/现货无关，见 spec OD-S01），#11/#68/#106 确认早已修好。当初推迟的理由（"要先给 market_snapshots 加 market_type 列"）经核查是**过时的**——那列本来就有，无需迁移。触风控信任边界的改动配 PL-MD-06/07 回归。验证 spec 全套 + risk + ranker + runtime → 633 passed / 0 failed。权威记录见 `FULL_BUG_REVIEW_2026-07-06.md` B12 行。剩余仅零星低优先项（#134 frontdoor 缓存，判为不值当）。**后续若无新子系统/新数据源，bug 修复阶段可视为收尾**；push / gateway restart 由 owner 触发。
+
+审查进度（2026-07-06）：**全项目覆盖审查已完成**，台账范围 `#1`–`#180`。
+
+- 三轮只读并行审 + 对抗性核验，叠加原 #1–#131 手工审：
+  - `#132`–`#142`（9 路）：未覆盖后端（控制路由 / gateway 生命周期·边缘 / 自更新 / server app / 持仓退出 / 交易所同步·broker / 底层 client）。
+  - `#143`–`#162`（16 路）：信任关键 + 决策链 + 数据/分析（risk 守卫链 / execution 咽喉 / permissions / self-heal / config·secrets / storage / agent_shell / agents / data / analytics 全 28 文件 / model_provider / universe·trading）。
+  - `#163`–`#180`（12 路收尾）：前端逐页（13 页 + 5 图表 + 全部组件 + 共享 App/client/types/lib）+ knowledge / doctor 逐行 / cli / runtime_continuity·uta。
+  - 合计覆盖前端端到端 + 全部后端子系统；台账 Coverage status 已标「full-project pass complete」。共 9 条候选被核验推翻，记在「Investigated and refuted」，勿再报。
+- **下一步不再做广扫**（无剩余未扫描区）。要么开修，要么仅在「新增子系统 / 新数据源 / 新学习消费者 / 新前端页」时做定向补扫。
+- 最高优先修复候选（HIGH）：`#159`（守卫晋升用污染数据可凭假证据晋升硬拦截守卫）、`#145`（掉线后自愈恢复任务挂错事件循环→永久暂停不自愈）、`#137`（tunnel 鉴权漏风控设置）。全部分诊见 `BUG_REVIEW_HANDOFF_2026-07-06.md` 的 Fix Triage Hints。
+- 动手前须先确认：`#142`（Binance 绕代理）疑似已在 `iridite/system_proxy_support` 修复；`#156`（Coinalyze OI）须先核实线上 `/open-interest` 字段名。
+
+当前意图：
+
+- 修复阶段进行中。逐批选择问题，先声明边界，再写聚焦回归测试，再改代码；触
+  `risk/`·`execution/`·secrets·live·gateway lifecycle 的改动带定向回归、需 owner 显式授权。
+- 每批一次提交（显式 `git add`，不 `-A`）；修复期间不 push/restart/enable live，推送/重启由 owner 指令触发。
+- 修学习/分析类消费者时套「合成平仓 + clean_window 过滤」自检（#159/#160 同类）。
+- 下一批优先级建议：B10 文档尾（最快）→ B9 → B7 → B8（留给需 npm build 的专门轮次）→ 数据模型迁移/operator 鉴权（基建专门轮次）。
+
+---
+
+## 当前诊断入口:Opportunity Lifecycle
+
+近期排查“机会为什么没有变成交易”时，优先使用统一入口：
+
+```powershell
+uv run aletheia opportunity audit --hours 24
+uv run aletheia opportunity trace --id <id>
+```
+
+排查特定问题时优先加过滤：
+
+```powershell
+uv run aletheia opportunity audit --hours 24 --stage debate_downgraded
+uv run aletheia opportunity audit --hours 24 --verdict missed_alpha_suspect
+uv run aletheia opportunity audit --hours 24 --symbol TRX/USDT
+```
+
+需要看单一维度时仍走同一个入口：
+
+```powershell
+uv run aletheia opportunity audit --view funnel
+uv run aletheia opportunity audit --view sizing
+uv run aletheia opportunity audit --view alpha
+uv run aletheia opportunity audit --view thesis
+```
+
+`inspect opportunities` 只用于列出机会原始记录；`opportunity audit/trace` 用于分析机会
+从生成到放弃或执行的完整生命周期。旧 `flow` / `alpha` / `funnel` / `sizing` / `thesis audit`
+入口保留为隐藏兼容命令，不再作为 owner 日常主入口。
+
+候选供给不足时，`trading_context` 会写 `candidate_supply_snapshot`，连续 2 个 cycle 的
+`executable_count < 3` 会在 `/api/operator/recommendations` 中出现
+`candidate_supply_drought`，并建议刷新机会池（`run_market_scan`）。
+
+边界保持不变：opportunity CLI 只读重建，不调用 LLM，不跑 ranker，不重跑 guard/debate/risk/execution，
+不改交易行为；缺字段保留 `insufficient_data`。
+
+---
+
 ## 当前阶段:Phase 0 — 边开发边观察闭环跑通
 
 **目标(机器无关,长期有效)**:让闭环在 `bitget_demo`(真实模拟盘)形态下能稳定跑起来,
@@ -61,14 +132,23 @@ doctor / gateway logs 的日志尾部输出必须走脱敏读取，不能把 tok
 **交易诊断入口（2026-07-04）**:`uv run aletheia doctor --deep` 现在是交易问题的
 第一诊断入口，会用 compact summary 指向 Alpha / Trade Funnel / Sizing / Thesis Lineage
 哪一块最值得看。
-详细报告走只读 standalone 命令：`uv run aletheia funnel audit --hours 24` 和
-`uv run aletheia sizing trace --hours 24`。Thesis 样本级复盘走
-`uv run aletheia thesis audit --days 7` 和 `uv run aletheia thesis records --days 7 --json`；
+详细报告统一走只读 opportunity 命令：`uv run aletheia opportunity audit --view funnel`、
+`uv run aletheia opportunity audit --view sizing`、`uv run aletheia opportunity audit --view alpha`、
+`uv run aletheia opportunity audit --view thesis`。Guard 是否压制候选流走
+`uv run aletheia inspect guard-impact --hours 24`（可加 `--json` 给机器消费）。Thesis 样本级复盘走
+`uv run aletheia opportunity audit --view thesis` 和 `uv run aletheia thesis records --days 7 --json`；
 Trades & Positions 详情 drawer 会在 Causal Chain 下方显示对应 Thesis Lineage。
 生成 thesis 的上游可以用 LLM 或规则/模型；Thesis Lineage v1 只还原和评估已经留下的
 thesis / reasoning / evidence，缺字段就标 missing/insufficient_data，不新增 LLM 调用，
 不事后补写理由。这些 audit 只做诊断，不自动调仓位、风控、Kelly、杠杆、ranker、prompt
 或 persona。
+
+**Guard Impact Audit 边界（2026-07-04）**：`inspect guard-impact` 只读 DB、active guard
+markdown/frontmatter 和已有 shadow/forward outcome。它用来判断 active blocking guards 是否疑似
+过度压制候选流，verdict 只有 `protective`、`overbroad_suspect`、`insufficient_data`。它不会
+禁用/修改 guard，不改 ranker/System Operator/risk/execution/live，不调用 LLM/HTTP/exchange。
+如果结果是 `insufficient_data`，继续观察或转向 unsupported candidates / debate；不要用它自动改
+交易行为。
 
 **Thesis Lineage V1.1 观察窗口（2026-07-04）**:v1 合并运行后，不要马上升 v2。
 接下来 7-14 天只回答一个问题：现有交易判断链有没有留下足够完整、可审判的数据。
@@ -77,7 +157,7 @@ thesis / reasoning / evidence，缺字段就标 missing/insufficient_data，不�
 是否能串起来、修断链和缺字段。禁止新增 thesis generator、LLM normalizer、prompt 优化、
 自动调参、新 UI、交易行为改动、新 `ThesisRecord` 表或决策前历史 thesis 检索。观察 JSON
 快照属于本机运行事实，写到 `data/diagnostics/` 这类 gitignored 目录，不写进 git 文档。
-`aletheia thesis audit --days 7 --json` 已内建 `data_completeness` 和
+`aletheia opportunity audit --view thesis --json` 已内建 `data_completeness` 和
 `raw_table_completeness`，`aletheia thesis snapshot --days 7` 会把同一份 audit JSON
 写到 `data/diagnostics/`，`aletheia thesis snapshots` 汇总最近保存的快照。下一轮观察优先
 看这两个区块，再决定修哪个 provenance 写入点。节奏：部署后先跑 `doctor --deep --json`，
@@ -93,14 +173,12 @@ thesis / reasoning / evidence，缺字段就标 missing/insufficient_data，不�
 修复是否有效，只用修复后新增行判断；历史缺口中无法确定性回填的部分保留为历史债务，
 不要用 LLM 或 symbol/time 猜测回写。
 
-**Vergex / Position X 永续结构信号（2026-07-07）**：advisory-only 第二阶段已收口：
-除了最小版 `perp_structure_snapshots`、白名单 fixture collector、doctor 新鲜度、market_observer
-prompt 证据块外，现在还包括 Position X 目录式离线材料提取（快照 + knowledge cards）、拟合文件公式提示、
-`analysis_*.json` 表达样式卡、压缩后的 `Position X (advisory only)` 证据，以及这块上下文进入
-System Operator。它仍不接真实 Vergex API，不导入地址/账户/raw prompt/credential，不影响下单、
-排序、风控或执行。下一步如果要接 partner feed，必须先补默认关闭的配置字段、Settings 控件、
-fixture-only collector 测试和无 key/无 endpoint 诚实跳过路径；在 2 周本地观察证明有边际价值前，
-不允许进入交易排序、仓位或风控。
+**Vergex 永续结构信号（2026-07-07）**：当前只完成 observation-only 最小接入：
+`perp_structure_snapshots`、白名单 fixture collector、doctor 新鲜度、market_observer prompt
+证据块。它不接真实 Vergex API，不导入地址/账户/prompt/credential，不影响下单、排序、风控或
+执行。下一步如果要接 partner feed，必须先补默认关闭的配置字段、Settings 控件、fixture-only
+collector 测试和无 key/无 endpoint 诚实跳过路径；在 2 周本地观察证明有边际价值前，不允许进入
+交易排序、仓位或风控。
 
 **Learning 闭环当前边界（2026-07-03）**:交易历史 → case study → lesson → policy →
 draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降权。draft skill 仍需

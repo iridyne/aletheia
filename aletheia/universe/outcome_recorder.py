@@ -87,64 +87,108 @@ def register_pending(members: list[dict], entry_ts: str) -> int:
     return len(outcomes)
 
 
-async def settle_due() -> int:
+async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> int:
     """Settle all overdue pending outcomes by fetching current prices.
 
+    Processes rows in batches until the queue is empty or the wall-clock budget
+    is exhausted (default 100s, safely under the scheduler's 120s job timeout).
+    This prevents large backlogs from accumulating when many rows pile up between
+    runs — previously a fixed limit=500 per call took hours to drain a deep queue.
+
+    Args:
+        max_rows: Maximum rows to process per call (safety cap across all batches).
+        time_budget_sec: Wall-clock seconds to spend before stopping early.
+
     Returns:
-        Number of outcomes settled.
+        Number of outcomes settled (status='settled', not 'failed').
     """
+    import time as _time
+
+    deadline = _time.monotonic() + time_budget_sec
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
 
-    pending = repo.list_pending_forward_outcomes(before_ts=now_iso, limit=500)
-    if not pending:
-        return 0
+    total_settled = 0
+    total_processed = 0
+    all_settled_rows: list[dict] = []
+    batch_size = 500  # sub-batch size: de-dup symbols across at most 500 rows at once
 
-    symbols_needed = list({r["symbol"] for r in pending})
-    prices = await _batch_fetch_prices(symbols_needed)
-
-    settled = 0
-    settled_rows: list[dict] = []
-    for row in pending:
-        symbol = row["symbol"]
-        price = prices.get(symbol)
-        if price is None or price <= 0:
-            repo.fail_forward_outcome(row["id"], settled_at=now_iso)
-            logger.warning("forward_outcome FAILED: symbol=%s horizon=%s — price unavailable", symbol, row.get("horizon"))
-            continue
-
-        entry = row["entry_price_usd"]
-
-        # Sanity: reject price deviating >10x from entry in either direction.
-        # Catches cross-symbol contamination (e.g. BTC price ~50000 applied to
-        # PEPE at entry 0.000003 → ratio 1.6B), which ccxt can return without
-        # raising when a symbol isn't found on the fallback exchange.
-        ratio = price / entry
-        if ratio > 10.0 or ratio < 0.1:
-            repo.fail_forward_outcome(row["id"], settled_at=now_iso)
-            logger.warning("forward_outcome FAILED: symbol=%s horizon=%s — price unavailable", symbol, row.get("horizon"))
-            logger.warning(
-                "Rejected anomalous exit price for %s: entry=%.8g exit=%.8g ratio=%.2f",
-                symbol, entry, price, ratio,
+    while total_processed < max_rows:
+        if _time.monotonic() >= deadline:
+            logger.info(
+                "outcome_settler: time budget (%.0fs) reached — %d processed, %d settled; "
+                "remaining rows will be handled in the next cycle",
+                time_budget_sec, total_processed, total_settled,
             )
-            continue
+            break
 
-        forward_return = ((price - entry) / entry) * 100.0
+        pending = repo.list_pending_forward_outcomes(before_ts=now_iso, limit=batch_size)
+        if not pending:
+            break  # queue drained
 
-        repo.settle_forward_outcome(
-            outcome_id=row["id"],
-            exit_price=price,
-            forward_return=forward_return,
-            settled_at=now_iso,
+        symbols_needed = list({r["symbol"] for r in pending})
+        prices = await _batch_fetch_prices(symbols_needed)
+
+        batch_settled_rows: list[dict] = []
+        for row in pending:
+            symbol = row["symbol"]
+            price = prices.get(symbol)
+            if price is None or price <= 0:
+                repo.fail_forward_outcome(row["id"], settled_at=now_iso)
+                logger.warning(
+                    "forward_outcome FAILED: symbol=%s horizon=%s — price unavailable",
+                    symbol, row.get("horizon"),
+                )
+                total_processed += 1
+                continue
+
+            entry = row["entry_price_usd"]
+
+            # Sanity: reject price deviating >10x from entry in either direction.
+            # Catches cross-symbol contamination (e.g. BTC price ~50000 applied to
+            # PEPE at entry 0.000003 → ratio 1.6B), which ccxt can return without
+            # raising when a symbol isn't found on the fallback exchange.
+            ratio = price / entry
+            if ratio > 10.0 or ratio < 0.1:
+                repo.fail_forward_outcome(row["id"], settled_at=now_iso)
+                logger.warning(
+                    "forward_outcome FAILED: symbol=%s horizon=%s — price unavailable",
+                    symbol, row.get("horizon"),
+                )
+                logger.warning(
+                    "Rejected anomalous exit price for %s: entry=%.8g exit=%.8g ratio=%.2f",
+                    symbol, entry, price, ratio,
+                )
+                total_processed += 1
+                continue
+
+            forward_return = ((price - entry) / entry) * 100.0
+
+            repo.settle_forward_outcome(
+                outcome_id=row["id"],
+                exit_price=price,
+                forward_return=forward_return,
+                settled_at=now_iso,
+            )
+            total_settled += 1
+            total_processed += 1
+            batch_settled_rows.append({**row, "forward_return_pct": forward_return})
+
+        if batch_settled_rows:
+            logger.info(
+                "outcome_settler: settled %d / %d in this batch",
+                len(batch_settled_rows), len(pending),
+            )
+        all_settled_rows.extend(batch_settled_rows)
+
+    if total_settled:
+        logger.info(
+            "outcome_settler: settled %d forward outcomes total (%d processed)",
+            total_settled, total_processed,
         )
-        settled += 1
-        settled_rows.append({**row, "forward_return_pct": forward_return})
-
-    if settled:
-        logger.info("Settled %d / %d forward outcomes", settled, len(pending))
 
     # Emit rolling win_rate metrics for observability (§4.2)
-    if settled:
+    if total_settled:
         try:
             stats = repo.calibration_stats()
             for row in stats:
@@ -157,10 +201,10 @@ async def settle_due() -> int:
         except Exception:
             pass
     # Tier 1: auto-generate guard candidates for significant losses
-    if settled_rows:
-        _maybe_generate_guard_candidates(settled_rows)
+    if all_settled_rows:
+        _maybe_generate_guard_candidates(all_settled_rows)
 
-    return settled
+    return total_settled
 
 
 async def _batch_fetch_prices(symbols: list[str]) -> dict[str, float | None]:
@@ -275,10 +319,13 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
                     "guard_id": guard_id,
                     "status": "candidate",
                     "scope": "paper_entry",
-                    # applies_to (built from scanner_family/direction in load_trading_guards)
-                    # filters which trades count; predicates must be non-empty for the
-                    # matcher to fire (_predicates_match returns False on []), so encode
-                    # the family as the predicate. Together they match this family+direction.
+                    "applies_to": {
+                        "symbol": [symbol],
+                        "scanner_family": [family],
+                        "direction": [direction],
+                    },
+                    # predicates must be non-empty for the matcher to fire
+                    # (_predicates_match returns False on []), so keep the family predicate.
                     "predicates": [{"field": "scanner_family", "op": "eq", "value": family}],
                     "outcome_id": row["id"],
                     "symbol": symbol,

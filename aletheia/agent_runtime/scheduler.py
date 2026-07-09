@@ -18,6 +18,31 @@ _scheduler: BackgroundScheduler | None = None
 _SCHEDULER_JOB_LOCK = threading.RLock()
 _JOB_RUN_STATE = threading.local()
 
+# Jobs that continue running during a layered pause (no LLM dependency).
+# These are pure data-collection / infrastructure jobs whose output is valuable
+# even when AI-dependent decision-making is offline.
+_ESSENTIAL_JOBS: set[str] = {
+    "market_data",
+    "data_collectors",
+    "connectivity_monitor",
+    "portfolio_snapshot",
+    "price_feed",
+    "ohlcv_nightly_backfill",
+    "exchange_sync",
+    "health_check",
+    "cleanup",
+    "news_fetch",
+    "okx_demo_symbols",
+    "reconciliation",
+    "position_reconcile",
+    "tpsl_fill_check",
+    "outcome_settler",
+    "shadow_resolver",
+}
+
+# Track which jobs were selectively paused (for targeted resume).
+_selectively_paused_jobs: set[str] = set()
+
 # Hard time budgets for scheduler jobs that depend on external IO or LLM calls.
 # APScheduler's max_instances=1 prevents overlap, but it cannot recover a job
 # that stays inside an awaited network call forever. Timeboxing these coroutines
@@ -51,6 +76,11 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "lesson_reviewer": 300.0,
     "shadow_resolver": 60.0,
     "outcome_settler": 120.0,
+    # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
+    # asyncio.run() internally. Without a bound, a stuck exchange session can
+    # block the scheduler pool for the full IOCP drain (~255s on Windows) and
+    # starve other io-executor jobs. 45s cap matches other network-bound polls.
+    "tpsl_fill_check": 45.0,
 }
 
 
@@ -546,10 +576,23 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
 
     _scheduler.start()
-    # If config says paused at boot, immediately pause the scheduler.
+    # If config says paused at boot, apply pause (layered or blanket).
     if cfg.runtime.paused:
-        _scheduler.pause()
-        logger.info("Scheduler started PAUSED (runtime.paused=true) with %d jobs", len(_scheduler.get_jobs()))
+        if cfg.health.layered_pause_enabled:
+            for job in _scheduler.get_jobs():
+                if job.id not in _ESSENTIAL_JOBS:
+                    _scheduler.pause_job(job.id)
+                    _selectively_paused_jobs.add(job.id)
+            logger.info(
+                "Scheduler started LAYERED-PAUSED (runtime.paused=true) with %d jobs "
+                "(%d essential running, %d paused)",
+                len(_scheduler.get_jobs()),
+                len([j for j in _scheduler.get_jobs() if j.id in _ESSENTIAL_JOBS]),
+                len(_selectively_paused_jobs),
+            )
+        else:
+            _scheduler.pause()
+            logger.info("Scheduler started PAUSED (runtime.paused=true) with %d jobs", len(_scheduler.get_jobs()))
     else:
         logger.info("Scheduler started with %d jobs", len(_scheduler.get_jobs()))
     return _scheduler
@@ -562,28 +605,77 @@ def stop_scheduler() -> None:
         _scheduler = None
 
 
-def pause_scheduler() -> None:
-    """Actually pause job execution (not just skip via config flag)."""
-    if _scheduler:
+def pause_scheduler(layered: bool | None = None) -> None:
+    """Pause job execution.
+
+    When layered=True (or config layered_pause_enabled and layered is None),
+    only non-essential jobs are paused — data collection continues.
+    When layered=False, all jobs are paused (legacy blanket behavior).
+    """
+    if not _scheduler:
+        return
+
+    if layered is None:
+        cfg = load_config()
+        layered = cfg.health.layered_pause_enabled
+
+    if not layered:
         _scheduler.pause()
-        logger.info("Scheduler paused")
+        logger.info("Scheduler paused (blanket)")
+        return
+
+    # Selective pause: only pause non-essential jobs
+    _selectively_paused_jobs.clear()
+    for job in _scheduler.get_jobs():
+        if job.id not in _ESSENTIAL_JOBS:
+            _scheduler.pause_job(job.id)
+            _selectively_paused_jobs.add(job.id)
+    logger.info(
+        "Scheduler layered-pause: %d jobs paused, %d essential jobs continue",
+        len(_selectively_paused_jobs),
+        len([j for j in _scheduler.get_jobs() if j.id in _ESSENTIAL_JOBS]),
+    )
 
 
 def resume_scheduler() -> None:
-    # If the scheduler never came up (init_scheduler raised during lifespan and
-    # was only warned, leaving _scheduler is None), a bare `if _scheduler` resume
-    # silently no-ops while the /api/gateway/resume route still reports success —
-    # so the operator thinks the loop resumed but no job is ever scheduled. Build
-    # it on demand. By now the caller has already persisted runtime.paused=False,
-    # so init_scheduler() won't boot it paused.
+    """Resume all paused jobs (whether blanket or selectively paused)."""
     global _scheduler
     if _scheduler is None:
         init_scheduler()
         if _scheduler is None:
             logger.warning("resume_scheduler: scheduler unavailable (disabled or init failed)")
-        return  # init_scheduler starts unpaused when runtime.paused is False
-    _scheduler.resume()
-    logger.info("Scheduler resumed")
+        return
+    # If blanket-paused, resume the whole scheduler
+    if _scheduler.state == STATE_PAUSED:
+        _scheduler.resume()
+        logger.info("Scheduler resumed (from blanket pause)")
+    # Also resume any selectively-paused jobs
+    if _selectively_paused_jobs:
+        for job_id in list(_selectively_paused_jobs):
+            try:
+                _scheduler.resume_job(job_id)
+            except Exception:
+                pass
+        logger.info("Scheduler resumed %d selectively-paused jobs", len(_selectively_paused_jobs))
+        _selectively_paused_jobs.clear()
+
+
+def get_pause_state() -> dict:
+    """Return current pause state for API/dashboard consumers."""
+    if _scheduler is None:
+        return {"scheduler_active": False, "mode": "stopped"}
+    if _scheduler.state == STATE_PAUSED:
+        return {"scheduler_active": True, "mode": "blanket_paused", "paused_jobs": "all"}
+    if _selectively_paused_jobs:
+        return {
+            "scheduler_active": True,
+            "mode": "layered_paused",
+            "paused_jobs": sorted(_selectively_paused_jobs),
+            "running_jobs": sorted(
+                j.id for j in _scheduler.get_jobs() if j.id in _ESSENTIAL_JOBS
+            ),
+        }
+    return {"scheduler_active": True, "mode": "running"}
 
 
 def reschedule_universe_refresh(interval_min: int) -> bool:
@@ -1005,7 +1097,10 @@ def _run_position_reconcile():
                 outputs.append(f"closed {len(summary['closed_orphans'])} orphans")
             if not outputs:
                 outputs.append("no action needed")
-            end_run(run, status="completed", outputs=outputs, errors=summary.get("errors") or None)
+            # #144: reflect per-item errors in the run status so health's failure-ratio
+            # sees a systematically-failing reconciler (matches the orchestrator convention).
+            _recon_status = "completed_with_errors" if summary.get("errors") else "completed"
+            end_run(run, status=_recon_status, outputs=outputs, errors=summary.get("errors") or None)
         except Exception as e:
             end_run(run, status="failed", errors=[str(e)])
             raise
@@ -1020,7 +1115,27 @@ def _run_tpsl_fill_check():
     Scans open positions with exchange_tpsl_order_id, queries Bitget plan order
     history, and proactively closes positions with accurate fill prices when a
     TPSL has been triggered on the exchange.
+
+    #90 fix: the body is wrapped in `_run_sync_with_timeout` (45s cap; see
+    _ASYNC_JOB_TIMEOUT_SEC['tpsl_fill_check']) so a stuck Bitget session can't
+    hold the io executor slot indefinitely. The inner asyncio.run() blocks the
+    calling thread; the timeout wrapper is what enforces the wall-clock bound.
+    The outer try/except keeps job-wrapper contract intact (spec_agent_contracts
+    test_scheduler_job_wrappers_have_try_except).
     """
+    try:
+        return _run_sync_with_timeout("tpsl_fill_check", _tpsl_fill_check_body)
+    except Exception as e:
+        logger.warning("tpsl_fill_check outer wrapper failed: %s", e)
+        _record_job_failure("tpsl_fill_check", str(e))
+        return None
+
+
+def _tpsl_fill_check_body():
+    """Inner body of tpsl_fill_check — kept separate so _run_sync_with_timeout
+    can wrap it. The outer entry point (`_run_tpsl_fill_check`) is what the
+    scheduler dispatches; keep the paused-check + timeout wiring there so the
+    body stays a plain sync function."""
     cfg = load_config()
     if cfg.runtime.paused:
         return
@@ -1170,6 +1285,10 @@ def _run_cleanup():
             "open_interest_snapshots": repo.prune_open_interest_snapshots(30),
             "macro_snapshots": repo.prune_macro_snapshots(90),
             "coingecko_top_snapshots": repo.prune_coingecko_top_snapshots(14),
+            # #149/#150: these had a prune fn but no cleanup-job wiring (onchain) or no
+            # prune at all (prediction), so they grew unbounded.
+            "onchain_snapshots": repo.prune_onchain_snapshots(30),
+            "prediction_probability_snapshots": repo.prune_prediction_probability_snapshots(90),
             "universe_feature_snapshots": repo.prune_universe_feature_snapshots(30),
             "universe_forward_outcomes": repo.prune_universe_forward_outcomes(30),
             "serenity_claims": repo.prune_serenity_claims(90),
@@ -1428,9 +1547,10 @@ def _run_universe_refresh():
 
 async def _async_settle_outcomes():
     from aletheia.universe.outcome_recorder import settle_due
+    # settle_due() now drains the full queue within a 100s time budget (safe under
+    # the 120s job timeout). It logs internally per batch; the total is returned.
     settled = await settle_due()
-    if settled:
-        logger.info("outcome_settler: settled %d forward outcomes", settled)
+    logger.debug("outcome_settler: %d outcomes settled this cycle", settled)
 
 
 def _run_outcome_settler():
@@ -1671,6 +1791,30 @@ async def _async_data_collectors(cfg, tick: int) -> None:
 
     # --- Phase B: macro + volume scanner + CoinGecko top (every 5th tick = ~10 min) ---
     if tick % 5 == 1:
+        # Volume scanner runs FIRST in Phase B — it drives universe ordering and is
+        # the most critical output of this phase. Previously it ran after CoinGecko
+        # (15s cap) + macro (15s cap), which left ≤ 0s budget on slow ticks and caused
+        # the volume_ranking snapshot to silently stall (doctor: "volume ranking stale").
+        # Running it first guarantees it gets its 12s cap regardless of what follows.
+        try:
+            from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+            vol_scanner = VolumeScannerCollector(top_n=30)
+            vol_result = await _bounded(vol_scanner.collect(symbols[:200]), "volume_scanner", 12.0, _deadline) or {}
+            if vol_result.get("top_symbols"):
+                _latest_volume_ranking.update({
+                    "symbols": vol_result["top_symbols"],
+                    "observed_at": vol_result["observed_at"],
+                })
+                try:
+                    from aletheia.storage import repositories as _repo
+                    _repo.save_volume_ranking_snapshot(
+                        vol_result["top_symbols"], vol_result["observed_at"]
+                    )
+                except Exception as _e:
+                    logger.debug("volume_ranking persist failed: %s", _e)
+        except Exception as e:
+            logger.debug("volume_scanner collection failed: %s", e)
+
         # CoinGecko top-N runs BEFORE macro persist so its movers_summary can be
         # folded into the same MacroSnapshot row (single insert, no UPDATE chase).
         cg_movers_summary: str | None = None
@@ -1701,25 +1845,6 @@ async def _async_data_collectors(cfg, tick: int) -> None:
                 repo.insert_macro_snapshot(snap.model_dump())
             except Exception as e:
                 logger.debug("macro persist failed: %s", e)
-
-        try:
-            from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
-            vol_scanner = VolumeScannerCollector(top_n=30)
-            vol_result = await _bounded(vol_scanner.collect(symbols[:200]), "volume_scanner", 12.0, _deadline) or {}
-            if vol_result.get("top_symbols"):
-                _latest_volume_ranking.update({
-                    "symbols": vol_result["top_symbols"],
-                    "observed_at": vol_result["observed_at"],
-                })
-                try:
-                    from aletheia.storage import repositories as _repo
-                    _repo.save_volume_ranking_snapshot(
-                        vol_result["top_symbols"], vol_result["observed_at"]
-                    )
-                except Exception as _e:
-                    logger.debug("volume_ranking persist failed: %s", _e)
-        except Exception as e:
-            logger.debug("volume_scanner collection failed: %s", e)
 
         # Coinalyze cross-exchange aggregated OI + liquidations (requires API key).
         # Replaces dead CoinGlass/CCXT/Bitget-OI paths. Skips gracefully when no key.

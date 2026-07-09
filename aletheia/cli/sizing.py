@@ -22,4 +22,5 @@ def trace(
     if json_output:
         typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
         return
+    typer.echo("Deprecated: use `uv run aletheia opportunity audit --view sizing` instead.\n")
     typer.echo(render_sizing_trace_audit(report))

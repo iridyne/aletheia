@@ -539,6 +539,13 @@ async def _analyze_symbol(
             log_tool(run_id, "annotate_opportunity", "observe", True, output=existing["id"])
             return existing["id"], llm_error
 
+    # IB-24-12: standalone neutral opportunities add no signal value and get
+    # filtered immediately by the ranker's neutral_bias gate. Skip creation.
+    if direction == "neutral":
+        record_step(run_id, f"neutral_skipped:{symbol}", input_data=None,
+                    output_data="direction=neutral standalone opp suppressed")
+        return None, llm_error
+
     # P0-2: fill scanner_family from LLM text when not set by universe member,
     # so the sideways regime tax can fire on non-universe opportunities.
     effective_scanner_family = scanner_family or _infer_scanner_family(rationale, observations)

@@ -288,6 +288,35 @@ class AgentShellRuntime:
                     intent=intent.command, risk_level=cmd_def.risk_level, response=response, session_id=session_id,
                 )
 
+            # #67 fix: confirmation gate. The natural-language handler previously ran
+            # unconditionally while the response merely labelled itself
+            # `needs_confirmation=True`, so a first-turn "resume agents" already
+            # mutated state before the operator could confirm. Now the first turn is
+            # non-executing when confirmation is required; the caller must resubmit
+            # with confirm=true in intent.parameters.
+            from aletheia.agent_shell.executor import _params_confirm
+            if cmd_def.requires_confirmation and not _params_confirm(intent.parameters):
+                response = (
+                    f"'{intent.command}' requires confirmation. Re-send the command "
+                    f"with parameter confirm=true to execute."
+                )
+                record_command(session_id, intent.command, intent.parameters, False, response)
+                close_session(
+                    session_id,
+                    intent=intent.command,
+                    command=intent.command,
+                    response=response,
+                    permitted=True,
+                    start_time=start_time,
+                )
+                return CommandResponse(
+                    intent=intent.command,
+                    risk_level=cmd_def.risk_level,
+                    response=response,
+                    needs_confirmation=True,
+                    session_id=session_id,
+                )
+
             result = await handler(intent.parameters)
 
             response = await synthesize_answer(result, text, ctx)

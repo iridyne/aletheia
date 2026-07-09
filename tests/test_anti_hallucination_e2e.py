@@ -264,6 +264,104 @@ def test_a10_layer2_signals_injected_into_prompt():
     assert "RF: momentum scanner" in prompt
 
 
+def test_layer2_splits_executable_and_excluded_ranker_candidates(monkeypatch):
+    """Skipped ranker rows must not consume the System Operator's main candidate slots."""
+    from aletheia.agent_shell.trading_context import _build_layer2_short_term
+
+    def fake_candidates(limit=30):
+        return [
+            {
+                "opportunity_id": "opp-good",
+                "symbol": "GOOD/USDT",
+                "direction": "short",
+                "trade_score": 50,
+                "skip_reason": None,
+                "scanner_family": "short_bias",
+            },
+            {
+                "opportunity_id": "opp-unsupported",
+                "symbol": "BAD1/USDT",
+                "direction": "long",
+                "trade_score": -999,
+                "skip_reason": "okx_demo_symbol_not_supported",
+                "scanner_family": "event",
+            },
+            {
+                "opportunity_id": "opp-guard",
+                "symbol": "BAD2/USDT",
+                "direction": "long",
+                "trade_score": 45,
+                "skip_reason": "guard_blocked:auto_momentum_long_bad2usdt",
+                "scanner_family": "momentum",
+            },
+            {
+                "opportunity_id": "opp-ttl",
+                "symbol": "BAD3/USDT",
+                "direction": "short",
+                "trade_score": 41,
+                "skip_reason": "ttl_expired",
+                "scanner_family": "mean_reversion",
+            },
+        ]
+
+    monkeypatch.setattr("aletheia.agents.paper_trader_ranker.build_paper_candidates", fake_candidates)
+
+    layer2 = _build_layer2_short_term()
+
+    assert [c["symbol"] for c in layer2["executable_candidates"]] == ["GOOD/USDT"]
+    assert [c["symbol"] for c in layer2["ranker_candidates"]] == ["GOOD/USDT"]
+    summary = {row["reason"]: row["count"] for row in layer2["excluded_candidates_summary"]}
+    assert summary["unsupported_demo_symbol"] == 1
+    assert summary["guard_blocked"] == 1
+    assert summary["ttl_expired"] == 1
+
+
+def test_prompt_prioritizes_executable_candidates_over_excluded_summary():
+    """Unsupported symbols may appear in summary, but not in the main executable slots."""
+    from aletheia.agent_shell.trading_decision import _build_assessment_prompt
+
+    ctx = {
+        "layer1": {},
+        "layer2": {
+            "executable_candidates": [
+                {
+                    "opportunity_id": "opp-good",
+                    "symbol": "GOOD/USDT",
+                    "direction": "short",
+                    "trade_score": 50,
+                    "scanner_family": "short_bias",
+                }
+            ],
+            "excluded_candidates_summary": [
+                {
+                    "reason": "unsupported_demo_symbol",
+                    "count": 6,
+                    "examples": [
+                        {"symbol": "BAD1/USDT", "direction": "long"},
+                        {"symbol": "BAD2/USDT", "direction": "short"},
+                    ],
+                },
+                {
+                    "reason": "guard_blocked",
+                    "count": 4,
+                    "examples": [{"symbol": "BAD3/USDT", "direction": "long"}],
+                },
+            ],
+        },
+        "layer3": {},
+    }
+
+    prompt = _build_assessment_prompt(ctx)
+    executable_section = prompt.split("## Executable Candidates", 1)[1].split(
+        "## Excluded Candidate Summary", 1
+    )[0]
+
+    assert "GOOD/USDT short" in executable_section
+    assert "BAD1/USDT" not in executable_section
+    assert "BAD2/USDT" not in executable_section
+    assert "unsupported_demo_symbol: 6" in prompt
+
+
 def test_layer2_trade_analytics_collected(tmp_path, monkeypatch):
     """Trades/Positions analytics must enter System Operator Layer 2, not only the UI."""
     setup_env(tmp_path, monkeypatch)

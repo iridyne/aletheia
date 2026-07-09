@@ -446,7 +446,10 @@ function SymbolDirectionMatrix({ data }: { data: TradeInsights['symbol_direction
         </div>
         {data.slice(0, 15).map((row, i) => (
           <div key={i} className="sdm-row">
-            <span className="mono">{row.symbol.replace('/USDT', '')}</span>
+            {/* #15/#175 fix: route through fmtSymbol so the spot/perp
+                convention (slash vs concatenated) is applied via one helper
+                instead of a raw string strip that assumes USDT quote. */}
+            <span className="mono">{fmtSymbol(row.symbol, (row as any).market_type)}</span>
             <span className="mono" style={{ color: row.direction === 'long' ? C.accent : C.yellow }}>
               {row.direction}
             </span>

@@ -317,34 +317,48 @@ function SettingsSearch({ onPick }: { onPick: (tab: Tab) => void }) {
 function AgentModelsTab({ status, settings, qc }: any) {
   const agent = settings?.agent as any || {}
   const runtime = settings?.runtime as any || {}
+  // #164 fix: previously these mutations had onSuccess only — a rejected save
+  // (validation, permission, backend error) failed silently. Toggle appears to
+  // work, config never persists. Route every failure through a shared local
+  // banner so the operator sees the real reason.
+  const [saveErr, setSaveErr] = useState<string | null>(null)
+  const onSaveError = (label: string) => (e: any) =>
+    setSaveErr(`${label}: ${e?.message || 'save failed'}`)
 
   const permMut = useMutation({
     mutationFn: (mode: string) => api.setPermissionMode(mode),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status'] }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status'] }); qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Permission mode'),
   })
   const autoLearnMut = useMutation({
     mutationFn: (enabled: boolean) => api.setAutonomousLearning(enabled),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Autonomous learning'),
   })
   const bypassDistressMut = useMutation({
     mutationFn: (enabled: boolean) => api.setBypassDistressGate(enabled),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Bypass distress gate'),
   })
   const runtimeMut = useMutation({
     mutationFn: (body: any) => api.updateRuntimeConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Runtime config'),
   })
   const operatorMut = useMutation({
     mutationFn: (body: any) => api.updateOperatorConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Operator config'),
   })
   const piDaemonMut = useMutation({
     mutationFn: (body: any) => api.updatePiDaemonConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('System Operator daemon'),
   })
   const serenityMut = useMutation({
     mutationFn: (body: any) => api.updateSerenityConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Serenity config'),
   })
 
   const perm = String(status.permission_mode || agent.permission_mode || '')
@@ -364,17 +378,30 @@ function AgentModelsTab({ status, settings, qc }: any) {
 
   const guardMut = useMutation({
     mutationFn: (body: any) => api.updateGuardConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Guard promotion'),
   })
 
   const regimeCfg = (settings?.regime ?? {}) as any
   const regimeMut = useMutation({
     mutationFn: (body: any) => api.updateRegimeConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Regime config'),
   })
 
   return (
     <div>
+      {saveErr && (
+        <div className="save-err-banner" role="alert" style={{
+          background: 'var(--red-bg, rgba(255,0,0,0.08))',
+          color: 'var(--red)',
+          padding: '0.6em 0.8em',
+          borderRadius: 4,
+          marginBottom: 12,
+        }}>
+          Save failed — {saveErr}
+        </div>
+      )}
       <Section
         title="Permission Mode"
         description="Controls how much autonomy agents have over trading decisions. Changes are audited."
@@ -403,6 +430,30 @@ function AgentModelsTab({ status, settings, qc }: any) {
         title="Guard Promotion"
         description="Post-trade lesson guards learned by the dreaming agent. When auto-promote is ON, guard candidates that accumulate enough matching trades are automatically promoted to active guards that block future trades. When OFF, promotions are manual-only."
       >
+        {/* #36 fix: previously only `auto_promote_enabled` was visible even though the
+            backend GuardConfig carries `enabled` / `enforce_in_paper_ranker` /
+            `min_matching_trades` / `max_score_penalty`. The API accepts all four,
+            so hiding them left the settings page mismatched with backend truth. */}
+        <Row
+          label="Guards enabled"
+          hint="Master switch. When OFF, guards do nothing — no scoring penalty, no auto-promotion, no candidate accumulation."
+        >
+          <Toggle
+            checked={guardCfg.enabled !== false}
+            onChange={v => guardMut.mutate({ enabled: v })}
+            disabled={guardMut.isPending}
+          />
+        </Row>
+        <Row
+          label="Enforce in paper ranker"
+          hint="When ON, active guards subtract score in the paper trader's ranking pass. When OFF, guards are advisory only (kept for observation but do not affect trade selection)."
+        >
+          <Toggle
+            checked={guardCfg.enforce_in_paper_ranker !== false}
+            onChange={v => guardMut.mutate({ enforce_in_paper_ranker: v })}
+            disabled={guardMut.isPending}
+          />
+        </Row>
         <Row
           label="Auto-promote guard candidates"
           hint="When ON, the lesson_reviewer promotes guard_candidate entries to active trading guards automatically. When OFF, guards are promoted manually only."
@@ -414,6 +465,41 @@ function AgentModelsTab({ status, settings, qc }: any) {
               guardMut.mutate({ auto_promote_enabled: v })
             }}
             disabled={guardMut.isPending}
+          />
+        </Row>
+        <Row
+          label="Min matching trades before promotion"
+          hint="A candidate guard needs at least this many matching trades before auto-promotion considers it. Higher = more evidence required, slower promotions."
+        >
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={Number(guardCfg.min_matching_trades ?? 3)}
+            onChange={e => {
+              const n = Math.max(1, Math.min(20, Math.round(Number(e.target.value) || 0)))
+              guardMut.mutate({ min_matching_trades: n })
+            }}
+            disabled={guardMut.isPending}
+            style={{ width: 80 }}
+          />
+        </Row>
+        <Row
+          label="Max score penalty"
+          hint="Maximum score points a single guard can subtract in the ranker. Caps runaway penalties from broad-matching guards."
+        >
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step={5}
+            value={Number(guardCfg.max_score_penalty ?? 40)}
+            onChange={e => {
+              const n = Math.max(0, Math.min(100, Number(e.target.value) || 0))
+              guardMut.mutate({ max_score_penalty: n })
+            }}
+            disabled={guardMut.isPending}
+            style={{ width: 80 }}
           />
         </Row>
       </Section>
@@ -2614,8 +2700,16 @@ function RiskCard({ settings, qc }: any) {
       <div className="kill-switch-info">
         <div className="kill-switch-info-title">Kill Switch Auto-Trigger Conditions</div>
         <ul>
-          <li><strong>Trigger formula:</strong> daily realized PnL &le; &minus;(Live Cap &times; Max Daily Loss %)</li>
-          <li><strong>Current threshold:</strong> &minus;{fmtNum((vals.max_live_limited_cap_usdt || 0) * (vals.max_daily_loss_pct || 0) / 100)} USDT</li>
+          {/* #39 fix: the trigger formula is MODE-DEPENDENT (risk/engine.py:209-216
+              — CR-RE-03). Live trades use `max_live_limited_cap_usdt × pct`;
+              demo trades use `starting_capital_usdt × pct` (the demo base — using
+              the tiny live cap spuriously tripped demo mode on any small loss).
+              The old UI only showed the live formula, so operators reading it for
+              a demo account saw a threshold ~1/1000th of the actual one. */}
+          <li><strong>Trigger formula (live):</strong> daily realized PnL &le; &minus;(Live Cap &times; Max Daily Loss %)</li>
+          <li><strong>Live threshold:</strong> &minus;{fmtNum((vals.max_live_limited_cap_usdt || 0) * (vals.max_daily_loss_pct || 0) / 100)} USDT</li>
+          <li><strong>Trigger formula (demo):</strong> daily realized PnL &le; &minus;(Starting Capital &times; Max Daily Loss %)</li>
+          <li><strong>Demo threshold:</strong> &minus;{fmtNum((vals.starting_capital_usdt || 0) * (vals.max_daily_loss_pct || 0) / 100)} USDT</li>
           <li><strong>Scope:</strong> applies to live trades when "Kill switch auto-trigger (live)" is ON; applies to demo trades when "Kill switch auto-trigger (demo)" is ON</li>
           <li><strong>Effect:</strong> once tripped, ALL proposals (live + demo) are rejected until manually released</li>
           <li><strong>Reset:</strong> release from Risk Controls panel or CLI after UTC new day</li>
@@ -2689,7 +2783,7 @@ function RuntimeSystemTab({ settings, qc, onDirty }: any) {
         <AutostartCard qc={qc} />
       </Section>
 
-      <Section title="Network Proxy" description="Route all outbound HTTP through a proxy. Required when direct internet access is unavailable (e.g. Task Scheduler-started gateway).">
+      <Section title="Network Proxy" description="Route all outbound traffic (exchange, market data, news, LLM) through a managed proxy. Set the protocol/host/port, and enable Enforce to require the proxy (fail-closed) so a proxy outage never leaks your real IP.">
         <NetworkCard settings={settings} qc={qc} />
       </Section>
     </div>
@@ -2866,7 +2960,8 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'health.auto_resume_enabled', 'health.auto_resume_interval_sec',  // HealthCard (DO-1/CUI-4)
     'health.exchange_probe_interval_sec', 'health.exchange_probe_failure_threshold',
     'health.exchange_auto_resume_interval_sec', 'health.exchange_auto_resume_success_threshold',
-    'network.proxy_url', 'network.no_proxy',
+    'network.proxy_protocol', 'network.proxy_host', 'network.proxy_port',
+    'network.enforce', 'network.proxy_url', 'network.no_proxy',
     'operator.loop_enabled',
     'guard.auto_promote_enabled',
   ])
@@ -3413,16 +3508,22 @@ function AutostartCard({ qc }: any) {
 
 function NetworkCard({ settings, qc }: any) {
   const net = (settings?.network as any) || {}
-  const [proxyUrl, setProxyUrl] = useState<string>(net.proxy_url || '')
+  const [protocol, setProtocol] = useState<string>(net.proxy_protocol || 'http')
+  const [host, setHost] = useState<string>(net.proxy_host ?? '')
+  const [port, setPort] = useState<string>(net.proxy_port != null ? String(net.proxy_port) : '')
+  const [enforce, setEnforce] = useState<boolean>(!!net.enforce)
   const [noProxy, setNoProxy] = useState<string>(net.no_proxy || '')
   const [testResult, setTestResult] = useState<{ reachable: boolean; latency_ms: number; error: string | null } | null>(null)
   const [testing, setTesting] = useState(false)
 
   // Sync from server state when settings load
   useEffect(() => {
-    setProxyUrl(net.proxy_url || '')
+    setProtocol(net.proxy_protocol || 'http')
+    setHost(net.proxy_host ?? '')
+    setPort(net.proxy_port != null ? String(net.proxy_port) : '')
+    setEnforce(!!net.enforce)
     setNoProxy(net.no_proxy || '')
-  }, [net.proxy_url, net.no_proxy])
+  }, [net.proxy_protocol, net.proxy_host, net.proxy_port, net.enforce, net.no_proxy])
 
   const mut = useMutation({
     mutationFn: (body: any) => api.updateNetworkConfig(body),
@@ -3430,7 +3531,14 @@ function NetworkCard({ settings, qc }: any) {
   })
 
   const handleSave = () => {
-    mut.mutate({ proxy_url: proxyUrl.trim(), no_proxy: noProxy.trim() })
+    const portNum = parseInt(port, 10)
+    mut.mutate({
+      proxy_protocol: protocol,
+      proxy_host: host.trim(),
+      proxy_port: Number.isFinite(portNum) ? portNum : 0,
+      enforce,
+      no_proxy: noProxy.trim(),
+    })
     setTestResult(null)
   }
 
@@ -3447,32 +3555,52 @@ function NetworkCard({ settings, qc }: any) {
     }
   }
 
-  const isConfigured = !!proxyUrl.trim()
+  const isConfigured = !!host.trim()
+  const composed = isConfigured ? `${protocol}://${host.trim()}:${port || '?'}` : '(disabled — direct connection)'
   let statusDot = <span style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>●</span>
   if (isConfigured && testResult?.reachable) statusDot = <span style={{ color: 'var(--green)', fontSize: '0.75rem' }}>●</span>
   else if (isConfigured && testResult && !testResult.reachable) statusDot = <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>●</span>
 
   return (
     <div className="flex flex-col gap-2">
-      <Row label="Proxy URL" hint="Applied to all outbound HTTP (LLM, exchange, market data). Leave empty for direct connection.">
+      <Row label="Protocol" hint="HTTP for a Clash/Mihomo mixed port; SOCKS5 for a SOCKS proxy (requires the aiohttp_socks backend package).">
+        <select value={protocol} onChange={e => setProtocol(e.target.value)} className="text-sm">
+          <option value="http">HTTP</option>
+          <option value="https">HTTPS</option>
+          <option value="socks5">SOCKS5</option>
+        </select>
+      </Row>
+      <Row label="Host" hint="Proxy hostname or IP. Leave empty to disable the proxy (direct connection).">
         <div className="flex gap-2 items-center">
           {statusDot}
           <input
-            type="text" value={proxyUrl}
-            onChange={e => setProxyUrl(e.target.value)}
-            placeholder="http://127.0.0.1:7897"
-            className="mono text-sm" style={{ width: '220px' }}
+            type="text" value={host}
+            onChange={e => setHost(e.target.value)}
+            placeholder="127.0.0.1"
+            className="mono text-sm" style={{ width: '160px' }}
           />
         </div>
       </Row>
-      <Row label="No Proxy" hint="Comma-separated hosts to bypass (e.g. 127.0.0.1,localhost).">
+      <Row label="Port" hint="Proxy port (e.g. Clash 7890 / 7897).">
+        <input
+          type="number" value={port}
+          onChange={e => setPort(e.target.value)}
+          placeholder="7890"
+          className="mono text-sm" style={{ width: '110px' }}
+        />
+      </Row>
+      <Row label="Enforce (fail-closed)" hint="Require ALL outbound traffic to go through the proxy. If the proxy is unreachable, requests fail and trading auto-pauses instead of silently connecting direct and leaking your real IP. Recommended for production.">
+        <Toggle checked={enforce} onCheckedChange={setEnforce} label={enforce ? 'Strict — proxy required' : 'Off — direct fallback allowed'} />
+      </Row>
+      <Row label="No Proxy" hint="Comma-separated hosts to bypass. Loopback (127.0.0.1, localhost, ::1) is always bypassed automatically.">
         <input
           type="text" value={noProxy}
           onChange={e => setNoProxy(e.target.value)}
-          placeholder="127.0.0.1,localhost"
+          placeholder="example.internal"
           className="mono text-sm" style={{ width: '220px' }}
         />
       </Row>
+      <div className="hint" style={{ paddingLeft: '0.2rem' }}>Effective proxy: <span className="mono">{composed}</span></div>
       <div className="flex gap-2 flex-wrap">
         <button onClick={handleSave} disabled={mut.isPending}>Save</button>
         <button className="secondary" onClick={handleTest} disabled={testing}>

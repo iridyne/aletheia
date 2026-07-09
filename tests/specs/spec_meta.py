@@ -6,7 +6,15 @@ from dataclasses import dataclass
 from typing import Literal
 
 SpecLevel = Literal["L2a", "L2b", "L2c"]
-SpecStatus = Literal["implemented", "partial", "missing"]
+# #74 fix: added "superseded" to the accepted status values. spec_pi_decision_chain.py:126
+# already carried a claim tagged status="superseded" — the Literal previously listed
+# only implemented/partial/missing so type checkers accepted the string at construction
+# time but the conformance matrix rendered it as "?" (unknown). Now the type reflects
+# reality: a claim can be superseded by a newer contract without being deleted, and the
+# matrix knows how to icon it.
+SpecStatus = Literal["implemented", "partial", "missing", "superseded"]
+
+_VALID_SPEC_STATUSES = frozenset({"implemented", "partial", "missing", "superseded"})
 
 
 @dataclass(frozen=True)
@@ -17,6 +25,17 @@ class SpecClaim:
     level: SpecLevel
     invariant: str
     status: SpecStatus = "implemented"
+
+    def __post_init__(self) -> None:
+        # #74 fix: the previous frozen dataclass accepted any string as `status`
+        # (the Literal is a type hint, not a runtime guard). A typo silently
+        # rendered as "?" in the matrix. Validate at construction so bad
+        # statuses fail loudly right where they're introduced.
+        if self.status not in _VALID_SPEC_STATUSES:
+            raise ValueError(
+                f"SpecClaim.status must be one of {sorted(_VALID_SPEC_STATUSES)}, "
+                f"got {self.status!r} on claim {self.claim_id!r}"
+            )
 
 
 SPEC_REGISTRY: dict[str, list[tuple[SpecClaim, object]]] = {}

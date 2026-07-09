@@ -76,8 +76,10 @@ class TradingDecision:
     market_type: str | None = None
     leverage: int | None = None
     debate_ran: bool = False
+    debate_initial_conviction: int | None = None
     debate_bull_confidence: int | None = None
     debate_bear_confidence: int | None = None
+    debate_adjustment: int | None = None
     # R0 attribution: backfilled from the source opportunity by
     # _attach_opportunity_context so the proposal carries a real opportunity_id /
     # strategy_id and the decision_meta records scanner_family (LEARNING_LOOP_AUDIT
@@ -204,6 +206,7 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
         debate = await _run_debate(decision.symbol, decision.direction, trading_context)
         if debate:
             decision.debate_ran = True
+            decision.debate_initial_conviction = initial_conviction
             decision.debate_bull_confidence = debate.bull_confidence
             decision.debate_bear_confidence = debate.bear_confidence
             # Debate ADJUSTS the initial conviction, it does not REPLACE it. The
@@ -214,14 +217,21 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
             # advantage is a correction term, not a fresh verdict (2026-06-23
             # profit-loop freeze exception). 0.3 weight keeps debate meaningful
             # without letting it override a confident initial read.
+            # bull_confidence = P(this trade succeeds), bear_confidence = P(this
+            # trade fails) — the prompts are direction-aware ("make the case FOR
+            # {symbol} {direction}" vs "why {direction} is a BAD idea"). So
+            # bull - bear is correctly signed for both long and short: a short
+            # with high bear_confidence (trade will fail) should reduce conviction.
             advantage = debate.bull_confidence - debate.bear_confidence
             adjusted = int(round(initial_conviction + advantage * 0.3))
             decision.conviction = max(0, min(100, adjusted))
+            decision.debate_adjustment = decision.conviction - initial_conviction
             if decision.conviction < _MIN_CONVICTION_TO_TRADE:
                 decision.action = "skip"
                 decision.reasoning += (
                     f" [debate adjusted conviction {initial_conviction}→{decision.conviction} "
-                    f"(bull {debate.bull_confidence} vs bear {debate.bear_confidence}) → skip]"
+                    f"(bull {debate.bull_confidence} vs bear {debate.bear_confidence}, "
+                    f"dir={decision.direction}) → skip]"
                 )
 
     # Compute sizing for trade-like actions (P1-5: pass strategy trade count for sample-aware Kelly)
@@ -319,8 +329,10 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     decision_meta = {
         "conviction": decision.conviction,
         "debate_ran": decision.debate_ran,
+        "debate_initial_conviction": decision.debate_initial_conviction,
         "debate_bull": decision.debate_bull_confidence,
         "debate_bear": decision.debate_bear_confidence,
+        "debate_adjustment": decision.debate_adjustment,
         "supporting_signals": decision.supporting_signals[:5],
         "opposing_signals": decision.opposing_signals[:5],
         "bear_case": decision.bear_case,
@@ -350,6 +362,11 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     market_type = decision.market_type
     if not market_type:
         market_type = "usdt_futures" if decision.direction == "short" else "spot"
+    elif market_type == "spot" and decision.direction == "short":
+        # #151: spot cannot be shorted — an explicit spot+short from the PI is forced
+        # to perp (same intent as the fallback above; risk engine #24 is the backstop).
+        # Prevents an impossible spot-short reaching the broker as a spot SELL.
+        market_type = "usdt_futures"
 
     # Leverage only applies to futures. Clamp the PI's request to the per-asset-tier
     # cap (the risk engine enforces the same cap as a hard reject — clamping here keeps
@@ -385,9 +402,9 @@ def _proposal_direction_overheated(
     conviction: int,
     *,
     window_hours: int = 24,
-    min_sample: int = 5,
-    max_share: float = 0.80,
-    override_conviction: int = 85,
+    min_sample: int = 15,
+    max_share: float = 0.95,
+    override_conviction: int = 75,
 ) -> str | None:
     """Return a skip reason when native proposals are one-sided.
 
@@ -946,18 +963,33 @@ def _build_assessment_prompt(ctx: dict) -> str:
             parts += ["## Reasoning Feedback (which signal patterns have actually worked)",
                       reasoning_fb, ""]
 
-    # Ranker candidates (what paper_trader would do)
-    ranker = layer2.get("ranker_candidates", [])
+    # Executable candidates (what paper_trader could actually submit)
+    ranker = (
+        layer2.get("executable_candidates")
+        if "executable_candidates" in layer2
+        else layer2.get("ranker_candidates", [])
+    )
     if ranker:
         ranker_lines = "\n".join(
             f"  {c['symbol']} {c.get('direction', '?')} score={c.get('trade_score', '?')}"
-            + (f" SKIP:{c['skip_reason']}" if c.get("skip_reason") else " ✓ eligible")
             for c in ranker[:6]
         )
-        parts += ["## Ranker Candidates (paper_trader's ranked picks)", ranker_lines, ""]
-        skew_note = _direction_skew_note(ranker[:6], "ranker candidates")
+        parts += ["## Executable Candidates (ranked picks that passed local filters)", ranker_lines, ""]
+        skew_note = _direction_skew_note(ranker[:6], "executable candidates")
         if skew_note:
             parts += [skew_note, ""]
+    excluded_summary = layer2.get("excluded_candidates_summary") or []
+    if excluded_summary:
+        excluded_lines = []
+        for row in excluded_summary[:6]:
+            examples = ", ".join(
+                f"{e.get('symbol')} {e.get('direction')}"
+                for e in (row.get("examples") or [])[:3]
+                if e.get("symbol")
+            )
+            suffix = f" examples={examples}" if examples else ""
+            excluded_lines.append(f"  {row.get('reason')}: {row.get('count', 0)}{suffix}")
+        parts += ["## Excluded Candidate Summary (not executable now)", "\n".join(excluded_lines), ""]
 
     # Phase 4b: Pending signals awaiting your decision
     pending = layer2.get("pending_signals", [])
@@ -1126,11 +1158,16 @@ def _build_bull_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
     oi_div = snap.get("oi_price_divergence")
     deriv_extras = f" OI_Δ={snap.get('oi_delta_1h', '?')} taker={snap.get('taker_buy_ratio', '?')} RS24h={snap.get('relative_strength_24h', '?')}%"
     div_note = f" [{_OI_DIV_LABEL[oi_div]}]" if oi_div else ""
-    return f"""You are a bull analyst. Make the STRONGEST case for {symbol} {direction or 'long'} RIGHT NOW.
+    _dir = direction or "long"
+    if _dir == "short":
+        note = "Note: FR>+0.01% = crowded longs → supports short; taker<0.8 = seller aggression → supports short; OI_div=weak_rally = distribution → supports short."
+    else:
+        note = "Note: FR<-0.01% = crowded shorts → bullish; taker>1.2 = buyer aggression; OI_div=hidden_acc = potential reversal long."
+    return f"""You are a bull analyst. Make the STRONGEST case for {symbol} {_dir} RIGHT NOW.
 
 Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}{deriv_extras}{div_note}
 {regime_str}
-Note: FR<-0.01% = crowded shorts → bullish; taker>1.2 = buyer aggression; OI_div=hidden_acc = potential reversal long.
+{note}
 
 Be specific: technical setup, regime alignment, risk/reward.
 Return confidence (0-100) where 100 = near-certain win. Provide 3-5 evidence points."""
@@ -1145,11 +1182,16 @@ def _build_bear_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
     oi_div = snap.get("oi_price_divergence")
     deriv_extras = f" OI_Δ={snap.get('oi_delta_1h', '?')} taker={snap.get('taker_buy_ratio', '?')} RS24h={snap.get('relative_strength_24h', '?')}%"
     div_note = f" [{_OI_DIV_LABEL[oi_div]}]" if oi_div else ""
-    return f"""You are a bear analyst. Find every reason why {symbol} {direction or 'long'} RIGHT NOW is a BAD idea.
+    _dir = direction or "long"
+    if _dir == "short":
+        note = "Note: FR<-0.01% = crowded shorts → fade risk (short squeeze); taker>1.2 = buyer aggression → challenges short; OI_div=hidden_acc = potential reversal → challenges short."
+    else:
+        note = "Note: FR>+0.01% = crowded longs → bearish; taker<0.8 = seller aggression; OI_div=weak_rally = distribution risk."
+    return f"""You are a bear analyst. Find every reason why {symbol} {_dir} RIGHT NOW is a BAD idea.
 
 Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}{deriv_extras}{div_note}
 {regime_str}
-Note: FR>+0.01% = crowded longs → bearish; taker<0.8 = seller aggression; OI_div=weak_rally = distribution risk.
+{note}
 
 Challenge aggressively: overbought/oversold, adverse regime, funding cost, better entry timing.
 Return confidence (0-100) where 100 = trade will definitely fail. Provide 3-5 counter-evidence points."""
@@ -1177,11 +1219,19 @@ def _parse_decision(raw: dict) -> TradingDecision:
         except (TypeError, ValueError):
             return None
 
+    def _int(v, default=0):
+        # #12: guard against non-integer LLM conviction (e.g. "high", "8.5", null-ish).
+        # A garbled conviction falls back to 0, which is below the gate and safely skips.
+        try:
+            return int(float(v)) if v is not None else default
+        except (TypeError, ValueError):
+            return default
+
     return TradingDecision(
         action=raw.get("action", "skip"),
         symbol=raw.get("symbol"),
         direction=raw.get("direction"),
-        conviction=int(raw.get("conviction", 0)),
+        conviction=_int(raw.get("conviction", 0)),
         reasoning=raw.get("reasoning", ""),
         market_type=mt,
         leverage=leverage,
@@ -1221,11 +1271,9 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
     if not decision.symbol:
         return
     opps = (ctx.get("layer1") or {}).get("opportunities") or []
-    saw_same_symbol_opportunity = False
     for o in opps:
         if o.get("symbol") != decision.symbol:
             continue
-        saw_same_symbol_opportunity = True
         bias = o.get("direction_bias")
         # Require direction agreement only when both sides declare one; an
         # opportunity with no bias still matches on symbol.
@@ -1241,13 +1289,18 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         if not decision.market_type and o.get("market"):
             decision.market_type = o.get("market")
         return
-    if saw_same_symbol_opportunity:
-        return
+
+    # #152: even when a same-symbol Layer-1 opportunity was seen but its direction
+    # conflicted (so the loop above did not attach), fall through to the ranker +
+    # serenity fallbacks — a matching-direction ranker candidate (same market_observer
+    # provenance) or serenity pick still carries the real opportunity_id, so the
+    # attribution chain (DL-INV-4) is preserved instead of severed.
 
     # Ranker candidates are a second deterministic source of market_observer
     # opportunity ids. They may include candidates not currently visible in the
     # compact Layer-1 opportunity list, so use them before falling back to Serenity.
-    ranker = (ctx.get("layer2") or {}).get("ranker_candidates") or []
+    layer2 = ctx.get("layer2") or {}
+    ranker = (layer2.get("executable_candidates") or []) + (layer2.get("ranker_candidates") or [])
     for c in ranker:
         if c.get("symbol") != decision.symbol:
             continue
@@ -1282,6 +1335,18 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
             continue
         decision.opportunity_id = oid
         decision.signal_source = "serenity"
+        # #102: pending_signals don't carry market_type (the pi_decisions query
+        # omits it and PiDecision has no such column), so a promoted serenity pick
+        # would fall through to the short->perp default. Recover it from the source
+        # serenity_opportunity. Defensive: a lookup miss must not break attribution.
+        if not decision.market_type:
+            try:
+                from aletheia.storage.repositories import get_serenity_opportunity
+                src_opp = get_serenity_opportunity(oid)
+                if src_opp and src_opp.get("market_type"):
+                    decision.market_type = src_opp["market_type"]
+            except Exception:
+                pass
         return
 
     # Serenity fallback (Phase 2): the pick matched no market_observer opportunity
@@ -1305,8 +1370,12 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
             continue
         decision.opportunity_id = oid
         decision.signal_source = "serenity"
-        if not decision.market_type and o.get("market"):
-            decision.market_type = o.get("market")
+        # #21/#102: serenity_opportunities dicts store the instrument under
+        # "market_type" (trading_context builds them that way), NOT "market" — the
+        # old o.get("market") always returned None, so a serenity spot pick fell
+        # through to the short->perp fallback. Read the correct key.
+        if not decision.market_type and o.get("market_type"):
+            decision.market_type = o.get("market_type")
         return
 
 

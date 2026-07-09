@@ -288,6 +288,16 @@ async def lifespan(app: FastAPI):
             logger.warning("git-hook install skipped (non-fatal): %s", e)
     logger.info("Aletheia Trading OS v%s starting", __version__)
     logger.info("Dashboard: http://%s:%d", cfg.app.bind_host, runtime_context["port"] or cfg.app.dashboard_port)
+    # Migrate keyring secrets to the encrypted file store so that CLI / service
+    # processes (which may run under a different Windows logon session and cannot
+    # reach the OS keyring) always find secrets in the file fallback path.
+    try:
+        from aletheia.config.secrets import migrate_keyring_to_file
+        n = migrate_keyring_to_file()
+        if n:
+            logger.info("Migrated %d secret(s) from keyring to file store", n)
+    except Exception as _e:
+        logger.debug("Keyring-to-file migration skipped: %s", _e)
     # Ensure DB schema + register agents/tools, then start the scheduler.
     from aletheia.storage.migrations import run_migrations
     from aletheia.agent_runtime.tool_registry import init_tool_registry
@@ -319,12 +329,6 @@ async def lifespan(app: FastAPI):
             init_scheduler()
         except Exception as e:
             logger.warning("Scheduler failed to start: %s", e)
-        try:
-            from aletheia.portfolio.exchange_sync import sync_all_exchanges
-            sync_all_exchanges()
-            logger.info("startup exchange sync complete")
-        except Exception as e:
-            logger.warning("startup exchange sync failed (non-fatal): %s", e)
     else:
         logger.info("Runtime mode %s: background services disabled", runtime_context["runtime_mode"])
     # Fail-loud LLM gate, run as a BACKGROUND task (not awaited here): if no
@@ -337,11 +341,32 @@ async def lifespan(app: FastAPI):
     # harmless to run once. See _llm_startup_gate.
     llm_gate_task = asyncio.create_task(_llm_startup_gate(cfg)) if background_services_enabled else None
 
+    # #138: initial exchange-state sync deferred to a POST-yield worker-thread task.
+    # It is a blocking aggregation that can take up to 30s on a slow/unreachable broker;
+    # running it inline before `yield` delayed the HTTP port bind, so the spawn-verifier /
+    # OS watchdog could see a dead port and falsely report gateway failure — the same
+    # reason the LLM/exchange gates are deferred. asyncio.to_thread keeps it off the loop.
+    # The scheduler's periodic exchange-sync keeps state fresh regardless.
+    startup_sync_task = None
+    if background_services_enabled:
+        async def _startup_exchange_sync():
+            try:
+                from aletheia.portfolio.exchange_sync import sync_all_exchanges
+                await asyncio.to_thread(sync_all_exchanges)
+                logger.info("startup exchange sync complete")
+            except Exception as e:
+                logger.warning("startup exchange sync failed (non-fatal): %s", e)
+        startup_sync_task = asyncio.create_task(_startup_exchange_sync())
+
     # Exchange connectivity gate — if exchange is unreachable at startup, pause
     # immediately and start auto-resume (same pattern as LLM gate).
     exchange_gate_task = None
     if background_services_enabled:
-        from aletheia.agent_runtime.connectivity import startup_exchange_gate
+        from aletheia.agent_runtime.connectivity import startup_exchange_gate, set_uvicorn_loop
+        # #145: capture the persistent uvicorn loop so a mid-run connectivity loss (detected
+        # on an ephemeral scheduler-job loop) can schedule its auto-resume task HERE, where it
+        # survives — not on the per-job loop that is torn down right after the check runs.
+        set_uvicorn_loop(asyncio.get_running_loop())
         exchange_gate_task = asyncio.create_task(startup_exchange_gate(cfg))
 
     # System Operator event-driven daemon — wakes immediately on signal arrival
@@ -422,6 +447,29 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Aletheia Trading OS", version=__version__, lifespan=lifespan)
 
+
+# #3 fix: FastAPI's default RequestValidationError handler echoes the rejected
+# input value in the 422 body (under "input": <raw_value>). With extra="forbid"
+# on settings models, an attacker/fuzzer can probe for field names and see their
+# payloads reflected verbatim — XSS-safe (JSON) but still unnecessary information
+# exposure. Strip the raw `input` from each error entry and keep only field
+# location + message.
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+
+@app.exception_handler(RequestValidationError)
+async def _sanitized_validation_error(_request, exc: RequestValidationError):
+    safe_errors = []
+    for err in exc.errors():
+        safe_errors.append({
+            "loc": err.get("loc"),
+            "msg": err.get("msg"),
+            "type": err.get("type"),
+        })
+    return JSONResponse(status_code=422, content={"detail": safe_errors})
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173",
@@ -436,8 +484,33 @@ app.add_middleware(
 _PROTECTED_PATHS = {
     "/api/settings/live-unlock", "/api/settings/live-lock",
     "/api/risk/kill-switch",
+    # #137/#42: these config mutations are trust-boundary (they can disable the
+    # kill switch, widen risk limits, flip demo->live, or elevate the agent
+    # permission mode), so they must require the tunnel token too — otherwise the
+    # protection on /api/risk/kill-switch is trivially bypassed via /settings/risk.
+    "/api/settings/risk", "/api/settings/exchange-mode", "/api/settings/permission-mode",
     "/api/gateway/restart", "/api/gateway/stop",
+    # #42 completion: operator command surfaces can trigger the AI to execute trades
+    # (even under permission-gate #40, the gate only checks the configured mode —
+    # if mode is PaperAuto, an unauthenticated tunnel caller can inject commands).
+    "/api/operator/command", "/api/operator/command-preview",
+    "/api/operator/pause", "/api/operator/resume", "/api/operator/wake",
+    "/api/operator/loop/trigger",
+    # Capital events (deposit/withdraw) alter the capital baseline used by drawdown
+    # and kill-switch calculations — fabricating one lowers the safety net.
+    "/api/capital/events",
 }
+
+# #41 fix: whole path PREFIXES that must require the tunnel token when the tunnel
+# is enabled. The operator-shell internal writer endpoints (`/api/operator/internal/*`)
+# had no auth guard at all — a tunneled caller could write heartbeats, tasks,
+# messages, events, artifacts, and repair decisions impersonating the operator.
+# These are LEGITIMATE for the local TypeScript bridge (loopback), so we don't
+# strictly forbid them; we require the same tunnel token the trust-boundary
+# routes require when public exposure is on.
+_PROTECTED_PATH_PREFIXES = (
+    "/api/operator/internal/",
+)
 
 
 @app.middleware("http")
@@ -450,7 +523,9 @@ async def _tunnel_auth_guard(request, call_next):
     an enabled tunnel with no secret would expose live-unlock and kill-switch to the
     public internet without any authentication.
     """
-    if request.url.path in _PROTECTED_PATHS:
+    path = request.url.path
+    _matches_prefix = any(path.startswith(p) for p in _PROTECTED_PATH_PREFIXES)
+    if path in _PROTECTED_PATHS or _matches_prefix:
         cfg = load_config()
         if getattr(cfg, "tunnel", None) and getattr(cfg.tunnel, "enabled", False):
             from aletheia.config.secrets import get_secret

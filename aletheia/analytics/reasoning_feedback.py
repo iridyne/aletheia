@@ -40,6 +40,7 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
                 tp.agent_rationale,
                 tp.direction,
                 p.realized_pnl,
+                p.close_reason,
                 p.regime_tag,
                 pd.conviction,
                 pd.reasoning AS pi_reasoning
@@ -65,12 +66,16 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
         executed_losses = []
         rejected = []
 
+        from aletheia.analytics.close_reasons import is_synthetic_close
         for p in proposals:
             status = p.get("proposal_status", "")
             pnl = p.get("realized_pnl")
             if status == "rejected":
                 rejected.append(p)
-            elif pnl is not None:
+            # #160: a synthetic/administrative close (reconciler sweep, cleanup) is not
+            # a genuine win/loss — exclude it from the executed-win/loss classification
+            # that feeds recommended_pursue/avoid patterns into the Layer-2 prompt.
+            elif pnl is not None and not is_synthetic_close(p.get("close_reason")):
                 if pnl > 0:
                     executed_wins.append(p)
                 else:

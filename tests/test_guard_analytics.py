@@ -64,11 +64,13 @@ class TestComputeGuardStats:
             {"symbol": "BTC/USDT", "direction": "long", "late_entry_penalty": 25,
              "realized_pnl": -5, "realized_pnl_pct": -2.5, "risk_flags": [],
              "scanner_family": "momentum", "confidence": "high", "confidence_score": 70,
-             "tradability_score": 70, "universe_total_score": 80, "crowding_risk": 3},
+             "tradability_score": 70, "universe_total_score": 80, "crowding_risk": 3,
+             "closed_at": "2026-07-01T12:00:00+00:00"},
             {"symbol": "ETH/USDT", "direction": "long", "late_entry_penalty": 30,
              "realized_pnl": 3, "realized_pnl_pct": 1.5, "risk_flags": [],
              "scanner_family": "momentum", "confidence": "high", "confidence_score": 70,
-             "tradability_score": 70, "universe_total_score": 80, "crowding_risk": 3},
+             "tradability_score": 70, "universe_total_score": 80, "crowding_risk": 3,
+             "closed_at": "2026-07-01T12:00:00+00:00"},
         ]
         result = compute_guard_stats()
         assert len(result) == 1

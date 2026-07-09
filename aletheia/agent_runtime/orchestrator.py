@@ -33,12 +33,20 @@ async def run_agent(agent_name: str, trigger_type: str = "scheduled") -> dict:
             outputs = result.get("outputs", [])
             errors = result.get("errors", [])
     except Exception as e:
-        errors.append(traceback.format_exc())
+        # #70 fix: persist only the exception type + first line (not the full
+        # traceback which leaks internal paths and possibly credentials from
+        # error messages of HTTP/exchange clients). Full traceback goes to the
+        # rotating log file (logger.exception below) which is never API-exposed.
+        import logging
+        _orch_logger = logging.getLogger("aletheia.orchestrator")
+        _orch_logger.exception("Agent %s failed", agent_name)
+        safe_error = f"{type(e).__name__}: {str(e)[:200]}"
+        errors.append(safe_error)
         write_audit({
             "actor": "system", "source": "orchestrator",
             "event_type": "agent_failed", "entity_type": "agent_run",
             "entity_id": run.id,
-            "message": f"Agent {agent_name} raised: {e}",
+            "message": f"Agent {agent_name} failed: {type(e).__name__}",
         })
 
     status = "completed" if not errors else "completed_with_errors"
