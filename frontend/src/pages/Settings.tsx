@@ -3590,10 +3590,7 @@ function NetworkCard({ settings, qc }: any) {
         />
       </Row>
       <Row label="Enforce (fail-closed)" hint="Require ALL outbound traffic to go through the proxy. If the proxy is unreachable, requests fail and trading auto-pauses instead of silently connecting direct and leaking your real IP. Recommended for production.">
-        <label className="flex gap-2 items-center text-sm">
-          <input type="checkbox" checked={enforce} onChange={e => setEnforce(e.target.checked)} />
-          <span>{enforce ? 'Strict — proxy required' : 'Off — direct fallback allowed'}</span>
-        </label>
+        <Toggle checked={enforce} onCheckedChange={setEnforce} label={enforce ? 'Strict — proxy required' : 'Off — direct fallback allowed'} />
       </Row>
       <Row label="No Proxy" hint="Comma-separated hosts to bypass. Loopback (127.0.0.1, localhost, ::1) is always bypassed automatically.">
         <input

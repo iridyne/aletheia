@@ -180,9 +180,9 @@ def test_guard_impact_flags_positive_blocked_outcome_as_overbroad_suspect(tmp_pa
 
     _write_guard(tmp_path)
     db = get_db()
-    _insert_member(db)
-    _insert_opportunity(db)
-    _insert_forward(db, ret=2.5)
+    _insert_member(db, symbol="SEED/USDT")
+    _insert_opportunity(db, symbol="SEED/USDT")
+    _insert_forward(db, symbol="SEED/USDT", ret=2.5)
 
     before = db.total_changes
     report = build_guard_impact_audit(hours=24)
@@ -193,7 +193,7 @@ def test_guard_impact_flags_positive_blocked_outcome_as_overbroad_suspect(tmp_pa
     assert report["candidate_flow"]["guard_blocked_candidates"] == 1
     row = report["blocked_candidates"][0]
     assert row["matched_guards"][0]["guard_id"] == "auto_momentum_long_test"
-    assert row["matched_guards"][0]["classification"] == ["family-wide", "direction-wide"]
+    assert row["matched_guards"][0]["classification"] == ["symbol-specific", "family-wide", "direction-wide"]
     assert row["matched_guards"][0]["evidence_symbol"] == "SEED/USDT"
     assert row["outcomes"]["forward"]["4h"]["direction_adjusted_return_pct"] == 2.5
     assert row["verdict"] == "overbroad_suspect"
@@ -206,9 +206,9 @@ def test_guard_impact_negative_blocked_outcome_is_protective(tmp_path):
 
     _write_guard(tmp_path)
     db = get_db()
-    _insert_member(db)
-    _insert_opportunity(db)
-    _insert_forward(db, ret=-3.0)
+    _insert_member(db, symbol="SEED/USDT")
+    _insert_opportunity(db, symbol="SEED/USDT")
+    _insert_forward(db, symbol="SEED/USDT", ret=-3.0)
 
     report = build_guard_impact_audit(hours=24)
 
@@ -240,8 +240,8 @@ def test_guard_impact_cli_outputs_human_and_json(tmp_path):
 
     _write_guard(tmp_path)
     db = get_db()
-    _insert_member(db)
-    _insert_opportunity(db)
+    _insert_member(db, symbol="SEED/USDT")
+    _insert_opportunity(db, symbol="SEED/USDT")
 
     runner = CliRunner()
     human = runner.invoke(inspect_app, ["guard-impact", "--hours", "24"])
