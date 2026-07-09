@@ -178,6 +178,8 @@ async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
     global _consecutive_failures, _consecutive_successes
 
     successes_needed = 2  # default, overridden from config below
+    loop_failures = 0
+    last_escalation_at = 0
 
     while True:
         await asyncio.sleep(interval_sec)
@@ -190,11 +192,13 @@ async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
             return
 
         successes_needed = cfg.health.exchange_auto_resume_success_threshold
+        stall_threshold = cfg.health.exchange_stall_threshold
 
         result = await probe_exchange(cfg)
         if result["reachable"]:
             _consecutive_successes += 1
             _consecutive_failures = 0
+            loop_failures = 0
             logger.info(
                 "exchange_auto_resume: probe OK (%d/%d)",
                 _consecutive_successes, successes_needed,
@@ -205,10 +209,55 @@ async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
         else:
             _consecutive_successes = 0
             _consecutive_failures += 1
-            logger.info(
-                "exchange_auto_resume: still unreachable (%s), retry in %ds",
-                result.get("error", "?"), interval_sec,
-            )
+            loop_failures += 1
+
+            if loop_failures >= stall_threshold and (
+                loop_failures - last_escalation_at >= stall_threshold
+            ):
+                _escalate_exchange_stall(cfg, result, loop_failures)
+                last_escalation_at = loop_failures
+            else:
+                logger.info(
+                    "exchange_auto_resume: still unreachable (%s), retry in %ds",
+                    result.get("error", "?"), interval_sec,
+                )
+
+
+def _escalate_exchange_stall(cfg, last_result: dict, consecutive: int) -> None:
+    """Notify operator about exchange connectivity stall."""
+    error = last_result.get("error", "unknown")
+    exchange = cfg.exchange.name
+    message = (
+        f"Exchange {exchange} unreachable for {consecutive} consecutive probes "
+        f"({consecutive}min+). Last error: {error}. "
+        f"Check network and proxy settings in Settings -> Network."
+    )
+    logger.warning("exchange_auto_resume stall: %s", message)
+    try:
+        from aletheia.notifications import notify_operator
+        notify_operator(
+            "Exchange Auto-Resume Stalled",
+            message,
+            source="connectivity_monitor",
+            event_type=None,
+            audit=False,
+            error_log=True,
+        )
+    except Exception:
+        pass
+    try:
+        from aletheia.files.jsonl import write_audit
+        write_audit({
+            "actor": "system",
+            "source": "connectivity_monitor",
+            "event_type": "exchange_auto_resume_stall_escalated",
+            "entity_type": "gateway",
+            "entity_id": "gateway",
+            "message": message,
+            "metadata": {"exchange": exchange, "consecutive_failures": consecutive},
+        })
+    except Exception:
+        pass
 
 
 async def _resume_from_network(cfg) -> None:

@@ -276,3 +276,80 @@ class TestStartAutoResumeTask:
             except asyncio.CancelledError:
                 pass
             mod._active_task = None
+
+
+# ---------------------------------------------------------------------------
+# 7. Stall detection: escalates after threshold consecutive failures
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_stall_escalation_fires_after_threshold(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    cfg = _save_paused_cfg()
+    # Set low threshold for test speed
+    cfg.health.auto_resume_stall_threshold = 3
+    from aletheia.config.loader import save_config
+    save_config(cfg)
+
+    _bounded_sleep(monkeypatch, max_iters=20)
+    # Never succeeds — will stall and eventually the test's bounded_sleep aborts it
+    calls = _patch_probe(monkeypatch, [False])
+
+    # Patch notify_operator to capture calls
+    notifications = []
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.auto_resume.logger",
+        __import__("logging").getLogger("test.auto_resume"),
+    )
+
+    from unittest.mock import patch
+
+    with patch("aletheia.notifications.notify_operator") as mock_notify:
+        from aletheia.agent_runtime.auto_resume import _auto_resume_loop
+        # Loop will run until bounded_sleep aborts it
+        with pytest.raises(AssertionError, match="did not exit"):
+            await _auto_resume_loop(interval_sec=1)
+
+        # After 3 failures (threshold), escalation should have fired
+        assert mock_notify.called
+        call_args = mock_notify.call_args
+        assert "stall" in call_args[0][0].lower() or "stall" in str(call_args).lower()
+
+    # Audit event should be written
+    stall_events = _audit_events("auto_resume_stall_escalated")
+    assert len(stall_events) >= 1
+
+
+# ---------------------------------------------------------------------------
+# 8. Stall classification: secret_missing detected correctly
+# ---------------------------------------------------------------------------
+
+def test_classify_stall_secret_missing(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    cfg = _save_paused_cfg()
+    cfg.models.providers["anthropic_compatible"].api_key_secret_ref = "model.test.api_key"
+    from aletheia.config.loader import save_config
+    save_config(cfg)
+
+    # Patch get_secret to return None (missing)
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", lambda k: None)
+
+    from aletheia.agent_runtime.auto_resume import _classify_stall
+    result = _classify_stall([{"provider": "anthropic_compatible", "usable": False, "error": "connection refused"}])
+    assert result == "secret_missing"
+
+
+# ---------------------------------------------------------------------------
+# 9. Stall classification: auth_error from 401 response
+# ---------------------------------------------------------------------------
+
+def test_classify_stall_auth_error(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _save_paused_cfg()
+
+    # Secret exists but provider returns 401
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", lambda k: "some-key")
+
+    from aletheia.agent_runtime.auto_resume import _classify_stall
+    result = _classify_stall([{"provider": "anthropic_compatible", "usable": False, "error": "HTTP 401 from https://example.com"}])
+    assert result == "auth_error"
