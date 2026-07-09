@@ -46,6 +46,19 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
     sq._db_conn = conn
     run_migrations()
 
+    # Pin the okx_broker demo-symbol cache to a permissive set INCLUDING BTC/USDT.
+    # Another full-suite test can leave it populated without BTC swap (fresh TTL),
+    # which would make the okx_demo averaging-in leg reject as an unsupported symbol
+    # before it updates the position — an order-dependent failure. Pinning avoids
+    # both that and a flaky live refresh (bitget/binance params ignore this cache).
+    import time as _time
+    import aletheia.execution.okx_broker as _okxb
+    _okxb._okx_demo_symbols = {
+        "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
+        "spot": frozenset({"BTC/USDT", "ETH/USDT"}),
+    }
+    _okxb._okx_demo_symbols_loaded_at = _time.time()
+
 
 def _make_open_position(
     *,
@@ -105,13 +118,21 @@ def test_live_broker_averaging_in_accumulates_entry_fee_and_recomputes_liquidati
     recomputed from the weighted-average entry (unchanged leverage)."""
     _setup_env(tmp_path, monkeypatch)
 
-    # The three live clients each validate credentials at __init__. Stub the
-    # credential-fetch used by their `_get_credentials` paths so the constructors
-    # don't refuse to build in a unit-test environment.
+    # The three live clients each validate credentials at __init__. Each client
+    # module did `from aletheia.config.secrets import get_secret`, so it holds its
+    # OWN module-level reference — patching only `aletheia.config.secrets.get_secret`
+    # does NOT intercept it. (This test only passed before when an earlier test left
+    # the real secrets cache primed with truthy values — an order-dependent flake.)
+    # Patch get_secret in each client's own namespace so the constructor builds
+    # deterministically regardless of collection order.
     def _fake_get_secret(key, default=None):
         return "test-fake-secret"
 
     monkeypatch.setattr("aletheia.config.secrets.get_secret", _fake_get_secret)
+    for _mod in ("aletheia.exchanges.bitget.client",
+                 "aletheia.exchanges.okx.client",
+                 "aletheia.exchanges.binance.client"):
+        monkeypatch.setattr(f"{_mod}.get_secret", _fake_get_secret, raising=False)
 
     from aletheia.storage.models import TradeProposal
     from aletheia.storage.repositories import _select_one, insert_trade_proposal
