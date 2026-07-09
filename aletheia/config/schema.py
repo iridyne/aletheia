@@ -392,11 +392,21 @@ class HealthConfig(BaseModel):
     # and auto-resume when connectivity is restored.
     auto_resume_enabled: bool = True
     auto_resume_interval_sec: int = 300
+    # Stall detection: after this many consecutive failed probes, escalate to
+    # operator with root-cause classification (secret_missing vs network vs auth).
+    auto_resume_stall_threshold: int = 6
+    auto_resume_stall_backoff_factor: float = 2.0
+    auto_resume_max_interval_sec: int = 1800
     # Exchange connectivity monitor: detect network outages and auto-pause/resume.
     exchange_probe_interval_sec: int = 30
     exchange_probe_failure_threshold: int = 3
     exchange_auto_resume_interval_sec: int = 60
     exchange_auto_resume_success_threshold: int = 2
+    exchange_stall_threshold: int = 30
+    # Layered pause: when True, pause only AI-dependent jobs (observer, trader,
+    # operator) while keeping data-collection jobs running. This prevents data
+    # gaps during LLM outages. When False, all jobs are halted (legacy behavior).
+    layered_pause_enabled: bool = True
 
 
 class RetentionConfig(BaseModel):

@@ -18,6 +18,31 @@ _scheduler: BackgroundScheduler | None = None
 _SCHEDULER_JOB_LOCK = threading.RLock()
 _JOB_RUN_STATE = threading.local()
 
+# Jobs that continue running during a layered pause (no LLM dependency).
+# These are pure data-collection / infrastructure jobs whose output is valuable
+# even when AI-dependent decision-making is offline.
+_ESSENTIAL_JOBS: set[str] = {
+    "market_data",
+    "data_collectors",
+    "connectivity_monitor",
+    "portfolio_snapshot",
+    "price_feed",
+    "ohlcv_nightly_backfill",
+    "exchange_sync",
+    "health_check",
+    "cleanup",
+    "news_fetch",
+    "okx_demo_symbols",
+    "reconciliation",
+    "position_reconcile",
+    "tpsl_fill_check",
+    "outcome_settler",
+    "shadow_resolver",
+}
+
+# Track which jobs were selectively paused (for targeted resume).
+_selectively_paused_jobs: set[str] = set()
+
 # Hard time budgets for scheduler jobs that depend on external IO or LLM calls.
 # APScheduler's max_instances=1 prevents overlap, but it cannot recover a job
 # that stays inside an awaited network call forever. Timeboxing these coroutines
@@ -551,10 +576,23 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
 
     _scheduler.start()
-    # If config says paused at boot, immediately pause the scheduler.
+    # If config says paused at boot, apply pause (layered or blanket).
     if cfg.runtime.paused:
-        _scheduler.pause()
-        logger.info("Scheduler started PAUSED (runtime.paused=true) with %d jobs", len(_scheduler.get_jobs()))
+        if cfg.health.layered_pause_enabled:
+            for job in _scheduler.get_jobs():
+                if job.id not in _ESSENTIAL_JOBS:
+                    _scheduler.pause_job(job.id)
+                    _selectively_paused_jobs.add(job.id)
+            logger.info(
+                "Scheduler started LAYERED-PAUSED (runtime.paused=true) with %d jobs "
+                "(%d essential running, %d paused)",
+                len(_scheduler.get_jobs()),
+                len([j for j in _scheduler.get_jobs() if j.id in _ESSENTIAL_JOBS]),
+                len(_selectively_paused_jobs),
+            )
+        else:
+            _scheduler.pause()
+            logger.info("Scheduler started PAUSED (runtime.paused=true) with %d jobs", len(_scheduler.get_jobs()))
     else:
         logger.info("Scheduler started with %d jobs", len(_scheduler.get_jobs()))
     return _scheduler
@@ -567,28 +605,77 @@ def stop_scheduler() -> None:
         _scheduler = None
 
 
-def pause_scheduler() -> None:
-    """Actually pause job execution (not just skip via config flag)."""
-    if _scheduler:
+def pause_scheduler(layered: bool | None = None) -> None:
+    """Pause job execution.
+
+    When layered=True (or config layered_pause_enabled and layered is None),
+    only non-essential jobs are paused — data collection continues.
+    When layered=False, all jobs are paused (legacy blanket behavior).
+    """
+    if not _scheduler:
+        return
+
+    if layered is None:
+        cfg = load_config()
+        layered = cfg.health.layered_pause_enabled
+
+    if not layered:
         _scheduler.pause()
-        logger.info("Scheduler paused")
+        logger.info("Scheduler paused (blanket)")
+        return
+
+    # Selective pause: only pause non-essential jobs
+    _selectively_paused_jobs.clear()
+    for job in _scheduler.get_jobs():
+        if job.id not in _ESSENTIAL_JOBS:
+            _scheduler.pause_job(job.id)
+            _selectively_paused_jobs.add(job.id)
+    logger.info(
+        "Scheduler layered-pause: %d jobs paused, %d essential jobs continue",
+        len(_selectively_paused_jobs),
+        len([j for j in _scheduler.get_jobs() if j.id in _ESSENTIAL_JOBS]),
+    )
 
 
 def resume_scheduler() -> None:
-    # If the scheduler never came up (init_scheduler raised during lifespan and
-    # was only warned, leaving _scheduler is None), a bare `if _scheduler` resume
-    # silently no-ops while the /api/gateway/resume route still reports success —
-    # so the operator thinks the loop resumed but no job is ever scheduled. Build
-    # it on demand. By now the caller has already persisted runtime.paused=False,
-    # so init_scheduler() won't boot it paused.
+    """Resume all paused jobs (whether blanket or selectively paused)."""
     global _scheduler
     if _scheduler is None:
         init_scheduler()
         if _scheduler is None:
             logger.warning("resume_scheduler: scheduler unavailable (disabled or init failed)")
-        return  # init_scheduler starts unpaused when runtime.paused is False
-    _scheduler.resume()
-    logger.info("Scheduler resumed")
+        return
+    # If blanket-paused, resume the whole scheduler
+    if _scheduler.state == STATE_PAUSED:
+        _scheduler.resume()
+        logger.info("Scheduler resumed (from blanket pause)")
+    # Also resume any selectively-paused jobs
+    if _selectively_paused_jobs:
+        for job_id in list(_selectively_paused_jobs):
+            try:
+                _scheduler.resume_job(job_id)
+            except Exception:
+                pass
+        logger.info("Scheduler resumed %d selectively-paused jobs", len(_selectively_paused_jobs))
+        _selectively_paused_jobs.clear()
+
+
+def get_pause_state() -> dict:
+    """Return current pause state for API/dashboard consumers."""
+    if _scheduler is None:
+        return {"scheduler_active": False, "mode": "stopped"}
+    if _scheduler.state == STATE_PAUSED:
+        return {"scheduler_active": True, "mode": "blanket_paused", "paused_jobs": "all"}
+    if _selectively_paused_jobs:
+        return {
+            "scheduler_active": True,
+            "mode": "layered_paused",
+            "paused_jobs": sorted(_selectively_paused_jobs),
+            "running_jobs": sorted(
+                j.id for j in _scheduler.get_jobs() if j.id in _ESSENTIAL_JOBS
+            ),
+        }
+    return {"scheduler_active": True, "mode": "running"}
 
 
 def reschedule_universe_refresh(interval_min: int) -> bool:
