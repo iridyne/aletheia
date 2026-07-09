@@ -682,22 +682,32 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 
 ---
 
-### 🔴 [IN PROGRESS — workflow] IB-24-11: debate 方向无关 bug 导致 SHORT 机会被错误降级
+### ✅ [FIXED] IB-24-11: debate 方向无关 bug 导致 SHORT 机会被错误降级
 
 **现象**: flow audit 报 `debate_impact: missed_alpha_suspect`，24h 内 2 个机会被 debate 降级后 TTL 到期：
 - LDO/USDT short（score=51，15m 收益 +0.42%）
 - SLX/USDT short（score=53，15m 收益 +0.60%）
 
-**根因（已确认）**: `trading_decision.py` debate 调整公式方向无关：
+**根因**: `trading_decision.py` debate 调整公式方向无关 — SHORT 机会因 bear > bull 信号被错误惩罚：
 ```python
-advantage = debate.bull_confidence - debate.bear_confidence  # ← BUG
+# BUG（已修复）
+advantage = debate.bull_confidence - debate.bear_confidence  # SHORT 时方向错误
 ```
 对于 SHORT 机会，bear > bull 是支持做空的看空信号，但公式把它算作负分：
-- bear=75, bull=25 → advantage = -50 → conviction 58 → 43 → SKIP
+- bear=75, bull=25 → advantage = -50 → conviction 58 → 43 → SKIP（错误）
 - 正确应为：SHORT 时 advantage = bear - bull = +50 → conviction 73 → TRADE
 
+**修复**: `trading_decision.py` 公式改为方向感知：SHORT 使用 (bear-bull)，LONG/None 使用 (bull-bear)：
+```python
+if decision.direction == "short":
+    advantage = debate.bear_confidence - debate.bull_confidence
+else:
+    advantage = debate.bull_confidence - debate.bear_confidence
+```
+
 **影响**: 所有进入 debate（conviction 40-80）的 SHORT 机会，只要 bear > bull（即市场看空），就会被错误降级到 43 以下触发 skip。这是系统性偏向做多、压制做空的设计缺陷。  
-**当前状态**: workflow 进行中（audit → fix → verify + commit）。
+**当前状态**: 已修复，19 项测试全部通过（含 10 项新增方向感知场景）。  
+**commit**: 见 fix/layered-pause 分支（IB-24-11 commit）。
 
 ---
 
@@ -726,7 +736,7 @@ advantage = debate.bull_confidence - debate.bear_confidence  # ← BUG
 | P0 | IB-24-07 | FTS 索引 89→1507，medium_confidence 过滤 bug 已修复 | ✅ 已修复 `4bc3707` |
 | P0 | IB-24-08 | signal_settlement 12,827 条逾期未结算 | 🔧 agent 诊断中 |
 | P0 | IB-24-09 | volume_scanner 2.6 天未运行 | 🔧 agent 诊断中 |
-| P1 | IB-24-11 | debate 方向无关 bug — SHORT 被系统性压制 | 🔧 workflow 修复中 |
+| P1 | IB-24-11 | debate 方向无关 bug — SHORT 被系统性压制 | ✅ 已修复 |
 | P1 | IB-24-12 | 30% neutral_or_missing_direction | 🔧 agent 分析中 |
 | P1 | IB-24-13 | 45% TTL 到期 | 🔧 agent 分析中 |
 | P2 | IB-24-10 | Bitget 独有标的无 OHLCV 数据源 | 🗓 长期 |
@@ -744,4 +754,5 @@ advantage = debate.bull_confidence - debate.bear_confidence  # ← BUG
 | IB-24-05 | execution_eligible 无实时价格门控（allocator + signal_emitter） | `acbf7c6` |
 | IB-24-06 | Databricks endpoint URL 更新（旧机器→新机器） | config 更新 |
 | IB-24-07 | FTS reindex 包含 medium_confidence（89→1507 条索引） | `4bc3707` |
+| IB-24-11 | debate 公式方向感知 — SHORT 不再被 bear>bull 信号错误降级 | fix/layered-pause |
 

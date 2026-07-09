@@ -217,7 +217,13 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
             # advantage is a correction term, not a fresh verdict (2026-06-23
             # profit-loop freeze exception). 0.3 weight keeps debate meaningful
             # without letting it override a confident initial read.
-            advantage = debate.bull_confidence - debate.bear_confidence
+            # For SHORT trades, bear > bull supports the thesis (market is going
+            # down). Invert the sign so a bearish debate result raises conviction
+            # for shorts rather than incorrectly downgrading it.
+            if decision.direction == "short":
+                advantage = debate.bear_confidence - debate.bull_confidence
+            else:
+                advantage = debate.bull_confidence - debate.bear_confidence
             adjusted = int(round(initial_conviction + advantage * 0.3))
             decision.conviction = max(0, min(100, adjusted))
             decision.debate_adjustment = decision.conviction - initial_conviction
@@ -225,7 +231,8 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
                 decision.action = "skip"
                 decision.reasoning += (
                     f" [debate adjusted conviction {initial_conviction}→{decision.conviction} "
-                    f"(bull {debate.bull_confidence} vs bear {debate.bear_confidence}) → skip]"
+                    f"(bull {debate.bull_confidence} vs bear {debate.bear_confidence}, "
+                    f"dir={decision.direction}) → skip]"
                 )
 
     # Compute sizing for trade-like actions (P1-5: pass strategy trade count for sample-aware Kelly)
