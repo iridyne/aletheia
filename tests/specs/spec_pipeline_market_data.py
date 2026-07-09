@@ -43,8 +43,9 @@ def _setup_db(tmp_path, monkeypatch):
     return conn
 
 
-def _insert_fresh_snapshot(conn, symbol: str, price: float = 50000.0, age_seconds: float = 0.0):
-    """Insert a market_snapshots row with a controlled timestamp."""
+def _insert_fresh_snapshot(conn, symbol: str, price: float = 50000.0, age_seconds: float = 0.0,
+                           market_type: str = "spot"):
+    """Insert a market_snapshots row with a controlled timestamp and market_type."""
     snap_id = str(uuid.uuid4())
     # age_seconds > 0 means the snapshot is that many seconds old
     snap_ts = datetime.fromtimestamp(
@@ -53,7 +54,7 @@ def _insert_fresh_snapshot(conn, symbol: str, price: float = 50000.0, age_second
     conn.execute(
         "INSERT INTO market_snapshots (id, symbol, market_type, price, volume_24h, "
         "change_pct_24h, snapshot_at, provider) VALUES (?,?,?,?,?,?,?,?)",
-        (snap_id, symbol, "spot", price, 1_000_000.0, 0.5, snap_ts, "ccxt"),
+        (snap_id, symbol, market_type, price, 1_000_000.0, 0.5, snap_ts, "ccxt"),
     )
     conn.commit()
     return snap_id
@@ -288,3 +289,68 @@ def test_xstock_consecutive_failures_trigger_infra_event(tmp_path, monkeypatch):
         "No infra_event row written after 3 consecutive xStock fetch failures. "
         "MD-1: infrastructure failures must surface as structured audit events."
     )
+
+
+# ---------------------------------------------------------------------------
+# PL-MD-06  L2b  typed_freshness: futures freshness prefers the perp snapshot
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MD-06", "pipeline_market_data", "§3 typed_freshness", "L2b",
+        "_market_data_age_seconds(symbol, market_type='usdt_futures') reads the "
+        "perp snapshot, not a same-symbol spot snapshot — so a futures decision's "
+        "freshness is not computed off a spot row (#13)",
+    ),
+)
+def test_market_data_freshness_prefers_typed_snapshot(tmp_path, monkeypatch):
+    """A stale spot snapshot must NOT satisfy a fresh futures freshness check."""
+    conn = _setup_db(tmp_path, monkeypatch)
+
+    # Old spot row + fresh perp row for the SAME symbol.
+    _insert_fresh_snapshot(conn, "BTC/USDT", price=60000.0, age_seconds=300.0, market_type="spot")
+    _insert_fresh_snapshot(conn, "BTC/USDT", price=60050.0, age_seconds=3.0, market_type="perp")
+
+    from aletheia.risk.engine import _market_data_age_seconds
+
+    # usdt_futures proposal → should resolve the ~3s perp row, not the 300s spot row.
+    age = _market_data_age_seconds("BTC/USDT", market_type="usdt_futures")
+    assert age is not None, "typed freshness returned None despite a fresh perp snapshot"
+    assert age < 120.0, (
+        f"Expected the ~3s perp snapshot, got age={age:.1f}s — futures freshness "
+        "is reading the stale spot row (#13 regression)"
+    )
+
+    # Symbol-only (legacy) call still returns the most recent row regardless of type.
+    legacy = _market_data_age_seconds("BTC/USDT")
+    assert legacy is not None and legacy < 120.0
+
+
+# ---------------------------------------------------------------------------
+# PL-MD-07  L2b  typed_fallback: typed query with no typed row falls back
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MD-07", "pipeline_market_data", "§3 typed_fallback", "L2b",
+        "_market_data_age_seconds(symbol, market_type='usdt_futures') falls back "
+        "to the symbol-only snapshot when no typed row exists, so old spot-only "
+        "DBs do not fail freshness closed (age=None) for futures proposals (#13)",
+    ),
+)
+def test_market_data_freshness_falls_back_to_symbol_only(tmp_path, monkeypatch):
+    """Only a spot snapshot exists → a futures freshness query still finds it."""
+    conn = _setup_db(tmp_path, monkeypatch)
+
+    _insert_fresh_snapshot(conn, "BTC/USDT", price=60000.0, age_seconds=5.0, market_type="spot")
+
+    from aletheia.risk.engine import _market_data_age_seconds
+
+    age = _market_data_age_seconds("BTC/USDT", market_type="usdt_futures")
+    assert age is not None, (
+        "typed futures query returned None despite a fresh spot snapshot — the "
+        "symbol-only fallback is missing, which would fail freshness closed (#13)"
+    )
+    assert age < 120.0

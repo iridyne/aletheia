@@ -34,13 +34,20 @@ def _is_live(execution_mode: str) -> bool:
     return execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited")
 
 
-def _market_data_age_seconds(symbol: str) -> float | None:
-    """Age in seconds of the latest market snapshot for symbol, or None if absent."""
-    from aletheia.storage.repositories import list_market_snapshots
-    rows = list_market_snapshots(symbol=symbol, limit=1)
-    if not rows:
+def _market_data_age_seconds(symbol: str, market_type: str | None = None) -> float | None:
+    """Age in seconds of the latest market snapshot for symbol, or None if absent.
+
+    When ``market_type`` (proposal vocabulary, e.g. "usdt_futures") is given, a
+    typed snapshot is preferred so a futures freshness check does not pass on a
+    spot snapshot for the same symbol (#13). ``latest_snapshot`` falls back to
+    the symbol-only lookup when no typed snapshot exists, so this stays fail-closed
+    on genuinely absent data without introducing new stale rejections.
+    """
+    from aletheia.trading.market_data import latest_snapshot
+    row = latest_snapshot(symbol, market_type=market_type)
+    if not row:
         return None
-    ts = rows[0].get("snapshot_at")
+    ts = row.get("snapshot_at")
     if not ts:
         return None
     try:
@@ -254,7 +261,7 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     # Live-only checks: data freshness, single-trade risk, strategy lifecycle.
     if _is_live(proposal.execution_mode):
         # 11. Data freshness
-        age = _market_data_age_seconds(proposal.symbol)
+        age = _market_data_age_seconds(proposal.symbol, market_type=proposal.market_type)
         if age is None or age > _MAX_DATA_AGE_SECONDS:
             violations.append(f"stale_market_data:age={age}")
 
@@ -315,7 +322,7 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
         # no exchange-side price and runs even when collection is paused. Looser bound
         # than live (see _MAX_DEMO_DATA_AGE_SECONDS).
         if proposal.execution_mode in ("bitget_demo", "okx_demo"):
-            demo_age = _market_data_age_seconds(proposal.symbol)
+            demo_age = _market_data_age_seconds(proposal.symbol, market_type=proposal.market_type)
             if demo_age is None or demo_age > _MAX_DEMO_DATA_AGE_SECONDS:
                 violations.append(f"stale_market_data_demo:age={demo_age}")
 
