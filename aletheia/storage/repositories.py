@@ -962,6 +962,7 @@ def list_market_snapshots(
         "market_snapshots",
         where=where,
         params=tuple(params),
+        order="COALESCE(snapshot_at, '') DESC, rowid DESC",
         limit=limit,
     )
 

@@ -165,7 +165,25 @@ async def _auto_resume_loop(interval_sec: int = 300) -> None:
                 )
         except Exception as e:
             consecutive_failures += 1
-            logger.debug("auto_resume: probe exception: %s", e)
+            probe_results = [{"provider": "unknown", "usable": False, "error": str(e)}]
+            cause = _classify_stall(probe_results)
+            if consecutive_failures >= stall_threshold and (
+                consecutive_failures - last_escalation_at >= stall_threshold
+            ):
+                _escalate_stall(cause, consecutive_failures)
+                last_escalation_at = consecutive_failures
+                current_interval = min(
+                    int(current_interval * backoff_factor), max_interval
+                )
+                logger.info(
+                    "auto_resume: stall detected (cause=%s), backed off to %ds",
+                    cause, current_interval,
+                )
+            else:
+                logger.warning(
+                    "auto_resume: probe exception (%s), retry in %ds",
+                    e, current_interval,
+                )
 
 
 def start_auto_resume_task(interval_sec: int = 300) -> asyncio.Task | None:

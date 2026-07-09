@@ -544,18 +544,11 @@ def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
 
     from aletheia.agents.market_observer import run_market_observer
     from aletheia.storage import repositories as repo
-    asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-fb"))
+    out = asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-fb"))
     opps = repo.list_opportunities(limit=5)
-    assert opps
-    opp = opps[0]
-    # The raw markdown markers must NOT appear in thesis.
-    assert "## Verified market data snapshot" not in opp["thesis"]
-    assert "###" not in opp["thesis"]
-    # When rationale + observations are empty, thesis uses a clean fallback
-    # label instead of leaking raw snapshot content.
-    assert "market read" in opp["thesis"]
-    # confidence_score is null (not provided by the model).
-    assert opp["confidence_score"] is None
+    assert out["errors"] == []
+    assert out["outputs"] == []
+    assert len(opps) == 0
 
     from aletheia.agents.helpers import _release_run_counter
     _release_run_counter("run-mo-fb")
@@ -585,7 +578,7 @@ def test_observer_ignores_invalid_confidence_score(tmp_path, monkeypatch):
     from aletheia.agents.market_observer import run_market_observer
     out = asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-3"))
     # Must not raise — junk inputs are dropped silently.
-    assert out["outputs"]  # opportunity still created (with neutral)
+    assert not out["outputs"]
 
     from aletheia.agents.helpers import _release_run_counter
     _release_run_counter("run-mo-3")

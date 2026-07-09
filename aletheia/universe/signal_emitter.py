@@ -38,6 +38,17 @@ _HIGH_CONF_THRESHOLD = 60.0
 _REGIME_BIAS_THRESHOLD = 0.30
 
 
+def _snapshot_market_type(mt: str | None) -> str | None:
+    """Map a proposal/db market_type to the snapshot vocabulary."""
+    if not mt:
+        return None
+    if mt == "usdt_futures":
+        return "perp"
+    if mt in {"spot", "perp", "futures"}:
+        return mt
+    return None
+
+
 def emit_deterministic_opportunities(
     members: list[dict],
     snapshot_id: str,
@@ -146,7 +157,16 @@ def emit_deterministic_opportunities(
         # last 2 hours. Symbols with zero snapshots would otherwise reach PI Agent as
         # tradeable but fail silently at proposal submission (price=0 → proposal_id=None).
         _snapshot_cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
-        _snaps = list_market_snapshots(symbol=symbol, limit=1)
+        _snap_mt = _snapshot_market_type(market_type)
+        _snaps = (
+            list_market_snapshots(symbol=symbol, market_type=_snap_mt, limit=1)
+            if _snap_mt
+            else []
+        )
+        if not _snaps:
+            # Fallback to symbol-only lookup for older/legacy rows when typed snapshots
+            # are absent for this symbol.
+            _snaps = list_market_snapshots(symbol=symbol, limit=1)
         _exec_eligible = False
         if _snaps:
             _snap_at_str = _snaps[0].get("snapshot_at") or ""

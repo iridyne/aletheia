@@ -216,6 +216,17 @@ def resolve_family_quota(cfg: UniverseConfig, regime_state: str | None) -> dict[
     return cfg.family_quota
 
 
+def _snapshot_market_type(mt: str | None) -> str | None:
+    """Map a proposal/db market_type to the snapshot vocabulary."""
+    if not mt:
+        return None
+    if mt == "usdt_futures":
+        return "perp"
+    if mt in {"spot", "perp", "futures"}:
+        return mt
+    return None
+
+
 def allocate_universe(
     scored: list[dict], cfg: UniverseConfig, regime_state: str | None = None,
 ) -> list[dict]:
@@ -306,7 +317,16 @@ def allocate_universe(
         # last 2 hours. Symbols with zero snapshots (e.g. NATGAS/USDT) would otherwise
         # reach PI Agent as tradeable but fail silently at proposal submission.
         _sym = item.get("symbol", "")
-        _snaps = list_market_snapshots(symbol=_sym, limit=1)
+        _snap_mt = _snapshot_market_type(item.get("market_type", "spot"))
+        _snaps = (
+            list_market_snapshots(symbol=_sym, market_type=_snap_mt, limit=1)
+            if _snap_mt
+            else []
+        )
+        if not _snaps:
+            # Fallback to symbol-only lookup for older/legacy rows when typed snapshots
+            # are absent for this symbol.
+            _snaps = list_market_snapshots(symbol=_sym, limit=1)
         if _snaps:
             _snap_at_str = _snaps[0].get("snapshot_at") or ""
             try:
