@@ -654,21 +654,26 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 
 ---
 
-### 🟠 [IN PROGRESS] IB-24-08: signal_settlement stall（12,827 条逾期 forward outcome 未结算）
+### 🟢 [FIXED] IB-24-08: signal_settlement stall（12,827 条逾期 forward outcome 未结算）
 
 **现象**: doctor 报 `content.signal_settlement: 78 forward outcomes past due_at, oldest 19min ago`；DB 实查：12,827 条 `settled_at IS NULL AND due_at <= now`。  
-**根因**: 待诊断（sub agent 进行中）。outcome settler job 可能：(a) 未在 scheduler 注册，(b) 注册了但静默失败，(c) 缺少某依赖数据导致无价格可结算。  
+**根因**: `settle_due()`（`outcome_recorder.py`）是单次调用，每次仅处理 500 行。12,827 行积压 + 15 分钟调度间隔 = 需要 6.5 小时才能清空，而新数据不断流入，实际永远无法追上。  
 **影响**: `data.signal_win_rate` 等指标基于已结算数据计算，大量未结算会导致统计偏差。  
-**当前状态**: sub agent 诊断中。
+**修复**:
+- `aletheia/universe/outcome_recorder.py`：`settle_due()` 改为批次循环直到队列清空，每批 500 行，100 秒墙时预算（低于 scheduler 120s 超时），每次调用最多处理 `max_rows=2000` 行
+- `aletheia/diagnostics/doctor.py`：修正过期注释（间隔是 15min 非 10min，阈值改为 20min）
+- **commit**: `6729aa13`
 
 ---
 
-### 🟠 [IN PROGRESS] IB-24-09: volume_scanner 停止运行（2.6 天无更新）
+### 🟢 [FIXED] IB-24-09: volume_scanner 停止运行（2.6 天无更新）
 
 **现象**: doctor 报 `data.volume_ranking stale: 2.6d ago`，最新 `volume_ranking_snapshots.observed_at = 2026-07-07T02:40`。  
-**根因**: 待诊断（sub agent 进行中）。  
+**根因**: `_async_data_collectors()` Phase B 共享 `_DC_DEADLINE_S=40s` 预算，Phase A（微结构 18s + 衍生品 18s = 36s）消耗大部分预算后，Phase B 剩余时间不足 4s。`volume_scanner` 排在 Phase B 最末，CoinGecko（15s 上限）+ macro（15s 上限）先耗尽剩余预算，`_bounded()` 检测到剩余≤2s 时静默跳过 volume_scanner，无错误日志。  
 **影响**: universe 排序退化为静态列表，ranker 无法按实时成交量排序候选标的。  
-**当前状态**: sub agent 诊断中。
+**修复**:
+- `aletheia/agent_runtime/scheduler.py`：Phase B 中 volume_scanner 调整为**最优先**执行（在 CoinGecko/macro 之前），保证其 12s 上限预算始终可用
+- **commit**: `6729aa13`
 
 ---
 
@@ -750,8 +755,8 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 | 优先级 | ID | 问题 | 状态 |
 |--------|----|----|------|
 | P0 | IB-24-07 | FTS 索引 89→1507，medium_confidence 过滤 bug 已修复 | ✅ 已修复 `4bc3707` |
-| P0 | IB-24-08 | signal_settlement 12,827 条逾期未结算 | 🔧 agent 诊断中 |
-| P0 | IB-24-09 | volume_scanner 2.6 天未运行 | 🔧 agent 诊断中 |
+| P0 | IB-24-08 | signal_settlement 12,827 条逾期未结算 | ✅ 已修复 `6729aa13` |
+| P0 | IB-24-09 | volume_scanner 2.6 天未运行 | ✅ 已修复 `6729aa13` |
 | P1 | IB-24-11 | debate 方向无关 bug — SHORT 被系统性压制 | ✅ 已修复 |
 | P1 | IB-24-12 | 30% neutral_or_missing_direction | ✅ 已修复（market_observer 跳过 neutral standalone opp） |
 | P1 | IB-24-13 | 45% TTL 到期 | ✅ 已修复（expire_stale_opportunities 增加 valid_until 检查） |
@@ -773,4 +778,6 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 | IB-24-11 | debate 信号提示方向感知 — SHORT 评估不再使用 LONG 视角信号 | `a747f19` |
 | IB-24-12 | market_observer 跳过 neutral standalone opp（不入库）| `96f6275` |
 | IB-24-13 | expire_stale_opportunities 增加 valid_until < now 条件 | `96f6275` |
+| IB-24-08 | settle_due() 改为批次循环（max_rows=2000, budget=100s），消除 12k 行积压 | `6729aa13` |
+| IB-24-09 | volume_scanner 调整为 Phase B 最优先（Phase B 独立 40s 预算首位保证） | `6729aa13` |
 
