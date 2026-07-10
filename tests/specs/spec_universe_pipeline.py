@@ -196,6 +196,31 @@ def test_short_disable_is_hard():
 
 
 @spec_claim(
+    SpecClaim("UP-19", "universe_pipeline", "§market-type snapshot eligibility", "L2b",
+              "a candidate is execution-eligible only when a fresh snapshot exists for "
+              "that exact spot/perp instrument; a same-symbol snapshot from the other "
+              "market type must not pass the pre-trade freshness gate"),
+)
+def test_snapshot_freshness_is_market_type_scoped(monkeypatch):
+    from datetime import datetime, timezone
+    from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
+
+    calls: list[dict] = []
+
+    def snapshots(**kwargs):
+        calls.append(kwargs)
+        return []
+
+    monkeypatch.setattr(
+        "aletheia.universe.snapshot_freshness.list_market_snapshots", snapshots,
+    )
+    assert has_fresh_market_snapshot(
+        "BTC/USDT", "perp", now=datetime.now(timezone.utc),
+    ) is False
+    assert calls == [{"symbol": "BTC/USDT", "market_type": "perp", "limit": 1}]
+
+
+@spec_claim(
     SpecClaim("UP-11", "universe_pipeline", "§2 MO-6 single-symbol RS rank", "L2b",
               "cross-asset RS rank is omitted for <2 symbols (a lone 'Rank 1 of 1' "
               "reads to the LLM as 'strongest in market')"),

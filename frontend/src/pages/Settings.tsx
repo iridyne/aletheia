@@ -620,11 +620,11 @@ function AgentModelsTab({ status, settings, qc }: any) {
 
       <Section
         title="Filter Feedback Controller"
-        description="Phase 1 (SHADOW): a background job scores every opportunity-screening filter per scanner_family from realized forward returns and records loosen/hold/tighten recommendations. It NEVER changes trading config in this phase — review recommendations via `ato opportunity audit --view controller`. Bounded auto-tune is a future phase."
+        description="Phase 1 (SHADOW): records whether each opportunity filter has enough causal evidence for a future review. Aggregate scanner results are not treated as proof that a specific filter should change. It NEVER changes trading config in this phase."
       >
         <Row
           label="Shadow observe job enabled"
-          hint="When ON, the controller runs every N hours and appends read-only recommendations to controller_recommendations. It writes no trading config. Safe to leave on."
+          hint="When ON, the controller records read-only evidence-availability rows. It writes no trading config and does not issue threshold changes until passed/dropped cohorts are recorded."
         >
           <Toggle
             checked={controllerShadowEnabled}
@@ -653,7 +653,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
         </Row>
         <Row
           label="Min samples gate"
-          hint="Minimum settled forward-outcome samples for a (filter, family) cell before a loosen/tighten verdict is emitted. Below this → insufficient_data. Default 20."
+          hint="Reserved for future filter-specific evidence. Aggregate family samples never produce a filter threshold recommendation. Default 20."
         >
           <input
             type="number"

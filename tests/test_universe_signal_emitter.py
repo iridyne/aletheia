@@ -234,6 +234,25 @@ class TestEmitDeterministicOpportunities:
         assert count == 1
         assert opps[0].valid_until == "2099-06-01T00:00:00"
 
+    def test_perp_eligibility_never_uses_a_spot_snapshot(self):
+        members = [{**_make_member("BTC/USDT", "momentum", 75), "market_type": "perp"}]
+        feats = [{**_make_feat("BTC/USDT"), "market_type": "perp"}]
+        inserted = []
+
+        def _snapshots(*, symbol, market_type, limit):
+            assert symbol == "BTC/USDT"
+            assert market_type == "perp"
+            return []
+
+        with patch("aletheia.universe.signal_emitter.find_open_opportunity_by_symbol_snapshot", return_value=None), \
+             patch("aletheia.universe.signal_emitter.insert_opportunity", side_effect=inserted.append), \
+             patch("aletheia.universe.snapshot_freshness.list_market_snapshots", side_effect=_snapshots):
+            count = emit_deterministic_opportunities(members, "snap-1", feats)
+
+        assert count == 1
+        assert inserted[0].market == "usdt_futures"
+        assert inserted[0].execution_eligible is False
+
     def test_derivatives_context_stamped_on_universe_opportunity(self):
         members = [_make_member("BTC/USDT", "derivatives", 75)]
         feats = [_make_feat(

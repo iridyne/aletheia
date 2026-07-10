@@ -244,7 +244,7 @@ def render_flow_trace(record: dict[str, Any]) -> str:
         f"Final: {record.get('final_state')} / {record.get('final_stage')}",
         f"Reason: {record.get('final_reason')}",
         "",
-        "Timeline:",
+        "Timeline (causal order; timestamps show persisted write time):",
     ]
     timeline = record.get("timeline") or []
     if not timeline:
@@ -541,9 +541,7 @@ def _build_record(db, opp: dict[str, Any], context: dict[str, Any]) -> dict[str,
     ]
 
     member = _universe_member(db, opp.get("universe_member_id"))
-    local_drop = _local_pre_trade_drop(opp, member, direction)
-    if local_drop:
-        events.append(_event(local_drop["stage"], "dropped", local_drop.get("at"), local_drop["reason"], local_drop))
+    events.extend(_pre_trade_observations(opp, member, direction))
 
     decisions = _decisions_for_opportunity(db, opp_id)
     for decision in decisions:
@@ -656,7 +654,10 @@ def _build_record(db, opp: dict[str, Any], context: dict[str, Any]) -> dict[str,
             )
         )
 
-    events = sorted(events, key=lambda e: _sort_ts(e.get("at")))
+    # The decision row can be persisted after the proposal/risk rows it caused.
+    # Render the durable facts in causal stage order while retaining their original
+    # write timestamps, rather than presenting write order as causal order.
+    events = sorted(events, key=lambda e: (_causal_stage_order(e.get("stage")), _sort_ts(e.get("at"))))
     final_state, final_stage, final_reason = _final_result(events)
     counterfactual["verdict"] = _counterfactual_verdict(counterfactual, final_state)
 
@@ -690,25 +691,54 @@ def _universe_member(db, member_id: Any) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def _local_pre_trade_drop(
+def _pre_trade_observations(
     opp: dict[str, Any], member: dict[str, Any] | None, direction: str | None
-) -> dict[str, Any] | None:
+) -> list[dict[str, Any]]:
+    """Return observed expiry plus clearly-labelled, non-final eligibility facts.
+
+    The ledger has no durable ranker-rejection table. It must therefore not turn
+    an opportunity's current fields into a historical ``ranker_excluded`` event.
+    """
+    events: list[dict[str, Any]] = []
+    if str(opp.get("status") or "").lower() == "expired":
+        events.append(_event(
+            "ttl_expired", "dropped", opp.get("valid_until") or opp.get("created_at"),
+            "Opportunity status was persisted as expired.",
+            {"valid_until": opp.get("valid_until")},
+        ))
     if not direction:
-        return {"stage": "ranker_excluded", "reason": "neutral_or_missing_direction", "at": opp.get("created_at")}
+        events.append(_event(
+            "eligibility_inferred", "inferred", opp.get("created_at"),
+            "Opportunity has no executable direction; no persisted ranker decision is available.",
+            {"would_skip_reason": "neutral_or_missing_direction"},
+        ))
     if not _truthy(opp.get("execution_eligible"), default=True):
-        return {"stage": "ranker_excluded", "reason": "execution_eligible_false", "at": opp.get("created_at")}
-    score = _to_float(opp.get("confidence_score"))
-    if score is not None and score < 45:
-        return {"stage": "ranker_excluded", "reason": "confidence_below", "confidence_score": score, "at": opp.get("created_at")}
+        events.append(_event(
+            "eligibility_inferred", "inferred", opp.get("created_at"),
+            "Opportunity was marked execution-ineligible; no persisted ranker decision is available.",
+            {"would_skip_reason": "execution_eligible_false"},
+        ))
     valid_until = opp.get("valid_until")
-    if valid_until and _is_past(valid_until):
-        return {"stage": "ttl_expired", "reason": "opportunity_valid_until_expired", "at": valid_until}
+    if valid_until and _is_past(valid_until) and str(opp.get("status") or "").lower() != "expired":
+        events.append(_event(
+            "eligibility_inferred", "inferred", valid_until,
+            "Opportunity validity deadline passed but expiry status was not persisted yet.",
+            {"would_skip_reason": "opportunity_valid_until_expired"},
+        ))
     if member:
         if not _truthy(member.get("execution_eligible"), default=True):
-            return {"stage": "ranker_excluded", "reason": "universe_member_not_eligible", "at": opp.get("created_at")}
+            events.append(_event(
+                "eligibility_inferred", "inferred", opp.get("created_at"),
+                "Universe member was marked execution-ineligible; no persisted ranker decision is available.",
+                {"would_skip_reason": "universe_member_not_eligible"},
+            ))
         if member.get("expires_at") and _is_past(member.get("expires_at")):
-            return {"stage": "ttl_expired", "reason": "universe_member_expired", "at": member.get("expires_at")}
-    return None
+            events.append(_event(
+                "eligibility_inferred", "inferred", member.get("expires_at"),
+                "Universe member validity deadline passed; no persisted ranker decision is available.",
+                {"would_skip_reason": "universe_member_expired"},
+            ))
+    return events
 
 
 def _decisions_for_opportunity(db, opp_id: str) -> list[dict[str, Any]]:
@@ -752,10 +782,19 @@ def _decision_events(decision: dict[str, Any]) -> list[dict[str, Any]]:
             "adjustment": decision.get("debate_adjustment"),
             "trace_status": "ok" if decision.get("debate_initial_conviction") is not None else "insufficient_data",
         }
+        debate_caused_skip = (
+            action == "skip"
+            and trace["initial_conviction"] is not None
+            and trace["final_conviction"] is not None
+            and trace["adjustment"] is not None
+            and int(trace["initial_conviction"]) >= 55
+            and int(trace["final_conviction"]) < 55
+            and int(trace["adjustment"]) < 0
+        )
         events.append(
             _event(
-                "debate_downgraded" if action == "skip" else "debate_recorded",
-                "dropped" if action == "skip" else "ok",
+                "debate_downgraded" if debate_caused_skip else "debate_recorded",
+                "dropped" if debate_caused_skip else "ok",
                 decision.get("created_at"),
                 "Persisted debate trace." if trace["trace_status"] == "ok" else "Legacy debate row has no trace fields.",
                 trace,
@@ -843,14 +882,24 @@ def _counterfactual(db, opp: dict[str, Any], direction: str | None) -> dict[str,
                 "rank": d.get("rank"),
                 "status": "resolved" if d.get("resolved_at") or d.get("pnl_pct") is not None else "pending",
             }
+    snapshot_id = opp.get("universe_snapshot_id")
     member_id = opp.get("universe_member_id")
-    if member_id and direction and _table_exists(db, "universe_forward_outcomes"):
+    if snapshot_id and direction and _table_exists(db, "universe_forward_outcomes"):
         for horizon in _FORWARD_HORIZONS:
+            conditions = [
+                "snapshot_id = ?",
+                "horizon = ?",
+                "status = 'settled'",
+                "forward_return_pct IS NOT NULL",
+            ]
+            params: list[Any] = [snapshot_id, horizon]
+            if member_id:
+                conditions.insert(1, "member_id = ?")
+                params.insert(1, member_id)
             row = db.execute(
-                "SELECT * FROM universe_forward_outcomes WHERE member_id = ? AND horizon = ? "
-                "AND status = 'settled' AND forward_return_pct IS NOT NULL "
+                "SELECT * FROM universe_forward_outcomes WHERE " + " AND ".join(conditions) + " "
                 "ORDER BY datetime(settled_at) DESC LIMIT 1",
-                (member_id, horizon),
+                tuple(params),
             ).fetchone()
             if not row:
                 continue
@@ -886,7 +935,31 @@ def _final_result(events: list[dict[str, Any]]) -> tuple[str, str, str]:
         if found:
             event = found[-1]
             return state, stage, event.get("reason") or "insufficient_data"
-    return "pending", "created", "No downstream lifecycle evidence is available yet."
+    return "pending", "created", "No persisted downstream lifecycle evidence is available yet."
+
+
+def _causal_stage_order(stage: Any) -> int:
+    order = {
+        "created": 0,
+        "eligibility_inferred": 1,
+        "ttl_expired": 2,
+        "signal_pending": 3,
+        "operator_trade_intent": 4,
+        "operator_skip": 4,
+        "debate_recorded": 5,
+        "debate_downgraded": 5,
+        "proposal_created": 6,
+        "risk_approved": 7,
+        "risk_rejected": 7,
+        "order_created": 8,
+        "order_executed": 8,
+        "order_failed": 8,
+        "position_opened": 9,
+        "position_closed": 10,
+        "shadow_resolved": 11,
+        "forward_outcome_resolved": 11,
+    }
+    return order.get(str(stage), 99)
 
 
 def _counterfactual_verdict(counterfactual: dict[str, Any], final_state: str) -> str:

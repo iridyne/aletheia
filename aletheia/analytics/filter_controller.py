@@ -1,16 +1,13 @@
 """Filter Feedback Controller — Phase 1 (shadow / observe-only).
 
-Computes, for each tunable filter × scanner_family, a negative-feedback verdict:
-whether the filter looks too tight (dropping opportunities that would have been
-profitable → LOOSEN), too loose (passing opportunities that lost → TIGHTEN), or
-in balance (HOLD). Below a sample-size gate it returns INSUFFICIENT_DATA and makes
-no recommendation.
+Reports whether each tunable filter has enough filter-specific evidence for a
+negative-feedback verdict. Aggregate scanner-family outcomes are useful context,
+but cannot prove that any individual filter is too tight or too loose, so they
+must never become loosen/tighten advice on their own.
 
-This is a direct generalization of `allocator.get_family_multipliers()`: same
-per-scanner-family forward-outcome hit-rate → linear error map around a neutral
-point → bounded/gated output. The difference is the *actuator*: get_family_multipliers
-scales score multipliers; this maps the same error onto each filter's threshold
-knob (in Phase 1 only as a recommendation, never applied).
+The existing allocator multiplier remains the legitimate family-level feedback
+loop. This controller remains a shadow audit until each filter persists its own
+passed and dropped cohorts with causal IDs.
 
 OBSERVE-ONLY invariant: this module reads the DB and writes append-only rows to
 `controller_recommendations`. It NEVER calls save_config, mutates trading state,
@@ -172,10 +169,20 @@ def compute_filter_feedback(min_samples: int = _DEFAULT_MIN_SAMPLES) -> list[Fil
     (observer_pre_filter) get a single 'insufficient_data' row noting why — they
     need dedicated signals added in a later phase.
     """
-    hitrates = _family_hitrates(min_samples)
     recs: list[FilterRecommendation] = []
 
     for spec in tunable_filters():
+        if not spec.feedback_ready:
+            recs.append(FilterRecommendation(
+                filter_name=spec.name, scanner_family="(unverified)", stage=spec.stage,
+                current_value=spec.current_value, verdict="insufficient_data",
+                suggested_direction="n/a", error_signal=None, n_samples=0,
+                reasoning=(
+                    "No per-filter passed/dropped cohort is persisted. Aggregate "
+                    "scanner-family returns are not a filter-calibration signal."
+                ),
+            ))
+            continue
         if not spec.family_keyed:
             recs.append(FilterRecommendation(
                 filter_name=spec.name, scanner_family="(global)", stage=spec.stage,
@@ -196,6 +203,7 @@ def compute_filter_feedback(min_samples: int = _DEFAULT_MIN_SAMPLES) -> list[Fil
             ))
             continue
 
+        hitrates = _family_hitrates(min_samples)
         if not hitrates:
             recs.append(FilterRecommendation(
                 filter_name=spec.name, scanner_family="(all)", stage=spec.stage,
@@ -288,10 +296,9 @@ def build_filter_controller_report(min_samples: int = _DEFAULT_MIN_SAMPLES) -> d
         "shadow_only": True,
         "signal_basis": "phase1_family_forward_return",
         "signal_note": (
-            "Phase 1 uses a SHARED per-scanner_family direction-adjusted forward-return "
-            "hit-rate (calibration_stats) as the error signal, so all filters keyed on "
-            "the same family share a verdict — the per-filter loosen_direction still "
-            "differs. A drop-specific counterfactual (per-stage) is a later-phase refinement."
+            "Aggregate scanner-family forward returns are shown only as context by the "
+            "existing allocator. This controller issues no loosen/tighten advice until "
+            "each filter records its own passed and dropped cohorts."
         ),
         "verdict_counts": counts,
         "recommendations": [asdict(r) for r in recs],
@@ -351,6 +358,6 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
 
     lines.append("")
     lines.append("Next action:")
-    lines.append("  Shadow mode. Review verdicts over multiple cycles; do not tune "
-                 "manually on a single cycle. Auto-tune is a future phase.")
+    lines.append("  Keep filter changes unchanged. Add causal passed/dropped evidence "
+                 "before enabling any per-filter recommendation.")
     return "\n".join(lines)

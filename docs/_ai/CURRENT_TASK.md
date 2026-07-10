@@ -43,6 +43,10 @@
 - 修学习/分析类消费者时套「合成平仓 + clean_window 过滤」自检（#159/#160 同类）。
 - 下一批优先级建议：B10 文档尾（最快）→ B9 → B7 → B8（留给需 npm build 的专门轮次）→ 数据模型迁移/operator 鉴权（基建专门轮次）。
 
+当前补充意图：机会生命周期审计和 filter feedback 只能消费有因果记录的事实。没有每个
+filter 的放行/拒绝记录前，保持 recommendation 为证据不足；不要用某个 scanner family 的总收益
+替代某个具体 filter 的效果。任何后续闭环调参先补持久化的 filter decision 记录和对应测试。
+
 ---
 
 ## 当前诊断入口:Opportunity Lifecycle

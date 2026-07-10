@@ -566,6 +566,21 @@ def _probe_config_gates(report: Report) -> None:
                f"live.state={cfg.live.state}, exchange.mode={cfg.exchange.mode}, "
                f"paper_execution_mode={getattr(cfg.exchange, 'paper_execution_mode', '?')}")
 
+    demo_cap = getattr(cfg.risk, "max_demo_position_notional_usdt", None)
+    paper_mode = getattr(cfg.exchange, "paper_execution_mode", "")
+    if (
+        cfg.exchange.mode == "demo"
+        and paper_mode in {"paper_internal", "bitget_demo", "okx_demo", "binance_testnet"}
+        and demo_cap is not None
+        and float(demo_cap) <= 0
+    ):
+        report.add(
+            "config.demo_notional_cap",
+            "blocker",
+            f"max_demo_position_notional_usdt={float(demo_cap):g} — every paper/demo proposal is rejected",
+            "set a positive paper/demo notional cap in Settings → Risk Limits after human review",
+        )
+
     if cfg.runtime.kill_switch_active:
         report.add("config.kill_switch", "blocker",
                    "kill_switch ACTIVE — every trade proposal is rejected",

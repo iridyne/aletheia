@@ -1,5 +1,20 @@
 # Development Log
 
+## 2026-07-10 — Opportunity lifecycle integrity repair
+
+- 前置快照资格检查改为严格匹配 spot/perp，避免同名现货报价让永续机会误进可执行队列。
+- lifecycle CLI 不再凭当前字段虚构 ranker 拒绝；debate 仅在它实际把可交易决策降到门槛以下时记为
+  debate downgrade；trace 按因果顺序展示，同时保留真实写入时间。
+- 机会的前向收益按 `universe_snapshot_id` 与 `member_id` 精确绑定，避免复用 member 后串结果。
+- filter feedback controller 暂停输出具体 filter 的收紧/放松建议，直到管道保存每个 filter 自己的
+  放行/拒绝样本；整体 family 表现继续由现有 allocator 校准使用。
+- `doctor` 新增 demo/paper notional cap 为零的 blocker，防止“系统健康但每笔 proposal 必拒”的假象。
+
+验证：`719 passed, 7 skipped, 6 xfailed`（相关 specs、机会、universe、doctor、filter 组合）；
+`npm run build` 通过。
+
+边界：不改 risk 限额、live、凭证或下单语义；只把现有证据链和诊断说清楚。
+
 ## 2026-07-10 — Filter Feedback Controller Phase 1（shadow / observe-only，分支 feat/filter-feedback-controller）
 
 **背景**：`ato opportunity audit` 显示 72h 漏斗 523 机会创建 → 仅 2 个开仓（0.38% 通过率）。每个流失点都是一个用固定阈值筛选机会的 filter，没人根据结果回调。目标：把整条机会管道变成负反馈控制系统——丢掉了本该盈利机会的 filter 应放松，放过了亏损机会的 filter 应收紧。
