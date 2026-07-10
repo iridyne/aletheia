@@ -72,8 +72,9 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 必须与 JSON 事实一致。有方向、可结算的关卡仍必须使用逐候选
 `filter_decisions`，不允许批次聚合后丢失 outcome 连接。
 为避免 10 分钟批次重复存储每个 JSON 字段名，当前编码为
-`{"fields":[...],"rows":[[presence_mask,...values]]}` 的无损行矩阵。
-`decode_filter_decision_batch()` 同时支持该编码和旧的 plain-list JSON；
+`{"fields":[...],"rows":[[presence_mask,...values]]}` 的无损行矩阵，再以
+`zlib-base64:` 自描述前缀压缩为 SQLite TEXT。`decode_filter_decision_batch()`
+同时支持当前压缩编码、未压缩行矩阵和旧的 plain-list JSON；
 压缩不得改变候选数、字段值或缺失字段语义。
 
 ## 4. 过滤候选的固定时点结果

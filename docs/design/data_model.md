@@ -128,7 +128,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `filter_decisions` | Immutable per-candidate pass/reject facts for directional and low-volume gates | candidate_key, filter_name, decision, reason_code, parameter_snapshot, filter_version, outcome_candidate_key, evaluated_at |
-| `filter_decision_batches` | Complete compressed facts for high-volume directionless ticker/tradability gates | run_id, filter_name, candidate_count, pass/reject/not-applicable/error counts, lossless field/row-matrix candidate_facts, filter_version |
+| `filter_decision_batches` | Complete compressed facts for high-volume directionless ticker/tradability gates | run_id, filter_name, candidate_count, pass/reject/not-applicable/error counts, zlib-base64 lossless field/row-matrix candidate_facts, filter_version |
 | `filter_candidate_outcomes` | Shared exact-instrument fixed-horizon net result for a candidate seen by multiple gates | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross/directional/cost/net/MFE/MAE, status |
 
 Business writers only append these rows. Daily retention removes expired analytical rows

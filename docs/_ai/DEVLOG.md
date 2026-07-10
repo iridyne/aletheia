@@ -3,7 +3,7 @@
 ## 2026-07-10 — Opportunity filter evidence and net control cohorts
 
 - 新增 `filter_decisions`、`filter_decision_batches`、`filter_candidate_outcomes` 和权威设计/可执行检查；业务写入只追加，幂等重试不制造重复证据。
-- Universe ticker/tradability 保存每次扫描的全部候选事实；稳定币、黑名单、成交额、点差和新鲜度按顺序留痕，首个拒绝后的关卡标为 not-applicable。批次 JSON 使用无损 field/row matrix 去掉重复字段名，兼容解码旧 plain-list 行，不抽样。
+- Universe ticker/tradability 保存每次扫描的全部候选事实；稳定币、黑名单、成交额、点差和新鲜度按顺序留痕，首个拒绝后的关卡标为 not-applicable。批次 JSON 使用无损 field/row matrix 去掉重复字段名，再用带自描述前缀的 zlib+Base64 压缩；兼容解码旧 plain-list/未压缩行，不抽样。
 - Observer、Ranker、open-position/cooldown/batch-limit、System Operator、Universe allocation 对照与 Risk 追加逐候选证据；RiskDecision 权威性、原风控阈值和订单路径不变。
 - 有事前方向的候选共享 exact-instrument 15m/1h/4h/24h 结果。shadow/control 新行分开 gross/net/手续费/点差滑点/资金费，历史 gross-only 不进入 alpha 消费者。
 - filter controller 只使用同 filter version/family/direction/market/horizon 的 pass/reject 收缩净期望；样本或覆盖不足时不给调参结论，且始终只读。

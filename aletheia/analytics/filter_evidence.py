@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
 from typing import Any
 from uuid import uuid4
+import zlib
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
@@ -186,7 +188,7 @@ def record_filter_decision_batch(
         rejected_count=counts["rejected"],
         not_applicable_count=counts["not_applicable"],
         error_count=counts["error"],
-        candidate_facts=_canonical_json(_compact_candidate_facts(facts)),
+        candidate_facts=_encode_candidate_facts(facts),
         parameter_snapshot=parameter_json,
         filter_version=filter_version,
         code_commit=_boot_commit(),
@@ -206,7 +208,14 @@ def record_filter_decision_batch(
 
 def decode_filter_decision_batch(payload: str) -> list[dict[str, Any]]:
     """Decode current compact batches and legacy plain-list batch payloads."""
-    raw = json.loads(payload or "[]")
+    encoded = payload or "[]"
+    if encoded.startswith("zlib-base64:"):
+        try:
+            compressed = base64.b64decode(encoded.removeprefix("zlib-base64:"))
+            encoded = zlib.decompress(compressed).decode("utf-8")
+        except (ValueError, zlib.error, UnicodeDecodeError):
+            return []
+    raw = json.loads(encoded)
     if isinstance(raw, list):
         return [dict(item) for item in raw if isinstance(item, dict)]
     if not isinstance(raw, dict):
@@ -610,6 +619,13 @@ def _compact_candidate_facts(facts: list[dict[str, Any]]) -> dict[str, Any]:
                 values.append(fact[field])
         rows.append([presence_mask, *values])
     return {"fields": fields, "rows": rows}
+
+
+def _encode_candidate_facts(facts: list[dict[str, Any]]) -> str:
+    """Compress the lossless row matrix while keeping a self-describing TEXT value."""
+    raw = _canonical_json(_compact_candidate_facts(facts)).encode("utf-8")
+    compressed = zlib.compress(raw, level=6)
+    return "zlib-base64:" + base64.b64encode(compressed).decode("ascii")
 
 
 def _normalize_market(market_type: str | None) -> str:

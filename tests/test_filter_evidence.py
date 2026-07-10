@@ -230,6 +230,7 @@ def test_filter_decision_batch_compacts_repeated_candidate_keys():
 
     assert decode_filter_decision_batch(row["candidate_facts"]) == facts
     assert len(row["candidate_facts"]) < len(naive) * 0.7
+    assert row["candidate_facts"].startswith("zlib-base64:")
 
 
 def test_ranker_trace_stops_at_first_rejection(monkeypatch):
