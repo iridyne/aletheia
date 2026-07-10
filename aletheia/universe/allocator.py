@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import random
 import logging
-from datetime import datetime, timezone, timedelta
 
 from aletheia.config.schema import UniverseConfig
+from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
 
 logger = logging.getLogger("aletheia.universe.allocator")
 
@@ -294,10 +294,6 @@ def allocate_universe(
     final = exploit_selected + explore_selected
     final = final[:max_total]
 
-    from aletheia.storage.repositories import list_market_snapshots  # lazy — avoid circular
-
-    _snapshot_cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
-
     for item in final:
         family = item.get("scanner_family", "momentum")
         item["ttl_sec"] = _FAMILY_TTL.get(family, 3600)
@@ -306,18 +302,7 @@ def allocate_universe(
         # last 2 hours. Symbols with zero snapshots (e.g. NATGAS/USDT) would otherwise
         # reach PI Agent as tradeable but fail silently at proposal submission.
         _sym = item.get("symbol", "")
-        _snaps = list_market_snapshots(symbol=_sym, limit=1)
-        if _snaps:
-            _snap_at_str = _snaps[0].get("snapshot_at") or ""
-            try:
-                _snap_dt = datetime.fromisoformat(_snap_at_str.replace("Z", "+00:00"))
-                if _snap_dt.tzinfo is None:
-                    _snap_dt = _snap_dt.replace(tzinfo=timezone.utc)
-                _has_live_price = _snap_dt >= _snapshot_cutoff
-            except (ValueError, AttributeError):
-                _has_live_price = False
-        else:
-            _has_live_price = False
+        _has_live_price = has_fresh_market_snapshot(_sym, item.get("market_type", "spot"))
 
         if not _has_live_price:
             logger.warning(

@@ -71,6 +71,22 @@ def test_ttl_assignment_by_family(cfg):
     assert ttls.get("momentum", 0) < ttls.get("derivatives", 0)
 
 
+def test_allocator_checks_freshness_for_the_selected_market_type(cfg, monkeypatch):
+    item = _scored_item("BTC/USDT", "momentum", 80, market_type="perp")
+    seen: list[tuple[str, str]] = []
+
+    def _fresh(symbol: str, market_type: str) -> bool:
+        seen.append((symbol, market_type))
+        return False
+
+    monkeypatch.setattr("aletheia.universe.allocator.has_fresh_market_snapshot", _fresh)
+
+    result = allocate_universe([item], cfg)
+
+    assert seen == [("BTC/USDT", "perp")]
+    assert result[0]["execution_eligible"] is False
+
+
 def test_late_entry_penalty_extreme_return():
     feat = {"return_1h": 7.0, "return_4h": 12.0, "rsi_14": 87}
     penalty = compute_late_entry_penalty(feat)

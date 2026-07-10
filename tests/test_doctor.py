@@ -417,6 +417,24 @@ def test_kill_switch_active_is_a_blocker(monkeypatch):
     assert ks and ks[0].severity == "blocker"
 
 
+def test_zero_demo_notional_cap_is_a_blocker(monkeypatch):
+    """A zero cap rejects every paper/demo proposal and must not look healthy."""
+    import aletheia.config.loader as loader
+
+    cfg = loader.load_config()
+    cfg.exchange.mode = "demo"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.risk.max_demo_position_notional_usdt = 0.0
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+
+    report = dx.Report(generated_at="t")
+    dx._probe_config_gates(report)
+
+    cap = next(c for c in report.checks if c.name == "config.demo_notional_cap")
+    assert cap.severity == "blocker"
+    assert "0" in cap.detail
+
+
 def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader

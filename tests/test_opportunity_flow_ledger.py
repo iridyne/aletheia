@@ -16,14 +16,15 @@ def _insert_opp(
     symbol: str = "BTC/USDT",
     direction: str = "long",
     confidence_score: int = 66,
+    snapshot_id: str = "snap-flow",
 ) -> None:
     db.execute(
         "INSERT INTO opportunities "
         "(id, symbol, market, direction_bias, thesis, confidence, confidence_score, source_agent, "
-        "created_at, status, asset_class, universe_member_id, scanner_family, execution_eligible) "
+        "created_at, status, asset_class, universe_member_id, universe_snapshot_id, scanner_family, execution_eligible) "
         "VALUES (?, ?, 'usdt_futures', ?, 'persisted thesis', 'high', ?, 'market_observer', "
-        "datetime('now','-2 hours'), 'open', 'crypto', ?, 'momentum', 1)",
-        (opp_id, symbol, direction, confidence_score, member_id),
+        "datetime('now','-2 hours'), 'open', 'crypto', ?, ?, 'momentum', 1)",
+        (opp_id, symbol, direction, confidence_score, member_id, snapshot_id),
     )
 
 
@@ -69,14 +70,15 @@ def _insert_forward(
     horizon: str = "1h",
     ret: float = 0.8,
     direction: str = "long",
+    snapshot_id: str = "snap-flow",
 ) -> None:
     db.execute(
         "INSERT INTO universe_forward_outcomes "
         "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, entry_price_usd, "
         "entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, status) "
-        "VALUES (?, ?, 'snap-flow', 'BTC/USDT', 'momentum', ?, ?, 100, datetime('now','-2 hours'), "
+        "VALUES (?, ?, ?, 'BTC/USDT', 'momentum', ?, ?, 100, datetime('now','-2 hours'), "
         "datetime('now','-1 hour'), datetime('now'), 100.8, ?, 'settled')",
-        (f"fwd-flow-{member_id}-{horizon}", member_id, direction, horizon, ret),
+        (f"fwd-flow-{member_id}-{snapshot_id}-{horizon}", member_id, snapshot_id, direction, horizon, ret),
     )
 
 
@@ -284,10 +286,80 @@ def test_opportunity_flow_missing_legacy_debate_fields_stay_insufficient_data():
     )
 
     trace = trace_opportunity_flow("opp-flow-1")
-    debate = [event for event in trace["timeline"] if event["stage"] == "debate_downgraded"][0]
+    debate = [event for event in trace["timeline"] if event["stage"] == "debate_recorded"][0]
 
+    assert trace["final_stage"] == "operator_skip"
     assert debate["details"]["trace_status"] == "insufficient_data"
     assert "Legacy debate row has no trace fields." in debate["reason"]
+
+
+def test_opportunity_flow_only_marks_debate_downgrade_when_debate_crossed_trade_threshold():
+    from aletheia.analytics.opportunity_flow import trace_opportunity_flow
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, opp_id="opp-direct-skip")
+    _insert_decision(
+        db,
+        opp_id="opp-direct-skip",
+        action="skip",
+        conviction=70,
+        reasoning="market context is conflicted",
+        debate_ran=True,
+        debate_initial=72,
+        debate_adjustment=-2,
+    )
+    db.commit()
+
+    trace = trace_opportunity_flow("opp-direct-skip")
+
+    assert trace["final_stage"] == "operator_skip"
+    assert not any(event["stage"] == "debate_downgraded" for event in trace["timeline"])
+    assert any(event["stage"] == "debate_recorded" for event in trace["timeline"])
+
+
+def test_opportunity_flow_does_not_invent_ranker_rejection_without_ranker_evidence():
+    from aletheia.analytics.opportunity_flow import trace_opportunity_flow
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, opp_id="opp-not-executable", confidence_score=20)
+    db.execute("UPDATE opportunities SET execution_eligible = 0 WHERE id = ?", ("opp-not-executable",))
+    db.commit()
+
+    trace = trace_opportunity_flow("opp-not-executable")
+
+    assert trace["final_state"] == "pending"
+    assert trace["final_stage"] == "created"
+    assert not any(event["stage"] == "ranker_excluded" for event in trace["timeline"])
+    inferred = [event for event in trace["timeline"] if event["stage"] == "eligibility_inferred"]
+    assert inferred and inferred[0]["status"] == "inferred"
+
+
+def test_opportunity_flow_counterfactual_uses_opportunity_snapshot_not_latest_member_result():
+    from aletheia.analytics.opportunity_flow import trace_opportunity_flow
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(
+        db,
+        opp_id="opp-snapshot-a",
+        member_id="member-reused",
+        snapshot_id="snap-a",
+    )
+    _insert_opp(
+        db,
+        opp_id="opp-snapshot-b",
+        member_id="member-reused",
+        snapshot_id="snap-b",
+    )
+    _insert_forward(db, member_id="member-reused", snapshot_id="snap-a", ret=-1.0)
+    _insert_forward(db, member_id="member-reused", snapshot_id="snap-b", ret=2.0)
+    db.commit()
+
+    trace = trace_opportunity_flow("opp-snapshot-a")
+
+    assert trace["counterfactual"]["forward"]["1h"]["direction_adjusted_return_pct"] == -1.0
 
 
 def test_opportunity_flow_audit_filters_by_stage_verdict_and_symbol():

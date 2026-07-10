@@ -7,7 +7,30 @@
 
 ## Last Updated
 
-2026-07-09 (Full bug review — fix phase: market-type sub-batch B12 done; merged master)
+2026-07-10 (Opportunity lifecycle integrity repair; awaiting review)
+
+---
+
+## Recent Change (Opportunity lifecycle integrity repair — 2026-07-10)
+
+修复机会从生成、筛选到收益复盘这条链里几处会把“猜测”写成“事实”的问题。
+
+- 现货与永续合约虽然共用 `BTC/USDT` 这样的内部符号，但资格检查现在必须匹配同一种市场的快照；
+  现货新报价不能再让永续合约被标成可执行。
+- `opportunity trace` 只把数据库里确实留下的决策算作拒绝。没有 ranker 记录时，
+  `execution_eligible=False` 等字段只显示为“推断的资格状态”，不再冒充 ranker 已拒绝。
+- debate 只有确实把原本可交易的信心降到门槛以下时，才记为 `debate_downgraded`；普通 skip
+  仍保持为 operator skip。
+- forward outcome 现在按机会所属的 universe snapshot 绑定，避免重复使用 member 时把后来收益
+  套到较早机会身上。
+- filter feedback controller 不再把某个 scanner family 的整体表现误说成某个具体 filter 应该放松或
+  收紧。在没有每个 filter 自己的放行/拒绝记录前，报告诚实显示证据不足。
+- `doctor` 会把 demo/paper 单笔额度为 `0` 的状态报为 blocker，因为这会让每一笔 proposal 都被风险门拒绝；
+  不自动改额度。
+
+验证：机会审计、universe、doctor、filter 相关测试及全部 specs 均已通过；前端 production build 通过。
+仍需人确认的事项：若要让本机 paper proposal 实际继续通过风险门，请在 Settings 的 Risk Limits 中由 owner
+自行设定一个正的 demo/paper notional cap。live 开关、凭证和 risk 值均未被本分支修改。
 
 ---
 

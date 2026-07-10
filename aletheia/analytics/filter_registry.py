@@ -73,6 +73,10 @@ class FilterSpec:
     # False for intentional hard rules and change-controlled params — the controller
     # may still REPORT on them but must never recommend auto-actuation.
     auto_tunable: bool
+    # True only after the pipeline persists this filter's own passed/dropped cohort.
+    # Aggregate family returns are useful context, but cannot prove a filter is too
+    # loose or too tight.
+    feedback_ready: bool = False
     # Approximate share of drops attributable to this filter in the reference 72h
     # window (for impact ranking in the report). 0.0 when latent / not yet observed.
     drop_share_hint: float = 0.0
@@ -264,7 +268,7 @@ NON_TUNABLE_HARD_RULES: tuple[str, ...] = (
 
 
 def tunable_filters() -> tuple[FilterSpec, ...]:
-    """Filters the controller may compute actuation recommendations for."""
+    """Filters that may be configured for future bounded actuation."""
     return tuple(f for f in FILTER_REGISTRY if f.auto_tunable)
 
 

@@ -4,65 +4,21 @@ Filter evaluation: Filter Feedback Controller (Phase 1, shadow / observe-only).
 Run with:  uv run pytest tests/filter_eval/test_filter_controller_eval.py -v
 
 Verifies:
-  1. Per-family hit-rate → verdict mapping (loosen / tighten / hold / insufficient_data).
-  2. Only family-keyed, forward-return-signalled, tunable filters get family cells.
-  3. The controller NEVER mutates trading config (shadow invariant) — asserted by
+  1. Aggregate family returns never become per-filter loosen/tighten advice.
+  2. The controller NEVER mutates trading config (shadow invariant) — asserted by
      ensuring save_config is never importable-and-called during a compute cycle.
 """
 from __future__ import annotations
 
-import pytest
-
 from aletheia.analytics import filter_controller as fc
 from aletheia.analytics.filter_registry import (
     tunable_filters,
-    report_only_filters,
     FILTER_REGISTRY,
 )
-from .scenarios.filter_controller import ALL_SCENARIOS
 
 
-@pytest.mark.parametrize("scenario", ALL_SCENARIOS, ids=lambda s: s.name)
-def test_controller_verdict_scenario(scenario, monkeypatch):
-    """Each synthetic calibration_stats() feed produces the expected family verdict."""
-    monkeypatch.setattr(
-        "aletheia.storage.repositories.calibration_stats",
-        lambda: scenario.calibration_rows,
-    )
-    recs = fc.compute_filter_feedback(min_samples=scenario.min_samples)
-
-    # Collect verdicts per family for family-keyed forward-return filters only.
-    family_keyed_names = {
-        f.name for f in tunable_filters()
-        if f.family_keyed and f.feedback_source != "none"
-    }
-    by_family: dict[str, set[str]] = {}
-    for r in recs:
-        if r.filter_name not in family_keyed_names:
-            continue
-        if r.scanner_family in ("(all)", "(global)"):
-            continue
-        by_family.setdefault(r.scanner_family, set()).add(r.verdict)
-
-    for family, expected in scenario.expected_verdict_by_family.items():
-        assert family in by_family, (
-            f"{scenario.name}: expected family '{family}' to have cells, got {sorted(by_family)}"
-        )
-        assert by_family[family] == {expected}, (
-            f"{scenario.name}: family '{family}' expected verdict '{expected}', "
-            f"got {by_family[family]}"
-        )
-
-    # Families NOT expected (e.g. wrong-horizon) must not appear.
-    if not scenario.expected_verdict_by_family:
-        assert not by_family, (
-            f"{scenario.name}: expected no family cells, got {sorted(by_family)}"
-        )
-
-
-def test_report_only_filters_never_actionable(monkeypatch):
-    """Hard rules and change-controlled filters must never emit loosen/tighten."""
-    # Strong signal for every family — would trip loosen if a report-only filter leaked in.
+def test_unattributed_family_performance_never_becomes_filter_advice(monkeypatch):
+    """A family hit-rate alone cannot prove that any individual filter is miscalibrated."""
     monkeypatch.setattr(
         "aletheia.storage.repositories.calibration_stats",
         lambda: [
@@ -71,10 +27,9 @@ def test_report_only_filters_never_actionable(monkeypatch):
         ],
     )
     recs = fc.compute_filter_feedback()
-    report_only_names = {f.name for f in report_only_filters()}
-    leaked = [r for r in recs
-              if r.filter_name in report_only_names and r.verdict in ("loosen", "tighten")]
-    assert not leaked, f"report-only filters must never be actionable, got {leaked}"
+    assert recs
+    assert all(r.verdict == "insufficient_data" for r in recs)
+    assert all("No per-filter passed/dropped cohort" in r.reasoning for r in recs)
 
 
 def test_shadow_compute_does_not_mutate_config(monkeypatch):
@@ -102,8 +57,8 @@ def test_build_report_shape(monkeypatch):
     assert "verdict_counts" in report
     assert report["total_filter_count"] == len(FILTER_REGISTRY)
     assert report["tunable_filter_count"] == len(tunable_filters())
-    # momentum strong signal → at least one loosen among family-keyed filters
-    assert report["verdict_counts"].get("loosen", 0) >= 1
+    assert report["verdict_counts"].get("loosen", 0) == 0
+    assert report["verdict_counts"].get("tighten", 0) == 0
 
 
 def test_insufficient_data_when_no_stats(monkeypatch):
