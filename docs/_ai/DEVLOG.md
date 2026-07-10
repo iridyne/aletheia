@@ -1,5 +1,21 @@
 # Development Log
 
+## 2026-07-10 — Paper simulation false $0 cap repair
+
+- Root cause: paper_internal has no account-equity series, but the drawdown guard
+  borrowed exchange_account snapshots. An unrelated historical peak followed by a
+  small current exchange balance fabricated a >20% drawdown and multiplied the
+  configured $200 cap by zero.
+- paper_internal now skips drawdown scaling. It remains bounded by the configured
+  position cap, daily-loss guard, max-open-position guard, and all other risk checks.
+  Exchange-backed demo/live modes continue to use real exchange-account equity.
+- Added behavior tests for local-notional collapse, unrelated external snapshots, and
+  external-account loss. Updated the risk contract and executable check RE-B05b.
+- Validation: focused risk tests 59 passed; full executable contract suite 573 passed,
+  7 skipped, 6 expected skips.
+
+---
+
 ## 2026-07-10 — Opportunity lifecycle integrity repair
 
 - 前置快照资格检查改为严格匹配 spot/perp，避免同名现货报价让永续机会误进可执行队列。

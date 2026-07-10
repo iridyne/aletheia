@@ -575,52 +575,39 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
         "drawdown", zeroing the size cap and rejecting every demo proposal
         while the real account sat untouched at ~$88k. Drawdown must track
         equity, not how much notional happens to be open right now.
-      - paper_internal: no exchange account exists; its mark-to-market
-        total_value_usdt IS its equity, so keep the existing path.
+      - paper_internal: its snapshots contain managed-position notional, not a
+        simulated account-equity series. Skip this scaling until a dedicated
+        paper-equity ledger exists; the configured cap and other risk checks
+        continue to bound the order.
     """
     try:
+        # Local paper has no trustworthy equity history. Its own snapshots are
+        # position notional, while exchange_account snapshots belong to a separate
+        # account and may be stale or unrelated. Either source can fabricate a
+        # drawdown and turn every proposal into a $0-cap rejection.
+        if execution_mode == "paper_internal":
+            return 1.0
+
         # View-completeness gate (P0, 2026-07-02): for exchange-backed modes, if the
         # active broker is missing from the unified view (e.g. OKX API down), the
         # equity snapshots may reflect the WRONG broker's balance — computing a
         # drawdown from that fabricates a false ~99% DD that zeroes the size cap.
         # Skip drawdown scaling (return 1.0, the $-notional caps still bound size).
-        if execution_mode != "paper_internal":
-            from aletheia.portfolio.exchange_sync import active_broker_view_complete
-            _complete, _ = active_broker_view_complete()
-            if not _complete:
-                return 1.0
+        from aletheia.portfolio.exchange_sync import active_broker_view_complete
+        _complete, _ = active_broker_view_complete()
+        if not _complete:
+            return 1.0
 
         from aletheia.storage.repositories import list_portfolio_snapshots
         snapshots = list_portfolio_snapshots(limit=50)
         if len(snapshots) < 3:
             return 1.0
 
-        if execution_mode == "paper_internal":
-            # #143 fix: paper_internal's total_value_usdt is position NOTIONAL
-            # (mark-to-market), not true equity — it swings with open-position
-            # size, so closing a good trade looks like a 90%+ "drawdown" even
-            # though the account is profitable. Use the `exchange_account` rows
-            # for drawdown when they exist (they capture real account equity);
-            # only fall back to the paper_internal mark-to-market rows when no
-            # exchange_account rows are available (pure-paper-simulation mode).
-            exchange_snapshots = [
-                s for s in snapshots if s.get("execution_mode") == "exchange_account"
-            ]
-            if len(exchange_snapshots) >= 3:
-                mode_snapshots = exchange_snapshots
-            else:
-                # Pure paper: no exchange to measure against. Notional is all we
-                # have — accept the imprecision and document it explicitly. The
-                # cap itself ($max_demo_position_notional_usdt) still bounds size.
-                mode_snapshots = [
-                    s for s in snapshots
-                    if s.get("execution_mode") in ("paper_internal", "bitget_demo")
-                ]
-        else:
-            # Real account equity lives in the exchange_account rows.
-            mode_snapshots = [
-                s for s in snapshots if s.get("execution_mode") == "exchange_account"
-            ]
+        # Exchange-backed modes use real account equity, never per-mode position
+        # notional. paper_internal returned above and cannot reach this branch.
+        mode_snapshots = [
+            s for s in snapshots if s.get("execution_mode") == "exchange_account"
+        ]
         if len(mode_snapshots) < 3:
             return 1.0
 

@@ -7,7 +7,22 @@
 
 ## Last Updated
 
-2026-07-10 (Opportunity lifecycle integrity and available-balance cap merged)
+2026-07-10 (Paper simulation drawdown source corrected)
+
+---
+
+## Recent Change (Paper simulation $0-cap repair — 2026-07-10)
+
+The local paper simulator was rejecting normal proposals even with the configured
+$200 cap because its drawdown multiplier read an unrelated exchange-account history.
+That history included an old high-water mark and a current small balance, producing
+a false large drawdown and an effective $0 cap.
+
+paper_internal now skips drawdown scaling until the system has a genuine simulated
+equity ledger. It still uses the configured position cap, daily-loss guard, open
+position limit, and all other risk checks. Exchange-backed demo/live modes retain
+their real account-equity drawdown protection. Focused risk tests and the full
+executable contract suite passed.
 
 ---
 

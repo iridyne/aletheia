@@ -239,34 +239,60 @@ def test_drawdown_scale_piecewise(monkeypatch):
         current_pct = _mock_snapshots._dd_pct
         current = peak * (1 - current_pct / 100)
         return [
-            {"total_value_usdt": peak, "execution_mode": "paper_internal"},
-            {"total_value_usdt": peak, "execution_mode": "paper_internal"},
-            {"total_value_usdt": peak, "execution_mode": "paper_internal"},
-            {"total_value_usdt": current, "execution_mode": "paper_internal"},
+            {"total_value_usdt": peak, "execution_mode": "exchange_account"},
+            {"total_value_usdt": peak, "execution_mode": "exchange_account"},
+            {"total_value_usdt": peak, "execution_mode": "exchange_account"},
+            {"total_value_usdt": current, "execution_mode": "exchange_account"},
         ]
 
     monkeypatch.setattr(
         "aletheia.storage.repositories.list_portfolio_snapshots", _mock_snapshots
     )
+    monkeypatch.setattr(
+        "aletheia.portfolio.exchange_sync.active_broker_view_complete",
+        lambda: (True, ""),
+    )
 
     _mock_snapshots._dd_pct = 0.0
-    assert _portfolio_drawdown_scale("paper_internal") == 1.0
+    assert _portfolio_drawdown_scale("okx_demo") == 1.0
 
     _mock_snapshots._dd_pct = 5.0
-    assert _portfolio_drawdown_scale("paper_internal") == 1.0
+    assert _portfolio_drawdown_scale("okx_demo") == 1.0
 
     _mock_snapshots._dd_pct = 7.5
-    scale = _portfolio_drawdown_scale("paper_internal")
+    scale = _portfolio_drawdown_scale("okx_demo")
     assert 0.7 < scale < 0.8  # linear 1.0→0.5 in 5-10% range
 
     _mock_snapshots._dd_pct = 10.0
-    assert abs(_portfolio_drawdown_scale("paper_internal") - 0.5) < 0.01
+    assert abs(_portfolio_drawdown_scale("okx_demo") - 0.5) < 0.01
 
     _mock_snapshots._dd_pct = 20.0
-    assert _portfolio_drawdown_scale("paper_internal") == 0.0
+    assert _portfolio_drawdown_scale("okx_demo") == 0.0
 
     _mock_snapshots._dd_pct = 25.0
-    assert _portfolio_drawdown_scale("paper_internal") == 0.0
+    assert _portfolio_drawdown_scale("okx_demo") == 0.0
+
+
+@spec_claim(
+    SpecClaim("RE-B05b", "risk_engine_contract", "§2 check #5 drawdown source", "L2b",
+              "paper_internal skips drawdown scaling because neither local notional nor "
+              "external account snapshots are its simulated equity"),
+)
+def test_paper_internal_drawdown_never_uses_snapshot_notional(monkeypatch):
+    from aletheia.risk.engine import _portfolio_drawdown_scale
+
+    monkeypatch.setattr(
+        "aletheia.storage.repositories.list_portfolio_snapshots",
+        lambda limit=50: [
+            {"total_value_usdt": 200.0, "execution_mode": "paper_internal"},
+            {"total_value_usdt": 200.0, "execution_mode": "paper_internal"},
+            {"total_value_usdt": 0.0, "execution_mode": "paper_internal"},
+            {"total_value_usdt": 100000.0, "execution_mode": "exchange_account"},
+            {"total_value_usdt": 167.0, "execution_mode": "exchange_account"},
+        ],
+    )
+
+    assert _portfolio_drawdown_scale("paper_internal") == 1.0
 
 
 @spec_claim(
