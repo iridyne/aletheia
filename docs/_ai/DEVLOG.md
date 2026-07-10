@@ -1,5 +1,18 @@
 # Development Log
 
+## 2026-07-10 — Separate current risk from decision history
+
+- Root cause: GET /api/risk/status copied the newest rejected risk decision into the
+  current violations list. A fixed historical rejection therefore held the dashboard
+  in warning state indefinitely.
+- Active risk now contains only live kill-switch and live-configuration conditions.
+  latest_risk_decision remains immutable history and Overview labels a rejected latest
+  check with its timestamp rather than presenting it as a current violation.
+- Validation: risk-route and focused risk tests passed; frontend production build
+  passed. No risk decision was deleted or rewritten.
+
+---
+
 ## 2026-07-10 — Paper simulation false $0 cap repair
 
 - Root cause: paper_internal has no account-equity series, but the drawdown guard

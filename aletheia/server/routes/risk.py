@@ -1,7 +1,5 @@
 """Risk API routes: kill switch, status, and boundaries display."""
 
-import json
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -47,17 +45,9 @@ async def risk_status():
         if exchange_mode == "live" and permission_mode == "Observe":
             status = "warning"
             violations.append(f"permission_mode_not_live_eligible:{permission_mode}")
-        if latest_decision and not bool(latest_decision.get("approved")):
-            raw_violations = _parse_violations(latest_decision.get("violations"))
-            # Filter out stale_market_data violations that have since resolved —
-            # re-check current freshness rather than echoing a past rejection forever.
-            live_violations = [v for v in raw_violations if not _is_resolved_staleness(v)]
-            if live_violations:
-                status = "warning"
-                violations.extend(live_violations)
-        if not violations and cfg.runtime.kill_switch_active:
-            status = "blocked"
-
+    # A decision is immutable history, not a live condition. It remains available
+    # to the UI as latest_risk_decision, but must not turn a resolved past rejection
+    # into a permanent current warning.
     if not violations and latest_decision:
         status = "healthy"
 
@@ -103,54 +93,6 @@ async def set_kill_switch(req: KillSwitchRequest):
             )
         kill_switch.deactivate(actor="human")
     return {"active": kill_switch.is_active()}
-
-
-def _is_resolved_staleness(violation: str) -> bool:
-    """Return True if a stale_market_data* violation has since resolved (data is fresh now)."""
-    if not violation.startswith("stale_market_data"):
-        return False
-    # Extract symbol from the risk decision's proposal context — not available in the
-    # violation string alone. Fall back to checking ALL observed symbols; if any are fresh
-    # then the system-wide staleness has resolved.
-    from aletheia.trading.market_data import latest_snapshot
-    from aletheia.trading.instruments import observed_instruments_from_config
-
-    cfg = load_config()
-    is_demo = "demo" in violation
-    max_age = 1800 if is_demo else 120
-
-    instruments = observed_instruments_from_config(cfg)
-    if not instruments:
-        return False
-    # If ANY observed symbol is fresh, the collection loop is working again.
-    for inst in instruments:
-        snap = latest_snapshot(inst.symbol)
-        if snap:
-            from datetime import datetime, timezone
-            ts = snap.get("snapshot_at")
-            if ts:
-                try:
-                    dt = datetime.fromisoformat(ts)
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
-                    age = (datetime.now(timezone.utc) - dt).total_seconds()
-                    if age <= max_age:
-                        return True
-                except ValueError:
-                    continue
-    return False
-
-
-def _parse_violations(value: str | None) -> list[str]:
-    if not value:
-        return []
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return [value]
-    if isinstance(parsed, list):
-        return [str(v) for v in parsed]
-    return [str(parsed)]
 
 
 @router.get("/account-leverage")

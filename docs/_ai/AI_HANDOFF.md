@@ -7,7 +7,20 @@
 
 ## Last Updated
 
-2026-07-10 (Paper simulation drawdown source corrected)
+2026-07-10 (Current risk state separated from historical decisions)
+
+---
+
+## Recent Change (Risk status history separation — 2026-07-10)
+
+The dashboard had treated the newest rejected RiskDecision as a currently active
+violation indefinitely. A resolved $0-cap rejection therefore kept the operator UI in
+warning state even after the effective cap returned to $200.
+
+The risk-status endpoint now reports only live configuration and kill-switch
+conditions as active violations. The newest immutable decision remains attached as
+history, and the Overview labels a rejected latest check with its timestamp instead
+of calling it current risk. No decision records are deleted or altered.
 
 ---
 

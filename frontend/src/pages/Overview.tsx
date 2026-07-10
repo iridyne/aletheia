@@ -93,6 +93,7 @@ export default function Overview() {
     : (riskState === 'warning' || riskState === 'not_available' || riskState === 'not_evaluated') ? 'yellow'
     : 'green'
   const violations = (riskStatus?.violations as string[]) || []
+  const latestRiskDecision = (riskStatus as any)?.latest_risk_decision
 
   // System state
   const liveState = String(s.live_state || 'live_disabled')
@@ -162,6 +163,11 @@ export default function Overview() {
                 <span className="risk-dot risk-dot-ok" />
                 <span className="text-muted text-sm">No active violations</span>
               </div>
+            )}
+            {latestRiskDecision && !latestRiskDecision.approved && (
+              <p className="hint mb-0">
+                Latest check rejected {fmtTimestamp(latestRiskDecision.created_at)}. Historical decisions remain available in Risk &amp; Controls.
+              </p>
             )}
           </Card>
 
