@@ -205,6 +205,32 @@ def test_trade_funnel_identifies_risk_engine_rejection_choke_point():
     assert report["main_choke_point"]["stage"] == "risk_engine"
 
 
+def test_trade_funnel_small_rejected_sample_never_reports_ok_with_zero_positions():
+    from aletheia.analytics.trade_funnel import build_trade_funnel_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for i in range(2):
+        _insert_opp(db, i)
+        pid = _insert_proposal(db, i)
+        _insert_signal(db, i, "signal_pending")
+        _insert_signal(db, i, "trade", proposal_id=pid)
+        _insert_risk(db, i, approved=False, reason="risk_limit")
+    _insert_opp(db, 99)  # enough upstream evidence; proposal sample remains thin
+    db.commit()
+
+    report = build_trade_funnel_audit(
+        hours=24,
+        min_sample_size=3,
+        include_ranker_snapshot=False,
+    )
+    choke = report["main_choke_point"]
+
+    assert choke["stage"] == "risk_engine"
+    assert choke["severity"] == "insufficient_data"
+    assert "2" in choke["summary"]
+
+
 def test_trade_funnel_groups_dynamic_risk_amounts_under_one_reason():
     from aletheia.analytics.trade_funnel import build_trade_funnel_audit
     from aletheia.storage.sqlite import get_db

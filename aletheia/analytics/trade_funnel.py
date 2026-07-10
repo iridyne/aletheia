@@ -667,6 +667,22 @@ def _main_choke_point(counts: dict, stats: dict, min_sample_size: int) -> dict:
             f"{counts['proposals_created']} proposals produced 0 opened positions.",
             "Inspect order fill handling and position creation after execution.",
         )
+    if int(counts["proposals_created"] or 0) > 0 and positions == 0:
+        proposals = int(counts["proposals_created"] or 0)
+        rejected = int(counts["risk_rejected"] or 0)
+        if rejected:
+            return _choke(
+                "risk_engine",
+                "insufficient_data",
+                f"Only {proposals} linked proposals are in this cohort; {rejected} were rejected by risk.",
+                f"Collect at least {min_sample_size} linked proposals before treating this as a stable choke point.",
+            )
+        return _choke(
+            "position_opening",
+            "insufficient_data",
+            f"Only {proposals} linked proposals and 0 positions are in this cohort.",
+            f"Collect at least {min_sample_size} linked proposals before tuning execution behavior.",
+        )
     if trade_decisions >= min_sample_size and int(counts["proposals_created"] or 0) == 0:
         return _choke(
             "proposal_submission",

@@ -6,7 +6,7 @@
 - 修复 OKX swap `quoteVolume=None` 导致全部永续候选被当 0 成交额淘汰；统一成交额换算供预筛和特征存储使用。
 - 修正 `short_bias` funding 经济含义；同 symbol 的 spot/perp 在 family quota 分配前按配置选唯一市场。
 - PI 的 `bear_case` 改为新决策必填并真实进入 parser；proposal 按最终 market type 读取 snapshot。
-- pending shadow 不再生成 resolved 事件；漏斗拆分事件吞吐和 Opportunity-ID cohort，所有转化率只来自后者；动态金额风险原因归一聚类。
+- pending shadow 不再生成 resolved 事件；漏斗拆分事件吞吐和 Opportunity-ID cohort，所有转化率只来自后者；动态金额风险原因归一聚类；小样本 0 持仓只报证据不足，不再落到 `ok`。
 - doctor 新增 recent Universe feature 的 spot/perp 覆盖；原 `loop.profit` 成功文案改为 proposal-flow healthy / profitability not assessed。
 - 保持不动：risk/execution/live/credentials、方向刹车、学习权重和 sizing。后四项先补净收益与逐过滤器对照数据。
 - 验证：聚焦批次 75 passed；扩展 Universe/决策/期货 234 passed（后续兼容桩 23 passed）；漏斗/doctor 回归通过；完整 specs 575 passed、7 skipped、6 xfailed；architecture fitness 11 passed。最终全量在排除 3 个已于未修改 master 独立复现的既有失败后为 2588 passed、14 skipped、6 xfailed。既有失败：macOS 环境运行 Windows autostart 路径断言，以及两条 knowledge maintenance 索引清理测试。
