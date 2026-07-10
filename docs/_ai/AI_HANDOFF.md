@@ -7,7 +7,22 @@
 
 ## Last Updated
 
-2026-07-09 (Full bug review — fix phase: market-type sub-batch B12 done; merged master)
+2026-07-10 (Risk sizing: cached available-balance cap prepared on a dedicated branch)
+
+---
+
+## Recent Change (Available-balance position cap — 2026-07-10)
+
+Risk check #5 now treats the existing position-notional values as hard ceilings and
+uses the lower of that ceiling and the matching exchange account's cached available
+USDT. Demo and live Bitget accounts are read separately; other exchange-backed modes
+use their own unified-account entry. paper_internal has no external balance, so it
+continues to use the configured ceiling. The risk engine never makes an exchange call
+while evaluating a proposal, and a missing cached balance retains the configured cap.
+
+The default demo ceiling remains $200. Live remains separately capped and still needs
+the existing human live-unlock path plus every other risk check. Focused risk tests,
+the full executable contract suite, and the frontend production build passed.
 
 ---
 

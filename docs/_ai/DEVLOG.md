@@ -1,5 +1,22 @@
 # Development Log
 
+## 2026-07-10 — Position cap follows cached available balance
+
+- Risk check #5 keeps max_demo_position_notional_usdt=$200 as the default hard
+  ceiling/fallback. For exchange-backed demo orders, the effective cap is the lower
+  of that value and the matching demo account's cached available USDT.
+- Live orders use the same conservative calculation against the live account, while
+  retaining the separate live ceiling and all existing live-unlock controls.
+- paper_internal has no external account and keeps the configured cap directly.
+  Risk evaluation reads only the local exchange-sync cache and never adds an exchange
+  request to the proposal path.
+- Settings now labels these fields as position hard ceilings and explains the balance
+  behavior. Added RE-B18 coverage for demo/live separation, local-paper fallback, and
+  the final rejection path. Validation: focused risk tests and all specs passed; the
+  frontend production build passed.
+
+---
+
 ## 2026-07-10 — Filter Feedback Controller Phase 1（shadow / observe-only，分支 feat/filter-feedback-controller）
 
 **背景**：`ato opportunity audit` 显示 72h 漏斗 523 机会创建 → 仅 2 个开仓（0.38% 通过率）。每个流失点都是一个用固定阈值筛选机会的 filter，没人根据结果回调。目标：把整条机会管道变成负反馈控制系统——丢掉了本该盈利机会的 filter 应放松，放过了亏损机会的 filter 应收紧。

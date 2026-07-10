@@ -2601,7 +2601,7 @@ const RISK_LIVE: NumField[] = [
   { key: 'max_total_live_exposure_pct',   label: 'Max total exposure',      unit: '%',    min: 1,    max: 50,     step: 0.5 },
   { key: 'starting_capital_usdt',         label: 'Starting capital',        unit: 'USDT', min: 1,    max: 100000, step: 1 },
   { key: 'max_live_limited_cap_usdt',     label: 'Live cap',                unit: 'USDT', min: 1,    max: 100000, step: 1 },
-  { key: 'max_live_position_notional_usdt', label: 'Max position notional', unit: 'USDT', min: 1,    max: 100000, step: 1 },
+  { key: 'max_live_position_notional_usdt', label: 'Position hard ceiling', unit: 'USDT', min: 1,    max: 100000, step: 1 },
   { key: 'max_futures_leverage_live',     label: 'Max leverage',            unit: 'x',    min: 1,    max: 20,     step: 1, isInt: true },
   { key: 'max_open_positions_live',       label: 'Max open positions',      unit: '',     min: 1,    max: 50,     step: 1, isInt: true },
 ]
@@ -2723,10 +2723,12 @@ function RiskCard({ settings, qc }: any) {
       {/* Live limits */}
       <div className="section-label">Live limits</div>
       <NumGrid fields={RISK_LIVE} vals={vals} set={set} errors={errors} />
+      <p className="hint">Exchange-backed orders use the lower of this ceiling and the live account's cached available USDT. If no balance snapshot is available, this ceiling is used.</p>
 
       {/* Demo limits */}
       <div className="section-label mt-4">Demo / paper limits</div>
       <NumGrid fields={RISK_DEMO} vals={vals} set={set} errors={errors} />
+      <p className="hint">Demo account orders use the lower of this ceiling and the demo account's cached available USDT. Local paper simulation has no external balance and uses this ceiling directly.</p>
 
       {/* Cross-mode guards (both demo and live) */}
       <div className="section-label mt-4">Per-symbol exposure (demo + live)</div>

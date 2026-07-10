@@ -34,6 +34,59 @@ def _is_live(execution_mode: str) -> bool:
     return execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited")
 
 
+def _cached_available_balance_usdt(execution_mode: str) -> float | None:
+    """Return the cached available USDT for the account used by an order.
+
+    Risk evaluation must stay local and deterministic: it never calls an exchange
+    for a balance. Bitget has a per-mode cache; the other exchange-backed modes
+    use their named account in the unified cache. ``paper_internal`` has no
+    external account, so its configured cap remains the only size boundary here.
+    """
+    if execution_mode == "paper_internal":
+        return None
+
+    try:
+        from aletheia.portfolio.exchange_sync import (
+            get_cached_state,
+            get_unified_cached_state,
+        )
+
+        if execution_mode.startswith("bitget_"):
+            state = get_cached_state("live" if _is_live(execution_mode) else "demo")
+            value = (state or {}).get("available_usdt")
+        else:
+            unified = get_unified_cached_state() or {}
+            account = next(
+                (
+                    item for item in (unified.get("accounts") or [])
+                    if item.get("broker_id") == execution_mode
+                ),
+                None,
+            )
+            value = (account or {}).get("available_usdt")
+        available = float(value)
+        return max(0.0, available)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    except Exception:
+        # Balance synchronization is advisory to this calculation. Preserve the
+        # configured hard cap if no local snapshot can be read.
+        return None
+
+
+def _effective_position_notional_cap(risk, execution_mode: str) -> float:
+    """Return the hard position cap tightened by the matching account balance."""
+    configured_cap = (
+        risk.max_live_position_notional_usdt
+        if _is_live(execution_mode)
+        else risk.max_demo_position_notional_usdt
+    )
+    available = _cached_available_balance_usdt(execution_mode)
+    if available is None:
+        return configured_cap
+    return min(configured_cap, available)
+
+
 def _market_data_age_seconds(symbol: str, market_type: str | None = None) -> float | None:
     """Age in seconds of the latest market snapshot for symbol, or None if absent.
 
@@ -146,9 +199,10 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     if proposal.execution_mode != "paper_internal" and perm == "Observe":
         violations.append(f"permission_mode_insufficient:{perm}")
 
-    # 5. Max position size. Live and demo each have a notional cap so paper
-    #    promotion evidence is built from bounded trades (distinct tokens: a demo
-    #    size rejection must not count toward live-critical violations).
+    # 5. Max position size. Live and demo each have a configured hard cap, tightened
+    #    to the cached available balance of the matching external account when one
+    #    exists. This never raises a cap and never calls the exchange on an order path.
+    #    Distinct tokens keep demo size rejections out of live-critical violations.
     #    Portfolio drawdown scaling: if current equity is significantly below peak,
     #    reduce the effective cap proportionally (industry standard: halve size at
     #    10% drawdown, reject at 20% drawdown).
@@ -156,11 +210,11 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     if proposal.quantity and proposal.price:
         notional = proposal.quantity * proposal.price
         if _is_live(proposal.execution_mode):
-            effective_cap = risk.max_live_position_notional_usdt * drawdown_scale
+            effective_cap = _effective_position_notional_cap(risk, proposal.execution_mode) * drawdown_scale
             if notional > effective_cap:
                 violations.append(f"exceeds_max_position_notional:{notional}>{effective_cap}")
         else:
-            effective_cap = risk.max_demo_position_notional_usdt * drawdown_scale
+            effective_cap = _effective_position_notional_cap(risk, proposal.execution_mode) * drawdown_scale
             if notional > effective_cap:
                 violations.append(f"exceeds_demo_position_notional:{notional}>{effective_cap}")
 
