@@ -441,7 +441,7 @@ def score_short_bias(feat: dict) -> tuple[float, list[str], str | None]:
 
     Fires ONLY "short". Looks for confluence of sustained downward momentum
     (4h + 24h aligned), non-crowded short positioning (funding not deeply
-    positive = shorts not already piled in), and RSI with room to fall (not
+    negative = shorts not already piled in), and RSI with room to fall (not
     already oversold). Complements the generic momentum/derivatives families
     with a short-specific edge; the regime gate in signal_emitter filters it
     out in bull markets, and short_enabled=False kills it globally.
@@ -483,12 +483,14 @@ def score_short_bias(feat: dict) -> tuple[float, list[str], str | None]:
         reasons.append(f"RS24h {rs_24h:.1f}% weak vs BTC")
 
     # === Funding gate: avoid crowded shorts (squeeze risk) ===
-    # Deeply positive funding = longs paying = shorts already crowded. Skip.
-    if funding is not None and funding > 0.01:
+    # Negative funding means shorts pay longs, so deeply negative funding is the
+    # crowded-short/squeeze-risk state. Positive funding means longs are paying
+    # and can support an already-valid short thesis; it never creates one alone.
+    if funding is not None and funding < -0.01:
         return 0.0, [], None
-    if funding is not None and funding < -0.005:
+    if funding is not None and funding > 0.005:
         score += 10.0
-        reasons.append(f"funding {funding:.3f} (longs still paying)")
+        reasons.append(f"funding {funding:.3f} (longs paying)")
 
     # === RSI room-to-fall gate: reject if already oversold (poor entry) ===
     if rsi_val is not None and rsi_val < 25:

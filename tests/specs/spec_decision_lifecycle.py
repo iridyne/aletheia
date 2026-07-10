@@ -39,14 +39,17 @@ def test_opportunity_carrier_fields():
     SpecClaim(
         "DL-S02", "decision_lifecycle_contract", "§2.2 TradingDecision carrier", "L2a",
         "TradingDecision dataclass — the sole LLM→proposal carrier — exposes "
-        "action/conviction/reasoning (required) + market_type/opportunity_id/signal_source",
+        "action/conviction/reasoning/bear_case (required) + market_type/opportunity_id/signal_source",
     ),
 )
 def test_trading_decision_carrier_fields():
     from aletheia.agent_shell.trading_decision import TradingDecision
 
     field_names = {f.name for f in dataclasses.fields(TradingDecision)}
-    required = {"action", "conviction", "reasoning", "market_type", "opportunity_id", "signal_source"}
+    required = {
+        "action", "conviction", "reasoning", "bear_case",
+        "market_type", "opportunity_id", "signal_source",
+    }
     missing = required - field_names
     assert not missing, f"TradingDecision missing seam fields {missing} (decision_lifecycle §2.2)"
 
@@ -130,3 +133,23 @@ def test_min_conviction_threshold_is_55():
     assert trading_decision._MIN_CONVICTION_TO_TRADE == 55, (
         "Conviction gate drifted from 55 — sync decision_lifecycle_contract §4 (DL-INV-2)"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S06", "decision_lifecycle_contract", "§4 DL-INV-5 instrument price", "L2a",
+        "submit_decision_as_proposal resolves the final market_type before calling "
+        "latest_snapshot and passes that market_type into the price lookup.",
+    ),
+)
+def test_proposal_price_lookup_is_market_type_scoped():
+    from aletheia.agent_shell import trading_decision
+
+    src = Path(trading_decision.__file__).read_text(encoding="utf-8")
+    start = src.index("async def submit_decision_as_proposal")
+    end = src.index("\ndef _proposal_direction_overheated", start)
+    body = src[start:end]
+
+    resolution = body.index("market_type = decision.market_type")
+    lookup = body.index("latest_snapshot(decision.symbol, market_type=market_type)")
+    assert resolution < lookup

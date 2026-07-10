@@ -221,8 +221,12 @@ class UniverseService:
                 )
                 scored.append({**feat, **scanner_result, "total_score": total})
 
+            # A symbol's spot/perp alternatives represent one candidate thesis.
+            # Deduplicate before quota allocation so the discarded instrument does
+            # not consume a family/explore slot that is never refilled.
+            unique_scored = _dedupe_by_symbol_preferred_market(scored, cfg)
             allocated = allocate_universe(
-                scored, cfg.universe,
+                unique_scored, cfg.universe,
                 regime_state=current_regime.state if current_regime else None,
             )
 
@@ -240,11 +244,6 @@ class UniverseService:
             )
             repo.insert_universe_snapshot(snap)
             repo.expire_universe_snapshots(market_type, except_id=snap.id)
-
-            # Deduplicate by symbol, but keep the configured market instrument.
-            # With spot+perp enabled, auto defaults to perp (OD-S01). The old
-            # "highest score wins" path let spot rows crowd out every perp row.
-            allocated = _dedupe_by_symbol_preferred_market(allocated, cfg)
 
             regime_tag = current_regime.state if current_regime else None
             inserted_members: list[dict] = []

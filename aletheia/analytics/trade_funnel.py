@@ -8,6 +8,7 @@ proposals, update opportunities, call agents, call LLMs, or call exchanges.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -140,15 +141,23 @@ def build_trade_funnel_audit(
             if snapshot.get("error"):
                 report["ranker_snapshot_error"] = snapshot["error"]
 
-        report["conversion_rates"] = _conversion_rates(counts)
-        report["top_dropoffs"] = _top_dropoffs(counts)
+        # The raw counts above are event throughput in one clock window. They are
+        # useful operationally but are not a conversion cohort: downstream rows
+        # can belong to older opportunities and one opportunity can be evaluated
+        # repeatedly. Build a distinct opportunity-ID cohort for all rates/dropoffs.
+        cohort_counts = _causal_cohort_counts(db, cutoff)
+        report["causal_cohort_counts"] = cohort_counts
+        report["conversion_rates"] = _conversion_rates(cohort_counts)
+        report["top_dropoffs"] = _top_dropoffs(cohort_counts)
         if _table_exists(db, "risk_decisions"):
             report["risk_rejection_reasons"] = _risk_rejection_reasons(db, cutoff)
         if _table_exists(db, "orders"):
             report["execution_error_reasons"] = _execution_error_reasons(db, cutoff)
         if _table_exists(db, "positions"):
             report["position_stats"] = _position_stats(db, cutoff)
-        report["main_choke_point"] = _main_choke_point(counts, report["position_stats"], min_sample_size)
+        report["main_choke_point"] = _main_choke_point(
+            cohort_counts, report["position_stats"], min_sample_size,
+        )
     except sqlite3.OperationalError as exc:
         report["schema_errors"].append(str(exc))
         report["main_choke_point"] = _choke(
@@ -169,7 +178,7 @@ def render_trade_funnel_audit(report: dict) -> str:
         for err in report["schema_errors"]:
             lines.append(f"  {err}")
         lines.append("")
-    lines.append("Counts:")
+    lines.append("Event-volume counts (same clock window; not conversion rates):")
     counts = report.get("counts") or {}
     for key in (
         "opportunities_created",
@@ -187,6 +196,23 @@ def render_trade_funnel_audit(report: dict) -> str:
         "positions_opened",
     ):
         value = counts.get(key)
+        lines.append(f"  {key}: {'n/a' if value is None else value}")
+    lines.extend(["", "Causal opportunity cohort (used for conversion rates):"])
+    cohort = report.get("causal_cohort_counts") or {}
+    for key in (
+        "opportunities_created",
+        "signal_pending_written",
+        "system_operator_evaluated",
+        "decisions_trade",
+        "decisions_watch",
+        "decisions_skip",
+        "proposals_created",
+        "risk_approved",
+        "risk_rejected",
+        "orders_executed",
+        "positions_opened",
+    ):
+        value = cohort.get(key)
         lines.append(f"  {key}: {'n/a' if value is None else value}")
     stats = report.get("position_stats") or {}
     if stats.get("sample_size"):
@@ -227,18 +253,25 @@ def compact_trade_funnel_summary(report: dict) -> dict:
         "reason": "; ".join(report.get("schema_errors") or []),
         "main_choke_point": report.get("main_choke_point"),
         "counts": report.get("counts"),
+        "causal_cohort_counts": report.get("causal_cohort_counts"),
         "position_stats": report.get("position_stats"),
     }
 
 
 def _base_report(generated_at: str, window: dict) -> dict:
-    counts: dict[str, int | None] = {key: 0 for key in _COUNT_KEYS}
-    counts["ranker_candidates"] = None
-    counts["ranker_eligible"] = None
+    counts = _empty_counts()
     return {
         "generated_at": generated_at,
         "window": window,
         "counts": counts,
+        "count_semantics": {
+            "counts": "independent event rows in the clock window; operational throughput only",
+            "causal_cohort_counts": (
+                "distinct opportunities created in the window, joined downstream by opportunity_id"
+            ),
+            "conversion_rates": "computed only from causal_cohort_counts",
+        },
+        "causal_cohort_counts": _empty_counts(),
         "conversion_rates": {
             "opportunity_to_signal_pending": None,
             "signal_pending_to_evaluated": None,
@@ -267,6 +300,13 @@ def _base_report(generated_at: str, window: dict) -> dict:
         ),
         "schema_errors": [],
     }
+
+
+def _empty_counts() -> dict[str, int | None]:
+    counts: dict[str, int | None] = {key: 0 for key in _COUNT_KEYS}
+    counts["ranker_candidates"] = None
+    counts["ranker_eligible"] = None
+    return counts
 
 
 def _window(*, hours: int | None, days: int | None) -> dict:
@@ -310,6 +350,142 @@ def _count(
         tuple(params),
     ).fetchone()
     return int(row["n"] if row else 0)
+
+
+def _causal_cohort_counts(db, cutoff: str) -> dict[str, int | None]:
+    """Count distinct opportunities created in-window through linked stages.
+
+    Downstream timestamps are intentionally unrestricted: this is a cohort view,
+    so a decision made after the opportunity's creation window still matures that
+    same opportunity. Rows without an opportunity_id remain visible in raw event
+    counts but cannot honestly contribute to conversion.
+    """
+    counts = _empty_counts()
+    if not _table_exists(db, "opportunities"):
+        return counts
+
+    cohort_rows = db.execute(
+        "SELECT id, status FROM opportunities WHERE datetime(created_at) >= datetime(?)",
+        (cutoff,),
+    ).fetchall()
+    cohort_ids = {str(row["id"]) for row in cohort_rows}
+    counts["opportunities_created"] = len(cohort_ids)
+    counts["open_opportunities"] = _count(
+        db, "opportunities", "created_at", cutoff, "status = 'open'",
+    )
+
+    signal_ids: set[str] = set()
+    trade_ids: set[str] = set()
+    if _table_exists(db, "pi_decisions"):
+        rows = db.execute(
+            "SELECT DISTINCT pd.opportunity_id "
+            "FROM pi_decisions pd JOIN opportunities o ON o.id = pd.opportunity_id "
+            "WHERE datetime(o.created_at) >= datetime(?) AND pd.action = 'signal_pending'",
+            (cutoff,),
+        ).fetchall()
+        signal_ids = {str(row["opportunity_id"]) for row in rows}
+        counts["signal_pending_written"] = len(signal_ids)
+
+        rows = db.execute(
+            "SELECT pd.opportunity_id, pd.action "
+            "FROM pi_decisions pd JOIN opportunities o ON o.id = pd.opportunity_id "
+            "WHERE datetime(o.created_at) >= datetime(?) "
+            "AND pd.action IN ('trade','watch','skip','scale_in','flip') "
+            "ORDER BY julianday(pd.created_at) ASC, pd.rowid ASC",
+            (cutoff,),
+        ).fetchall()
+        latest_action: dict[str, str] = {}
+        for decision in rows:
+            opportunity_id = str(decision["opportunity_id"])
+            if opportunity_id in signal_ids:
+                latest_action[opportunity_id] = str(decision["action"])
+        action_counts = Counter(latest_action.values())
+        trade_ids = {
+            opportunity_id
+            for opportunity_id, action in latest_action.items()
+            if action in {"trade", "scale_in", "flip"}
+        }
+        counts["system_operator_evaluated"] = len(latest_action)
+        for action, key in (
+            ("trade", "decisions_trade"),
+            ("watch", "decisions_watch"),
+            ("skip", "decisions_skip"),
+            ("scale_in", "decisions_scale_in"),
+            ("flip", "decisions_flip"),
+        ):
+            counts[key] = int(action_counts.get(action, 0))
+
+    proposal_ids: set[str] = set()
+    if _table_exists(db, "trade_proposals"):
+        proposal_ids = _linked_opportunity_ids(
+            db,
+            "trade_proposals tp JOIN opportunities o ON o.id = tp.opportunity_id",
+            cutoff,
+        )
+        proposal_ids &= trade_ids
+        counts["proposals_created"] = len(proposal_ids)
+
+    approved_ids: set[str] = set()
+    if _table_exists(db, "risk_decisions") and _table_exists(db, "trade_proposals"):
+        for approved, key in ((1, "risk_approved"), (0, "risk_rejected")):
+            linked = _linked_opportunity_ids(
+                db,
+                "risk_decisions rd "
+                "JOIN trade_proposals tp ON tp.id = rd.proposal_id "
+                "JOIN opportunities o ON o.id = tp.opportunity_id",
+                cutoff,
+                "rd.approved = ?",
+                (approved,),
+            )
+            linked &= proposal_ids
+            counts[key] = len(linked)
+            if approved:
+                approved_ids = linked
+
+    if _table_exists(db, "orders") and _table_exists(db, "trade_proposals"):
+        executed_ids = _linked_opportunity_ids(
+            db,
+            "orders ord "
+            "JOIN trade_proposals tp ON tp.id = ord.proposal_id "
+            "JOIN opportunities o ON o.id = tp.opportunity_id",
+            cutoff,
+            "(lower(COALESCE(ord.status, '')) IN ('filled', 'executed') "
+            "OR ord.filled_at IS NOT NULL)",
+        )
+        counts["orders_executed"] = len(executed_ids & approved_ids)
+
+    if _table_exists(db, "positions") and _table_exists(db, "trade_proposals"):
+        rows = db.execute(
+            "SELECT DISTINCT o.id "
+            "FROM positions pos "
+            "LEFT JOIN trade_proposals tp ON tp.id = pos.proposal_id "
+            "JOIN opportunities o ON o.id = COALESCE(pos.opportunity_id, tp.opportunity_id) "
+            "WHERE datetime(o.created_at) >= datetime(?)",
+            (cutoff,),
+        ).fetchall()
+        position_ids = {str(row["id"]) for row in rows}
+        counts["positions_opened"] = len(position_ids & approved_ids)
+
+    return counts
+
+
+def _linked_opportunity_ids(
+    db,
+    from_sql: str,
+    cutoff: str,
+    extra_where: str | None = None,
+    extra_params: tuple = (),
+) -> set[str]:
+    where = ["datetime(o.created_at) >= datetime(?)"]
+    params: list[Any] = [cutoff]
+    if extra_where:
+        where.append(extra_where)
+        params.extend(extra_params)
+    rows = db.execute(
+        f"SELECT DISTINCT o.id FROM {from_sql} WHERE {' AND '.join(where)}",
+        tuple(params),
+    ).fetchall()
+    return {str(row["id"]) for row in rows}
 
 
 def _orders_executed(db, cutoff: str) -> int:
@@ -385,13 +561,34 @@ def _risk_rejection_reasons(db, cutoff: str) -> list[dict]:
         (cutoff,),
     ).fetchall()
     counter: Counter[str] = Counter()
+    examples: dict[str, str] = {}
     for row in rows:
         reasons = _json_list(row["violations"])
         if not reasons and row["message"]:
             reasons = [str(row["message"])]
         for reason in reasons or ["unknown"]:
-            counter[str(reason)] += 1
-    return [{"reason": reason, "count": count} for reason, count in counter.most_common(10)]
+            raw = str(reason)
+            bucket = _risk_reason_bucket(raw)
+            counter[bucket] += 1
+            examples.setdefault(bucket, raw)
+    result = []
+    for reason, count in counter.most_common(10):
+        item = {"reason": reason, "count": count}
+        if examples.get(reason) != reason:
+            item["example"] = examples[reason]
+        result.append(item)
+    return result
+
+
+def _risk_reason_bucket(reason: str) -> str:
+    """Collapse human-readable numeric details without changing reason tokens."""
+    text = reason.strip() or "unknown"
+    if re.fullmatch(r"[a-z0-9_.:-]+", text):
+        return text
+    text = re.sub(r"\$[-+]?\d[\d,]*(?:\.\d+)?", "$N", text)
+    text = re.sub(r"(?<![A-Za-z0-9_])[-+]?\d+(?:\.\d+)?%", "N%", text)
+    text = re.sub(r"(?<=[>:<])[-+]?\d+(?:\.\d+)?", "N", text)
+    return text
 
 
 def _execution_error_reasons(db, cutoff: str) -> list[dict]:

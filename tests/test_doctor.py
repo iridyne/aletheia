@@ -495,6 +495,103 @@ def test_llm_credentials_do_not_require_api_key_for_cli_provider(monkeypatch):
     assert "codex_cli" in llm.detail
 
 
+def test_universe_market_coverage_warns_when_enabled_perps_have_no_features(tmp_path, monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.storage.sqlite import get_db
+
+    setup_env(tmp_path, monkeypatch)
+    cfg = AletheiaConfig()
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": True}
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+
+    db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    db.execute(
+        "INSERT INTO universe_registry (id, venue, market_type, symbol) "
+        "VALUES ('asset-spot', 'okx', 'spot', 'BTC/USDT')"
+    )
+    db.execute(
+        "INSERT INTO universe_registry (id, venue, market_type, symbol) "
+        "VALUES ('asset-perp', 'okx', 'perp', 'BTC/USDT')"
+    )
+    db.execute(
+        "INSERT INTO universe_feature_snapshots (id, asset_id, ts, quote_volume_24h) "
+        "VALUES ('feature-spot', 'asset-spot', ?, 1000000)",
+        (now,),
+    )
+    db.commit()
+
+    report = dx.Report(generated_at="t")
+    dx._probe_universe_market_coverage(report)
+    verdict = report.checks[0]
+
+    assert verdict.severity == "warn"
+    assert "perp=0" in verdict.detail
+
+
+def test_universe_market_coverage_ok_when_enabled_markets_both_produce_features(tmp_path, monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.storage.sqlite import get_db
+
+    setup_env(tmp_path, monkeypatch)
+    cfg = AletheiaConfig()
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": True}
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+
+    db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    for market_type in ("spot", "perp"):
+        db.execute(
+            "INSERT INTO universe_registry (id, venue, market_type, symbol) VALUES (?, 'okx', ?, ?)",
+            (f"asset-{market_type}", market_type, f"{market_type.upper()}/USDT"),
+        )
+        db.execute(
+            "INSERT INTO universe_feature_snapshots (id, asset_id, ts, quote_volume_24h) "
+            "VALUES (?, ?, ?, 1000000)",
+            (f"feature-{market_type}", f"asset-{market_type}", now),
+        )
+    db.commit()
+
+    report = dx.Report(generated_at="t")
+    dx._probe_universe_market_coverage(report)
+    verdict = report.checks[0]
+
+    assert verdict.severity == "ok"
+    assert "spot=1" in verdict.detail
+    assert "perp=1" in verdict.detail
+
+
+def test_profit_loop_success_only_claims_proposal_flow_liveness(tmp_path, monkeypatch):
+    from aletheia.storage.sqlite import get_db
+
+    setup_env(tmp_path, monkeypatch)
+    db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    db.execute(
+        "INSERT INTO opportunities "
+        "(id, symbol, market, confidence, source_agent, created_at, status) "
+        "VALUES ('opp-profit-label', 'BTC/USDT', 'spot', 'high', 'test', ?, 'open')",
+        (now,),
+    )
+    db.execute(
+        "INSERT INTO trade_proposals "
+        "(id, symbol, market_type, direction, created_at) "
+        "VALUES ('proposal-profit-label', 'BTC/USDT', 'spot', 'long', ?)",
+        (now,),
+    )
+    db.commit()
+
+    report = dx.Report(generated_at="t")
+    dx._probe_profit_loop(report)
+    verdict = report.checks[0]
+
+    assert verdict.severity == "ok"
+    assert "proposal flow healthy" in verdict.detail
+    assert "profitability not assessed" in verdict.detail
+
+
 def test_process_autostart_warns_when_watchdog_never_ran(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader

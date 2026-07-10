@@ -76,10 +76,26 @@ def test_research_worker_prompt_includes_verdict():
     ),
 )
 def test_trading_decision_bear_case_field():
-    src = _TRADING_DECISION.read_text(encoding="utf-8")
-    assert "bear_case" in src, (
-        "TradingDecision in trading_decision.py missing bear_case field"
+    from aletheia.agent_shell.trading_decision import (
+        TradingDecision,
+        _DECISION_SCHEMA,
+        _build_assessment_prompt,
+        _parse_decision,
     )
+
+    assert "bear_case" in TradingDecision.__dataclass_fields__
+    assert "bear_case" in _DECISION_SCHEMA["properties"]
+    assert "bear_case" in _DECISION_SCHEMA["required"]
+    parsed = _parse_decision({
+        "action": "trade",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "conviction": 70,
+        "reasoning": "breakout",
+        "bear_case": "failed breakout traps late buyers",
+    })
+    assert parsed.bear_case == "failed breakout traps late buyers"
+    assert "bear_case" in _build_assessment_prompt({})
 
 
 # ---------------------------------------------------------------------------

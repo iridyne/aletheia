@@ -124,7 +124,7 @@ def test_trade_funnel_identifies_system_operator_skip_choke_point():
     for i in range(4):
         _insert_opp(db, i)
         _insert_signal(db, i, "signal_pending")
-        _insert_signal(db, i + 10, "skip")
+        _insert_signal(db, i, "skip")
     db.commit()
 
     report = build_trade_funnel_audit(hours=24, min_sample_size=1, include_ranker_snapshot=False)
@@ -136,6 +136,54 @@ def test_trade_funnel_identifies_system_operator_skip_choke_point():
     assert "4 evaluated" in report["main_choke_point"]["summary"]
 
 
+def test_trade_funnel_conversion_uses_linked_opportunity_cohort():
+    """Unrelated decisions in the same clock window must not create >100% rates."""
+    from aletheia.analytics.trade_funnel import build_trade_funnel_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, 1)
+    _insert_signal(db, 1, "signal_pending")
+    _insert_signal(db, 1, "trade")
+    _insert_opp(db, 2)
+    _insert_signal(db, 2, "skip")  # linked to cohort, but bypassed signal_pending
+    for i in range(20, 24):
+        _insert_signal(db, i, "skip")  # no matching opportunity in this cohort
+    db.commit()
+
+    report = build_trade_funnel_audit(hours=24, include_ranker_snapshot=False)
+
+    assert report["counts"]["system_operator_evaluated"] == 6  # event throughput remains visible
+    assert report["causal_cohort_counts"]["system_operator_evaluated"] == 1
+    assert report["causal_cohort_counts"]["decisions_trade"] == 1
+    assert report["conversion_rates"]["signal_pending_to_evaluated"] == 1.0
+    assert all(
+        rate is None or 0.0 <= rate <= 1.0
+        for rate in report["conversion_rates"].values()
+    )
+
+
+def test_trade_funnel_cohort_uses_latest_terminal_decision_once():
+    """One opportunity with repeated evaluations is one converted opportunity."""
+    from aletheia.analytics.trade_funnel import build_trade_funnel_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, 1)
+    _insert_signal(db, 1, "signal_pending")
+    _insert_signal(db, 1, "watch")
+    _insert_signal(db, 1, "trade")
+    db.commit()
+
+    report = build_trade_funnel_audit(hours=24, include_ranker_snapshot=False)
+    cohort = report["causal_cohort_counts"]
+
+    assert cohort["system_operator_evaluated"] == 1
+    assert cohort["decisions_trade"] == 1
+    assert cohort["decisions_watch"] == 0
+    assert report["conversion_rates"]["evaluated_to_trade_decision"] == 1.0
+
+
 def test_trade_funnel_identifies_risk_engine_rejection_choke_point():
     from aletheia.analytics.trade_funnel import build_trade_funnel_audit
     from aletheia.storage.sqlite import get_db
@@ -144,6 +192,7 @@ def test_trade_funnel_identifies_risk_engine_rejection_choke_point():
     for i in range(3):
         _insert_opp(db, i)
         pid = _insert_proposal(db, i)
+        _insert_signal(db, i, "signal_pending")
         _insert_signal(db, i, "trade", proposal_id=pid)
         _insert_risk(db, i, approved=False, reason="max_demo_position_notional")
     db.commit()
@@ -156,6 +205,43 @@ def test_trade_funnel_identifies_risk_engine_rejection_choke_point():
     assert report["main_choke_point"]["stage"] == "risk_engine"
 
 
+def test_trade_funnel_groups_dynamic_risk_amounts_under_one_reason():
+    from aletheia.analytics.trade_funnel import build_trade_funnel_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for i, notional in enumerate((68.8, 71.2, 83.4)):
+        _insert_opp(db, i)
+        _insert_proposal(db, i)
+        _insert_risk(
+            db,
+            i,
+            approved=False,
+            reason=(
+                f"Position notional ${notional} exceeds "
+                "max demo position notional $0.0"
+            ),
+        )
+    db.commit()
+
+    report = build_trade_funnel_audit(hours=24, include_ranker_snapshot=False)
+    top = report["risk_rejection_reasons"][0]
+
+    assert top["count"] == 3
+    assert top["reason"] == (
+        "Position notional $N exceeds max demo position notional $N"
+    )
+    assert "$68.8" in top["example"]
+
+
+def test_trade_funnel_groups_machine_risk_tokens_with_dynamic_numbers():
+    from aletheia.analytics.trade_funnel import _risk_reason_bucket
+
+    assert _risk_reason_bucket(
+        "exceeds_demo_position_notional:68.79983666>0.0"
+    ) == "exceeds_demo_position_notional:N>N"
+
+
 def test_trade_funnel_identifies_execution_gap_after_risk_approval():
     from aletheia.analytics.trade_funnel import build_trade_funnel_audit
     from aletheia.storage.sqlite import get_db
@@ -164,6 +250,7 @@ def test_trade_funnel_identifies_execution_gap_after_risk_approval():
     for i in range(2):
         _insert_opp(db, i)
         pid = _insert_proposal(db, i)
+        _insert_signal(db, i, "signal_pending")
         _insert_signal(db, i, "trade", proposal_id=pid)
         _insert_risk(db, i, approved=True)
     db.commit()
@@ -183,6 +270,7 @@ def test_trade_funnel_points_tiny_positions_to_sizing_trace():
     for i in range(3):
         _insert_opp(db, i)
         pid = _insert_proposal(db, i, status="executed", notional=1.5)
+        _insert_signal(db, i, "signal_pending")
         _insert_signal(db, i, "trade", proposal_id=pid)
         _insert_risk(db, i, approved=True)
         _insert_order(db, i)

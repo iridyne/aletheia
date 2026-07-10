@@ -70,6 +70,42 @@ def _is_valid_symbol(symbol: str) -> bool:
     return symbol.isascii()
 
 
+def _positive_float(value) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _quote_volume_24h(exchange, ccxt_symbol: str, ticker: dict) -> float:
+    """Return 24h quote-currency volume for spot or contract tickers.
+
+    OKX swap tickers leave ``quoteVolume`` empty and expose ``baseVolume`` as
+    contract count. Convert contracts to base units with ``contractSize`` before
+    multiplying by the last price. Keeping this conversion in one helper ensures
+    the volume pre-filter and persisted feature use identical economics.
+    """
+    direct = _positive_float(ticker.get("quoteVolume"))
+    if direct is not None:
+        return direct
+
+    base_volume = _positive_float(ticker.get("baseVolume"))
+    last = _positive_float(ticker.get("last") or ticker.get("close"))
+    if base_volume is None or last is None:
+        return 0.0
+
+    markets = getattr(exchange, "markets", {}) or {}
+    market = markets.get(ccxt_symbol) or {}
+    if market.get("contract"):
+        contract_size = _positive_float(market.get("contractSize"))
+        if contract_size is None:
+            return 0.0
+        base_volume *= contract_size
+
+    return base_volume * last
+
+
 async def _chunked_fetch_tickers(exchange, symbols: list[str]) -> dict:
     """Fetch tickers in chunks to stay within Binance URL length limits."""
     all_tickers: dict = {}
@@ -96,7 +132,7 @@ async def _fetch_single_feature(
 
     ccxt_sym = to_ccxt_perp(symbol) if is_perp else symbol
 
-    quote_volume_24h = float(ticker.get("quoteVolume") or 0)
+    quote_volume_24h = _quote_volume_24h(exchange, ccxt_sym, ticker)
     bid = ticker.get("bid")
     ask = ticker.get("ask")
     spread = _spread_bps(
@@ -372,7 +408,7 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
             if ticker is None:
                 continue
 
-            vol = float(ticker.get("quoteVolume") or 0)
+            vol = _quote_volume_24h(exchange, ccxt_sym, ticker)
             if vol < min_vol:
                 continue
 

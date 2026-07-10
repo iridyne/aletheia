@@ -131,12 +131,17 @@ def test_short_bias_scanner_family_reachable():
     # 1. 干净 bearish setup → 产出 short 信号
     bearish = {
         "return_4h": -4.0, "return_24h": -6.0,
-        "funding_rate": -0.006, "rsi_14": 40.0,
+        "funding_rate": 0.006, "rsi_14": 40.0,
         "relative_strength_24h": -5.0,
     }
     score, reasons, direction = score_short_bias(bearish)
     assert direction == "short", f"score_short_bias 未在 bearish setup 产出 short: {direction}"
     assert score > 0, f"score_short_bias 产出 short 但 score={score}"
+
+    # Deeply negative funding means shorts are paying/crowded. A dedicated
+    # continuation-short scanner must reject that squeeze-prone setup.
+    crowded_short = {**bearish, "funding_rate": -0.012}
+    assert score_short_bias(crowded_short)[2] is None
 
     # 2. bullish setup → 不误发
     bullish = {"return_4h": 3.0, "return_24h": 5.0, "rsi_14": 60.0}

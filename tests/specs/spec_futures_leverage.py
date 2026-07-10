@@ -277,7 +277,7 @@ async def test_submit_decision_clamps_leverage(monkeypatch):
     # the decision→proposal forwarding logic (not the execution pipeline).
     monkeypatch.setattr("aletheia.execution.paper_tools.create_paper_proposal", _fake_create)
     monkeypatch.setattr("aletheia.trading.market_data.latest_snapshot",
-                        lambda s: {"price": 60000.0})
+                        lambda s, market_type=None: {"price": 60000.0})
     monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda ctx: [])
     monkeypatch.setattr("aletheia.trust.guard_chain.summarize",
                         lambda v: {"blocks": [], "details": ""})

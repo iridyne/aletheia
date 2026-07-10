@@ -221,6 +221,30 @@ def test_snapshot_freshness_is_market_type_scoped(monkeypatch):
 
 
 @spec_claim(
+    SpecClaim(
+        "UP-20", "universe_pipeline", "§contract quote-volume normalization", "L2b",
+        "When a linear contract ticker omits quoteVolume, Universe feature collection "
+        "derives quote-currency volume from baseVolume × contractSize × last instead "
+        "of dropping the enabled perp market as zero-volume.",
+    ),
+)
+def test_contract_quote_volume_fallback_uses_contract_size():
+    from aletheia.universe.features import _quote_volume_24h
+
+    class Exchange:
+        markets = {
+            "BTC/USDT:USDT": {"contract": True, "contractSize": 0.01},
+        }
+
+    volume = _quote_volume_24h(
+        Exchange(),
+        "BTC/USDT:USDT",
+        {"quoteVolume": None, "baseVolume": 9_000_000, "last": 60_000},
+    )
+    assert volume == 5_400_000_000.0
+
+
+@spec_claim(
     SpecClaim("UP-11", "universe_pipeline", "§2 MO-6 single-symbol RS rank", "L2b",
               "cross-asset RS rank is omitted for <2 symbols (a lone 'Rank 1 of 1' "
               "reads to the LLM as 'strongest in market')"),

@@ -633,7 +633,10 @@ def _build_record(db, opp: dict[str, Any], context: dict[str, Any]) -> dict[str,
             )
 
     counterfactual = _counterfactual(db, opp, direction)
-    if counterfactual.get("shadow"):
+    if (
+        counterfactual.get("shadow")
+        and counterfactual["shadow"].get("status") == "resolved"
+    ):
         events.append(
             _event(
                 "shadow_resolved",

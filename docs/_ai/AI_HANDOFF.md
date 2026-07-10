@@ -7,7 +7,22 @@
 
 ## Last Updated
 
-2026-07-10 (Local-paper exchange status honesty)
+2026-07-10 (Opportunity profitability review and repair)
+
+---
+
+## Recent Change (Opportunity profitability review and repair — 2026-07-10)
+
+从顶层盈利目标到 `Opportunity -> filter -> System Operator -> proposal -> risk -> execution -> outcome -> feedback` 完成一轮当前源码和历史数据核实。权威入口：
+
+- `docs/research/OPPORTUNITY_LIFECYCLE_PROFITABILITY_REVIEW_2026-07-10.md`
+- `docs/plans/opportunity_lifecycle_profitability_repair_plan_2026-07-10.md`
+
+本轮已修：OKX 永续成交额为空导致合约全部在预筛消失；`short_bias` 资金费率方向写反；现货/永续在分配后才去重导致占坑；PI `bear_case` 只有字段未接 schema/parser；提案按 symbol-only 取价；pending shadow 伪装 resolved。Opportunity 漏斗现在把事件吞吐和同批机会转化分开，转化率只用 Opportunity ID 因果 cohort；动态金额风控理由会聚类。doctor 新增 spot/perp feature 覆盖，并明确 `loop.profit=ok` 只代表提案流水，不代表盈利。
+
+未直接改：方向刹车、ranker 权重、family calibration、Kelly/sizing、净收益结算、多资产执行。这些会改变选择或仓位，先按计划补 market-aware 净收益和 filter 决策/对照记录。
+
+验证：聚焦测试、相关 Universe/决策/漏斗/doctor 回归、完整 specs 和 architecture fitness 均通过；最终全量为 2588 passed（排除 3 个已在未修改 master 独立复现的既有失败），细节见同日 DEVLOG。
 
 ---
 

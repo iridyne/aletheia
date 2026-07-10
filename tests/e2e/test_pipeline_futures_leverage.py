@@ -81,7 +81,7 @@ class TestFuturesLeverageAcceptance:
         # network boundary; everything downstream is real).
         import aletheia.agent_shell.trading_decision as td
         orig = market_data.latest_snapshot
-        market_data.latest_snapshot = lambda s: {"price": 150.0}
+        market_data.latest_snapshot = lambda s, market_type=None: {"price": 150.0}
         try:
             decision = TradingDecision(
                 action="trade", symbol="SOL/USDT", direction="long",

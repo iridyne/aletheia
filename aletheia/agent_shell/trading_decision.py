@@ -120,6 +120,9 @@ _DECISION_SCHEMA = {
         "direction": {"type": "string", "enum": ["long", "short"]},
         "conviction": {"type": "integer", "minimum": 0, "maximum": 100},
         "reasoning": {"type": "string"},
+        # Forced counter-argument: even a trade recommendation must state the
+        # strongest concrete failure case instead of presenting one-sided confidence.
+        "bear_case": {"type": "string", "minLength": 1},
         # market_type: which venue expresses the view. "usdt_futures" (perp) supports
         # leverage and pays/earns funding; "spot" has no leverage and no funding cost.
         "market_type": {"type": "string", "enum": ["spot", "usdt_futures"]},
@@ -138,7 +141,7 @@ _DECISION_SCHEMA = {
         # P1: structured assumption list — at most 3, kept concise
         "key_assumptions": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["action", "conviction", "reasoning"],
+    "required": ["action", "conviction", "reasoning", "bear_case"],
 }
 
 _BULL_SCHEMA = {
@@ -262,7 +265,18 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     from aletheia.trust.guard_chain import run_guards, summarize
 
     cfg = load_config()
-    snap = latest_snapshot(decision.symbol)
+
+    # Resolve the instrument before looking up price. Spot and perp rows share the
+    # canonical symbol but have different prices and freshness histories.
+    market_type = decision.market_type
+    if not market_type:
+        market_type = "usdt_futures" if decision.direction == "short" else "spot"
+    elif market_type == "spot" and decision.direction == "short":
+        # Spot cannot express a native short; the risk engine retains the hard
+        # backstop, while this keeps the proposal on the intended perp instrument.
+        market_type = "usdt_futures"
+
+    snap = latest_snapshot(decision.symbol, market_type=market_type)
     price = float((snap or {}).get("price") or 0)
     if not price:
         logger.warning("no_price_for_decision_proposal: %s", decision.symbol)
@@ -353,20 +367,6 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     if len(thesis) > _MAX_RATIONALE_TEXT:
         thesis = thesis[:_MAX_RATIONALE_TEXT].rstrip() + "…"
     rationale = f"{thesis}\n---\n{json.dumps(decision_meta)}"
-
-    # Market type, in priority order: the PI's explicit choice → the source
-    # opportunity's instrument (backfilled by _attach_opportunity_context) → a
-    # last-resort fallback. The fallback is NOT a fixed perp bias (owner
-    # principle 3): spot cannot be shorted, so only a short forces perp; an
-    # otherwise-unknown long defaults to spot (no leverage / funding / liquidation).
-    market_type = decision.market_type
-    if not market_type:
-        market_type = "usdt_futures" if decision.direction == "short" else "spot"
-    elif market_type == "spot" and decision.direction == "short":
-        # #151: spot cannot be shorted — an explicit spot+short from the PI is forced
-        # to perp (same intent as the fallback above; risk engine #24 is the backstop).
-        # Prevents an impossible spot-short reaching the broker as a spot SELL.
-        market_type = "usdt_futures"
 
     # Leverage only applies to futures. Clamp the PI's request to the per-asset-tier
     # cap (the risk engine enforces the same cap as a hard reject — clamping here keeps
@@ -1083,7 +1083,8 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "",
         "Return: action, symbol (BTC/USDT format), direction (long/short), "
         "conviction (0-100), market_type (spot/usdt_futures), leverage (integer ≥1), "
-        "reasoning, risk_factors, supporting_signals, opposing_signals, "
+        "reasoning, bear_case (required: strongest concrete reason this decision can fail), "
+        "risk_factors, supporting_signals, opposing_signals, "
         "key_assumptions (array of ≤3 short strings: critical premises this decision rests on).",
     ]
 
@@ -1233,6 +1234,7 @@ def _parse_decision(raw: dict) -> TradingDecision:
         direction=raw.get("direction"),
         conviction=_int(raw.get("conviction", 0)),
         reasoning=raw.get("reasoning", ""),
+        bear_case=str(raw.get("bear_case") or "")[:500],
         market_type=mt,
         leverage=leverage,
         stop_price=_num(raw.get("stop_price")),

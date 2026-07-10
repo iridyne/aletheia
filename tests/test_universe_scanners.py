@@ -3,7 +3,7 @@
 import pytest
 from aletheia.universe.scanners import (
     score_momentum, score_mean_reversion, score_volatility,
-    score_derivatives, score_event, run_all_scanners,
+    score_derivatives, score_event, score_short_bias, run_all_scanners,
 )
 
 
@@ -204,6 +204,38 @@ def test_derivatives_no_data():
     score, _, direction = score_derivatives(feat)
     assert score == 0
     assert direction is None
+
+
+# --- Dedicated short bias ---
+
+def test_short_bias_rejects_crowded_shorts_with_deeply_negative_funding():
+    feat = _base_feat(
+        return_4h=-4.0,
+        return_24h=-6.0,
+        relative_strength_24h=-5.0,
+        funding_rate=-0.012,
+        rsi_14=40.0,
+    )
+
+    assert score_short_bias(feat) == (0.0, [], None)
+
+
+def test_short_bias_positive_funding_supports_short_without_creating_it():
+    base = _base_feat(
+        return_4h=-4.0,
+        return_24h=-6.0,
+        relative_strength_24h=-5.0,
+        funding_rate=None,
+        rsi_14=40.0,
+    )
+    funded = {**base, "funding_rate": 0.006}
+
+    base_score, _, base_direction = score_short_bias(base)
+    funded_score, funded_reasons, funded_direction = score_short_bias(funded)
+
+    assert base_direction == funded_direction == "short"
+    assert funded_score > base_score
+    assert any("longs paying" in reason for reason in funded_reasons)
 
 
 # --- Event (placeholder) ---

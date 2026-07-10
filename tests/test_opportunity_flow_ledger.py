@@ -182,6 +182,25 @@ def test_opportunity_flow_empty_db_does_not_crash(monkeypatch):
     assert report["read_only"] is True
 
 
+def test_opportunity_flow_pending_shadow_is_not_reported_as_resolved():
+    from aletheia.analytics.opportunity_flow import trace_opportunity_flow
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db)
+    db.execute(
+        "INSERT INTO shadow_trades "
+        "(id, opportunity_id, symbol, direction, scanner_family, trade_score, rank, entry_price) "
+        "VALUES ('shadow-pending', 'opp-flow-1', 'BTC/USDT', 'long', 'momentum', 50, 1, 100)"
+    )
+    db.commit()
+
+    trace = trace_opportunity_flow("opp-flow-1")
+
+    assert trace["counterfactual"]["shadow"]["status"] == "pending"
+    assert not any(event["stage"] == "shadow_resolved" for event in trace["timeline"])
+
+
 def test_opportunity_flow_candidate_supply_uses_wide_event_window(monkeypatch):
     # Read-model purity (test_opportunity_flow_read_model_*): opportunity_flow must
     # NOT import aletheia.agent_shell, so it queries the agent_shell_events table

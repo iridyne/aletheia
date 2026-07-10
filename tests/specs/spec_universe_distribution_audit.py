@@ -141,6 +141,18 @@ def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
     monkeypatch.setattr("aletheia.universe.registry.sync_registry", fake_sync_registry)
     monkeypatch.setattr("aletheia.universe.features.collect_features", fake_collect_features)
     monkeypatch.setattr("aletheia.universe.scanners.run_all_scanners", fake_run_all_scanners)
+
+    # Same-symbol instruments must be deduped BEFORE family quota allocation. If
+    # dedup happens after allocation, the duplicate consumes a slot and is then
+    # deleted without refill.
+    from aletheia.universe.allocator import allocate_universe as real_allocate
+    allocation_inputs: list[list[dict]] = []
+
+    def capture_allocate(scored, universe_cfg, regime_state=None):
+        allocation_inputs.append([dict(row) for row in scored])
+        return real_allocate(scored, universe_cfg, regime_state=regime_state)
+
+    monkeypatch.setattr("aletheia.universe.allocator.allocate_universe", capture_allocate)
     monkeypatch.setattr("aletheia.regime.collector.collect_regime_inputs", fake_regime_inputs)
     monkeypatch.setattr("aletheia.regime.detector.debounced_detect", fake_detect)
     monkeypatch.setattr("aletheia.universe.outcome_recorder.settle_due", lambda: None)
@@ -152,6 +164,11 @@ def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
 
     snapshot_id = asyncio.run(UniverseService().refresh())
     assert snapshot_id is not None
+    assert len(allocation_inputs) == 1
+    assert len(allocation_inputs[0]) == 6, (
+        "7 raw instruments must become 6 unique symbols before quota allocation"
+    )
+    assert len([r for r in allocation_inputs[0] if r["symbol"] == "BTC/USDT"]) == 1
 
     members = repo.list_universe_members(snapshot_id, limit=50)
     assert len(members) == 6, f"7 raw instruments should dedupe to 6 members, got {len(members)}"

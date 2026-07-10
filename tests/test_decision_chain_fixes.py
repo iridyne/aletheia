@@ -25,6 +25,47 @@ def test_parse_decision_guards_non_integer_conviction():
     assert _parse_decision({**base, "conviction": None}).conviction == 0       # null → 0
 
 
+def test_submit_decision_reads_snapshot_for_final_market_type(monkeypatch):
+    """A perp proposal must not build quantity/entry geometry from a spot row."""
+    import asyncio
+    import aletheia.agent_shell.trading_decision as td
+
+    snapshot_calls: list[tuple[str, str | None]] = []
+    captured: dict = {}
+
+    def latest(symbol, market_type=None):
+        snapshot_calls.append((symbol, market_type))
+        return {"price": 200.0 if market_type == "usdt_futures" else 100.0}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return {"status": "pending"}
+
+    monkeypatch.setattr("aletheia.trading.market_data.latest_snapshot", latest)
+    monkeypatch.setattr("aletheia.execution.paper_tools.create_paper_proposal", create)
+    monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda ctx: [])
+    monkeypatch.setattr(
+        "aletheia.trust.guard_chain.summarize",
+        lambda verdicts: {"blocks": [], "details": []},
+    )
+    monkeypatch.setattr(td, "_proposal_direction_overheated", lambda *args: None)
+
+    decision = TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=80,
+        reasoning="perp setup",
+        position_size_usdt=20.0,
+        market_type="usdt_futures",
+    )
+    asyncio.run(td.submit_decision_as_proposal(decision, "paper_internal"))
+
+    assert snapshot_calls == [("BTC/USDT", "usdt_futures")]
+    assert captured["price"] == 200.0
+    assert captured["quantity"] == 0.1
+
+
 def test_attribution_survives_conflicting_layer1_via_ranker():
     """#152: a conflicting-direction Layer-1 opp must not block the ranker fallback."""
     dec = TradingDecision(action="trade", symbol="BTC/USDT", direction="long",

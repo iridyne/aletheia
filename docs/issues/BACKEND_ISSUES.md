@@ -13,9 +13,20 @@
 > - 🟠 让数据失真或学习失效（promotion gate 错算 / KB 类型混淆 / PnL 不可信）
 > - 🟡 dead code / cosmetic / future-violation tripwire
 >
-> **最后更新**：2026-07-05 · 维护者：Aletheia Dev
+> **最后更新**：2026-07-10 · 维护者：Aletheia Dev
 > **来源**：6 个并行 subagent 审计（agents+runtime / risk+execution / storage+knowledge /
 > server+config / lifecycle+gateway / model+telegram+update+cli）+ 早期对照表
+
+---
+
+## 0b. Opportunity 生命周期与盈利能力专项审计（2026-07-10）
+
+当前源码和历史数据的重新核实见：
+
+- [`OPPORTUNITY_LIFECYCLE_PROFITABILITY_REVIEW_2026-07-10.md`](../research/OPPORTUNITY_LIFECYCLE_PROFITABILITY_REVIEW_2026-07-10.md)：从资产发现到结果/负反馈的完整评审，含 P0/P1/P2 问题和多资产能力矩阵。
+- [`opportunity_lifecycle_profitability_repair_plan_2026-07-10.md`](../plans/opportunity_lifecycle_profitability_repair_plan_2026-07-10.md)：按“先修断路和统计真相，再做策略实验”排列的施工计划。
+
+本次确认的最高优先问题：OKX 永续成交额被当 0、`short_bias` 资金费率经济含义相反、同币种现货/永续分配后才去重、漏斗用独立时间窗伪造转化、PI 的 `bear_case` 只声明未接通、提案取价未按最终 market type、pending shadow 被标成 resolved。旧条目和旧审计有大量已修/过时结论，后续以专项报告中的当前源码核实为准。
 
 ---
 

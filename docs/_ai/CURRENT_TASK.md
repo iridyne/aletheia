@@ -13,6 +13,24 @@
 
 ---
 
+## 当前专项：Opportunity 盈利闭环后续阶段
+
+当前源码级全生命周期评审和第一批确定性修复已落地。后续唯一权威入口：
+
+- `docs/research/OPPORTUNITY_LIFECYCLE_PROFITABILITY_REVIEW_2026-07-10.md`
+- `docs/plans/opportunity_lifecycle_profitability_repair_plan_2026-07-10.md`
+
+下一批意图按顺序固定为：
+
+1. 给 forward outcome 增加 market type 和 gross/net 成本口径。
+2. 持久化每个前置 filter 的输入、放行/拒绝、原因和版本，并继续结算拒绝组。
+3. 有对照证据后，再分别实验 family+direction 校准、方向刹车、ranker 重复扣分和 Kelly/sizing。
+4. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+
+已经修好的供给/语义问题不要重复施工：OKX 永续成交额、分配前 market 去重、short funding 方向、PI bear_case、market-aware proposal price、pending shadow、因果漏斗和 doctor 市场覆盖。
+
+---
+
 ## 当前任务:全项目 Bug/SDD 审查 — 修复阶段进行中
 
 全项目 bug/SDD 审查**已完成**（`#1`–`#180`）；现处于**修复阶段**，分支 `fix/bug-review-fixes`（已推送 origin）。

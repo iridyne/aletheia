@@ -33,7 +33,7 @@ def _capture_rationale(monkeypatch, decision: TradingDecision) -> str:
     # Mock only the I/O boundaries — the rationale-building logic runs for real.
     monkeypatch.setattr(
         "aletheia.trading.market_data.latest_snapshot",
-        lambda symbol: {"price": 100.0},
+        lambda symbol, market_type=None: {"price": 100.0},
     )
     monkeypatch.setattr(
         "aletheia.execution.paper_tools.create_paper_proposal",
@@ -124,7 +124,10 @@ def test_direction_overheated_skips_proposal_creation(monkeypatch):
         return {"id": "unexpected", "status": "pending"}
 
     monkeypatch.setattr(td, "_proposal_direction_overheated", lambda direction, conviction: "6h native proposals are 5/5 long")
-    monkeypatch.setattr("aletheia.trading.market_data.latest_snapshot", lambda symbol: {"price": 100.0})
+    monkeypatch.setattr(
+        "aletheia.trading.market_data.latest_snapshot",
+        lambda symbol, market_type=None: {"price": 100.0},
+    )
     monkeypatch.setattr("aletheia.execution.paper_tools.create_paper_proposal", fake_create_paper_proposal)
 
     decision = TradingDecision(

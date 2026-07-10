@@ -688,6 +688,73 @@ def _probe_market_data(report: Report) -> None:
         report.add("data.market", "ok", detail)
 
 
+def _probe_universe_market_coverage(report: Report) -> None:
+    """Verify each enabled instrument market reaches the recent feature layer."""
+    try:
+        from aletheia.config.loader import load_config
+        from aletheia.storage.sqlite import get_db
+
+        cfg = load_config()
+        enabled = cfg.exchange.enabled_markets or {}
+        expected: list[str] = []
+        if enabled.get("spot"):
+            expected.append("spot")
+        if enabled.get("usdt_futures"):
+            expected.append("perp")
+        if not expected:
+            report.add(
+                "data.universe_market_coverage", "info",
+                "no spot/perp markets enabled for Universe feature collection",
+            )
+            return
+
+        db = get_db()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        rows = db.execute(
+            "SELECT ur.market_type, COUNT(*) AS n "
+            "FROM universe_feature_snapshots ufs "
+            "JOIN universe_registry ur ON ur.id = ufs.asset_id "
+            "WHERE datetime(ufs.ts) >= datetime(?) "
+            "GROUP BY ur.market_type",
+            (cutoff,),
+        ).fetchall()
+        feature_counts = {str(row["market_type"]): int(row["n"]) for row in rows}
+
+        active_rows = db.execute(
+            "SELECT um.market_type, COUNT(*) AS n FROM universe_members um "
+            "WHERE um.snapshot_id = ("
+            "  SELECT id FROM universe_snapshots WHERE status = 'active' "
+            "  ORDER BY datetime(created_at) DESC LIMIT 1"
+            ") GROUP BY um.market_type"
+        ).fetchall()
+        member_counts = {str(row["market_type"]): int(row["n"]) for row in active_rows}
+    except Exception as e:
+        report.add("data.universe_market_coverage", "info", f"probe error: {e}")
+        return
+
+    detail = (
+        "recent features "
+        f"spot={feature_counts.get('spot', 0)} perp={feature_counts.get('perp', 0)}; "
+        "active members "
+        f"spot={member_counts.get('spot', 0)} perp={member_counts.get('perp', 0)}"
+    )
+    if sum(feature_counts.values()) == 0:
+        report.add(
+            "data.universe_market_coverage", "info", detail,
+            "wait for Universe refresh before judging per-market coverage",
+        )
+        return
+
+    missing = [market for market in expected if feature_counts.get(market, 0) == 0]
+    if missing:
+        report.add(
+            "data.universe_market_coverage", "warn", detail,
+            "enabled market type(s) missing from recent features: " + ", ".join(missing),
+        )
+        return
+    report.add("data.universe_market_coverage", "ok", detail)
+
+
 def _probe_orderbook(report: Report) -> None:
     """Expose whether L2 orderbook snapshots are actually reaching storage."""
     try:
@@ -1110,12 +1177,13 @@ def _probe_trading_loop(report: Report) -> None:
 
 
 def _probe_profit_loop(report: Report) -> None:
-    """Minimum profit loop liveness — the core revenue closed loop.
+    """Proposal-flow liveness for the trading pipeline.
 
     The loop is: opportunities -> (paper_trader ranks) -> signal_pending pi_decisions
     -> System Operator LLM decides -> trade_proposals -> risk -> orders -> positions.
 
-    A silent stall here is the most dangerous failure class: the observe stage
+    This probe does not measure profitability. A silent stall here is still a
+    dangerous failure class: the observe stage
     keeps producing opportunities (so loop.newest_opportunity stays green) while
     NO new proposals are created for hours — the system looks alive but earns and
     learns nothing. This probe catches that decoupling directly by comparing the
@@ -1218,14 +1286,15 @@ def _probe_profit_loop(report: Report) -> None:
                        "System Operator sees adverse trading_context (low WR / recent SL streak)")
         else:
             report.add("loop.profit", "warn",
-                       f"PROFIT LOOP STALLED: opportunities fresh ({_fmt_age(opp_age)}) but "
+                       f"PROPOSAL FLOW STALLED: opportunities fresh ({_fmt_age(opp_age)}) but "
                        f"newest proposal {prop_desc}{attribution}",
                        "opportunities flow but produce no proposals — inspect "
                        "paper_trader_ranker scoring + System Operator decision inputs "
                        "(see docs/issues/MINIMUM_PROFIT_LOOP_AUDIT.md)")
     elif prop_age is not None and prop_age < PROPOSAL_STALL_MIN:
         report.add("loop.profit", "ok",
-                   f"loop healthy — newest proposal {_fmt_age(prop_age)}")
+                   f"proposal flow healthy — newest proposal {_fmt_age(prop_age)}; "
+                   "profitability not assessed")
     else:
         report.add("loop.profit", "info",
                    f"opportunities {_fmt_age(opp_age)}, proposals {_fmt_age(prop_age) if prop_age else 'none'}")
@@ -2412,6 +2481,7 @@ def build_report() -> Report:
         _probe_config_consistency,
         _probe_credentials,
         _probe_market_data,
+        _probe_universe_market_coverage,
         _probe_orderbook,
         _probe_perp_structure,
         _probe_macro_signals,
