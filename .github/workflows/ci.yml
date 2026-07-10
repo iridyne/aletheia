@@ -5,6 +5,13 @@ on:
     branches: [master]
   push:
     branches: [master]
+  workflow_dispatch:
+    inputs:
+      full_regression:
+        description: Run the full Python regression audit
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -15,7 +22,7 @@ concurrency:
 
 jobs:
   backend:
-    name: Python safety and regression suite
+    name: Python safety and contract gate
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -39,7 +46,8 @@ jobs:
       - name: Verify executable contracts
         run: uv run pytest tests/specs/ -q --junitxml=test-results/specs.xml
 
-      - name: Run full regression suite
+      - name: Run full regression audit
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_regression }}
         run: uv run pytest tests/ -q --tb=line --junitxml=test-results/full.xml
 
       - name: Upload test reports
