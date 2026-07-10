@@ -882,6 +882,29 @@ class SerenityConfig(BaseModel):
     max_hold_days: int = 90
 
 
+class ControllerConfig(BaseModel):
+    """Filter feedback controller — negative-feedback tuning of opportunity filters.
+
+    Phase 1 is SHADOW / observe-only: an every-N-hours background job computes
+    per-filter × scanner_family loosen/hold/tighten recommendations from realized
+    forward-return outcomes and appends them to `controller_recommendations`. It
+    NEVER writes trading config in this phase. Bounded auto-tune and full
+    closed-loop actuation are future phases, gated behind additional flags.
+    See aletheia/analytics/filter_controller.py + filter_registry.py.
+    """
+    # Master switch for the shadow observe job. Default ON — it is read-only and safe.
+    shadow_enabled: bool = True
+    # How often the observe job runs (hours). Low-frequency: verdicts are based on
+    # multi-hour forward-return horizons, so more frequent runs add no signal.
+    observe_interval_hours: int = 6
+    # Minimum settled forward-outcome samples for a (filter, family) cell before the
+    # controller will emit a loosen/tighten verdict. Below this → insufficient_data.
+    min_samples_gate: int = 20
+    # Max fractional step a bounded auto-tune (Phase 2) may move a param in one cycle.
+    # Unused in Phase 1 (recorded for forward-compat and UI display).
+    max_step: float = 0.10
+
+
 class AletheiaConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
@@ -909,3 +932,4 @@ class AletheiaConfig(BaseModel):
     pi_daemon: PiDaemonConfig = Field(default_factory=PiDaemonConfig)
     news: NewsConfig = Field(default_factory=NewsConfig)
     serenity: SerenityConfig = Field(default_factory=SerenityConfig)
+    controller: ControllerConfig = Field(default_factory=ControllerConfig)

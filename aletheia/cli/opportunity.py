@@ -9,7 +9,7 @@ import typer
 
 opportunity_app = typer.Typer(no_args_is_help=True)
 
-_VIEWS = {"overview", "funnel", "sizing", "alpha", "thesis"}
+_VIEWS = {"overview", "funnel", "sizing", "alpha", "thesis", "controller"}
 
 
 @opportunity_app.command("audit")
@@ -19,7 +19,7 @@ def audit(
     stage: str | None = typer.Option(None, "--stage", help="Only show opportunities whose timeline includes this stage."),
     verdict: str | None = typer.Option(None, "--verdict", help="Only show opportunities with this counterfactual verdict."),
     symbol: str | None = typer.Option(None, "--symbol", help="Only show opportunities for this canonical symbol."),
-    view: str = typer.Option("overview", "--view", help="View: overview, funnel, sizing, alpha, or thesis."),
+    view: str = typer.Option("overview", "--view", help="View: overview, funnel, sizing, alpha, thesis, or controller."),
     json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
 ):
     """Analyze the full lifecycle of opportunities and their evidence."""
@@ -120,6 +120,14 @@ def _build_audit_view(
 
         report = build_sizing_trace_audit(hours=hours)
         return report, render_sizing_trace_audit(report)
+    if clean_view == "controller":
+        from aletheia.analytics.filter_controller import (
+            build_filter_controller_report,
+            render_filter_controller_report,
+        )
+
+        report = build_filter_controller_report()
+        return report, render_filter_controller_report(report)
     days = max(1, (max(1, int(hours or 24)) + 23) // 24)
     if clean_view == "alpha":
         from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit, render_alpha_audit

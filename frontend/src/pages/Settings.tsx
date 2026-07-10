@@ -70,6 +70,7 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   { title: 'Guard Promotion',          tab: 'agent', alt: ['guard', 'lesson guard', 'auto promote', 'guard candidate'] },
   { title: 'Regime Detection',         tab: 'agent', alt: ['regime', 'bias', 'short enabled', 'bear', 'trend', 'direction'] },
   { title: 'Serenity Research',        tab: 'agent', alt: ['serenity', 'auto promote', 'pi evaluation', 'long horizon', 'industrial chain'] },
+  { title: 'Filter Feedback Controller', tab: 'agent', alt: ['controller', 'negative feedback', 'shadow', 'filter tuning', 'opportunity funnel', 'loosen tighten'] },
   { title: 'Scheduler',                tab: 'agent', alt: ['jobs', 'cron', 'autostart agents'] },
   { title: 'AI Model Providers',       tab: 'agent', alt: ['llm', 'openai', 'anthropic', 'claude', 'codex'] },
   // Execution
@@ -360,6 +361,11 @@ function AgentModelsTab({ status, settings, qc }: any) {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Serenity config'),
   })
+  const controllerMut = useMutation({
+    mutationFn: (body: any) => api.updateControllerConfig(body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Filter controller config'),
+  })
 
   const perm = String(status.permission_mode || agent.permission_mode || '')
   const autoLearn = !!agent.autonomous_learning
@@ -373,6 +379,10 @@ function AgentModelsTab({ status, settings, qc }: any) {
   const serenityMinScore = Number(serenity.min_score_for_pi ?? 72)
   const serenityStopLossPct = Number(serenity.stop_loss_pct ?? 8.0)
   const serenityMaxHoldDays = Number(serenity.max_hold_days ?? 90)
+  const controllerCfg = (settings?.controller ?? {}) as any
+  const controllerShadowEnabled = controllerCfg.shadow_enabled !== false
+  const controllerObserveHours = Number(controllerCfg.observe_interval_hours ?? 6)
+  const controllerMinSamples = Number(controllerCfg.min_samples_gate ?? 20)
   const guardCfg = (settings?.guard ?? {}) as any
   const guardAutoPromote = guardCfg.auto_promote_enabled !== false
 
@@ -604,6 +614,60 @@ function AgentModelsTab({ status, settings, qc }: any) {
             }}
             className="w-24"
             disabled={serenityMut.isPending}
+          />
+        </Row>
+      </Section>
+
+      <Section
+        title="Filter Feedback Controller"
+        description="Phase 1 (SHADOW): a background job scores every opportunity-screening filter per scanner_family from realized forward returns and records loosen/hold/tighten recommendations. It NEVER changes trading config in this phase — review recommendations via `ato opportunity audit --view controller`. Bounded auto-tune is a future phase."
+      >
+        <Row
+          label="Shadow observe job enabled"
+          hint="When ON, the controller runs every N hours and appends read-only recommendations to controller_recommendations. It writes no trading config. Safe to leave on."
+        >
+          <Toggle
+            checked={controllerShadowEnabled}
+            onChange={v => controllerMut.mutate({ shadow_enabled: v })}
+            disabled={controllerMut.isPending}
+          />
+        </Row>
+        <Row
+          label="Observe interval (hours)"
+          hint="How often the shadow observe job runs. Verdicts use multi-hour forward-return horizons, so frequent runs add no signal. Default 6."
+        >
+          <input
+            type="number"
+            min={1}
+            max={168}
+            step={1}
+            defaultValue={controllerObserveHours}
+            onBlur={e => {
+              const v = parseInt(e.currentTarget.value, 10)
+              if (!Number.isFinite(v) || v < 1 || v > 168 || v === controllerObserveHours) return
+              controllerMut.mutate({ observe_interval_hours: v })
+            }}
+            className="w-24"
+            disabled={controllerMut.isPending}
+          />
+        </Row>
+        <Row
+          label="Min samples gate"
+          hint="Minimum settled forward-outcome samples for a (filter, family) cell before a loosen/tighten verdict is emitted. Below this → insufficient_data. Default 20."
+        >
+          <input
+            type="number"
+            min={5}
+            max={500}
+            step={1}
+            defaultValue={controllerMinSamples}
+            onBlur={e => {
+              const v = parseInt(e.currentTarget.value, 10)
+              if (!Number.isFinite(v) || v < 5 || v > 500 || v === controllerMinSamples) return
+              controllerMut.mutate({ min_samples_gate: v })
+            }}
+            className="w-24"
+            disabled={controllerMut.isPending}
           />
         </Row>
       </Section>

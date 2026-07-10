@@ -1,5 +1,48 @@
 # Development Log
 
+## 2026-07-10 — Filter Feedback Controller Phase 1（shadow / observe-only，分支 feat/filter-feedback-controller）
+
+**背景**：`ato opportunity audit` 显示 72h 漏斗 523 机会创建 → 仅 2 个开仓（0.38% 通过率）。每个流失点都是一个用固定阈值筛选机会的 filter，没人根据结果回调。目标：把整条机会管道变成负反馈控制系统——丢掉了本该盈利机会的 filter 应放松，放过了亏损机会的 filter 应收紧。
+
+**关键发现**：这个模式在代码里已有三个局部实现，本期是**统一泛化**而非另起炉灶：
+- `allocator.get_family_multipliers()`（生产在跑）——按 scanner_family 用前向收益 hit-rate 做有界校准，但只作用于评分乘子
+- `operator_loop.PARAM_REGISTRY`——有界 config 调参（neutral/floor/ceiling/step/cooldown/audit/热重载），但只 3 个全局参数、由账户整体健康驱动
+- `factor_feedback`——按 factor 分类 watch→blocked→active→preferred，但作用于 factor 非 filter
+
+**本期交付（Phase 1，纯观测，零交易行为改动）**：
+- `filter_registry.py`——10 个 FilterSpec 声明式清单（逐条对源码核实），标注每个 filter 的 drop_reason、config 路径/硬编码位置、松紧方向、反馈信号源、是否可调
+- `filter_controller.py`——`compute_filter_feedback()` 按 (filter × scanner_family) 用 `calibration_stats` 前向收益 hit-rate 映射 loosen/hold/tighten/insufficient_data 判据（有界 + 样本门控，泛化自 get_family_multipliers）；`run_controller_observe()` 追加写 `controller_recommendations`（status='shadow_only'），**永不写 config**
+- `controller_recommendations` 迁移（append-only）；`ControllerConfig` + Web 设置 UI + `/api/analytics/filter-controller` 只读端点 + `ato opportunity audit --view controller`
+- 每 6h 的 `filter_controller_observe` 调度 job（read-only，受 `controller.shadow_enabled` 门控）
+- `tests/filter_eval/` 新增 9 个测试，含"shadow 模式绝不改 config"不变量断言
+
+**路线图（本期未做，已文档化）**：Phase 2 有界自动调参（3 档审批 + 抽屉回滚 + 抖动退避，先从 scanner_weights/family_quota 起）；Phase 3 变更受控风控参数（人工门控）；补 shadow-trade PnL 校准层 + 因果/反事实分析（owner 要求）；补 observer 预过滤 `pre_filter_rejections` 观测缺口。
+
+### 验证
+- `tests/filter_eval/` 27 passed（+1 预存的日期敏感 flake `signal_runaway_extreme` 与本期无关：direction_brake 场景硬编码 2026-07-09 时间戳，24h 窗口相对 now 已过期）；config/settings 131 passed；前端 `tsc --noEmit` 通过；CLI + 设置 API 端到端手测通过。
+
+### 边界
+新增分析模块 + 一个只读调度 job + 一个 config 子节 + UI；不改 ranker/debate/risk/execution 决策路径；observe job 只 append 到新表，不碰 config.yaml。commit 单条于 feat 分支，未推送、未合并、未重启 gateway。
+
+---
+
+## 2026-07-10 — 运行时行为问题批次修复 IB-24-07～13（6 issues / 5 commits）
+
+本次修复的 6 个问题均为**静默劣化**类——系统表面正常运行，但核心决策质量、数据采集、结算统计在后台持续退化。详见 `docs/issues/RUNTIME_BEHAVIOR_ISSUES.md` 及 `docs/_ai/RUNTIME_BUG_LESSONS_2026-07-10.md`。
+
+- **IB-24-07 FTS 知识库过滤 bug**（`4bc3707`）：`_ALLOWED_CONFIDENCE = "high_confidence"` 字符串被 `not in` 当字符检查而非集合成员检查，导致 1,405 条 medium_confidence 知识条目完全排除在 FTS 索引外。改为元组后 89→1,507 条；配合从 `aletheia_data.zip` 恢复 515 条旧机器缺失文件，最终达 **2,036 条**。
+- **IB-24-11 debate 信号提示方向偏置**（`a747f19`）：`_build_bull_prompt` / `_build_bear_prompt` 硬编码 LONG 视角信号解读（FR<-0.01%=看多等），评估 SHORT 时 LLM 收到误导性 note，系统性低估 SHORT 机会。改为按 `direction` 参数切换信号语义。公式 `advantage = bull - bear` 不变（prompts 已方向感知）。
+- **IB-24-12 neutral standalone opp 浪费管道容量**（`96f6275`）：`market_observer.py` 独立路径创建 `direction='neutral'` 的 opp 进入数据库，ranker 100% 丢弃。加早期拦截直接返回。
+- **IB-24-13 expire_stale_opportunities 忽略 valid_until**（`96f6275`）：UPDATE 只检查 `created_at < 48h`，动量机会（TTL=30min）实际 open 状态持续 48h，造成漏斗统计失真。加 `OR (valid_until IS NOT NULL AND valid_until < now())` 条件。
+- **IB-24-08 signal_settlement 单次 500 行永远追不上积压**（`6729aa13`）：`settle_due()` 单次 limit=500，每 15min 调用一次，12,827 行积压理论需 6.5h 清完。改为循环批次，单次 100s 时间预算内消费到队列清空，max_rows=2000。
+- **IB-24-09 volume_scanner 被 Phase B 预算饥饿**（`6729aa13`）：Phase B 共享 40s 预算，CoinGecko+macro 先跑耗尽后 volume_scanner 静默跳过，停运 2.6 天。调整为 volume_scanner 在 Phase B 最前执行。
+
+### 验证
+- `tests/filter_eval/` 新增 19 个参数化测试（debate_direction × 5 + direction_brake × 9 + 其他 5）全部通过。
+- FTS reindex 后 2,036 条索引，无报错。
+
+---
+
 ## 2026-07-09 — 市场类型数据模型子批 B12 + 合并 master（4 findings / 6 commits）
 
 - **同名币现货/合约混淆一组问题**（bug 审查台账 #9/#13/#14/#102）：`market_snapshots` 本来就有 `market_type` 列（推迟理由过时，无需迁移）。`list_market_snapshots` 加可选 `market_type` 过滤；`latest_snapshot(symbol, market_type)` 优先按类型精确匹配、无则退回按符号（#13，触风控信任边界，配 PL-MD-06/07）；`_build_dynamic_instruments` 按标的/持仓自身 market_type 采集（#14）；`_make_candidate` 带上 market_type（#9）；Serenity 待决信号从源机会补回 market_type（#102，不用给 pi_decisions 加列）。

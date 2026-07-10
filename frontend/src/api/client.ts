@@ -474,6 +474,8 @@ export const api = {
     post<{ updated: Record<string, any> }>('/settings/pi_daemon', body),
   updateSerenityConfig: (body: Partial<{ auto_promote: boolean; min_score_for_pi: number }>) =>
     post<{ updated: Record<string, any> }>('/settings/serenity', body),
+  updateControllerConfig: (body: Partial<{ shadow_enabled: boolean; observe_interval_hours: number; min_samples_gate: number; max_step: number }>) =>
+    post<{ updated: Record<string, any> }>('/settings/controller', body),
   updateOperatorConfig: (body: Partial<{ loop_enabled: boolean }>) =>
     post<{ updated: Record<string, any> }>('/settings/operator', body),
   updateGuardConfig: (body: Partial<{ enabled: boolean; enforce_in_paper_ranker: boolean; auto_promote_enabled: boolean; min_matching_trades: number; max_score_penalty: number }>) =>
@@ -857,6 +859,21 @@ export const api = {
     return fetchJson<{ records: ThesisLineageRecord[] }>(`/analytics/thesis-lineage?${q.toString()}`)
   },
   getGoLiveScorecard: () => fetchJson<GoLiveScorecard>('/analytics/go-live-scorecard'),
+  getFilterController: () => fetchJson<{
+    generated_at: string
+    min_samples: number
+    shadow_only: boolean
+    signal_note?: string
+    verdict_counts: Record<string, number>
+    recommendations: Array<{
+      filter_name: string; scanner_family: string; stage: string; current_value: string
+      verdict: string; suggested_direction: string; error_signal: number | null
+      n_samples: number; reasoning: string
+    }>
+    report_only_filters: Array<{ name: string; stage: string; reason: string }>
+    tunable_filter_count: number
+    total_filter_count: number
+  }>('/analytics/filter-controller'),
   getCostSummary: () => fetchJson<CostSummary>('/analytics/cost-summary'),
   getConfidenceCalibration: () => fetchJson<CalibrationReport>('/analytics/confidence-calibration'),
   getReasoningFeedback: () => fetchJson<ReasoningFeedback>('/analytics/reasoning-feedback'),
