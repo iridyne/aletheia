@@ -212,6 +212,8 @@ function StatusBar() {
   const liveOn = live !== 'live_disabled'
   const mode = String(data.exchange_mode || '')
   const exch = String(data.exchange || '')
+  const usesExternalExchange = !!data.uses_external_exchange
+  const exchangeLabel = usesExternalExchange ? `${exch || '—'}${mode ? ` · ${mode}` : ''}` : 'Local paper · no exchange'
   const perm = String(data.permission_mode || '')
   const modelProv = String(data.model_provider || '')
   const hasSchedulerActual = typeof data.scheduler_running === 'boolean'
@@ -331,7 +333,7 @@ function StatusBar() {
             <div className="sp-section-label">Infrastructure</div>
             <div className="sp-row">
               <span className="sp-label">Exchange</span>
-              <span className="sp-value">{exch || '—'}{mode ? ` · ${mode}` : ''}</span>
+              <span className="sp-value">{exchangeLabel}</span>
             </div>
             <div className="sp-row">
               <span className="sp-label">Permission</span>

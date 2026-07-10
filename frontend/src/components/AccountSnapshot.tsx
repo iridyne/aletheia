@@ -24,7 +24,8 @@ export default function AccountSnapshot() {
       ? 'unified · live'
       : p?.exchange_equity_usdt != null
         ? syncStatus === 'stale' ? 'exchange · data stale' : 'exchange · live'
-        : syncStatus === 'unconfigured' ? 'exchange not configured'
+      : syncStatus === 'not_applicable' ? 'local paper · no exchange'
+      : syncStatus === 'unconfigured' ? 'exchange not configured'
         : syncStatus === 'error' ? 'exchange sync error'
         : 'exchange sync pending'
 

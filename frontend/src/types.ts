@@ -362,6 +362,9 @@ export interface SystemStatus {
   paused: boolean
   exchange: string
   exchange_mode: string
+  paper_execution_mode: string
+  execution_target: 'local_paper' | 'external_exchange'
+  uses_external_exchange: boolean
   live_state: string
   permission_mode: string
   scheduler_enabled: boolean

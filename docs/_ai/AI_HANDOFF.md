@@ -7,7 +7,22 @@
 
 ## Last Updated
 
-2026-07-10 (Current risk state separated from historical decisions)
+2026-07-10 (Local-paper exchange status honesty)
+
+---
+
+## Recent Change (Local-paper exchange status honesty — 2026-07-10)
+
+The dashboard previously treated the configured exchange preference (for example,
+OKX demo) as evidence that an external account should be connected. In local paper
+mode this caused a failing connection probe and a red exchange warning even though
+no exchange was meant to be used. Restored exchange-account cache data could also
+appear as the local paper account's balance.
+
+The status API now states whether the current execution path actually uses an
+external exchange. Local paper displays "no exchange", does not probe an external
+connection, and excludes external account caches from its account summary. External
+demo/live paths retain their existing connection status and cached-balance behavior.
 
 ---
 

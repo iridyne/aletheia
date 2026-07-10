@@ -197,6 +197,7 @@ export default function PnLZone() {
   const [rangeDays, setRangeDays] = useState<number | undefined>(30)
 
   const exchangeMode = String((status as any)?.exchange_mode || 'demo')
+  const isLocalPaper = (status as any)?.execution_target === 'local_paper'
 
   useDecimals()
   const toneOf = (n: number | null) => (n == null ? 'muted' : n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral')
@@ -213,7 +214,9 @@ export default function PnLZone() {
   const totalRaw = utaEquity ?? exchangeEquity ?? p?.total_value_usdt
   const totalValue = fmtNum(totalRaw)
   const syncCaveat =
-    utaEquity != null
+    isLocalPaper
+      ? 'local paper · no exchange'
+      : utaEquity != null
       ? utaAccounts.length > 1 ? `${utaAccounts.length} accounts · unified` : 'unified'
       : exchangeEquity != null
         ? syncStatus === 'stale' ? 'data stale' : 'live'

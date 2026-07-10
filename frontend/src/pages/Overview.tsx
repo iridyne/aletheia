@@ -27,6 +27,7 @@ export default function Overview() {
   const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
   const exchangeMode = String((status as any)?.exchange_mode || '')
+  const usesExternalExchange = !!(status as any)?.uses_external_exchange
   // #171 fix: pick the exchange-test endpoint by the CONFIGURED exchange, not
   // always Bitget. Previously an OKX/Binance deployment saw a stale Bitget
   // probe (false-red if bitget creds absent, false-green if bitget was up
@@ -40,7 +41,7 @@ export default function Overview() {
     queryKey: ['exchange-test', exchangeName, exchangeMode],
     queryFn: () => testExchangeConnection(exchangeMode),
     refetchInterval: 15000,
-    enabled: !!exchangeMode,
+    enabled: usesExternalExchange,
   })
   const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
   const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
@@ -198,8 +199,8 @@ export default function Overview() {
                 })()}
                 <StatusRow
                   label="Exchange"
-                  light={exchangeHealth?.connected ? 'green' : exchangeHealth ? 'red' : 'yellow'}
-                  value={`${String(s.exchange)} · ${exchangeMode}`}
+                  light={!usesExternalExchange ? 'muted' : exchangeHealth?.connected ? 'green' : exchangeHealth ? 'red' : 'yellow'}
+                  value={!usesExternalExchange ? 'Local paper · no exchange' : `${String(s.exchange)} · ${exchangeMode}`}
                 />
                 <StatusRow
                   label="Model"

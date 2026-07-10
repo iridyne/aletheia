@@ -229,6 +229,8 @@ async def stability():
 @router.get("/status")
 async def status():
     cfg = load_config()
+    paper_execution_mode = cfg.exchange.paper_execution_mode
+    uses_external_exchange = paper_execution_mode != "paper_internal"
     try:
         h = _cached_compute_health()
     except Exception as e:
@@ -261,6 +263,9 @@ async def status():
         "paused": cfg.runtime.paused,
         "exchange": cfg.exchange.name,
         "exchange_mode": cfg.exchange.mode,
+        "paper_execution_mode": paper_execution_mode,
+        "execution_target": "external_exchange" if uses_external_exchange else "local_paper",
+        "uses_external_exchange": uses_external_exchange,
         "live_state": cfg.live.state,
         "permission_mode": cfg.agent.permission_mode,
         "scheduler_enabled": cfg.runtime.scheduler_enabled,

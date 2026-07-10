@@ -221,6 +221,24 @@ def test_compute_portfolio_unconfigured_keeps_local_view(tmp_path, monkeypatch):
     assert out["positions_count"] == 0
 
 
+def test_compute_portfolio_ignores_exchange_cache_for_local_paper(tmp_path, monkeypatch):
+    """A stale external cache must not become local-paper account value."""
+    setup_env(tmp_path, monkeypatch)
+    es = _patch_client(monkeypatch, balances=[_FakeBalance("USDT", 10000.0, 0.0)])
+    es.sync_exchange_account()
+
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    save_config(cfg)
+
+    from aletheia.portfolio.pnl import compute_portfolio
+    out = compute_portfolio()
+    assert out["exchange_sync_status"] == "not_applicable"
+    assert out["exchange_equity_usdt"] is None
+    assert out["total_value_usdt"] == 0.0
+
+
 # --- drift detection ---
 
 def test_external_position_count_surfaces_drift(tmp_path, monkeypatch):

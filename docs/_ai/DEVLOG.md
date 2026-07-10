@@ -1,5 +1,19 @@
 # Development Log
 
+## 2026-07-10 — Local-paper exchange status honesty
+
+- Root cause: the Home status row used the configured exchange preference as if it
+  were an active external connection. Local paper therefore probed an intentionally
+  absent exchange and showed a red warning; restored exchange cache data could also
+  be shown as local-paper equity.
+- Status now exposes whether the active execution path uses an external exchange.
+  Local paper labels itself as having no exchange, skips the probe, and ignores
+  external account cache/UTA data. External demo/live behavior is unchanged.
+- Validation: focused status, exchange-sync, and frontend-source tests passed;
+  production frontend build passed.
+
+---
+
 ## 2026-07-10 — Separate current risk from decision history
 
 - Root cause: GET /api/risk/status copied the newest rejected risk decision into the

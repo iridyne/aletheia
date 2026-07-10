@@ -125,3 +125,20 @@ async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
     assert data["boot_commit"] == "old"
     assert data["current_commit"] == "new"
     assert data["model_provider"]
+
+
+@pytest.mark.anyio
+async def test_status_reports_local_paper_without_exchange_connection(client):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.exchange.name = "okx"  # Retained preference must not imply a connection.
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    save_config(cfg)
+
+    resp = await client.get("/api/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["execution_target"] == "local_paper"
+    assert data["uses_external_exchange"] is False
+    assert data["paper_execution_mode"] == "paper_internal"

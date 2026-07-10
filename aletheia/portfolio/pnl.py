@@ -301,84 +301,89 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
     # `exchange_sync_status` to know which meaning applies.
     final_total_value = total_notional
     exchange_external_summary: list = []
-    try:
-        from aletheia.portfolio import exchange_sync
-        cached = exchange_sync.get_cached_state()
-        sync_status = exchange_sync.status_for(cached)
-        if cached is not None and sync_status in ("ok", "stale"):
-            # get_cached_state() default path may now return the unified (multi-broker)
-            # cache, which uses total_equity_usdt instead of the Bitget-specific
-            # equity_usdt. Fall back so exchange_equity_usdt isn't null on non-Bitget
-            # accounts (mirrors trading_context.py:64-65).
-            exchange_equity_usdt = cached.get("equity_usdt") or cached.get("total_equity_usdt")
-            exchange_state_age_sec = cached.get("age_seconds")
-            # Real account equity is the authoritative total value when present.
-            if exchange_equity_usdt is not None:
-                final_total_value = float(exchange_equity_usdt)
-            # Accurate external-position classification via a pair-based (symbol,
-            # direction) join — the crude `exchange_count - local_count` count is
-            # wrong under hedge mode (a symbol can be long AND short at once). The
-            # back-compat int is derived from the precise list below.
-            try:
-                from aletheia.portfolio.position_reconciler import classify_positions
-                _recon = classify_positions()
-                exchange_external_summary = [i.to_dict() for i in _recon.external]
-                exchange_external_positions = len(_recon.external)
-            except Exception:
-                local_open = len(positions)
-                ext_total = int(cached.get("open_positions_count") or 0)
-                exchange_external_positions = max(0, ext_total - local_open)
-            exchange_asset_breakdown = cached.get("asset_breakdown") or []
+    from aletheia.config.loader import load_config
+    uses_external_exchange = load_config().exchange.paper_execution_mode != "paper_internal"
+    sync_status = "not_applicable" if not uses_external_exchange else "unconfigured"
+    if uses_external_exchange:
+        try:
+            from aletheia.portfolio import exchange_sync
+            cached = exchange_sync.get_cached_state()
+            sync_status = exchange_sync.status_for(cached)
+            if cached is not None and sync_status in ("ok", "stale"):
+                # get_cached_state() default path may now return the unified (multi-broker)
+                # cache, which uses total_equity_usdt instead of the Bitget-specific
+                # equity_usdt. Fall back so exchange_equity_usdt isn't null on non-Bitget
+                # accounts (mirrors trading_context.py:64-65).
+                exchange_equity_usdt = cached.get("equity_usdt") or cached.get("total_equity_usdt")
+                exchange_state_age_sec = cached.get("age_seconds")
+                # Real account equity is the authoritative total value when present.
+                if exchange_equity_usdt is not None:
+                    final_total_value = float(exchange_equity_usdt)
+                # Accurate external-position classification via a pair-based (symbol,
+                # direction) join — the crude `exchange_count - local_count` count is
+                # wrong under hedge mode (a symbol can be long AND short at once). The
+                # back-compat int is derived from the precise list below.
+                try:
+                    from aletheia.portfolio.position_reconciler import classify_positions
+                    _recon = classify_positions()
+                    exchange_external_summary = [i.to_dict() for i in _recon.external]
+                    exchange_external_positions = len(_recon.external)
+                except Exception:
+                    local_open = len(positions)
+                    ext_total = int(cached.get("open_positions_count") or 0)
+                    exchange_external_positions = max(0, ext_total - local_open)
+                exchange_asset_breakdown = cached.get("asset_breakdown") or []
 
-            # Override PnL/exposure metrics with real exchange data when available.
-            # Unified cache uses total_unrealized_pnl; Bitget cache uses futures_unrealized_pnl.
-            exc_upnl = cached.get("futures_unrealized_pnl")
-            if exc_upnl is None:
-                exc_upnl = cached.get("total_unrealized_pnl")
-            if exc_upnl is not None:
-                final_unrealized = float(exc_upnl)
-                final_today_pnl = float(exc_upnl) + total_today_realized
+                # Override PnL/exposure metrics with real exchange data when available.
+                # Unified cache uses total_unrealized_pnl; Bitget cache uses futures_unrealized_pnl.
+                exc_upnl = cached.get("futures_unrealized_pnl")
+                if exc_upnl is None:
+                    exc_upnl = cached.get("total_unrealized_pnl")
+                if exc_upnl is not None:
+                    final_unrealized = float(exc_upnl)
+                    final_today_pnl = float(exc_upnl) + total_today_realized
 
-            exc_positions = cached.get("positions") or []
-            if exc_positions:
-                final_positions_count = len(exc_positions)
-                exc_exposure: dict[str, float] = {}
-                for p in exc_positions:
-                    sym = p.get("symbol", "")
-                    notional = float(p.get("quantity") or 0) * float(p.get("entry_price") or 0)
-                    exc_exposure[sym] = exc_exposure.get(sym, 0.0) + notional
-                if exc_exposure:
-                    final_exposure = exc_exposure
-    except Exception:
-        sync_status = "error"
+                exc_positions = cached.get("positions") or []
+                if exc_positions:
+                    final_positions_count = len(exc_positions)
+                    exc_exposure: dict[str, float] = {}
+                    for p in exc_positions:
+                        sym = p.get("symbol", "")
+                        notional = float(p.get("quantity") or 0) * float(p.get("entry_price") or 0)
+                        exc_exposure[sym] = exc_exposure.get(sym, 0.0) + notional
+                    if exc_exposure:
+                        final_exposure = exc_exposure
+        except Exception:
+            sync_status = "error"
 
     # UTA unified state (multi-broker aggregate, cached)
     uta_state = None
-    try:
-        from aletheia.portfolio import exchange_sync
-        unified = exchange_sync.get_unified_cached_state()
-        if unified is not None:
-            uta_age = unified.get("age_seconds")
-            if uta_age is not None and uta_age < 600:
-                uta_state = unified
-                # When unified state is available and has data, use as hero number
-                uta_equity = unified.get("total_equity_usdt")
-                if uta_equity and uta_equity > 0:
-                    final_total_value = float(uta_equity)
-                # UTA uPnL is the authoritative cross-broker unrealized PnL. The
-                # legacy single-broker Bitget cache above sets final_unrealized to
-                # 0 when the active account is on another broker (e.g. OKX), which
-                # contradicted the equity-curve's local estimate. Prefer UTA here
-                # so the UNREALIZED card matches the real exchange mark-price uPnL.
-                uta_count = len(unified.get("positions") or [])
-                uta_upnl = unified.get("total_unrealized_pnl")
-                if uta_upnl is not None:
-                    final_unrealized = float(uta_upnl)
-                    final_today_pnl = float(uta_upnl) + total_today_realized
-                if uta_count:
-                    final_positions_count = uta_count
-    except Exception:
-        pass
+    if uses_external_exchange:
+        try:
+            from aletheia.portfolio import exchange_sync
+            unified = exchange_sync.get_unified_cached_state()
+            if unified is not None:
+                uta_age = unified.get("age_seconds")
+                if uta_age is not None and uta_age < 600:
+                    uta_state = unified
+                    # When unified state is available and has data, use as hero number
+                    uta_equity = unified.get("total_equity_usdt")
+                    if uta_equity and uta_equity > 0:
+                        final_total_value = float(uta_equity)
+                    # UTA uPnL is the authoritative cross-broker unrealized PnL. The
+                    # legacy single-broker Bitget cache above sets final_unrealized to
+                    # 0 when the active account is on another broker (e.g. OKX), which
+                    # contradicted the equity-curve's local estimate. Prefer UTA here
+                    # so the UNREALIZED card matches the real exchange mark-price uPnL.
+                    uta_count = len(unified.get("positions") or [])
+                    uta_upnl = unified.get("total_unrealized_pnl")
+                    if uta_upnl is not None:
+                        final_unrealized = float(uta_upnl)
+                        final_today_pnl = float(uta_upnl) + total_today_realized
+                    if uta_count:
+                        final_positions_count = uta_count
+        except Exception:
+            pass
 
     return {
         "total_value_usdt": round(final_total_value, 4),
