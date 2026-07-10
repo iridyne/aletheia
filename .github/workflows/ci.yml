@@ -1,0 +1,76 @@
+name: Aletheia CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Python safety and regression suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Verify architecture and safety defaults
+        run: uv run pytest tests/test_architecture_fitness.py -q --junitxml=test-results/architecture.xml
+
+      - name: Verify executable contracts
+        run: uv run pytest tests/specs/ -q --junitxml=test-results/specs.xml
+
+      - name: Run full regression suite
+        run: uv run pytest tests/ -q --tb=line --junitxml=test-results/full.xml
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  frontend:
+    name: Dashboard build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked dashboard dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Type-check and build dashboard
+        working-directory: frontend
+        run: npm run build
