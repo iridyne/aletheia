@@ -1028,3 +1028,4 @@
 | OPR-E02 | ✅ | shadow_trades 自身仍是 gross directional PnL | 新 shadow 绑定 exact venue+market 的共享 outcome，分开 gross/net/手续费/点差滑点/资金费；历史 gross-only 不进入 alpha 学习 |
 | OPR-E03 | ✅ | alpha control observations 缺 market/cost，当前对照只能算 gross | Universe 对照保存 venue+market+family+outcome key，通过 `filter_candidate_outcomes.net_return_pct` 共享同口径成本；旧 gross 对照排除 |
 | OPR-E04 | ✅ | 前置高频证据长期运行会无界增长 | 批次证据 30d，逐候选与净结果 90d；每日 cleanup 只清理分析表，不触碰交易/风控/审计原件 |
+| OPR-G01 | ⏳ | 股票代币会被通用加密行情任务送到错误交易所/市场 | `price_feed.py:get_watched_symbols()` 丢失 member 的 venue/market，`refresh_watched_prices()` 固定用当前主交易所 + `MARKET_SPOT`；`volume_scanner.py` 也把整个 symbols 列表一次送给主 CCXT exchange。对已登记的 Bitget stock token 会产生 market-not-found/HTTP 400，并使整个 volume ranking 失败。Stage G 需先把 watch item 升级为 InstrumentId，按 venue+market 分组批量取价；observation-only 股票不得进入 crypto 可执行池 |
