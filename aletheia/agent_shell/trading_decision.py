@@ -98,6 +98,9 @@ class TradingDecision:
     # P1 (2026-06-28, AI Berkshire belief decomposition): the critical assumptions
     # this decision depends on. At most 3 items, kept concise. Empty = not provided.
     key_assumptions: list[str] = field(default_factory=list)
+    # Append-only observation facts for the exact gates evaluated in this call.
+    # Persisted only after the authoritative PiDecision row is written.
+    filter_trace: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -194,12 +197,40 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
 
     # "scale_in" and "flip" are trade-like actions that go through debate+sizing
     trade_actions = ("trade", "scale_in", "flip")
+    trade_intent = decision.action in trade_actions
 
     bias_brake_reason = _proposal_bias_brake_reason(decision)
     if bias_brake_reason:
+        decision.filter_trace.append({
+            "filter_name": "direction_bias_brake",
+            "stage": "system_operator",
+            "decision": "rejected",
+            "reason_code": "proposal_direction_concentration",
+            "inputs": {"conviction": decision.conviction, "direction": decision.direction},
+            "parameters": {
+                "window_hours": _BIAS_BRAKE_WINDOW_HOURS,
+                "min_proposals": _BIAS_BRAKE_MIN_PROPOSALS,
+                "max_direction_pct": _BIAS_BRAKE_MAX_DIRECTION_PCT,
+                "bypass_conviction": _BIAS_BRAKE_BYPASS_CONVICTION,
+            },
+        })
         decision.action = "watch"
         decision.reasoning = f"{decision.reasoning} [{bias_brake_reason}]"
         return decision
+    if trade_intent:
+        decision.filter_trace.append({
+            "filter_name": "direction_bias_brake",
+            "stage": "system_operator",
+            "decision": "passed",
+            "reason_code": "proposal_direction_not_concentrated",
+            "inputs": {"conviction": decision.conviction, "direction": decision.direction},
+            "parameters": {
+                "window_hours": _BIAS_BRAKE_WINDOW_HOURS,
+                "min_proposals": _BIAS_BRAKE_MIN_PROPOSALS,
+                "max_direction_pct": _BIAS_BRAKE_MAX_DIRECTION_PCT,
+                "bypass_conviction": _BIAS_BRAKE_BYPASS_CONVICTION,
+            },
+        })
 
     # Run debate for uncertain conviction range
     if (decision.action in trade_actions
@@ -236,14 +267,51 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
                     f"(bull {debate.bull_confidence} vs bear {debate.bear_confidence}, "
                     f"dir={decision.direction}) → skip]"
                 )
+            decision.filter_trace.append({
+                "filter_name": "debate_downgrade",
+                "stage": "system_operator_debate",
+                "decision": "rejected" if decision.action == "skip" else "passed",
+                "reason_code": (
+                    "debate_below_min_conviction"
+                    if decision.action == "skip"
+                    else "debate_at_or_above_min_conviction"
+                ),
+                "inputs": {
+                    "initial_conviction": initial_conviction,
+                    "final_conviction": decision.conviction,
+                    "bull_confidence": debate.bull_confidence,
+                    "bear_confidence": debate.bear_confidence,
+                },
+                "parameters": {
+                    "debate_range": list(_DEBATE_RANGE),
+                    "minimum_conviction": _MIN_CONVICTION_TO_TRADE,
+                    "adjustment_weight": 0.3,
+                },
+            })
 
     # Compute sizing for trade-like actions (P1-5: pass strategy trade count for sample-aware Kelly)
     if decision.action in trade_actions and decision.conviction >= _MIN_CONVICTION_TO_TRADE:
+        decision.filter_trace.append({
+            "filter_name": "operator_conviction_gate",
+            "stage": "system_operator",
+            "decision": "passed",
+            "reason_code": "conviction_at_or_above_minimum",
+            "inputs": {"conviction": decision.conviction},
+            "parameters": {"minimum_conviction": _MIN_CONVICTION_TO_TRADE},
+        })
         ptc = _get_strategy_paper_trade_count(decision.strategy_id)
         decision.position_size_usdt = _compute_position_size(
             decision.conviction, symbol=decision.symbol, paper_trade_count=ptc
         )
-    elif decision.action in trade_actions:
+    elif trade_intent:
+        decision.filter_trace.append({
+            "filter_name": "operator_conviction_gate",
+            "stage": "system_operator",
+            "decision": "rejected",
+            "reason_code": "conviction_below_minimum",
+            "inputs": {"conviction": decision.conviction},
+            "parameters": {"minimum_conviction": _MIN_CONVICTION_TO_TRADE},
+        })
         decision.action = "skip"
 
     return decision
@@ -256,8 +324,24 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
 
     overheated = _proposal_direction_overheated(decision.direction, decision.conviction)
     if overheated:
+        decision.filter_trace.append({
+            "filter_name": "direction_bias_brake",
+            "stage": "proposal_submission",
+            "decision": "rejected",
+            "reason_code": "direction_overheated",
+            "inputs": {"direction": decision.direction, "conviction": decision.conviction},
+            "parameters": {"min_sample": 15, "max_share": 0.95, "override_conviction": 75},
+        })
         logger.info("proposal skipped by direction diversity brake: %s", overheated)
         return {"status": "skipped", "reason": "direction_overheated", "detail": overheated}
+    decision.filter_trace.append({
+        "filter_name": "direction_bias_brake",
+        "stage": "proposal_submission",
+        "decision": "passed",
+        "reason_code": "direction_not_overheated",
+        "inputs": {"direction": decision.direction, "conviction": decision.conviction},
+        "parameters": {"min_sample": 15, "max_share": 0.95, "override_conviction": 75},
+    })
 
     from aletheia.trading.market_data import latest_snapshot
     from aletheia.execution.paper_tools import create_paper_proposal

@@ -219,8 +219,8 @@ def get_alpha_attribution(days: int = 30):
 def get_filter_controller():
     """Read-only filter feedback controller report (Phase 1 shadow).
 
-    Live per-filter × scanner_family loosen/hold/tighten recommendations computed
-    from realized forward returns. Never mutates config."""
+    Exact-version pass/reject net-outcome findings with sample/coverage gates.
+    Observational only; never mutates config."""
     from aletheia.analytics.filter_controller import build_filter_controller_report
     return build_filter_controller_report()
 

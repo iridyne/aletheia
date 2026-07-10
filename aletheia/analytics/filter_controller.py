@@ -5,9 +5,9 @@ negative-feedback verdict. Aggregate scanner-family outcomes are useful context,
 but cannot prove that any individual filter is too tight or too loose, so they
 must never become loosen/tighten advice on their own.
 
-The allocator multiplier now uses cost-aware family+direction+market cohorts.
-This controller remains a shadow audit until each filter persists its own
-passed and dropped cohorts with causal IDs.
+The controller now uses filter-specific, exact-version pass/reject cohorts with
+cost-aware net outcomes. It remains a shadow audit: observational differences
+never mutate a threshold or trading configuration.
 
 OBSERVE-ONLY invariant: this module reads the DB and writes append-only rows to
 `controller_recommendations`. It NEVER calls save_config, mutates trading state,
@@ -32,24 +32,13 @@ from aletheia.analytics.filter_registry import (
 
 logger = logging.getLogger("aletheia.analytics.filter_controller")
 
-Verdict = Literal["loosen", "hold", "tighten", "insufficient_data"]
+Verdict = Literal["overrestrictive_suspect", "hold", "insufficient_data"]
 
 # ─── Controller constants (Phase 1 defaults; overridable via ControllerConfig) ──
 # Minimum settled samples for a (filter, family) cell before we recommend anything.
 _DEFAULT_MIN_SAMPLES = 20
-# Hit-rate band around 0.5 treated as "balanced" → HOLD. Outside the band we
-# recommend a direction. Mirrors get_family_multipliers' linear map slope choice.
-_HOLD_BAND = 0.10  # win_rate within 0.50 ± 0.10 → hold
-# Per-family calibration horizon — the holding period each family is judged on.
-# Copied from allocator._FAMILY_CALIBRATION_HORIZON so verdicts align with the
-# score-multiplier loop already in production.
-_FAMILY_HORIZON = {
-    "momentum": "4h",
-    "mean_reversion": "1h",
-    "volatility": "1h",
-    "derivatives": "1h",
-}
-_DEFAULT_HORIZON = "1h"
+_MIN_OUTCOME_COVERAGE = 0.70
+_MIN_NET_DIFFERENCE_PCT = 0.05
 
 
 @dataclass
@@ -69,110 +58,46 @@ class FilterRecommendation:
     error_signal: float | None
     n_samples: int
     reasoning: str
+    direction: str | None = None
+    market_type: str | None = None
+    horizon: str | None = None
+    filter_version: str | None = None
+    passed_n: int = 0
+    rejected_n: int = 0
+    passed_shrunk_avg_net: float | None = None
+    rejected_shrunk_avg_net: float | None = None
+    outcome_coverage: float | None = None
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _family_horizon(family: str) -> str:
-    return _FAMILY_HORIZON.get(family, _DEFAULT_HORIZON)
-
-
-def _verdict_from_hitrate(
-    hit_rate: float | None,
-    n: int,
-    min_samples: int,
-) -> tuple[Verdict, float | None]:
-    """Map a cohort's cost-aware hit_rate to a verdict + signed error.
-
-    hit_rate is the fraction of settled outcomes whose net return clears the
-    minimum tradable edge. The controller is currently observe-only because it
-    does not yet persist filter-specific passed and dropped cohorts.
-
-    error = (hit_rate - 0.5) * 2  → range [-1, 1]. A high hit_rate on opportunities
-    this filter DROPPED means the filter is discarding good setups → LOOSEN.
-    A low hit_rate on setups it PASSED means it is letting losers through → TIGHTEN.
-    """
-    if hit_rate is None or n < min_samples:
-        return "insufficient_data", None
-    error = max(-1.0, min(1.0, (hit_rate - 0.5) * 2.0))
-    if hit_rate > 0.5 + _HOLD_BAND:
-        return "loosen", error
-    if hit_rate < 0.5 - _HOLD_BAND:
-        return "tighten", error
-    return "hold", error
-
-
-def _direction_label(spec: FilterSpec, verdict: Verdict) -> str:
-    """The config move implied by a verdict, for display. Purely informational
-    in Phase 1 (nothing is applied)."""
-    if verdict in ("insufficient_data", "hold"):
-        return "hold" if verdict == "hold" else "n/a"
-    return verdict  # "loosen" / "tighten" — the abstract move, dir arrow shown in report
-
-
-def _reason(spec: FilterSpec, family: str, verdict: Verdict,
-            hit_rate: float | None, n: int, horizon: str) -> str:
-    if verdict == "insufficient_data":
-        return (f"{family}: only {n} settled {horizon} outcomes "
-                f"(< gate); no recommendation.")
-    wr = f"{hit_rate*100:.1f}%" if hit_rate is not None else "n/a"
-    if verdict == "loosen":
-        return (f"{family}: cost-aware {horizon} hit-rate {wr} on n={n} "
-                f"outcomes — this family's setups are working; '{spec.name}' looks "
-                f"too tight (move {spec.loosen_direction} to loosen).")
-    if verdict == "tighten":
-        return (f"{family}: cost-aware {horizon} hit-rate {wr} on n={n} "
-                f"outcomes — setups underperforming; '{spec.name}' looks too loose.")
-    return (f"{family}: hit-rate {wr} on n={n} outcomes — within balanced band, hold.")
-
-
-def _family_hitrates(min_samples: int) -> dict[str, dict[str, Any]]:
-    """Legacy family projection of cost-aware cohort hit rates.
-
-    Reuses repositories.calibration_stats() (all settled universe_forward_outcomes,
-    grouped by family+direction+market+horizon). This projection must not drive a
-    recommendation while more than one cohort exists for a family; all current
-    filter definitions are therefore feedback_ready=False. Returns
-    {family: {"hit_rate": float|None, "n": int, "horizon": str}}.
-    Read-only; returns {} on any error so the controller degrades to
-    insufficient_data rather than raising.
-    """
-    try:
-        from aletheia.storage import repositories as repo
-        stats = repo.calibration_stats()
-    except Exception as e:  # pragma: no cover - defensive
-        logger.warning("filter_controller: calibration_stats failed: %s", e)
-        return {}
-
-    out: dict[str, dict[str, Any]] = {}
-    for row in stats:
-        family = row.get("scanner_family")
-        if not family:
-            continue
-        if row.get("horizon") != _family_horizon(family):
-            continue
-        n = int(row.get("n") or 0)
-        win = int(row.get("win_count") or 0)
-        hit_rate = (win / n) if n else None
-        out[family] = {"hit_rate": hit_rate, "n": n, "horizon": _family_horizon(family)}
-    return out
-
-
 def compute_filter_feedback(min_samples: int = _DEFAULT_MIN_SAMPLES) -> list[FilterRecommendation]:
-    """Compute shadow recommendations for every tunable, family-keyed filter.
+    """Compare exact pass/reject cohorts without mutating any filter parameter."""
+    try:
+        from aletheia.analytics.filter_evidence import filter_feedback_stats
 
-    Phase-1 context source: cost-aware outcome calibration. It cannot become a
-    filter verdict until the individual filter's passed and dropped cohorts are
-    persisted with causal IDs.
+        stats = filter_feedback_stats()
+    except Exception as exc:
+        logger.warning("filter_controller: filter evidence unavailable: %s", exc)
+        stats = []
 
-    Non-family-keyed filters (batch_limit, cooldown) and unobservable filters
-    (observer_pre_filter) get a single 'insufficient_data' row noting why — they
-    need dedicated signals added in a later phase.
-    """
+    grouped: dict[tuple, dict[str, dict[str, Any]]] = {}
+    for row in stats:
+        if not row.get("horizon"):
+            continue
+        key = (
+            row.get("filter_name"),
+            row.get("filter_version"),
+            row.get("scanner_family") or "unknown",
+            row.get("direction"),
+            row.get("market_type"),
+            row.get("horizon"),
+        )
+        grouped.setdefault(key, {})[str(row.get("decision"))] = row
+
     recs: list[FilterRecommendation] = []
-
     for spec in tunable_filters():
         if not spec.feedback_ready:
             recs.append(FilterRecommendation(
@@ -185,48 +110,94 @@ def compute_filter_feedback(min_samples: int = _DEFAULT_MIN_SAMPLES) -> list[Fil
                 ),
             ))
             continue
-        if not spec.family_keyed:
-            recs.append(FilterRecommendation(
-                filter_name=spec.name, scanner_family="(global)", stage=spec.stage,
-                current_value=spec.current_value, verdict="insufficient_data",
-                suggested_direction="n/a", error_signal=None, n_samples=0,
-                reasoning=f"{spec.name} is not scanner_family-keyed and has no "
-                          f"dedicated signal yet ({spec.feedback_source}); "
-                          f"see roadmap.",
-            ))
-            continue
-        if spec.feedback_source == "none":
+        matching = [
+            (key, cells) for key, cells in grouped.items() if key[0] == spec.name
+        ]
+        if not matching:
             recs.append(FilterRecommendation(
                 filter_name=spec.name, scanner_family="(all)", stage=spec.stage,
                 current_value=spec.current_value, verdict="insufficient_data",
                 suggested_direction="n/a", error_signal=None, n_samples=0,
-                reasoning=f"{spec.name} drops before an opportunity row exists — "
-                          f"not observable until a rejection log is added (roadmap).",
+                reasoning="No settled filter-specific pass/reject net outcomes yet.",
             ))
             continue
-
-        hitrates = _family_hitrates(min_samples)
-        if not hitrates:
-            recs.append(FilterRecommendation(
-                filter_name=spec.name, scanner_family="(all)", stage=spec.stage,
-                current_value=spec.current_value, verdict="insufficient_data",
-                suggested_direction="n/a", error_signal=None, n_samples=0,
-                reasoning="No settled forward-outcome stats available yet.",
-            ))
-            continue
-
-        for family, hr in sorted(hitrates.items()):
-            verdict, error = _verdict_from_hitrate(hr["hit_rate"], hr["n"], min_samples)
+        for key, cells in sorted(matching, key=lambda item: str(item[0])):
+            _, version, family, direction, market_type, horizon = key
+            passed = cells.get("passed")
+            rejected = cells.get("rejected")
+            pass_n = int((passed or {}).get("n_net") or 0)
+            reject_n = int((rejected or {}).get("n_net") or 0)
+            pass_coverage = float((passed or {}).get("outcome_coverage") or 0.0)
+            reject_coverage = float((rejected or {}).get("outcome_coverage") or 0.0)
+            coverage = min(pass_coverage, reject_coverage)
+            pass_mean = (passed or {}).get("shrunk_avg_net")
+            reject_mean = (rejected or {}).get("shrunk_avg_net")
+            enough = (
+                passed is not None
+                and rejected is not None
+                and pass_n >= min_samples
+                and reject_n >= min_samples
+                and coverage >= _MIN_OUTCOME_COVERAGE
+                and pass_mean is not None
+                and reject_mean is not None
+            )
+            difference = (
+                float(reject_mean) - float(pass_mean)
+                if enough else None
+            )
+            suspect = bool(
+                enough
+                and difference is not None
+                and difference >= _MIN_NET_DIFFERENCE_PCT
+                and float(reject_mean) > 0
+            )
+            if suspect:
+                verdict: Verdict = "overrestrictive_suspect"
+                suggested = "review_loosen"
+                error = round(max(-1.0, min(1.0, float(difference))), 4)
+                reasoning = (
+                    f"{family}:{direction}:{market_type}:{horizon} rejected net mean "
+                    f"{float(reject_mean):+.3f}% exceeds passed {float(pass_mean):+.3f}% "
+                    f"after shrinkage (pass n={pass_n}, reject n={reject_n}, "
+                    f"coverage={coverage:.0%}); observational review only."
+                )
+            elif enough:
+                verdict = "hold"
+                suggested = "hold"
+                error = None
+                reasoning = (
+                    f"{family}:{direction}:{market_type}:{horizon} has complete paired "
+                    f"evidence but no >= {_MIN_NET_DIFFERENCE_PCT:.2f}% overrestriction "
+                    f"signal; keep unchanged."
+                )
+            else:
+                verdict = "insufficient_data"
+                suggested = "n/a"
+                error = None
+                reasoning = (
+                    f"{family}:{direction}:{market_type}:{horizon} needs pass/reject "
+                    f"n>={min_samples} and coverage>={_MIN_OUTCOME_COVERAGE:.0%}; "
+                    f"currently pass={pass_n}, reject={reject_n}, coverage={coverage:.0%}."
+                )
             recs.append(FilterRecommendation(
                 filter_name=spec.name,
                 scanner_family=family,
                 stage=spec.stage,
                 current_value=spec.current_value,
                 verdict=verdict,
-                suggested_direction=_direction_label(spec, verdict),
-                error_signal=round(error, 4) if error is not None else None,
-                n_samples=hr["n"],
-                reasoning=_reason(spec, family, verdict, hr["hit_rate"], hr["n"], hr["horizon"]),
+                suggested_direction=suggested,
+                error_signal=error,
+                n_samples=min(pass_n, reject_n),
+                reasoning=reasoning,
+                direction=direction,
+                market_type=market_type,
+                horizon=horizon,
+                filter_version=version,
+                passed_n=pass_n,
+                rejected_n=reject_n,
+                passed_shrunk_avg_net=pass_mean,
+                rejected_shrunk_avg_net=reject_mean,
+                outcome_coverage=coverage,
             ))
     return recs
 
@@ -247,6 +218,16 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
         from aletheia.storage.repositories import transaction
         with transaction():
             for r in recs:
+                legacy_verdict = (
+                    r.verdict
+                    if r.verdict in {"hold", "insufficient_data"}
+                    else "insufficient_data"
+                )
+                legacy_direction = (
+                    r.suggested_direction
+                    if r.suggested_direction in {"loosen", "hold", "tighten", "n/a"}
+                    else "n/a"
+                )
                 repo.insert_controller_recommendation({
                     "id": uuid.uuid4().hex,
                     "created_at": generated_at,
@@ -254,16 +235,31 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
                     "scanner_family": r.scanner_family,
                     "stage": r.stage,
                     "current_value": r.current_value,
-                    "suggested_direction": r.suggested_direction,
-                    "verdict": r.verdict,
+                    # Existing databases constrain these two legacy columns to
+                    # the old action vocabulary. Keep old readers conservative;
+                    # the evidence_* columns carry the new observational result.
+                    "suggested_direction": legacy_direction,
+                    "verdict": legacy_verdict,
                     "error_signal": r.error_signal,
                     "n_samples": r.n_samples,
                     "reasoning": r.reasoning,
                     "status": "shadow_only",
                     "run_id": run_id,
+                    "evidence_verdict": r.verdict,
+                    "evidence_direction": r.suggested_direction,
+                    "filter_version": r.filter_version,
+                    "direction": r.direction,
+                    "market_type": r.market_type,
+                    "horizon": r.horizon,
+                    "passed_n": r.passed_n,
+                    "rejected_n": r.rejected_n,
+                    "passed_shrunk_avg_net": r.passed_shrunk_avg_net,
+                    "rejected_shrunk_avg_net": r.rejected_shrunk_avg_net,
+                    "outcome_coverage": r.outcome_coverage,
                 })
                 written += 1
     except Exception as e:  # pragma: no cover - defensive
+        written = 0
         logger.warning("filter_controller: persist failed: %s", e)
 
     counts: dict[str, int] = {}
@@ -296,11 +292,10 @@ def build_filter_controller_report(min_samples: int = _DEFAULT_MIN_SAMPLES) -> d
         "generated_at": _now_iso(),
         "min_samples": min_samples,
         "shadow_only": True,
-        "signal_basis": "phase1_family_forward_return",
+        "signal_basis": "filter_specific_shrunk_net_expectancy",
         "signal_note": (
-            "Aggregate scanner-family forward returns are shown only as context by the "
-            "existing allocator. This controller issues no loosen/tighten advice until "
-            "each filter records its own passed and dropped cohorts."
+            "Only exact filter-version pass/reject cohorts with cost-aware net outcomes "
+            "are compared. Findings are observational and never mutate configuration."
         ),
         "verdict_counts": counts,
         "recommendations": [asdict(r) for r in recs],
@@ -313,8 +308,7 @@ def build_filter_controller_report(min_samples: int = _DEFAULT_MIN_SAMPLES) -> d
     }
 
 
-_ARROW = {"loosen": "↑ loosen", "tighten": "↓ tighten", "hold": "= hold",
-          "n/a": "n/a"}
+_ARROW = {"review_loosen": "review loosen", "hold": "= hold", "n/a": "n/a"}
 
 
 def render_filter_controller_report(report: dict[str, Any]) -> str:
@@ -328,14 +322,16 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
     if report.get("signal_note"):
         lines.append(f"Signal: {report['signal_note']}")
     vc = report.get("verdict_counts") or {}
-    lines.append(f"Verdicts: loosen={vc.get('loosen',0)} tighten={vc.get('tighten',0)} "
-                 f"hold={vc.get('hold',0)} insufficient_data={vc.get('insufficient_data',0)}")
+    lines.append(
+        f"Verdicts: overrestrictive_suspect={vc.get('overrestrictive_suspect',0)} "
+        f"hold={vc.get('hold',0)} insufficient_data={vc.get('insufficient_data',0)}"
+    )
     lines.append("")
 
     recs = report.get("recommendations") or []
-    actionable = [r for r in recs if r["verdict"] in ("loosen", "tighten")]
+    actionable = [r for r in recs if r["verdict"] == "overrestrictive_suspect"]
     if actionable:
-        lines.append("Actionable recommendations (would-be adjustments, NOT applied):")
+        lines.append("Overrestrictive suspects (human review only, NOT applied):")
         for r in sorted(actionable, key=lambda x: abs(x.get("error_signal") or 0), reverse=True):
             lines.append(
                 f"  {r['filter_name']} · {r['scanner_family']} "
@@ -344,7 +340,7 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
             )
             lines.append(f"      {r['reasoning']}")
     else:
-        lines.append("No actionable recommendations — all cells hold or insufficient_data.")
+        lines.append("No overrestrictive suspects — all cells hold or insufficient_data.")
     lines.append("")
 
     insufficient = [r for r in recs if r["verdict"] == "insufficient_data"]
@@ -360,6 +356,6 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
 
     lines.append("")
     lines.append("Next action:")
-    lines.append("  Keep filter changes unchanged. Add causal passed/dropped evidence "
-                 "before enabling any per-filter recommendation.")
+    lines.append("  Keep filter parameters unchanged; collect independent evidence or "
+                 "run a bounded replay before changing a threshold.")
     return "\n".join(lines)

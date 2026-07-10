@@ -1556,6 +1556,9 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "key_assumptions": decision.key_assumptions,
         "supporting_signals": decision.supporting_signals,
         "opposing_signals": decision.opposing_signals,
+        "market_type": decision.market_type,
+        "scanner_family": decision.scanner_family,
+        "filter_trace": decision.filter_trace,
     }
 
     # trade / scale_in / flip all produce proposals
@@ -1568,6 +1571,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         if proposal_result:
             result["proposal_id"] = proposal_result.get("proposal_id")
             result["proposal_status"] = proposal_result.get("status")
+            result["filter_trace"] = decision.filter_trace
         else:
             result["proposal_error"] = "price_unavailable_or_proposal_rejected"
 

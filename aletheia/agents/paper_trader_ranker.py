@@ -109,6 +109,8 @@ def _evaluate_candidate(
     Returns a candidate dict with trade_score and optional skip_reason,
     or None if the opportunity should be completely excluded (wrong asset class, etc).
     """
+    filter_trace: list[dict] = []
+
     # Hard filter: asset class
     ac = opp.get("asset_class") or "crypto"
     if ac == "equity":
@@ -123,7 +125,14 @@ def _evaluate_candidate(
         bias = (opp.get("direction_bias") or "neutral").lower()
         direction = "long" if bias in ("long", "bullish") else ("short" if bias in ("short", "bearish") else None)
         score = float(opp.get("confidence_score") or 0)
-        return _make_candidate(opp, skip_reason="equity_shadow_track", direction=direction, trade_score=score)
+        _filter_step(
+            filter_trace, "execution_capability", "rejected", "equity_shadow_track",
+            inputs={"asset_class": ac}, parameters={"executable_asset_class": "crypto"},
+        )
+        return _make_candidate(
+            opp, skip_reason="equity_shadow_track", direction=direction,
+            trade_score=score, filter_trace=filter_trace,
+        )
     if ac != "crypto":
         return None
 
@@ -133,25 +142,59 @@ def _evaluate_candidate(
     if opp.get("status") != "open":
         return None
 
+    bias = (opp.get("direction_bias") or "neutral").lower()
+    direction = "long" if bias in ("long", "bullish") else ("short" if bias in ("short", "bearish") else None)
+
     # Hard filter: execution eligible
     if not opp.get("execution_eligible", True):
-        return _make_candidate(opp, skip_reason="execution_eligible=False")
+        _filter_step(
+            filter_trace, "execution_eligibility", "rejected", "execution_eligible_false",
+            inputs={"execution_eligible": False}, parameters={"required": True},
+        )
+        return _make_candidate(
+            opp, skip_reason="execution_eligible=False", direction=direction,
+            filter_trace=filter_trace,
+        )
+    _filter_step(
+        filter_trace, "execution_eligibility", "passed", "execution_eligible_true",
+        inputs={"execution_eligible": True}, parameters={"required": True},
+    )
 
     # Hard filter: symbol allowed
     if not symbol_allowed(symbol):
         return None
 
     # Direction gate
-    bias = (opp.get("direction_bias") or "neutral").lower()
-    direction = "long" if bias in ("long", "bullish") else ("short" if bias in ("short", "bearish") else None)
     if direction is None:
-        return _make_candidate(opp, skip_reason="neutral_bias")
+        _filter_step(
+            filter_trace, "direction_present", "rejected", "neutral_or_missing_direction",
+            inputs={"direction_bias": bias}, parameters={"allowed": ["long", "short"]},
+        )
+        return _make_candidate(
+            opp, skip_reason="neutral_bias", direction=direction,
+            filter_trace=filter_trace,
+        )
+    _filter_step(
+        filter_trace, "direction_present", "passed", "direction_available",
+        inputs={"direction": direction}, parameters={"allowed": ["long", "short"]},
+    )
 
     # Confidence gate
     confidence = (opp.get("confidence") or "speculative").lower()
     conf_ok = _CONFIDENCE_RANK.get(confidence, 0) >= _CONFIDENCE_RANK.get(min_conf, 1)
     if not conf_ok:
-        return _make_candidate(opp, skip_reason=f"confidence_below_{min_conf}:{confidence}")
+        _filter_step(
+            filter_trace, "ranker_confidence_gate", "rejected", "confidence_below",
+            inputs={"confidence": confidence}, parameters={"minimum": min_conf},
+        )
+        return _make_candidate(
+            opp, skip_reason=f"confidence_below_{min_conf}:{confidence}",
+            direction=direction, filter_trace=filter_trace,
+        )
+    _filter_step(
+        filter_trace, "ranker_confidence_gate", "passed", "confidence_at_or_above",
+        inputs={"confidence": confidence}, parameters={"minimum": min_conf},
+    )
 
     # Universe TTL gate
     universe_member = None
@@ -159,9 +202,35 @@ def _evaluate_candidate(
         universe_member = _safe_get_universe_member(opp["universe_member_id"])
         if universe_member:
             if not universe_member.get("execution_eligible", True):
-                return _make_candidate(opp, skip_reason="universe_not_eligible")
+                _filter_step(
+                    filter_trace, "universe_execution_eligibility", "rejected",
+                    "universe_not_eligible",
+                    inputs={"execution_eligible": False}, parameters={"required": True},
+                )
+                return _make_candidate(
+                    opp, skip_reason="universe_not_eligible", direction=direction,
+                    universe_member=universe_member, filter_trace=filter_trace,
+                )
+            _filter_step(
+                filter_trace, "universe_execution_eligibility", "passed",
+                "universe_eligible",
+                inputs={"execution_eligible": True}, parameters={"required": True},
+            )
             if universe_member.get("expires_at") and universe_member["expires_at"] < now_iso:
-                return _make_candidate(opp, skip_reason="ttl_expired")
+                _filter_step(
+                    filter_trace, "family_ttl", "rejected", "universe_member_expired",
+                    inputs={"expires_at": universe_member.get("expires_at"), "now": now_iso},
+                    parameters={"ttl_sec": universe_member.get("ttl_sec")},
+                )
+                return _make_candidate(
+                    opp, skip_reason="ttl_expired", direction=direction,
+                    universe_member=universe_member, filter_trace=filter_trace,
+                )
+            _filter_step(
+                filter_trace, "family_ttl", "passed", "universe_member_fresh",
+                inputs={"expires_at": universe_member.get("expires_at"), "now": now_iso},
+                parameters={"ttl_sec": universe_member.get("ttl_sec")},
+            )
 
     # Strategy attribution passthrough (Position C 2026-07-02): the rules engine is
     # gone. We no longer resolve a StrategyRecord, check pause/regime/market-type
@@ -181,8 +250,21 @@ def _evaluate_candidate(
             _opp_market_type = (opp.get("market") or "usdt_futures").lower()
             _okx_supported = _get_demo_symbols(_opp_market_type)
             if _okx_supported is not None and to_canonical(symbol) not in _okx_supported:
+                _filter_step(
+                    filter_trace, "venue_symbol_capability", "rejected",
+                    "okx_demo_symbol_not_supported",
+                    inputs={"symbol": to_canonical(symbol), "market_type": _opp_market_type},
+                    parameters={"execution_mode": global_venue},
+                )
                 return _make_candidate(opp, skip_reason="okx_demo_symbol_not_supported",
-                                       direction=direction, strategy_id=strategy_id)
+                                       direction=direction, strategy_id=strategy_id,
+                                       universe_member=universe_member,
+                                       filter_trace=filter_trace)
+            _filter_step(
+                filter_trace, "venue_symbol_capability", "passed", "venue_symbol_supported",
+                inputs={"symbol": to_canonical(symbol), "market_type": _opp_market_type},
+                parameters={"execution_mode": global_venue},
+            )
         except Exception:
             pass
 
@@ -199,12 +281,25 @@ def _evaluate_candidate(
 
     # P1-4: hard_blocked is a hard reject — high confidence cannot override a confirmed loser
     if factor_signal.get("status") == "hard_blocked":
+        _filter_step(
+            filter_trace, "factor_hard_block", "rejected", "factor_hard_blocked",
+            inputs={"factor_key": factor_signal.get("factor_key"),
+                    "factor_status": factor_signal.get("status")},
+            parameters={"blocked_status": "hard_blocked"},
+        )
         return _make_candidate(
             opp, skip_reason="factor_hard_blocked",
             direction=direction, strategy_id=strategy_id,
             factor_signal=factor_signal,
             universe_member=universe_member,
+            filter_trace=filter_trace,
         )
+    _filter_step(
+        filter_trace, "factor_hard_block", "passed", "factor_not_hard_blocked",
+        inputs={"factor_key": factor_signal.get("factor_key"),
+                "factor_status": factor_signal.get("status")},
+        parameters={"blocked_status": "hard_blocked"},
+    )
 
     # Guard evaluation (deterministic, no LLM)
     guard_eval = _evaluate_guards_safe(
@@ -213,13 +308,24 @@ def _evaluate_candidate(
     )
     if guard_eval and guard_eval.blocked:
         blocked_ids = ",".join(h.guard_id for h in guard_eval.hits if h.block_candidate)
+        _filter_step(
+            filter_trace, "guard_candidate_block", "rejected", "guard_blocked",
+            inputs={"guard_ids": [h.guard_id for h in guard_eval.hits if h.block_candidate]},
+            parameters={"scope": "paper_entry"},
+        )
         return _make_candidate(
             opp, skip_reason=f"guard_blocked:{blocked_ids}",
             direction=direction, strategy_id=strategy_id,
             strategy_has_ruleset=strategy_has_ruleset,
             universe_member=universe_member, factor_signal=factor_signal,
             strategy_evidence=strategy_evidence, guard_eval=guard_eval,
+            filter_trace=filter_trace,
         )
+    _filter_step(
+        filter_trace, "guard_candidate_block", "passed", "guard_not_blocking",
+        inputs={"guard_ids": [h.guard_id for h in guard_eval.hits] if guard_eval else []},
+        parameters={"scope": "paper_entry"},
+    )
 
     # Compute trade score
     trade_score = _compute_trade_score(
@@ -242,7 +348,27 @@ def _evaluate_candidate(
         trade_score=trade_score,
         strategy_evidence=strategy_evidence,
         guard_eval=guard_eval,
+        filter_trace=filter_trace,
     )
+
+
+def _filter_step(
+    trace: list[dict],
+    filter_name: str,
+    decision: str,
+    reason_code: str,
+    *,
+    inputs: dict | None = None,
+    parameters: dict | None = None,
+) -> None:
+    trace.append({
+        "filter_name": filter_name,
+        "stage": "paper_ranker",
+        "decision": decision,
+        "reason_code": reason_code,
+        "inputs": inputs or {},
+        "parameters": parameters or {},
+    })
 
 
 _SCANNER_REGIME_SCORING_DEFAULTS = {
@@ -566,12 +692,14 @@ def _make_candidate(
     trade_score: float = -999.0,
     strategy_evidence: dict | None = None,
     guard_eval=None,
+    filter_trace: list[dict] | None = None,
 ) -> dict:
     """Assemble a candidate dict."""
     return {
         # Opportunity fields
         "opportunity_id": opp.get("id"),
         "symbol": opp.get("symbol"),
+        "asset_class": opp.get("asset_class") or "crypto",
         # #9: carry the instrument type so trading_decision can distinguish the
         # same symbol on spot vs perp. opportunities store it under "market".
         "market_type": opp.get("market") or opp.get("market_type"),
@@ -581,6 +709,7 @@ def _make_candidate(
         "source_agent": opp.get("source_agent"),
         "scanner_family": opp.get("scanner_family"),
         "universe_member_id": opp.get("universe_member_id"),
+        "universe_snapshot_id": opp.get("universe_snapshot_id"),
         "linked_strategy_id": opp.get("linked_strategy_id"),
         # Resolved fields
         "direction": direction,
@@ -592,6 +721,10 @@ def _make_candidate(
         "universe_total_score": universe_member.get("total_score") if universe_member else None,
         "tradability_score": universe_member.get("tradability_score") if universe_member else None,
         "late_entry_penalty": universe_member.get("late_entry_penalty") if universe_member else None,
+        "entry_price_usd": universe_member.get("entry_price_usd") if universe_member else None,
+        "entry_spread_bps": universe_member.get("spread_bps") if universe_member else None,
+        "funding_rate_at_entry": opp.get("funding_rate"),
+        "regime_tag": opp.get("regime_tag") or (universe_member.get("regime_tag") if universe_member else None),
         "crowding_risk": universe_member.get("crowding_risk") if universe_member else None,
         "atr_pct": universe_member.get("atr_pct") if universe_member else None,
         "risk_flags": _parse_risk_flags(universe_member),
@@ -614,6 +747,7 @@ def _make_candidate(
         # Scoring
         "trade_score": trade_score,
         "skip_reason": skip_reason,
+        "filter_trace": list(filter_trace or []),
     }
 
 

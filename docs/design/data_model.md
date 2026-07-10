@@ -1,9 +1,9 @@
 # Data Model Reference
 
 > Complete index of Aletheia Trading OS data layer.
-> ~80 SQLite tables, 52 Pydantic models, WAL mode, additive-only migrations.
+> ~94 SQLite table declarations, 54 Pydantic models, WAL mode, additive-only migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
-> Last updated: 2026-06-29
+> Last updated: 2026-07-10
 
 ---
 
@@ -49,7 +49,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `orders` | Execution orders | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
 | `positions` | Open/closed positions | symbol, direction, entry_price, quantity, status, realized_pnl | position_manager |
-| `shadow_trades` | What-if trades for comparison | opportunity_id, predicted_entry, actual_outcome | analytics |
+| `shadow_trades` | What-if trades for comparison | opportunity_id, venue, market_type, outcome_candidate_key, gross_return_pct, net_pnl_pct, estimated costs | analytics |
 | `portfolio_snapshots` | Periodic equity snapshots | total_value_usdt, unrealized_pnl, execution_mode | scheduler job |
 | `market_regimes` | Detected market regimes | regime_type, confidence, indicators (JSON) | market_observer |
 
@@ -119,9 +119,21 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `universe_feature_snapshots` | Per-symbol feature vectors | symbol, rsi, bb_width, vol_ratio, taker_buy_ratio |
 | `universe_scanner_runs` | Scanner execution log | scanner_name, symbols_scanned, signals_emitted |
 | `universe_snapshots` | Universe composition snapshots | snapshot_id, created_at |
-| `universe_members` | Assets in a universe snapshot | snapshot_id, symbol, rank, score |
+| `universe_members` | Assets in a universe snapshot | snapshot_id, symbol, market_type, rank, score, scanner_direction |
 | `universe_forward_outcomes` | Fixed-horizon Opportunity economics | venue, symbol, market_type, direction, horizon, gross_return_pct, directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, min_tradable_edge_pct, mfe_pct, mae_pct, settlement_price_source, cost_model_version |
 | `universe_policies` | Universe selection rules | policy_name, filters (JSON), priority |
+
+### G-bis. Opportunity Filter Evidence (3 tables)
+
+| Table | Purpose | Key columns |
+|-------|---------|-------------|
+| `filter_decisions` | Immutable per-candidate pass/reject facts for directional and low-volume gates | candidate_key, filter_name, decision, reason_code, parameter_snapshot, filter_version, outcome_candidate_key, evaluated_at |
+| `filter_decision_batches` | Complete compressed facts for high-volume directionless ticker/tradability gates | run_id, filter_name, candidate_count, pass/reject/not-applicable/error counts, lossless field/row-matrix candidate_facts, filter_version |
+| `filter_candidate_outcomes` | Shared exact-instrument fixed-horizon net result for a candidate seen by multiple gates | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross/directional/cost/net/MFE/MAE, status |
+
+Business writers only append these rows. Daily retention removes expired analytical rows
+(30d for compressed batches; 90d for per-candidate decisions/outcomes). This retention
+does not apply to authoritative proposals, RiskDecision, orders, fills, positions, or audit records.
 
 ### H. Serenity Pipeline (14 tables)
 
@@ -201,7 +213,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 ---
 
-## 4. Pydantic Model Index (52 models)
+## 4. Pydantic Model Index (54 models)
 
 All models in `aletheia/storage/models.py`. Key mapping:
 
@@ -211,6 +223,9 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | AgentRun | agent_runs | Runtime |
 | Opportunity | opportunities | Trading |
 | ShadowTrade | shadow_trades | Trading |
+| FilterDecision | filter_decisions | Analytics |
+| FilterDecisionBatch | filter_decision_batches | Analytics |
+| FilterCandidateOutcome | filter_candidate_outcomes | Analytics |
 | TradeProposal | trade_proposals | Trading |
 | RiskDecision | risk_decisions | Trading |
 | Order | orders | Trading |
@@ -297,6 +312,8 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | `macro_snapshots` | 90d | hardcoded | `repositories.py:1587` |
 | `coingecko_top_snapshots` (Round 2 Step 3) | 14d | hardcoded | `repositories.py:prune_coingecko_top_snapshots` |
 | `universe_forward_outcomes` | 30d | hardcoded | `repositories.py:prune_universe_forward_outcomes` |
+| `filter_decision_batches` | 30d | hardcoded | `repositories.py:prune_filter_decision_batches` |
+| `filter_decisions` / `filter_candidate_outcomes` | 90d | hardcoded | `repositories.py` filter-evidence prune functions |
 | `agent_shell_heartbeats` / `_events` / `_messages` / `_artifacts` (operator telemetry, DB-SIZE-1) | 2d / 14d / 30d / 30d | hardcoded | `repositories.py` `_PRUNABLE` + `scheduler.py:_run_cleanup` |
 | `opportunities` (open) | 48h → `expired` | yes | `repositories.py:1597-1612` |
 

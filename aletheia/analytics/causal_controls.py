@@ -55,10 +55,16 @@ def record_universe_control_cohort(
             treatment_id=member.get("id") or snapshot_id,
             role="selected",
             symbol=member["symbol"],
+            venue=member.get("venue"),
+            market_type=member.get("market_type") or "spot",
             direction=member.get("direction"),
             entry_price=member.get("entry_price_usd"),
             entry_ts=entry_ts,
             score=member.get("total_score"),
+            scanner_family=member.get("scanner_family"),
+            regime_tag=member.get("regime_tag"),
+            entry_spread_bps=member.get("spread_bps"),
+            funding_rate_at_entry=member.get("funding_rate"),
             module_path="aletheia/universe/allocator.py",
             metadata={
                 "snapshot_id": snapshot_id,
@@ -73,18 +79,30 @@ def record_universe_control_cohort(
             treatment_id=snapshot_id,
             role="control",
             symbol=item["symbol"],
+            venue=item.get("venue") or (
+                selected_members[0].get("venue") if selected_members else None
+            ),
+            market_type=item.get("market_type") or "spot",
             direction=item.get("scanner_direction") or item.get("direction"),
             entry_price=item.get("last_price"),
             entry_ts=entry_ts,
             score=item.get("total_score"),
+            scanner_family=item.get("scanner_family"),
+            regime_tag=item.get("regime_tag"),
+            entry_spread_bps=item.get("spread_bps"),
+            funding_rate_at_entry=item.get("funding_rate"),
             module_path="aletheia/universe/allocator.py",
             metadata={
                 "snapshot_id": snapshot_id,
                 "scanner_family": item.get("scanner_family"),
+                "regime_tag": item.get("regime_tag"),
                 "control_source": "same_refresh_scored_pool",
             },
         ))
-    return _insert_rows(rows)
+    inserted = _insert_rows(rows)
+    if inserted:
+        _record_universe_allocation_decisions(rows)
+    return inserted
 
 
 def record_serenity_control_cohort(opportunity: dict, max_controls: int = 10) -> int:
@@ -101,10 +119,16 @@ def record_serenity_control_cohort(opportunity: dict, max_controls: int = 10) ->
         treatment_id=opportunity.get("id"),
         role="selected",
         symbol=symbol,
+        venue=None,
+        market_type=opportunity.get("market_type") or "spot",
         direction=opportunity.get("direction"),
         entry_price=_latest_ohlcv_price(symbol, entry_ts),
         entry_ts=entry_ts,
         score=opportunity.get("confidence_score"),
+        scanner_family=None,
+        regime_tag=None,
+        entry_spread_bps=None,
+        funding_rate_at_entry=None,
         module_path="aletheia/agents/research_worker.py",
         metadata={
             "theme_id": opportunity.get("theme_id"),
@@ -124,10 +148,16 @@ def record_serenity_control_cohort(opportunity: dict, max_controls: int = 10) ->
             treatment_id=opportunity.get("id"),
             role="control",
             symbol=control_symbol,
+            venue=None,
+            market_type="spot",
             direction=opportunity.get("direction"),
             entry_price=_latest_ohlcv_price(control_symbol, entry_ts),
             entry_ts=entry_ts,
             score=None,
+            scanner_family=None,
+            regime_tag=None,
+            entry_spread_bps=None,
+            funding_rate_at_entry=None,
             module_path="aletheia/agents/research_worker.py",
             metadata={"control_source": "observable_ohlcv_pool"},
         ))
@@ -141,14 +171,46 @@ def _rows_for_item(
     treatment_id: str | None,
     role: str,
     symbol: str,
+    venue: str | None,
+    market_type: str,
     direction: str | None,
     entry_price: float | None,
     entry_ts: str,
     score: float | None,
+    scanner_family: str | None,
+    regime_tag: str | None,
+    entry_spread_bps: float | None,
+    funding_rate_at_entry: float | None,
     module_path: str,
     metadata: dict,
 ) -> list[dict]:
     rows: list[dict] = []
+    outcome_material = (
+        f"{layer}|{cohort_id}|{role}|{treatment_id}|{venue}|{symbol}|"
+        f"{market_type}|{direction}|{entry_ts}"
+    )
+    outcome_candidate_key = (
+        f"control:{hashlib.sha256(outcome_material.encode('utf-8')).hexdigest()[:20]}"
+    )
+    if venue and direction in {"long", "short"} and entry_price:
+        try:
+            from aletheia.analytics.filter_evidence import ensure_candidate_outcomes
+
+            ensure_candidate_outcomes(
+                outcome_candidate_key=outcome_candidate_key,
+                venue=venue,
+                symbol=symbol,
+                market_type=market_type,
+                direction=direction,
+                scanner_family=scanner_family,
+                regime_tag=regime_tag,
+                entry_price_usd=float(entry_price),
+                entry_spread_bps=entry_spread_bps,
+                funding_rate_at_entry=funding_rate_at_entry,
+                entry_ts=entry_ts,
+            )
+        except Exception:
+            pass
     for horizon in _HORIZONS[layer]:
         rows.append({
             "id": uuid4().hex,
@@ -157,6 +219,9 @@ def _rows_for_item(
             "treatment_id": treatment_id,
             "role": role,
             "symbol": symbol,
+            "venue": venue,
+            "market_type": market_type,
+            "scanner_family": scanner_family,
             "direction": direction,
             "horizon": horizon,
             "entry_price": entry_price,
@@ -164,6 +229,7 @@ def _rows_for_item(
             "score": score,
             "module_path": module_path,
             "metadata": json.dumps({**metadata, "due_at": _due_at(entry_ts, horizon)}, ensure_ascii=False),
+            "outcome_candidate_key": outcome_candidate_key if venue else None,
             "created_at": _utcnow(),
         })
     return rows
@@ -187,6 +253,61 @@ def _insert_rows(rows: list[dict]) -> int:
         if not was_in_tx:
             db.commit()
         return len(rows)
+    except Exception:
+        return 0
+
+
+def _record_universe_allocation_decisions(rows: list[dict]) -> int:
+    """Project one decision per sampled item from the prospective cohort rows."""
+    try:
+        from aletheia.analytics.filter_evidence import record_filter_decision
+        from aletheia.config.loader import load_config
+        from aletheia.storage.repositories import transaction
+
+        universe_cfg = load_config().universe
+        parameters = {
+            "scanner_weights": universe_cfg.scanner_weights,
+            "family_quota": universe_cfg.family_quota,
+            "family_quota_by_regime": universe_cfg.family_quota_by_regime,
+            "scanner_regime_scoring": universe_cfg.scanner_regime_scoring,
+        }
+        written = 0
+        with transaction():
+            for row in rows:
+                if row.get("layer") != "universe" or row.get("horizon") != "1h":
+                    continue
+                metadata = json.loads(row.get("metadata") or "{}")
+                role = row.get("role")
+                market_type = row.get("market_type") or "spot"
+                candidate_key = (
+                    f"allocation:{row.get('cohort_id')}:{role}:"
+                    f"{row.get('symbol')}:{market_type}"
+                )
+                record_filter_decision(
+                    candidate_key=candidate_key,
+                    candidate_kind="universe_allocation",
+                    filter_name="scanner_weights_quota",
+                    stage="universe_allocation",
+                    decision="passed" if role == "selected" else "rejected",
+                    reason_code=(
+                        "selected_by_allocator" if role == "selected"
+                        else "same_pool_control_not_selected"
+                    ),
+                    symbol=row["symbol"],
+                    venue=row.get("venue"),
+                    market_type=market_type,
+                    direction=row.get("direction"),
+                    scanner_family=row.get("scanner_family"),
+                    regime_tag=metadata.get("regime_tag"),
+                    universe_snapshot_id=metadata.get("snapshot_id"),
+                    inputs={"role": role, "score": row.get("score")},
+                    parameters=parameters,
+                    outcome_candidate_key=row.get("outcome_candidate_key"),
+                    entry_price_usd=row.get("entry_price"),
+                    evaluated_at=row.get("entry_ts"),
+                )
+                written += 1
+        return written
     except Exception:
         return 0
 

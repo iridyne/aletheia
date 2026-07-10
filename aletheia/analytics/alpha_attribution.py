@@ -254,10 +254,10 @@ def _universe_alpha(db, cutoff: str, min_sample_size: int) -> dict:
 
 def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
     rows = db.execute(
-        "SELECT batch_id, rank, pnl_pct FROM shadow_trades "
+        "SELECT batch_id, rank, net_pnl_pct FROM shadow_trades "
         "WHERE batch_id IS NOT NULL "
         "AND resolved_at IS NOT NULL "
-        "AND pnl_pct IS NOT NULL "
+        "AND net_pnl_pct IS NOT NULL "
         "AND datetime(created_at) >= datetime(?)",
         (cutoff,),
     ).fetchall()
@@ -271,14 +271,14 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
     eligible: list[float] = []
     usable_batches = 0
     for batch_rows in batches.values():
-        rank1 = [float(r["pnl_pct"]) for r in batch_rows if int(r["rank"] or 0) == 1]
-        rest = [float(r["pnl_pct"]) for r in batch_rows if 2 <= int(r["rank"] or 0) <= 5]
+        rank1 = [float(r["net_pnl_pct"]) for r in batch_rows if int(r["rank"] or 0) == 1]
+        rest = [float(r["net_pnl_pct"]) for r in batch_rows if 2 <= int(r["rank"] or 0) <= 5]
         if not rank1 or not rest:
             continue
         usable_batches += 1
         top1.append(rank1[0])
         top2_5.extend(rest)
-        eligible.extend(float(r["pnl_pct"]) for r in batch_rows if int(r["rank"] or 0) >= 1)
+        eligible.extend(float(r["net_pnl_pct"]) for r in batch_rows if int(r["rank"] or 0) >= 1)
 
     if usable_batches < min_sample_size or len(top2_5) < min_sample_size:
         return _verdict(
@@ -289,7 +289,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
             _safe_mean(top1),
             None,
             "insufficient",
-            "Not enough resolved shadow-trade batches with rank1 and rank2-5 outcomes.",
+            "Not enough cost-aware net shadow batches with rank1 and rank2-5 outcomes.",
             {"top2_5_sample_size": len(top2_5), "eligible_average": _safe_mean(eligible)},
         )
 
@@ -337,10 +337,10 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         if not batch or not batch["batch_id"]:
             continue
         shadow_rows = db.execute(
-            "SELECT pnl_pct FROM shadow_trades "
+            "SELECT net_pnl_pct FROM shadow_trades "
             "WHERE batch_id = ? "
             "AND resolved_at IS NOT NULL "
-            "AND pnl_pct IS NOT NULL "
+            "AND net_pnl_pct IS NOT NULL "
             "AND opportunity_id != ?",
             (batch["batch_id"], opp_id),
         ).fetchall()
@@ -351,7 +351,7 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
             continue
         compared_proposals += 1
         accepted.append(pnl_pct)
-        shadows.extend(float(r["pnl_pct"]) for r in shadow_rows)
+        shadows.extend(float(r["net_pnl_pct"]) for r in shadow_rows)
 
     if compared_proposals < min_sample_size or len(shadows) < min_sample_size:
         return _verdict(
@@ -745,19 +745,16 @@ def _causal_control_alpha(db, layer: str, name: str, cutoff: str, min_sample_siz
 
 
 def _control_observation_return(db, row) -> float | None:
-    metadata = _parse_json(row["metadata"])
-    due_at = metadata.get("due_at")
-    entry_price = row["entry_price"]
-    if not due_at or entry_price is None or float(entry_price) <= 0:
+    outcome_key = row["outcome_candidate_key"]
+    if not outcome_key:
         return None
-    due_dt = _parse_dt(due_at)
-    if due_dt is None or due_dt > _utcnow():
-        return None
-    exit_price = _exit_price_from_ohlcv(db, row["symbol"], due_at)
-    if exit_price is None:
-        return None
-    raw = (exit_price - float(entry_price)) / float(entry_price) * 100.0
-    return _directional_return(raw, row["direction"])
+    outcome = db.execute(
+        "SELECT net_return_pct FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key=? AND horizon=? AND status='settled' "
+        "AND net_return_pct IS NOT NULL LIMIT 1",
+        (outcome_key, row["horizon"]),
+    ).fetchone()
+    return float(outcome["net_return_pct"]) if outcome else None
 
 
 def _exit_price_from_ohlcv(db, symbol: str, due_at: str) -> float | None:

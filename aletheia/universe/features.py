@@ -106,6 +106,137 @@ def _quote_volume_24h(exchange, ccxt_symbol: str, ticker: dict) -> float:
     return base_volume * last
 
 
+def _ticker_candidate_fact(
+    asset: dict,
+    *,
+    decision: str,
+    reason_code: str,
+    inputs: dict | None = None,
+) -> dict:
+    symbol = str(asset.get("symbol") or "")
+    venue = str(asset.get("venue") or "")
+    market_type = str(asset.get("market_type") or "spot")
+    candidate_key = asset.get("id") or f"instrument:{venue}:{market_type}:{symbol}"
+    return {
+        "candidate_key": str(candidate_key),
+        "asset_id": asset.get("id"),
+        "symbol": symbol,
+        "venue": venue,
+        "market_type": market_type,
+        "decision": decision,
+        "reason_code": reason_code,
+        "inputs": inputs or {},
+    }
+
+
+def _evaluate_ticker_prefilters(
+    assets: list[dict],
+    tickers: dict,
+    exchange,
+    to_ccxt_perp,
+    *,
+    min_volume: float,
+) -> tuple[list[tuple[dict, dict]], list[dict], list[dict]]:
+    """Evaluate ticker availability and volume in order without sampling facts."""
+    candidates: list[tuple[dict, dict]] = []
+    ticker_facts: list[dict] = []
+    volume_facts: list[dict] = []
+
+    for asset in assets:
+        symbol = str(asset.get("symbol") or "")
+        asset_id = str(asset.get("id") or "")
+        if not symbol or not asset_id:
+            ticker_facts.append(_ticker_candidate_fact(
+                asset,
+                decision="rejected",
+                reason_code="asset_identity_missing",
+                inputs={"has_symbol": bool(symbol), "has_asset_id": bool(asset_id)},
+            ))
+            volume_facts.append(_ticker_candidate_fact(
+                asset,
+                decision="not_applicable",
+                reason_code="ticker_prerequisite_failed",
+            ))
+            continue
+
+        is_perp = asset.get("market_type", "spot") == "perp"
+        ccxt_symbol = to_ccxt_perp(symbol) if is_perp else symbol
+        ticker = tickers.get(ccxt_symbol)
+        if ticker is None:
+            ticker_facts.append(_ticker_candidate_fact(
+                asset,
+                decision="rejected",
+                reason_code="ticker_unavailable",
+                inputs={"ticker_symbol": ccxt_symbol},
+            ))
+            volume_facts.append(_ticker_candidate_fact(
+                asset,
+                decision="not_applicable",
+                reason_code="ticker_prerequisite_failed",
+            ))
+            continue
+
+        ticker_facts.append(_ticker_candidate_fact(
+            asset,
+            decision="passed",
+            reason_code="ticker_available",
+            inputs={"ticker_symbol": ccxt_symbol},
+        ))
+        volume = _quote_volume_24h(exchange, ccxt_symbol, ticker)
+        if volume < min_volume:
+            volume_facts.append(_ticker_candidate_fact(
+                asset,
+                decision="rejected",
+                reason_code="quote_volume_below_prefilter_minimum",
+                inputs={"quote_volume_24h": volume},
+            ))
+            continue
+
+        volume_facts.append(_ticker_candidate_fact(
+            asset,
+            decision="passed",
+            reason_code="quote_volume_prefilter_sufficient",
+            inputs={"quote_volume_24h": volume},
+        ))
+        candidates.append((asset, ticker))
+
+    return candidates, ticker_facts, volume_facts
+
+
+def _record_ticker_prefilter_batches(
+    scanner_run_id: str | None,
+    ticker_facts: list[dict],
+    volume_facts: list[dict],
+    cfg: AletheiaConfig,
+) -> None:
+    if not scanner_run_id:
+        return
+
+    from aletheia.analytics.filter_evidence import record_filter_decision_batch
+
+    record_filter_decision_batch(
+        run_id=scanner_run_id,
+        candidate_kind="universe_asset",
+        filter_name="ticker_availability",
+        stage="ticker_prefilter",
+        candidate_facts=ticker_facts,
+        parameters={
+            "primary_venue": cfg.market_data.ccxt_exchange,
+            "fallback_venue": cfg.market_data.ccxt_fallback or cfg.market_data.ccxt_exchange,
+        },
+    )
+    record_filter_decision_batch(
+        run_id=scanner_run_id,
+        candidate_kind="universe_asset",
+        filter_name="ticker_volume_prefilter",
+        stage="ticker_prefilter",
+        candidate_facts=volume_facts,
+        parameters={
+            "minimum_quote_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
+        },
+    )
+
+
 async def _chunked_fetch_tickers(exchange, symbols: list[str]) -> dict:
     """Fetch tickers in chunks to stay within Binance URL length limits."""
     all_tickers: dict = {}
@@ -349,12 +480,17 @@ async def _fetch_single_feature(
         relative_strength_24h=relative_strength_24h,
         oi_price_divergence=oi_price_divergence,
     )
+    feat["feature_snapshot_id"] = snap.id
     repo.insert_universe_feature_snapshot(snap)
 
     return feat
 
 
-async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict]:
+async def collect_features(
+    assets: list[dict],
+    cfg: AletheiaConfig,
+    scanner_run_id: str | None = None,
+) -> list[dict]:
     """Two-phase feature collection: batch tickers → volume pre-filter → concurrent OHLCV.
 
     Phase A: fetch all tickers in batch (spot + perp separately) — ~2-4s total.
@@ -394,25 +530,16 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
 
         # --- Volume pre-filter ---
         min_vol = cfg.universe.min_volume_24h_usdt
-        candidates = []
-        for asset in assets:
-            symbol = asset.get("symbol", "")
-            asset_id = asset.get("id", "")
-            if not symbol or not asset_id:
-                continue
-
-            is_perp = asset.get("market_type", "spot") == "perp"
-            ccxt_sym = to_ccxt_perp(symbol) if is_perp else symbol
-            ticker = tickers.get(ccxt_sym)
-
-            if ticker is None:
-                continue
-
-            vol = _quote_volume_24h(exchange, ccxt_sym, ticker)
-            if vol < min_vol:
-                continue
-
-            candidates.append((asset, ticker))
+        candidates, ticker_facts, volume_facts = _evaluate_ticker_prefilters(
+            assets,
+            tickers,
+            exchange,
+            to_ccxt_perp,
+            min_volume=min_vol,
+        )
+        _record_ticker_prefilter_batches(
+            scanner_run_id, ticker_facts, volume_facts, cfg,
+        )
 
         logger.info(
             "Volume pre-filter: %d/%d assets pass (min_vol=%.0f USDT)",

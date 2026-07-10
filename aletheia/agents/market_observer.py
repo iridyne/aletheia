@@ -162,40 +162,61 @@ def _infer_scanner_family(rationale: str, observations: list[str]) -> str | None
     return None
 
 
+_PREFILTER_RSI_DEVIATION = 12.0
+_PREFILTER_ATR_PCT = 0.8
+_PREFILTER_KEYWORDS = (
+    "breakout", "breakdown", "oversold", "overbought", "squeeze",
+    "divergence", "spike",
+)
+
+
+def _evaluate_pre_filter(context_str: str) -> dict:
+    """Return the exact point-in-time evidence behind the Observer pre-filter."""
+    import re
+
+    rsi_value: float | None = None
+    atr_pct: float | None = None
+    matched_rules: list[str] = []
+
+    rsi_match = re.search(r'RSI[^|]*\|[^|]*\|[^|]*?(\d+\.?\d*)', context_str, re.IGNORECASE)
+    if rsi_match:
+        try:
+            rsi_value = float(rsi_match.group(1))
+            if abs(rsi_value - 50) > _PREFILTER_RSI_DEVIATION:
+                matched_rules.append("rsi_deviation")
+        except ValueError:
+            rsi_value = None
+
+    atr_match = re.search(r'ATR[^|]*\|[^|]*?(\d+\.?\d+)%', context_str, re.IGNORECASE)
+    if atr_match:
+        try:
+            atr_pct = float(atr_match.group(1))
+            if atr_pct > _PREFILTER_ATR_PCT:
+                matched_rules.append("atr_pct")
+        except ValueError:
+            atr_pct = None
+
+    context_lower = context_str.lower()
+    keyword_hits = [kw for kw in _PREFILTER_KEYWORDS if kw in context_lower]
+    if keyword_hits:
+        matched_rules.append("keyword")
+
+    return {
+        "passed": bool(matched_rules),
+        "rsi": rsi_value,
+        "atr_pct": atr_pct,
+        "keyword_hits": keyword_hits,
+        "matched_rules": matched_rules,
+    }
+
+
 def _has_sufficient_signal(context_str: str) -> bool:
     """Deterministic pre-filter: returns True if the context contains actionable signals.
 
     Checks RSI deviation from 50, ATR%, and momentum keywords.
     Used to skip the LLM call for calm markets (P1-7 — saves wall-clock budget).
     """
-    import re
-
-    # RSI deviation check: |RSI - 50| > 12 is actionable
-    # Table format: | RSI | <timeframe> | <value> | — skip two columns before the number
-    rsi_match = re.search(r'RSI[^|]*\|[^|]*\|[^|]*?(\d+\.?\d*)', context_str, re.IGNORECASE)
-    if rsi_match:
-        try:
-            if abs(float(rsi_match.group(1)) - 50) > 12:
-                return True
-        except ValueError:
-            pass
-
-    # ATR% check: > 0.8% indicates meaningful volatility
-    atr_match = re.search(r'ATR[^|]*\|[^|]*?(\d+\.?\d+)%', context_str, re.IGNORECASE)
-    if atr_match:
-        try:
-            if float(atr_match.group(1)) > 0.8:
-                return True
-        except ValueError:
-            pass
-
-    # Keyword check: presence of directional/momentum keywords
-    keywords = ("breakout", "breakdown", "oversold", "overbought", "squeeze",
-                "divergence", "spike")
-    if any(kw in context_str.lower() for kw in keywords):
-        return True
-
-    return False
+    return bool(_evaluate_pre_filter(context_str)["passed"])
 
 
 def _prediction_cutoff_iso(max_age_hours: int = _PREDICTION_CONTEXT_MAX_AGE_HOURS) -> str:
@@ -270,6 +291,10 @@ async def _analyze_symbol(
     universe_snapshot_id: str | None = None,
     universe_member_id: str | None = None,
     scanner_family: str | None = None,
+    scanner_direction: str | None = None,
+    member_entry_price_usd: float | None = None,
+    member_spread_bps: float | None = None,
+    venue: str | None = None,
     force_full: bool = False,
     prediction_context_enabled: bool = False,
     prediction_context_cutoff: str | None = None,
@@ -414,7 +439,54 @@ async def _analyze_symbol(
     # P1-7: deterministic pre-filter — skip LLM for symbols with no actionable signal.
     # MO-14: force_full is passed in (computed once per run). load_config() has no
     # cache, so calling it per-symbol was a file read + YAML parse every iteration.
-    if not force_full and not _has_sufficient_signal(context):
+    pre_filter = _evaluate_pre_filter(context)
+    pre_filter_passed = _has_sufficient_signal(context)
+    try:
+        from aletheia.analytics.filter_evidence import record_observer_pre_filter_evidence
+
+        pre_filter_decision = (
+            "not_applicable" if force_full
+            else "passed" if pre_filter_passed
+            else "rejected"
+        )
+        pre_filter_reason = (
+            "force_full_bypass" if force_full
+            else "+".join(pre_filter["matched_rules"])
+            if pre_filter["matched_rules"]
+            else "sufficient_signal" if pre_filter_passed
+            else "no_sufficient_signal"
+        )
+        record_observer_pre_filter_evidence(
+            run_id=run_id,
+            symbol=symbol,
+            venue=venue,
+            market_type=market_type,
+            scanner_direction=scanner_direction,
+            scanner_family=scanner_family,
+            universe_snapshot_id=universe_snapshot_id,
+            universe_member_id=universe_member_id,
+            decision=pre_filter_decision,
+            reason_code=pre_filter_reason,
+            inputs={
+                "rsi": pre_filter["rsi"],
+                "atr_pct": pre_filter["atr_pct"],
+                "keyword_hits": pre_filter["keyword_hits"],
+                "matched_rules": pre_filter["matched_rules"],
+                "force_full": force_full,
+            },
+            parameters={
+                "rsi_deviation": _PREFILTER_RSI_DEVIATION,
+                "atr_pct": _PREFILTER_ATR_PCT,
+                "keywords": list(_PREFILTER_KEYWORDS),
+            },
+            entry_price_usd=member_entry_price_usd,
+            entry_spread_bps=member_spread_bps,
+            funding_rate_at_entry=funding_rate_val,
+        )
+    except Exception as exc:
+        logger.warning("observer pre-filter evidence unavailable for %s: %s", symbol, exc)
+
+    if not force_full and not pre_filter_passed:
         logger.debug("pre-filter: no sufficient signal for %s — skipping LLM call", symbol)
         return None, f"pre_filter_skip:{symbol}:no_sufficient_signal"
 
@@ -737,6 +809,10 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 universe_snapshot_id=universe_snapshot_id,
                 universe_member_id=u_member.get("id") if u_member else None,
                 scanner_family=u_member.get("scanner_family") if u_member else None,
+                scanner_direction=u_member.get("scanner_direction") if u_member else None,
+                member_entry_price_usd=u_member.get("entry_price_usd") if u_member else None,
+                member_spread_bps=u_member.get("spread_bps") if u_member else None,
+                venue=cfg.market_data.ccxt_exchange,
                 force_full=_force_full,
                 prediction_context_enabled=prediction_context_enabled,
                 prediction_context_cutoff=prediction_context_cutoff,

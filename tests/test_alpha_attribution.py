@@ -34,9 +34,9 @@ def _insert_shadow(db, batch: str, opp: str, rank: int, pnl: float, selected: in
     db.execute(
         "INSERT INTO shadow_trades "
         "(id, batch_id, opportunity_id, symbol, direction, scanner_family, trade_score, rank, "
-        "entry_price, was_selected, created_at, pnl_pct, resolved_at) "
-        "VALUES (?, ?, ?, 'BTC/USDT', 'long', 'momentum', ?, ?, 100, ?, ?, ?, ?)",
-        (f"sh-{batch}-{rank}-{opp}", batch, opp, 100 - rank, rank, selected, _iso(days_ago=1), pnl, _iso()),
+        "entry_price, was_selected, created_at, pnl_pct, net_pnl_pct, resolved_at) "
+        "VALUES (?, ?, ?, 'BTC/USDT', 'long', 'momentum', ?, ?, 100, ?, ?, ?, ?, ?)",
+        (f"sh-{batch}-{rank}-{opp}", batch, opp, 100 - rank, rank, selected, _iso(days_ago=1), pnl, pnl, _iso()),
     )
 
 
@@ -167,13 +167,24 @@ def test_universe_alpha_prefers_prospective_control_cohort():
         _insert_ohlcv(db, sel, "1h", entry, 100.0, {1: 103.0})
         _insert_ohlcv(db, ctl, "1h", entry, 100.0, {1: 100.0})
         for role, sym in (("selected", sel), ("control", ctl)):
+            outcome_key = f"control:{role}:{i}"
             db.execute(
                 "INSERT INTO alpha_control_observations "
                 "(id, layer, cohort_id, treatment_id, role, symbol, direction, horizon, "
-                "entry_price, entry_ts, score, module_path, metadata) "
+                "entry_price, entry_ts, score, module_path, metadata, outcome_candidate_key) "
                 "VALUES (?, 'universe', 'cohort-1', 'snap-1', ?, ?, 'long', '1h', 100, ?, 50, "
-                "'aletheia/universe/allocator.py', ?)",
-                (f"aco-{role}-{i}", role, sym, entry, json.dumps({"due_at": due_at})),
+                "'aletheia/universe/allocator.py', ?, ?)",
+                (f"aco-{role}-{i}", role, sym, entry, json.dumps({"due_at": due_at}), outcome_key),
+            )
+            db.execute(
+                "INSERT INTO filter_candidate_outcomes "
+                "(id, outcome_candidate_key, venue, symbol, market_type, direction, "
+                "horizon, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, status) "
+                "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, 'settled')",
+                (
+                    f"fco-{role}-{i}", outcome_key, sym, entry, due_at, due_at,
+                    3.0 if role == "selected" else 0.0,
+                ),
             )
     db.commit()
 

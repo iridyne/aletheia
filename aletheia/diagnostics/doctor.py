@@ -2371,6 +2371,109 @@ def _probe_outcome_economics(report: Report) -> None:
         pass
 
 
+def _probe_filter_evidence(report: Report) -> None:
+    """Report whether filter pass/reject facts and their net outcomes are connected."""
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        db = get_db()
+        decisions = db.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN decision='passed' THEN 1 ELSE 0 END) AS passed, "
+            "SUM(CASE WHEN decision='rejected' THEN 1 ELSE 0 END) AS rejected, "
+            "COUNT(DISTINCT CASE WHEN outcome_candidate_key IS NOT NULL "
+            "  THEN outcome_candidate_key END) AS outcome_candidates "
+            "FROM filter_decisions"
+        ).fetchone()
+        batches = db.execute(
+            "SELECT COUNT(*) AS total, "
+            "COALESCE(SUM(candidate_count), 0) AS candidates, "
+            "COUNT(DISTINCT filter_name) AS filters, "
+            "SUM(CASE WHEN candidate_count != "
+            "  passed_count + rejected_count + not_applicable_count + error_count "
+            "  THEN 1 ELSE 0 END) AS malformed "
+            "FROM filter_decision_batches"
+        ).fetchone()
+        total = int(decisions["total"] or 0) if decisions else 0
+        batch_total = int(batches["total"] or 0) if batches else 0
+        batch_candidates = int(batches["candidates"] or 0) if batches else 0
+        batch_filters = int(batches["filters"] or 0) if batches else 0
+        malformed_batches = int(batches["malformed"] or 0) if batches else 0
+        if total == 0:
+            if batch_total:
+                detail = (
+                    f"decisions=0; batches={batch_total}, "
+                    f"batch_candidates={batch_candidates}, "
+                    f"batch_filters={batch_filters}, malformed={malformed_batches}; "
+                    "directional outcome evidence is warming up"
+                )
+                if malformed_batches:
+                    report.add(
+                        "data.filter_evidence",
+                        "warn",
+                        detail,
+                        "inspect incomplete directionless filter batch writes",
+                    )
+                else:
+                    report.add("data.filter_evidence", "info", detail)
+                return
+            report.add(
+                "data.filter_evidence",
+                "info",
+                "filter evidence is warming up; no pass/reject facts recorded yet",
+            )
+            return
+
+        outcomes = db.execute(
+            "SELECT COUNT(DISTINCT outcome_candidate_key) AS registered, "
+            "SUM(CASE WHEN status='settled' THEN 1 ELSE 0 END) AS settled, "
+            "SUM(CASE WHEN status='settled' AND net_return_pct IS NOT NULL "
+            "  THEN 1 ELSE 0 END) AS net_complete, "
+            "SUM(CASE WHEN status='pending' AND due_at < ? THEN 1 ELSE 0 END) AS overdue "
+            "FROM filter_candidate_outcomes",
+            (datetime.now(timezone.utc).isoformat(),),
+        ).fetchone()
+        outcome_candidates = int(decisions["outcome_candidates"] or 0)
+        registered = int(outcomes["registered"] or 0) if outcomes else 0
+        settled = int(outcomes["settled"] or 0) if outcomes else 0
+        net_complete = int(outcomes["net_complete"] or 0) if outcomes else 0
+        overdue = int(outcomes["overdue"] or 0) if outcomes else 0
+        registration = registered / outcome_candidates if outcome_candidates else 1.0
+        detail = (
+            f"decisions={total} (pass={int(decisions['passed'] or 0)}, "
+            f"reject={int(decisions['rejected'] or 0)}); "
+            f"batches={batch_total}, batch_candidates={batch_candidates}, "
+            f"batch_filters={batch_filters}, malformed={malformed_batches}; "
+            f"outcome_candidates={registered}/{outcome_candidates}; "
+            f"settled={settled}, net_complete={net_complete}, overdue={overdue}"
+        )
+        if malformed_batches:
+            report.add(
+                "data.filter_evidence",
+                "warn",
+                detail,
+                "inspect incomplete directionless filter batch writes",
+            )
+        elif registration < 0.95:
+            report.add(
+                "data.filter_evidence",
+                "warn",
+                detail,
+                "inspect filter evidence write failures; eligible decisions are missing outcomes",
+            )
+        elif overdue > 50:
+            report.add(
+                "data.filter_evidence",
+                "warn",
+                detail,
+                "inspect outcome settler logs and exact-instrument market coverage",
+            )
+        else:
+            report.add("data.filter_evidence", "ok", detail)
+    except Exception:
+        pass
+
+
 def _probe_serenity_pipeline(report: Report) -> None:
     """Serenity research pipeline freshness — last run age + active opportunity count."""
     try:
@@ -2542,6 +2645,7 @@ def build_report() -> Report:
         _probe_data_quality,
         _probe_ohlcv_coverage,
         _probe_outcome_economics,
+        _probe_filter_evidence,
         _probe_signal_effectiveness,
         _probe_trading_loop,
         _probe_profit_loop,

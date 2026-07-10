@@ -1024,6 +1024,7 @@
 | OPR-D03 | ✅ | 做空结果和成本未统一，毛涨跌可被当盈利 | 保存 gross、directional、fee、spread/slippage、funding、net；永续 funding 未知时 net=NULL |
 | OPR-D04 | ✅ | 任一正毛收益被标 missed alpha | 只有 `net > min_tradable_edge` 才是 `missed_alpha_suspect`；否则为 `positive_gross_move_only` |
 | OPR-D05 | ✅ | 校准把 long/short 与 spot/perp 混合 | 聚合键改为 family+direction+market_type+horizon；风险资格和 System Operator 精确读取目标 cohort |
-| OPR-E01 | ⏳ | 每个前置过滤器仍无逐候选放行/拒绝事实 | 阶段 E：不可变 filter decision + filter version + candidate snapshot + shadow settlement |
-| OPR-E02 | ⏳ | shadow_trades 自身仍是 gross directional PnL | 阶段 E 与 filter 对照一起迁移成本模型；完成前 shadow 正收益不得单独证明 missed alpha |
-| OPR-E03 | ⏳ | alpha control observations 缺 market/cost，当前对照只能算 gross | 阶段 E 对照 cohort 增加 instrument identity 与同口径成本后，才能宣称净 alpha |
+| OPR-E01 | ✅ | 每个前置过滤器仍无逐候选放行/拒绝事实 | 已增不可变 `filter_decisions`；高频无方向 ticker/tradability 用完整非抽样 `filter_decision_batches`；保存原因、最小输入、参数/代码版本和候选身份 |
+| OPR-E02 | ✅ | shadow_trades 自身仍是 gross directional PnL | 新 shadow 绑定 exact venue+market 的共享 outcome，分开 gross/net/手续费/点差滑点/资金费；历史 gross-only 不进入 alpha 学习 |
+| OPR-E03 | ✅ | alpha control observations 缺 market/cost，当前对照只能算 gross | Universe 对照保存 venue+market+family+outcome key，通过 `filter_candidate_outcomes.net_return_pct` 共享同口径成本；旧 gross 对照排除 |
+| OPR-E04 | ✅ | 前置高频证据长期运行会无界增长 | 批次证据 30d，逐候选与净结果 90d；每日 cleanup 只清理分析表，不触碰交易/风控/审计原件 |

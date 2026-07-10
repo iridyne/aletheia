@@ -29,7 +29,11 @@ def test_unattributed_family_performance_never_becomes_filter_advice(monkeypatch
     recs = fc.compute_filter_feedback()
     assert recs
     assert all(r.verdict == "insufficient_data" for r in recs)
-    assert all("No per-filter passed/dropped cohort" in r.reasoning for r in recs)
+    assert all(
+        "filter-specific" in r.reasoning
+        or "No per-filter passed/dropped cohort" in r.reasoning
+        for r in recs
+    )
 
 
 def test_shadow_compute_does_not_mutate_config(monkeypatch):

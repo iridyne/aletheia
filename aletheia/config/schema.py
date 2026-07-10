@@ -890,8 +890,8 @@ class ControllerConfig(BaseModel):
     """Filter feedback controller — negative-feedback tuning of opportunity filters.
 
     Phase 1 is SHADOW / observe-only: an every-N-hours background job computes
-    per-filter × scanner_family loosen/hold/tighten recommendations from realized
-    forward-return outcomes and appends them to `controller_recommendations`. It
+    filter-version pass/reject observational findings from cost-aware net outcomes
+    and appends them to `controller_recommendations`. It
     NEVER writes trading config in this phase. Bounded auto-tune and full
     closed-loop actuation are future phases, gated behind additional flags.
     See aletheia/analytics/filter_controller.py + filter_registry.py.

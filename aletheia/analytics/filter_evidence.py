@@ -1,0 +1,725 @@
+"""Append-only evidence for Opportunity filter decisions and outcomes."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
+import logging
+from typing import Any
+from uuid import uuid4
+
+from aletheia.storage import repositories as repo
+from aletheia.storage.models import (
+    FilterCandidateOutcome,
+    FilterDecision,
+    FilterDecisionBatch,
+)
+
+
+logger = logging.getLogger("aletheia.analytics.filter_evidence")
+
+_SCHEMA_VERSION = "v1"
+_HORIZONS = {
+    "15m": timedelta(minutes=15),
+    "1h": timedelta(hours=1),
+    "4h": timedelta(hours=4),
+    "24h": timedelta(hours=24),
+}
+_VALID_DIRECTIONS = {"long", "short"}
+_VALID_DECISIONS = {"passed", "rejected", "not_applicable", "error"}
+_DROP_SNAPSHOT_VALUE = object()
+_SENSITIVE_KEY_PARTS = {
+    "api_key", "authorization", "credential", "password", "prompt",
+    "raw_context", "secret", "token",
+}
+
+
+def record_filter_decision(
+    *,
+    candidate_key: str,
+    candidate_kind: str,
+    filter_name: str,
+    stage: str,
+    decision: str,
+    reason_code: str,
+    symbol: str,
+    market_type: str = "spot",
+    parent_candidate_key: str | None = None,
+    run_id: str | None = None,
+    opportunity_id: str | None = None,
+    universe_snapshot_id: str | None = None,
+    universe_member_id: str | None = None,
+    proposal_id: str | None = None,
+    venue: str | None = None,
+    direction: str | None = None,
+    scanner_family: str | None = None,
+    regime_tag: str | None = None,
+    sequence_no: int = 0,
+    reason_detail: str | None = None,
+    inputs: dict[str, Any] | None = None,
+    parameters: dict[str, Any] | None = None,
+    evaluated_at: str | None = None,
+    outcome_candidate_key: str | None = None,
+    entry_price_usd: float | None = None,
+    entry_spread_bps: float | None = None,
+    funding_rate_at_entry: float | None = None,
+) -> str:
+    """Persist one gate fact and, when economically identifiable, its outcomes.
+
+    Evidence failures are fail-open with respect to the trading pipeline: callers
+    receive a stable ID and the original decision semantics remain unchanged.
+    """
+    if decision not in _VALID_DECISIONS:
+        raise ValueError(f"unsupported filter decision: {decision}")
+    if not candidate_key or not filter_name or not symbol:
+        raise ValueError("candidate_key, filter_name and symbol are required")
+
+    params = _sanitize_snapshot(parameters or {})
+    input_values = _sanitize_snapshot(inputs or {})
+    parameter_json = _canonical_json(params)
+    input_json = _canonical_json(input_values)
+    filter_version = _filter_version(filter_name, parameter_json)
+    dedup_material = f"{candidate_key}|{filter_name}|{decision}|{filter_version}"
+    dedup_key = hashlib.sha256(dedup_material.encode("utf-8")).hexdigest()
+    decision_id = dedup_key[:12]
+    side = str(direction or "").lower() or None
+    market = _normalize_market(market_type)
+    timestamp = evaluated_at or _utcnow()
+
+    learnable = (
+        side in _VALID_DIRECTIONS
+        and bool(venue)
+        and entry_price_usd is not None
+        and float(entry_price_usd) > 0
+    )
+    result_key = outcome_candidate_key or candidate_key if learnable else None
+    fact = FilterDecision(
+        id=decision_id,
+        dedup_key=dedup_key,
+        candidate_key=candidate_key,
+        candidate_kind=candidate_kind,
+        parent_candidate_key=parent_candidate_key,
+        run_id=run_id,
+        opportunity_id=opportunity_id,
+        universe_snapshot_id=universe_snapshot_id,
+        universe_member_id=universe_member_id,
+        proposal_id=proposal_id,
+        venue=venue,
+        symbol=symbol,
+        market_type=market,
+        direction=side,
+        scanner_family=scanner_family,
+        regime_tag=regime_tag,
+        filter_name=filter_name,
+        stage=stage,
+        sequence_no=sequence_no,
+        decision=decision,
+        reason_code=reason_code,
+        reason_detail=_safe_text(reason_detail),
+        input_snapshot=input_json,
+        parameter_snapshot=parameter_json,
+        filter_version=filter_version,
+        code_commit=_boot_commit(),
+        outcome_candidate_key=result_key,
+        evaluated_at=timestamp,
+    )
+    try:
+        repo.insert_filter_decision(fact)
+        if result_key:
+            _ensure_candidate_outcomes(
+                outcome_candidate_key=result_key,
+                venue=str(venue),
+                symbol=symbol,
+                market_type=market,
+                direction=str(side),
+                scanner_family=scanner_family,
+                regime_tag=regime_tag,
+                entry_price_usd=float(entry_price_usd),
+                entry_spread_bps=entry_spread_bps,
+                funding_rate_at_entry=funding_rate_at_entry,
+                entry_ts=timestamp,
+            )
+    except Exception as exc:  # observation must not mutate the trading decision
+        logger.warning(
+            "filter evidence write failed candidate=%s filter=%s: %s",
+            candidate_key,
+            filter_name,
+            exc,
+        )
+    return decision_id
+
+
+def record_filter_decision_batch(
+    *,
+    run_id: str,
+    candidate_kind: str,
+    filter_name: str,
+    stage: str,
+    candidate_facts: list[dict[str, Any]],
+    parameters: dict[str, Any] | None = None,
+    evaluated_at: str | None = None,
+) -> str:
+    """Persist every high-volume directionless fact in one immutable run batch."""
+    if not run_id or not filter_name:
+        raise ValueError("run_id and filter_name are required")
+    facts = [_sanitize_snapshot(item) for item in candidate_facts]
+    params = _sanitize_snapshot(parameters or {})
+    parameter_json = _canonical_json(params)
+    filter_version = _filter_version(filter_name, parameter_json)
+    dedup_key = hashlib.sha256(
+        f"{run_id}|{candidate_kind}|{filter_name}|{filter_version}".encode("utf-8")
+    ).hexdigest()
+    counts = {name: 0 for name in _VALID_DECISIONS}
+    for fact in facts:
+        decision = str((fact or {}).get("decision") or "error")
+        counts[decision if decision in counts else "error"] += 1
+    batch = FilterDecisionBatch(
+        id=dedup_key[:12],
+        dedup_key=dedup_key,
+        run_id=run_id,
+        candidate_kind=candidate_kind,
+        filter_name=filter_name,
+        stage=stage,
+        candidate_count=len(facts),
+        passed_count=counts["passed"],
+        rejected_count=counts["rejected"],
+        not_applicable_count=counts["not_applicable"],
+        error_count=counts["error"],
+        candidate_facts=_canonical_json(_compact_candidate_facts(facts)),
+        parameter_snapshot=parameter_json,
+        filter_version=filter_version,
+        code_commit=_boot_commit(),
+        evaluated_at=evaluated_at or _utcnow(),
+    )
+    try:
+        repo.insert_filter_decision_batch(batch)
+    except Exception as exc:
+        logger.warning(
+            "filter evidence batch write failed run=%s filter=%s: %s",
+            run_id,
+            filter_name,
+            exc,
+        )
+    return batch.id
+
+
+def decode_filter_decision_batch(payload: str) -> list[dict[str, Any]]:
+    """Decode current compact batches and legacy plain-list batch payloads."""
+    raw = json.loads(payload or "[]")
+    if isinstance(raw, list):
+        return [dict(item) for item in raw if isinstance(item, dict)]
+    if not isinstance(raw, dict):
+        return []
+    fields = raw.get("fields") or []
+    rows = raw.get("rows") or []
+    if not isinstance(fields, list) or not isinstance(rows, list):
+        return []
+
+    decoded: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, list) or not row:
+            continue
+        try:
+            presence_mask = int(row[0])
+        except (TypeError, ValueError):
+            continue
+        values = iter(row[1:])
+        fact: dict[str, Any] = {}
+        try:
+            for index, field in enumerate(fields):
+                if presence_mask & (1 << index):
+                    fact[str(field)] = next(values)
+        except StopIteration:
+            continue
+        decoded.append(fact)
+    return decoded
+
+
+def filter_feedback_stats(shrinkage_k: float = 20.0) -> list[dict[str, Any]]:
+    """Return cost-aware pass/reject cells with a conservative shrunk mean."""
+    from aletheia.storage.sqlite import get_db
+
+    rows = get_db().execute(
+        "SELECT fd.filter_name, fd.filter_version, fd.decision, "
+        "COALESCE(fd.scanner_family, 'unknown') AS scanner_family, "
+        "fd.direction, fd.market_type, fo.horizon, "
+        "COUNT(DISTINCT fd.outcome_candidate_key) AS n_total, "
+        "COUNT(DISTINCT CASE WHEN fo.status='settled' AND fo.net_return_pct IS NOT NULL "
+        "  THEN fd.outcome_candidate_key END) AS n_net, "
+        "AVG(CASE WHEN fo.status='settled' THEN fo.net_return_pct END) AS avg_net, "
+        "SUM(CASE WHEN fo.status='settled' AND fo.net_return_pct > 0 "
+        "  THEN fo.net_return_pct ELSE 0 END) AS gains, "
+        "SUM(CASE WHEN fo.status='settled' AND fo.net_return_pct < 0 "
+        "  THEN -fo.net_return_pct ELSE 0 END) AS losses "
+        "FROM filter_decisions fd "
+        "JOIN filter_candidate_outcomes fo "
+        "  ON fo.outcome_candidate_key = fd.outcome_candidate_key "
+        "WHERE fd.decision IN ('passed','rejected') "
+        "GROUP BY fd.filter_name, fd.filter_version, fd.decision, "
+        "COALESCE(fd.scanner_family, 'unknown'), fd.direction, fd.market_type, fo.horizon "
+        "ORDER BY fd.filter_name, fd.filter_version, scanner_family, "
+        "fd.direction, fd.market_type, fo.horizon, fd.decision"
+    ).fetchall()
+    raw = [dict(row) for row in rows]
+    priors: dict[tuple, tuple[int, float]] = {}
+    for row in raw:
+        key = _cohort_key(row)
+        n = int(row.get("n_net") or 0)
+        total, weighted = priors.get(key, (0, 0.0))
+        priors[key] = (total + n, weighted + n * float(row.get("avg_net") or 0.0))
+
+    output: list[dict[str, Any]] = []
+    for row in raw:
+        n_total = int(row.get("n_total") or 0)
+        n = int(row.get("n_net") or 0)
+        prior_n, prior_sum = priors[_cohort_key(row)]
+        prior = prior_sum / prior_n if prior_n else 0.0
+        sample = float(row.get("avg_net") or 0.0)
+        gains = float(row.pop("gains") or 0.0)
+        losses = float(row.pop("losses") or 0.0)
+        row["n"] = n
+        row["n_total"] = n_total
+        row["n_net"] = n
+        row["outcome_coverage"] = round(n / n_total, 4) if n_total else 0.0
+        row["avg_net"] = round(sample, 6)
+        row["shrunk_avg_net"] = round(
+            (n * sample + float(shrinkage_k) * prior) / (n + float(shrinkage_k)),
+            6,
+        )
+        row["profit_factor"] = round(gains / losses, 4) if losses > 0 else None
+        output.append(row)
+    return output
+
+
+def record_candidate_filter_trace(
+    candidate: dict[str, Any],
+    *,
+    run_id: str | None = None,
+    trace: list[dict[str, Any]] | None = None,
+) -> int:
+    """Persist a candidate's sequential gate trace using one shared outcome seed."""
+    opportunity_id = candidate.get("opportunity_id")
+    symbol = str(candidate.get("symbol") or "")
+    if not opportunity_id or not symbol:
+        return 0
+    steps = trace if trace is not None else candidate.get("filter_trace") or []
+    if not steps:
+        return 0
+
+    candidate_key = f"opportunity:{opportunity_id}"
+    market = _normalize_market(candidate.get("market_type"))
+    venue = candidate.get("venue") or _default_venue()
+    entry_price = _exact_snapshot_price(symbol, market)
+    if entry_price is None:
+        entry_price = _positive_float(candidate.get("entry_price_usd"))
+    evaluated_at = _utcnow()
+    count = 0
+    for sequence, step in enumerate(steps, start=1):
+        try:
+            record_filter_decision(
+                candidate_key=candidate_key,
+                candidate_kind="opportunity",
+                parent_candidate_key=(
+                    f"universe_member:{candidate['universe_member_id']}"
+                    if candidate.get("universe_member_id")
+                    else None
+                ),
+                run_id=run_id,
+                opportunity_id=opportunity_id,
+                universe_snapshot_id=candidate.get("universe_snapshot_id"),
+                universe_member_id=candidate.get("universe_member_id"),
+                venue=venue,
+                symbol=symbol,
+                market_type=market,
+                direction=candidate.get("direction"),
+                scanner_family=candidate.get("scanner_family"),
+                regime_tag=candidate.get("regime_tag"),
+                filter_name=str(step["filter_name"]),
+                stage=str(step.get("stage") or "paper_ranker"),
+                sequence_no=int(step.get("sequence_no") or sequence),
+                decision=str(step["decision"]),
+                reason_code=str(step.get("reason_code") or step["decision"]),
+                reason_detail=step.get("reason_detail"),
+                inputs=step.get("inputs") or {},
+                parameters=step.get("parameters") or {},
+                evaluated_at=evaluated_at,
+                outcome_candidate_key=candidate_key,
+                entry_price_usd=entry_price,
+                entry_spread_bps=_optional_float(candidate.get("entry_spread_bps")),
+                funding_rate_at_entry=_optional_float(candidate.get("funding_rate_at_entry")),
+            )
+            count += 1
+        except Exception as exc:
+            logger.warning(
+                "candidate filter trace failed opportunity=%s filter=%s: %s",
+                opportunity_id,
+                step.get("filter_name"),
+                exc,
+            )
+    return count
+
+
+def record_observer_pre_filter_evidence(
+    *,
+    run_id: str | None,
+    symbol: str,
+    venue: str | None,
+    market_type: str,
+    scanner_direction: str | None,
+    scanner_family: str | None,
+    universe_snapshot_id: str | None,
+    universe_member_id: str | None,
+    decision: str,
+    reason_code: str,
+    inputs: dict[str, Any],
+    parameters: dict[str, Any],
+    entry_price_usd: float | None = None,
+    entry_spread_bps: float | None = None,
+    funding_rate_at_entry: float | None = None,
+) -> str:
+    """Record an Observer pre-filter without persisting raw market context."""
+    market = _normalize_market(market_type)
+    evaluation_id = run_id or f"direct-{uuid4().hex[:12]}"
+    candidate_key = f"observer:{evaluation_id}:{venue or 'unknown'}:{symbol}:{market}"
+    exact_price = _exact_snapshot_price(symbol, market)
+    return record_filter_decision(
+        candidate_key=candidate_key,
+        candidate_kind="observer_evaluation",
+        parent_candidate_key=(
+            f"universe_member:{universe_member_id}" if universe_member_id else None
+        ),
+        run_id=run_id,
+        universe_snapshot_id=universe_snapshot_id,
+        universe_member_id=universe_member_id,
+        venue=venue,
+        symbol=symbol,
+        market_type=market,
+        direction=scanner_direction,
+        scanner_family=scanner_family,
+        filter_name="observer_pre_filter",
+        stage="observer_pre_filter",
+        decision=decision,
+        reason_code=reason_code,
+        inputs=inputs,
+        parameters=parameters,
+        outcome_candidate_key=candidate_key,
+        entry_price_usd=exact_price or _positive_float(entry_price_usd),
+        entry_spread_bps=entry_spread_bps,
+        funding_rate_at_entry=funding_rate_at_entry,
+    )
+
+
+def ensure_candidate_outcomes(
+    *,
+    outcome_candidate_key: str,
+    venue: str,
+    symbol: str,
+    market_type: str,
+    direction: str,
+    scanner_family: str | None,
+    regime_tag: str | None,
+    entry_price_usd: float,
+    entry_spread_bps: float | None,
+    funding_rate_at_entry: float | None,
+    entry_ts: str,
+) -> int:
+    """Public registration seam for non-filter prospective control cohorts."""
+    if str(direction or "").lower() not in _VALID_DIRECTIONS:
+        return 0
+    if not venue or not symbol or float(entry_price_usd or 0) <= 0:
+        return 0
+    return _ensure_candidate_outcomes(
+        outcome_candidate_key=outcome_candidate_key,
+        venue=venue,
+        symbol=symbol,
+        market_type=_normalize_market(market_type),
+        direction=str(direction).lower(),
+        scanner_family=scanner_family,
+        regime_tag=regime_tag,
+        entry_price_usd=float(entry_price_usd),
+        entry_spread_bps=entry_spread_bps,
+        funding_rate_at_entry=funding_rate_at_entry,
+        entry_ts=entry_ts,
+    )
+
+
+def record_operator_filter_trace(decision_id: str, decision_result: dict[str, Any]) -> int:
+    """Persist System Operator gates after its authoritative PiDecision exists."""
+    trace = decision_result.get("filter_trace") or []
+    symbol = decision_result.get("symbol")
+    direction = decision_result.get("direction")
+    if not trace or not symbol:
+        return 0
+    opportunity_id = decision_result.get("opportunity_id")
+    opportunity = repo.get_opportunity(opportunity_id) if opportunity_id else None
+    member = None
+    if opportunity and opportunity.get("universe_member_id"):
+        try:
+            member = repo.get_universe_member(opportunity["universe_member_id"])
+        except Exception:
+            member = None
+    market = _normalize_market(
+        decision_result.get("market_type")
+        or (opportunity or {}).get("market")
+        or "spot"
+    )
+    venue = _default_venue()
+    entry_price = _exact_snapshot_price(str(symbol), market)
+    candidate_key = f"pi_decision:{decision_id}"
+    evaluated_at = _utcnow()
+    count = 0
+    for sequence, step in enumerate(trace, start=1):
+        record_filter_decision(
+            candidate_key=candidate_key,
+            candidate_kind="pi_decision",
+            parent_candidate_key=(
+                f"opportunity:{opportunity_id}" if opportunity_id else None
+            ),
+            opportunity_id=opportunity_id,
+            universe_snapshot_id=(opportunity or {}).get("universe_snapshot_id"),
+            universe_member_id=(opportunity or {}).get("universe_member_id"),
+            venue=venue,
+            symbol=str(symbol),
+            market_type=market,
+            direction=direction,
+            scanner_family=decision_result.get("scanner_family")
+            or (opportunity or {}).get("scanner_family"),
+            regime_tag=(opportunity or {}).get("regime_tag"),
+            filter_name=str(step["filter_name"]),
+            stage=str(step.get("stage") or "system_operator"),
+            sequence_no=sequence,
+            decision=str(step["decision"]),
+            reason_code=str(step.get("reason_code") or step["decision"]),
+            inputs=step.get("inputs") or {},
+            parameters=step.get("parameters") or {},
+            evaluated_at=evaluated_at,
+            outcome_candidate_key=candidate_key,
+            entry_price_usd=entry_price,
+            entry_spread_bps=_optional_float((member or {}).get("spread_bps")),
+            funding_rate_at_entry=_optional_float((opportunity or {}).get("funding_rate")),
+        )
+        count += 1
+    return count
+
+
+def record_risk_filter_decision(
+    proposal: Any,
+    *,
+    risk_decision_id: str,
+    approved: bool,
+    violations: list[str],
+) -> str:
+    """Index the authoritative RiskDecision without weakening or duplicating it."""
+    opportunity = repo.get_opportunity(proposal.opportunity_id) if proposal.opportunity_id else None
+    member = None
+    if opportunity and opportunity.get("universe_member_id"):
+        try:
+            member = repo.get_universe_member(opportunity["universe_member_id"])
+        except Exception:
+            member = None
+    normalized_codes = sorted({str(item).split(":", 1)[0] for item in violations})
+    return record_filter_decision(
+        candidate_key=f"proposal:{proposal.id}",
+        candidate_kind="proposal",
+        parent_candidate_key=(
+            f"opportunity:{proposal.opportunity_id}" if proposal.opportunity_id else None
+        ),
+        opportunity_id=proposal.opportunity_id,
+        universe_snapshot_id=(opportunity or {}).get("universe_snapshot_id"),
+        universe_member_id=(opportunity or {}).get("universe_member_id"),
+        proposal_id=proposal.id,
+        venue=_default_venue(),
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        scanner_family=(opportunity or {}).get("scanner_family"),
+        regime_tag=(opportunity or {}).get("regime_tag"),
+        filter_name="risk_engine",
+        stage="risk",
+        decision="passed" if approved else "rejected",
+        reason_code="risk_approved" if approved else "risk_rejected",
+        inputs={
+            "risk_decision_id": risk_decision_id,
+            "violation_codes": normalized_codes,
+            "violation_count": len(violations),
+            "execution_mode": proposal.execution_mode,
+        },
+        parameters={"authority": "RiskDecision", "auto_tunable": False},
+        outcome_candidate_key=f"proposal:{proposal.id}",
+        entry_price_usd=_positive_float(proposal.price),
+        entry_spread_bps=_optional_float((member or {}).get("spread_bps")),
+        funding_rate_at_entry=_optional_float((opportunity or {}).get("funding_rate")),
+    )
+
+
+def _ensure_candidate_outcomes(
+    *,
+    outcome_candidate_key: str,
+    venue: str,
+    symbol: str,
+    market_type: str,
+    direction: str,
+    scanner_family: str | None,
+    regime_tag: str | None,
+    entry_price_usd: float,
+    entry_spread_bps: float | None,
+    funding_rate_at_entry: float | None,
+    entry_ts: str,
+) -> int:
+    entry_dt = _parse_dt(entry_ts)
+    if entry_dt is None:
+        return 0
+    outcomes = []
+    for horizon, delta in _HORIZONS.items():
+        material = f"{outcome_candidate_key}|{horizon}"
+        outcomes.append(FilterCandidateOutcome(
+            id=hashlib.sha256(material.encode("utf-8")).hexdigest()[:12],
+            outcome_candidate_key=outcome_candidate_key,
+            venue=venue,
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+            scanner_family=scanner_family,
+            regime_tag=regime_tag,
+            horizon=horizon,
+            entry_price_usd=entry_price_usd,
+            entry_spread_bps=entry_spread_bps,
+            funding_rate_at_entry=funding_rate_at_entry,
+            entry_ts=entry_ts,
+            due_at=(entry_dt + delta).isoformat(),
+        ))
+    return repo.insert_filter_candidate_outcomes_batch(outcomes)
+
+
+def _filter_version(filter_name: str, parameter_json: str) -> str:
+    material = f"{_SCHEMA_VERSION}|{filter_name}|{parameter_json}"
+    return f"{_SCHEMA_VERSION}-{hashlib.sha256(material.encode('utf-8')).hexdigest()[:12]}"
+
+
+def _compact_candidate_facts(facts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Store repeated candidate dictionaries as a lossless field/row matrix."""
+    fields = sorted({str(key) for fact in facts for key in fact})
+    rows: list[list[Any]] = []
+    for fact in facts:
+        presence_mask = 0
+        values: list[Any] = []
+        for index, field in enumerate(fields):
+            if field in fact:
+                presence_mask |= 1 << index
+                values.append(fact[field])
+        rows.append([presence_mask, *values])
+    return {"fields": fields, "rows": rows}
+
+
+def _normalize_market(market_type: str | None) -> str:
+    return (
+        "perp"
+        if str(market_type or "spot").lower()
+        in {"perp", "futures", "swap", "usdt_futures"}
+        else "spot"
+    )
+
+
+def _sanitize_snapshot(value: Any, key: str = "") -> Any:
+    key_lower = key.lower()
+    if any(part in key_lower for part in _SENSITIVE_KEY_PARTS):
+        return _DROP_SNAPSHOT_VALUE
+    if isinstance(value, dict):
+        sanitized_dict: dict[str, Any] = {}
+        for child_key, child_value in value.items():
+            sanitized = _sanitize_snapshot(child_value, str(child_key))
+            if sanitized is not _DROP_SNAPSHOT_VALUE:
+                sanitized_dict[str(child_key)] = sanitized
+        return sanitized_dict
+    if isinstance(value, (list, tuple)):
+        return [
+            sanitized
+            for item in value[:50]
+            if (sanitized := _sanitize_snapshot(item)) is not _DROP_SNAPSHOT_VALUE
+        ]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value[:500] if isinstance(value, str) else value
+    return str(value)[:500]
+
+
+def _safe_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return str(value)[:500]
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _cohort_key(row: dict[str, Any]) -> tuple:
+    return (
+        row.get("filter_name"),
+        row.get("filter_version"),
+        row.get("scanner_family"),
+        row.get("direction"),
+        row.get("market_type"),
+        row.get("horizon"),
+    )
+
+
+def _exact_snapshot_price(symbol: str, market_type: str) -> float | None:
+    """Read only an exact typed snapshot; never fall back across spot/perp."""
+    try:
+        from aletheia.data.symbols import to_canonical
+
+        rows = repo.list_market_snapshots(
+            symbol=to_canonical(symbol),
+            market_type=market_type,
+            limit=1,
+        )
+        return _positive_float(rows[0].get("price")) if rows else None
+    except Exception:
+        return None
+
+
+def _default_venue() -> str | None:
+    try:
+        from aletheia.config.loader import load_config
+
+        return load_config().market_data.ccxt_exchange
+    except Exception:
+        return None
+
+
+def _positive_float(value: Any) -> float | None:
+    parsed = _optional_float(value)
+    return parsed if parsed is not None and parsed > 0 else None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _boot_commit() -> str | None:
+    try:
+        from aletheia.agent_runtime.build_info import get_boot_commit
+
+        return get_boot_commit()
+    except Exception:
+        return None
+
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()

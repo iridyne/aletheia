@@ -20,14 +20,14 @@ logger = logging.getLogger("aletheia.analytics.shadow_trades")
 
 def persist_shadow_batch(
     top_candidates: list[dict],
-    selected: dict | None,
+    selected: dict | list[dict] | None,
     top_n: int = 5,
 ) -> list[str]:
     """Persist the top_n ranked candidates as shadow trades.
 
     Args:
         top_candidates: full ranked candidate list (already sorted by trade_score desc).
-        selected: the candidate that was actually selected (may be None).
+        selected: candidate(s) actually emitted after occupancy/cooldown checks.
         top_n: how many shadow rows to write per tick.
 
     Returns:
@@ -42,27 +42,66 @@ def persist_shadow_batch(
     batch_id = uuid4().hex[:12]
     now_iso = datetime.now(timezone.utc).isoformat()
     regime = _current_regime()
+    try:
+        from aletheia.config.loader import load_config
+
+        venue = load_config().market_data.ccxt_exchange
+    except Exception:
+        venue = None
 
     inserted_ids: list[str] = []
-    selected_opp_id = selected.get("opportunity_id") if selected else None
+    selected_candidates = selected if isinstance(selected, list) else ([selected] if selected else [])
+    if isinstance(selected, list):
+        selected_opp_ids = {
+            item.get("opportunity_id") for item in selected if item.get("opportunity_id")
+        }
+    elif selected:
+        selected_opp_ids = {selected.get("opportunity_id")}
+    else:
+        selected_opp_ids = set()
 
-    for rank, candidate in enumerate(top_candidates[:top_n], start=1):
+    rank_by_opportunity = {
+        candidate.get("opportunity_id"): rank
+        for rank, candidate in enumerate(top_candidates, start=1)
+        if candidate.get("opportunity_id")
+    }
+    batch_candidates = list(top_candidates[:top_n])
+    included_ids = {
+        candidate.get("opportunity_id")
+        for candidate in batch_candidates
+        if candidate.get("opportunity_id")
+    }
+    for candidate in selected_candidates:
         opp_id = candidate.get("opportunity_id")
+        if opp_id and opp_id not in included_ids:
+            batch_candidates.append(candidate)
+            included_ids.add(opp_id)
+
+    for fallback_rank, candidate in enumerate(batch_candidates, start=1):
+        opp_id = candidate.get("opportunity_id")
+        rank = rank_by_opportunity.get(opp_id, fallback_rank)
         symbol = candidate.get("symbol") or ""
         direction = candidate.get("direction") or candidate.get("direction_bias") or "long"
-        entry_price = _current_price(symbol)
+        market_type = candidate.get("market_type") or "spot"
+        entry_price = _current_price(symbol, market_type=market_type, exact=True)
+        outcome_candidate_key = f"opportunity:{opp_id}" if opp_id else None
 
         shadow = ShadowTrade(
             batch_id=batch_id,
             opportunity_id=opp_id or "",
             symbol=symbol,
+            venue=venue,
+            market_type=market_type,
             direction=direction,
             scanner_family=candidate.get("scanner_family"),
             trade_score=float(candidate.get("trade_score") or -999),
             rank=rank,
             entry_price=entry_price,
+            entry_spread_bps=candidate.get("entry_spread_bps"),
+            funding_rate_at_entry=candidate.get("funding_rate_at_entry"),
+            outcome_candidate_key=outcome_candidate_key,
             regime_tag=regime,
-            was_selected=(opp_id is not None and opp_id == selected_opp_id),
+            was_selected=(opp_id is not None and opp_id in selected_opp_ids),
         )
         try:
             insert_shadow_trade(shadow)
@@ -119,7 +158,8 @@ def resolve_stale_shadows(
     cutoff_iso = (datetime.now(timezone.utc) - timedelta(hours=min_age_hours)).isoformat()
     rows = db.execute(
         "SELECT id, symbol, direction, entry_price, created_at FROM shadow_trades "
-        "WHERE resolved_at IS NULL AND created_at < ? ORDER BY created_at ASC LIMIT ?",
+        "WHERE resolved_at IS NULL AND outcome_candidate_key IS NULL "
+        "AND created_at < ? ORDER BY created_at ASC LIMIT ?",
         (cutoff_iso, limit),
     ).fetchall()
 
@@ -165,13 +205,35 @@ def resolve_stale_shadows(
     return counts
 
 
-def _current_price(symbol: str) -> float | None:
+def _current_price(
+    symbol: str,
+    market_type: str | None = None,
+    *,
+    exact: bool = False,
+) -> float | None:
     """Return the latest market price for a symbol, or None."""
     if not symbol:
         return None
     try:
         from aletheia.trading.market_data import latest_snapshot
-        snap = latest_snapshot(symbol)
+        if exact:
+            from aletheia.data.symbols import to_canonical
+            from aletheia.storage.repositories import list_market_snapshots
+
+            normalized_market = (
+                "perp"
+                if str(market_type or "spot").lower()
+                in {"perp", "futures", "swap", "usdt_futures"}
+                else "spot"
+            )
+            rows = list_market_snapshots(
+                symbol=to_canonical(symbol),
+                market_type=normalized_market,
+                limit=1,
+            )
+            snap = rows[0] if rows else None
+        else:
+            snap = latest_snapshot(symbol, market_type=market_type)
         return float(snap["price"]) if snap else None
     except Exception:
         return None
@@ -207,7 +269,8 @@ def resolve_shadow_trades_for_position(position: dict) -> int:
     # Find the shadow row that was_selected for this opportunity
     selected_rows = _select_all(
         "shadow_trades",
-        where="opportunity_id = ? AND was_selected = 1 AND resolved_at IS NULL",
+        where="opportunity_id = ? AND was_selected = 1 AND resolved_at IS NULL "
+              "AND outcome_candidate_key IS NULL",
         params=(opp_id,),
         limit=1,
     )

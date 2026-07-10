@@ -2,7 +2,7 @@
 
 > 一页俯瞰系统所有活动部件、数据流向、管道状态。
 > 断管道标记: ✅ 闭环 | ⚠️ 窄消费（仅API/CLI） | ❌ 断裂（写入无消费）
-> Last synced with code: 2026-06-23
+> Last synced with code: 2026-07-10
 
 ---
 
@@ -15,7 +15,9 @@
 | `data_collectors` | 2min | orderbook_snapshots, funding_rates, oi_snapshots, liquidation_events, macro_snapshots, volume_profiles | market_observer(context_builder 部分消费) | ⚠️ liquidation_events 不进风控 |
 | `exchange_sync` | 5min | positions(sync), portfolio_snapshots(side-effect) | risk_engine(exposure), position_manager, UI | ✅ |
 | `portfolio_snapshot` | 10min | portfolio_snapshots | risk_engine(drawdown scale), UI, Telegram | ✅ |
-| `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes（venue+market+gross/net+cost+MFE/MAE） | paper_trader_ranker（分 direction/market 的净结果校准）、System Operator family edge、risk live-evidence、doctor、guard candidate | ✅ |
+| `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes，filter_decision_batches/filter_decisions/filter_candidate_outcomes | paper_trader_ranker（分 direction/market 的净结果校准）、System Operator family edge、filter controller、risk live-evidence、doctor、guard candidate | ✅ |
+| `outcome_settler` | 15min | 更新 universe_forward_outcomes + filter_candidate_outcomes；同步新 shadow 净结果 | 净收益校准、filter controller、alpha attribution、doctor | ✅ |
+| `cleanup` | cron 03:17 | 删除超保留期的分析/遥测行；filter batch 30d、decision/outcome 90d | SQLite 稳定性 + `data_pruned` audit | ✅，不触碰交易因果表 |
 | `ohlcv_nightly_backfill` | cron(可配) | ohlcv_bars | (历史 OHLCV 存储;backtest 消费者随引擎删除 Position C) | ✅ |
 | `okx_demo_symbols` | 4h | (内存 set 缓存) | okx_broker(filter) | ✅ |
 
@@ -39,6 +41,7 @@
 | `dreaming_daily` | cron 02:00 CST | knowledge_items + positions | knowledge_items(dreaming_log), serenity_* tables | ⚠️ serenity 4表仅API消费 |
 | `insight_synthesizer` | cron 02:30 CST | knowledge_items + market_snapshots | trading_memo(knowledge_items) | retrieve_lessons() | ✅ |
 | `confidence_calibration` | 6h | predictions + outcomes | calibration reports | UI(analytics) | ⚠️ |
+| `filter_controller_observe` | 6h（配置开启时） | 逐 filter/version/family/direction/market/horizon 的 pass/reject 净结果 | controller_recommendations(shadow_only) | CLI/API 诊断；不写 config | ✅ 只读 |
 | `pi_operator_loop` | cron 每4h:15 CST | system health + strategies + positions | operator_actions, PiDecision(recommendations) | pi_daemon(wake signal) | ✅ |
 
 ---

@@ -204,9 +204,13 @@ class UniverseService:
             except Exception as e:
                 logger.debug("volume_ranking injection skipped: %s", e)
 
-            features_list = await collect_features(assets, cfg)
+            features_list = await collect_features(
+                assets, cfg, scanner_run_id=run.id,
+            )
 
-            filtered = apply_tradability_filters(features_list, cfg.universe)
+            filtered = apply_tradability_filters(
+                features_list, cfg.universe, scanner_run_id=run.id,
+            )
             repo.update_universe_scanner_run(run.id, assets_passed=len(filtered))
 
             calibration = get_family_multipliers()
@@ -251,6 +255,10 @@ class UniverseService:
                 ttl_sec = min(item.get("ttl_sec", 3600), snapshot_ttl_sec)
                 member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
                 entry_price = item.get("last_price")
+                scanner_direction = (
+                    item.get("scanner_direction")
+                    or _infer_direction(item.get("scanner_family"), item)
+                )
                 member = UniverseMember(
                     snapshot_id=snap.id,
                     asset_id=item["asset_id"],
@@ -265,6 +273,7 @@ class UniverseService:
                     crowding_risk=item.get("crowding_risk"),
                     late_entry_penalty=item.get("late_entry_penalty"),
                     scanner_family=item.get("scanner_family"),
+                    scanner_direction=scanner_direction,
                     regime_tag=regime_tag,
                     all_scores=json.dumps(item.get("all_scores", {})),
                     quote_volume_24h=item.get("quote_volume_24h"),
@@ -295,8 +304,7 @@ class UniverseService:
                     # to forward outcomes as direction=None (54% of momentum rows),
                     # and the recorded direction could disagree with the emitted
                     # opportunity, double-corrupting win-rate stats.
-                    "direction": item.get("scanner_direction")
-                    or _infer_direction(item.get("scanner_family"), item),
+                    "direction": scanner_direction,
                     "entry_price_usd": entry_price,
                     "spread_bps": item.get("spread_bps"),
                     "funding_rate": item.get("funding_rate"),

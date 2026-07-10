@@ -1078,6 +1078,13 @@ _PRUNABLE = {
     # NOT causal-chain tables — safe to prune old rows. 90-day retention.
     "serenity_claims": "created_at",
     "shadow_trades": "created_at",
+    # Filter evidence is analytical and reproducible from source decisions. Keep
+    # enough history for paired cohorts without allowing 10-minute batches to
+    # grow the SQLite file forever. Authoritative RiskDecision/order rows remain
+    # outside this whitelist.
+    "filter_decision_batches": "evaluated_at",
+    "filter_decisions": "evaluated_at",
+    "filter_candidate_outcomes": "entry_ts",
 }
 
 _CONDITIONALLY_PRUNABLE = {
@@ -1172,6 +1179,18 @@ def prune_serenity_claims(days: int = 90) -> int:
 
 def prune_shadow_trades(days: int = 90) -> int:
     return _delete_old_rows("shadow_trades", days)
+
+
+def prune_filter_decision_batches(days: int = 30) -> int:
+    return _delete_old_rows("filter_decision_batches", days)
+
+
+def prune_filter_decisions(days: int = 90) -> int:
+    return _delete_old_rows("filter_decisions", days)
+
+
+def prune_filter_candidate_outcomes(days: int = 90) -> int:
+    return _delete_old_rows("filter_candidate_outcomes", days)
 
 
 # Transient PI-decision actions: pre-decision signals + non-trade outcomes that
@@ -1640,6 +1659,144 @@ def list_forward_outcomes_by_member(member_id: str) -> list[dict]:
         params=(member_id,),
         order="horizon ASC",
     )
+
+
+# ---------------------------------------------------------------------------
+# Opportunity filter evidence
+# ---------------------------------------------------------------------------
+
+def insert_filter_decision(decision) -> bool:
+    """Insert one immutable filter fact; duplicate dedup keys are ignored."""
+    data = decision.model_dump()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cols = ", ".join(data.keys())
+    placeholders = ", ".join("?" for _ in data)
+    cur = db.execute(
+        f"INSERT OR IGNORE INTO filter_decisions ({cols}) VALUES ({placeholders})",
+        list(data.values()),
+    )
+    if not was_in_tx:
+        db.commit()
+    return bool(cur.rowcount)
+
+
+def insert_filter_decision_batch(batch) -> bool:
+    """Insert one immutable compressed filter batch."""
+    data = batch.model_dump()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cols = ", ".join(data.keys())
+    placeholders = ", ".join("?" for _ in data)
+    cur = db.execute(
+        f"INSERT OR IGNORE INTO filter_decision_batches ({cols}) VALUES ({placeholders})",
+        list(data.values()),
+    )
+    if not was_in_tx:
+        db.commit()
+    return bool(cur.rowcount)
+
+
+def insert_filter_candidate_outcomes_batch(outcomes: list) -> int:
+    """Register fixed-horizon candidate outcomes without duplicating a candidate."""
+    if not outcomes:
+        return 0
+    db = get_db()
+    was_in_tx = db.in_transaction
+    inserted = 0
+    for outcome in outcomes:
+        data = outcome.model_dump()
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join("?" for _ in data)
+        cur = db.execute(
+            f"INSERT OR IGNORE INTO filter_candidate_outcomes ({cols}) VALUES ({placeholders})",
+            list(data.values()),
+        )
+        inserted += max(0, cur.rowcount or 0)
+    if not was_in_tx:
+        db.commit()
+    return inserted
+
+
+def list_pending_filter_candidate_outcomes(
+    before_ts: str,
+    limit: int = 200,
+) -> list[dict]:
+    return _select_all(
+        "filter_candidate_outcomes",
+        where="status = 'pending' AND due_at <= ?",
+        params=(before_ts,),
+        order="due_at ASC",
+        limit=limit,
+    )
+
+
+def settle_filter_candidate_outcome(
+    outcome_id: str,
+    *,
+    exit_price: float,
+    settled_at: str,
+    economics: dict,
+    settlement_price_source: str | None,
+    settlement_lag_sec: float | None,
+) -> None:
+    updates = {
+        "exit_price_usd": exit_price,
+        "settled_at": settled_at,
+        "status": "settled",
+        **economics,
+    }
+    if settlement_price_source is not None:
+        updates["settlement_price_source"] = settlement_price_source
+    if settlement_lag_sec is not None:
+        updates["settlement_lag_sec"] = settlement_lag_sec
+    _update("filter_candidate_outcomes", outcome_id, updates)
+
+
+def fail_filter_candidate_outcome(outcome_id: str, settled_at: str) -> None:
+    _update("filter_candidate_outcomes", outcome_id, {
+        "settled_at": settled_at,
+        "status": "failed",
+    })
+
+
+def settle_linked_shadow_outcomes(
+    outcome_candidate_key: str,
+    *,
+    exit_price: float,
+    settled_at: str,
+    economics: dict,
+    settlement_price_source: str | None,
+    settlement_lag_sec: float | None,
+) -> int:
+    """Project a settled shared 24h result onto linked shadow rows."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "UPDATE shadow_trades SET exit_price=?, pnl_pct=?, gross_return_pct=?, "
+        "net_pnl_pct=?, estimated_fee_pct=?, estimated_spread_slippage_pct=?, "
+        "estimated_funding_pct=?, min_tradable_edge_pct=?, "
+        "settlement_price_source=?, settlement_lag_sec=?, cost_model_version=?, "
+        "resolved_at=? WHERE outcome_candidate_key=? AND resolved_at IS NULL",
+        (
+            exit_price,
+            economics.get("directional_return_pct"),
+            economics.get("gross_return_pct"),
+            economics.get("net_return_pct"),
+            economics.get("estimated_fee_pct"),
+            economics.get("estimated_spread_slippage_pct"),
+            economics.get("estimated_funding_pct"),
+            economics.get("min_tradable_edge_pct"),
+            settlement_price_source,
+            settlement_lag_sec,
+            economics.get("cost_model_version"),
+            settled_at,
+            outcome_candidate_key,
+        ),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
 
 
 def mark_outlier_outcomes_failed(max_abs_return_pct: float = 1_000_000) -> int:

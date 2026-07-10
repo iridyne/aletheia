@@ -92,18 +92,120 @@ class ShadowTrade(BaseModel):
     batch_id: str | None = None
     opportunity_id: str
     symbol: str
+    venue: str | None = None
+    market_type: str = "spot"
     direction: str
     scanner_family: str | None = None
     trade_score: float = -999.0
     rank: int = 0
     entry_price: float | None = None
+    entry_spread_bps: float | None = None
+    funding_rate_at_entry: float | None = None
+    outcome_candidate_key: str | None = None
     regime_tag: str | None = None
     was_selected: bool = False
     created_at: str = Field(default_factory=_utcnow)
     exit_price: float | None = None
     pnl_pct: float | None = None
+    gross_return_pct: float | None = None
+    net_pnl_pct: float | None = None
+    estimated_fee_pct: float | None = None
+    estimated_spread_slippage_pct: float | None = None
+    estimated_funding_pct: float | None = None
+    min_tradable_edge_pct: float | None = None
+    settlement_price_source: str | None = None
+    settlement_lag_sec: float | None = None
+    cost_model_version: str | None = None
     btc_return_pct: float | None = None
     resolved_at: str | None = None
+
+
+class FilterDecision(BaseModel):
+    """Append-only fact for one candidate crossing one pipeline gate."""
+
+    id: str = Field(default_factory=new_id)
+    dedup_key: str
+    candidate_key: str
+    candidate_kind: str
+    parent_candidate_key: str | None = None
+    run_id: str | None = None
+    opportunity_id: str | None = None
+    universe_snapshot_id: str | None = None
+    universe_member_id: str | None = None
+    proposal_id: str | None = None
+    venue: str | None = None
+    symbol: str
+    market_type: str = "spot"
+    direction: str | None = None
+    scanner_family: str | None = None
+    regime_tag: str | None = None
+    filter_name: str
+    stage: str
+    sequence_no: int = 0
+    decision: str
+    reason_code: str
+    reason_detail: str | None = None
+    input_snapshot: str = "{}"
+    parameter_snapshot: str = "{}"
+    filter_version: str
+    code_commit: str | None = None
+    outcome_candidate_key: str | None = None
+    evaluated_at: str = Field(default_factory=_utcnow)
+
+
+class FilterDecisionBatch(BaseModel):
+    """Compressed complete facts for one high-volume directionless gate."""
+
+    id: str = Field(default_factory=new_id)
+    dedup_key: str
+    run_id: str
+    candidate_kind: str
+    filter_name: str
+    stage: str
+    candidate_count: int
+    passed_count: int = 0
+    rejected_count: int = 0
+    not_applicable_count: int = 0
+    error_count: int = 0
+    candidate_facts: str = "[]"
+    parameter_snapshot: str = "{}"
+    filter_version: str
+    code_commit: str | None = None
+    evaluated_at: str = Field(default_factory=_utcnow)
+
+
+class FilterCandidateOutcome(BaseModel):
+    """Fixed-horizon net result shared by all gates for one ex-ante candidate."""
+
+    id: str = Field(default_factory=new_id)
+    outcome_candidate_key: str
+    venue: str
+    symbol: str
+    market_type: str = "spot"
+    direction: str
+    scanner_family: str | None = None
+    regime_tag: str | None = None
+    horizon: str
+    entry_price_usd: float
+    entry_spread_bps: float | None = None
+    funding_rate_at_entry: float | None = None
+    entry_ts: str = Field(default_factory=_utcnow)
+    due_at: str
+    settled_at: str | None = None
+    exit_price_usd: float | None = None
+    gross_return_pct: float | None = None
+    directional_return_pct: float | None = None
+    estimated_fee_pct: float | None = None
+    estimated_spread_slippage_pct: float | None = None
+    estimated_funding_pct: float | None = None
+    net_return_pct: float | None = None
+    min_tradable_edge_pct: float | None = None
+    mfe_pct: float | None = None
+    mae_pct: float | None = None
+    settlement_price_source: str | None = None
+    settlement_lag_sec: float | None = None
+    cost_model_version: str | None = None
+    status: str = "pending"
 
 
 class TradeProposal(BaseModel):
@@ -865,6 +967,7 @@ class UniverseMember(BaseModel):
     crowding_risk: float | None = None
     late_entry_penalty: float | None = None
     scanner_family: str | None = None
+    scanner_direction: str | None = None
     regime_tag: str | None = None
     # JSON dict {family: score} of all 5+ scanner families' scores for this member
     # (Phase 2A+.12). Enables ensemble/consensus analysis beyond the single winning

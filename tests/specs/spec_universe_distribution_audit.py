@@ -89,7 +89,8 @@ def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
             "oi_delta_1h": 8.5 if asset["market_type"] == "perp" else None,
         }
 
-    async def fake_collect_features(assets, _cfg):
+    async def fake_collect_features(assets, _cfg, scanner_run_id=None):
+        assert scanner_run_id
         by_key = {
             ("BTC/USDT", "spot"): ("momentum", 100.0, "long"),
             # Lower score than spot, but auto preference must keep this perp row.

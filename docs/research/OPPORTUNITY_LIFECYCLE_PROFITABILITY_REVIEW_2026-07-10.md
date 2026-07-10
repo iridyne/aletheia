@@ -202,4 +202,16 @@ Go-Live 评分的大部分权重来自连通性、数据、模型、对账和无
 - OPR-14：`missed_alpha_suspect` 只在净收益超过持久化安全余量时成立；正毛走势但成本后不够或成本未知时标 `positive_gross_move_only`。
 - 校准、family edge、doctor signal health、lesson evidence 和 Tier-1 guard 改为只消费完整 net 结果；历史 gross-only 样本不再参与自动学习。
 - 分层键扩展为 scanner_family + direction + market_type + horizon；Universe UI 同步显示该粒度，避免展示层重新混合。
-- 尚未完成：逐过滤器放行/拒绝事件与同批 shadow 对照（OPR-15）、方向刹车/ranker 实验（OPR-08~11）、LLM round-robin（OPR-12）、多资产阶段 G。
+- 阶段 D 完成当时尚缺逐过滤器对照；该项后续实施状态见下方“阶段 E 补充”。方向刹车/ranker 实验（OPR-08~11）、LLM round-robin（OPR-12）和完整多资产阶段 G 仍未完成。
+
+### 阶段 E 补充（2026-07-10）
+
+- OPR-15：已建立逐候选 `filter_decisions` 和高频无方向 `filter_decision_batches`。ticker 可用性、下载前成交额、稳定币/黑名单/成交额/点差/新鲜度、Observer、Ranker、持仓重复/冷却/批次上限、System Operator、Universe 配额对照和 Risk 统一索引已留痕。
+- 无事前方向的前置门不创建可学习收益，避免事后选更赚方向。已有 long/short 的候选共享 `filter_candidate_outcomes` 的 15m/1h/4h/24h exact-instrument 净结果。
+- filter controller 不再使用整个 family 的胜率猜测某个门槛，只比较同 filter version、family、direction、market 和 horizon 的 pass/reject 净结果，用 `k=20` 收缩；只可报 `overrestrictive_suspect`，不自动改参数。
+- 新 shadow/control 已保存 venue、market 和成本后 net；历史 gross-only 对照不再进入 ranker/System Operator alpha 基线。RiskDecision 仍是唯一权威风控事实。
+- 修正了 Top-N 选择顺序：先检查已持仓和冷却，再应用批次上限，高排名候选被拒后低排名可补位。
+- `XAUT/PAXG` 已从美元稳定币排除集移出，只恢复参与普通交易所/流动性检查的资格，不绕过风控、执行或实盘锁。
+- 新分析证据有界保留：高频批次 30 天，逐候选和结果 90 天。交易提案、权威风控、订单、成交、持仓和审计仍不清理。
+
+仍未实施且必须另立实验：合并两个方向刹车、修改 ranker 经济门/权重、family 生产校准、Kelly/sizing、LLM round-robin 和完整多资产能力表。

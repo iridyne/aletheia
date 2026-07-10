@@ -160,16 +160,30 @@ CREATE TABLE IF NOT EXISTS shadow_trades (
     batch_id TEXT,
     opportunity_id TEXT NOT NULL,
     symbol TEXT NOT NULL,
+    venue TEXT,
+    market_type TEXT NOT NULL DEFAULT 'spot',
     direction TEXT NOT NULL,
     scanner_family TEXT,
     trade_score REAL NOT NULL DEFAULT -999,
     rank INTEGER NOT NULL DEFAULT 0,
     entry_price REAL,
+    entry_spread_bps REAL,
+    funding_rate_at_entry REAL,
+    outcome_candidate_key TEXT,
     regime_tag TEXT,
     was_selected INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     exit_price REAL,
     pnl_pct REAL,
+    gross_return_pct REAL,
+    net_pnl_pct REAL,
+    estimated_fee_pct REAL,
+    estimated_spread_slippage_pct REAL,
+    estimated_funding_pct REAL,
+    min_tradable_edge_pct REAL,
+    settlement_price_source TEXT,
+    settlement_lag_sec REAL,
+    cost_model_version TEXT,
     btc_return_pct REAL,
     resolved_at TEXT
 );
@@ -185,6 +199,9 @@ CREATE TABLE IF NOT EXISTS alpha_control_observations (
     treatment_id TEXT,
     role TEXT NOT NULL,
     symbol TEXT NOT NULL,
+    venue TEXT,
+    market_type TEXT NOT NULL DEFAULT 'spot',
+    scanner_family TEXT,
     direction TEXT,
     horizon TEXT NOT NULL,
     entry_price REAL,
@@ -192,12 +209,108 @@ CREATE TABLE IF NOT EXISTS alpha_control_observations (
     score REAL,
     module_path TEXT,
     metadata TEXT DEFAULT '{}',
+    outcome_candidate_key TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_alpha_control_layer_entry
     ON alpha_control_observations (layer, entry_ts);
 CREATE INDEX IF NOT EXISTS idx_alpha_control_cohort
     ON alpha_control_observations (cohort_id, horizon);
+
+CREATE TABLE IF NOT EXISTS filter_decisions (
+    id TEXT PRIMARY KEY,
+    dedup_key TEXT NOT NULL UNIQUE,
+    candidate_key TEXT NOT NULL,
+    candidate_kind TEXT NOT NULL,
+    parent_candidate_key TEXT,
+    run_id TEXT,
+    opportunity_id TEXT,
+    universe_snapshot_id TEXT,
+    universe_member_id TEXT,
+    proposal_id TEXT,
+    venue TEXT,
+    symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL DEFAULT 'spot',
+    direction TEXT,
+    scanner_family TEXT,
+    regime_tag TEXT,
+    filter_name TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    sequence_no INTEGER NOT NULL DEFAULT 0,
+    decision TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    reason_detail TEXT,
+    input_snapshot TEXT NOT NULL DEFAULT '{}',
+    parameter_snapshot TEXT NOT NULL DEFAULT '{}',
+    filter_version TEXT NOT NULL,
+    code_commit TEXT,
+    outcome_candidate_key TEXT,
+    evaluated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_filter_decisions_filter_time
+    ON filter_decisions (filter_name, evaluated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_filter_decisions_candidate
+    ON filter_decisions (candidate_key, sequence_no);
+CREATE INDEX IF NOT EXISTS idx_filter_decisions_outcome
+    ON filter_decisions (outcome_candidate_key);
+
+CREATE TABLE IF NOT EXISTS filter_decision_batches (
+    id TEXT PRIMARY KEY,
+    dedup_key TEXT NOT NULL UNIQUE,
+    run_id TEXT NOT NULL,
+    candidate_kind TEXT NOT NULL,
+    filter_name TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    candidate_count INTEGER NOT NULL,
+    passed_count INTEGER NOT NULL DEFAULT 0,
+    rejected_count INTEGER NOT NULL DEFAULT 0,
+    not_applicable_count INTEGER NOT NULL DEFAULT 0,
+    error_count INTEGER NOT NULL DEFAULT 0,
+    candidate_facts TEXT NOT NULL DEFAULT '[]',
+    parameter_snapshot TEXT NOT NULL DEFAULT '{}',
+    filter_version TEXT NOT NULL,
+    code_commit TEXT,
+    evaluated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_filter_batches_filter_time
+    ON filter_decision_batches (filter_name, evaluated_at DESC);
+
+CREATE TABLE IF NOT EXISTS filter_candidate_outcomes (
+    id TEXT PRIMARY KEY,
+    outcome_candidate_key TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL DEFAULT 'spot',
+    direction TEXT NOT NULL,
+    scanner_family TEXT,
+    regime_tag TEXT,
+    horizon TEXT NOT NULL,
+    entry_price_usd REAL NOT NULL,
+    entry_spread_bps REAL,
+    funding_rate_at_entry REAL,
+    entry_ts TEXT NOT NULL,
+    due_at TEXT NOT NULL,
+    settled_at TEXT,
+    exit_price_usd REAL,
+    gross_return_pct REAL,
+    directional_return_pct REAL,
+    estimated_fee_pct REAL,
+    estimated_spread_slippage_pct REAL,
+    estimated_funding_pct REAL,
+    net_return_pct REAL,
+    min_tradable_edge_pct REAL,
+    mfe_pct REAL,
+    mae_pct REAL,
+    settlement_price_source TEXT,
+    settlement_lag_sec REAL,
+    cost_model_version TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    UNIQUE (outcome_candidate_key, horizon)
+);
+CREATE INDEX IF NOT EXISTS idx_filter_outcomes_status_due
+    ON filter_candidate_outcomes (status, due_at);
+CREATE INDEX IF NOT EXISTS idx_filter_outcomes_candidate
+    ON filter_candidate_outcomes (outcome_candidate_key, horizon);
 
 CREATE TABLE IF NOT EXISTS serenity_themes (
     id TEXT PRIMARY KEY,
@@ -1075,6 +1188,7 @@ CREATE TABLE IF NOT EXISTS universe_members (
     crowding_risk REAL,
     late_entry_penalty REAL,
     scanner_family TEXT,
+    scanner_direction TEXT,
     ttl_sec INTEGER NOT NULL DEFAULT 3600,
     expires_at TEXT NOT NULL,
     inclusion_reason TEXT DEFAULT '[]',
@@ -1394,6 +1508,20 @@ _ADDITIVE_COLUMNS = [
     ("debate_bull_confidence", "pi_decisions", "INTEGER"),
     ("debate_bear_confidence", "pi_decisions", "INTEGER"),
     ("debate_adjustment", "pi_decisions", "INTEGER"),
+    # Keep the legacy controller verdict CHECK intact for existing databases.
+    # New observational semantics live in additive unconstrained columns; the
+    # legacy verdict/direction remain conservative for old readers.
+    ("evidence_verdict", "controller_recommendations", "TEXT"),
+    ("evidence_direction", "controller_recommendations", "TEXT"),
+    ("filter_version", "controller_recommendations", "TEXT"),
+    ("direction", "controller_recommendations", "TEXT"),
+    ("market_type", "controller_recommendations", "TEXT"),
+    ("horizon", "controller_recommendations", "TEXT"),
+    ("passed_n", "controller_recommendations", "INTEGER"),
+    ("rejected_n", "controller_recommendations", "INTEGER"),
+    ("passed_shrunk_avg_net", "controller_recommendations", "REAL"),
+    ("rejected_shrunk_avg_net", "controller_recommendations", "REAL"),
+    ("outcome_coverage", "controller_recommendations", "REAL"),
     # Phase 2 (Serenity Option A): discriminator for which table opportunity_id
     # points at ('market_observer' → opportunities; 'serenity' → serenity_opportunities).
     ("signal_source", "pi_decisions", "TEXT"),
@@ -1513,6 +1641,26 @@ _ADDITIVE_COLUMNS = [
     ("entry_price_usd", "universe_members", "REAL"),
     # Direction-aware calibration: the trade direction the scanner implied.
     ("direction", "universe_forward_outcomes", "TEXT"),
+    ("scanner_direction", "universe_members", "TEXT"),
+    # Cost-aware shadow rows link to the shared filter-candidate outcome.
+    ("venue", "shadow_trades", "TEXT"),
+    ("market_type", "shadow_trades", "TEXT NOT NULL DEFAULT 'spot'"),
+    ("entry_spread_bps", "shadow_trades", "REAL"),
+    ("funding_rate_at_entry", "shadow_trades", "REAL"),
+    ("outcome_candidate_key", "shadow_trades", "TEXT"),
+    ("gross_return_pct", "shadow_trades", "REAL"),
+    ("net_pnl_pct", "shadow_trades", "REAL"),
+    ("estimated_fee_pct", "shadow_trades", "REAL"),
+    ("estimated_spread_slippage_pct", "shadow_trades", "REAL"),
+    ("estimated_funding_pct", "shadow_trades", "REAL"),
+    ("min_tradable_edge_pct", "shadow_trades", "REAL"),
+    ("settlement_price_source", "shadow_trades", "TEXT"),
+    ("settlement_lag_sec", "shadow_trades", "REAL"),
+    ("cost_model_version", "shadow_trades", "TEXT"),
+    ("venue", "alpha_control_observations", "TEXT"),
+    ("market_type", "alpha_control_observations", "TEXT NOT NULL DEFAULT 'spot'"),
+    ("scanner_family", "alpha_control_observations", "TEXT"),
+    ("outcome_candidate_key", "alpha_control_observations", "TEXT"),
     # Cost-aware fixed-horizon outcome contract (2026-07-10).
     ("venue", "universe_forward_outcomes", "TEXT"),
     ("market_type", "universe_forward_outcomes", "TEXT NOT NULL DEFAULT 'spot'"),
@@ -1719,6 +1867,10 @@ def _backfill_forward_outcome_instrument_identity(db) -> None:
         "    AND um.market_type != universe_forward_outcomes.market_type"
         ")"
     )
+    _backfill_forward_outcome_funding(db)
+
+
+def _backfill_forward_outcome_funding(db) -> None:
     db.execute(
         "UPDATE universe_forward_outcomes SET funding_rate_at_entry = ("
         "  SELECT ufs.funding_rate FROM universe_members um "
@@ -1736,6 +1888,18 @@ def _backfill_forward_outcome_instrument_identity(db) -> None:
         "    AND ufs.funding_rate IS NOT NULL "
         "    AND datetime(ufs.ts) <= datetime(universe_forward_outcomes.entry_ts)"
         ")"
+    )
+
+
+def _ensure_filter_evidence_indexes(db) -> None:
+    """Create indexes that depend on additive columns after those columns exist."""
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_shadow_trades_outcome "
+        "ON shadow_trades(outcome_candidate_key)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_alpha_control_outcome "
+        "ON alpha_control_observations(outcome_candidate_key)"
     )
 
 
@@ -1953,9 +2117,9 @@ CREATE TABLE IF NOT EXISTS volume_ranking_snapshots (
 CREATE INDEX IF NOT EXISTS idx_volume_ranking_ts ON volume_ranking_snapshots(observed_at DESC);
 """
 
-# Filter feedback controller — append-only shadow log of per-filter × scanner_family
-# loosen/hold/tighten recommendations. Phase 1 is observe-only: rows never advance
-# past status='shadow_only'. Immutable audit trail (see filter_controller.py).
+# Filter feedback controller — append-only shadow log of exact-version pass/reject
+# findings. Legacy action columns remain constrained for old readers; evidence_*
+# carries observational verdicts. Rows never advance past status='shadow_only'.
 _CONTROLLER_RECOMMENDATIONS_DDL = """
 CREATE TABLE IF NOT EXISTS controller_recommendations (
     id TEXT PRIMARY KEY,
@@ -1970,7 +2134,18 @@ CREATE TABLE IF NOT EXISTS controller_recommendations (
     n_samples INTEGER NOT NULL DEFAULT 0,
     reasoning TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'shadow_only' CHECK (status IN ('shadow_only','proposed','approved','applied','rejected')),
-    run_id TEXT
+    run_id TEXT,
+    evidence_verdict TEXT,
+    evidence_direction TEXT,
+    filter_version TEXT,
+    direction TEXT,
+    market_type TEXT,
+    horizon TEXT,
+    passed_n INTEGER,
+    rejected_n INTEGER,
+    passed_shrunk_avg_net REAL,
+    rejected_shrunk_avg_net REAL,
+    outcome_coverage REAL
 );
 CREATE INDEX IF NOT EXISTS idx_controller_recs_created ON controller_recommendations(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_controller_recs_filter ON controller_recommendations(filter_name, scanner_family);
@@ -2007,6 +2182,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_VOLUME_RANKING_DDL)
     db.executescript(_CONTROLLER_RECOMMENDATIONS_DDL)
     _ensure_columns(db)
+    _ensure_filter_evidence_indexes(db)
     _backfill_forward_outcome_instrument_identity(db)
     _ensure_runtime_baseline(db)
     _ensure_knowledge_fts_outcome_column(db)

@@ -7,7 +7,21 @@
 
 ## Last Updated
 
-2026-07-10 (Opportunity cost-aware fixed-horizon outcomes)
+2026-07-10 (Opportunity filter evidence foundation)
+
+---
+
+## Recent Change (Opportunity filter evidence foundation — 2026-07-10)
+
+机会链上的每道主要筛选现在会在判断当时留下事实，不再从最终状态反推。ticker 是否存在、下载前成交额、稳定币/黑名单/成交额/点差/新鲜度等高频无方向检查按扫描批次完整保存；Observer、Ranker、冷却/持仓/批次上限、System Operator、Universe 配额和 Risk 保存逐候选轨迹。
+
+只有在事前已有 long/short、目标交易所/市场和有效入场价时，才创建 15m/1h/4h/24h 净结果；无方向候选只报覆盖，不事后选赚钱方向。新 shadow/control 复用同一份 exact-instrument 成本后结果，旧 gross-only 行不进入 alpha 学习。filter controller 只比较同版本、同策略族/方向/市场/周期的 pass/reject，未达样本与覆盖门时保持“证据不足”，不写配置。
+
+Top-N 选择改为先排除已持仓/冷却，再应用批次上限，低排名候选可补位。`XAUT/PAXG` 不再被误当美元稳定币，但仍必须通过普通交易所、流动性、风控和执行检查。分析证据按 30/90 天有界保留；交易、权威风控和审计原件不清理。
+
+仍保持不动：方向刹车阈值、ranker 权重/经济门、生产校准、Kelly/sizing、live、凭证和订单路径。
+
+验证：完整设计+机会决策链组合 `1165 passed, 9 skipped, 6 xfailed`；最终全量测试为 `2649 passed, 14 skipped, 6 xfailed`，仅 3 个已在干净主分支独立确认的旧失败（macOS/Windows autostart 路径断言 + 2 个 knowledge maintenance 索引测试）。
 
 ---
 
@@ -17,7 +31,7 @@
 
 结果分别保存原始价格涨跌、按方向换算的收益、手续费、价差/滑点、资金费、净收益和期间最好/最差波动。只有净收益超过最低可交易优势才算胜出；旧数据只保留价格变动的历史解释价值，不补写虚构成本，也不进入新校准。现货与永续合约的后备行情不再互相代用。
 
-分配、风控读取、诊断、规则候选、机会审计和 Universe 页面已统一到这个净收益口径，并按策略族+方向+市场类型分组。下一阶段仍是给每个前置筛选器建立自己的放行/拒绝对照；在此之前不会自动放宽或收紧某个筛选器。
+分配、风控读取、诊断、规则候选、机会审计和 Universe 页面已统一到这个净收益口径，并按策略族+方向+市场类型分组。逐筛选器对照已在随后的 Stage E 实施；自动放宽/收紧仍关闭。
 
 ---
 

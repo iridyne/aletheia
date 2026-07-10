@@ -259,6 +259,24 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
     if all_settled_rows:
         _maybe_generate_guard_candidates(all_settled_rows)
 
+    # Use the same remaining scheduler budget to settle filter pass/reject
+    # counterfactuals. They share this module's exact-instrument OHLCV fetch path
+    # and the Stage-D economics formula; no second shadow-return definition.
+    remaining_sec = max(0.0, deadline - _time.monotonic())
+    remaining_rows = max(0, max_rows - total_processed)
+    if remaining_rows and remaining_sec > 1.0:
+        try:
+            from aletheia.universe.filter_outcome_recorder import (
+                settle_due_filter_outcomes,
+            )
+
+            total_settled += await settle_due_filter_outcomes(
+                max_rows=remaining_rows,
+                time_budget_sec=remaining_sec,
+            )
+        except Exception as exc:
+            logger.warning("filter outcome settlement failed (non-fatal): %s", exc)
+
     return total_settled
 
 

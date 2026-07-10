@@ -1,7 +1,7 @@
 # Opportunity Outcome Contract
 
 > 状态：阶段 D 权威设计，2026-07-10。
-> 范围：Universe 选出的 Opportunity 在固定持有期后的反事实结果，以及这些结果如何进入诊断和学习。
+> 范围：Universe 选出的 Opportunity 和已有事前方向的筛选候选，在固定持有期后的反事实结果，以及这些结果如何进入诊断和学习。
 > 不包含：实盘盈亏记账、风控限额、订单执行、自动调参。
 
 ## 1. 目标
@@ -22,6 +22,10 @@
 - `direction`：`long` / `short`；未知方向只能记录毛价格变化，不能计算净交易结果。
 
 取价边界必须使用完整的 `InstrumentId(venue, symbol, market_type)`。永续取价失败时不得回退到同名现货。
+
+`filter_candidate_outcomes` 复用完全相同的标的身份、固定周期、成本和路径质量字段。
+同一候选经过多个筛选关时，以 `outcome_candidate_key + horizon` 共享一条结果，
+禁止把同一条价格路径重复当成多个独立样本。
 
 ## 3. 固定持有期
 
@@ -71,6 +75,7 @@ MFE/MAE 是毛路径指标，用来区分方向错误与出入场表达错误；
 - 历史 `forward_return_pct` 保留用于历史解释，不回填虚构成本，也不混入净收益样本。
 - 任何按方向或市场聚合的消费者必须至少按 `scanner_family + direction + market_type + horizon` 区分；若上层暂时不能消费该粒度，应保持中性而不是合并相反经济含义。
 - Alpha 对照组在拥有同口径成本前必须明确标为 gross comparison，不得声称是净盈利证据。
+- 新 shadow/control 行必须通过 `outcome_candidate_key` 读取共享 net 结果；历史 gross-only 行仍可解释，但不进入 ranker/System Operator alpha 基线。
 
 ## 8. 安全边界
 

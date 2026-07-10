@@ -62,6 +62,7 @@
 | OI 历史（跨所） | CoinalyzeCollector（key-guard，data_collectors Phase B；DU-S06/DU-T01） | `open_interest_snapshots` | market_observer→crowding_score→LLM | ✅ 有 key 时写入 / 无 key 时诚实跳过 |
 | OHLCV 多周期（1h/4h/1d） | CCXTProvider（market_context._TIMEFRAMES 锁定三周期；DU-S07） | `market_snapshots` | market_context.build_market_context → 多周期技术块 → LLM | ✅ |
 | Opportunity 固定持有期结果 | outcome_recorder（目标 instrument OHLCV/ticker + 入场 spread/funding + 配置 fee/slippage） | `universe_forward_outcomes` | net calibration / family edge → System Operator；doctor；debate/guard/flow/thesis 审计；净亏损 guard candidate | ✅，历史 gross-only 行只解释不学习 |
+| Opportunity 筛选证据 | Universe ticker/tradability、Observer、Ranker、System Operator、Risk 的事前判断；结果复用目标 instrument 的固定时点成本模型 | `filter_decision_batches` / `filter_decisions` / `filter_candidate_outcomes` | filter controller（只读）、doctor、shadow/control 净结果、后续受控实验 | ✅，无方向门只报覆盖；风控/交易所能力永不自动放宽 |
 
 ---
 

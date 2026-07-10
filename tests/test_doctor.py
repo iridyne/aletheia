@@ -174,6 +174,87 @@ def test_doctor_reports_incomplete_cost_aware_outcomes(tmp_path, monkeypatch):
     assert "missing_funding=6" in check.detail
 
 
+def test_doctor_reports_filter_evidence_registration(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.analytics.filter_evidence import (
+        record_filter_decision,
+        record_filter_decision_batch,
+    )
+
+    record_filter_decision(
+        candidate_key="opportunity:doctor-filter",
+        candidate_kind="opportunity",
+        filter_name="ranker_confidence_gate",
+        stage="paper_ranker",
+        decision="rejected",
+        reason_code="confidence_below",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="spot",
+        direction="long",
+        entry_price_usd=100.0,
+    )
+    record_filter_decision_batch(
+        run_id="doctor-scanner-run",
+        candidate_kind="universe_asset",
+        filter_name="ticker_availability",
+        stage="ticker_prefilter",
+        candidate_facts=[
+            {
+                "candidate_key": "asset:btc",
+                "symbol": "BTC/USDT",
+                "decision": "passed",
+                "reason_code": "ticker_available",
+            },
+            {
+                "candidate_key": "asset:missing",
+                "symbol": "MISSING/USDT",
+                "decision": "rejected",
+                "reason_code": "ticker_unavailable",
+            },
+        ],
+    )
+    report = dx.Report(generated_at="t")
+
+    dx._probe_filter_evidence(report)
+
+    check = {c.name: c for c in report.checks}["data.filter_evidence"]
+    assert check.severity == "ok"
+    assert "decisions=1" in check.detail
+    assert "batches=1" in check.detail
+    assert "batch_candidates=2" in check.detail
+    assert "outcome_candidates=1/1" in check.detail
+
+
+def test_doctor_reports_directionless_filter_batches_during_warmup(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.analytics.filter_evidence import record_filter_decision_batch
+
+    record_filter_decision_batch(
+        run_id="doctor-batch-only",
+        candidate_kind="universe_feature",
+        filter_name="tradability_volume",
+        stage="tradability_filter",
+        candidate_facts=[
+            {
+                "candidate_key": "feature:btc",
+                "symbol": "BTC/USDT",
+                "decision": "passed",
+                "reason_code": "quote_volume_sufficient",
+            },
+        ],
+    )
+    report = dx.Report(generated_at="t")
+
+    dx._probe_filter_evidence(report)
+
+    check = {c.name: c for c in report.checks}["data.filter_evidence"]
+    assert check.severity == "info"
+    assert "decisions=0" in check.detail
+    assert "batches=1" in check.detail
+    assert "batch_candidates=1" in check.detail
+
+
 def test_doctor_orderbook_ok_when_rows_are_fresh(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage.sqlite import get_db

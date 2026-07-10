@@ -1,5 +1,19 @@
 # Development Log
 
+## 2026-07-10 — Opportunity filter evidence and net control cohorts
+
+- 新增 `filter_decisions`、`filter_decision_batches`、`filter_candidate_outcomes` 和权威设计/可执行检查；业务写入只追加，幂等重试不制造重复证据。
+- Universe ticker/tradability 保存每次扫描的全部候选事实；稳定币、黑名单、成交额、点差和新鲜度按顺序留痕，首个拒绝后的关卡标为 not-applicable。批次 JSON 使用无损 field/row matrix 去掉重复字段名，兼容解码旧 plain-list 行，不抽样。
+- Observer、Ranker、open-position/cooldown/batch-limit、System Operator、Universe allocation 对照与 Risk 追加逐候选证据；RiskDecision 权威性、原风控阈值和订单路径不变。
+- 有事前方向的候选共享 exact-instrument 15m/1h/4h/24h 结果。shadow/control 新行分开 gross/net/手续费/点差滑点/资金费，历史 gross-only 不进入 alpha 消费者。
+- filter controller 只使用同 filter version/family/direction/market/horizon 的 pass/reject 收缩净期望；样本或覆盖不足时不给调参结论，且始终只读。
+- 修正批次补位顺序，避免已持仓/冷却的高排名候选浪费后续名额；`XAUT/PAXG` 从错误的美元稳定币分类中移出。
+- `doctor` 报告批次/逐候选/结果覆盖与批次计数一致性。分析证据按 30/90 天清理，交易因果原件不在清理白名单。
+- 提交前人工审查补上：TTL 反馈登记口径、旧 `controller_recommendations` CHECK 约束的兼容写入、补位到 Top-5 外的真实 selected shadow，以及已留痕硬门的 registry 完整性。
+- 验证：设计+机会决策链组合 `1165 passed, 9 skipped, 6 xfailed`；最终全量 `2649 passed, 14 skipped, 6 xfailed`，仅保留 3 个已在干净 master 复现的旧失败（autostart 跨平台断言 + 2 knowledge maintenance 索引测试）。
+
+---
+
 ## 2026-07-10 — Opportunity cost-aware fixed-horizon outcomes
 
 - 新增机会结果设计文档和可执行检查，固定内部标的为 `venue + symbol + market_type`，固定结算期为 15m/1h/4h/24h。

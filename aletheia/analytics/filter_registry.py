@@ -83,6 +83,36 @@ class FilterSpec:
     note: str = ""
 
 
+def _report_only_gate(
+    *,
+    name: str,
+    stage: str,
+    reason_codes: tuple[str, ...],
+    current_value: str,
+    note: str,
+    feedback_source: FeedbackSource = "none",
+    feedback_ready: bool = False,
+) -> FilterSpec:
+    """Declare a persisted hard/capability gate that must never auto-actuate."""
+    return FilterSpec(
+        name=name,
+        stage=stage,
+        drop_reason_codes=reason_codes,
+        config_path="",
+        hardcoded_at="",
+        current_value=current_value,
+        loosen_direction="n/a",
+        neutral=None,
+        floor=None,
+        ceiling=None,
+        feedback_source=feedback_source,
+        family_keyed=False,
+        auto_tunable=False,
+        feedback_ready=feedback_ready,
+        note=note,
+    )
+
+
 # ─── The inventory ───────────────────────────────────────────────────────────
 # Ordered by observed drop-volume impact (largest first) so reports and future
 # actuation address the dominant bottleneck before low-impact knobs.
@@ -102,9 +132,10 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="forward_return",
         family_keyed=True,
         auto_tunable=True,
+        feedback_ready=True,
         drop_share_hint=0.67,  # 121/181 observed drops
-        note="Largest drop bucket. If a family's expired opps show positive "
-             "direction-adjusted forward return, its TTL is too short.",
+        note="Largest historical drop bucket. Compare exact-version pass/reject "
+             "net outcomes before considering a longer family TTL.",
     ),
     FilterSpec(
         name="ranker_confidence_gate",
@@ -119,8 +150,68 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="forward_return",
         family_keyed=True,
         auto_tunable=True,
+        feedback_ready=True,
         drop_share_hint=0.20,  # part of 54/181 ranker_excluded
         note="Categorical ladder. Reuse operator_loop._CONFIDENCE_LADDER semantics.",
+    ),
+    _report_only_gate(
+        name="execution_capability",
+        stage="paper_ranker",
+        reason_codes=("equity_shadow_track",),
+        current_value="asset-class execution routing",
+        note="Observation-only asset routing is a capability boundary, not an alpha knob.",
+    ),
+    _report_only_gate(
+        name="execution_eligibility",
+        stage="paper_ranker",
+        reason_codes=("execution_eligible_false",),
+        current_value="opportunity execution_eligible must be true",
+        note="Upstream execution capability fact. Never auto-override from missed returns.",
+        feedback_source="forward_return",
+        feedback_ready=True,
+    ),
+    _report_only_gate(
+        name="direction_present",
+        stage="paper_ranker",
+        reason_codes=("neutral_or_missing_direction",),
+        current_value="long or short direction required",
+        note="Directionless candidates cannot produce a causal net-alpha counterfactual.",
+    ),
+    _report_only_gate(
+        name="universe_execution_eligibility",
+        stage="paper_ranker",
+        reason_codes=("universe_not_eligible",),
+        current_value="Universe member execution_eligible must be true",
+        note="Market-data/capability boundary inherited from the selected instrument.",
+        feedback_source="forward_return",
+        feedback_ready=True,
+    ),
+    _report_only_gate(
+        name="venue_symbol_capability",
+        stage="paper_ranker",
+        reason_codes=("okx_demo_symbol_not_supported",),
+        current_value="target venue must list the exact market instrument",
+        note="Exchange capability is report-only and cannot be loosened by alpha evidence.",
+        feedback_source="forward_return",
+        feedback_ready=True,
+    ),
+    _report_only_gate(
+        name="factor_hard_block",
+        stage="paper_ranker",
+        reason_codes=("factor_hard_blocked",),
+        current_value="confirmed hard_blocked factor status",
+        note="Factor governance owns this hard rule; unified outcomes are diagnostic only.",
+        feedback_source="forward_return",
+        feedback_ready=True,
+    ),
+    _report_only_gate(
+        name="guard_candidate_block",
+        stage="paper_ranker",
+        reason_codes=("guard_blocked",),
+        current_value="active block_candidate guard",
+        note="Guard lifecycle owns promotion and rollback; filter evidence is report-only.",
+        feedback_source="forward_return",
+        feedback_ready=True,
     ),
     FilterSpec(
         name="debate_downgrade",
@@ -135,6 +226,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="forward_return",
         family_keyed=True,
         auto_tunable=True,
+        feedback_ready=True,
         drop_share_hint=0.03,  # 5/181; but highest missed_alpha_suspect signal density
         note="missed_alpha_suspect concentrates here. Conviction cutoff is a config-"
              "liftable constant; the LLM debate itself stays out of scope.",
@@ -153,9 +245,29 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="forward_return",
         family_keyed=True,
         auto_tunable=True,
+        feedback_ready=True,
         drop_share_hint=0.0,  # latent in reference window
         note="Two brakes. Relaxed in a prior session; watch for SHORT suppression "
              "(see IB-24-11). Keyed by direction within family.",
+    ),
+    FilterSpec(
+        name="operator_conviction_gate",
+        stage="operator_skip",
+        drop_reason_codes=("conviction_below_minimum",),
+        config_path="",
+        hardcoded_at="aletheia/agent_shell/trading_decision.py "
+                     "(_MIN_CONVICTION_TO_TRADE)",
+        current_value="minimum_conviction=55",
+        loosen_direction="down",
+        neutral=55.0,
+        floor=45.0,
+        ceiling=65.0,
+        feedback_source="forward_return",
+        family_keyed=True,
+        auto_tunable=True,
+        feedback_ready=True,
+        note="Final post-debate conviction gate. Observe-only until exact-version "
+             "pass/reject net cohorts satisfy coverage and sample gates.",
     ),
     FilterSpec(
         name="ranker_ic_ramp",
@@ -183,11 +295,31 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         current_value="3",
         loosen_direction="up",  # more signals per cycle
         neutral=3.0, floor=2.0, ceiling=5.0,
-        feedback_source="closed_pnl",
+        feedback_source="forward_return",
         family_keyed=False,
         auto_tunable=True,
+        feedback_ready=True,
         drop_share_hint=0.0,
-        note="Reward from shadow_trades rank>1 pnl: if rank-2/3 outperform rank-1, raise.",
+        note="Batch pass/reject facts now settle with fixed-horizon net economics; "
+             "legacy shadow PnL remains explanatory only until its own migration.",
+    ),
+    _report_only_gate(
+        name="duplicate_symbol",
+        stage="paper_trader_selection",
+        reason_codes=("duplicate_symbol",),
+        current_value="one ranked thesis per symbol per cycle",
+        note="In-cycle deduplication boundary; the next distinct symbol backfills the slot.",
+        feedback_source="forward_return",
+        feedback_ready=True,
+    ),
+    _report_only_gate(
+        name="open_position_duplicate",
+        stage="paper_trader_selection",
+        reason_codes=("open_position_duplicate",),
+        current_value="one open position per symbol",
+        note="Portfolio-state conflict, not a quality threshold. Lower ranks backfill the slot.",
+        feedback_source="forward_return",
+        feedback_ready=True,
     ),
     FilterSpec(
         name="signal_cooldown",
@@ -201,9 +333,10 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="forward_return",
         family_keyed=False,
         auto_tunable=True,
+        feedback_ready=True,
         drop_share_hint=0.0,
-        note="Observability gap: cooldown rejections not logged. Signal is indirect "
-             "until a cooldown_rejected event is added (roadmap).",
+        note="Cooldown pass/reject is persisted before the batch cap so a cooling "
+             "top-ranked candidate cannot hide a viable lower-ranked candidate.",
     ),
     FilterSpec(
         name="observer_pre_filter",
@@ -215,12 +348,115 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         current_value="rsi_deviation>12, atr_pct>0.8",
         loosen_direction="down",  # lower thresholds → more opportunities created
         neutral=12.0, floor=6.0, ceiling=20.0,
+        feedback_source="forward_return",
+        family_keyed=False,
+        auto_tunable=True,
+        feedback_ready=True,
+        drop_share_hint=0.0,
+        note="Pass/reject facts are now persisted. Only rows carrying an ex-ante "
+             "scanner direction receive net outcomes; directionless rows remain coverage-only.",
+    ),
+    FilterSpec(
+        name="ticker_availability",
+        stage="ticker_prefilter",
+        drop_reason_codes=("ticker_unavailable", "asset_identity_missing"),
+        config_path="market_data.ccxt_exchange / market_data.ccxt_fallback",
+        hardcoded_at="",
+        current_value="primary/fallback market-data venue capability",
+        loosen_direction="n/a",
+        neutral=None, floor=None, ceiling=None,
         feedback_source="none",
         family_keyed=False,
-        auto_tunable=False,  # NOT observable until pre_filter_rejections log exists
-        drop_share_hint=0.0,
-        note="Drops before a row exists → no per-rejection signal. Do NOT auto-tune "
-             "until the pre_filter_rejections table is added (roadmap).",
+        auto_tunable=False,
+        note="Directionless capability evidence. Missing venue data is observable but "
+             "must never become an automatic threshold change.",
+    ),
+    FilterSpec(
+        name="ticker_volume_prefilter",
+        stage="ticker_prefilter",
+        drop_reason_codes=("quote_volume_below_prefilter_minimum",),
+        config_path="universe.min_volume_24h_usdt",
+        hardcoded_at="",
+        current_value="download prefilter at configured 24h quote-volume minimum",
+        loosen_direction="down",
+        neutral=None, floor=None, ceiling=None,
+        feedback_source="none",
+        family_keyed=False,
+        auto_tunable=False,
+        note="No ex-ante direction exists yet. Report supply coverage only; do not infer "
+             "missed net alpha or auto-lower the liquidity floor.",
+    ),
+    FilterSpec(
+        name="tradability_stablecoin",
+        stage="tradability_filter",
+        drop_reason_codes=("stablecoin_base_excluded",),
+        config_path="",
+        hardcoded_at="aletheia/universe/filters.py (_STABLECOIN_BASES)",
+        current_value="USD stablecoin bases excluded; gold-backed RWA remains eligible",
+        loosen_direction="n/a",
+        neutral=None, floor=None, ceiling=None,
+        feedback_source="none",
+        family_keyed=False,
+        auto_tunable=False,
+        note="Asset-class classification rule, not an alpha threshold.",
+    ),
+    FilterSpec(
+        name="tradability_blacklist",
+        stage="tradability_filter",
+        drop_reason_codes=("configured_blacklist",),
+        config_path="universe.blacklist",
+        hardcoded_at="",
+        current_value="configured blacklist",
+        loosen_direction="n/a",
+        neutral=None, floor=None, ceiling=None,
+        feedback_source="none",
+        family_keyed=False,
+        auto_tunable=False,
+        note="Intentional operator exclusion. Never auto-remove an asset from the blacklist.",
+    ),
+    FilterSpec(
+        name="tradability_volume",
+        stage="tradability_filter",
+        drop_reason_codes=("quote_volume_below_minimum",),
+        config_path="universe.min_volume_24h_usdt",
+        hardcoded_at="",
+        current_value="configured 24h quote-volume minimum",
+        loosen_direction="down",
+        neutral=None, floor=None, ceiling=None,
+        feedback_source="none",
+        family_keyed=False,
+        auto_tunable=False,
+        note="Directionless execution-quality check. Keep report-only until a valid "
+             "ex-ante strategy direction exists before this gate.",
+    ),
+    FilterSpec(
+        name="tradability_spread",
+        stage="tradability_filter",
+        drop_reason_codes=("spread_above_rejection_limit",),
+        config_path="universe.max_spread_bps",
+        hardcoded_at="aletheia/universe/filters.py (rejection multiplier=2)",
+        current_value="reject above 2x configured max_spread_bps",
+        loosen_direction="up",
+        neutral=None, floor=None, ceiling=None,
+        feedback_source="none",
+        family_keyed=False,
+        auto_tunable=False,
+        note="Execution-cost gate without an ex-ante direction. Never relax from gross "
+             "price movement alone.",
+    ),
+    FilterSpec(
+        name="tradability_freshness",
+        stage="tradability_filter",
+        drop_reason_codes=("market_data_stale",),
+        config_path="",
+        hardcoded_at="aletheia/universe/filters.py (_MAX_FRESHNESS_SEC)",
+        current_value="7200 seconds",
+        loosen_direction="up",
+        neutral=7200.0, floor=None, ceiling=None,
+        feedback_source="none",
+        family_keyed=False,
+        auto_tunable=False,
+        note="Data-integrity gate. Stale quotes are report-only and never auto-approved.",
     ),
     FilterSpec(
         name="scanner_weights_quota",
@@ -232,12 +468,31 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         current_value="scanner_weights={}, family_quota={momentum:.., ...} (see UniverseConfig)",
         loosen_direction="up",  # higher weight/quota → family surfaces more
         neutral=None, floor=None, ceiling=None,  # dict-valued
-        feedback_source="closed_pnl",
+        feedback_source="forward_return",
         family_keyed=True,
         auto_tunable=True,
+        feedback_ready=True,
         drop_share_hint=0.0,
-        note="Strongest existing signal (family_direction_edge + family_scorecard). "
-             "Best Phase-2 first candidate. Overlaps get_family_multipliers.",
+        note="Selected members and deterministic same-pool controls now share exact "
+             "net outcomes. Still observation-only because allocation is not randomized.",
+    ),
+    FilterSpec(
+        name="risk_engine",
+        stage="risk_rejected",
+        drop_reason_codes=("risk_rejected",),
+        config_path="risk.*",
+        hardcoded_at="",
+        current_value="authoritative RiskDecision checks (see RiskConfig)",
+        loosen_direction="n/a",
+        neutral=None,
+        floor=None,
+        ceiling=None,
+        feedback_source="forward_return",
+        family_keyed=True,
+        auto_tunable=False,
+        feedback_ready=True,
+        note="RiskDecision remains authoritative. Unified evidence is report-only "
+             "and must never loosen risk, live, credential or execution gates.",
     ),
     FilterSpec(
         name="risk_family_live_eligibility",

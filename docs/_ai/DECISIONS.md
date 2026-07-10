@@ -1,5 +1,28 @@
 # Decisions
 
+## 2026-07-10 — 筛选负反馈只使用事前候选与同口径净结果
+
+### Context
+
+旧 filter controller 只看整个 scanner family 的表现，但管道没有保存某个具体门槛放过了谁、拒绝了谁。这无法区分家族本身好坏与某个筛选器的因果作用，更不能用事后涨跌为无方向候选选一个更赚的方向。
+
+### Decisions
+
+1. 每个可评价筛选关必须保存事前候选身份、最小输入、pass/reject/not-applicable/error、原因、参数版本和代码提交。
+2. 高频无方向门可以按扫描批次压缩，但 `candidate_facts` 必须包含全部候选，不得抽样。
+3. 只有事前已有 long/short、exact venue/symbol/market 和有效入场价的候选才创建可学习净结果。同一候选经过多关时共享一份结果。
+4. 筛选评价至少按 filter version + family + direction + market + horizon 分层，使用收缩净期望。pass/reject 两边各少于 20 个完整 net 样本或覆盖低于 70% 时只报证据不足。
+5. 观察数据只能输出 `overrestrictive_suspect`，不直接改参数。Risk/live/credential/exchange-capability 不因错过收益自动放宽。
+6. 为稳定长期运行，高频批次保留 30 天，逐候选/结果保留 90 天。这些是分析镜像；权威交易、风控和审计原件仍永久保留。
+
+### Consequences
+
+- 新代码上线后需要重新积累样本，旧的 family 总胜率不能补写成某个 filter 的历史对照。
+- 方向刹车、ranker 权重、family 生产校准和 sizing 仍需独立受控实验。
+- 证据写入失败不改变原始交易决定，但 `doctor` 必须暴露覆盖和计数不一致。
+
+---
+
 ## 2026-07-10 — Opportunity 结果以固定时点净收益为学习事实
 
 ### Context

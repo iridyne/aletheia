@@ -462,6 +462,17 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     )
     insert_risk_decision(decision)
     result.decision_id = decision.id
+    try:
+        from aletheia.analytics.filter_evidence import record_risk_filter_decision
+
+        record_risk_filter_decision(
+            proposal,
+            risk_decision_id=decision.id,
+            approved=approved,
+            violations=violations,
+        )
+    except Exception as evidence_error:
+        logger.warning("risk filter evidence unavailable: %s", evidence_error)
 
     return result
 

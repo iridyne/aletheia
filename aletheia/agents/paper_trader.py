@@ -20,11 +20,12 @@ closes positions itself.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import log_tool
-from aletheia.agents.paper_trader_ranker import build_paper_candidates, select_best_candidate
+from aletheia.agents.paper_trader_ranker import build_paper_candidates
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
 from aletheia.execution.paper_tools import create_paper_proposal
@@ -35,6 +36,12 @@ logger = logging.getLogger("aletheia.agents.paper_trader")
 _BASE_NOTIONAL_USDT = 25.0  # legacy fallback; prefer cfg.trading.default_notional_usdt
 _ATR_TARGET_PCT = 1.5  # legacy fallback; prefer cfg.trading.vol_target_pct
 _RECENT_SIGNAL_COOLDOWN_MINUTES = 120
+
+
+@dataclass
+class SignalBatchPlan:
+    selected: list[dict]
+    decisions: dict[str, tuple[str, str]]
 
 
 _EXCHANGE_CRED_KEYS: dict[str, str] = {
@@ -163,6 +170,41 @@ def _select_signal_candidates(candidates: list[dict], limit: int = 3) -> list[di
     return selected
 
 
+def _plan_signal_batch(
+    candidates: list[dict],
+    *,
+    open_symbols: set[str],
+    recent_signal_pairs: set[tuple[str, str]],
+    limit: int = 3,
+) -> SignalBatchPlan:
+    """Apply occupancy/cooldown before the batch cap so lower ranks can backfill."""
+    selected: list[dict] = []
+    decisions: dict[str, tuple[str, str]] = {}
+    seen_symbols: set[str] = set()
+    for candidate in candidates:
+        opp_id = str(candidate.get("opportunity_id") or "")
+        symbol = candidate.get("symbol")
+        direction = candidate.get("direction")
+        if not opp_id or not symbol or not direction:
+            continue
+        if symbol in seen_symbols:
+            decisions[opp_id] = ("duplicate_symbol", "rejected")
+            continue
+        seen_symbols.add(symbol)
+        if symbol in open_symbols:
+            decisions[opp_id] = ("open_position_duplicate", "rejected")
+            continue
+        if (symbol, direction) in recent_signal_pairs:
+            decisions[opp_id] = ("signal_cooldown", "rejected")
+            continue
+        if len(selected) >= limit:
+            decisions[opp_id] = ("signal_batch_limit", "rejected")
+            continue
+        selected.append(candidate)
+        decisions[opp_id] = ("signal_batch_limit", "passed")
+    return SignalBatchPlan(selected=selected, decisions=decisions)
+
+
 @register_agent("paper_trader")
 async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     outputs: list[str] = []
@@ -180,9 +222,6 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # Snapshot of currently open symbols — used to skip redundant signal writes.
     open_symbols: set[str] = {p["symbol"] for p in list_positions(status="open")}
     recent_signal_pairs = _recent_signal_pairs()
-    # Track symbols that received a signal_pending write in this cycle (cross-path dedup).
-    cycle_pending_symbols: set[str] = set()
-
     # Position C (2026-07-02): Path A (RuleSet-driven signals) was removed with the
     # strategy rules engine. The paper trader is now purely opportunity-driven: it
     # ranks market_observer opportunities and writes the top ones as signal_pending
@@ -192,7 +231,11 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # ── Opportunity-driven (ranked) ───────────────────────────────────────────
     candidates = build_paper_candidates(limit=50)
 
-    _PERMANENT_SKIP_PREFIXES = ("neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:", "equity_shadow_track")
+    _PERMANENT_SKIP_PREFIXES = (
+        "neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:",
+        "equity_shadow_track", "execution_eligible=False", "universe_not_eligible",
+        "ttl_expired", "factor_hard_blocked", "okx_demo_symbol_not_supported",
+    )
     skipped = [c for c in candidates if c.get("skip_reason")]
     for c in skipped:
         reason = c.get("skip_reason", "")
@@ -201,35 +244,41 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     for c in skipped[:10]:
         outputs.append(f"skip:{c.get('symbol','?')}:{c['skip_reason']}")
 
-    # Edge Lab: persist top-N candidates as shadow trades for counterfactual analysis.
-    try:
-        from aletheia.analytics.shadow_trades import persist_shadow_batch
-        eligible = [c for c in candidates if not c.get("skip_reason")]
-        selected = select_best_candidate(candidates)
-        persist_shadow_batch(eligible, selected, top_n=5)
-    except Exception as _shadow_err:
-        logger.debug("shadow trade persistence failed: %s", _shadow_err)
-
     # Phase 4a: Path B is now a pure signal collector — write top candidates as
     # signal_pending for System Operator to evaluate (System Operator is the sole decision maker).
     eligible = [c for c in candidates if not c.get("skip_reason")]
     if not eligible:
+        _persist_filter_evidence(candidates, None, run_id=run_id)
         if not outputs:
             outputs.append("no_ranked_candidate")
         return {"outputs": outputs, "errors": errors}
 
-    # Write top 3 eligible candidates as pending signals for System Operator
+    plan = _plan_signal_batch(
+        eligible,
+        open_symbols=open_symbols,
+        recent_signal_pairs=recent_signal_pairs,
+        limit=3,
+    )
+    _persist_filter_evidence(candidates, plan, run_id=run_id)
+    for candidate in eligible:
+        opp_id = str(candidate.get("opportunity_id") or "")
+        filter_name, verdict = plan.decisions.get(opp_id, ("", ""))
+        if verdict != "rejected":
+            continue
+        if filter_name == "open_position_duplicate":
+            outputs.append(f"skip_existing_position:{candidate.get('symbol')}")
+        elif filter_name == "signal_cooldown":
+            outputs.append(
+                f"skip_recent_signal:{candidate.get('symbol')}:{candidate.get('direction')}"
+            )
+
+    # Write up to 3 candidates after occupancy/cooldown rejects have been removed.
     signals_written = 0
-    for candidate in _select_signal_candidates(eligible, limit=3):
+    emitted_candidates: list[dict] = []
+    for candidate in plan.selected:
         try:
             sym = candidate["symbol"]
             direction = candidate.get("direction")
-            if sym in open_symbols or sym in cycle_pending_symbols:
-                outputs.append(f"skip_existing_position:{sym}")
-                continue
-            if direction and (sym, direction) in recent_signal_pairs:
-                outputs.append(f"skip_recent_signal:{sym}:{direction}")
-                continue
             from aletheia.storage.models import PiDecision
             from aletheia.storage.repositories import insert_pi_decision
             pi_dec = PiDecision(
@@ -259,10 +308,10 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                     update_opportunity(candidate["opportunity_id"], status="reviewed")
                 except Exception as _e:
                     logger.debug("opportunity reviewed-mark failed: %s", _e)
-            cycle_pending_symbols.add(sym)
             if direction:
                 recent_signal_pairs.add((sym, direction))
             signals_written += 1
+            emitted_candidates.append(candidate)
             try:
                 from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
                 notify_pi_daemon(source="paper_trader_path_b")
@@ -270,6 +319,15 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 pass
         except Exception as e:
             logger.debug("signal_pending write failed for %s: %s", candidate.get("symbol"), e)
+
+    # Counterfactual selection must reflect candidates actually emitted after all
+    # occupancy/cooldown checks, not the theoretical rank-1 before those checks.
+    try:
+        from aletheia.analytics.shadow_trades import persist_shadow_batch
+
+        persist_shadow_batch(eligible, emitted_candidates, top_n=5)
+    except Exception as _shadow_err:
+        logger.debug("shadow trade persistence failed: %s", _shadow_err)
 
     if signals_written:
         outputs.append(f"signals_pending:{signals_written}")
@@ -279,8 +337,50 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     return {"outputs": outputs, "errors": errors}
 
 
+def _persist_filter_evidence(
+    candidates: list[dict],
+    plan: SignalBatchPlan | None,
+    *,
+    run_id: str | None,
+) -> None:
+    """Best-effort append of ranker and selection facts; never changes decisions."""
+    try:
+        from aletheia.analytics.filter_evidence import record_candidate_filter_trace
+        from aletheia.storage.repositories import transaction
+
+        with transaction():
+            for candidate in candidates:
+                record_candidate_filter_trace(candidate, run_id=run_id)
+            if plan is None:
+                return
+            for candidate in candidates:
+                opp_id = str(candidate.get("opportunity_id") or "")
+                if not opp_id or opp_id not in plan.decisions:
+                    continue
+                filter_name, decision = plan.decisions[opp_id]
+                parameters = {"limit": 3} if filter_name == "signal_batch_limit" else {}
+                if filter_name == "signal_cooldown":
+                    parameters["cooldown_minutes"] = _RECENT_SIGNAL_COOLDOWN_MINUTES
+                record_candidate_filter_trace(
+                    candidate,
+                    run_id=run_id,
+                    trace=[{
+                        "filter_name": filter_name,
+                        "stage": "paper_trader_selection",
+                        "decision": decision,
+                        "reason_code": filter_name,
+                        "inputs": {
+                            "trade_score": candidate.get("trade_score"),
+                            "symbol": candidate.get("symbol"),
+                            "direction": candidate.get("direction"),
+                        },
+                        "parameters": parameters,
+                    }],
+                )
+    except Exception as exc:
+        logger.warning("paper trader filter evidence unavailable: %s", exc)
+
+
 # Position C (2026-07-02): _handle_ruleset_entry removed with the rules engine.
 # The paper trader no longer produces RuleSet-driven signals; it is purely
 # opportunity-driven (ranked → signal_pending → PI decides).
-
-

@@ -17,7 +17,10 @@ def cfg():
 def _make_feat(symbol="BTC/USDT", volume=10_000_000, spread=5.0, freshness=300):
     return {
         "asset_id": "a1",
+        "feature_snapshot_id": f"feature:{symbol}",
         "symbol": symbol,
+        "venue": "okx",
+        "market_type": "spot",
         "quote_volume_24h": volume,
         "spread_bps": spread,
         "data_freshness_sec": freshness,
@@ -103,3 +106,47 @@ def test_multiple_assets_filter(cfg):
     assert "ETH/USDT" in symbols
     assert "LOWVOL/USDT" not in symbols
     assert "SCAM/USDT" not in symbols
+
+
+def test_gold_backed_rwa_is_not_classified_as_a_stablecoin(cfg):
+    features = [
+        _make_feat("XAUT/USDT", volume=20_000_000),
+        _make_feat("PAXG/USDT", volume=20_000_000),
+        _make_feat("USDC/USDT", volume=20_000_000),
+    ]
+
+    result = apply_tradability_filters(features, cfg)
+
+    assert {row["symbol"] for row in result} == {"XAUT/USDT", "PAXG/USDT"}
+
+
+def test_tradability_evidence_records_first_rejection_then_not_applicable(cfg):
+    from aletheia.analytics.filter_evidence import decode_filter_decision_batch
+    from aletheia.storage.sqlite import get_db
+
+    btc = _make_feat("BTC/USDT", volume=20_000_000)
+    stable = _make_feat("USDC/USDT", volume=20_000_000)
+    stable["asset_id"] = "stable"
+    stable["feature_snapshot_id"] = "feature:stable"
+
+    result = apply_tradability_filters(
+        [btc, stable], cfg, scanner_run_id="tradability-run",
+    )
+
+    assert [row["symbol"] for row in result] == ["BTC/USDT"]
+    rows = get_db().execute(
+        "SELECT filter_name, candidate_count, candidate_facts "
+        "FROM filter_decision_batches WHERE run_id=? ORDER BY filter_name",
+        ("tradability-run",),
+    ).fetchall()
+    assert len(rows) == 5
+    facts_by_filter = {
+        row["filter_name"]: decode_filter_decision_batch(row["candidate_facts"])
+        for row in rows
+    }
+    stablecoin_facts = facts_by_filter["tradability_stablecoin"]
+    assert [fact["decision"] for fact in stablecoin_facts] == ["passed", "rejected"]
+    blacklist_facts = facts_by_filter["tradability_blacklist"]
+    assert [fact["decision"] for fact in blacklist_facts] == [
+        "passed", "not_applicable",
+    ]

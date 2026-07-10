@@ -15,6 +15,7 @@
 
 ```
 跳0 采集    collectors/* → market_snapshots / funding / microstructure 等原始表
+跳0.5 前置门 Universe ticker/tradability → 无方向完整批次证据（不伪造收益）
 跳1 观察    market_observer.py:_analyze_symbol → LLM → Opportunity → insert_opportunity → notify_pi_daemon
 跳2 排序    paper_trader_ranker(纯确定性打分,无LLM) → 前N候选写 PiDecision(action='signal_pending')
 跳3 唤醒    pi_daemon._run_evaluation(防抖8s/冷却60s/300s兜底) → evaluate_trading_opportunity
@@ -27,6 +28,8 @@
 跳9 复盘    平仓后 post_trade_reviewer → knowledge_items(post_trade_review) → 晋级门 + 学习闭环
 旁路结果    universe member → 固定 horizon 的目标 instrument OHLCV → gross/directional/cost/net/MFE/MAE
             → 只把完整 net 结果送入 scanner 校准、family edge、missed-alpha 与 guard candidate
+筛选旁路    Observer/Ranker/System Operator/Risk → filter_decisions
+            → filter_candidate_outcomes（共享四个固定 horizon）→ 只读分层对照
 ```
 
 > 固定持有期反事实结果遵循 `docs/design/opportunity_outcome_contract.md`。历史 gross-only 行、
@@ -75,6 +78,15 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 (`trading_context.py:463-465`:`WHERE action='signal_pending' AND created_at >= ? ORDER BY created_at DESC LIMIT 5`)。
 **不变量**:TTL 由 `created_at >= cutoff` 控制;只取最近 5 条。
 
+### 2.4 Filter Evidence（评估旁路）
+
+- `filter_decision_batches` 保存 ticker/tradability 等高频无方向门；必须保存本次扫描的全部候选，不得抽样。
+- `filter_decisions` 保存已有方向的 Observer、Ranker、System Operator 和 Risk 逐关事实，到首个拒绝停止。
+- `filter_candidate_outcomes` 按候选共享一份目标市场净结果，不按筛选关重复结算。
+- Risk 证据必须在权威 `RiskDecision` 落库后追加；证据失败不改变原始批准/拒绝。
+
+完整定义见 `docs/design/filter_evidence_contract.md`。
+
 ---
 
 ## 3. 接缝守卫表
@@ -86,6 +98,7 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 | 决策→提案 | `trading_decision.py:218` | `gateway.py` | `conviction≥55 且 action∈trade类` 才提案;白名单校验 | DL-C01 + execution_contract §3 |
 | 提案→风控 | `gateway.py` | `risk/engine.py:67` | `_eval_lock` 串行;每提案恰评估一次;`approved=False` 不执行 | risk_engine_contract / spec_pipeline_risk_gate |
 | 平仓脊柱 | — | — | 见 `execution_contract §10`(退出触发器优先级 / paused 不挡平仓) | PL-PM-01~07 |
+| 筛选证据 | 各关原 writer | filter controller / doctor | 事前输入+参数版本；无方向不生成可学习净结果；Risk 只报告 | filter_evidence_contract / spec_filter_evidence |
 
 ---
 
@@ -97,6 +110,8 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 - **DL-INV-4 归因继承**:`_attach_opportunity_context` 必须按 `signal_source` 把 opportunity_id/strategy_id/scanner_family 回填到 decision,否则学习闭环断链(LEARNING_LOOP_AUDIT §R0)。
 - **DL-INV-5 instrument 取价**:跳6 必须先确定最终 `market_type`,再按该类型读取 snapshot；同 symbol 的 spot/perp 行不得互相替代为首选价格。
 - **DL-INV-6 强制反方论证**:新 TradingDecision 的 LLM schema 必须要求非空 `bear_case`,`_parse_decision` 必须透传到提案审计元数据；仅 dataclass 有字段不算实现。
+- **DL-INV-7 筛选事实不反推**:放行/拒绝必须在当次评估时记录，不得从最终 opportunity/proposal 状态倒推中间关卡。
+- **DL-INV-8 无方向不学收益**:无事前 `long/short` 时只衡量能力和覆盖，禁止事后选最赚方向。
 
 ---
 
@@ -112,3 +127,4 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 | `DL-C01` | L2c | `_MIN_CONVICTION_TO_TRADE == 55`(改阈值即爆红,强制同步本契约) |
 
 `tests/specs/spec_decision_lifecycle.py`。验证:`uv run pytest tests/specs/spec_decision_lifecycle.py -q`。
+筛选证据的结构、行为和跨操作规则在 `tests/specs/spec_filter_evidence.py`。

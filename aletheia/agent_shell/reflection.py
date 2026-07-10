@@ -82,6 +82,12 @@ def record_decision(decision_result: dict) -> None:
             key_assumptions=assumptions_json,
         )
         insert_pi_decision(pi_dec)
+        try:
+            from aletheia.analytics.filter_evidence import record_operator_filter_trace
+
+            record_operator_filter_trace(pi_dec.id, decision_result)
+        except Exception as evidence_error:
+            logger.warning("operator filter evidence unavailable: %s", evidence_error)
     except Exception as e:
         logger.debug("pi_decision db persist failed: %s", e)
 

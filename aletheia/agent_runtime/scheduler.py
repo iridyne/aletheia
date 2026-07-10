@@ -482,9 +482,9 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("persona_rollout", _run_persona_rollout), "interval", hours=8,
         id="persona_rollout", misfire_grace_time=600, executor="io",
     )
-    # Filter feedback controller (Phase 1, SHADOW): every N hours, compute per-filter
-    # × scanner_family loosen/hold/tighten recommendations from realized forward
-    # returns and append them to controller_recommendations. Read-only — writes NO
+    # Filter feedback controller (Phase 1, SHADOW): every N hours, compute exact
+    # filter-version pass/reject findings from cost-aware net outcomes and append
+    # them to controller_recommendations. Read-only — writes NO
     # trading config. No-op unless cfg.controller.shadow_enabled. See filter_controller.py.
     if getattr(cfg, "controller", None) and cfg.controller.shadow_enabled:
         _scheduler.add_job(
@@ -1304,6 +1304,9 @@ def _run_cleanup():
             "universe_forward_outcomes": repo.prune_universe_forward_outcomes(30),
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
+            "filter_decision_batches": repo.prune_filter_decision_batches(30),
+            "filter_decisions": repo.prune_filter_decisions(90),
+            "filter_candidate_outcomes": repo.prune_filter_candidate_outcomes(90),
             "pi_decisions_transient": repo.prune_pi_decisions(7),
             "system_actions": repo.prune_system_actions(7),
             # Operator-shell telemetry (DB-SIZE-1): heartbeats are the dominant
@@ -1956,5 +1959,3 @@ def _get_observed_symbols(cfg) -> list[str]:
         return list(cfg.market_data.observed_symbols or [])[:20]
     except Exception:
         return []
-
-

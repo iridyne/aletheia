@@ -85,6 +85,67 @@ def test_prune_universe_forward_outcomes(tmp_path, monkeypatch):
     assert remaining == {"n"}, "prune must drop only outcomes older than the window"
 
 
+def test_prune_filter_evidence_keeps_recent_rows(tmp_path, monkeypatch):
+    from aletheia.storage.models import (
+        FilterCandidateOutcome,
+        FilterDecision,
+        FilterDecisionBatch,
+    )
+
+    conn = setup_env(tmp_path, monkeypatch)
+    for suffix, timestamp in (("old", _old(120)), ("new", _recent())):
+        repo.insert_filter_decision(FilterDecision(
+            id=f"decision-{suffix}",
+            dedup_key=f"decision-dedup-{suffix}",
+            candidate_key=f"candidate-{suffix}",
+            candidate_kind="opportunity",
+            symbol="BTC/USDT",
+            filter_name="ranker_confidence_gate",
+            stage="paper_ranker",
+            decision="passed",
+            reason_code="confidence_sufficient",
+            filter_version="v1-test",
+            evaluated_at=timestamp,
+        ))
+        repo.insert_filter_decision_batch(FilterDecisionBatch(
+            id=f"batch-{suffix}",
+            dedup_key=f"batch-dedup-{suffix}",
+            run_id=f"run-{suffix}",
+            candidate_kind="universe_asset",
+            filter_name="ticker_availability",
+            stage="ticker_prefilter",
+            candidate_count=1,
+            passed_count=1,
+            candidate_facts="[]",
+            filter_version="v1-test",
+            evaluated_at=timestamp,
+        ))
+        repo.insert_filter_candidate_outcomes_batch([FilterCandidateOutcome(
+            id=f"outcome-{suffix}",
+            outcome_candidate_key=f"candidate-{suffix}",
+            venue="okx",
+            symbol="BTC/USDT",
+            direction="long",
+            horizon="24h",
+            entry_price_usd=100.0,
+            entry_ts=timestamp,
+            due_at=timestamp,
+        )])
+
+    assert repo.prune_filter_decision_batches(days=30) == 1
+    assert repo.prune_filter_decisions(days=90) == 1
+    assert repo.prune_filter_candidate_outcomes(days=90) == 1
+    assert {row["id"] for row in conn.execute(
+        "SELECT id FROM filter_decision_batches"
+    ).fetchall()} == {"batch-new"}
+    assert {row["id"] for row in conn.execute(
+        "SELECT id FROM filter_decisions"
+    ).fetchall()} == {"decision-new"}
+    assert {row["id"] for row in conn.execute(
+        "SELECT id FROM filter_candidate_outcomes"
+    ).fetchall()} == {"outcome-new"}
+
+
 def test_cleanup_never_touches_causal_chain(tmp_path, monkeypatch):
     conn = setup_env(tmp_path, monkeypatch)
     # Insert old trust-bearing rows; they must survive any cleanup.
