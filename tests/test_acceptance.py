@@ -71,6 +71,49 @@ async def test_ac05_dashboard_data_endpoints(client):
         assert (await c.get(path)).status_code == 200
 
 
+@pytest.mark.anyio
+async def test_strategy_summary_endpoint_supports_operator_shell(client):
+    c, _ = client
+    from aletheia.storage.models import StrategyRecord
+
+    repo.insert_strategy(StrategyRecord(id="paper-running", name="Paper Running", state="paper_running"))
+    repo.insert_strategy(
+        StrategyRecord(
+            id="under-review",
+            name="Under Review",
+            state="paper_running",
+            under_review=True,
+        )
+    )
+    repo.insert_strategy(
+        StrategyRecord(
+            id="paused-paper",
+            name="Paused Paper",
+            state="paper_candidate",
+            paper_trading_paused=True,
+        )
+    )
+    repo.insert_strategy(StrategyRecord(id="paper-passed", name="Paper Passed", state="paper_passed"))
+    repo.insert_strategy(StrategyRecord(id="live-candidate", name="Live Candidate", state="live_candidate"))
+
+    response = await c.get("/api/strategies/summary")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert {item["id"] for item in data["active_paper_strategies"]} == {
+        "paper-running",
+        "under-review",
+        "paused-paper",
+        "paper-passed",
+    }
+    assert [item["id"] for item in data["under_review_strategies"]] == ["under-review"]
+    assert [item["id"] for item in data["paused_paper_strategies"]] == ["paused-paper"]
+    assert [item["id"] for item in data["live_candidate_strategies"]] == ["live-candidate"]
+    assert data["needs_operator_evaluation_strategy_ids"] == ["paused-paper", "under-review"]
+    assert data["needs_operator_promotion_proposal_strategy_ids"] == ["paper-passed"]
+    assert data["needs_operator_live_limited_enablement_strategy_ids"] == ["live-candidate"]
+
+
 # #6 Model provider layer (OpenAI/Anthropic/Codex)
 @pytest.mark.anyio
 async def test_ac06_model_providers(client):

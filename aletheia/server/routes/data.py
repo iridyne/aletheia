@@ -826,6 +826,67 @@ async def get_strategies():
     return repo.list_strategies()
 
 
+def _truthy_strategy_flag(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return False
+
+
+def _strategy_operator_summary(strategies: list[dict]) -> dict:
+    under_review = [item for item in strategies if _truthy_strategy_flag(item.get("under_review"))]
+    paused_paper = [item for item in strategies if _truthy_strategy_flag(item.get("paper_trading_paused"))]
+    active_paper = [
+        item
+        for item in strategies
+        if item.get("state") in {"paper_candidate", "paper_running", "paper_passed"}
+    ]
+    live_candidate = [
+        item
+        for item in strategies
+        if item.get("state") in {"live_candidate", "live_limited_candidate"}
+    ]
+
+    flagged_ids = {
+        str(item.get("id"))
+        for item in [*under_review, *paused_paper]
+        if item.get("id")
+    }
+    promotion_ids = {
+        str(item.get("id"))
+        for item in strategies
+        if item.get("id") and item.get("state") == "paper_passed"
+    }
+    live_limited_ids = {
+        str(item.get("id"))
+        for item in live_candidate
+        if item.get("id")
+    }
+
+    return {
+        "active_paper_strategies": active_paper,
+        "under_review_strategies": under_review,
+        "paused_paper_strategies": paused_paper,
+        "live_candidate_strategies": live_candidate,
+        "recent_strategy_evaluations": [],
+        "needs_operator_evaluation_strategy_ids": sorted(flagged_ids),
+        "recent_strategy_promotion_proposals": [],
+        "needs_operator_promotion_proposal_strategy_ids": sorted(promotion_ids),
+        "recent_live_limited_enablement_proposals": [],
+        "needs_operator_live_limited_enablement_strategy_ids": sorted(live_limited_ids),
+    }
+
+
+@router.get("/strategies/summary")
+async def get_strategy_summary():
+    """Operator-facing strategy summary used by the local operator shell."""
+    _ensure_db()
+    return _strategy_operator_summary(repo.list_strategies(limit=500))
+
+
 
 @router.get("/market/snapshots")
 async def get_market_snapshots(
