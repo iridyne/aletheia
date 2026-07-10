@@ -427,7 +427,12 @@ def do_status() -> None:
     typer.echo(f"Gateway: {'running' if running else 'stopped'}" + (f" (PID {pid})" if running else ""))
     typer.echo(f"Paused: {cfg.runtime.paused}")
     typer.echo(f"Dashboard: http://{cfg.app.bind_host}:{cfg.app.dashboard_port}")
-    typer.echo(f"Exchange: {cfg.exchange.name} ({cfg.exchange.mode})")
+    exchange_label = (
+        "Local paper (no external exchange)"
+        if cfg.exchange.paper_execution_mode == "paper_internal"
+        else f"{cfg.exchange.name} ({cfg.exchange.mode})"
+    )
+    typer.echo(f"Exchange: {exchange_label}")
     typer.echo(f"Live state: {cfg.live.state}")
     typer.echo(f"Permission: {cfg.agent.permission_mode}")
     from aletheia.gateway.autostart import status as autostart_status

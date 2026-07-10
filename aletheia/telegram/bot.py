@@ -109,10 +109,15 @@ class TelegramBot:
 
     def _cmd_status(self) -> str:
         cfg = load_config()
+        exchange_label = (
+            "Local paper (no external exchange)"
+            if cfg.exchange.paper_execution_mode == "paper_internal"
+            else f"{cfg.exchange.name} ({cfg.exchange.mode})"
+        )
         return (
             f"<b>Gateway:</b> running\n"
             f"<b>Paused:</b> {cfg.runtime.paused}\n"
-            f"<b>Exchange:</b> {cfg.exchange.name} ({cfg.exchange.mode})\n"
+            f"<b>Exchange:</b> {exchange_label}\n"
             f"<b>Live:</b> {cfg.live.state}\n"
             f"<b>Permission:</b> {cfg.agent.permission_mode}"
         )

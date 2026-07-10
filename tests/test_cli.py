@@ -47,6 +47,23 @@ def test_gateway_status_shows_autostart(tmp_path, monkeypatch):
     assert "disabled" in result.output
 
 
+def test_gateway_status_labels_local_paper_without_an_exchange(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    cfg = loader.load_config()
+    cfg.exchange.name = "okx"  # Retained preference, not an active connection.
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    loader.save_config(cfg)
+
+    result = runner.invoke(app, ["gateway", "status"])
+
+    assert result.exit_code == 0
+    assert "Exchange: Local paper (no external exchange)" in result.output
+    assert "Exchange: okx" not in result.output
+
+
 def test_gateway_enable_disable_autostart_smoke(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from aletheia.gateway import autostart

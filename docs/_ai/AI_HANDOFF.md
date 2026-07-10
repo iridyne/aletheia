@@ -23,6 +23,7 @@ The status API now states whether the current execution path actually uses an
 external exchange. Local paper displays "no exchange", does not probe an external
 connection, and excludes external account caches from its account summary. External
 demo/live paths retain their existing connection status and cached-balance behavior.
+Gateway status and Telegram `/status` use the same distinction.
 
 ---
 

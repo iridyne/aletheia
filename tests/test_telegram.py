@@ -34,6 +34,23 @@ async def test_status_command(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_status_command_labels_local_paper_without_an_exchange(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.exchange.name = "okx"  # Retained preference, not an active connection.
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    save_config(cfg)
+
+    resp = await TelegramBot().handle_message(123, "/status")
+
+    assert "Local paper (no external exchange)" in resp
+    assert "okx (demo)" not in resp
+    reset_db()
+
+
+@pytest.mark.anyio
 async def test_pause_command(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     bot = TelegramBot()
