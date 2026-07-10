@@ -482,6 +482,17 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("persona_rollout", _run_persona_rollout), "interval", hours=8,
         id="persona_rollout", misfire_grace_time=600, executor="io",
     )
+    # Filter feedback controller (Phase 1, SHADOW): every N hours, compute per-filter
+    # × scanner_family loosen/hold/tighten recommendations from realized forward
+    # returns and append them to controller_recommendations. Read-only — writes NO
+    # trading config. No-op unless cfg.controller.shadow_enabled. See filter_controller.py.
+    if getattr(cfg, "controller", None) and cfg.controller.shadow_enabled:
+        _scheduler.add_job(
+            _guarded("filter_controller_observe", _run_filter_controller_observe), "interval",
+            hours=max(1, int(cfg.controller.observe_interval_hours)),
+            id="filter_controller_observe", misfire_grace_time=600, executor="io",
+            next_run_time=datetime.now() + timedelta(minutes=2),
+        )
     # News RSS feed collector — fetches enabled feeds every N minutes (default 15).
     _scheduler.add_job(
         _guarded("news_fetch", _run_news_fetch), "interval",
@@ -1367,6 +1378,27 @@ def _run_persona_rollout():
     except Exception as e:
         logger.warning("persona_rollout job failed: %s", e)
         _record_job_failure("persona_rollout", str(e))
+
+
+def _run_filter_controller_observe():
+    """Phase 1 shadow observe: compute + persist filter feedback recommendations.
+    Read-only w.r.t. trading config — appends to controller_recommendations only.
+    No-op unless cfg.controller.shadow_enabled. See analytics/filter_controller.py."""
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        ctrl = getattr(cfg, "controller", None)
+        if not ctrl or not ctrl.shadow_enabled:
+            return
+        from aletheia.analytics.filter_controller import run_controller_observe
+        summary = run_controller_observe(min_samples=int(ctrl.min_samples_gate))
+        logger.info(
+            "filter_controller_observe: wrote %d recs (verdicts=%s)",
+            summary.get("recommendations_written", 0), summary.get("verdict_counts"),
+        )
+    except Exception as e:
+        logger.warning("filter_controller_observe job failed: %s", e)
+        _record_job_failure("filter_controller_observe", str(e))
 
 
 def _run_health_check():

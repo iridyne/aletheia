@@ -140,6 +140,7 @@ async def get_settings():
         "pi_daemon": cfg.pi_daemon.model_dump(mode="json"),
         "news": cfg.news.model_dump(mode="json"),
         "serenity": cfg.serenity.model_dump(mode="json"),
+        "controller": cfg.controller.model_dump(mode="json"),
     }
 
 
@@ -426,6 +427,44 @@ async def update_serenity_config(req: SerenityConfigUpdate):
                  "entity_type": "serenity_config", "before": old,
                  "after": cfg.serenity.model_dump(mode="json"),
                  "message": f"Serenity config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
+# Filter feedback controller config (Phase 1 shadow)
+# ---------------------------------------------------------------------------
+
+class ControllerConfigUpdate(SettingsRequest):
+    shadow_enabled: Optional[bool] = None
+    observe_interval_hours: Optional[int] = None
+    min_samples_gate: Optional[int] = None
+    max_step: Optional[float] = None
+
+
+_CONTROLLER_BOUNDS: dict[str, tuple[float, float]] = {
+    "observe_interval_hours": (1, 168),
+    "min_samples_gate": (5, 500),
+    "max_step": (0.01, 0.5),
+}
+
+
+@router.post("/controller")
+async def update_controller_config(req: ControllerConfigUpdate):
+    cfg = load_config()
+    old = cfg.controller.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        if field in _CONTROLLER_BOUNDS:
+            lo, hi = _CONTROLLER_BOUNDS[field]
+            if not (lo <= value <= hi):
+                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+        setattr(cfg.controller, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "controller_config_changed",
+                 "entity_type": "controller_config", "before": old,
+                 "after": cfg.controller.model_dump(mode="json"),
+                 "message": f"Controller config updated: {list(updates.keys())}"})
     return {"updated": updates}
 
 
