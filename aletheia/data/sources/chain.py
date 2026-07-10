@@ -15,6 +15,7 @@ import asyncio
 import logging
 
 from aletheia.data.providers import Candle, Ticker
+from aletheia.data.symbols import InstrumentId, MARKET_SPOT
 
 logger = logging.getLogger("aletheia.data.sources.chain")
 
@@ -64,12 +65,23 @@ class FallbackChainProvider:
     def _ensure_primary(self):
         return self._providers[0]._ensure_primary()
 
+    def _eligible_providers(self, symbol):
+        """Never satisfy a derivative request with a spot-only fallback.
+
+        The first provider is CCXT, whose own primary/fallback exchanges preserve
+        InstrumentId.market_type. CoinGecko/BinancePublic are spot adapters; using
+        them after a perpetual miss silently changes the instrument being priced.
+        """
+        if isinstance(symbol, InstrumentId) and symbol.market_type != MARKET_SPOT:
+            return self._providers[:1]
+        return self._providers
+
     async def get_ticker(self, symbol) -> Ticker:
         last_err: Exception | None = None
         result: Ticker | None = None
         fallback_used = False
 
-        for idx, provider in enumerate(self._providers):
+        for idx, provider in enumerate(self._eligible_providers(symbol)):
             try:
                 result = await provider.get_ticker(symbol)
                 if idx > 0:
@@ -159,7 +171,7 @@ class FallbackChainProvider:
         since: int | None = None,
     ) -> list[Candle]:
         last_err: Exception | None = None
-        for provider in self._providers:
+        for provider in self._eligible_providers(symbol):
             try:
                 return await provider.get_ohlcv(
                     symbol, timeframe=timeframe, limit=limit, since=since

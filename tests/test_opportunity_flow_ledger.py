@@ -72,13 +72,20 @@ def _insert_forward(
     direction: str = "long",
     snapshot_id: str = "snap-flow",
 ) -> None:
+    directional = -ret if direction == "short" else ret
+    net = directional - 0.2
     db.execute(
         "INSERT INTO universe_forward_outcomes "
         "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, entry_price_usd, "
-        "entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, status) "
+        "entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, gross_return_pct, "
+        "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, "
+        "estimated_funding_pct, net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
         "VALUES (?, ?, ?, 'BTC/USDT', 'momentum', ?, ?, 100, datetime('now','-2 hours'), "
-        "datetime('now','-1 hour'), datetime('now'), 100.8, ?, 'settled')",
-        (f"fwd-flow-{member_id}-{snapshot_id}-{horizon}", member_id, snapshot_id, direction, horizon, ret),
+        "datetime('now','-1 hour'), datetime('now'), 100.8, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
+        (
+            f"fwd-flow-{member_id}-{snapshot_id}-{horizon}", member_id,
+            snapshot_id, direction, horizon, ret, ret, directional, net,
+        ),
     )
 
 

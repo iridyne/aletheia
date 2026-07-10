@@ -22,12 +22,15 @@ def _make_row(
     entry_price=67000.0,
     entry_ts="2026-06-17T10:00:00Z",
 ):
+    directional = -forward_return if direction == "short" else forward_return
     return {
         "id": outcome_id,
         "symbol": symbol,
         "scanner_family": family,
         "direction": direction,
         "forward_return_pct": forward_return,
+        "directional_return_pct": directional,
+        "net_return_pct": directional - 0.2,
         "horizon": horizon,
         "entry_price_usd": entry_price,
         "entry_ts": entry_ts,
@@ -52,6 +55,7 @@ def test_generates_for_long_loss():
         assert "momentum" in call_kwargs.kwargs["title"]
         meta = call_kwargs.kwargs["metadata"]
         assert meta["forward_return_pct"] == -5.0
+        assert meta["net_return_pct"] == -5.2
         assert meta["tier"] == 1
         assert meta["auto_generated"] is True
 

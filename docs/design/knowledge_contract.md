@@ -165,7 +165,7 @@ Guards 是 YAML frontmatter Markdown 文件，不是代码。文件目录：`dat
 | `severity` | GuardSeverity | info / warning / critical |
 | `score_penalty` | float | scoring 模式下的扣分值 |
 | `block_candidate` | bool | True → `GuardEvaluation.blocked = True` |
-| `applies_to` | GuardAppliesTo | 多维过滤：asset_class / scanner_family / symbol / direction / confidence_bucket / late_entry_bucket |
+| `applies_to` | GuardAppliesTo | 多维过滤：asset_class / scanner_family / symbol / direction / market_type / confidence_bucket / late_entry_bucket |
 | `predicates` | list[GuardPredicate] | AND 逻辑，操作符白名单 (eq/ne/gt/gte/lt/lte/in/contains) |
 
 ### 4.3 evaluate_guards() (`guards.py:147`)
@@ -175,7 +175,7 @@ Guards 是 YAML frontmatter Markdown 文件，不是代码。文件目录：`dat
 1. 若 `guard_cfg.enabled = False`（config）→ 返回空 `GuardEvaluation`
 2. 按 `scope` + `status="active"` 加载 guards
 3. 对每个 guard：先 `_applies_to_context()`，再 `_predicates_match()`
-4. 谓词字段白名单 `ALLOWED_GUARD_FIELDS`（`guards.py:71`，19 个字段）——未知字段 → 谓词不匹配
+4. 谓词字段白名单 `ALLOWED_GUARD_FIELDS`（`guards.py:72`，含 market_type）——未知字段 → 谓词不匹配
 
 ### 4.4 Guard 来源层级 (Tier)
 

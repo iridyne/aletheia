@@ -244,3 +244,53 @@ def test_get_family_multipliers_above_threshold(monkeypatch):
     assert "momentum" in result
     assert result["momentum"] > 1.0
     assert result["momentum"] <= 1.40
+
+
+def test_calibration_keeps_direction_and_market_cohorts_separate(monkeypatch):
+    import aletheia.storage.repositories as _repo
+
+    monkeypatch.setattr(_repo, "calibration_stats", lambda: [
+        {
+            "scanner_family": "momentum", "direction": "long", "market_type": "spot",
+            "horizon": "4h", "n": 20, "win_count": 15,
+        },
+        {
+            "scanner_family": "momentum", "direction": "short", "market_type": "perp",
+            "horizon": "4h", "n": 20, "win_count": 5,
+        },
+    ])
+
+    result = get_family_multipliers()
+
+    assert result["momentum:long:spot"] > 1.0
+    assert result["momentum:short:perp"] < 1.0
+    assert "momentum" not in result
+
+
+def test_total_score_uses_exact_calibration_cohort(cfg):
+    feat = {
+        "market_type": "perp",
+        "tradability_score": 80.0,
+        "quote_volume_24h": 50_000_000,
+        "spread_bps": 5.0,
+        "rsi_14": 55.0,
+        "return_1h": -1.0,
+        "return_4h": -2.0,
+        "data_freshness_sec": 200,
+    }
+    scanner = {
+        "opportunity_score": 70.0,
+        "scanner_family": "momentum",
+        "scanner_direction": "short",
+    }
+
+    boosted = compute_total_score(
+        dict(feat), scanner, cfg,
+        calibration={"momentum:short:perp": 1.2, "momentum:long:spot": 0.6},
+    )
+    penalized = compute_total_score(
+        dict(feat), scanner, cfg,
+        calibration={"momentum:short:perp": 0.8, "momentum:long:spot": 1.4},
+    )
+
+    assert boosted > penalized

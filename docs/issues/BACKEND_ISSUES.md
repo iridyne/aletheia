@@ -1012,3 +1012,18 @@
 1. **先修数据诚实性**：MDS-01 / MDS-02 / MDS-03。目标是旧数据不进决策、已采字段不丢。
 2. **再修排障可见性**：MDS-07 / MDS-08 / MDS-09。目标是 owner 能看到每类数据是否真的在供给。
 3. **最后处理架构取舍**：MDS-04 / MDS-05 / MDS-06 / MDS-10 / MDS-11。需要明确产品方向后再改，避免把 MVP 扩成多交易所行情平台。
+
+---
+
+## §21 Opportunity 结果与负反馈（2026-07-10）
+
+| ID | 状态 | 问题 | 处理/下一步 |
+|---|---|---|---|
+| OPR-D01 | ✅ | forward outcome 缺 market_type，spot/perp 同 symbol 结算可混价 | 结果保存 venue+market_type；取价使用完整 InstrumentId；非现货请求禁止降级到 spot provider |
+| OPR-D02 | ✅ | 当前 ticker 被用来结算 overdue horizon，持有期漂移 | 优先 entry_ts→due_at OHLCV；只有延迟不超过 horizon 10% 的 ticker 可形成 net，过晚 ticker 仅保留 gross 排障 |
+| OPR-D03 | ✅ | 做空结果和成本未统一，毛涨跌可被当盈利 | 保存 gross、directional、fee、spread/slippage、funding、net；永续 funding 未知时 net=NULL |
+| OPR-D04 | ✅ | 任一正毛收益被标 missed alpha | 只有 `net > min_tradable_edge` 才是 `missed_alpha_suspect`；否则为 `positive_gross_move_only` |
+| OPR-D05 | ✅ | 校准把 long/short 与 spot/perp 混合 | 聚合键改为 family+direction+market_type+horizon；风险资格和 System Operator 精确读取目标 cohort |
+| OPR-E01 | ⏳ | 每个前置过滤器仍无逐候选放行/拒绝事实 | 阶段 E：不可变 filter decision + filter version + candidate snapshot + shadow settlement |
+| OPR-E02 | ⏳ | shadow_trades 自身仍是 gross directional PnL | 阶段 E 与 filter 对照一起迁移成本模型；完成前 shadow 正收益不得单独证明 missed alpha |
+| OPR-E03 | ⏳ | alpha control observations 缺 market/cost，当前对照只能算 gross | 阶段 E 对照 cohort 增加 instrument identity 与同口径成本后，才能宣称净 alpha |

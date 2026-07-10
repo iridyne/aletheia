@@ -195,3 +195,11 @@ Go-Live 评分的大部分权重来自连通性、数据、模型、对账和无
 - 风控拒绝原因会归一动态金额，保留原始示例，不再把同类 `$68.8/$71.2/...` 拆成单条原因。
 
 尚未实现且不得在没有对照实验时直接改交易行为：OPR-07~12、OPR-14~15，以及多资产执行扩展。它们继续以修复计划为准。
+
+### 阶段 D 补充（2026-07-10）
+
+- OPR-07：`universe_forward_outcomes` 已持久化 venue、market_type、方向毛收益、手续费、点差/滑点、资金费、净收益、MFE/MAE 和结算质量；结算按目标 InstrumentId 与 due_at OHLCV，不再用同名现货或过晚当前价冒充。
+- OPR-14：`missed_alpha_suspect` 只在净收益超过持久化安全余量时成立；正毛走势但成本后不够或成本未知时标 `positive_gross_move_only`。
+- 校准、family edge、doctor signal health、lesson evidence 和 Tier-1 guard 改为只消费完整 net 结果；历史 gross-only 样本不再参与自动学习。
+- 分层键扩展为 scanner_family + direction + market_type + horizon；Universe UI 同步显示该粒度，避免展示层重新混合。
+- 尚未完成：逐过滤器放行/拒绝事件与同批 shadow 对照（OPR-15）、方向刹车/ranker 实验（OPR-08~11）、LLM round-robin（OPR-12）、多资产阶段 G。

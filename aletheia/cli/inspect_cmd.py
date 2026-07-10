@@ -810,7 +810,7 @@ def liquidations(
 def calibration(
     json_output: bool = typer.Option(False, "--json"),
 ):
-    """Show signal calibration stats — scanner family × horizon win rates."""
+    """Show net calibration by family, direction, market and horizon."""
     from aletheia.storage.repositories import calibration_stats
     stats = calibration_stats()
     if not stats:
@@ -819,17 +819,24 @@ def calibration(
     if json_output:
         _output(stats, True)
         return
-    typer.echo("=== Signal Calibration (forward outcomes) ===")
-    typer.echo(f"  {'family':<20s} {'horizon':<6s} {'n':>4s} {'win%':>6s} {'avg_ret':>8s}")
-    typer.echo(f"  {'-'*20} {'-'*6} {'-'*4} {'-'*6} {'-'*8}")
+    typer.echo("=== Net Signal Calibration (cost-aware outcomes) ===")
+    typer.echo(
+        f"  {'family':<18s} {'side':<6s} {'market':<7s} "
+        f"{'horizon':<6s} {'n':>4s} {'win%':>6s} {'avg_net':>8s}"
+    )
     for row in stats:
         family = row.get("scanner_family") or "unknown"
+        direction = row.get("direction") or "?"
+        market_type = row.get("market_type") or "spot"
         horizon = row.get("horizon") or "?"
         n = row.get("total_count") or row.get("n") or 0
         win_count = row.get("win_count", 0)
         win_pct = (win_count / n * 100) if n else 0
         avg_ret = row.get("avg_return") or row.get("avg_return_pct") or 0
-        typer.echo(f"  {family:<20s} {horizon:<6s} {n:>4d} {win_pct:>5.1f}% {avg_ret:>+7.2f}%")
+        typer.echo(
+            f"  {family:<18s} {direction:<6s} {market_type:<7s} "
+            f"{horizon:<6s} {n:>4d} {win_pct:>5.1f}% {avg_ret:>+7.2f}%"
+        )
 
 
 # ===========================================================================

@@ -1555,6 +1555,11 @@ def list_universe_snapshots(market_type: str = "crypto", limit: int = 20) -> lis
 # Universe Forward Outcomes
 # ---------------------------------------------------------------------------
 
+_OUTCOME_MARKET_SQL = (
+    "CASE WHEN market_type IN ('perp','futures','swap','usdt_futures') "
+    "THEN 'perp' ELSE COALESCE(market_type, 'spot') END"
+)
+
 def insert_forward_outcome(outcome) -> None:
     _insert("universe_forward_outcomes", outcome.model_dump())
 
@@ -1584,13 +1589,29 @@ def list_pending_forward_outcomes(before_ts: str, limit: int = 500) -> list[dict
     )
 
 
-def settle_forward_outcome(outcome_id: str, exit_price: float, forward_return: float, settled_at: str) -> None:
-    _update("universe_forward_outcomes", outcome_id, {
+def settle_forward_outcome(
+    outcome_id: str,
+    exit_price: float,
+    forward_return: float,
+    settled_at: str,
+    *,
+    economics: dict | None = None,
+    settlement_price_source: str | None = None,
+    settlement_lag_sec: float | None = None,
+) -> None:
+    updates = {
         "exit_price_usd": exit_price,
         "forward_return_pct": forward_return,
         "settled_at": settled_at,
         "status": "settled",
-    })
+    }
+    if economics:
+        updates.update(economics)
+    if settlement_price_source is not None:
+        updates["settlement_price_source"] = settlement_price_source
+    if settlement_lag_sec is not None:
+        updates["settlement_lag_sec"] = settlement_lag_sec
+    _update("universe_forward_outcomes", outcome_id, updates)
 
 
 def fail_forward_outcome(outcome_id: str, settled_at: str) -> None:
@@ -1633,8 +1654,8 @@ def mark_outlier_outcomes_failed(max_abs_return_pct: float = 1_000_000) -> int:
         "UPDATE universe_forward_outcomes "
         "SET status = 'failed' "
         "WHERE status = 'settled' "
-        "AND ABS(forward_return_pct) > ?",
-        (max_abs_return_pct,),
+        "AND (ABS(forward_return_pct) > ? OR ABS(net_return_pct) > ?)",
+        (max_abs_return_pct, max_abs_return_pct),
     )
     return result.rowcount
 
@@ -1668,66 +1689,60 @@ def latest_controller_run_id() -> str | None:
 
 
 def calibration_stats() -> list[dict]:
-    """Aggregate forward return stats grouped by scanner_family + horizon.
+    """Aggregate cost-aware returns by family + direction + market + horizon.
 
-    A "win" is direction-aware: a long member wins when the forward return is
-    positive, a short member wins when it is negative. Rows with NULL direction
-    are excluded because the system cannot honestly score an unknown direction
-    as either long or short.
-
-    Rows with |forward_return_pct| > 100 are excluded — they indicate
-    cross-symbol price contamination and skew avg_return into the billions.
+    Legacy gross-only rows are intentionally excluded. A win must clear the
+    persisted minimum tradable edge after fees, spread/slippage and funding.
     """
     db = get_db()
     rows = db.execute(
-        "SELECT scanner_family, horizon, "
+        "SELECT scanner_family, direction, "
+        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
         "COUNT(*) as n, "
-        "AVG(forward_return_pct) as avg_return, "
-        "SUM(CASE "
-        "  WHEN direction = 'short' AND forward_return_pct < 0 THEN 1 "
-        "  WHEN direction = 'long' AND forward_return_pct > 0 THEN 1 "
-        "  ELSE 0 END) as win_count, "
-        "MIN(forward_return_pct) as min_return, "
-        "MAX(forward_return_pct) as max_return "
+        "AVG(net_return_pct) as avg_return, "
+        "SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0) "
+        "  THEN 1 ELSE 0 END) as win_count, "
+        "MIN(net_return_pct) as min_return, "
+        "MAX(net_return_pct) as max_return "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
-        "AND ABS(forward_return_pct) <= 100 "
+        "AND net_return_pct IS NOT NULL "
+        "AND ABS(net_return_pct) <= 100 "
         "AND direction IN ('long', 'short') "
-        "GROUP BY scanner_family, horizon "
-        "ORDER BY scanner_family, horizon"
+        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
+        "ORDER BY scanner_family, direction, market_type, horizon"
     ).fetchall()
     return [dict(r) for r in rows]
 
 
 def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[dict]:
-    """Per-(scanner_family, direction) forward-outcome edge from settled outcomes.
+    """Per-(scanner_family, direction, market_type) cost-aware edge.
 
-    Thesis evidence for the System Operator (Position B, P1a 2026-07-02): unlike
-    calibration_stats() which folds direction into the win metric and groups only
-    by (family, horizon), this groups by (scanner_family, direction) so the PI can
-    see "momentum:long" and "momentum:short" as SEPARATE falsifiable theses at
-    decision time. Reuses the existing universe_forward_outcomes store — no new
-    table. Read-only; direction-aware win (long wins on +return, short on -return).
+    Thesis evidence for the System Operator. Like calibration_stats(), this keeps
+    long/short and spot/perpetual evidence separate; unlike calibration_stats(),
+    it selects one horizon and recent time window for decision-time context.
+    Reuses the existing universe_forward_outcomes store and excludes legacy
+    gross-only rows.
 
-    Returns rows: {scanner_family, direction, n, win_rate, avg_return}.
+    Returns rows: {scanner_family, direction, market_type, n, win_rate, avg_return}.
     Only families with n >= 1 in the window are returned.
     """
     db = get_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).isoformat()
     rows = db.execute(
         "SELECT scanner_family, direction, "
+        f"{_OUTCOME_MARKET_SQL} AS market_type, "
         "COUNT(*) as n, "
-        "AVG(forward_return_pct) as avg_return, "
-        "SUM(CASE "
-        "  WHEN direction = 'short' AND forward_return_pct < 0 THEN 1 "
-        "  WHEN direction = 'long' AND forward_return_pct > 0 THEN 1 "
-        "  ELSE 0 END) as win_count "
+        "AVG(net_return_pct) as avg_return, "
+        "SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0) "
+        "  THEN 1 ELSE 0 END) as win_count "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' AND horizon = ? "
-        "AND settled_at >= ? AND ABS(forward_return_pct) <= 100 "
+        "AND settled_at >= ? AND net_return_pct IS NOT NULL "
+        "AND ABS(net_return_pct) <= 100 "
         "AND scanner_family IS NOT NULL "
         "AND direction IN ('long', 'short') "
-        "GROUP BY scanner_family, direction "
+        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL} "
         "ORDER BY n DESC",
         (horizon, cutoff),
     ).fetchall()
@@ -1741,17 +1756,29 @@ def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[di
     return out
 
 
-def guard_candidate_exists_recent(symbol: str, scanner_family: str, within_days: int = 7) -> bool:
-    """Return True if a guard_candidate for this symbol+family was created within within_days."""
+def guard_candidate_exists_recent(
+    symbol: str,
+    scanner_family: str,
+    within_days: int = 7,
+    *,
+    direction: str | None = None,
+    market_type: str | None = None,
+) -> bool:
+    """Return whether the same scoped auto-guard candidate already exists."""
     db = get_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).isoformat()
+    title_pattern = f"%{symbol}%{scanner_family}%"
+    if direction:
+        title_pattern += f"{direction}%"
+    if market_type:
+        title_pattern += f"{market_type}%"
     row = db.execute(
         "SELECT 1 FROM knowledge_items "
         "WHERE item_type = 'guard_candidate' "
         "AND title LIKE ? "
         "AND created_at >= ? "
         "LIMIT 1",
-        (f"%{symbol}%{scanner_family}%", cutoff),
+        (title_pattern, cutoff),
     ).fetchone()
     return row is not None
 

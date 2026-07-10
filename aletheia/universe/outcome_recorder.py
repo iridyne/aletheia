@@ -8,7 +8,7 @@ Two entry points called from UniverseService.refresh():
   2. settle_due() — find overdue pending rows, fetch exit price, compute return
 
 Self-evolution Tier 1:
-  After settling, outcomes with 4h forward_return below the loss threshold
+  After settling, outcomes with 4h net_return below the loss threshold
   automatically generate guard_candidate knowledge items for human review.
   Closes the feedback loop: scanner signal → actual result → candidate rule.
 """
@@ -25,8 +25,7 @@ logger = logging.getLogger("aletheia.universe.outcome_recorder")
 
 # Tier 1: loss threshold for auto guard_candidate generation
 _GUARD_HORIZON = "4h"
-_LOSS_THRESHOLD_LONG = -3.0   # long outcome: return < -3% triggers candidate
-_LOSS_THRESHOLD_SHORT = 3.0   # short outcome: return > +3% triggers candidate
+_LOSS_THRESHOLD_NET = -3.0
 _DEDUP_WINDOW_DAYS = 7
 
 _HORIZONS: dict[str, timedelta] = {
@@ -35,6 +34,15 @@ _HORIZONS: dict[str, timedelta] = {
     "4h": timedelta(hours=4),
     "24h": timedelta(hours=24),
 }
+
+_FETCH_PLAN: dict[str, tuple[str, int]] = {
+    "15m": ("1m", 20),
+    "1h": ("1m", 65),
+    "4h": ("5m", 51),
+    "24h": ("15m", 99),
+}
+_MAX_CONCURRENT_FETCHES = 8
+_FETCH_TIMEOUT_SEC = 20.0
 
 
 def register_pending(members: list[dict], entry_ts: str) -> int:
@@ -66,10 +74,14 @@ def register_pending(members: list[dict], entry_ts: str) -> int:
                 member_id=m["id"],
                 snapshot_id=m["snapshot_id"],
                 symbol=m["symbol"],
+                venue=m.get("venue"),
+                market_type=m.get("market_type", "spot"),
                 scanner_family=m.get("scanner_family"),
                 direction=m.get("direction"),
                 horizon=horizon_key,
                 entry_price_usd=entry_price,
+                entry_spread_bps=m.get("spread_bps"),
+                funding_rate_at_entry=m.get("funding_rate"),
                 entry_ts=entry_ts,
                 due_at=due_at,
             ))
@@ -111,7 +123,13 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
     total_settled = 0
     total_processed = 0
     all_settled_rows: list[dict] = []
-    batch_size = 500  # sub-batch size: de-dup symbols across at most 500 rows at once
+    # Bound one network wave below the scheduler's wall-clock budget even when
+    # requests hit their timeout. The outer loop drains more waves while time remains.
+    batch_size = 32
+    from aletheia.config.loader import load_config
+    from aletheia.universe.outcome_economics import estimate_outcome_economics
+
+    cfg = load_config()
 
     while total_processed < max_rows:
         if _time.monotonic() >= deadline:
@@ -126,13 +144,13 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
         if not pending:
             break  # queue drained
 
-        symbols_needed = list({r["symbol"] for r in pending})
-        prices = await _batch_fetch_prices(symbols_needed)
+        observations = await _batch_fetch_market_observations(pending, now=now)
 
         batch_settled_rows: list[dict] = []
         for row in pending:
             symbol = row["symbol"]
-            price = prices.get(symbol)
+            observation = observations.get(row["id"])
+            price = observation.get("exit_price") if observation else None
             if price is None or price <= 0:
                 repo.fail_forward_outcome(row["id"], settled_at=now_iso)
                 logger.warning(
@@ -162,17 +180,48 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
                 total_processed += 1
                 continue
 
-            forward_return = ((price - entry) / entry) * 100.0
+            entry_dt = _parse_dt(row.get("entry_ts"))
+            due_dt = _parse_dt(row.get("due_at"))
+            hold_seconds = (
+                max(0.0, (due_dt - entry_dt).total_seconds())
+                if entry_dt and due_dt
+                else _HORIZONS.get(row.get("horizon"), timedelta()).total_seconds()
+            )
+            economics = estimate_outcome_economics(
+                entry_price=entry,
+                exit_price=price,
+                direction=row.get("direction"),
+                market_type=row.get("market_type") or "spot",
+                hold_seconds=hold_seconds,
+                entry_spread_bps=row.get("entry_spread_bps"),
+                fallback_spread_bps=cfg.universe.max_spread_bps,
+                funding_rate_at_entry=row.get("funding_rate_at_entry"),
+                execution_fee_pct=cfg.trading.execution_fee_pct,
+                slippage_bps=cfg.trading.slippage_bps,
+                range_high=observation.get("range_high"),
+                range_low=observation.get("range_low"),
+                price_quality_ok=bool(observation.get("price_quality_ok")),
+            )
+            forward_return = economics["gross_return_pct"]
 
             repo.settle_forward_outcome(
                 outcome_id=row["id"],
                 exit_price=price,
                 forward_return=forward_return,
                 settled_at=now_iso,
+                economics=economics,
+                settlement_price_source=observation.get("price_source"),
+                settlement_lag_sec=observation.get("settlement_lag_sec"),
             )
             total_settled += 1
             total_processed += 1
-            batch_settled_rows.append({**row, "forward_return_pct": forward_return})
+            batch_settled_rows.append({
+                **row,
+                **economics,
+                "forward_return_pct": forward_return,
+                "settlement_price_source": observation.get("price_source"),
+                "settlement_lag_sec": observation.get("settlement_lag_sec"),
+            })
 
         if batch_settled_rows:
             logger.info(
@@ -187,7 +236,7 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
             total_settled, total_processed,
         )
 
-    # Emit rolling win_rate metrics for observability (§4.2)
+    # Emit cost-aware cohort metrics for observability (§4.2).
     if total_settled:
         try:
             stats = repo.calibration_stats()
@@ -195,8 +244,14 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
                 if row["n"] >= 10:
                     wr = row["win_count"] / row["n"] * 100
                     logger.info(
-                        "METRIC family=%s horizon=%s n=%d win_rate=%.1f%%",
-                        row["scanner_family"], row["horizon"], row["n"], wr,
+                        "METRIC family=%s direction=%s market_type=%s "
+                        "horizon=%s n=%d net_win_rate=%.1f%%",
+                        row["scanner_family"],
+                        row["direction"],
+                        row["market_type"],
+                        row["horizon"],
+                        row["n"],
+                        wr,
                     )
         except Exception:
             pass
@@ -207,57 +262,127 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
     return total_settled
 
 
-async def _batch_fetch_prices(symbols: list[str]) -> dict[str, float | None]:
-    """Fetch latest prices for all universe symbols.
+async def _batch_fetch_market_observations(
+    rows: list[dict],
+    *,
+    now: datetime,
+) -> dict[str, dict]:
+    """Fetch each outcome's target-horizon price on its exact instrument.
 
-    Forward outcomes cover the full rotating universe, but stored market
-    snapshots only exist for the few statically observed instruments
-    (BTC/ETH/SOL). Reading snapshots alone left every rotating member priceless,
-    so its outcome was marked `failed` and calibration never accumulated data.
-
-    Fetch live tickers via the shared CCXT market-data provider for all symbols,
-    falling back to the latest stored snapshot when a live fetch fails.
+    OHLCV is preferred because an overdue scheduler run must still settle at
+    ``due_at`` rather than at the later wall-clock time. Ticker fallback is usable
+    for net learning only when the lag is within 10% of the requested horizon.
     """
-    from aletheia.trading.market_data import latest_snapshot
+    import asyncio
 
-    prices: dict[str, float | None] = {}
+    from aletheia.config.loader import load_config
+    from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
+    from aletheia.data.symbols import InstrumentId
 
-    # 1. Live tickers for every symbol (one provider, closed once).
+    provider = get_market_data_provider()
+    default_venue = load_config().market_data.ccxt_exchange
+    semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
+
+    async def fetch_one(row: dict) -> tuple[str, dict | None]:
+        async with semaphore:
+            entry_dt = _parse_dt(row.get("entry_ts"))
+            due_dt = _parse_dt(row.get("due_at"))
+            if entry_dt is None or due_dt is None:
+                return row["id"], None
+            raw_market_type = str(row.get("market_type") or "spot").lower()
+            market_type = (
+                "perp"
+                if raw_market_type in {"perp", "swap", "usdt_futures"}
+                else raw_market_type
+            )
+            instrument = InstrumentId.from_parts(
+                row.get("venue") or default_venue,
+                row["symbol"],
+                market_type,
+            )
+            horizon = row.get("horizon") or "1h"
+            timeframe, limit = _FETCH_PLAN.get(horizon, ("1h", 27))
+            entry_ms = int(entry_dt.timestamp() * 1000)
+            due_ms = int(due_dt.timestamp() * 1000)
+            lag_sec = max(0.0, (now - due_dt).total_seconds())
+            try:
+                candles = await provider.get_ohlcv(
+                    instrument,
+                    timeframe=timeframe,
+                    limit=limit,
+                    since=entry_ms,
+                )
+                bar_ms = timeframe_ms(timeframe)
+                eligible = [
+                    c for c in candles
+                    if entry_ms <= c.timestamp and c.timestamp + bar_ms <= due_ms
+                ]
+                if eligible:
+                    last = eligible[-1]
+                    max_gap_ms = max(60_000, bar_ms * 2)
+                    if due_ms - (last.timestamp + bar_ms) <= max_gap_ms:
+                        return row["id"], {
+                            "exit_price": float(last.close),
+                            "range_high": max(float(c.high) for c in eligible),
+                            "range_low": min(float(c.low) for c in eligible),
+                            "price_source": "horizon_ohlcv",
+                            "price_quality_ok": True,
+                            "settlement_lag_sec": lag_sec,
+                        }
+            except Exception as exc:
+                logger.debug(
+                    "forward outcome OHLCV unavailable for %s/%s: %s",
+                    instrument,
+                    horizon,
+                    exc,
+                )
+
+            try:
+                ticker = await provider.get_ticker(instrument)
+                price = float(ticker.last_price) if ticker.last_price else None
+            except Exception:
+                price = None
+            if not price or price <= 0:
+                return row["id"], None
+            hold_sec = max(1.0, (due_dt - entry_dt).total_seconds())
+            near_due = lag_sec <= hold_sec * 0.10
+            return row["id"], {
+                "exit_price": price,
+                "range_high": None,
+                "range_low": None,
+                "price_source": "near_due_ticker" if near_due else "late_ticker",
+                "price_quality_ok": near_due,
+                "settlement_lag_sec": lag_sec,
+            }
+
+    async def fetch_bounded(row: dict) -> tuple[str, dict | None]:
+        try:
+            return await asyncio.wait_for(fetch_one(row), timeout=_FETCH_TIMEOUT_SEC)
+        except Exception as exc:
+            logger.debug("forward outcome fetch failed for %s: %s", row.get("id"), exc)
+            return row["id"], None
+
     try:
-        from aletheia.data.ccxt_provider import get_market_data_provider
+        fetched = await asyncio.gather(*(fetch_bounded(row) for row in rows))
+        return {outcome_id: value for outcome_id, value in fetched if value is not None}
+    finally:
+        await provider.close()
 
-        provider = get_market_data_provider()
-        try:
-            for sym in symbols:
-                try:
-                    ticker = await provider.get_ticker(sym)
-                    price = float(ticker.last_price) if ticker.last_price else None
-                    prices[sym] = price if price and price > 0 else None
-                except Exception:
-                    prices[sym] = None
-        finally:
-            await provider.close()
-    except Exception as e:  # provider construction failed — fall through to snapshots
-        logger.warning("Live price fetch unavailable, using snapshots only: %s", e)
 
-    # 2. Snapshot fallback for any symbol the live fetch couldn't price.
-    for sym in symbols:
-        if prices.get(sym):
-            continue
-        try:
-            snap = latest_snapshot(sym)
-            prices[sym] = float(snap["price"]) if snap and snap.get("price") else None
-        except Exception:
-            prices[sym] = None
-
-    return prices
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
     """Self-evolution Tier 1: generate guard_candidate items for notable losses.
 
-    Only processes 4h horizon rows. Direction-aware: long outcomes trigger on
-    return < -3%, short outcomes on return > +3%. Deduplicates within 7 days
+    Only processes complete 4h net outcomes below -3%. Deduplicates within 7 days
     per symbol+family to avoid flooding the knowledge base.
 
     Never raises — failures are logged and ignored so settle_due() is unaffected.
@@ -267,7 +392,7 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
     candidates = [
         r for r in settled_rows
         if r.get("horizon") == _GUARD_HORIZON
-        and r.get("forward_return_pct") is not None
+        and r.get("net_return_pct") is not None
         and r.get("scanner_family")
     ]
     if not candidates:
@@ -275,22 +400,31 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
 
     generated = 0
     for row in candidates:
-        fwd = row["forward_return_pct"]
+        net = row["net_return_pct"]
         direction = row.get("direction") or "long"
+        raw_market_type = str(row.get("market_type") or "spot").lower()
+        market_type = (
+            "perp"
+            if raw_market_type in {"perp", "futures", "swap", "usdt_futures"}
+            else "spot"
+        )
         symbol = row["symbol"]
         family = row["scanner_family"]
 
         # Direction-aware loss check
-        is_loss = (
-            (direction == "short" and fwd > _LOSS_THRESHOLD_SHORT)
-            or (direction != "short" and fwd < _LOSS_THRESHOLD_LONG)
-        )
+        is_loss = net < _LOSS_THRESHOLD_NET
         if not is_loss:
             continue
 
         # Dedup: skip if a candidate for this symbol+family exists within 7 days
         try:
-            if repo.guard_candidate_exists_recent(symbol, family, _DEDUP_WINDOW_DAYS):
+            if repo.guard_candidate_exists_recent(
+                symbol,
+                family,
+                _DEDUP_WINDOW_DAYS,
+                direction=direction,
+                market_type=market_type,
+            ):
                 logger.debug(
                     "evolution:tier1 skipped dedup symbol=%s family=%s", symbol, family
                 )
@@ -299,8 +433,8 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
             logger.warning("evolution:tier1 dedup check failed: %s", e)
             continue
 
-        title = f"Auto guard candidate: {symbol} {family} 4h loss"
-        content = _build_guard_candidate_content(row, fwd, direction)
+        title = f"Auto guard candidate: {symbol} {family} {direction} {market_type} 4h net loss"
+        content = _build_guard_candidate_content(row, net, direction)
 
         # Stable guard_id per (family, direction, symbol) loss pattern so the
         # promoter (run_promotion_check) can match + promote/move it, and so the
@@ -308,7 +442,7 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
         # status="candidate") filters it out). Without these the candidate was
         # invisible to the promotion chain — L-Bug-D/B3.
         guard_id = (
-            f"auto_{family}_{direction}_{symbol}"
+            f"auto_{family}_{direction}_{market_type}_{symbol}"
             .replace("/", "").replace(":", "").replace(" ", "_").lower()
         )
         try:
@@ -323,6 +457,7 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
                         "symbol": [symbol],
                         "scanner_family": [family],
                         "direction": [direction],
+                        "market_type": [market_type],
                     },
                     # predicates must be non-empty for the matcher to fire
                     # (_predicates_match returns False on []), so keep the family predicate.
@@ -331,8 +466,10 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
                     "symbol": symbol,
                     "scanner_family": family,
                     "horizon": _GUARD_HORIZON,
-                    "forward_return_pct": fwd,
+                    "forward_return_pct": row.get("forward_return_pct"),
+                    "net_return_pct": net,
                     "direction": direction,
+                    "market_type": market_type,
                     "entry_ts": row.get("entry_ts", ""),
                     "auto_generated": True,
                     "tier": 1,
@@ -342,7 +479,7 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
             generated += 1
             logger.info(
                 "evolution:tier1 guard_candidate created symbol=%s family=%s return=%.2f%%",
-                symbol, family, fwd,
+                symbol, family, net,
             )
         except Exception as e:
             logger.warning(
@@ -353,37 +490,40 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
         logger.info("evolution:tier1 generated %d guard candidate(s)", generated)
 
 
-def _build_guard_candidate_content(row: dict, fwd: float, direction: str) -> str:
+def _build_guard_candidate_content(row: dict, net: float, direction: str) -> str:
     symbol = row["symbol"]
     family = row["scanner_family"]
     entry_price = row.get("entry_price_usd", "?")
     entry_ts = row.get("entry_ts", "?")
     outcome_id = row.get("id", "?")
     snapshot_id = row.get("snapshot_id", "?")
+    market_type = row.get("market_type", "spot")
 
-    threshold = _LOSS_THRESHOLD_SHORT if direction == "short" else _LOSS_THRESHOLD_LONG
-    direction_label = "short（上涨为亏损）" if direction == "short" else "long（下跌为亏损）"
+    gross = row.get("directional_return_pct")
+    direction_label = "short" if direction == "short" else "long"
 
     return f"""## 观察
 
 scanner_family=`{family}` 选出 `{symbol}`，方向 {direction_label}，
-4h 实际收益 **{fwd:+.2f}%**（触发阈值：{threshold:+.1f}%）。
+4h 成本后估算净收益 **{net:+.2f}%**（触发阈值：{_LOSS_THRESHOLD_NET:+.1f}%）。
 
 ## 信号上下文
 
 - symbol: {symbol}
 - scanner_family: {family}
 - direction: {direction}
+- market_type: {market_type}
 - entry_price_usd: {entry_price}
 - entry_ts: {entry_ts}
 - horizon: 4h
-- forward_return_pct: {fwd:+.2f}%
+- directional_return_pct: {gross if gross is not None else "unknown"}%
+- net_return_pct: {net:+.2f}%
 - outcome_id: {outcome_id}
 - snapshot_id: {snapshot_id}
 
 ## 候选规则（待人工确认）
 
-当 `{family}` scanner 选出 {direction} 信号，且 4h 实际收益为 {fwd:+.2f}%，
+当 `{family}` scanner 选出 {direction} 信号，且 4h 成本后净收益为 {net:+.2f}%，
 说明本次入场的时机或信号强度判断存在问题。
 
 建议：

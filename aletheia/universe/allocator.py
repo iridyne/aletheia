@@ -37,11 +37,16 @@ _FAMILY_TTL = {
 }
 
 
-def get_family_multipliers(max_step: float = 0.40) -> dict[str, float]:
-    """Compute opportunity-score multipliers from forward outcome data.
+def _calibration_key(family: str, direction: str | None, market_type: str | None) -> str:
+    return f"{family}:{direction or 'unknown'}:{market_type or 'spot'}"
 
-    Returns {family: multiplier} where multiplier is in [1-max_step, 1+max_step].
-    Families with insufficient data get 1.0 (neutral).
+
+def get_family_multipliers(max_step: float = 0.40) -> dict[str, float]:
+    """Compute stratified opportunity-score multipliers from net outcomes.
+
+    Returns {family:direction:market_type: multiplier}. Legacy test/adaptor rows
+    without direction/market_type retain a family-only compatibility key, but
+    production rows are never folded across economically opposite cohorts.
 
     Each family is calibrated on its natural horizon (momentum → 4h,
     derivatives/mean_reversion/volatility → 1h).
@@ -68,25 +73,14 @@ def get_family_multipliers(max_step: float = 0.40) -> dict[str, float]:
         # Linear map: 0.5 → 1.0, 0.65+ → 1+max_step, 0.35- → 1-max_step
         adjustment = (hit_rate - 0.5) * (max_step / 0.15)
         adjustment = max(-max_step, min(max_step, adjustment))
-        multipliers[family] = 1.0 + adjustment
-
-    # Blend in real PnL signal from family_scorecard (trades actually closed)
-    try:
-        from aletheia.analytics.family_scorecard import compute_family_scorecard
-        for card in compute_family_scorecard():
-            family = card.get("family") or card.get("scanner_family")
-            if not family or card.get("trade_count", 0) < _MIN_CALIBRATION_SAMPLES:
-                continue
-            real_wr = card.get("win_rate", 0.5)
-            real_adj = (real_wr - 0.5) * (max_step / 0.15)
-            real_adj = max(-max_step, min(max_step, real_adj))
-            real_mult = 1.0 + real_adj
-            if family in multipliers:
-                multipliers[family] = 0.6 * real_mult + 0.4 * multipliers[family]
-            else:
-                multipliers[family] = real_mult
-    except Exception:
-        pass
+        direction = row.get("direction")
+        market_type = row.get("market_type")
+        key = (
+            _calibration_key(family, direction, market_type)
+            if direction or market_type
+            else family
+        )
+        multipliers[key] = 1.0 + adjustment
 
     return multipliers
 
@@ -139,7 +133,12 @@ def compute_total_score(
     opportunity = scanner_result.get("opportunity_score", 0)
     family = scanner_result.get("scanner_family", "momentum")
     if calibration:
-        opportunity *= calibration.get(family, 1.0)
+        exact_key = _calibration_key(
+            family,
+            scanner_result.get("scanner_direction") or scanner_result.get("direction"),
+            feat.get("market_type", "spot"),
+        )
+        opportunity *= calibration.get(exact_key, calibration.get(family, 1.0))
     # Operator-adjustable per-family weight. The PI Operator writes
     # cfg.scanner_weights via _action_adjust_scanner_weight (OL-C09) and the UI
     # shows it, but scoring never consumed it — the manual bias was inert. Empty

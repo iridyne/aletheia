@@ -15,6 +15,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from aletheia.analytics.outcome_semantics import (
+    MISSED_ALPHA,
+    POSITIVE_GROSS_ONLY,
+    PROTECTIVE,
+    classify_outcome_row,
+    outcome_values,
+)
 from aletheia.config.loader import get_data_dir
 from aletheia.knowledge.frontmatter import parse_frontmatter
 from aletheia.knowledge.guards import TradingGuard, evaluate_guards, load_trading_guards
@@ -23,6 +30,7 @@ from aletheia.storage.sqlite import get_db
 _HORIZONS = ("1h", "4h", "24h")
 _VERDICT_PROTECTIVE = "protective"
 _VERDICT_SUSPECT = "overbroad_suspect"
+_VERDICT_GROSS_ONLY = POSITIVE_GROSS_ONLY
 _VERDICT_INSUFFICIENT = "insufficient_data"
 
 
@@ -184,6 +192,7 @@ def _guard_context(opp: dict[str, Any], member: dict[str, Any] | None, direction
         "asset_class": opp.get("asset_class") or "crypto",
         "direction": direction,
         "scanner_family": opp.get("scanner_family"),
+        "market_type": opp.get("market") or (member or {}).get("market_type") or "spot",
         "confidence": opp.get("confidence"),
         "confidence_score": confidence_score,
         "confidence_bucket": _confidence_bucket(confidence_score),
@@ -240,7 +249,7 @@ def _outcomes_for_candidate(db, opp: dict[str, Any], direction: str) -> dict[str
     if member_id and _table_exists(db, "universe_forward_outcomes"):
         for horizon in _HORIZONS:
             row = db.execute(
-                "SELECT forward_return_pct, settled_at, status FROM universe_forward_outcomes "
+                "SELECT * FROM universe_forward_outcomes "
                 "WHERE member_id = ? AND horizon = ? AND status = 'settled' "
                 "AND forward_return_pct IS NOT NULL "
                 "ORDER BY datetime(settled_at) DESC LIMIT 1",
@@ -249,10 +258,15 @@ def _outcomes_for_candidate(db, opp: dict[str, Any], direction: str) -> dict[str
             if not row:
                 continue
             d = dict(row)
-            raw = _to_float(d.get("forward_return_pct"))
+            values = outcome_values(d, direction)
             outcomes["forward"][horizon] = {
-                "forward_return_pct": _round(raw),
-                "direction_adjusted_return_pct": _round(_direction_adjusted(raw, direction)),
+                "forward_return_pct": _round(values["gross_return_pct"]),
+                "gross_return_pct": _round(values["gross_return_pct"]),
+                "direction_adjusted_return_pct": _round(values["directional_return_pct"]),
+                "directional_return_pct": _round(values["directional_return_pct"]),
+                "net_return_pct": _round(values["net_return_pct"]),
+                "min_tradable_edge_pct": _round(values["min_tradable_edge_pct"]),
+                "verdict": classify_outcome_row(d, direction),
                 "settled_at": d.get("settled_at"),
                 "status": d.get("status"),
             }
@@ -260,19 +274,15 @@ def _outcomes_for_candidate(db, opp: dict[str, Any], direction: str) -> dict[str
 
 
 def _candidate_verdict(outcomes: dict[str, Any]) -> str:
-    values: list[float] = []
     shadow = outcomes.get("shadow")
-    if shadow and shadow.get("pnl_pct") is not None:
-        values.append(float(shadow["pnl_pct"]))
-    for item in (outcomes.get("forward") or {}).values():
-        val = item.get("direction_adjusted_return_pct")
-        if val is not None:
-            values.append(float(val))
-    if not values:
-        return _VERDICT_INSUFFICIENT
-    if any(v > 0 for v in values):
+    verdicts = [item.get("verdict") for item in (outcomes.get("forward") or {}).values()]
+    if MISSED_ALPHA in verdicts:
         return _VERDICT_SUSPECT
-    if all(v <= 0 for v in values):
+    if _VERDICT_GROSS_ONLY in verdicts or (
+        shadow and shadow.get("pnl_pct") is not None and float(shadow["pnl_pct"]) > 0
+    ):
+        return _VERDICT_GROSS_ONLY
+    if PROTECTIVE in verdicts:
         return _VERDICT_PROTECTIVE
     return _VERDICT_INSUFFICIENT
 
@@ -283,6 +293,8 @@ def _overall_verdict(blocked: list[dict[str, Any]], guards: list[TradingGuard]) 
     verdicts = [r.get("verdict") for r in blocked]
     if _VERDICT_SUSPECT in verdicts:
         return _VERDICT_SUSPECT
+    if _VERDICT_GROSS_ONLY in verdicts:
+        return _VERDICT_GROSS_ONLY
     if _VERDICT_PROTECTIVE in verdicts:
         return _VERDICT_PROTECTIVE
     return _VERDICT_INSUFFICIENT
@@ -345,6 +357,8 @@ def _guard_values(guard: TradingGuard, field: str) -> list[Any]:
         return list(at.scanner_family or [])
     if field == "direction":
         return list(at.direction or [])
+    if field == "market_type":
+        return list(at.market_type or [])
     if field == "symbol":
         return list(at.symbol or [])
     return []
@@ -408,12 +422,6 @@ def _is_past(raw: Any) -> bool:
         return ts < datetime.now(timezone.utc)
     except (TypeError, ValueError):
         return False
-
-
-def _direction_adjusted(value: float | None, direction: str) -> float | None:
-    if value is None:
-        return None
-    return -value if direction == "short" else value
 
 
 def _confidence_bucket(score: float | None) -> str | None:

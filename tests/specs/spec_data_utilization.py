@@ -527,15 +527,22 @@ def _seed_forward_outcome(conn, family, direction, forward_return, horizon="24h"
     import uuid
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
+    directional = (
+        forward_return if direction == "long"
+        else -forward_return if direction == "short"
+        else None
+    )
+    net = directional - 0.2 if directional is not None else None
     conn.execute(
         "INSERT INTO universe_forward_outcomes "
         "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
         " entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
-        " forward_return_pct, status) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " forward_return_pct, gross_return_pct, directional_return_pct, net_return_pct, "
+        " min_tradable_edge_pct, market_type, cost_model_version, status) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), "X/USDT",
          family, direction, horizon, 100.0, now, now, now, 101.0,
-         forward_return, "settled"),
+         forward_return, forward_return, directional, net, 0.05, "spot", "v1", "settled"),
     )
     conn.commit()
 
@@ -543,9 +550,9 @@ def _seed_forward_outcome(conn, family, direction, forward_return, horizon="24h"
 @spec_claim(
     SpecClaim(
         "DU-S10", _CONTRACT, "§thesis evidence aggregation", "L2b",
-        "repositories.family_direction_edge groups settled forward outcomes by "
-        "(scanner_family, direction) with a direction-aware win_rate — momentum:long "
-        "and momentum:short are SEPARATE theses, not folded together.",
+        "repositories.family_direction_edge groups settled net outcomes by "
+        "(scanner_family, direction, market_type) — momentum:long:spot and "
+        "momentum:short:perp are separate theses, not folded together.",
     ),
 )
 def test_family_direction_edge_groups_by_direction(tmp_path, monkeypatch):
@@ -563,12 +570,12 @@ def test_family_direction_edge_groups_by_direction(tmp_path, monkeypatch):
     _seed_forward_outcome(conn, "momentum", None, 9.0)
 
     rows = family_direction_edge(horizon="24h", within_days=7)
-    by_key = {(r["scanner_family"], r["direction"]): r for r in rows}
+    by_key = {(r["scanner_family"], r["direction"], r["market_type"]): r for r in rows}
 
-    assert ("momentum", "long") in by_key, "momentum:long thesis missing"
-    assert ("momentum", "short") in by_key, "momentum:short thesis missing — direction was folded"
-    long_edge = by_key[("momentum", "long")]
-    short_edge = by_key[("momentum", "short")]
+    assert ("momentum", "long", "spot") in by_key, "momentum:long:spot thesis missing"
+    assert ("momentum", "short", "spot") in by_key, "momentum:short:spot thesis missing"
+    long_edge = by_key[("momentum", "long", "spot")]
+    short_edge = by_key[("momentum", "short", "spot")]
     assert long_edge["n"] == 3 and abs(long_edge["win_rate"] - 66.7) < 0.5, (
         f"momentum:long win_rate wrong: {long_edge}"
     )

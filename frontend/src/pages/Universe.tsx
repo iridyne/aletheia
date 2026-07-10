@@ -212,36 +212,37 @@ export default function Universe() {
       {(() => {
         const horizons = ['15m', '1h', '4h', '24h']
         const calMap: Record<string, Record<string, { n: number; wr: number }>> = {}
-        for (const row of calibration?.by_family_horizon ?? []) {
+        for (const row of calibration?.by_cohort_horizon ?? []) {
           const fam = row.scanner_family ?? 'unknown'
-          if (!calMap[fam]) calMap[fam] = {}
+          const cohort = `${fam} · ${row.direction} · ${row.market_type}`
+          if (!calMap[cohort]) calMap[cohort] = {}
           if (row.n >= 10) {
-            calMap[fam][row.horizon] = { n: row.n, wr: row.win_count / row.n * 100 }
+            calMap[cohort][row.horizon] = { n: row.n, wr: row.win_count / row.n * 100 }
           }
         }
         const calFamilies = Object.keys(calMap)
         if (!calFamilies.length) return null
         return (
           <Card className="mb-3">
-            <div className="metric-label mb-2">Scanner Calibration <span className="text-muted">(win rate, n≥10)</span></div>
+            <div className="metric-label mb-2">Net Scanner Calibration <span className="text-muted">(after estimated costs, n≥10)</span></div>
             <div className="cal-scroll">
               <table className="cal-table">
                 <thead>
                   <tr>
-                    <th className="cal-th cal-th-left">Family</th>
+                    <th className="cal-th cal-th-left">Family · Side · Market</th>
                     {horizons.map(h => (
                       <th key={h} className="cal-th cal-th-center">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {calFamilies.sort().map(fam => (
-                    <tr key={fam}>
+                  {calFamilies.sort().map(cohort => (
+                    <tr key={cohort}>
                       <td className="cal-td">
-                        <span className={familyClass(fam)}>{humanize(fam)}</span>
+                        <span className={familyClass(cohort.split(' · ')[0])}>{humanize(cohort)}</span>
                       </td>
                       {horizons.map(h => {
-                        const cell = calMap[fam]?.[h]
+                        const cell = calMap[cohort]?.[h]
                         if (!cell) return <td key={h} className="cal-td cal-td-center cal-td-muted">—</td>
                         const tone = cell.wr >= 52 ? 'pnl-positive' : cell.wr <= 48 ? 'pnl-negative' : ''
                         return (

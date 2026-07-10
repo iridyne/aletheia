@@ -2284,13 +2284,15 @@ def _probe_signal_effectiveness(report: Report) -> None:
         # 24h horizon — most meaningful for strategy effectiveness
         row = db.execute(
             """SELECT COUNT(*),
-                      SUM(CASE WHEN forward_return_pct > 0 THEN 1 ELSE 0 END),
-                      AVG(forward_return_pct)
+                      SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0)
+                               THEN 1 ELSE 0 END),
+                      AVG(net_return_pct)
                FROM universe_forward_outcomes
                WHERE status = 'settled'
                  AND horizon = '24h'
                  AND settled_at >= ?
-                 AND ABS(forward_return_pct) <= 100""",
+                 AND net_return_pct IS NOT NULL
+                 AND ABS(net_return_pct) <= 100""",
             (cutoff,),
         ).fetchone()
 
@@ -2298,7 +2300,7 @@ def _probe_signal_effectiveness(report: Report) -> None:
 
         if not total:
             report.add("data.signal", "info",
-                       "insufficient settled outcomes in last 7d — signal effectiveness unknown")
+                       "insufficient cost-aware net outcomes in last 7d — signal effectiveness unknown")
             return
 
         win_rate = (wins or 0) / total * 100
@@ -2307,16 +2309,64 @@ def _probe_signal_effectiveness(report: Report) -> None:
         if win_rate < 40:
             report.add(
                 "data.signal", "warn",
-                f"24h signal win_rate {win_rate:.1f}% ({total} settled, avg={avg_str}) — "
+                f"24h net signal win_rate {win_rate:.1f}% ({total} settled, avg_net={avg_str}) — "
                 "universe selection may be degraded",
                 "review scanner weights; consider updating Optuna strategy params",
             )
         elif win_rate >= 55:
             report.add("data.signal", "ok",
-                       f"24h signal win_rate {win_rate:.1f}% ({total} settled, avg={avg_str})")
+                       f"24h net signal win_rate {win_rate:.1f}% ({total} settled, avg_net={avg_str})")
         else:
             report.add("data.signal", "info",
-                       f"24h signal win_rate {win_rate:.1f}% ({total} settled, avg={avg_str}) — near-random")
+                       f"24h net signal win_rate {win_rate:.1f}% ({total} settled, avg_net={avg_str}) — near-random")
+    except Exception:
+        pass
+
+
+def _probe_outcome_economics(report: Report) -> None:
+    """Expose whether post-migration outcomes have complete net economics."""
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        db = get_db()
+        row = db.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN net_return_pct IS NOT NULL THEN 1 ELSE 0 END) AS complete, "
+            "SUM(CASE WHEN net_return_pct IS NULL "
+            "  AND market_type IN ('perp','futures','swap','usdt_futures') "
+            "  AND funding_rate_at_entry IS NULL THEN 1 ELSE 0 END) AS missing_funding, "
+            "SUM(CASE WHEN net_return_pct IS NULL "
+            "  AND settlement_price_source = 'late_ticker' THEN 1 ELSE 0 END) AS late_price "
+            "FROM universe_forward_outcomes "
+            "WHERE status='settled' AND cost_model_version='v1'"
+        ).fetchone()
+        total = int(row["total"] or 0) if row else 0
+        complete = int(row["complete"] or 0) if row else 0
+        missing_funding = int(row["missing_funding"] or 0) if row else 0
+        late_price = int(row["late_price"] or 0) if row else 0
+        if total == 0:
+            report.add(
+                "data.outcome_economics",
+                "info",
+                "cost-aware outcome model is warming up; no settled v1 rows yet",
+            )
+            return
+        ratio = complete / total
+        detail = (
+            f"cost-aware outcomes complete={complete}/{total} ({ratio:.0%}); "
+            f"missing_funding={missing_funding}, late_price={late_price}"
+        )
+        if total >= 10 and ratio < 0.5:
+            report.add(
+                "data.outcome_economics",
+                "warn",
+                detail,
+                "inspect derivative funding coverage and outcome settlement lag",
+            )
+        elif complete == total:
+            report.add("data.outcome_economics", "ok", detail)
+        else:
+            report.add("data.outcome_economics", "info", detail)
     except Exception:
         pass
 
@@ -2491,6 +2541,7 @@ def build_report() -> Report:
         _probe_volume_ranking,
         _probe_data_quality,
         _probe_ohlcv_coverage,
+        _probe_outcome_economics,
         _probe_signal_effectiveness,
         _probe_trading_loop,
         _probe_profit_loop,

@@ -522,6 +522,7 @@ def _evaluate_guards_safe(
             "asset_class": "crypto",
             "direction": direction,
             "scanner_family": opp.get("scanner_family"),
+            "market_type": opp.get("market") or opp.get("market_type") or "spot",
             "confidence": confidence,
             "confidence_score": opp.get("confidence_score"),
             "confidence_bucket": confidence,

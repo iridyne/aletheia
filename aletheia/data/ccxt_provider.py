@@ -195,7 +195,7 @@ class CCXTProvider:
                     )
                     for row in raw
                 ]
-                self._persist(canon, timeframe, candles, name)
+                self._persist(canon, timeframe, candles, name, market_type=mkt)
                 if since is None and candles:
                     cache.set(canon, timeframe, limit, candles, market_type=mkt)
                 return candles
@@ -205,9 +205,21 @@ class CCXTProvider:
         raise last_err if last_err else RuntimeError("ohlcv fetch failed")
 
     @staticmethod
-    def _persist(canon: str, timeframe: str, candles: list[Candle], exchange: str) -> None:
+    def _persist(
+        canon: str,
+        timeframe: str,
+        candles: list[Candle],
+        exchange: str,
+        market_type: str = "spot",
+    ) -> None:
         """Best-effort persist to market_ohlcv; never raise into the fetch path."""
         if not candles:
+            return
+        # The legacy market_ohlcv primary key omits market_type. Persisting a
+        # derivative bar would overwrite the same symbol's spot bar. The caller
+        # still receives exact derivative candles; skip only the ambiguous cache
+        # write until the storage table has full instrument identity.
+        if market_type != "spot":
             return
         try:
             from aletheia.storage.repositories import upsert_ohlcv_candles

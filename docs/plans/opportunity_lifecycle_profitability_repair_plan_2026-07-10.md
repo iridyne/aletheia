@@ -6,8 +6,8 @@
 
 ## 当前进度（2026-07-10）
 
-- **已完成**：阶段 A、阶段 B、阶段 C 的因果 cohort/风险原因聚类、对应 doctor 覆盖诊断。
-- **待实施**：阶段 D 至 G。阶段 E/F 会改变交易选择或仓位，只能在 D 的净收益结果层和 filter 决策记录完成后分项实验。
+- **已完成**：阶段 A、阶段 B、阶段 C；阶段 D 的 market-aware gross/net 结果层、目标 horizon 取价、成本/MFE/MAE、净收益消费者迁移已实现。
+- **待实施**：阶段 E 至 G。阶段 E/F 会改变交易选择或仓位，只能在 filter 决策记录和拒绝候选对照完成后分项实验。
 - **明确不做**：因当前 7 天样本表现差就直接放宽过滤、删除方向刹车或增大仓位；现有统计还不足以证明这些改动会增加净利润。
 
 ## 阶段 A：恢复真实候选供给
@@ -69,6 +69,8 @@
 - 保存 MFE/MAE 或至少用周期内高低价近似，区分“方向对但入场/退出差”。
 - `missed_alpha_suspect` 只有 net return 超过最小可交易优势时成立；否则显示 `positive_gross_move_only`。
 - 数据表变更同步 `data_model.md`、`api_reference.md` 和对应可执行规则。
+
+实施说明：权威公式见 `docs/design/opportunity_outcome_contract.md`。历史 gross-only 行不回填净收益；永续缺入场 funding、方向未知或价格时点不可信时 net 保持 NULL。`missed_alpha_suspect` 只由高于安全余量的 net 结果触发，毛方向正确单独标为 `positive_gross_move_only`。
 
 ## 阶段 E：负反馈重构
 

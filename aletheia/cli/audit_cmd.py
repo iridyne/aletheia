@@ -68,13 +68,15 @@ def data(
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     row = db.execute(
         """SELECT COUNT(*),
-                  SUM(CASE WHEN forward_return_pct > 0 THEN 1 ELSE 0 END),
-                  AVG(forward_return_pct)
+                  SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0)
+                           THEN 1 ELSE 0 END),
+                  AVG(net_return_pct)
            FROM universe_forward_outcomes
            WHERE status = 'settled'
              AND horizon = '24h'
              AND settled_at >= ?
-             AND ABS(forward_return_pct) <= 100""",
+             AND net_return_pct IS NOT NULL
+             AND ABS(net_return_pct) <= 100""",
         (cutoff,),
     ).fetchone()
     total_outcomes, wins, avg_ret = row if row else (0, None, None)
@@ -89,7 +91,7 @@ def data(
             "horizon": "24h",
             "settled_outcomes": total_outcomes,
             "win_rate_pct": win_rate,
-            "avg_return_pct": round(avg_ret, 4) if avg_ret is not None else None,
+            "avg_net_return_pct": round(avg_ret, 4) if avg_ret is not None else None,
         },
     }
 

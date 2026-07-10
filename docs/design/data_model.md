@@ -120,7 +120,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `universe_scanner_runs` | Scanner execution log | scanner_name, symbols_scanned, signals_emitted |
 | `universe_snapshots` | Universe composition snapshots | snapshot_id, created_at |
 | `universe_members` | Assets in a universe snapshot | snapshot_id, symbol, rank, score |
-| `universe_forward_outcomes` | Post-scan price performance | opportunity_id, pnl_15m, pnl_1h, pnl_4h, pnl_24h |
+| `universe_forward_outcomes` | Fixed-horizon Opportunity economics | venue, symbol, market_type, direction, horizon, gross_return_pct, directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, min_tradable_edge_pct, mfe_pct, mae_pct, settlement_price_source, cost_model_version |
 | `universe_policies` | Universe selection rules | policy_name, filters (JSON), priority |
 
 ### H. Serenity Pipeline (14 tables)

@@ -431,6 +431,7 @@ def test_data_health_signal_win_rate_excludes_unknown_direction(tmp_path, monkey
     now = datetime.now(timezone.utc).isoformat()
 
     def _outcome(symbol: str, direction: str | None, ret: float) -> UniverseForwardOutcome:
+        directional = ret if direction == "long" else -ret if direction == "short" else None
         return UniverseForwardOutcome(
             member_id=f"m_{symbol}_{direction}_{ret}",
             snapshot_id="snap_data_health",
@@ -444,6 +445,12 @@ def test_data_health_signal_win_rate_excludes_unknown_direction(tmp_path, monkey
             settled_at=now,
             exit_price_usd=100.0 * (1 + ret / 100.0),
             forward_return_pct=ret,
+            gross_return_pct=ret,
+            directional_return_pct=directional,
+            net_return_pct=(directional - 0.2) if directional is not None else None,
+            min_tradable_edge_pct=0.05,
+            cost_model_version="v1",
+            market_type="spot",
             status="settled",
         )
 

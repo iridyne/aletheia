@@ -281,6 +281,7 @@ class UniverseService:
                     "id": member.id,
                     "snapshot_id": snap.id,
                     "symbol": item["symbol"],
+                    "venue": item.get("venue") or cfg.market_data.ccxt_exchange,
                     # Carry market_type so signal_emitter labels perp opportunities
                     # correctly. Without this key every emitted opportunity fell back
                     # to "spot" (signal_emitter:70), mislabeling perp/derivatives.
@@ -297,6 +298,8 @@ class UniverseService:
                     "direction": item.get("scanner_direction")
                     or _infer_direction(item.get("scanner_family"), item),
                     "entry_price_usd": entry_price,
+                    "spread_bps": item.get("spread_bps"),
+                    "funding_rate": item.get("funding_rate"),
                     "total_score": item["total_score"],
                     "expires_at": member_expires,
                 })

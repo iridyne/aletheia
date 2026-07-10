@@ -25,7 +25,12 @@
 跳7 风控    risk/engine.py:evaluate_proposal —— 唯一硬门(20关,见 risk_engine_contract)
 跳8 执行    gateway → broker → Order → Fill → Position
 跳9 复盘    平仓后 post_trade_reviewer → knowledge_items(post_trade_review) → 晋级门 + 学习闭环
+旁路结果    universe member → 固定 horizon 的目标 instrument OHLCV → gross/directional/cost/net/MFE/MAE
+            → 只把完整 net 结果送入 scanner 校准、family edge、missed-alpha 与 guard candidate
 ```
+
+> 固定持有期反事实结果遵循 `docs/design/opportunity_outcome_contract.md`。历史 gross-only 行、
+> 永续缺 funding、方向未知或过晚 ticker 只能用于解释，不得进入自动学习。
 
 > **两个控制环**(理解模型,见上游报告 §2):跳1–8 是**交易决策环**(OODA,分钟级);
 > 系统监管环(MAPE-K,小时级,见 `operator_layer.md` + `PI_OPERATOR_DESIGN_DECISIONS.md`)与本脊柱

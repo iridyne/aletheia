@@ -5,8 +5,8 @@ negative-feedback verdict. Aggregate scanner-family outcomes are useful context,
 but cannot prove that any individual filter is too tight or too loose, so they
 must never become loosen/tighten advice on their own.
 
-The existing allocator multiplier remains the legitimate family-level feedback
-loop. This controller remains a shadow audit until each filter persists its own
+The allocator multiplier now uses cost-aware family+direction+market cohorts.
+This controller remains a shadow audit until each filter persists its own
 passed and dropped cohorts with causal IDs.
 
 OBSERVE-ONLY invariant: this module reads the DB and writes append-only rows to
@@ -84,11 +84,11 @@ def _verdict_from_hitrate(
     n: int,
     min_samples: int,
 ) -> tuple[Verdict, float | None]:
-    """Map a family's direction-adjusted hit_rate to a verdict + signed error.
+    """Map a cohort's cost-aware hit_rate to a verdict + signed error.
 
-    hit_rate is the fraction of settled outcomes where the family's directional
-    call was correct (long wins on +return, short on -return) — the same win
-    metric calibration_stats/family_direction_edge already compute.
+    hit_rate is the fraction of settled outcomes whose net return clears the
+    minimum tradable edge. The controller is currently observe-only because it
+    does not yet persist filter-specific passed and dropped cohorts.
 
     error = (hit_rate - 0.5) * 2  → range [-1, 1]. A high hit_rate on opportunities
     this filter DROPPED means the filter is discarding good setups → LOOSEN.
@@ -119,20 +119,22 @@ def _reason(spec: FilterSpec, family: str, verdict: Verdict,
                 f"(< gate); no recommendation.")
     wr = f"{hit_rate*100:.1f}%" if hit_rate is not None else "n/a"
     if verdict == "loosen":
-        return (f"{family}: direction-adjusted {horizon} hit-rate {wr} on n={n} "
+        return (f"{family}: cost-aware {horizon} hit-rate {wr} on n={n} "
                 f"outcomes — this family's setups are working; '{spec.name}' looks "
                 f"too tight (move {spec.loosen_direction} to loosen).")
     if verdict == "tighten":
-        return (f"{family}: direction-adjusted {horizon} hit-rate {wr} on n={n} "
+        return (f"{family}: cost-aware {horizon} hit-rate {wr} on n={n} "
                 f"outcomes — setups underperforming; '{spec.name}' looks too loose.")
     return (f"{family}: hit-rate {wr} on n={n} outcomes — within balanced band, hold.")
 
 
 def _family_hitrates(min_samples: int) -> dict[str, dict[str, Any]]:
-    """Per-family direction-adjusted hit-rate at the family's calibration horizon.
+    """Legacy family projection of cost-aware cohort hit rates.
 
     Reuses repositories.calibration_stats() (all settled universe_forward_outcomes,
-    grouped by family+horizon, direction-aware win). Returns
+    grouped by family+direction+market+horizon). This projection must not drive a
+    recommendation while more than one cohort exists for a family; all current
+    filter definitions are therefore feedback_ready=False. Returns
     {family: {"hit_rate": float|None, "n": int, "horizon": str}}.
     Read-only; returns {} on any error so the controller degrades to
     insufficient_data rather than raising.
@@ -161,9 +163,9 @@ def _family_hitrates(min_samples: int) -> dict[str, dict[str, Any]]:
 def compute_filter_feedback(min_samples: int = _DEFAULT_MIN_SAMPLES) -> list[FilterRecommendation]:
     """Compute shadow recommendations for every tunable, family-keyed filter.
 
-    Phase-1 signal source: per-family direction-adjusted forward-return hit-rate
-    (calibration_stats). This is deliberately the SAME signal the production
-    score-multiplier loop uses, so verdicts are consistent with existing behavior.
+    Phase-1 context source: cost-aware outcome calibration. It cannot become a
+    filter verdict until the individual filter's passed and dropped cohorts are
+    persisted with causal IDs.
 
     Non-family-keyed filters (batch_limit, cooldown) and unobservable filters
     (observer_pre_filter) get a single 'insufficient_data' row noting why — they

@@ -273,7 +273,11 @@ def _build_layer1_snapshot() -> dict[str, Any]:
         try:
             from aletheia.storage.repositories import family_direction_edge
             for _e in family_direction_edge(horizon="24h", within_days=7):
-                _edge_map[(_e["scanner_family"], _e["direction"])] = {
+                _edge_map[(
+                    _e["scanner_family"],
+                    _e["direction"],
+                    _e.get("market_type") or "spot",
+                )] = {
                     "n": _e["n"], "win_rate": _e["win_rate"], "avg_return": _e["avg_return"],
                 }
         except Exception:
@@ -284,7 +288,13 @@ def _build_layer1_snapshot() -> dict[str, Any]:
             d = (o.get("direction_bias") or "long")
             if d not in ("long", "short"):
                 d = "long"
-            return _edge_map.get((fam, d))
+            raw_market = str(o.get("market") or "spot").lower()
+            market_type = (
+                "perp"
+                if raw_market in {"perp", "futures", "swap", "usdt_futures"}
+                else "spot"
+            )
+            return _edge_map.get((fam, d, market_type))
 
         layer["opportunities"] = [
             {
@@ -738,7 +748,10 @@ def _build_layer3_wisdom() -> dict[str, Any]:
                         parts: list[str] = []
                         if _meta:
                             if _meta.get("outcome"):
-                                parts.append(f"outcome={_meta['outcome']} return={_meta.get('forward_return_pct', '?')}%")
+                                parts.append(
+                                    f"outcome={_meta['outcome']} "
+                                    f"net={_meta.get('net_return_pct', '?')}%"
+                                )
                             if _meta.get("scanner_family"):
                                 parts.append(f"scanner={_meta['scanner_family']}")
                         if _body:
@@ -889,14 +902,12 @@ def _get_data_health_summary() -> dict[str, Any]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         row = db.execute(
             """SELECT COUNT(*),
-                      SUM(CASE
-                        WHEN direction = 'short' AND forward_return_pct < 0 THEN 1
-                        WHEN direction = 'long' AND forward_return_pct > 0 THEN 1
-                        ELSE 0
-                      END)
+                      SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0)
+                               THEN 1 ELSE 0 END)
                FROM universe_forward_outcomes
                WHERE status = 'settled' AND horizon = '24h'
-                 AND settled_at >= ? AND ABS(forward_return_pct) <= 100
+                 AND settled_at >= ? AND net_return_pct IS NOT NULL
+                 AND ABS(net_return_pct) <= 100
                  AND direction IN ('long', 'short')""",
             (cutoff,),
         ).fetchone()

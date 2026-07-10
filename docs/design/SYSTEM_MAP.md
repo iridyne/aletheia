@@ -15,7 +15,7 @@
 | `data_collectors` | 2min | orderbook_snapshots, funding_rates, oi_snapshots, liquidation_events, macro_snapshots, volume_profiles | market_observer(context_builder 部分消费) | ⚠️ liquidation_events 不进风控 |
 | `exchange_sync` | 5min | positions(sync), portfolio_snapshots(side-effect) | risk_engine(exposure), position_manager, UI | ✅ |
 | `portfolio_snapshot` | 10min | portfolio_snapshots | risk_engine(drawdown scale), UI, Telegram | ✅ |
-| `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes | paper_trader_ranker(universe_score), risk_engine(beta/correlation), guard_candidate generation | ✅ |
+| `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes（venue+market+gross/net+cost+MFE/MAE） | paper_trader_ranker（分 direction/market 的净结果校准）、System Operator family edge、risk live-evidence、doctor、guard candidate | ✅ |
 | `ohlcv_nightly_backfill` | cron(可配) | ohlcv_bars | (历史 OHLCV 存储;backtest 消费者随引擎删除 Position C) | ✅ |
 | `okx_demo_symbols` | 4h | (内存 set 缓存) | okx_broker(filter) | ✅ |
 

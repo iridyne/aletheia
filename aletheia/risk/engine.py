@@ -349,7 +349,11 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
         if prop_family is None:
             violations.append("family_not_live_eligible:unknown")
         else:
-            edge = _family_live_edge(prop_family, proposal.direction)
+            edge = _family_live_edge(
+                prop_family,
+                proposal.direction,
+                getattr(proposal, "market_type", "spot"),
+            )
             if edge is None:
                 violations.append(f"family_not_live_eligible:{prop_family}:no_evidence")
             elif (edge.get("n") or 0) < min_n:
@@ -784,17 +788,31 @@ def _resolve_proposal_family(proposal) -> str | None:
         return None
 
 
-def _family_live_edge(family: str, direction: str) -> dict | None:
-    """Clean-window (scanner_family, direction) edge from settled forward outcomes.
+def _family_live_edge(
+    family: str,
+    direction: str,
+    market_type: str = "spot",
+) -> dict | None:
+    """Matching family/direction/market edge from settled net outcomes.
 
     Returns the matching family_direction_edge row ({n, win_rate (0-100), ...}) or
     None when the family has no settled evidence in the 7d clean window / on error.
     Check #14 (live-eligibility) gates on this — see engine §14.
     """
+    normalized_market = (
+        "perp"
+        if str(market_type or "spot").lower()
+        in {"perp", "futures", "swap", "usdt_futures"}
+        else "spot"
+    )
     try:
         from aletheia.storage.repositories import family_direction_edge
         for row in family_direction_edge(within_days=7):
-            if row.get("scanner_family") == family and row.get("direction") == direction:
+            if (
+                row.get("scanner_family") == family
+                and row.get("direction") == direction
+                and (row.get("market_type") or "spot") == normalized_market
+            ):
                 return row
     except Exception:
         return None

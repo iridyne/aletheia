@@ -32,6 +32,7 @@ class GuardAppliesTo(BaseModel):
     scanner_family: list[str] | None = None
     symbol: list[str] | None = None
     direction: list[str] | None = None
+    market_type: list[str] | None = None
     confidence_bucket: list[str] | None = None
     late_entry_bucket: list[str] | None = None
 
@@ -73,6 +74,7 @@ ALLOWED_GUARD_FIELDS = {
     "asset_class",
     "direction",
     "scanner_family",
+    "market_type",
     "confidence",
     "confidence_score",
     "confidence_bucket",
@@ -114,12 +116,15 @@ def _applies_to_from_meta(meta: dict) -> dict:
         symbol = meta.get("symbol")
         fam = meta.get("scanner_family")
         direction = meta.get("direction")
+        market_type = meta.get("market_type")
         if symbol:
             applies_to["symbol"] = [symbol] if isinstance(symbol, str) else symbol
         if fam:
             applies_to["scanner_family"] = [fam] if isinstance(fam, str) else fam
         if direction:
             applies_to["direction"] = [direction] if isinstance(direction, str) else direction
+        if market_type:
+            applies_to["market_type"] = [market_type] if isinstance(market_type, str) else market_type
     return applies_to
 
 
@@ -256,6 +261,11 @@ def _applies_to_context(guard: TradingGuard, context: dict) -> bool:
         val = context.get("direction")
         if val is None or val not in at.direction:
             return False
+    if at.market_type:
+        val = _normalize_market_type(context.get("market_type"))
+        allowed = {_normalize_market_type(item) for item in at.market_type}
+        if val is None or val not in allowed:
+            return False
     if at.confidence_bucket:
         val = context.get("confidence_bucket")
         if val is None or val not in at.confidence_bucket:
@@ -265,6 +275,15 @@ def _applies_to_context(guard: TradingGuard, context: dict) -> bool:
         if val is None or val not in at.late_entry_bucket:
             return False
     return True
+
+
+def _normalize_market_type(value: Any) -> str | None:
+    raw = str(value or "").lower()
+    if not raw:
+        return None
+    if raw in {"perp", "futures", "swap", "usdt_futures"}:
+        return "perp"
+    return "spot" if raw == "spot" else raw
 
 
 def _predicates_match(predicates: list[GuardPredicate], context: dict) -> bool:

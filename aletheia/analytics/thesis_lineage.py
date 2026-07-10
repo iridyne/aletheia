@@ -16,6 +16,14 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
 
+from aletheia.analytics.outcome_semantics import (
+    MISSED_ALPHA,
+    POSITIVE_GROSS_ONLY,
+    PROTECTIVE,
+    classify_outcome_row,
+    outcome_values,
+)
+
 
 _MISS_THRESHOLD_PCT = 0.5
 _POOR_EXPRESSION_DELTA_PCT = 0.5
@@ -80,7 +88,11 @@ def build_thesis_lineage_audit(days: int = 7) -> dict:
     report["raw_table_completeness"] = _raw_table_completeness(db, window["cutoff"])
     report["by_scanner_family"] = _group_summary(records, "scanner_family")
     report["by_source"] = _group_summary(records, "root_type")
-    report["top_missed_alpha"] = _top(records, "missed_alpha", "shadow_pnl_pct", reverse=True)
+    report["top_missed_alpha"] = sorted(
+        [row for row in records if row.get("verdict") == "missed_alpha"],
+        key=lambda row: _first_number(row.get("forward_net_return_pct")) or float("-inf"),
+        reverse=True,
+    )[:10]
     report["top_failed_traded_thesis"] = _top(records, "failed", "actual_pnl_pct", reverse=False)
     report["top_poor_expression"] = _top(records, "poor_expression", "actual_pnl_pct", reverse=False)
     report["main_finding"] = _main_finding(report)
@@ -174,7 +186,7 @@ def render_thesis_lineage_audit(report: dict) -> str:
         )
     if not report.get("by_scanner_family"):
         lines.append("  n/a")
-    _append_top(lines, "Top missed alpha records", report.get("top_missed_alpha") or [], "shadow_pnl_pct")
+    _append_top(lines, "Top missed alpha records", report.get("top_missed_alpha") or [], "forward_net_return_pct")
     _append_top(lines, "Top failed traded thesis records", report.get("top_failed_traded_thesis") or [], "actual_pnl_pct")
     lines.extend([
         "",
@@ -420,6 +432,7 @@ def _record_from_root(root: dict, *, root_type: str, ctx: dict) -> dict:
     forward = ctx["forward_by_member"].get(root.get("universe_member_id"))
     parsed = _parse_agent_rationale(proposal.get("agent_rationale") if proposal else None)
 
+    direction = root.get("direction_bias") or root.get("direction")
     actual_pnl = _actual_pnl(position)
     notional = _notional(position, proposal, order, fill)
     actual_pnl_pct = _pnl_pct(actual_pnl, notional)
@@ -427,8 +440,17 @@ def _record_from_root(root: dict, *, root_type: str, ctx: dict) -> dict:
     batch_avg = ctx["shadow_batch_avg"].get(str(shadow.get("batch_id"))) if shadow and shadow.get("batch_id") else None
     risk_reward = _first_number(proposal.get("risk_reward") if proposal else None)
     was_traded = bool(position or (order and _is_filled_order(order)) or (proposal and (proposal.get("status") or "").lower() in {"executed", "filled"}))
-    verdict = _verdict(was_traded, actual_pnl, actual_pnl_pct, risk_reward, shadow_pnl, batch_avg)
-    direction = root.get("direction_bias") or root.get("direction")
+    forward_verdict = classify_outcome_row(forward, direction) if forward else "insufficient_data"
+    verdict = _verdict(
+        was_traded,
+        actual_pnl,
+        actual_pnl_pct,
+        risk_reward,
+        shadow_pnl,
+        batch_avg,
+        forward_verdict,
+    )
+    forward_values = outcome_values(forward or {}, direction)
 
     return {
         "lineage_id": f"{root_type}:{root_id}",
@@ -477,7 +499,9 @@ def _record_from_root(root: dict, *, root_type: str, ctx: dict) -> dict:
         "parse_warning": parsed.get("parse_warning"),
         "human_thesis": parsed.get("human_thesis"),
         "decision_meta": parsed.get("decision_meta"),
-        "forward_return_pct": _direction_adjusted_forward(forward, direction),
+        "forward_return_pct": _round(forward_values["directional_return_pct"]),
+        "forward_net_return_pct": _round(forward_values["net_return_pct"]),
+        "forward_min_tradable_edge_pct": _round(forward_values["min_tradable_edge_pct"]),
         "serenity": _serenity_fields(root) if root_type == "serenity" else None,
     }
 
@@ -539,6 +563,7 @@ def _verdict(
     risk_reward: float | None,
     shadow_pnl: float | None,
     batch_avg: float | None,
+    forward_verdict: str,
 ) -> str:
     if was_traded:
         if actual_pnl_pct is not None and batch_avg is not None and actual_pnl_pct < batch_avg - _POOR_EXPRESSION_DELTA_PCT:
@@ -551,8 +576,14 @@ def _verdict(
             if actual_pnl is not None and actual_pnl >= 0 and risk_reward is not None and risk_reward > 0:
                 return "validated"
         return "pending"
-    if shadow_pnl is not None:
-        return "missed_alpha" if shadow_pnl > _MISS_THRESHOLD_PCT else "insufficient_data"
+    if forward_verdict == MISSED_ALPHA:
+        return "missed_alpha"
+    if forward_verdict == POSITIVE_GROSS_ONLY or (
+        shadow_pnl is not None and shadow_pnl > _MISS_THRESHOLD_PCT
+    ):
+        return POSITIVE_GROSS_ONLY
+    if forward_verdict == PROTECTIVE:
+        return PROTECTIVE
     return "pending"
 
 
@@ -563,6 +594,9 @@ def _summary(records: list[dict]) -> dict:
         "skipped_watch_count": sum(1 for r in records if (r.get("decision_action") or "").lower() in {"skip", "watch"}),
         "pending_count": sum(1 for r in records if r.get("verdict") == "pending"),
         "missed_alpha_count": sum(1 for r in records if r.get("verdict") == "missed_alpha"),
+        "positive_gross_move_only_count": sum(
+            1 for r in records if r.get("verdict") == POSITIVE_GROSS_ONLY
+        ),
         "failed_traded_thesis_count": sum(1 for r in records if r.get("verdict") == "failed"),
         "poor_expression_count": sum(1 for r in records if r.get("verdict") == "poor_expression"),
     }
@@ -896,13 +930,6 @@ def _serenity_fields(root: dict) -> dict:
 
 def _risk_flags(member: dict | None) -> list:
     return _json_list(member.get("risk_flags") if member else None)
-
-
-def _direction_adjusted_forward(forward: dict | None, direction: str | None) -> float | None:
-    value = _first_number(forward.get("forward_return_pct") if forward else None)
-    if value is None:
-        return None
-    return _round(-value if str(direction or "").lower() == "short" else value)
 
 
 def _older_than_hours(raw: str | None, hours: int) -> bool:

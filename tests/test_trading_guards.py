@@ -95,13 +95,35 @@ class TestEvaluateGuards:
             "symbol": "SOL/USDT",
             "scanner_family": "momentum",
             "direction": "long",
+            "market_type": "perp",
         })
 
         assert applies_to == {
             "symbol": ["SOL/USDT"],
             "scanner_family": ["momentum"],
             "direction": ["long"],
+            "market_type": ["perp"],
         }
+
+    def test_market_type_scope_does_not_cross_spot_and_perp(self):
+        guard = _make_guard(
+            predicates=[GuardPredicate(field="scanner_family", op="eq", value="momentum")],
+            applies_to=GuardAppliesTo(market_type=["perp"]),
+        )
+
+        perp = evaluate_guards(
+            {"scanner_family": "momentum", "market_type": "usdt_futures"},
+            scope="paper_entry",
+            guards=[guard],
+        )
+        spot = evaluate_guards(
+            {"scanner_family": "momentum", "market_type": "spot"},
+            scope="paper_entry",
+            guards=[guard],
+        )
+
+        assert len(perp.hits) == 1
+        assert spot.hits == []
 
     def test_scoring_guard_produces_penalty(self):
         guard = _make_guard(

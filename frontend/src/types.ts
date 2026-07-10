@@ -743,6 +743,8 @@ export interface UniverseMemberDetail {
 
 export interface CalibrationRow {
   scanner_family: string | null
+  direction: 'long' | 'short'
+  market_type: 'spot' | 'perp' | 'futures'
   horizon: string
   n: number
   win_count: number
@@ -753,12 +755,14 @@ export interface CalibrationRow {
 
 export interface CalibrationFamilySummary {
   family: string
+  direction: 'long' | 'short' | 'unknown'
+  market_type: string
   total_outcomes: number
   hit_rate_pct: number
   avg_return_pct: number
 }
 
 export interface CalibrationResponse {
-  by_family_horizon: CalibrationRow[]
-  by_family: CalibrationFamilySummary[]
+  by_cohort_horizon: CalibrationRow[]
+  by_cohort: CalibrationFamilySummary[]
 }

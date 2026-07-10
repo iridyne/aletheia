@@ -14,6 +14,14 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from aletheia.analytics.outcome_semantics import (
+    MISSED_ALPHA,
+    POSITIVE_GROSS_ONLY,
+    PROTECTIVE,
+    classify_outcome_row,
+    outcome_values,
+)
+
 from aletheia.analytics.debate_impact import build_debate_impact_audit
 from aletheia.analytics.sizing_trace import build_sizing_trace_audit, compact_sizing_trace_summary
 from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit, compact_thesis_lineage_summary
@@ -907,10 +915,15 @@ def _counterfactual(db, opp: dict[str, Any], direction: str | None) -> dict[str,
             if not row:
                 continue
             d = dict(row)
-            raw = _to_float(d.get("forward_return_pct"))
+            values = outcome_values(d, direction)
             out["forward"][horizon] = {
-                "forward_return_pct": _round(raw),
-                "direction_adjusted_return_pct": _round(_direction_adjusted(raw, direction)),
+                "forward_return_pct": _round(values["gross_return_pct"]),
+                "gross_return_pct": _round(values["gross_return_pct"]),
+                "direction_adjusted_return_pct": _round(values["directional_return_pct"]),
+                "directional_return_pct": _round(values["directional_return_pct"]),
+                "net_return_pct": _round(values["net_return_pct"]),
+                "min_tradable_edge_pct": _round(values["min_tradable_edge_pct"]),
+                "verdict": classify_outcome_row(d, direction),
                 "settled_at": d.get("settled_at"),
                 "status": d.get("status"),
             }
@@ -968,18 +981,18 @@ def _causal_stage_order(stage: Any) -> int:
 def _counterfactual_verdict(counterfactual: dict[str, Any], final_state: str) -> str:
     if final_state in {"executed", "closed"}:
         return "executed_path"
-    values: list[float] = []
     shadow = counterfactual.get("shadow")
-    if shadow and shadow.get("pnl_pct") is not None:
-        values.append(float(shadow["pnl_pct"]))
-    for item in (counterfactual.get("forward") or {}).values():
-        if item.get("direction_adjusted_return_pct") is not None:
-            values.append(float(item["direction_adjusted_return_pct"]))
-    if not values:
-        return "insufficient_data"
-    if any(value > 0 for value in values):
-        return "missed_alpha_suspect"
-    if all(value <= 0 for value in values):
+    verdicts = [
+        item.get("verdict")
+        for item in (counterfactual.get("forward") or {}).values()
+    ]
+    if MISSED_ALPHA in verdicts:
+        return MISSED_ALPHA
+    if POSITIVE_GROSS_ONLY in verdicts or (
+        shadow and shadow.get("pnl_pct") is not None and float(shadow["pnl_pct"]) > 0
+    ):
+        return POSITIVE_GROSS_ONLY
+    if PROTECTIVE in verdicts:
         return "protective_or_correct"
     return "insufficient_data"
 
@@ -1044,12 +1057,6 @@ def _direction_from_bias(raw: Any) -> str | None:
     if bias in {"short", "bearish"}:
         return "short"
     return None
-
-
-def _direction_adjusted(value: float | None, direction: str) -> float | None:
-    if value is None:
-        return None
-    return -value if direction == "short" else value
 
 
 def _truthy(value: Any, *, default: bool = False) -> bool:
@@ -1154,6 +1161,8 @@ def _fmt_forward(forward: dict[str, Any]) -> str:
     parts = []
     for horizon in _FORWARD_HORIZONS:
         item = forward.get(horizon)
-        if item and item.get("direction_adjusted_return_pct") is not None:
-            parts.append(f"{horizon}={item['direction_adjusted_return_pct']:+.4f}%")
+        if item and item.get("net_return_pct") is not None:
+            parts.append(f"{horizon}_net={item['net_return_pct']:+.4f}%")
+        elif item and item.get("direction_adjusted_return_pct") is not None:
+            parts.append(f"{horizon}_gross={item['direction_adjusted_return_pct']:+.4f}%")
     return ", ".join(parts) if parts else "n/a"

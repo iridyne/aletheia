@@ -605,7 +605,7 @@ def _fmt_family_edge(edge: dict | None) -> str:
     wr = edge.get("win_rate")
     ar = edge.get("avg_return")
     wr_s = f"{wr:.0f}%WR" if wr is not None else "?WR"
-    ar_s = f"{ar:+.2f}%avg" if ar is not None else ""
+    ar_s = f"{ar:+.2f}%avg_net" if ar is not None else ""
     weak = " (thin)" if n < 5 else ""
     return f" {{edge:{n}T {wr_s} {ar_s}{weak}}}"
 

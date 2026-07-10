@@ -288,7 +288,12 @@ def test_live_family_with_clean_window_edge_passes_gate14(tmp_path, monkeypatch)
             member_id=f"m{i}", snapshot_id="snap1", symbol="BTC/USDT",
             scanner_family="momentum", direction="long", horizon="24h",
             entry_price_usd=100.0, due_at=now, settled_at=now,
-            exit_price_usd=105.0, forward_return_pct=5.0, status="settled",
+            exit_price_usd=105.0, forward_return_pct=5.0,
+            gross_return_pct=5.0, directional_return_pct=5.0,
+            estimated_fee_pct=0.12, estimated_spread_slippage_pct=0.15,
+            estimated_funding_pct=0.0, net_return_pct=4.73,
+            min_tradable_edge_pct=0.05, cost_model_version="v1",
+            market_type="spot", status="settled",
         ))
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
                       scanner_family="momentum")
@@ -304,6 +309,22 @@ def test_live_family_with_clean_window_edge_passes_gate14(tmp_path, monkeypatch)
     assert not any("family_not_live_eligible" in v for v in result.violations), (
         f"family gate should pass with 30 winning outcomes, got: {result.violations}"
     )
+
+
+def test_live_family_edge_selects_matching_market_type(monkeypatch):
+    from aletheia.risk.engine import _family_live_edge
+
+    monkeypatch.setattr(
+        repo,
+        "family_direction_edge",
+        lambda **_: [
+            {"scanner_family": "momentum", "direction": "long", "market_type": "spot", "n": 30},
+            {"scanner_family": "momentum", "direction": "long", "market_type": "perp", "n": 12},
+        ],
+    )
+
+    assert _family_live_edge("momentum", "long", "spot")["n"] == 30
+    assert _family_live_edge("momentum", "long", "usdt_futures")["n"] == 12
 
 
 # --- demo/paper bounds (§2.3: paper evidence must be built from bounded trades) ---

@@ -1,5 +1,18 @@
 # Development Log
 
+## 2026-07-10 — Opportunity cost-aware fixed-horizon outcomes
+
+- 新增机会结果设计文档和可执行检查，固定内部标的为 `venue + symbol + market_type`，固定结算期为 15m/1h/4h/24h。
+- 新结算优先取目标时点 OHLCV，防止用调度器晚到后的当前价偷看未来；当前价只在滞后不超过持有期 10% 时可形成净收益样本。
+- 新增 gross/directional/fee/spread-slippage/funding/net/min-edge/MFE/MAE 字段；永续合约缺资金费、缺方向或缺合格时点价时，净收益保持空值。
+- 历史行只回填可证明的交易所/市场/入场价差/资金费输入，不合成历史净收益。后续校准只消费完整净收益行。
+- 校准、分配、风控读取、诊断、guard 影响、thesis 回放、debate 复盘、CLI/API/UI 统一按策略族+方向+市场类型+时间分组；只有超过最低可交易净优势才能被标记为 missed alpha。
+- 永续合约的行情请求不再降级为现货数据；旧 OHLCV 表因主键缺市场类型，合约 K 线只返回给本次计算，不覆盖同名现货存储。
+- 高敏感风控读取只改为精确市场样本，原有门槛、实盘锁和下单路径未改。
+- 验证：关键路径 146 passed；全部设计检查 583 passed / 7 skipped / 6 xfailed；架构检查 11 passed；前端 production build 通过。全量测试仅保留干净 master 上已独立复现的 3 个旧失败。
+
+---
+
 ## 2026-07-10 — Opportunity profitability lifecycle review and repair
 
 - 新增完整评审与分阶段修复计划，明确当前可执行范围仍是加密现货/永续；股票、预测市场、FX、RWA 的真实能力分别标为 observation/shadow/unsupported，避免字段存在即被误解为可盈利执行。

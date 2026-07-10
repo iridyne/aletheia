@@ -139,7 +139,12 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
             member_id=f"m{i}", snapshot_id="snap1", symbol="BTC/USDT",
             scanner_family="momentum", direction="long", horizon="24h",
             entry_price_usd=100.0, due_at=now, settled_at=now,
-            exit_price_usd=105.0, forward_return_pct=5.0, status="settled",
+            exit_price_usd=105.0, forward_return_pct=5.0,
+            gross_return_pct=5.0, directional_return_pct=5.0,
+            estimated_fee_pct=0.12, estimated_spread_slippage_pct=0.15,
+            estimated_funding_pct=0.0, net_return_pct=4.73,
+            min_tradable_edge_pct=0.05, cost_model_version="v1",
+            market_type="spot", status="settled",
         ))
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long", scanner_family="momentum")
     repo.insert_opportunity(opp)

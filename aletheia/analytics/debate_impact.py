@@ -14,12 +14,21 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from aletheia.analytics.outcome_semantics import (
+    INSUFFICIENT,
+    MISSED_ALPHA,
+    POSITIVE_GROSS_ONLY,
+    PROTECTIVE,
+    classify_outcome_row,
+    outcome_values,
+)
 from aletheia.storage.sqlite import get_db
 
 _HORIZONS = ("15m", "1h", "4h")
-_VERDICT_MISSED = "missed_alpha_suspect"
-_VERDICT_PROTECTIVE = "protective"
-_VERDICT_INSUFFICIENT = "insufficient_data"
+_VERDICT_MISSED = MISSED_ALPHA
+_VERDICT_GROSS_ONLY = POSITIVE_GROSS_ONLY
+_VERDICT_PROTECTIVE = PROTECTIVE
+_VERDICT_INSUFFICIENT = INSUFFICIENT
 
 
 def build_debate_impact_audit(hours: int = 24) -> dict[str, Any]:
@@ -45,7 +54,8 @@ def build_debate_impact_audit(hours: int = 24) -> dict[str, Any]:
             "Read-only snapshot: no decisions, proposals, guards, or thresholds were modified.",
             "Unsupported candidate signal is counted from persisted decision reasoning only; this audit does not rerun the ranker.",
             "Debate trace fields are available only for rows written after the trace migration; legacy rows stay missing.",
-            "Verdict uses existing forward outcomes only; missing outcomes stay insufficient_data.",
+            "Missed-alpha requires cost-aware net return above its persisted safety edge.",
+            "Legacy positive gross movement is reported as positive_gross_move_only, not tradable alpha.",
         ],
     }
 
@@ -77,7 +87,8 @@ def render_debate_impact_audit(report: dict[str, Any]) -> str:
             f"{horizon}: with_outcome={item.get('with_outcome', 0)} "
             f"favorable={item.get('favorable', 0)} "
             f"unfavorable={item.get('unfavorable', 0)} "
-            f"avg_dir_adj={_fmt_pct(item.get('avg_direction_adjusted_return_pct'))}"
+            f"avg_net={_fmt_pct(item.get('avg_net_return_pct'))} "
+            f"gross_only={item.get('positive_gross_only', 0)}"
         )
 
     lines += ["", "Debated opportunities:"]
@@ -191,7 +202,7 @@ def _outcomes_for_opportunity(db, row: dict[str, Any]) -> dict[str, Any]:
         return outcomes
     for horizon in _HORIZONS:
         found = db.execute(
-            "SELECT forward_return_pct, settled_at, status FROM universe_forward_outcomes "
+            "SELECT * FROM universe_forward_outcomes "
             "WHERE member_id = ? AND horizon = ? AND status = 'settled' "
             "AND forward_return_pct IS NOT NULL "
             "ORDER BY datetime(settled_at) DESC LIMIT 1",
@@ -200,10 +211,15 @@ def _outcomes_for_opportunity(db, row: dict[str, Any]) -> dict[str, Any]:
         if not found:
             continue
         d = dict(found)
-        raw = _to_float(d.get("forward_return_pct"))
+        values = outcome_values(d, direction)
         outcomes[horizon] = {
-            "forward_return_pct": _round(raw),
-            "direction_adjusted_return_pct": _round(_direction_adjusted(raw, direction)),
+            "forward_return_pct": _round(values["gross_return_pct"]),
+            "gross_return_pct": _round(values["gross_return_pct"]),
+            "direction_adjusted_return_pct": _round(values["directional_return_pct"]),
+            "directional_return_pct": _round(values["directional_return_pct"]),
+            "net_return_pct": _round(values["net_return_pct"]),
+            "min_tradable_edge_pct": _round(values["min_tradable_edge_pct"]),
+            "verdict": classify_outcome_row(d, direction),
             "settled_at": d.get("settled_at"),
             "status": d.get("status"),
         }
@@ -213,36 +229,39 @@ def _outcomes_for_opportunity(db, row: dict[str, Any]) -> dict[str, Any]:
 def _outcome_summary(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     summary: dict[str, dict[str, Any]] = {}
     for horizon in _HORIZONS:
-        values = [
-            item.get("direction_adjusted_return_pct")
+        net_values = [
+            item.get("net_return_pct")
             for row in rows
             for item in [(row.get("outcomes") or {}).get(horizon) or {}]
-            if item.get("direction_adjusted_return_pct") is not None
+            if item.get("net_return_pct") is not None
+        ]
+        verdicts = [
+            item.get("verdict")
+            for row in rows
+            for item in [(row.get("outcomes") or {}).get(horizon) or {}]
+            if item
         ]
         summary[horizon] = {
-            "with_outcome": len(values),
-            "favorable": sum(1 for value in values if value > 0),
-            "unfavorable": sum(1 for value in values if value <= 0),
-            "avg_direction_adjusted_return_pct": _round(
-                sum(values) / len(values) if values else None
+            "with_outcome": len(net_values),
+            "favorable": verdicts.count(_VERDICT_MISSED),
+            "unfavorable": verdicts.count(_VERDICT_PROTECTIVE),
+            "positive_gross_only": verdicts.count(_VERDICT_GROSS_ONLY),
+            "avg_net_return_pct": _round(
+                sum(net_values) / len(net_values) if net_values else None
             ),
-            "min_direction_adjusted_return_pct": _round(min(values) if values else None),
-            "max_direction_adjusted_return_pct": _round(max(values) if values else None),
+            "min_net_return_pct": _round(min(net_values) if net_values else None),
+            "max_net_return_pct": _round(max(net_values) if net_values else None),
         }
     return summary
 
 
 def _opportunity_verdict(outcomes: dict[str, Any]) -> str:
-    values = [
-        item.get("direction_adjusted_return_pct")
-        for item in outcomes.values()
-        if item.get("direction_adjusted_return_pct") is not None
-    ]
-    if not values:
-        return _VERDICT_INSUFFICIENT
-    if any(value > 0 for value in values):
+    verdicts = [item.get("verdict") for item in outcomes.values()]
+    if _VERDICT_MISSED in verdicts:
         return _VERDICT_MISSED
-    if all(value <= 0 for value in values):
+    if _VERDICT_GROSS_ONLY in verdicts:
+        return _VERDICT_GROSS_ONLY
+    if _VERDICT_PROTECTIVE in verdicts:
         return _VERDICT_PROTECTIVE
     return _VERDICT_INSUFFICIENT
 
@@ -251,6 +270,8 @@ def _overall_verdict(rows: list[dict[str, Any]]) -> str:
     verdicts = [row.get("verdict") for row in rows]
     if _VERDICT_MISSED in verdicts:
         return _VERDICT_MISSED
+    if _VERDICT_GROSS_ONLY in verdicts:
+        return _VERDICT_GROSS_ONLY
     if _VERDICT_PROTECTIVE in verdicts:
         return _VERDICT_PROTECTIVE
     return _VERDICT_INSUFFICIENT
@@ -263,12 +284,6 @@ def _direction_from_bias(raw: Any) -> str | None:
     if bias in {"short", "bearish"}:
         return "short"
     return None
-
-
-def _direction_adjusted(value: float | None, direction: str) -> float | None:
-    if value is None:
-        return None
-    return -value if direction == "short" else value
 
 
 def _to_float(value: Any) -> float | None:

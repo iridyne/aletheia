@@ -186,6 +186,23 @@ def _insert_shadow(db, idx: int, *, pnl_pct: float, batch: str = "batch-lineage"
     )
 
 
+def _insert_forward_net(db, idx: int, *, gross: float, net: float) -> None:
+    db.execute(
+        "INSERT INTO universe_forward_outcomes "
+        "(id, member_id, snapshot_id, symbol, market_type, scanner_family, direction, horizon, "
+        "entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, "
+        "gross_return_pct, directional_return_pct, estimated_fee_pct, "
+        "estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, "
+        "min_tradable_edge_pct, cost_model_version, status) "
+        "VALUES (?, ?, ?, 'BTC/USDT', 'perp', 'momentum', 'long', '24h', 100, ?, ?, ?, 102, "
+        "?, ?, ?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
+        (
+            f"forward-lineage-{idx}", f"um-lineage-{idx}", f"snap-lineage-{idx}",
+            _iso(25), _iso(), _iso(), gross, gross, gross, net,
+        ),
+    )
+
+
 def test_reconstruct_market_observer_thesis_from_opportunity_only():
     from aletheia.analytics.thesis_lineage import build_thesis_lineage_records
     from aletheia.storage.sqlite import get_db
@@ -302,7 +319,7 @@ def test_parse_legacy_supporting_opposing_meta_keys():
     assert record["key_assumptions"] == ["assumption"]
 
 
-def test_detect_missed_alpha_from_shadow_without_proposal():
+def test_positive_shadow_without_costs_is_not_missed_alpha():
     from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit
     from aletheia.storage.sqlite import get_db
 
@@ -314,8 +331,26 @@ def test_detect_missed_alpha_from_shadow_without_proposal():
 
     report = build_thesis_lineage_audit(days=7)
 
+    assert report["summary"]["missed_alpha_count"] == 0
+    assert report["summary"]["positive_gross_move_only_count"] == 1
+    assert report["records"][0]["verdict"] == "positive_gross_move_only"
+
+
+def test_detect_missed_alpha_from_cost_aware_forward_outcome():
+    from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, 44)
+    _insert_decision(db, 44, action="skip")
+    _insert_forward_net(db, 44, gross=1.2, net=0.8)
+    db.commit()
+
+    report = build_thesis_lineage_audit(days=7)
+
     assert report["summary"]["missed_alpha_count"] == 1
     assert report["top_missed_alpha"][0]["verdict"] == "missed_alpha"
+    assert report["top_missed_alpha"][0]["forward_net_return_pct"] == 0.8
 
 
 def test_detect_poor_expression_against_shadow_batch_average():

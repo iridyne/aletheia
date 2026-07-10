@@ -1089,15 +1089,31 @@ CREATE TABLE IF NOT EXISTS universe_forward_outcomes (
     member_id TEXT NOT NULL REFERENCES universe_members(id),
     snapshot_id TEXT NOT NULL,
     symbol TEXT NOT NULL,
+    venue TEXT,
+    market_type TEXT NOT NULL DEFAULT 'spot',
     scanner_family TEXT,
     direction TEXT,
     horizon TEXT NOT NULL,
     entry_price_usd REAL NOT NULL,
+    entry_spread_bps REAL,
+    funding_rate_at_entry REAL,
     entry_ts TEXT NOT NULL,
     due_at TEXT NOT NULL,
     settled_at TEXT,
     exit_price_usd REAL,
     forward_return_pct REAL,
+    gross_return_pct REAL,
+    directional_return_pct REAL,
+    estimated_fee_pct REAL,
+    estimated_spread_slippage_pct REAL,
+    estimated_funding_pct REAL,
+    net_return_pct REAL,
+    min_tradable_edge_pct REAL,
+    mfe_pct REAL,
+    mae_pct REAL,
+    settlement_price_source TEXT,
+    settlement_lag_sec REAL,
+    cost_model_version TEXT,
     status TEXT NOT NULL DEFAULT 'pending'
 );
 CREATE INDEX IF NOT EXISTS idx_forward_outcomes_status_due
@@ -1497,6 +1513,23 @@ _ADDITIVE_COLUMNS = [
     ("entry_price_usd", "universe_members", "REAL"),
     # Direction-aware calibration: the trade direction the scanner implied.
     ("direction", "universe_forward_outcomes", "TEXT"),
+    # Cost-aware fixed-horizon outcome contract (2026-07-10).
+    ("venue", "universe_forward_outcomes", "TEXT"),
+    ("market_type", "universe_forward_outcomes", "TEXT NOT NULL DEFAULT 'spot'"),
+    ("entry_spread_bps", "universe_forward_outcomes", "REAL"),
+    ("funding_rate_at_entry", "universe_forward_outcomes", "REAL"),
+    ("gross_return_pct", "universe_forward_outcomes", "REAL"),
+    ("directional_return_pct", "universe_forward_outcomes", "REAL"),
+    ("estimated_fee_pct", "universe_forward_outcomes", "REAL"),
+    ("estimated_spread_slippage_pct", "universe_forward_outcomes", "REAL"),
+    ("estimated_funding_pct", "universe_forward_outcomes", "REAL"),
+    ("net_return_pct", "universe_forward_outcomes", "REAL"),
+    ("min_tradable_edge_pct", "universe_forward_outcomes", "REAL"),
+    ("mfe_pct", "universe_forward_outcomes", "REAL"),
+    ("mae_pct", "universe_forward_outcomes", "REAL"),
+    ("settlement_price_source", "universe_forward_outcomes", "TEXT"),
+    ("settlement_lag_sec", "universe_forward_outcomes", "REAL"),
+    ("cost_model_version", "universe_forward_outcomes", "TEXT"),
     # Knowledge dedup: SHA-256 prefix of content for write-time duplicate detection.
     ("content_hash", "knowledge_items", "TEXT"),
     # US Equity integration: sub-category and canonical ticker on opportunities.
@@ -1632,6 +1665,78 @@ def _ensure_columns(db) -> None:
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e).lower():
                 raise
+
+
+def _backfill_forward_outcome_instrument_identity(db) -> None:
+    """Recover point-in-time instrument fields for legacy pending/settled rows.
+
+    Identity and entry inputs are copied only from the member/feature rows that
+    caused the outcome. Historical net returns are deliberately not synthesized:
+    old rows keep NULL net fields so gross-only evidence cannot enter learning.
+    """
+    tables = {
+        row["name"]
+        for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    required = {
+        "universe_forward_outcomes",
+        "universe_members",
+        "universe_registry",
+        "universe_feature_snapshots",
+    }
+    if not required <= tables:
+        return
+    db.execute(
+        "UPDATE universe_forward_outcomes SET "
+        "venue = COALESCE(venue, ("
+        "  SELECT ur.venue FROM universe_members um "
+        "  JOIN universe_registry ur ON ur.id = um.asset_id "
+        "  WHERE um.id = universe_forward_outcomes.member_id"
+        ")), "
+        "entry_spread_bps = COALESCE(entry_spread_bps, ("
+        "  SELECT um.spread_bps FROM universe_members um "
+        "  WHERE um.id = universe_forward_outcomes.member_id"
+        ")) "
+        "WHERE (venue IS NULL AND EXISTS ("
+        "  SELECT 1 FROM universe_members um "
+        "  JOIN universe_registry ur ON ur.id = um.asset_id "
+        "  WHERE um.id = universe_forward_outcomes.member_id "
+        "    AND ur.venue IS NOT NULL"
+        ")) OR (entry_spread_bps IS NULL AND EXISTS ("
+        "  SELECT 1 FROM universe_members um "
+        "  WHERE um.id = universe_forward_outcomes.member_id "
+        "    AND um.spread_bps IS NOT NULL"
+        "))"
+    )
+    db.execute(
+        "UPDATE universe_forward_outcomes SET market_type = ("
+        "  SELECT um.market_type FROM universe_members um "
+        "  WHERE um.id = universe_forward_outcomes.member_id"
+        ") WHERE EXISTS ("
+        "  SELECT 1 FROM universe_members um "
+        "  WHERE um.id = universe_forward_outcomes.member_id "
+        "    AND um.market_type IS NOT NULL "
+        "    AND um.market_type != universe_forward_outcomes.market_type"
+        ")"
+    )
+    db.execute(
+        "UPDATE universe_forward_outcomes SET funding_rate_at_entry = ("
+        "  SELECT ufs.funding_rate FROM universe_members um "
+        "  JOIN universe_feature_snapshots ufs ON ufs.asset_id = um.asset_id "
+        "  WHERE um.id = universe_forward_outcomes.member_id "
+        "    AND datetime(ufs.ts) <= datetime(universe_forward_outcomes.entry_ts) "
+        "  ORDER BY datetime(ufs.ts) DESC LIMIT 1"
+        ") "
+        "WHERE funding_rate_at_entry IS NULL "
+        "AND market_type IN ('perp', 'futures', 'swap', 'usdt_futures') "
+        "AND EXISTS ("
+        "  SELECT 1 FROM universe_members um "
+        "  JOIN universe_feature_snapshots ufs ON ufs.asset_id = um.asset_id "
+        "  WHERE um.id = universe_forward_outcomes.member_id "
+        "    AND ufs.funding_rate IS NOT NULL "
+        "    AND datetime(ufs.ts) <= datetime(universe_forward_outcomes.entry_ts)"
+        ")"
+    )
 
 
 def fts5_available(db) -> bool:
@@ -1902,6 +2007,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_VOLUME_RANKING_DDL)
     db.executescript(_CONTROLLER_RECOMMENDATIONS_DDL)
     _ensure_columns(db)
+    _backfill_forward_outcome_instrument_identity(db)
     _ensure_runtime_baseline(db)
     _ensure_knowledge_fts_outcome_column(db)
     _ensure_knowledge_fts(db)

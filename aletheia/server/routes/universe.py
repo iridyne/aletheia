@@ -100,35 +100,46 @@ def get_current_policy():
 
 @router.get("/calibration")
 def get_calibration():
-    """Forward outcome calibration: per-family/horizon aggregate stats.
+    """Net calibration: family/direction/market/horizon aggregate stats.
 
     Answers: "do the scanner families actually pick winners?"
     """
     stats = repo.calibration_stats()
 
-    # Also provide per-family summary across all horizons
-    family_agg: dict[str, dict] = {}
+    cohort_agg: dict[tuple[str, str, str], dict] = {}
     for row in stats:
         fam = row["scanner_family"] or "unknown"
-        if fam not in family_agg:
-            family_agg[fam] = {"family": fam, "total_n": 0, "total_wins": 0, "weighted_return": 0.0}
-        family_agg[fam]["total_n"] += row["n"]
-        family_agg[fam]["total_wins"] += row["win_count"]
-        family_agg[fam]["weighted_return"] += (row["avg_return"] or 0) * row["n"]
+        direction = row.get("direction") or "unknown"
+        market_type = row.get("market_type") or "spot"
+        key = (fam, direction, market_type)
+        if key not in cohort_agg:
+            cohort_agg[key] = {
+                "family": fam,
+                "direction": direction,
+                "market_type": market_type,
+                "total_n": 0,
+                "total_wins": 0,
+                "weighted_return": 0.0,
+            }
+        cohort_agg[key]["total_n"] += row["n"]
+        cohort_agg[key]["total_wins"] += row["win_count"]
+        cohort_agg[key]["weighted_return"] += (row["avg_return"] or 0) * row["n"]
 
     summaries = []
-    for fam, agg in sorted(family_agg.items()):
+    for _, agg in sorted(cohort_agg.items()):
         n = agg["total_n"]
         summaries.append({
-            "family": fam,
+            "family": agg["family"],
+            "direction": agg["direction"],
+            "market_type": agg["market_type"],
             "total_outcomes": n,
             "hit_rate_pct": round(agg["total_wins"] / n * 100, 1) if n > 0 else 0,
             "avg_return_pct": round(agg["weighted_return"] / n, 3) if n > 0 else 0,
         })
 
     return {
-        "by_family_horizon": stats,
-        "by_family": summaries,
+        "by_cohort_horizon": stats,
+        "by_cohort": summaries,
     }
 
 

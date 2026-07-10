@@ -126,12 +126,42 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
         db.execute(
             "INSERT INTO universe_forward_outcomes "
             "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
-            " entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, status) "
+            " entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
+            " gross_return_pct, directional_return_pct, net_return_pct, "
+            " min_tradable_edge_pct, cost_model_version, status) "
             "VALUES (?, 'm1', 's1', 'BTC/USDT', 'momentum', 'long', '24h', "
-            " 100.0, datetime('now','-2 days'), datetime('now','-1 day'), datetime('now'), ?, 'settled')",
-            (f"fo-{i}", ret),
+            " 100.0, datetime('now','-2 days'), datetime('now','-1 day'), datetime('now'), "
+            " ?, ?, ?, ?, 0.05, 'v1', 'settled')",
+            (f"fo-{i}", ret, ret, ret, ret - 0.2),
         )
     db.commit()
 
     asyncio.run(run_lesson_reviewer(run_id="test"))
     assert store.get(les.lesson_id).status == "rejected"   # applied lesson overturned
+
+
+def test_lesson_evidence_ignores_gross_only_history(tmp_path, monkeypatch):
+    """Legacy price moves without costs must not promote or overturn lessons."""
+    sq = _reviewer_db(tmp_path, monkeypatch)
+    from aletheia.agents.lesson_reviewer import _fetch_evidence
+    from aletheia.learning.lessons import LessonStore
+
+    lesson = LessonStore().create(
+        "BTC/USDT gross-only history",
+        source_type="test",
+        source_id="gross-only",
+        category="entry_timing",
+        severity="warning",
+    )
+    db = sq.get_db()
+    db.execute(
+        "INSERT INTO universe_forward_outcomes "
+        "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
+        "entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, status) "
+        "VALUES ('gross-only', 'm', 's', 'BTC/USDT', 'momentum', 'long', '24h', 100, "
+        "datetime('now','-2 days'), datetime('now','-1 day'), datetime('now'), 9, 'settled')"
+    )
+    db.commit()
+
+    evidence = _fetch_evidence(lesson)
+    assert evidence["aggregate"]["total"] == 0

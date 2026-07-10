@@ -66,12 +66,12 @@ def _fetch_evidence(lesson) -> dict:
     def _agg(where_extra: str, params: tuple) -> dict:
         row = db.execute(
             "SELECT COUNT(*) AS total, "
-            "  SUM(CASE WHEN (direction='long'  AND forward_return_pct > 0) "
-            "            OR (direction='short' AND forward_return_pct < 0) "
+            "  SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0) "
             "          THEN 1 ELSE 0 END) AS wins, "
-            "  AVG(forward_return_pct) AS avg_return "
+            "  AVG(net_return_pct) AS avg_return "
             "FROM universe_forward_outcomes "
             "WHERE status='settled' AND horizon='24h' "
+            "  AND net_return_pct IS NOT NULL "
             "  AND settled_at >= datetime('now','-30 days') " + where_extra,
             params,
         ).fetchone()

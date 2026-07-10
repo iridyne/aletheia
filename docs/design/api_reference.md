@@ -269,10 +269,10 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | GET | `/universe/snapshots` | Universe snapshot history |
 | GET | `/universe/snapshots/{id}` | Snapshot detail with members |
 | GET | `/universe/members/{id}` | Member detail (features, outcomes) |
-| GET | `/universe/members/{id}/outcomes` | Forward outcome history |
+| GET | `/universe/members/{id}/outcomes` | Market-aware gross/net outcome history, including estimated costs and MFE/MAE |
 | POST | `/universe/refresh` | Trigger universe refresh |
 | GET | `/universe/policy` | Active universe policies |
-| GET | `/universe/calibration` | Universe scanner calibration data |
+| GET | `/universe/calibration` | Cost-aware scanner calibration keyed by family + direction + market type + horizon (`by_cohort_horizon`, `by_cohort`) |
 | GET | `/universe/registry/stats` | Registry statistics |
 
 ---
