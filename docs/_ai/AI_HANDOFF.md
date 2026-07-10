@@ -7,7 +7,7 @@
 
 ## Last Updated
 
-2026-07-10 (Opportunity lifecycle integrity repair; awaiting review)
+2026-07-10 (Opportunity lifecycle integrity and available-balance cap merged)
 
 ---
 
@@ -29,8 +29,21 @@
   不自动改额度。
 
 验证：机会审计、universe、doctor、filter 相关测试及全部 specs 均已通过；前端 production build 通过。
-仍需人确认的事项：若要让本机 paper proposal 实际继续通过风险门，请在 Settings 的 Risk Limits 中由 owner
-自行设定一个正的 demo/paper notional cap。live 开关、凭证和 risk 值均未被本分支修改。
+
+---
+
+## Recent Change (Available-balance position cap — 2026-07-10)
+
+Risk check #5 now treats the existing position-notional values as hard ceilings and
+uses the lower of that ceiling and the matching exchange account's cached available
+USDT. Demo and live Bitget accounts are read separately; other exchange-backed modes
+use their own unified-account entry. paper_internal has no external balance, so it
+continues to use the configured ceiling. The risk engine never makes an exchange call
+while evaluating a proposal, and a missing cached balance retains the configured cap.
+
+The default demo ceiling remains $200. Live remains separately capped and still needs
+the existing human live-unlock path plus every other risk check. Focused risk tests,
+the full executable contract suite, and the frontend production build passed.
 
 ---
 

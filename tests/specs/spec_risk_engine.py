@@ -471,6 +471,43 @@ def test_demo_notional_cap_fires(tmp_path, monkeypatch):
     )
 
 
+@spec_claim(
+    SpecClaim("RE-B18", "risk_engine_contract", "§2 check #5", "L2b",
+              "Exchange-backed orders use the lower of the configured hard cap and the "
+              "matching account's cached available USDT; paper_internal uses the configured cap"),
+)
+def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
+    """Demo/live must read separate cached accounts; local paper has no account."""
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.portfolio.exchange_sync as sync
+    import aletheia.risk.engine as eng
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    _setup_db(tmp_path, monkeypatch)
+    cfg = AletheiaConfig()
+    cfg.risk.max_demo_position_notional_usdt = 200.0
+    cfg.risk.max_live_position_notional_usdt = 50.0
+    monkeypatch.setattr(eng, "load_config", lambda: cfg)
+
+    def cached_state(mode):
+        return {"available_usdt": 80.0 if mode == "demo" else 30.0}
+
+    monkeypatch.setattr(sync, "get_cached_state", cached_state)
+
+    assert eng._effective_position_notional_cap(cfg.risk, "bitget_demo") == 80.0
+    assert eng._effective_position_notional_cap(cfg.risk, "bitget_live_limited") == 30.0
+    assert eng._effective_position_notional_cap(cfg.risk, "paper_internal") == 200.0
+
+    proposal = TradeProposal(
+        symbol="ETH/USDT", market_type="spot", direction="long",
+        execution_mode="bitget_demo", quantity=1.0, price=100.0,
+    )
+    repo.insert_trade_proposal(proposal)
+    result = eng.evaluate_proposal(proposal)
+    assert any(v == "exceeds_demo_position_notional:100.0>80.0" for v in result.violations)
+
+
 # ---------------------------------------------------------------------------
 # RE-B10 — §2 check #6: max open demo positions
 # ---------------------------------------------------------------------------
