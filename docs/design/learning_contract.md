@@ -3,6 +3,8 @@
 > Contract level: L2. This file is normative for the Learning subsystem.
 > Last aligned: 2026-07-03.
 > Reference intent: root `discussion.md` Learning section.
+> Target extension: `learning_evolution_contract.md` defines the proposed measured
+> self-improvement lifecycle; its claims remain missing until implemented.
 
 Learning is not a dashboard-only feature. Its product role is to turn market
 observations, trade decisions, closed trades, reviews, and later corrections into

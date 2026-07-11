@@ -1,5 +1,7 @@
 # Learning 模块完整修复实施计划
 
+> **状态更新（2026-07-12）**：本文件记录 2026-07-02 当时的断路修复基线，部分现状（FTS、guard promotion、SkillStore producer 等）已经过期。后续 Learning 正贡献、自我改进、因果归因和自动回退实施，以 [`learning_positive_contribution_implementation_plan_2026-07-12.md`](learning_positive_contribution_implementation_plan_2026-07-12.md) 为准；当前行为仍以 `docs/design/learning_contract.md` 为准。
+
 > **生成时间**：2026-07-02
 > **审计来源**：`docs/issues/LEARNING_LOOP_AUDIT_2026-06-26.md` + `docs/issues/LEARNING_LOOP_CHAIN_AUDIT.md` + 代码实测
 > **范围**：Learning 子系统（`aletheia/learning/` + `aletheia/knowledge/`）+ 3 个最小赚钱循环接入点 + `skills.py` 休眠问题
