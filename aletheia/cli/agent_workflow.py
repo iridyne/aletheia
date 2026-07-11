@@ -2,7 +2,7 @@
 from pathlib import Path
 import json
 import typer
-from aletheia.agent_workflow import bootstrap, claim_task, recovery_test, render_bootstrap, validate, write_handoff
+from aletheia.agent_workflow import bootstrap, claim_task, complete_task, create_task, recovery_test, render_bootstrap, validate, write_handoff
 
 workflow_app = typer.Typer(no_args_is_help=True)
 task_app = typer.Typer(no_args_is_help=True)
@@ -34,6 +34,26 @@ def claim(task_id: str, holder: str = typer.Option(..., "--holder"), hours: int 
         typer.echo(str(exc), err=True)
         raise typer.Exit(1)
     typer.echo(f"Claimed {task['id']} on {task['ownership']['branch']}.")
+
+@task_app.command("create")
+def create(task_id: str, title: str = typer.Option(..., "--title"), intent: str = typer.Option(..., "--intent")):
+    """Create a ready task packet and matching handoff template."""
+    try:
+        task = create_task(task_id, title=title, intent=intent)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Created {task['id']}; claim it from its dedicated branch before editing code.")
+
+@task_app.command("complete")
+def complete(task_id: str, command_key: str = typer.Option(..., "--command-key")):
+    """Mark a clean, already-verified task complete with registered evidence."""
+    try:
+        task = complete_task(task_id, command_key=command_key)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Recorded completion evidence for {task['id']}; commit its task packet and handoff.")
 
 @workflow_app.command("handoff")
 def handoff(task_id: str = typer.Option(..., "--task"), from_file: Path = typer.Option(..., "--from-file")):

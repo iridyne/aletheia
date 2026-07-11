@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from aletheia.agent_workflow import bootstrap, claim_task, recovery_test, validate, write_handoff
+from aletheia.agent_workflow import bootstrap, claim_task, complete_task, create_task, recovery_test, validate, write_handoff
 
 
 def _repo(tmp_path: Path, monkeypatch) -> Path:
@@ -72,3 +72,17 @@ def test_handoff_rejects_secret_like_text(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(ValueError, match="secret-like"):
         write_handoff("TASK-1", "api_key=forbidden", root=root)
+
+
+def test_create_task_writes_pair(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    task = create_task("TASK-2", title="Second", intent="Independent work", root=root)
+    assert task["status"] == "ready"
+    assert (root / ".agent/handoffs/TASK-2.md").is_file()
+
+
+def test_complete_requires_clean_workspace_and_registered_evidence(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    import pytest
+    with pytest.raises(ValueError, match="workspace is dirty"):
+        complete_task("TASK-1", command_key="test", root=root)

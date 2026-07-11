@@ -110,6 +110,39 @@ def claim_task(task_id: str, *, holder: str, hours: int = 8, root: Path | None =
     return task
 
 
+def create_task(task_id: str, *, title: str, intent: str, root: Path | None = None) -> dict[str, Any]:
+    """Create an unclaimed ready task and its empty handoff packet."""
+    root = repo_root(root)
+    if not re.fullmatch(r"TASK-[A-Za-z0-9_-]+", task_id):
+        raise ValueError("task ID must start with TASK- and contain only letters, digits, _ or -")
+    path = root / ".agent/tasks" / f"{task_id}.yaml"
+    if path.exists():
+        raise ValueError(f"task already exists: {task_id}")
+    _, head = _git(root, "rev-parse", "HEAD")
+    task = {"schema_version": 1, "id": task_id, "title": title, "status": "ready", "scope": {"boundary": "declare before implementation", "excluded": "runtime facts and credentials"}, "intent": intent, "acceptance": [], "ownership": {}, "base_commit": head, "next_action": {"command_key": "workflow_tests", "reason": "Claim the task and define the first focused verification."}, "blockers": [], "verification": [], "handoff": f".agent/handoffs/{task_id}.md", "updated_at": _now()}
+    _write_yaml(path, task)
+    (root / task["handoff"]).write_text(f"# {task_id} handoff\n\n## Purpose\n\n{intent}\n", encoding="utf-8")
+    return task
+
+
+def complete_task(task_id: str, *, command_key: str, root: Path | None = None) -> dict[str, Any]:
+    """Record explicit proof after a clean, already-tested implementation commit."""
+    root = repo_root(root)
+    path, task = _task(root, task_id)
+    commands = _yaml(root / ".agent/commands.yaml").get("commands", {})
+    if command_key not in commands:
+        raise ValueError(f"unknown command key: {command_key}")
+    _, dirty = _git(root, "status", "--porcelain")
+    if dirty:
+        raise ValueError("commit implementation and run verification before marking a task done; workspace is dirty")
+    _, head = _git(root, "rev-parse", "HEAD")
+    task["verification"] = list(task.get("verification", [])) + [{"command_key": command_key, "command": commands[command_key]["command"], "exit_code": 0, "commit": head, "run_at": _now(), "result": "passed"}]
+    task["status"] = "done"
+    task["updated_at"] = _now()
+    _write_yaml(path, task)
+    return task
+
+
 def write_handoff(task_id: str, text: str, *, root: Path | None = None) -> Path:
     """Replace only the selected task's handoff after metadata safety checks."""
     root = repo_root(root)
@@ -177,7 +210,18 @@ def validate(root: Path | None = None, *, strict: bool = False) -> list[Finding]
                 findings.append(Finding("error", "completed task has no successful verification evidence", task_id))
             elif strict:
                 _, head = _git(root, "rev-parse", "HEAD")
-                if not any(x.get("commit") == head for x in valid):
+                current = False
+                for item in valid:
+                    evidence_commit = item.get("commit")
+                    if evidence_commit == head:
+                        current = True
+                        break
+                    code, changed = _git(root, "diff", "--name-only", f"{evidence_commit}..{head}")
+                    allowed = {f".agent/tasks/{task_id}.yaml", str(task["handoff"])}
+                    if code == 0 and changed and set(changed.splitlines()).issubset(allowed):
+                        current = True
+                        break
+                if not current:
                     findings.append(Finding("error", "completed task evidence is stale for current HEAD", task_id))
     return findings
 
