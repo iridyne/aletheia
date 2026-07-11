@@ -3864,13 +3864,16 @@ function ModelProviderCard({ qc }: any) {
 
   const deepName = (data as any).deep_provider
   const fastName = (data as any).fast_provider
+  const defaultName = String((data as any).default_provider || '')
+  const routingFallback = defaultName ? `→ ${defaultName}` : 'not set'
 
   return (
     <div className="flex flex-col gap-2">
-      <ModelPingButton />
+      <ModelPingButton configured={!!defaultName} />
       <div style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'flex', gap: '1rem', paddingLeft: '0.2rem' }}>
-        <span>Deep (decisions): <span style={{ color: 'var(--text)' }}>{deepName || '→ default'}</span></span>
-        <span>Fast (research): <span style={{ color: 'var(--text)' }}>{fastName || '→ default'}</span></span>
+        <span>Default: <span style={{ color: 'var(--text)' }}>{defaultName || 'not set'}</span></span>
+        <span>Deep (decisions): <span style={{ color: 'var(--text)' }}>{deepName || routingFallback}</span></span>
+        <span>Fast (research): <span style={{ color: 'var(--text)' }}>{fastName || routingFallback}</span></span>
       </div>
       {ALL_PROVIDERS.map(p => (
         <ProviderCard
@@ -3891,13 +3894,13 @@ function ModelProviderCard({ qc }: any) {
   )
 }
 
-function ModelPingButton() {
+function ModelPingButton({ configured }: { configured: boolean }) {
   const ping = useMutation({ mutationFn: () => api.pingModel() })
   const result = ping.data
   return (
     <div className="model-ping-row">
-      <button className="secondary" onClick={() => ping.mutate()} disabled={ping.isPending}>
-        {ping.isPending ? 'Testing…' : 'Test Default Model'}
+      <button className="secondary" onClick={() => ping.mutate()} disabled={!configured || ping.isPending}>
+        {ping.isPending ? 'Testing…' : configured ? 'Test Default Model' : 'No Default Model Selected'}
       </button>
       {result && (
         <span className={`model-ping-result mono ${result.ok ? 'ok' : 'fail'}`}>
@@ -3917,7 +3920,7 @@ function ProviderCard({ name, config, health, allHealth, isDefault, isDeep, isFa
   const isHTTP = HTTP_PROVIDERS.has(name)
   const isOAuth = OAUTH_PROVIDERS.has(name)
   const isCLI = !isHTTP
-  const enabled = config?.enabled !== false
+  const enabled = config?.enabled === true
 
   const toggleEnabled = useMutation({
     mutationFn: (next: boolean) => api.setModelProvider({ provider: name, enabled: next }),

@@ -3116,3 +3116,9 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Connection-class `httpx` failures now use configured LLM fallback models; timeout exceptions remain terminal to preserve scheduler wall-clock bounds.
 - Updated focused runtime tests for valid zero-opportunity scans and added executable provider fallback coverage.
 - Renamed the duplicate data-collector stability claim from `GS-S03` to `GS-S04`, restoring unique rule identities without behavioral changes.
+
+## 2026-07-12 — Honest blank AI provider UI
+
+- Fresh installs now render all AI provider cards as disabled when no provider entries have been saved.
+- Default, deep, and fast routes show `not set` instead of implying a nonexistent default.
+- The default-model connection test stays disabled until the owner explicitly selects a default provider.
