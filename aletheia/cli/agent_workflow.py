@@ -1,14 +1,18 @@
 """Repository-agent recovery commands; separate from the operator runtime."""
 from pathlib import Path
 import json
+import sys
 import typer
 from aletheia.agent_workflow import (
     bootstrap,
     claim_task,
     complete_task,
     create_task,
+    load_tasks,
     recovery_test,
     render_bootstrap,
+    repo_root,
+    trust_boundary_hits_for_paths,
     update_task,
     validate,
     verify_task,
@@ -131,5 +135,48 @@ def recovery(json_out: bool = typer.Option(False, "--json")):
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2) if json_out else ("RECOVERABLE" if payload["recoverable"] else "NOT RECOVERABLE"))
     if not payload["recoverable"]:
         raise typer.Exit(1)
+
+@workflow_app.command("check-staged")
+def check_staged(paths_stdin: bool = typer.Option(False, "--paths-stdin")):
+    """Verify a staged-file list against `.agent/policy.yaml`.
+
+    Reads one path per line from stdin. Exits 0 when no trust-boundary is
+    touched or every touched boundary is covered by a passing task packet;
+    exits 1 with a summary otherwise. Used by the pre-commit hook.
+    """
+    if not paths_stdin:
+        typer.echo("--paths-stdin is required; pipe staged paths on stdin", err=True)
+        raise typer.Exit(2)
+    changed = {line.strip() for line in sys.stdin.read().splitlines() if line.strip()}
+    root = repo_root()
+    hits = trust_boundary_hits_for_paths(changed, root=root)
+    if not hits:
+        raise typer.Exit(0)
+    missing = []
+    task_packets = [task for _, task in load_tasks(root)]
+    for boundary_id, meta in sorted(hits.items()):
+        required = set(meta["required_command_keys"])
+        satisfied = any(
+            isinstance(item, dict)
+            and item.get("exit_code") == 0
+            and item.get("result", "passed") == "passed"
+            and item.get("command_key") in required
+            for task in task_packets
+            for item in task.get("verification", [])
+        )
+        if not satisfied:
+            paths_summary = ", ".join(meta["paths"][:3])
+            if len(meta["paths"]) > 3:
+                paths_summary += ", ..."
+            missing.append(
+                f"trust-boundary {boundary_id!r} touched ({paths_summary}); "
+                f"stage a task packet with passing evidence for one of: "
+                f"{', '.join(sorted(required))}"
+            )
+    if missing:
+        for line in missing:
+            typer.echo(line, err=True)
+        raise typer.Exit(1)
+
 
 workflow_app.add_typer(task_app, name="task", help="Claim repository tasks without touching the trading runtime.")

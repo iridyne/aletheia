@@ -363,3 +363,169 @@ def test_bootstrap_falls_back_to_global_history_on_unclaimed_branch(tmp_path, mo
     payload = bootstrap(root)
     assert payload["task"]["id"] == "TASK-1"
     assert payload["task_source"] == "global_history"
+
+
+# ---------------------------------------------------------------------------
+# Trust-boundary policy enforcement (TASK-2026-011)
+# ---------------------------------------------------------------------------
+
+
+def _repo_with_policy(tmp_path, monkeypatch):
+    """Set up a scratch repo whose commands and policy files declare a fake
+    trust boundary. Uses a real spec-style command_key so we can also test
+    evidence attachment end-to-end."""
+    root = _repo(tmp_path, monkeypatch)
+    (root / ".agent/commands.yaml").write_text(
+        "commands:\n"
+        "  test:\n"
+        "    command: git status --short\n"
+        "  workflow_bootstrap:\n"
+        "    command: uv run aletheia agent workflow bootstrap\n"
+        "  spec_risk_engine:\n"
+        "    command: git status --short\n"
+        "  spec_execution:\n"
+        "    command: git status --short\n",
+        encoding="utf-8",
+    )
+    (root / ".agent/policy.yaml").write_text(
+        "schema_version: 1\n"
+        "trust_boundaries:\n"
+        "  - id: risk\n"
+        "    paths:\n"
+        "      - aletheia/risk/**\n"
+        "    required_command_keys:\n"
+        "      - spec_risk_engine\n"
+        "  - id: bitget_auth\n"
+        "    paths:\n"
+        "      - aletheia/exchanges/bitget/auth.py\n"
+        "    required_command_keys:\n"
+        "      - spec_execution\n",
+        encoding="utf-8",
+    )
+    (root / "aletheia/risk").mkdir(parents=True)
+    (root / "aletheia/risk/engine.py").write_text("# initial\n", encoding="utf-8")
+    (root / "aletheia/exchanges/bitget").mkdir(parents=True)
+    (root / "aletheia/exchanges/bitget/auth.py").write_text("# initial\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "seed policy"], cwd=root, check=True, capture_output=True)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, text=True, capture_output=True
+    ).stdout.strip()
+    return root, base
+
+
+def test_trust_boundary_change_without_evidence_fails_strict_check(tmp_path, monkeypatch):
+    root, base = _repo_with_policy(tmp_path, monkeypatch)
+    (root / "aletheia/risk/engine.py").write_text("# tweak\n", encoding="utf-8")
+    write_handoff("TASK-1", _handoff(), root=root)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "touch risk"], cwd=root, check=True, capture_output=True)
+    messages = [f.message for f in validate(root, strict=True, changed_since=base)]
+    assert any("trust-boundary 'risk' touched" in m and "spec_risk_engine" in m for m in messages), messages
+
+
+def test_trust_boundary_change_with_matching_evidence_passes(tmp_path, monkeypatch):
+    root, base = _repo_with_policy(tmp_path, monkeypatch)
+    (root / "aletheia/risk/engine.py").write_text("# tweak\n", encoding="utf-8")
+    subprocess.run(["git", "add", "aletheia/risk/engine.py"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "risk change"], cwd=root, check=True, capture_output=True)
+    verify_task("TASK-1", command_key="spec_risk_engine", root=root)
+    write_handoff("TASK-1", _handoff(), root=root)
+    subprocess.run(["git", "add", ".agent"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "attach evidence"], cwd=root, check=True, capture_output=True)
+    messages = [f.message for f in validate(root, strict=True, changed_since=base)]
+    trust_findings = [m for m in messages if "trust-boundary" in m]
+    assert trust_findings == [], trust_findings
+
+
+def test_trust_boundary_evidence_from_other_branch_still_counts_when_reachable(tmp_path, monkeypatch):
+    """Evidence recorded at an ancestor of HEAD covers current-HEAD changes."""
+    root, base = _repo_with_policy(tmp_path, monkeypatch)
+    (root / "aletheia/risk/engine.py").write_text("# tweak\n", encoding="utf-8")
+    subprocess.run(["git", "add", "aletheia/risk/engine.py"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "risk change"], cwd=root, check=True, capture_output=True)
+    verify_task("TASK-1", command_key="spec_risk_engine", root=root)
+    write_handoff("TASK-1", _handoff(), root=root)
+    subprocess.run(["git", "add", ".agent"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "evidence"], cwd=root, check=True, capture_output=True)
+    (root / "README.md").write_text("later\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "later"], cwd=root, check=True, capture_output=True)
+    messages = [f.message for f in validate(root, strict=True, changed_since=base)]
+    trust_findings = [m for m in messages if "trust-boundary" in m]
+    assert trust_findings == [], trust_findings
+
+
+def test_trust_boundary_evidence_at_orphan_commit_is_rejected(tmp_path, monkeypatch):
+    root, base = _repo_with_policy(tmp_path, monkeypatch)
+    (root / "aletheia/risk/engine.py").write_text("# tweak\n", encoding="utf-8")
+    subprocess.run(["git", "add", "aletheia/risk/engine.py"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "risk change"], cwd=root, check=True, capture_output=True)
+    verify_task("TASK-1", command_key="spec_risk_engine", root=root)
+    task_path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+    task["verification"][-1]["commit"] = "0" * 40  # unreachable commit hash
+    task_path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    write_handoff("TASK-1", _handoff(), root=root)
+    subprocess.run(["git", "add", ".agent"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "attach evidence"], cwd=root, check=True, capture_output=True)
+    messages = [f.message for f in validate(root, strict=True, changed_since=base)]
+    assert any("trust-boundary 'risk' touched" in m for m in messages), messages
+
+
+def test_trust_boundary_file_scoped_glob_matches_exact_file(tmp_path, monkeypatch):
+    root, base = _repo_with_policy(tmp_path, monkeypatch)
+    (root / "aletheia/exchanges/bitget/auth.py").write_text("# tweak\n", encoding="utf-8")
+    write_handoff("TASK-1", _handoff(), root=root)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "touch auth"], cwd=root, check=True, capture_output=True)
+    messages = [f.message for f in validate(root, strict=True, changed_since=base)]
+    assert any("trust-boundary 'bitget_auth' touched" in m and "spec_execution" in m for m in messages), messages
+
+
+def test_trust_boundary_evidence_from_unrelated_command_key_does_not_count(tmp_path, monkeypatch):
+    root, base = _repo_with_policy(tmp_path, monkeypatch)
+    (root / "aletheia/risk/engine.py").write_text("# tweak\n", encoding="utf-8")
+    subprocess.run(["git", "add", "aletheia/risk/engine.py"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "risk change"], cwd=root, check=True, capture_output=True)
+    # Verify with a DIFFERENT command_key (not spec_risk_engine)
+    verify_task("TASK-1", command_key="test", root=root)
+    write_handoff("TASK-1", _handoff(), root=root)
+    subprocess.run(["git", "add", ".agent"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "wrong evidence"], cwd=root, check=True, capture_output=True)
+    messages = [f.message for f in validate(root, strict=True, changed_since=base)]
+    assert any("trust-boundary 'risk' touched" in m for m in messages), messages
+
+
+def test_check_staged_cli_reports_missing_evidence(tmp_path, monkeypatch):
+    root, _ = _repo_with_policy(tmp_path, monkeypatch)
+    result = CliRunner().invoke(
+        workflow_app,
+        ["check-staged", "--paths-stdin"],
+        input="aletheia/risk/engine.py\n",
+    )
+    assert result.exit_code == 1, result.stdout
+    combined = result.stdout + (getattr(result, "stderr", "") or "")
+    assert "trust-boundary 'risk' touched" in combined
+    assert "spec_risk_engine" in combined
+
+
+def test_check_staged_cli_passes_when_evidence_present(tmp_path, monkeypatch):
+    root, _ = _repo_with_policy(tmp_path, monkeypatch)
+    verify_task("TASK-1", command_key="spec_risk_engine", root=root)
+    result = CliRunner().invoke(
+        workflow_app,
+        ["check-staged", "--paths-stdin"],
+        input="aletheia/risk/engine.py\n",
+    )
+    assert result.exit_code == 0, result.stdout
+
+
+def test_check_staged_cli_ignores_non_boundary_paths(tmp_path, monkeypatch):
+    root, _ = _repo_with_policy(tmp_path, monkeypatch)
+    result = CliRunner().invoke(
+        workflow_app,
+        ["check-staged", "--paths-stdin"],
+        input="frontend/src/pages/Home.tsx\n",
+    )
+    assert result.exit_code == 0, result.stdout

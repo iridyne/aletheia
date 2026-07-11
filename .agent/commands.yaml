@@ -6,12 +6,33 @@ commands:
   workflow_tests:
     command: uv run pytest tests/test_agent_workflow.py -q
     purpose: Validate session-independent workflow tooling.
+  workflow_trust_boundary_tests:
+    command: uv run pytest tests/test_agent_workflow.py tests/specs/spec_trust_boundary.py tests/specs/spec_agent_workflow.py -q
+    purpose: Validate workflow tooling and trust-boundary policy contract together.
   architecture:
     command: uv run pytest tests/test_architecture_fitness.py -q
     purpose: Verify dependency direction.
   specs:
     command: uv run pytest tests/specs/ -q
     purpose: Verify executable contracts.
+  spec_risk_engine:
+    command: uv run pytest tests/specs/spec_risk_engine.py -q
+    purpose: Verify risk-engine trust-boundary contract.
+  spec_execution:
+    command: uv run pytest tests/specs/spec_execution.py -q
+    purpose: Verify execution/gateway trust-boundary contract.
+  spec_kill_conditions:
+    command: uv run pytest tests/specs/spec_kill_conditions.py -q
+    purpose: Verify kill-switch trust-boundary contract.
+  spec_live_unlock:
+    command: uv run pytest tests/specs/spec_live_unlock.py -q
+    purpose: Verify live-unlock trust-boundary contract.
+  spec_audit_chain:
+    command: uv run pytest tests/specs/spec_audit_chain.py -q
+    purpose: Verify audit chain and JSONL append-only trust-boundary contract.
+  spec_pipeline_execution_chain:
+    command: uv run pytest tests/specs/spec_pipeline_execution_chain.py -q
+    purpose: Verify end-to-end proposal/risk/order/fill causal chain.
   doctor:
     command: uv run aletheia doctor
     purpose: Probe local runtime facts; never stored as Git state.
