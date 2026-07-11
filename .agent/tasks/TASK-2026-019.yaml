@@ -28,6 +28,14 @@ next_action:
   reason: Add focused regression tests for historical versus changed task evidence
     before changing validation behavior.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 1d94ba8e5b60d90ad231f6ae86597d86ea48250a
+  run_at: '2026-07-11T17:28:55.749767Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-019.md
-updated_at: '2026-07-11T17:28:18.438064Z'
+updated_at: '2026-07-11T17:29:13.762398Z'
