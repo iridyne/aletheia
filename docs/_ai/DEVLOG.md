@@ -6,7 +6,7 @@
 - Added durable per-instrument/timeframe `ready`/`partial`/`failed` state, one-hour partial retries, exponential failure backoff, and deduplicated infrastructure warnings after repeated failures.
 - Settings exposes enable/interval/max-pairs controls; doctor reports automatic catch-up state beside exact active coverage gaps. Nightly bulk backfill remains unchanged as fallback.
 - No Universe scoring, filter, risk, sizing, execution, live, or credential behavior changed.
-- Validation: production-database backup migration kept all checked market/trading row counts unchanged with `PRAGMA integrity_check=ok`; focused 18 passed, all specs 617 passed, full suite 2704 passed with 0 real failures; frontend production build passed.
+- Validation: production-database backup migration kept all checked market/trading row counts unchanged with `PRAGMA integrity_check=ok`; focused 18 passed, all specs 617 passed, and the post-master-merge full suite passed 2719 tests with 0 real failures; frontend production build passed.
 
 ---
 
