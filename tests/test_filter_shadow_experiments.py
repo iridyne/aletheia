@@ -91,7 +91,10 @@ def test_replay_ready_plan_is_registered_once_and_starts_prospectively():
     replay = _ready_replay(filter_version="fixed-v1")
 
     first = register_replay_ready_experiments([replay], now=started_at)
-    second = register_replay_ready_experiments([replay], now=started_at + timedelta(hours=1))
+    second = register_replay_ready_experiments(
+        [_ready_replay(filter_version="fixed-v1", ttl_sec=7200)],
+        now=started_at + timedelta(hours=1),
+    )
     rows = get_db().execute("SELECT * FROM filter_shadow_experiments").fetchall()
 
     assert first == {"registered": 1, "already_registered": 0, "skipped": 0}

@@ -508,6 +508,9 @@ def test_filter_shadow_experiments_are_prospective_and_observe_only():
     assert "production_mutation_allowed" in source
     assert "save_config" not in source
     assert "ready_for_review" in source
+    from aletheia.storage import migrations
+
+    assert "idx_filter_shadow_experiments_fixed_scope" in migrations._FILTER_SHADOW_EXPERIMENTS_DDL
 
 
 @spec_claim(

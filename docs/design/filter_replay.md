@@ -83,6 +83,9 @@ Prospective evaluation obeys these rules:
   `completed_no_support`;
 - any production filter-version change invalidates the experiment rather than
   mixing policies;
+- one fixed version/stage/family/direction/market/horizon scope can preregister
+  only one treatment. Later replay fluctuations cannot create parallel thresholds
+  against the same future cohort;
 - every evaluation is append-only. The plan has a database-enforced
   `production_mutation_allowed=0` field, and no experiment status writes config.
 

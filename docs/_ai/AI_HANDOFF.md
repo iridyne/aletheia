@@ -25,6 +25,8 @@ doctor 原先只要 filter outcome 到了 `due_at` 就立即计入 overdue，超
 
 对照组和 shadow 增量组都要各自达到至少 20 个完整净结果和 70% 覆盖。达到绝对与相对 5bp 门槛只会进入人工复核；不支持则结束，生产 filter 版本变化则自动作废。实验表通过 CHECK 约束固定 `production_mutation_allowed=0`，整个模块不写配置、不改变放行结果。
 
+同一个固定版本、阶段、家族、方向、市场和周期由数据库唯一索引限制为一个预登记 treatment；后续历史回放波动不会再为同一未来样本并行追逐其他阈值。
+
 没有修改 TTL、ranker、方向刹车、Kelly/sizing、风险、执行、live 或凭证。
 
 验证：聚焦过滤回归 48 项、架构检查 11 项、完整规则 633 项通过；重放到最新主线后单进程连续全量 `2806 passed, 13 skipped, 6 xfailed`。

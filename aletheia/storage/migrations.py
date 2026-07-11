@@ -2326,6 +2326,10 @@ CREATE INDEX IF NOT EXISTS idx_filter_shadow_experiments_scope
     ON filter_shadow_experiments(
         filter_name, filter_version, scanner_family, direction, market_type, horizon
     );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_filter_shadow_experiments_fixed_scope
+    ON filter_shadow_experiments(
+        filter_name, filter_version, stage, scanner_family, direction, market_type, horizon
+    );
 
 CREATE TABLE IF NOT EXISTS filter_shadow_evaluations (
     id TEXT PRIMARY KEY,

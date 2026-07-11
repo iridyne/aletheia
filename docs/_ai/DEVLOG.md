@@ -23,6 +23,9 @@
 - Production filter-version drift invalidates an active experiment. Final states
   are review-only or no-support; a database CHECK fixes
   `production_mutation_allowed=0`, and no config path is imported.
+- A database unique index permits only one preregistered treatment per fixed
+  version/stage/cohort scope, preventing repeated replay fluctuations from
+  creating parallel threshold tests on the same future sample.
 - CLI/API controller reports expose plan and latest evidence status. No TTL,
   ranker, sizing, risk, execution, live, or credential behavior changed.
 - Validation: focused filter suites passed 48 tests; architecture fitness passed

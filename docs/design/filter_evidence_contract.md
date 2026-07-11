@@ -160,7 +160,9 @@ MVP 收缩公式：
 独立 shadow 实验必须在回放后预登记固定 version/cohort/control/treatment/停止门槛，从登记
 时刻之后的新 first-exposure 样本开始，禁止复用挑选阈值的历史样本做验证。control 与新增
 shadow treatment 各自达到 20 个完整净结果和 70% 覆盖后才判定；生产 filter version 变化则
-实验失效。`ready_for_review` 只表示可人工复核，任何状态都不得写生产配置或改变候选放行。
+实验失效。同一个固定 version/stage/family/direction/market/horizon 只能登记一个 treatment，
+后续回放波动不得并行追逐另一个阈值。`ready_for_review` 只表示可人工复核，任何状态都不得写
+生产配置或改变候选放行。
 
 ## 7. 批次选择的特别规则
 
