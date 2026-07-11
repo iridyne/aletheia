@@ -3100,3 +3100,12 @@ Suite: 357 passed.
 ### Notes
 
 AI workspace initialization. Existing AGENTS.md preserved as-is (already comprehensive).
+
+## 2026-07-11 — Session-independent workflow hardening
+
+- Added explicit approved-command execution and tool-produced verification records.
+- Completion now requires current-HEAD proof, structured handoff content, and a safe completed-state next action.
+- Added evidence freshness to bootstrap/recovery, controlled task updates, filtered/JSON validation, and change-range enforcement.
+- CI now runs workflow behavior tests and rejects governed diffs without both task and handoff records; the versioned pre-commit hook applies the same local gate.
+- Migrated completed task packets away from stale implementation next actions and replaced root `CURRENT_TASK.md` with the durable bootstrap pointer.
+- Verification: focused/architecture 40 passed; specs 636 passed, 7 skipped, 6 xfailed; full suite 2837 passed with one pre-existing duplicate Gateway claim ID failure.

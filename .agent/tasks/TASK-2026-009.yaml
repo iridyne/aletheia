@@ -24,9 +24,8 @@ ownership:
   expires_at: '2026-07-11T21:30:56.178935Z'
 base_commit: c4df25e84d3c79505db1a15658288c05d3135d87
 next_action:
-  command_key: workflow_tests
-  reason: Add focused regression tests for recovered restart history, service-safe
-    Node discovery, and operator shell health reporting.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing code.
 blockers: []
 verification:
 - command_key: specs

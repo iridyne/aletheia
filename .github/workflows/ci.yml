@@ -53,8 +53,18 @@ jobs:
       - name: Verify executable contracts
         run: uv run pytest tests/specs/ -q --junitxml=test-results/specs.xml
 
+      - name: Verify agent workflow behavior
+        run: uv run pytest tests/test_agent_workflow.py -q --junitxml=test-results/agent-workflow.xml
+
       - name: Verify agent workflow integrity
-        run: uv run aletheia agent workflow check --strict
+        env:
+          CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$CHANGE_BASE" ] && git cat-file -e "${CHANGE_BASE}^{commit}" 2>/dev/null; then
+            uv run aletheia agent workflow check --strict --changed-since "$CHANGE_BASE"
+          else
+            uv run aletheia agent workflow check --strict
+          fi
 
       - name: Run full regression audit
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_regression }}

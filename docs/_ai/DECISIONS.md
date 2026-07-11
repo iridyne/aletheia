@@ -833,3 +833,27 @@ Aletheia 已完整自建（operator-shell 自身已是 LLM agent runtime）+ 引
 - 三组件区分图：`docs/design/operator_layer.md` §[必看] 警告框
 - memory：`aletheia-pi-agent-full-build-decision`（含 A2/A4 误报根因详述）
 - 历史设计归档：`docs/design/specs/2026-06-10-pi-operator-agent-design-crosswalk.md`
+
+## 2026-07-11 — Verification evidence must be tool-produced
+
+### Context
+
+The first repository-agent workflow could mark a task passed without executing
+the registered command, and completed tasks retained stale implementation next
+actions. A fresh session could therefore recover structurally valid but false
+or misleading state.
+
+### Decision
+
+Only an explicit `agent workflow task verify` (or `task complete
+--command-key`) may produce versioned success evidence. It executes the selected
+catalogued command without a shell, records the exact implementation commit and
+command digest, and records nothing on failure. Completion requires current-HEAD
+tool evidence and a structured handoff, then resets the next action to workflow
+bootstrap. CI enforces task and handoff adoption over the full changed range.
+
+### Consequences
+
+Repository continuity is no longer based solely on Agent prose. Historical
+evidence remains useful history but is visibly labelled and cannot complete new
+work. Trading and runtime behavior are unchanged.

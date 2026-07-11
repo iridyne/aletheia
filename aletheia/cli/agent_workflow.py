@@ -2,7 +2,18 @@
 from pathlib import Path
 import json
 import typer
-from aletheia.agent_workflow import bootstrap, claim_task, complete_task, create_task, recovery_test, render_bootstrap, validate, write_handoff
+from aletheia.agent_workflow import (
+    bootstrap,
+    claim_task,
+    complete_task,
+    create_task,
+    recovery_test,
+    render_bootstrap,
+    update_task,
+    validate,
+    verify_task,
+    write_handoff,
+)
 
 workflow_app = typer.Typer(no_args_is_help=True)
 task_app = typer.Typer(no_args_is_help=True)
@@ -16,14 +27,23 @@ def bootstrap_command(json_out: bool = typer.Option(False, "--json")):
         raise typer.Exit(1)
 
 @workflow_app.command("check")
-def check(strict: bool = typer.Option(False, "--strict")):
+def check(
+    strict: bool = typer.Option(False, "--strict"),
+    task_id: str | None = typer.Option(None, "--task"),
+    changed_since: str | None = typer.Option(None, "--changed-since"),
+    json_out: bool = typer.Option(False, "--json"),
+):
     """Validate tracked task state without touching runtime or trading state."""
-    findings = validate(strict=strict)
-    for finding in findings:
-        typer.echo(f"{finding.severity.upper()}: {finding.message}" + (f" [{finding.task_id}]" if finding.task_id else ""))
+    findings = validate(strict=strict, task_id=task_id, changed_since=changed_since)
+    if json_out:
+        typer.echo(json.dumps({"valid": not any(x.severity == "error" for x in findings), "findings": [x.__dict__ for x in findings]}, ensure_ascii=False, indent=2))
+    else:
+        for finding in findings:
+            typer.echo(f"{finding.severity.upper()}: {finding.message}" + (f" [{finding.task_id}]" if finding.task_id else ""))
+        if not findings:
+            typer.echo("Agent workflow state is valid.")
     if any(x.severity == "error" for x in findings):
         raise typer.Exit(1)
-    typer.echo("Agent workflow state is valid.")
 
 @task_app.command("claim")
 def claim(task_id: str, holder: str = typer.Option(..., "--holder"), hours: int = typer.Option(8, "--hours", min=1, max=72)):
@@ -46,14 +66,53 @@ def create(task_id: str, title: str = typer.Option(..., "--title"), intent: str 
     typer.echo(f"Created {task['id']}; claim it from its dedicated branch before editing code.")
 
 @task_app.command("complete")
-def complete(task_id: str, command_key: str = typer.Option(..., "--command-key")):
-    """Mark a clean, already-verified task complete with registered evidence."""
+def complete(task_id: str, command_key: str | None = typer.Option(None, "--command-key")):
+    """Run optional registered verification, then complete with current proof."""
     try:
-        task = complete_task(task_id, command_key=command_key)
+        if command_key is not None:
+            verify_task(task_id, command_key=command_key)
+        task = complete_task(task_id)
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1)
     typer.echo(f"Recorded completion evidence for {task['id']}; commit its task packet and handoff.")
+
+
+@task_app.command("verify")
+def verify(task_id: str, command_key: str = typer.Option(..., "--command-key")):
+    """Execute an approved command and record proof only if it really passes."""
+    try:
+        task = verify_task(task_id, command_key=command_key)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+    evidence = task["verification"][-1]
+    typer.echo(f"Verified {task['id']} at {evidence['commit'][:7]} with {command_key}.")
+
+
+@task_app.command("update")
+def update(
+    task_id: str,
+    status: str | None = typer.Option(None, "--status"),
+    next_command_key: str | None = typer.Option(None, "--next-command-key"),
+    next_reason: str | None = typer.Option(None, "--next-reason"),
+    blocker: list[str] = typer.Option([], "--blocker"),
+    acceptance: list[str] = typer.Option([], "--acceptance"),
+):
+    """Update one task without bypassing state-transition or command checks."""
+    try:
+        task = update_task(
+            task_id,
+            status=status,
+            next_command_key=next_command_key,
+            next_reason=next_reason,
+            blockers=blocker or None,
+            acceptance=acceptance or None,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Updated {task['id']} ({task['status']}).")
 
 @workflow_app.command("handoff")
 def handoff(task_id: str = typer.Option(..., "--task"), from_file: Path = typer.Option(..., "--from-file")):

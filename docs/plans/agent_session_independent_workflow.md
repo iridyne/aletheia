@@ -131,10 +131,11 @@ updated_at: 2026-07-11T00:00:00Z
 ```
 
 `verification.command_key` is mandatory and must refer to `commands.yaml`.
-The repeated display command is compared to the catalogue, avoiding arbitrary
-shell text and accidental secret storage. Evidence is **current** only at the
-recorded commit; bootstrap reports it as stale whenever `HEAD` differs, even if
-the recorded commit is an ancestor. This is conservative and honest.
+The repeated display command and its digest are compared to the catalogue,
+avoiding arbitrary shell text and accidental secret storage. For versioned
+packets, evidence is created only by explicit tool execution. Evidence is
+**current** only at the recorded commit; bootstrap labels an ancestor result as
+historical rather than presenting it as proof of the current checkout.
 
 The per-task handoff is concise Markdown with fixed headings: purpose, changes
 made, uncommitted-work warning, verification table, remaining work, exact next
@@ -150,8 +151,8 @@ support tools that need a file command. All Python runs through `uv run`.
 | Command | Behaviour | Side effects |
 |---|---|---|
 | `agent workflow bootstrap [--json]` | validates metadata, detects current branch/worktree, selects the uniquely matching task, reports proof freshness, dirty files, blockers, and next action; points to `doctor` for runtime facts | read-only |
-| `agent workflow check [--strict] [--task ID]` | validates schemas, IDs, task state transitions, handoff references, command catalogue, Git commit existence/ancestry, duplicate active ownership, stale/unsupported completion and secret-like metadata | read-only |
-| `agent workflow task create/claim/update/complete` | creates or deliberately edits one task packet; completion requires current successful evidence and a handoff | tracked file edit |
+| `agent workflow check [--strict] [--task ID] [--changed-since COMMIT] [--json]` | validates schemas, IDs, task state transitions, handoff references, command catalogue, Git commit existence/ancestry, duplicate active ownership, unsupported completion, secret-like metadata, and change-range adoption | read-only |
+| `agent workflow task create/claim/update/verify/complete` | creates or deliberately edits one task packet; `verify` explicitly executes an approved command and completion requires its current-HEAD evidence plus a structured handoff | tracked file edit; `verify` also runs the selected approved command |
 | `agent workflow handoff --task ID --from-file FILE` | validates a structured handoff input, updates only that task packet/handoff, and prints the exact files to stage | tracked file edit |
 | `agent workflow recovery-test` | performs a read-only cold-start assessment and returns a report suitable for a fresh agent; it does not invent missing facts | read-only |
 
@@ -188,9 +189,9 @@ and invalid task packets.
    task metadata is executed by bootstrap/check.
 3. Implement `bootstrap`, machine-readable JSON output, proof freshness, and
    diagnostics that distinguish repository facts from local runtime facts.
-4. Implement `check` with normal and strict modes. Strict mode fails stale
-   evidence for `done` tasks and all structural errors; normal mode reports
-   stale in-progress evidence as a warning.
+4. Implement `check` with normal and strict modes. Strict mode rejects
+   unsupported or unreachable completion evidence and all structural errors;
+   bootstrap separately reports current versus historical evidence age.
 
 Exit: focused unit tests cover malformed YAML, unknown command keys, absent
 handoff, invalid commit, non-ancestor base, duplicate active branch ownership,
@@ -213,11 +214,10 @@ can recover the next action without chat history.
 
 ### Phase 4 — Gentle enforcement and CI
 
-1. Repair the versioned pre-commit reminder and make it warn when source or
-   documentation changes are staged without a corresponding `.agent/tasks/` or
-   `.agent/handoffs/` update. It remains non-blocking initially.
+1. Repair the versioned pre-commit reminder. After the initial adoption period,
+   make it block governed changes that omit either the task packet or handoff.
 2. Add an `agent-state-integrity` CI step to the existing workflow. It runs
-   `uv run aletheia agent check --strict` and validates tracked state only; it
+   `uv run aletheia agent workflow check --strict` and validates tracked state only; it
    never calls `doctor`, starts a gateway, or assumes local credentials.
 3. Add an optional PR convention for task IDs in commit/PR text only after the
    basic system has soaked. Do not make external GitHub availability part of
@@ -258,8 +258,8 @@ Required commands before calling the first release complete:
 ```bash
 uv run pytest tests/test_agent_workflow.py tests/specs/spec_agent_workflow.py -q
 uv run pytest tests/test_architecture_fitness.py tests/specs/ -q
-uv run aletheia agent check --strict
-uv run aletheia agent recovery-test --json
+uv run aletheia agent workflow check --strict
+uv run aletheia agent workflow recovery-test --json
 ```
 
 After the tooling has landed, the cold recovery drill is a mandatory manual
@@ -269,8 +269,9 @@ acceptance test, not a claim inferred from unit tests alone.
 
 - No cloud control plane, database, Redis, Docker service, vector store, or
   external task manager.
-- No automatic execution of recorded commands, automatic test-passing claims,
-  automatic commits, automatic pushes, or automatic task completion.
+- Bootstrap and check never execute recorded commands. Only the explicit
+  `task verify`/`task complete --command-key` action executes a selected approved
+  command; there are no automatic test-passing claims, commits, pushes, or task completion.
 - No storage of gateway/process/DB/config/credential state in Git.
 - No changes to risk, execution, live-trading permissions, exchange clients, or
   secret handling beyond rejecting secret-like text from workflow metadata.
@@ -283,3 +284,8 @@ Begin with phases 1 and 2 in a dedicated branch. They establish the minimum
 usable recovery loop and are entirely outside trading trust boundaries. Phases
 3–5 follow only after the first cold-start test proves the format is useful;
 the existing documents remain available throughout the transition.
+
+Hardening completed after nine real task adoptions: completion evidence is now
+tool-produced at the current implementation commit, handoffs are structured,
+completed tasks return to bootstrap, evidence age is visible, and CI enforces
+task/handoff updates across governed change ranges.
