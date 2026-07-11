@@ -1078,6 +1078,20 @@ class CapitalEvent(BaseModel):
     note: str = ""
 
 
+class PaperAccountEvent(BaseModel):
+    """Immutable cash-account event for the local paper simulator only."""
+    id: str = Field(default_factory=new_id)
+    action: str
+    amount_usdt: float
+    cash_balance_before_usdt: float
+    cash_balance_after_usdt: float
+    actor: str = "system"
+    source: str = "paper_account"
+    position_id: str | None = None
+    note: str = ""
+    created_at: str = Field(default_factory=_utcnow)
+
+
 class OnchainSnapshot(BaseModel):
     """Aggregated on-chain / DeFi metric snapshot (DefiLlama).
 

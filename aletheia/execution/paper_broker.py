@@ -147,6 +147,9 @@ def execute_paper_order(
         )
         insert_position(position)
         position_id = position.id
+        if execution_mode == "paper_internal":
+            from aletheia.portfolio.paper_account import record_position_opened
+            record_position_opened(position_id)
 
     result = {
         "order_id": order.id,

@@ -2108,6 +2108,27 @@ CREATE TABLE IF NOT EXISTS capital_events (
 CREATE INDEX IF NOT EXISTS idx_capital_events_detected ON capital_events(detected_at);
 """
 
+_PAPER_ACCOUNT_EVENTS_DDL = """
+CREATE TABLE IF NOT EXISTS paper_account_events (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL CHECK (action IN (
+        'initial_funding', 'manual_credit', 'manual_debit', 'manual_set_balance',
+        'position_opened', 'position_closed'
+    )),
+    amount_usdt REAL NOT NULL,
+    cash_balance_before_usdt REAL NOT NULL,
+    cash_balance_after_usdt REAL NOT NULL,
+    actor TEXT NOT NULL DEFAULT 'system',
+    source TEXT NOT NULL DEFAULT 'paper_account',
+    position_id TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(action, position_id)
+);
+CREATE INDEX IF NOT EXISTS idx_paper_account_events_created
+    ON paper_account_events(created_at DESC);
+"""
+
 _VOLUME_RANKING_DDL = """
 CREATE TABLE IF NOT EXISTS volume_ranking_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2179,6 +2200,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_MARKET_REGIME_DDL)
     db.executescript(_PI_DECISIONS_DDL)
     db.executescript(_CAPITAL_EVENTS_DDL)
+    db.executescript(_PAPER_ACCOUNT_EVENTS_DDL)
     db.executescript(_VOLUME_RANKING_DDL)
     db.executescript(_CONTROLLER_RECOMMENDATIONS_DDL)
     _ensure_columns(db)

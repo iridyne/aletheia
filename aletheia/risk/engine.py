@@ -40,10 +40,15 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
     Risk evaluation must stay local and deterministic: it never calls an exchange
     for a balance. Bitget has a per-mode cache; the other exchange-backed modes
     use their named account in the unified cache. ``paper_internal`` has no
-    external account, so its configured cap remains the only size boundary here.
+    external account; it uses an isolated local ledger instead.
     """
     if execution_mode == "paper_internal":
-        return None
+        try:
+            from aletheia.portfolio.paper_account import get_paper_account
+            return get_paper_account(event_limit=0)["available_balance_usdt"]
+        except Exception:
+            # Preserve the configured cap if the local ledger cannot be read.
+            return None
 
     try:
         from aletheia.portfolio.exchange_sync import (

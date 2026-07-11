@@ -111,6 +111,8 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
     row = repo._select_one("positions", position_id)
     if row is None:
         raise ValueError(f"position not found: {position_id}")
+    if row.get("status") != "open":
+        raise ValueError(f"position is not open: {position_id}")
 
     gross_pnl = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
     # Deduct round-trip fees; prefer stored entry_fee (precise) over re-derivation.
@@ -170,6 +172,9 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         slippage_cost=slippage_cost,
     )
     row["closed_at"] = closed_at  # so the Serenity hook computes real hold_h
+    if row.get("execution_mode") == "paper_internal":
+        from aletheia.portfolio.paper_account import settle_position_closed
+        settle_position_closed(position_id, realized)
     write_audit({
         "actor": "system",
         "source": "scheduler",

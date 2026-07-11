@@ -51,6 +51,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `positions` | Open/closed positions | symbol, direction, entry_price, quantity, status, realized_pnl | position_manager |
 | `shadow_trades` | What-if trades for comparison | opportunity_id, venue, market_type, outcome_candidate_key, gross_return_pct, net_pnl_pct, estimated costs | analytics |
 | `portfolio_snapshots` | Periodic equity snapshots | total_value_usdt, unrealized_pnl, execution_mode | scheduler job |
+| `paper_account_events` | **Local `paper_internal` cash ledger only**; immutable starting funds, human adjustments, and realized-PnL settlements | action, amount_usdt, cash_balance_before_usdt, cash_balance_after_usdt, actor, source, position_id, note | paper account service |
 | `market_regimes` | Detected market regimes | regime_type, confidence, indicators (JSON) | market_observer |
 
 ### B. Strategy Management (4 tables)

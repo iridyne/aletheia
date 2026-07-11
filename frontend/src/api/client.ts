@@ -653,6 +653,17 @@ export const api = {
   createCapitalEvent: (body: { broker_id: string; event_type: string; amount_usdt: number; note?: string }) =>
     post<any>('/capital/events', body),
 
+  // Local paper account (available only in Paper internal / No exchange mode)
+  getPaperAccount: () => fetchJson<any>('/settings/paper-account'),
+  creditPaperAccount: (amount_usdt: number, note?: string) =>
+    post<any>('/settings/paper-account/credit', { amount_usdt, note }),
+  debitPaperAccount: (amount_usdt: number, note?: string) =>
+    post<any>('/settings/paper-account/debit', { amount_usdt, note }),
+  setPaperAccountBalance: (cash_balance_usdt: number, note?: string) =>
+    post<any>('/settings/paper-account/set-balance', { cash_balance_usdt, note }),
+  closeAllPaperPositions: () => post<any>('/settings/paper-account/close-all'),
+  closePaperSpotPositions: () => post<any>('/settings/paper-account/close-spot'),
+
   // Audit / Activity
   getAuditEvents: (limit = 50) => fetchJson<any[]>(`/audit/events?limit=${limit}`),
 

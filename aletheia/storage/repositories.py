@@ -9,6 +9,7 @@ from aletheia.storage.models import (
     RiskDecision, Order, Fill, Position, StrategyRecord, KnowledgeItem,
     SerenityTheme, SerenityEvidence, SerenityOpportunity, SerenityRiskGate,
     SerenityReplaySnapshot, SerenityPostMortem, SerenityClaim,
+    PaperAccountEvent,
 )
 
 
@@ -180,6 +181,35 @@ def get_first_capital_event_time() -> str | None:
     db = get_db()
     row = db.execute("SELECT MIN(detected_at) AS t FROM capital_events").fetchone()
     return row["t"] if row and row["t"] else None
+
+
+# --- Local paper account events ---
+
+def insert_paper_account_event(event: PaperAccountEvent) -> None:
+    _insert("paper_account_events", event.model_dump())
+
+
+def list_paper_account_events(limit: int = 50) -> list[dict]:
+    return _select_all("paper_account_events", order="created_at DESC, rowid DESC", limit=limit)
+
+
+def get_paper_account_cash_balance() -> float:
+    db = get_db()
+    row = db.execute("SELECT COALESCE(SUM(amount_usdt), 0) AS cash FROM paper_account_events").fetchone()
+    return float(row["cash"]) if row else 0.0
+
+
+def has_paper_account_event() -> bool:
+    db = get_db()
+    return db.execute("SELECT 1 FROM paper_account_events LIMIT 1").fetchone() is not None
+
+
+def has_paper_account_position_event(action: str, position_id: str) -> bool:
+    db = get_db()
+    return db.execute(
+        "SELECT 1 FROM paper_account_events WHERE action = ? AND position_id = ? LIMIT 1",
+        (action, position_id),
+    ).fetchone() is not None
 
 
 # --- Prediction Observer Runs ---

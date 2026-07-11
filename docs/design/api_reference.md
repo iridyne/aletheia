@@ -178,6 +178,12 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | POST | `/settings/bypass-distress-gate` | Explicit operator bypass for distress gate checks |
 | POST | `/settings/exchange-markets` | Observed symbols list |
 | POST | `/settings/primary-exchange` | Primary exchange selection |
+| GET | `/settings/paper-account` | Local simulated cash, reserved margin, available balance, equity, and recent ledger events. Available only when `paper_internal` is active. |
+| POST | `/settings/paper-account/credit` | Add local simulated USDT: `{"amount_usdt": number, "note"?: string}`. Human/audit logged; never touches an exchange. |
+| POST | `/settings/paper-account/debit` | Remove local simulated USDT; cannot make cash negative. Human/audit logged. |
+| POST | `/settings/paper-account/set-balance` | Set local simulated cash: `{"cash_balance_usdt": number, "note"?: string}`. An explicit zero remains zero; it is not automatically re-funded. |
+| POST | `/settings/paper-account/close-spot` | Close all open local spot positions at their latest stored market prices. Preserves trade history and logs the human action. |
+| POST | `/settings/paper-account/close-all` | Close all open local paper positions at their latest stored market prices. Preserves trade history and logs the human action. |
 | POST | `/settings/runtime` | Scheduler intervals, timeouts |
 | POST | `/settings/app` | App-level settings (timezone, locale) |
 | POST | `/settings/pi_daemon` | PI daemon config (debounce, cooldown) |

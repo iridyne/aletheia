@@ -172,25 +172,46 @@ def _build_layer1_snapshot() -> dict[str, Any]:
     except Exception:
         layer["positions"] = []
 
-    # Account balance
+    # Account balance. Local paper is a separate cash ledger: showing an old
+    # exchange cache here would make the agent misread a human balance adjustment.
     try:
-        from aletheia.portfolio.exchange_sync import get_cached_state
-        state = get_cached_state()
-        if state and state.get("age_seconds", 999) < 300:
+        from aletheia.config.loader import load_config as _load_cfg
+        _mode = _load_cfg().exchange.paper_execution_mode or "paper_internal"
+        if _mode == "paper_internal":
+            from aletheia.portfolio.paper_account import get_paper_account
+            account = get_paper_account(event_limit=3)
             layer["balance"] = {
-                "equity_usdt": state.get("equity_usdt") or state.get("total_equity_usdt"),
-                "available_usdt": state.get("available_usdt") or state.get("total_available_usdt"),
+                "equity_usdt": account["equity_usdt"],
+                "available_usdt": account["available_balance_usdt"],
+                "reserved_margin_usdt": account["reserved_margin_usdt"],
+                "source": "local_paper_ledger",
             }
+            layer["recent_account_changes"] = [
+                {"action": event["action"], "amount_usdt": event["amount_usdt"],
+                 "note": event.get("note"), "at": event["created_at"]}
+                for event in account["events"]
+                if event["action"].startswith("manual_")
+            ]
         else:
-            layer["balance"] = None
+            from aletheia.portfolio.exchange_sync import get_cached_state
+            state = get_cached_state()
+            if state and state.get("age_seconds", 999) < 300:
+                layer["balance"] = {
+                    "equity_usdt": state.get("equity_usdt") or state.get("total_equity_usdt"),
+                    "available_usdt": state.get("available_usdt") or state.get("total_available_usdt"),
+                }
+            else:
+                layer["balance"] = None
+            layer["recent_account_changes"] = []
     except Exception:
         layer["balance"] = None
+        layer["recent_account_changes"] = []
 
     # Today's realized PnL (scoped to active execution mode so PI sees
     # the same figure as the paper dashboard, not a cross-mode total).
     try:
         from aletheia.portfolio.pnl import today_realized_pnl
-        from aletheia.config import load_config as _load_cfg
+        from aletheia.config.loader import load_config as _load_cfg
         _mode = _load_cfg().exchange.paper_execution_mode or "paper_internal"
         layer["today_pnl"] = round(today_realized_pnl(execution_mode=_mode), 2)
     except Exception:

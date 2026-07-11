@@ -7,7 +7,26 @@
 
 ## Last Updated
 
-2026-07-11 (Restored knowledge path relocation)
+2026-07-11 (Local No-Exchange paper account)
+
+---
+
+## Recent Change (Local No-Exchange paper account — 2026-07-11)
+
+Local `paper_internal` now owns an append-only simulated-cash ledger. First use
+records 200 USDT once; a deliberate operator balance of zero stays zero. Available
+cash is cash less margin reserved by open local positions, and risk tightens the
+existing local per-order ceiling by that available amount. A local close records its
+realized PnL once without rewriting trade history.
+
+Settings exposes human-only cash credit/debit/set actions and close-all / close-spot
+actions only while Paper (internal) is active. Each is audit logged. The System
+Operator receives the local balance and recent human account changes as read-only
+context. External demo/live accounts, credentials, exchange execution, and live
+unlock behavior were not changed.
+
+Validation: focused account/risk/execution/settings tests, full specs, architecture
+fitness, and frontend production build passed.
 
 ---
 

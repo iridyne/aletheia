@@ -1,5 +1,24 @@
 # Development Log
 
+## 2026-07-11 — Local No-Exchange paper account
+
+- Local paper trading now has its own append-only cash ledger, separate from the
+  cross-broker chart baseline and from external exchange caches. The first local
+  account use records a one-time 200-USDT starting balance; an operator-set zero
+  remains zero and blocks new local paper orders.
+- The Settings page adds local cash add/remove/set controls and close-all / close
+  local-spot controls. Position closes preserve normal trade history and settle
+  realized PnL into the local ledger exactly once.
+- Every human operation is written to the audit chain. The System Operator sees
+  the local available balance and recent human changes as read-only context, but
+  gains no account-mutation tool.
+- External demo/live balances, credentials, exchange execution, and live unlock
+  behavior are unchanged.
+- Validation: focused account/risk/execution/settings tests plus all specs passed;
+  frontend production build passed.
+
+---
+
 ## 2026-07-11 — Restored knowledge path relocation
 
 - FTS 重建现在可把旧机器保存的 Windows 绝对 `file_path` 安全重定位到本机 data 目录；只接受 `data/` 后缀且解析后必须仍在 data 根目录内。

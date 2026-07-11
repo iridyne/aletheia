@@ -78,6 +78,7 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   { title: 'Trading Mode',             tab: 'execution', alt: ['demo', 'live unlock', 'paper'] },
   { title: 'Paper Trading Parameters', tab: 'execution', alt: ['stop loss', 'take profit', 'hold time', 'confidence'] },
   { title: 'Capital Events',           tab: 'execution', alt: ['deposit', 'withdrawal', 'pnl baseline'] },
+  { title: 'Local Paper Account',      tab: 'execution', alt: ['no exchange', 'paper cash', 'available balance', 'close positions'] },
   { title: 'Market Data Sources',      tab: 'execution', alt: ['ohlcv', 'data provider', 'override', 'long short', 'lsr'] },
   { title: 'Macro & Sentiment Signals',tab: 'execution', alt: ['fear greed', 'sentiment', 'coingecko', 'top movers', 'macro'] },
   // Risk & Universe
@@ -1233,6 +1234,15 @@ function ExecutionTab({ status, settings, qc, onDirty }: any) {
         <CapitalEventsCard />
       </Section>
 
+      {String((settings?.exchange as any)?.paper_execution_mode) === 'paper_internal' && (
+        <Section
+          title="Local Paper Account"
+          description="No exchange only. Manage local simulated cash and positions; every change is recorded for audit and shown to the trading agent."
+        >
+          <PaperAccountCard qc={qc} />
+        </Section>
+      )}
+
       <Section
         title="Market Data Sources (Advanced)"
         description="Override primary exchange data routing. Normally managed by the Primary Exchange selector above."
@@ -1248,6 +1258,86 @@ function ExecutionTab({ status, settings, qc, onDirty }: any) {
       >
         <MacroSignalsCard settings={settings} qc={qc} onDirty={onDirty} />
       </Section>
+    </div>
+  )
+}
+
+function PaperAccountCard({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
+  const { data: account, isLoading } = useQuery({ queryKey: ['paper-account'], queryFn: api.getPaperAccount })
+  const [amount, setAmount] = useState('')
+  const [note, setNote] = useState('')
+  const [msg, setMsg] = useState<string | null>(null)
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['paper-account'] })
+    qc.invalidateQueries({ queryKey: ['positions'] })
+    qc.invalidateQueries({ queryKey: ['portfolio'] })
+  }
+  const mutate = useMutation({
+    mutationFn: ({ action, value }: { action: 'credit' | 'debit' | 'set'; value: number }) => {
+      if (action === 'credit') return api.creditPaperAccount(value, note)
+      if (action === 'debit') return api.debitPaperAccount(value, note)
+      return api.setPaperAccountBalance(value, note)
+    },
+    onSuccess: () => { setMsg('Saved local paper account change'); setAmount(''); setNote(''); refresh() },
+    onError: (error: any) => setMsg(error.message || 'Account change failed'),
+  })
+  const closeMutation = useMutation({
+    mutationFn: (spotOnly: boolean) => spotOnly ? api.closePaperSpotPositions() : api.closeAllPaperPositions(),
+    onSuccess: (result) => { setMsg(`Closed ${result.closed_position_ids?.length ?? 0} local position(s)`); refresh() },
+    onError: (error: any) => setMsg(error.message || 'Could not close positions'),
+  })
+  const value = Number(amount)
+  const valid = Number.isFinite(value) && value >= 0
+
+  if (isLoading) return <p className="hint">Loading local paper account…</p>
+  return (
+    <div>
+      <div className="settings-number-grid" style={{ marginBottom: '1rem' }}>
+        {[
+          ['Cash balance', account?.cash_balance_usdt],
+          ['Reserved margin', account?.reserved_margin_usdt],
+          ['Available balance', account?.available_balance_usdt],
+          ['Equity', account?.equity_usdt],
+        ].map(([label, raw]) => (
+          <label className="settings-field" key={String(label)}>
+            <span>{label}</span>
+            <input readOnly value={`${Number(raw ?? 0).toFixed(2)} USDT`} className="mono" />
+          </label>
+        ))}
+      </div>
+      <Row label="Amount" hint="Add, remove, or set local simulated cash. Setting cash to 0 is preserved and blocks new local paper orders until funded again.">
+        <input type="number" min="0" step="0.01" value={amount} onChange={e => { setAmount(e.target.value); setMsg(null) }} placeholder="200" />
+        <input value={note} onChange={e => setNote(e.target.value)} placeholder="Reason (shown to agent)" style={{ minWidth: '180px' }} />
+        <button disabled={!valid || mutate.isPending} onClick={() => mutate.mutate({ action: 'credit', value })}>Add funds</button>
+        <button className="secondary" disabled={!valid || value <= 0 || mutate.isPending} onClick={() => mutate.mutate({ action: 'debit', value })}>Remove funds</button>
+        <button className="secondary" disabled={!valid || mutate.isPending} onClick={() => {
+          if (confirm(`Set local paper cash balance to ${value.toFixed(2)} USDT?`)) mutate.mutate({ action: 'set', value })
+        }}>Set balance</button>
+      </Row>
+      <div className="danger-zone" style={{ marginTop: '1rem' }}>
+        <div className="danger-zone-header">Position Management</div>
+        <Row label="Close local spot positions" hint="Closes every open local paper spot position at its last stored market price. Trade history remains intact.">
+          <button className="secondary" disabled={closeMutation.isPending} onClick={() => {
+            if (confirm('Close all local paper spot positions?')) closeMutation.mutate(true)
+          }}>Close local spot positions</button>
+        </Row>
+        <Row label="Close all local positions" hint="Closes every open local paper position, including futures, at its last stored market price.">
+          <button disabled={closeMutation.isPending} onClick={() => {
+            if (confirm('Close every open local paper position?')) closeMutation.mutate(false)
+          }}>Close all local positions</button>
+        </Row>
+      </div>
+      {msg && <p className="hint" style={{ marginTop: '0.75rem' }}>{msg}</p>}
+      {(account?.events || []).length > 0 && (
+        <div style={{ marginTop: '1rem' }}>
+          <p className="hint">Recent local account activity</p>
+          {(account.events as any[]).slice(0, 5).map(event => (
+            <p className="hint mono" key={event.id} style={{ margin: '0.2rem 0' }}>
+              {event.created_at} · {event.action} · {Number(event.amount_usdt).toFixed(2)} USDT {event.note ? `· ${event.note}` : ''}
+            </p>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

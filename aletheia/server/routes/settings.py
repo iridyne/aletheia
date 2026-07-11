@@ -1,5 +1,6 @@
 """Settings API routes."""
 
+import asyncio
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -142,6 +143,126 @@ async def get_settings():
         "serenity": cfg.serenity.model_dump(mode="json"),
         "controller": cfg.controller.model_dump(mode="json"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Local paper account (No exchange only)
+# ---------------------------------------------------------------------------
+
+class PaperAccountAdjustmentRequest(SettingsRequest):
+    amount_usdt: float
+    note: str = ""
+
+
+class PaperAccountSetBalanceRequest(SettingsRequest):
+    cash_balance_usdt: float
+    note: str = ""
+
+
+def _require_local_paper_mode() -> None:
+    if load_config().exchange.paper_execution_mode != "paper_internal":
+        raise HTTPException(409, "Local paper account controls require Paper (internal) / No exchange mode")
+
+
+def _audit_paper_account_change(action: str, before: dict, after: dict, note: str) -> None:
+    from aletheia.files.jsonl import write_audit
+    write_audit({
+        "actor": "human", "source": "dashboard", "event_type": f"paper_account_{action}",
+        "entity_type": "paper_account", "before": before, "after": after,
+        "message": f"Local paper account {action}: {note or 'manual operator action'}",
+    })
+
+
+@router.get("/paper-account")
+async def get_paper_account():
+    def _read():
+        _require_local_paper_mode()
+        from aletheia.portfolio.paper_account import get_paper_account as _get
+        return _get()
+    return await asyncio.to_thread(_read)
+
+
+@router.post("/paper-account/credit")
+async def credit_paper_account(req: PaperAccountAdjustmentRequest):
+    if req.amount_usdt <= 0:
+        raise HTTPException(400, "amount_usdt must be positive")
+
+    def _credit():
+        _require_local_paper_mode()
+        from aletheia.portfolio.paper_account import adjust_cash, get_paper_account as _get
+        before = _get(event_limit=0)
+        after = adjust_cash(req.amount_usdt, note=req.note)
+        _audit_paper_account_change("credit", before, after, req.note)
+        return after
+    return await asyncio.to_thread(_credit)
+
+
+@router.post("/paper-account/debit")
+async def debit_paper_account(req: PaperAccountAdjustmentRequest):
+    if req.amount_usdt <= 0:
+        raise HTTPException(400, "amount_usdt must be positive")
+
+    def _debit():
+        _require_local_paper_mode()
+        from aletheia.portfolio.paper_account import adjust_cash, get_paper_account as _get
+        before = _get(event_limit=0)
+        try:
+            after = adjust_cash(-req.amount_usdt, note=req.note)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        _audit_paper_account_change("debit", before, after, req.note)
+        return after
+    return await asyncio.to_thread(_debit)
+
+
+@router.post("/paper-account/set-balance")
+async def set_paper_account_balance(req: PaperAccountSetBalanceRequest):
+    if req.cash_balance_usdt < 0:
+        raise HTTPException(400, "cash_balance_usdt must be non-negative")
+
+    def _set_balance():
+        _require_local_paper_mode()
+        from aletheia.portfolio.paper_account import set_cash_balance, get_paper_account as _get
+        before = _get(event_limit=0)
+        after = set_cash_balance(req.cash_balance_usdt, note=req.note)
+        _audit_paper_account_change("set_balance", before, after, req.note)
+        return after
+    return await asyncio.to_thread(_set_balance)
+
+
+def _close_local_positions(market_type: str | None) -> dict:
+    _require_local_paper_mode()
+    from aletheia.storage.repositories import list_positions
+    from aletheia.portfolio.pnl import close_position
+
+    candidates = [
+        row for row in list_positions(status="open", limit=10_000)
+        if row.get("execution_mode") == "paper_internal"
+        and (market_type is None or row.get("market_type") == market_type)
+    ]
+    missing_price = [row["id"] for row in candidates if row.get("current_price") is None]
+    if missing_price:
+        raise HTTPException(409, f"Cannot close local positions without a stored market price: {missing_price}")
+    results = [close_position(row["id"], float(row["current_price"]), reason="manual_bulk_close") for row in candidates]
+    from aletheia.portfolio.paper_account import get_paper_account as _get
+    after = _get()
+    _audit_paper_account_change(
+        "close_spot_positions" if market_type == "spot" else "close_all_positions",
+        {"open_positions_count": len(candidates)},
+        {"closed_position_ids": [result["position_id"] for result in results], **after},
+        "Manual local paper position close",
+    )
+    return {"closed_position_ids": [result["position_id"] for result in results], "account": after}
+
+
+@router.post("/paper-account/close-all")
+async def close_all_local_paper_positions():
+    return await asyncio.to_thread(_close_local_positions, None)
+
+
+@router.post("/paper-account/close-spot")
+async def close_local_paper_spot_positions():
+    return await asyncio.to_thread(_close_local_positions, "spot")
 
 
 # ---------------------------------------------------------------------------
