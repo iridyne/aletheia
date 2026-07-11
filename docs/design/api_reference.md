@@ -135,6 +135,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | GET | `/market/snapshots` | Recent market snapshots (price, volume) |
 | GET | `/market/ohlcv` | OHLCV candlestick data |
 | GET | `/market/macro` | Macro economic indicators |
+| GET | `/market/collector-health` | Bounded per-domain collector status, cadence, timeout/budget-skip counters, and overdue state |
 
 ---
 

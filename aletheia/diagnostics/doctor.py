@@ -700,6 +700,67 @@ def _probe_market_data(report: Report) -> None:
         report.add("data.market", "ok", detail)
 
 
+def _probe_collector_health(report: Report) -> None:
+    """Surface whether scheduled domains ran, timed out, or lost the shared budget."""
+    try:
+        from aletheia.data.collector_health import get_collector_health_report
+
+        state = get_collector_health_report()
+    except Exception as e:
+        report.add("data.collectors", "info", f"collector status unavailable: {e}")
+        return
+
+    domains = state["domains"]
+    status = state["status"]
+    if status == "initializing":
+        report.add(
+            "data.collectors",
+            "info",
+            "collector status initializing; no domain has completed a scheduled tick yet",
+        )
+        return
+
+    problem_rows = [
+        row for row in domains if row.get("degraded") or row.get("last_status") in {
+            "failed", "timed_out", "skipped_budget"
+        }
+    ]
+    inactive = [
+        row["domain"] for row in domains
+        if row.get("last_status") in {"disabled", "not_configured"}
+    ]
+    detail = (
+        f"{state['recorded_count']}/{state['domain_count']} domains reporting; "
+        f"{state['completed_count']} completed on latest due tick"
+    )
+    if inactive:
+        detail += f"; inactive={','.join(inactive)}"
+
+    if status == "degraded":
+        problems = ", ".join(
+            f"{row['domain']}:{row['last_status']}"
+            f"{'(overdue)' if row.get('overdue') else ''}"
+            for row in problem_rows
+        )
+        report.add(
+            "data.collectors",
+            "warn",
+            f"{detail}; degraded={problems}",
+            "inspect GET /api/market/collector-health and gateway errors; keep the 40s budget bounded",
+        )
+    elif status == "attention":
+        problems = ", ".join(
+            f"{row['domain']}:{row['last_status']}" for row in problem_rows
+        )
+        report.add(
+            "data.collectors",
+            "info",
+            f"{detail}; transient={problems}",
+        )
+    else:
+        report.add("data.collectors", "ok", detail)
+
+
 def _probe_universe_market_coverage(report: Report) -> None:
     """Verify each enabled instrument market reaches the recent feature layer."""
     try:
@@ -2685,6 +2746,7 @@ def build_report() -> Report:
         _probe_config_consistency,
         _probe_credentials,
         _probe_market_data,
+        _probe_collector_health,
         _probe_universe_market_coverage,
         _probe_orderbook,
         _probe_perp_structure,

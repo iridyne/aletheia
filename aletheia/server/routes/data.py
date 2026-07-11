@@ -1008,6 +1008,15 @@ async def get_macro_snapshot():
     return {"available": True, "data": snap}
 
 
+@router.get("/market/collector-health")
+def get_market_collector_health():
+    """Bounded per-domain collector state; sync route keeps SQLite off the event loop."""
+    _ensure_db()
+    from aletheia.data.collector_health import get_collector_health_report
+
+    return get_collector_health_report()
+
+
 @router.get("/knowledge")
 async def get_knowledge(type: str = Query(default="research_note")):
     _ensure_db()

@@ -22,7 +22,9 @@ async def client(tmp_path, monkeypatch):
     reset_db()
     sq._db_conn = None
     import sqlite3
-    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    test_db = tmp_path / "test.db"
+    monkeypatch.setattr(sq, "db_path", lambda: test_db)
+    conn = sqlite3.connect(str(test_db), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
@@ -67,6 +69,20 @@ async def test_portfolio_history_route_returns_latest_window_in_ascending_order(
     data = resp.json()
     assert [row["total_value_usdt"] for row in data] == [1001, 1002]
     assert [row["snapshot_at"] for row in data] == sorted(row["snapshot_at"] for row in data)
+
+
+@pytest.mark.anyio
+async def test_collector_health_route_returns_durable_domain_state(client):
+    from aletheia.data.collector_health import record_collector_status
+
+    record_collector_status("microstructure", "success", tick=1, duration_ms=7)
+    resp = await client.get("/api/market/collector-health")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    row = next(item for item in body["domains"] if item["domain"] == "microstructure")
+    assert body["recorded_count"] == 1
+    assert row["last_status"] == "success"
 
 
 @pytest.mark.anyio

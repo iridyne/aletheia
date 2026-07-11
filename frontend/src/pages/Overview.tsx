@@ -26,6 +26,11 @@ export default function Overview() {
   const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
   const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
+  const { data: collectorHealth } = useQuery({
+    queryKey: ['collector-health'],
+    queryFn: api.getCollectorHealth,
+    refetchInterval: 30000,
+  })
   const exchangeMode = String((status as any)?.exchange_mode || '')
   const usesExternalExchange = !!(status as any)?.uses_external_exchange
   // #171 fix: pick the exchange-test endpoint by the CONFIGURED exchange, not
@@ -206,6 +211,24 @@ export default function Overview() {
                   label="Model"
                   light={dph?.available ? 'green' : dph ? 'red' : 'yellow'}
                   value={defaultProvider || '—'}
+                />
+                <StatusRow
+                  label="Collectors"
+                  light={
+                    !collectorHealth ? 'yellow' :
+                    collectorHealth.status === 'healthy' ? 'green' :
+                    collectorHealth.status === 'initializing' ? 'muted' :
+                    collectorHealth.status === 'degraded' ? 'red' : 'yellow'
+                  }
+                  value={
+                    !collectorHealth ? 'loading' :
+                    collectorHealth.status === 'initializing' ? 'initializing' :
+                    collectorHealth.status === 'degraded'
+                      ? `${collectorHealth.degraded_count} degraded · ${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
+                      : collectorHealth.status === 'attention'
+                        ? `${collectorHealth.transient_problem_count} transient · ${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
+                        : `${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
+                  }
                 />
                 {/* Live + Permission + Kill collapsed into one row to keep the System
                     card height short — open positions moved to the PnL Exposure tile. */}

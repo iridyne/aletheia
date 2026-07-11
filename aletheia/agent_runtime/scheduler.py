@@ -1,6 +1,7 @@
 """Scheduler for periodic agent + market-data tasks using APScheduler."""
 
 import asyncio
+from contextvars import ContextVar
 from functools import partial
 import logging
 import threading
@@ -1783,6 +1784,35 @@ async def _async_run(agent_name: str):
 # Phase counter for the data_collectors job (module-level, not reset between calls).
 _DC_TICK: int = 0
 
+# Carries the current collector tick into _bounded() without changing its public
+# four-argument contract (several offline specs replace that helper directly).
+_DC_HEALTH_TICK: ContextVar[int | None] = ContextVar("dc_health_tick", default=None)
+
+
+def _record_collector_health(
+    label: str,
+    status: str,
+    *,
+    duration_ms: int | None = None,
+    error_code: str | None = None,
+) -> None:
+    """Best-effort diagnostics must never make a healthy collection fail."""
+    tick = _DC_HEALTH_TICK.get()
+    if tick is None:
+        return
+    try:
+        from aletheia.data.collector_health import record_collector_status
+
+        record_collector_status(
+            label,
+            status,
+            tick=tick,
+            duration_ms=duration_ms,
+            error_code=error_code,
+        )
+    except Exception as exc:
+        logger.debug("data_collectors: health state write failed for %s: %s", label, exc)
+
 
 def _run_data_collectors():
     """Collect microstructure/derivatives/macro data on a 2-min tick.
@@ -1794,8 +1824,8 @@ def _run_data_collectors():
     """
     global _DC_TICK
     cfg = load_config()
-    if cfg.runtime.paused:
-        return
+    # This is an _ESSENTIAL_JOBS member under layered pause. Trading pause blocks
+    # decisions and execution; it must not stop public-data accumulation.
     _DC_TICK += 1
     try:
         _run_async_with_timeout("data_collectors", _async_data_collectors(cfg, _DC_TICK))
@@ -1824,20 +1854,42 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
     """Await `coro` under min(cap, time-left-to-deadline). On timeout/skip/error
     return None and keep the job moving — never let one collector hang the tick."""
     import time as _time
-    remaining = deadline - _time.monotonic()
+    started = _time.monotonic()
+    remaining = deadline - started
     if remaining <= 2.0:
         logger.warning("data_collectors: skipped %s — job wall-clock budget (%.0fs) exhausted",
                        label, _DC_DEADLINE_S)
         coro.close()  # avoid 'coroutine was never awaited' warning
+        _record_collector_health(label, "skipped_budget", duration_ms=0)
         return None
     try:
-        return await asyncio.wait_for(coro, timeout=min(cap, remaining))
+        result = await asyncio.wait_for(coro, timeout=min(cap, remaining))
+        from aletheia.data.collector_health import classify_collector_result
+
+        _record_collector_health(
+            label,
+            classify_collector_result(result),
+            duration_ms=int((_time.monotonic() - started) * 1000),
+        )
+        return result
     except asyncio.TimeoutError:
         logger.warning("data_collectors: %s timed out (%.0fs cap) — skipped this tick",
                        label, min(cap, remaining))
+        _record_collector_health(
+            label,
+            "timed_out",
+            duration_ms=int((_time.monotonic() - started) * 1000),
+            error_code="asyncio_timeout",
+        )
         return None
     except Exception as e:
         logger.debug("data_collectors: %s failed: %s", label, e)
+        _record_collector_health(
+            label,
+            "failed",
+            duration_ms=int((_time.monotonic() - started) * 1000),
+            error_code=type(e).__name__,
+        )
         return None
 
 
@@ -1846,49 +1898,53 @@ async def _async_data_collectors(cfg, tick: int) -> None:
     from aletheia.data.collectors.microstructure import MicrostructureCollector
     from aletheia.data.collectors.derivatives import DerivativesCollector
     from aletheia.data.collectors.macro import MacroCollector
-    from aletheia.data.normalizer import compute_tradability, compute_leverage_state
     from aletheia.storage import repositories as repo
 
+    _DC_HEALTH_TICK.set(tick)
     _deadline = _time.monotonic() + _DC_DEADLINE_S
 
     # Keep venue + market identity for primary-exchange collectors. Cross-venue
     # collectors still receive the deduplicated canonical symbol list below.
     instruments = _get_observed_instruments(cfg)
-    if not instruments:
-        logger.debug("data_collectors: no symbols configured, skipping")
-        return
     symbols = list(dict.fromkeys(item.symbol for item in instruments))
 
     # --- Phase A: microstructure + derivatives (every tick) ---
-    micro = MicrostructureCollector()
-    micro_result = await _bounded(micro.collect(instruments), "microstructure", 18.0, _deadline) or {}
-    for snap in micro_result.get("snapshots", []):
-        try:
-            repo.insert_orderbook_snapshot(snap.model_dump())
-        except Exception as e:
-            logger.debug("orderbook persist failed: %s", e)
+    micro_result: dict = {}
+    deriv_result: dict = {}
+    if instruments:
+        micro = MicrostructureCollector()
+        micro_result = await _bounded(micro.collect(instruments), "microstructure", 18.0, _deadline) or {}
+        for snap in micro_result.get("snapshots", []):
+            try:
+                repo.insert_orderbook_snapshot(snap.model_dump())
+            except Exception as e:
+                logger.debug("orderbook persist failed: %s", e)
 
-    deriv = DerivativesCollector()
-    deriv_result = await _bounded(deriv.collect(symbols), "derivatives", 18.0, _deadline) or {}
-    for snap in deriv_result.get("funding", []):
-        try:
-            repo.insert_funding_rate_snapshot(snap.model_dump())
-        except Exception as e:
-            logger.debug("funding persist failed: %s", e)
-    for snap in deriv_result.get("open_interest", []):
-        try:
-            repo.insert_open_interest_snapshot(snap.model_dump())
-        except Exception as e:
-            logger.debug("OI persist failed: %s", e)
-    liq_count = 0
-    for event in deriv_result.get("liquidations", []):
-        try:
-            repo.insert_liquidation_event(event.model_dump())
-            liq_count += 1
-        except Exception as e:
-            logger.debug("liquidation persist failed: %s", e)
-    if liq_count:
-        logger.info("liquidations persisted: %d", liq_count)
+        deriv = DerivativesCollector()
+        deriv_result = await _bounded(deriv.collect(symbols), "derivatives", 18.0, _deadline) or {}
+        for snap in deriv_result.get("funding", []):
+            try:
+                repo.insert_funding_rate_snapshot(snap.model_dump())
+            except Exception as e:
+                logger.debug("funding persist failed: %s", e)
+        for snap in deriv_result.get("open_interest", []):
+            try:
+                repo.insert_open_interest_snapshot(snap.model_dump())
+            except Exception as e:
+                logger.debug("OI persist failed: %s", e)
+        liq_count = 0
+        for event in deriv_result.get("liquidations", []):
+            try:
+                repo.insert_liquidation_event(event.model_dump())
+                liq_count += 1
+            except Exception as e:
+                logger.debug("liquidation persist failed: %s", e)
+        if liq_count:
+            logger.info("liquidations persisted: %d", liq_count)
+    else:
+        logger.debug("data_collectors: no observed instruments; running symbol-independent domains only")
+        _record_collector_health("microstructure", "not_configured")
+        _record_collector_health("derivatives", "not_configured")
 
     # --- Phase B: macro + volume scanner + CoinGecko top (every 5th tick = ~10 min) ---
     if tick % 5 == 1:
@@ -1898,23 +1954,27 @@ async def _async_data_collectors(cfg, tick: int) -> None:
         # the volume_ranking snapshot to silently stall (doctor: "volume ranking stale").
         # Running it first guarantees it gets its 12s cap regardless of what follows.
         try:
-            from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
-            vol_scanner = VolumeScannerCollector(top_n=30)
-            vol_result = await _bounded(vol_scanner.collect(instruments[:200]), "volume_scanner", 12.0, _deadline) or {}
-            if vol_result.get("top_symbols"):
-                _latest_volume_ranking.update({
-                    "symbols": vol_result["top_symbols"],
-                    "observed_at": vol_result["observed_at"],
-                })
-                try:
-                    from aletheia.storage import repositories as _repo
-                    _repo.save_volume_ranking_snapshot(
-                        vol_result["top_symbols"], vol_result["observed_at"]
-                    )
-                except Exception as _e:
-                    logger.debug("volume_ranking persist failed: %s", _e)
+            if instruments:
+                from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+                vol_scanner = VolumeScannerCollector(top_n=30)
+                vol_result = await _bounded(vol_scanner.collect(instruments[:200]), "volume_scanner", 12.0, _deadline) or {}
+                if vol_result.get("top_symbols"):
+                    _latest_volume_ranking.update({
+                        "symbols": vol_result["top_symbols"],
+                        "observed_at": vol_result["observed_at"],
+                    })
+                    try:
+                        from aletheia.storage import repositories as _repo
+                        _repo.save_volume_ranking_snapshot(
+                            vol_result["top_symbols"], vol_result["observed_at"]
+                        )
+                    except Exception as _e:
+                        logger.debug("volume_ranking persist failed: %s", _e)
+            else:
+                _record_collector_health("volume_scanner", "not_configured")
         except Exception as e:
             logger.debug("volume_scanner collection failed: %s", e)
+            _record_collector_health("volume_scanner", "failed", error_code=type(e).__name__)
 
         # CoinGecko top-N runs BEFORE macro persist so its movers_summary can be
         # folded into the same MacroSnapshot row (single insert, no UPDATE chase).
@@ -1932,8 +1992,11 @@ async def _async_data_collectors(cfg, tick: int) -> None:
                     except Exception as e:
                         logger.debug("coingecko_top persist failed: %s", e)
                 cg_movers_summary = cg_result.get("movers_summary")
+            else:
+                _record_collector_health("coingecko_top", "disabled")
         except Exception as e:
             logger.debug("coingecko_top collection failed: %s", e)
+            _record_collector_health("coingecko_top", "failed", error_code=type(e).__name__)
 
         macro_coll = MacroCollector()
         macro_result = await _bounded(macro_coll.collect(symbols), "macro", 15.0, _deadline) or {}
@@ -1950,7 +2013,7 @@ async def _async_data_collectors(cfg, tick: int) -> None:
         # Coinalyze cross-exchange aggregated OI + liquidations (requires API key).
         # Replaces dead CoinGlass/CCXT/Bitget-OI paths. Skips gracefully when no key.
         try:
-            if getattr(cfg.market_data, "enable_coinalyze", True):
+            if getattr(cfg.market_data, "enable_coinalyze", True) and symbols:
                 from aletheia.data.collectors.coinalyze import CoinalyzeCollector
                 cz_result = await _bounded(CoinalyzeCollector().collect(symbols), "coinalyze", 12.0, _deadline) or {}
                 cz_oi_count = 0
@@ -1974,20 +2037,30 @@ async def _async_data_collectors(cfg, tick: int) -> None:
                     )
                 if cz_result.get("errors"):
                     logger.debug("coinalyze collection errors: %s", cz_result["errors"])
+            elif not getattr(cfg.market_data, "enable_coinalyze", True):
+                _record_collector_health("coinalyze", "disabled")
+            else:
+                _record_collector_health("coinalyze", "not_configured")
         except Exception as e:
             logger.debug("coinalyze collection failed: %s", e)
+            _record_collector_health("coinalyze", "failed", error_code=type(e).__name__)
 
         # Hyperliquid cross-venue perp OI + funding (zero key). Self-persists to the
         # funding/OI tables tagged exchange="hyperliquid" (excluded from the primary
         # per-symbol read, so it never pollutes the venue the LLM sees).
         try:
-            if getattr(cfg.market_data, "enable_hyperliquid", True):
+            if getattr(cfg.market_data, "enable_hyperliquid", True) and symbols:
                 from aletheia.data.collectors.hyperliquid import HyperliquidCollector
                 hl_result = await _bounded(HyperliquidCollector().collect(symbols), "hyperliquid", 12.0, _deadline) or {}
                 if hl_result.get("errors"):
                     logger.debug("hyperliquid collection errors: %s", hl_result["errors"])
+            elif not getattr(cfg.market_data, "enable_hyperliquid", True):
+                _record_collector_health("hyperliquid", "disabled")
+            else:
+                _record_collector_health("hyperliquid", "not_configured")
         except Exception as e:
             logger.debug("hyperliquid collection failed: %s", e)
+            _record_collector_health("hyperliquid", "failed", error_code=type(e).__name__)
 
         # DefiLlama on-chain (stablecoin mcap / chain TVL / DEX volume, zero key).
         # Self-persists to onchain_snapshots; folded into the macro context block.
@@ -1997,8 +2070,11 @@ async def _async_data_collectors(cfg, tick: int) -> None:
                 dl_result = await _bounded(DefiLlamaCollector().collect(), "defillama", 12.0, _deadline) or {}
                 if dl_result.get("errors"):
                     logger.debug("defillama collection errors: %s", dl_result["errors"])
+            else:
+                _record_collector_health("defillama", "disabled")
         except Exception as e:
             logger.debug("defillama collection failed: %s", e)
+            _record_collector_health("defillama", "failed", error_code=type(e).__name__)
 
     # Log summary
     micro_count = len(micro_result.get("snapshots", []))

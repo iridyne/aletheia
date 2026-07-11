@@ -1,5 +1,16 @@
 # Development Log
 
+## 2026-07-11 — Market-data collector coverage visibility
+
+- Preserved the 40-second collector wall-clock budget and per-domain timeout caps while recording distinct success, partial, empty, failure, timeout, budget-skip, disabled, and unconfigured outcomes.
+- Added bounded durable `collector_health_state` with one row per known domain, cumulative counters, three-consecutive-problem warnings, and sanitized error codes only.
+- Added a thread-pooled read-only API, doctor summary, and Overview System row backed by the same state.
+- Corrected layered-pause behavior so trading pause does not stop public-data collection. With no observed instruments, only symbol-dependent domains stop; CoinGecko, macro, and DefiLlama continue.
+- No budget/concurrency increase and no market-value, filter, risk, execution, live, or credential change.
+- Validation: production-database online backup migrated with `PRAGMA integrity_check=ok`; focused 101 passed, all specs 625 passed, full suite 2741 passed with 0 real failures; frontend production build passed.
+
+---
+
 ## 2026-07-11 — macOS launchd gateway watchdog
 
 - Added a user LaunchAgent with RunAtLoad + 60-second StartInterval around the existing idempotent gated start; no second supervisor and no KeepAlive restart loop.

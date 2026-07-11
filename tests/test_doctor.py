@@ -473,6 +473,7 @@ def test_build_report_runs_and_covers_all_dimensions():
     for expected in (
         "code.sync", "process.gateway", "config.permission",
         "config.kill_switch", "creds.bitget_demo", "data.market",
+        "data.collectors",
         "loop.activity", "health.rollup",
     ):
         # process.autostart is also expected on Windows, but stays optional so the

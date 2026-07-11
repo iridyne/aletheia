@@ -677,6 +677,7 @@ export const api = {
 
   // Macro indicators (VIX, DXY, SPY, BTC dominance, risk regime)
   getMacro: () => fetchJson<{ available: boolean; data: any }>('/market/macro'),
+  getCollectorHealth: () => fetchJson<import('../types').CollectorHealthReport>('/market/collector-health'),
 
   // News Intelligence
   getNews: (limit = 50) => fetchJson<any[]>(`/news?limit=${limit}`),

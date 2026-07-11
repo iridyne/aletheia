@@ -71,12 +71,13 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `news_items` | External news signals | source, headline, sentiment, symbols (JSON) |
 | `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
 
-### D. Market Data Collection (10 tables)
+### D. Market Data Collection (11 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `market_snapshots` | Point-in-time price/volume | symbol, price, volume_24h, change_pct_24h |
 | `ohlcv_backfill_state` | Durable active-Universe catch-up/retry state; operational metadata only, pruned after 90 days inactive | exchange, symbol, market_type, timeframe, status, bar_count, consecutive_failures, next_attempt_at, last_error |
+| `collector_health_state` | Bounded operational coverage: exactly one latest/cumulative row per scheduled collector domain | domain, cadence_sec, last_status, last_scheduled_at, last_success_at, consecutive_problems, attempts, timeouts, budget_skips, failures |
 | `orderbook_snapshots` | Order book depth with exact instrument identity | exchange, symbol, market_type, bid/ask, spread, depth, imbalance |
 | `funding_rate_snapshots` | Perpetual funding rates (multi-venue via **exchange** tag) | symbol, exchange, funding_rate, next_funding_time; `exchange="hyperliquid"` / `"hyperliquid_predicted"` are cross-venue feeds **excluded from the primary per-symbol read** (see `latest_funding_rate(exchange=...)`) |
 | `open_interest_snapshots` | Open interest data (multi-venue via **exchange** tag) | symbol, exchange, open_interest, oi_change_pct, **long_short_ratio** (Round 2 Step 1 — Binance globalLongShortAccountRatio); Hyperliquid writes cross-venue OI here, excluded from the primary per-symbol read |

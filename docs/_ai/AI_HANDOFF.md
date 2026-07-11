@@ -7,7 +7,17 @@
 
 ## Last Updated
 
-2026-07-11 (macOS launchd gateway watchdog)
+2026-07-11 (market-data collector coverage visibility)
+
+---
+
+## Recent Change (Market-data collector coverage visibility — 2026-07-11)
+
+`data_collectors` 仍严格受 40 秒总预算和 45 秒任务上限保护，但每个 domain 现在会区分成功、部分结果、空结果、失败、超时、因总预算跳过、未配置和已禁用。SQLite 按 domain 只保留一行最新状态和累计计数，不生成无限历史；连续三次失败/超时/预算跳过才产生去重基础设施提醒。
+
+`GET /api/market/collector-health`、doctor `data.collectors` 和 Overview System / Collectors 读取同一状态。交易暂停不再误停 layered-pause 中的公共数据采集；没有 observed instruments 时，依赖标的的盘口/衍生品明确标为未配置，CoinGecko、宏观和 DefiLlama 继续运行。没有增加预算或并发，也没有修改行情值、筛选、风险、执行、live 或凭证。
+
+验证：真实数据库在线副本迁移后完整性为 ok；聚焦回归 101 项、完整规则 625 项、全量 2741 项通过，0 项真实失败；前端 production build 通过。
 
 ---
 

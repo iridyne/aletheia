@@ -1471,6 +1471,48 @@ def upsert_ohlcv_backfill_state(
         db.commit()
 
 
+def get_collector_health_state(domain: str) -> dict | None:
+    """Return the latest bounded operational state for one collector domain."""
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM collector_health_state WHERE domain=?", (domain,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_collector_health_states() -> list[dict]:
+    """Return one latest-state row per collector domain."""
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM collector_health_state ORDER BY domain"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def upsert_collector_health_state(state: dict) -> None:
+    """Persist one bounded collector state using the canonical transaction pattern."""
+    columns = (
+        "domain", "cadence_sec", "last_status", "last_tick", "last_scheduled_at",
+        "last_attempt_at", "last_finished_at", "last_success_at", "duration_ms",
+        "consecutive_problems", "attempts", "successes", "partial_results",
+        "empty_results", "timeouts", "budget_skips", "failures", "last_error_code",
+    )
+    values = tuple(state.get(column) for column in columns)
+    updates = ", ".join(
+        f"{column}=excluded.{column}" for column in columns if column != "domain"
+    )
+    db = get_db()
+    was_in_tx = db.in_transaction
+    db.execute(
+        f"INSERT INTO collector_health_state ({','.join(columns)},updated_at) "
+        f"VALUES ({','.join('?' for _ in columns)},datetime('now')) "
+        f"ON CONFLICT(domain) DO UPDATE SET {updates},updated_at=datetime('now')",
+        values,
+    )
+    if not was_in_tx:
+        db.commit()
+
+
 def get_ohlcv_candles(
     symbol: str,
     timeframe: str,

@@ -40,6 +40,74 @@ def test_data_collectors_job_is_timeboxed(monkeypatch, caplog):
     assert "data_collectors job timed out" in caplog.text
 
 
+def test_data_collectors_keeps_collecting_during_layered_trading_pause(monkeypatch):
+    """Trading pause blocks decisions, not the essential public-data supply."""
+    from aletheia.agent_runtime import scheduler
+
+    calls = []
+
+    async def collect_once(_cfg_obj, tick):
+        calls.append(tick)
+
+    monkeypatch.setattr(scheduler, "load_config", lambda: _cfg(paused=True))
+    monkeypatch.setattr(scheduler, "_async_data_collectors", collect_once)
+    monkeypatch.setattr(scheduler, "_DC_TICK", 0)
+
+    scheduler._run_data_collectors()
+
+    assert calls == [1]
+
+
+def test_symbol_independent_phase_b_collectors_run_without_instruments(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
+    from aletheia.data.collectors.defillama import DefiLlamaCollector
+    from aletheia.data.collectors.macro import MacroCollector
+
+    cfg = SimpleNamespace(
+        market_data=SimpleNamespace(
+            enable_coingecko_top=True,
+            coingecko_top_n=10,
+            enable_coinalyze=True,
+            enable_hyperliquid=True,
+            enable_defillama=True,
+        )
+    )
+    bounded_labels = []
+    health = []
+
+    async def fake_bounded(coro, label, cap, deadline):
+        bounded_labels.append(label)
+        return await coro
+
+    async def macro_collect(self, symbols):
+        return {"snapshot": None, "errors": []}
+
+    async def coingecko_collect(self, top_n):
+        return {"rows": [], "movers_summary": None, "errors": []}
+
+    async def defillama_collect(self):
+        return {"snapshots": [], "errors": []}
+
+    monkeypatch.setattr(scheduler, "_get_observed_instruments", lambda _cfg: [])
+    monkeypatch.setattr(scheduler, "_bounded", fake_bounded)
+    monkeypatch.setattr(
+        scheduler,
+        "_record_collector_health",
+        lambda label, status, **kwargs: health.append((label, status)),
+    )
+    monkeypatch.setattr(MacroCollector, "collect", macro_collect)
+    monkeypatch.setattr(CoinGeckoTopCollector, "collect", coingecko_collect)
+    monkeypatch.setattr(DefiLlamaCollector, "collect", defillama_collect)
+
+    asyncio.run(scheduler._async_data_collectors(cfg, tick=1))
+
+    assert bounded_labels == ["coingecko_top", "macro", "defillama"]
+    assert ("microstructure", "not_configured") in health
+    assert ("derivatives", "not_configured") in health
+    assert ("volume_scanner", "not_configured") in health
+
+
 def test_sync_timeout_abandons_hung_function(monkeypatch):
     """_run_sync_with_timeout abandons a hung sync function via concurrent.futures."""
     import concurrent.futures

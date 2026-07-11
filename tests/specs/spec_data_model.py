@@ -218,6 +218,25 @@ def test_ohlcv_backfill_state_uses_full_instrument_primary_key():
     assert "PRIMARY KEY (exchange, symbol, market_type, timeframe)" in migrations
 
 
+@spec_claim(
+    SpecClaim(
+        "DM-S25", "data_model", "§3 collector health state", "L2a",
+        "collector_health_state keeps one bounded operational row per collector domain; "
+        "it does not append an unbounded event history.",
+        status="implemented",
+    ),
+)
+def test_collector_health_state_is_bounded_by_domain_primary_key():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent.parent
+    migrations = (root / "aletheia" / "storage" / "migrations.py").read_text(
+        encoding="utf-8"
+    )
+    assert "CREATE TABLE IF NOT EXISTS collector_health_state" in migrations
+    assert "domain TEXT PRIMARY KEY" in migrations
+
+
 # ---------------------------------------------------------------------------
 # L2b — Behavioral (new claims)
 # ---------------------------------------------------------------------------

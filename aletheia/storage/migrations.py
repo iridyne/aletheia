@@ -2229,6 +2229,33 @@ CREATE INDEX IF NOT EXISTS idx_ohlcv_backfill_due
     ON ohlcv_backfill_state(status, next_attempt_at);
 """
 
+_COLLECTOR_HEALTH_STATE_DDL = """
+CREATE TABLE IF NOT EXISTS collector_health_state (
+    domain TEXT PRIMARY KEY,
+    cadence_sec INTEGER NOT NULL,
+    last_status TEXT NOT NULL CHECK (last_status IN (
+        'success','partial','empty','failed','timed_out','skipped_budget',
+        'not_configured','disabled'
+    )),
+    last_tick INTEGER,
+    last_scheduled_at TEXT NOT NULL,
+    last_attempt_at TEXT,
+    last_finished_at TEXT,
+    last_success_at TEXT,
+    duration_ms INTEGER,
+    consecutive_problems INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    successes INTEGER NOT NULL DEFAULT 0,
+    partial_results INTEGER NOT NULL DEFAULT 0,
+    empty_results INTEGER NOT NULL DEFAULT 0,
+    timeouts INTEGER NOT NULL DEFAULT 0,
+    budget_skips INTEGER NOT NULL DEFAULT 0,
+    failures INTEGER NOT NULL DEFAULT 0,
+    last_error_code TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
 # Filter feedback controller — append-only shadow log of exact-version pass/reject
 # findings. Legacy action columns remain constrained for old readers; evidence_*
 # carries observational verdicts. Rows never advance past status='shadow_only'.
@@ -2294,6 +2321,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_PAPER_ACCOUNT_EVENTS_DDL)
     db.executescript(_VOLUME_RANKING_DDL)
     db.executescript(_OHLCV_BACKFILL_STATE_DDL)
+    db.executescript(_COLLECTOR_HEALTH_STATE_DDL)
     db.executescript(_CONTROLLER_RECOMMENDATIONS_DDL)
     _ensure_columns(db)
     _ensure_market_ohlcv_instrument_identity(db)

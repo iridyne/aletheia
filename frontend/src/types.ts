@@ -394,6 +394,26 @@ export interface InfraEvent {
   metadata?: Record<string, unknown>
 }
 
+export interface CollectorHealthDomain {
+  domain: string
+  cadence_sec: number
+  last_status: string
+  age_sec: number | null
+  overdue: boolean
+  degraded: boolean
+  consecutive_problems?: number
+}
+
+export interface CollectorHealthReport {
+  status: 'healthy' | 'attention' | 'degraded' | 'initializing'
+  domain_count: number
+  recorded_count: number
+  completed_count: number
+  degraded_count: number
+  transient_problem_count: number
+  domains: CollectorHealthDomain[]
+}
+
 export interface AuditEvent {
   id: string
   actor: string
