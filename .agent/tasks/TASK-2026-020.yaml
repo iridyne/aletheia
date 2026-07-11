@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-020
 title: Design positive-contribution Learning implementation plan
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -27,10 +27,18 @@ ownership:
   expires_at: '2026-07-12T01:50:31.610704Z'
 base_commit: ab2d38789ebfbd06c81befa7d01d7ab08547e8cb
 next_action:
-  command_key: specs
-  reason: Validate that documentation-only planning changes preserve the current executable
-    specification suite.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: ebfd3440b13d1bebaf6f124cc927f855302e515d
+  run_at: '2026-07-11T17:59:14.799949Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-020.md
-updated_at: '2026-07-11T17:51:32.753171Z'
+updated_at: '2026-07-11T17:59:33.083628Z'
