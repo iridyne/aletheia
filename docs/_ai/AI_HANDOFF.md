@@ -7,7 +7,15 @@
 
 ## Last Updated
 
-2026-07-11 (Opportunity submission evidence honesty)
+2026-07-11 (Instrument-aware market collector routing)
+
+---
+
+## Recent Change (Instrument-aware market collector routing — 2026-07-11)
+
+主交易所行情任务不再把永续成员当现货字符串。Price feed、orderbook 和 volume ranking 现在携带完整的交易所与市场类型；批量成交量扫描会先确认每个精确市场，单个不支持标的不再拖垮整批。结构化 ranking 回到 Universe 时也保留原 market type，不再把字典误当 symbol。
+
+OKX category 3 股票/ETF 合约在资产分类、成本和执行能力正式接入前继续保持观察态，不进入 crypto 可执行池。本批没有新增交易权限，也没有修改风控、仓位、订单路径或 live 开关。
 
 ---
 

@@ -47,7 +47,7 @@
 | 美股宏观代理(S&P500/VIX/DXY/Gold) | yfinance_provider (enable_yfinance_macro 门控) | 不落库，直接生成 markdown | market_context.build_market_context → "Macro context (daily)" 块 → LLM | ✅ |
 | 恐惧贪婪指数 | MacroCollector (alternative.me) | `macro_snapshots.fng_*` | macro 块→LLM | ✅ |
 | 涨跌幅榜 | CoinGeckoTopCollector | `coingecko_top_snapshots` + 折叠 summary | macro 块(top_movers_summary)→LLM | ✅ |
-| 成交量排名 | VolumeScannerCollector | 内存 `_latest_volume_ranking` | universe/service→选币注入 | ✅ (进程内) |
+| 成交量排名 | VolumeScannerCollector（精确 venue+market InstrumentId） | 内存 `_latest_volume_ranking` + `volume_ranking_snapshots` | universe/service→按原 market_type 排序已登记资产（不创建新资产） | ✅；单标的不支持不再打断整批 |
 | 新闻+情绪 | NewsCollector + analyzer | `news_items` | market_observer 新闻块 + research_worker | ✅ |
 | 官方公告/监管 RSS（SEC/CFTC/Ethereum Foundation） | NewsCollector（默认 news.feeds） | `news_items` | market_observer 新闻块 + research_worker | ✅ |
 | **Hyperliquid OI/资金费率/预测** | HyperliquidCollector | `funding/OI` (exchange=hyperliquid*) | **market_observer→跨venue资金费率对比→LLM** (本次新增路由) | ✅ |

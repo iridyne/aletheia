@@ -25,8 +25,9 @@
 1. **已完成**：forward outcome 按交易所+市场类型锁定真实标的，按 15m/1h/4h/24h 固定时点结算，分开原始涨跌、方向收益和扣除手续费/价差/滑点/资金费后的净收益。历史旧行不伪造成本，不进入新学习样本。
 2. **已完成**：主要前置 filter 的事前输入、放行/拒绝、原因和版本已留痕；有方向的拒绝组共享同口径净结果，无方向 ticker/tradability 只报覆盖。
 3. **已完成**：只读漏斗直接消费历史 ranker 和 proposal submission 证据；trade 意图被提案前置门拒绝时保留机器原因，不再显示为未知空洞。
-4. **下一阶段**：等各筛选器达到 pass/reject 各20个完整 net 样本和 70% 覆盖后，再分别实验 family+direction+market 校准、方向刹车、ranker 重复扣分和 Kelly/sizing。
-5. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+4. **已完成**：price feed、主所采集器和 volume ranking 保留 venue+spot/perp 身份；尚未正式接入的股票/ETF 合约不进入 crypto 执行池。
+5. **下一阶段**：等各筛选器达到 pass/reject 各20个完整 net 样本和 70% 覆盖后，再分别实验 family+direction+market 校准、方向刹车、ranker 重复扣分和 Kelly/sizing。
+6. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
 已经修好的供给/语义问题不要重复施工：OKX 永续成交额、分配前 market 去重、short funding 方向、PI bear_case、market-aware proposal price、pending shadow、因果漏斗和 doctor 市场覆盖。
 

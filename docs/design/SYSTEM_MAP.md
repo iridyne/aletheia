@@ -11,8 +11,8 @@
 | Job ID | 频率 | 写入表 | 下游消费者 | 管道 |
 |--------|------|--------|-----------|------|
 | `market_data` | 5min | market_snapshots | price_feed, market_observer, paper_trader_ranker, risk_engine(data freshness) | ✅ |
-| `price_feed` | 30s | (内存缓存 watched_prices) | position_manager(mark-to-market), portfolio_snapshot | ✅ |
-| `data_collectors` | 2min | orderbook_snapshots, funding_rates, oi_snapshots, liquidation_events, macro_snapshots, volume_profiles | market_observer(context_builder 部分消费) | ⚠️ liquidation_events 不进风控 |
+| `price_feed` | 30s | (内存缓存 watched_prices；输入保留 venue+spot/perp) | position_manager(mark-to-market), portfolio_snapshot | ✅ |
+| `data_collectors` | 2min | orderbook_snapshots, funding_rates, oi_snapshots, liquidation_events, macro_snapshots, volume ranking | market_observer + universe/service | ⚠️ liquidation_events 不进风控；主所采集按 InstrumentId 路由 |
 | `exchange_sync` | 5min | positions(sync), portfolio_snapshots(side-effect) | risk_engine(exposure), position_manager, UI | ✅ |
 | `portfolio_snapshot` | 10min | portfolio_snapshots | risk_engine(drawdown scale), UI, Telegram | ✅ |
 | `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes，filter_decision_batches/filter_decisions/filter_candidate_outcomes | paper_trader_ranker（分 direction/market 的净结果校准）、System Operator family edge、filter controller、risk live-evidence、doctor、guard candidate | ✅ |

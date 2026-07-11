@@ -32,9 +32,9 @@
 | 19 | exchange_sync | 5min | io | Refresh exchange account cache |
 | 20 | portfolio_snapshot | 10min | default | Store portfolio equity snapshot |
 | 21 | reconciliation | 2min (live only) | io | Full state reconciliation |
-| 22 | price_feed | 30s | fast_io | In-memory price cache refresh |
+| 22 | price_feed | 30s | fast_io | Exact-instrument (venue + spot/perp) in-memory price cache refresh |
 | 23 | daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
-| 24 | data_collectors | 2min | io | Funding rate, OI, liquidation, orderbook |
+| 24 | data_collectors | 2min | io | Funding rate, OI, liquidation, orderbook, exact-instrument volume ranking |
 | 25 | okx_demo_symbols | 4h | io | Refresh OKX demo symbol list |
 | 26 | guard_promotion | cron 04:00 CST | io | Promote candidate trading guards to active (learning; re-homed from deleted backtest_orchestrator, Position C) |
 | 27 | universe_refresh | 10min | io | Universe composition refresh |

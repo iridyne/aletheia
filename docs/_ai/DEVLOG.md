@@ -1,5 +1,15 @@
 # Development Log
 
+## 2026-07-11 — Instrument-aware market collector routing
+
+- 修复主交易所行情链把 Universe 永续成员降级成现货字符串的问题；scheduler、price feed 和 volume scanner 现在传递 `venue + symbol + market_type` 完整身份。
+- Volume scanner 按 venue+market 分组批量请求，先用交易所 market registry 剔除单个不支持标的，避免一个坏 symbol 让整批 ranking 失败；合约缺 quoteVolume 时复用 contractSize 经济换算。
+- 修复结构化 volume ranking 下游把整条 dict 当 symbol 的死消费路径；Universe 只按原 exchange/market_type 排序已登记资产，不再用排名结果创建缺失资产，同时兼容历史纯字符串快照。
+- OKX `instCategory=3` 股票/ETF 合约在资产分类和执行能力正式接入前不进入 crypto registry；没有新增股票执行权限，也未修改风险、仓位、订单或 live 边界。
+- 验证：联网 exact-instrument volume scan 无路由错误且 category 3 不进入结果；相关设计/Universe/采集器回归 `827 passed`；最终全量 `2660 passed, 14 skipped, 6 xfailed`，仅 3 个未修改 master 已知基线失败。
+
+---
+
 ## 2026-07-11 — Opportunity submission evidence honesty
 
 - Trade 类 System Operator 判断与 proposal 创建结果明确分层：方向集中度或目标市场取价在提案前拒绝时，保留稳定机器原因和 `proposal_submission` 证据；不改模型原始交易意图。

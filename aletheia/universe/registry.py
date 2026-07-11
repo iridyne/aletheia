@@ -40,9 +40,15 @@ def _precision_to_decimals(p) -> int | None:
 
 
 def _is_excluded(symbol_info: dict) -> bool:
-    """Filter out leveraged tokens, test symbols, and known-bad assets."""
+    """Filter out unsupported asset classes, leveraged tokens, and test symbols."""
     base = (symbol_info.get("base") or "").upper()
     symbol_id = (symbol_info.get("id") or "").upper()
+
+    # OKX category 3 is tokenized stocks/ETFs. The equity observer handles these
+    # as observation-only until asset-class metadata and execution capability are
+    # explicitly connected; treating them as crypto makes them silently executable.
+    if str((symbol_info.get("info") or {}).get("instCategory") or "") == "3":
+        return True
 
     if any(base.endswith(s) for s in _LEVERAGED_SUFFIXES):
         return True

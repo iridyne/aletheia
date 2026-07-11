@@ -1787,15 +1787,17 @@ async def _async_data_collectors(cfg, tick: int) -> None:
 
     _deadline = _time.monotonic() + _DC_DEADLINE_S
 
-    # Observed symbols: use universe if available, fall back to configured symbols.
-    symbols = _get_observed_symbols(cfg)
-    if not symbols:
+    # Keep venue + market identity for primary-exchange collectors. Cross-venue
+    # collectors still receive the deduplicated canonical symbol list below.
+    instruments = _get_observed_instruments(cfg)
+    if not instruments:
         logger.debug("data_collectors: no symbols configured, skipping")
         return
+    symbols = list(dict.fromkeys(item.symbol for item in instruments))
 
     # --- Phase A: microstructure + derivatives (every tick) ---
     micro = MicrostructureCollector()
-    micro_result = await _bounded(micro.collect(symbols), "microstructure", 18.0, _deadline) or {}
+    micro_result = await _bounded(micro.collect(instruments), "microstructure", 18.0, _deadline) or {}
     for snap in micro_result.get("snapshots", []):
         try:
             repo.insert_orderbook_snapshot(snap.model_dump())
@@ -1834,7 +1836,7 @@ async def _async_data_collectors(cfg, tick: int) -> None:
         try:
             from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
             vol_scanner = VolumeScannerCollector(top_n=30)
-            vol_result = await _bounded(vol_scanner.collect(symbols[:200]), "volume_scanner", 12.0, _deadline) or {}
+            vol_result = await _bounded(vol_scanner.collect(instruments[:200]), "volume_scanner", 12.0, _deadline) or {}
             if vol_result.get("top_symbols"):
                 _latest_volume_ranking.update({
                     "symbols": vol_result["top_symbols"],
@@ -1943,19 +1945,44 @@ async def _async_data_collectors(cfg, tick: int) -> None:
     )
 
 
-def _get_observed_symbols(cfg) -> list[str]:
-    """Return list of canonical symbols to collect data for."""
+def _get_observed_instruments(cfg):
+    """Return executable active-universe instruments with full venue identity."""
+    from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
+
     # Primary: active universe members
     try:
         from aletheia.storage import repositories as repo
         members = repo.get_active_universe_members(limit=cfg.universe.max_candidates)
         if members:
-            return [m["symbol"] for m in members if m.get("symbol")]
+            result = []
+            for member in members:
+                if not member.get("symbol") or not member.get("execution_eligible", True):
+                    continue
+                asset = repo.get_universe_asset(member.get("asset_id")) or {}
+                venue = asset.get("venue") or cfg.market_data.ccxt_exchange or "binance"
+                market_type = member.get("market_type") or asset.get("market_type") or MARKET_SPOT
+                if market_type == "usdt_futures":
+                    market_type = MARKET_PERP
+                try:
+                    result.append(
+                        InstrumentId.from_parts(venue, member["symbol"], market_type)
+                    )
+                except ValueError:
+                    continue
+            if result:
+                return result
     except Exception:
         pass
 
-    # Fallback: configured observed symbols
+    # Fallback: configured observed instruments.
     try:
-        return list(cfg.market_data.observed_symbols or [])[:20]
+        from aletheia.trading.instruments import observed_instruments_from_config
+
+        return observed_instruments_from_config(cfg)[:20]
     except Exception:
         return []
+
+
+def _get_observed_symbols(cfg) -> list[str]:
+    """Compatibility view for symbol-only cross-venue consumers and tests."""
+    return list(dict.fromkeys(item.symbol for item in _get_observed_instruments(cfg)))

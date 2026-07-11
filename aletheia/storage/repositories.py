@@ -1456,6 +1456,10 @@ def list_universe_assets(venue: str | None = None, active_only: bool = True, lim
     return [dict(r) for r in db.execute(sql, params).fetchall()]
 
 
+def get_universe_asset(asset_id: str) -> dict | None:
+    return _select_one("universe_registry", asset_id)
+
+
 def insert_universe_feature_snapshot(snap: UniverseFeatureSnapshot) -> None:
     _insert("universe_feature_snapshots", snap.model_dump())
 

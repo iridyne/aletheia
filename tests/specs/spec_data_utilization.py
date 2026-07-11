@@ -632,7 +632,13 @@ def test_scheduler_persists_coinalyze_outputs(monkeypatch):
     oi_rows: list[dict] = []
     liq_rows: list[dict] = []
 
-    monkeypatch.setattr(sch, "_get_observed_symbols", lambda cfg: ["BTC/USDT"])
+    from aletheia.data.symbols import InstrumentId
+
+    monkeypatch.setattr(
+        sch,
+        "_get_observed_instruments",
+        lambda cfg: [InstrumentId.from_parts("binance", "BTC/USDT", "perp")],
+    )
     monkeypatch.setattr(repo, "insert_open_interest_snapshot", lambda row: oi_rows.append(row))
     monkeypatch.setattr(repo, "insert_liquidation_event", lambda row: liq_rows.append(row))
     monkeypatch.setattr(repo, "insert_orderbook_snapshot", lambda row: None)

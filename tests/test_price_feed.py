@@ -7,8 +7,11 @@ from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
 
+from aletheia.data.symbols import InstrumentId
+
 from aletheia.data.price_feed import (
     get_cached_price,
+    get_watched_instruments,
     get_watched_symbols,
     refresh_watched_prices,
     cache_stats,
@@ -71,8 +74,11 @@ class TestGetCachedPrice:
 
 
 class TestGetWatchedSymbols:
+    @patch("aletheia.config.loader.load_config")
     @patch("aletheia.storage.repositories.list_positions")
-    def test_returns_unique_symbols(self, mock_list):
+    def test_returns_unique_symbols(self, mock_list, mock_cfg):
+        mock_cfg.return_value.event_triggers.enabled = False
+        mock_cfg.return_value.market_data.ccxt_exchange = "binance"
         mock_list.return_value = [
             {"symbol": "BTC/USDT"},
             {"symbol": "ETH/USDT"},
@@ -81,23 +87,68 @@ class TestGetWatchedSymbols:
         result = get_watched_symbols()
         assert result == ["BTC/USDT", "ETH/USDT"]
 
+    @patch("aletheia.config.loader.load_config")
     @patch("aletheia.storage.repositories.list_positions")
-    def test_returns_empty_on_no_positions(self, mock_list):
+    def test_returns_empty_on_no_positions(self, mock_list, mock_cfg):
+        mock_cfg.return_value.event_triggers.enabled = False
+        mock_cfg.return_value.market_data.ccxt_exchange = "binance"
         mock_list.return_value = []
         assert get_watched_symbols() == []
 
+    @patch("aletheia.config.loader.load_config")
     @patch("aletheia.storage.repositories.list_positions", side_effect=Exception("db error"))
-    def test_returns_empty_on_error(self, mock_list):
+    def test_returns_empty_on_error(self, mock_list, mock_cfg):
+        mock_cfg.return_value.event_triggers.enabled = False
+        mock_cfg.return_value.market_data.ccxt_exchange = "binance"
         assert get_watched_symbols() == []
+
+    @patch("aletheia.config.loader.load_config")
+    @patch("aletheia.storage.repositories.get_universe_asset")
+    @patch("aletheia.storage.repositories.get_active_universe_members")
+    @patch("aletheia.storage.repositories.list_positions")
+    def test_instruments_preserve_position_and_member_market(
+        self, mock_positions, mock_members, mock_asset, mock_cfg
+    ):
+        mock_positions.return_value = [
+            {"symbol": "BTC/USDT", "market_type": "usdt_futures"}
+        ]
+        mock_members.return_value = [
+            {
+                "asset_id": "asset-eth",
+                "symbol": "ETH/USDT",
+                "market_type": "perp",
+                "execution_eligible": 1,
+            }
+        ]
+        mock_asset.return_value = {"venue": "okx", "market_type": "perp"}
+        cfg = MagicMock()
+        cfg.market_data.ccxt_exchange = "okx"
+        cfg.event_triggers.enabled = True
+        cfg.event_triggers.watch_universe_members = True
+        mock_cfg.return_value = cfg
+
+        with patch("aletheia.data.price_feed._UNIVERSE_TICK_EVERY", 1):
+            result = get_watched_instruments()
+
+        assert [str(item) for item in result] == [
+            "okx:BTC/USDT:perp",
+            "okx:ETH/USDT:perp",
+        ]
 
 
 class TestRefreshWatchedPrices:
-    @patch("aletheia.data.price_feed.get_watched_symbols", return_value=[])
+    @patch("aletheia.data.price_feed.get_watched_instruments", return_value=[])
     def test_no_symbols_early_return(self, mock_symbols):
         result = asyncio.run(refresh_watched_prices())
         assert result == {"refreshed": 0, "symbols": [], "errors": []}
 
-    @patch("aletheia.data.price_feed.get_watched_symbols", return_value=["BTC/USDT", "ETH/USDT"])
+    @patch(
+        "aletheia.data.price_feed.get_watched_instruments",
+        return_value=[
+            InstrumentId.from_parts("binance", "BTC/USDT", "spot"),
+            InstrumentId.from_parts("binance", "ETH/USDT", "spot"),
+        ],
+    )
     @patch("aletheia.data.ccxt_provider.get_market_data_provider")
     @patch("aletheia.config.loader.load_config")
     def test_refreshes_cache_on_success(self, mock_cfg, mock_provider_fn, mock_symbols):
@@ -122,7 +173,10 @@ class TestRefreshWatchedPrices:
         assert get_cached_price("BTC/USDT") == 65000.0
         assert get_cached_price("ETH/USDT") == 3500.0
 
-    @patch("aletheia.data.price_feed.get_watched_symbols", return_value=["BTC/USDT"])
+    @patch(
+        "aletheia.data.price_feed.get_watched_instruments",
+        return_value=[InstrumentId.from_parts("binance", "BTC/USDT", "spot")],
+    )
     @patch("aletheia.data.ccxt_provider.get_market_data_provider")
     @patch("aletheia.config.loader.load_config")
     def test_handles_ticker_failure_gracefully(self, mock_cfg, mock_provider_fn, mock_symbols):

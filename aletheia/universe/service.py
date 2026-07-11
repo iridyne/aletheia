@@ -20,6 +20,36 @@ from aletheia.storage.models import (
 logger = logging.getLogger("aletheia.universe")
 
 
+def _volume_ranked_instruments(rows: list, default_venue: str):
+    """Normalize structured and legacy volume-ranking rows to exact instruments."""
+    from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
+
+    result: list[InstrumentId] = []
+    seen: set[str] = set()
+    for row in rows:
+        if isinstance(row, dict):
+            symbol = row.get("symbol")
+            venue = row.get("exchange") or default_venue
+            market_type = row.get("market_type") or MARKET_SPOT
+        else:
+            symbol = row
+            venue = default_venue
+            market_type = MARKET_SPOT
+        if venue != default_venue or not symbol:
+            continue
+        if market_type == "usdt_futures":
+            market_type = MARKET_PERP
+        try:
+            instrument = InstrumentId.from_parts(venue, symbol, market_type)
+        except ValueError:
+            continue
+        key = str(instrument)
+        if key not in seen:
+            seen.add(key)
+            result.append(instrument)
+    return result
+
+
 def _dedupe_by_symbol_preferred_market(allocated: list[dict], cfg) -> list[dict]:
     """Keep one market instrument per symbol, respecting configured market preference."""
     preferred = getattr(cfg.exchange, "preferred_market_type", "auto")
@@ -178,29 +208,22 @@ class UniverseService:
                 from aletheia.agent_runtime.scheduler import get_latest_volume_ranking
                 vol = get_latest_volume_ranking()
                 vol_symbols = vol.get("symbols") or [] if vol else []
-                existing_symbols = {a.get("symbol") for a in assets}
-                # Perp duplicates for volume-ranked symbols that are explicit futures
-                # symbols (futures_round2_deferred §5). sync_registry already seeds perp
-                # assets (registry.py:117) and collect_features handles them
-                # (features.py:336), so this only fills the volume-injection gap, which
-                # was spot-only. Gated on usdt_futures so spot-only configs are unchanged.
-                from aletheia.data.symbols import to_canonical
-                futures_set = {to_canonical(s) for s in (cfg.exchange.futures_symbols or [])}
-                inject_perp = cfg.exchange.enabled_markets.get("usdt_futures", False)
-                existing_perp = {a.get("symbol") for a in assets if a.get("market_type") == "perp"}
-                for sym in vol_symbols[:20]:
-                    if sym and sym not in existing_symbols:
-                        from aletheia.storage.models import UniverseAsset
-                        asset = UniverseAsset(venue=cfg.market_data.ccxt_exchange, market_type="spot", symbol=sym)
-                        repo.upsert_universe_asset(asset)
-                    if (inject_perp and sym and to_canonical(sym) in futures_set
-                            and sym not in existing_perp):
-                        from aletheia.storage.models import UniverseAsset
-                        repo.upsert_universe_asset(UniverseAsset(
-                            venue=cfg.market_data.ccxt_exchange, market_type="perp", symbol=sym,
-                        ))
-                if vol_symbols:
-                    assets = repo.list_universe_assets(venue=cfg.market_data.ccxt_exchange, limit=1000)
+                ranked_instruments = _volume_ranked_instruments(
+                    vol_symbols[:20], cfg.market_data.ccxt_exchange,
+                )
+                rank_index = {
+                    (item.exchange, item.symbol, item.market_type): index
+                    for index, item in enumerate(ranked_instruments)
+                }
+                if rank_index:
+                    assets.sort(key=lambda asset: rank_index.get(
+                        (
+                            asset.get("venue"),
+                            asset.get("symbol"),
+                            asset.get("market_type"),
+                        ),
+                        len(rank_index),
+                    ))
             except Exception as e:
                 logger.debug("volume_ranking injection skipped: %s", e)
 

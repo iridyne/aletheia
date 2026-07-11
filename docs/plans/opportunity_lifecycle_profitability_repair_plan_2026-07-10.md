@@ -95,6 +95,7 @@
 - 新闻先做事件到标的映射，允许发现 Universe 外候选，但先 observation/shadow。
 - RWA、股票、FX 分别建立 capability matrix；没有报价、成本、交易时段和合法执行 adapter 前不得标 executable。
 - ✅ XAUT/PAXG 已从“美元稳定币”概念中拆出；它们现在可进入普通 ticker/流动性检查，但不因分类修正获得实盘授权。
+- ✅ 主交易所行情任务保留 venue+spot/perp 身份；volume ranking 的结构化结果按原市场类型回到 Universe。OKX category 3 股票/ETF 合约在正式 capability 接入前保持 observation-only，不混入 crypto 执行池。
 
 ## 验证顺序
 

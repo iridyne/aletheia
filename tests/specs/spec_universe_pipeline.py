@@ -542,3 +542,117 @@ def test_universe_member_regime_tag_persists_and_refresh_assigns(tmp_path, monke
     assert "regime_tag = current_regime.state if current_regime else None" in src
     assert "regime_tag=regime_tag" in src
     assert '"regime_tag": regime_tag' in src
+
+
+@spec_claim(
+    SpecClaim(
+        "UP-21", "universe_pipeline", "§instrument-aware collector routing", "L2b",
+        "Active universe market-data collection preserves venue and market type as an "
+        "InstrumentId; a perp member must not be downgraded to a spot symbol.",
+        status="implemented",
+    ),
+)
+def test_observed_instruments_preserve_member_venue_and_market(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import scheduler
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(
+        repo,
+        "get_active_universe_members",
+        lambda limit: [
+            {
+                "asset_id": "asset-perp",
+                "symbol": "SPCX/USDT",
+                "market_type": "perp",
+                "execution_eligible": 1,
+            },
+            {
+                "asset_id": "asset-observe-only",
+                "symbol": "AAPL/USDT",
+                "market_type": "perp",
+                "execution_eligible": 0,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        repo,
+        "get_universe_asset",
+        lambda asset_id: {
+            "venue": "okx",
+            "market_type": "perp",
+        },
+    )
+    cfg = SimpleNamespace(
+        universe=SimpleNamespace(max_candidates=20),
+        market_data=SimpleNamespace(
+            ccxt_exchange="binance",
+            observed_instruments=[],
+            observed_symbols=[],
+        ),
+        exchange=SimpleNamespace(
+            enabled_markets={"spot": True, "usdt_futures": True},
+            preferred_market_type="auto",
+        ),
+    )
+
+    instruments = scheduler._get_observed_instruments(cfg)
+
+    assert [str(item) for item in instruments] == ["okx:SPCX/USDT:perp"]
+
+
+@spec_claim(
+    SpecClaim(
+        "UP-22", "universe_pipeline", "§equity capability boundary", "L2c",
+        "OKX instCategory=3 stock/ETF contracts remain observation-only until their "
+        "asset-class and execution capability are explicitly integrated; crypto registry "
+        "sync must exclude them.",
+        status="implemented",
+    ),
+)
+def test_okx_equity_contracts_are_excluded_from_crypto_registry():
+    from aletheia.universe.registry import _is_excluded
+
+    equity_swap = {
+        "base": "SPCX",
+        "id": "SPCX-USDT-SWAP",
+        "info": {"instCategory": "3"},
+    }
+    crypto_swap = {
+        "base": "BTC",
+        "id": "BTC-USDT-SWAP",
+        "info": {"instCategory": "1"},
+    }
+
+    assert _is_excluded(equity_swap) is True
+    assert _is_excluded(crypto_swap) is False
+
+
+@spec_claim(
+    SpecClaim(
+        "UP-23", "universe_pipeline", "§volume ranking consumption", "L2b",
+        "Structured volume-ranking rows retain exchange and market_type when ordering "
+        "registered universe assets; legacy plain-symbol snapshots remain spot-compatible.",
+        status="implemented",
+    ),
+)
+def test_volume_ranking_rows_preserve_instrument_identity():
+    from aletheia.universe.service import UniverseService, _volume_ranked_instruments
+
+    rows = [
+        {"symbol": "SPCX/USDT", "market_type": "perp", "exchange": "okx"},
+        "BTC/USDT",
+        {"symbol": "ETH/USDT", "market_type": "perp", "exchange": "binance"},
+    ]
+
+    instruments = _volume_ranked_instruments(rows, default_venue="okx")
+
+    assert [str(item) for item in instruments] == [
+        "okx:SPCX/USDT:perp",
+        "okx:BTC/USDT:spot",
+    ]
+    source = inspect.getsource(UniverseService.refresh)
+    block = source[source.index("# Inject volume-ranking symbols"):source.index("features_list =")]
+    assert "assets.sort" in block
+    assert "upsert_universe_asset" not in block

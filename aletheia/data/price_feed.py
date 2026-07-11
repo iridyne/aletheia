@@ -59,28 +59,50 @@ def get_cached_price_with_meta(symbol: str) -> dict | None:
         return dict(entry)
 
 
-def get_watched_symbols() -> list[str]:
-    """Return canonical symbols for open positions (always) + universe members (tick-gated)."""
-    from aletheia.data.symbols import to_canonical
+def get_watched_instruments():
+    """Return exact instruments for open positions + executable universe members."""
+    from aletheia.config.loader import load_config
+    from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
+    from aletheia.data.symbols import is_stock_token, stock_token_exchange
 
     seen: set[str] = set()
-    result: list[str] = []
+    result: list[InstrumentId] = []
+    cfg = load_config()
+    default_exchange = cfg.market_data.ccxt_exchange or "binance"
+
+    def append_instrument(raw_symbol: str, market_type: str | None, venue: str | None) -> None:
+        if not raw_symbol:
+            return
+        exchange = stock_token_exchange(raw_symbol) if is_stock_token(raw_symbol) else venue
+        normalized_market = MARKET_PERP if market_type == "usdt_futures" else market_type
+        try:
+            instrument = InstrumentId.from_parts(
+                exchange or default_exchange,
+                raw_symbol,
+                normalized_market or MARKET_SPOT,
+            )
+        except ValueError:
+            return
+        # The cache is symbol-keyed, so retain one authoritative instrument per
+        # canonical symbol. Open positions are appended before universe members.
+        if instrument.symbol not in seen:
+            seen.add(instrument.symbol)
+            result.append(instrument)
 
     # Always watch open position symbols
     try:
         from aletheia.storage.repositories import list_positions
         for p in list_positions(status="open"):
-            sym = to_canonical(p.get("symbol", ""))
-            if sym and sym not in seen:
-                seen.add(sym)
-                result.append(sym)
+            append_instrument(
+                p.get("symbol", ""),
+                p.get("market_type"),
+                p.get("venue"),
+            )
     except Exception as e:
         logger.warning("price_feed: failed to get position symbols: %s", e)
 
     # Universe members — tick-gated
     try:
-        from aletheia.config.loader import load_config
-        cfg = load_config()
         if cfg.event_triggers.enabled and cfg.event_triggers.watch_universe_members:
             with _tick_lock:
                 global _tick_counter
@@ -89,16 +111,26 @@ def get_watched_symbols() -> list[str]:
 
             if do_universe:
                 from aletheia.storage.repositories import get_active_universe_members
+                from aletheia.storage.repositories import get_universe_asset
                 members = get_active_universe_members(limit=50)
                 for m in members:
-                    sym = to_canonical(m.get("symbol", ""))
-                    if sym and sym not in seen:
-                        seen.add(sym)
-                        result.append(sym)
+                    if not m.get("execution_eligible", True):
+                        continue
+                    asset = get_universe_asset(m.get("asset_id")) or {}
+                    append_instrument(
+                        m.get("symbol", ""),
+                        m.get("market_type") or asset.get("market_type"),
+                        asset.get("venue"),
+                    )
     except Exception as e:
         logger.debug("price_feed: universe expansion failed: %s", e)
 
     return result
+
+
+def get_watched_symbols() -> list[str]:
+    """Backward-compatible canonical-symbol view of the watched instruments."""
+    return [instrument.symbol for instrument in get_watched_instruments()]
 
 
 async def refresh_watched_prices() -> dict:
@@ -111,8 +143,8 @@ async def refresh_watched_prices() -> dict:
     watched set is small so serial is acceptable; switch to a provider batch call
     if it grows. Never raises — errors are logged and cache entries left stale.
     """
-    symbols = get_watched_symbols()
-    if not symbols:
+    instruments = get_watched_instruments()
+    if not instruments:
         return {"refreshed": 0, "symbols": [], "errors": []}
 
     refreshed: list[str] = []
@@ -120,41 +152,52 @@ async def refresh_watched_prices() -> dict:
     now = datetime.now(timezone.utc)
 
     try:
+        from collections import defaultdict
+
         from aletheia.data.ccxt_provider import get_market_data_provider
-        from aletheia.data.symbols import InstrumentId, MARKET_SPOT
+        from aletheia.data.ccxt_provider import CCXTProvider
+        from aletheia.data.symbols import is_stock_token
         from aletheia.config.loader import load_config
 
         cfg = load_config()
-        exchange = cfg.market_data.ccxt_exchange or "binance"
-        provider = get_market_data_provider()
+        groups = defaultdict(list)
+        for instrument in instruments:
+            groups[instrument.exchange].append(instrument)
 
-        try:
-            for sym in symbols:
-                try:
-                    iid = InstrumentId.from_parts(exchange, sym, MARKET_SPOT)
-                    ticker = await provider.get_ticker(iid)
-                    if ticker and ticker.last_price and ticker.last_price > 0:
-                        with _cache_lock:
-                            prev_entry = _price_cache.get(sym, {})
-                            prev_price = prev_entry.get("price")
-                            volume_24h = getattr(ticker, "volume_24h", None) or prev_entry.get("volume_24h")
-                            _price_cache[sym] = {
-                                "price": ticker.last_price,
-                                "ts": now,
-                                "prev_price": prev_price,
-                                "volume_24h": volume_24h,
-                                "provider": getattr(ticker, "provider", None) or "unknown",
-                            }
+        for venue, group in groups.items():
+            # Bitget stock tokens are venue-exclusive; never fall back to a crypto
+            # provider that may interpret the same symbol as a different asset.
+            if any(is_stock_token(item.symbol) for item in group):
+                provider = CCXTProvider(exchange=venue, fallback_exchange=venue)
+            else:
+                provider = get_market_data_provider(exchange=venue, native_ccxt=True)
+            try:
+                for instrument in group:
+                    sym = instrument.symbol
+                    try:
+                        ticker = await provider.get_ticker(instrument)
+                        if ticker and ticker.last_price and ticker.last_price > 0:
+                            with _cache_lock:
+                                prev_entry = _price_cache.get(sym, {})
+                                prev_price = prev_entry.get("price")
+                                volume_24h = getattr(ticker, "volume_24h", None) or prev_entry.get("volume_24h")
+                                _price_cache[sym] = {
+                                    "price": ticker.last_price,
+                                    "ts": now,
+                                    "prev_price": prev_price,
+                                    "volume_24h": volume_24h,
+                                    "provider": getattr(ticker, "provider", None) or "unknown",
+                                }
 
-                        if prev_price and prev_price > 0 and cfg.event_triggers.enabled:
-                            pct = (ticker.last_price - prev_price) / prev_price * 100
-                            _check_event_triggers(sym, pct, volume_24h, prev_entry.get("volume_24h"), cfg)
+                            if prev_price and prev_price > 0 and cfg.event_triggers.enabled:
+                                pct = (ticker.last_price - prev_price) / prev_price * 100
+                                _check_event_triggers(sym, pct, volume_24h, prev_entry.get("volume_24h"), cfg)
 
-                        refreshed.append(sym)
-                except Exception as e:
-                    errors.append(f"{sym}: {e}")
-        finally:
-            await provider.close()
+                            refreshed.append(sym)
+                    except Exception as e:
+                        errors.append(f"{instrument}: {e}")
+            finally:
+                await provider.close()
     except Exception as e:
         logger.error("price_feed: refresh failed globally: %s", e)
         errors.append(f"global: {e}")
