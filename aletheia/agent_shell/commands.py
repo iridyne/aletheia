@@ -1559,6 +1559,8 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "market_type": decision.market_type,
         "scanner_family": decision.scanner_family,
         "filter_trace": decision.filter_trace,
+        # One bundle-level attribution unit for all overlapping Learning prompt channels.
+        "learning_manifest": ctx.get("learning_manifest") or {},
     }
 
     # trade / scale_in / flip all produce proposals

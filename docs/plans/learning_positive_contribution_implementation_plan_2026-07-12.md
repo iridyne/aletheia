@@ -1,7 +1,7 @@
 # Learning Positive-Contribution Implementation Plan
 
-> Status: implementation in progress; integrity ledger, scheduler continuity, factor authority,
-> and universe-calibration authority are implemented. Prompt attribution and remaining consumers follow.
+> Status: implementation in progress; integrity ledger, scheduler continuity, factor/universe
+> authority, prompt manifests, causal reflection, and automatic block routing are implemented.
 > Normative target: `docs/design/learning_evolution_contract.md`.
 > Existing behavior contract: `docs/design/learning_contract.md`.
 > Supersedes: `docs/plans/LEARNING_MODULE_REPAIR_PLAN.md` for future work.
@@ -14,6 +14,10 @@
 > shadow experiments. Paper influence requires stable treatment/control assignment,
 > minimum time, unique linked cost-aware outcomes, and a positive verdict; negative or
 > invalid evidence restores the static baseline immediately.
+> Attribution update (2026-07-12): Operator Learning channels persist as one bundle
+> manifest, observer advisory memory has its own Opportunity-linked manifest, reflection
+> is causal-id-only, and automatic block suggestions route to non-blocking guard shadow
+> candidates instead of pretending to be Risk Engine lessons.
 
 ## 1. Outcome And Non-Negotiable Standard
 

@@ -53,6 +53,11 @@ def run_promotion_check() -> dict:
     deprecations = 0
 
     for guard in candidates:
+        # Automatic lesson block suggestions enter guard shadow evaluation first.
+        # Historical matching trades cannot auto-promote them into blockers; a
+        # later prospective evaluator or explicit owner action must remove this tag.
+        if "shadow-only" in set(guard.tags or []):
+            continue
         matched = _rows_matching_guard(guard, rows)
         if len(matched) < min_trades:
             continue

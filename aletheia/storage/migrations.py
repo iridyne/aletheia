@@ -1767,6 +1767,7 @@ _ADDITIVE_COLUMNS = [
     ("bear_case", "pi_decisions", "TEXT DEFAULT ''"),
     # P1 (2026-06-28, AI Berkshire belief decomposition): structured assumption list.
     ("key_assumptions", "pi_decisions", "TEXT DEFAULT '[]'"),
+    ("learning_manifest_json", "pi_decisions", "TEXT NOT NULL DEFAULT '{}'"),
     # 2026-06-29: lesson block guard fields (dry-run window + TTL expiry).
     # Prevent immediately-accepted lessons from blocking all trades without
     # cooldown (sleeping bomb fix; see spec_lesson_guards.py LG-S01..S04).
@@ -2162,7 +2163,8 @@ CREATE TABLE IF NOT EXISTS pi_decisions (
     debate_bull_confidence INTEGER,
     debate_bear_confidence INTEGER,
     debate_adjustment INTEGER,
-    opportunity_id TEXT
+    opportunity_id TEXT,
+    learning_manifest_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_pi_decisions_symbol ON pi_decisions(symbol, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pi_decisions_created ON pi_decisions(created_at DESC);

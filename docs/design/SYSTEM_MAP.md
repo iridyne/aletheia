@@ -37,9 +37,9 @@
 
 | Job ID | 频率 | 输入数据 | 输出数据 | 下游 | 管道 |
 |--------|------|---------|---------|------|------|
-| `market_observer` | 15min | market_snapshots + context_builder(微结构) | opportunities, knowledge_items(research) | paper_trader_ranker | ✅ |
+| `market_observer` | 15min | market_snapshots + context_builder(微结构) + advisory bundle | opportunities（metadata 含 observer Learning manifest）, knowledge_items(research) | paper_trader_ranker | ✅ observer bundle 与下游 Operator bundle 分开归因 |
 | `paper_trader` | 5min | opportunities + PiDecision + guards | trade_proposals → risk_engine → orders → fills | ✅ 核心链路 |
-| `pi_trading_decision` | ~15min | market context + guards + lessons | PiDecision(pi_decisions 表) | paper_trader(消费 decision) | ✅ |
+| `pi_trading_decision` | ~15min | market context + one Learning bundle（reflection/memo/reasoning/calibration/cases/lessons） | PiDecision（含 opportunity/proposal 因果 id + learning_manifest_json） | paper_trader(消费 decision) | ✅ |
 | `position_manager` | 5min | open positions + market prices + exit_rules | close proposals / TP-SL updates | ✅ |
 | `position_reconcile` | 5min | exchange positions vs local | reconciliation_reports | ✅ |
 | `tpsl_fill_check` | 90s | pending TP/SL orders | fill records | ✅ |
@@ -77,7 +77,7 @@
 | 模块 | 写入路径 | 读取路径 | 管道 |
 |------|---------|---------|------|
 | knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | retrieve_lessons() → LLM prompts (市观/paper_trader_ranker/trading_decision(PI)) | ✅ |
-| trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | paper_trader_ranker(evaluate_guards), risk_engine(check#15) | ✅ |
+| trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | active guard → paper_trader_ranker；automatic lesson block → shadow-only candidate（历史自动晋级跳过） | ✅ 不伪装成 Risk Engine lesson |
 | ps_lessons (LessonStore) | dreaming_agent → lesson_reviewer | trading_context Layer3 → System Operator prompt → risk engine #15(applied, non-expired) | ✅ 双轨:**影响决策**但不进 knowledge_fts(有意设计,见 knowledge_contract §6.A1) |
 | ps_skills (SkillStore) | lesson_reviewer(applied lesson→draft skill), persistence API | persistence API / manual review | ✅ draft producer 已接入;不会自动 activate(见 knowledge_contract §6.A2) |
 

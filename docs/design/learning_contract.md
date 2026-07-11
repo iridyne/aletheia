@@ -63,7 +63,7 @@ results can influence a later trading judgment, even when it lives outside `alet
 | Factor feedback | `analytics/factor_feedback.py`, `learning/experiments.py` | exact clean history is diagnostic and proposes shadow treatments; ranker score/filter authority requires a prospective positive verdict and otherwise stays neutral |
 | Reasoning feedback | `analytics/reasoning_feedback.py` | Operator prompt advice |
 | Confidence calibration | `analytics/confidence_calibration.py` | Operator prompt advice |
-| Last-decision reflection | `agent_shell/reflection.py` | Operator prompt advice; current outcome lookup contains heuristic fallbacks |
+| Last-decision reflection | `agent_shell/reflection.py` | Operator prompt advice; only exact proposal→position or opportunity→fixed-horizon/shadow outcomes are rendered |
 | Learned guards | `knowledge/guards.py`, `analytics/guard_promotion.py` | active paper-entry candidate blocks |
 | Trust guard chain | `trust/guard_chain.py` | pre-risk observability only; even a `block` verdict does not block execution |
 | Case/memo score | `agents/paper_trader_ranker.py` | bounded candidate score changes |
@@ -87,22 +87,24 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - positive/negative experiment verdict calculation is still a separate evaluator responsibility;
   the authority adapter independently verifies real linked samples and fails closed if a verdict
   is absent, stale, under-sampled, or contradicted by a newer refreeze verdict;
-- automatic lesson extraction emits categories such as `risk_sizing`/`entry_timing`, while the Risk
-  Engine accepts hard `block_*` actions only from exact category `risk`; therefore automatic block
-  recommendations are generally advisory despite comments suggesting the Risk Engine can act;
+- automatic lesson `block_*` suggestions are rewritten as non-blocking `shadow-only` guard
+  candidates, never coerced into Risk Engine category `risk`, and excluded from historical
+  auto-promotion until prospective evaluation or explicit owner action;
 - memo guidance reaches three stages (observer, ranker, Operator), so a later trade cannot identify
   which stage deserves credit without prospective exposure assignment;
-- reflection may fall back to matching a position or move by symbol instead of a complete causal id;
+- reflection now fails closed when proposal/opportunity causal ids or eligible outcomes are absent;
 - narrative review, memo, reasoning, calibration, lesson, and guard artifacts use different evidence
   units and confidence conventions;
 - position-only historical guard replays cannot see successful blocks; Phase 0 now augments guard
   effectiveness with cost-aware `filter_candidate_outcomes` for actually blocked candidates;
 - applied artifact counts and retrieval visibility show activity/influence, not contribution;
-- overlapping prompt channels can reuse the same outcome unless attribution explicitly prevents it.
+- overlapping Operator prompt channels now persist one bundle manifest; observer memory is a
+  separate manifest on the causal Opportunity, so the two stages cannot masquerade as one exposure.
 - learned trading guards and the advisory trust guard chain have different authority and must not
   be merged or reported as the same mechanism.
 - operator-loop safety/config changes can alter the same candidates/outcomes during a Learning
-  evaluation; without policy epochs they confound attribution, but safety tightening must never be
+  evaluation; factor/universe exposures now rotate durable policy epochs, while remaining prompt
+  and sizing adapters still need epoch migration. Safety tightening must never be
   withheld merely to make a cleaner experiment.
 
 The target lifecycle, registry, prospective experiments, overlap handling, and automatic fallback

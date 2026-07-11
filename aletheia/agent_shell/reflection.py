@@ -1,11 +1,10 @@
 """System Operator Reflection Loop — records decisions and injects outcomes.
 
-Implements the "last decision reflection" pattern from arXiv:2510.08068
-(+31% improvement via verbal feedback). Zero extra LLM cost: just writes
-the previous decision's outcome back into the next prompt.
+Implements a last-decision reflection pattern without an extra LLM call. Only
+causally linked proposal/position or opportunity/fixed-horizon outcomes are
+rendered; symbol-only movement is never treated as the decision's result.
 
-Storage: single JSON file at data/pi_reflection.json (rotated each cycle).
-No new DB tables needed.
+Storage: a rotating JSON pointer plus the durable pi_decisions audit row.
 """
 
 from __future__ import annotations
@@ -80,6 +79,9 @@ def record_decision(decision_result: dict) -> None:
             debate_adjustment=decision_result.get("debate_adjustment"),
             bear_case=decision_result.get("bear_case") or "",
             key_assumptions=assumptions_json,
+            learning_manifest_json=json.dumps(
+                decision_result.get("learning_manifest") or {}, sort_keys=True
+            ),
         )
         insert_pi_decision(pi_dec)
         try:
@@ -111,6 +113,8 @@ def get_last_reflection() -> str | None:
     reasoning = raw.get("reasoning", "")
     decided_at = raw.get("decided_at", "")
     proposal_id = raw.get("proposal_id")
+    opportunity_id = raw.get("opportunity_id")
+    signal_source = raw.get("signal_source") or "market_observer"
 
     if not action or not decided_at:
         return None
@@ -125,7 +129,9 @@ def get_last_reflection() -> str | None:
             f"Reason: {reasoning}. {outcome_str}"
         )
     elif action == "skip":
-        missed_str = _compute_missed_opportunity(symbol, decided_at) if symbol else ""
+        missed_str = _compute_missed_opportunity(
+            opportunity_id, signal_source, direction, decided_at
+        )
         return (
             f"Last decision ({_time_ago(decided_at)}): SKIP"
             f"{f' on {symbol} {direction}' if symbol else ''}. "
@@ -140,53 +146,80 @@ def get_last_reflection() -> str | None:
 
 
 def _compute_outcome(symbol: str | None, proposal_id: str | None, decided_at: str) -> str:
-    """Check what happened to a trade decision since it was made."""
-    if not symbol:
-        return ""
-
+    """Resolve an executed outcome only through the decision's proposal id."""
+    if not proposal_id:
+        return "Outcome unavailable: no causally linked proposal/position."
     try:
-        from aletheia.storage.repositories import list_positions
-        positions = list_positions(status="open", limit=20)
-        for p in positions:
-            if p.get("symbol") == symbol:
-                upnl = p.get("unrealized_pnl")
-                if upnl is not None:
-                    return f"Outcome: position still open, uPnL=${upnl:+.2f}."
-                return "Outcome: position still open."
-
-        closed = list_positions(status="closed", limit=50)
-        for p in closed:
-            if p.get("symbol") == symbol and (p.get("opened_at") or "") >= decided_at:
-                rpnl = p.get("realized_pnl")
-                if rpnl is not None:
-                    return f"Outcome: closed, realized=${rpnl:+.2f}."
-                return "Outcome: closed."
+        from aletheia.storage.sqlite import get_db
+        row = get_db().execute(
+            "SELECT * FROM positions WHERE proposal_id=? ORDER BY opened_at DESC LIMIT 1",
+            (proposal_id,),
+        ).fetchone()
+        if row is None:
+            return "Outcome unavailable: proposal has no causally linked position."
+        position = dict(row)
+        if position.get("status") == "open":
+            upnl = position.get("unrealized_pnl")
+            return (
+                f"Outcome pending: linked position still open, uPnL=${float(upnl):+.2f}."
+                if upnl is not None else "Outcome pending: linked position still open."
+            )
+        from aletheia.learning.outcomes import assess_realized_position
+        assessed = assess_realized_position(position)
+        if not assessed.eligible:
+            return f"Outcome unavailable: linked close excluded ({assessed.reason})."
+        return (
+            f"Outcome: causally linked close, realized=${float(position['realized_pnl']):+.2f} "
+            f"(net={assessed.net_return_pct:+.2f}%)."
+        )
     except Exception:
-        pass
-
-    if proposal_id:
-        return "Outcome: proposal submitted, position status unknown."
-    return ""
+        return "Outcome unavailable: causal lookup failed."
 
 
-def _compute_missed_opportunity(symbol: str | None, decided_at: str) -> str:
-    """Check if a skipped symbol moved favorably after the skip."""
-    if not symbol:
-        return ""
-
+def _compute_missed_opportunity(
+    opportunity_id: str | None,
+    signal_source: str,
+    direction: str | None,
+    decided_at: str,
+) -> str:
+    """Resolve a skip only from its exact fixed-horizon candidate outcome."""
+    if not opportunity_id:
+        return "Counterfactual unavailable: no causally linked opportunity."
+    if signal_source != "market_observer":
+        return "Counterfactual unavailable: source has no registered fixed-horizon outcome."
     try:
-        from aletheia.storage.repositories import list_universe_feature_snapshots
-        snaps = list_universe_feature_snapshots(limit=50)
-        for s in snaps:
-            if s.get("symbol") == symbol:
-                ret_4h = s.get("return_4h")
-                if ret_4h is not None and abs(ret_4h) > 1.0:
-                    direction = "up" if ret_4h > 0 else "down"
-                    return f"Since skip: {symbol} moved {direction} {abs(ret_4h):.1f}% in 4h."
-                return ""
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        opp = db.execute(
+            "SELECT universe_member_id FROM opportunities WHERE id=?", (opportunity_id,)
+        ).fetchone()
+        if opp and opp[0]:
+            row = db.execute(
+                "SELECT * FROM universe_forward_outcomes WHERE member_id=? AND horizon='4h' "
+                "AND status='settled' ORDER BY settled_at DESC LIMIT 1",
+                (opp[0],),
+            ).fetchone()
+            if row:
+                from aletheia.learning.outcomes import assess_candidate_outcome
+                assessed = assess_candidate_outcome(dict(row))
+                if assessed.eligible:
+                    return (
+                        "Causal 4h counterfactual: "
+                        f"net={assessed.net_return_pct:+.2f}% ({direction or 'unknown'})."
+                    )
+                return f"Counterfactual unavailable: linked outcome excluded ({assessed.reason})."
+        shadow = db.execute(
+            "SELECT * FROM shadow_trades WHERE opportunity_id=? AND resolved_at IS NOT NULL "
+            "ORDER BY resolved_at DESC LIMIT 1",
+            (opportunity_id,),
+        ).fetchone()
+        if shadow:
+            data = dict(shadow)
+            if data.get("net_pnl_pct") is not None and data.get("cost_model_version"):
+                return f"Causal shadow counterfactual: net={float(data['net_pnl_pct']):+.2f}%."
     except Exception:
-        pass
-    return ""
+        return "Counterfactual unavailable: causal lookup failed."
+    return "Counterfactual unavailable: linked outcome not settled."
 
 
 def _time_ago(iso_str: str) -> str:

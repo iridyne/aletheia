@@ -110,11 +110,23 @@ def build_enriched_trading_context() -> dict[str, Any]:
     Returns a dict with keys: layer1, layer2, layer3, each containing
     pre-formatted data ready for prompt injection.
     """
-    return {
+    ctx = {
         "layer1": _build_layer1_snapshot(),
         "layer2": _build_layer2_short_term(),
         "layer3": _build_layer3_wisdom(),
     }
+    from aletheia.learning.prompt_bundles import (
+        build_operator_learning_manifest,
+        gate_operator_learning_context,
+    )
+    try:
+        from aletheia.config.loader import load_config
+        enabled = bool(load_config().agent.autonomous_learning)
+    except Exception:
+        enabled = False
+    ctx = gate_operator_learning_context(ctx, enabled=enabled)
+    ctx["learning_manifest"] = build_operator_learning_manifest(ctx)
+    return ctx
 
 
 # ── Layer 1: Environment Snapshot ────────────────────────────────────────────

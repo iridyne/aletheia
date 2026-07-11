@@ -1067,6 +1067,8 @@ class PiDecision(BaseModel):
     # P1 (2026-06-28, AI Berkshire belief decomposition): JSON-encoded list of
     # critical assumptions this decision rests on. Empty JSON array = not provided.
     key_assumptions: str = "[]"
+    # One bundle-level manifest for overlapping Learning prompt components.
+    learning_manifest_json: str = "{}"
 
 
 class CapitalEvent(BaseModel):

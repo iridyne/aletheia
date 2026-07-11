@@ -229,7 +229,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
             '"evidence" (object with fields: outcome_counts (dict), avg_pnl_pct (float or null), '
             'factor_keys (list of strings), scanner_families (list of strings)), '
             '"recommendation" (optional — include ONLY when evidence strongly supports a specific '
-            'trading constraint; must be one of: '
+            'shadow-evaluation hypothesis; block_* suggestions never become Risk Engine rules and must be one of: '
             '{"action": "block_scanner", "scanner": "<scanner_family>"}, '
             '{"action": "block_direction", "direction": "short"|"long"}, '
             '{"action": "reduce_size", "factor": 0.3-0.8}; '
@@ -301,7 +301,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         evidence = {**llm_evidence, **agg_evidence}
         # Phase 1c: deterministic recommendation fallback when LLM omits it.
         # If aggregate evidence shows a clear loss pattern for a specific scanner,
-        # generate a block_scanner recommendation so risk engine can act.
+        # propose block_scanner for guard shadow evaluation (never Risk authority).
         rec = lesson.get("recommendation") or None
         if not rec and agg_evidence.get("outcome_counts"):
             losses = agg_evidence["outcome_counts"].get("loss", 0)
@@ -313,10 +313,16 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
                     "(block_scanner=%s, loss_rate=%d/%d)",
                     rec["scanner"], losses, total,
                 )
+        source_id = reviews[0].get("id", "unknown")
+        if rec and rec.get("action") in {"block_scanner", "block_direction", "block_symbol"}:
+            from aletheia.learning.guard_routing import route_automatic_block_recommendation
+            rec = route_automatic_block_recommendation(
+                rec, evidence=evidence, source_id=source_id,
+            )
         created = store.create(
             summary=lesson["summary"],
             source_type="trade_case_study",
-            source_id=reviews[0].get("id", "unknown"),
+            source_id=source_id,
             category=lesson.get("category", "general"),
             severity=lesson.get("severity", "info"),
             evidence=evidence,

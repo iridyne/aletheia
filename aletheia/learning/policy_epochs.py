@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -85,6 +86,31 @@ def compare_policy_epochs(
     return EpochComparison("new_epoch", "apply_normally", "effective_policy_changed")
 
 
+def persist_policy_epoch(epoch: PolicyEpoch) -> str:
+    """Return the durable open epoch id, rotating when effective values change."""
+    from aletheia.learning.ledger import (
+        close_policy_epoch, get_open_policy_epoch, insert_record,
+    )
+    from aletheia.learning.models import LearningPolicyEpoch
+
+    current = get_open_policy_epoch(epoch.epoch_kind)
+    if current and current.get("effective_values_hash") == epoch.epoch_hash:
+        return str(current["epoch_id"])
+    now = datetime.now(timezone.utc).isoformat()
+    if current:
+        close_policy_epoch(str(current["epoch_id"]), now)
+    record = LearningPolicyEpoch(
+        epoch_kind=epoch.epoch_kind,
+        effective_values_hash=epoch.epoch_hash,
+        effective_values_json=json.dumps(epoch.effective_values, sort_keys=True, default=str),
+        affected_path_ids_json=json.dumps(epoch.affected_path_ids, sort_keys=True),
+        safety_required=epoch.safety_required,
+        started_at=now,
+    )
+    insert_record("learning_policy_epochs", record)
+    return record.epoch_id
+
+
 def _without_secrets(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -100,4 +126,3 @@ def _without_secrets(value: Any) -> Any:
 def _is_secret_key(key: str) -> bool:
     lowered = key.lower()
     return any(fragment in lowered for fragment in _SECRET_FRAGMENTS)
-

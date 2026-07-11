@@ -113,7 +113,9 @@ def get_exposure_by_dedup_key(dedup_key: str) -> dict | None:
     return dict(row) if row else None
 
 
-def linked_settled_exposure_counts(experiment_id: str) -> dict[str, int]:
+def linked_settled_exposure_counts(
+    experiment_id: str, *, policy_epoch: str | None = None,
+) -> dict[str, int]:
     """Count unique arms backed by real clean, cost-aware settled outcomes."""
     from aletheia.analytics.learning_window import clean_window_cutoff
 
@@ -132,9 +134,30 @@ def linked_settled_exposure_counts(experiment_id: str) -> dict[str, int]:
         "SELECT e.assignment, COUNT(DISTINCT e.candidate_key) AS n "
         "FROM learning_exposures e JOIN eligible_keys k"
         " ON k.outcome_key=e.outcome_candidate_key "
-        "WHERE e.experiment_id=? GROUP BY e.assignment",
-        (cutoff, cutoff, experiment_id),
+        "WHERE e.experiment_id=? AND (? IS NULL OR e.concurrent_policy_epoch=?) "
+        "GROUP BY e.assignment",
+        (cutoff, cutoff, experiment_id, policy_epoch, policy_epoch),
     ).fetchall()
     counts = {"control": 0, "treatment": 0}
     counts.update({str(row[0]): int(row[1]) for row in rows})
     return counts
+
+
+def get_open_policy_epoch(epoch_kind: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM learning_policy_epochs WHERE epoch_kind=? AND ended_at IS NULL "
+        "ORDER BY started_at DESC LIMIT 1",
+        (epoch_kind,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def close_policy_epoch(epoch_id: str, ended_at: str) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    db.execute(
+        "UPDATE learning_policy_epochs SET ended_at=? WHERE epoch_id=? AND ended_at IS NULL",
+        (ended_at, epoch_id),
+    )
+    if not was_in_tx:
+        db.commit()

@@ -292,6 +292,7 @@ async def _analyze_symbol(
     force_full: bool = False,
     prediction_context_enabled: bool = False,
     prediction_context_cutoff: str | None = None,
+    learning_memory_block: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Run market context build + LLM read for a single symbol.
 
@@ -487,7 +488,8 @@ async def _analyze_symbol(
     # built from a symbol LIST with no family, so no guard ever matched. Build it
     # here where scanner_family is known.
     sym_memory = memory_block
-    if scanner_family:
+    guard_block = ""
+    if scanner_family and learning_memory_block is not None:
         try:
             from aletheia.knowledge.router import build_guard_advisory
             guard_block = build_guard_advisory({
@@ -499,6 +501,10 @@ async def _analyze_symbol(
                 sym_memory = f"{memory_block}{guard_block}"
         except Exception:
             pass
+    from aletheia.learning.prompt_bundles import build_observer_learning_manifest
+    learning_manifest = build_observer_learning_manifest(
+        learning_memory_block or "", guard_block,
+    )
 
     # MO-4: tell the LLM which scanner family surfaced this symbol so it VALIDATES
     # that signal family rather than doing a generic technical read.
@@ -585,6 +591,13 @@ async def _analyze_symbol(
         )
         if existing:
             updates: dict = {"thesis": thesis}
+            if learning_manifest:
+                try:
+                    existing_meta = json.loads(existing.get("metadata") or "{}")
+                except (TypeError, ValueError):
+                    existing_meta = {}
+                existing_meta["learning_manifest"] = learning_manifest
+                updates["metadata"] = json.dumps(existing_meta, sort_keys=True)
             if funding_rate_val is not None:
                 updates["funding_rate"] = funding_rate_val
             if open_interest_val is not None:
@@ -624,6 +637,8 @@ async def _analyze_symbol(
         source_agent="market_observer",
         linked_strategy_id=linked_strategy_id,
         asset_class=asset_class,
+        metadata=json.dumps({"learning_manifest": learning_manifest}, sort_keys=True)
+        if learning_manifest else "{}",
         universe_snapshot_id=universe_snapshot_id,
         universe_member_id=universe_member_id,
         scanner_family=effective_scanner_family,
@@ -732,6 +747,10 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     except Exception:
         pass
 
+    learning_memory_block = memory_block if cfg.agent.autonomous_learning else None
+    if learning_memory_block is None:
+        memory_block = ""
+
     prediction_context_enabled = bool(cfg.market_data.prediction_enabled)
     prediction_context_cutoff = _prediction_cutoff_iso()
     if prediction_context_enabled:
@@ -816,6 +835,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 force_full=_force_full,
                 prediction_context_enabled=prediction_context_enabled,
                 prediction_context_cutoff=prediction_context_cutoff,
+                learning_memory_block=learning_memory_block,
             )
             if opp_id:
                 outputs.append(f"opportunity:{opp_id}")

@@ -93,7 +93,7 @@ def _ensure_experiment(
     return hypothesis, LearningExperiment(**experiment_row)
 
 
-def _verdict_authorizes(experiment: LearningExperiment) -> bool:
+def _verdict_authorizes(experiment: LearningExperiment, policy_epoch: str) -> bool:
     if experiment.status != "active" or not experiment.stage.startswith("paper"):
         return False
     verdict = get_latest_verdict(experiment.experiment_id)
@@ -101,7 +101,9 @@ def _verdict_authorizes(experiment: LearningExperiment) -> bool:
         return False
     if min(int(verdict.get("unique_treatment_n") or 0), int(verdict.get("unique_control_n") or 0)) < experiment.min_samples_per_arm:
         return False
-    linked = linked_settled_exposure_counts(experiment.experiment_id)
+    linked = linked_settled_exposure_counts(
+        experiment.experiment_id, policy_epoch=policy_epoch,
+    )
     if min(linked["treatment"], linked["control"]) < experiment.min_samples_per_arm:
         return False
     try:
@@ -126,12 +128,16 @@ def _policy_epoch(path_id: str) -> str:
             "permission_mode": cfg.agent.permission_mode,
             "scanner_weights": cfg.universe.scanner_weights,
             "scanner_regime_scoring": cfg.universe.scanner_regime_scoring,
+            "risk": cfg.risk.model_dump(),
+            "trading": cfg.trading.model_dump(),
         }
     except Exception:
         values = {"config": "unavailable"}
-    return build_policy_epoch(
-        "decision_policy", values, affected_path_ids=(path_id,)
-    ).epoch_hash
+    from aletheia.learning.policy_epochs import persist_policy_epoch
+    epoch = build_policy_epoch(
+        f"decision_policy:{path_id}", values, affected_path_ids=(path_id,)
+    )
+    return persist_policy_epoch(epoch)
 
 
 def apply_numeric_treatment(
@@ -152,10 +158,10 @@ def apply_numeric_treatment(
         target_horizon=target_horizon, consumer=consumer,
     )
     assignment = stable_assignment(experiment, candidate_key)
-    authorized = _verdict_authorizes(experiment)
+    policy_epoch = _policy_epoch(path_id)
+    authorized = _verdict_authorizes(experiment, policy_epoch)
     applied = authorized and assignment == "treatment"
     value = float(treatment if applied else baseline)
-    policy_epoch = _policy_epoch(path_id)
     stage = experiment.stage if authorized else "shadow_refrozen"
     dedup_key = f"{experiment.experiment_id}:{candidate_key}:{stage}:{policy_epoch}"
     exposure = LearningExposure(

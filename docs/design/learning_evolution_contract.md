@@ -427,21 +427,21 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B04 | L2b | reviewer defers when the exact scope misses its sample gate | missing |
 | LE-B05 | L2b | stable assignment survives retries/restarts | implemented |
 | LE-B06 | L2b | every applied ranker delta stores before/after score and ids | implemented |
-| LE-B07 | L2b | every prompt decision stores its Learning manifest | missing |
+| LE-B07 | L2b | every prompt decision stores its Learning manifest | implemented |
 | LE-B08 | L2b | blocked guard candidates continue shadow settlement | missing |
 | LE-B09 | L2b | guard effectiveness consumes blocked shadow outcomes | implemented |
 | LE-B10 | L2b | sizing stores learned and baseline notional | missing |
 | LE-B11 | L2b | missed scheduled windows catch up once and only once | implemented |
 | LE-B12 | L2b | stalled reviewer/backlog refreezes promotion | implemented |
 | LE-B13 | L2b | factor feedback uses clean exact-scope evidence and prospective exposure before influence | implemented |
-| LE-B14 | L2b | observer and operator prompt bundles persist exact manifests and causal outcome links | missing |
-| LE-B15 | L2b | reflection cannot infer eligible outcomes from symbol-only or unbounded time matching | missing |
+| LE-B14 | L2b | observer and operator prompt bundles persist exact manifests and causal outcome links | implemented |
+| LE-B15 | L2b | reflection cannot infer eligible outcomes from symbol-only or unbounded time matching | implemented |
 | LE-B16 | L2b | all paths share versioned cost-aware outcome eligibility and source precedence | partial — shared fail-closed adapter exists; remaining consumers migrate in later phases |
 | LE-B17 | L2b | narrative/LLM artifacts cannot independently increase samples or promotion confidence | implemented |
 | LE-B18 | L2b | exit-policy advisor remains read-only with no settings or position-management consumer | implemented |
-| LE-B19 | L2b | automatic `block_*` recommendations enter guard shadow evaluation, not Risk Engine via category coercion | missing |
+| LE-B19 | L2b | automatic `block_*` recommendations enter guard shadow evaluation, not Risk Engine via category coercion | implemented |
 | LE-B20 | L2b | universe family calibration records clean prospective neutral/treatment exposures before score influence | implemented |
-| LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — deterministic secret-free epoch semantics exist; persistence/adapters remain |
+| LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — secret-free epochs now persist and stratify factor/universe exposures; remaining prompt/sizing adapters follow |
 | LE-B22 | L2b | factor producer, Operator context, ranker trace, and exposure use the same stable `factor_key` identity | implemented |
 | LE-B23 | L2b | retrying one exposure dedup key stores one immutable influence record | implemented |
 | LE-C01 | L2c | no promotion without unique samples, time span, and outcome links | implemented |
@@ -453,10 +453,11 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-C07 | L2c | full close→learn→expose→settle→promote→demote chain is causal | missing |
 | LE-C08 | L2c | factor hard block/preference demotes to static behavior after negative holdout | missing |
 | LE-C09 | L2c | market-observer Learning influence is separated from downstream ranker/operator influence | missing |
-| LE-C10 | L2c | overlapping Learning channels cannot double-count one outcome as independent credit | partial — common aggregator and current Learning alpha dedupe exist; exposure migration remains |
+| LE-C10 | L2c | overlapping Learning channels cannot double-count one outcome as independent credit | partial — Observer and Operator persist separate bundle manifests and the common aggregator dedupes outcomes; controlled prompt exposure migration remains |
 | LE-C11 | L2c | data-quality or causal-link loss makes contribution unavailable and refreezes authority | partial — shared aggregator requests refreeze; consumer authority adapters remain |
 | LE-C12 | L2c | negative/invalid family-calibration holdout restores neutral multiplier `1.0` | implemented |
 | LE-C13 | L2c | safety/operations tightening is never withheld or credited as Learning contribution | partial — epoch core enforces semantics; operator integration remains |
+| LE-C14 | L2c | disabling autonomous Learning restores declared prompt-consumer baselines without removing market/safety context | implemented |
 
 ## 13. Definition Of Positive Contribution
 
