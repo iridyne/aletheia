@@ -746,14 +746,15 @@ def test_zero_demo_notional_cap_is_a_blocker(monkeypatch):
 
 
 def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
     import aletheia.config.loader as loader
     import aletheia.config.secrets as secrets
 
     cfg = AletheiaConfig()
     cfg.models.default_provider = "anthropic_compatible"
-    cfg.models.providers["anthropic_compatible"].enabled = True
-    cfg.models.providers["anthropic_compatible"].api_key_secret_ref = "model.gateway.api_key"
+    cfg.models.providers["anthropic_compatible"] = ProviderConfig(
+        type="anthropic_compatible", enabled=True, api_key_secret_ref="model.gateway.api_key"
+    )
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
     monkeypatch.setattr(secrets, "get_secret", lambda key: "secret" if key == "model.gateway.api_key" else None)
 
@@ -766,14 +767,15 @@ def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
 
 
 def test_llm_credentials_warn_when_enabled_http_provider_secret_missing(monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
     import aletheia.config.loader as loader
     import aletheia.config.secrets as secrets
 
     cfg = AletheiaConfig()
     cfg.models.default_provider = "anthropic_compatible"
-    cfg.models.providers["anthropic_compatible"].enabled = True
-    cfg.models.providers["anthropic_compatible"].api_key_secret_ref = "model.gateway.api_key"
+    cfg.models.providers["anthropic_compatible"] = ProviderConfig(
+        type="anthropic_compatible", enabled=True, api_key_secret_ref="model.gateway.api_key"
+    )
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
     monkeypatch.setattr(secrets, "get_secret", lambda key: None)
 
@@ -786,14 +788,15 @@ def test_llm_credentials_warn_when_enabled_http_provider_secret_missing(monkeypa
 
 
 def test_llm_credentials_do_not_require_api_key_for_cli_provider(monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
     import aletheia.config.loader as loader
     import aletheia.config.secrets as secrets
 
     cfg = AletheiaConfig()
     cfg.models.default_provider = "codex_cli"
-    cfg.models.providers["codex_cli"].enabled = True
-    cfg.models.providers["codex_cli"].api_key_secret_ref = None
+    cfg.models.providers["codex_cli"] = ProviderConfig(
+        type="codex_cli", enabled=True, api_key_secret_ref=None
+    )
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
     monkeypatch.setattr(secrets, "get_secret", lambda key: None)
 

@@ -118,6 +118,10 @@ async def test_strategy_summary_endpoint_supports_operator_shell(client):
 @pytest.mark.anyio
 async def test_ac06_model_providers(client):
     c, _ = client
+    # Providers ship empty now; the model layer supports these types on demand —
+    # register them via the API (as a fresh-install operator would through Settings).
+    for provider in ("openai_compatible", "anthropic_compatible", "codex_cli"):
+        await c.post("/api/settings/model", json={"provider": provider})
     data = (await c.get("/api/model")).json()
     assert set(["openai_compatible", "anthropic_compatible", "codex_cli"]).issubset(data["providers"].keys())
 

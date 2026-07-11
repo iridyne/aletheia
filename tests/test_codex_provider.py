@@ -197,9 +197,10 @@ async def test_graceful_degradation_when_codex_absent(monkeypatch, tmp_path):
     from aletheia.model_provider.router import clear_cache
     clear_cache()
     from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
     cfg = load_config()
     cfg.models.default_provider = "codex_cli"
-    cfg.models.providers["codex_cli"].enabled = True
+    cfg.models.providers["codex_cli"] = ProviderConfig(type="codex_cli", enabled=True)
     save_config(cfg)
     monkeypatch.setattr("aletheia.model_provider.codex_cli.shutil.which", lambda c: None)
 

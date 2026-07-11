@@ -216,7 +216,10 @@ class ProviderConfig(BaseModel):
     base_url: str = ""
     protocol: str = "chat_completions"
     model: str = "default"
-    enabled: bool = True
+    # Opt-in by default: a provider entry that made it into config.yaml but
+    # nobody has enabled yet must not be probed. Fresh installs never enable
+    # anything until the operator configures it explicitly.
+    enabled: bool = False
     command: str = ""
     mode: str = ""
     api_key_secret_ref: str | None = None
@@ -239,37 +242,20 @@ class ProviderConfig(BaseModel):
 
 
 class ModelsConfig(BaseModel):
-    default_provider: str = "openai_compatible"
+    # Fresh installs ship blank: no default provider name, no pre-populated
+    # provider stubs. The operator adds providers explicitly via the Settings
+    # page (POST /settings/model) — see routes/model.py. Historically we seeded
+    # openai_compatible → localhost:8000 and anthropic_compatible → localhost:8001,
+    # which meant every fresh clone tripped the boot-time LLM probe against
+    # services that were never there. Existing config.yaml files are untouched
+    # by this default change (loader merges on top of user-supplied values).
+    default_provider: str = ""
     # Two-tier model routing (MR, 2026-07-01): let top-level decision agents use a
     # stronger model while bulk data-extraction agents use a cheaper/faster one.
     # None → fall back to default_provider, so existing configs need no migration.
     deep_provider: str | None = None   # decision/analysis tier: trading_decision, strategy_designer, risk_critic, …
     fast_provider: str | None = None   # extraction tier: research_worker bulk LLM calls
-    providers: dict[str, ProviderConfig] = Field(default_factory=lambda: {
-        "openai_compatible": ProviderConfig(
-            type="openai_compatible",
-            base_url="http://localhost:8000/v1",
-            protocol="chat_completions",
-            model="default",
-        ),
-        "anthropic_compatible": ProviderConfig(
-            type="anthropic_compatible",
-            base_url="http://localhost:8001",
-            model="default",
-        ),
-        "codex_cli": ProviderConfig(
-            type="codex_cli",
-            enabled=False,
-            command="codex",
-            mode="exec",
-        ),
-        "claude_cli": ProviderConfig(
-            type="claude_cli",
-            enabled=False,
-            command="claude",
-            mode="print",
-        ),
-    })
+    providers: dict[str, ProviderConfig] = Field(default_factory=dict)
 
 
 class RiskConfig(BaseModel):
@@ -389,7 +375,12 @@ class HealthConfig(BaseModel):
     # (runtime.paused=True) instead of running blind. The process stays ALIVE (it is
     # NOT killed — that would just trigger a supervisor/watchdog respawn loop); the
     # Web UI shows the degraded state and the operator resumes after fixing a provider.
-    require_llm_at_startup: bool = True
+    # Default off: fresh installs have no providers configured (see ModelsConfig
+    # defaults), so gating startup on LLM connectivity would pause the runtime
+    # before the operator has any UI path to configure one. Existing installs
+    # that opted in keep their setting because loader.load_config merges on top
+    # of user-supplied values.
+    require_llm_at_startup: bool = False
     startup_gate_max_retries: int = 3
     startup_gate_retry_delay_sec: int = 15
     # Auto-resume: when startup gate pauses the system, periodically probe LLM

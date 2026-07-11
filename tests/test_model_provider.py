@@ -22,9 +22,14 @@ def test_router_injects_api_key_from_secret_ref(tmp_path, monkeypatch):
 
     # Configure a provider with an api_key_secret_ref and store that secret
     from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
     from aletheia.config.secrets import set_secret
     cfg = load_config()
-    cfg.models.providers["openai_compatible"].api_key_secret_ref = "model.openai_compatible.api_key"
+    cfg.models.providers["openai_compatible"] = ProviderConfig(
+        type="openai_compatible",
+        base_url="http://localhost:8000/v1",
+        api_key_secret_ref="model.openai_compatible.api_key",
+    )
     save_config(cfg)
     set_secret("model.openai_compatible.api_key", "sk-secret-123")
 
@@ -35,8 +40,19 @@ def test_router_injects_api_key_from_secret_ref(tmp_path, monkeypatch):
 
 def test_router_returns_openai_by_default(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    clear_cache()
+    # Providers ship empty now; seed the default explicitly (mirrors a user who
+    # configured openai_compatible as their default via Settings).
+    cfg = load_config()
+    cfg.models.default_provider = "openai_compatible"
+    cfg.models.providers["openai_compatible"] = ProviderConfig(
+        type="openai_compatible", base_url="http://localhost:8000/v1"
+    )
+    save_config(cfg)
     clear_cache()
     provider = get_provider()
     assert isinstance(provider, OpenAICompatibleProvider)
@@ -46,8 +62,14 @@ def test_router_returns_openai_by_default(tmp_path, monkeypatch):
 
 def test_router_returns_anthropic(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    clear_cache()
+    cfg = load_config()
+    cfg.models.providers["anthropic_compatible"] = ProviderConfig(type="anthropic_compatible")
+    save_config(cfg)
     clear_cache()
     provider = get_provider("anthropic_compatible")
     assert isinstance(provider, AnthropicCompatibleProvider)
@@ -56,12 +78,30 @@ def test_router_returns_anthropic(tmp_path, monkeypatch):
 
 def test_router_returns_codex(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    clear_cache()
+    cfg = load_config()
+    cfg.models.providers["codex_cli"] = ProviderConfig(type="codex_cli")
+    save_config(cfg)
     clear_cache()
     provider = get_provider("codex_cli")
     assert isinstance(provider, CodexCLIProvider)
     assert provider.enabled is False
+    clear_cache()
+
+
+def test_router_raises_clear_error_when_no_provider_configured(tmp_path, monkeypatch):
+    """Fresh install ships blank (default_provider=''). get_provider() must raise a
+    human-actionable error, not a confusing 'Unknown provider: ' with an empty name."""
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    clear_cache()
+    with pytest.raises(ValueError, match="No LLM provider configured"):
+        get_provider()  # name=None → default_provider="" on a blank config
     clear_cache()
 
 
