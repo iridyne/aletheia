@@ -2,7 +2,7 @@
 
 > 这是文档金字塔**中层契约**的导航中枢:回答"系统**该**是什么样",可作实现依据。
 > 冲突裁决:文档为准,代码追文档;已实现部分的偏差落 [issues](../issues/BACKEND_ISSUES.md)。
-> Last updated: 2026-06-21
+> Last updated: 2026-07-12
 
 ---
 
@@ -43,8 +43,8 @@ L4 状态/参考   status/* · references/* · _ai/* ── 现在是什么样/�
 | [api_reference](api_reference.md) | REST 端点索引 / 状态码 / trust 端点义务 | ✅ 金标准(批次2细化) |
 | [data_layer](data_layer.md) | CCXT provider 重构 / symbol 格式 | 🟡 契约(部分 Phase 已实现) |
 | [knowledge_contract](knowledge_contract.md) | Knowledge 检索子系统 / LessonStore / GuardStore / 双轨断裂清单 | ✅ 金标准(批次6 新建) |
-| [learning_contract](learning_contract.md) | 学习子系统 — LessonStore 状态机 / SkillStore 权限 / 守卫时间戳 / 晋升链 | 🟡 新建 2026-07-02 |
-| [learning_evolution_contract](learning_evolution_contract.md) | Learning 目标态 — 唯一假设、对照实验、贡献门、自动降级/冻结、持续可推翻 | 📐 proposed（claims missing，待分阶段实现） |
+| [learning_contract](learning_contract.md) | Learning 当前全循环 — 结果、生产者、存储、上游校准、记忆/过滤/提示/仓位消费者、调度与已知断口 | 🟡 现状契约（2026-07-12 全链审计） |
+| [learning_evolution_contract](learning_evolution_contract.md) | Learning 目标态 — 路径登记、统一结果口径、唯一假设、分层对照、重叠归因、贡献门、自动降级/冻结 | 📐 proposed（claims missing，待分阶段实现） |
 | [serenity_contract](serenity_contract.md) | Serenity 深度研究镜头 — 生成者/评估者分离(D2) / tier 阶梯 / 证据评分 + bucket / 多镜头研究 / trade_school 持有周期 / 信任边界隔离 | 🟡 新建 2026-07-02 |
 | [scheduler_contract](scheduler_contract.md) | 调度器 job 清单 / 频率 / 执行器分组 / 故障隔离 | ✅ 金标准(批次6 新建) |
 | [audit_chain_contract](audit_chain_contract.md) | 审计链完整性 / risk_decisions / 操作日志 / 不可变性要求 | ✅ 金标准(批次6 新建) |

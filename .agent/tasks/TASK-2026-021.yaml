@@ -1,0 +1,37 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-021
+title: Audit Learning plan completeness across the full loop
+status: in_progress
+packet_type: standard
+scope:
+  boundary: documentation-only full-loop Learning audit and design hardening
+  excluded: runtime behavior, schemas, configuration, risk/execution authority, credentials,
+    live state, and production data mutation
+intent: Re-audit every Learning-adjacent producer, store, consumer, feedback, scheduler,
+  UI, and trust boundary; close omissions in the target contract and implementation
+  plan.
+acceptance:
+- Current L2 contract inventories all Learning-adjacent outcome, producer, store,
+  consumer, scheduler, diagnostics, UI, and trust paths discovered in code.
+- Target L2 contract declares path registry, outcome truth, overlap/credit rules,
+  stage-specific experiments, safe fallback, and executable missing claims.
+- Implementation plan maps the target to concrete files, phased authority changes,
+  SDD batches, and positive/reversal/failure end-to-end scenarios.
+- Existing behavior is not described as proven positive or fully normal where evidence
+  is absent, and this task makes no runtime behavior change.
+- Documentation consistency, focused related specs, architecture/trust checks, and
+  strict workflow verification pass.
+ownership:
+  branch: plan/learning-positive-contribution
+  lease_holder: codex
+  claimed_at: '2026-07-11T18:02:20.248954Z'
+  expires_at: '2026-07-12T02:02:20.249091Z'
+base_commit: dd230f464d6608209634ef60437c6cd01209c5cd
+next_action:
+  command_key: workflow_tests
+  reason: Verify the expanded full-loop contract and implementation plan.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-021.md
+updated_at: '2026-07-11T18:02:20.249098Z'

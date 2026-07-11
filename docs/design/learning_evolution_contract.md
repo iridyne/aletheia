@@ -2,8 +2,9 @@
 
 > Contract level: L2 target contract.
 > Status: proposed; implementation claims are intentionally marked `missing` until delivered.
-> Scope: closed-trade learning, ranker feedback, prompt guidance, learned guards,
-> advisory skills, sizing policy learning, causal attribution, and automatic rollback.
+> Scope: every Learning-adjacent producer, store, consumer, outcome source, scheduler,
+> report, learned ranker/filter, prompt channel, guard, advisory skill, sizing policy,
+> causal-attribution path, and automatic rollback.
 > This contract extends `learning_contract.md`; the existing contract remains the
 > authority for currently implemented behavior until each claim below becomes GREEN.
 
@@ -41,11 +42,59 @@ Learning may influence only these bounded surfaces:
 
 | Surface | Maximum automatic authority |
 | --- | --- |
+| Universe allocation | bounded paper/shadow opportunity-score multiplier after evidence gates |
 | Ranker | score adjustment or candidate block in paper/shadow modes after evidence gates |
 | System Operator prompt | advisory context with explicit source ids and confidence |
 | Trading guard | paper-entry block after dry-run and prospective shadow validation |
 | Sizing policy | one bounded parameter at a time, inside immutable Risk Engine caps |
 | Skill | advisory prompt/ranking policy only; forbidden layers remain unreachable |
+
+### 2.1 Full-loop boundary
+
+The Learning boundary is defined by behavioral influence, not by package name. A module is
+Learning-adjacent when it derives a reusable judgment from past outcomes, injects that judgment
+into a future decision, blocks or reorders a candidate from historical performance, or measures
+whether such influence helped.
+
+The complete governed loop therefore includes:
+
+| Stage | Current modules/data | Required target treatment |
+| --- | --- | --- |
+| Outcome truth | `trade_attribution`, `trade_path`, `shadow_trades`, `filter_candidate_outcomes`, `universe_forward_outcomes`, `outcome_semantics`, `outcome_economics`, close-reason and clean-window rules | one versioned outcome contract and source precedence |
+| Structured producers | `trade_case_builder`, universe outcome guard producer, `dreaming_agent`, `lesson_reviewer`, guard candidate/promotion, persona sizing | hypothesis/source identity before authority |
+| Narrative/analytic producers | `post_trade_reviewer`, `risk_critic`, `insight_synthesizer`, `reasoning_feedback`, `confidence_calibration`, `reflection`, `exit_policy_advisor`, `factor_feedback`, filter replay/controller/shadow experiments | declared evidence class; narrative/diagnostic output is never a quantitative vote |
+| Stores | knowledge items/FTS, `ps_lessons`, policy versions, skills, filter/shadow evidence, PI decisions, positions | durable causal ids, versions, retention and no hard deletion |
+| Upstream consumers | outcome-calibrated universe family multiplier; market-observer advisory retrieval and trading memo | separate universe and observer-stage experiments/outcomes |
+| Candidate consumers | factor hard block/preference, case-study score, memo score, learned guards | named before/after components and safe static fallback |
+| Advisory trust guards | `trust/guard_chain.py` | observability only; never conflate its `block` label with Risk Engine or learned candidate-block authority |
+| Decision consumers | reflection, memo, reasoning feedback, calibration feedback, structured lessons | exact prompt manifest and bundle/component experiments |
+| Proposal consumers | persona/sizing policy and existing risk-lesson checks | baseline/treatment persistence; immutable risk envelope |
+| Operations | scheduler, catch-up, enable switch, doctor, learning funnel, alpha/guard/memo reports, API/UI | durable health, honest contribution status and refreeze |
+| Concurrent controls | operator-loop risk/confidence/stop tightening, strategy lifecycle, debate and other non-Learning policy versions | record as safety/control changes and experiment confounders; never withhold or credit to Learning |
+
+Modules that only propose diagnostics remain inside the inventory so a later consumer cannot
+silently turn them into authority. In particular, `exit_policy_advisor` remains proposal-only;
+changing stops, take profit, holding time, or position management from its output is outside this
+contract until a separately approved experiment and trust-boundary review exist.
+
+### 2.2 Declared-path registry
+
+Every reusable Learning path must have one registry entry containing:
+
+- stable path id, producer, source tables/item types, consumer, and maximum authority;
+- exact scope dimensions, clean-data floor, outcome source and precedence, target horizon;
+- treatment/control unit, overlap group, promotion/harm gates, TTL, and static fallback;
+- expected scheduler job, owner-facing health state, and required specs/E2E scenarios.
+
+An undeclared producer may write an inactive diagnostic artifact. An undeclared consumer must
+not change a score, block, prompt, size, risk decision, or exit policy. Architecture tests enforce
+registry coverage at behavior-changing call sites.
+
+Safety/operations feedback is registered as a concurrent control rather than a Learning treatment.
+Automatic tightening that is already authorized by the operator/risk contract is never withheld for
+an experiment and never counted as Learning profit. A change to confidence gates, risk caps, stop
+policy, strategy state, universe/filter version, model/prompt version, or execution conditions starts
+a new attribution epoch or invalidates/stratifies the affected experiment.
 
 Any proposal to change Risk Engine limits, execution semantics, credentials, or live
 authority is outside Learning and requires a separate owner-approved, change-controlled task.
@@ -100,6 +149,7 @@ Required fields:
 | `scope_json` | Explicit symbol/direction/scanner/regime/market type/confidence dimensions |
 | `action_json` | Typed action and bounded parameters |
 | `consumer` | `ranker`, `operator_prompt`, `guard`, `sizing`, or `skill` |
+| `path_id` / `overlap_group` | Registry identity and attribution group for interacting channels |
 | `target_horizon` | Outcome horizon used for promotion and later monitoring |
 | `evidence_window` | Start/end, clean-data floor, unique sample count, market-day count |
 | `status` | Lifecycle state from §3 |
@@ -138,9 +188,12 @@ Minimums are configuration values with conservative defaults. Initial defaults:
 
 | Path | Unique samples | Minimum span | Required evidence |
 | --- | ---: | ---: | --- |
+| Universe family calibration | 50 per arm | 7 market days | clean family/direction/market/horizon candidate outcomes |
 | Ranker score | 50 per arm | 7 market days | prospective treatment/control outcomes |
+| Factor block/preference | 50 per arm | 7 market days | exact-scope clean candidate outcomes; historical minimum alone is insufficient |
 | Guard paper block | 30 matched shadows | 7 market days | blocked candidates continue outcome settlement |
-| Prompt lesson | 50 decisions per arm | 7 market days | prompt manifest + decision/shadow outcomes |
+| Market-observer bundle | 50 opportunities per arm | 7 market days | observer manifest + fixed-horizon opportunity outcomes |
+| Operator-prompt bundle | 50 decisions per arm | 7 market days | prompt manifest + decision/shadow outcomes |
 | Sizing bucket | 30 genuine closes | 14 market days | attributed regime and realized net return |
 | Advisory skill | inherits source path | inherits | no independent promotion without exposures |
 
@@ -169,13 +222,29 @@ Controls by path:
 
 | Path | Treatment | Control |
 | --- | --- | --- |
+| Universe family calibration | bounded learned family multiplier | neutral multiplier `1.0` |
 | Ranker | learned score delta applied | same candidate scored without delta |
+| Factor filter | historical factor block/preference applied | same candidate evaluated without that learned filter |
 | Guard | candidate blocked in paper trial | matched shadow keeps hypothetical unblocked result |
-| Prompt | reviewed lesson ids rendered | lessons withheld, all other prompt context identical |
+| Market observer | advisory memory bundle rendered | same market input without Learning memory; compare emitted opportunities |
+| Operator prompt | one declared Learning bundle rendered | bundle withheld, all market/risk/candidate input identical |
 | Sizing | bounded learned notional | static/persona baseline notional |
 
 Live trading is never used to create an untreated control group. Initial experiments are
 paper/shadow only.
+
+### 6.1 Overlap and credit assignment
+
+When multiple Learning paths touch one candidate, the registry must either assign only one
+treatment in that overlap group or use a predeclared factorial design with enough samples. The
+same candidate outcome may describe several exposures, but it cannot be counted as an independent
+success for every exposure. Initial rollout permits one Learning treatment bundle per stage;
+component-level credit is `not_identifiable` until isolated evidence exists.
+
+Memo, reasoning feedback, calibration feedback, reflection, and structured lessons currently
+share the System Operator prompt. They are one operator-prompt bundle for the first experiment.
+The same memo also reaches market observation and ranker scoring; those upstream/candidate effects
+must be assigned and evaluated separately rather than crediting all three paths from one close.
 
 ## 7. Contribution Decision
 
@@ -229,15 +298,41 @@ exposures, outcomes, or prior policy versions.
 - The candidate trace records each hypothesis id and delta.
 - A guard block still registers all configured counterfactual outcome horizons.
 - Ranker learning failures return the static score, not a partially modified score.
+- Historical factor feedback is a learned filter: `hard_blocked`, `preferred`, and every future
+  equivalent require clean-window evidence, an exposure, a prospective control, and a fallback.
+- A threshold such as ten historical trades is an eligibility hint, not proof of contribution.
 
-### 9.2 System Operator Prompt
+### 9.2 Universe Allocation
+
+- Outcome-derived scanner-family multipliers are Learning influence, even though their code lives
+  in `universe/allocator.py` rather than `learning/`.
+- Family, direction, market type, horizon, score before/after, multiplier and policy version are
+  persisted before universe selection.
+- Historical calibration can nominate a shadow treatment but cannot grant the current ±40% score
+  authority from a ten-sample threshold.
+- Negative/invalid holdout restores the exact neutral multiplier `1.0`; allocation failures also
+  fall back to neutral rather than a partial map.
+
+### 9.3 Market Observer
+
+- Retrieved cases, lessons, guards, and memos form an explicit observer-stage manifest.
+- Treatment/control keeps market data and model settings identical and varies only that manifest.
+- Contribution is first measured on emitted opportunity quality and fixed-horizon candidate
+  outcomes; later trade PnL is secondary because downstream ranker/operator treatments intervene.
+- Missing retrieval, stale memo, or Learning refreeze produces the declared no-Learning baseline.
+
+### 9.4 System Operator Prompt
 
 - Prompt context contains lesson ids, versions, scope, confidence, age, and evidence count.
 - The persisted decision records the exact prompt learning manifest.
 - Treatment/control changes only Learning context, not market/risk inputs.
 - The Operator may disagree; disagreement is recorded and becomes evidence, not an error.
+- Reflection must resolve by causal decision/opportunity/proposal/position ids and time bounds.
+  Symbol-only position matching or latest-price movement is explanatory text, not eligible evidence.
+- Reasoning, calibration, memo, reflection, and lesson channels are attributed first as one bundle;
+  no individual channel may claim credit until isolated or factorial evidence exists.
 
-### 9.3 Guards
+### 9.5 Guards
 
 - `guard_candidate` is not an active guard.
 - Promotion requires matched shadow outcomes at the intended horizon.
@@ -245,20 +340,40 @@ exposures, outcomes, or prior policy versions.
 - Broad global/direction blocks require a separate explicit safety review; ordinary automatic
   guards remain high-dimensional (symbol/scanner/direction/regime where supported).
 
-### 9.4 Sizing
+### 9.6 Sizing
 
 - Learning adjusts one parameter at a time.
 - Risk Engine caps remain the outer bound.
 - Unknown regime, thin samples, distress, or attribution gaps return the static baseline.
 - Learned size and baseline size are both stored for outcome attribution.
 
-### 9.5 Skills
+### 9.7 Skills
 
 - A skill is a versioned reusable advisory policy, not executable code generation.
 - Automatic activation is limited to prompt/ranking advisory layers after the source
   hypothesis passes its contribution gate.
 - `FORBIDDEN_LAYERS` remains immutable and structurally tested.
 - Skill activation, use, and demotion create durable exposures/events.
+
+### 9.8 Narrative and diagnostic producers
+
+- Post-trade reviews and LLM lesson explanations may describe evidence but never add samples,
+  upgrade confidence, or promote an action on their own.
+- Deterministic trade cases retain the original causal chain and settled outcome quality fields.
+- Confidence calibration and reasoning feedback use the same clean-window, synthetic-close, and
+  attribution rules as the shared outcome contract.
+- Exit-policy advice remains read-only/proposal-only. No consumer may mutate stop, take-profit,
+  maximum hold, trailing behavior, or position manager settings from it under this contract.
+
+### 9.9 Outcome truth
+
+- Every path uses a versioned shared adapter for close eligibility, direction, fees, spread,
+  slippage, funding, horizon quality, and source precedence.
+- Realized closed-position outcomes are used only for decisions that actually executed.
+  Fixed-horizon candidate outcomes are used for blocked/skipped/non-executed decisions.
+- Legacy gross-only outcomes may explain market movement but cannot prove tradable positive alpha.
+- Unresolved, ambiguous, symbol-only, contaminated, or economically incomplete rows remain
+  unavailable; they must never be converted to optimistic zero cost or a win.
 
 ## 10. Scheduler And Operational Continuity
 
@@ -269,7 +384,10 @@ next due time, input watermark, output counts, and failure reason.
 - A direct scheduled extractor is recorded even when it bypasses the agent orchestrator.
 - Backlog age and count are health signals; a healthy producer with a stalled reviewer is unhealthy.
 - `autonomous_learning=false` prevents all autonomous Learning producers/reviewers/promoters,
-  while manual read-only audit remains available.
+  and returns every Learning consumer (including universe family calibration) to its declared
+  baseline, while manual read-only audit remains available.
+- Operator/risk safety tightening is not disabled by the Learning switch; it is a concurrent
+  safety control, not a Learning treatment.
 - Settings UI and backend behavior use the same effective flag.
 
 ## 11. UI And API Honesty
@@ -301,6 +419,7 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-S01 | L2a | hypothesis/exposure/experiment stores exist with stable ids | missing |
 | LE-S02 | L2a | Learning imports no exchange auth/client or live unlock route | missing |
 | LE-S03 | L2a | autonomous Learning jobs share one effective enable gate | missing |
+| LE-S04 | L2a | every behavior-changing Learning producer/consumer is declared in the path registry | missing |
 | LE-B01 | L2b | repeated source/action/scope creates one hypothesis fingerprint | missing |
 | LE-B02 | L2b | duplicate artifacts do not multiply contribution sample size | missing |
 | LE-B03 | L2b | incomplete/synthetic evidence is ineligible | missing |
@@ -313,6 +432,16 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B10 | L2b | sizing stores learned and baseline notional | missing |
 | LE-B11 | L2b | missed scheduled windows catch up once and only once | missing |
 | LE-B12 | L2b | stalled reviewer/backlog refreezes promotion | missing |
+| LE-B13 | L2b | factor feedback uses clean exact-scope evidence and prospective exposure before influence | missing |
+| LE-B14 | L2b | observer and operator prompt bundles persist exact manifests and causal outcome links | missing |
+| LE-B15 | L2b | reflection cannot infer eligible outcomes from symbol-only or unbounded time matching | missing |
+| LE-B16 | L2b | all paths share versioned cost-aware outcome eligibility and source precedence | missing |
+| LE-B17 | L2b | narrative/LLM artifacts cannot independently increase samples or promotion confidence | missing |
+| LE-B18 | L2b | exit-policy advisor remains read-only with no settings or position-management consumer | missing |
+| LE-B19 | L2b | automatic `block_*` recommendations enter guard shadow evaluation, not Risk Engine via category coercion | missing |
+| LE-B20 | L2b | universe family calibration records clean prospective neutral/treatment exposures before score influence | missing |
+| LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | missing |
+| LE-B22 | L2b | factor producer, Operator context, ranker trace, and exposure use the same stable `factor_key` identity | missing |
 | LE-C01 | L2c | no promotion without unique samples, time span, and outcome links | missing |
 | LE-C02 | L2c | negative/unsafe holdout automatically demotes or refreezes | missing |
 | LE-C03 | L2c | refreeze restores static baseline without deleting evidence | missing |
@@ -320,6 +449,12 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-C05 | L2c | Learning cannot change hard risk limits or execution authority | missing |
 | LE-C06 | L2c | UI contribution status is derived from measured verdict, not counts | missing |
 | LE-C07 | L2c | full close→learn→expose→settle→promote→demote chain is causal | missing |
+| LE-C08 | L2c | factor hard block/preference demotes to static behavior after negative holdout | missing |
+| LE-C09 | L2c | market-observer Learning influence is separated from downstream ranker/operator influence | missing |
+| LE-C10 | L2c | overlapping Learning channels cannot double-count one outcome as independent credit | missing |
+| LE-C11 | L2c | data-quality or causal-link loss makes contribution unavailable and refreezes authority | missing |
+| LE-C12 | L2c | negative/invalid family-calibration holdout restores neutral multiplier `1.0` | missing |
+| LE-C13 | L2c | safety/operations tightening is never withheld or credited as Learning contribution | missing |
 
 ## 13. Definition Of Positive Contribution
 

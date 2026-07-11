@@ -1,7 +1,7 @@
 # Learning Subsystem Contract
 
 > Contract level: L2. This file is normative for the Learning subsystem.
-> Last aligned: 2026-07-03.
+> Last aligned: 2026-07-12 full-loop inventory audit.
 > Reference intent: root `discussion.md` Learning section.
 > Target extension: `learning_evolution_contract.md` defines the proposed measured
 > self-improvement lifecycle; its claims remain missing until implemented.
@@ -19,7 +19,7 @@ change hard risk limits without explicit change control.
 
 ## 1. Current Contract
 
-The current implementation has four connected layers:
+The current implementation has four durable artifact layers:
 
 1. **Knowledge corpus**: `knowledge_items` + `knowledge_fts`.
    High-confidence active Markdown-backed knowledge is searchable through FTS.
@@ -31,17 +31,81 @@ The current implementation has four connected layers:
    Applied lessons can create draft long-term skill candidates. They are not
    activated automatically.
 
-The stable Learning chain is:
+Those stores are only part of the real behavioral loop. The current loop is:
 
 ```text
-closed trade / market evidence
-  -> trade_case_study / trading_memo / reasoning_feedback / guard_candidate
-  -> dreaming_agent extracts ps_lessons
-  -> lesson_reviewer accepts/rejects proposed lessons
-  -> accepted lessons are marked applied with a policy version
-  -> applied lessons feed System Operator prompt and risk lesson checks
-  -> applied lessons also create draft skill candidates
+realized closes + fixed-horizon candidate/shadow outcomes
+  -> attribution/path/economic interpretation
+  -> cases + reviews + memos + factor/reasoning/calibration/reflection + guard candidates
+  -> knowledge/lesson/policy/skill/filter/shadow stores
+  -> market observer + paper ranker/filters/guards + System Operator + sizing/risk checks
+  -> candidate/decision/proposal/order/position or blocked/skipped counterfactual
+  -> later outcomes and effectiveness reports
 ```
+
+### 1.1 Current full-loop inventory
+
+The following inventory is normative for present behavior. A path belongs here if historical
+results can influence a later trading judgment, even when it lives outside `aletheia/learning/`.
+
+| Role | Current implementation | Current authority |
+| --- | --- | --- |
+| Outcome joins | `analytics/trade_attribution.py`, `trade_path.py` | read-only realized-trade joins |
+| Candidate counterfactuals | `analytics/shadow_trades.py`, `filter_evidence.py`, `universe/filter_outcome_recorder.py` | settle skipped/blocked candidate outcomes |
+| Outcome economics | `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | cost/quality/contamination interpretation, not yet uniformly consumed by every path |
+| Universe family calibration | `universe/allocator.py::get_family_multipliers`, `universe/service.py` | settled outcomes can change family/direction/market opportunity score multiplier from 0.6–1.4 after 10 samples |
+| Structured cases | `analytics/trade_case_builder.py` | deterministic high-confidence cases and guard candidates |
+| Universe guard producer | `universe/outcome_recorder.py` | derives candidate guards from settled rejected/pass outcomes |
+| Narrative review | `agents/post_trade_reviewer.py` | medium-confidence prose; also triggers deterministic case building |
+| Risk critique | `agents/risk_critic.py` | advisory research note from proposal/risk-decision history |
+| Lesson extraction/review | `agents/dreaming_agent.py`, `agents/lesson_reviewer.py` | proposed→applied lesson/policy and draft skill |
+| Memo synthesis | `analytics/insight_synthesizer.py`, `memo_effectiveness.py` | memo reaches observer prompt, ranker score, and Operator prompt |
+| Factor feedback | `analytics/factor_feedback.py` | ranker can hard-reject `hard_blocked`; history also enters Operator context |
+| Reasoning feedback | `analytics/reasoning_feedback.py` | Operator prompt advice |
+| Confidence calibration | `analytics/confidence_calibration.py` | Operator prompt advice |
+| Last-decision reflection | `agent_shell/reflection.py` | Operator prompt advice; current outcome lookup contains heuristic fallbacks |
+| Learned guards | `knowledge/guards.py`, `analytics/guard_promotion.py` | active paper-entry candidate blocks |
+| Trust guard chain | `trust/guard_chain.py` | pre-risk observability only; even a `block` verdict does not block execution |
+| Case/memo score | `agents/paper_trader_ranker.py` | bounded candidate score changes |
+| Advisory retrieval | `knowledge/router.py`, `knowledge/retrieval.py` | market-observer and decision context |
+| Persona learning | `trading/persona.py`, `persona_rollout.py`, `sizing_policy.py` | bounded/dormant-to-progressive paper sizing inside risk caps |
+| Exit diagnostics | `analytics/exit_policy_advisor.py` | read-only advice only; no automatic mutation |
+| Filter diagnostics | `analytics/filter_registry.py`, `filter_replay.py`, `filter_controller.py`, `filter_shadow_experiments.py` | shadow recommendations/observe-only experiments; no production mutation |
+| Contribution/health | alpha, memo, guard impact/effectiveness, learning-funnel analytics, doctor, scheduler | reporting and operational control with different evidence coverage |
+| Supporting audits | trade insights/stats, family scorecard, opportunity flow, debate impact, thesis lineage, go-live scorecard | read models/gates; some are outcome sources or concurrent controls, not Learning treatments |
+| Operator control loop | `agent_shell/operator_loop.py` | may tighten confidence, size/risk cap, stop or scanner settings under its own safety contract; loosening requires higher authority |
+
+### 1.2 Current-path caveats
+
+Existing tests prove individual behaviors and safety tripwires; they do not prove that the full
+loop contributes positively. Current behavior has these contract-relevant limitations:
+
+- factor feedback can hard-reject a paper candidate from small retrospective groups and does not
+  yet share one universal clean-window/outcome adapter with all other paths;
+- the Operator-context adapter reads factor field `key`, while the producer emits `factor_key`, so
+  the affected factor identity is currently lost in that prompt summary;
+- universe family calibration can change upstream opportunity scores by ±40% after only ten
+  retrospective outcomes and currently has no prospective neutral-multiplier exposure ledger;
+- automatic lesson extraction emits categories such as `risk_sizing`/`entry_timing`, while the Risk
+  Engine accepts hard `block_*` actions only from exact category `risk`; therefore automatic block
+  recommendations are generally advisory despite comments suggesting the Risk Engine can act;
+- memo guidance reaches three stages (observer, ranker, Operator), so a later trade cannot identify
+  which stage deserves credit without prospective exposure assignment;
+- reflection may fall back to matching a position or move by symbol instead of a complete causal id;
+- narrative review, memo, reasoning, calibration, lesson, and guard artifacts use different evidence
+  units and confidence conventions;
+- successful guard blocks may be invisible to position-only effectiveness reports;
+- applied artifact counts and retrieval visibility show activity/influence, not contribution;
+- overlapping prompt channels can reuse the same outcome unless attribution explicitly prevents it.
+- learned trading guards and the advisory trust guard chain have different authority and must not
+  be merged or reported as the same mechanism.
+- operator-loop safety/config changes can alter the same candidates/outcomes during a Learning
+  evaluation; without policy epochs they confound attribution, but safety tightening must never be
+  withheld merely to make a cleaner experiment.
+
+The target lifecycle, registry, prospective experiments, overlap handling, and automatic fallback
+are normative in `learning_evolution_contract.md` but remain unimplemented until their executable
+claims turn GREEN.
 
 ---
 
@@ -182,9 +246,11 @@ High-confidence active knowledge is indexed into FTS and can be retrieved throug
 
 ---
 
-## 5. Dual Learning Paths
+## 5. Two Artifact-Retrieval Paths
 
-The subsystem intentionally has two paths.
+Knowledge/lesson retrieval has two intentionally distinct paths. They are not the whole
+Learning subsystem; factor feedback, memo scoring, prompt feedback, learned guards, sizing,
+reflection, shadow outcomes, and contribution analytics are additional paths listed in §1.1.
 
 ### Path A: FTS Advisory Retrieval
 
@@ -222,8 +288,8 @@ review status, or structured recommendation fields. `ps_lessons` rows do.
 
 ## 6. Memo Evolution And Time Decay
 
-Insight Synthesizer writes `trading_memo` items and renders them into System
-Operator context.
+Insight Synthesizer writes `trading_memo` items. The latest memo can currently influence three
+different stages: market-observer context, paper-ranker score, and System Operator context.
 
 Current safeguards:
 
@@ -236,6 +302,10 @@ Current safeguards:
 This implements the discussion requirement that newer evidence can repair or
 reduce the influence of older rules instead of letting old memories remain
 equally authoritative forever.
+
+Time decay and contradiction handling limit stale influence; they do not establish causal
+positive contribution. The target contract requires separate observer/ranker/operator exposures
+and prevents the same later trade from being counted as independent proof for all three.
 
 ---
 
@@ -255,6 +325,10 @@ Promotion must preserve auditability:
 - The active guard is created as `trading_guard`.
 - The source candidate is deprecated, not hard-deleted.
 - A `TRADING_GUARD_PROMOTED` event is written.
+
+The present promotion gate is evidence-gated but retrospective. Under the target contract,
+historical evidence may nominate a shadow experiment only; active authority requires prospective
+blocked-candidate outcomes, supply-harm checks, continual holdout, and automatic demotion.
 
 ---
 
@@ -305,6 +379,13 @@ Primary executable claims:
 - `tests/specs/spec_lesson_guards.py`
 - `tests/specs/spec_insight_feedback_loop.py`
 - `tests/specs/spec_knowledge_fts.py`
+- `tests/specs/spec_factor_feedback.py`
+- `tests/specs/spec_filter_evidence.py`
+- `tests/specs/spec_opportunity_outcomes.py`
+- `tests/specs/spec_persona_sizing.py`
+- `tests/specs/spec_pi_decision_chain.py`
+- `tests/e2e/test_pipeline_feedback_loop.py`
+- `tests/e2e/test_pipeline_guard_promotion.py`
 
 Important tripwires:
 
@@ -316,3 +397,6 @@ Important tripwires:
   visibly into prompt context.
 - `KL-S02`: risk engine must not grow a learning override interface without
   change-control review.
+
+These current claims remain valid regression coverage. They must not be represented as proof of
+the target `LE-*` positive-contribution claims or of profitability.

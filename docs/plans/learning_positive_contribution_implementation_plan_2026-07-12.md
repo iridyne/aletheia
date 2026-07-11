@@ -4,6 +4,9 @@
 > Normative target: `docs/design/learning_evolution_contract.md`.
 > Existing behavior contract: `docs/design/learning_contract.md`.
 > Supersedes: `docs/plans/LEARNING_MODULE_REPAIR_PLAN.md` for future work.
+> Full-loop re-audit: 2026-07-12; includes universe calibration, observer memory,
+> factor feedback, prompt-channel overlap, causal reflection, filter diagnostics,
+> concurrent operator controls, shared outcome truth, and non-authoritative analytics.
 > Product stage: MVP trust hardening; no new exchange, database service, vector store,
 > reinforcement-learning framework, or live authority.
 
@@ -48,6 +51,46 @@ is procedural: Learning must prove value continuously and lose authority when it
 | Sizing learner is enabled but inactive on sparse regime tags | attribution coverage gate + shadow baseline + explicit inactivity reason | LE-B10/C03 |
 | Draft skills exist without measurable use | advisory-only activation tied to proven source hypothesis | skill E2E |
 | Current reports can label activity as effectiveness | contribution verdict API and honest UI states | LE-C06 |
+| Factor feedback can hard-block paper candidates from small retrospective groups | register as a learned filter; shared clean window, shadow/control, promotion and demotion | LE-B13/C08 |
+| Memo affects observer, ranker, and Operator but has one artifact identity | stage-specific exposures and overlap groups; never triple-credit one close | LE-B14/C09/C10 |
+| Reflection can infer outcomes by symbol or recent movement | causal decision→proposal/opportunity→position/outcome resolver; heuristic text is ineligible | LE-B15 |
+| Outcome quality/economics differ by analytics path | one versioned outcome adapter and explicit source precedence | LE-B16/C11 |
+| LLM reviews and explanations can look like evidence | narrative evidence class cannot add samples or promotion weight | LE-B17 |
+| Exit advisor emits actionable-sounding changes | permanent proposal-only registry authority; no config/position-manager consumer | LE-B18 |
+| Prompt channels overlap (memo, reasoning, calibration, reflection, lessons) | bundle experiment first; isolated/factorial component tests only after enough data | LE-C10 |
+| Automatic lessons emit non-`risk` categories while Risk Engine only honors `risk` hard actions | keep automatic recommendation advisory; route typed `block_*` into learned-guard shadow path, never relabel to gain Risk authority | LE-B19/C05 |
+| Universe family multiplier changes upstream scores ±40% after 10 retrospective samples | register as a first-stage Learning treatment with neutral `1.0` control and holdout rollback | LE-B20/C12 |
+| Operator loop can concurrently tighten confidence/risk/stop/scanner config | persist policy epochs; stratify/pause/invalidate experiments; never withhold safety tightening or credit it to Learning | LE-B21/C13 |
+
+### 2.1 Audited path register
+
+Implementation starts from this code-backed inventory; it is not permitted to scope Learning to
+`aletheia/learning/` alone.
+
+| Path id | Producer → consumer | Present influence | Initial experiment unit / fallback |
+| --- | --- | --- | --- |
+| `universe_family_calibration` | forward calibration stats → universe allocator | family/direction/market score multiplier 0.6–1.4 | scored asset → neutral multiplier `1.0` |
+| `observer_advisory_bundle` | router cases/lessons/guards + memo → market observer | changes LLM opportunity output | observer run/symbol → no-Learning memory block |
+| `ranker_case_score` | retrieved trade cases → ranker | negative soft score | candidate → static score |
+| `ranker_memo_score` | latest memo → ranker | ± score | candidate → static score |
+| `ranker_factor_filter` | factor feedback → ranker | hard block plus status context | candidate → factor filter disabled |
+| `ranker_learned_guard` | trading guards → ranker | hard paper-entry block | candidate → shadow/unblocked counterfactual |
+| `operator_learning_bundle` | reflection + memo + reasoning + calibration + lessons → Operator | changes trade/skip/direction/conviction | decision opportunity → same prompt without bundle |
+| `risk_lesson_constraint` | applied structured lesson → Risk Engine | selected block actions after dry run | proposal → existing static risk behavior; change-controlled migration |
+| `persona_sizing` | regime/outcome learner → sizing | bounded parameter selection | proposal → static/persona baseline |
+| `advisory_skill` | proven hypothesis → future prompt/ranker adapter | currently draft/no consumer | inherits source exposure → no advisory |
+| `exit_policy_advice` | trade path diagnosis → analytics API | read-only | no experiment/authority in this program |
+| `filter_ttl_shadow` | historical filter replay → prospective observe-only evaluator | review-ready proposal only | first exposure → production filter unchanged |
+| `operator_safety_control` | system assessment → operator config actions | authorized tightening/recommendations under operator contract | not a Learning treatment; policy epoch/confounder |
+
+Supporting truth/health paths—trade attribution, trade path, shadow outcomes, filter/universe
+forward outcomes, economics/semantics, close reasons, clean window, scheduler, doctor, alpha/memo/
+guard reports—must also be registered even though they do not directly alter a candidate.
+
+The `risk_lesson_constraint` row documents current behavior, not the intended automatic path.
+Dreaming-produced `block_*` recommendations use categories such as `entry_timing`, `risk_sizing`,
+or `symbol_selection`; they must not be relabelled `risk` merely to make the Risk Engine consume
+them. Phase 3 converts them into scoped learned-guard hypotheses and prospective shadow evidence.
 
 ## 3. Target Code Architecture
 
@@ -56,9 +99,13 @@ is procedural: Learning must prove value continuously and lose authority when it
 ```text
 aletheia/learning/
   models.py              Typed hypothesis/exposure/experiment/verdict models
+  registry.py            Declared producer→consumer paths, authority and safe fallback
   hypotheses.py          Fingerprint, dedup, lifecycle transitions
   evidence.py            Clean/scope-complete evidence eligibility
+  outcomes.py            Versioned outcome adapter, economics and source precedence
   experiments.py         Stable assignment and treatment/control manifests
+  overlap.py             Mutually exclusive bundles/factorial credit rules
+  policy_epochs.py       Concurrent config/model/safety changes and experiment validity
   exposures.py           Consumer influence ledger
   contribution.py        Unique-cohort metrics, bootstrap, harm gates
   promotion.py           Promote/demote/refreeze state machine
@@ -75,13 +122,19 @@ of their behavior.
 
 | Consumer | Adapter change | Boundary |
 | --- | --- | --- |
+| Universe allocator | baseline/learned family multiplier, exposure and neutral fallback | upstream candidate supply |
 | Paper ranker | calculate baseline and learned score; persist components/assignment | `agents/paper_trader_ranker.py` |
+| Factor feedback | clean exact-scope eligibility; shadow/control before block/preference | analytics + paper ranker |
 | Filter evidence | register treatment/control outcomes for all candidates | `analytics/filter_evidence.py` |
-| System Operator | build Learning manifest and persist it with decision | high-sensitivity decision chain |
+| Market observer | stage-specific Learning manifest and opportunity outcome link | high-sensitivity decision chain |
+| System Operator | build one initial Learning-bundle manifest and persist it with decision | high-sensitivity decision chain |
+| Reflection | replace eligible symbol heuristic with causal outcome resolver | high-sensitivity decision chain |
 | Guards | link active guard to hypothesis/experiment and settle blocked shadows | knowledge/ranker path |
 | Sizing | persist baseline and learned notional; one-param trial | trading sizing path |
 | Scheduler | durable expected-run/catch-up and universal enable gate | runtime scheduler |
 | Alpha audit | consume exposures/outcomes, distinct by cohort/candidate | read-only analytics |
+| Diagnostics | mark exit advice/narrative review as non-authoritative evidence classes | read-only analytics |
+| Operator safety loop | emit concurrent policy epochs; pause/stratify experiments | existing operator authority, not Learning authority |
 | API/UI | contribution, lifecycle, experiment, and health read models | cached read endpoints |
 
 ### 3.3 Dependency Direction
@@ -91,7 +144,7 @@ storage/data outcomes
        ↓
 learning core (pure policy/evidence decisions)
        ↓
-consumer adapters (ranker / prompt / guard / sizing)
+consumer adapters (universe / observer / ranker / prompt / guard / sizing)
        ↓
 existing risk and execution gates
 ```
@@ -99,6 +152,49 @@ existing risk and execution gates
 Risk and execution do not call a generic Learning override. The current lesson hard-block
 path is migrated to the evidence-gated trading-guard path; removing or changing that path
 is a separate change-controlled batch with focused Risk Engine tests.
+
+`registry.py` is the architecture root for this subsystem. A behavior-changing adapter cannot
+be added merely by importing an analytics helper: it needs a declared path, consumer stage,
+authority ceiling, experiment unit, outcome source, overlap group, health job, and fallback.
+
+### 3.4 Concrete Existing-Code Touch Map
+
+This map is the implementation checklist. A phase task narrows it further and declares its own
+boundary before editing; no phase should edit all files at once.
+
+| Area/file | Required implementation | Must not change |
+| --- | --- | --- |
+| `universe/allocator.py`, `universe/service.py` | neutral/learned multiplier components, registry assignment, exposure before scoring, holdout and `1.0` fallback | scanner logic, quotas and execution eligibility |
+| `analytics/trade_attribution.py`, `trade_path.py` | expose resolver-quality/causal completeness; avoid silent eligible defaults | causal ids and existing read-only behavior |
+| `analytics/close_reasons.py`, `learning_window.py`, `outcome_semantics.py`; `universe/outcome_economics.py` | compose behind `learning/outcomes.py`, version the decision and exclusion reason | cost-aware conservative unknown semantics |
+| `analytics/factor_feedback.py` | consume clean eligible rows; separate diagnostic status from authorized treatment; exact-scope hypothesis id; standardize `factor_key` (current Operator adapter asks for nonexistent `key`) | no direct DB/LLM/exchange mutation |
+| `agents/paper_trader_ranker.py` | named baseline/case/memo/factor/guard components; registry lookup; exposure before influence; static fallback | venue, execution-eligibility and non-Learning hard filters |
+| `analytics/filter_evidence.py`, `universe/filter_outcome_recorder.py`, `shadow_trades.py` | link experiments/exposures and settle every declared horizon idempotently | existing observe-only and price-quality rules |
+| `analytics/filter_shadow_experiments.py` | optionally nominate inactive hypothesis; retain manual-review/production-mutation prohibition | must never apply TTL to production |
+| `analytics/trade_case_builder.py`, `universe/outcome_recorder.py` | attach unique source outcome/cohort/hypothesis provenance to cases/guard candidates | deterministic case/outcome construction |
+| `agents/post_trade_reviewer.py` | attach evidence class/source ids; keep prose non-quantitative | no confidence auto-upgrade or direct promotion |
+| `agents/risk_critic.py` | register advisory narrative source and causal proposal/risk-decision ids | cannot change hard limits or create an automatic risk override |
+| `agents/dreaming_agent.py`, `agents/lesson_reviewer.py` | fingerprint before write/review; exact-scope gate; durable run/watermark; shadow-only result | LLM cannot waive data gates |
+| `learning/lessons.py`, `skills.py`; knowledge manager/retrieval/router | compatibility links, versioned manifest items and safe fallback | archive-not-delete and forbidden skill layers |
+| `analytics/insight_synthesizer.py`, `memo_effectiveness.py` | memo hypothesis/version/source cohort; stage-specific use tracking | time decay and contradiction correction |
+| `analytics/reasoning_feedback.py`, `confidence_calibration.py` | shared clean outcome adapter and bundle component ids | advisory-only prompt authority |
+| `agent_shell/reflection.py` | causal resolver and explicit verified/unverified result | JSON/DB audit trail and no invented settled outcome |
+| `agents/market_observer.py` | stable observer assignment, exact manifest, emitted-opportunity link, empty-bundle fallback | market provider and canonical-symbol rules |
+| `agent_shell/trading_context.py`, `trading_decision.py` | one Operator bundle assignment/manifest; persist what was rendered | market/risk inputs identical across arms |
+| `knowledge/guards.py`, `analytics/guard_promotion.py`, `guard_impact.py`, `guard_effectiveness.py` | hypothesis links, prospective blocked outcomes, supply harm, holdout/demotion | seed/safety guard classification and archive history |
+| `trust/guard_chain.py` | registry as advisory observability and preserve separate reporting identity | never wire its `block` label into execution or merge it with learned ranker guards |
+| `trading/persona.py`, `persona_rollout.py`, `sizing_policy.py` | baseline/learned notional exposure and resolver-based bucket evidence | Risk Engine caps, leverage/stops/pyramiding freeze |
+| `analytics/exit_policy_advisor.py` | registry entry and structural no-consumer test only | read-only/no config or position mutation |
+| `analytics/filter_registry.py`, `filter_replay.py`, `filter_controller.py`, `filter_shadow_experiments.py` | registry entries, source provenance and observe-only hypothesis nomination | no direct production filter/config mutation |
+| `agent_runtime/scheduler.py` | shared enable gate, durable expected-run/catch-up/health for every mutating Learning job | worker cap and SQLite concurrency rules |
+| `agent_shell/operator_loop.py` | publish policy/config epoch events and invalidate/stratify affected experiments | existing safety authority, human gate for loosening, risk caps |
+| trade insights/stats, family scorecard, opportunity flow, debate impact, thesis lineage, go-live scorecard | register as source/read-model/concurrent-control inputs with shared outcome quality where eligible | no promotion authority inferred from diagnostic verdicts |
+| storage migrations/models/repositories | additive tables/columns/indexes and transaction-safe idempotency | one-connection-per-thread and pre-write transaction invariant |
+| diagnostics/analytics/server/frontend | cached read models, honest status/coverage/overlap/fallback | no hot async disk/SQLite scans; no count-based optimism |
+| `risk/engine.py` | only a separately scoped migration from lesson hard blocks if authorized | hard limits, required approval and gateway invariants |
+
+Every row that changes behavior receives a focused current-behavior regression first, then the
+new target claim. Risk/execution/live modules are not bulk-edited as part of Learning.
 
 ## 4. Data Model And Migration
 
@@ -112,6 +208,8 @@ fingerprint TEXT NOT NULL UNIQUE
 cohort_id TEXT NOT NULL
 source_type TEXT NOT NULL
 source_artifact_ids_json TEXT NOT NULL
+path_id TEXT NOT NULL
+overlap_group TEXT NOT NULL
 scope_json TEXT NOT NULL
 action_json TEXT NOT NULL
 consumer TEXT NOT NULL
@@ -154,17 +252,24 @@ experiment_id TEXT NOT NULL
 hypothesis_id TEXT NOT NULL
 assignment TEXT NOT NULL
 consumer TEXT NOT NULL
+consumer_stage TEXT NOT NULL
+path_id TEXT NOT NULL
+overlap_group TEXT NOT NULL
 candidate_key TEXT
 opportunity_id TEXT
 proposal_id TEXT
 decision_id TEXT
+observer_run_id TEXT
 position_id TEXT
 before_json TEXT NOT NULL
 after_json TEXT NOT NULL
 manifest_json TEXT NOT NULL
 outcome_candidate_key TEXT
+outcome_source TEXT
+outcome_contract_version TEXT NOT NULL
 code_commit TEXT
 policy_version TEXT
+concurrent_policy_epoch TEXT NOT NULL
 exposed_at TEXT NOT NULL
 ```
 
@@ -207,6 +312,25 @@ last_error TEXT
 updated_at TEXT NOT NULL
 ```
 
+#### `learning_policy_epochs`
+
+```sql
+epoch_id TEXT PRIMARY KEY
+epoch_kind TEXT NOT NULL
+effective_values_hash TEXT NOT NULL
+effective_values_json TEXT NOT NULL
+affected_path_ids_json TEXT NOT NULL
+source_event_id TEXT
+safety_required INTEGER NOT NULL DEFAULT 0
+started_at TEXT NOT NULL
+ended_at TEXT
+created_at TEXT NOT NULL
+```
+
+Epochs cover effective configuration, universe/filter policy, prompt/model version, strategy
+lifecycle and execution-condition changes that can alter treatment/control outcomes. Secret values
+are never stored; only non-secret effective fields and hashes are eligible.
+
 ### 4.2 Existing Table Extensions
 
 - `ps_lessons`: add nullable `hypothesis_id`, `fingerprint`, `review_reason_json`.
@@ -217,6 +341,10 @@ updated_at TEXT NOT NULL
   decision record that already owns the reasoning result. If no durable decision table
   can carry it without ambiguity, introduce `decision_learning_manifests` instead of
   hiding it in free-form rationale.
+- Market-observer opportunity/run persistence: add a manifest link or normalized
+  `decision_learning_manifests` owner row so observer memory influence is not lost before ranking.
+- Factor/filter traces: persist hypothesis/experiment/exposure ids alongside the existing
+  factor hard-block step and fixed-horizon outcome registration.
 
 ### 4.3 Migration Rules
 
@@ -228,6 +356,12 @@ updated_at TEXT NOT NULL
    proves or contradicts them; safety-approved static seed guards remain separately labelled.
 6. Existing skill drafts remain drafts and receive hypothesis links only when provable.
 7. Backfill is idempotent and emits counts, not runtime facts into Git documentation.
+8. Historical factor statuses, prompt injections, and reflection text are imported as
+   retrospective/unmeasured observations only; they cannot backfill treatment assignments.
+9. Existing filter shadow experiments remain observe-only and can nominate a hypothesis, but
+   `ready_for_review` does not become production or Learning promotion evidence by itself.
+10. Existing operator-loop config/audit history seeds policy epochs only where exact effective
+    values/timestamps are provable; ambiguous windows are invalid rather than guessed.
 
 Schema addition requires updating `docs/design/data_model.md` and `spec_data_model.py` in the
 same implementation batch.
@@ -298,21 +432,77 @@ Store both:
 - each run writes an `agent_runs` or equivalent durable record even with zero outputs;
 - proposed backlog age can refreeze new promotions while existing static behavior continues;
 - `autonomous_learning=false` disables extraction, review, promotion, experiments, and
-  learned sizing together; read-only reports remain enabled.
+  every Learning consumer including universe calibration, learned ranker/filter/guard influence,
+  prompt bundles and learned sizing together; read-only reports remain enabled;
+- the flag does not disable operator/risk safety tightening, which remains a concurrent control.
+
+### 6.4 Shared Outcome Resolver
+
+`learning/outcomes.py` normalizes every eligible result before any producer/reviewer/report uses
+it. It wraps the existing close-reason, clean-window, outcome-semantics and outcome-economics
+rules rather than duplicating them.
+
+Source precedence:
+
+1. an actually executed decision uses its causally linked settled position with realized costs;
+2. a blocked/skipped/non-executed candidate uses the registered fixed-horizon candidate outcome;
+3. a same-stage shadow may be used only at its declared horizon and cost-model version;
+4. legacy gross-only movement is explanatory, never positive-contribution evidence;
+5. symbol-only, unresolved, contaminated, missing-direction, stale-price, or incomplete derivative
+   funding data returns `unavailable`, never zero-cost/neutral/win.
+
+Every evidence record stores resolver version, source, horizon, quality, and exclusion reason.
+`factor_feedback`, reasoning/calibration/memo builders, persona sizing, guards, and contribution
+reports migrate to this adapter before authority can expand.
+
+### 6.5 Evidence Classes
+
+| Class | Examples | May count samples? | May change behavior directly? |
+| --- | --- | --- | --- |
+| settled quantitative | causal realized close; cost-aware candidate outcome | yes, once per experiment unit/horizon | only after experiment gate |
+| deterministic derived | trade case, factor aggregate, calibration statistic | no additional sample beyond sources | proposal/shadow only until proven |
+| narrative | post-trade review, LLM lesson explanation, memo prose, reflection text | no | advisory treatment only |
+| diagnostic proposal | exit-policy advice, replay-ready filter threshold | no | no; owner/review workflow only |
+
+This prevents a close, its case study, its review, its memo summary, and six duplicate lessons from
+becoming ten independent observations.
 
 ## 7. Experiment Design By Learning Path
 
-### 7.1 Ranker Lessons And Memos
+### 7.1 Universe Family Calibration
+
+Current `get_family_multipliers()` can change opportunity scores by up to ±40% after ten settled
+rows. That is a real upstream Learning treatment, not a harmless dashboard calibration.
+
+Implementation:
+
+1. replace direct retrospective authority with a scoped hypothesis keyed by scanner family,
+   direction, market type, natural horizon and calibration version;
+2. use the shared clean outcome adapter and require prospective neutral/treatment arms;
+3. persist raw opportunity score, neutral score, multiplier, treated score and allocation result;
+4. keep quotas, tradability, execution eligibility and regime direction brakes identical;
+5. measure fixed-horizon opportunity quality and supply/concentration harm before downstream stages;
+6. promote paper influence only after the common gate and maintain continual neutral holdout;
+7. negative, invalid, sparse or stale evidence restores multiplier exactly to `1.0`.
+
+The existing ten-row threshold becomes nomination-only. It cannot preserve production-like score
+authority merely because it already exists in code.
+
+### 7.2 Ranker Cases, Memos, And Factor Feedback
 
 Implementation:
 
 1. split current score into named components;
 2. calculate `baseline_score` without learned components;
-3. calculate bounded `lesson_delta`, `memo_delta`, and `guard_delta` separately;
+3. calculate bounded `case_delta`, `memo_delta`, factor decision, and guard decision separately;
 4. persist every component before candidate selection;
 5. assign eligible candidates to treatment/control prospectively;
 6. register all horizons through existing filter outcome settlement;
 7. ranker selection continues to obey all non-Learning hard filters in both arms.
+8. migrate factor feedback from retrospective `hard_blocked`/`preferred` classification to a
+   registered hypothesis: historical data can nominate shadow, not immediately grant authority;
+9. enforce the central clean-data floor and exact factor scope before factor eligibility;
+10. continuously settle candidates that factor feedback would block, and auto-demote on reversal.
 
 Initial bounds:
 
@@ -320,8 +510,10 @@ Initial bounds:
 - total learned advisory delta: `[-20, +20]`;
 - a score bonus cannot make an execution-ineligible candidate eligible;
 - negative contribution demotes the hypothesis to shadow immediately after gate evaluation.
+- the existing ten-trade hard-block threshold is removed as an authority gate; it may remain only
+  as an early diagnostic label until the prospective gate is satisfied.
 
-### 7.2 Learned Guards
+### 7.3 Learned Guards
 
 Implementation:
 
@@ -336,7 +528,20 @@ Implementation:
 Promotion must consider opportunity-supply harm. A guard that avoids losses but removes an
 excessive share of otherwise profitable supply fails the harm gate.
 
-### 7.3 System Operator Lessons
+### 7.4 Market-Observer Learning Bundle
+
+The market observer is an upstream Learning consumer and receives both advisory retrieval and the
+latest memo. It needs its own experiment because it can change whether an opportunity exists before
+the ranker or Operator sees it.
+
+1. build an observer manifest of case/lesson/guard/memo ids and versions per symbol run;
+2. assign the observer bundle prospectively while keeping market inputs/model settings identical;
+3. persist the manifest on emitted opportunities or a normalized run-manifest link;
+4. compare opportunity emission, direction, confidence, and fixed-horizon cost-aware outcomes;
+5. do not use later executed PnL as isolated observer credit when ranker/operator Learning also ran;
+6. stale/missing/refrozen Learning returns an empty observer bundle, not partially mixed context.
+
+### 7.5 System Operator Learning Bundle
 
 Implementation:
 
@@ -346,11 +551,17 @@ Implementation:
 4. preserve identical market, account, risk, and opportunity inputs between arms;
 5. connect decision to executed result or same-cycle shadow result;
 6. measure trade rate, direction, conviction calibration, and cost-aware outcome.
+7. treat reflection, memo, reasoning, calibration, and structured lessons as one initial overlap
+   bundle; component credit remains `not_identifiable` until isolated/factorial experiments run;
+8. replace reflection's eligible outcome lookup with decision/opportunity/proposal/position ids and
+   bounded timestamps; retain heuristic symbol/move text only as visibly unverified context;
+9. persist disagreement and which bundle component the Operator cited without treating citation as
+   causal proof.
 
 The experiment is paper-only. The control group withholds advisory Learning context, never
 safety instructions or hard risk controls.
 
-### 7.4 Persona/Sizing Learning
+### 7.6 Persona/Sizing Learning
 
 Implementation:
 
@@ -365,7 +576,7 @@ Implementation:
 Counterfactual PnL for sizing must use the same price path and cap at actually available
 liquidity/exposure. It must not pretend unfillable size had the same execution quality.
 
-### 7.5 Advisory Skills
+### 7.7 Advisory Skills
 
 Skills become reusable wrappers around proven hypotheses:
 
@@ -376,12 +587,38 @@ Skills become reusable wrappers around proven hypotheses:
 - negative source/skill holdout demotes the skill automatically;
 - human activation cannot add a forbidden layer.
 
+### 7.8 Diagnostics And Concurrent Controls
+
+- `post_trade_reviewer` prose stays medium-confidence narrative and cannot satisfy a sample gate;
+- deterministic case studies carry the causal source ids used by hypotheses;
+- `exit_policy_advisor` remains read-only and has no adapter to config, position manager, risk, or
+  execution; future exit-policy automation requires a separate owner-approved program;
+- existing filter TTL shadow experiments remain prospective observe-only proposals. A human review
+  cannot silently turn `ready_for_review` into a production mutation.
+- operator-loop safety tightening and approved config changes remain under their existing contract,
+  are never withheld for a Learning control, and create a concurrent policy epoch. Affected
+  experiments pause, stratify, or invalidate instead of attributing the change to Learning.
+- debate, strategy lifecycle, live-readiness and execution-condition changes are likewise recorded
+  as concurrent policy versions when they affect an experiment cohort.
+
 ## 8. Contribution Engine
 
 ### 8.1 Aggregation
 
 All metrics use distinct `(experiment_id, candidate_key, horizon)` or the equivalent
 decision identity. Artifact count is never a weight.
+
+The contribution engine resolves overlap before aggregation:
+
+- one candidate may have many exposure rows for audit, but only the predeclared experiment unit
+  contributes one observation per horizon;
+- mutually exclusive assignment is the default within `observer`, `ranker`, `operator`, and
+  `sizing` overlap groups;
+- multi-stage outcomes are reported as total bundle effect unless upstream/downstream treatments
+  were isolated by design;
+- memo component contribution is not inferred from a trade that also received memo influence in
+  another stage;
+- retrospective correlations remain labelled weak/unidentified and cannot promote.
 
 Primary calculation:
 
@@ -434,6 +671,7 @@ Proposed endpoints:
 | `GET /api/learning/experiments` | active/completed experiment state |
 | `GET /api/learning/health` | expected jobs, last success, backlog, refreeze reason |
 | `GET /api/learning/exposures/{entity_id}` | why a candidate/decision/size changed |
+| `GET /api/learning/paths` | declared paths, authority ceiling, overlap group, fallback, health |
 
 Endpoints use a 30–60 second cached read model. Aggregation runs in a sync worker or scheduled
 materializer, never as unbounded SQLite/Markdown work in an async handler.
@@ -458,6 +696,8 @@ Replace count-first health with five panels:
 3. Hypothesis lifecycle: proposed/shadow/paper/active/demoted.
 4. Operational health: last expected/successful run, backlog age, refreeze reason.
 5. Decision trace: exact learned influences for a selected candidate/trade.
+6. Data integrity: outcome contract version, causal coverage, exclusions, unresolved and overlap
+   rates; component contribution is shown as `not identifiable` when appropriate.
 
 Words such as “effective” or “improving” render only for a measured positive verdict.
 
@@ -497,17 +737,22 @@ Goal: make existing reports honest before changing behavior.
 
 Changes:
 
+- codify the audited path registry and an architecture tripwire for undeclared consumers;
+- add the shared outcome resolver contract and report per-path eligibility/coverage gaps;
+- identify concurrent policy/config epochs and invalidate ambiguous historical windows;
 - deduplicate Learning alpha by cohort/candidate/horizon;
 - label before/after evidence weak and remove repeated-artifact confidence inflation;
 - add guard counterfactual outcomes to effectiveness analytics;
 - split activity, influence, and contribution metrics;
-- add `LE-B02`, `LE-B09`, `LE-C06` RED→GREEN tests;
+- classify narrative/diagnostic artifacts as non-sample evidence;
+- add `LE-S04`, `LE-B02/09/16/17/18`, `LE-C06/10/11` RED→GREEN tests;
 - record a versioned baseline report in runtime analytics, not Git docs.
 
 Authority change: none.
 
-Exit gate: current behavior can be measured without duplicate samples and guard blocks are
-visible through settled shadow outcomes.
+Exit gate: every current producer/consumer has an authority/fallback entry; eligible outcomes use
+one contract; current behavior can be measured without duplicate or overlapping credit, and guard
+blocks are visible through settled shadow outcomes.
 
 ### Phase 1 — Durable Hypothesis And Exposure Ledger
 
@@ -517,7 +762,7 @@ Changes:
 
 - migrations and repositories for hypotheses/experiments/exposures/verdicts/job health;
 - typed models and fingerprint logic;
-- backfill existing lessons/guards/memos to non-active hypothesis states;
+- backfill existing lessons/guards/memos/factor statuses to non-active hypothesis states;
 - update data model/retention/export/import documentation;
 - add hypothesis/exposure read APIs.
 
@@ -543,39 +788,50 @@ Authority change: new promotions remain disabled.
 Exit gate: no duplicate hypothesis from retries/restarts; missed job catches up once; disabling
 Learning actually disables autonomous mutation.
 
-### Phase 3 — Ranker And Guard Prospective Experiments
+### Phase 3 — Universe, Ranker, And Guard Prospective Experiments
 
 Goal: prove the already-active low-risk feedback paths.
 
 Changes:
 
+- universe family-calibration neutral/treatment exposure, supply metrics and `1.0` rollback;
 - ranker score component exposure logging;
+- factor feedback clean-window/exact-scope migration and prospective experiment;
+- automatic lesson `block_*` actions become learned-guard hypotheses; do not coerce category to
+  `risk` or broaden Risk Engine authority;
 - stable experiment assignment;
 - blocked-guard shadow settlement;
 - guard contribution and supply-harm gates;
 - shadow→paper→active promotion/demotion state machine;
 - active guard continual holdout.
 
-Authority change: paper ranker/guard only, behind config defaults OFF.
+Authority change: paper universe/ranker/guard only, behind config defaults OFF.
 
-Exit gate: an E2E harmful guard is automatically demoted and a beneficial guard promotes only
-after unique prospective evidence.
+Exit gate: harmful universe/factor/guard treatments automatically demote, and beneficial treatments
+promote only after unique prospective evidence; retrospective ten-trade labels cannot directly
+change universe scores or block candidates.
 
-### Phase 4 — System Operator Prompt Experiments
+### Phase 4 — Observer And System Operator Bundle Experiments
 
-Goal: establish whether reviewed lessons change decisions profitably.
+Goal: establish separately whether upstream memory improves opportunities and whether the complete
+Operator Learning bundle improves decisions.
 
 Changes:
 
 - typed compact Learning manifest;
+- observer-run manifest and opportunity outcome linkage;
 - treatment/control prompt rendering;
 - persisted decision manifest and disagreement reason;
 - same-cycle shadow linkage;
 - contribution by lesson/hypothesis and prompt bundle.
+- causal reflection resolver; heuristic reflection text marked unverified and ineligible;
+- bundle-first overlap assignment for memo/reasoning/calibration/reflection/lessons;
+- isolated component tests remain disabled until bundle evidence and sample capacity permit them.
 
 Authority change: paper System Operator context only.
 
-Exit gate: exact lesson influence and control comparison are queryable for every decision.
+Exit gate: observer and Operator effects are queryable separately; exact bundle influence and
+control comparison exist for every opportunity/decision; no channel double-counts one close.
 
 ### Phase 5 — Sizing Shadow Learner
 
@@ -632,11 +888,11 @@ Implementation mapping:
 
 | Batch | Spec files | Claims |
 | --- | --- | --- |
-| Phase 0 | `spec_learning_contribution.py` | LE-B02, LE-B09, LE-C06 |
+| Phase 0 | `spec_learning_registry.py`, `spec_learning_contribution.py`, existing outcome/operator specs | LE-S04, LE-B02/09/16/17/18/21, LE-C06/10/11/13 |
 | Phase 1 | `spec_learning_evolution.py`, `spec_data_model.py` | LE-S01/02, LE-B01, LE-C05 |
 | Phase 2 | `spec_learning_evolution.py`, `spec_agent_contracts.py` | LE-S03, LE-B03/04/11/12, LE-C01 |
-| Phase 3 | `spec_learning_experiments.py`, `spec_filter_evidence.py` | LE-B05/06/08/09, LE-C02/03/04 |
-| Phase 4 | `spec_pi_decision_chain.py`, `spec_learning_experiments.py` | LE-B07, LE-C04/07 |
+| Phase 3 | `spec_learning_experiments.py`, `spec_factor_feedback.py`, `spec_filter_evidence.py`, `spec_lesson_guards.py`, `spec_universe_pipeline.py` | LE-B05/06/08/09/13/19/20/22, LE-C02/03/04/05/08/12 |
+| Phase 4 | `spec_pi_decision_chain.py`, `spec_insight_feedback_loop.py`, `spec_learning_experiments.py` | LE-B07/14/15, LE-C04/07/09/10 |
 | Phase 5 | `spec_persona_sizing.py`, `spec_learning_experiments.py` | LE-B10, LE-C02/03/07 |
 | Phase 6 | `spec_skill_store.py`, `spec_learning_evolution.py` | LE-C02/05/07 |
 
@@ -675,6 +931,19 @@ New test module family: `tests/e2e/test_learning_evolution_*.py`.
 | E2E-LE-16 | crash between exposure and settlement | idempotent recovery links one outcome, no double count |
 | E2E-LE-17 | historical backfill | duplicates soft-linked/archived; no hard deletion; second run no-op |
 | E2E-LE-18 | API/UI honesty | inactive/refrozen/insufficient displayed from backend values, not optimistic labels |
+| E2E-LE-19 | retrospective factor loser | stable `factor_key` reaches Operator/ranker/exposure; history may nominate shadow but cannot hard-block before prospective gate |
+| E2E-LE-20 | factor promote then reverse | exact-scope clean treatment wins, promotes in paper, later holdout loss restores static factor behavior |
+| E2E-LE-21 | observer bundle isolation | same market/model input; manifest persists on opportunity; outcome credits observer bundle only |
+| E2E-LE-22 | overlapping Operator channels | memo/reasoning/calibration/reflection/lesson exposures remain one bundle observation, not five wins |
+| E2E-LE-23 | reflection causal mismatch | same-symbol unrelated position/move is labelled unverified and cannot settle the decision exposure |
+| E2E-LE-24 | shared outcome quality | synthetic close, dirty window, gross-only move, missing perp funding, wrong horizon all remain ineligible |
+| E2E-LE-25 | narrative fan-out | one close→case→review→memo→duplicate lessons still contributes one unique source outcome |
+| E2E-LE-26 | exit diagnostic boundary | advice can be read but cannot write config, risk, position-manager, order, or execution state |
+| E2E-LE-27 | undeclared consumer | architecture/runtime guard rejects behavior-changing Learning use without registry/fallback/experiment metadata |
+| E2E-LE-28 | automatic block recommendation | non-`risk` lesson cannot gain Risk authority; becomes scoped guard shadow and needs prospective evidence |
+| E2E-LE-29 | universe calibration lifecycle | neutral/treatment family score persists; positive paper gate promotes; negative holdout restores `1.0` |
+| E2E-LE-30 | concurrent config change | operator tightening starts new policy epoch and pauses/stratifies affected Learning verdict |
+| E2E-LE-31 | safety control coexistence | Learning control never withholds kill/risk/operator safety tightening and never claims its benefit |
 
 Test design rules:
 
@@ -682,6 +951,7 @@ Test design rules:
 - no real exchange, network, secrets, or live mode;
 - deterministic fake LLM responses only where semantic review is under test;
 - treatment and control share identical market inputs;
+- overlap-group fixtures prove mutually exclusive assignment or declared factorial cells;
 - outcome fixtures include fees, spread/slippage, and adverse cases;
 - assert persisted rows and causal links, not just returned dictionaries;
 - test promotion and later demotion in the same lifecycle scenario;
@@ -699,6 +969,13 @@ uv run pytest tests/specs/spec_learning_evolution.py \
 uv run pytest tests/e2e/test_learning_evolution_*.py -q
 
 uv run pytest tests/specs/spec_filter_evidence.py \
+  tests/specs/spec_factor_feedback.py \
+  tests/specs/spec_insight_feedback_loop.py \
+  tests/specs/spec_learning_pipeline.py \
+  tests/specs/spec_lesson_guards.py \
+  tests/specs/spec_opportunity_outcomes.py \
+  tests/specs/spec_operator_loop.py \
+  tests/specs/spec_universe_pipeline.py \
   tests/specs/spec_pi_decision_chain.py \
   tests/specs/spec_persona_sizing.py \
   tests/specs/spec_skill_store.py \
@@ -755,9 +1032,13 @@ The migration away from direct lesson hard blocks may touch `risk/engine.py`; th
 
 The entire program is complete only when evidence proves every item:
 
-- normative claims LE-S01 through LE-C07 are GREEN;
-- all 18 E2E scenarios pass against persisted state;
-- ranker, prompt, guard, sizing, and skill paths each have an observable baseline fallback;
+- normative claims LE-S01 through LE-C11, including every intermediate LE-B claim, are GREEN;
+- all 31 E2E scenarios pass against persisted state;
+- universe calibration, observer, factor filter, ranker, prompt bundle, guard, sizing, and skill paths each have an
+  observable baseline fallback;
+- every audited Learning-adjacent path has a registry entry and undeclared behavioral use fails;
+- all eligible evidence paths use one versioned outcome adapter and report exclusions honestly;
+- overlapping channels cannot claim independent credit from one outcome;
 - duplicate artifacts cannot change unique sample counts;
 - scheduler catch-up and disable semantics work under restart;
 - a beneficial fixture promotes and a later harmful fixture demotes/refreezes;
@@ -772,18 +1053,22 @@ definition of self-evolution.
 ## 19. Recommended Task DAG
 
 ```text
-LE-00 measurement integrity
+LE-00 path registry + outcome integrity + honest measurement
   -> LE-01 schema + hypothesis ledger
       -> LE-02 producer dedup + scheduler continuity
-          -> LE-03 ranker exposures
+          -> LE-03 universe + ranker + factor exposures
           -> LE-04 guard shadow experiments
               -> LE-05 contribution/promotion engine
-                  -> LE-06 prompt experiments
-                  -> LE-07 sizing shadow learner
-                      -> LE-08 advisory skills
-                          -> LE-09 UI + controlled rollout audit
+                  -> LE-06 observer bundle experiment
+                  -> LE-07 Operator bundle + causal reflection experiment
+                      -> LE-08 sizing shadow learner
+                          -> LE-09 advisory skills
+                              -> LE-10 UI + controlled rollout audit
 ```
 
-`LE-03` and `LE-04` may proceed in parallel after the ledger exists. Prompt and sizing trials
-wait for the shared contribution engine so each path does not invent a different definition
-of “positive”.
+`LE-03` and `LE-04` may proceed in parallel after the ledger exists. Concurrent operator/risk
+policy epochs are a Phase-0 prerequisite and are never disabled for experiment cleanliness.
+Observer and Operator bundle
+experiments remain separate so upstream opportunity generation is not confused with downstream
+decision changes. Prompt and sizing trials wait for the shared contribution engine so each path
+does not invent a different definition of “positive”.
