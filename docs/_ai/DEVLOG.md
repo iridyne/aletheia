@@ -3122,3 +3122,10 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Fresh installs now render all AI provider cards as disabled when no provider entries have been saved.
 - Default, deep, and fast routes show `not set` instead of implying a nonexistent default.
 - The default-model connection test stays disabled until the owner explicitly selects a default provider.
+
+## 2026-07-12 — Remote CI historical evidence resilience
+
+- Range-strict PR checks now distinguish tasks changed by the PR from unchanged completed history.
+- A missing verification commit is a warning only for an unchanged historical task whose deleted feature branch is no longer fetchable by GitHub Actions.
+- Tasks changed in the current PR still fail strictly on missing evidence; trust-boundary evidence requirements are unchanged.
+- Added regression coverage for both the historical-warning path and the current-task hard-failure path.

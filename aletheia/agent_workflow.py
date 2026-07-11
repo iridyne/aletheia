@@ -478,6 +478,13 @@ def validate(
     if project.get("schema_version") != 1 or not isinstance(commands, dict):
         findings.append(Finding("error", "invalid project or commands schema version"))
         return findings
+    changed_paths: set[str] | None = None
+    if changed_since is not None:
+        code, changed = _git(root, "diff", "--name-only", f"{changed_since}...HEAD")
+        if code:
+            findings.append(Finding("error", f"cannot inspect changes since {changed_since}"))
+        else:
+            changed_paths = {line for line in changed.splitlines() if line}
     owners: dict[str, str] = {}
     tasks = load_tasks(root)
     if task_id is not None:
@@ -550,6 +557,10 @@ def validate(
             ):
                 findings.append(Finding("error", "verification was not recorded by the workflow verifier", task_id))
         if task["status"] == "done":
+            task_changed_in_range = changed_paths is None or any(
+                candidate in changed_paths
+                for candidate in (str(path.relative_to(root)), str(task.get("handoff", "")))
+            )
             valid = [
                 x for x in evidence
                 if isinstance(x, dict)
@@ -590,19 +601,22 @@ def validate(
                             task_id,
                         ))
                     else:
-                        findings.append(Finding(
-                            "error",
-                            "completed task evidence commit does not exist in this repository",
-                            task_id,
-                        ))
+                        if task_changed_in_range:
+                            findings.append(Finding(
+                                "error",
+                                "completed task evidence commit does not exist in this repository",
+                                task_id,
+                            ))
+                        else:
+                            findings.append(Finding(
+                                "warning",
+                                "unchanged historical completed task evidence commit does not exist "
+                                "in this checkout (likely deleted after squash merge)",
+                                task_id,
+                            ))
             if not isinstance(next_action, dict) or next_action.get("command_key") != "workflow_bootstrap":
                 findings.append(Finding("error", "completed task next action must return to workflow_bootstrap", task_id))
-    if changed_since is not None:
-        code, changed = _git(root, "diff", "--name-only", f"{changed_since}...HEAD")
-        if code:
-            findings.append(Finding("error", f"cannot inspect changes since {changed_since}"))
-        else:
-            changed_paths = {line for line in changed.splitlines() if line}
+    if changed_paths is not None:
             governed = {
                 path for path in changed_paths
                 if path.startswith(("aletheia/", "frontend/", "tests/", "docs/", "scripts/", ".github/", ".agent/schemas/"))
