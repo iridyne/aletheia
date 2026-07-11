@@ -158,6 +158,85 @@ def test_controller_report_renders_bounded_gate_only_replay(monkeypatch):
     assert "no cohort ready for a controlled experiment" in rendered
 
 
+def test_controller_report_renders_registered_prospective_experiment(monkeypatch):
+    monkeypatch.setattr(fc, "compute_filter_feedback", lambda **kwargs: [])
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_evidence.filter_feedback_trajectory_summary",
+        lambda **kwargs: {},
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_replay.build_bounded_filter_replays",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_shadow_experiments.build_filter_shadow_experiment_report",
+        lambda: [{
+            "filter_name": "family_ttl",
+            "scanner_family": "momentum",
+            "direction": "long",
+            "market_type": "perp",
+            "horizon": "4h",
+            "filter_version": "fixed-v1",
+            "started_at": "2026-07-11T12:00:00+00:00",
+            "status": "collecting",
+            "control_parameter": {"ttl_sec": 1800},
+            "treatment_parameter": {"ttl_sec": 14400},
+            "production_mutation_allowed": 0,
+            "latest_evaluation": {
+                "control_settled_n": 2,
+                "treatment_settled_n": 1,
+                "disposition": "collecting",
+            },
+        }],
+    )
+
+    report = fc.build_filter_controller_report(hours=24)
+    rendered = fc.render_filter_controller_report(report)
+
+    assert len(report["shadow_experiments"]) == 1
+    assert "Prospective shadow experiments (production unchanged):" in rendered
+    assert "1800s -> 14400s" in rendered
+    assert "status=collecting" in rendered
+
+
+def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
+    calls = {"registered": 0, "evaluated": 0}
+    monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20: [])
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_replay.build_bounded_filter_replays",
+        lambda *args, **kwargs: [{"filter_name": "family_ttl"}],
+    )
+
+    def fake_register(replays):
+        assert replays == [{"filter_name": "family_ttl"}]
+        calls["registered"] += 1
+        return {"registered": 1, "already_registered": 0, "skipped": 0}
+
+    def fake_evaluate():
+        calls["evaluated"] += 1
+        return {
+            "evaluated": 1,
+            "ready_for_review": 0,
+            "completed_no_support": 0,
+            "invalidated": 0,
+        }
+
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_shadow_experiments.register_replay_ready_experiments",
+        fake_register,
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_shadow_experiments.evaluate_active_shadow_experiments",
+        fake_evaluate,
+    )
+
+    summary = fc.run_controller_observe()
+
+    assert calls == {"registered": 1, "evaluated": 1}
+    assert summary["experiments_registered"] == 1
+    assert summary["experiments_evaluated"] == 1
+
+
 def test_insufficient_data_when_no_stats(monkeypatch):
     """No calibration data → every tunable family filter reports insufficient_data, no crash."""
     monkeypatch.setattr("aletheia.storage.repositories.calibration_stats", lambda: [])

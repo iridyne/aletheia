@@ -2034,6 +2034,66 @@ def latest_controller_run_id() -> str | None:
     return row["run_id"] if row else None
 
 
+def insert_filter_shadow_experiment(experiment: dict) -> bool:
+    """Insert an immutable prospective plan, returning False for a duplicate key."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cols = ", ".join(experiment.keys())
+    placeholders = ", ".join(["?"] * len(experiment))
+    cursor = db.execute(
+        f"INSERT OR IGNORE INTO filter_shadow_experiments ({cols}) VALUES ({placeholders})",
+        list(experiment.values()),
+    )
+    if not was_in_tx:
+        db.commit()
+    return bool(cursor.rowcount)
+
+
+def list_filter_shadow_experiments(
+    *, status: str | None = None, limit: int = 100
+) -> list[dict]:
+    if status:
+        return _select_all(
+            "filter_shadow_experiments",
+            where="status = ?",
+            params=(status,),
+            order="started_at DESC",
+            limit=limit,
+        )
+    return _select_all(
+        "filter_shadow_experiments", order="started_at DESC", limit=limit
+    )
+
+
+def update_filter_shadow_experiment(experiment_id: str, **values) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    sets = ", ".join(f"{key} = ?" for key in values)
+    db.execute(
+        f"UPDATE filter_shadow_experiments SET {sets} WHERE id = ?",
+        [*values.values(), experiment_id],
+    )
+    if not was_in_tx:
+        db.commit()
+
+
+def insert_filter_shadow_evaluation(evaluation: dict) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    _insert("filter_shadow_evaluations", evaluation)
+    if not was_in_tx:
+        db.commit()
+
+
+def latest_filter_shadow_evaluation(experiment_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM filter_shadow_evaluations WHERE experiment_id=? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (experiment_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def calibration_stats() -> list[dict]:
     """Aggregate cost-aware returns by family + direction + market + horizon.
 

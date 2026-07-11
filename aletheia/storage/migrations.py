@@ -2292,6 +2292,65 @@ CREATE INDEX IF NOT EXISTS idx_controller_recs_run ON controller_recommendations
 """
 
 
+_FILTER_SHADOW_EXPERIMENTS_DDL = """
+CREATE TABLE IF NOT EXISTS filter_shadow_experiments (
+    id TEXT PRIMARY KEY,
+    experiment_key TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    filter_name TEXT NOT NULL,
+    filter_version TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    scanner_family TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    market_type TEXT NOT NULL,
+    horizon TEXT NOT NULL,
+    control_parameter TEXT NOT NULL,
+    treatment_parameter TEXT NOT NULL,
+    assignment_policy TEXT NOT NULL DEFAULT 'prospective_first_exposure',
+    status TEXT NOT NULL DEFAULT 'collecting'
+        CHECK (status IN ('collecting','ready_for_review','completed_no_support','invalidated')),
+    min_samples INTEGER NOT NULL,
+    min_coverage REAL NOT NULL,
+    min_edge_delta_pct REAL NOT NULL,
+    source_replay TEXT NOT NULL DEFAULT '{}',
+    production_mutation_allowed INTEGER NOT NULL DEFAULT 0
+        CHECK (production_mutation_allowed = 0),
+    last_evaluated_at TEXT,
+    completed_at TEXT,
+    invalidation_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_filter_shadow_experiments_status
+    ON filter_shadow_experiments(status, started_at);
+CREATE INDEX IF NOT EXISTS idx_filter_shadow_experiments_scope
+    ON filter_shadow_experiments(
+        filter_name, filter_version, scanner_family, direction, market_type, horizon
+    );
+
+CREATE TABLE IF NOT EXISTS filter_shadow_evaluations (
+    id TEXT PRIMARY KEY,
+    experiment_id TEXT NOT NULL REFERENCES filter_shadow_experiments(id),
+    created_at TEXT NOT NULL,
+    evidence_through_at TEXT NOT NULL,
+    disposition TEXT NOT NULL
+        CHECK (disposition IN ('collecting','ready_for_review','completed_no_support','invalidated')),
+    control_candidate_count INTEGER NOT NULL DEFAULT 0,
+    control_settled_n INTEGER NOT NULL DEFAULT 0,
+    control_outcome_coverage REAL NOT NULL DEFAULT 0,
+    control_raw_avg_net_pct REAL,
+    treatment_candidate_count INTEGER NOT NULL DEFAULT 0,
+    treatment_settled_n INTEGER NOT NULL DEFAULT 0,
+    treatment_outcome_coverage REAL NOT NULL DEFAULT 0,
+    treatment_raw_avg_net_pct REAL,
+    treatment_shrunk_avg_net_pct REAL,
+    edge_delta_pct REAL,
+    note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_filter_shadow_evaluations_experiment
+    ON filter_shadow_evaluations(experiment_id, created_at DESC);
+"""
+
+
 
 def _ensure_knowledge_fts_outcome_column(db) -> None:
     """Recreate knowledge_fts with outcome column if missing.
@@ -2323,6 +2382,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_OHLCV_BACKFILL_STATE_DDL)
     db.executescript(_COLLECTOR_HEALTH_STATE_DDL)
     db.executescript(_CONTROLLER_RECOMMENDATIONS_DDL)
+    db.executescript(_FILTER_SHADOW_EXPERIMENTS_DDL)
     _ensure_columns(db)
     _ensure_market_ohlcv_instrument_identity(db)
     _ensure_orderbook_instrument_index(db)

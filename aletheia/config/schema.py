@@ -892,11 +892,10 @@ class SerenityConfig(BaseModel):
 class ControllerConfig(BaseModel):
     """Filter feedback controller — negative-feedback tuning of opportunity filters.
 
-    Phase 1 is SHADOW / observe-only: an every-N-hours background job computes
-    filter-version pass/reject observational findings from cost-aware net outcomes
-    and appends them to `controller_recommendations`. It
-    NEVER writes trading config in this phase. Bounded auto-tune and full
-    closed-loop actuation are future phases, gated behind additional flags.
+    The every-N-hours SHADOW job computes filter-version pass/reject findings,
+    appends them to `controller_recommendations`, and can preregister/evaluate
+    prospective observe-only experiments for replay-ready monotonic thresholds.
+    It NEVER writes trading config. Full closed-loop actuation remains out of scope.
     See aletheia/analytics/filter_controller.py + filter_registry.py.
     """
     # Master switch for the shadow observe job. Default ON — it is read-only and safe.

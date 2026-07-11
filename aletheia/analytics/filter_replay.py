@@ -30,6 +30,7 @@ def build_family_ttl_replay(
     current_ttl_sec: int,
     alternative_ttls: Iterable[int] | None = None,
     evaluated_since: str | None = None,
+    evaluated_after: str | None = None,
     min_samples: int = 20,
     max_candidates: int = _MAX_CANDIDATES,
 ) -> dict[str, Any]:
@@ -49,6 +50,8 @@ def build_family_ttl_replay(
     horizon_s = str(horizon or "").strip()
     if not all((stage_s, family, side, market, horizon_s)):
         raise ValueError("stage, scanner_family, direction, market_type and horizon are required")
+    if evaluated_since and evaluated_after:
+        raise ValueError("evaluated_since and evaluated_after are mutually exclusive")
 
     current_ttl = max(1, int(current_ttl_sec))
     candidate_cap = max(1, min(int(max_candidates), _MAX_CANDIDATES))
@@ -63,6 +66,7 @@ def build_family_ttl_replay(
         market_type=market,
         horizon=horizon_s,
         evaluated_since=evaluated_since,
+        evaluated_after=evaluated_after,
         cap=candidate_cap,
     )
     rejected_rows, rejected_capped = _load_first_exposure_rows(
@@ -74,6 +78,7 @@ def build_family_ttl_replay(
         market_type=market,
         horizon=horizon_s,
         evaluated_since=evaluated_since,
+        evaluated_after=evaluated_after,
         cap=candidate_cap,
     )
 
@@ -132,6 +137,7 @@ def build_family_ttl_replay(
         "market_type": market,
         "horizon": horizon_s,
         "evaluated_since": evaluated_since,
+        "evaluated_after": evaluated_after,
         "assignment_policy": "first_exposure",
         "current_ttl_sec": current_ttl,
         "candidate_cap": candidate_cap,
@@ -196,14 +202,20 @@ def _load_first_exposure_rows(
     market_type: str,
     horizon: str,
     evaluated_since: str | None,
+    evaluated_after: str | None,
     cap: int,
 ) -> tuple[list[dict[str, Any]], bool]:
-    time_clause = " AND datetime(fd.first_evaluated_at) >= datetime(?)" if evaluated_since else ""
+    if evaluated_after:
+        time_clause = " AND julianday(fd.first_evaluated_at) > julianday(?)"
+    elif evaluated_since:
+        time_clause = " AND datetime(fd.first_evaluated_at) >= datetime(?)"
+    else:
+        time_clause = ""
     params: list[Any] = [
         horizon, decision, filter_version, stage, scanner_family, direction, market_type,
     ]
-    if evaluated_since:
-        params.append(evaluated_since)
+    if evaluated_after or evaluated_since:
+        params.append(evaluated_after or evaluated_since)
     params.append(cap + 1)
     rows = get_db().execute(
         FIRST_EXPOSURE_CTE_SQL +

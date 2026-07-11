@@ -1,5 +1,22 @@
 # Development Log
 
+## 2026-07-11 — Prospective filter shadow experiments
+
+- Replay-ready monotonic threshold candidates now preregister a fixed-version,
+  fixed-cohort control/treatment plan instead of remaining an informal next step.
+- Evaluation uses only first exposures strictly after registration. Control and
+  incremental shadow cohorts each require 20 settled net outcomes and 70%
+  coverage under a preregistered 5bp absolute/relative stopping rule.
+- Production filter-version drift invalidates an active experiment. Final states
+  are review-only or no-support; a database CHECK fixes
+  `production_mutation_allowed=0`, and no config path is imported.
+- CLI/API controller reports expose plan and latest evidence status. No TTL,
+  ranker, sizing, risk, execution, live, or credential behavior changed.
+- Validation: focused filter suites passed 48 tests; architecture fitness passed
+  11; all specs passed 633; full suite passed 2805 with 13 skipped and 6 expected failures.
+
+---
+
 ## 2026-07-11 — Serenity worker failure classification
 
 - The background research thread previously overwrote every unhandled failure as

@@ -7,7 +7,19 @@
 
 ## Last Updated
 
-2026-07-11 (Serenity worker failure classification)
+2026-07-11 (Prospective filter shadow experiments)
+
+---
+
+## Recent Change (Prospective filter shadow experiments — 2026-07-11)
+
+历史回放达到门槛后不再停在一句“建议设计实验”，也不会直接放宽生产过滤。控制器会登记一个固定版本、固定人群、固定对照值/候选值和固定停止门的前瞻 shadow 实验；只使用登记时刻之后的新首次候选，历史选参样本不能再次充当验证样本。
+
+对照组和 shadow 增量组都要各自达到至少 20 个完整净结果和 70% 覆盖。达到绝对与相对 5bp 门槛只会进入人工复核；不支持则结束，生产 filter 版本变化则自动作废。实验表通过 CHECK 约束固定 `production_mutation_allowed=0`，整个模块不写配置、不改变放行结果。
+
+没有修改 TTL、ranker、方向刹车、Kelly/sizing、风险、执行、live 或凭证。
+
+验证：聚焦过滤回归 48 项、架构检查 11 项、完整规则 633 项通过；单进程连续全量 `2805 passed, 13 skipped, 6 xfailed`。
 
 ---
 

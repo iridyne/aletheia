@@ -61,3 +61,32 @@ portfolio conflicts, cooldown, risk, execution, exchange availability, or market
 impact. `ready_for_controlled_experiment` permits a separately designed shadow
 experiment; it never changes configuration. `insufficient_data` and `no_support`
 mean the current threshold remains unchanged.
+
+## Prospective shadow experiment contract
+
+A replay-ready result is not itself confirmation. The controller preregisters a
+separate `filter_shadow_experiments` plan with an immutable filter version,
+cohort scope, control value, treatment value, evidence gates, and start time.
+The least-permissive replay-ready alternative is selected so a wider historical
+search cannot silently become a more aggressive production proposal.
+
+Prospective evaluation obeys these rules:
+
+- only first exposures strictly after `started_at` are included; the historical
+  rows used to choose the treatment cannot validate it;
+- the production-pass cohort is the control and candidates rejected by the
+  production TTL but admitted by the shadow TTL are the incremental treatment;
+- control and treatment must each have at least 20 settled net outcomes and at
+  least 70% coverage before the preregistered stopping decision is evaluated;
+- the treatment's shrunk net result and its improvement over control must each
+  reach 5bp to become `ready_for_review`; otherwise it becomes
+  `completed_no_support`;
+- any production filter-version change invalidates the experiment rather than
+  mixing policies;
+- every evaluation is append-only. The plan has a database-enforced
+  `production_mutation_allowed=0` field, and no experiment status writes config.
+
+Statuses are analytical only: `collecting`, `ready_for_review`,
+`completed_no_support`, and `invalidated`. Even `ready_for_review` requires a
+separate human decision and a downstream-aware experiment before any production
+change.

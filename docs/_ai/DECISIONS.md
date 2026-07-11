@@ -1,5 +1,28 @@
 # Decisions
 
+## 2026-07-11 — 回放只负责提出候选，独立前瞻样本才负责验证
+
+### Context
+
+有界历史回放能发现某个过滤阈值可能过紧，但同一批数据既用于挑选候选值、又用于证明候选值，会产生选择偏差。直接把 `ready_for_controlled_experiment` 变成配置变更，还会绕过 ranker、组合冲突、风险和执行等未回放环节。
+
+### Decisions
+
+1. 回放达到门槛后，只登记 observe-only 实验；生产阈值和候选放行保持不变。
+2. 实验锁定 filter stage/version/family/direction/market/horizon、control、treatment 和停止门，重复控制器运行不能改写计划。
+3. 只使用严格晚于登记时刻的 first-exposure 候选；挑选 treatment 的历史样本永久排除在验证外。
+4. 生产 pass 是 control；生产拒绝但 shadow 阈值会放行的增量候选是 treatment。两边各需 20 个 settled net 结果和 70% 覆盖。
+5. treatment 收缩净结果及其相对 control 改善均达到 5bp，只进入 `ready_for_review`；不支持则结束，生产版本变化则作废。
+6. 数据库固定 `production_mutation_allowed=0`；实验代码不得导入或调用配置写入、风险、执行或 live 路径。
+
+### Consequences
+
+- 当前候选值需要重新积累未来样本，历史回放结果不会被冒充为独立证明。
+- `ready_for_review` 不是自动应用许可；任何生产变化仍需人工决定及下游影响评估。
+- 实验计划和每次评估快照保留为小型分析审计历史，便于解释为什么某个候选被继续、否定或作废。
+
+---
+
 ## 2026-07-11 — macOS 用周期 LaunchAgent 托管 gated start，而不另造 supervisor
 
 ### Context

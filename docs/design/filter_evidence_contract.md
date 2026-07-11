@@ -157,6 +157,11 @@ MVP 收缩公式：
 显示新增放行样本、净结果覆盖、原始和收缩净期望及未覆盖的下游关卡；任何 `ready` 只允许
 进入独立 shadow 实验，不得直接写配置。具体边界见 `docs/design/filter_replay.md`。
 
+独立 shadow 实验必须在回放后预登记固定 version/cohort/control/treatment/停止门槛，从登记
+时刻之后的新 first-exposure 样本开始，禁止复用挑选阈值的历史样本做验证。control 与新增
+shadow treatment 各自达到 20 个完整净结果和 70% 覆盖后才判定；生产 filter version 变化则
+实验失效。`ready_for_review` 只表示可人工复核，任何状态都不得写生产配置或改变候选放行。
+
 ## 7. 批次选择的特别规则
 
 `open_position -> cooldown -> batch_limit` 是三个不同关卡，不得先截取 Top-3 再检查前两关。否则 Top-1 被冷却拒绝后，Top-4 永远没有补位机会，候选供给会被静默浪费。
@@ -192,7 +197,8 @@ Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候
 6. 已完成：只读 filter feedback 使用分层收缩净期望，未达样本门只显示证据不足。
 7. 已完成：ranker 历史漏斗和 proposal submission 原因直接来自已落库证据；无目标市场价格返回稳定失败原因，不再静默 `None`。
 8. 已完成：反馈统计按真实 stage 分组并展示事发参数；同名同参数关卡跨阶段不再因幂等键碰撞丢证据。
-9. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
+9. 已完成：可回放单调阈值的前瞻 shadow 登记、严格起始边界、固定停止门和版本失效保护；只观察，不自动应用。
+10. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
 
 ## 10. 诊断时间窗口与 sizing 口径
 

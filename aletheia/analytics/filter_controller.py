@@ -279,9 +279,29 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
     for r in recs:
         counts[r.verdict] = counts.get(r.verdict, 0) + 1
 
+    experiment_registration = {
+        "registered": 0, "already_registered": 0, "skipped": 0,
+    }
+    experiment_evaluation = {
+        "evaluated": 0, "ready_for_review": 0,
+        "completed_no_support": 0, "invalidated": 0,
+    }
+    try:
+        from aletheia.analytics.filter_replay import build_bounded_filter_replays
+        from aletheia.analytics.filter_shadow_experiments import (
+            evaluate_active_shadow_experiments,
+            register_replay_ready_experiments,
+        )
+
+        replays = build_bounded_filter_replays(recs, min_samples=min_samples)
+        experiment_registration = register_replay_ready_experiments(replays)
+        experiment_evaluation = evaluate_active_shadow_experiments()
+    except Exception as exc:  # pragma: no cover - defensive scheduler boundary
+        logger.warning("filter_controller: shadow experiment cycle failed: %s", exc)
+
     logger.info(
-        "filter_controller observe: run=%s written=%d verdicts=%s",
-        run_id, written, counts,
+        "filter_controller observe: run=%s written=%d verdicts=%s experiments=%s/%s",
+        run_id, written, counts, experiment_registration, experiment_evaluation,
     )
     return {
         "run_id": run_id,
@@ -290,6 +310,10 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
         "verdict_counts": counts,
         "min_samples": min_samples,
         "shadow_only": True,
+        "experiments_registered": experiment_registration["registered"],
+        "experiments_evaluated": experiment_evaluation["evaluated"],
+        "experiment_registration": experiment_registration,
+        "experiment_evaluation": experiment_evaluation,
     }
 
 
@@ -338,6 +362,15 @@ def build_filter_controller_report(
         logger.warning("filter_controller: bounded replay unavailable: %s", exc)
         bounded_replays = []
     replay_summary = _summarize_replays(bounded_replays)
+    try:
+        from aletheia.analytics.filter_shadow_experiments import (
+            build_filter_shadow_experiment_report,
+        )
+
+        shadow_experiments = build_filter_shadow_experiment_report()
+    except Exception as exc:
+        logger.warning("filter_controller: shadow experiment report unavailable: %s", exc)
+        shadow_experiments = []
     counts: dict[str, int] = {}
     for r in recs:
         counts[r.verdict] = counts.get(r.verdict, 0) + 1
@@ -355,6 +388,7 @@ def build_filter_controller_report(
         "trajectory_summary": trajectory_summary,
         "bounded_replays": bounded_replays,
         "replay_summary": replay_summary,
+        "shadow_experiments": shadow_experiments,
         "verdict_counts": counts,
         "recommendations": [asdict(r) for r in recs],
         "report_only_filters": [
@@ -442,6 +476,28 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
                 lines.append("    candidate cap reached; widen only in an explicit offline analysis run")
         lines.append("")
 
+    experiments = report.get("shadow_experiments") or []
+    if experiments:
+        lines.append("Prospective shadow experiments (production unchanged):")
+        for experiment in experiments:
+            control = experiment.get("control_parameter") or {}
+            treatment = experiment.get("treatment_parameter") or {}
+            latest = experiment.get("latest_evaluation") or {}
+            lines.append(
+                f"  {experiment.get('filter_name')} · {experiment.get('scanner_family')} "
+                f"{experiment.get('direction')} {experiment.get('market_type')} "
+                f"{experiment.get('horizon')} "
+                f"{control.get('ttl_sec')}s -> {treatment.get('ttl_sec')}s "
+                f"status={experiment.get('status')}"
+            )
+            lines.append(
+                "    prospective first exposures only; "
+                f"control settled={latest.get('control_settled_n', 0)}; "
+                f"treatment settled={latest.get('treatment_settled_n', 0)}; "
+                f"disposition={latest.get('disposition', 'not_evaluated')}"
+            )
+        lines.append("")
+
     insufficient = [r for r in recs if r["verdict"] == "insufficient_data"]
     if insufficient:
         lines.append(f"Insufficient data ({len(insufficient)} cells): "
@@ -455,7 +511,22 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
 
     lines.append("")
     lines.append("Next action:")
-    if replays and replay_summary.get("experiment_ready", 0) == 0:
+    active_experiments = [
+        row for row in experiments if row.get("status") == "collecting"
+    ]
+    review_experiments = [
+        row for row in experiments if row.get("status") == "ready_for_review"
+    ]
+    if review_experiments:
+        lines.append(
+            "  Review prospective evidence manually; production parameters remain unchanged."
+        )
+    elif active_experiments:
+        lines.append(
+            "  Keep production parameters unchanged; collect future first-exposure "
+            "control and treatment outcomes."
+        )
+    elif replays and replay_summary.get("experiment_ready", 0) == 0:
         lines.append(
             "  Keep filter parameters unchanged; bounded replays found no cohort "
             "ready for a controlled experiment."

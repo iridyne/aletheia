@@ -44,8 +44,9 @@
 20. **已完成**：LLM 空消息异常保留异常类型；methodology 研究输出预算对齐 provider 超时边界。Serenity 的正常管线和后台线程兜底都使用同一分类，后续空消息超时会归为 provider_timeout 而非 unknown_error。
 21. **已完成**：可选 Coinalyze 未配置不再产生故障告警；已配置无 OI 才 warn，清算平静期保持 idle/info。
 22. **已完成**：数据库容量按真实磁盘压力和 freelist 判断；有效历史导致的大文件不再误告警或推荐不存在的 VACUUM 脚本。
-23. **下一阶段**：筛选器达到 20/20 完整净样本后，才实验方向刹车、ranker 和 Kelly/sizing；未达到前只继续积累和核对证据。
-24. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+23. **已完成**：单调筛选阈值的回放候选可自动预登记为前瞻 shadow 实验；只使用登记后的首次样本，锁定版本和停止门，生产版本变化自动失效，任何结果都不自动改参数。
+24. **下一阶段**：筛选器达到独立前瞻样本门后，才人工评审方向刹车、ranker 和 Kelly/sizing 实验；未达到前只继续积累和核对证据。
+25. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
 机会诊断口径已补强：overview 的窗口总数与重建上限分离；controller 的 `--hours`
 真实截断证据；sizing trace 将历史 proposal/fill 事实与当前配置投影分开。后续离线实验只能
@@ -55,7 +56,7 @@
 Filter feedback 的 cohort 必须按 filter+stage+version+candidate 首次暴露唯一归组；后续重试
 不得重复贡献同一个 outcome。任何单调阈值候选先走有界 gate-only replay；只有回放同时满足
 20 个完整样本、70% 覆盖、绝对和相对收缩净优势各 5bp，才允许设计独立 shadow 实验，仍不
-直接修改生产参数。
+直接修改生产参数。已登记实验严格排除登记前样本；`ready_for_review` 也只表示可人工复核。
 
 已经修好的供给/语义问题不要重复施工：OKX 永续成交额、分配前 market 去重、short funding 方向、PI bear_case、market-aware proposal price、pending shadow、因果漏斗和 doctor 市场覆盖。
 

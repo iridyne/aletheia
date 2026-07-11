@@ -489,3 +489,22 @@ def test_filter_feedback_first_exposure_and_replay_bounds_are_explicit():
     assert "filter_version is required" in replay_source
     assert '"read_only": True' in replay_source
     assert "save_config" not in replay_source
+
+
+@spec_claim(
+    SpecClaim(
+        "FE-C10", _CONTRACT, "§6 prospective shadow experiments", "L2c",
+        "Replay-ready filter changes are preregistered prospectively, evaluated on future first exposures, and can never mutate production config.",
+        status="implemented",
+    )
+)
+def test_filter_shadow_experiments_are_prospective_and_observe_only():
+    import inspect
+
+    from aletheia.analytics import filter_shadow_experiments
+
+    source = inspect.getsource(filter_shadow_experiments)
+    assert "prospective_first_exposure" in source
+    assert "production_mutation_allowed" in source
+    assert "save_config" not in source
+    assert "ready_for_review" in source

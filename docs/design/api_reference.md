@@ -117,7 +117,7 @@ operators do not infer the real order target from the retained exchange preferen
 | GET | `/analytics/cost-summary` | LLM and execution cost breakdown |
 | GET | `/analytics/confidence-calibration` | ECE calibration by conviction bucket |
 | GET | `/analytics/reasoning-feedback` | Per-bucket rejection/win rates |
-| GET | `/analytics/filter-controller` | Shadow-only first-exposure filter cohorts, retry-transition telemetry, and bounded fixed-version gate replays; never mutates config |
+| GET | `/analytics/filter-controller` | Shadow-only first-exposure cohorts, retry telemetry, bounded fixed-version replays, and preregistered prospective experiment status; never mutates config |
 | GET | `/analytics/alpha-attribution` | Read-only five-layer alpha attribution audit (`?days=7/14/30`) |
 | GET | `/analytics/thesis-lineage` | Read-only thesis lineage records layered over the trade causal chain (`?position_id=...&order_id=...&days=90`) |
 | GET | `/analytics/round1-progress` | Historical Round 1 progress metrics |

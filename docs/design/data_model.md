@@ -126,17 +126,23 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `universe_forward_outcomes` | Fixed-horizon Opportunity economics | venue, symbol, market_type, direction, horizon, gross_return_pct, directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, min_tradable_edge_pct, mfe_pct, mae_pct, settlement_price_source, cost_model_version |
 | `universe_policies` | Universe selection rules | policy_name, filters (JSON), priority |
 
-### G-bis. Opportunity Filter Evidence (3 tables)
+### G-bis. Opportunity Filter Evidence (6 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `filter_decisions` | Immutable per-candidate pass/reject facts for directional and low-volume gates | candidate_key, filter_name, decision, reason_code, parameter_snapshot, filter_version, outcome_candidate_key, evaluated_at |
 | `filter_decision_batches` | Complete compressed facts for high-volume directionless ticker/tradability gates | run_id, filter_name, candidate_count, pass/reject/not-applicable/error counts, zlib-base64 lossless field/row-matrix candidate_facts, filter_version |
 | `filter_candidate_outcomes` | Shared exact-instrument fixed-horizon net result for a candidate seen by multiple gates | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross/directional/cost/net/MFE/MAE, status |
+| `controller_recommendations` | Append-only observational filter findings; legacy action fields remain conservative | filter/stage/version/cohort dimensions, pass/reject counts, shrunk net means, evidence_verdict, status |
+| `filter_shadow_experiments` | Immutable prospective plans for replay-ready monotonic threshold candidates | experiment_key, fixed scope/version, control/treatment parameters, started_at, evidence gates, status, production_mutation_allowed=0 |
+| `filter_shadow_evaluations` | Append-only evidence snapshots for a prospective plan | experiment_id, disposition, control/treatment samples and coverage, net means, edge delta |
 
 Business writers only append these rows. Daily retention removes expired analytical rows
 (30d for compressed batches; 90d for per-candidate decisions/outcomes). This retention
 does not apply to authoritative proposals, RiskDecision, orders, fills, positions, or audit records.
+Controller recommendations and the small experiment/evaluation records are retained
+as the audit history for why a threshold was or was not advanced; they are not
+production trading state and cannot authorize a parameter change.
 
 ### H. Serenity Pipeline (14 tables)
 
