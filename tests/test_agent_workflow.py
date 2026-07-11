@@ -107,3 +107,13 @@ def test_bootstrap_selects_latest_completed_task_when_branch_has_history(tmp_pat
     (root / ".agent/tasks/TASK-2.yaml").write_text(yaml.safe_dump(second), encoding="utf-8")
     (root / ".agent/handoffs/TASK-2.md").write_text("# handoff\n", encoding="utf-8")
     assert bootstrap(root)["task"]["id"] == "TASK-2"
+
+
+def test_bootstrap_falls_back_to_global_history_on_unclaimed_branch(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    task = yaml.safe_load((root / ".agent/tasks/TASK-1.yaml").read_text(encoding="utf-8"))
+    task.update({"status": "done", "ownership": {"branch": "other"}, "updated_at": "2026-02-01T00:00:00Z"})
+    (root / ".agent/tasks/TASK-1.yaml").write_text(yaml.safe_dump(task), encoding="utf-8")
+    payload = bootstrap(root)
+    assert payload["task"]["id"] == "TASK-1"
+    assert payload["task_source"] == "global_history"
