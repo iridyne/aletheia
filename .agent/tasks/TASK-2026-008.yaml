@@ -1,7 +1,7 @@
 schema_version: 1
 id: TASK-2026-008
 title: Rotate bounded market-observer coverage fairly
-status: in_progress
+status: done
 scope:
   boundary: declare before implementation
   excluded: runtime facts and credentials
@@ -22,6 +22,12 @@ next_action:
   command_key: workflow_tests
   reason: Claim the task and define the first focused verification.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  exit_code: 0
+  commit: b74c86a28cf878dba7080772d25adbf3ce97962a
+  run_at: '2026-07-11T13:08:38.458329Z'
+  result: passed
 handoff: .agent/handoffs/TASK-2026-008.md
-updated_at: '2026-07-11T13:06:41.484852Z'
+updated_at: '2026-07-11T13:08:38.458472Z'
