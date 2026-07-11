@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-017
 title: Tolerate squash-merged evidence commits in strict check
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -31,10 +31,18 @@ ownership:
   expires_at: '2026-07-12T00:57:48.735006Z'
 base_commit: f9de4ba49b45dfb30f7f5aade96df6b254818f13
 next_action:
-  command_key: workflow_tests
-  reason: Write red tests for the three evidence-reachability outcomes before changing
-    validate().
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 9af013bc87b7ed6fce975159b0319b20532aed0a
+  run_at: '2026-07-11T17:01:42.208979Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-017.md
-updated_at: '2026-07-11T16:57:56.502987Z'
+updated_at: '2026-07-11T17:02:20.738996Z'
