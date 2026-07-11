@@ -339,6 +339,54 @@ def test_controller_only_flags_overrestriction_after_paired_gates(monkeypatch):
     assert rec.current_value == '{"minimum_confidence":"medium"}'
 
 
+def test_filter_feedback_stats_respects_decision_time_window():
+    from aletheia.analytics.filter_evidence import (
+        filter_feedback_stats,
+        record_filter_decision,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc)
+    common = dict(
+        candidate_kind="opportunity",
+        filter_name="ranker_confidence_gate",
+        stage="ranker_excluded",
+        reason_code="test",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="perp",
+        direction="long",
+        scanner_family="momentum",
+        entry_price_usd=100.0,
+        parameters={"minimum_confidence": "medium"},
+    )
+    for age_days, suffix in ((10, "old"), (1, "new")):
+        evaluated_at = (now - timedelta(days=age_days)).isoformat()
+        for decision in ("passed", "rejected"):
+            record_filter_decision(
+                candidate_key=f"opportunity:{suffix}:{decision}",
+                decision=decision,
+                evaluated_at=evaluated_at,
+                **common,
+            )
+    db = get_db()
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.1 "
+        "WHERE horizon='1h'"
+    )
+
+    rows = filter_feedback_stats(
+        evaluated_since=(now - timedelta(days=7)).isoformat()
+    )
+    scoped = [
+        row for row in rows
+        if row["filter_name"] == "ranker_confidence_gate" and row["horizon"] == "1h"
+    ]
+
+    assert {row["decision"] for row in scoped} == {"passed", "rejected"}
+    assert all(row["n_total"] == 1 for row in scoped)
+
+
 def test_controller_uses_evidence_stage_instead_of_registry_stage(monkeypatch):
     from aletheia.analytics import filter_controller
 

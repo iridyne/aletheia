@@ -65,6 +65,23 @@ def test_build_report_shape(monkeypatch):
     assert report["verdict_counts"].get("tighten", 0) == 0
 
 
+def test_build_report_applies_requested_evidence_window(monkeypatch):
+    captured = {}
+
+    def fake_compute(min_samples=20, *, evaluated_since=None):
+        captured["evaluated_since"] = evaluated_since
+        return []
+
+    monkeypatch.setattr(fc, "compute_filter_feedback", fake_compute)
+
+    report = fc.build_filter_controller_report(hours=168)
+    rendered = fc.render_filter_controller_report(report)
+
+    assert captured["evaluated_since"] is not None
+    assert report["window"]["hours"] == 168
+    assert "Window: 168h" in rendered
+
+
 def test_insufficient_data_when_no_stats(monkeypatch):
     """No calibration data → every tunable family filter reports insufficient_data, no crash."""
     monkeypatch.setattr("aletheia.storage.repositories.calibration_stats", lambda: [])

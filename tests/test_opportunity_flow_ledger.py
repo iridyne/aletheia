@@ -418,6 +418,31 @@ def test_opportunity_flow_audit_filters_by_stage_verdict_and_symbol():
     assert "stage: debate_downgraded" in rendered
 
 
+def test_opportunity_flow_distinguishes_window_total_from_reconstruction_limit():
+    from aletheia.analytics.opportunity_flow import build_opportunity_flow_ledger, render_flow_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for idx in range(3):
+        _insert_opp(
+            db,
+            opp_id=f"opp-window-{idx}",
+            member_id=f"member-window-{idx}",
+            symbol="BTC/USDT",
+        )
+    db.commit()
+
+    report = build_opportunity_flow_ledger(hours=24, limit=2)
+    summary = report["summary"]
+    rendered = render_flow_audit(report)
+
+    assert summary["window_opportunities"] == 3
+    assert summary["reconstructed_opportunities"] == 2
+    assert summary["displayed_opportunities"] == 2
+    assert "Window opportunities: 3" in rendered
+    assert "Reconstructed: latest 2 (limit=2)" in rendered
+
+
 def test_opportunity_flow_success_path_reaches_closed_position():
     from aletheia.analytics.opportunity_flow import trace_opportunity_flow
     from aletheia.storage.sqlite import get_db

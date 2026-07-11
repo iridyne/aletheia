@@ -7,7 +7,17 @@
 
 ## Last Updated
 
-2026-07-11 (market-data collector coverage visibility)
+2026-07-11 (opportunity diagnostic evidence honesty)
+
+---
+
+## Recent Change (Opportunity diagnostic evidence honesty — 2026-07-11)
+
+机会审计不再把重建上限冒充窗口总样本：overview 分开报告窗口数据库总数、实际重建数和过滤后显示数。controller view 现在真正使用 `--hours`，按过滤决策发生时间截断近期证据；scheduler 的长期 shadow 观察仍使用全历史。
+
+sizing trace 的历史计划仓位改用提案自身 quantity×price，当前配置反算值单独标为 current-policy projection；实际成交优先按该提案 fills 汇总，只有没有 fill 的旧链路才回退 position。这样后续仓位变化不会倒灌到某一笔历史提案。没有修改 sizing 计算、Kelly、过滤参数、风险或订单。
+
+验证：机会/仓位/过滤证据聚焦回归 100 项通过，完整规则 625 项、全量 2746 项通过，0 项真实失败。
 
 ---
 

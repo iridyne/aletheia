@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from aletheia.analytics.filter_registry import (
@@ -73,12 +73,20 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def compute_filter_feedback(min_samples: int = _DEFAULT_MIN_SAMPLES) -> list[FilterRecommendation]:
+def compute_filter_feedback(
+    min_samples: int = _DEFAULT_MIN_SAMPLES,
+    *,
+    evaluated_since: str | None = None,
+) -> list[FilterRecommendation]:
     """Compare exact pass/reject cohorts without mutating any filter parameter."""
     try:
         from aletheia.analytics.filter_evidence import filter_feedback_stats
 
-        stats = filter_feedback_stats()
+        stats = (
+            filter_feedback_stats(evaluated_since=evaluated_since)
+            if evaluated_since
+            else filter_feedback_stats()
+        )
     except Exception as exc:
         logger.warning("filter_controller: filter evidence unavailable: %s", exc)
         stats = []
@@ -287,14 +295,28 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
 
 # ─── Report builder + renderer (for `ato opportunity audit --view controller`) ──
 
-def build_filter_controller_report(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str, Any]:
+def build_filter_controller_report(
+    min_samples: int = _DEFAULT_MIN_SAMPLES,
+    *,
+    hours: int | None = None,
+) -> dict[str, Any]:
     """Read-only report of current recommendations (does NOT persist)."""
-    recs = compute_filter_feedback(min_samples=min_samples)
+    hours_i = max(1, int(hours)) if hours is not None else None
+    evaluated_since = (
+        (datetime.now(timezone.utc) - timedelta(hours=hours_i)).isoformat()
+        if hours_i is not None
+        else None
+    )
+    recs = compute_filter_feedback(
+        min_samples=min_samples,
+        evaluated_since=evaluated_since,
+    )
     counts: dict[str, int] = {}
     for r in recs:
         counts[r.verdict] = counts.get(r.verdict, 0) + 1
     return {
         "generated_at": _now_iso(),
+        "window": {"hours": hours_i, "evaluated_since": evaluated_since},
         "min_samples": min_samples,
         "shadow_only": True,
         "signal_basis": "filter_specific_shrunk_net_expectancy",
@@ -322,6 +344,12 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
     lines.append("Filter Feedback Controller (SHADOW — observe only)")
     lines.append("")
     lines.append(f"Generated: {report.get('generated_at')}")
+    window = report.get("window") or {}
+    lines.append(
+        f"Window: {window.get('hours')}h"
+        if window.get("hours") is not None
+        else "Window: all persisted evidence"
+    )
     lines.append(f"Mode: shadow_only (no config changes) | "
                  f"min_samples gate: {report.get('min_samples')}")
     if report.get("signal_note"):

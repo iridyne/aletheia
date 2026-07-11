@@ -1,5 +1,15 @@
 # Development Log
 
+## 2026-07-11 — Opportunity diagnostic evidence honesty
+
+- Opportunity overview now distinguishes total rows in the requested window, rows reconstructed under the limit, and rows displayed after filters.
+- Controller view now applies `--hours` to `filter_decisions.evaluated_at`; scheduled long-running shadow reports remain all-history by default.
+- Sizing trace uses persisted proposal notional as historical intent and proposal-scoped fills as execution truth. Current-config reconstruction is explicitly a projection; mutable position state is only a legacy fallback.
+- No sizing, Kelly, filter, risk, execution, or order behavior changed.
+- Validation: focused opportunity/sizing/filter suites passed 100 tests; all specs 625 passed; full suite 2746 passed with 0 real failures.
+
+---
+
 ## 2026-07-11 — Market-data collector coverage visibility
 
 - Preserved the 40-second collector wall-clock budget and per-domain timeout caps while recording distinct success, partial, empty, failure, timeout, budget-skip, disabled, and unconfigured outcomes.

@@ -38,6 +38,11 @@
 14. **下一阶段**：筛选器达到 20/20 完整净样本后，才实验方向刹车、ranker 和 Kelly/sizing；未达到前只继续积累和核对证据。
 15. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
+机会诊断口径已补强：overview 的窗口总数与重建上限分离；controller 的 `--hours`
+真实截断证据；sizing trace 将历史 proposal/fill 事实与当前配置投影分开。后续离线实验只能
+使用明确时间窗、固定 filter_version、同方向+同市场+同 horizon 的净结果 cohort，不得拿
+当前策略反算值解释历史仓位。
+
 已经修好的供给/语义问题不要重复施工：OKX 永续成交额、分配前 market 去重、short funding 方向、PI bear_case、market-aware proposal price、pending shadow、因果漏斗和 doctor 市场覆盖。
 
 ---

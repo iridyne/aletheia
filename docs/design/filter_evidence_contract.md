@@ -178,12 +178,24 @@ Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候
 3. 已完成：open-position/cooldown/batch-limit 补位顺序与 shadow 真实 selected 语义。
 4. 已完成：固定时点净结果，shadow/control 新行的 instrument 和成本迁移。
 5. 已完成：Universe ticker/tradability 批次证据、allocation 对照、System Operator 和 Risk 统一索引。
+
 6. 已完成：只读 filter feedback 使用分层收缩净期望，未达样本门只显示证据不足。
 7. 已完成：ranker 历史漏斗和 proposal submission 原因直接来自已落库证据；无目标市场价格返回稳定失败原因，不再静默 `None`。
 8. 已完成：反馈统计按真实 stage 分组并展示事发参数；同名同参数关卡跨阶段不再因幂等键碰撞丢证据。
 9. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
 
-## 10. 完成标准
+## 10. 诊断时间窗口与 sizing 口径
+
+- `opportunity audit --hours N --view controller` 必须按
+  `filter_decisions.evaluated_at` 截断证据；交互式近期报告不得暗中回退成全历史。
+  scheduler 的长期 shadow controller 不传窗口，继续使用全历史积累。
+- Opportunity overview 同时报告窗口内数据库总数、实际重建数和过滤后显示数。
+  `--limit` 只是重建成本上限，不得冒充窗口样本量。
+- sizing trace 的历史计划值来自持久化 proposal notional，实际成交优先来自该
+  proposal 的 fills。按当前配置反算的值只能标为 current-policy projection，不得
+  描述成历史决策事实；position 仅是缺 fill 旧链路的 fallback。
+
+## 11. 完成标准
 
 - 相关关卡 pass/reject 都有真实事前记录，不从最终状态反推。
 - 无方向候选不会生成可学习净收益。

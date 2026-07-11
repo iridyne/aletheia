@@ -247,10 +247,16 @@ def decode_filter_decision_batch(payload: str) -> list[dict[str, Any]]:
     return decoded
 
 
-def filter_feedback_stats(shrinkage_k: float = 20.0) -> list[dict[str, Any]]:
+def filter_feedback_stats(
+    shrinkage_k: float = 20.0,
+    *,
+    evaluated_since: str | None = None,
+) -> list[dict[str, Any]]:
     """Return cost-aware pass/reject cells with a conservative shrunk mean."""
     from aletheia.storage.sqlite import get_db
 
+    time_clause = " AND datetime(fd.evaluated_at) >= datetime(?)" if evaluated_since else ""
+    params = (evaluated_since,) if evaluated_since else ()
     rows = get_db().execute(
         "SELECT fd.filter_name, fd.stage, fd.filter_version, "
         "fd.parameter_snapshot, fd.decision, "
@@ -268,11 +274,13 @@ def filter_feedback_stats(shrinkage_k: float = 20.0) -> list[dict[str, Any]]:
         "JOIN filter_candidate_outcomes fo "
         "  ON fo.outcome_candidate_key = fd.outcome_candidate_key "
         "WHERE fd.decision IN ('passed','rejected') "
+        f"{time_clause} "
         "GROUP BY fd.filter_name, fd.stage, fd.filter_version, "
         "fd.parameter_snapshot, fd.decision, "
         "COALESCE(fd.scanner_family, 'unknown'), fd.direction, fd.market_type, fo.horizon "
         "ORDER BY fd.filter_name, fd.stage, fd.filter_version, scanner_family, "
-        "fd.direction, fd.market_type, fo.horizon, fd.decision"
+        "fd.direction, fd.market_type, fo.horizon, fd.decision",
+        params,
     ).fetchall()
     raw = [dict(row) for row in rows]
     priors: dict[tuple, tuple[int, float]] = {}

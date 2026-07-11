@@ -216,7 +216,50 @@ def test_sizing_trace_marks_current_config_reconstruction(monkeypatch):
     report = build_sizing_trace_audit(hours=24, min_sample_size=1)
 
     assert "reconstructed_from_current_config" in report["traces"][0]["notes"]
-    assert report["traces"][0]["intended_position_size_usdt"] is not None
+    assert report["traces"][0]["intended_position_size_usdt"] == 25.0
+    assert report["traces"][0]["current_policy_projection_usdt"] is not None
+
+
+def test_sizing_trace_prefers_proposal_fills_over_later_position_size(monkeypatch):
+    from aletheia.analytics.sizing_trace import build_sizing_trace_audit
+    from aletheia.storage.sqlite import get_db
+
+    _patch_cfg(monkeypatch, _cfg(vol_enabled=False))
+    db = get_db()
+    _insert_proposal(db, 1, notional=25.0, conviction=70)
+    _insert_position(db, 1, notional=50.0)
+    db.execute(
+        "INSERT INTO fills (id, order_id, fill_price, fill_quantity, filled_at) "
+        "VALUES ('fill-sizing-1', 'order-sizing-1', 100, 0.25, ?)",
+        (_iso(),),
+    )
+    db.commit()
+
+    report = build_sizing_trace_audit(hours=24, min_sample_size=1)
+
+    trace = report["traces"][0]
+    assert trace["proposal_notional_usdt"] == 25.0
+    assert trace["executed_notional_usdt"] == 25.0
+
+
+def test_sizing_trace_render_labels_current_config_projection(monkeypatch):
+    from aletheia.analytics.sizing_trace import (
+        build_sizing_trace_audit,
+        render_sizing_trace_audit,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    _patch_cfg(monkeypatch, _cfg(default_notional=100.0, vol_enabled=False))
+    db = get_db()
+    _insert_proposal(db, 1, notional=25.0, conviction=70)
+    _insert_position(db, 1, notional=25.0)
+    db.commit()
+
+    rendered = render_sizing_trace_audit(build_sizing_trace_audit(hours=24, min_sample_size=1))
+
+    assert "median_proposal_notional: 25.0U" in rendered
+    assert "median_current_policy_projection:" in rendered
+    assert "Current-policy projection bottleneck:" in rendered
 
 
 def test_sizing_trace_cli_outputs_human_and_json_reports(monkeypatch):

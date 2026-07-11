@@ -104,15 +104,16 @@ def render_sizing_trace_audit(report: dict) -> str:
     lines.extend([
         "Summary:",
         f"  sample_size: {summary.get('sample_size', 0)}",
-        f"  median_intended_notional: {_fmt_usdt(summary.get('median_intended_notional_usdt'))}",
+        f"  median_proposal_notional: {_fmt_usdt(summary.get('median_intended_notional_usdt'))}",
         f"  median_executed_notional: {_fmt_usdt(summary.get('median_executed_notional_usdt'))}",
+        f"  median_current_policy_projection: {_fmt_usdt(summary.get('median_current_policy_projection_usdt'))}",
         f"  median_conviction: {_fmt_num(summary.get('median_conviction'))}",
         f"  median_leverage: {_fmt_num(summary.get('median_leverage'))}",
         "",
     ])
     bottleneck = report.get("main_sizing_bottleneck") or {}
     lines.extend([
-        "Main sizing bottleneck:",
+        "Current-policy projection bottleneck:",
         f"  {bottleneck.get('reason', 'insufficient_data')}",
         "",
         "Reason:",
@@ -129,8 +130,9 @@ def render_sizing_trace_audit(report: dict) -> str:
                 "  "
                 f"{trace.get('proposal_id')} {trace.get('symbol')} {trace.get('direction')} "
                 f"reason={trace.get('main_reason')} "
-                f"intended={_fmt_usdt(trace.get('intended_position_size_usdt'))} "
-                f"executed={_fmt_usdt(trace.get('executed_notional_usdt'))}"
+                f"proposal={_fmt_usdt(trace.get('proposal_notional_usdt'))} "
+                f"executed={_fmt_usdt(trace.get('executed_notional_usdt'))} "
+                f"current_policy={_fmt_usdt(trace.get('current_policy_projection_usdt'))}"
             )
     return "\n".join(lines)
 
@@ -157,6 +159,8 @@ def _base_report(generated_at: str, window: dict) -> dict:
             "median_intended_notional_usdt": None,
             "avg_executed_notional_usdt": None,
             "median_executed_notional_usdt": None,
+            "avg_current_policy_projection_usdt": None,
+            "median_current_policy_projection_usdt": None,
             "avg_conviction": None,
             "median_conviction": None,
             "avg_leverage": None,
@@ -212,6 +216,7 @@ def _build_traces(db, cutoff: str, cfg) -> list[dict]:
             executed_notional=executed_notional,
         )
         notes.append("reconstructed_from_current_config")
+        notes.append("current_policy_projection_not_historical_intent")
         traces.append({
             "proposal_id": proposal["id"],
             "position_id": position.get("id") if position else None,
@@ -226,8 +231,11 @@ def _build_traces(db, cutoff: str, cfg) -> list[dict]:
             "atr_pct": atr_pct,
             "raw_vol_size": sizing["raw_vol_size"],
             "kelly_cap": sizing["kelly_cap"],
-            "intended_position_size_usdt": sizing["intended_position_size_usdt"],
+            # Compatibility field now carries the persisted historical proposal
+            # notional. The current config reconstruction has its own honest name.
+            "intended_position_size_usdt": proposal_notional,
             "proposal_notional_usdt": proposal_notional,
+            "current_policy_projection_usdt": sizing["intended_position_size_usdt"],
             "executed_notional_usdt": executed_notional,
             "leverage": leverage,
             "risk_cap_hit": risk,
@@ -362,18 +370,21 @@ def _effective_kelly(base_kelly: float, paper_trade_count: int) -> float:
 
 
 def _executed_notional(db, proposal_id: str, position: dict | None) -> float | None:
+    # Fills are immutable and proposal-scoped. A position can later be resized,
+    # so it is only a fallback for legacy paths that never persisted fills.
+    if _table_exists(db, "fills") and _table_exists(db, "orders"):
+        rows = db.execute(
+            "SELECT f.fill_price, f.fill_quantity FROM fills f "
+            "JOIN orders o ON o.id = f.order_id "
+            "WHERE o.proposal_id = ?",
+            (proposal_id,),
+        ).fetchall()
+        total = sum(float(r["fill_price"] or 0) * float(r["fill_quantity"] or 0) for r in rows)
+        if total > 0:
+            return _round(total)
     if position:
         return _notional(position.get("quantity"), position.get("entry_price"))
-    if not _table_exists(db, "fills") or not _table_exists(db, "orders"):
-        return None
-    rows = db.execute(
-        "SELECT f.fill_price, f.fill_quantity FROM fills f "
-        "JOIN orders o ON o.id = f.order_id "
-        "WHERE o.proposal_id = ?",
-        (proposal_id,),
-    ).fetchall()
-    total = sum(float(r["fill_price"] or 0) * float(r["fill_quantity"] or 0) for r in rows)
-    return _round(total) if total > 0 else None
+    return None
 
 
 def _risk_cap_hit(db, proposal_id: str, proposal_notional: float | None, cfg) -> bool | None:
@@ -434,8 +445,9 @@ def _reason(
 
 
 def _summary(traces: list[dict]) -> dict:
-    intended = [t["intended_position_size_usdt"] for t in traces if t.get("intended_position_size_usdt") is not None]
+    intended = [t["proposal_notional_usdt"] for t in traces if t.get("proposal_notional_usdt") is not None]
     executed = [t["executed_notional_usdt"] for t in traces if t.get("executed_notional_usdt") is not None]
+    projected = [t["current_policy_projection_usdt"] for t in traces if t.get("current_policy_projection_usdt") is not None]
     convictions = [t["conviction"] for t in traces if t.get("conviction") is not None]
     leverages = [t["leverage"] for t in traces if t.get("leverage") is not None]
     return {
@@ -444,6 +456,8 @@ def _summary(traces: list[dict]) -> dict:
         "median_intended_notional_usdt": _stat_median(intended),
         "avg_executed_notional_usdt": _stat_mean(executed),
         "median_executed_notional_usdt": _stat_median(executed),
+        "avg_current_policy_projection_usdt": _stat_mean(projected),
+        "median_current_policy_projection_usdt": _stat_median(projected),
         "avg_conviction": _stat_mean(convictions),
         "median_conviction": _stat_median(convictions),
         "avg_leverage": _stat_mean(leverages),
@@ -501,8 +515,10 @@ def _main_sizing_bottleneck(report: dict, min_sample_size: int) -> dict:
     return _bottleneck(
         top["reason"],
         severity,
-        f"{top['evidence']} Median executed notional={_fmt_usdt(median_exec)}.",
+        f"Current config projection only, not historical intent. {top['evidence']} "
+        f"Median executed notional={_fmt_usdt(median_exec)}.",
         _next_action(top["reason"]),
+        evidence_basis="current_config_projection",
     )
 
 
@@ -518,12 +534,20 @@ def _next_action(reason: str) -> str:
     }.get(reason, "Review traces before changing sizing, leverage, Kelly, or persona settings.")
 
 
-def _bottleneck(reason: str, severity: str, summary: str, next_action: str) -> dict:
+def _bottleneck(
+    reason: str,
+    severity: str,
+    summary: str,
+    next_action: str,
+    *,
+    evidence_basis: str = "persisted_or_insufficient",
+) -> dict:
     return {
         "reason": reason,
         "severity": severity,
         "summary": summary,
         "next_action": next_action,
+        "evidence_basis": evidence_basis,
     }
 
 

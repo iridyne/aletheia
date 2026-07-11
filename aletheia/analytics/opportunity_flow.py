@@ -54,6 +54,9 @@ def build_opportunity_flow_ledger(
     context = _context_from_audits(integrated)
     search_limit = _search_limit(limit_i, filters)
     opportunities = _recent_opportunities(db, cutoff, search_limit, symbol_filter=filters.get("symbol"))
+    window_opportunities = _count_recent_opportunities(
+        db, cutoff, symbol_filter=filters.get("symbol")
+    )
     unfiltered_records = [_build_record(db, opp, context) for opp in opportunities]
     records = _filter_records(unfiltered_records, filters, limit_i)
 
@@ -74,6 +77,10 @@ def build_opportunity_flow_ledger(
             "Missing legacy evidence is reported as insufficient_data instead of reconstructed after the fact.",
         ],
         "summary": {
+            "window_opportunities": window_opportunities,
+            "reconstructed_opportunities": len(unfiltered_records),
+            "displayed_opportunities": len(records),
+            "reconstruction_limit": limit_i,
             "total_opportunities": len(records),
             "source_opportunities": len(unfiltered_records),
             "final_state_counts": dict(final_states),
@@ -120,6 +127,10 @@ def _empty_report(
             "Missing legacy evidence is reported as insufficient_data instead of reconstructed after the fact.",
         ],
         "summary": {
+            "window_opportunities": 0,
+            "reconstructed_opportunities": 0,
+            "displayed_opportunities": 0,
+            "reconstruction_limit": 0,
             "total_opportunities": 0,
             "source_opportunities": 0,
             "final_state_counts": {},
@@ -157,7 +168,10 @@ def render_flow_audit(report: dict[str, Any]) -> str:
         "Opportunity Flow Ledger",
         "",
         f"Window: {window.get('hours', '?')}h",
-        f"Opportunities: {summary.get('total_opportunities', 0)}",
+        f"Window opportunities: {summary.get('window_opportunities', summary.get('source_opportunities', 0))}",
+        f"Reconstructed: latest {summary.get('reconstructed_opportunities', summary.get('source_opportunities', 0))} "
+        f"(limit={summary.get('reconstruction_limit', summary.get('total_opportunities', 0))})",
+        f"Displayed after filters: {summary.get('displayed_opportunities', summary.get('total_opportunities', 0))}",
         "",
     ]
     filters = report.get("filters") or {}
@@ -520,6 +534,26 @@ def _recent_opportunities(
         tuple(params),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _count_recent_opportunities(
+    db,
+    cutoff: str,
+    *,
+    symbol_filter: str | None = None,
+) -> int:
+    if not _table_exists(db, "opportunities"):
+        return 0
+    where = ["datetime(created_at) >= datetime(?)"]
+    params: list[Any] = [cutoff]
+    if symbol_filter:
+        where.append("upper(symbol) = ?")
+        params.append(symbol_filter)
+    row = db.execute(
+        f"SELECT COUNT(*) AS n FROM opportunities WHERE {' AND '.join(where)}",
+        tuple(params),
+    ).fetchone()
+    return int(row["n"] if row else 0)
 
 
 def _opportunity_by_id(db, opportunity_id: str) -> dict[str, Any] | None:

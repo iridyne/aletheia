@@ -126,7 +126,7 @@ def _build_audit_view(
             render_filter_controller_report,
         )
 
-        report = build_filter_controller_report()
+        report = build_filter_controller_report(hours=hours)
         return report, render_filter_controller_report(report)
     days = max(1, (max(1, int(hours or 24)) + 23) // 24)
     if clean_view == "alpha":
