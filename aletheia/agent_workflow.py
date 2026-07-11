@@ -227,11 +227,18 @@ def bootstrap(root: Path | None = None) -> dict[str, Any]:
     branch_tasks = [task for _, task in load_tasks(root) if task.get("ownership", {}).get("branch") == branch]
     matches = [task for task in branch_tasks if task.get("status") == "in_progress"]
     selected = matches[0] if len(matches) == 1 else None
+    task_source = "active_branch" if selected else None
     if selected is None and not matches:
         completed = [task for task in branch_tasks if task.get("status") in {"done", "cancelled"}]
         if completed:
             selected = max(completed, key=lambda task: str(task.get("updated_at", "")))
-    return {"repository": str(root), "branch": branch, "head": head, "dirty": bool(porcelain), "task": selected, "task_match_count": len(matches), "findings": [f.__dict__ for f in findings], "runtime_next_command": "uv run aletheia doctor"}
+            task_source = "branch_history"
+        elif not branch_tasks:
+            completed = [task for _, task in load_tasks(root) if task.get("status") in {"done", "cancelled"}]
+            if completed:
+                selected = max(completed, key=lambda task: str(task.get("updated_at", "")))
+                task_source = "global_history"
+    return {"repository": str(root), "branch": branch, "head": head, "dirty": bool(porcelain), "task": selected, "task_source": task_source, "task_match_count": len(matches), "findings": [f.__dict__ for f in findings], "runtime_next_command": "uv run aletheia doctor"}
 
 
 def recovery_test(root: Path | None = None) -> dict[str, Any]:
@@ -247,7 +254,8 @@ def render_bootstrap(payload: dict[str, Any], *, json_out: bool = False) -> str:
     task = payload["task"]
     lines = ["ALETHEIA AGENT BOOTSTRAP", f"Branch: {payload['branch']}", f"HEAD: {payload['head']}", f"Workspace: {'dirty' if payload['dirty'] else 'clean'}"]
     if task:
-        lines += [f"Task: {task['id']} — {task['title']}", f"Next: {task['next_action']['command_key']} — {task['next_action']['reason']}"]
+        prefix = "History (no active task): " if payload.get("task_source") == "global_history" else "Task: "
+        lines += [f"{prefix}{task['id']} — {task['title']}", f"Next: {task['next_action']['command_key']} — {task['next_action']['reason']}"]
     else:
         lines.append("Task: no unique in-progress task claims this branch; inspect .agent/tasks before editing.")
     for finding in payload["findings"]:
