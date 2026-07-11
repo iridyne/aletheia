@@ -149,7 +149,7 @@ persisted in `learning_job_health`.
 - **Outputs**: signal_pending PiDecisions (Phase 4a: System Operator is the **sole** proposal submitter — paper_trader no longer creates proposals directly)
 - **Side effects**: Writes signal_pending decisions for System Operator consumption. RuleSet exit auto-close was removed with the rules engine; paper_trader must not close positions directly.
 - **Key invariant**: Never calls LLM; never executes orders directly; never submits proposals (signal collector only)
-- **Learning authority**: factor history is exact-scope, clean, diagnostic evidence only. Ranker score/filter influence stays at the static baseline unless a durable prospective treatment/control verdict has enough linked net outcomes; control candidates retain the same non-Learning safety and guard checks.
+- **Learning authority**: factor history and raw case/memo scores are diagnostic proposals only. Each ranker component has a separate candidate-linked exposure; score/filter influence stays at the static baseline unless a durable prospective treatment/control verdict has enough linked net outcomes. Control candidates retain the same venue, eligibility, static-risk-flag, learned-guard, and downstream Risk Engine checks.
 
 #### System Operator — Trading Decision Daemon (pi_trading_decision / pi_daemon)
 

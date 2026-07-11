@@ -786,6 +786,9 @@ Exit gate: repeated sources are idempotent and every future influence has a plac
 
 ### Phase 2 — Producer Hygiene And Scheduler Continuity
 
+Current status (2026-07-12): implemented for exact-scope reviewer gating, shared autonomous
+job control, durable catch-up watermarks, backlog health, and promotion refreeze.
+
 Goal: stop noisy production and stalled review.
 
 Changes:
@@ -803,6 +806,11 @@ Exit gate: no duplicate hypothesis from retries/restarts; missed job catches up 
 Learning actually disables autonomous mutation.
 
 ### Phase 3 — Universe, Ranker, And Guard Prospective Experiments
+
+Current status (2026-07-12): universe/factor/ranker numeric consumers now create separate
+candidate-linked prospective exposures and restore their static baselines without authority.
+Automatic lesson blocks route to non-blocking guard shadow candidates. Full blocked-candidate
+settlement and the aggregate promotion/demotion evaluator remain later work.
 
 Goal: prove the already-active low-risk feedback paths.
 
@@ -848,6 +856,11 @@ Exit gate: observer and Operator effects are queryable separately; exact bundle 
 control comparison exist for every opportunity/decision; no channel double-counts one close.
 
 ### Phase 5 — Sizing Shadow Learner
+
+Current status (2026-07-12): the System Operator sizing path computes and records static,
+learned-proposal, and actual notional; missing causal links, missing authority, no proposed delta,
+or adapter failure returns the static value. Promotion evaluation and liquidity-aware sizing
+counterfactual reporting remain later work.
 
 Goal: activate one bounded learned parameter only with adequate attribution.
 

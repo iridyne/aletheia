@@ -78,7 +78,9 @@
 |------|---------|---------|------|
 | knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | retrieve_lessons() → LLM prompts (市观/paper_trader_ranker/trading_decision(PI)) | ✅ |
 | trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | active guard → paper_trader_ranker；automatic lesson block → shadow-only candidate（历史自动晋级跳过） | ✅ 不伪装成 Risk Engine lesson |
-| ps_lessons (LessonStore) | dreaming_agent → lesson_reviewer | trading_context Layer3 → System Operator prompt → risk engine #15(applied, non-expired) | ✅ 双轨:**影响决策**但不进 knowledge_fts(有意设计,见 knowledge_contract §6.A1) |
+| ps_lessons (LessonStore) | dreaming_agent → lesson_reviewer | trading_context Layer3 → System Operator prompt → risk engine #15(applied, non-expired) | ✅ 晋级/推翻只认同标的、同方向、同 scanner 的干净净收益；全局样本只作背景，不能代替窄范围门槛 |
+| ranker case/memo Learning | trade_case_study + latest trading_memo | paper_trader_ranker score | ✅ 原始历史分只作候选；无合格前瞻对照结论时实际增量固定为 0，并记录独立路径证据 |
+| persona sizing Learning | clean realized regime cohort + causal opportunity outcome | trading/sizing → System Operator proposal rationale | ✅ 同时记录静态/学习建议/实际金额；无因果键、无授权或记录故障均回到静态金额 |
 | ps_skills (SkillStore) | lesson_reviewer(applied lesson→draft skill), persistence API | persistence API / manual review | ✅ draft producer 已接入;不会自动 activate(见 knowledge_contract §6.A2) |
 
 ---

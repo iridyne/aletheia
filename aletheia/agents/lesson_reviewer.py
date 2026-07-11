@@ -12,8 +12,9 @@ is a high-dimensional, evidence-based, fully-automatic, *overturnable* reviewer:
   Step A (overturn): re-judge every already-accepted lesson against fresh settled
           evidence; demote (→ rejected) any the current evidence no longer
           supports. Later evidence can always overturn an earlier acceptance.
-  Step B (promote):  judge each proposed lesson against the settled outcome record
-          (system-wide aggregate + symbol-specific when the lesson carries one).
+  Step B (promote):  judge each proposed lesson against clean, cost-aware settled
+          outcomes matching every populated symbol/direction/scanner dimension.
+          System-wide aggregates are context only and never satisfy the gate.
           A deterministic floor (insufficient settled data → defer) prevents
           rubber-stamping in a data vacuum; the LLM then accepts only what the
           numbers support, rejects what they contradict, defers the ambiguous.
@@ -49,56 +50,76 @@ _DEMOTE_MIN_SAMPLES = 10
 _DEMOTE_WIN_RATE = 35.0
 
 _SYMBOL_RE = re.compile(r"\b([A-Z0-9]{2,12}/USDT)\b")
+_LONG_RE = re.compile(r"\blongs?\b", re.IGNORECASE)
+_SHORT_RE = re.compile(r"\bshorts?\b", re.IGNORECASE)
 
 
 def _fetch_evidence(lesson) -> dict:
     """Build the settled-outcome evidence pack for a lesson.
 
-    System-wide aggregate over the last 30 days at the 24h horizon, plus a
-    symbol-specific slice when a symbol can be recovered from the lesson's
-    recommendation/evidence JSON or its summary text. All counts come from
-    universe_forward_outcomes (status='settled').
+    Global figures are context only. Eligibility is decided exclusively by the
+    clean, cost-aware 24h outcomes matching every populated scope dimension that
+    can be recovered deterministically from the lesson.
     """
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
 
     def _agg(where_extra: str, params: tuple) -> dict:
-        row = db.execute(
-            "SELECT COUNT(*) AS total, "
-            "  SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0) "
-            "          THEN 1 ELSE 0 END) AS wins, "
-            "  AVG(net_return_pct) AS avg_return "
+        from aletheia.learning.outcomes import assess_candidate_outcome
+
+        rows = db.execute(
+            "SELECT id,outcome_candidate_key,status,horizon,entry_ts,direction,"
+            "net_return_pct,min_tradable_edge_pct,cost_model_version "
             "FROM universe_forward_outcomes "
             "WHERE status='settled' AND horizon='24h' "
-            "  AND net_return_pct IS NOT NULL "
-            "  AND settled_at >= datetime('now','-30 days') " + where_extra,
+            "AND settled_at >= datetime('now','-30 days') " + where_extra,
             params,
-        ).fetchone()
-        total = row["total"] or 0
-        wins = row["wins"] or 0
+        ).fetchall()
+        eligible_by_outcome: dict[str, tuple[dict, float]] = {}
+        for raw in rows:
+            row = dict(raw)
+            assessed = assess_candidate_outcome(row)
+            if (
+                not assessed.eligible
+                or assessed.net_return_pct is None
+                or not assessed.outcome_key
+            ):
+                continue
+            eligible_by_outcome.setdefault(
+                assessed.outcome_key, (row, assessed.net_return_pct),
+            )
+        eligible = list(eligible_by_outcome.values())
+        total = len(eligible)
+        wins = sum(
+            1 for row, net in eligible
+            if net > float(row.get("min_tradable_edge_pct") or 0.0)
+        )
+        avg_return = (
+            sum(net for _, net in eligible) / total if total else None
+        )
         return {
             "total": total,
             "wins": wins,
             "win_rate": round(100.0 * wins / total, 1) if total else None,
-            "avg_return": round(row["avg_return"], 3) if row["avg_return"] is not None else None,
+            "avg_return": round(avg_return, 3) if avg_return is not None else None,
         }
 
     evidence = {"aggregate": _agg("", ())}
 
+    def _json_dict(raw: str | None) -> dict:
+        try:
+            value = json.loads(raw or "{}")
+            return value if isinstance(value, dict) else {}
+        except (ValueError, TypeError):
+            return {}
+
+    rec = _json_dict(lesson.recommendation_json)
+    ev = _json_dict(lesson.evidence_json)
+
     # Recover a symbol if the lesson carries one.
     symbol = None
-    try:
-        rec = json.loads(lesson.recommendation_json or "{}")
-        symbol = rec.get("symbol")
-    except (ValueError, TypeError):
-        rec = {}
-    if not symbol:
-        try:
-            ev = json.loads(lesson.evidence_json or "{}")
-            symbol = ev.get("symbol")
-        except (ValueError, TypeError):
-            pass
+    symbol = rec.get("symbol") or ev.get("symbol")
     if not symbol and lesson.summary:
         m = _SYMBOL_RE.search(lesson.summary)
         if m:
@@ -112,16 +133,49 @@ def _fetch_evidence(lesson) -> dict:
     # scanner-family's OWN settled outcomes, not just the global/symbol aggregates —
     # otherwise a family-specific block is approved on evidence that never looked at
     # that family. universe_forward_outcomes carries scanner_family.
-    scanner = (rec or {}).get("scanner")
+    scanner = rec.get("scanner") or rec.get("scanner_family")
+    scanner = scanner or ev.get("scanner") or ev.get("scanner_family")
     if not scanner:
-        try:
-            ev = json.loads(lesson.evidence_json or "{}")
-            scanner = ev.get("scanner") or ev.get("scanner_family")
-        except (ValueError, TypeError):
-            pass  # intentional: missing/malformed evidence_json -> no scanner slice
+        families = ev.get("scanner_families")
+        if isinstance(families, list) and len(families) == 1:
+            scanner = families[0]
     evidence["scanner_family"] = scanner
     if scanner:
         evidence["scanner_family_stats"] = _agg("AND scanner_family = ?", (scanner,))
+
+    direction = rec.get("direction") or ev.get("direction")
+    if not direction and lesson.summary:
+        if _LONG_RE.search(lesson.summary):
+            direction = "long"
+        elif _SHORT_RE.search(lesson.summary):
+            direction = "short"
+    direction = str(direction).lower() if direction else None
+    if direction not in {"long", "short"}:
+        direction = None
+    evidence["direction"] = direction
+    if direction:
+        evidence["direction_stats"] = _agg("AND direction = ?", (direction,))
+
+    scope_clauses: list[str] = []
+    scope_params: list[str] = []
+    if symbol:
+        scope_clauses.append("AND symbol = ?")
+        scope_params.append(symbol)
+    if direction:
+        scope_clauses.append("AND direction = ?")
+        scope_params.append(direction)
+    if scanner:
+        scope_clauses.append("AND scanner_family = ?")
+        scope_params.append(scanner)
+    evidence["exact_scope_dimensions"] = {
+        key: value for key, value in {
+            "symbol": symbol, "direction": direction, "scanner_family": scanner,
+        }.items() if value
+    }
+    evidence["exact_scope"] = (
+        _agg(" ".join(scope_clauses), tuple(scope_params))
+        if scope_clauses else {"total": 0, "wins": 0, "win_rate": None, "avg_return": None}
+    )
     return evidence
 
 
@@ -143,6 +197,18 @@ def _evidence_block(evidence: dict) -> str:
             f"Scanner family {evidence['scanner_family']}: total: {sf.get('total')}, "
             f"win_rate: {sf.get('win_rate')}%, avg_return: {sf.get('avg_return')}%"
         )
+    if evidence.get("direction"):
+        ds = evidence.get("direction_stats") or {}
+        lines.append(
+            f"Direction {evidence['direction']}: total: {ds.get('total')}, "
+            f"win_rate: {ds.get('win_rate')}%, avg_return: {ds.get('avg_return')}%"
+        )
+    exact = evidence.get("exact_scope") or {}
+    lines.append(
+        f"Exact populated scope {evidence.get('exact_scope_dimensions') or {}}: "
+        f"total: {exact.get('total')}, win_rate: {exact.get('win_rate')}%, "
+        f"avg_return: {exact.get('avg_return')}%"
+    )
     return "\n".join(lines)
 
 
@@ -185,11 +251,16 @@ async def _judge(lesson, evidence: dict, run_id: str | None) -> tuple[str, str]:
 
 
 def _deterministic_demote(evidence: dict) -> bool:
-    """A symbol-specific basis that has clearly failed demotes regardless of LLM."""
-    s = evidence.get("symbol_stats")
+    """A clearly failed exact-scope basis demotes regardless of LLM."""
+    s = evidence.get("exact_scope")
     if not s or not s.get("total"):
         return False
-    return s["total"] >= _DEMOTE_MIN_SAMPLES and (s.get("win_rate") or 100.0) < _DEMOTE_WIN_RATE
+    win_rate = s.get("win_rate")
+    return (
+        s["total"] >= _DEMOTE_MIN_SAMPLES
+        and win_rate is not None
+        and win_rate < _DEMOTE_WIN_RATE
+    )
 
 
 @register_agent("lesson_reviewer")
@@ -225,6 +296,8 @@ async def run_lesson_reviewer(
             outputs.append(f"demoted:{lesson.lesson_id}")
             log_tool(run_id, "demote_lesson", "observe", True, output=lesson.lesson_id)
             continue
+        if evidence["exact_scope"]["total"] < _MIN_SETTLED_EVIDENCE:
+            continue
         decision, reason = await _judge(lesson, evidence, run_id)
         if decision == "reject":
             store.reject(lesson.lesson_id)
@@ -247,7 +320,7 @@ async def run_lesson_reviewer(
             deferred += 1
             continue
         # Deterministic floor: no data → defer (never rubber-stamp in a vacuum).
-        if evidence["aggregate"]["total"] < _MIN_SETTLED_EVIDENCE:
+        if evidence["exact_scope"]["total"] < _MIN_SETTLED_EVIDENCE:
             deferred += 1
             continue
         decision, reason = await _judge(lesson, evidence, run_id)

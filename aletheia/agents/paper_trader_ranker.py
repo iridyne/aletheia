@@ -335,9 +335,11 @@ def _evaluate_candidate(
     )
 
     # Compute trade score
+    learning_trace: list[dict] = []
     trade_score = _compute_trade_score(
         opp, universe_member, factor_signal, confidence, strategy_evidence,
         strategy_has_ruleset=strategy_has_ruleset, direction=direction,
+        learning_trace=learning_trace,
     )
 
     # Apply guard penalty
@@ -356,6 +358,7 @@ def _evaluate_candidate(
         strategy_evidence=strategy_evidence,
         guard_eval=guard_eval,
         filter_trace=filter_trace,
+        learning_trace=learning_trace,
     )
 
 
@@ -410,6 +413,7 @@ def _compute_trade_score(
     *,
     strategy_has_ruleset: bool = False,
     direction: str | None = None,
+    learning_trace: list[dict] | None = None,
 ) -> float:
     """Compute deterministic trade quality score."""
     score = 0.0
@@ -474,8 +478,23 @@ def _compute_trade_score(
     # Position C (2026-07-02): the "+15 executable RuleSet bonus" was removed with
     # the rules engine — there are no RuleSets to prefer.
 
-    # P1: Lesson-aware scoring — penalty for symbol+direction with negative experience
-    score += _lesson_penalty(opp.get("symbol"), direction, opp.get("scanner_family"))
+    # Historical case/memo statistics are proposed treatments, not authority. They
+    # remain at the static zero-delta baseline until a prospective paper experiment
+    # has enough causally linked treatment/control outcomes and a positive verdict.
+    case_delta = _lesson_penalty(opp.get("symbol"), direction, opp.get("scanner_family"))
+    score += _authorized_ranker_delta(
+        path_id="ranker_case_score",
+        proposed_delta=case_delta,
+        opp=opp,
+        direction=direction,
+        scope={
+            "symbol": opp.get("symbol"),
+            "direction": direction,
+            "scanner_family": opp.get("scanner_family"),
+        },
+        source_cohort="trade_case_study:v1",
+        learning_trace=learning_trace,
+    )
 
     # Risk flag penalties
     risk_flags = []
@@ -499,10 +518,94 @@ def _compute_trade_score(
         else:
             score -= 5
 
-    # Trading Memo scoring — historical performance insights as soft preference
-    score += _memo_scoring(opp.get("symbol"), direction, regime)
+    memo_delta = _memo_scoring(opp.get("symbol"), direction, regime)
+    score += _authorized_ranker_delta(
+        path_id="ranker_memo_score",
+        proposed_delta=memo_delta,
+        opp=opp,
+        direction=direction,
+        scope={
+            "symbol": opp.get("symbol"),
+            "direction": direction,
+            "regime": regime.state,
+        },
+        source_cohort="latest_trading_memo:v1",
+        learning_trace=learning_trace,
+    )
 
     return round(score, 2)
+
+
+def _authorized_ranker_delta(
+    *,
+    path_id: str,
+    proposed_delta: float,
+    opp: dict,
+    direction: str | None,
+    scope: dict,
+    source_cohort: str,
+    learning_trace: list[dict] | None,
+) -> float:
+    """Return a prospective-authorized score delta, otherwise the static zero.
+
+    A fixed-horizon key is mandatory for a writable/creditable exposure. Legacy or
+    non-Universe opportunities therefore fail closed instead of creating an
+    unresolvable experiment row.
+    """
+    try:
+        meta = _json.loads(opp.get("metadata") or "{}")
+    except (TypeError, ValueError):
+        meta = {}
+    learning_key = meta.get("learning_candidate_key")
+    opportunity_id = opp.get("id")
+    candidate_key = (
+        f"opportunity:{opportunity_id}"
+        if opportunity_id and learning_key else None
+    )
+    outcome_key = f"{learning_key}:4h" if learning_key else None
+
+    from aletheia.learning.experiments import InfluenceDecision, apply_numeric_treatment
+
+    if abs(float(proposed_delta)) < 1e-9:
+        decision = InfluenceDecision(0.0, False, "baseline", "no_proposed_delta")
+    else:
+        try:
+            decision = apply_numeric_treatment(
+                path_id=path_id,
+                scope={k: v for k, v in scope.items() if v is not None},
+                action={"score_component": path_id, "method": "bounded_soft_delta"},
+                source_cohort=source_cohort,
+                target_horizon="4h",
+                candidate_key=candidate_key,
+                baseline=0.0,
+                treatment=float(proposed_delta),
+                consumer="paper_trader_ranker",
+                consumer_stage="score",
+                outcome_candidate_key=outcome_key,
+                opportunity_id=opportunity_id,
+                manifest={
+                    "proposed_delta": float(proposed_delta),
+                    "symbol": opp.get("symbol"),
+                    "direction": direction,
+                },
+            )
+        except Exception as exc:
+            logger.warning("Ranker Learning adapter failed closed for %s: %s", path_id, exc)
+            decision = InfluenceDecision(0.0, False, "unavailable", "adapter_error")
+    if learning_trace is not None:
+        learning_trace.append({
+            "path_id": path_id,
+            "baseline_delta": 0.0,
+            "proposed_delta": float(proposed_delta),
+            "actual_delta": float(decision.value),
+            "authority_applied": decision.applied,
+            "assignment": decision.assignment,
+            "reason": decision.reason,
+            "hypothesis_id": decision.hypothesis_id,
+            "experiment_id": decision.experiment_id,
+            "exposure_id": decision.exposure_id,
+        })
+    return float(decision.value)
 
 
 def _lesson_penalty(symbol: str | None, direction: str | None, scanner_family: str | None) -> float:
@@ -689,8 +792,13 @@ def _make_candidate(
     strategy_evidence: dict | None = None,
     guard_eval=None,
     filter_trace: list[dict] | None = None,
+    learning_trace: list[dict] | None = None,
 ) -> dict:
     """Assemble a candidate dict."""
+    try:
+        opportunity_meta = _json.loads(opp.get("metadata") or "{}")
+    except (TypeError, ValueError):
+        opportunity_meta = {}
     return {
         # Opportunity fields
         "opportunity_id": opp.get("id"),
@@ -706,6 +814,7 @@ def _make_candidate(
         "scanner_family": opp.get("scanner_family"),
         "universe_member_id": opp.get("universe_member_id"),
         "universe_snapshot_id": opp.get("universe_snapshot_id"),
+        "learning_candidate_key": opportunity_meta.get("learning_candidate_key"),
         "linked_strategy_id": opp.get("linked_strategy_id"),
         # Resolved fields
         "direction": direction,
@@ -744,6 +853,7 @@ def _make_candidate(
         "trade_score": trade_score,
         "skip_reason": skip_reason,
         "filter_trace": list(filter_trace or []),
+        "learning_score_trace": list(learning_trace or []),
     }
 
 

@@ -82,6 +82,15 @@ def test_evidence_block_includes_scanner_family():
     assert "30.0" in block
 
 
+def test_lesson_reviewer_zero_win_rate_demotes_exact_scope():
+    """A literal 0% win rate must not be mistaken for a missing value."""
+    from aletheia.agents.lesson_reviewer import _deterministic_demote
+
+    assert _deterministic_demote({
+        "exact_scope": {"total": 10, "win_rate": 0.0, "avg_return": -2.0},
+    }) is True
+
+
 def _reviewer_db(tmp_path, monkeypatch):
     import sqlite3
     import aletheia.config.loader as loader
@@ -125,14 +134,14 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
         ret = 2.0 if i < 3 else -2.0
         db.execute(
             "INSERT INTO universe_forward_outcomes "
-            "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
+            "(id, outcome_candidate_key, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
             " entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
             " gross_return_pct, directional_return_pct, net_return_pct, "
             " min_tradable_edge_pct, cost_model_version, status) "
-            "VALUES (?, 'm1', 's1', 'BTC/USDT', 'momentum', 'long', '24h', "
+            "VALUES (?, ?, 'm1', 's1', 'BTC/USDT', 'momentum', 'long', '24h', "
             " 100.0, datetime('now','-2 days'), datetime('now','-1 day'), datetime('now'), "
             " ?, ?, ?, ?, 0.05, 'v1', 'settled')",
-            (f"fo-{i}", ret, ret, ret, ret - 0.2),
+            (f"fo-{i}", f"candidate-fo-{i}", ret, ret, ret, ret - 0.2),
         )
     db.commit()
 

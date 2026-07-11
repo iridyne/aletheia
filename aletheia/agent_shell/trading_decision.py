@@ -85,6 +85,7 @@ class TradingDecision:
     # strategy_id and the decision_meta records scanner_family (LEARNING_LOOP_AUDIT
     # §R0 + BACKEND_ISSUES §1.1 causal-chain strategy_id).
     opportunity_id: str | None = None
+    learning_candidate_key: str | None = None
     strategy_id: str | None = None
     scanner_family: str | None = None
     # Phase 2 (Serenity Option A): which table opportunity_id resolves against.
@@ -101,6 +102,7 @@ class TradingDecision:
     # Append-only observation facts for the exact gates evaluated in this call.
     # Persisted only after the authoritative PiDecision row is written.
     filter_trace: list[dict] = field(default_factory=list)
+    sizing_trace: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -301,7 +303,13 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
         })
         ptc = _get_strategy_paper_trade_count(decision.strategy_id)
         decision.position_size_usdt = _compute_position_size(
-            decision.conviction, symbol=decision.symbol, paper_trade_count=ptc
+            decision.conviction,
+            symbol=decision.symbol,
+            direction=decision.direction,
+            paper_trade_count=ptc,
+            opportunity_id=decision.opportunity_id,
+            learning_candidate_key=decision.learning_candidate_key,
+            sizing_trace=decision.sizing_trace,
         )
     elif trade_intent:
         decision.filter_trace.append({
@@ -458,6 +466,7 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         # analytics/reasoning_feedback.py and fed to the PI prompt. Hard-coded
         # absence here is why reasoning_feedback scanner was permanently unknown.
         "scanner_family": decision.scanner_family,
+        "sizing_learning": decision.sizing_trace,
         "guards": guard_summary,
     }
     # Cap ONLY the human thesis; append the full JSON AFTER capping so the JSON
@@ -614,7 +623,11 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
 def _compute_position_size(
     conviction: int,
     symbol: str | None = None,
+    direction: str | None = None,
     paper_trade_count: int = 0,
+    opportunity_id: str | None = None,
+    learning_candidate_key: str | None = None,
+    sizing_trace: dict | None = None,
 ) -> float:
     """Compute notional position size from conviction score (0-100).
 
@@ -623,9 +636,20 @@ def _compute_position_size(
     """
     from aletheia.config.loader import load_config
     cfg = load_config()
-    if cfg.trading.vol_sizing_enabled and symbol:
+    if symbol:
         from aletheia.trading.sizing import vol_target_size
-        return vol_target_size(symbol, conviction=conviction, paper_trade_count=paper_trade_count)
+        return vol_target_size(
+            symbol,
+            conviction=conviction,
+            direction=direction,
+            paper_trade_count=paper_trade_count,
+            candidate_key=f"opportunity:{opportunity_id}" if opportunity_id else None,
+            outcome_candidate_key=(
+                f"{learning_candidate_key}:4h" if learning_candidate_key else None
+            ),
+            opportunity_id=opportunity_id,
+            sizing_trace=sizing_trace,
+        )
     from aletheia.trading.sizing import compute_position_size
     base = cfg.trading.default_notional_usdt
     return compute_position_size(conviction, base)
@@ -1382,6 +1406,12 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         if decision.direction and bias and bias != decision.direction:
             continue
         decision.opportunity_id = o.get("id")
+        try:
+            raw_meta = o.get("metadata") or "{}"
+            meta = raw_meta if isinstance(raw_meta, dict) else json.loads(raw_meta)
+        except (TypeError, ValueError):
+            meta = {}
+        decision.learning_candidate_key = meta.get("learning_candidate_key")
         decision.strategy_id = o.get("linked_strategy_id")
         decision.scanner_family = o.get("scanner_family")
         decision.signal_source = "market_observer"
@@ -1413,6 +1443,7 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         if not oid:
             continue
         decision.opportunity_id = oid
+        decision.learning_candidate_key = c.get("learning_candidate_key")
         decision.strategy_id = c.get("strategy_id")
         decision.scanner_family = c.get("scanner_family")
         decision.signal_source = c.get("signal_source") or "market_observer"

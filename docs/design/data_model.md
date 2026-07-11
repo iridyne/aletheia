@@ -77,13 +77,15 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 |-------|---------|-------------|
 | `learning_hypotheses` | Canonical scoped Learning hypothesis | hypothesis_id, fingerprint, path_id, scope/action JSON, status, version |
 | `learning_experiments` | Registered shadow/paper experiment | experiment_id, hypothesis_id, assignment salt, gates, status |
-| `learning_exposures` | Immutable record of one actual/control influence | dedup_key, assignment, entity ids, before/after/manifest, policy epoch |
+| `learning_exposures` | Immutable record of one actual/control influence; ranker score components and persona sizing store baseline/proposed/actual values here | dedup_key, assignment, entity ids, before/after/manifest, outcome_candidate_key, policy epoch |
 | `learning_contribution_verdicts` | Append-only measured verdict window | unique arm counts, delta/interval, harm metrics, verdict |
 | `learning_job_health` | Durable expected-run/backlog health | schedule, watermarks, failures, status |
 | `learning_policy_epochs` | Non-sensitive effective-policy attribution boundary | effective-values hash/JSON, affected paths, safety flag, interval |
 
-These tables are additive and observational in Phase 1. Their existence does not activate a
-Learning treatment or change universe, ranker, prompt, sizing, risk, execution, or live behavior.
+These tables were additive/observational in Phase 1. Current universe, factor, ranker, and sizing
+consumers now write refrozen prospective exposures; only an active paper experiment with enough
+linked cost-aware outcomes and a positive verdict may apply a treatment. The ledger grants no
+risk, execution, credential, or live authority.
 
 ### D. Market Data Collection (11 tables)
 

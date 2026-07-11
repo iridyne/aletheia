@@ -316,9 +316,12 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 ### 8.1 Ranker 权重调整（低风险）
 
-`paper_trader_ranker.py` 在检索 lessons 后对机会打分排序。学习产出（`trade_case_study` / `post_trade_review`）可以通过以下机制影响 Ranker 行为：
-- 高质量历史模式 → 提升同类机会的 memo_effectiveness 权重
-- 负反馈归因（regime + 方向 + scanner 组合）→ 降权对应组合
+`paper_trader_ranker.py` 只检索可信的 `trade_case_study`，并另行读取最新 `trading_memo`。
+两者计算出的历史分值只是候选调整，必须分别经过 `ranker_case_score` 与
+`ranker_memo_score` 的前瞻 treatment/control 授权；没有足量、成本后净收益结果与正向结论时，实际调整固定为 0：
+- 历史案例负反馈（symbol + direction + scanner）→ 候选降权
+- memo 的 regime、symbol affinity 与 anti-pattern → 候选软调整
+- 每次候选都记录原始建议、实际增量、实验和 exposure id，两个来源不互相冒领贡献
 - **边界**：Ranker 调整只影响机会排序，不影响 risk_engine 关卡，不影响 sizing
 
 ### 8.2 System Operator system prompt 片段（中风险）

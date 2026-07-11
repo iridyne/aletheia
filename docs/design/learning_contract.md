@@ -52,13 +52,13 @@ results can influence a later trading judgment, even when it lives outside `alet
 | --- | --- | --- |
 | Outcome joins | `analytics/trade_attribution.py`, `trade_path.py` | read-only realized-trade joins |
 | Candidate counterfactuals | `analytics/shadow_trades.py`, `filter_evidence.py`, `universe/filter_outcome_recorder.py` | settle skipped/blocked candidate outcomes |
-| Outcome economics | `learning/outcomes.py`, `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | shared fail-closed cost/quality contract now governs factor and universe authority; remaining prompt/sizing paths are still migrating |
+| Outcome economics | `learning/outcomes.py`, `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | shared fail-closed cost/quality contract governs factor, universe, reviewer, ranker and sizing exposure authority; prompt-bundle treatment settlement remains incomplete |
 | Universe family calibration | `universe/allocator.py::get_family_multipliers`, `learning/experiments.py`, `universe/service.py` | 50-sample retrospective cohorts may propose a bounded 0.9/1.1 shadow treatment; actual paper influence requires stable prospective arms, linked net outcomes, minimum time, and a positive verdict; fallback is 1.0 |
 | Structured cases | `analytics/trade_case_builder.py` | deterministic high-confidence cases and guard candidates |
 | Universe guard producer | `universe/outcome_recorder.py` | derives candidate guards from settled rejected/pass outcomes |
 | Narrative review | `agents/post_trade_reviewer.py` | medium-confidence prose; also triggers deterministic case building |
 | Risk critique | `agents/risk_critic.py` | advisory research note from proposal/risk-decision history |
-| Lesson extraction/review | `agents/dreaming_agent.py`, `agents/lesson_reviewer.py` | proposed→applied lesson/policy and draft skill |
+| Lesson extraction/review | `agents/dreaming_agent.py`, `agents/lesson_reviewer.py` | promotion/overturn requires clean cost-aware outcomes matching every populated symbol/direction/scanner dimension; global history is context only |
 | Memo synthesis | `analytics/insight_synthesizer.py`, `memo_effectiveness.py` | memo reaches observer prompt, ranker score, and Operator prompt |
 | Factor feedback | `analytics/factor_feedback.py`, `learning/experiments.py` | exact clean history is diagnostic and proposes shadow treatments; ranker score/filter authority requires a prospective positive verdict and otherwise stays neutral |
 | Reasoning feedback | `analytics/reasoning_feedback.py` | Operator prompt advice |
@@ -66,9 +66,9 @@ results can influence a later trading judgment, even when it lives outside `alet
 | Last-decision reflection | `agent_shell/reflection.py` | Operator prompt advice; only exact proposal→position or opportunity→fixed-horizon/shadow outcomes are rendered |
 | Learned guards | `knowledge/guards.py`, `analytics/guard_promotion.py` | active paper-entry candidate blocks |
 | Trust guard chain | `trust/guard_chain.py` | pre-risk observability only; even a `block` verdict does not block execution |
-| Case/memo score | `agents/paper_trader_ranker.py` | bounded candidate score changes |
+| Case/memo score | `agents/paper_trader_ranker.py`, `learning/experiments.py` | retrospective case/memo values only propose bounded score deltas; static zero is used until a prospective paper verdict is authorized, and each candidate carries the two separate exposure traces |
 | Advisory retrieval | `knowledge/router.py`, `knowledge/retrieval.py` | market-observer and decision context |
-| Persona learning | `trading/persona.py`, `persona_rollout.py`, `sizing_policy.py` | bounded/dormant-to-progressive paper sizing inside risk caps |
+| Persona learning | `trading/persona.py`, `persona_rollout.py`, `sizing_policy.py`, `trading/sizing.py` | clean realized history proposes a bounded notional; static, learned and actual values are recorded and actual stays static without prospective authority; risk caps remain downstream and unchanged |
 | Exit diagnostics | `analytics/exit_policy_advisor.py` | read-only advice only; no automatic mutation |
 | Filter diagnostics | `analytics/filter_registry.py`, `filter_replay.py`, `filter_controller.py`, `filter_shadow_experiments.py` | shadow recommendations/observe-only experiments; no production mutation |
 | Contribution/health | alpha, memo, guard impact/effectiveness, learning-funnel analytics, doctor, scheduler | reporting and operational control with different evidence coverage |
@@ -90,8 +90,9 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - automatic lesson `block_*` suggestions are rewritten as non-blocking `shadow-only` guard
   candidates, never coerced into Risk Engine category `risk`, and excluded from historical
   auto-promotion until prospective evaluation or explicit owner action;
-- memo guidance reaches three stages (observer, ranker, Operator), so a later trade cannot identify
-  which stage deserves credit without prospective exposure assignment;
+- memo guidance reaches three stages; observer and Operator persist separate bundle manifests,
+  while the ranker now uses its own `ranker_memo_score` treatment/exposure instead of inheriting
+  observer credit;
 - reflection now fails closed when proposal/opportunity causal ids or eligible outcomes are absent;
 - narrative review, memo, reasoning, calibration, lesson, and guard artifacts use different evidence
   units and confidence conventions;
@@ -103,8 +104,8 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - learned trading guards and the advisory trust guard chain have different authority and must not
   be merged or reported as the same mechanism.
 - operator-loop safety/config changes can alter the same candidates/outcomes during a Learning
-  evaluation; factor/universe exposures now rotate durable policy epochs, while remaining prompt
-  and sizing adapters still need epoch migration. Safety tightening must never be
+  evaluation; factor, universe, ranker, and sizing exposures rotate durable policy epochs, while
+  prompt-bundle treatment exposure still needs migration. Safety tightening must never be
   withheld merely to make a cleaner experiment.
 
 The target lifecycle, registry, prospective experiments, overlap handling, and automatic fallback
@@ -129,8 +130,9 @@ The first target slice is implemented without changing trading behavior:
   persistence and operator/consumer integration remain future work;
 - alpha read models distinguish directional evidence from measured prospective contribution.
 
-This baseline improves measurement honesty only. It does not promote a lesson, change a score,
-block a new candidate, alter position size, or modify any risk/execution/live authority.
+This historical Phase 0 slice improved measurement honesty only. Later implemented slices now
+create refrozen paper exposures for ranker and sizing proposals, but still do not modify any
+risk/execution/live authority without the separate prospective gates described above.
 
 ---
 

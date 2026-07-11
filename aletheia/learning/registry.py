@@ -67,7 +67,8 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
     LearningPath(
         "persona_sizing", "persona outcome learner", "paper sizing policy",
         "bounded paper base-notional adjustment", ("size_adjustment",), "sizing",
-        "realized cost-aware position outcome", "static persona baseline notional",
+        "clean realized source cohort plus fixed-horizon candidate net outcome",
+        "static persona baseline notional",
     ),
     LearningPath(
         "advisory_skill", "proven hypothesis skill", "prompt or ranker advisory adapter",

@@ -46,7 +46,13 @@ def get_active_persona(cfg=None):
     return persona
 
 
-def build_sizing_context(symbol: str | None = None, direction: str | None = None, cfg=None) -> dict:
+def build_sizing_context(
+    symbol: str | None = None,
+    direction: str | None = None,
+    cfg=None,
+    *,
+    apply_learning: bool = True,
+) -> dict:
     """Gather the context the Operator uses to pick sizing WITHIN persona ranges (P2).
 
     Combines owner's three inputs — (b) 标的+市场情绪 (regime/F&G), (c) BTC 大盘 (proxied
@@ -112,14 +118,15 @@ def build_sizing_context(symbol: str | None = None, direction: str | None = None
 
     # P3: persona learning nudges appetite by the current regime bucket's clean-window
     # reward (dormant unless persona_learning_enabled + enough clean samples; bounded).
-    try:
-        from aletheia.trading.sizing_policy import learned_appetite_adjustment
-        adj = learned_appetite_adjustment(ctx.get("regime"), cfg)
-        if adj:
-            appetite += adj
-            ctx["learned_adj"] = adj
-    except Exception:
-        pass
+    if apply_learning:
+        try:
+            from aletheia.trading.sizing_policy import learned_appetite_adjustment
+            adj = learned_appetite_adjustment(ctx.get("regime"), cfg)
+            if adj:
+                appetite += adj
+                ctx["learned_adj"] = adj
+        except Exception:
+            pass
 
     ctx["risk_appetite"] = max(0.0, min(1.0, appetite))
     return ctx
@@ -160,7 +167,13 @@ def effective_operator_decidable(persona, cfg=None) -> dict:
     return out
 
 
-def effective_sizing_params(cfg=None, symbol: str | None = None, direction: str | None = None) -> dict:
+def effective_sizing_params(
+    cfg=None,
+    symbol: str | None = None,
+    direction: str | None = None,
+    *,
+    apply_learning: bool = True,
+) -> dict:
     """Resolve the effective sizing params for the current decision.
 
     Returns a dict of {param_key: value}. P1 semantics:
@@ -189,7 +202,9 @@ def effective_sizing_params(cfg=None, symbol: str | None = None, direction: str 
                 # this path; the rest stay pinned at init. Default personas mark none,
                 # so this is dormant until the operator unlocks a param.
                 if ctx is None:
-                    ctx = build_sizing_context(symbol, direction, cfg)
+                    ctx = build_sizing_context(
+                        symbol, direction, cfg, apply_learning=apply_learning,
+                    )
                 out[key] = decide_param_value(persona.params[key], ctx["risk_appetite"])
             else:
                 out[key] = float(persona.params[key].init)
@@ -197,4 +212,6 @@ def effective_sizing_params(cfg=None, symbol: str | None = None, direction: str 
             out[key] = legacy
     out["_persona"] = persona.name if persona is not None else "legacy"
     out["_risk_appetite"] = ctx["risk_appetite"] if ctx else None
+    out["_regime"] = ctx.get("regime") if ctx else None
+    out["_learned_adj"] = ctx.get("learned_adj", 0.0) if ctx else 0.0
     return out

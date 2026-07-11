@@ -74,9 +74,14 @@ def vol_target_size(
     symbol: str,
     *,
     conviction: int = 70,
+    direction: str | None = None,
     drawdown_pct: float = 0.0,
     atr_pct_override: float | None = None,
     paper_trade_count: int = 0,
+    candidate_key: str | None = None,
+    outcome_candidate_key: str | None = None,
+    opportunity_id: str | None = None,
+    sizing_trace: dict | None = None,
 ) -> float:
     """Unified volatility-target sizing with sample-aware Kelly fraction.
 
@@ -96,43 +101,61 @@ def vol_target_size(
     # (P2: context-decided within range for operator_decidable params; else init);
     # persona OFF → legacy flat config (default_notional_usdt / vol_kelly_cap_fraction),
     # zero behavior change. `symbol` feeds the P2 sizing context (regime/F&G/vol).
-    _eff = effective_sizing_params(cfg, symbol=symbol)
-    base = _eff["notional_usdt"]
-    base_kelly = _eff["kelly_fraction"]
+    static_params = effective_sizing_params(
+        cfg, symbol=symbol, direction=direction, apply_learning=False,
+    )
+    learned_params = effective_sizing_params(
+        cfg, symbol=symbol, direction=direction, apply_learning=True,
+    )
 
-    # P1-5: sample-aware Kelly fraction
-    if paper_trade_count < 10:
-        effective_kelly = 0.1
-    elif paper_trade_count < 30:
-        t = (paper_trade_count - 10) / 20.0
-        effective_kelly = 0.1 + t * (base_kelly - 0.1)
-    else:
-        effective_kelly = base_kelly
-
-    if not cfg.trading.vol_sizing_enabled:
-        return compute_position_size(conviction, base, drawdown_pct=drawdown_pct,
-                                     kelly_fraction=effective_kelly)
-
-    # Get ATR%
+    # Resolve market volatility once so baseline and treatment differ only in the
+    # persona Learning proposal, never because they observed different inputs.
     atr_pct = atr_pct_override
-    if atr_pct is None:
+    if cfg.trading.vol_sizing_enabled and atr_pct is None:
         atr_pct = _lookup_atr_pct(symbol)
 
-    if not atr_pct or atr_pct <= 0:
-        return compute_position_size(conviction, base, drawdown_pct=drawdown_pct,
-                                     kelly_fraction=effective_kelly)
+    def _from_params(params: dict) -> float:
+        base = float(params["notional_usdt"])
+        base_kelly = float(params["kelly_fraction"])
+        if paper_trade_count < 10:
+            effective_kelly = 0.1
+        elif paper_trade_count < 30:
+            t = (paper_trade_count - 10) / 20.0
+            effective_kelly = 0.1 + t * (base_kelly - 0.1)
+        else:
+            effective_kelly = base_kelly
+        sizing_base = base
+        if cfg.trading.vol_sizing_enabled and atr_pct and atr_pct > 0:
+            risk_budget = cfg.trading.vol_target_risk_usdt
+            raw_size = risk_budget / (atr_pct / 100.0)
+            kelly_cap = base * (effective_kelly * 4) * _MAX_MULTIPLIER
+            sizing_base = min(raw_size, kelly_cap)
+        return compute_position_size(
+            conviction, sizing_base, drawdown_pct=drawdown_pct,
+            kelly_fraction=effective_kelly,
+        )
 
-    # Core formula: size such that 1 ATR move = risk_budget
-    risk_budget = cfg.trading.vol_target_risk_usdt
-    raw_size = risk_budget / (atr_pct / 100.0)
-
-    # Kelly cap scaled by effective_kelly
-    kelly_cap = base * (effective_kelly * 4) * _MAX_MULTIPLIER
-    sized = min(raw_size, kelly_cap)
-
-    # Apply conviction multiplier and drawdown scale
-    return compute_position_size(conviction, sized, drawdown_pct=drawdown_pct,
-                                 kelly_fraction=effective_kelly)
+    baseline_notional = _from_params(static_params)
+    # Phase 1 exposes one learned parameter only: base notional. Kelly, stops,
+    # leverage and pyramiding remain at their static/persona values.
+    learned_notional_params = dict(static_params)
+    learned_notional_params["notional_usdt"] = learned_params["notional_usdt"]
+    learned_notional = _from_params(learned_notional_params)
+    from aletheia.trading.sizing_policy import resolve_learned_notional
+    trace = resolve_learned_notional(
+        baseline_notional=baseline_notional,
+        learned_notional=learned_notional,
+        symbol=symbol,
+        direction=direction,
+        regime_bucket=learned_params.get("_regime"),
+        candidate_key=candidate_key,
+        outcome_candidate_key=outcome_candidate_key,
+        opportunity_id=opportunity_id,
+    )
+    if sizing_trace is not None:
+        sizing_trace.clear()
+        sizing_trace.update(trace)
+    return round(float(trace["actual_notional"]), 2)
 
 
 def _lookup_atr_pct(symbol: str) -> float | None:
