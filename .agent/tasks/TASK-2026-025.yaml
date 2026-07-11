@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-025
 title: Refreeze small-sample Learning authority
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -29,8 +29,9 @@ ownership:
   expires_at: '2026-07-12T03:02:48.915795Z'
 base_commit: 0763f8679e70ac49b3113d883313483db85e9e88
 next_action:
-  command_key: workflow_tests
-  reason: Claim the task and define the first focused verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: specs
@@ -41,5 +42,13 @@ verification:
   run_at: '2026-07-11T19:26:39.299487Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 92082d252136858af470fa8109858cedbfea4d97
+  run_at: '2026-07-11T19:27:10.354687Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-025.md
-updated_at: '2026-07-11T19:26:39.299710Z'
+updated_at: '2026-07-11T19:27:14.728669Z'
