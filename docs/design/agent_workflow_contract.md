@@ -50,3 +50,14 @@ execution, credentials, gateway state, databases, balances, or positions.
    AGENTS.md stops naming `.agent/handoffs/` or `AI_HANDOFF.md` loses its
    frozen banner. `DEVLOG.md` and `DECISIONS.md` remain append-only for
    change history and architecture decisions respectively.
+10. **AW-S10 — squash-merge evidence tolerance.** A completed task's
+    verification evidence is recorded against the feature-branch commit that
+    ran it. A squash-merge (or rebase) rewrites that commit into a new SHA on
+    the default branch, orphaning the recorded SHA even though the proof was
+    real. Under `--strict`, evidence whose commit *still exists* in the repo
+    but is no longer a HEAD ancestor is a **warning** (not an error); only
+    evidence whose commit *does not exist at all* (fabricated / typo'd) is a
+    hard error. This keeps `check --strict` green on the default branch after
+    the normal squash-merge PR flow, mirroring the AW-S08 base_commit
+    precedent. A completed task with no successful evidence at all remains an
+    error.

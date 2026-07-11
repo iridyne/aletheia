@@ -561,12 +561,40 @@ def validate(
             if not valid:
                 findings.append(Finding("error", "completed task has no successful verification evidence", task_id))
             elif strict:
+                # A squash-merge (or rebase) rewrites the feature-branch commit
+                # into a new SHA on the default branch, orphaning the evidence
+                # commit recorded here even though the work was genuinely verified
+                # when it landed. Distinguish two cases, mirroring the AW-S08
+                # base_commit precedent:
+                #   - evidence commit still EXISTS in the repo but is not a HEAD
+                #     ancestor  -> WARNING (squash-merge orphan; the proof was real)
+                #   - evidence commit does NOT exist at all  -> ERROR (fabricated
+                #     or typo'd commit that never happened)
+                reachable = False
+                any_exists = False
                 for item in valid:
-                    code, _ = _git(root, "merge-base", "--is-ancestor", str(item.get("commit", "")), "HEAD")
+                    commit = str(item.get("commit", ""))
+                    exists, _ = _git(root, "cat-file", "-e", f"{commit}^{{commit}}")
+                    if exists == 0:
+                        any_exists = True
+                    code, _ = _git(root, "merge-base", "--is-ancestor", commit, "HEAD")
                     if code == 0:
+                        reachable = True
                         break
-                else:
-                    findings.append(Finding("error", "completed task evidence is not reachable from current HEAD", task_id))
+                if not reachable:
+                    if any_exists:
+                        findings.append(Finding(
+                            "warning",
+                            "completed task evidence is not reachable from current HEAD "
+                            "(likely squash-merged); the recorded proof commit still exists",
+                            task_id,
+                        ))
+                    else:
+                        findings.append(Finding(
+                            "error",
+                            "completed task evidence commit does not exist in this repository",
+                            task_id,
+                        ))
             if not isinstance(next_action, dict) or next_action.get("command_key") != "workflow_bootstrap":
                 findings.append(Finding("error", "completed task next action must return to workflow_bootstrap", task_id))
     if changed_since is not None:

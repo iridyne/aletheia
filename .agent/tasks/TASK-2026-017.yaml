@@ -1,0 +1,48 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-017
+title: Tolerate squash-merged evidence commits in strict check
+status: done
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Completed-task verification evidence recorded on a feature branch becomes
+  unreachable from master after a squash-merge, so workflow check --strict hard-fails
+  for every previously-merged task. Downgrade the still-exists-but-unreachable case
+  to a warning (the work was genuinely verified when recorded); keep a hard error
+  only when the evidence commit does not exist at all. Mirrors the AW-S08 base_commit
+  rebase-resilience precedent.
+acceptance:
+- validate(strict=True) emits a WARNING (not error) when a completed task's best evidence
+  commit exists in the repo but is not a HEAD ancestor (squash-merge orphan)
+- validate(strict=True) still emits an ERROR when a completed task's evidence commit
+  does not exist in the repo at all (fabricated/typo)
+- validate(strict=True) still emits an ERROR when a completed task has no successful
+  evidence at all
+- check --strict on current master (TASK-012..015 orphaned) exits 0 with warnings,
+  not errors
+- 'New unit tests cover: reachable=ok, exists-but-unreachable=warning, nonexistent=error;
+  plus a spec claim documents the tolerance'
+ownership:
+  branch: worktree-workflow-evidence-squash-merge
+  lease_holder: claude-code
+  claimed_at: '2026-07-11T16:57:48.734692Z'
+  expires_at: '2026-07-12T00:57:48.735006Z'
+base_commit: f9de4ba49b45dfb30f7f5aade96df6b254818f13
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 9af013bc87b7ed6fce975159b0319b20532aed0a
+  run_at: '2026-07-11T17:01:42.208979Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-017.md
+updated_at: '2026-07-11T17:02:20.738996Z'

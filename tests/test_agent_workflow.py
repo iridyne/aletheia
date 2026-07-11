@@ -782,3 +782,82 @@ def test_legal_transitions_map_declares_blocked_complements():
     assert "cancelled" in _LEGAL_TRANSITIONS["blocked"]
     # done is intentionally omitted — complete_task is the only path.
     assert "done" not in _LEGAL_TRANSITIONS["blocked"]
+
+
+# ---------------------------------------------------------------------------
+# Squash-merge tolerance for completed-task evidence (TASK-2026-017)
+# ---------------------------------------------------------------------------
+
+
+def _done_task_with_evidence_commit(root: Path, commit: str) -> None:
+    """Mark TASK-1 done with a single passing evidence record at `commit`."""
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task.update({
+        "status": "done",
+        "next_action": {"command_key": "workflow_bootstrap", "reason": "Task complete; claim new work."},
+        "verification": [{
+            "command_key": "test",
+            "command": "git status --short",
+            "exit_code": 0,
+            "commit": commit,
+            "result": "passed",
+            "recorded_by": "agent_workflow.verify/v1",
+        }],
+    })
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+
+
+def test_strict_accepts_reachable_completed_evidence(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, text=True, capture_output=True
+    ).stdout.strip()
+    _done_task_with_evidence_commit(root, head)
+    findings = validate(root, strict=True)
+    assert not any("evidence" in f.message and f.severity == "error" for f in findings)
+    assert not any("not reachable" in f.message for f in findings)
+
+
+def test_strict_warns_on_squash_merged_orphan_evidence(tmp_path, monkeypatch):
+    """Evidence commit that still exists but is no longer a HEAD ancestor
+    (the squash-merge case) is a warning, not an error."""
+    root = _repo(tmp_path, monkeypatch)
+    # Create a real commit on a side branch, capture its SHA, then return to the
+    # main branch and delete the side branch — the commit still exists (dangling)
+    # but is not reachable from HEAD, exactly like a squash-merged feature tip.
+    branch = yaml.safe_load(
+        (root / ".agent/tasks/TASK-1.yaml").read_text(encoding="utf-8")
+    )["ownership"]["branch"]
+    subprocess.run(["git", "checkout", "-b", "orphan-side"], cwd=root, check=True, capture_output=True)
+    (root / "sidefile").write_text("side\n", encoding="utf-8")
+    subprocess.run(["git", "add", "sidefile"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "orphan side"], cwd=root, check=True, capture_output=True)
+    orphan = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, text=True, capture_output=True
+    ).stdout.strip()
+    subprocess.run(["git", "checkout", branch], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "branch", "-D", "orphan-side"], cwd=root, check=True, capture_output=True)
+
+    _done_task_with_evidence_commit(root, orphan)
+    findings = validate(root, strict=True)
+    orphan_findings = [f for f in findings if "not reachable" in f.message]
+    assert orphan_findings, "expected an orphan-evidence finding"
+    assert all(f.severity == "warning" for f in orphan_findings), [
+        (f.severity, f.message) for f in orphan_findings
+    ]
+    # And it must NOT surface as an error anywhere.
+    assert not any(
+        f.severity == "error" and "evidence" in f.message for f in findings
+    )
+
+
+def test_strict_errors_on_nonexistent_evidence_commit(tmp_path, monkeypatch):
+    """A completed task whose evidence commit does not exist at all is a hard
+    error — that proof never happened."""
+    root = _repo(tmp_path, monkeypatch)
+    _done_task_with_evidence_commit(root, "0" * 40)
+    findings = validate(root, strict=True)
+    assert any(
+        f.severity == "error" and "does not exist" in f.message for f in findings
+    ), [(f.severity, f.message) for f in findings]

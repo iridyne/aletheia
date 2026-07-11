@@ -27,6 +27,8 @@ def test_validator_locks_honest_completion():
     complete_source = Path(complete_task.__code__.co_filename).read_text(encoding="utf-8")
     assert "completed task has no successful verification evidence" in source
     assert "completed task evidence is not reachable from current HEAD" in source
+    # Nonexistent evidence commits remain a hard error (fabricated proof).
+    assert "completed task evidence commit does not exist in this repository" in source
     assert "subprocess.run(shlex.split(command)" in verify_source
     assert '"recorded_by": "agent_workflow.verify/v1"' in verify_source
     assert 'item.get("commit") == head' in complete_source
@@ -102,3 +104,18 @@ def test_handoff_channel_is_single_source():
     assert ".agent/handoffs/TASK-*.md" in agents, "AGENTS.md must name the per-task handoff path"
     assert "FROZEN AS OF" in ai_handoff, "AI_HANDOFF.md must carry a frozen banner"
     assert ".agent/handoffs/" in ai_handoff, "AI_HANDOFF.md banner must point to the live channel"
+
+
+@spec_claim(SpecClaim("AW-S10", _CONTRACT, "§invariants", "L2b", "Squash-merge tolerance: completed-task evidence that still exists but is unreachable from HEAD is a warning; a nonexistent evidence commit stays an error."))
+def test_squash_merged_evidence_is_tolerated():
+    from aletheia.agent_workflow import validate
+    source = Path(validate.__code__.co_filename).read_text(encoding="utf-8")
+    # The still-exists-but-unreachable branch downgrades to a warning...
+    assert 'Finding(\n                            "warning",' in source or (
+        '"warning"' in source and "likely squash-merged" in source
+    )
+    assert "likely squash-merged" in source
+    # ...while a truly-missing commit remains a hard error.
+    assert "completed task evidence commit does not exist in this repository" in source
+    # It proves existence with cat-file before deciding.
+    assert 'cat-file", "-e"' in source
