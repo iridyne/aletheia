@@ -1,0 +1,33 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-015
+title: Converge handoffs on .agent/handoffs; freeze AI_HANDOFF.md
+status: in_progress
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: 'Stop the double-ledger: mark docs/_ai/AI_HANDOFF.md as frozen archive, point
+  AGENTS.md to .agent/handoffs/ as the primary channel, and add an SDD claim that
+  fails on drift so this decision does not silently regress.'
+acceptance:
+- AGENTS.md line 192 (session-end handoff guidance) points to .agent/handoffs/TASK-*.md
+  as primary
+- AI_HANDOFF.md top carries an unambiguous FROZEN AS OF 2026-07-12 banner and a pointer
+  to .agent/handoffs/
+- DEVLOG.md is untouched (changelog convention keeps append)
+- spec_agent_workflow.py grows a claim asserting AGENTS.md references .agent/handoffs/
+  and AI_HANDOFF.md carries the frozen banner
+ownership:
+  branch: worktree-agent-workflow-handoff-convergence
+  lease_holder: claude-code
+  claimed_at: '2026-07-11T16:00:22.988269Z'
+  expires_at: '2026-07-12T00:00:22.988439Z'
+base_commit: 8e26595e200459ee156f9ba6e4466b656ae9bd75
+next_action:
+  command_key: workflow_tests
+  reason: Write the SDD claim first; then apply the doc edits and confirm the claim
+    goes green.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-015.md
+updated_at: '2026-07-11T16:00:23.142622Z'

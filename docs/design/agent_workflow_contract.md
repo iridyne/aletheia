@@ -44,3 +44,9 @@ execution, credentials, gateway state, databases, balances, or positions.
    TASK-ID`, which resets `base_commit` to current HEAD and records
    `rebased_at`. `rebase-base` refuses tasks not in `in_progress` or
    `blocked`.
+9. **AW-S09 — single handoff channel.** Per-task hand-offs live in
+   `.agent/handoffs/TASK-*.md`. `docs/_ai/AI_HANDOFF.md` is frozen as of
+   2026-07-12 and preserved as historical narrative only; the spec fails if
+   AGENTS.md stops naming `.agent/handoffs/` or `AI_HANDOFF.md` loses its
+   frozen banner. `DEVLOG.md` and `DECISIONS.md` remain append-only for
+   change history and architecture decisions respectively.
