@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-027
 title: Close remaining Learning consumer authority gaps
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -28,9 +28,9 @@ ownership:
   expires_at: '2026-07-12T03:47:24.064239Z'
 base_commit: 946ab837f082dfc583c23093ac320bc3d02d38ab
 next_action:
-  command_key: specs
-  reason: Implementation complete; register executable contract verification after
-    commit.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: specs
@@ -41,5 +41,13 @@ verification:
   run_at: '2026-07-11T20:06:07.057572Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 5dd2e9d798542036e80283933bcce09283f5ece6
+  run_at: '2026-07-11T20:06:49.013174Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-027.md
-updated_at: '2026-07-11T20:06:07.057786Z'
+updated_at: '2026-07-11T20:06:55.661665Z'
