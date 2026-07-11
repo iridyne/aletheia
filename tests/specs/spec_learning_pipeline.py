@@ -976,6 +976,50 @@ def test_insight_synthesizer_has_startup_catchup():
     )
 
 
+@spec_claim(
+    SpecClaim(
+        "LP-S17", "learning_pipeline", "§Serenity daily scheduling continuity", "L2a",
+        "dreaming_daily retains its 02:00 CST cron while a separate one-shot "
+        "serenity_startup_catchup runs within five minutes of scheduler startup. "
+        "The catch-up uses a durable CST batch key instead of rerunning on every restart.",
+        status="implemented",
+    )
+)
+def test_serenity_daily_has_durable_startup_catchup():
+    import ast
+    import pathlib
+
+    root = pathlib.Path(_project_root())
+    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    tree = ast.parse(sched_src)
+    jobs: dict[str, ast.Call] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+        job_id = keywords.get("id")
+        if isinstance(job_id, ast.Constant) and isinstance(job_id.value, str):
+            jobs[job_id.value] = node
+
+    daily = jobs.get("dreaming_daily")
+    catchup = jobs.get("serenity_startup_catchup")
+    assert daily is not None and len(daily.args) >= 2
+    assert isinstance(daily.args[1], ast.Constant) and daily.args[1].value == "cron"
+    daily_kw = {kw.arg: kw.value for kw in daily.keywords if kw.arg}
+    assert ast.literal_eval(daily_kw["hour"]) == 2
+    assert ast.literal_eval(daily_kw["minute"]) == 0
+
+    assert catchup is not None, "Serenity needs a startup catch-up after a missed daily cron"
+    assert len(catchup.args) >= 2 and isinstance(catchup.args[1], ast.Constant)
+    assert catchup.args[1].value == "date"
+    catchup_kw = {kw.arg: kw.value for kw in catchup.keywords if kw.arg}
+    rendered = ast.unparse(catchup_kw["run_date"])
+    assert "datetime.now()" in rendered and "timedelta" in rendered
+    assert "minutes=4" in rendered.replace(" ", "")
+    assert "_enqueue_serenity_research_if_due" in sched_src
+    assert "serenity:scheduled:" in sched_src
+
+
 # ---------------------------------------------------------------------------
 # KL-B01 (L2b implemented) — 时间衰减推翻路径（three-path fusion §方案2）
 # ---------------------------------------------------------------------------

@@ -3,11 +3,11 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-07-11 (macOS launchd gateway watchdog)
+> Last updated: 2026-07-11 (Serenity daily scheduler continuity)
 
 ---
 
-## 1. Scheduler Job Overview (35 jobs with optional jobs enabled)
+## 1. Scheduler Job Overview (35 recurring jobs with optional jobs enabled + 1 startup one-shot)
 
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
@@ -46,6 +46,7 @@
 | 33 | shadow_resolver | 6h | io | Resolve shadow trades against realised outcomes |
 | 34 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
 | 35 | outcome_settler | 15min | io | Settle outstanding prediction / universe forward outcomes |
+| 36 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
 
 ### OS Watchdog Contract
 
@@ -201,11 +202,11 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 
 #### dreaming_daily
 
-- **Trigger**: daily 02:00 UTC
+- **Trigger**: daily 02:00 CST; `serenity_startup_catchup` checks the latest due CST batch 4 minutes after boot
 - **Inputs**: All knowledge_items from past 24h, closed positions, agent run summaries
 - **LLM**: Yes (synthesis)
-- **Outputs**: knowledge_items (item_type=dreaming_log)
-- **Side effects**: Produces high-confidence lessons that influence future FTS5 retrieval
+- **Outputs**: knowledge_items (item_type=dreaming_log), serenity research runs/themes/evidence/opportunities
+- **Side effects**: The Serenity portion uses `serenity:scheduled:YYYY-MM-DD` idempotency and successful-run freshness. Restart-interrupted queued/running rows are marked failed before a catch-up is considered; lesson extraction remains on the daily cron only
 
 #### insight_synthesizer
 

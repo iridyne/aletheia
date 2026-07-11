@@ -5,8 +5,9 @@ from contextvars import ContextVar
 from functools import partial
 import logging
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable
+from zoneinfo import ZoneInfo
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -358,6 +359,141 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
         pool.shutdown(wait=False)
 
 
+def _serenity_schedule_boundary(now: datetime | None = None) -> datetime:
+    """Return the latest daily 02:00 CST research boundary in UTC."""
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    cst = ZoneInfo("Asia/Shanghai")
+    local = current.astimezone(cst)
+    boundary = local.replace(hour=2, minute=0, second=0, microsecond=0)
+    if local < boundary:
+        boundary -= timedelta(days=1)
+    return boundary.astimezone(timezone.utc)
+
+
+def _parse_serenity_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _recover_interrupted_serenity_run() -> list[str]:
+    """Mark research work owned by the previous gateway process as failed."""
+    try:
+        from aletheia.storage import repositories as repo
+        from aletheia.storage.models import SerenityRunEvent
+
+        active_runs = repo.list_active_serenity_research_runs()
+        if not active_runs:
+            return []
+        now = datetime.now(timezone.utc).isoformat()
+        recovered: list[str] = []
+        for run in active_runs:
+            run_id = run["id"]
+            repo.update_serenity_research_run(
+                run_id,
+                status="failed",
+                error_type="gateway_restart_interrupted",
+                error_message="Gateway restarted before the research run completed",
+                error_stage=run.get("stage"),
+                finished_at=now,
+                updated_at=now,
+            )
+            try:
+                repo.insert_serenity_run_event(SerenityRunEvent(
+                    run_id=run_id,
+                    event_type="run.interrupted",
+                    stage=run.get("stage"),
+                    message="Gateway restart interrupted this research run",
+                ))
+            except Exception as event_exc:
+                logger.warning(
+                    "Could not record interruption event for Serenity run %s: %s",
+                    run_id,
+                    event_exc,
+                )
+            recovered.append(run_id)
+        logger.warning(
+            "Recovered %d interrupted Serenity research run(s) from the previous process",
+            len(recovered),
+        )
+        return recovered
+    except Exception as exc:
+        logger.warning("Serenity startup recovery failed (non-fatal): %s", exc)
+        return []
+
+
+def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
+    """Enqueue at most one durable research attempt for the latest CST batch."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import SerenityResearchRun
+
+    boundary = _serenity_schedule_boundary(now)
+    local_date = boundary.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    batch_key = f"serenity:scheduled:{local_date}"
+
+    latest = repo.get_latest_successful_serenity_research_run()
+    latest_at = _parse_serenity_timestamp(
+        (latest or {}).get("finished_at") or (latest or {}).get("created_at")
+    )
+    if latest_at is not None and latest_at >= boundary:
+        return {"status": "fresh", "run_id": latest["id"], "batch_key": batch_key}
+
+    attempted = repo.get_serenity_research_run_by_idempotency_key(batch_key)
+    if attempted is not None:
+        return {
+            "status": "already_attempted",
+            "run_id": attempted["id"],
+            "batch_key": batch_key,
+        }
+
+    active = repo.get_active_serenity_research_run()
+    if active is not None:
+        return {"status": "active", "run_id": active["id"], "batch_key": batch_key}
+
+    run = SerenityResearchRun(
+        trigger_type="scheduled",
+        mode="standard",
+        status="queued",
+        idempotency_key=batch_key,
+    )
+    repo.insert_serenity_research_run(run)
+    try:
+        from aletheia.agents.research_worker import enqueue_research_run
+        enqueue_research_run(run.id)
+    except Exception as exc:
+        failed_at = datetime.now(timezone.utc).isoformat()
+        repo.update_serenity_research_run(
+            run.id,
+            status="failed",
+            error_type="enqueue_failed",
+            error_message=str(exc)[:500],
+            finished_at=failed_at,
+            updated_at=failed_at,
+        )
+        raise
+    return {"status": "enqueued", "run_id": run.id, "batch_key": batch_key}
+
+
+def _run_serenity_startup_catchup() -> None:
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        result = _enqueue_serenity_research_if_due()
+        logger.info("Serenity startup catch-up: %s", result["status"])
+    except Exception as exc:
+        logger.warning("Serenity startup catch-up failed: %s", exc)
+        _record_job_failure("serenity_startup_catchup", str(exc))
+
+
 def init_scheduler() -> BackgroundScheduler | None:
     """Initialize and start the background scheduler.
 
@@ -368,6 +504,9 @@ def init_scheduler() -> BackgroundScheduler | None:
         return _scheduler
 
     cfg = load_config()
+    # Research workers are process-owned daemon threads. Their persisted active
+    # rows are interrupted after any restart even when scheduling is disabled.
+    _recover_interrupted_serenity_run()
     if not cfg.runtime.scheduler_enabled:
         logger.info("Scheduler disabled by config; not starting.")
         return None
@@ -396,6 +535,14 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("dreaming_daily", _run_dreaming_agent), "cron", hour=2, minute=0, id="dreaming_daily",
         misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
+    )
+    _scheduler.add_job(
+        _guarded("serenity_startup_catchup", _run_serenity_startup_catchup),
+        "date",
+        run_date=datetime.now() + timedelta(minutes=4),
+        id="serenity_startup_catchup",
+        misfire_grace_time=None,
+        executor="agents",
     )
     # Evidence-gated review of the lessons dreaming produced — runs after the 2am
     # consolidation so it sees the night's fresh proposed lessons.
@@ -864,15 +1011,11 @@ def _run_dreaming_agent():
         return
 
     # Step 1: Serenity research pipeline (evidence collection, theme clustering, opps).
-    # enqueue_research_run launches a background thread and returns immediately — it
-    # never raises, so the old fallback to run_dreaming_agent was unreachable.
+    # The durable CST batch key makes the daily cron and startup catch-up converge
+    # on one attempt instead of duplicating research after every gateway restart.
     try:
-        from aletheia.storage.models import SerenityResearchRun
-        from aletheia.storage import repositories as repo
-        from aletheia.agents.research_worker import enqueue_research_run
-        run = SerenityResearchRun(trigger_type="scheduled", mode="standard", status="queued")
-        repo.insert_serenity_research_run(run)
-        enqueue_research_run(run.id)
+        result = _enqueue_serenity_research_if_due()
+        logger.info("dreaming_agent: Serenity research %s", result["status"])
     except Exception as e:
         logger.warning("dreaming_agent: serenity research enqueue failed: %s", e)
         _record_job_failure("dreaming_daily", str(e))

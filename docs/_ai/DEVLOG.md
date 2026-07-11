@@ -1,5 +1,23 @@
 # Development Log
 
+## 2026-07-11 — Serenity daily scheduler continuity
+
+- Kept the 02:00 CST `dreaming_daily` cadence and added a separate one-shot
+  startup catch-up four minutes after gateway boot.
+- Catch-up computes the latest due CST batch, skips a successful/active/already
+  attempted batch, and persists `serenity:scheduled:YYYY-MM-DD` before enqueueing.
+- All queued/running/waiting-retry research rows from the previous process are
+  marked failed with a restart-interrupted reason before scheduling decisions.
+- Doctor freshness now uses the latest successful completion. A recent failed
+  attempt cannot make stale research look current, and hints name real jobs.
+- No research scoring, auto-promotion threshold, PI decision, filter, risk,
+  execution, live, credential, or daily lesson-extraction behavior changed.
+- Validation: focused scheduler/Serenity/doctor suites passed 129 tests; all specs
+  passed 630; one uninterrupted full run passed 2784 tests with 13 skipped and
+  6 expected failures.
+
+---
+
 ## 2026-07-11 — Deterministic application shutdown
 
 - Fixed asymmetric FastAPI lifespan ownership: startup account sync, exchange

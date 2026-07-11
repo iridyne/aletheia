@@ -39,8 +39,9 @@
 15. **已完成**：采集任务健康与 SQLite 实际覆盖分开显示；首页可见 8 类数据的 current 状态。OHLCV 保持数组响应并标记 cache/provider/DB 来源，断网按 exact instrument 从本地历史降级；CLI 盘口 imbalance 与衍生品场所诊断已纠正。
 16. **已完成**：外部执行场所与主行情场所分叉由统一模型判定；两条设置入口产生新分叉前必须明确二次确认，状态 API、doctor、Settings、首页和连接探针读取同一真实执行场所。本地模拟不报分叉。
 17. **已完成**：FastAPI lifespan 对称停止启动同步、连接检查和派生自动恢复循环；异常退出也执行清理，API 测试不再启动真实后台网络。后续新增 lifespan 任务必须同时提供停止路径。
-18. **下一阶段**：筛选器达到 20/20 完整净样本后，才实验方向刹车、ranker 和 Kelly/sizing；未达到前只继续积累和核对证据。
-19. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+18. **已完成**：Serenity 每日 02:00 研究增加持久批次键和启动补跑；进程重启中断的活动行会转为失败，doctor 只按成功完成判断新鲜度。
+19. **下一阶段**：筛选器达到 20/20 完整净样本后，才实验方向刹车、ranker 和 Kelly/sizing；未达到前只继续积累和核对证据。
+20. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
 机会诊断口径已补强：overview 的窗口总数与重建上限分离；controller 的 `--hours`
 真实截断证据；sizing trace 将历史 proposal/fill 事实与当前配置投影分开。后续离线实验只能

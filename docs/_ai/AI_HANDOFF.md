@@ -7,7 +7,19 @@
 
 ## Last Updated
 
-2026-07-11 (deterministic application shutdown)
+2026-07-11 (Serenity daily scheduler continuity)
+
+---
+
+## Recent Change (Serenity daily scheduler continuity — 2026-07-11)
+
+Serenity 原本只随 `dreaming_daily` 在每天 02:00 CST 入队，网关错过该时刻就要再等一天。现在保留原 cron，同时在网关启动 4 分钟后做一次补跑判断：按上海时区计算最近应执行批次，只有该批次没有成功结果、没有活动任务且没有已尝试记录时才创建；`serenity:scheduled:YYYY-MM-DD` 持久键防止反复重启重复研究。
+
+研究 worker 是进程内 daemon thread，无法跨网关重启存活。启动时会把前一进程留下的全部 queued/running/waiting_retry 行标为 `gateway_restart_interrupted` 失败并记录事件，不再让幽灵 running 永久堵塞。doctor 改用最近成功完成时间判断新鲜度；近期失败只作为 latest attempt 展示，不再伪装成功，修复提示也改为真实的 `dreaming_daily` 与 `serenity_startup_catchup`。
+
+没有修改研究评分、自动晋升阈值、PI 决策、filter、风险、执行、live、凭证或每日 lesson extraction 行为。
+
+验证：聚焦 scheduler/Serenity/doctor 回归 129 项、完整规则 630 项通过；单进程连续全量 `2784 passed, 13 skipped, 6 xfailed`。
 
 ---
 

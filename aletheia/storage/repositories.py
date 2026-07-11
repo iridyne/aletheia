@@ -773,10 +773,26 @@ def update_serenity_research_run(run_id: str, **kwargs) -> None:
 
 
 def get_active_serenity_research_run() -> dict | None:
+    rows = list_active_serenity_research_runs(limit=1)
+    return rows[0] if rows else None
+
+
+def list_active_serenity_research_runs(limit: int = 100) -> list[dict]:
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM serenity_research_runs WHERE status IN ('queued', 'running', 'waiting_retry') "
+        "ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_latest_successful_serenity_research_run() -> dict | None:
     db = get_db()
     row = db.execute(
-        "SELECT * FROM serenity_research_runs WHERE status IN ('queued', 'running', 'waiting_retry') "
-        "ORDER BY created_at DESC LIMIT 1"
+        "SELECT * FROM serenity_research_runs "
+        "WHERE status IN ('completed', 'completed_empty') "
+        "ORDER BY COALESCE(finished_at, created_at) DESC LIMIT 1"
     ).fetchone()
     return dict(row) if row else None
 

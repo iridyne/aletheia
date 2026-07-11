@@ -1053,3 +1053,9 @@
 | ID | 状态 | 问题 | 证据/下一步 |
 |---|---|---|---|
 | TST-A01 | ✅ | 全量单进程运行曾在 `tests/test_doctor_json.py::test_infra_doctor_endpoint_matches_contract` 的 `TestClient` 退出时无限等待 anyio portal 线程 | 根因是生产 lifespan 启动了账户同步、交易所启动探针及其派生自动恢复循环，却没有对称停止；接口测试又以 current 模式误启真实后台网络。现统一执行“停调度器→取消直属任务→停止派生循环→回收 Telegram/PI”，清理放进 `finally`；启动账户同步使用独立可释放执行器，API 合约测试固定为 api-only runtime。新增取消、幂等停止和独立执行器回归；单进程连续全量 `2775 passed, 13 skipped, 6 xfailed`，原卡点及后半段均通过 |
+
+## §24 每日研究调度连续性（2026-07-11）
+
+| ID | 状态 | 问题 | 处理/下一步 |
+|---|---|---|---|
+| SCH-A01 | ✅ | Serenity 只挂在内存 scheduler 的 `dreaming_daily` 02:00 CST；网关错过该时刻后不会补跑。doctor 又指向不存在的 `serenity_research_runner`，并把最近失败记录的 `created_at` 当成管线新鲜 | 保留每日 cron，新增启动后 4 分钟一次性补跑；按最近应执行 CST 批次和持久批次键去重，fresh/active/already-attempted 均 no-op。启动时将上个进程遗留的全部 queued/running/waiting_retry 诚实标为中断失败。doctor 改看最近成功完成时间，失败只作最近尝试说明，并指向真实 `dreaming_daily`/`serenity_startup_catchup` |

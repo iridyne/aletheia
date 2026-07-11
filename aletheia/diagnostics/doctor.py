@@ -2587,12 +2587,19 @@ def _probe_filter_evidence(report: Report) -> None:
 
 
 def _probe_serenity_pipeline(report: Report) -> None:
-    """Serenity research pipeline freshness — last run age + active opportunity count."""
+    """Serenity freshness is based on successful completion, not mere attempts."""
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
-        row = db.execute(
-            "SELECT MAX(created_at) newest FROM serenity_research_runs"
+        successful = db.execute(
+            "SELECT status, COALESCE(finished_at, created_at) newest "
+            "FROM serenity_research_runs "
+            "WHERE status IN ('completed', 'completed_empty') "
+            "ORDER BY COALESCE(finished_at, created_at) DESC LIMIT 1"
+        ).fetchone()
+        attempted = db.execute(
+            "SELECT status, error_type, COALESCE(finished_at, created_at) attempted_at "
+            "FROM serenity_research_runs ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
         active = db.execute(
             "SELECT COUNT(*) FROM serenity_opportunities WHERE status = 'active'"
@@ -2600,17 +2607,27 @@ def _probe_serenity_pipeline(report: Report) -> None:
     except Exception as e:
         report.add("data.serenity_pipeline", "info", f"probe error: {e}")
         return
-    if not row["newest"]:
+    if not successful:
+        attempt_detail = ""
+        if attempted:
+            attempt_detail = (
+                f"; latest attempt={attempted['status']}"
+                + (f" ({attempted['error_type']})" if attempted["error_type"] else "")
+            )
         report.add("data.serenity_pipeline", "warn",
-                   "no serenity research runs recorded",
-                   "check serenity_research_runner scheduler job is registered and running")
+                   f"no successful Serenity research run{attempt_detail}",
+                   "check dreaming_daily and serenity_startup_catchup scheduler jobs")
         return
-    age = _age_minutes(row["newest"])
-    detail = f"last run {_fmt_age(age)}, {active} active opportunities"
+    age = _age_minutes(successful["newest"])
+    detail = f"last successful run {_fmt_age(age)}, {active} active opportunities"
+    if attempted and attempted["status"] not in ("completed", "completed_empty"):
+        detail += f"; latest attempt={attempted['status']}"
+        if attempted["error_type"]:
+            detail += f" ({attempted['error_type']})"
     if age is not None and age > 1560:  # 26h — serenity runs once per 24h; 12h fired daily false-positives
         report.add("data.serenity_pipeline", "warn",
                    f"Serenity research stale: {detail}",
-                   "serenity_research_runner has not run in >26h — check scheduler health")
+                   "dreaming_daily missed 02:00 CST and startup catch-up has not completed")
     else:
         report.add("data.serenity_pipeline", "ok", detail)
 
