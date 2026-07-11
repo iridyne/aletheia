@@ -13,9 +13,11 @@ intent: Make the human Learning enable switch govern all autonomous Learning mut
 acceptance:
 - All autonomous Learning mutation jobs share the backend autonomous_learning gate.
 - Measurement-only outcome and shadow settlement continue while Learning is disabled.
-- Missed daily Learning windows catch up once per durable date key and retry after failure.
+- Missed daily Learning windows catch up once per durable date key and retry after
+  failure.
 - Producer/reviewer success, failure, watermark, and backlog health persist durably.
-- Stalled or stale reviewer health refreezes new automatic guard promotion without changing existing guards.
+- Stalled or stale reviewer health refreezes new automatic guard promotion without
+  changing existing guards.
 ownership:
   branch: fix/learning-producer-continuity
   lease_holder: codex
@@ -26,6 +28,22 @@ next_action:
   command_key: workflow_tests
   reason: Claim the task and define the first focused verification.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: b08d46f55d47be70e676e23aa000ee5a45f54c8f
+  run_at: '2026-07-11T19:00:36.831424Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: b08d46f55d47be70e676e23aa000ee5a45f54c8f
+  run_at: '2026-07-11T19:01:20.772532Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-024.md
-updated_at: '2026-07-11T18:47:06.100695Z'
+updated_at: '2026-07-11T19:01:20.772730Z'
