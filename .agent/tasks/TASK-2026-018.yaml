@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-018
 title: Show blank AI provider state honestly
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -20,10 +20,18 @@ ownership:
   expires_at: '2026-07-12T01:11:38.000051Z'
 base_commit: 0ae52905445138a0e4901dfc78718c7724ea476c
 next_action:
-  command_key: specs
-  reason: Apply the smallest Settings-only honesty fix and verify the frontend build
-    plus repository checks.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: a97b83417230df7847d93ac0a9c7a5a3a7c10724
+  run_at: '2026-07-11T17:14:47.609872Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-018.md
-updated_at: '2026-07-11T17:13:14.395957Z'
+updated_at: '2026-07-11T17:14:47.774649Z'
