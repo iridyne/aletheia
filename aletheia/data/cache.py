@@ -1,6 +1,6 @@
 """In-memory TTL cache for OHLCV candle sets — a process-global singleton.
 
-Keyed by the composite ``(symbol, timeframe, limit)`` tuple. TTL is read from
+Keyed by ``(exchange, symbol, market_type, timeframe, limit)``. TTL is read from
 ``market_data.ohlcv_cache_ttl_min`` (default 10 min) at cache-creation time.
 
 Time is read via a module-level ``_now()`` indirection so tests can patch it; we
@@ -38,14 +38,18 @@ class OHLCVCache:
         self._lock = threading.Lock()
 
     @staticmethod
-    def _key(symbol: str, timeframe: str, limit: int, market_type: str = "spot") -> tuple:
-        # #155 fix: include market_type so spot and perp candles for the same
-        # symbol don't collide (they share the canonical BTC/USDT name).
-        return (symbol, timeframe, limit, market_type)
+    def _key(
+        symbol: str, timeframe: str, limit: int,
+        market_type: str = "spot", exchange: str = "",
+    ) -> tuple:
+        return (exchange, symbol, market_type, timeframe, limit)
 
-    def get(self, symbol: str, timeframe: str, limit: int, market_type: str = "spot"):
+    def get(
+        self, symbol: str, timeframe: str, limit: int,
+        market_type: str = "spot", exchange: str = "",
+    ):
         """Return the cached value or None if absent / expired."""
-        key = self._key(symbol, timeframe, limit, market_type)
+        key = self._key(symbol, timeframe, limit, market_type, exchange)
         with self._lock:
             entry = self._store.get(key)
             if entry is None:
@@ -57,8 +61,11 @@ class OHLCVCache:
                 return None
             return value
 
-    def set(self, symbol: str, timeframe: str, limit: int, value, market_type: str = "spot") -> None:
-        key = self._key(symbol, timeframe, limit, market_type)
+    def set(
+        self, symbol: str, timeframe: str, limit: int, value,
+        market_type: str = "spot", exchange: str = "",
+    ) -> None:
+        key = self._key(symbol, timeframe, limit, market_type, exchange)
         with self._lock:
             self._store[key] = (_now(), value)
 

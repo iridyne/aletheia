@@ -239,7 +239,7 @@ def test_migration_backfills_identity_without_inventing_historical_net():
     assert row["net_return_pct"] is None
 
 
-def test_derivative_ohlcv_does_not_overwrite_legacy_spot_store(monkeypatch):
+def test_derivative_ohlcv_persists_with_market_identity(monkeypatch):
     from aletheia.data.ccxt_provider import CCXTProvider
     from aletheia.data.providers import Candle
 
@@ -251,6 +251,8 @@ def test_derivative_ohlcv_does_not_overwrite_legacy_spot_store(monkeypatch):
     candles = [Candle(1, 100, 101, 99, 100.5, 10)]
 
     CCXTProvider._persist("BTC/USDT", "1h", candles, "okx", market_type="perp")
-    assert calls == []
-    CCXTProvider._persist("BTC/USDT", "1h", candles, "okx", market_type="spot")
     assert len(calls) == 1
+    assert calls[0]["market_type"] == "perp"
+    CCXTProvider._persist("BTC/USDT", "1h", candles, "okx", market_type="spot")
+    assert len(calls) == 2
+    assert calls[1]["market_type"] == "spot"

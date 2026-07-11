@@ -1314,49 +1314,84 @@ def upsert_ohlcv_candles(
     candles: list,  # list of Candle dataclass from aletheia.data.providers
     provider: str = "ccxt",
     exchange: str = "",
+    market_type: str = "spot",
     window: int | None = None,
 ) -> None:
     """Insert or replace OHLCV bars, then prune to rolling window.
 
     window: explicit bar limit; None reads from config (default 50000).
-    exchange: source exchange name (e.g. "binance"). Stored for query filtering;
-    does not affect the PRIMARY KEY (symbol, timeframe, ts) — last-writer wins
-    for the same bar across exchanges (acceptable MVP tradeoff).
+    exchange + market_type are part of the primary key. Unknown legacy callers
+    are isolated under `legacy_unknown` instead of impersonating a real venue.
     """
     if not candles:
         return
-    effective_exchange = exchange or provider
+    effective_exchange = (exchange or "legacy_unknown").lower()
+    effective_market_type = market_type or "spot"
     effective_window = window if window is not None else _ohlcv_window()
     db = get_db()
+    was_in_tx = db.in_transaction
     db.executemany(
         "INSERT OR REPLACE INTO market_ohlcv "
-        "(symbol, timeframe, ts, open, high, low, close, volume, provider, exchange) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume, provider) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            (symbol, timeframe, c.timestamp,
-             c.open, c.high, c.low, c.close, c.volume, provider, effective_exchange)
+            (effective_exchange, symbol, effective_market_type, timeframe, c.timestamp,
+             c.open, c.high, c.low, c.close, c.volume, provider)
             for c in candles
         ],
     )
     db.execute(
         "DELETE FROM market_ohlcv "
-        "WHERE symbol = ? AND timeframe = ? "
+        "WHERE exchange = ? AND symbol = ? AND market_type = ? AND timeframe = ? "
         "AND ts NOT IN ("
         "  SELECT ts FROM market_ohlcv "
-        "  WHERE symbol = ? AND timeframe = ? "
+        "  WHERE exchange = ? AND symbol = ? AND market_type = ? AND timeframe = ? "
         "  ORDER BY ts DESC LIMIT ?"
         ")",
-        (symbol, timeframe, symbol, timeframe, effective_window),
+        (effective_exchange, symbol, effective_market_type, timeframe,
+         effective_exchange, symbol, effective_market_type, timeframe, effective_window),
     )
+    if not was_in_tx:
+        db.commit()
 
 
-def get_ohlcv_coverage(symbol: str, timeframe: str) -> dict:
+def _resolve_ohlcv_scope(
+    db, symbol: str, timeframe: str, exchange: str, market_type: str
+) -> tuple[str, str] | None:
+    """Choose one coherent instrument for legacy partially-scoped readers."""
+    if exchange and market_type:
+        return exchange.lower(), market_type
+    where = ["symbol = ?", "timeframe = ?"]
+    params: list = [symbol, timeframe]
+    if exchange:
+        where.append("exchange = ?")
+        params.append(exchange.lower())
+    if market_type:
+        where.append("market_type = ?")
+        params.append(market_type)
+    row = db.execute(
+        "SELECT exchange,market_type,MAX(ts) newest FROM market_ohlcv WHERE "
+        + " AND ".join(where)
+        + " GROUP BY exchange,market_type "
+          "ORDER BY CASE WHEN exchange='legacy_unknown' THEN 1 ELSE 0 END, newest DESC LIMIT 1",
+        params,
+    ).fetchone()
+    return (row["exchange"], row["market_type"]) if row else None
+
+
+def get_ohlcv_coverage(
+    symbol: str, timeframe: str, exchange: str = "", market_type: str = ""
+) -> dict:
     """Return coverage stats for a symbol+timeframe pair."""
     db = get_db()
+    scope = _resolve_ohlcv_scope(db, symbol, timeframe, exchange, market_type)
+    if scope is None:
+        return {"bar_count": 0, "oldest_ts": None, "newest_ts": None}
+    scoped_exchange, scoped_market_type = scope
     row = db.execute(
         "SELECT COUNT(*) as cnt, MIN(ts) as oldest_ts, MAX(ts) as newest_ts "
-        "FROM market_ohlcv WHERE symbol = ? AND timeframe = ?",
-        (symbol, timeframe),
+        "FROM market_ohlcv WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=?",
+        (scoped_exchange, symbol, scoped_market_type, timeframe),
     ).fetchone()
     return {
         "bar_count": row[0] or 0,
@@ -1365,12 +1400,19 @@ def get_ohlcv_coverage(symbol: str, timeframe: str) -> dict:
     }
 
 
-def get_ohlcv_newest_ts(symbol: str, timeframe: str) -> int | None:
+def get_ohlcv_newest_ts(
+    symbol: str, timeframe: str, exchange: str = "", market_type: str = ""
+) -> int | None:
     """Return the newest timestamp stored for a symbol+timeframe, or None."""
     db = get_db()
+    scope = _resolve_ohlcv_scope(db, symbol, timeframe, exchange, market_type)
+    if scope is None:
+        return None
+    scoped_exchange, scoped_market_type = scope
     row = db.execute(
-        "SELECT MAX(ts) FROM market_ohlcv WHERE symbol = ? AND timeframe = ?",
-        (symbol, timeframe),
+        "SELECT MAX(ts) FROM market_ohlcv "
+        "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=?",
+        (scoped_exchange, symbol, scoped_market_type, timeframe),
     ).fetchone()
     return row[0] if row else None
 
@@ -1380,28 +1422,24 @@ def get_ohlcv_candles(
     timeframe: str,
     limit: int = 100,
     exchange: str = "",
+    market_type: str = "",
 ) -> list[dict]:
     """Return up to `limit` most-recent OHLCV bars, oldest-first.
 
-    exchange: if given, filter to rows from that exchange only.
+    When exchange/market_type are supplied, queries are scoped to that exact
+    instrument. Unscoped legacy callers should be migrated by their owners.
     """
     db = get_db()
-    if exchange:
-        rows = db.execute(
-            "SELECT ts, open, high, low, close, volume, provider, exchange "
-            "FROM market_ohlcv "
-            "WHERE symbol = ? AND timeframe = ? AND exchange = ? "
-            "ORDER BY ts DESC LIMIT ?",
-            (symbol, timeframe, exchange, limit),
-        ).fetchall()
-    else:
-        rows = db.execute(
-            "SELECT ts, open, high, low, close, volume, provider, exchange "
-            "FROM market_ohlcv "
-            "WHERE symbol = ? AND timeframe = ? "
-            "ORDER BY ts DESC LIMIT ?",
-            (symbol, timeframe, limit),
-        ).fetchall()
+    scope = _resolve_ohlcv_scope(db, symbol, timeframe, exchange, market_type)
+    if scope is None:
+        return []
+    scoped_exchange, scoped_market_type = scope
+    rows = db.execute(
+        "SELECT ts, open, high, low, close, volume, provider, exchange, market_type "
+        "FROM market_ohlcv WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? "
+        "ORDER BY ts DESC LIMIT ?",
+        (scoped_exchange, symbol, scoped_market_type, timeframe, limit),
+    ).fetchall()
     # Reverse so callers get oldest→newest
     return [dict(r) for r in reversed(rows)]
 

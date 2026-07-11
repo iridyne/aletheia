@@ -488,7 +488,9 @@ CREATE TABLE IF NOT EXISTS news_items (
 -- recent 500 bars. Older bars are pruned by _prune_ohlcv() after each write.
 -- symbol uses canonical BTC/USDT format; provider records which source supplied it.
 CREATE TABLE IF NOT EXISTS market_ohlcv (
+    exchange TEXT NOT NULL DEFAULT 'legacy_unknown',
     symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL DEFAULT 'spot',
     timeframe TEXT NOT NULL,
     ts INTEGER NOT NULL,        -- unix milliseconds (open time of bar)
     open REAL NOT NULL,
@@ -497,11 +499,8 @@ CREATE TABLE IF NOT EXISTS market_ohlcv (
     close REAL NOT NULL,
     volume REAL NOT NULL,
     provider TEXT NOT NULL DEFAULT 'ccxt',
-    PRIMARY KEY (symbol, timeframe, ts)
+    PRIMARY KEY (exchange, symbol, market_type, timeframe, ts)
 );
-
-CREATE INDEX IF NOT EXISTS idx_market_ohlcv_sym_tf_ts
-    ON market_ohlcv (symbol, timeframe, ts DESC);
 
 -- Runtime Continuity (PI runtime lifecycle): candidate -> shadow -> promote -> rollback.
 CREATE TABLE IF NOT EXISTS runtime_registry (
@@ -1559,9 +1558,6 @@ _ADDITIVE_COLUMNS = [
     # Exchange-aware instrument identity (2026-06-08): which exchange supplied the data.
     # Allows Binance spot BTC/USDT and Bybit spot BTC/USDT to coexist without overwriting.
     ("exchange", "market_snapshots", "TEXT"),
-    # exchange column on OHLCV (supplement to provider — same value, explicit naming).
-    # Primary key stays (symbol, timeframe, ts); exchange stored for query filtering only.
-    ("exchange", "market_ohlcv", "TEXT"),
     ("under_review", "strategy_records", "INTEGER"),
     ("review_notes", "strategy_records", "TEXT"),
     ("review_updated_at", "strategy_records", "TEXT"),
@@ -1813,6 +1809,69 @@ def _ensure_columns(db) -> None:
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e).lower():
                 raise
+
+
+def _ensure_market_ohlcv_instrument_identity(db) -> None:
+    """Upgrade legacy symbol-only OHLCV storage to full instrument identity."""
+    import sqlite3
+
+    if not db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_ohlcv'"
+    ).fetchone():
+        return
+    info = db.execute("PRAGMA table_info(market_ohlcv)").fetchall()
+    columns = {row["name"] for row in info}
+    pk = [row["name"] for row in sorted(info, key=lambda row: row["pk"]) if row["pk"]]
+    expected_pk = ["exchange", "symbol", "market_type", "timeframe", "ts"]
+    if "market_type" in columns and pk == expected_pk:
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_market_ohlcv_instrument_tf_ts "
+            "ON market_ohlcv(exchange,symbol,market_type,timeframe,ts DESC)"
+        )
+        return
+
+    exchange_expr = (
+        "CASE "
+        "WHEN exchange IS NOT NULL AND trim(exchange) NOT IN ('', 'ccxt') "
+        "THEN lower(exchange) "
+        "WHEN provider IS NOT NULL AND trim(provider) NOT IN ('', 'ccxt') "
+        "THEN lower(provider) "
+        "ELSE 'legacy_unknown' END"
+        if "exchange" in columns
+        else (
+            "CASE WHEN provider IS NOT NULL AND trim(provider) NOT IN ('', 'ccxt') "
+            "THEN lower(provider) ELSE 'legacy_unknown' END"
+        )
+    )
+    db.execute("SAVEPOINT market_ohlcv_identity_upgrade")
+    try:
+        db.execute("DROP TABLE IF EXISTS market_ohlcv_identity_new")
+        db.execute(
+            "CREATE TABLE market_ohlcv_identity_new ("
+            "exchange TEXT NOT NULL DEFAULT 'legacy_unknown', symbol TEXT NOT NULL, "
+            "market_type TEXT NOT NULL DEFAULT 'spot', "
+            "timeframe TEXT NOT NULL, ts INTEGER NOT NULL, open REAL NOT NULL, "
+            "high REAL NOT NULL, low REAL NOT NULL, close REAL NOT NULL, "
+            "volume REAL NOT NULL, provider TEXT NOT NULL DEFAULT 'ccxt', "
+            "PRIMARY KEY (exchange, symbol, market_type, timeframe, ts))"
+        )
+        db.execute(
+            "INSERT OR REPLACE INTO market_ohlcv_identity_new "
+            "(exchange,symbol,market_type,timeframe,ts,open,high,low,close,volume,provider) "
+            f"SELECT {exchange_expr},symbol,'spot',timeframe,ts,open,high,low,close,volume,provider "
+            "FROM market_ohlcv"
+        )
+        db.execute("DROP TABLE market_ohlcv")
+        db.execute("ALTER TABLE market_ohlcv_identity_new RENAME TO market_ohlcv")
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_market_ohlcv_instrument_tf_ts "
+            "ON market_ohlcv(exchange,symbol,market_type,timeframe,ts DESC)"
+        )
+        db.execute("RELEASE SAVEPOINT market_ohlcv_identity_upgrade")
+    except sqlite3.Error:
+        db.execute("ROLLBACK TO SAVEPOINT market_ohlcv_identity_upgrade")
+        db.execute("RELEASE SAVEPOINT market_ohlcv_identity_upgrade")
+        raise
 
 
 def _backfill_forward_outcome_instrument_identity(db) -> None:
@@ -2204,6 +2263,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_VOLUME_RANKING_DDL)
     db.executescript(_CONTROLLER_RECOMMENDATIONS_DDL)
     _ensure_columns(db)
+    _ensure_market_ohlcv_instrument_identity(db)
     _ensure_filter_evidence_indexes(db)
     _backfill_forward_outcome_instrument_identity(db)
     _ensure_runtime_baseline(db)

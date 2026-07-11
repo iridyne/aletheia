@@ -171,7 +171,10 @@ class CCXTProvider:
         from aletheia.data.cache import get_cache
         cache = get_cache()
         if since is None:
-            cached = cache.get(canon, timeframe, limit, market_type=mkt)
+            cached = cache.get(
+                canon, timeframe, limit,
+                market_type=mkt, exchange=self._primary_name,
+            )
             if cached is not None:
                 return cached
 
@@ -197,7 +200,10 @@ class CCXTProvider:
                 ]
                 self._persist(canon, timeframe, candles, name, market_type=mkt)
                 if since is None and candles:
-                    cache.set(canon, timeframe, limit, candles, market_type=mkt)
+                    cache.set(
+                        canon, timeframe, limit, candles,
+                        market_type=mkt, exchange=self._primary_name,
+                    )
                 return candles
             except Exception as e:  # noqa: BLE001 — try fallback, then re-raise
                 last_err = e
@@ -215,18 +221,12 @@ class CCXTProvider:
         """Best-effort persist to market_ohlcv; never raise into the fetch path."""
         if not candles:
             return
-        # The legacy market_ohlcv primary key omits market_type. Persisting a
-        # derivative bar would overwrite the same symbol's spot bar. The caller
-        # still receives exact derivative candles; skip only the ambiguous cache
-        # write until the storage table has full instrument identity.
-        if market_type != "spot":
-            return
         try:
             from aletheia.storage.repositories import upsert_ohlcv_candles
 
             upsert_ohlcv_candles(
                 symbol=canon, timeframe=timeframe, candles=candles,
-                provider="ccxt", exchange=exchange,
+                provider="ccxt", exchange=exchange, market_type=market_type,
             )
         except Exception as e:  # noqa: BLE001
             logger.debug("ohlcv persist skipped for %s/%s: %s", canon, timeframe, e)
@@ -273,6 +273,7 @@ def get_market_data_provider(
     exchange: str | None = None,
     *,
     native_ccxt: bool = False,
+    fallback_exchange: str | None = None,
 ):
     """Construct a FRESH market-data provider (never cached — see module docstring).
 
@@ -288,7 +289,10 @@ def get_market_data_provider(
 
     md = load_config().market_data
     primary = exchange or md.ccxt_exchange
-    ccxt = CCXTProvider(exchange=primary, fallback_exchange=md.ccxt_fallback)
+    ccxt = CCXTProvider(
+        exchange=primary,
+        fallback_exchange=fallback_exchange or md.ccxt_fallback,
+    )
 
     if native_ccxt or not getattr(md, "enable_crypto_fallback", True):
         return ccxt

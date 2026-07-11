@@ -895,7 +895,7 @@ def _build_layer3_wisdom() -> dict[str, Any]:
 def _get_data_health_summary() -> dict[str, Any]:
     """Build a concise data-health dict for System Operator context injection."""
     try:
-        from aletheia.storage.repositories import get_active_universe_members
+        from aletheia.storage.repositories import get_active_universe_members, get_universe_asset
         from aletheia.storage.sqlite import get_db
         from aletheia.config.loader import load_config
 
@@ -910,9 +910,13 @@ def _get_data_health_summary() -> dict[str, Any]:
             sym = m.get("symbol", "")
             if not sym:
                 continue
+            asset = get_universe_asset(m.get("asset_id")) or {}
+            venue = asset.get("venue", "")
+            market_type = m.get("market_type") or asset.get("market_type", "")
             bars = db.execute(
-                "SELECT COUNT(*) FROM market_ohlcv WHERE symbol=? AND timeframe='1h'",
-                (sym,),
+                "SELECT COUNT(*) FROM market_ohlcv "
+                "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe='1h'",
+                (venue, sym, market_type),
             ).fetchone()[0]
             if bars >= min_bars:
                 ready_count += 1

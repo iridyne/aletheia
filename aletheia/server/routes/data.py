@@ -955,10 +955,13 @@ async def get_market_ohlcv(
         since_ms = before * 1000 - limit * tf_ms
 
     cache = get_cache()
-    cache_key = sym  # cache by canonical symbol (same data regardless of exchange for spot)
+    cache_key = sym
     use_cache = since_ms is None and limit == 100
     try:
-        candles = cache.get(cache_key, timeframe, limit) if use_cache else None
+        candles = cache.get(
+            cache_key, timeframe, limit,
+            market_type=market_type, exchange=effective_exchange,
+        ) if use_cache else None
         if candles is None:
             provider = get_market_data_provider(effective_exchange)
             try:
@@ -966,7 +969,10 @@ async def get_market_ohlcv(
                     instrument, timeframe=timeframe, limit=limit, since=since_ms,
                 )
                 if use_cache:
-                    cache.set(cache_key, timeframe, limit, candles)
+                    cache.set(
+                        cache_key, timeframe, limit, candles,
+                        market_type=market_type, exchange=effective_exchange,
+                    )
             finally:
                 await provider.close()
         # For a historical page, drop any candle at/after `before` so the prepend

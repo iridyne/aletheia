@@ -1655,30 +1655,24 @@ def _run_ohlcv_nightly_backfill():
 def _ohlcv_backfill_body():
     import asyncio as _asyncio
     from aletheia.data.history_downloader import download_symbol_history
-    from aletheia.storage.repositories import get_active_universe_members
 
     cfg = load_config()
     months = cfg.historical_data.default_months
-    symbols: set[str] = set()
-    try:
-        members = get_active_universe_members()
-        for m in members:
-            symbols.add(m.get("symbol", ""))
-    except Exception:
-        pass
-    symbols.update(cfg.market_data.observed_symbols or [])
-    symbols.discard("")
+    instruments = set(_get_observed_instruments(cfg))
 
     total_bars = 0
-    for sym in sorted(symbols):
+    for instrument in sorted(instruments, key=str):
         for tf in ("1h", "4h"):
             try:
-                result = _asyncio.run(download_symbol_history(sym, tf, months=months))
+                result = _asyncio.run(download_symbol_history(
+                    instrument.symbol, tf, months=months,
+                    exchange=instrument.exchange, market_type=instrument.market_type,
+                ))
                 total_bars += result.bars_fetched
             except Exception as e:
-                logger.debug("nightly_backfill skip %s/%s: %s", sym, tf, e)
+                logger.debug("nightly_backfill skip %s/%s: %s", instrument, tf, e)
     logger.info("ohlcv_nightly_backfill: %d symbols, %d total bars fetched",
-                len(symbols), total_bars)
+                len(instruments), total_bars)
 
 
 def _run_okx_demo_symbols():

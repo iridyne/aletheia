@@ -13,6 +13,8 @@ def download(
     symbol: str = typer.Argument(..., help="Canonical symbol, e.g. BTC/USDT"),
     timeframe: str = typer.Option("1h", help="Candle timeframe (1m/5m/15m/1h/4h/1d)"),
     months: int = typer.Option(6, help="How many months of history to fetch"),
+    exchange: str = typer.Option("", help="Source exchange (default: configured primary)"),
+    market_type: str = typer.Option("spot", help="Instrument market type: spot | perp"),
 ):
     """Bulk-download historical OHLCV candles from the configured exchange."""
     from aletheia.data.history_downloader import download_symbol_history
@@ -24,7 +26,8 @@ def download(
         typer.echo("\r", nl=False)
 
     result = asyncio.run(download_symbol_history(
-        symbol, timeframe, months=months, progress_callback=_progress,
+        symbol, timeframe, months=months, exchange=exchange or None,
+        market_type=market_type, progress_callback=_progress,
     ))
 
     if result.error:
@@ -37,30 +40,42 @@ def backfill(
     months: int = typer.Option(1, help="Months of history to backfill"),
     symbols: Optional[str] = typer.Option(None, help="Comma-separated symbols (default: all active members)"),
     timeframes: str = typer.Option("1h,4h", help="Comma-separated timeframes"),
+    exchange: str = typer.Option("", help="Venue for explicit --symbols"),
+    market_type: str = typer.Option("spot", help="Market type for explicit --symbols"),
 ):
     """Batch-backfill OHLCV history for all active universe members."""
     from aletheia.data.history_downloader import download_symbol_history
-    from aletheia.storage.repositories import get_active_universe_members
+    from aletheia.config.loader import load_config
+    from aletheia.storage.repositories import get_active_universe_members, get_universe_asset
 
     if symbols:
-        sym_list = [s.strip() for s in symbols.split(",")]
+        venue = exchange or load_config().market_data.ccxt_exchange
+        instruments = [(venue, s.strip(), market_type) for s in symbols.split(",") if s.strip()]
     else:
         members = get_active_universe_members()
-        sym_list = [m["symbol"] for m in members if m.get("symbol")]
+        instruments = []
+        for member in members:
+            asset = get_universe_asset(member.get("asset_id")) or {}
+            venue = asset.get("venue")
+            mkt = member.get("market_type") or asset.get("market_type")
+            if venue and member.get("symbol") and mkt:
+                instruments.append((venue, member["symbol"], mkt))
 
-    if not sym_list:
+    if not instruments:
         typer.echo("No symbols to backfill (empty universe).")
         raise typer.Exit(1)
 
     tf_list = [t.strip() for t in timeframes.split(",")]
-    typer.echo(f"Backfilling {len(sym_list)} symbols × {len(tf_list)} timeframes ({months}mo)...")
+    typer.echo(f"Backfilling {len(instruments)} instruments × {len(tf_list)} timeframes ({months}mo)...")
 
     total_bars = 0
-    for sym in sym_list:
+    for venue, sym, mkt in instruments:
         for tf in tf_list:
-            result = asyncio.run(download_symbol_history(sym, tf, months=months))
+            result = asyncio.run(download_symbol_history(
+                sym, tf, months=months, exchange=venue, market_type=mkt,
+            ))
             total_bars += result.bars_fetched
-            status = f"  {sym}/{tf}: +{result.bars_fetched} bars"
+            status = f"  {venue}:{sym}:{mkt}/{tf}: +{result.bars_fetched} bars"
             if result.error:
                 status += f" (error: {result.error})"
             typer.echo(status)
@@ -72,12 +87,17 @@ def backfill(
 def coverage(
     symbol: str = typer.Argument(..., help="Canonical symbol, e.g. BTC/USDT"),
     timeframe: str = typer.Option("1h", help="Candle timeframe"),
+    exchange: str = typer.Option("", help="Filter by source exchange"),
+    market_type: str = typer.Option("", help="Filter by market type: spot | perp"),
 ):
     """Show local OHLCV data coverage for a symbol."""
     from aletheia.storage.repositories import get_ohlcv_coverage
 
-    cov = get_ohlcv_coverage(symbol, timeframe)
-    typer.echo(f"{symbol} {timeframe}: {cov['bar_count']} bars")
+    cov = get_ohlcv_coverage(
+        symbol, timeframe, exchange=exchange, market_type=market_type,
+    )
+    identity = f"{exchange or '*'}:{symbol}:{market_type or '*'}"
+    typer.echo(f"{identity} {timeframe}: {cov['bar_count']} bars")
     if cov["oldest_ts"]:
         from datetime import datetime, timezone
         oldest = datetime.fromtimestamp(cov["oldest_ts"] / 1000, tz=timezone.utc)
