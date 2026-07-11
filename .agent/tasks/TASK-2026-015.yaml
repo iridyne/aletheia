@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-015
 title: Converge handoffs on .agent/handoffs; freeze AI_HANDOFF.md
-status: in_progress
+status: done
 scope:
   boundary: declare before implementation
   excluded: runtime facts and credentials
@@ -24,10 +24,18 @@ ownership:
   expires_at: '2026-07-12T00:00:22.988439Z'
 base_commit: 8e26595e200459ee156f9ba6e4466b656ae9bd75
 next_action:
-  command_key: workflow_tests
-  reason: Write the SDD claim first; then apply the doc edits and confirm the claim
-    goes green.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: aa4fee7d0de72ce70224c477217b53c91903a06e
+  run_at: '2026-07-11T16:01:56.030630Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-015.md
-updated_at: '2026-07-11T16:00:23.142622Z'
+updated_at: '2026-07-11T16:02:09.463770Z'
