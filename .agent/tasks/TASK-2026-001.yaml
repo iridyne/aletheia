@@ -1,14 +1,15 @@
 schema_version: 1
 id: TASK-2026-001
 title: Establish session-independent agent workflow
-status: in_progress
+status: done
 scope:
   boundary: developer workflow, repository metadata, and CLI diagnostics
   excluded: trading, risk, execution, credentials, and gateway behaviour
-intent: Implement the recovery, validation, and handoff mechanism in the accompanying plan.
+intent: Implement the recovery, validation, and handoff mechanism in the accompanying
+  plan.
 acceptance:
-  - A fresh agent can identify this task and its next action without chat history.
-  - Completed tasks require verifiable command evidence.
+- A fresh agent can identify this task and its next action without chat history.
+- Completed tasks require verifiable command evidence.
 ownership:
   branch: iridite/agent-continuity
   lease_holder: codex
@@ -19,6 +20,12 @@ next_action:
   command_key: workflow_tests
   reason: Run the workflow tests after the final cold-start and CI integration checks.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  exit_code: 0
+  commit: b0e91f0b48dbc549b09f5891d31436ff3f6ce5b6
+  run_at: '2026-07-11T05:16:13.002350Z'
+  result: passed
 handoff: .agent/handoffs/TASK-2026-001.md
-updated_at: '2026-07-11T00:00:00Z'
+updated_at: '2026-07-11T05:16:13.002525Z'
