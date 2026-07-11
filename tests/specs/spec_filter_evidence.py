@@ -508,3 +508,20 @@ def test_filter_shadow_experiments_are_prospective_and_observe_only():
     assert "production_mutation_allowed" in source
     assert "save_config" not in source
     assert "ready_for_review" in source
+
+
+@spec_claim(
+    SpecClaim(
+        "FE-C11", _CONTRACT, "§8 operations", "L2c",
+        "Doctor distinguishes outcomes waiting inside the 15-minute settler cadence from genuinely stale settlement backlog.",
+        status="implemented",
+    )
+)
+def test_filter_evidence_health_respects_settler_cadence():
+    import inspect
+
+    from aletheia.diagnostics.doctor import _probe_filter_evidence
+
+    source = inspect.getsource(_probe_filter_evidence)
+    assert "awaiting_cadence" in source
+    assert "stale_overdue" in source

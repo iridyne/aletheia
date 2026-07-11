@@ -306,6 +306,59 @@ def test_doctor_reports_filter_evidence_registration(tmp_path, monkeypatch):
     assert "outcome_candidates=1/1" in check.detail
 
 
+def _seed_pending_filter_outcomes(*, count: int, due_at: str) -> None:
+    from aletheia.analytics.filter_evidence import record_filter_decision
+    from aletheia.storage.sqlite import get_db
+
+    for index in range(count):
+        record_filter_decision(
+            candidate_key=f"opportunity:doctor-pending-{index}",
+            candidate_kind="opportunity",
+            filter_name="family_ttl",
+            stage="paper_ranker",
+            decision="passed",
+            reason_code="universe_member_fresh",
+            symbol="BTC/USDT",
+            venue="okx",
+            market_type="perp",
+            direction="long",
+            scanner_family="momentum",
+            entry_price_usd=100.0,
+        )
+    get_db().execute(
+        "UPDATE filter_candidate_outcomes SET due_at=?, status='pending'",
+        (due_at,),
+    )
+
+
+def test_doctor_treats_recently_due_filter_outcomes_as_within_cadence(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _seed_pending_filter_outcomes(count=13, due_at=_iso_ago(10))
+    report = dx.Report(generated_at="t")
+
+    dx._probe_filter_evidence(report)
+
+    check = {c.name: c for c in report.checks}["data.filter_evidence"]
+    assert check.severity == "ok"
+    assert "overdue=52" in check.detail
+    assert "awaiting_cadence=52" in check.detail
+    assert "stale_overdue=0" in check.detail
+
+
+def test_doctor_warns_for_filter_outcomes_past_settler_grace(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _seed_pending_filter_outcomes(count=13, due_at=_iso_ago(30))
+    report = dx.Report(generated_at="t")
+
+    dx._probe_filter_evidence(report)
+
+    check = {c.name: c for c in report.checks}["data.filter_evidence"]
+    assert check.severity == "warn"
+    assert "overdue=52" in check.detail
+    assert "awaiting_cadence=0" in check.detail
+    assert "stale_overdue=52" in check.detail
+
+
 def test_doctor_reports_directionless_filter_batches_during_warmup(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.analytics.filter_evidence import record_filter_decision_batch

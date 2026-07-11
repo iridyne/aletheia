@@ -45,8 +45,9 @@
 21. **已完成**：可选 Coinalyze 未配置不再产生故障告警；已配置无 OI 才 warn，清算平静期保持 idle/info。
 22. **已完成**：数据库容量按真实磁盘压力和 freelist 判断；有效历史导致的大文件不再误告警或推荐不存在的 VACUUM 脚本。
 23. **已完成**：单调筛选阈值的回放候选可自动预登记为前瞻 shadow 实验；只使用登记后的首次样本，锁定版本和停止门，生产版本变化自动失效，任何结果都不自动改参数。
-24. **下一阶段**：筛选器达到独立前瞻样本门后，才人工评审方向刹车、ranker 和 Kelly/sizing 实验；未达到前只继续积累和核对证据。
-25. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+24. **已完成**：filter outcome 刚到期但仍在 15 分钟结算周期内时不再产生假告警；20 分钟宽限后仍积压才计入 doctor warning。
+25. **下一阶段**：筛选器达到独立前瞻样本门后，才人工评审方向刹车、ranker 和 Kelly/sizing 实验；未达到前只继续积累和核对证据。
+26. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
 机会诊断口径已补强：overview 的窗口总数与重建上限分离；controller 的 `--hours`
 真实截断证据；sizing trace 将历史 proposal/fill 事实与当前配置投影分开。后续离线实验只能

@@ -7,7 +7,15 @@
 
 ## Last Updated
 
-2026-07-11 (Prospective filter shadow experiments)
+2026-07-11 (Filter settlement cadence diagnostic honesty)
+
+---
+
+## Recent Change (Filter settlement cadence diagnostic honesty — 2026-07-11)
+
+doctor 原先只要 filter outcome 到了 `due_at` 就立即计入 overdue，超过 50 条便告警；但 outcome settler 每 15 分钟运行，所以正常等待下一轮的样本会让健康状态周期性变黄。现在统一采用 20 分钟宽限：宽限内单列 `awaiting_cadence`，超过宽限才进入 `stale_overdue` 和告警阈值。
+
+没有修改结算频率、取价、结果计算、过滤、实验、风险、执行或 live。doctor 回归 46 项、完整规则 634 项通过；单进程连续全量 `2809 passed, 13 skipped, 6 xfailed`。
 
 ---
 

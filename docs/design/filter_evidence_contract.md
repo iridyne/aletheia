@@ -180,6 +180,9 @@ Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候
 - 证据写入失败不能改变原交易决定，但必须记 warning/doctor coverage，不得沉默当成完整证据。
 - outcome 取价失败保持 `failed`/NULL，不用同名现货或过晚价格补齐。
 - `doctor` 分开报告：记录覆盖率、可结算比例、到期未结算数、各 filter 是否达到最小对照样本。
+- `outcome_settler` 每 15 分钟运行；刚到期的 filter outcome 在 20 分钟宽限内标为
+  `awaiting_cadence`，不算故障。超过宽限的 `stale_overdue` 才参与积压告警，口径与主 forward
+  outcome 诊断一致。
 - `doctor` 同时校验批次里的候选总数是否等于 pass/reject/not-applicable/error 之和。
 - Trade Funnel 优先从 `filter_decisions` 读取窗口内 ranker 历史候选，不在审计时重跑 ranker；
   `proposal_submission` 拒绝原因必须单列，不能统称为未知的 decision-to-proposal 丢失。

@@ -36,6 +36,8 @@ from typing import Literal
 
 Severity = Literal["ok", "info", "warn", "blocker"]
 
+_OUTCOME_SETTLER_GRACE_MINUTES = 20
+
 
 @dataclass
 class Check:
@@ -2061,8 +2063,11 @@ def _probe_content_signal_settlement(report: Report) -> None:
         return
     if overdue > 0:
         oldest_age = _age_minutes(oldest_due)
-        # outcome_settler runs every 15 min — tolerate up to 20 min before alarming
-        if oldest_age is not None and oldest_age > 20:
+        # outcome_settler runs every 15 min; allow one cadence plus scheduling slack.
+        if (
+            oldest_age is not None
+            and oldest_age > _OUTCOME_SETTLER_GRACE_MINUTES
+        ):
             report.add("content.signal_settlement", "warn",
                        f"{overdue} forward outcomes past due_at, oldest {_fmt_age(oldest_age)} — settler stalled",
                        "outcome settler job is not closing due outcomes; check its scheduler cadence")
@@ -2551,20 +2556,30 @@ def _probe_filter_evidence(report: Report) -> None:
             )
             return
 
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        stale_before = (
+            now - timedelta(minutes=_OUTCOME_SETTLER_GRACE_MINUTES)
+        ).isoformat()
         outcomes = db.execute(
             "SELECT COUNT(DISTINCT outcome_candidate_key) AS registered, "
             "SUM(CASE WHEN status='settled' THEN 1 ELSE 0 END) AS settled, "
             "SUM(CASE WHEN status='settled' AND net_return_pct IS NOT NULL "
             "  THEN 1 ELSE 0 END) AS net_complete, "
-            "SUM(CASE WHEN status='pending' AND due_at < ? THEN 1 ELSE 0 END) AS overdue "
+            "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
+            "  THEN 1 ELSE 0 END) AS overdue, "
+            "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
+            "  THEN 1 ELSE 0 END) AS stale_overdue "
             "FROM filter_candidate_outcomes",
-            (datetime.now(timezone.utc).isoformat(),),
+            (now_iso, stale_before),
         ).fetchone()
         outcome_candidates = int(decisions["outcome_candidates"] or 0)
         registered = int(outcomes["registered"] or 0) if outcomes else 0
         settled = int(outcomes["settled"] or 0) if outcomes else 0
         net_complete = int(outcomes["net_complete"] or 0) if outcomes else 0
         overdue = int(outcomes["overdue"] or 0) if outcomes else 0
+        stale_overdue = int(outcomes["stale_overdue"] or 0) if outcomes else 0
+        awaiting_cadence = max(0, overdue - stale_overdue)
         registration = registered / outcome_candidates if outcome_candidates else 1.0
         detail = (
             f"decisions={total} (pass={int(decisions['passed'] or 0)}, "
@@ -2572,7 +2587,8 @@ def _probe_filter_evidence(report: Report) -> None:
             f"batches={batch_total}, batch_candidates={batch_candidates}, "
             f"batch_filters={batch_filters}, malformed={malformed_batches}; "
             f"outcome_candidates={registered}/{outcome_candidates}; "
-            f"settled={settled}, net_complete={net_complete}, overdue={overdue}"
+            f"settled={settled}, net_complete={net_complete}, overdue={overdue}, "
+            f"awaiting_cadence={awaiting_cadence}, stale_overdue={stale_overdue}"
         )
         if malformed_batches:
             report.add(
@@ -2588,12 +2604,13 @@ def _probe_filter_evidence(report: Report) -> None:
                 detail,
                 "inspect filter evidence write failures; eligible decisions are missing outcomes",
             )
-        elif overdue > 50:
+        elif stale_overdue > 50:
             report.add(
                 "data.filter_evidence",
                 "warn",
                 detail,
-                "inspect outcome settler logs and exact-instrument market coverage",
+                "inspect outcome settler logs and exact-instrument market coverage; "
+                "recently due rows inside the cadence are excluded from this warning",
             )
         else:
             report.add("data.filter_evidence", "ok", detail)

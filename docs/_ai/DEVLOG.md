@@ -1,5 +1,18 @@
 # Development Log
 
+## 2026-07-11 — Filter settlement cadence diagnostic honesty
+
+- Filter evidence health now separates all due rows into `awaiting_cadence` and
+  `stale_overdue` using the same 20-minute grace as the main forward-outcome probe.
+- The warning threshold applies only after the 15-minute settler cadence plus
+  scheduling slack; normal queue turnover no longer makes doctor oscillate red.
+- Settlement frequency, price lookup, economics, filter decisions, experiments,
+  risk, execution, and live behavior are unchanged.
+- Validation: doctor tests passed 46; all specs passed 634; full suite passed
+  2809 with 13 skipped and 6 expected failures.
+
+---
+
 ## 2026-07-11 — Prospective filter shadow experiments
 
 - Replay-ready monotonic threshold candidates now preregister a fixed-version,
