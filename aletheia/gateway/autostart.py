@@ -29,7 +29,7 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from aletheia.config.loader import _PROJECT_ROOT
 from aletheia.files.jsonl import write_audit
@@ -114,12 +114,16 @@ def _task_arguments() -> str:
     `import aletheia.main` finds typer/fastapi/etc.
     """
     exe = sys.executable
-    venv_dir = Path(exe).resolve().parent.parent
+    # Tests may emulate Windows while executing on Linux. Choose the path flavour
+    # from the executable value so a Windows venv is never reinterpreted as a
+    # POSIX relative path.
+    path_type = PureWindowsPath if "\\" in exe or (len(exe) > 1 and exe[1] == ":") else Path
+    venv_dir = path_type(exe).parent.parent
     pyvenv_cfg = venv_dir / "pyvenv.cfg"
     real_python = _python_for_task()
 
     # If we resolved to a real python (different from venv shim), need bootstrap.
-    if _exists(pyvenv_cfg) and str(Path(exe).resolve()) != str(Path(real_python).resolve()):
+    if _exists(pyvenv_cfg) and str(path_type(exe)) != str(path_type(real_python)):
         venv_site = str(venv_dir / "Lib" / "site-packages")
         project_root = str(_PROJECT_ROOT)
         # Use repr() for path strings to handle single quotes, backslashes, etc.

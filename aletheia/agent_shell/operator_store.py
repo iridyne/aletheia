@@ -500,7 +500,7 @@ def list_sessions(limit: int = 50) -> list[dict]:
             FROM agent_shell_commands
             GROUP BY session_id
         ) cmd ON cmd.session_id = s.id
-        ORDER BY s.created_at DESC, rowid DESC
+        ORDER BY s.created_at DESC, s.rowid DESC
         LIMIT ?
         """,
         (limit,),

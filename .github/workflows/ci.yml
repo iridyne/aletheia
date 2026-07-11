@@ -23,7 +23,7 @@ concurrency:
 jobs:
   backend:
     name: Python safety and contract gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -39,6 +39,9 @@ jobs:
 
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
+
+      - name: Prepare test report directory
+        run: mkdir -p test-results
 
       - name: Verify architecture and safety defaults
         run: uv run pytest tests/test_architecture_fitness.py -q --junitxml=test-results/architecture.xml
@@ -61,7 +64,7 @@ jobs:
 
   frontend:
     name: Dashboard build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:
