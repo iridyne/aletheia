@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-022
 title: Implement Learning Phase 0 measurement integrity
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: Learning measurement core, read-only alpha/guard analytics, executable
@@ -27,8 +27,8 @@ acceptance:
   channels and requests refreeze when quantitative evidence coverage is lost.
 - Policy epoch semantics are deterministic, secret-free, never withhold safety tightening,
   and invalidate affected comparisons.
-- Focused regressions, full specs, full tests, doctor, and strict workflow verification pass
-  or any environment-only limitation is reported without changing runtime state.
+- Focused regressions, full specs, full tests, doctor, and strict workflow verification
+  pass or any environment-only limitation is reported without changing runtime state.
 ownership:
   branch: feat/learning-phase0-integrity
   lease_holder: codex
@@ -36,9 +36,18 @@ ownership:
   expires_at: '2026-07-12T02:21:32.191780Z'
 base_commit: b7f21124d13221950a3b412220ec06b237e32682
 next_action:
-  command_key: specs
-  reason: Verify the executable Learning evolution claims and all existing contracts.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: e721920482bb98498bc139d22c8cb8075f68c288
+  run_at: '2026-07-11T18:39:14.614393Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-022.md
-updated_at: '2026-07-11T18:21:32.191790Z'
+updated_at: '2026-07-11T18:39:20.070444Z'
