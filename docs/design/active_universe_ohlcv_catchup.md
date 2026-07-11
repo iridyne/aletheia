@@ -15,7 +15,7 @@ ranking, filters, risk limits, sizing, execution, credentials, or live state.
 
 `ohlcv_active_backfill` is an independent scheduler job. Each cycle:
 
-1. Resolve executable active members to `InstrumentId(exchange, symbol, market_type)`.
+1. Resolve all active members to `InstrumentId(exchange, symbol, market_type)`.
 2. Compare exact 1h and 4h coverage with `min_bars_for_backtest`.
 3. Exclude pairs whose durable `next_attempt_at` is still in the future.
 4. Prioritize 1h, then member rank, and process at most the configured pair limit.
@@ -53,3 +53,7 @@ Settings exposes:
 
 `doctor` reports exact active gaps and the associated catch-up states. Disabling
 automatic catch-up restores the explicit manual `aletheia data backfill` path.
+
+Coverage is deliberately independent from `execution_eligible`: historical data
+may help an active member become diagnosable, but this job never writes or
+overrides trading eligibility.

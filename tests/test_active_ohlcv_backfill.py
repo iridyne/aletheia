@@ -82,6 +82,35 @@ def test_plan_skips_target_until_durable_retry_time(monkeypatch):
     ) == []
 
 
+def test_plan_repairs_active_member_even_when_not_yet_execution_eligible(monkeypatch):
+    from aletheia.data import active_ohlcv_backfill as backfill
+
+    member = _member("WATCH/USDT", "watch")
+    member["execution_eligible"] = 0
+    monkeypatch.setattr(
+        backfill.repo, "get_active_universe_members", lambda limit=50: [member]
+    )
+    monkeypatch.setattr(
+        backfill.repo,
+        "get_universe_asset",
+        lambda asset_id: {"venue": "okx", "market_type": "perp"},
+    )
+    monkeypatch.setattr(
+        backfill.repo,
+        "get_ohlcv_coverage",
+        lambda *args, **kwargs: {"bar_count": 0},
+    )
+    monkeypatch.setattr(backfill.repo, "get_ohlcv_backfill_state", lambda *args: None)
+    monkeypatch.setattr(backfill.repo, "upsert_ohlcv_backfill_state", lambda **kwargs: None)
+
+    planned = backfill.plan_active_ohlcv_backfill(min_bars=200, max_pairs=2)
+
+    assert {(item.symbol, item.timeframe) for item in planned} == {
+        ("WATCH/USDT", "1h"),
+        ("WATCH/USDT", "4h"),
+    }
+
+
 @pytest.mark.asyncio
 async def test_run_records_partial_coverage_and_defers_retry(monkeypatch):
     from aletheia.data import active_ohlcv_backfill as backfill

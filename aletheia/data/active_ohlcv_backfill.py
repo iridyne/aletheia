@@ -74,7 +74,11 @@ def _active_instruments(member_limit: int = 50) -> list[tuple[InstrumentId, int]
     result: list[tuple[InstrumentId, int]] = []
     seen: set[str] = set()
     for member in repo.get_active_universe_members(limit=member_limit):
-        if not member.get("symbol") or not member.get("execution_eligible", True):
+        # Data coverage must precede and remain independent from execution
+        # eligibility. A selected member can be temporarily ineligible precisely
+        # because an upstream data/capability check is incomplete; skipping it
+        # here would make that state self-perpetuating and disagree with doctor.
+        if not member.get("symbol"):
             continue
         asset = repo.get_universe_asset(member.get("asset_id")) or {}
         exchange = asset.get("venue")

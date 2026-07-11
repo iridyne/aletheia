@@ -3,6 +3,7 @@
 ## 2026-07-11 — Active-Universe OHLCV catch-up
 
 - Added an independent bounded scheduler job for exact active-member 1h/4h coverage gaps; Universe refresh never waits on historical network downloads.
+- Coverage includes temporarily non-executable active members; data repair never writes execution eligibility, avoiding a self-perpetuating gap between doctor and the planner.
 - Added durable per-instrument/timeframe `ready`/`partial`/`failed` state, one-hour partial retries, exponential failure backoff, and deduplicated infrastructure warnings after repeated failures.
 - Settings exposes enable/interval/max-pairs controls; doctor reports automatic catch-up state beside exact active coverage gaps. Nightly bulk backfill remains unchanged as fallback.
 - No Universe scoring, filter, risk, sizing, execution, live, or credential behavior changed.
