@@ -573,7 +573,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         evidence_text, err = await llm_complete(
             system=_ICT_METHODOLOGY_SYSTEM,
             user=f"Research context:\n{research_context}\n\nCollect relevant evidence.",
-            max_tokens=16384,
+            max_tokens=8192,
             provider=_fast,
         )
         if err:

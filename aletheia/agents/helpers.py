@@ -11,6 +11,13 @@ from aletheia.model_provider.fallback import complete_with_fallback
 logger = logging.getLogger("aletheia.agents")
 
 
+def _exception_detail(exc: BaseException) -> str:
+    """Keep the exception class when libraries raise with an empty message."""
+    name = type(exc).__name__
+    message = str(exc).strip()
+    return f"{name}: {message}" if message else name
+
+
 async def llm_complete(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None) -> tuple[str | None, str | None]:
     """Call the model provider. Returns (content, error).
 
@@ -37,9 +44,10 @@ async def llm_complete(system: str, user: str, *, max_tokens: int = 800, provide
         _record_llm(True)
         return resp.content, None
     except Exception as e:
-        logger.warning("LLM call failed: %s", e)
+        detail = _exception_detail(e)
+        logger.warning("LLM call failed: %s", detail)
         _record_llm(False)
-        return None, f"llm_unavailable: {e}"
+        return None, f"llm_unavailable: {detail}"
 
 
 def _extract_json_object(text: str):
@@ -177,9 +185,10 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 10
         logger.warning("LLM structured call: JSON parse failed: %s", e)
         return None, f"structured_parse_error: {e}"
     except Exception as e:
-        logger.warning("LLM structured call failed: %s", e)
+        detail = _exception_detail(e)
+        logger.warning("LLM structured call failed: %s", detail)
         _record_llm(False)
-        return None, f"llm_unavailable: {e}"
+        return None, f"llm_unavailable: {detail}"
 
 
 async def llm_stream(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None) -> AsyncIterator[StreamChunk]:
@@ -199,7 +208,7 @@ async def llm_stream(system: str, user: str, *, max_tokens: int = 800, provider:
             yield chunk
         _record_llm(True)
     except Exception as e:
-        logger.warning("LLM stream failed: %s", e)
+        logger.warning("LLM stream failed: %s", _exception_detail(e))
         _record_llm(False)
         yield StreamChunk(content="", done=True)
 

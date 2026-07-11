@@ -126,3 +126,35 @@ def test_methodology_mode_bypasses_multi_lens():
     assert "methodology" in src, (
         "research_worker.py missing methodology-mode bypass for multi-lens Stage 1"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "ML-B03", _CONTRACT, "§5 methodology output budget", "L2a",
+        "The single methodology evidence call uses at most 8192 output tokens so "
+        "its generation budget remains compatible with the provider timeout.",
+        status="implemented",
+    ),
+)
+def test_methodology_output_budget_is_bounded():
+    import ast
+
+    tree = ast.parse(_RESEARCH_WORKER.read_text(encoding="utf-8"))
+    methodology_if = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.If) and "methodology" in ast.unparse(node.test)
+        and any(
+            isinstance(child, ast.Name) and child.id == "_ICT_METHODOLOGY_SYSTEM"
+            for child in ast.walk(node)
+        )
+    )
+    calls = [
+        node for node in ast.walk(methodology_if)
+        if isinstance(node, ast.Call)
+        and (getattr(node.func, "id", None) or getattr(node.func, "attr", None)) == "llm_complete"
+    ]
+    assert calls
+    max_tokens = next(
+        kw.value for kw in calls[0].keywords if kw.arg == "max_tokens"
+    )
+    assert isinstance(max_tokens, ast.Constant) and max_tokens.value <= 8192

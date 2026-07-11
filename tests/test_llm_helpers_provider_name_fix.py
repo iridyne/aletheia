@@ -71,6 +71,22 @@ async def test_llm_complete_forwards_none_when_caller_did_not_specify():
 
 
 @pytest.mark.asyncio
+async def test_llm_complete_preserves_empty_exception_type():
+    """TimeoutError has an empty str(); diagnostics must still retain its type."""
+    from aletheia.agents import helpers
+
+    async def timeout(*_args, **_kwargs):
+        raise TimeoutError()
+
+    with patch.object(helpers, "complete_with_fallback", timeout):
+        with patch.object(helpers, "get_provider", lambda _name: object()):
+            content, err = await helpers.llm_complete("sys", "user")
+
+    assert content is None
+    assert err == "llm_unavailable: TimeoutError"
+
+
+@pytest.mark.asyncio
 async def test_llm_structured_threads_provider_name_to_complete_with_fallback():
     """#161: llm_structured must apply the same fix — its loop calls
     complete_with_fallback and must forward provider_name too."""

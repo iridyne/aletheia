@@ -1,5 +1,20 @@
 # Development Log
 
+## 2026-07-11 — LLM timeout error observability
+
+- Shared LLM helpers retain the exception class when a provider raises with an
+  empty message, so `TimeoutError` no longer degrades to bare `llm_unavailable:`.
+- Complete, structured, and streaming logs use the same formatter; downstream
+  Serenity classification can now persist `provider_timeout` accurately.
+- Methodology research keeps its dedicated prompt and single-lens path but aligns
+  its one-call output budget from 16384 to the proven standard-lens 8192 tokens.
+- No provider selection, fallback order, prompt, research scoring, promotion,
+  trading, risk, execution, live, or credential behavior changed.
+- Validation: focused LLM/health/Serenity suites passed 88 tests; all specs passed
+  632; one uninterrupted full run passed 2794 tests with 13 skipped and 6 expected failures.
+
+---
+
 ## 2026-07-11 — Operator scheduler continuity
 
 - Preserved the six daily `:15` CST cron windows and added a startup attempt two

@@ -7,7 +7,17 @@
 
 ## Last Updated
 
-2026-07-11 (Operator scheduler continuity)
+2026-07-11 (LLM timeout error observability)
+
+---
+
+## Recent Change (LLM timeout error observability — 2026-07-11)
+
+通用 LLM helper 以前只记录 `str(exception)`；provider 抛空消息 `TimeoutError` 时，日志和研究 run 只剩 `llm_unavailable:`，Serenity 最终误报 `unknown_error`。现在 complete/structured/stream 共用异常格式器，消息为空也保留类名，下游可准确归为 `provider_timeout`。
+
+methodology 研究仍使用原 ICT/SMC 专用 prompt 和单 lens 路径，只把单次输出预算从 16384 对齐到常规 lens 已验证的 8192，降低撞 60 秒 provider 边界的概率。没有修改 provider 选择、fallback 顺序、研究评分、晋升、交易、风险、执行、live 或凭证。
+
+验证：聚焦 LLM/health/Serenity 回归 88 项、完整规则 632 项通过；单进程连续全量 `2794 passed, 13 skipped, 6 xfailed`。
 
 ---
 
