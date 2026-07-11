@@ -1049,6 +1049,22 @@ def _probe_coinalyze(report: Report) -> None:
         enabled = bool(getattr(cfg.market_data, "enable_coinalyze", False))
         if not enabled:
             report.add("data.coinalyze", "info", "Coinalyze disabled in settings")
+            report.add("data.liquidations", "info", "Coinalyze liquidation feed disabled in settings")
+            return
+
+        from aletheia.data.collectors.coinalyze import is_configured
+        if not is_configured():
+            report.add(
+                "data.coinalyze",
+                "info",
+                "Coinalyze optional feed is enabled but not configured",
+                "add a Coinalyze API key only if this optional cross-venue feed is needed",
+            )
+            report.add(
+                "data.liquidations",
+                "info",
+                "Coinalyze liquidation feed unavailable while Coinalyze is not configured",
+            )
             return
 
         from aletheia.storage.sqlite import get_db
@@ -1078,8 +1094,8 @@ def _probe_coinalyze(report: Report) -> None:
             report.add(
                 "data.coinalyze",
                 "warn",
-                "Coinalyze enabled but no OI rows yet",
-                "configure coinalyze_api_key or COINALYZE_API_KEY, then wait for the data_collectors tick",
+                "Coinalyze configured but no OI rows yet",
+                "check Coinalyze key/quota and the data_collectors job",
             )
 
         if liq_row:
@@ -1092,10 +1108,9 @@ def _probe_coinalyze(report: Report) -> None:
         else:
             report.add(
                 "data.liquidations",
-                "warn" if not oi_row else "info",
-                "no Coinalyze liquidation rows yet",
-                "same key path as Coinalyze OI; no rows is expected until a real liquidation occurs"
-                if oi_row else "Coinalyze has not produced any OI/liquidation rows yet",
+                "info",
+                "no liquidation events observed yet",
+                "event-driven feed is idle until a real liquidation occurs",
             )
     except Exception as e:
         report.add("data.coinalyze", "info", f"could not read Coinalyze state: {e}")

@@ -98,20 +98,44 @@ def test_report_severity_partitions():
     assert [c.name for c in r.warns] == ["b"]
 
 
-def test_doctor_warns_when_coinalyze_enabled_without_rows(tmp_path, monkeypatch):
+def test_doctor_reports_unconfigured_coinalyze_as_info(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", lambda _key: None)
+    monkeypatch.delenv("COINALYZE_API_KEY", raising=False)
+    report = dx.Report(generated_at="t")
+
+    dx._probe_coinalyze(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.coinalyze"].severity == "info"
+    assert "not configured" in checks["data.coinalyze"].detail
+    assert checks["data.liquidations"].severity == "info"
+    assert "unavailable while Coinalyze is not configured" in checks["data.liquidations"].detail
+
+
+def test_doctor_warns_when_configured_coinalyze_has_no_oi_rows(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "aletheia.config.secrets.get_secret",
+        lambda key: "configured" if key == "coinalyze_api_key" else None,
+    )
     report = dx.Report(generated_at="t")
 
     dx._probe_coinalyze(report)
 
     checks = {c.name: c for c in report.checks}
     assert checks["data.coinalyze"].severity == "warn"
-    assert "enabled but no OI rows" in checks["data.coinalyze"].detail
-    assert checks["data.liquidations"].severity == "warn"
+    assert "configured but no OI rows" in checks["data.coinalyze"].detail
+    assert checks["data.liquidations"].severity == "info"
+    assert "no liquidation events" in checks["data.liquidations"].detail
 
 
 def test_doctor_coinalyze_ok_when_oi_rows_are_fresh(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "aletheia.config.secrets.get_secret",
+        lambda key: "configured" if key == "coinalyze_api_key" else None,
+    )
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc).isoformat()
@@ -131,6 +155,24 @@ def test_doctor_coinalyze_ok_when_oi_rows_are_fresh(tmp_path, monkeypatch):
     assert checks["data.coinalyze"].severity == "ok"
     assert "BTC/USDT" in checks["data.coinalyze"].detail
     assert checks["data.liquidations"].severity == "info"
+
+
+def test_doctor_disabled_coinalyze_reports_both_domains(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.market_data.enable_coinalyze = False
+    save_config(cfg)
+    report = dx.Report(generated_at="t")
+
+    dx._probe_coinalyze(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.coinalyze"].severity == "info"
+    assert checks["data.liquidations"].severity == "info"
+    assert "disabled" in checks["data.coinalyze"].detail
+    assert "disabled" in checks["data.liquidations"].detail
 
 
 def test_doctor_warns_when_orderbook_rows_are_missing(tmp_path, monkeypatch):

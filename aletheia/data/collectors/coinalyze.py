@@ -115,6 +115,11 @@ def _load_api_key() -> str | None:
     return os.environ.get("COINALYZE_API_KEY") or None
 
 
+def is_configured() -> bool:
+    """Return credential presence without exposing the credential value."""
+    return bool(_load_api_key())
+
+
 def _to_coinalyze_symbol(canonical: str) -> str:
     """Convert canonical BTC/USDT → BTCUSDT_PERP.A (Coinalyze aggregated perp)."""
     return canonical.replace("/", "") + _AGG_SUFFIX

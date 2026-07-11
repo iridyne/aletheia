@@ -7,7 +7,17 @@
 
 ## Last Updated
 
-2026-07-11 (LLM timeout error observability)
+2026-07-11 (optional feed diagnostic honesty)
+
+---
+
+## Recent Change (Optional feed diagnostic honesty — 2026-07-11)
+
+Coinalyze 开关默认开启但凭证是可选的，旧 doctor 只看开关，导致未配置时同时产生 OI 和清算两个 warn。现在 doctor 复用 collector 的真实 secret→environment 凭证存在性判断，但只接收布尔值：disabled/unconfigured 都是 info；已配置却没有 OI 或 OI 过期才 warn；清算是事件流，没有事件始终显示 idle/info。
+
+没有启用数据源、没有输出密钥，也没有修改采集、评分、交易、风险、执行或 live。
+
+验证：聚焦 collector/doctor 回归 70 项、完整规则 632 项通过；单进程连续全量 `2796 passed, 13 skipped, 6 xfailed`。
 
 ---
 

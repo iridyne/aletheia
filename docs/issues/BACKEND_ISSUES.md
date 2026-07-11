@@ -1066,3 +1066,4 @@
 | ID | 状态 | 问题 | 处理/下一步 |
 |---|---|---|---|
 | LLM-A01 | ✅ | provider 超时可抛空消息 `TimeoutError`；通用 helper 只保存 `str(e)`，日志/研究记录退化为 `llm_unavailable:`，Serenity 再误归 `unknown_error`。methodology 单次 16384 输出预算又比正常 lens 高一倍，更易撞 60s 边界 | 通用 helper 在消息为空时保留异常类名，complete/structured/stream 共用；研究分类因此可识别 `provider_timeout`。methodology 专用 prompt/单-lens 不变，单次输出预算与已验证的标准 lens 对齐为 8192 |
+| DATA-A01 | ✅ | Coinalyze 默认开关为 true 但凭证可选；doctor 只看开关，把“未配置”报成 OI/清算两个 warn，且把平静期无清算事件当故障，与 collector-health 的 unconfigured/idle 语义冲突 | collector 暴露只返回布尔值的凭证存在性接口，doctor 复用真实 secret→env 双路径。disabled/unconfigured 均为 info；只有 configured 且 OI 无数据/过期才 warn；清算无事件始终为 idle/info，不读取或输出密钥 |

@@ -1,5 +1,19 @@
 # Development Log
 
+## 2026-07-11 — Optional feed diagnostic honesty
+
+- Coinalyze exposes credential presence as a boolean using the collector's real
+  secrets-store then environment fallback; no credential value is returned.
+- Doctor distinguishes disabled, unconfigured, configured-but-empty, and stale OI.
+- Missing liquidation events are always idle/info because this is an event stream,
+  not proof of collector failure. Configured OI remains the liveness signal.
+- No source was enabled, no credential was read into output, and collection,
+  scoring, trading, risk, execution, and live behavior are unchanged.
+- Validation: focused collector/doctor suites passed 70 tests; all specs passed
+  632; one uninterrupted full run passed 2796 tests with 13 skipped and 6 expected failures.
+
+---
+
 ## 2026-07-11 — LLM timeout error observability
 
 - Shared LLM helpers retain the exception class when a provider raises with an

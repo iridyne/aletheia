@@ -42,8 +42,9 @@
 18. **已完成**：Serenity 每日 02:00 研究增加持久批次键和启动补跑；进程重启中断的活动行会转为失败，doctor 只按成功完成判断新鲜度。
 19. **已完成**：Operator 4 小时评估增加启动补跑和持久 assessment 去重；重启不会重复执行近期动作，也不会因错过 cron 一直等到下一窗口。
 20. **已完成**：LLM 空消息异常保留异常类型；methodology 研究输出预算对齐 provider 超时边界，后续超时会归为 provider_timeout 而非 unknown_error。
-21. **下一阶段**：筛选器达到 20/20 完整净样本后，才实验方向刹车、ranker 和 Kelly/sizing；未达到前只继续积累和核对证据。
-22. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+21. **已完成**：可选 Coinalyze 未配置不再产生故障告警；已配置无 OI 才 warn，清算平静期保持 idle/info。
+22. **下一阶段**：筛选器达到 20/20 完整净样本后，才实验方向刹车、ranker 和 Kelly/sizing；未达到前只继续积累和核对证据。
+23. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
 机会诊断口径已补强：overview 的窗口总数与重建上限分离；controller 的 `--hours`
 真实截断证据；sizing trace 将历史 proposal/fill 事实与当前配置投影分开。后续离线实验只能
