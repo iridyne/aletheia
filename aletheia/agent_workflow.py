@@ -229,8 +229,8 @@ def bootstrap(root: Path | None = None) -> dict[str, Any]:
     selected = matches[0] if len(matches) == 1 else None
     if selected is None and not matches:
         completed = [task for task in branch_tasks if task.get("status") in {"done", "cancelled"}]
-        if len(completed) == 1:
-            selected = completed[0]
+        if completed:
+            selected = max(completed, key=lambda task: str(task.get("updated_at", "")))
     return {"repository": str(root), "branch": branch, "head": head, "dirty": bool(porcelain), "task": selected, "task_match_count": len(matches), "findings": [f.__dict__ for f in findings], "runtime_next_command": "uv run aletheia doctor"}
 
 

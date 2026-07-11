@@ -96,3 +96,14 @@ def test_bootstrap_surfaces_single_completed_task_when_no_active_task(tmp_path, 
     task["verification"] = [{"command_key": "test", "command": "uv run pytest tests/test_agent_workflow.py -q", "exit_code": 0, "commit": task["base_commit"]}]
     path.write_text(yaml.safe_dump(task), encoding="utf-8")
     assert bootstrap(root)["task"]["id"] == "TASK-1"
+
+
+def test_bootstrap_selects_latest_completed_task_when_branch_has_history(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    first = yaml.safe_load((root / ".agent/tasks/TASK-1.yaml").read_text(encoding="utf-8"))
+    first.update({"status": "done", "updated_at": "2026-01-01T00:00:00Z"})
+    second = dict(first, id="TASK-2", updated_at="2026-02-01T00:00:00Z", handoff=".agent/handoffs/TASK-2.md")
+    (root / ".agent/tasks/TASK-1.yaml").write_text(yaml.safe_dump(first), encoding="utf-8")
+    (root / ".agent/tasks/TASK-2.yaml").write_text(yaml.safe_dump(second), encoding="utf-8")
+    (root / ".agent/handoffs/TASK-2.md").write_text("# handoff\n", encoding="utf-8")
+    assert bootstrap(root)["task"]["id"] == "TASK-2"
