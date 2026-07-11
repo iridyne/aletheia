@@ -12,12 +12,16 @@ intent: Remove symbol-only reflection outcome inference, bundle overlapping prom
   to guard shadow evaluation, and persist relevant policy epochs without changing
   Risk Engine or execution semantics.
 acceptance:
-- Reflection uses proposal/opportunity causal ids and never symbol-only position or movement inference.
+- Reflection uses proposal/opportunity causal ids and never symbol-only position or
+  movement inference.
 - Operator Learning channels persist as one bundle manifest with decision causal ids.
 - Observer advisory memory persists as a separate Opportunity-linked bundle manifest.
-- autonomous_learning=false restores the Operator and observer prompt baselines without removing market or safety context.
-- Automatic block suggestions become non-blocking shadow-only guard candidates and cannot historical-auto-promote.
-- Factor and universe exposures persist and stratify on durable secret-free policy epochs.
+- autonomous_learning=false restores the Operator and observer prompt baselines without
+  removing market or safety context.
+- Automatic block suggestions become non-blocking shadow-only guard candidates and
+  cannot historical-auto-promote.
+- Factor and universe exposures persist and stratify on durable secret-free policy
+  epochs.
 ownership:
   branch: fix/learning-attribution-safety
   lease_holder: codex
@@ -28,6 +32,14 @@ next_action:
   command_key: workflow_tests
   reason: Claim the task and define the first focused verification.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 7b37fbe4f645b2a286f8fe5a827c7fcdb5b6fd36
+  run_at: '2026-07-11T19:46:05.253693Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-026.md
-updated_at: '2026-07-11T19:27:41.301844Z'
+updated_at: '2026-07-11T19:46:05.253916Z'
