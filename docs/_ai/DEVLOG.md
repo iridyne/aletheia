@@ -1,5 +1,25 @@
 # Development Log
 
+## 2026-07-11 — Market-data observability and OHLCV provenance
+
+- Split collector execution health from persisted data coverage. The cached sync
+  endpoint reports exact rows, symbols, sources, newest timestamp, age, and state
+  for eight market-data domains; Overview displays both truths separately.
+- Event-driven liquidations report idle when no recent event exists instead of
+  inventing a collector failure.
+- OHLCV keeps its candle-array body and adds cache/provider/database/unavailable
+  provenance headers. Provider failure falls back to exact scoped SQLite history;
+  the DB read is thread-pooled and does not block the async server loop.
+- Fixed `inspect microstructure` to read `imbalance_ratio`, scope funding/OI to the
+  active venue, and expose source timestamps and freshness.
+- No cadence, provider, market value, scoring, filter, risk, execution, live, or
+  credential behavior changed.
+- Validation: cold exact coverage on the 567 MB local DB measured about 150 ms and
+  the 30-second cached path below 1 ms; focused tests passed 78, all specs passed
+  628, full suite passed 2763 with 0 real failures, and frontend build passed.
+
+---
+
 ## 2026-07-11 — Enriched decision-context freshness
 
 - Added one fail-closed freshness policy for orderbook, primary funding/OI/LSR,

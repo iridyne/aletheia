@@ -899,20 +899,30 @@ def microstructure(
 
     result = []
     for sym, venue, market_type in instruments:
-        fr = repo.latest_funding_rate(sym)
-        oi = repo.latest_open_interest(sym)
+        from aletheia.data.freshness import assess_freshness
+
+        deriv_exchange = venue or None
+        fr = repo.latest_funding_rate(sym, exchange=deriv_exchange)
+        oi = repo.latest_open_interest(sym, exchange=deriv_exchange)
         ob = repo.latest_orderbook(sym, exchange=venue, market_type=market_type)
         entry = {"symbol": sym, "exchange": venue or None, "market_type": market_type or None}
         if fr:
             entry["funding_rate"] = fr.get("funding_rate")
-            entry["predicted_rate"] = fr.get("predicted_rate")
+            entry["funding_exchange"] = fr.get("exchange")
+            entry["funding_observed_at"] = fr.get("observed_at")
+            entry["funding_state"] = assess_freshness(fr, "funding").state
         if oi:
             entry["oi_usd"] = oi.get("open_interest_usd")
             entry["oi_delta_1h"] = oi.get("oi_change_1h_pct")
+            entry["oi_exchange"] = oi.get("exchange")
+            entry["oi_observed_at"] = oi.get("observed_at")
+            entry["oi_state"] = assess_freshness(oi, "open_interest").state
         if ob:
             entry["spread_bps"] = ob.get("spread_bps")
             entry["depth_10bps_usd"] = ob.get("total_depth_10bps_usd")
-            entry["imbalance"] = ob.get("bid_ask_imbalance")
+            entry["imbalance"] = ob.get("imbalance_ratio")
+            entry["orderbook_observed_at"] = ob.get("observed_at")
+            entry["orderbook_state"] = assess_freshness(ob, "orderbook").state
         result.append(entry)
     _output(result, json_output)
 

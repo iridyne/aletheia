@@ -116,6 +116,27 @@ def test_enriched_decision_consumers_share_freshness_policy():
     assert "fresh_row" in features
 
 
+@spec_claim(
+    SpecClaim(
+        "DU-S17", _CONTRACT, "§market-data operator visibility", "L2a",
+        "Collector execution health and persisted data coverage are separate API/UI "
+        "signals, while the OHLCV array endpoint exposes cache/provider/database "
+        "provenance through a backward-compatible response header.",
+    ),
+)
+def test_market_data_visibility_surfaces_are_wired():
+    routes = (_ROOT / "aletheia" / "server" / "routes" / "data.py").read_text(encoding="utf-8")
+    client = (_ROOT / "frontend" / "src" / "api" / "client.ts").read_text(encoding="utf-8")
+    overview = (_ROOT / "frontend" / "src" / "pages" / "Overview.tsx").read_text(encoding="utf-8")
+    api_doc = (_ROOT / "docs" / "design" / "api_reference.md").read_text(encoding="utf-8")
+
+    assert '@router.get("/market/data-coverage")' in routes
+    assert "X-Aletheia-Data-Source" in routes
+    assert "getDataCoverage" in client and "data-coverage" in client
+    assert "Data coverage" in overview
+    assert "/market/data-coverage" in api_doc
+
+
 # ---------------------------------------------------------------------------
 # DU-S13 — perp structure rows are registered and consumed as observation data
 # ---------------------------------------------------------------------------

@@ -31,6 +31,11 @@ export default function Overview() {
     queryFn: api.getCollectorHealth,
     refetchInterval: 30000,
   })
+  const { data: dataCoverage } = useQuery({
+    queryKey: ['market-data-coverage'],
+    queryFn: api.getDataCoverage,
+    refetchInterval: 30000,
+  })
   const exchangeMode = String((status as any)?.exchange_mode || '')
   const usesExternalExchange = !!(status as any)?.uses_external_exchange
   // #171 fix: pick the exchange-test endpoint by the CONFIGURED exchange, not
@@ -230,6 +235,21 @@ export default function Overview() {
                         : `${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
                   }
                 />
+                <StatusRow
+                  label="Data coverage"
+                  light={
+                    !dataCoverage ? 'yellow' :
+                    dataCoverage.status === 'empty' ? 'muted' :
+                    dataCoverage.critical_problem_count > 0 ? 'yellow' : 'green'
+                  }
+                  value={
+                    !dataCoverage ? 'loading' :
+                    `${dataCoverage.fresh_count}/${dataCoverage.domain_count} current`
+                  }
+                  title={dataCoverage?.domains.map(domain => (
+                    `${domain.label}: ${domain.state} · ${domain.symbol_count} symbols · ${domain.row_count} rows`
+                  )).join('\n')}
+                />
                 {/* Live + Permission + Kill collapsed into one row to keep the System
                     card height short — open positions moved to the PnL Exposure tile. */}
                 <StatusRow
@@ -317,13 +337,15 @@ function GoLiveScoreCard() {
 type Light = 'green' | 'red' | 'yellow' | 'blue' | 'muted'
 
 /** One row of the System status board: label · status light · value. */
-function StatusRow({ label, light, value }: { label: string; light: Light; value: string }) {
+function StatusRow({
+  label, light, value, title,
+}: { label: string; light: Light; value: string; title?: string }) {
   return (
     <tr className="status-row">
       <th>{label}</th>
       <td className="status-cell">
         <span className={`status-light light-${light}`} />
-        <span className="status-value">{value}</span>
+        <span className="status-value" title={title}>{value}</span>
       </td>
     </tr>
   )

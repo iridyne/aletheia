@@ -137,6 +137,11 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | GET | `/market/ohlcv` | OHLCV candlestick data |
 | GET | `/market/macro` | Macro economic indicators |
 | GET | `/market/collector-health` | Bounded per-domain collector status, cadence, timeout/budget-skip counters, and overdue state |
+| GET | `/market/data-coverage` | Cached persisted row/symbol/source coverage and freshness, separate from collector execution health |
+
+`GET /market/ohlcv` preserves its historical candle-array body. The response header
+`X-Aletheia-Data-Source` is `memory_cache`, `provider_fetch`, `database_fallback`,
+or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope.
 
 ---
 

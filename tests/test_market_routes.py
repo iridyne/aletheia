@@ -28,9 +28,15 @@ async def client(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+    from aletheia.data.cache import get_cache
+    from aletheia.data.data_coverage import clear_data_coverage_cache
+    get_cache().invalidate()
+    clear_data_coverage_cache()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+    get_cache().invalidate()
+    clear_data_coverage_cache()
     reset_db()
 
 
@@ -86,6 +92,20 @@ async def test_collector_health_route_returns_durable_domain_state(client):
 
 
 @pytest.mark.anyio
+async def test_data_coverage_route_separates_persisted_data_from_job_health(client):
+    resp = await client.get("/api/market/data-coverage")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["domain_count"] == 8
+    assert {row["domain"] for row in body["domains"]} >= {
+        "orderbook", "primary_funding", "primary_open_interest", "ohlcv",
+    }
+    liquidation = next(row for row in body["domains"] if row["domain"] == "liquidations")
+    assert liquidation["state"] == "idle"
+
+
+@pytest.mark.anyio
 async def test_ohlcv_route_returns_candles_or_error(client, monkeypatch):
     from aletheia.data.providers import Candle
     from aletheia.data import ccxt_provider
@@ -107,6 +127,56 @@ async def test_ohlcv_route_returns_candles_or_error(client, monkeypatch):
     assert isinstance(data, list)
     assert data[0]["time"] == 1700000000  # ms -> s
     assert data[0]["close"] == 1.5
+    assert resp.headers["x-aletheia-data-source"] == "provider_fetch"
+
+
+@pytest.mark.anyio
+async def test_ohlcv_route_marks_memory_cache_source(client, monkeypatch):
+    from aletheia.data.cache import get_cache
+    from aletheia.data.providers import Candle
+
+    get_cache().set(
+        "BTC/USDT", "1h", 100,
+        [Candle(timestamp=1700000000000, open=1, high=2, low=0.5, close=1.5, volume=10)],
+        exchange="binance", market_type="spot",
+    )
+    resp = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h")
+
+    assert resp.status_code == 200
+    assert resp.headers["x-aletheia-data-source"] == "memory_cache"
+    assert resp.json()[0]["close"] == 1.5
+
+
+@pytest.mark.anyio
+async def test_ohlcv_route_falls_back_to_exact_database_history(client, monkeypatch):
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle
+
+    class _UnavailableCCXT:
+        async def get_ohlcv(self, *args, **kwargs):
+            raise ConnectionError("offline")
+
+        async def close(self):
+            pass
+
+    repo.upsert_ohlcv_candles(
+        symbol="BTC/USDT", timeframe="1h", exchange="binance", market_type="spot",
+        candles=[Candle(
+            timestamp=1700000000000, open=1, high=2, low=0.5, close=1.4, volume=10,
+        )],
+    )
+    monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _UnavailableCCXT())
+
+    resp = await client.get(
+        "/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=99",
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["x-aletheia-data-source"] == "database_fallback"
+    assert resp.json() == [{
+        "time": 1700000000, "open": 1.0, "high": 2.0, "low": 0.5,
+        "close": 1.4, "volume": 10.0,
+    }]
 
 
 @pytest.mark.anyio

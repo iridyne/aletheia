@@ -3,9 +3,8 @@
 import json
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
-from datetime import datetime, timezone
 
 from aletheia.storage.sqlite import get_db
 from aletheia.storage.migrations import run_migrations
@@ -906,6 +905,7 @@ async def get_market_snapshots(
 
 @router.get("/market/ohlcv")
 async def get_market_ohlcv(
+    response: Response,
     symbol: str = "BTC/USDT",
     timeframe: str = "1h",
     limit: int = 100,
@@ -926,7 +926,10 @@ async def get_market_ohlcv(
     limit (before unset). Historical pages (before>0) and any non-default limit are
     fetched fresh — historical because each window is distinct, and the latest view
     needs a live tail rather than a cached candle that would freeze the chart.
+    `X-Aletheia-Data-Source` reports memory_cache, provider_fetch, database_fallback,
+    or unavailable without changing the historical array response shape.
     """
+    import asyncio
     import logging
     from aletheia.config.loader import load_config
     from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
@@ -942,6 +945,7 @@ async def get_market_ohlcv(
     try:
         instrument = InstrumentId.from_parts(effective_exchange, sym, market_type)
     except ValueError:
+        response.headers["X-Aletheia-Data-Source"] = "unavailable"
         return {"error": f"invalid_instrument: {effective_exchange}:{sym}:{market_type}", "candles": []}
 
     # Historical pagination window: ask the exchange for `limit` candles ending
@@ -951,44 +955,83 @@ async def get_market_ohlcv(
     if before > 0:
         tf_ms = timeframe_ms(timeframe)
         if tf_ms == 0:
+            response.headers["X-Aletheia-Data-Source"] = "unavailable"
             return {"error": f"unsupported_timeframe: {timeframe}", "candles": []}
         since_ms = before * 1000 - limit * tf_ms
 
     cache = get_cache()
     cache_key = sym
     use_cache = since_ms is None and limit == 100
+    data_source = "memory_cache"
     try:
         candles = cache.get(
             cache_key, timeframe, limit,
             market_type=market_type, exchange=effective_exchange,
         ) if use_cache else None
         if candles is None:
+            data_source = "provider_fetch"
             provider = get_market_data_provider(effective_exchange)
             try:
-                candles = await provider.get_ohlcv(
-                    instrument, timeframe=timeframe, limit=limit, since=since_ms,
-                )
-                if use_cache:
+                try:
+                    candles = await provider.get_ohlcv(
+                        instrument, timeframe=timeframe, limit=limit, since=since_ms,
+                    )
+                except Exception:
+                    # The chart remains usable during a provider outage, but exact
+                    # venue/market/time paging is preserved and provenance is explicit.
+                    db_rows = await asyncio.to_thread(
+                        repo.get_ohlcv_candles,
+                        sym,
+                        timeframe,
+                        limit=limit,
+                        exchange=effective_exchange,
+                        market_type=market_type,
+                        before_ts=before * 1000 if before > 0 else None,
+                    )
+                    if not db_rows:
+                        raise
+                    candles = db_rows
+                    data_source = "database_fallback"
+                if use_cache and data_source == "provider_fetch":
                     cache.set(
                         cache_key, timeframe, limit, candles,
                         market_type=market_type, exchange=effective_exchange,
                     )
             finally:
                 await provider.close()
+        def _value(candle, key: str):
+            return candle.get(key) if isinstance(candle, dict) else getattr(candle, key)
+
         # For a historical page, drop any candle at/after `before` so the prepend
         # on the frontend never overlaps the existing left-most bar.
         if before > 0:
             cutoff_ms = before * 1000
-            candles = [c for c in candles if c.timestamp < cutoff_ms]
+            candles = [
+                c for c in candles
+                if _value(c, "ts" if isinstance(c, dict) else "timestamp") < cutoff_ms
+            ]
         # lightweight-charts wants ascending time in seconds
-        rows = [
-            {"time": int(c.timestamp / 1000), "open": c.open, "high": c.high,
-             "low": c.low, "close": c.close, "volume": c.volume}
-            for c in sorted(candles, key=lambda c: c.timestamp)
-        ]
+        rows = [{
+            "time": int(_value(c, "ts" if isinstance(c, dict) else "timestamp") / 1000),
+            "open": _value(c, "open"),
+            "high": _value(c, "high"),
+            "low": _value(c, "low"),
+            "close": _value(c, "close"),
+            "volume": _value(c, "volume"),
+        } for c in sorted(
+            candles,
+            key=lambda candle: _value(
+                candle, "ts" if isinstance(candle, dict) else "timestamp",
+            ),
+        )]
+        response.headers["X-Aletheia-Data-Source"] = data_source
+        response.headers["X-Aletheia-Data-Instrument"] = (
+            f"{effective_exchange}:{sym}:{market_type}:{timeframe}"
+        )
         return rows
     except Exception as e:
         logging.getLogger("aletheia.routes.data").warning("OHLCV fetch failed: %s", e)
+        response.headers["X-Aletheia-Data-Source"] = "unavailable"
         return {"error": "market_data_unavailable", "candles": []}
 
 
@@ -1015,6 +1058,15 @@ def get_market_collector_health():
     from aletheia.data.collector_health import get_collector_health_report
 
     return get_collector_health_report()
+
+
+@router.get("/market/data-coverage")
+def get_market_data_coverage():
+    """Cached table coverage and freshness; separate from collector execution health."""
+    _ensure_db()
+    from aletheia.data.data_coverage import get_data_coverage_report
+
+    return get_data_coverage_report()
 
 
 @router.get("/knowledge")

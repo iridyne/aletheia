@@ -1519,6 +1519,7 @@ def get_ohlcv_candles(
     limit: int = 100,
     exchange: str = "",
     market_type: str = "",
+    before_ts: int | None = None,
 ) -> list[dict]:
     """Return up to `limit` most-recent OHLCV bars, oldest-first.
 
@@ -1530,11 +1531,15 @@ def get_ohlcv_candles(
     if scope is None:
         return []
     scoped_exchange, scoped_market_type = scope
+    before_clause = " AND ts < ?" if before_ts is not None else ""
+    params: tuple = (scoped_exchange, symbol, scoped_market_type, timeframe)
+    if before_ts is not None:
+        params = (*params, int(before_ts))
     rows = db.execute(
         "SELECT ts, open, high, low, close, volume, provider, exchange, market_type "
         "FROM market_ohlcv WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? "
-        "ORDER BY ts DESC LIMIT ?",
-        (scoped_exchange, symbol, scoped_market_type, timeframe, limit),
+        + before_clause + " ORDER BY ts DESC LIMIT ?",
+        (*params, limit),
     ).fetchall()
     # Reverse so callers get oldest→newest
     return [dict(r) for r in reversed(rows)]

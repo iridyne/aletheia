@@ -414,6 +414,29 @@ export interface CollectorHealthReport {
   domains: CollectorHealthDomain[]
 }
 
+export interface MarketDataCoverageDomain {
+  domain: string
+  label: string
+  state: 'fresh' | 'stale' | 'empty' | 'invalid' | 'idle'
+  critical: boolean
+  row_count: number
+  symbol_count: number
+  source_counts: Record<string, number>
+  newest_observed_at: string | null
+  age_sec: number | null
+  max_age_sec: number
+}
+
+export interface MarketDataCoverageReport {
+  status: 'healthy' | 'attention' | 'empty'
+  generated_at: string
+  domain_count: number
+  fresh_count: number
+  problem_count: number
+  critical_problem_count: number
+  domains: MarketDataCoverageDomain[]
+}
+
 export interface AuditEvent {
   id: string
   actor: string

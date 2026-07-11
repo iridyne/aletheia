@@ -7,7 +7,19 @@
 
 ## Last Updated
 
-2026-07-11 (enriched decision-context freshness)
+2026-07-11 (market-data observability and OHLCV provenance)
+
+---
+
+## Recent Change (Market-data observability and OHLCV provenance — 2026-07-11)
+
+采集任务最近成功不再被当成“库里一定有可用数据”。新增只读覆盖报告，分别显示盘口、主场所 funding/OI、LSR、清算、宏观、链上和 OHLCV 的保留行数、标的数、来源数、最新时间与新鲜状态；首页 System 同时显示 Collectors 和 Data coverage。清算是事件流，平静期显示 idle，不伪报采集故障。
+
+OHLCV API 保持原数组响应，响应头明确区分内存缓存、外部抓取、数据库降级和不可用。外部失败时只读取 exact venue+symbol+spot/perp+timeframe+before 的本地历史，SQLite 读取走线程池。CLI microstructure 修正 imbalance 字段，并按 exact venue 显示 funding/OI 来源、时间和 freshness。
+
+没有修改采集频率、provider、行情值、scanner、filter、风险、仓位、执行、live 或凭证。
+
+验证：真实 567MB 数据库冷覆盖报告约 150ms、30 秒缓存热读低于 1ms；聚焦回归 78 项、完整规则 628 项、全量 2763 项与前端 production build 通过，0 项真实失败。
 
 ---
 

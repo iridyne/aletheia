@@ -56,6 +56,10 @@ local-paper installation with no configured execution exchange.
 - Overview / System / Collectors: 30-second read-only summary. Red means repeated
   or overdue degradation; yellow means a single transient problem; muted means
   initialization; green means no active operational problem.
+- `GET /api/market/data-coverage` and Overview / System / Data coverage report
+  what is actually present in SQLite: row count, symbol count, source count, newest
+  observation, and freshness. This is intentionally separate: a successful empty
+  collector call and a fresh populated table are different facts.
 
 Overdue means no scheduled update for more than three expected cadences. Disabled
 and unconfigured domains are never declared overdue.
