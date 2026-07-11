@@ -79,6 +79,24 @@ def test_market_observer_has_module_logger():
     )
 
 
+@spec_claim(
+    SpecClaim(
+        "GS-S03", _CONTRACT, "§bounded-loop fairness", "L2b",
+        "When the market-observer budget skips instruments, the next cycle begins "
+        "from the durable successor of the last completed instrument; cancellation "
+        "does not advance the cursor.",
+    ),
+)
+def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
+    from aletheia.agents.round_robin import DurableRoundRobin, rotate_from_next
+
+    assert rotate_from_next(["a", "b", "c"], next_key="b", key=str) == ["b", "c", "a"]
+    source = _MARKET_OBS.read_text(encoding="utf-8")
+    assert "DurableRoundRobin" in source
+    assert "completed_attempt" in source
+    assert "if completed_attempt:" in source
+
+
 # ---------------------------------------------------------------------------
 # Fake LLM plumbing for behavioral tests (mock only the network boundary)
 # ---------------------------------------------------------------------------

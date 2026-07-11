@@ -42,6 +42,7 @@ _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 _MARKET_OBSERVER_JOB_TIMEOUT_S = 240.0
 _MARKET_OBSERVER_LOOP_BUDGET_SEC = 200.0
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
+_ROUND_ROBIN_STATE_KEY = "agent.market_observer.round_robin.v1"
 
 
 class MarketRead(BaseModel):
@@ -679,6 +680,13 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
         instruments = observed_instruments_from_config(cfg)
         universe_members = []
 
+    from aletheia.agents.round_robin import DurableRoundRobin, rotate_from_next
+
+    instrument_key = str
+    round_robin = DurableRoundRobin(_ROUND_ROBIN_STATE_KEY)
+    instruments = rotate_from_next(
+        instruments, next_key=round_robin.next_key(), key=instrument_key,
+    )
     symbols = [i.symbol for i in instruments]  # canonical list for memory query
 
     # Build symbol→strategy map so each opportunity links to a matching strategy.
@@ -785,6 +793,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 _idx, len(instruments), _MARKET_OBSERVER_LOOP_BUDGET_SEC, _skipped,
             )
             break
+        completed_attempt = False
         try:
             u_member = _universe_lookup.get(instrument.symbol)
             _sym_canonical = to_canonical(instrument.symbol)
@@ -812,7 +821,16 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 outputs.append(f"opportunity:{opp_id}")
             if err:
                 errors.append(f"{instrument}:{err}")
+            completed_attempt = True
         except Exception as e:
             errors.append(f"{instrument}:unexpected:{e}")
+            completed_attempt = True
+        finally:
+            # Cancellation must not skip an in-flight item. A budget interruption
+            # breaks before entering this block, preserving the first skipped item.
+            if completed_attempt:
+                round_robin.advance_after(
+                    instruments, completed_key=instrument_key(instrument), key=instrument_key,
+                )
 
     return {"outputs": outputs, "errors": errors}
