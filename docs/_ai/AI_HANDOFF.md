@@ -7,7 +7,17 @@
 
 ## Last Updated
 
-2026-07-11 (Serenity daily scheduler continuity)
+2026-07-11 (Operator scheduler continuity)
+
+---
+
+## Recent Change (Operator scheduler continuity — 2026-07-11)
+
+System Operator 原本只有每天 6 个 `:15` CST 内存 cron，网关错过窗口后不会补评估。现在保留原时刻，并在启动 2 分钟后触发同一个 job；scheduler wrapper 先读取持久 `operator_assessment`，最近结果不足 3 小时 45 分钟就跳过，既防止反复重启重复动作，也允许 agents 串行队列约 15 分钟的正常延迟。
+
+无历史、坏时间或查询失败时允许评估继续，因为 Operator 原有 permission level、禁止动作、提案门和每日动作限频仍是最终边界。wrapper 对空 summary 改为安全 no-op。没有修改任何评估规则、参数动作、权限等级、风险或执行语义。
+
+验证：聚焦 Operator/scheduler/doctor 回归 120 项、完整规则 631 项通过；单进程连续全量 `2792 passed, 13 skipped, 6 xfailed`。
 
 ---
 

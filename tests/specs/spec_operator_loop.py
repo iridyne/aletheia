@@ -123,6 +123,35 @@ def test_scheduler_operator_loop_cron():
     )
 
 
+@spec_claim(
+    SpecClaim(
+        "OL-S07", "operator_layer", "§scheduler startup continuity", "L2a",
+        "pi_operator_loop keeps its four-hour cron and receives a startup "
+        "next_run_time within two minutes, guarded by persisted assessment freshness.",
+        status="implemented",
+    ),
+)
+def test_scheduler_operator_loop_has_deduplicated_startup_catchup():
+    src = _SCHEDULER_SRC.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    target = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+        job_id = kwargs.get("id")
+        if isinstance(job_id, ast.Constant) and job_id.value == "pi_operator_loop":
+            target = node
+            break
+
+    assert target is not None
+    kwargs = {kw.arg: kw.value for kw in target.keywords if kw.arg}
+    rendered = ast.unparse(kwargs["next_run_time"])
+    assert "datetime.now()" in rendered and "timedelta" in rendered
+    assert "minutes=2" in rendered.replace(" ", "")
+    assert "_operator_assessment_due" in src
+
+
 # ---------------------------------------------------------------------------
 # L2b — Behavioral claims
 # ---------------------------------------------------------------------------

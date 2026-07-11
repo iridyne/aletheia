@@ -372,7 +372,7 @@ def _serenity_schedule_boundary(now: datetime | None = None) -> datetime:
     return boundary.astimezone(timezone.utc)
 
 
-def _parse_serenity_timestamp(value: str | None) -> datetime | None:
+def _parse_scheduler_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
@@ -440,7 +440,7 @@ def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
     batch_key = f"serenity:scheduled:{local_date}"
 
     latest = repo.get_latest_successful_serenity_research_run()
-    latest_at = _parse_serenity_timestamp(
+    latest_at = _parse_scheduler_timestamp(
         (latest or {}).get("finished_at") or (latest or {}).get("created_at")
     )
     if latest_at is not None and latest_at >= boundary:
@@ -492,6 +492,41 @@ def _run_serenity_startup_catchup() -> None:
     except Exception as exc:
         logger.warning("Serenity startup catch-up failed: %s", exc)
         _record_job_failure("serenity_startup_catchup", str(exc))
+
+
+def _operator_assessment_due(
+    now: datetime | None = None,
+    min_interval_minutes: int = 225,
+) -> bool:
+    """Return whether persisted Operator output is old enough for another run.
+
+    The cron is four-hourly, but prior runs can start several minutes late while
+    waiting for the serial agents executor. A 3h45m floor preserves the next
+    nominal cron while deduplicating restart catch-ups and closely spaced runs.
+    Missing, malformed, or unreadable history fails open: the Operator retains
+    its own permission and per-action rate limits.
+    """
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
+    try:
+        from aletheia.storage import repositories as repo
+
+        rows = repo.list_knowledge_items(
+            item_type="operator_assessment",
+            status="active",
+            limit=1,
+        )
+        if not rows:
+            return True
+        latest = _parse_scheduler_timestamp(rows[0].get("created_at"))
+        if latest is None or latest > current + timedelta(minutes=5):
+            return True
+        return current - latest >= timedelta(minutes=min_interval_minutes)
+    except Exception as exc:
+        logger.warning("Operator assessment freshness check failed open: %s", exc)
+        return True
 
 
 def init_scheduler() -> BackgroundScheduler | None:
@@ -752,6 +787,7 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("pi_operator_loop", _run_operator_loop), "cron",
         hour="0,4,8,12,16,20", minute=15,
         id="pi_operator_loop", misfire_grace_time=3600, executor="agents",
+        next_run_time=datetime.now() + timedelta(minutes=2),
         timezone="Asia/Shanghai",
     )
 
@@ -1216,9 +1252,15 @@ def _run_operator_loop():
         return
     if cfg.agent.permission_mode not in ("Paper", "Full"):
         return
+    if not _operator_assessment_due():
+        logger.debug("pi_operator_loop: skipped — recent assessment is still current")
+        return
     try:
         from aletheia.agent_shell.operator_loop import run_operator_loop
         summary = _run_sync_with_timeout("pi_operator_loop", lambda: run_operator_loop(trigger="scheduled"))
+        if not summary:
+            logger.debug("pi_operator_loop: no summary returned")
+            return
         status = summary.get("status", "") if summary else ""
         if status == "skipped":
             logger.debug("pi_operator_loop: skipped — %s", summary.get("reason"))

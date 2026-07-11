@@ -53,7 +53,7 @@
 | `insight_synthesizer` | cron 02:30 CST + boot 3min catch-up（6h限流） | knowledge_items + market_snapshots | trading_memo(knowledge_items) | retrieve_lessons() | ✅ |
 | `confidence_calibration` | 6h | predictions + outcomes | calibration reports | UI(analytics) | ⚠️ |
 | `filter_controller_observe` | 6h（配置开启时） | 逐 filter/version/family/direction/market/horizon 的 pass/reject 净结果 | controller_recommendations(shadow_only) | CLI/API 诊断；不写 config | ✅ 只读 |
-| `pi_operator_loop` | cron 每4h:15 CST | system health + strategies + positions | operator_actions, PiDecision(recommendations) | pi_daemon(wake signal) | ✅ |
+| `pi_operator_loop` | cron 每4h:15 CST + boot 2min catch-up（assessment 3h45m 防重） | system health + strategies + positions | operator_assessment, operator_actions, PiDecision(recommendations) | pi_daemon(wake signal) | ✅ |
 
 ---
 

@@ -3,7 +3,7 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-07-11 (Serenity daily scheduler continuity)
+> Last updated: 2026-07-11 (Operator scheduler continuity)
 
 ---
 
@@ -26,7 +26,7 @@
 | 13 | lesson_reviewer | cron 03:00 CST | agents | Overturn/renew accepted lessons after outcome review |
 | 14 | insight_synthesizer | cron 02:30 CST | agents | Cross-agent insight synthesis |
 | 15 | confidence_calibration | 6h | io | Compute ECE calibration metrics |
-| 16 | pi_operator_loop | cron 每4h:15 CST | agents | High-level operator assessment loop |
+| 16 | pi_operator_loop | cron 每4h:15 CST + boot 2min catch-up | agents | High-level operator assessment loop; persisted assessment freshness prevents restart duplicates |
 | 17 | health_check | 10min | io | Doctor health probe |
 | 18 | cleanup | cron 03:17 CST | io | Data retention cleanup |
 | 19 | exchange_sync | 5min | io | Refresh exchange account cache |
@@ -230,15 +230,16 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 
 #### pi_operator_loop
 
-- **Trigger**: scheduler every 1h
+- **Trigger**: cron every 4 hours at `:15` CST plus a startup attempt after 2 minutes
+- **Deduplication**: scheduled runs require the latest persisted `operator_assessment` to be at least 3h45m old; missing/malformed history fails open because action permission and daily rate limits remain authoritative
 - **Inputs**: Portfolio state, strategy performance, market regime, system health
-- **LLM**: Yes (assessment + recommendations)
-- **Outputs**: Operator recommendations (Level 1: assess-only, Level 2: propose, Level 3: with-confirmation)
+- **LLM**: No direct model call; deterministic assessment may enqueue a separate Serenity research run
+- **Outputs**: `operator_assessment`, bounded config actions/proposals and notifications
 - **Side effects**: 
-  - Level 1: strategy_research trigger (daily limit 1)
-  - Level 2: strategy retire/demote recommendations (not direct execution)
-  - Level 3: risk policy proposals (require human approval)
-- **Key invariant**: Never executes changes directly; all actions go through proposal flow
+  - Level 1: bounded tightening/self-heal/notification actions and strategy research trigger under existing daily limits
+  - Level 2: loosening and unknown actions become proposals; no direct execution
+  - Level 3: live, credentials, permissions and hard-risk changes are forbidden, not confirmable by this loop
+- **Key invariant**: Level 1 cannot expand risk; Level 2 requires a proposal path; Level 3 never executes
 
 ---
 

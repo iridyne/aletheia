@@ -1756,7 +1756,7 @@ def _probe_operator_loop(report: Report) -> None:
         elif age > 300:  # 5h — missed at least one 4h cadence
             report.add("operator.loop", "warn",
                        f"last operator assessment {_fmt_age(age)} — missed scheduled cadence",
-                       "operator loop should run every 4h; check scheduler/gateway")
+                       "pi_operator_loop runs every 4h plus a deduplicated startup catch-up; check scheduler/gateway")
         else:
             report.add("operator.loop", "ok", f"last assessment {_fmt_age(age)}")
     except Exception as e:

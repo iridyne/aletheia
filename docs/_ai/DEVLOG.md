@@ -1,5 +1,21 @@
 # Development Log
 
+## 2026-07-11 — Operator scheduler continuity
+
+- Preserved the six daily `:15` CST cron windows and added a startup attempt two
+  minutes after gateway boot.
+- Scheduler-side dedup reads the persisted `operator_assessment`; assessments less
+  than 3h45m old suppress a restart run while allowing normal executor jitter.
+- Missing, malformed, or unreadable history fails open. Existing Operator permission
+  levels, forbidden actions, proposal gates, and per-day action limits remain intact.
+- Empty Operator results are handled as a clean no-op instead of raising from logging.
+- Doctor guidance now names both the recurring cron and startup catch-up behavior.
+- Validation: focused Operator/scheduler/doctor suites passed 120 tests; all specs
+  passed 631; one uninterrupted full run passed 2792 tests with 13 skipped and
+  6 expected failures.
+
+---
+
 ## 2026-07-11 — Serenity daily scheduler continuity
 
 - Kept the 02:00 CST `dreaming_daily` cadence and added a separate one-shot

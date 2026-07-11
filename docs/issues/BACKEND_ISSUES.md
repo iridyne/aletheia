@@ -1059,3 +1059,4 @@
 | ID | 状态 | 问题 | 处理/下一步 |
 |---|---|---|---|
 | SCH-A01 | ✅ | Serenity 只挂在内存 scheduler 的 `dreaming_daily` 02:00 CST；网关错过该时刻后不会补跑。doctor 又指向不存在的 `serenity_research_runner`，并把最近失败记录的 `created_at` 当成管线新鲜 | 保留每日 cron，新增启动后 4 分钟一次性补跑；按最近应执行 CST 批次和持久批次键去重，fresh/active/already-attempted 均 no-op。启动时将上个进程遗留的全部 queued/running/waiting_retry 诚实标为中断失败。doctor 改看最近成功完成时间，失败只作最近尝试说明，并指向真实 `dreaming_daily`/`serenity_startup_catchup` |
+| SCH-A02 | ✅ | `pi_operator_loop` 同样只有内存 cron；错过任一 4h 窗口后 doctor 会持续告警到下一时点，重启本身不能补评估 | 保留 `0,4,8,12,16,20:15` CST cron，增加 boot+2min `next_run_time`；scheduler wrapper 读取持久 `operator_assessment`，3h45m 内已有结果即跳过，兼容 agents 串行队列最多约 15min 延迟。无历史/坏时间/查询失败时 fail-open，仍受 Operator 原权限、动作等级和每日限频约束；空 summary 安全返回 |
