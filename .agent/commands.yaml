@@ -1,0 +1,14 @@
+schema_version: 1
+commands:
+  workflow_tests:
+    command: uv run pytest tests/test_agent_workflow.py -q
+    purpose: Validate session-independent workflow tooling.
+  architecture:
+    command: uv run pytest tests/test_architecture_fitness.py -q
+    purpose: Verify dependency direction.
+  specs:
+    command: uv run pytest tests/specs/ -q
+    purpose: Verify executable contracts.
+  doctor:
+    command: uv run aletheia doctor
+    purpose: Probe local runtime facts; never stored as Git state.
