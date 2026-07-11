@@ -1,7 +1,8 @@
 #!/bin/sh
 # Optional pre-commit hook for AI workspace projects.
 # Install: cp scripts/hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
-# Purpose: Prevent accidental secret commits and remind about handoff docs.
+# Purpose: Prevent accidental secret commits, remind about handoff docs, and
+#          enforce the machine-readable trust-boundary policy in .agent/policy.yaml.
 
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -24,7 +25,7 @@ if git diff --cached -U0 | grep -qE "$SECRETS_PATTERN"; then
 fi
 
 # Session-continuity gate: governed changes must carry both durable records.
-if git diff --cached --name-only | grep -qE '^(aletheia/|frontend/|tests/|docs/|scripts/|\.github/|\.agent/(commands\.yaml|project\.yaml|schemas/)|AGENTS\.md$|CURRENT_TASK\.md$|README\.md$|pyproject\.toml$|uv\.lock$)'; then
+if git diff --cached --name-only | grep -qE '^(aletheia/|frontend/|tests/|docs/|scripts/|\.github/|\.agent/(commands\.yaml|project\.yaml|policy\.yaml|schemas/)|AGENTS\.md$|CURRENT_TASK\.md$|README\.md$|pyproject\.toml$|uv\.lock$)'; then
     if ! git diff --cached --name-only | grep -qE '^\.agent/(tasks|handoffs)/'; then
         echo "${RED}ERROR: code/docs changed without a tracked task packet or handoff update.${NC}"
         exit 1
@@ -36,6 +37,23 @@ if git diff --cached --name-only | grep -qE '^(aletheia/|frontend/|tests/|docs/|
     if ! git diff --cached --name-only | grep -qE '^\.agent/handoffs/'; then
         echo "${RED}ERROR: code/docs changed without a handoff update.${NC}"
         exit 1
+    fi
+fi
+
+# Trust-boundary gate: if any staged path matches .agent/policy.yaml, require
+# passing task-packet evidence for the group. Delegates matching to the CLI so
+# glob semantics stay in one place.
+if [ -f .agent/policy.yaml ]; then
+    STAGED=$(git diff --cached --name-only)
+    if [ -n "$STAGED" ]; then
+        TMP=$(mktemp -t aletheia-precommit-tb.XXXXXX)
+        if ! printf '%s\n' "$STAGED" | uv run --quiet aletheia agent workflow check-staged --paths-stdin >"$TMP" 2>&1; then
+            echo "${RED}ERROR: trust-boundary policy violation:${NC}"
+            cat "$TMP"
+            rm -f "$TMP"
+            exit 1
+        fi
+        rm -f "$TMP"
     fi
 fi
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import hashlib
 import re
@@ -126,6 +127,61 @@ def _commands(root: Path) -> dict[str, Any]:
     if not isinstance(commands, dict):
         raise ValueError("commands catalogue must contain a commands mapping")
     return commands
+
+
+def _load_policy(root: Path) -> list[dict[str, Any]]:
+    """Read `.agent/policy.yaml` and return the trust-boundary list (empty when absent)."""
+    path = root / ".agent/policy.yaml"
+    if not path.is_file():
+        return []
+    doc = _yaml(path)
+    if doc.get("schema_version") != 1:
+        raise ValueError("policy.yaml schema_version must be 1")
+    entries = doc.get("trust_boundaries")
+    if not isinstance(entries, list):
+        raise ValueError("policy.yaml must contain a trust_boundaries list")
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("id"):
+            raise ValueError("each trust_boundaries entry needs an id")
+        if not isinstance(entry.get("paths"), list) or not entry["paths"]:
+            raise ValueError(f"trust_boundaries[{entry.get('id')}] needs paths")
+        if not isinstance(entry.get("required_command_keys"), list) or not entry["required_command_keys"]:
+            raise ValueError(f"trust_boundaries[{entry.get('id')}] needs required_command_keys")
+    return entries
+
+
+def _match_trust_boundaries(
+    changed_paths: set[str], policy: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    """Return {boundary_id: {"paths": [...], "required_command_keys": [...]}} for touched boundaries."""
+    hits: dict[str, dict[str, Any]] = {}
+    for entry in policy:
+        touched = sorted({
+            path for path in changed_paths
+            for pattern in entry["paths"]
+            if _path_matches(path, pattern)
+        })
+        if touched:
+            hits[entry["id"]] = {
+                "paths": touched,
+                "required_command_keys": list(entry["required_command_keys"]),
+            }
+    return hits
+
+
+def _path_matches(path: str, pattern: str) -> bool:
+    """Match a path against a policy glob. `**` means any depth."""
+    if "**" in pattern:
+        # Split around the first `**`; require prefix and suffix to match.
+        head, _, tail = pattern.partition("**")
+        head = head.rstrip("/")
+        tail = tail.lstrip("/")
+        if head and not path.startswith(head + "/") and path != head:
+            return False
+        if tail and not fnmatch.fnmatch(path, "*" + tail):
+            return False
+        return True
+    return fnmatch.fnmatch(path, pattern)
 
 
 def _dirty_paths(root: Path) -> set[str]:
@@ -452,7 +508,7 @@ def validate(
             governed = {
                 path for path in changed_paths
                 if path.startswith(("aletheia/", "frontend/", "tests/", "docs/", "scripts/", ".github/", ".agent/schemas/"))
-                or path in {".agent/commands.yaml", ".agent/project.yaml"}
+                or path in {".agent/commands.yaml", ".agent/project.yaml", ".agent/policy.yaml"}
                 or path in {"AGENTS.md", "CURRENT_TASK.md", "README.md", "pyproject.toml", "uv.lock"}
             }
             if governed:
@@ -460,7 +516,78 @@ def validate(
                     findings.append(Finding("error", "governed changes require a tracked task packet update"))
                 if not any(path.startswith(".agent/handoffs/") for path in changed_paths):
                     findings.append(Finding("error", "governed changes require a tracked handoff update"))
+            try:
+                policy = _load_policy(root)
+            except (FileNotFoundError, ValueError) as exc:
+                findings.append(Finding("error", f"trust-boundary policy is invalid: {exc}"))
+                policy = []
+            hits = _match_trust_boundaries(changed_paths, policy)
+            if hits:
+                _, head = _git(root, "rev-parse", "HEAD")
+                touched_task_ids = {
+                    path.split("/")[-1].removesuffix(".yaml")
+                    for path in changed_paths
+                    if path.startswith(".agent/tasks/") and path.endswith(".yaml")
+                }
+                candidate_tasks = [
+                    (task_path, task)
+                    for task_path, task in load_tasks(root)
+                    if not touched_task_ids or task.get("id") in touched_task_ids
+                ]
+                if not candidate_tasks:
+                    for boundary_id, meta in sorted(hits.items()):
+                        findings.append(Finding(
+                            "error",
+                            f"trust-boundary {boundary_id!r} touched but no task packet accompanies "
+                            f"the change; add evidence with one of: {', '.join(meta['required_command_keys'])}",
+                        ))
+                for boundary_id, meta in sorted(hits.items()):
+                    satisfied_by: str | None = None
+                    for _, task in candidate_tasks:
+                        for item in task.get("verification", []):
+                            if not isinstance(item, dict):
+                                continue
+                            if item.get("exit_code") != 0:
+                                continue
+                            if item.get("result", "passed") != "passed":
+                                continue
+                            if item.get("command_key") not in meta["required_command_keys"]:
+                                continue
+                            commit = str(item.get("commit", ""))
+                            code, _ = _git(root, "merge-base", "--is-ancestor", commit, head)
+                            if code == 0:
+                                satisfied_by = str(task.get("id"))
+                                break
+                        if satisfied_by:
+                            break
+                    if not satisfied_by:
+                        paths_summary = ", ".join(meta["paths"][:3])
+                        if len(meta["paths"]) > 3:
+                            paths_summary += ", ..."
+                        findings.append(Finding(
+                            "error",
+                            f"trust-boundary {boundary_id!r} touched ({paths_summary}) requires "
+                            f"passing evidence for one of: {', '.join(meta['required_command_keys'])} "
+                            f"recorded at a commit reachable from HEAD",
+                        ))
     return findings
+
+
+def trust_boundary_hits_for_paths(
+    changed_paths: set[str], root: Path | None = None
+) -> dict[str, dict[str, Any]]:
+    """Public helper: report which trust-boundary groups a path set would trigger.
+
+    Intended for use by scripts (pre-commit hook, ad-hoc audits). Returns an
+    empty dict when the policy is missing or malformed rather than raising, so
+    the hook can print a hint and continue.
+    """
+    resolved = repo_root(root)
+    try:
+        policy = _load_policy(resolved)
+    except (FileNotFoundError, ValueError):
+        return {}
+    return _match_trust_boundaries(changed_paths, policy)
 
 
 def bootstrap(root: Path | None = None) -> dict[str, Any]:

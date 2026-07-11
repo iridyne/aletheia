@@ -36,9 +36,13 @@ requested change would expand scope, weaken safety, or make system state less tr
 - No uncontrolled expansion: no new exchanges, no Docker/Postgres/Redis, no vector search
 - **EXPERIMENT FREEZE —— 已于 2026-06-27 由 owner 决定提前结束/解除**: Round 1 因实验有效性塌方提前结束；**冻结约束已解除**，原 AI 决策链代码现可修改。当前处于「Round 1 后全量修复」阶段（见 `docs/plans/round2_week1_decision_chain_fixes.md` + `docs/issues/` master ledger）。原冻结路径（`agent_shell/trading_context.py`, `agent_shell/trading_decision.py`, `agents/market_observer.py`, `agents/paper_trader*.py`, `agents/pi_agent*`, `strategy/`, `learning/`）仍是高敏感决策链：修改时**必须**补/更新对应 `tests/specs/spec_*.py`、走 SDD 流程、改后 `aletheia doctor` 验证。详见 `docs/product/EXPERIMENT_PROTOCOL.md`。
 - Trust boundaries (change-controlled — touch only for tasks that explicitly require it):
-  `aletheia/risk/`, `aletheia/execution/`, `exchanges/bitget/auth.py`, `exchanges/bitget/client.py`,
-  `config/secrets.py`, `agent_runtime/permissions.py`, `server/routes/live.py`
-  For these files, every behavioral change must have a focused regression test.
+  `aletheia/risk/`, `aletheia/execution/`, `aletheia/exchanges/bitget/auth.py`, `aletheia/exchanges/bitget/client.py`,
+  `aletheia/config/secrets.py`, `aletheia/agent_runtime/permissions.py`, `aletheia/agent_runtime/tool_registry.py`,
+  `aletheia/agent_shell/registry.py`, `aletheia/files/jsonl.py`, `aletheia/server/routes/live.py`
+  For these files, every behavioral change must have a focused regression test — and the machine-readable
+  policy in `.agent/policy.yaml` requires matching spec evidence in the task packet (`workflow check --strict`).
+  Keep this list in lockstep with `.agent/policy.yaml` and `docs/governance/trust_and_change_control.md §6.1`;
+  `tests/specs/spec_trust_boundary.py` fails on drift.
 - Trading state invariants: Orders flow through Execution Gateway only; live trading disabled by default
 - Market data: always go through `get_market_data_provider()` (`aletheia/data/ccxt_provider.py`) — never import `BitgetClient` for market data (execution-context only; REST v2 rejects canonical `BTC/USDT`). Providers are per-call, never cached (CCXT binds aiohttp to the creating event loop). Only exception: Bitget-only ON-series xStocks, which construct `CCXTProvider(exchange="bitget", fallback_exchange="bitget")` directly (see comments at call sites).
 - Symbol format: canonical `BTC/USDT` everywhere internally (storage, risk, PnL, opportunities); `BTCUSDT` exists ONLY at the execution adapter boundary via `to_bitget()`. Converters/`InstrumentId` live in `aletheia/data/symbols.py`. A mismatch silently drops opportunities at `paper_trader`'s filter.
