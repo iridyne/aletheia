@@ -39,7 +39,10 @@ _LEGAL_TRANSITIONS = {
     "backlog": {"ready", "cancelled"},
     "ready": {"blocked", "cancelled"},
     "in_progress": {"blocked", "cancelled"},
-    "blocked": {"cancelled"},
+    # A blocked task can be resumed on the same branch (in_progress) or
+    # released back to the ready pool. Previously the only escape was
+    # `cancelled`, which forced re-claiming through the claim_task side door.
+    "blocked": {"in_progress", "ready", "cancelled"},
     "done": set(),
     "cancelled": set(),
 }

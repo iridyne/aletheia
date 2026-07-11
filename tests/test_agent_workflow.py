@@ -730,3 +730,55 @@ def test_legacy_task_without_packet_type_still_validates(tmp_path, monkeypatch):
     path.write_text(yaml.safe_dump(task), encoding="utf-8")
     findings = validate(root)
     assert not any("packet_type" in f.message for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# _LEGAL_TRANSITIONS completeness (TASK-2026-014)
+# ---------------------------------------------------------------------------
+
+
+def _set_status(root: Path, status: str) -> None:
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["status"] = status
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+
+
+def test_update_task_allows_blocked_to_in_progress(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    _set_status(root, "blocked")
+    updated = update_task("TASK-1", status="in_progress", root=root)
+    assert updated["status"] == "in_progress"
+
+
+def test_update_task_allows_blocked_to_ready(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    _set_status(root, "blocked")
+    updated = update_task("TASK-1", status="ready", root=root)
+    assert updated["status"] == "ready"
+
+
+def test_update_task_still_rejects_blocked_to_backlog(tmp_path, monkeypatch):
+    """Backlog is not a legal target from blocked; regressions here would let
+    a task lose its intake context."""
+    root = _repo(tmp_path, monkeypatch)
+    _set_status(root, "blocked")
+    with pytest.raises(ValueError, match="illegal task transition"):
+        update_task("TASK-1", status="backlog", root=root)
+
+
+def test_update_task_still_rejects_done_via_update(tmp_path, monkeypatch):
+    """Only complete_task may set done, regardless of source status."""
+    root = _repo(tmp_path, monkeypatch)
+    _set_status(root, "blocked")
+    with pytest.raises(ValueError, match="use task complete to enter done state"):
+        update_task("TASK-1", status="done", root=root)
+
+
+def test_legal_transitions_map_declares_blocked_complements():
+    from aletheia.agent_workflow import _LEGAL_TRANSITIONS
+    assert "in_progress" in _LEGAL_TRANSITIONS["blocked"]
+    assert "ready" in _LEGAL_TRANSITIONS["blocked"]
+    assert "cancelled" in _LEGAL_TRANSITIONS["blocked"]
+    # done is intentionally omitted — complete_task is the only path.
+    assert "done" not in _LEGAL_TRANSITIONS["blocked"]
