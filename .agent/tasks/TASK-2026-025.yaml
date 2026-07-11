@@ -1,0 +1,32 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-025
+title: Refreeze small-sample Learning authority
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Replace retrospective small-sample factor and universe score authority with
+  neutral fail-closed behavior, clean exact-scope evidence, prospective exposure records,
+  and gradual promotion without touching risk or execution semantics.
+acceptance:
+- Retrospective factor and universe statistics cannot directly change score or filter behavior.
+- Stable treatment/control assignment and immutable before/after exposures are durable.
+- Authority requires minimum prospective time, unique arm samples, linked clean net outcomes, and a positive verdict.
+- Negative or invalid verdicts restore static factor and neutral universe baselines without deleting evidence.
+- Factor evidence uses exact clean scope and factor_key remains consistent through producer, ranker, and Operator context.
+- Universe forward outcomes preserve the causal Learning candidate key used by score exposure.
+ownership:
+  branch: fix/learning-authority-safety
+  lease_holder: codex
+  claimed_at: '2026-07-11T19:02:48.915582Z'
+  expires_at: '2026-07-12T03:02:48.915795Z'
+base_commit: 0763f8679e70ac49b3113d883313483db85e9e88
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-025.md
+updated_at: '2026-07-11T19:02:48.915805Z'

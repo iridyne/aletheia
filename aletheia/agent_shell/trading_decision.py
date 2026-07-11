@@ -976,7 +976,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
     factors = layer1.get("factor_feedback", [])
     if factors:
         factor_lines = "\n".join(
-            f"  {f['key']} ({f['group_type']}): {f['status']} "
+            f"  {f['factor_key']} ({f['group_type']}): {f['status']} "
             f"WR={f.get('win_rate', '?')}% exp={f.get('expectancy', '?')} "
             f"n={f.get('trade_count', 0)}"
             for f in factors

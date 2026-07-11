@@ -985,6 +985,7 @@ class UniverseMember(BaseModel):
 
 class UniverseForwardOutcome(BaseModel):
     id: str = Field(default_factory=new_id)
+    outcome_candidate_key: str | None = None
     member_id: str
     snapshot_id: str
     symbol: str

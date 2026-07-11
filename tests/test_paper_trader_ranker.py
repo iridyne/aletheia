@@ -124,24 +124,23 @@ def test_expired_universe_member_skipped():
     assert candidates[0]["skip_reason"] == "ttl_expired"
 
 
-def test_blocked_factor_skipped():
-    """Phase 3d: blocked_candidate now applies heavy penalty (-50) instead of hard-skip."""
+def test_blocked_factor_diagnostic_is_neutral_without_authority():
+    """Retrospective blocked_candidate does not change score without prospective authority."""
     from aletheia.agents.paper_trader_ranker import build_paper_candidates
 
     opps = [_make_opp()]
 
-    # First: verify with blocked_candidate the score is significantly penalized
+    # A diagnostic status without authority must retain the static baseline.
     with _patch_deps(opps, factor_status="blocked_candidate"):
         blocked_candidates = build_paper_candidates(limit=50)
     assert len(blocked_candidates) == 1
     assert blocked_candidates[0]["skip_reason"] is None  # no hard-skip
 
-    # Compare with "active" status to verify penalty applied
+    # Compare with "active" status: neither un-authorized label changes score.
     with _patch_deps(opps, factor_status="active"):
         active_candidates = build_paper_candidates(limit=50)
     assert len(active_candidates) == 1
-    # blocked_candidate score should be 55 points lower than active (+5 vs -50)
-    assert blocked_candidates[0]["trade_score"] < active_candidates[0]["trade_score"] - 40
+    assert blocked_candidates[0]["trade_score"] == active_candidates[0]["trade_score"]
 
 
 # ---------------------------------------------------------------------------

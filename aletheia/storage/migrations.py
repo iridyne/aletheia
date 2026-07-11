@@ -1199,6 +1199,7 @@ CREATE INDEX IF NOT EXISTS idx_universe_members_snapshot
 
 CREATE TABLE IF NOT EXISTS universe_forward_outcomes (
     id TEXT PRIMARY KEY,
+    outcome_candidate_key TEXT,
     member_id TEXT NOT NULL REFERENCES universe_members(id),
     snapshot_id TEXT NOT NULL,
     symbol TEXT NOT NULL,
@@ -1676,6 +1677,7 @@ _ADDITIVE_COLUMNS = [
     ("settlement_price_source", "universe_forward_outcomes", "TEXT"),
     ("settlement_lag_sec", "universe_forward_outcomes", "REAL"),
     ("cost_model_version", "universe_forward_outcomes", "TEXT"),
+    ("outcome_candidate_key", "universe_forward_outcomes", "TEXT"),
     # Knowledge dedup: SHA-256 prefix of content for write-time duplicate detection.
     ("content_hash", "knowledge_items", "TEXT"),
     # US Equity integration: sub-category and canonical ticker on opportunities.
@@ -2397,6 +2399,8 @@ CREATE TABLE IF NOT EXISTS learning_experiments (
 );
 CREATE INDEX IF NOT EXISTS idx_learning_experiments_hypothesis
     ON learning_experiments(hypothesis_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_open_experiment
+    ON learning_experiments(hypothesis_id) WHERE ended_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS learning_exposures (
     exposure_id TEXT PRIMARY KEY,

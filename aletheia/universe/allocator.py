@@ -11,7 +11,7 @@ from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
 logger = logging.getLogger("aletheia.universe.allocator")
 
 # Calibration: minimum samples before adjusting a family's weight
-_MIN_CALIBRATION_SAMPLES = 10
+_MIN_CALIBRATION_SAMPLES = 50
 # US-13: explore candidates below this total_score are too weak to promote into the
 # executable universe (they would be flagged execution_eligible with a near-zero score).
 _EXPLORE_MIN_SCORE = 20.0
@@ -41,7 +41,7 @@ def _calibration_key(family: str, direction: str | None, market_type: str | None
     return f"{family}:{direction or 'unknown'}:{market_type or 'spot'}"
 
 
-def get_family_multipliers(max_step: float = 0.40) -> dict[str, float]:
+def get_family_multipliers(max_step: float = 0.10) -> dict[str, float]:
     """Compute stratified opportunity-score multipliers from net outcomes.
 
     Returns {family:direction:market_type: multiplier}. Legacy test/adaptor rows
@@ -138,7 +138,40 @@ def compute_total_score(
             scanner_result.get("scanner_direction") or scanner_result.get("direction"),
             feat.get("market_type", "spot"),
         )
-        opportunity *= calibration.get(exact_key, calibration.get(family, 1.0))
+        raw_multiplier = float(calibration.get(exact_key, calibration.get(family, 1.0)))
+        # Historical calibration can propose only a bounded direction. It does
+        # not receive score authority until a prospective treatment/control
+        # verdict passes the shared experiment gate.
+        proposed_multiplier = 1.1 if raw_multiplier > 1.0 else 0.9 if raw_multiplier < 1.0 else 1.0
+        if proposed_multiplier != 1.0:
+            from aletheia.learning.experiments import apply_numeric_treatment
+
+            direction = scanner_result.get("scanner_direction") or scanner_result.get("direction") or "unknown"
+            market_type = feat.get("market_type", "spot")
+            feature_id = feat.get("feature_snapshot_id")
+            candidate_key = (
+                f"universe:{feature_id}:{family}:{direction}:{market_type}"
+                if feature_id else None
+            )
+            horizon = _FAMILY_CALIBRATION_HORIZON.get(family, _DEFAULT_CALIBRATION_HORIZON)
+            influence = apply_numeric_treatment(
+                path_id="universe_family_calibration",
+                scope={"family": family, "direction": direction, "market_type": market_type},
+                action={"type": "opportunity_multiplier", "multiplier": proposed_multiplier},
+                source_cohort="universe_forward_outcomes:clean_net:v2",
+                target_horizon=horizon,
+                candidate_key=candidate_key,
+                baseline=float(opportunity),
+                treatment=float(opportunity) * proposed_multiplier,
+                consumer="universe_allocator",
+                consumer_stage="opportunity_score",
+                outcome_candidate_key=(f"{candidate_key}:{horizon}" if candidate_key else None),
+                manifest={"raw_multiplier": raw_multiplier, "proposed_multiplier": proposed_multiplier},
+            )
+            opportunity = influence.value
+            if candidate_key:
+                feat["learning_candidate_key"] = candidate_key
+                feat["learning_exposure_id"] = influence.exposure_id
     # Operator-adjustable per-family weight. The PI Operator writes
     # cfg.scanner_weights via _action_adjust_scanner_weight (OL-C09) and the UI
     # shows it, but scoring never consumed it — the manual bias was inert. Empty

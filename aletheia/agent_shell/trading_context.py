@@ -356,7 +356,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
         all_factors = build_factor_feedback(limit=200, min_trades=3)
         layer["factor_feedback"] = [
             {
-                "key": f.get("key"),
+                "factor_key": f.get("factor_key"),
                 "group_type": f.get("group_type"),
                 "status": f.get("status"),
                 "win_rate": f.get("win_rate"),

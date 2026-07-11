@@ -47,6 +47,7 @@ def _settled(symbol, direction, ret_pct, *, family="momentum", horizon="1h"):
         directional_return_pct=directional,
         net_return_pct=net,
         min_tradable_edge_pct=0.05,
+        cost_model_version="test-v1",
         status="settled",
     )
 

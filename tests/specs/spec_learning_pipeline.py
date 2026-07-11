@@ -1225,13 +1225,16 @@ def test_factor_feedback_excludes_synthetic_closes():
     def _row(reason, pnl):
         return {"scanner_family": "momentum", "direction": "long", "symbol": "BTC/USDT",
                 "confidence": "high", "late_entry_penalty": 0,
+                "position_id": f"{reason}:{pnl}", "entry_price": 100.0, "quantity": 1.0,
+                "closed_at": "2026-07-10T00:00:00+00:00",
                 "realized_pnl": pnl, "close_reason": reason}
 
     # All-synthetic factor → excluded → no history.
     all_synth = [_row("reconciled_gone", p) for p in (5.0, -3.0, 4.0, -2.0, 6.0)]
     with patch.object(ff, "build_trade_attribution_rows", lambda limit=500: all_synth):
         sig = ff.lookup_factor_signal({"scanner_family": "momentum", "direction": "long",
-                                       "symbol": "BTC/USDT", "confidence": "high"})
+                                       "symbol": "BTC/USDT", "confidence": "high",
+                                       "late_entry_penalty": 0})
         assert sig["trade_count"] == 0, (
             f"reconciled_gone rows must be excluded from the signal gate, got "
             f"trade_count={sig['trade_count']}"
@@ -1243,7 +1246,8 @@ def test_factor_feedback_excludes_synthetic_closes():
              + [_row("reconciled_gone", -99.0) for _ in range(5)])
     with patch.object(ff, "build_trade_attribution_rows", lambda limit=500: mixed):
         sig = ff.lookup_factor_signal({"scanner_family": "momentum", "direction": "long",
-                                       "symbol": "BTC/USDT", "confidence": "high"})
+                                       "symbol": "BTC/USDT", "confidence": "high",
+                                       "late_entry_penalty": 0})
         assert sig["trade_count"] == 3, (
             f"only genuine closes must count, got trade_count={sig['trade_count']}"
         )

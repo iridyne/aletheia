@@ -269,7 +269,14 @@ def _evaluate_candidate(
             pass
 
     # Factor feedback lookup
+    try:
+        _opportunity_meta = _json.loads(opp.get("metadata") or "{}")
+    except (TypeError, ValueError):
+        _opportunity_meta = {}
     candidate_for_factor = {
+        "opportunity_id": opp.get("id"),
+        "universe_member_id": opp.get("universe_member_id"),
+        "learning_candidate_key": _opportunity_meta.get("learning_candidate_key"),
         "scanner_family": opp.get("scanner_family"),
         "symbol": symbol,
         "direction": direction,
@@ -280,7 +287,7 @@ def _evaluate_candidate(
     factor_signal = lookup_factor_signal(candidate_for_factor)
 
     # P1-4: hard_blocked is a hard reject — high confidence cannot override a confirmed loser
-    if factor_signal.get("status") == "hard_blocked":
+    if factor_signal.get("authority_applied") and factor_signal.get("status") == "hard_blocked":
         _filter_step(
             filter_trace, "factor_hard_block", "rejected", "factor_hard_blocked",
             inputs={"factor_key": factor_signal.get("factor_key"),
@@ -425,21 +432,10 @@ def _compute_trade_score(
         score -= float(universe_member.get("crowding_risk") or 0)
 
     # P0-3: Factor feedback — IC-proxy continuous weighting (replaces discrete ±5/±20 jumps)
-    factor_status = factor_signal.get("status", "watch")
-    factor_win_rate = factor_signal.get("win_rate")
-    factor_trade_count = factor_signal.get("trade_count", 0)
-
-    if factor_status == "blocked_candidate":
-        score -= 50
-    else:
-        # IC proxy: (win_rate - 0.5) * 2, range [-1, +1]; max ±20 pts
-        # Sample weight: ramps to full weight at 10 trades (avoids noise from 3-trade factors)
-        if factor_win_rate is not None and factor_trade_count >= 3:
-            ic_proxy = (factor_win_rate - 0.5) * 2
-            sample_weight = min(1.0, factor_trade_count / 10.0)
-            score += 20 * ic_proxy * sample_weight
-        else:
-            score -= 5  # no history: mild penalty (was 0 for watch)
+    # Retrospective statistics are diagnostic. Only the prospective experiment
+    # adapter may expose a bounded score delta after treatment/control evidence.
+    if factor_signal.get("authority_applied"):
+        score += float(factor_signal.get("score_delta") or 0.0)
 
     # Position C (2026-07-02): the strategy-evidence bonus/penalty (backtest +
     # paper-drift scoring) was removed with the rules engine. Per-family live edge is

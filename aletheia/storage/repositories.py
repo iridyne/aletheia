@@ -2100,7 +2100,10 @@ def calibration_stats() -> list[dict]:
     Legacy gross-only rows are intentionally excluded. A win must clear the
     persisted minimum tradable edge after fees, spread/slippage and funding.
     """
+    from aletheia.analytics.learning_window import clean_window_cutoff
+
     db = get_db()
+    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
     rows = db.execute(
         "SELECT scanner_family, direction, "
         f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
@@ -2112,11 +2115,14 @@ def calibration_stats() -> list[dict]:
         "MAX(net_return_pct) as max_return "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
+        "AND entry_ts >= ? "
         "AND net_return_pct IS NOT NULL "
+        "AND cost_model_version IS NOT NULL "
         "AND ABS(net_return_pct) <= 100 "
         "AND direction IN ('long', 'short') "
         f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
-        "ORDER BY scanner_family, direction, market_type, horizon"
+        "ORDER BY scanner_family, direction, market_type, horizon",
+        (cutoff,),
     ).fetchall()
     return [dict(r) for r in rows]
 

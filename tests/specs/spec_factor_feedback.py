@@ -69,9 +69,8 @@ def test_factor_outlier_pf_not_preferred():
         "FF-HARD-BLOCKED", "factor_feedback",
         "§classify_factor hard_blocked status",
         "L2b",
-        "trade_count >= 10 且 win_rate < 0.30 且 expectancy < -0.5 → 返回 hard_blocked。"
-        "hard_blocked 在 ranker 中触发硬拒绝（skip_reason=factor_hard_blocked），"
-        "不是 -50 分软惩罚。",
+        "trade_count >= 10 且 win_rate < 0.30 且 expectancy < -0.5 → 返回 hard_blocked 诊断。"
+        "该诊断本身不再获得 ranker 权限；是否应用由前瞻实验授权字段决定。",
         status="implemented",
     ),
 )
@@ -88,15 +87,15 @@ def test_factor_hard_blocked_status():
 @spec_claim(
     SpecClaim(
         "FF-HARD-BLOCKED-RANKER", "factor_feedback",
-        "§ranker hard_blocked hard_reject",
+        "§ranker prospective authority gate",
         "L2b",
-        "ranker 遇到 factor_signal.status == 'hard_blocked' 时返回 skip_reason='factor_hard_blocked'，"
-        "不进入评分（非 -50 软惩罚）。",
+        "历史统计给出 hard_blocked 诊断但没有 prospective authority 时，ranker 不得硬拒绝；"
+        "只有带 authority_applied=True 的前瞻处理组才能启用该行为。",
         status="implemented",
     ),
 )
-def test_ranker_hard_blocked_is_hard_reject():
-    """factor_status=hard_blocked 应使 _evaluate_candidate 返回 skip_reason=factor_hard_blocked。"""
+def test_ranker_hard_blocked_requires_prospective_authority():
+    """Retrospective hard_blocked alone must remain neutral."""
     from aletheia.agents.paper_trader_ranker import _evaluate_candidate
     from aletheia.config.loader import load_config
     import unittest.mock as mock
@@ -117,7 +116,9 @@ def test_ranker_hard_blocked_is_hard_reject():
 
     with mock.patch(
         "aletheia.agents.paper_trader_ranker.lookup_factor_signal",
-        return_value={"status": "hard_blocked", "factor_key": "test", "trade_count": 12,
+        return_value={"status": "hard_blocked", "observed_status": "hard_blocked",
+                      "authority_applied": False, "score_delta": 0.0,
+                      "factor_key": "test", "trade_count": 12,
                       "win_rate": 0.25, "expectancy": -0.8, "reason": "hard_blocked"},
     ), mock.patch(
         "aletheia.agents.paper_trader_ranker.get_current_regime",
@@ -133,6 +134,4 @@ def test_ranker_hard_blocked_is_hard_reject():
         )
 
     assert candidate is not None, "应返回 candidate dict，不是 None"
-    assert candidate.get("skip_reason") == "factor_hard_blocked", (
-        f"skip_reason 应为 'factor_hard_blocked'，得到: {candidate.get('skip_reason')!r}"
-    )
+    assert candidate.get("skip_reason") is None

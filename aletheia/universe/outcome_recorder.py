@@ -71,6 +71,10 @@ def register_pending(members: list[dict], entry_ts: str) -> int:
         for horizon_key, delta in _HORIZONS.items():
             due_at = (ts + delta).isoformat()
             outcomes.append(UniverseForwardOutcome(
+                outcome_candidate_key=(
+                    f"{m['learning_candidate_key']}:{horizon_key}"
+                    if m.get("learning_candidate_key") else None
+                ),
                 member_id=m["id"],
                 snapshot_id=m["snapshot_id"],
                 symbol=m["symbol"],

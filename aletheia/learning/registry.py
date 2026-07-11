@@ -46,7 +46,7 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
     ),
     LearningPath(
         "ranker_factor_filter", "factor feedback", "paper ranker",
-        "paper candidate filter", ("candidate_filter",), "ranker",
+        "prospective paper score/filter treatment", ("candidate_filter", "score_adjustment"), "ranker",
         "fixed-horizon candidate net outcome", "factor filter disabled",
     ),
     LearningPath(
@@ -105,4 +105,3 @@ def get_learning_path(path_id: str) -> LearningPath:
         if path.path_id == path_id:
             return path
     raise KeyError(f"undeclared Learning path: {path_id}")
-

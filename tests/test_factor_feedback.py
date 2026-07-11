@@ -117,19 +117,22 @@ def test_lookup_factor_signal_with_matching_history():
             "scanner_family": "momentum", "symbol": "BTC/USDT", "direction": "long",
             "confidence_score": 75, "confidence": "high", "late_entry_penalty": None,
             "realized_pnl": 5.0, "holding_hours": 4.0, "close_reason": "take_profit",
-            "closed_at": "2026-06-14T01:00:00",
+            "position_id": "p1", "entry_price": 100.0, "quantity": 1.0,
+            "closed_at": "2026-07-01T01:00:00+00:00",
         },
         {
             "scanner_family": "momentum", "symbol": "BTC/USDT", "direction": "long",
             "confidence_score": 75, "confidence": "high", "late_entry_penalty": None,
             "realized_pnl": 3.0, "holding_hours": 2.0, "close_reason": "take_profit",
-            "closed_at": "2026-06-14T02:00:00",
+            "position_id": "p2", "entry_price": 100.0, "quantity": 1.0,
+            "closed_at": "2026-07-01T02:00:00+00:00",
         },
         {
             "scanner_family": "momentum", "symbol": "BTC/USDT", "direction": "long",
             "confidence_score": 75, "confidence": "high", "late_entry_penalty": None,
             "realized_pnl": -1.0, "holding_hours": 1.0, "close_reason": "stop_loss",
-            "closed_at": "2026-06-14T03:00:00",
+            "position_id": "p3", "entry_price": 100.0, "quantity": 1.0,
+            "closed_at": "2026-07-01T03:00:00+00:00",
         },
     ]
     with patch("aletheia.analytics.factor_feedback.build_trade_attribution_rows", return_value=fake_rows):
@@ -142,8 +145,8 @@ def test_lookup_factor_signal_with_matching_history():
             "late_entry_penalty": None,
         })
     assert signal["trade_count"] == 3
-    # 3 笔不满足 preferred 门槛（需要 >= 8）— 返回 active 是正确行为（P0-4）
-    assert signal["status"] == "active"
+    assert signal["observed_status"] == "active"
+    assert signal["status"] == "watch"  # retrospective history has no authority
 
 
 # ---------------------------------------------------------------------------
@@ -162,13 +165,15 @@ def test_build_factor_feedback_groups():
             "scanner_family": "momentum", "symbol": "BTC/USDT", "direction": "long",
             "confidence_score": 75, "confidence": "high", "late_entry_penalty": 5.0,
             "realized_pnl": 10.0, "holding_hours": 4.0, "close_reason": "take_profit",
-            "closed_at": "2026-06-14T01:00:00",
+            "position_id": "g1", "entry_price": 100.0, "quantity": 1.0,
+            "closed_at": "2026-07-01T01:00:00+00:00",
         },
         {
             "scanner_family": "momentum", "symbol": "ETH/USDT", "direction": "short",
             "confidence_score": 60, "confidence": "medium", "late_entry_penalty": 0.0,
             "realized_pnl": -2.0, "holding_hours": 1.0, "close_reason": "stop_loss",
-            "closed_at": "2026-06-14T02:00:00",
+            "position_id": "g2", "entry_price": 100.0, "quantity": 1.0,
+            "closed_at": "2026-07-01T02:00:00+00:00",
         },
     ]
     with patch("aletheia.analytics.factor_feedback.build_trade_attribution_rows", return_value=fake_rows):

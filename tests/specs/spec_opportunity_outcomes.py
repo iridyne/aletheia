@@ -151,9 +151,9 @@ def test_calibration_excludes_gross_only_rows():
         ),
         UniverseForwardOutcome(
             member_id="member-net", symbol="BBB/USDT",
-            forward_return_pct=-1.0, gross_return_pct=-1.0,
-            directional_return_pct=-1.0, net_return_pct=-1.2,
-            min_tradable_edge_pct=0.05, **common,
+                forward_return_pct=-1.0, gross_return_pct=-1.0,
+                directional_return_pct=-1.0, net_return_pct=-1.2,
+                min_tradable_edge_pct=0.05, cost_model_version="test-v1", **common,
         ),
     ])
 

@@ -10,6 +10,7 @@ Called at the end of every universe refresh cycle (source_agent="universe_scanne
 
 from __future__ import annotations
 
+import json
 import logging
 
 from aletheia.storage.models import Opportunity
@@ -157,6 +158,10 @@ def emit_deterministic_opportunities(
             source_agent="universe_scanner",
             linked_strategy_id=linked_strategy_id,
             asset_class="crypto",
+            metadata=json.dumps({
+                "learning_candidate_key": m.get("learning_candidate_key"),
+                "learning_exposure_id": m.get("learning_exposure_id"),
+            }, sort_keys=True),
             execution_eligible=_exec_eligible,
             universe_snapshot_id=snapshot_id,
             universe_member_id=member_id,

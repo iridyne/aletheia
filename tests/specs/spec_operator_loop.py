@@ -978,13 +978,13 @@ def test_sideways_trend_tax_applied():
         "OL-FACTOR-SMOOTH", "operator_layer",
         "§ranker factor IC smooth scoring",
         "L2b",
-        "factor_status != blocked_candidate 时用 IC 代理连续加权（(win_rate-0.5)*2*20），"
-        "替换离散 ±5/±20 跳跃。win_rate 已由 lookup_factor_signal 返回，无新依赖。",
+        "factor retrospective win_rate has no direct score authority. The ranker consumes only "
+        "the bounded prospective score_delta emitted by the shared experiment adapter.",
         status="implemented",
     ),
 )
 def test_factor_scoring_is_continuous():
-    """win_rate=0.52 和 win_rate=0.60 的分差应在 (0, 10) 区间（连续而非离散跳变）。"""
+    """Unapproved history is neutral; authorized bounded deltas remain continuous."""
     from aletheia.agents.paper_trader_ranker import _compute_trade_score
     from aletheia.regime.detector import MarketRegime
     import unittest.mock as mock
@@ -993,15 +993,18 @@ def test_factor_scoring_is_continuous():
     with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
                     return_value=flat):
         base = {"confidence_score": 50, "symbol": "BTC/USDT", "scanner_family": "test"}
-        sig_low  = {"status": "active", "win_rate": 0.52, "trade_count": 10}
-        sig_high = {"status": "active", "win_rate": 0.60, "trade_count": 10}
+        sig_low  = {"status": "active", "win_rate": 0.52, "trade_count": 10,
+                    "authority_applied": False, "score_delta": 99.0}
+        sig_high = {"status": "active", "win_rate": 0.60, "trade_count": 10,
+                    "authority_applied": False, "score_delta": -99.0}
         s_low  = _compute_trade_score(base, None, sig_low, "medium", direction="long")
         s_high = _compute_trade_score(base, None, sig_high, "medium", direction="long")
-    delta = s_high - s_low
-    assert 0 < delta < 10, (
-        f"win_rate 0.52→0.60 分差 {delta:.1f} 超出连续范围 (0,10)；"
-        "factor 评分仍为离散跳跃，检查 IC 代理实现"
-    )
+        assert s_low == s_high
+        authorized_low = {"authority_applied": True, "score_delta": 1.0}
+        authorized_high = {"authority_applied": True, "score_delta": 4.0}
+        a_low = _compute_trade_score(base, None, authorized_low, "medium", direction="long")
+        a_high = _compute_trade_score(base, None, authorized_high, "medium", direction="long")
+    assert a_high - a_low == 3.0
 
 
 @spec_claim(

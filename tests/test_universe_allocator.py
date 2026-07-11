@@ -159,8 +159,8 @@ def test_core_vs_rotating_split(cfg):
 # --- Calibration feedback tests ---
 
 
-def test_calibration_boosts_high_hit_rate(cfg):
-    """A family with high hit_rate gets opportunity_score boosted."""
+def test_calibration_boost_is_refrozen_without_candidate_identity(cfg):
+    """Retrospective calibration alone cannot boost a candidate."""
     feat = {
         "tradability_score": 80.0,
         "quote_volume_24h": 50_000_000,
@@ -175,11 +175,11 @@ def test_calibration_boosts_high_hit_rate(cfg):
     score_boosted = compute_total_score(
         feat, scanner_result, cfg, calibration={"momentum": 1.15}
     )
-    assert score_boosted > score_neutral
+    assert score_boosted == score_neutral
 
 
-def test_calibration_penalizes_low_hit_rate(cfg):
-    """A family with low hit_rate gets opportunity_score reduced."""
+def test_calibration_penalty_is_refrozen_without_candidate_identity(cfg):
+    """Retrospective calibration alone cannot suppress a candidate."""
     feat = {
         "tradability_score": 80.0,
         "quote_volume_24h": 50_000_000,
@@ -194,7 +194,7 @@ def test_calibration_penalizes_low_hit_rate(cfg):
     score_penalized = compute_total_score(
         feat, scanner_result, cfg, calibration={"momentum": 0.85}
     )
-    assert score_penalized < score_neutral
+    assert score_penalized == score_neutral
 
 
 def test_calibration_no_effect_on_unknown_family(cfg):
@@ -252,11 +252,11 @@ def test_calibration_keeps_direction_and_market_cohorts_separate(monkeypatch):
     monkeypatch.setattr(_repo, "calibration_stats", lambda: [
         {
             "scanner_family": "momentum", "direction": "long", "market_type": "spot",
-            "horizon": "4h", "n": 20, "win_count": 15,
+            "horizon": "4h", "n": 50, "win_count": 38,
         },
         {
             "scanner_family": "momentum", "direction": "short", "market_type": "perp",
-            "horizon": "4h", "n": 20, "win_count": 5,
+            "horizon": "4h", "n": 50, "win_count": 12,
         },
     ])
 
@@ -293,4 +293,4 @@ def test_total_score_uses_exact_calibration_cohort(cfg):
         calibration={"momentum:short:perp": 0.8, "momentum:long:spot": 1.4},
     )
 
-    assert boosted > penalized
+    assert boosted == penalized

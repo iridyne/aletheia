@@ -332,6 +332,8 @@ class UniverseService:
                     "spread_bps": item.get("spread_bps"),
                     "funding_rate": item.get("funding_rate"),
                     "total_score": item["total_score"],
+                    "learning_candidate_key": item.get("learning_candidate_key"),
+                    "learning_exposure_id": item.get("learning_exposure_id"),
                     "expires_at": member_expires,
                 })
 

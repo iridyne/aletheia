@@ -1,6 +1,7 @@
 # Learning Positive-Contribution Implementation Plan
 
-> Status: approved design target; implementation not started.
+> Status: implementation in progress; integrity ledger, scheduler continuity, factor authority,
+> and universe-calibration authority are implemented. Prompt attribution and remaining consumers follow.
 > Normative target: `docs/design/learning_evolution_contract.md`.
 > Existing behavior contract: `docs/design/learning_contract.md`.
 > Supersedes: `docs/plans/LEARNING_MODULE_REPAIR_PLAN.md` for future work.
@@ -9,6 +10,10 @@
 > concurrent operator controls, shared outcome truth, and non-authoritative analytics.
 > Product stage: MVP trust hardening; no new exchange, database service, vector store,
 > reinforcement-learning framework, or live authority.
+> Phase 3 update (2026-07-12): retrospective factor/family findings now create neutral
+> shadow experiments. Paper influence requires stable treatment/control assignment,
+> minimum time, unique linked cost-aware outcomes, and a positive verdict; negative or
+> invalid evidence restores the static baseline immediately.
 
 ## 1. Outcome And Non-Negotiable Standard
 

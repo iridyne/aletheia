@@ -1,10 +1,10 @@
 # Learning Subsystem Contract
 
 > Contract level: L2. This file is normative for the Learning subsystem.
-> Last aligned: 2026-07-12 full-loop inventory audit.
+> Last aligned: 2026-07-12 Learning authority hardening.
 > Reference intent: root `discussion.md` Learning section.
-> Target extension: `learning_evolution_contract.md` defines the proposed measured
-> self-improvement lifecycle; its claims remain missing until implemented.
+> Target extension: `learning_evolution_contract.md` defines the measured
+> self-improvement lifecycle and tracks each implemented/remaining claim.
 
 Learning is not a dashboard-only feature. Its product role is to turn market
 observations, trade decisions, closed trades, reviews, and later corrections into
@@ -52,15 +52,15 @@ results can influence a later trading judgment, even when it lives outside `alet
 | --- | --- | --- |
 | Outcome joins | `analytics/trade_attribution.py`, `trade_path.py` | read-only realized-trade joins |
 | Candidate counterfactuals | `analytics/shadow_trades.py`, `filter_evidence.py`, `universe/filter_outcome_recorder.py` | settle skipped/blocked candidate outcomes |
-| Outcome economics | `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | cost/quality/contamination interpretation, not yet uniformly consumed by every path |
-| Universe family calibration | `universe/allocator.py::get_family_multipliers`, `universe/service.py` | settled outcomes can change family/direction/market opportunity score multiplier from 0.6–1.4 after 10 samples |
+| Outcome economics | `learning/outcomes.py`, `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | shared fail-closed cost/quality contract now governs factor and universe authority; remaining prompt/sizing paths are still migrating |
+| Universe family calibration | `universe/allocator.py::get_family_multipliers`, `learning/experiments.py`, `universe/service.py` | 50-sample retrospective cohorts may propose a bounded 0.9/1.1 shadow treatment; actual paper influence requires stable prospective arms, linked net outcomes, minimum time, and a positive verdict; fallback is 1.0 |
 | Structured cases | `analytics/trade_case_builder.py` | deterministic high-confidence cases and guard candidates |
 | Universe guard producer | `universe/outcome_recorder.py` | derives candidate guards from settled rejected/pass outcomes |
 | Narrative review | `agents/post_trade_reviewer.py` | medium-confidence prose; also triggers deterministic case building |
 | Risk critique | `agents/risk_critic.py` | advisory research note from proposal/risk-decision history |
 | Lesson extraction/review | `agents/dreaming_agent.py`, `agents/lesson_reviewer.py` | proposed→applied lesson/policy and draft skill |
 | Memo synthesis | `analytics/insight_synthesizer.py`, `memo_effectiveness.py` | memo reaches observer prompt, ranker score, and Operator prompt |
-| Factor feedback | `analytics/factor_feedback.py` | ranker can hard-reject `hard_blocked`; history also enters Operator context |
+| Factor feedback | `analytics/factor_feedback.py`, `learning/experiments.py` | exact clean history is diagnostic and proposes shadow treatments; ranker score/filter authority requires a prospective positive verdict and otherwise stays neutral |
 | Reasoning feedback | `analytics/reasoning_feedback.py` | Operator prompt advice |
 | Confidence calibration | `analytics/confidence_calibration.py` | Operator prompt advice |
 | Last-decision reflection | `agent_shell/reflection.py` | Operator prompt advice; current outcome lookup contains heuristic fallbacks |
@@ -80,12 +80,13 @@ results can influence a later trading judgment, even when it lives outside `alet
 Existing tests prove individual behaviors and safety tripwires; they do not prove that the full
 loop contributes positively. Current behavior has these contract-relevant limitations:
 
-- factor feedback can hard-reject a paper candidate from small retrospective groups and does not
-  yet share one universal clean-window/outcome adapter with all other paths;
-- the Operator-context adapter reads factor field `key`, while the producer emits `factor_key`, so
-  the affected factor identity is currently lost in that prompt summary;
-- universe family calibration can change upstream opportunity scores by ±40% after only ten
-  retrospective outcomes and currently has no prospective neutral-multiplier exposure ledger;
+- factor and universe authority are now refrozen on existing retrospective data; they will remain
+  behaviorally neutral until sufficient prospective treatment/control outcomes exist;
+- factor identity is standardized as `factor_key` through producer, ranker, Operator context and
+  prompt rendering, with immutable before/after exposure records;
+- positive/negative experiment verdict calculation is still a separate evaluator responsibility;
+  the authority adapter independently verifies real linked samples and fails closed if a verdict
+  is absent, stale, under-sampled, or contradicted by a newer refreeze verdict;
 - automatic lesson extraction emits categories such as `risk_sizing`/`entry_timing`, while the Risk
   Engine accepts hard `block_*` actions only from exact category `risk`; therefore automatic block
   recommendations are generally advisory despite comments suggesting the Risk Engine can act;
