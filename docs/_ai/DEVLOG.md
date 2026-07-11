@@ -1,5 +1,15 @@
 # Development Log
 
+## 2026-07-11 — Orderbook parser recovery
+
+- 修复 OKX/CCXT 盘口档位含第三列订单数时被两变量解包、导致全部 microstructure 标的失败的问题；解析只读取价格和数量，保留尾部字段兼容。
+- 永续盘口的数量按 market contractSize 换成基础币数量后再计算 10bps 美元深度；现货保持原计算。
+- 登记 OPR-G03：orderbook 表和 symbol-only 消费者仍需独立补 market_type，本批不在解析修复中扩数据库迁移。
+- 不改风险、订单、仓位、live 或任何机会筛选阈值。
+- 相关采集/市场数据回归 `46 passed`；真实活动标的请求 `13/13` 产出盘口且无错误。
+
+---
+
 ## 2026-07-11 — Filter feedback stage identity
 
 - 修复 filter evidence 幂等身份缺少 stage/sequence 的问题；同一候选经过同名同参数但位于不同阶段的关卡时，不再静默丢掉后写入的证据。

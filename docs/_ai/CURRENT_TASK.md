@@ -27,8 +27,9 @@
 3. **已完成**：只读漏斗直接消费历史 ranker 和 proposal submission 证据；trade 意图被提案前置门拒绝时保留机器原因，不再显示为未知空洞。
 4. **已完成**：price feed、主所采集器和 volume ranking 保留 venue+spot/perp 身份；尚未正式接入的股票/ETF 合约不进入 crypto 执行池。
 5. **已完成**：负反馈统计按真实关卡阶段和事发参数分组；同名关卡跨阶段不再因幂等键碰撞丢失证据。
-6. **下一阶段**：等各筛选器达到 pass/reject 各20个完整 net 样本和 70% 覆盖后，再分别实验 family+direction+market 校准、方向刹车、ranker 重复扣分和 Kelly/sizing。
-7. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+6. **已完成**：订单簿解析兼容 CCXT 三列档位，永续深度按 contractSize 换算；后续仍须给 orderbook 存储和消费者补 market_type。
+7. **下一阶段**：等各筛选器达到 pass/reject 各20个完整 net 样本和 70% 覆盖后，再分别实验 family+direction+market 校准、方向刹车、ranker 重复扣分和 Kelly/sizing。
+8. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
 已经修好的供给/语义问题不要重复施工：OKX 永续成交额、分配前 market 去重、short funding 方向、PI bear_case、market-aware proposal price、pending shadow、因果漏斗和 doctor 市场覆盖。
 

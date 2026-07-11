@@ -7,7 +7,15 @@
 
 ## Last Updated
 
-2026-07-11 (Filter feedback stage identity)
+2026-07-11 (Orderbook parser recovery)
+
+---
+
+## Recent Change (Orderbook parser recovery — 2026-07-11)
+
+订单簿采集长期 0 行的直接原因是 CCXT/OKX 每档返回价格、数量、订单数三列，而解析器只接受两列，导致每个标的都失败。现在只读取前两列，并对永续合约按 contractSize 换算真实美元深度；没有改变交易决策或执行边界。
+
+仍有一个已登记后续项：orderbook 存储缺少 market_type。当前 Universe 的同 symbol 市场去重只能降低混用概率，不能替代完整现货/永续身份；需要独立迁移和逐消费者改造。
 
 ---
 

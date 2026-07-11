@@ -46,12 +46,20 @@ class MicrostructureCollector:
                         canonical_sym = sym
 
                     exchange.options["defaultType"] = "swap" if is_perp else "spot"
+                    market = exchange.market(fetch_sym)
+                    contract_size = _contract_size(market)
 
                     t0 = time.time()
                     ob = await exchange.fetch_order_book(fetch_sym, limit=20)
                     latency_ms = int((time.time() - t0) * 1000)
 
-                    snap = _parse_orderbook(canonical_sym, provider._primary_name, ob, latency_ms)
+                    snap = _parse_orderbook(
+                        canonical_sym,
+                        provider._primary_name,
+                        ob,
+                        latency_ms,
+                        contract_size=contract_size,
+                    )
                     if snap:
                         snapshots.append(snap)
                 except Exception as e:
@@ -64,7 +72,12 @@ class MicrostructureCollector:
 
 
 def _parse_orderbook(
-    symbol: str, exchange: str, ob: dict, latency_ms: int
+    symbol: str,
+    exchange: str,
+    ob: dict,
+    latency_ms: int,
+    *,
+    contract_size: float = 1.0,
 ) -> OrderbookSnapshot | None:
     bids = ob.get("bids", [])
     asks = ob.get("asks", [])
@@ -81,11 +94,15 @@ def _parse_orderbook(
 
     threshold_10bps = mid * 0.001  # 10 bps from mid
 
-    bid_depth = _depth_within(bids, mid - threshold_10bps, side="bid")
-    ask_depth = _depth_within(asks, mid + threshold_10bps, side="ask")
+    bid_depth = _depth_within(
+        bids, mid - threshold_10bps, side="bid", contract_size=contract_size
+    )
+    ask_depth = _depth_within(
+        asks, mid + threshold_10bps, side="ask", contract_size=contract_size
+    )
 
-    bid_vol = sum(float(b[1]) for b in bids[:10])
-    ask_vol = sum(float(a[1]) for a in asks[:10])
+    bid_vol = sum(float(level[1]) for level in bids[:10])
+    ask_vol = sum(float(level[1]) for level in asks[:10])
     total_vol = bid_vol + ask_vol
     imbalance = (bid_vol - ask_vol) / total_vol if total_vol > 0 else None
 
@@ -104,15 +121,32 @@ def _parse_orderbook(
     )
 
 
-def _depth_within(levels: list, price_threshold: float, side: str) -> float:
+def _depth_within(
+    levels: list,
+    price_threshold: float,
+    side: str,
+    *,
+    contract_size: float = 1.0,
+) -> float:
     """Sum USD value of levels within price threshold from mid."""
     total_usd = 0.0
-    for price_str, qty_str in levels:
-        price = float(price_str)
-        qty = float(qty_str)
+    for level in levels:
+        price = float(level[0])
+        qty = float(level[1])
         if side == "bid" and price < price_threshold:
             break
         if side == "ask" and price > price_threshold:
             break
-        total_usd += price * qty
+        total_usd += price * qty * contract_size
     return total_usd
+
+
+def _contract_size(market: dict[str, Any]) -> float:
+    """Return base units per amount; spot amounts already use base units."""
+    if not market.get("contract"):
+        return 1.0
+    try:
+        size = float(market.get("contractSize") or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    return size if size > 0 else 1.0
