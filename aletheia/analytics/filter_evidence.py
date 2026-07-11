@@ -36,6 +36,25 @@ _SENSITIVE_KEY_PARTS = {
     "raw_context", "secret", "token",
 }
 
+# Shared causal assignment used by feedback statistics and bounded replays.
+# Later scheduler retries remain stored but cannot place one candidate in both
+# pass and reject cohorts.
+FIRST_EXPOSURE_CTE_SQL = (
+    "WITH ranked_filter_decisions AS ("
+    " SELECT fd.*, "
+    " ROW_NUMBER() OVER ("
+    "   PARTITION BY fd.filter_name, fd.stage, fd.filter_version, fd.outcome_candidate_key "
+    "   ORDER BY datetime(fd.evaluated_at), fd.rowid"
+    " ) AS exposure_rank, "
+    " MIN(fd.evaluated_at) OVER ("
+    "   PARTITION BY fd.filter_name, fd.stage, fd.filter_version, fd.outcome_candidate_key"
+    " ) AS first_evaluated_at "
+    " FROM filter_decisions fd "
+    " WHERE fd.decision IN ('passed','rejected') "
+    "   AND fd.outcome_candidate_key IS NOT NULL"
+    ") "
+)
+
 
 def record_filter_decision(
     *,
@@ -255,9 +274,15 @@ def filter_feedback_stats(
     """Return cost-aware pass/reject cells with a conservative shrunk mean."""
     from aletheia.storage.sqlite import get_db
 
-    time_clause = " AND datetime(fd.evaluated_at) >= datetime(?)" if evaluated_since else ""
+    # A candidate can be evaluated on multiple scheduler ticks (fresh first,
+    # expired later). Assign it once by its first persisted exposure so pass and
+    # reject cohorts remain disjoint. Apply the report window only after ranking,
+    # otherwise a pass just outside the window can be forgotten and its later
+    # rejection incorrectly becomes the candidate's first exposure.
+    time_clause = " AND datetime(fd.first_evaluated_at) >= datetime(?)" if evaluated_since else ""
     params = (evaluated_since,) if evaluated_since else ()
     rows = get_db().execute(
+        FIRST_EXPOSURE_CTE_SQL +
         "SELECT fd.filter_name, fd.stage, fd.filter_version, "
         "fd.parameter_snapshot, fd.decision, "
         "COALESCE(fd.scanner_family, 'unknown') AS scanner_family, "
@@ -270,10 +295,10 @@ def filter_feedback_stats(
         "  THEN fo.net_return_pct ELSE 0 END) AS gains, "
         "SUM(CASE WHEN fo.status='settled' AND fo.net_return_pct < 0 "
         "  THEN -fo.net_return_pct ELSE 0 END) AS losses "
-        "FROM filter_decisions fd "
+        "FROM ranked_filter_decisions fd "
         "JOIN filter_candidate_outcomes fo "
         "  ON fo.outcome_candidate_key = fd.outcome_candidate_key "
-        "WHERE fd.decision IN ('passed','rejected') "
+        "WHERE fd.exposure_rank = 1 "
         f"{time_clause} "
         "GROUP BY fd.filter_name, fd.stage, fd.filter_version, "
         "fd.parameter_snapshot, fd.decision, "
@@ -309,8 +334,43 @@ def filter_feedback_stats(
             6,
         )
         row["profit_factor"] = round(gains / losses, 4) if losses > 0 else None
+        row["assignment_policy"] = "first_exposure"
         output.append(row)
     return output
+
+
+def filter_feedback_trajectory_summary(
+    *, evaluated_since: str | None = None
+) -> dict[str, Any]:
+    """Explain how many retry rows were excluded by first-exposure assignment."""
+    from aletheia.storage.sqlite import get_db
+
+    time_clause = "WHERE datetime(first_evaluated_at) >= datetime(?)" if evaluated_since else ""
+    params = (evaluated_since,) if evaluated_since else ()
+    row = get_db().execute(
+        "WITH trajectories AS ("
+        " SELECT filter_name, stage, filter_version, outcome_candidate_key, "
+        " COUNT(*) AS decision_rows, COUNT(DISTINCT decision) AS decision_kinds, "
+        " MIN(evaluated_at) AS first_evaluated_at "
+        " FROM filter_decisions "
+        " WHERE decision IN ('passed','rejected') "
+        "   AND outcome_candidate_key IS NOT NULL "
+        " GROUP BY filter_name, stage, filter_version, outcome_candidate_key"
+        ") "
+        "SELECT COUNT(*) AS candidate_trajectories, "
+        " COALESCE(SUM(decision_rows - 1), 0) AS excluded_later_rows, "
+        " COALESCE(SUM(CASE WHEN decision_kinds > 1 THEN 1 ELSE 0 END), 0) "
+        "   AS decision_transition_candidates "
+        "FROM trajectories "
+        f"{time_clause}",
+        params,
+    ).fetchone()
+    return {
+        "assignment_policy": "first_exposure",
+        "candidate_trajectories": int(row["candidate_trajectories"] or 0),
+        "excluded_later_rows": int(row["excluded_later_rows"] or 0),
+        "decision_transition_candidates": int(row["decision_transition_candidates"] or 0),
+    }
 
 
 def record_candidate_filter_trace(

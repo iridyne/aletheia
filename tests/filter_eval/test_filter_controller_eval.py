@@ -73,6 +73,15 @@ def test_build_report_applies_requested_evidence_window(monkeypatch):
         return []
 
     monkeypatch.setattr(fc, "compute_filter_feedback", fake_compute)
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_evidence.filter_feedback_trajectory_summary",
+        lambda **kwargs: {
+            "assignment_policy": "first_exposure",
+            "candidate_trajectories": 10,
+            "excluded_later_rows": 4,
+            "decision_transition_candidates": 2,
+        },
+    )
 
     report = fc.build_filter_controller_report(hours=168)
     rendered = fc.render_filter_controller_report(report)
@@ -80,6 +89,73 @@ def test_build_report_applies_requested_evidence_window(monkeypatch):
     assert captured["evaluated_since"] is not None
     assert report["window"]["hours"] == 168
     assert "Window: 168h" in rendered
+    assert report["trajectory_summary"]["assignment_policy"] == "first_exposure"
+    assert "later retries excluded=4" in rendered
+
+
+def test_controller_report_renders_bounded_gate_only_replay(monkeypatch):
+    from aletheia.analytics.filter_controller import FilterRecommendation
+
+    recommendation = FilterRecommendation(
+        filter_name="family_ttl",
+        scanner_family="momentum",
+        stage="paper_ranker",
+        current_value='{"ttl_sec":1800}',
+        verdict="overrestrictive_suspect",
+        suggested_direction="review_loosen",
+        error_signal=0.2,
+        n_samples=25,
+        reasoning="test",
+        direction="long",
+        market_type="perp",
+        horizon="1h",
+        filter_version="v1-fixed",
+    )
+    replay = {
+        "filter_name": "family_ttl",
+        "filter_version": "v1-fixed",
+        "scanner_family": "momentum",
+        "direction": "long",
+        "market_type": "perp",
+        "horizon": "1h",
+        "current_ttl_sec": 1800,
+        "candidate_cap_reached": False,
+        "alternatives": [{
+            "ttl_sec": 3600,
+            "newly_admitted_candidates": 4,
+            "settled_n": 4,
+            "outcome_coverage": 1.0,
+            "raw_avg_net_pct": 1.2,
+            "shrunk_avg_net_pct": -0.1,
+            "readiness": "insufficient_data",
+        }],
+    }
+    monkeypatch.setattr(fc, "compute_filter_feedback", lambda **kwargs: [recommendation])
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_evidence.filter_feedback_trajectory_summary",
+        lambda **kwargs: {
+            "assignment_policy": "first_exposure",
+            "candidate_trajectories": 1,
+            "excluded_later_rows": 0,
+            "decision_transition_candidates": 0,
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_replay.build_bounded_filter_replays",
+        lambda *args, **kwargs: [replay],
+    )
+
+    report = fc.build_filter_controller_report(hours=24)
+    rendered = fc.render_filter_controller_report(report)
+
+    assert report["bounded_replays"] == [replay]
+    assert "Bounded gate-only replays" in rendered
+    assert "1800s -> 3600s" in rendered
+    assert "readiness=insufficient_data" in rendered
+    assert report["replay_summary"]["experiment_ready"] == 0
+    assert "Replay disposition: experiment_ready=0" in rendered
+    assert "Observational screening suspects" in rendered
+    assert "no cohort ready for a controlled experiment" in rendered
 
 
 def test_insufficient_data_when_no_stats(monkeypatch):

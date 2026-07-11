@@ -43,6 +43,11 @@
 使用明确时间窗、固定 filter_version、同方向+同市场+同 horizon 的净结果 cohort，不得拿
 当前策略反算值解释历史仓位。
 
+Filter feedback 的 cohort 必须按 filter+stage+version+candidate 首次暴露唯一归组；后续重试
+不得重复贡献同一个 outcome。任何单调阈值候选先走有界 gate-only replay；只有回放同时满足
+20 个完整样本、70% 覆盖、绝对和相对收缩净优势各 5bp，才允许设计独立 shadow 实验，仍不
+直接修改生产参数。
+
 已经修好的供给/语义问题不要重复施工：OKX 永续成交额、分配前 market 去重、short funding 方向、PI bear_case、market-aware proposal price、pending shadow、因果漏斗和 doctor 市场覆盖。
 
 ---

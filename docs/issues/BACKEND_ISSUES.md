@@ -1040,6 +1040,7 @@
 | OPR-G06 | ✅ | 动态 Universe 与夜间历史回填存在时间差；新成员可在精确 1h 历史不足时进入活动池，数据供给缺口会伪装成筛选/策略拒绝 | 新增独立 `ohlcv_active_backfill`：按完整 instrument 身份检查 1h/4h，单轮有界，持久化 partial/failed/ready 和指数退避，连续失败进 infra event；不把网络下载耦合进 Universe 刷新，夜间任务继续兜底。Settings 和 doctor 同步暴露控制与状态 |
 | OPR-H01 | ✅ | sizing trace 把当前配置反算值叫作历史“计划仓位”，又优先用可变 position 代替提案级 fill，可能把当前策略投影和后续仓位变化误报为当时 sizing 行为 | 历史计划值改用 proposal quantity×price；当前配置反算单列为 `current_policy_projection_usdt` 并在 CLI/JSON 明示只是一种当前策略投影。实际成交优先汇总该 proposal 的不可变 fills，只有无 fill 的旧链路才回退 position；不改 sizing/risk/order |
 | OPR-H02 | ✅ | opportunity overview 的 200 条重建上限被显示成窗口机会总数；controller view 又忽略 `--hours`，近期 PR 效果可能混入全历史证据 | overview 分开输出窗口 DB 总数、实际重建数和过滤后显示数；controller 将 hours 转成 `filter_decisions.evaluated_at` cutoff，报告明确显示时间窗。调度器的长期 shadow controller 保持全历史，不改任何 filter 参数 |
+| OPR-H03 | ✅ | 同一候选可在新鲜时通过、后续重试时过期拒绝，旧 feedback 把同一净结果同时放进 pass/reject，伪增样本并污染对照 | 按 filter+stage+version+outcome candidate 采用首次暴露唯一归因，窗口在全历史排序后截断；controller 显示排除的后续重试和状态迁移。新增固定版本、最多 4 阈值/5000 候选的 gate-only TTL replay，样本/覆盖/5bp 经济门不满足时明确 no support/insufficient，不写配置 |
 
 ## §22 Gateway 无人值守运行（2026-07-11）
 

@@ -147,6 +147,16 @@ MVP 收缩公式：
 
 观察数据不是随机实验，因此结论只能是 `suspect`，不能直接改配置。自动收紧也不能只因 pass 亏损就触发；它需要门槛附近的反事实或独立回放。
 
+同一候选可能跨调度轮次重复经过同一关卡。统计必须按
+`filter_name + stage + filter_version + outcome_candidate_key` 选择最早一次持久化决定，
+把候选唯一归入 first-exposure pass 或 reject cohort；后续重试只用于轨迹排障，不再次贡献
+收益样本。时间窗在首次暴露排序完成后应用，禁止把窗口外首次放行遗忘后，将窗口内后续拒绝
+冒充首次决定。
+
+对达到嫌疑门槛的可重放单调阈值，先执行固定版本、有界、只读的 gate-only replay。回放必须
+显示新增放行样本、净结果覆盖、原始和收缩净期望及未覆盖的下游关卡；任何 `ready` 只允许
+进入独立 shadow 实验，不得直接写配置。具体边界见 `docs/design/filter_replay.md`。
+
 ## 7. 批次选择的特别规则
 
 `open_position -> cooldown -> batch_limit` 是三个不同关卡，不得先截取 Top-3 再检查前两关。否则 Top-1 被冷却拒绝后，Top-4 永远没有补位机会，候选供给会被静默浪费。

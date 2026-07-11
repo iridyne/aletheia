@@ -311,6 +311,33 @@ def build_filter_controller_report(
         min_samples=min_samples,
         evaluated_since=evaluated_since,
     )
+    try:
+        from aletheia.analytics.filter_evidence import filter_feedback_trajectory_summary
+
+        trajectory_summary = filter_feedback_trajectory_summary(
+            evaluated_since=evaluated_since
+        )
+    except Exception as exc:
+        logger.warning("filter_controller: trajectory summary unavailable: %s", exc)
+        trajectory_summary = {
+            "assignment_policy": "first_exposure",
+            "candidate_trajectories": 0,
+            "excluded_later_rows": 0,
+            "decision_transition_candidates": 0,
+            "error": type(exc).__name__,
+        }
+    try:
+        from aletheia.analytics.filter_replay import build_bounded_filter_replays
+
+        bounded_replays = build_bounded_filter_replays(
+            recs,
+            evaluated_since=evaluated_since,
+            min_samples=min_samples,
+        )
+    except Exception as exc:
+        logger.warning("filter_controller: bounded replay unavailable: %s", exc)
+        bounded_replays = []
+    replay_summary = _summarize_replays(bounded_replays)
     counts: dict[str, int] = {}
     for r in recs:
         counts[r.verdict] = counts.get(r.verdict, 0) + 1
@@ -322,8 +349,12 @@ def build_filter_controller_report(
         "signal_basis": "filter_specific_shrunk_net_expectancy",
         "signal_note": (
             "Only exact filter-version pass/reject cohorts with cost-aware net outcomes "
-            "are compared. Findings are observational and never mutate configuration."
+            "are compared. Each candidate is assigned by its first persisted exposure; "
+            "later retries are excluded. Findings are observational and never mutate configuration."
         ),
+        "trajectory_summary": trajectory_summary,
+        "bounded_replays": bounded_replays,
+        "replay_summary": replay_summary,
         "verdict_counts": counts,
         "recommendations": [asdict(r) for r in recs],
         "report_only_filters": [
@@ -354,17 +385,29 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
                  f"min_samples gate: {report.get('min_samples')}")
     if report.get("signal_note"):
         lines.append(f"Signal: {report['signal_note']}")
+    trajectory = report.get("trajectory_summary") or {}
+    lines.append(
+        "Cohort assignment: first exposure; "
+        f"later retries excluded={trajectory.get('excluded_later_rows', 0)}; "
+        f"decision transitions={trajectory.get('decision_transition_candidates', 0)}"
+    )
     vc = report.get("verdict_counts") or {}
     lines.append(
         f"Verdicts: overrestrictive_suspect={vc.get('overrestrictive_suspect',0)} "
         f"hold={vc.get('hold',0)} insufficient_data={vc.get('insufficient_data',0)}"
+    )
+    replay_summary = report.get("replay_summary") or {}
+    lines.append(
+        f"Replay disposition: experiment_ready={replay_summary.get('experiment_ready', 0)} "
+        f"no_support={replay_summary.get('no_support', 0)} "
+        f"insufficient_data={replay_summary.get('insufficient_data', 0)}"
     )
     lines.append("")
 
     recs = report.get("recommendations") or []
     actionable = [r for r in recs if r["verdict"] == "overrestrictive_suspect"]
     if actionable:
-        lines.append("Overrestrictive suspects (human review only, NOT applied):")
+        lines.append("Observational screening suspects (replay required; NOT applied):")
         for r in sorted(actionable, key=lambda x: abs(x.get("error_signal") or 0), reverse=True):
             lines.append(
                 f"  {r['filter_name']} · {r['scanner_family']} "
@@ -375,6 +418,29 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
     else:
         lines.append("No overrestrictive suspects — all cells hold or insufficient_data.")
     lines.append("")
+
+    replays = report.get("bounded_replays") or []
+    if replays:
+        lines.append("Bounded gate-only replays (read-only; downstream gates not replayed):")
+        for replay in replays:
+            lines.append(
+                f"  {replay.get('filter_name')} · {replay.get('scanner_family')} "
+                f"{replay.get('direction')} {replay.get('market_type')} "
+                f"{replay.get('horizon')} version={replay.get('filter_version')}"
+            )
+            for alternative in replay.get("alternatives") or []:
+                lines.append(
+                    f"    {replay.get('current_ttl_sec')}s -> {alternative.get('ttl_sec')}s: "
+                    f"new={alternative.get('newly_admitted_candidates')} "
+                    f"settled={alternative.get('settled_n')} "
+                    f"coverage={float(alternative.get('outcome_coverage') or 0):.0%} "
+                    f"raw_net={alternative.get('raw_avg_net_pct')}% "
+                    f"shrunk_net={alternative.get('shrunk_avg_net_pct')}% "
+                    f"readiness={alternative.get('readiness')}"
+                )
+            if replay.get("candidate_cap_reached"):
+                lines.append("    candidate cap reached; widen only in an explicit offline analysis run")
+        lines.append("")
 
     insufficient = [r for r in recs if r["verdict"] == "insufficient_data"]
     if insufficient:
@@ -389,6 +455,37 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
 
     lines.append("")
     lines.append("Next action:")
-    lines.append("  Keep filter parameters unchanged; collect independent evidence or "
-                 "run a bounded replay before changing a threshold.")
+    if replays and replay_summary.get("experiment_ready", 0) == 0:
+        lines.append(
+            "  Keep filter parameters unchanged; bounded replays found no cohort "
+            "ready for a controlled experiment."
+        )
+    elif replay_summary.get("experiment_ready", 0) > 0:
+        lines.append(
+            "  Keep production parameters unchanged; design a separate shadow experiment "
+            "only for replay-ready cohorts."
+        )
+    else:
+        lines.append("  Keep filter parameters unchanged; collect independent evidence or "
+                     "run a bounded replay before changing a threshold.")
     return "\n".join(lines)
+
+
+def _summarize_replays(replays: list[dict[str, Any]]) -> dict[str, int]:
+    summary = {
+        "experiment_ready": 0,
+        "no_support": 0,
+        "insufficient_data": 0,
+    }
+    for replay in replays:
+        readiness = {
+            str(row.get("readiness") or "insufficient_data")
+            for row in replay.get("alternatives") or []
+        }
+        if "ready_for_controlled_experiment" in readiness:
+            summary["experiment_ready"] += 1
+        elif "no_support" in readiness:
+            summary["no_support"] += 1
+        else:
+            summary["insufficient_data"] += 1
+    return summary

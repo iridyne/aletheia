@@ -464,3 +464,28 @@ def test_persisted_ranker_and_selection_gates_are_registered():
     assert specs["family_ttl"].feedback_ready is True
     for name in names - {"family_ttl", "signal_cooldown", "signal_batch_limit"}:
         assert specs[name].auto_tunable is False
+
+
+@spec_claim(
+    SpecClaim(
+        "FE-C09", _CONTRACT, "§6 first-exposure cohorts and bounded replay", "L2c",
+        "Filter feedback assigns each candidate to its first persisted filter exposure, "
+        "and supported threshold replays are fixed-version, read-only and bounded.",
+        status="implemented",
+    )
+)
+def test_filter_feedback_first_exposure_and_replay_bounds_are_explicit():
+    import inspect
+
+    from aletheia.analytics import filter_evidence, filter_replay
+
+    cte = filter_evidence.FIRST_EXPOSURE_CTE_SQL
+    assert "ROW_NUMBER() OVER" in cte
+    assert "fd.filter_name, fd.stage, fd.filter_version, fd.outcome_candidate_key" in cte
+    assert "exposure_rank=1" in inspect.getsource(filter_evidence.filter_feedback_stats).replace(" ", "")
+    replay_source = inspect.getsource(filter_replay)
+    assert filter_replay._MAX_ALTERNATIVES <= 4
+    assert filter_replay._MAX_CANDIDATES <= 5000
+    assert "filter_version is required" in replay_source
+    assert '"read_only": True' in replay_source
+    assert "save_config" not in replay_source

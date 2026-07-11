@@ -387,6 +387,65 @@ def test_filter_feedback_stats_respects_decision_time_window():
     assert all(row["n_total"] == 1 for row in scoped)
 
 
+def test_filter_feedback_assigns_each_candidate_to_first_exposure_only():
+    from aletheia.analytics.filter_evidence import (
+        filter_feedback_stats,
+        filter_feedback_trajectory_summary,
+        record_filter_decision,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc)
+    common = dict(
+        candidate_kind="opportunity",
+        filter_name="family_ttl",
+        stage="paper_ranker",
+        reason_code="test",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="perp",
+        direction="long",
+        scanner_family="momentum",
+        entry_price_usd=100.0,
+        parameters={"ttl_sec": 1800},
+    )
+    record_filter_decision(
+        candidate_key="opportunity:repeated",
+        decision="passed",
+        evaluated_at=(now - timedelta(hours=2)).isoformat(),
+        **common,
+    )
+    record_filter_decision(
+        candidate_key="opportunity:repeated",
+        decision="rejected",
+        evaluated_at=(now - timedelta(hours=1)).isoformat(),
+        **common,
+    )
+    record_filter_decision(
+        candidate_key="opportunity:rejected-only",
+        decision="rejected",
+        evaluated_at=(now - timedelta(hours=1)).isoformat(),
+        **common,
+    )
+    db = get_db()
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.2 "
+        "WHERE horizon='1h'"
+    )
+
+    rows = filter_feedback_stats()
+    scoped = {
+        row["decision"]: row for row in rows
+        if row["filter_name"] == "family_ttl" and row["horizon"] == "1h"
+    }
+    trajectory = filter_feedback_trajectory_summary()
+
+    assert scoped["passed"]["n_total"] == 1
+    assert scoped["rejected"]["n_total"] == 1
+    assert trajectory["excluded_later_rows"] == 1
+    assert trajectory["decision_transition_candidates"] == 1
+
+
 def test_controller_uses_evidence_stage_instead_of_registry_stage(monkeypatch):
     from aletheia.analytics import filter_controller
 

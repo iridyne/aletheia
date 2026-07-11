@@ -1,5 +1,16 @@
 # Development Log
 
+## 2026-07-11 — First-exposure filter feedback and bounded replay
+
+- Feedback cohorts now assign each filter/stage/version/candidate once by first persisted exposure; later scheduler retries remain inspectable but cannot contribute the same outcome to both pass and reject.
+- Evidence windows apply after first-exposure ranking. Controller reports excluded later rows and candidates whose later decision changed.
+- Added a generic bounded monotonic-threshold replay framework with a family-TTL adapter: exact stage/version/cohort scope, four alternatives, 5,000 candidates per side, eight replays per report, cost-aware settled outcomes and conservative shrinkage.
+- Replay readiness requires sample count, coverage, absolute 5bp positive net edge and 5bp relative improvement. Replay remains gate-only/read-only and never mutates configuration.
+- No TTL, ranker, sizing, Kelly, risk, execution, or order behavior changed.
+- Validation: focused opportunity/filter/replay tests 82 passed; all specs 626 passed; full suite 2751 passed with 0 real failures.
+
+---
+
 ## 2026-07-11 — Opportunity diagnostic evidence honesty
 
 - Opportunity overview now distinguishes total rows in the requested window, rows reconstructed under the limit, and rows displayed after filters.

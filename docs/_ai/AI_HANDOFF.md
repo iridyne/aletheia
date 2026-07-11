@@ -7,7 +7,19 @@
 
 ## Last Updated
 
-2026-07-11 (opportunity diagnostic evidence honesty)
+2026-07-11 (first-exposure filter feedback and bounded replay)
+
+---
+
+## Recent Change (First-exposure filter feedback and bounded replay — 2026-07-11)
+
+过滤证据现在按 filter+stage+version+outcome candidate 的首次持久化决定唯一归组。同一机会先新鲜放行、后续重试时过期拒绝，后者仍保留用于排障，但不会再把同一个净结果同时放进 pass/reject。报告时间窗在全保留历史完成首次暴露排序后再截断，并显示排除的重试行和发生决定迁移的候选数。
+
+新增通用的固定版本单调阈值回放框架，首个 adapter 是 family TTL。每个回放精确锁定 stage/version/family/direction/market/horizon，最多 4 个候选阈值、每组 5000 候选、每报告 8 个嫌疑；显示新增放行、净结果覆盖、原始/收缩净期望和下游未重放限制。只有至少 20 个完整结果、70% 覆盖、收缩净收益绝对值和相对改善都达到 5bp，才可标记为“可设计独立 shadow 实验”；永不写配置。
+
+没有修改 TTL、ranker、sizing、Kelly、风险、执行或订单。
+
+验证：聚焦机会/过滤/回放测试 82 项、完整规则 626 项、全量 2751 项通过，0 项真实失败。
 
 ---
 
