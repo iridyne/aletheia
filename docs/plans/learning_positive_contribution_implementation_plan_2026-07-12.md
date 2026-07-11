@@ -735,6 +735,11 @@ phase's evidence and observability are GREEN.
 
 Goal: make existing reports honest before changing behavior.
 
+Delivery status: measurement-integrity batch A implemented. Path registry, evidence classes,
+shared fail-closed outcome adapter, unique/overlap aggregation, Learning-alpha deduplication,
+blocked-guard outcomes, and pure policy-epoch semantics are present. Consumer-wide outcome
+migration, durable epoch persistence, and UI contribution rendering remain before Phase 0 is closed.
+
 Changes:
 
 - codify the audited path registry and an architecture tripwire for undeclared consumers;

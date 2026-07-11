@@ -44,7 +44,7 @@ L4 状态/参考   status/* · references/* · _ai/* ── 现在是什么样/�
 | [data_layer](data_layer.md) | CCXT provider 重构 / symbol 格式 | 🟡 契约(部分 Phase 已实现) |
 | [knowledge_contract](knowledge_contract.md) | Knowledge 检索子系统 / LessonStore / GuardStore / 双轨断裂清单 | ✅ 金标准(批次6 新建) |
 | [learning_contract](learning_contract.md) | Learning 当前全循环 — 结果、生产者、存储、上游校准、记忆/过滤/提示/仓位消费者、调度与已知断口 | 🟡 现状契约（2026-07-12 全链审计） |
-| [learning_evolution_contract](learning_evolution_contract.md) | Learning 目标态 — 路径登记、统一结果口径、唯一假设、分层对照、重叠归因、贡献门、自动降级/冻结 | 📐 proposed（claims missing，待分阶段实现） |
+| [learning_evolution_contract](learning_evolution_contract.md) | Learning 目标态 — 路径登记、统一结果口径、唯一假设、分层对照、重叠归因、贡献门、自动降级/冻结 | 🚧 Phase 0 测量底座部分实现；行为放权仍 missing |
 | [serenity_contract](serenity_contract.md) | Serenity 深度研究镜头 — 生成者/评估者分离(D2) / tier 阶梯 / 证据评分 + bucket / 多镜头研究 / trade_school 持有周期 / 信任边界隔离 | 🟡 新建 2026-07-02 |
 | [scheduler_contract](scheduler_contract.md) | 调度器 job 清单 / 频率 / 执行器分组 / 故障隔离 | ✅ 金标准(批次6 新建) |
 | [audit_chain_contract](audit_chain_contract.md) | 审计链完整性 / risk_decisions / 操作日志 / 不可变性要求 | ✅ 金标准(批次6 新建) |
@@ -115,6 +115,7 @@ Conformance Matrix (`test_spec_conformance` 输出 + `docs/status/CONFORMANCE_MA
   `spec_serenity_researchability.py`, `spec_serenity_xstock_execution.py`
 - 学习类：`spec_learning_pipeline.py`, `spec_factor_feedback.py`,
   `spec_insight_feedback_loop.py`, `spec_lesson_guards.py`,
+  `spec_learning_registry.py`, `spec_learning_contribution.py`,
   `spec_knowledge_fts.py`
 
 另有 `test_architecture_fitness.py`（依赖方向 fitness functions）独立于 claim 体系。

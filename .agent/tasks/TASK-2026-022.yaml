@@ -1,0 +1,44 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-022
+title: Implement Learning Phase 0 measurement integrity
+status: in_progress
+packet_type: standard
+scope:
+  boundary: Learning measurement core, read-only alpha/guard analytics, executable
+    SDD, and matching design/plan status
+  excluded: candidate scoring or blocking behavior, scheduler behavior, database schema,
+    configuration, risk/execution/live authority, runtime facts, and credentials
+intent: 'Implement the first SDD batch: declare Learning paths, centralize conservative
+  outcome eligibility, prevent duplicate and overlapping contribution credit, and
+  keep all behavior-changing learning authority unchanged.'
+acceptance:
+- All current Learning and adjacent behavior paths have stable registry ids, authority
+  ceilings, overlap groups, outcome sources, and static fallbacks.
+- Narrative/diagnostic artifacts have zero quantitative sample weight and the exit
+  policy advisor remains structurally read-only.
+- Shared outcome assessment fails closed for synthetic, dirty, unresolved, gross-only,
+  missing-direction, or economically incomplete evidence.
+- Learning alpha separates raw artifacts from unique cohorts/outcomes, deduplicates
+  repeated lessons, and does not label weak before/after evidence as measured contribution.
+- Guard effectiveness includes cost-aware fixed-horizon outcomes for successfully
+  blocked candidates without changing guard behavior.
+- Overlap aggregation prevents one outcome from becoming independent credit for several
+  channels and requests refreeze when quantitative evidence coverage is lost.
+- Policy epoch semantics are deterministic, secret-free, never withhold safety tightening,
+  and invalidate affected comparisons.
+- Focused regressions, full specs, full tests, doctor, and strict workflow verification pass
+  or any environment-only limitation is reported without changing runtime state.
+ownership:
+  branch: feat/learning-phase0-integrity
+  lease_holder: codex
+  claimed_at: '2026-07-11T18:21:32.191327Z'
+  expires_at: '2026-07-12T02:21:32.191780Z'
+base_commit: b7f21124d13221950a3b412220ec06b237e32682
+next_action:
+  command_key: specs
+  reason: Verify the executable Learning evolution claims and all existing contracts.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-022.md
+updated_at: '2026-07-11T18:21:32.191790Z'

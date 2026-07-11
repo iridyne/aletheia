@@ -176,7 +176,8 @@ def test_alpha_attribution_contract_shape_on_empty_db():
     for item in report["verdicts"].values():
         assert item["verdict"] == "insufficient_data"
         for key in ("sample_size", "baseline", "observed", "delta", "confidence_label",
-                    "causal_grade", "evidence_type", "suspected_modules", "reason"):
+                    "causal_grade", "evidence_type", "contribution_verdict",
+                    "measurement_status", "suspected_modules", "reason"):
             assert key in item
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
 

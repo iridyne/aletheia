@@ -94,7 +94,8 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - reflection may fall back to matching a position or move by symbol instead of a complete causal id;
 - narrative review, memo, reasoning, calibration, lesson, and guard artifacts use different evidence
   units and confidence conventions;
-- successful guard blocks may be invisible to position-only effectiveness reports;
+- position-only historical guard replays cannot see successful blocks; Phase 0 now augments guard
+  effectiveness with cost-aware `filter_candidate_outcomes` for actually blocked candidates;
 - applied artifact counts and retrieval visibility show activity/influence, not contribution;
 - overlapping prompt channels can reuse the same outcome unless attribution explicitly prevents it.
 - learned trading guards and the advisory trust guard chain have different authority and must not
@@ -104,8 +105,29 @@ loop contributes positively. Current behavior has these contract-relevant limita
   withheld merely to make a cleaner experiment.
 
 The target lifecycle, registry, prospective experiments, overlap handling, and automatic fallback
-are normative in `learning_evolution_contract.md` but remain unimplemented until their executable
-claims turn GREEN.
+are normative in `learning_evolution_contract.md`. Phase 0 measurement claims are tracked below;
+behavior-changing claims remain unavailable until their executable status turns GREEN.
+
+### 1.3 Phase 0 measurement-integrity baseline
+
+The first target slice is implemented without changing trading behavior:
+
+- `learning/registry.py` declares current Learning and adjacent paths, authority ceilings,
+  overlap groups, outcome sources, and static fallbacks;
+- `learning/evidence.py` gives narrative and diagnostic artifacts zero quantitative sample weight;
+- `learning/outcomes.py` provides a shared fail-closed adapter for genuine realized positions and
+  settled cost-aware candidate outcomes; consumer migration is intentionally partial;
+- `learning/contribution.py` deduplicates repeated outcome identity, flags overlapping channel
+  credit as not identifiable, and requests refreeze when eligible evidence coverage is lost;
+- Learning alpha reports raw artifact events separately from unique cohorts/outcomes, so duplicate
+  lessons no longer manufacture sample confidence;
+- guard effectiveness includes successfully blocked candidates from fixed-horizon net outcomes;
+- `learning/policy_epochs.py` defines deterministic, secret-free concurrent-policy semantics;
+  persistence and operator/consumer integration remain future work;
+- alpha read models distinguish directional evidence from measured prospective contribution.
+
+This baseline improves measurement honesty only. It does not promote a lesson, change a score,
+block a new candidate, alter position size, or modify any risk/execution/live authority.
 
 ---
 

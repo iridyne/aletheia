@@ -8,6 +8,8 @@ Deterministic. No LLM. Read-only (queries attribution + ranker logs).
 from __future__ import annotations
 
 import logging
+import json
+import sqlite3
 from collections import defaultdict
 
 from aletheia.analytics.trade_attribution import build_trade_attribution_rows
@@ -52,12 +54,14 @@ def compute_guard_stats() -> list[dict]:
         return []
 
     rows = _clean_rows(build_trade_attribution_rows(limit=500))
-    if not rows:
+    blocked_by_guard = _blocked_candidate_stats_by_guard(guards)
+    if not rows and not blocked_by_guard:
         return []
 
     stats = []
     for guard in guards:
         fired_rows = _rows_matching_guard(guard, rows)
+        blocked = blocked_by_guard.get(guard.guard_id, _empty_blocked_stats())
         if not fired_rows:
             stats.append({
                 "guard_id": guard.guard_id,
@@ -66,6 +70,7 @@ def compute_guard_stats() -> list[dict]:
                 "loss_rate_when_fired": 0.0,
                 "avg_loss_pct": 0.0,
                 "estimated_savings": 0.0,
+                **blocked,
             })
             continue
 
@@ -83,9 +88,85 @@ def compute_guard_stats() -> list[dict]:
             "loss_rate_when_fired": round(loss_rate, 3),
             "avg_loss_pct": round(avg_loss, 4),
             "estimated_savings": round(abs(avg_loss) * len(losses), 2),
+            **blocked,
         })
 
     return stats
+
+
+def _blocked_candidate_stats_by_guard(guards, horizon: str = "4h") -> dict[str, dict]:
+    """Aggregate successfully blocked candidate outcomes by matched guard id.
+
+    Filter evidence is the only place where a successful hard block and its
+    counterfactual coexist. Position attribution cannot observe these rows by
+    definition because the candidate never became a position.
+    """
+    from aletheia.learning.outcomes import assess_candidate_outcome
+    from aletheia.storage.sqlite import get_db
+
+    guard_ids = {guard.guard_id for guard in guards}
+    candidates: dict[str, set[str]] = defaultdict(set)
+    settled: dict[str, dict[str, float]] = defaultdict(dict)
+    try:
+        rows = get_db().execute(
+            "SELECT fd.input_snapshot, fd.outcome_candidate_key AS decision_outcome_candidate_key, fo.* "
+            "FROM filter_decisions fd "
+            "LEFT JOIN filter_candidate_outcomes fo "
+            "  ON fo.outcome_candidate_key = fd.outcome_candidate_key AND fo.horizon = ? "
+            "WHERE fd.filter_name = 'guard_candidate_block' "
+            "  AND fd.decision = 'rejected' "
+            "  AND fd.outcome_candidate_key IS NOT NULL",
+            (horizon,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+
+    for raw in rows:
+        row = dict(raw)
+        matched_ids = _guard_ids_from_snapshot(row.get("input_snapshot")) & guard_ids
+        if not matched_ids:
+            continue
+        candidate_key = str(row.get("decision_outcome_candidate_key") or row.get("outcome_candidate_key") or "")
+        if not candidate_key:
+            continue
+        assessment = assess_candidate_outcome(row)
+        for guard_id in matched_ids:
+            candidates[guard_id].add(candidate_key)
+            if assessment.eligible and assessment.net_return_pct is not None:
+                settled[guard_id].setdefault(candidate_key, assessment.net_return_pct)
+
+    result: dict[str, dict] = {}
+    for guard_id in candidates:
+        values = list(settled.get(guard_id, {}).values())
+        result[guard_id] = {
+            "blocked_candidate_count": len(candidates[guard_id]),
+            "blocked_settled_n": len(values),
+            "blocked_loss_rate": round(sum(1 for value in values if value < 0) / len(values), 4) if values else None,
+            "blocked_avg_net_pct": round(sum(values) / len(values), 4) if values else None,
+            "blocked_outcome_horizon": horizon,
+            "blocked_evidence_source": "filter_candidate_outcomes",
+        }
+    return result
+
+
+def _guard_ids_from_snapshot(raw: object) -> set[str]:
+    try:
+        data = raw if isinstance(raw, dict) else json.loads(str(raw or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return set()
+    values = data.get("guard_ids") if isinstance(data, dict) else None
+    return {str(value) for value in values or [] if value}
+
+
+def _empty_blocked_stats() -> dict:
+    return {
+        "blocked_candidate_count": 0,
+        "blocked_settled_n": 0,
+        "blocked_loss_rate": None,
+        "blocked_avg_net_pct": None,
+        "blocked_outcome_horizon": "4h",
+        "blocked_evidence_source": "filter_candidate_outcomes",
+    }
 
 
 def _rows_matching_guard(guard, rows: list[dict]) -> list[dict]:

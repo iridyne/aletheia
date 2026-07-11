@@ -163,7 +163,8 @@ def render_alpha_audit(report: dict) -> str:
             f"observed={_fmt_metric(item.get('observed'))} "
             f"delta={_fmt_metric(item.get('delta'))} "
             f"confidence={item['confidence_label']} "
-            f"evidence={item.get('causal_grade', 'unknown')}"
+            f"evidence={item.get('causal_grade', 'unknown')} "
+            f"contribution={item.get('contribution_verdict', 'insufficient_data')}"
         )
         lines.append(f"  {item['reason']}")
         modules = item.get("suspected_modules") or []
@@ -384,8 +385,9 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
 
 
 def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
-    events = _learning_events(db, cutoff)
-    if not events:
+    raw_events = _learning_events(db, cutoff)
+    events = _dedupe_learning_events(raw_events)
+    if not raw_events:
         return _verdict(
             "Learning Alpha",
             "insufficient_data",
@@ -395,14 +397,17 @@ def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
             None,
             "insufficient",
             "No structured learning/memo/guard events in the audit window.",
-            {"event_count": 0},
+            {"event_count": 0, "raw_event_count": 0, "unique_event_count": 0},
         )
 
     before_avgs: list[float] = []
     after_avgs: list[float] = []
-    did_observed: list[float] = []
-    did_baseline: list[float] = []
-    after_count_total = 0
+    raw_after_count = 0
+    unique_after: dict[str, float] = {}
+    unique_before: dict[str, float] = {}
+    unique_control_after: dict[str, float] = {}
+    unique_control_before: dict[str, float] = {}
+    after_membership: dict[str, int] = defaultdict(int)
     usable_events = 0
     did_events = 0
     total_events_with_group = 0
@@ -413,41 +418,60 @@ def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
             continue
         total_events_with_group += 1
         before, after, control_before, control_after = _trade_pnl_before_after(db, event["event_at"], days, group)
-        after_count_total += len(after)
+        raw_after_count += len(after)
+        for key, value in before.items():
+            unique_before.setdefault(key, value)
+        for key, value in after.items():
+            unique_after.setdefault(key, value)
+            after_membership[key] += 1
+        for key, value in control_before.items():
+            unique_control_before.setdefault(key, value)
+        for key, value in control_after.items():
+            unique_control_after.setdefault(key, value)
         if len(before) < min_sample_size or len(after) < min_sample_size:
             continue
-        before_avgs.append(mean(before))
-        after_avgs.append(mean(after))
+        before_avgs.append(mean(before.values()))
+        after_avgs.append(mean(after.values()))
         usable_events += 1
         if len(control_before) >= min_sample_size and len(control_after) >= min_sample_size:
-            did_observed.append(mean(after) - mean(before))
-            did_baseline.append(mean(control_after) - mean(control_before))
             did_events += 1
 
     if usable_events == 0:
         return _verdict(
             "Learning Alpha",
             "insufficient_data",
-            after_count_total,
+            len(unique_after),
             _safe_mean(before_avgs),
             _safe_mean(after_avgs),
             None,
             "insufficient",
             "Learning events exist, but there are not enough before/after same-pattern closed trades to judge behavior change.",
-            {"event_count": len(events), "events_with_group": total_events_with_group, "usable_events": 0},
+            {
+                "event_count": len(events),
+                "raw_event_count": len(raw_events),
+                "unique_event_count": len(events),
+                "duplicate_event_count": len(raw_events) - len(events),
+                "events_with_group": total_events_with_group,
+                "usable_events": 0,
+                "raw_after_sample_size": raw_after_count,
+                "unique_after_sample_size": len(unique_after),
+            },
             evidence_type="same_pattern_before_after",
             causal_grade="insufficient",
         )
 
-    if did_events:
-        observed = mean(did_observed)
-        base = mean(did_baseline)
+    if (
+        len(unique_control_before) >= min_sample_size
+        and len(unique_control_after) >= min_sample_size
+    ):
+        observed = mean(unique_after.values()) - mean(unique_before.values())
+        base = mean(unique_control_after.values()) - mean(unique_control_before.values())
         reason_basis = "difference-in-differences against contemporaneous non-matching trade controls"
         evidence_type = "difference_in_differences"
         causal_grade = "moderate_quasi_causal"
     else:
-        observed = mean(after_avgs)
-        base = mean(before_avgs)
+        observed = mean(unique_after.values())
+        base = mean(unique_before.values())
         reason_basis = "same-pattern before/after comparison without enough controls"
         evidence_type = "same_pattern_before_after"
         causal_grade = "weak_before_after"
@@ -456,13 +480,27 @@ def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
     return _verdict(
         "Learning Alpha",
         status,
-        after_count_total,
+        len(unique_after),
         base,
         observed,
         delta,
-        _confidence_label(after_count_total, min_sample_size),
+        _confidence_label(len(unique_after), min_sample_size),
         f"Learning-treated patterns {'improved' if delta > 0 else 'worsened' if delta < 0 else 'matched'} using {reason_basis}.",
-        {"event_count": len(events), "events_with_group": total_events_with_group, "usable_events": usable_events, "did_events": did_events},
+        {
+            "event_count": len(events),
+            "raw_event_count": len(raw_events),
+            "unique_event_count": len(events),
+            "duplicate_event_count": len(raw_events) - len(events),
+            "events_with_group": total_events_with_group,
+            "usable_events": usable_events,
+            "did_events": did_events,
+            "raw_after_sample_size": raw_after_count,
+            "unique_after_sample_size": len(unique_after),
+            "unique_before_sample_size": len(unique_before),
+            "unique_control_after_sample_size": len(unique_control_after),
+            "unique_control_before_sample_size": len(unique_control_before),
+            "overlapping_after_sample_size": sum(1 for count in after_membership.values() if count > 1),
+        },
         evidence_type=evidence_type,
         causal_grade=causal_grade,
     )
@@ -539,7 +577,7 @@ def _serenity_alpha(db, cutoff: str, min_sample_size: int) -> dict:
 def _learning_events(db, cutoff: str) -> list[dict]:
     events: list[dict] = []
     lesson_rows = db.execute(
-        "SELECT lesson_id AS id, evidence_json, recommendation_json, "
+        "SELECT lesson_id AS id, source_type, source_id, evidence_json, recommendation_json, "
         "COALESCE(activated_at, created_at) AS event_at "
         "FROM ps_lessons "
         "WHERE status IN ('accepted', 'applied') "
@@ -551,8 +589,12 @@ def _learning_events(db, cutoff: str) -> list[dict]:
         recommendation = _parse_json(row["recommendation_json"])
         events.append({
             "id": row["id"],
+            "event_kind": "lesson",
+            "source_type": row["source_type"],
+            "source_id": row["source_id"],
             "event_at": row["event_at"],
             "group": _extract_learning_group(evidence, recommendation),
+            "action": recommendation.get("action"),
         })
 
     knowledge_rows = db.execute(
@@ -565,20 +607,48 @@ def _learning_events(db, cutoff: str) -> list[dict]:
         tags = _parse_json(row["tags"])
         events.append({
             "id": row["id"],
+            "event_kind": row["item_type"],
+            "source_type": row["item_type"],
+            "source_id": row["id"],
             "event_at": row["event_at"],
             "group": _extract_learning_group(tags),
+            "action": tags.get("action") if isinstance(tags, dict) else None,
         })
     return events
 
 
-def _trade_pnl_before_after(db, event_at: str, days: int, group: dict) -> tuple[list[float], list[float], list[float], list[float]]:
+def _dedupe_learning_events(events: list[dict]) -> list[dict]:
+    """Collapse repeated artifact rows into one scope/action cohort.
+
+    Prose, artifact ids, and retry timestamps are intentionally excluded. The
+    earliest activation anchors the weak before/after window; later duplicates
+    cannot reset the clock or multiply the same closed positions.
+    """
+    by_fingerprint: dict[str, dict] = {}
+    for event in events:
+        payload = {
+            "event_kind": event.get("event_kind"),
+            "source_type": event.get("source_type"),
+            "group": event.get("group") or {},
+            "action": event.get("action"),
+        }
+        fingerprint = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        current = by_fingerprint.get(fingerprint)
+        if current is None or str(event.get("event_at") or "") < str(current.get("event_at") or ""):
+            by_fingerprint[fingerprint] = event
+    return sorted(by_fingerprint.values(), key=lambda row: str(row.get("event_at") or ""))
+
+
+def _trade_pnl_before_after(db, event_at: str, days: int, group: dict) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, float]]:
+    from aletheia.learning.outcomes import assess_realized_position
+
     event_dt = _parse_dt(event_at)
     if event_dt is None:
-        return [], [], [], []
+        return {}, {}, {}, {}
     before_start = (event_dt - timedelta(days=days)).isoformat()
     after_end = _utcnow().isoformat()
     rows = db.execute(
-        "SELECT p.symbol, p.direction, p.realized_pnl, p.entry_price, p.quantity, "
+        "SELECT p.id AS position_id, p.symbol, p.direction, p.realized_pnl, p.entry_price, p.quantity, "
         "p.close_reason, p.closed_at, o.scanner_family "
         "FROM positions p "
         "LEFT JOIN trade_proposals tp ON tp.id = p.proposal_id "
@@ -590,26 +660,29 @@ def _trade_pnl_before_after(db, event_at: str, days: int, group: dict) -> tuple[
         (before_start, after_end),
     ).fetchall()
 
-    before: list[float] = []
-    after: list[float] = []
-    control_before: list[float] = []
-    control_after: list[float] = []
+    before: dict[str, float] = {}
+    after: dict[str, float] = {}
+    control_before: dict[str, float] = {}
+    control_after: dict[str, float] = {}
     for row in rows:
-        pnl_pct = _position_pnl_pct(row)
-        if pnl_pct is None:
+        row_dict = dict(row)
+        outcome = assess_realized_position(row_dict)
+        if not outcome.eligible or outcome.net_return_pct is None or not outcome.outcome_key:
             continue
+        pnl_pct = outcome.net_return_pct
         closed_at = _parse_dt(row["closed_at"])
         if closed_at is None:
             continue
         matches = _matches_learning_group(row, group)
+        position_id = outcome.outcome_key
         if matches and closed_at < event_dt:
-            before.append(pnl_pct)
+            before[position_id] = pnl_pct
         elif matches:
-            after.append(pnl_pct)
+            after[position_id] = pnl_pct
         elif closed_at < event_dt:
-            control_before.append(pnl_pct)
+            control_before[position_id] = pnl_pct
         else:
-            control_after.append(pnl_pct)
+            control_after[position_id] = pnl_pct
     return before, after, control_before, control_after
 
 
@@ -887,6 +960,11 @@ def _verdict(
     evidence_type: str = "observational",
     causal_grade: str = "weak_observational",
 ) -> dict:
+    contribution_verdict = (
+        status
+        if causal_grade == "strong_prospective_control" and status != "insufficient_data"
+        else "insufficient_data"
+    )
     return {
         "name": name,
         "verdict": status,
@@ -897,6 +975,14 @@ def _verdict(
         "confidence_label": confidence_label,
         "evidence_type": evidence_type,
         "causal_grade": causal_grade,
+        "contribution_verdict": contribution_verdict,
+        "measurement_status": (
+            "measured_contribution"
+            if contribution_verdict != "insufficient_data"
+            else "directional_evidence_only"
+            if status != "insufficient_data"
+            else "not_measured"
+        ),
         "suspected_modules": _MODULES_BY_LAYER.get(name, []),
         "reason": reason,
         "details": details or {},

@@ -263,8 +263,13 @@ class TestConformanceStructure:
         # bumping downward means a fix landed and someone should ratchet
         # this budget down accordingly.
         MAX_MISSING = 5
-        # #153: 5 self-heal specs moved to partial (OL-C08, OL-S13, SH-S01, SH-C02, SH-B03)
-        MAX_PARTIAL = 6
+        # #153: 5 self-heal specs moved to partial (OL-C08, OL-S13, SH-S01, SH-C02, SH-B03).
+        # TASK-2026-022 adds six explicitly bounded Learning-evolution claims whose
+        # Phase-0 cores are implemented but whose consumer-wide persistence/UI/
+        # authority adapters remain later-phase work: LE-B16/B21 and
+        # LE-C06/C10/C11/C13. Keeping them partial is deliberate semantic honesty;
+        # the target contract names the exact remaining boundary for each claim.
+        MAX_PARTIAL = 12
         MAX_SUPERSEDED = 1
 
         missing = counts.get("missing", 0)
