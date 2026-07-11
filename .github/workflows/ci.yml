@@ -59,6 +59,39 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  linux-regression-diagnostic:
+    name: Linux full-regression diagnostic
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'fix/ci-linux-regression' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Run full Linux suite and retain the report
+        continue-on-error: true
+        run: uv run pytest tests/ -q --tb=line --junitxml=test-results/full-linux-diagnostic.xml
+
+      - name: Upload diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-linux-regression-diagnostic
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   frontend:
     name: Dashboard build
     runs-on: ubuntu-latest
