@@ -24,6 +24,40 @@ from aletheia.files.jsonl import write_audit
 logger = logging.getLogger("aletheia.execution_gateway")
 
 
+def _reject_for_exchange_constraints(proposal: TradeProposal, reason: str) -> dict:
+    """Persist a fail-closed executable-venue rule rejection without an order."""
+    update_trade_proposal(proposal.id, status="rejected")
+    write_audit({
+        "actor": "system", "source": "execution_gateway",
+        "event_type": "proposal_rejected", "entity_type": "trade_proposal",
+        "entity_id": proposal.id, "before": {"status": proposal.status},
+        "after": {"status": "rejected"}, "message": reason,
+    })
+    return {"status": "rejected", "proposal_id": proposal.id, "message": reason}
+
+
+def _prepare_exchange_quantity(
+    execution_mode: str, symbol: str, market_type: str, quantity: float, price: float,
+) -> tuple[float, str | None]:
+    """Apply executable-venue minima before Risk Engine sees an exchange order.
+
+    Local paper fills intentionally have no exchange-side size constraints.
+    """
+    if execution_mode == "paper_internal":
+        return quantity, None
+    from aletheia.execution.order_constraints import (
+        ConstraintUnavailable, prepare_exchange_quantity,
+    )
+    try:
+        from aletheia.data.symbols import to_canonical
+        return prepare_exchange_quantity(
+            execution_mode, to_canonical(symbol), market_type, quantity, price,
+        ), None
+    except ConstraintUnavailable as exc:
+        logger.warning("Exchange order constraints unavailable for %s/%s: %s", execution_mode, symbol, exc)
+        return quantity, "Executable venue order rules are unavailable or do not support this order. No order was sent."
+
+
 def submit_proposal(
     symbol: str,
     market_type: str,
@@ -217,6 +251,33 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
 
     # Execute based on allowed mode
     allowed_mode = risk_result.allowed_execution_mode
+
+    # The first Risk Engine pass preserves all existing hard gates (especially
+    # live-disabled) before any external call.  Once it has admitted an
+    # exchange-bound proposal, obtain authoritative venue rules, normalize the
+    # size upward, and evaluate that *final* size again before it can be sent.
+    adjusted_quantity, constraint_error = _prepare_exchange_quantity(
+        allowed_mode, proposal.symbol, proposal.market_type,
+        proposal.quantity or 0.0, proposal.price or 0.0,
+    )
+    if constraint_error:
+        return _reject_for_exchange_constraints(proposal, constraint_error)
+    if adjusted_quantity != proposal.quantity:
+        proposal.quantity = adjusted_quantity
+        update_trade_proposal(proposal.id, quantity=adjusted_quantity)
+        risk_result = evaluate_proposal(proposal)
+        if not risk_result.approved:
+            update_trade_proposal(proposal.id, status="rejected")
+            write_audit({
+                "actor": "system", "source": "execution_gateway",
+                "event_type": "proposal_rejected", "entity_type": "trade_proposal",
+                "entity_id": proposal.id, "before": {"status": proposal.status},
+                "after": {"status": "rejected"}, "message": risk_result.message,
+            })
+            return {
+                "status": "rejected", "proposal_id": proposal.id,
+                "risk_violations": risk_result.violations, "message": risk_result.message,
+            }
 
     # Symbol availability pre-check: if the exchange doesn't list this symbol,
     # reject gracefully here instead of letting CCXT throw an opaque error.

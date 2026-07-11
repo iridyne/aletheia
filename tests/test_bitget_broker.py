@@ -117,6 +117,10 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     captured = []
     _patch_place_order(monkeypatch, captured)
+    # This test owns the exchange submission mock, so also provide the
+    # executable venue's published constraints instead of touching Bitget.
+    from aletheia.execution import gateway
+    monkeypatch.setattr(gateway, "_prepare_exchange_quantity", lambda *args: (0.00001, None))
 
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()

@@ -125,6 +125,30 @@ def test_proposal_default_status():
     assert p.status == "pending"
 
 
+@spec_claim(
+    SpecClaim(
+        "EX-B05", "execution_contract", "§1 executable venue rules", "L2b",
+        "Exchange-bound proposals obtain executable-venue constraints, re-run Risk "
+        "Engine on the adjusted quantity, and reject if rules are unavailable",
+    ),
+)
+def test_exchange_order_constraint_gate_is_wired_before_submission():
+    from aletheia.execution import gateway
+
+    source = ast.parse(open(gateway.__file__, encoding="utf-8").read())
+    execute = next(
+        node for node in source.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_execute_proposal"
+    )
+    calls = [
+        node.func.id for node in ast.walk(execute)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    ]
+    assert "evaluate_proposal" in calls
+    assert "_prepare_exchange_quantity" in calls
+    assert calls.count("evaluate_proposal") >= 2, "adjusted quantity must be re-checked by Risk Engine"
+
+
 # ---------------------------------------------------------------------------
 # L2c — Invariant claims
 # ---------------------------------------------------------------------------

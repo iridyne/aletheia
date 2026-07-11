@@ -86,6 +86,19 @@ trade_proposals.id
 2. 确保 `sync_universe_registry()` 已写入 `venue="hyperliquid"` 行
 
 **Spec claims**：`EX-S07`（结构）/ `EX-B10`（paper_internal 免检）/ `EX-B11`（OKX demo）/ `EX-B12`（registry 模式 + fail-open）。`gateway.py:85-165`。
+
+### 3.3 交易所最小下单规则（开仓）
+
+对会发到交易所的开仓（demo/testnet/live），不得用行情源或本地猜测来决定最小下单量。首轮风控通过后，gateway 必须从**实际接收订单的交易所**读取该标的规则；`paper_internal` 不适用。
+
+- 必须同时处理最小数量、数量增量、最小成交额、最大数量，以及永续合约的“张数 ↔ 币数”换算；内部数量始终是币数。
+- 数量须向上对齐到合法增量并满足最小成交额；对齐后的数量必须再经过 Risk Engine，才可调用 broker。
+- 规则缺失、规则过期后无法刷新、市场已停用或精度类型无法安全换算时，proposal 设为 `rejected`，写审计记录，且**不得创建/发送 Order**。
+- 规则缓存仅 5 分钟；过期缓存不能在刷新失败时继续使用。此规则是 fail-closed，与上节只为改善提示的标的可用性预检不同。
+
+这道闸门防止系统主动发送低于交易所已公布门槛的开仓单；交易所仍可能因价格瞬时变动、余额、仓位模式或临时风控拒单，调用方必须保留交易所最终回执作为事实来源。
+
+**Spec claim**：`EX-B05`；行为回归：`tests/test_order_constraints.py`、`tests/test_gateway_order_constraints.py`。
 ---
 
 ## 4. TPSL 交易所挂单
