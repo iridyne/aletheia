@@ -419,7 +419,7 @@ These claims are target SDD. Each implementation batch must first add its claims
 | --- | --- | --- | --- |
 | LE-S01 | L2a | hypothesis/exposure/experiment stores exist with stable ids | implemented |
 | LE-S02 | L2a | Learning imports no exchange auth/client or live unlock route | missing |
-| LE-S03 | L2a | autonomous Learning jobs share one effective enable gate | missing |
+| LE-S03 | L2a | autonomous Learning jobs share one effective enable gate | implemented |
 | LE-S04 | L2a | every behavior-changing Learning producer/consumer is declared in the path registry | implemented |
 | LE-B01 | L2b | repeated source/action/scope creates one hypothesis fingerprint | implemented |
 | LE-B02 | L2b | duplicate artifacts do not multiply contribution sample size | implemented |
@@ -431,8 +431,8 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B08 | L2b | blocked guard candidates continue shadow settlement | missing |
 | LE-B09 | L2b | guard effectiveness consumes blocked shadow outcomes | implemented |
 | LE-B10 | L2b | sizing stores learned and baseline notional | missing |
-| LE-B11 | L2b | missed scheduled windows catch up once and only once | missing |
-| LE-B12 | L2b | stalled reviewer/backlog refreezes promotion | missing |
+| LE-B11 | L2b | missed scheduled windows catch up once and only once | implemented |
+| LE-B12 | L2b | stalled reviewer/backlog refreezes promotion | implemented |
 | LE-B13 | L2b | factor feedback uses clean exact-scope evidence and prospective exposure before influence | missing |
 | LE-B14 | L2b | observer and operator prompt bundles persist exact manifests and causal outcome links | missing |
 | LE-B15 | L2b | reflection cannot infer eligible outcomes from symbol-only or unbounded time matching | missing |

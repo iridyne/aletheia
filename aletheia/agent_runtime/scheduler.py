@@ -105,6 +105,8 @@ def _record_job_success(job_id: str) -> None:
 def _record_job_failure(job_id: str, error: str) -> None:
     _JOB_RUN_STATE.failure_recorded = True
     _consecutive_failures[job_id] = _consecutive_failures.get(job_id, 0) + 1
+    from aletheia.learning.control import record_learning_job_failure
+    record_learning_job_failure(job_id, error)
     count = _consecutive_failures[job_id]
     if count >= _FAILURE_ALERT_THRESHOLD:
         from aletheia.infra.events import emit_infra_event
@@ -173,9 +175,24 @@ def _run_job_guarded(job_id: str, fn):
     _JOB_RUN_STATE.job_id = job_id
     _JOB_RUN_STATE.failure_recorded = False
     try:
+        from aletheia.learning.control import (
+            is_autonomous_learning_job,
+            learning_job_gate_reason,
+            record_learning_job_skipped,
+            record_learning_job_started,
+            record_learning_job_success,
+        )
+        if is_autonomous_learning_job(job_id):
+            gate_reason = learning_job_gate_reason(job_id)
+            if gate_reason is not None:
+                record_learning_job_skipped(job_id, gate_reason)
+                logger.info("Learning job %s skipped: %s", job_id, gate_reason)
+                return None
+            record_learning_job_started(job_id)
         result = fn()
         if not getattr(_JOB_RUN_STATE, "failure_recorded", False):
             _record_job_success(job_id)
+            record_learning_job_success(job_id)
         return result
     except Exception as e:
         logger.warning("%s job failed outside wrapper: %s", job_id, e)
@@ -588,10 +605,13 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("insight_synthesizer", _run_insight_synthesizer), "cron", hour=2, minute=30,
         id="insight_synthesizer", misfire_grace_time=600, executor="agents", timezone="Asia/Shanghai",
-        # A gateway that was offline at 02:30 must repair an expired memo after
-        # boot instead of waiting another day. The synthesizer's own 6h limiter
-        # makes this cheap on ordinary restarts with a recent memo.
-        next_run_time=datetime.now() + timedelta(minutes=3),
+    )
+    # Repair at most the latest missed daily Learning window. Successful window
+    # keys live in learning_job_health, so ordinary restarts do not duplicate work.
+    _scheduler.add_job(
+        _guarded("learning_startup_catchup", _run_learning_startup_catchup),
+        "date", run_date=datetime.now() + timedelta(minutes=5),
+        id="learning_startup_catchup", misfire_grace_time=None, executor="agents",
     )
     _scheduler.add_job(
         _guarded("confidence_calibration", _run_confidence_calibration), "interval", hours=6,
@@ -1713,6 +1733,26 @@ def _run_confidence_calibration():
     except Exception as e:
         logger.warning("confidence_calibration job failed: %s", e)
         _record_job_failure("confidence_calibration", str(e))
+
+
+_DAILY_LEARNING_CATCHUP_JOBS = (
+    ("dreaming_daily", _run_dreaming_agent),
+    ("insight_synthesizer", _run_insight_synthesizer),
+    ("lesson_reviewer", _run_lesson_reviewer),
+)
+
+
+def _run_learning_startup_catchup():
+    """Run each latest missed daily Learning window once, in dependency order."""
+    try:
+        from aletheia.learning.control import daily_catchup_due
+
+        for job_id, fn in _DAILY_LEARNING_CATCHUP_JOBS:
+            if daily_catchup_due(job_id):
+                _run_job_guarded(job_id, fn)
+    except Exception as e:
+        logger.warning("learning_startup_catchup failed: %s", e)
+        _record_job_failure("learning_startup_catchup", str(e))
 
 
 def _cleanup_stale_scanner_runs():

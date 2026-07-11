@@ -1,0 +1,31 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-024
+title: Fix Learning producer continuity and enable gate
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Make the human Learning enable switch govern all autonomous Learning mutation
+  jobs, add durable job-health recording and single-window catch-up semantics, and
+  prevent producer/reviewer backlog drift without changing trading behavior.
+acceptance:
+- All autonomous Learning mutation jobs share the backend autonomous_learning gate.
+- Measurement-only outcome and shadow settlement continue while Learning is disabled.
+- Missed daily Learning windows catch up once per durable date key and retry after failure.
+- Producer/reviewer success, failure, watermark, and backlog health persist durably.
+- Stalled or stale reviewer health refreezes new automatic guard promotion without changing existing guards.
+ownership:
+  branch: fix/learning-producer-continuity
+  lease_holder: codex
+  claimed_at: '2026-07-11T18:47:06.100481Z'
+  expires_at: '2026-07-12T02:47:06.100685Z'
+base_commit: 4dfb653da621b8f397a21a05a36fab1fb0c18e96
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-024.md
+updated_at: '2026-07-11T18:47:06.100695Z'

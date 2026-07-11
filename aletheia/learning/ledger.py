@@ -59,3 +59,23 @@ def insert_experiment(record) -> bool:
 def insert_exposure(record) -> bool:
     return insert_record("learning_exposures", record, ignore_duplicates=True)
 
+
+def upsert_job_health(record) -> None:
+    """Persist the latest durable health snapshot for one Learning job."""
+    data = record.model_dump()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    columns = ", ".join(data)
+    placeholders = ", ".join("?" for _ in data)
+    updates = ", ".join(f"{column}=excluded.{column}" for column in data if column != "job_id")
+    db.execute(
+        f"INSERT INTO learning_job_health ({columns}) VALUES ({placeholders}) "
+        f"ON CONFLICT(job_id) DO UPDATE SET {updates}",
+        tuple(data.values()),
+    )
+    if not was_in_tx:
+        db.commit()
+
+
+def get_job_health(job_id: str) -> dict | None:
+    return get_record("learning_job_health", job_id)

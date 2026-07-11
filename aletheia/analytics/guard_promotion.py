@@ -34,6 +34,14 @@ def run_promotion_check() -> dict:
     if not candidates:
         return {"promotions": 0, "deprecations": 0, "candidates_checked": 0}
 
+    # Automatic promotion is fail-closed when the shared Learning reviewer has
+    # stopped or accumulated a stale/oversized backlog. Existing active guards
+    # remain unchanged; the owner-controlled manual promotion route is separate.
+    from aletheia.learning.control import promotion_refreeze_reason
+    refreeze_reason = promotion_refreeze_reason()
+    if refreeze_reason is not None:
+        return {"skipped": True, "refrozen": True, "reason": refreeze_reason}
+
     from aletheia.analytics.guard_effectiveness import _rows_matching_guard, _clean_rows
     from aletheia.analytics.trade_attribution import build_trade_attribution_rows
 

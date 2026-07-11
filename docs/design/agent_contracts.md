@@ -3,11 +3,11 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-07-11 (Operator scheduler continuity)
+> Last updated: 2026-07-12 (Learning enable gate and durable catch-up)
 
 ---
 
-## 1. Scheduler Job Overview (35 recurring jobs with optional jobs enabled + 1 startup one-shot)
+## 1. Scheduler Job Overview (35 recurring jobs with optional jobs enabled + 2 startup one-shots)
 
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
@@ -47,6 +47,14 @@
 | 34 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
 | 35 | outcome_settler | 15min | io | Settle outstanding prediction / universe forward outcomes |
 | 36 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
+| 37 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
+
+Learning mutation jobs (rows 10–15, 26, 30–31 and the Learning catch-up) share
+`agent.autonomous_learning` as one backend gate. When disabled, no automatic producer,
+reviewer, promoter, controller, or learned rollout runs. Measurement-only
+`outcome_settler` and `shadow_resolver` continue so disabling Learning does not erase
+or delay outcome truth. Successful/failed/skipped runs and reviewer backlog health are
+persisted in `learning_job_health`.
 
 ### OS Watchdog Contract
 
@@ -188,7 +196,7 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 
 #### post_trade_reviewer
 
-- **Trigger**: scheduler every 4h
+- **Trigger**: scheduler every 4h; disabled when `agent.autonomous_learning=false`
 - **Inputs**: Recently closed positions (no existing review), market context at entry/exit
 - **LLM**: Yes (analysis of trade quality)
 - **Outputs**: knowledge_items (item_type=post_trade_review)
@@ -196,7 +204,7 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 
 #### risk_critic
 
-- **Trigger**: scheduler every 6h
+- **Trigger**: scheduler every 6h; disabled when `agent.autonomous_learning=false`
 - **Inputs**: Open positions, risk config, recent violations, portfolio exposure
 - **LLM**: Yes (risk assessment)
 - **Outputs**: knowledge_items (item_type=**research_note**, metadata.subtype=risk_lesson — `risk_critic.py:42` calls `create_research_note()`; `risk_lesson` is not a top-level item_type, see `knowledge_contract.md §2.1`), risk flag annotations on opportunities
@@ -204,15 +212,15 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 
 #### dreaming_daily
 
-- **Trigger**: daily 02:00 CST; `serenity_startup_catchup` checks the latest due CST batch 4 minutes after boot
+- **Trigger**: daily 02:00 CST; the shared Learning catch-up checks the latest missed lesson-extraction window 5 minutes after boot; `serenity_startup_catchup` separately repairs the research batch at 4 minutes
 - **Inputs**: All knowledge_items from past 24h, closed positions, agent run summaries
 - **LLM**: Yes (synthesis)
 - **Outputs**: knowledge_items (item_type=dreaming_log), serenity research runs/themes/evidence/opportunities
-- **Side effects**: The Serenity portion uses `serenity:scheduled:YYYY-MM-DD` idempotency and successful-run freshness. Restart-interrupted queued/running rows are marked failed before a catch-up is considered; lesson extraction remains on the daily cron only
+- **Side effects**: The Serenity portion uses `serenity:scheduled:YYYY-MM-DD` idempotency and successful-run freshness. Restart-interrupted queued/running rows are marked failed before a catch-up is considered; lesson extraction uses `learning_job_health.input_watermark` to catch up one missed date-window without duplicate restart runs
 
 #### insight_synthesizer
 
-- **Trigger**: daily 02:30 CST (= 18:30 UTC previous day) + startup catch-up after 3min; internal 6h rate limit skips redundant restart runs
+- **Trigger**: daily 02:30 CST (= 18:30 UTC previous day) + durable shared startup catch-up after 5min
 - **Inputs**: knowledge_items, opportunities, positions, strategy performance
 - **LLM**: Yes
 - **Outputs**: Synthesized insights; reasoning_feedback piggyback (per-bucket statistics)

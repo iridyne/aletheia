@@ -935,9 +935,9 @@ def test_batch_synthesis_jobs_all_registered():
 @spec_claim(
     SpecClaim(
         "LP-S16", "learning_pipeline", "§batch synthesis startup catch-up", "L2a",
-        "insight_synthesizer keeps its daily cron cadence but also receives a "
-        "next_run_time within five minutes of scheduler startup, so missing the "
-        "overnight window cannot leave trading_memo expired until the next day.",
+        "insight_synthesizer keeps its daily cron cadence and participates in the "
+        "durable Learning startup catch-up, so a missed overnight window runs once "
+        "without repeating on every gateway restart.",
         status="implemented",
     )
 )
@@ -963,17 +963,20 @@ def test_insight_synthesizer_has_startup_catchup():
     assert len(target.args) >= 2 and isinstance(target.args[1], ast.Constant)
     assert target.args[1].value == "cron", "daily cron cadence must remain intact"
 
-    keywords = {kw.arg: kw.value for kw in target.keywords if kw.arg}
-    next_run = keywords.get("next_run_time")
-    assert next_run is not None, (
-        "insight_synthesizer needs a startup catch-up next_run_time; otherwise a "
-        "gateway that misses 02:30 CST leaves the memo stale until the next day"
-    )
-    rendered = ast.unparse(next_run)
-    assert "datetime.now()" in rendered and "timedelta" in rendered
-    assert "minutes=3" in rendered.replace(" ", ""), (
-        f"startup catch-up must run within five minutes; got {rendered}"
-    )
+    catchup = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+        job_id = keywords.get("id")
+        if isinstance(job_id, ast.Constant) and job_id.value == "learning_startup_catchup":
+            catchup = node
+            break
+    assert catchup is not None
+    rendered = ast.unparse(catchup)
+    assert "minutes=5" in rendered.replace(" ", "")
+    assert "_run_learning_startup_catchup" in rendered
+    assert "daily_catchup_due" in sched_src
 
 
 @spec_claim(

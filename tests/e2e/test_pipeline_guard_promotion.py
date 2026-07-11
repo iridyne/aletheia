@@ -66,7 +66,11 @@ class TestGuardPromotionChain:
         for i in range(3):
             _losing_momentum_long_trade(i)
 
-        # 4) promotion check (e2e default config has auto_promote_enabled=True)
+        # 4) automatic promotion requires a healthy durable reviewer checkpoint.
+        from aletheia.learning.control import record_learning_job_success
+        record_learning_job_success("lesson_reviewer")
+
+        # 5) promotion check (e2e default config has auto_promote_enabled=True)
         result = run_promotion_check()
         assert result.get("promotions", 0) >= 1, f"candidate should be promoted: {result}"
 

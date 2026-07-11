@@ -233,8 +233,9 @@ async def run_lesson_reviewer(
             log_tool(run_id, "demote_lesson", "observe", True, output=f"{lesson.lesson_id}:{reason}")
 
     # ── Step B: promote — judge proposed lessons ──
-    proposed = store.list_all(status="proposed", limit=200)
-    backlog = len(proposed)
+    # Oldest-first prevents a busy producer from starving long-waiting lessons.
+    proposed = store.list_all(status="proposed", limit=200, oldest_first=True)
+    backlog, _oldest_backlog_at = store.backlog_stats()
     batch = proposed[:_MAX_PROPOSED_PER_RUN]
     newly_accepted: list[str] = []
     rejected = deferred = 0
