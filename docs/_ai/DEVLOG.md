@@ -13,7 +13,7 @@
 - CLI/API controller reports expose plan and latest evidence status. No TTL,
   ranker, sizing, risk, execution, live, or credential behavior changed.
 - Validation: focused filter suites passed 48 tests; architecture fitness passed
-  11; all specs passed 633; full suite passed 2805 with 13 skipped and 6 expected failures.
+  11; all specs passed 633; the latest-master full suite passed 2806 with 13 skipped and 6 expected failures.
 
 ---
 
