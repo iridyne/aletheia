@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_structured, log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
+from aletheia.data.freshness import fresh_row
 from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
@@ -41,7 +42,6 @@ _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 _MARKET_OBSERVER_JOB_TIMEOUT_S = 240.0
 _MARKET_OBSERVER_LOOP_BUDGET_SEC = 200.0
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
-_PERP_STRUCTURE_MAX_AGE_MINUTES = 60
 
 
 class MarketRead(BaseModel):
@@ -68,18 +68,11 @@ class MarketRead(BaseModel):
 
 
 def _is_perp_structure_fresh(row: dict | None) -> bool:
-    if not row:
-        return False
-    ts_text = row.get("as_of_time") or row.get("observed_at")
-    if not ts_text:
-        return False
-    try:
-        ts = datetime.fromisoformat(str(ts_text).replace("Z", "+00:00"))
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-    except ValueError:
-        return False
-    return datetime.now(timezone.utc) - ts <= timedelta(minutes=_PERP_STRUCTURE_MAX_AGE_MINUTES)
+    return fresh_row(
+        row,
+        "perp_structure",
+        timestamp_field="as_of_time" if row and row.get("as_of_time") else "observed_at",
+    ) is not None
 
 
 # ROUND 2 SIGNAL-INTRODUCTION DECISION (per plan §8.6.2, spec MS-S15):
@@ -321,66 +314,62 @@ async def _analyze_symbol(
 
         # Append enriched microstructure/derivatives/macro context if available.
         try:
-            from aletheia.data.context_builder import render_enriched_context_md
+            from aletheia.data.context_builder import (
+                build_market_context_from_db,
+                render_enriched_context_md,
+            )
+            from aletheia.data.freshness import fresh_rows
             from aletheia.storage import repositories as repo
-            from aletheia.data.normalizer import compute_tradability, compute_leverage_state
             from aletheia.data.models import TradabilityScore, LeverageState, MacroSnapshot
 
-            ob = repo.latest_orderbook(
-                symbol, exchange=venue or "", market_type=market_type
+            # The shared DB builder applies exact-instrument identity and the same
+            # fail-closed freshness policy used by Universe feature collection.
+            enriched_snapshot = build_market_context_from_db(
+                [symbol], exchange=venue or "", market_type=market_type,
             )
-            fr = repo.latest_funding_rate(symbol)
-            oi = repo.latest_open_interest(symbol)
             ps = repo.latest_perp_structure(symbol)
-            macro_row = repo.latest_macro_snapshot()
+            tradability = {
+                sym: TradabilityScore(**row)
+                for sym, row in enriched_snapshot.tradability.items()
+            }
+            leverage = {
+                sym: LeverageState(**row)
+                for sym, row in enriched_snapshot.leverage.items()
+            }
+            macro = (
+                MacroSnapshot(**enriched_snapshot.macro)
+                if enriched_snapshot.macro else None
+            )
 
-            # Capture derivatives state for the Opportunity row.
-            if fr:
-                funding_rate_val = fr.get("funding_rate")
-            if oi:
-                open_interest_val = oi.get("open_interest_usd")
-                oi_delta_val = oi.get("oi_change_1h_pct")
-
-            tradability: dict = {}
-            if ob:
-                t = compute_tradability(
-                    symbol=symbol, exchange=ob.get("exchange", ""),
-                    spread_bps=ob["spread_bps"],
-                    depth_10bps_usd=ob.get("total_depth_10bps_usd") or 0,
-                    volume_24h_usd=0,  # supplemented from ticker if available
-                )
-                tradability[symbol] = t
-
-            leverage: dict = {}
-            if fr or oi:
-                lv = compute_leverage_state(
-                    symbol=symbol,
-                    funding_rate=fr["funding_rate"] if fr else None,
-                    funding_annualized=fr["funding_rate_annualized"] if fr else None,
-                    open_interest_usd=oi["open_interest_usd"] if oi else None,
-                    oi_delta_1h_pct=oi["oi_change_1h_pct"] if oi else None,
-                    long_short_ratio=oi.get("long_short_ratio") if oi else None,
-                )
-                leverage[symbol] = lv
-
-            macro = None
-            if macro_row:
-                macro = MacroSnapshot(**macro_row)
+            # Only freshness-qualified derivatives are copied into Opportunity rows.
+            lv = leverage.get(symbol)
+            if lv:
+                funding_rate_val = lv.funding_rate
+                open_interest_val = lv.open_interest_usd
+                oi_delta_val = lv.oi_delta_1h_pct
 
             # On-chain regime (DefiLlama stablecoin/TVL/DEX) — global, not per-symbol.
-            onchain_rows = repo.latest_onchain_snapshots(limit=2)
+            onchain_rows = fresh_rows(
+                repo.latest_onchain_snapshots(limit=3), "onchain",
+            )
 
             # Cross-venue funding: route the Hyperliquid feed (otherwise orphan) into
             # the decision context as a basis/sentiment-divergence signal vs the
             # primary venue. Compared annualized (HL 1h vs primary 8h interval).
             xvenue_funding: dict = {}
-            hl_fr = repo.latest_funding_rate(symbol, exchange="hyperliquid")
-            hl_pred = repo.latest_funding_rate(symbol, exchange="hyperliquid_predicted")
+            hl_fr = fresh_row(
+                repo.latest_funding_rate(symbol, exchange="hyperliquid"),
+                "cross_venue_funding",
+            )
+            hl_pred = fresh_row(
+                repo.latest_funding_rate(symbol, exchange="hyperliquid_predicted"),
+                "cross_venue_funding",
+            )
             if hl_fr or hl_pred:
                 xvenue_funding[symbol] = {
                     "hl_ann": hl_fr.get("funding_rate_annualized") if hl_fr else None,
                     "hl_predicted_ann": hl_pred.get("funding_rate_annualized") if hl_pred else None,
-                    "primary_ann": fr.get("funding_rate_annualized") if fr else None,
+                    "primary_ann": lv.funding_annualized if lv else None,
                 }
 
             # Position X / perp-structure evidence stays advisory-only: we pass the

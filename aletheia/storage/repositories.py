@@ -2147,12 +2147,12 @@ def insert_funding_rate_snapshot(data: dict) -> None:
     _insert("funding_rate_snapshots", data)
 
 
-# Cross-venue / secondary feeds (Hyperliquid spot venue + its PREDICTED funding)
+# Cross-venue / secondary feeds (Hyperliquid and Coinalyze aggregate data)
 # share the funding/OI tables via the `exchange` tag, but must NOT win the
 # per-symbol "latest" read that the LLM context, universe features and the
 # primary collector's own delta all consume as the PRIMARY trading venue's
 # view. Excluded by default; pass exchange=<name> to target one venue exactly.
-_CROSS_VENUE_TAGS = ("hyperliquid", "hyperliquid_predicted")
+_CROSS_VENUE_TAGS = ("hyperliquid", "hyperliquid_predicted", "coinalyze")
 
 
 def _latest_deriv_where(exchange: str | None) -> tuple[str, tuple]:

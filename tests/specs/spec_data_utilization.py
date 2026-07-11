@@ -95,6 +95,27 @@ def test_onchain_routed_to_decision_context():
     assert "onchain=" in src, "market_observer must pass onchain= into render"
 
 
+@spec_claim(
+    SpecClaim(
+        "DU-S16", _CONTRACT, "§decision-context freshness", "L2a",
+        "Orderbook, funding, open-interest, macro, on-chain, and cross-venue "
+        "context consumers share one fail-closed freshness policy; stale rows "
+        "cannot reach Observer or Universe decisions through a side path.",
+    ),
+)
+def test_enriched_decision_consumers_share_freshness_policy():
+    freshness = (_ROOT / "aletheia" / "data" / "freshness.py").read_text(encoding="utf-8")
+    observer = _MARKET_OBS.read_text(encoding="utf-8")
+    context = _CONTEXT_BUILDER.read_text(encoding="utf-8")
+    features = (_ROOT / "aletheia" / "universe" / "features.py").read_text(encoding="utf-8")
+
+    for domain in ("orderbook", "funding", "open_interest", "macro", "onchain"):
+        assert f'"{domain}"' in freshness
+    assert "build_market_context_from_db" in observer
+    assert "fresh_row" in context
+    assert "fresh_row" in features
+
+
 # ---------------------------------------------------------------------------
 # DU-S13 — perp structure rows are registered and consumed as observation data
 # ---------------------------------------------------------------------------
@@ -709,8 +730,10 @@ def test_orderbook_identity_reaches_storage_and_consumers():
     assert "market_type: str" in model
     assert "market_type=market_type" in collector
     assert "def latest_orderbook(" in repo and "market_type: str" in repo
-    assert "latest_orderbook(" in observer
+    assert "build_market_context_from_db" in observer
+    assert "latest_orderbook(" in _CONTEXT_BUILDER.read_text(encoding="utf-8")
     assert "exchange=venue" in observer and "market_type=market_type" in observer
     assert "latest_orderbook(" in features
-    assert 'exchange=asset.get("venue"' in features
-    assert 'market_type=asset.get("market_type"' in features
+    assert 'venue = str(asset.get("venue")' in features
+    assert 'market_type = str(asset.get("market_type")' in features
+    assert "exchange=venue, market_type=market_type" in features

@@ -7,7 +7,19 @@
 
 ## Last Updated
 
-2026-07-11 (first-exposure filter feedback and bounded replay)
+2026-07-11 (enriched decision-context freshness)
+
+---
+
+## Recent Change (Enriched decision-context freshness — 2026-07-11)
+
+增强行情不再因为“仍是数据库最新一行”就无限期参与决策。盘口、主场所 funding/OI/LSR、宏观、链上、跨场所 funding 和永续持仓结构统一使用 fail-closed 时效策略；缺失、坏时间、过期或异常未来时间都会让整条快照退出决策，不再出现主字段已失效但年化值、变化率或 LSR 仍残留的半失效状态。
+
+Market Observer 复用通用数据库上下文构建器，Universe 的数据库 fallback 使用同一策略。已知交易场所时衍生品按 exact venue 查询；Coinalyze 聚合 OI 保留给显式 research/doctor 消费，但从默认主场所读取中排除。通用 DB 路径补回 LSR，真实 render 可见且进入 crowding。
+
+没有修改行情值、scanner 权重、filter 阈值、风险、仓位、执行、live 或凭证。
+
+验证：聚焦回归 73 项、完整规则 627 项、全量 2757 项通过，0 项真实失败。
 
 ---
 

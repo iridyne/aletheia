@@ -1,5 +1,24 @@
 # Development Log
 
+## 2026-07-11 — Enriched decision-context freshness
+
+- Added one fail-closed freshness policy for orderbook, primary funding/OI/LSR,
+  macro, on-chain, cross-venue funding, and perp-structure decision inputs.
+- Snapshot fields now fail as a unit: stale funding cannot retain annualization;
+  stale OI cannot retain delta or LSR. Empty derivative evidence is omitted rather
+  than rendered as neutral or all-`n/a` data.
+- Market Observer delegates primary DB assembly to the common context builder;
+  Universe DB fallbacks apply the same policy and only retain a fresh cached value
+  after a failed live funding fetch.
+- Derivative reads use the exact venue when known. Coinalyze aggregate OI is
+  excluded from the default primary-venue read while remaining explicitly readable.
+- The DB context path now carries fresh LSR through crowding and markdown render.
+- No market-value, scoring, filter, risk, sizing, execution, live, or credential change.
+- Validation: focused suites passed 73 tests; all specs passed 627 tests; full suite
+  passed 2757 tests with 0 real failures.
+
+---
+
 ## 2026-07-11 — First-exposure filter feedback and bounded replay
 
 - Feedback cohorts now assign each filter/stage/version/candidate once by first persisted exposure; later scheduler retries remain inspectable but cannot contribute the same outcome to both pass and reject.

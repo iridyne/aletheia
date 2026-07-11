@@ -35,8 +35,9 @@
 11. **已完成**：动态 Universe 新成员由独立有界任务自动补齐精确 1h/4h 历史；持久化 partial/failed/ready 与指数退避，不阻塞 Universe 刷新，夜间批量任务继续兜底。
 12. **已完成**：macOS 使用用户级 launchd LaunchAgent 登录启动并每 60 秒运行同一 gated start；无提权/凭证/第二套 supervisor，状态由 launchctl 实时查询。
 13. **已完成**：数据采集 domain 区分成功、空结果、失败、超时、预算跳过、未配置和禁用；doctor/API/Overview 读取同一有界持久状态，交易暂停不再误停公共资料积累。
-14. **下一阶段**：筛选器达到 20/20 完整净样本后，才实验方向刹车、ranker 和 Kelly/sizing；未达到前只继续积累和核对证据。
-15. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+14. **已完成**：盘口、funding、OI/LSR、宏观、链上、跨场所 funding 和持仓结构共用 fail-closed 时效策略；旧快照整行退出 Observer/Universe 决策，衍生品按 exact venue 读取，Coinalyze 聚合 OI 不再冒充主交易所数据。
+15. **下一阶段**：筛选器达到 20/20 完整净样本后，才实验方向刹车、ranker 和 Kelly/sizing；未达到前只继续积累和核对证据。
+16. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
 机会诊断口径已补强：overview 的窗口总数与重建上限分离；controller 的 `--hours`
 真实截断证据；sizing trace 将历史 proposal/fill 事实与当前配置投影分开。后续离线实验只能

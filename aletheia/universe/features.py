@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 
 from aletheia.config.schema import AletheiaConfig
+from aletheia.data.freshness import fresh_row
 from aletheia.storage.models import UniverseFeatureSnapshot
 from aletheia.storage import repositories as repo
 from aletheia.trading.indicators import rsi, atr, sma, bollinger, volume_sma_ratio
@@ -76,6 +77,32 @@ def _positive_float(value) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _load_fresh_enrichment_rows(
+    asset: dict, *, now: datetime,
+) -> tuple[dict | None, dict | None, dict | None]:
+    """Load exact-instrument DB fallbacks and reject each stale snapshot as a unit."""
+    symbol = str(asset.get("symbol") or "")
+    venue = str(asset.get("venue") or "")
+    market_type = str(asset.get("market_type") or "spot")
+    ob_row = fresh_row(
+        repo.latest_orderbook(symbol, exchange=venue, market_type=market_type),
+        "orderbook",
+        now=now,
+    )
+    deriv_exchange = venue or None
+    fr_row = fresh_row(
+        repo.latest_funding_rate(symbol, exchange=deriv_exchange),
+        "funding",
+        now=now,
+    )
+    oi_row = fresh_row(
+        repo.latest_open_interest(symbol, exchange=deriv_exchange),
+        "open_interest",
+        now=now,
+    )
+    return ob_row, fr_row, oi_row
 
 
 def _quote_volume_24h(exchange, ccxt_symbol: str, ticker: dict) -> float:
@@ -368,20 +395,14 @@ async def _fetch_single_feature(
         last_ts = int(ohlcv_1h[-1][0]) / 1000
         data_freshness_sec = int(time.time() - last_ts)
 
-    ob_row = repo.latest_orderbook(
-        symbol,
-        exchange=asset.get("venue", ""),
-        market_type=asset.get("market_type", "spot"),
-    )
-    fr_row = repo.latest_funding_rate(symbol)
-    oi_row = repo.latest_open_interest(symbol)
+    ob_row, fr_row, oi_row = _load_fresh_enrichment_rows(asset, now=now)
 
     depth_10bps = ob_row["total_depth_10bps_usd"] if ob_row else None
     funding_rate = fr_row["funding_rate"] if fr_row else None
     open_interest = oi_row["open_interest_usd"] if oi_row else None
     oi_delta_1h = oi_row["oi_change_1h_pct"] if oi_row else None
 
-    # P1a: Real-time funding rate for perp-eligible symbols (overrides stale DB cache)
+    # P1a: Real-time funding rate for perp-eligible symbols overrides the fresh DB fallback.
     # P2: Taker buy/sell ratio for perp symbols
     taker_buy_ratio = None
     if is_perp:
@@ -394,7 +415,7 @@ async def _fetch_single_feature(
             if fr_data and fr_data.get("fundingRate") is not None:
                 funding_rate = float(fr_data["fundingRate"])
         except Exception:
-            pass  # Keep DB cached value as fallback
+            pass  # Keep only a freshness-qualified DB value as fallback.
 
         # Taker buy/sell ratio — only available on Binance (fapi endpoint)
         if getattr(exchange, "id", "") == "binance":

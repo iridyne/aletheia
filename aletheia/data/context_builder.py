@@ -13,7 +13,7 @@ Two usage paths:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from aletheia.data.models import (
@@ -23,11 +23,9 @@ from aletheia.data.models import (
     TradabilityScore,
 )
 from aletheia.data.position_x import build_position_x_agent_context
+from aletheia.data.freshness import fresh_row
 
 logger = logging.getLogger("aletheia.data.context_builder")
-
-_STALENESS_THRESHOLD = timedelta(minutes=15)
-
 
 def build_market_context_snapshot(
     symbols: list[str],
@@ -279,7 +277,8 @@ def _fmt_usd_compact(value: object) -> str:
 # ---------------------------------------------------------------------------
 
 def build_market_context_from_db(
-    symbols: list[str], *, exchange: str = "", market_type: str = ""
+    symbols: list[str], *, exchange: str = "", market_type: str = "",
+    now: datetime | None = None,
 ) -> MarketContextSnapshot:
     """Read latest collector data from SQLite and produce a full context snapshot.
 
@@ -289,7 +288,7 @@ def build_market_context_from_db(
     from aletheia.data.normalizer import compute_leverage_state, compute_tradability
     from aletheia.storage import repositories as repo
 
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     tradability: dict[str, TradabilityScore] = {}
     leverage_states: dict[str, LeverageState] = {}
 
@@ -298,7 +297,8 @@ def build_market_context_from_db(
         ob = repo.latest_orderbook(
             sym, exchange=exchange, market_type=market_type
         )
-        if ob and _is_fresh(ob.get("observed_at"), now):
+        ob = fresh_row(ob, "orderbook", now=now)
+        if ob:
             vol = _get_volume(sym)
             tradability[sym] = compute_tradability(
                 symbol=sym,
@@ -309,24 +309,36 @@ def build_market_context_from_db(
             )
 
         # Derivatives → LeverageState
-        fr = repo.latest_funding_rate(sym)
-        oi = repo.latest_open_interest(sym)
+        deriv_exchange = exchange or None
+        fr = fresh_row(
+            repo.latest_funding_rate(sym, exchange=deriv_exchange),
+            "funding",
+            now=now,
+        )
+        oi = fresh_row(
+            repo.latest_open_interest(sym, exchange=deriv_exchange),
+            "open_interest",
+            now=now,
+        )
         liqs = repo.recent_liquidations(sym, hours=1)
         liq_total = sum(l.get("quantity_usd", 0) for l in liqs)
 
-        leverage_states[sym] = compute_leverage_state(
-            symbol=sym,
-            funding_rate=fr.get("funding_rate") if fr and _is_fresh(fr.get("observed_at"), now) else None,
-            funding_annualized=fr.get("funding_rate_annualized") if fr else None,
-            open_interest_usd=oi.get("open_interest_usd") if oi and _is_fresh(oi.get("observed_at"), now) else None,
-            oi_delta_1h_pct=oi.get("oi_change_1h_pct") if oi else None,
-            liquidation_1h_usd=liq_total if liq_total > 0 else None,
-        )
+        if fr or oi or liq_total > 0:
+            leverage_states[sym] = compute_leverage_state(
+                symbol=sym,
+                funding_rate=fr.get("funding_rate") if fr else None,
+                funding_annualized=fr.get("funding_rate_annualized") if fr else None,
+                open_interest_usd=oi.get("open_interest_usd") if oi else None,
+                oi_delta_1h_pct=oi.get("oi_change_1h_pct") if oi else None,
+                long_short_ratio=oi.get("long_short_ratio") if oi else None,
+                liquidation_1h_usd=liq_total if liq_total > 0 else None,
+            )
 
     # Macro
     macro_row = repo.latest_macro_snapshot()
     macro: MacroSnapshot | None = None
-    if macro_row and _is_fresh(macro_row.get("observed_at"), now, threshold=timedelta(minutes=30)):
+    macro_row = fresh_row(macro_row, "macro", now=now)
+    if macro_row:
         macro = MacroSnapshot(
             btc_dominance=macro_row.get("btc_dominance"),
             total_market_cap_usd=macro_row.get("total_market_cap_usd"),
@@ -347,22 +359,6 @@ def build_market_context_from_db(
         )
 
     return build_market_context_snapshot(symbols, tradability, leverage_states, macro)
-
-
-def _is_fresh(
-    observed_at: str | None,
-    now: datetime,
-    threshold: timedelta = _STALENESS_THRESHOLD,
-) -> bool:
-    if not observed_at:
-        return False
-    try:
-        ts = datetime.fromisoformat(observed_at)
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        return (now - ts) < threshold
-    except (ValueError, TypeError):
-        return False
 
 
 def _get_volume(symbol: str) -> float:
