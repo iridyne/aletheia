@@ -1,7 +1,7 @@
 schema_version: 1
 id: TASK-2026-004
 title: Recover latest history from master
-status: in_progress
+status: done
 scope:
   boundary: declare before implementation
   excluded: runtime facts and credentials
@@ -17,6 +17,12 @@ next_action:
   command_key: workflow_tests
   reason: Claim the task and define the first focused verification.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  exit_code: 0
+  commit: f62d69fa2ee4d182f2551800c7952d1a1aefdfd7
+  run_at: '2026-07-11T06:55:55.573833Z'
+  result: passed
 handoff: .agent/handoffs/TASK-2026-004.md
-updated_at: '2026-07-11T06:53:12.658035Z'
+updated_at: '2026-07-11T06:55:55.573979Z'
