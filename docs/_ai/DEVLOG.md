@@ -1,5 +1,13 @@
 # Development Log
 
+## 2026-07-11 — Unique local-paper data-model claim ID
+
+- The local paper account structural check now uses `DM-S23`; `DM-S08` remains the established proposal hash-chain check.
+- This removes a duplicate identifier that made the full conformance index fail after both otherwise-valid changes were merged. Runtime code and data behavior are unchanged.
+- Validation: data-model specs 24 passed, conformance structure 6 passed, full suite 2683 passed / 14 skipped / 6 expected failures / 0 failed.
+
+---
+
 ## 2026-07-11 — Reconciliation execution-account scope
 
 - 现场因果链确认：本地模拟仓成交后 3–6 分钟被 unified 外部空仓缓存标为 `reconciled_gone`，AI 随后因“无持仓”再次开同方向；VIRTUAL 集中成交是错误对账的结果，不是正常分批建仓。

@@ -184,7 +184,7 @@ def test_capital_events_table():
 
 @spec_claim(
     SpecClaim(
-        "DM-S08", "data_model", "§3 local paper account", "L2a",
+        "DM-S23", "data_model", "§3 local paper account", "L2a",
         "Local paper cash is an append-only ledger, separate from cross-broker capital events",
     ),
 )

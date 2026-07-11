@@ -7,7 +7,15 @@
 
 ## Last Updated
 
-2026-07-11 (Reconciliation execution-account scope)
+2026-07-11 (Data-model claim ID uniqueness)
+
+---
+
+## Recent Change (Data-model claim ID uniqueness — 2026-07-11)
+
+Local paper account 的结构检查从重复的 `DM-S08` 改为未占用的 `DM-S23`；原 `DM-S08` 继续唯一指向交易提案哈希链。只修复规则索引，不改运行时代码或数据。
+
+验证：数据模型检查 24 项、规则索引结构 6 项、全量 2683 项通过；14 项跳过、6 项预期失败、0 项真实失败。
 
 ---
 
