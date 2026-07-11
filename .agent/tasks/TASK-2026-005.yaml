@@ -1,7 +1,7 @@
 schema_version: 1
 id: TASK-2026-005
 title: Correct OHLCV market-data issue ledger
-status: in_progress
+status: done
 scope:
   boundary: declare before implementation
   excluded: runtime facts and credentials
@@ -18,6 +18,12 @@ next_action:
   command_key: workflow_tests
   reason: Claim the task and define the first focused verification.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  exit_code: 0
+  commit: 065cf5f1db09f6294552f9de2ab14854f51d13ca
+  run_at: '2026-07-11T12:05:01.484647Z'
+  result: passed
 handoff: .agent/handoffs/TASK-2026-005.md
-updated_at: '2026-07-11T12:03:36.289358Z'
+updated_at: '2026-07-11T12:05:01.484794Z'
