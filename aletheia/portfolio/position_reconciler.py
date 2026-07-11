@@ -42,20 +42,22 @@ logger = logging.getLogger("aletheia.position_reconciler")
 # The exchange aggregates fills, so local-vs-exchange size can drift a little.
 _QTY_REL_TOL = 0.02  # 2%
 
-# Adopted positions inherit the honest execution_mode of the account they live on,
-# which also drives management: position_manager auto-manages bitget_demo and SKIPS
-# bitget_live_limited (live stays human-only). Mapping the exchange account mode to
-# the execution_mode is the single point where the demo-auto / live-human split is set.
-_LIVE_EXECUTION_MODE = "bitget_live_limited"
+_LIVE_EXECUTION_MODES = {
+    "bitget": "bitget_live_limited",
+    "okx": "okx_live_limited",
+    "binance": "binance_live_limited",
+}
 
 
 def _execution_mode_for(account_mode: str) -> str | None:
     """Resolve execution_mode from account mode, respecting paper_execution_mode config."""
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
     if account_mode == "live":
-        return _LIVE_EXECUTION_MODE
+        return _LIVE_EXECUTION_MODES.get((cfg.exchange.name or "").lower())
     if account_mode == "demo":
-        from aletheia.config.loader import load_config
-        return load_config().exchange.paper_execution_mode
+        return cfg.exchange.paper_execution_mode
     return None
 
 
@@ -135,8 +137,37 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     `sync_status` reflects why — we never infer `orphaned` from a missing cache,
     because "no exchange data" must not look like "the exchange has no positions".
     """
-    # Prefer unified (UTA) state — covers all brokers (OKX/Bitget/Binance).
-    # Fall back to legacy Bitget-only cache for backwards compat.
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    account_mode = mode or cfg.exchange.mode
+    target_execution_mode = _execution_mode_for(account_mode)
+    local_open = list_positions(status="open")
+    in_scope = [
+        position for position in local_open
+        if position.get("execution_mode") == target_execution_mode
+    ]
+    result = ReconcileResult()
+
+    # Local simulation has no exchange-side position view by design. Treat every
+    # local row as managed and never let a stale/unrelated broker cache close it.
+    if target_execution_mode == "paper_internal":
+        for position in in_scope:
+            result.managed.append(
+                ReconcileItem(
+                    symbol=to_canonical(position["symbol"]),
+                    direction=_norm_direction(position["direction"]),
+                    classification="managed",
+                    local=position,
+                )
+            )
+        result.sync_status = "local_only"
+        return result
+
+    # Demo reconciliation prefers the unified (UTA) state, but only the active
+    # broker's rows. Live accounts are not represented by the current UTA adapters
+    # (all registered adapters are demo/testnet), so a demo aggregate must never be
+    # used to classify live positions.
     cached = None
     # View-completeness gate (P0, 2026-07-02): only trust the unified view for
     # classification when the ACTIVE broker is actually in it. A unified cache can
@@ -144,21 +175,47 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     # leaving only bitget). Classifying OKX locals against that incomplete view
     # orphans them → thrash. This is the "fresh but incomplete" variant the earlier
     # stale-cache fix did not cover. See dynamic_sizing_operator_persona_design.md §4.1.
-    _view_complete, _view_reason = exchange_sync.active_broker_view_complete()
-    unified = exchange_sync.get_unified_cached_state()
-    if unified is not None and _view_complete:
-        age = unified.get("age_seconds")
-        if age is not None and age < 600:
-            cached = {
-                "positions": unified.get("positions") or [],
-                "age_seconds": age,
-                "fetched_at": unified.get("fetched_at", ""),
-            }
-    if not _view_complete:
-        logger.warning(
-            "Reconcile: active-broker view incomplete (%s) — not classifying against "
-            "an incomplete unified view (prevents false-orphan thrash).", _view_reason,
+    if account_mode == "demo":
+        unified = exchange_sync.get_unified_cached_state()
+        connected = {
+            account.get("broker_id")
+            for account in ((unified or {}).get("accounts") or [])
+            if account.get("broker_id")
+        }
+        view_complete = target_execution_mode in connected
+        view_reason = (
+            f"{target_execution_mode} connected"
+            if view_complete
+            else f"{target_execution_mode} not connected (have {sorted(connected) or 'none'})"
         )
+        if unified is not None and view_complete:
+            age = unified.get("age_seconds")
+            unified_positions = unified.get("positions") or []
+            # Broker identity is mandatory once more than one account shares this
+            # cache. An old/partial row without broker_id cannot safely prove either
+            # presence or absence for the active account, so degrade instead of
+            # inferring an orphan.
+            positions_identified = all(
+                position.get("broker_id")
+                for position in unified_positions
+                if float(position.get("quantity") or 0) > 0
+            )
+            if age is not None and age < 600 and positions_identified:
+                cached = {
+                    "positions": [
+                        position for position in unified_positions
+                        if position.get("broker_id") == target_execution_mode
+                    ],
+                    "age_seconds": age,
+                    "fetched_at": unified.get("fetched_at", ""),
+                }
+            elif not positions_identified:
+                view_reason = "unified positions missing broker_id"
+        if not view_complete or cached is None:
+            logger.warning(
+                "Reconcile: active-broker view unusable (%s) — not classifying "
+                "against an incomplete or ambiguous unified view.", view_reason,
+            )
     if cached is None:
         # No fresh multi-broker (unified) view. The legacy per-mode cache is
         # written ONLY by the Bitget sync, so falling back to it is safe only when
@@ -173,23 +230,21 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
         # orphans from a wrong-broker cache. Live keeps the legacy path (live
         # reconcile is alert-only and Bitget-based today). See
         # docs/research/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
-        from aletheia.config.loader import load_config
-        _active_is_bitget = (load_config().exchange.paper_execution_mode or "").startswith("bitget")
-        if mode == "live" or _active_is_bitget:
-            cached = exchange_sync.get_cached_state(mode)
+        # The legacy cache is Bitget-only. It is valid for Bitget demo/live, but
+        # never for OKX/Binance or any future broker account.
+        if (target_execution_mode or "").startswith("bitget"):
+            cached = exchange_sync.get_cached_state(account_mode)
     sync_status = exchange_sync.status_for(cached)
 
-    local_open = list_positions(status="open")
     local_by_key: dict[tuple[str, str], dict] = {}
-    for p in local_open:
+    for p in in_scope:
         local_by_key[_key(p["symbol"], p["direction"])] = p
-
-    result = ReconcileResult(sync_status=sync_status)
+    result.sync_status = sync_status
 
     # Without a usable exchange view we cannot classify externals/orphans honestly.
     # Report locals as managed and bail — the caller sees sync_status and knows why.
     if cached is None or sync_status not in ("ok", "stale"):
-        for p in local_open:
+        for p in in_scope:
             result.managed.append(
                 ReconcileItem(
                     symbol=to_canonical(p["symbol"]),

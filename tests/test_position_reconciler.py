@@ -165,6 +165,145 @@ def test_degraded_cache_never_infers_orphans(tmp_path, monkeypatch):
     assert len(r.managed) == 1  # local position reported, not lost
 
 
+def test_paper_internal_never_reconciles_against_exchange_cache(tmp_path, monkeypatch):
+    """A local-only position has no exchange counterpart by design, not by drift."""
+    setup_env(tmp_path, monkeypatch)
+    import yaml
+    import aletheia.config.loader as loader
+
+    loader.CONFIG_PATH.write_text(
+        yaml.safe_dump({"exchange": {"mode": "demo", "paper_execution_mode": "paper_internal"}}),
+        encoding="utf-8",
+    )
+    loader._cached_config = None
+    repo.insert_position(Position(
+        symbol="VIRTUAL/USDT", market_type="usdt_futures", direction="short",
+        quantity=100.0, entry_price=0.6, execution_mode="paper_internal",
+    ))
+
+    from aletheia.portfolio import position_reconciler as pr
+    monkeypatch.setattr(
+        pr.exchange_sync,
+        "get_unified_cached_state",
+        lambda: {"positions": [], "accounts": [], "age_seconds": 1.0},
+    )
+    monkeypatch.setattr(pr.exchange_sync, "status_for", lambda *a, **kw: "ok")
+
+    result = pr.classify_positions("demo")
+    assert len(result.managed) == 1
+    assert result.managed[0].local["execution_mode"] == "paper_internal"
+    assert result.external == []
+    assert result.orphaned == []
+
+
+def test_reconcile_scopes_locals_to_active_execution_account(tmp_path, monkeypatch):
+    """External demo reconciliation excludes local-only and other-account rows."""
+    setup_env(tmp_path, monkeypatch)
+    import yaml
+    import aletheia.config.loader as loader
+
+    loader.CONFIG_PATH.write_text(
+        yaml.safe_dump({"exchange": {"mode": "demo", "paper_execution_mode": "bitget_demo"}}),
+        encoding="utf-8",
+    )
+    loader._cached_config = None
+    repo.insert_position(Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=60_000.0, execution_mode="paper_internal",
+    ))
+    external_local = Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.02, entry_price=60_000.0, execution_mode="bitget_demo",
+    )
+    repo.insert_position(external_local)
+    _stub_cache(monkeypatch, [])
+
+    from aletheia.portfolio.position_reconciler import classify_positions
+    result = classify_positions("demo")
+    assert result.managed == []
+    assert [item.local["id"] for item in result.orphaned] == [external_local.id]
+
+
+def test_live_reconcile_execution_mode_follows_active_exchange(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    import yaml
+    import aletheia.config.loader as loader
+    from aletheia.portfolio.position_reconciler import _execution_mode_for
+
+    for exchange, expected in (
+        ("bitget", "bitget_live_limited"),
+        ("okx", "okx_live_limited"),
+        ("binance", "binance_live_limited"),
+    ):
+        loader.CONFIG_PATH.write_text(
+            yaml.safe_dump({"exchange": {"name": exchange, "mode": "live"}}),
+            encoding="utf-8",
+        )
+        loader._invalidate_config_cache()
+        assert _execution_mode_for("live") == expected
+
+
+def test_unified_positions_are_scoped_to_active_broker(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    import yaml
+    import aletheia.config.loader as loader
+
+    loader.CONFIG_PATH.write_text(
+        yaml.safe_dump({"exchange": {"mode": "demo", "paper_execution_mode": "okx_demo"}}),
+        encoding="utf-8",
+    )
+    loader._invalidate_config_cache()
+    repo.insert_position(Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=60_000.0, execution_mode="okx_demo",
+    ))
+
+    from aletheia.portfolio import position_reconciler as pr
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
+        "accounts": [
+            {"broker_id": "okx_demo"},
+            {"broker_id": "bitget_demo"},
+        ],
+        "positions": [
+            {**_ex("BTCUSDT", "long", 0.01, 60_000.0), "broker_id": "bitget_demo"},
+        ],
+        "age_seconds": 1.0,
+    })
+
+    result = pr.classify_positions("demo")
+    assert result.managed == []
+    assert len(result.orphaned) == 1
+    assert result.external == []
+
+
+def test_unified_position_without_broker_id_never_infers_orphan(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    import yaml
+    import aletheia.config.loader as loader
+
+    loader.CONFIG_PATH.write_text(
+        yaml.safe_dump({"exchange": {"mode": "demo", "paper_execution_mode": "okx_demo"}}),
+        encoding="utf-8",
+    )
+    loader._invalidate_config_cache()
+    repo.insert_position(Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=60_000.0, execution_mode="okx_demo",
+    ))
+
+    from aletheia.portfolio import position_reconciler as pr
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
+        "accounts": [{"broker_id": "okx_demo"}],
+        "positions": [_ex("BTCUSDT", "long", 0.01, 60_000.0)],
+        "age_seconds": 1.0,
+    })
+
+    result = pr.classify_positions("demo")
+    assert result.sync_status == "unconfigured"
+    assert len(result.managed) == 1
+    assert result.orphaned == []
+
+
 def test_zero_quantity_exchange_rows_ignored(tmp_path, monkeypatch):
     """Bitget sometimes returns zero-qty slots for closed positions — skip them."""
     setup_env(tmp_path, monkeypatch)

@@ -28,8 +28,9 @@
 4. **已完成**：price feed、主所采集器和 volume ranking 保留 venue+spot/perp 身份；尚未正式接入的股票/ETF 合约不进入 crypto 执行池。
 5. **已完成**：负反馈统计按真实关卡阶段和事发参数分组；同名关卡跨阶段不再因幂等键碰撞丢失证据。
 6. **已完成**：订单簿解析兼容 CCXT 三列档位，永续深度按 contractSize 换算；后续仍须给 orderbook 存储和消费者补 market_type。
-7. **下一阶段**：等各筛选器达到 pass/reject 各20个完整 net 样本和 70% 覆盖后，再分别实验 family+direction+market 校准、方向刹车、ranker 重复扣分和 Kelly/sizing。
-8. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+7. **已完成**：持仓 reconciliation 按 execution account 隔离；本地模拟仓不会再被外部空仓缓存关闭，跨账户同标的不会互相覆盖。
+8. **下一阶段**：恢复过期 trading memo，再补活动标的 OHLCV 和 orderbook market_type；筛选器达到 20/20 完整净样本后才实验方向刹车、ranker 和 Kelly/sizing。
+9. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
 已经修好的供给/语义问题不要重复施工：OKX 永续成交额、分配前 market 去重、short funding 方向、PI bear_case、market-aware proposal price、pending shadow、因果漏斗和 doctor 市场覆盖。
 

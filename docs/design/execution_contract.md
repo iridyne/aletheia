@@ -135,6 +135,15 @@ trade_proposals.id
 | 红线 | **对账绝不下单/撤单**,只比对状态 + 写收敛/审计记录([trust §1.3](../governance/trust_and_change_control.md)) | — |
 | 防伪 | 对账从不创建虚假 Fill,仅更新 `order.status` | `reconciliation.py:77` |
 
+Position reconciler 的匹配身份必须包含执行账户作用域：`execution_mode + canonical symbol + direction`。
+外部 Demo/Live 只比较当前执行账户对应的本地仓；其他账户仓位不进入本次分类，不能被当前账户关闭。
+`paper_internal` 是纯本地模拟，没有交易所对应物，始终返回 `sync_status=local_only`，任何 unified/legacy
+外部缓存都不得把它分类为 `orphaned`。可执行检查：`PL-ADOPT-22`。
+Live 作用域从 `exchange.name` 派生对应的 `*_live_limited`，不得硬编码某一家交易所（`PL-ADOPT-23`）。
+统一 Demo 快照中的每条非零仓位必须有 `broker_id`，且只匹配当前执行账户；账户标签缺失时必须降级为
+不可用，不能据此推断本地仓已从交易所消失（`PL-ADOPT-24`）。统一快照当前不包含 Live 账户，禁止用
+Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。
+
 ---
 
 ## 7. 审计要求

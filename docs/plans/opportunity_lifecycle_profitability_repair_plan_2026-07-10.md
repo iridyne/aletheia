@@ -86,6 +86,7 @@
 
 ## 阶段 F：仓位和样本身份
 
+- ✅ Reconciler 按 execution account 隔离；paper_internal 不进入外部 orphan 判定，跨账户同 symbol/direction 不再互相覆盖或关闭。
 - strategy engine 删除后，样本身份改为 family+direction+market+regime 或明确的 hypothesis ID。
 - Kelly 只作用一次；波动率 cap 与 conviction multiplier 分工明确。
 - 仓位修复先做离线 sizing trace 对比，不改变风险引擎硬上限。

@@ -681,7 +681,7 @@ def test_non_bitget_fresh_unified_manages(tmp_path, monkeypatch):
     from aletheia.portfolio import position_reconciler as pr
     # Fresh unified that INCLUDES the active broker (okx_demo) in accounts → complete.
     monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
-        "positions": [{"symbol": "BNBUSDT", "side": "short", "quantity": 0.03,
+        "positions": [{"broker_id": "okx_demo", "symbol": "BNBUSDT", "side": "short", "quantity": 0.03,
                        "entry_price": 562.73, "mark_price": 560.0}],
         "accounts": [{"broker_id": "okx_demo", "equity_usdt": 89000.0}],
         "age_seconds": 5.0, "fetched_at": "2026-07-01T00:00:00+00:00",
@@ -1138,6 +1138,91 @@ def test_fresh_but_incomplete_unified_never_orphans(tmp_path, monkeypatch):
         f"(got {len(r.orphaned)}) — this is the OKX-down thrash variant"
     )
     assert len(r.managed) == 1, "the real OKX position must be reported managed (safe)"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-22", "pipeline_adopted_position", "§22 execution_account_scope", "L2c",
+        "Reconciliation scopes local rows to the active execution account; paper_internal "
+        "positions are local-only and can never become exchange orphans.",
+        status="implemented",
+    )
+)
+def test_paper_internal_is_outside_exchange_reconciliation_scope(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    _write_config(tmp_path, monkeypatch, "paper_internal")
+
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    repo.insert_position(Position(
+        symbol="VIRTUAL/USDT", market_type="usdt_futures", direction="short",
+        quantity=100.0, entry_price=0.6, execution_mode="paper_internal", status="open",
+    ))
+
+    from aletheia.portfolio import position_reconciler as pr
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
+        "positions": [], "accounts": [], "age_seconds": 1.0,
+    })
+    monkeypatch.setattr(pr.exchange_sync, "status_for", lambda *args, **kwargs: "ok")
+
+    result = pr.classify_positions("demo")
+    assert result.sync_status == "local_only"
+    assert len(result.managed) == 1
+    assert result.orphaned == []
+    assert result.external == []
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-24", "pipeline_adopted_position", "§22 execution_account_scope", "L2c",
+        "Unified exchange positions must carry broker_id and are filtered to the active "
+        "execution account before matching; ambiguous rows degrade without orphaning.",
+        status="implemented",
+    )
+)
+def test_unified_position_identity_is_required_for_destructive_reconcile(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    _write_config(tmp_path, monkeypatch, "okx_demo")
+
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    repo.insert_position(Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=60_000.0, execution_mode="okx_demo", status="open",
+    ))
+
+    from aletheia.portfolio import position_reconciler as pr
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
+        "positions": [{"symbol": "BTCUSDT", "side": "long", "quantity": 0.01}],
+        "accounts": [{"broker_id": "okx_demo"}],
+        "age_seconds": 1.0,
+    })
+
+    result = pr.classify_positions("demo")
+    assert len(result.managed) == 1
+    assert result.orphaned == []
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-23", "pipeline_adopted_position", "§22 execution_account_scope", "L2b",
+        "Live reconciliation derives its execution mode from the configured exchange "
+        "instead of hardcoding Bitget.",
+        status="implemented",
+    )
+)
+def test_live_reconcile_scope_follows_configured_exchange(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    import yaml
+    import aletheia.config.loader as loader
+    from aletheia.portfolio.position_reconciler import _execution_mode_for
+
+    loader.CONFIG_PATH.write_text(
+        yaml.safe_dump({"exchange": {"name": "okx", "mode": "live"}}),
+        encoding="utf-8",
+    )
+    loader._invalidate_config_cache()
+    assert _execution_mode_for("live") == "okx_live_limited"
 
 
 @spec_claim(

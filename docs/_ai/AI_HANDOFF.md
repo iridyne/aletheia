@@ -7,7 +7,17 @@
 
 ## Last Updated
 
-2026-07-11 (Local No-Exchange paper account)
+2026-07-11 (Reconciliation execution-account scope)
+
+---
+
+## Recent Change (Reconciliation execution-account scope — 2026-07-11)
+
+重复开仓的根因不是方向刹车：paper_internal 本地仓被拿去和 unified 外部账户空仓视图比较，几分钟后被 `reconciled_gone` 关闭，AI 又因无持仓重新进入。Reconciler 现在按 active execution_mode 隔离本地仓与快照仓；本地模拟固定 local_only，外部账户只能处理本账户的本地仓和带同一 broker_id 的快照仓。缺少账户标签时安全降级，Demo 聚合快照不解释 Live 仓位。
+
+这是一条通用账户边界，不针对 VIRTUAL 写特例。没有修改 broker 下单、风险、平仓价格、live 或凭证。
+
+验证：对账聚焦测试 17 项、持仓接管规则 24 项、全部规则 612 项、执行/风控/仓位组合回归 87 项通过。全量 2682 项通过；唯一失败是 master 已有的 `DM-S08` 规则编号重复，需在独立提交中更名。
 
 ---
 

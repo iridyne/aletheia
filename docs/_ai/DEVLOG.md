@@ -1,5 +1,16 @@
 # Development Log
 
+## 2026-07-11 — Reconciliation execution-account scope
+
+- 现场因果链确认：本地模拟仓成交后 3–6 分钟被 unified 外部空仓缓存标为 `reconciled_gone`，AI 随后因“无持仓”再次开同方向；VIRTUAL 集中成交是错误对账的结果，不是正常分批建仓。
+- `classify_positions` 现在先按 active execution_mode 分区；paper_internal 固定 local_only，外部 Demo/Live 只处理当前账户，本地其他账户仓位不进入本次分类。
+- 匹配身份从 symbol+direction 扩展为 execution account 作用域内的 symbol+direction，避免跨账户同标的相互覆盖。
+- unified Demo 快照同时按 broker_id 过滤；旧/异常快照若仓位没有账户标签则安全降级，且 Demo 聚合快照不再解释 Live 仓位。
+- 未修改 broker 下单、风险阈值、平仓估值、live 或凭证。
+- 验证：对账聚焦测试 17 项、持仓接管规则 24 项、全部规则 612 项、执行/风控/仓位组合回归 87 项通过。全量 2682 项通过；唯一失败是 master 已有的 `DM-S08` 规则编号重复，另开独立修复处理。
+
+---
+
 ## 2026-07-11 — Local No-Exchange paper account
 
 - Local paper trading now has its own append-only cash ledger, separate from the
