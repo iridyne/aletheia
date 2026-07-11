@@ -1115,6 +1115,7 @@ _PRUNABLE = {
     "filter_decision_batches": "evaluated_at",
     "filter_decisions": "evaluated_at",
     "filter_candidate_outcomes": "entry_ts",
+    "ohlcv_backfill_state": "updated_at",
 }
 
 _CONDITIONALLY_PRUNABLE = {
@@ -1189,6 +1190,11 @@ def prune_market_snapshots(days: int = 30) -> int:
 
 def prune_portfolio_snapshots(days: int = 90) -> int:
     return _delete_old_rows("portfolio_snapshots", days)
+
+
+def prune_ohlcv_backfill_state(days: int = 90) -> int:
+    """Drop stale operational retries after an instrument has left the Universe."""
+    return _delete_old_rows("ohlcv_backfill_state", days)
 
 
 def prune_serenity_claims(days: int = 90) -> int:
@@ -1415,6 +1421,54 @@ def get_ohlcv_newest_ts(
         (scoped_exchange, symbol, scoped_market_type, timeframe),
     ).fetchone()
     return row[0] if row else None
+
+
+def get_ohlcv_backfill_state(
+    exchange: str, symbol: str, market_type: str, timeframe: str
+) -> dict | None:
+    """Return durable retry state for one exact OHLCV instrument/timeframe."""
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM ohlcv_backfill_state "
+        "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=?",
+        (exchange.lower(), symbol, market_type, timeframe),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_ohlcv_backfill_state(
+    *,
+    exchange: str,
+    symbol: str,
+    market_type: str,
+    timeframe: str,
+    status: str,
+    bar_count: int,
+    consecutive_failures: int,
+    last_attempt_at: str | None,
+    next_attempt_at: str | None,
+    last_error: str | None,
+) -> None:
+    """Persist one exact catch-up state without leaking a caller transaction."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    db.execute(
+        "INSERT INTO ohlcv_backfill_state "
+        "(exchange,symbol,market_type,timeframe,status,bar_count,consecutive_failures,"
+        " last_attempt_at,next_attempt_at,last_error,updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now')) "
+        "ON CONFLICT(exchange,symbol,market_type,timeframe) DO UPDATE SET "
+        "status=excluded.status, bar_count=excluded.bar_count, "
+        "consecutive_failures=excluded.consecutive_failures, "
+        "last_attempt_at=excluded.last_attempt_at, next_attempt_at=excluded.next_attempt_at, "
+        "last_error=excluded.last_error, updated_at=datetime('now')",
+        (
+            exchange.lower(), symbol, market_type, timeframe, status, int(bar_count),
+            int(consecutive_failures), last_attempt_at, next_attempt_at, last_error,
+        ),
+    )
+    if not was_in_tx:
+        db.commit()
 
 
 def get_ohlcv_candles(

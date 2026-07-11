@@ -1,5 +1,15 @@
 # Development Log
 
+## 2026-07-11 — Active-Universe OHLCV catch-up
+
+- Added an independent bounded scheduler job for exact active-member 1h/4h coverage gaps; Universe refresh never waits on historical network downloads.
+- Added durable per-instrument/timeframe `ready`/`partial`/`failed` state, one-hour partial retries, exponential failure backoff, and deduplicated infrastructure warnings after repeated failures.
+- Settings exposes enable/interval/max-pairs controls; doctor reports automatic catch-up state beside exact active coverage gaps. Nightly bulk backfill remains unchanged as fallback.
+- No Universe scoring, filter, risk, sizing, execution, live, or credential behavior changed.
+- Validation: production-database backup migration kept all checked market/trading row counts unchanged with `PRAGMA integrity_check=ok`; focused 18 passed, all specs 617 passed, full suite 2704 passed with 0 real failures; frontend production build passed.
+
+---
+
 ## 2026-07-11 — Orderbook full instrument identity
 
 - `OrderbookSnapshot` and `orderbook_snapshots` now carry market_type. Existing rows are migrated to `unknown` rather than guessed; new InstrumentId-driven collection writes the real spot/perp type.

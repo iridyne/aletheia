@@ -7,7 +7,17 @@
 
 ## Last Updated
 
-2026-07-11 (Orderbook full instrument identity)
+2026-07-11 (Active-Universe OHLCV catch-up)
+
+---
+
+## Recent Change (Active-Universe OHLCV catch-up — 2026-07-11)
+
+动态 Universe 新成员不再只能等待夜间历史回填。独立 scheduler 任务按交易所、symbol、spot/perp 和周期检查精确 1h/4h 覆盖，每轮只处理配置上限内的缺口。partial/failed/ready、连续失败次数和下次重试时间保存在 SQLite；失败按 15 分钟起步指数退避，三次后进入基础设施告警。Universe 刷新本身不做网络下载，夜间回填继续作为批量兜底。
+
+Settings 暴露开关、间隔和单轮上限；doctor 显示活动缺口对应的 catch-up 状态。没有修改选币分数、过滤器、风险、仓位、执行、live 或凭证。
+
+验证：真实库副本迁移完整性为 ok，关键行情/交易因果表行数前后一致；专项回归 18 项、完整规则 617 项、全量 2704 项通过，0 项真实失败；前端 production build 通过。
 
 ---
 

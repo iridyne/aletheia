@@ -1524,6 +1524,9 @@ class HistoricalDataConfigUpdate(SettingsRequest):
     nightly_backfill_enabled: bool | None = None
     nightly_backfill_hour_cst: int | None = None
     min_bars_for_backtest: int | None = None
+    active_universe_backfill_enabled: bool | None = None
+    active_universe_backfill_interval_minutes: int | None = None
+    active_universe_backfill_max_pairs_per_run: int | None = None
 
 
 _HIST_DATA_BOUNDS: dict[str, tuple[float, float]] = {
@@ -1531,6 +1534,8 @@ _HIST_DATA_BOUNDS: dict[str, tuple[float, float]] = {
     "default_months": (1, 24),
     "nightly_backfill_hour_cst": (0, 23),
     "min_bars_for_backtest": (30, 5_000),
+    "active_universe_backfill_interval_minutes": (5, 60),
+    "active_universe_backfill_max_pairs_per_run": (1, 10),
 }
 
 

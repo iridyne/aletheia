@@ -71,11 +71,12 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `news_items` | External news signals | source, headline, sentiment, symbols (JSON) |
 | `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
 
-### D. Market Data Collection (9 tables)
+### D. Market Data Collection (10 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `market_snapshots` | Point-in-time price/volume | symbol, price, volume_24h, change_pct_24h |
+| `ohlcv_backfill_state` | Durable active-Universe catch-up/retry state; operational metadata only, pruned after 90 days inactive | exchange, symbol, market_type, timeframe, status, bar_count, consecutive_failures, next_attempt_at, last_error |
 | `orderbook_snapshots` | Order book depth with exact instrument identity | exchange, symbol, market_type, bid/ask, spread, depth, imbalance |
 | `funding_rate_snapshots` | Perpetual funding rates (multi-venue via **exchange** tag) | symbol, exchange, funding_rate, next_funding_time; `exchange="hyperliquid"` / `"hyperliquid_predicted"` are cross-venue feeds **excluded from the primary per-symbol read** (see `latest_funding_rate(exchange=...)`) |
 | `open_interest_snapshots` | Open interest data (multi-venue via **exchange** tag) | symbol, exchange, open_interest, oi_change_pct, **long_short_ratio** (Round 2 Step 1 — Binance globalLongShortAccountRatio); Hyperliquid writes cross-venue OI here, excluded from the primary per-symbol read |
@@ -310,6 +311,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | `portfolio_snapshots` | 90d | yes | `repositories.py:1006` |
 | `orderbook_snapshots` / `liquidation_events` | 7d | hardcoded | `repositories.py:1539-1556` |
 | `funding_rate_snapshots` / `open_interest_snapshots` / `perp_structure_snapshots` / `universe_feature_snapshots` | 30d | hardcoded | `repositories.py` prune functions |
+| `ohlcv_backfill_state` | 90d since last update | hardcoded | `repositories.py:prune_ohlcv_backfill_state` |
 | `macro_snapshots` | 90d | hardcoded | `repositories.py:1587` |
 | `coingecko_top_snapshots` (Round 2 Step 3) | 14d | hardcoded | `repositories.py:prune_coingecko_top_snapshots` |
 | `universe_forward_outcomes` | 30d | hardcoded | `repositories.py:prune_universe_forward_outcomes` |

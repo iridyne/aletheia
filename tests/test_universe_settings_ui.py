@@ -50,6 +50,9 @@ def test_settings_controls_match_backend_config_fields():
         "self_heal_port_cleanup",
         "min_depth_10bps_usd",
         "fallback_symbols",
+        "active_universe_backfill_enabled",
+        "active_universe_backfill_interval_minutes",
+        "active_universe_backfill_max_pairs_per_run",
     ]
     for field in expected_fields:
         assert field in settings

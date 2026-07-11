@@ -2241,6 +2241,7 @@ def _probe_ohlcv_coverage(report: Report) -> None:
             return
 
         gaps: list[str] = []
+        gap_identities: list[tuple[str, str, str]] = []
         for m in members:
             sym = m.get("symbol", "")
             if not sym:
@@ -2256,6 +2257,7 @@ def _probe_ohlcv_coverage(report: Report) -> None:
             ).fetchone()[0]
             if bars < min_bars:
                 gaps.append(f"{venue}:{sym}:{market_type}({bars})")
+                gap_identities.append((venue, sym, market_type))
 
         symbols_covered = db.execute(
             "SELECT COUNT(DISTINCT exchange || ':' || symbol || ':' || market_type) "
@@ -2263,11 +2265,41 @@ def _probe_ohlcv_coverage(report: Report) -> None:
         ).fetchone()[0]
 
         if gaps:
+            catchup_counts: dict[str, int] = {}
+            persistent_failures = 0
+            for venue, sym, market_type in gap_identities:
+                state = db.execute(
+                    "SELECT status,consecutive_failures FROM ohlcv_backfill_state "
+                    "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe='1h'",
+                    (venue, sym, market_type),
+                ).fetchone()
+                status = state["status"] if state else "awaiting"
+                catchup_counts[status] = catchup_counts.get(status, 0) + 1
+                if state and int(state["consecutive_failures"] or 0) >= 3:
+                    persistent_failures += 1
+            auto_enabled = bool(
+                cfg.historical_data.enabled
+                and cfg.historical_data.active_universe_backfill_enabled
+            )
+            detail = (
+                f"{len(gaps)}/{len(members)} active members below {min_bars} bars: "
+                + ", ".join(gaps[:5])
+                + ("…" if len(gaps) > 5 else "")
+                + f"; catch-up={catchup_counts}"
+            )
+            if persistent_failures:
+                detail += f", persistent_failures={persistent_failures}"
+            action = (
+                "automatic active-Universe catch-up is enabled; check gateway logs if "
+                "persistent_failures remains non-zero"
+                if auto_enabled
+                else "enable Active Universe catch-up in Settings or run: "
+                "uv run aletheia data backfill"
+            )
             report.add(
                 "data.ohlcv", "warn",
-                f"{len(gaps)}/{len(members)} active members below {min_bars} bars: "
-                + ", ".join(gaps[:5]) + ("…" if len(gaps) > 5 else ""),
-                "run: uv run aletheia data backfill",
+                detail,
+                action,
             )
         else:
             report.add(

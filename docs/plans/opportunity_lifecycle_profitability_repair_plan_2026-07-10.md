@@ -99,6 +99,7 @@
 - ✅ XAUT/PAXG 已从“美元稳定币”概念中拆出；它们现在可进入普通 ticker/流动性检查，但不因分类修正获得实盘授权。
 - ✅ 主交易所行情任务保留 venue+spot/perp 身份；volume ranking 的结构化结果按原市场类型回到 Universe。OKX category 3 股票/ETF 合约在正式 capability 接入前保持 observation-only，不混入 crypto 执行池。
 - ✅ OHLCV 存储、provider、活动池回填与覆盖诊断使用 venue+symbol+market_type 完整身份；永续历史不再被跳过，现货行不再冒充活动永续覆盖，旧不明 venue 标为 legacy_unknown。
+- ✅ 动态 Universe 新成员的精确 1h/4h 缺口由独立有界任务补齐；状态和失败退避持久化，不把公共网络下载耦合进 Universe 刷新。
 - ✅ Orderbook 模型、存储、采集和关键消费者使用 venue+symbol+market_type；旧无类型行标 unknown，不进入精确 spot/perp 查询。
 
 ## 验证顺序

@@ -40,7 +40,7 @@
 |---|---|---|---|---|
 | 现货价/OHLCV | CCXTProvider / market_data job | `market_snapshots` | market_observer / paper_trader / trading_decision / price_feed / shadow_trades | ✅ |
 | 微观结构/盘口 | MicrostructureCollector | `orderbook_snapshots` | market_observer→tradability→LLM；universe/features 选币；inspect/doctor 诊断 | ✅ CCXT 三列档位与 contractSize 深度已修复；存储/采集/关键消费者按 venue+symbol+market_type 精确路由，旧行标 unknown |
-| 历史 K 线 | CCXTProvider / history_downloader | `market_ohlcv` | 图表、回测、trade path、shadow/alpha 分析、覆盖诊断 | ✅ 按 venue+symbol+market_type+timeframe+ts 隔离；活动池回填和诊断使用完整 InstrumentId，旧不明 venue 诚实标记 |
+| 历史 K 线 | CCXTProvider / history_downloader / ohlcv_active_backfill | `market_ohlcv` + `ohlcv_backfill_state` | 图表、回测、trade path、shadow/alpha 分析、覆盖诊断 | ✅ 按 venue+symbol+market_type+timeframe+ts 隔离；动态活动成员由独立有界任务补齐，持久化失败退避且不阻塞 Universe 刷新；旧不明 venue 诚实标记 |
 | 资金费率(主交易所) | DerivativesCollector | `funding_rate_snapshots` (exchange=okx) | market_observer→leverage→LLM；context_builder；universe/features | ✅ |
 | 持仓量 OI(主交易所) | DerivativesCollector | `open_interest_snapshots` | 同上→crowding_score | ✅ |
 | 多空比 LSR | DerivativesCollector (Binance fapi) | `open_interest_snapshots.long_short_ratio` | normalizer→crowding_score→leverage→LLM | ✅ |

@@ -206,7 +206,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | POST | `/settings/market-data` | Market data collection config |
 | POST | `/settings/universe` | Universe pipeline config |
 | POST | `/settings/strategy_factory` | Legacy strategy-factory config retained for compatibility; rules engine is removed |
-| POST | `/settings/historical_data` | Historical data backfill config |
+| POST | `/settings/historical_data` | Historical data config, including nightly and bounded active-Universe catch-up controls |
 | POST | `/settings/event_triggers` | Event-driven trigger config |
 | POST | `/settings/news` | News ingestion/settings config |
 | POST | `/settings/network` | Network/proxy settings |

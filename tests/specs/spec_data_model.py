@@ -199,6 +199,25 @@ def test_local_paper_account_ledger_contract():
     assert "manual_set_balance" in account
 
 
+@spec_claim(
+    SpecClaim(
+        "DM-S24", "data_model", "§3 OHLCV catch-up state", "L2a",
+        "ohlcv_backfill_state has one durable row per exchange + canonical symbol + "
+        "market_type + timeframe, preserving retry state without mixing instruments.",
+        status="implemented",
+    ),
+)
+def test_ohlcv_backfill_state_uses_full_instrument_primary_key():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent.parent
+    migrations = (root / "aletheia" / "storage" / "migrations.py").read_text(
+        encoding="utf-8"
+    )
+    assert "CREATE TABLE IF NOT EXISTS ohlcv_backfill_state" in migrations
+    assert "PRIMARY KEY (exchange, symbol, market_type, timeframe)" in migrations
+
+
 # ---------------------------------------------------------------------------
 # L2b — Behavioral (new claims)
 # ---------------------------------------------------------------------------

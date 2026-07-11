@@ -2,7 +2,7 @@
 
 > 一页俯瞰系统所有活动部件、数据流向、管道状态。
 > 断管道标记: ✅ 闭环 | ⚠️ 窄消费（仅API/CLI） | ❌ 断裂（写入无消费）
-> Last synced with code: 2026-07-10
+> Last synced with code: 2026-07-11
 
 ---
 
@@ -18,7 +18,8 @@
 | `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes，filter_decision_batches/filter_decisions/filter_candidate_outcomes | paper_trader_ranker（分 direction/market 的净结果校准）、System Operator family edge、filter controller、risk live-evidence、doctor、guard candidate | ✅ |
 | `outcome_settler` | 15min | 更新 universe_forward_outcomes + filter_candidate_outcomes；同步新 shadow 净结果 | 净收益校准、filter controller、alpha attribution、doctor | ✅ |
 | `cleanup` | cron 03:17 | 删除超保留期的分析/遥测行；filter batch 30d、decision/outcome 90d | SQLite 稳定性 + `data_pruned` audit | ✅，不触碰交易因果表 |
-| `ohlcv_nightly_backfill` | cron(可配) | ohlcv_bars | (历史 OHLCV 存储;backtest 消费者随引擎删除 Position C) | ✅ |
+| `ohlcv_nightly_backfill` | cron(可配) | market_ohlcv | (历史 OHLCV 存储;backtest 消费者随引擎删除 Position C) | ✅ |
+| `ohlcv_active_backfill` | 5–60min(可配，默认10min) | market_ohlcv + ohlcv_backfill_state | 活动 Universe 指标、结果结算、doctor；单轮1–10个精确 instrument/timeframe，失败退避 | ✅，不阻塞 universe_refresh |
 | `okx_demo_symbols` | 4h | (内存 set 缓存) | okx_broker(filter) | ✅ |
 
 ---

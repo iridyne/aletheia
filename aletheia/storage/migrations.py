@@ -2210,6 +2210,25 @@ CREATE TABLE IF NOT EXISTS volume_ranking_snapshots (
 CREATE INDEX IF NOT EXISTS idx_volume_ranking_ts ON volume_ranking_snapshots(observed_at DESC);
 """
 
+_OHLCV_BACKFILL_STATE_DDL = """
+CREATE TABLE IF NOT EXISTS ohlcv_backfill_state (
+    exchange TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running','partial','failed','ready')),
+    bar_count INTEGER NOT NULL DEFAULT 0,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    next_attempt_at TEXT,
+    last_error TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (exchange, symbol, market_type, timeframe)
+);
+CREATE INDEX IF NOT EXISTS idx_ohlcv_backfill_due
+    ON ohlcv_backfill_state(status, next_attempt_at);
+"""
+
 # Filter feedback controller — append-only shadow log of exact-version pass/reject
 # findings. Legacy action columns remain constrained for old readers; evidence_*
 # carries observational verdicts. Rows never advance past status='shadow_only'.
@@ -2274,6 +2293,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_CAPITAL_EVENTS_DDL)
     db.executescript(_PAPER_ACCOUNT_EVENTS_DDL)
     db.executescript(_VOLUME_RANKING_DDL)
+    db.executescript(_OHLCV_BACKFILL_STATE_DDL)
     db.executescript(_CONTROLLER_RECOMMENDATIONS_DDL)
     _ensure_columns(db)
     _ensure_market_ohlcv_instrument_identity(db)

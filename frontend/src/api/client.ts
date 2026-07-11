@@ -828,6 +828,9 @@ export const api = {
     enabled: boolean; max_bars_per_pair: number; default_months: number;
     nightly_backfill_enabled: boolean; nightly_backfill_hour_cst: number;
     min_bars_for_backtest: number;
+    active_universe_backfill_enabled: boolean;
+    active_universe_backfill_interval_minutes: number;
+    active_universe_backfill_max_pairs_per_run: number;
   }>) => post<any>('/settings/historical_data', body),
 
   // Event trigger config

@@ -699,6 +699,9 @@ class HistoricalDataConfig(BaseModel):
     nightly_backfill_enabled: bool = True
     nightly_backfill_hour_cst: int = 3
     min_bars_for_backtest: int = 200
+    active_universe_backfill_enabled: bool = True
+    active_universe_backfill_interval_minutes: int = Field(default=10, ge=5, le=60)
+    active_universe_backfill_max_pairs_per_run: int = Field(default=3, ge=1, le=10)
 
 
 class EventTriggerConfig(BaseModel):

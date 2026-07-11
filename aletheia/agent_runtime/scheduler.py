@@ -28,6 +28,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "portfolio_snapshot",
     "price_feed",
     "ohlcv_nightly_backfill",
+    "ohlcv_active_backfill",
     "exchange_sync",
     "health_check",
     "cleanup",
@@ -67,6 +68,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "price_feed": 45.0,
     "daily_summary": 60.0,
     "ohlcv_nightly_backfill": 3600.0,
+    "ohlcv_active_backfill": 300.0,
     "pi_operator_loop": 120.0,
     "insight_synthesizer": 120.0,
     "confidence_calibration": 30.0,
@@ -568,6 +570,21 @@ def init_scheduler() -> BackgroundScheduler | None:
             "cron", hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30,
             id="ohlcv_nightly_backfill", misfire_grace_time=600,
             executor="io", timezone="Asia/Shanghai",
+        )
+    if (
+        getattr(cfg.historical_data, "enabled", True)
+        and getattr(cfg.historical_data, "active_universe_backfill_enabled", True)
+    ):
+        _scheduler.add_job(
+            _guarded("ohlcv_active_backfill", _run_active_ohlcv_backfill),
+            "interval",
+            minutes=getattr(
+                cfg.historical_data, "active_universe_backfill_interval_minutes", 10
+            ),
+            id="ohlcv_active_backfill",
+            misfire_grace_time=120,
+            next_run_time=datetime.now() + timedelta(minutes=3),
+            executor="io",
         )
     # OKX demo symbol list refresh — keeps the O(1) filter cache warm.
     _scheduler.add_job(
@@ -1305,6 +1322,7 @@ def _run_cleanup():
             "onchain_snapshots": repo.prune_onchain_snapshots(30),
             "prediction_probability_snapshots": repo.prune_prediction_probability_snapshots(90),
             "universe_feature_snapshots": repo.prune_universe_feature_snapshots(30),
+            "ohlcv_backfill_state": repo.prune_ohlcv_backfill_state(90),
             "universe_forward_outcomes": repo.prune_universe_forward_outcomes(30),
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
@@ -1650,6 +1668,54 @@ def _run_ohlcv_nightly_backfill():
     except Exception as e:
         logger.warning("ohlcv_nightly_backfill failed: %s", e)
         _record_job_failure("ohlcv_nightly_backfill", str(e))
+
+
+def _run_active_ohlcv_backfill():
+    """Repair a bounded number of active-Universe OHLCV gaps."""
+    cfg = load_config()
+    if (
+        not cfg.historical_data.enabled
+        or not cfg.historical_data.active_universe_backfill_enabled
+    ):
+        return
+    try:
+        result = _run_sync_with_timeout(
+            "ohlcv_active_backfill", _active_ohlcv_backfill_body
+        )
+        if result.attempted and result.failed == result.attempted:
+            _record_job_failure("ohlcv_active_backfill", "all attempted pairs failed")
+        logger.info(
+            "ohlcv_active_backfill: planned=%d attempted=%d ready=%d partial=%d "
+            "failed=%d fetched=%d",
+            result.planned,
+            result.attempted,
+            result.ready,
+            result.partial,
+            result.failed,
+            result.bars_fetched,
+        )
+        return result
+    except TimeoutError:
+        logger.warning(
+            "ohlcv_active_backfill timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["ohlcv_active_backfill"],
+        )
+        _record_job_failure("ohlcv_active_backfill", "timeout")
+    except Exception as e:
+        logger.warning("ohlcv_active_backfill failed: %s", e)
+        _record_job_failure("ohlcv_active_backfill", str(e))
+
+
+def _active_ohlcv_backfill_body():
+    import asyncio as _asyncio
+    from aletheia.data.active_ohlcv_backfill import run_active_ohlcv_backfill
+
+    cfg = load_config()
+    return _asyncio.run(run_active_ohlcv_backfill(
+        min_bars=cfg.historical_data.min_bars_for_backtest,
+        max_pairs=cfg.historical_data.active_universe_backfill_max_pairs_per_run,
+        months=cfg.historical_data.default_months,
+    ))
 
 
 def _ohlcv_backfill_body():

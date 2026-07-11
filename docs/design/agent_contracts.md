@@ -3,11 +3,11 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-07-07 (#29 scheduler drift sweep)
+> Last updated: 2026-07-11 (active-Universe OHLCV catch-up)
 
 ---
 
-## 1. Scheduler Job Overview (33 jobs)
+## 1. Scheduler Job Overview (35 jobs with optional jobs enabled)
 
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
@@ -39,11 +39,13 @@
 | 26 | guard_promotion | cron 04:00 CST | io | Promote candidate trading guards to active (learning; re-homed from deleted backtest_orchestrator, Position C) |
 | 27 | universe_refresh | 10min | io | Universe composition refresh |
 | 28 | ohlcv_nightly_backfill | cron (configurable) CST | io | Historical OHLCV gap fill |
-| 29 | persona_rollout | 8h | io | Advance dynamic-sizing rollout ladder one health-gated step (no-op unless persona_auto_advance_enabled) |
-| 30 | connectivity_monitor | interval `health.exchange_probe_interval_sec` | fast_io | Probe exchange connectivity; auto-pause on outage; auto-resume when recovered |
-| 31 | shadow_resolver | 6h | io | Resolve shadow trades against realised outcomes |
-| 32 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
-| 33 | outcome_settler | 15min | io | Settle outstanding prediction / universe forward outcomes |
+| 29 | ohlcv_active_backfill | interval `historical_data.active_universe_backfill_interval_minutes` (optional) | io | Bounded exact-instrument repair for active members below the OHLCV minimum; durable backoff |
+| 30 | filter_controller_observe | interval `controller.observe_interval_hours` (optional) | io | Shadow-only pass/reject evidence report; never changes config |
+| 31 | persona_rollout | 8h | io | Advance dynamic-sizing rollout ladder one health-gated step (no-op unless persona_auto_advance_enabled) |
+| 32 | connectivity_monitor | interval `health.exchange_probe_interval_sec` | fast_io | Probe exchange connectivity; auto-pause on outage; auto-resume when recovered |
+| 33 | shadow_resolver | 6h | io | Resolve shadow trades against realised outcomes |
+| 34 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
+| 35 | outcome_settler | 15min | io | Settle outstanding prediction / universe forward outcomes |
 
 ---
 

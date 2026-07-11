@@ -267,6 +267,29 @@ def test_ohlcv_storage_uses_full_instrument_identity():
     assert "InstrumentId.from_parts" in downloader
 
 
+@spec_claim(
+    SpecClaim(
+        "DL-S10",
+        "data_layer_contract",
+        "§4 active universe ohlcv catch-up",
+        "L2c",
+        "Active Universe instruments with insufficient OHLCV are repaired by an "
+        "independent bounded job using exact exchange + symbol + market_type identity, "
+        "durable retry state, and failure backoff.",
+        status="implemented",
+    )
+)
+def test_active_universe_ohlcv_catchup_is_bounded_and_durable():
+    migrations = (_ROOT / "aletheia/storage/migrations.py").read_text(encoding="utf-8")
+    scheduler = (_ROOT / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    module = (_ROOT / "aletheia/data/active_ohlcv_backfill.py")
+
+    assert module.exists()
+    assert "ohlcv_backfill_state" in migrations
+    assert "ohlcv_active_backfill" in scheduler
+    assert "active_universe_backfill_max_pairs_per_run" in scheduler
+
+
 # ---------------------------------------------------------------------------
 # L2b — Behavioral
 # ---------------------------------------------------------------------------
