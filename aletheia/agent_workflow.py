@@ -307,6 +307,29 @@ def update_task(
     return task
 
 
+def rebase_base(task_id: str, *, root: Path | None = None) -> dict[str, Any]:
+    """Reset an active task's base_commit to current HEAD, recording the rebase.
+
+    After a rebase or squash-merge the original base_commit can become
+    unreachable from HEAD even though every intended change is still there.
+    `validate()` reports that as a warning; this call resolves it explicitly.
+    """
+    root = repo_root(root)
+    path, task = _task(root, task_id)
+    if task.get("status") not in {"in_progress", "blocked"}:
+        raise ValueError(
+            f"only in-progress or blocked tasks may rebase base_commit (is {task.get('status')!r})"
+        )
+    _, head = _git(root, "rev-parse", "HEAD")
+    if not head:
+        raise ValueError("cannot resolve current HEAD")
+    task["base_commit"] = head
+    task["rebased_at"] = _now()
+    task["updated_at"] = _now()
+    _write_yaml(path, task)
+    return task
+
+
 def verify_task(task_id: str, *, command_key: str, root: Path | None = None) -> dict[str, Any]:
     """Run one registered command and record evidence only after a real success."""
     root = repo_root(root)
@@ -452,7 +475,11 @@ def validate(
         else:
             code, _ = _git(root, "merge-base", "--is-ancestor", str(task["base_commit"]), "HEAD")
             if code:
-                findings.append(Finding("error", "base_commit is not reachable from current HEAD", task_id))
+                # After a rebase or squash-merge, the original branch tip can
+                # become an orphan even though every intended change is still
+                # reachable. Surface it as a warning so `check --strict` doesn't
+                # jam long-lived branches — `task rebase-base` clears it.
+                findings.append(Finding("warning", "base_commit is not reachable from current HEAD; run 'agent workflow task rebase-base' to reset it", task_id))
         next_action = task.get("next_action")
         if not isinstance(next_action, dict) or next_action.get("command_key") not in commands:
             findings.append(Finding("error", "next action references an unknown command key", task_id))

@@ -31,3 +31,11 @@ execution, credentials, gateway state, databases, balances, or positions.
 7. **AW-S07 — enforced adoption.** Strict range validation and CI reject
    governed source/documentation changes unless the same change range updates
    both a task packet and its handoff.
+8. **AW-S08 — base_commit rebase resilience.** A `base_commit` that no longer
+   reaches HEAD (after a rebase, squash-merge, or history rewrite) surfaces as
+   a warning, not an error, so long-lived branches can stay honest without
+   fabricating history. Only a non-existent commit is an error. Owners
+   explicitly re-anchor the packet with `agent workflow task rebase-base
+   TASK-ID`, which resets `base_commit` to current HEAD and records
+   `rebased_at`. `rebase-base` refuses tasks not in `in_progress` or
+   `blocked`.
