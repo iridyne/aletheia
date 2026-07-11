@@ -78,11 +78,11 @@ def open_dashboard():
 
 @gateway_app.command(name="enable-autostart")
 def enable_autostart():
-    """Register a Windows task to start the gateway on logon + watchdog every 5 min."""
+    """Register the OS watchdog to start and resurrect the gateway."""
     from aletheia.gateway import autostart
     result = autostart.enable(source="cli")
     if result.get("ok"):
-        typer.echo(f"Autostart enabled (task: {autostart.TASK_NAME}).")
+        typer.echo(f"Autostart enabled (task: {result.get('task_name') or autostart.TASK_NAME}).")
     elif not result.get("supported"):
         typer.echo(f"Autostart not available on this OS ({result.get('reason')}).")
     else:
@@ -93,7 +93,7 @@ def enable_autostart():
 
 @gateway_app.command(name="disable-autostart")
 def disable_autostart():
-    """Remove the gateway autostart scheduled task."""
+    """Remove the gateway OS autostart/watchdog registration."""
     from aletheia.gateway import autostart
     result = autostart.disable(source="cli")
     if result.get("ok"):

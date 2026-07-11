@@ -33,8 +33,9 @@
 9. **已完成**：OHLCV 表、provider、回填、CLI 和覆盖诊断保留 venue+spot/perp 身份；旧不明 venue 不猜测，标为 legacy_unknown。
 10. **已完成**：orderbook 模型、表、采集器、Universe/observer/context/inspect/doctor 消费者保留 venue+spot/perp 身份；旧行标 unknown。
 11. **已完成**：动态 Universe 新成员由独立有界任务自动补齐精确 1h/4h 历史；持久化 partial/failed/ready 与指数退避，不阻塞 Universe 刷新，夜间批量任务继续兜底。
-12. **下一阶段**：补齐 macOS launchd 自动复活；筛选器达到 20/20 完整净样本后才实验方向刹车、ranker 和 Kelly/sizing。
-13. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+12. **已完成**：macOS 使用用户级 launchd LaunchAgent 登录启动并每 60 秒运行同一 gated start；无提权/凭证/第二套 supervisor，状态由 launchctl 实时查询。
+13. **下一阶段**：补数据采集 domain 跳过/超时可见性；筛选器达到 20/20 完整净样本后才实验方向刹车、ranker 和 Kelly/sizing。
+14. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
 已经修好的供给/语义问题不要重复施工：OKX 永续成交额、分配前 market 去重、short funding 方向、PI bear_case、market-aware proposal price、pending shadow、因果漏斗和 doctor 市场覆盖。
 
@@ -388,8 +389,7 @@ Microstructure/Derivatives/Macro 三表段，平均每个 symbol 多 ~200 token 
    knowledge_items 是否仍在累积;退化才回头查根因。
 2. **并行开发**:可以同时推进 Operator Layer Track B、Persistence/Recovery 集成、
    或本节列出的任何能力线;不再受"Phase 0 门未绿"约束阻塞。
-3. **Windows 无人值守加固**:autostart 看门狗 schtasks 注册可靠性、gateway 重启 / 注销 /
-   整机重启后的自动复活。这是真无人值守的前提,但不是闭环验证的前提。
+3. **跨平台无人值守加固**:Windows Task Scheduler 与 macOS launchd 均使用同一 gated start；gateway 重启 / 注销 / 整机重启后的自动复活状态以 doctor 实时查询为准。
 4. **经验闭环质量门**:post_trade_reviewer / risk_critic 仅在 LLM 真产出 + 有真实活动时
    升 `high_confidence`,防噪音进检索。
 5. **Persistence/Sync/Recovery 集成**:子系统代码已完整实现,下一步 = 将

@@ -1038,3 +1038,9 @@
 | OPR-G04 | ✅ | `market_ohlcv` 主键缺 venue/market_type，永续不落库；回填又把 provider 已写入的真实 venue 二次覆盖成 `ccxt`，doctor 用现货行冒充活动永续覆盖 | 表迁移为 exchange+symbol+market_type+timeframe+ts 复合主键；旧 `ccxt` 行标记 `legacy_unknown`，不猜 venue；provider 可落永续，下载器锁定单一 venue并传 InstrumentId，CLI/夜间任务/doctor/System Operator 覆盖检查均按活动成员完整身份。旧 symbol-only 读取最多选择一个最新数据集，不跨市场拼接 |
 | OPR-G05 | ✅ | 新上市标的在本地 0 历史时，从一个月前请求可能返回空页，下载器立即停止；CAP 永续现场表现为 4h 有 89 根而 1h 为 0 | 空库远起点为空后按 500/100/24/6 根窗口逐步靠近当前；发现首批数据后复用同一向左补齐逻辑，再向右追到当前。增量与空库不再维护两套不同的上市探测行为 |
 | OPR-G06 | ✅ | 动态 Universe 与夜间历史回填存在时间差；新成员可在精确 1h 历史不足时进入活动池，数据供给缺口会伪装成筛选/策略拒绝 | 新增独立 `ohlcv_active_backfill`：按完整 instrument 身份检查 1h/4h，单轮有界，持久化 partial/failed/ready 和指数退避，连续失败进 infra event；不把网络下载耦合进 Universe 刷新，夜间任务继续兜底。Settings 和 doctor 同步暴露控制与状态 |
+
+## §22 Gateway 无人值守运行（2026-07-11）
+
+| ID | 状态 | 问题 | 处理/下一步 |
+|---|---|---|---|
+| OPS-A01 | ✅ | autostart 仅实现 Windows `schtasks`；macOS 永远返回 `not_windows`，整机重启或 supervisor 被杀后无法由项目自身恢复 | 新增用户级 launchd LaunchAgent：登录启动 + 60 秒幂等 gated-start 检查，原子/无凭证 plist、bootstrap/kickstart/bootout、真实状态解析、路径漂移诊断、Settings/doctor/CLI 跨平台说明；不改 supervisor、live、风险或执行 |

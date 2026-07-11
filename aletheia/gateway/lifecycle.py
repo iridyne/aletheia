@@ -270,11 +270,11 @@ def _auto_register_watchdog(cfg) -> None:
         return
     try:
         from aletheia.gateway import autostart
-        if not autostart._is_windows():
+        if not autostart.is_supported_platform():
             return
         # Skip if already registered (avoid re-register on every watchdog tick).
         current = autostart.status()
-        if current.get("enabled"):
+        if current.get("enabled") and current.get("config_valid") is not False:
             return
         result = autostart.enable(source="auto")
         if result.get("ok"):

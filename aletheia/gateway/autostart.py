@@ -1,9 +1,9 @@
-"""Windows Task Scheduler autostart + supervisor watchdog.
+"""OS-level autostart + supervisor watchdog for Windows and macOS.
 
 The gateway already detaches a background process and a supervisor respawns the
 inner server on crash — but nothing restarts the supervisor itself after a
 reboot, power loss, OOM kill, or manual kill. This module closes that gap on
-Windows by registering a per-user scheduled task that runs the SAME gated
+Windows Task Scheduler and a macOS user LaunchAgent both run the SAME gated
 `gateway start` a human runs:
 
   - ONLOGON trigger  → starts the gateway when the user logs on (boot autostart).
@@ -23,6 +23,8 @@ Governance:
 import getpass
 import os
 import platform
+import plistlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -36,6 +38,8 @@ from aletheia.files.jsonl import write_audit
 from aletheia.gateway.pidfile import _no_window_kwargs
 
 TASK_NAME = "Aletheia Trading OS Gateway"
+LAUNCHD_LABEL = "com.aletheia.trading-os.gateway"
+LAUNCHD_INTERVAL_SEC = 60
 
 # How often the task re-checks the gateway (and resurrects a dead supervisor).
 # Windows Task Scheduler enforces a minimum repetition interval of PT1M;
@@ -209,8 +213,172 @@ def _is_windows() -> bool:
     return platform.system() == "Windows"
 
 
-def _not_supported(reason: str = "not_windows") -> dict:
+def _is_macos() -> bool:
+    return platform.system() == "Darwin"
+
+
+def is_supported_platform() -> bool:
+    return _is_windows() or _is_macos()
+
+
+def _not_supported(reason: str = "unsupported_platform") -> dict:
     return {"supported": False, "enabled": False, "ok": False, "reason": reason}
+
+
+def _launch_agents_dir() -> Path:
+    return Path.home() / "Library" / "LaunchAgents"
+
+
+def _launchd_plist_path() -> Path:
+    return _launch_agents_dir() / f"{LAUNCHD_LABEL}.plist"
+
+
+def _launchd_domain() -> str:
+    return f"gui/{os.getuid()}"
+
+
+def _launchd_target() -> str:
+    return f"{_launchd_domain()}/{LAUNCHD_LABEL}"
+
+
+def _build_launchd_plist() -> dict:
+    """Build a secret-free periodic LaunchAgent definition.
+
+    `gateway start` is intentionally short-lived and idempotent, so StartInterval
+    is the correct watchdog primitive. KeepAlive would relaunch the successful
+    command in a tight loop. AbandonProcessGroup preserves the detached supervisor
+    spawned by the gated lifecycle command after the watchdog invocation exits.
+    """
+    log_dir = _PROJECT_ROOT / "data" / "logs"
+    return {
+        "Label": LAUNCHD_LABEL,
+        "ProgramArguments": [
+            sys.executable,
+            "-m",
+            "aletheia.main",
+            "gateway",
+            "start",
+            "--no-browser",
+        ],
+        "WorkingDirectory": str(_PROJECT_ROOT),
+        "RunAtLoad": True,
+        "StartInterval": LAUNCHD_INTERVAL_SEC,
+        "AbandonProcessGroup": True,
+        "ProcessType": "Background",
+        "ThrottleInterval": 10,
+        "StandardOutPath": str(log_dir / "launchd-watchdog.log"),
+        "StandardErrorPath": str(log_dir / "launchd-watchdog-errors.log"),
+    }
+
+
+def _validate_launchd_plist(payload: dict) -> bool:
+    expected_args = [
+        sys.executable,
+        "-m",
+        "aletheia.main",
+        "gateway",
+        "start",
+        "--no-browser",
+    ]
+    return (
+        payload.get("Label") == LAUNCHD_LABEL
+        and payload.get("ProgramArguments") == expected_args
+        and payload.get("WorkingDirectory") == str(_PROJECT_ROOT)
+        and payload.get("RunAtLoad") is True
+        and payload.get("StartInterval") == LAUNCHD_INTERVAL_SEC
+        and payload.get("AbandonProcessGroup") is True
+        and "EnvironmentVariables" not in payload
+        and "KeepAlive" not in payload
+        and Path(sys.executable).is_absolute()
+        and Path(_PROJECT_ROOT).is_absolute()
+    )
+
+
+def _write_launchd_plist() -> Path:
+    """Atomically install a validated user LaunchAgent plist with mode 0644."""
+    payload = _build_launchd_plist()
+    if not _validate_launchd_plist(payload):
+        raise ValueError("invalid launchd plist payload")
+    data = plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=False)
+    # Validate the serialized form too; a partial or malformed plist must never
+    # replace the last working registration.
+    if not _validate_launchd_plist(plistlib.loads(data)):
+        raise ValueError("launchd plist serialization failed validation")
+
+    target = _launchd_plist_path()
+    (_PROJECT_ROOT / "data" / "logs").mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=target.parent, prefix=f".{LAUNCHD_LABEL}.",
+            suffix=".tmp", delete=False,
+        ) as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+            tmp = handle.name
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, target)
+        tmp = None
+        return target
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def _launchctl(args: list[str]):
+    return subprocess.run(
+        ["launchctl", *args],
+        capture_output=True,
+        timeout=30,
+        text=True,
+        errors="replace",
+    )
+
+
+def _classify_launchctl_error(stderr: str) -> str:
+    low = (stderr or "").lower()
+    if any(marker in low for marker in (
+        "could not find service", "service not found", "no such process", "not found",
+    )):
+        return "not_found"
+    if any(marker in low for marker in (
+        "operation not permitted", "permission denied", "not privileged", "access denied",
+    )):
+        return "access_denied"
+    return "launchctl_error"
+
+
+def _parse_launchctl_status(output: str) -> dict:
+    """Parse stable `launchctl print` keys for a short-lived periodic job."""
+    result: dict = {}
+    patterns = {
+        "status": (r"^\s*state\s*=\s*(.+?)\s*$", str),
+        "runs": (r"^\s*runs\s*=\s*(\d+)\s*$", int),
+        "last_result": (r"^\s*last exit code\s*=\s*(-?\d+)\s*$", str),
+        "pid": (r"^\s*pid\s*=\s*(\d+)\s*$", int),
+    }
+    for line in (output or "").splitlines():
+        for key, (pattern, cast) in patterns.items():
+            match = re.match(pattern, line, flags=re.IGNORECASE)
+            if match:
+                result[key] = cast(match.group(1).strip())
+                break
+    runs = result.get("runs")
+    last_result = result.get("last_result")
+    if runs is None:
+        result["primed"] = None
+    elif runs < 1:
+        result["primed"] = False
+    elif last_result is None and result.get("status") == "running":
+        result["primed"] = True
+    else:
+        result["primed"] = last_result == "0"
+    return result
 
 
 def _classify_stderr(stderr: str) -> str:
@@ -254,10 +422,238 @@ def _verify_after_prime(timeout: float = 30.0) -> dict:
     }
 
 
+def _status_macos() -> dict:
+    path = _launchd_plist_path()
+    installed = path.exists()
+    config_valid: bool | None = None
+    if installed:
+        try:
+            config_valid = _validate_launchd_plist(plistlib.loads(path.read_bytes()))
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            config_valid = False
+
+    try:
+        proc = _launchctl(["print", _launchd_target()])
+    except FileNotFoundError:
+        return {
+            "supported": False,
+            "enabled": False,
+            "installed": installed,
+            "task_name": LAUNCHD_LABEL,
+            "platform": "launchd",
+            "reason": "launchctl_unavailable",
+        }
+    except Exception as exc:
+        return {
+            "supported": True,
+            "enabled": None,
+            "installed": installed,
+            "task_name": LAUNCHD_LABEL,
+            "platform": "launchd",
+            "reason": "launchctl_error",
+            "detail": type(exc).__name__,
+        }
+
+    if proc.returncode != 0:
+        reason = _classify_launchctl_error(proc.stderr)
+        if reason == "not_found":
+            return {
+                "supported": True,
+                "enabled": False,
+                "installed": installed,
+                "config_valid": config_valid,
+                "task_name": LAUNCHD_LABEL,
+                "platform": "launchd",
+                "interval": f"{LAUNCHD_INTERVAL_SEC}s",
+                "reason": "not_loaded" if installed else "not_installed",
+            }
+        return {
+            "supported": True,
+            "enabled": None,
+            "installed": installed,
+            "config_valid": config_valid,
+            "task_name": LAUNCHD_LABEL,
+            "platform": "launchd",
+            "reason": reason,
+            "detail": (proc.stderr or "").strip()[:200],
+        }
+
+    runtime = _parse_launchctl_status(proc.stdout)
+    reason = None
+    if not installed:
+        reason = "plist_missing"
+    elif config_valid is False:
+        reason = "config_drift"
+    return {
+        "supported": True,
+        "enabled": True,
+        "installed": installed,
+        "config_valid": config_valid,
+        "task_name": LAUNCHD_LABEL,
+        "platform": "launchd",
+        "interval": f"{LAUNCHD_INTERVAL_SEC}s",
+        "reason": reason,
+        **runtime,
+    }
+
+
+def _enable_macos(source: str) -> dict:
+    try:
+        path = _write_launchd_plist()
+    except Exception as exc:
+        write_audit({
+            "actor": "human", "source": source,
+            "event_type": "autostart_enable_failed",
+            "entity_type": "gateway_autostart", "entity_id": LAUNCHD_LABEL,
+            "message": f"macOS autostart plist install failed: {type(exc).__name__}",
+        })
+        return {
+            "supported": True, "enabled": False, "ok": False,
+            "platform": "launchd", "task_name": LAUNCHD_LABEL,
+            "reason": "plist_install_error", "detail": type(exc).__name__,
+        }
+
+    # Replace an already loaded definition so path/interpreter drift is repaired.
+    try:
+        old = _launchctl(["bootout", _launchd_target()])
+        if old.returncode != 0:
+            reason = _classify_launchctl_error(old.stderr)
+            if reason == "access_denied":
+                return {
+                    "supported": True, "enabled": None, "ok": False,
+                    "installed": True, "platform": "launchd",
+                    "task_name": LAUNCHD_LABEL, "reason": reason,
+                    "detail": (old.stderr or "").strip()[:200],
+                }
+    except FileNotFoundError:
+        return {
+            "supported": False, "enabled": False, "ok": False,
+            "installed": True, "platform": "launchd",
+            "task_name": LAUNCHD_LABEL, "reason": "launchctl_unavailable",
+        }
+    except Exception as exc:
+        return {
+            "supported": True, "enabled": None, "ok": False,
+            "installed": True, "platform": "launchd",
+            "task_name": LAUNCHD_LABEL, "reason": "launchctl_error",
+            "detail": type(exc).__name__,
+        }
+
+    try:
+        loaded = _launchctl(["bootstrap", _launchd_domain(), str(path)])
+    except FileNotFoundError:
+        return {
+            "supported": False, "enabled": False, "ok": False,
+            "installed": True, "platform": "launchd",
+            "task_name": LAUNCHD_LABEL, "reason": "launchctl_unavailable",
+        }
+    except Exception as exc:
+        loaded = None
+        load_error = type(exc).__name__
+    else:
+        load_error = ""
+
+    if loaded is None or loaded.returncode != 0:
+        reason = (
+            "launchctl_error" if loaded is None
+            else _classify_launchctl_error(loaded.stderr)
+        )
+        detail = load_error if loaded is None else (loaded.stderr or "").strip()[:200]
+        write_audit({
+            "actor": "human", "source": source,
+            "event_type": "autostart_enable_failed",
+            "entity_type": "gateway_autostart", "entity_id": LAUNCHD_LABEL,
+            "message": f"macOS LaunchAgent bootstrap failed: {reason}",
+        })
+        return {
+            "supported": True, "enabled": False, "ok": False,
+            "installed": True, "platform": "launchd",
+            "task_name": LAUNCHD_LABEL, "reason": reason, "detail": detail,
+        }
+
+    try:
+        prime = _launchctl(["kickstart", "-k", _launchd_target()])
+        primed = prime.returncode == 0
+        prime_reason = None if primed else _classify_launchctl_error(prime.stderr)
+    except Exception as exc:
+        primed = False
+        prime_reason = "launchctl_unavailable" if isinstance(exc, FileNotFoundError) else "launchctl_error"
+
+    live = _status_macos()
+    if live.get("enabled") is not True:
+        write_audit({
+            "actor": "human", "source": source,
+            "event_type": "autostart_enable_failed",
+            "entity_type": "gateway_autostart", "entity_id": LAUNCHD_LABEL,
+            "message": "macOS LaunchAgent bootstrap returned success but live query failed.",
+        })
+        return {**live, "ok": False, "reason": live.get("reason") or "verification_failed"}
+
+    verify = _verify_after_prime(timeout=30.0) if primed else {}
+    write_audit({
+        "actor": "human", "source": source, "event_type": "autostart_enabled",
+        "entity_type": "gateway_autostart", "entity_id": LAUNCHD_LABEL,
+        "message": (
+            "macOS LaunchAgent installed (RunAtLoad + "
+            f"{LAUNCHD_INTERVAL_SEC}s watchdog)."
+        ),
+    })
+    return {
+        **live,
+        "ok": True,
+        "primed": live.get("primed") if live.get("primed") is not None else primed,
+        "prime_reason": prime_reason,
+        **verify,
+    }
+
+
+def _disable_macos(source: str) -> dict:
+    path = _launchd_plist_path()
+    try:
+        proc = _launchctl(["bootout", _launchd_target()])
+    except FileNotFoundError:
+        return {
+            "supported": False, "enabled": path.exists(), "ok": False,
+            "platform": "launchd", "reason": "launchctl_unavailable",
+        }
+    except Exception as exc:
+        return {
+            "supported": True, "enabled": None, "ok": False,
+            "platform": "launchd", "reason": "launchctl_error",
+            "detail": type(exc).__name__,
+        }
+
+    if proc.returncode != 0:
+        reason = _classify_launchctl_error(proc.stderr)
+        if reason != "not_found":
+            return {
+                "supported": True, "enabled": None, "ok": False,
+                "platform": "launchd", "reason": reason,
+                "detail": (proc.stderr or "").strip()[:200],
+            }
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        return {
+            "supported": True, "enabled": False, "ok": False,
+            "platform": "launchd", "reason": "plist_remove_error",
+            "detail": type(exc).__name__,
+        }
+
+    write_audit({
+        "actor": "human", "source": source, "event_type": "autostart_disabled",
+        "entity_type": "gateway_autostart", "entity_id": LAUNCHD_LABEL,
+        "message": "macOS LaunchAgent removed.",
+    })
+    return {"supported": True, "enabled": False, "ok": True, "platform": "launchd"}
+
+
 def enable(source: str = "api") -> dict:
     """Register (or replace) the autostart+watchdog scheduled task. Never raises."""
+    if _is_macos():
+        return _enable_macos(source)
     if not _is_windows():
-        return _not_supported()
+        return _not_supported(f"unsupported_platform:{platform.system().lower()}")
 
     xml = _build_task_xml()
     tmp = None
@@ -312,8 +708,10 @@ def enable(source: str = "api") -> dict:
 
 def disable(source: str = "api") -> dict:
     """Delete the scheduled task. Absence is treated as success. Never raises."""
+    if _is_macos():
+        return _disable_macos(source)
     if not _is_windows():
-        return _not_supported()
+        return _not_supported(f"unsupported_platform:{platform.system().lower()}")
 
     try:
         proc = subprocess.run(
@@ -447,9 +845,11 @@ def status() -> dict:
     state cannot be determined — so the UI never shows a reassuring state that is
     not backed by a real query (UI honesty).
     """
+    if _is_macos():
+        return _status_macos()
     if not _is_windows():
         return {"supported": False, "enabled": False, "task_name": TASK_NAME,
-                "reason": "not_windows"}
+                "reason": f"unsupported_platform:{platform.system().lower()}"}
 
     # Query 1: XML (structured, locale-independent config)
     try:

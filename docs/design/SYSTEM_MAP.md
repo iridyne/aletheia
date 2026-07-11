@@ -6,6 +6,15 @@
 
 ---
 
+## 零、运行托管层
+
+| 层 | 平台/频率 | 责任 | 边界 |
+|---|---|---|---|
+| OS watchdog | Windows Task Scheduler / macOS launchd，每 60 秒 | 登录启动；supervisor 整体死亡后重新执行幂等 gated start | 用户级、无提权、无凭证、不会解锁 live |
+| gateway supervisor | 常驻 | 管理 frontdoor:8787 + backend:8788，内部子进程异常时重生 | 唯一 pidfile/lifecycle 入口；不由 launchd 分别管理子进程 |
+
+---
+
 ## 一、数据采集层（IO Executor）
 
 | Job ID | 频率 | 写入表 | 下游消费者 | 管道 |

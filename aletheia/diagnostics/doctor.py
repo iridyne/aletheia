@@ -410,27 +410,39 @@ def _probe_process(report: Report) -> None:
         except Exception:
             pass
 
-    # Autostart watchdog: logon-trigger + 2-min repetition that resurrects a dead
-    # supervisor. status() does a live `schtasks /Query`, so this is real state,
-    # not a persisted flag. enabled=None means the query itself failed (unknown).
+    # Autostart watchdog: query the live OS service manager, never a persisted flag.
+    # enabled=None means the OS query itself failed (unknown).
     try:
         from aletheia.gateway.autostart import status as autostart_status, WATCHDOG_INTERVAL
         a = autostart_status()
-        interval_desc = WATCHDOG_INTERVAL.replace("PT", "").replace("M", "-min")
+        raw_interval = a.get("interval") or WATCHDOG_INTERVAL
+        interval_desc = (
+            raw_interval.replace("PT", "").replace("M", "-min")
+            if str(raw_interval).startswith("PT") else str(raw_interval)
+        )
+        manager = a.get("platform") or "task_scheduler"
         if not a.get("supported"):
             report.add("process.autostart", "info", f"not supported ({a.get('reason')})")
         elif a.get("enabled") is True:
-            if a.get("primed") is False:
+            if a.get("config_valid") is False:
+                report.add(
+                    "process.autostart", "warn",
+                    f"watchdog loaded via {manager} but registration points at stale code/path",
+                    "run `aletheia gateway enable-autostart` to reinstall the current definition",
+                )
+            elif a.get("primed") is not True:
                 last_run = a.get("last_run_time") or "unknown"
                 last_result = a.get("last_result") or "unknown"
                 report.add("process.autostart", "warn",
-                           f"watchdog registered but not run successfully yet "
+                           f"watchdog registered but successful run is not verified "
                            f"(last_run={last_run}, last_result={last_result})",
-                           "`aletheia gateway enable-autostart` to re-prime, or `schtasks /Run /TN \"Aletheia Trading OS Gateway\"`")
+                           "run `aletheia gateway enable-autostart` to reinstall and re-prime")
             else:
-                detail = f"watchdog registered (logon + time-triggered {interval_desc} repetition)"
+                detail = f"watchdog registered via {manager} (login + {interval_desc} repetition)"
                 if a.get("last_run_time"):
                     detail += f", last_run={a.get('last_run_time')}"
+                elif a.get("runs") is not None:
+                    detail += f", runs={a.get('runs')}, last_result={a.get('last_result') or 'unknown'}"
                 report.add("process.autostart", "ok", detail)
         elif a.get("enabled") is False:
             report.add("process.autostart", "warn",
@@ -439,7 +451,7 @@ def _probe_process(report: Report) -> None:
         else:
             report.add("process.autostart", "warn",
                        f"watchdog state unknown ({a.get('reason')})",
-                       "run `aletheia gateway enable-autostart` or check Task Scheduler access")
+                       "run `aletheia gateway enable-autostart` or check OS service-manager access")
     except Exception:
         pass
 

@@ -1,4 +1,4 @@
-"""Tests for Windows Task Scheduler autostart + supervisor watchdog.
+"""Tests for Windows Task Scheduler and macOS launchd gateway watchdogs.
 
 Governance: human-triggered only, never agent-callable, runs the SAME gated
 `gateway start` a human runs (live stays disabled, RunLevel LeastPrivilege).
@@ -9,7 +9,9 @@ human-triggered enable/disable.
 """
 
 import sqlite3
+import plistlib
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -60,6 +62,18 @@ class _Recorder:
 def _force_windows(monkeypatch, autostart, python=r"C:\venv\Scripts\pythonw.exe"):
     monkeypatch.setattr(autostart.platform, "system", lambda: "Windows")
     monkeypatch.setattr(autostart, "_python_for_task", lambda: python)
+
+
+def _force_macos(monkeypatch, autostart, tmp_path):
+    launch_agents = tmp_path / "Library" / "LaunchAgents"
+    project_root = tmp_path / "project"
+    project_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(autostart.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(autostart, "_launch_agents_dir", lambda: launch_agents)
+    monkeypatch.setattr(autostart, "_PROJECT_ROOT", project_root)
+    monkeypatch.setattr(autostart.sys, "executable", str(project_root / ".venv/bin/python"))
+    monkeypatch.setattr(autostart.os, "getuid", lambda: 501)
+    return launch_agents, project_root
 
 
 # --- 1. enable builds correct argv + Task XML ---
@@ -352,9 +366,9 @@ def test_status_access_denied_is_honest(tmp_path, monkeypatch):
     assert result["reason"] == "access_denied"
 
 
-# --- 10. non-Windows → all three are honest no-ops, never shell out ---
+# --- 10. unsupported OS → all three are honest no-ops, never shell out ---
 
-def test_non_windows_no_op(monkeypatch):
+def test_unsupported_linux_no_op(monkeypatch):
     from aletheia.gateway import autostart
     monkeypatch.setattr(autostart.platform, "system", lambda: "Linux")
     called = []
@@ -526,14 +540,216 @@ async def test_api_post_disable_audits(tmp_path, monkeypatch):
     assert any(e.get("event_type") == "autostart_disabled" for e in read_jsonl("audit.jsonl"))
 
 
-async def test_api_non_windows_supported_false(tmp_path, monkeypatch):
+async def test_api_unsupported_linux_supported_false(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import autostart
-    monkeypatch.setattr(autostart.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(autostart.platform, "system", lambda: "Linux")
     async with await _client() as c:
         resp = await c.get("/api/gateway/autostart")
     assert resp.status_code == 200
     assert resp.json()["supported"] is False
+
+
+# --- 21. macOS launchd support ---
+
+def test_macos_plist_uses_safe_periodic_gated_start(tmp_path, monkeypatch):
+    from aletheia.gateway import autostart
+
+    _, project_root = _force_macos(monkeypatch, autostart, tmp_path)
+    payload = autostart._build_launchd_plist()
+
+    assert payload["Label"] == autostart.LAUNCHD_LABEL
+    assert payload["ProgramArguments"] == [
+        str(project_root / ".venv/bin/python"),
+        "-m", "aletheia.main", "gateway", "start", "--no-browser",
+    ]
+    assert payload["WorkingDirectory"] == str(project_root)
+    assert payload["RunAtLoad"] is True
+    assert payload["StartInterval"] == 60
+    assert payload["AbandonProcessGroup"] is True
+    assert "KeepAlive" not in payload
+    assert "EnvironmentVariables" not in payload
+    assert "api_key" not in plistlib.dumps(payload).decode("utf-8").lower()
+
+
+def test_macos_enable_writes_plist_bootstraps_kickstarts_and_audits(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+    from aletheia.files.jsonl import read_jsonl
+
+    launch_agents, _ = _force_macos(monkeypatch, autostart, tmp_path)
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(list(args))
+        if args[1] == "print":
+            return _FakeProc(
+                stdout="state = not running\nruns = 1\nlast exit code = 0\n",
+                returncode=0,
+            )
+        if args[1] == "bootout":
+            return _FakeProc(stderr="Could not find service", returncode=113)
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(autostart.subprocess, "run", run)
+    monkeypatch.setattr(autostart, "_verify_after_prime", lambda **kw: {"verified": True})
+
+    result = autostart.enable(source="cli")
+
+    plist_path = launch_agents / f"{autostart.LAUNCHD_LABEL}.plist"
+    assert plist_path.exists()
+    assert plist_path.stat().st_mode & 0o777 == 0o644
+    assert plistlib.loads(plist_path.read_bytes())["Label"] == autostart.LAUNCHD_LABEL
+    assert any(call[1] == "bootstrap" for call in calls)
+    assert any(call[1] == "kickstart" for call in calls)
+    assert result["ok"] is True and result["enabled"] is True
+    assert result["platform"] == "launchd"
+    assert result["primed"] is True and result["verified"] is True
+    assert any(e.get("event_type") == "autostart_enabled" for e in read_jsonl("audit.jsonl"))
+
+
+def test_macos_status_installed_but_not_loaded_is_honest(tmp_path, monkeypatch):
+    from aletheia.gateway import autostart
+
+    launch_agents, _ = _force_macos(monkeypatch, autostart, tmp_path)
+    launch_agents.mkdir(parents=True)
+    plist_path = launch_agents / f"{autostart.LAUNCHD_LABEL}.plist"
+    plist_path.write_bytes(plistlib.dumps(autostart._build_launchd_plist()))
+    monkeypatch.setattr(
+        autostart.subprocess,
+        "run",
+        lambda *args, **kwargs: _FakeProc(returncode=113, stderr="Could not find service"),
+    )
+
+    result = autostart.status()
+
+    assert result["supported"] is True
+    assert result["enabled"] is False
+    assert result["installed"] is True
+    assert result["reason"] == "not_loaded"
+
+
+def test_macos_disable_boots_out_and_removes_plist(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+    from aletheia.files.jsonl import read_jsonl
+
+    launch_agents, _ = _force_macos(monkeypatch, autostart, tmp_path)
+    launch_agents.mkdir(parents=True)
+    plist_path = launch_agents / f"{autostart.LAUNCHD_LABEL}.plist"
+    plist_path.write_bytes(plistlib.dumps(autostart._build_launchd_plist()))
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(list(args))
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(autostart.subprocess, "run", run)
+
+    result = autostart.disable(source="api")
+
+    assert result == {
+        "supported": True, "enabled": False, "ok": True, "platform": "launchd"
+    }
+    assert not plist_path.exists()
+    assert any(call[1] == "bootout" for call in calls)
+    assert any(e.get("event_type") == "autostart_disabled" for e in read_jsonl("audit.jsonl"))
+
+
+def test_macos_status_loaded_with_stale_path_reports_drift(tmp_path, monkeypatch):
+    from aletheia.gateway import autostart
+
+    launch_agents, _ = _force_macos(monkeypatch, autostart, tmp_path)
+    launch_agents.mkdir(parents=True)
+    payload = autostart._build_launchd_plist()
+    payload["WorkingDirectory"] = "/stale/project"
+    (launch_agents / f"{autostart.LAUNCHD_LABEL}.plist").write_bytes(
+        plistlib.dumps(payload)
+    )
+    monkeypatch.setattr(
+        autostart.subprocess,
+        "run",
+        lambda *args, **kwargs: _FakeProc(
+            stdout="state = not running\nruns = 2\nlast exit code = 0\n",
+            returncode=0,
+        ),
+    )
+
+    result = autostart.status()
+
+    assert result["enabled"] is True
+    assert result["config_valid"] is False
+    assert result["reason"] == "config_drift"
+
+
+def test_macos_enable_bootstrap_failure_is_honest_and_audited(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+    from aletheia.files.jsonl import read_jsonl
+
+    _force_macos(monkeypatch, autostart, tmp_path)
+
+    def run(args, **kwargs):
+        if args[1] == "bootout":
+            return _FakeProc(returncode=113, stderr="Could not find service")
+        if args[1] == "bootstrap":
+            return _FakeProc(returncode=5, stderr="Bootstrap failed: input/output error")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(autostart.subprocess, "run", run)
+
+    result = autostart.enable(source="api")
+
+    assert result["ok"] is False
+    assert result["enabled"] is False
+    assert result["installed"] is True
+    assert result["reason"] == "launchctl_error"
+    assert any(
+        event.get("event_type") == "autostart_enable_failed"
+        for event in read_jsonl("audit.jsonl")
+    )
+
+
+def test_parse_launchctl_status_short_lived_success_is_primed():
+    from aletheia.gateway.autostart import _parse_launchctl_status
+
+    parsed = _parse_launchctl_status(
+        "state = not running\nruns = 12\nlast exit code = 0\npid = 0\n"
+    )
+
+    assert parsed == {
+        "status": "not running",
+        "runs": 12,
+        "last_result": "0",
+        "pid": 0,
+        "primed": True,
+    }
+
+
+def test_lifecycle_auto_registers_watchdog_on_macos(monkeypatch):
+    from aletheia.gateway import autostart, lifecycle
+
+    cfg = SimpleNamespace(runtime=SimpleNamespace(autostart_on_start=True))
+    monkeypatch.setattr(autostart, "is_supported_platform", lambda: True)
+    monkeypatch.setattr(autostart, "status", lambda: {"supported": True, "enabled": False})
+    calls: list[str] = []
+    monkeypatch.setattr(
+        autostart,
+        "enable",
+        lambda source="api": calls.append(source) or {"ok": True, "enabled": True},
+    )
+
+    lifecycle._auto_register_watchdog(cfg)
+
+    assert calls == ["auto"]
+
+
+def test_settings_distinguishes_loaded_from_verified_watchdog():
+    source = Path("frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
+    assert "macOS launchd" in source
+    assert "Needs Attention" in source
+    assert "config_valid === false" in source
+    assert "primed !== true" in source
 
 
 # --- 20. Governance guard: autostart must never be agent-callable ---

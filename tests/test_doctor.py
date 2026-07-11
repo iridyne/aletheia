@@ -733,7 +733,44 @@ def test_process_autostart_warns_when_watchdog_never_ran(monkeypatch):
 
     autostart_check = next(c for c in r.checks if c.name == "process.autostart")
     assert autostart_check.severity == "warn"
-    assert "not run" in autostart_check.detail.lower()
+    assert "not verified" in autostart_check.detail.lower()
+
+
+def test_process_autostart_reports_loaded_launchd_agent(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    import aletheia.gateway.pidfile as pidfile
+    import aletheia.gateway.autostart as autostart
+
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(pidfile, "is_running", lambda: False)
+    monkeypatch.setattr(pidfile, "read_pid", lambda: None)
+    monkeypatch.setattr(pidfile, "port_in_use", lambda port, host: False)
+    monkeypatch.setattr(
+        autostart,
+        "status",
+        lambda: {
+            "supported": True,
+            "enabled": True,
+            "installed": True,
+            "config_valid": True,
+            "platform": "launchd",
+            "interval": "60s",
+            "status": "not running",
+            "runs": 4,
+            "last_result": "0",
+            "primed": True,
+        },
+    )
+
+    report = dx.Report(generated_at="t")
+    dx._probe_process(report)
+
+    check = next(item for item in report.checks if item.name == "process.autostart")
+    assert check.severity == "ok"
+    assert "launchd" in check.detail
+    assert "runs=4" in check.detail
 
 
 def test_frontdoor_probe_reports_backend_readiness(monkeypatch):

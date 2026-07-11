@@ -514,14 +514,18 @@ export const api = {
     deps_reinstalled?: boolean; restart_required?: boolean; message?: string
   }>('/update/apply'),
 
-  // Autostart + watchdog (Windows Task Scheduler; on-logon start + 2-min watchdog)
+  // Autostart + watchdog (Windows Task Scheduler / macOS launchd)
   getAutostartStatus: () => fetchJson<{
     supported: boolean; enabled: boolean | null; task_name?: string
-    trigger?: string; interval?: string; reason?: string; detail?: string
+    platform?: string; installed?: boolean; config_valid?: boolean | null
+    primed?: boolean | null; runs?: number; last_result?: string
+    trigger?: string; interval?: string; reason?: string | null; detail?: string
   }>('/gateway/autostart'),
   setAutostart: (enabled: boolean) => post<{
     supported: boolean; enabled: boolean | null; ok?: boolean
-    reason?: string; detail?: string
+    platform?: string; installed?: boolean; config_valid?: boolean | null
+    primed?: boolean | null; runs?: number; last_result?: string
+    reason?: string | null; detail?: string
   }>('/gateway/autostart', { enabled }),
 
   // Data

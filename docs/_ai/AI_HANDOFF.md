@@ -7,7 +7,17 @@
 
 ## Last Updated
 
-2026-07-11 (Active-Universe OHLCV catch-up)
+2026-07-11 (macOS launchd gateway watchdog)
+
+---
+
+## Recent Change (macOS launchd gateway watchdog — 2026-07-11)
+
+macOS 不再把 autostart 报为不支持。项目会安装用户级 `com.aletheia.trading-os.gateway` LaunchAgent：登录运行并每 60 秒执行同一个幂等 `gateway start --no-browser`。它只恢复现有 supervisor，不分别托管 frontdoor/backend，不使用会造成短命令重启风暴的 KeepAlive。
+
+plist 使用绝对 venv Python 和项目目录，原子写入、无环境变量/凭证；enable/disable 通过 launchctl bootstrap/kickstart/bootout，status 实时区分未安装、文件存在但未加载、已加载未成功运行、路径漂移和未知状态。Windows Task Scheduler 行为保持不变。Settings、CLI 和 doctor 使用统一跨平台语义。没有修改 live、风险、执行、交易暂停或凭证。
+
+验证：生成 plist 通过 macOS `plutil`，绝对 Python/工作目录存在且 CLI 可导入；跨平台 autostart/gateway 聚焦回归 112 项、完整规则 623 项、全量 2731 项通过，0 项真实失败；前端 production build 通过。
 
 ---
 

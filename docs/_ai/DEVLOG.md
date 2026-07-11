@@ -1,5 +1,15 @@
 # Development Log
 
+## 2026-07-11 — macOS launchd gateway watchdog
+
+- Added a user LaunchAgent with RunAtLoad + 60-second StartInterval around the existing idempotent gated start; no second supervisor and no KeepAlive restart loop.
+- Plist installation is validated, atomic, mode 0644 and secret-free; lifecycle uses launchctl bootstrap/kickstart/bootout and parses live runs/exit state.
+- Automatic registration now covers supported Windows/macOS platforms and repairs stale path definitions. CLI, Settings and doctor use platform-neutral status language.
+- Live, risk, execution, pause and credential behavior are unchanged.
+- Validation: generated plist passed macOS `plutil`; focused cross-platform watchdog/gateway tests 112 passed, all specs 623 passed, full suite 2731 passed with 0 real failures; frontend production build passed.
+
+---
+
 ## 2026-07-11 — Active-Universe OHLCV catch-up
 
 - Added an independent bounded scheduler job for exact active-member 1h/4h coverage gaps; Universe refresh never waits on historical network downloads.

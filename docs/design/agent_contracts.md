@@ -3,7 +3,7 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-07-11 (active-Universe OHLCV catch-up)
+> Last updated: 2026-07-11 (macOS launchd gateway watchdog)
 
 ---
 
@@ -46,6 +46,14 @@
 | 33 | shadow_resolver | 6h | io | Resolve shadow trades against realised outcomes |
 | 34 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
 | 35 | outcome_settler | 15min | io | Settle outstanding prediction / universe forward outcomes |
+
+### OS Watchdog Contract
+
+- Windows: per-user Task Scheduler entry, logon trigger plus 1-minute repetition.
+- macOS: per-user LaunchAgent `com.aletheia.trading-os.gateway`, `RunAtLoad` plus 60-second `StartInterval`.
+- Both invoke the same idempotent `gateway start --no-browser`; neither bypasses live, risk, permission, or credential gates.
+- The macOS plist uses an absolute venv interpreter and project working directory, stores no environment variables/secrets, and uses `AbandonProcessGroup` so the detached supervisor survives the short watchdog command.
+- `status()` queries the live OS service manager. A plist file without a loaded job, a loaded job with stale paths, and an unreadable state are distinct results.
 
 ---
 

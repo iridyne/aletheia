@@ -1,5 +1,27 @@
 # Decisions
 
+## 2026-07-11 — macOS 用周期 LaunchAgent 托管 gated start，而不另造 supervisor
+
+### Context
+
+现有 gateway 已有 supervisor 管理 frontdoor/backend，`gateway start` 又是幂等、带启动验证的短命令。若 launchd 直接用 `KeepAlive` 反复运行这个短命令，正常退出会触发重启风暴；若让 launchd 分别托管内部两个进程，则会产生第二套生命周期真相源。
+
+### Decisions
+
+1. macOS 安装用户级 LaunchAgent，不用 root/LaunchDaemon；登录时运行，并用 `StartInterval=60` 周期执行同一个 `gateway start --no-browser`。
+2. 不使用 `KeepAlive`。plist 使用 `AbandonProcessGroup=true`，让 gated start 生成的独立 supervisor 在检查进程退出后继续存活。
+3. plist 只保存绝对 venv Python、项目工作目录和日志路径，不保存环境变量、API key、token 或凭证引用。
+4. 安装采用校验后原子替换，再用 `launchctl bootstrap/kickstart`；删除使用 `bootout`。状态以 `launchctl print` 为准，不以文件存在冒充已加载。
+5. Windows 继续使用原 Task Scheduler 实现；两个平台共享 enable/disable/status API、CLI、Settings 和 doctor 语义。
+
+### Consequences
+
+- supervisor 仍是唯一内部进程管理者；launchd 只负责 supervisor 整体死亡或用户重新登录后的恢复。
+- 周期任务显示 `state=not running` 可以是正常状态，必须结合 runs 与 last exit code 判断是否成功。
+- 项目或 venv 路径变化会被标为配置漂移，需要重新 enable，而不是显示虚假绿色。
+
+---
+
 ## 2026-07-10 — 筛选负反馈只使用事前候选与同口径净结果
 
 ### Context

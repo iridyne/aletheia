@@ -460,8 +460,8 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/gateway/autostart` | Autostart configuration |
-| POST | `/gateway/autostart` | Toggle autostart |
+| GET | `/gateway/autostart` | Live Windows Task Scheduler / macOS launchd watchdog state |
+| POST | `/gateway/autostart` | Human-triggered watchdog install/remove |
 | POST | `/gateway/restart` | Restart gateway processes |
 
 ---
