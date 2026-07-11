@@ -80,6 +80,7 @@
 - ✅ 有方向的被拒绝候选继续固定时点 net 结算；无方向 ticker/tradability 只做完整覆盖留痕。
 - ✅ 家族对照分 `scanner_family + direction + market_type + horizon + filter_version`。
 - ✅ 只读学习目标使用收缩后的净期望；未达 20/20 样本与 70% 覆盖只报证据不足。
+- ✅ 反馈 cohort 包含真实 stage；同名关卡跨阶段不会碰撞，报告展示事发参数而不是注册表概括值。
 - ⏳ 删除/合并两个重叠方向刹车；先收集对照，本批不改阈值。
 - ⏳ Ranker 特征去重和最低经济质量门；阈值必须来自回放/影子证据。
 

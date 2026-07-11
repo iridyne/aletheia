@@ -82,7 +82,9 @@ def record_filter_decision(
     parameter_json = _canonical_json(params)
     input_json = _canonical_json(input_values)
     filter_version = _filter_version(filter_name, parameter_json)
-    dedup_material = f"{candidate_key}|{filter_name}|{decision}|{filter_version}"
+    dedup_material = (
+        f"{candidate_key}|{filter_name}|{stage}|{sequence_no}|{decision}|{filter_version}"
+    )
     dedup_key = hashlib.sha256(dedup_material.encode("utf-8")).hexdigest()
     decision_id = dedup_key[:12]
     side = str(direction or "").lower() or None
@@ -170,7 +172,7 @@ def record_filter_decision_batch(
     parameter_json = _canonical_json(params)
     filter_version = _filter_version(filter_name, parameter_json)
     dedup_key = hashlib.sha256(
-        f"{run_id}|{candidate_kind}|{filter_name}|{filter_version}".encode("utf-8")
+        f"{run_id}|{candidate_kind}|{filter_name}|{stage}|{filter_version}".encode("utf-8")
     ).hexdigest()
     counts = {name: 0 for name in _VALID_DECISIONS}
     for fact in facts:
@@ -250,7 +252,8 @@ def filter_feedback_stats(shrinkage_k: float = 20.0) -> list[dict[str, Any]]:
     from aletheia.storage.sqlite import get_db
 
     rows = get_db().execute(
-        "SELECT fd.filter_name, fd.filter_version, fd.decision, "
+        "SELECT fd.filter_name, fd.stage, fd.filter_version, "
+        "fd.parameter_snapshot, fd.decision, "
         "COALESCE(fd.scanner_family, 'unknown') AS scanner_family, "
         "fd.direction, fd.market_type, fo.horizon, "
         "COUNT(DISTINCT fd.outcome_candidate_key) AS n_total, "
@@ -265,9 +268,10 @@ def filter_feedback_stats(shrinkage_k: float = 20.0) -> list[dict[str, Any]]:
         "JOIN filter_candidate_outcomes fo "
         "  ON fo.outcome_candidate_key = fd.outcome_candidate_key "
         "WHERE fd.decision IN ('passed','rejected') "
-        "GROUP BY fd.filter_name, fd.filter_version, fd.decision, "
+        "GROUP BY fd.filter_name, fd.stage, fd.filter_version, "
+        "fd.parameter_snapshot, fd.decision, "
         "COALESCE(fd.scanner_family, 'unknown'), fd.direction, fd.market_type, fo.horizon "
-        "ORDER BY fd.filter_name, fd.filter_version, scanner_family, "
+        "ORDER BY fd.filter_name, fd.stage, fd.filter_version, scanner_family, "
         "fd.direction, fd.market_type, fo.horizon, fd.decision"
     ).fetchall()
     raw = [dict(row) for row in rows]
@@ -682,6 +686,7 @@ def _parse_dt(value: str | None) -> datetime | None:
 def _cohort_key(row: dict[str, Any]) -> tuple:
     return (
         row.get("filter_name"),
+        row.get("stage"),
         row.get("filter_version"),
         row.get("scanner_family"),
         row.get("direction"),

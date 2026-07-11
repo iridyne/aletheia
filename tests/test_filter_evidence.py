@@ -141,6 +141,33 @@ def test_filter_snapshot_drops_sensitive_keys_and_truncates_text():
     assert len(payload["note"]) == 500
 
 
+def test_same_named_filter_gates_remain_distinct_across_stages():
+    from aletheia.analytics.filter_evidence import record_filter_decision
+    from aletheia.storage.sqlite import get_db
+
+    common = dict(
+        candidate_key="pi_decision:stage-identity",
+        candidate_kind="pi_decision",
+        filter_name="direction_bias_brake",
+        decision="passed",
+        reason_code="direction_not_overheated",
+        symbol="BTC/USDT",
+        parameters={"max_share": 0.95},
+    )
+    first_id = record_filter_decision(stage="system_operator", **common)
+    second_id = record_filter_decision(stage="proposal_submission", **common)
+
+    rows = get_db().execute(
+        "SELECT id, stage FROM filter_decisions "
+        "WHERE candidate_key='pi_decision:stage-identity' ORDER BY stage"
+    ).fetchall()
+    assert first_id != second_id
+    assert [row["stage"] for row in rows] == [
+        "proposal_submission",
+        "system_operator",
+    ]
+
+
 def test_filter_decision_batch_is_complete_counted_and_idempotent():
     from aletheia.analytics.filter_evidence import (
         decode_filter_decision_batch,
@@ -195,6 +222,15 @@ def test_filter_decision_batch_is_complete_counted_and_idempotent():
     assert rows[0]["not_applicable_count"] == 1
     assert rows[0]["error_count"] == 0
     assert decode_filter_decision_batch(rows[0]["candidate_facts"]) == facts
+
+    other_stage = record_filter_decision_batch(
+        **{**kwargs, "stage": "secondary_ticker_prefilter"}
+    )
+    assert other_stage != first
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM filter_decision_batches WHERE run_id=?",
+        (kwargs["run_id"],),
+    ).fetchone()[0] == 2
 
 
 def test_filter_decision_batch_compacts_repeated_candidate_keys():
@@ -271,7 +307,9 @@ def test_controller_only_flags_overrestriction_after_paired_gates(monkeypatch):
 
     common = {
         "filter_name": "ranker_confidence_gate",
+        "stage": "ranker_excluded",
         "filter_version": "v1-test",
+        "parameter_snapshot": '{"minimum_confidence":"medium"}',
         "scanner_family": "momentum",
         "direction": "long",
         "market_type": "perp",
@@ -297,6 +335,41 @@ def test_controller_only_flags_overrestriction_after_paired_gates(monkeypatch):
     assert rec.suggested_direction == "review_loosen"
     assert rec.passed_n == 20
     assert rec.rejected_n == 20
+    assert rec.stage == "ranker_excluded"
+    assert rec.current_value == '{"minimum_confidence":"medium"}'
+
+
+def test_controller_uses_evidence_stage_instead_of_registry_stage(monkeypatch):
+    from aletheia.analytics import filter_controller
+
+    common = {
+        "filter_name": "direction_bias_brake",
+        "stage": "proposal_submission",
+        "filter_version": "v1-proposal-brake",
+        "parameter_snapshot": '{"max_share":0.95,"min_sample":15}',
+        "scanner_family": "momentum",
+        "direction": "long",
+        "market_type": "perp",
+        "horizon": "15m",
+        "n_total": 25,
+        "n_net": 20,
+        "n": 20,
+        "outcome_coverage": 0.8,
+    }
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_evidence.filter_feedback_stats",
+        lambda: [
+            {**common, "decision": "passed", "shrunk_avg_net": -0.10},
+            {**common, "decision": "rejected", "shrunk_avg_net": 0.20},
+        ],
+    )
+
+    rec = next(
+        row for row in filter_controller.compute_filter_feedback()
+        if row.filter_name == "direction_bias_brake"
+    )
+    assert rec.stage == "proposal_submission"
+    assert rec.current_value == common["parameter_snapshot"]
 
 
 def test_controller_persists_new_observational_verdict_through_legacy_schema(monkeypatch):

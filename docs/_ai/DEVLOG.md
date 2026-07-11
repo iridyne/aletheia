@@ -1,5 +1,14 @@
 # Development Log
 
+## 2026-07-11 — Filter feedback stage identity
+
+- 修复 filter evidence 幂等身份缺少 stage/sequence 的问题；同一候选经过同名同参数但位于不同阶段的关卡时，不再静默丢掉后写入的证据。
+- `filter_feedback_stats` 将真实 stage 纳入分组与收缩先验，控制器显示证据发生的真实阶段和当时 parameter snapshot，不再把 proposal submission 方向刹车误标成 operator skip。
+- 两道方向刹车的行为和阈值完全不变；本批只修分析证据身份与报告语义，未修改 risk、execution、仓位或 live。
+- 聚焦负反馈/生命周期回归 `93 passed`；全部设计检查 `608 passed, 7 skipped, 6 xfailed`；全量 `2663 passed, 14 skipped, 6 xfailed`，仅 3 个未修改主分支已知基线失败。
+
+---
+
 ## 2026-07-11 — Instrument-aware market collector routing
 
 - 修复主交易所行情链把 Universe 永续成员降级成现货字符串的问题；scheduler、price feed 和 volume scanner 现在传递 `venue + symbol + market_type` 完整身份。

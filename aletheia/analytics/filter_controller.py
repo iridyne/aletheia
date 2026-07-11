@@ -89,6 +89,7 @@ def compute_filter_feedback(min_samples: int = _DEFAULT_MIN_SAMPLES) -> list[Fil
             continue
         key = (
             row.get("filter_name"),
+            row.get("stage"),
             row.get("filter_version"),
             row.get("scanner_family") or "unknown",
             row.get("direction"),
@@ -122,9 +123,13 @@ def compute_filter_feedback(min_samples: int = _DEFAULT_MIN_SAMPLES) -> list[Fil
             ))
             continue
         for key, cells in sorted(matching, key=lambda item: str(item[0])):
-            _, version, family, direction, market_type, horizon = key
+            _, evidence_stage, version, family, direction, market_type, horizon = key
             passed = cells.get("passed")
             rejected = cells.get("rejected")
+            evidence = passed or rejected or {}
+            current_value = str(
+                evidence.get("parameter_snapshot") or spec.current_value
+            )
             pass_n = int((passed or {}).get("n_net") or 0)
             reject_n = int((rejected or {}).get("n_net") or 0)
             pass_coverage = float((passed or {}).get("outcome_coverage") or 0.0)
@@ -182,8 +187,8 @@ def compute_filter_feedback(min_samples: int = _DEFAULT_MIN_SAMPLES) -> list[Fil
             recs.append(FilterRecommendation(
                 filter_name=spec.name,
                 scanner_family=family,
-                stage=spec.stage,
-                current_value=spec.current_value,
+                stage=str(evidence_stage or spec.stage),
+                current_value=current_value,
                 verdict=verdict,
                 suggested_direction=suggested,
                 error_signal=error,

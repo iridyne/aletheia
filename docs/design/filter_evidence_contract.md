@@ -116,7 +116,13 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 
 统计单元至少为：
 
-`filter_name + filter_version + scanner_family + direction + market_type + horizon`
+`filter_name + stage + filter_version + scanner_family + direction + market_type + horizon`
+
+`stage` 是关卡身份的一部分。同名过滤器如果分别发生在 System Operator 和
+proposal submission，必须分别留痕、分别统计；幂等键至少包含
+`candidate_key + filter_name + stage + sequence + decision + filter_version`。
+控制器展示的当前值优先使用证据行自己的 `parameter_snapshot`，不能用注册表中的
+概括值覆盖历史上真正执行过的参数。
 
 regime 样本足够后再增加 `regime_tag`，禁止小样本无限切片。
 
@@ -174,7 +180,8 @@ Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候
 5. 已完成：Universe ticker/tradability 批次证据、allocation 对照、System Operator 和 Risk 统一索引。
 6. 已完成：只读 filter feedback 使用分层收缩净期望，未达样本门只显示证据不足。
 7. 已完成：ranker 历史漏斗和 proposal submission 原因直接来自已落库证据；无目标市场价格返回稳定失败原因，不再静默 `None`。
-8. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
+8. 已完成：反馈统计按真实 stage 分组并展示事发参数；同名同参数关卡跨阶段不再因幂等键碰撞丢证据。
+9. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
 
 ## 10. 完成标准
 

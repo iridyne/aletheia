@@ -87,6 +87,36 @@ def test_filter_decision_recording_is_append_only_and_idempotent():
 
 @spec_claim(
     SpecClaim(
+        "FE-B10", _CONTRACT, "§3 stage identity", "L2b",
+        "Same-named gates at different pipeline stages persist as distinct evidence facts.",
+        status="implemented",
+    )
+)
+def test_filter_decision_stage_is_part_of_dedup_identity():
+    from aletheia.analytics.filter_evidence import record_filter_decision
+    from aletheia.storage.sqlite import get_db
+
+    common = dict(
+        candidate_key="pi_decision:fe-stage-identity",
+        candidate_kind="pi_decision",
+        filter_name="direction_bias_brake",
+        decision="passed",
+        reason_code="direction_not_overheated",
+        symbol="BTC/USDT",
+        parameters={"max_share": 0.95},
+    )
+    first = record_filter_decision(stage="system_operator", **common)
+    second = record_filter_decision(stage="proposal_submission", **common)
+
+    assert first != second
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM filter_decisions WHERE candidate_key=?",
+        (common["candidate_key"],),
+    ).fetchone()[0] == 2
+
+
+@spec_claim(
+    SpecClaim(
         "FE-B02", _CONTRACT, "§4 ex-ante direction", "L2b",
         "A directionless filter candidate records the decision but creates no learnable outcome rows.",
         status="implemented",

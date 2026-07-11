@@ -7,7 +7,15 @@
 
 ## Last Updated
 
-2026-07-11 (Instrument-aware market collector routing)
+2026-07-11 (Filter feedback stage identity)
+
+---
+
+## Recent Change (Filter feedback stage identity — 2026-07-11)
+
+负反馈证据现在把“发生在哪一道关卡”作为身份的一部分。同一候选即使在两个阶段经过同名、同参数、同结果的检查，也会保留两条独立事实；控制器按真实阶段分组，并展示当时实际参数，不再用注册表的概括标签覆盖历史事实。
+
+这修复了两道方向刹车在报告中都显示成 operator skip 的问题，也防止未来参数相同后证据因幂等键碰撞丢失。没有合并或放宽方向刹车，没有修改风险、执行、仓位、live 或凭证边界。
 
 ---
 
