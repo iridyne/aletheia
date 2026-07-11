@@ -31,8 +31,9 @@
 7. **已完成**：持仓 reconciliation 按 execution account 隔离；本地模拟仓不会再被外部空仓缓存关闭，跨账户同标的不会互相覆盖。
 8. **已完成**：trading memo 保留每日合成并增加启动补跑，服务错过夜间窗口后可自愈；不存在的“3 个案例事件触发”说明已纠正。
 9. **已完成**：OHLCV 表、provider、回填、CLI 和覆盖诊断保留 venue+spot/perp 身份；旧不明 venue 不猜测，标为 legacy_unknown。
-10. **下一阶段**：补 orderbook market_type；筛选器达到 20/20 完整净样本后才实验方向刹车、ranker 和 Kelly/sizing。
-11. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+10. **已完成**：orderbook 模型、表、采集器、Universe/observer/context/inspect/doctor 消费者保留 venue+spot/perp 身份；旧行标 unknown。
+11. **下一阶段**：给动态 Universe 新成员增加受控 OHLCV 自动补齐；筛选器达到 20/20 完整净样本后才实验方向刹车、ranker 和 Kelly/sizing。
+12. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
 已经修好的供给/语义问题不要重复施工：OKX 永续成交额、分配前 market 去重、short funding 方向、PI bear_case、market-aware proposal price、pending shadow、因果漏斗和 doctor 市场覆盖。
 

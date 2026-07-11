@@ -20,10 +20,13 @@ def test_parse_orderbook_basic():
         "bids": [[50000.0, 1.0], [49990.0, 2.0]],
         "asks": [[50010.0, 1.0], [50020.0, 2.0]],
     }
-    snap = _parse_orderbook("BTC/USDT", "binance", ob, latency_ms=5)
+    snap = _parse_orderbook(
+        "BTC/USDT", "binance", ob, latency_ms=5, market_type="perp"
+    )
     assert snap is not None
     assert snap.symbol == "BTC/USDT"
     assert snap.exchange == "binance"
+    assert snap.market_type == "perp"
     assert snap.bid_price == 50000.0
     assert snap.ask_price == 50010.0
     # spread = (50010 - 50000) / 50005 * 10000 ≈ 2 bps

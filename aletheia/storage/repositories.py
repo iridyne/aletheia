@@ -2023,11 +2023,21 @@ def insert_orderbook_snapshot(data: dict) -> None:
     _insert("orderbook_snapshots", data)
 
 
-def latest_orderbook(symbol: str) -> dict | None:
+def latest_orderbook(
+    symbol: str, exchange: str = "", market_type: str = ""
+) -> dict | None:
+    where = ["symbol = ?"]
+    params: list = [symbol]
+    if exchange:
+        where.append("exchange = ?")
+        params.append(exchange.lower())
+    if market_type:
+        where.append("market_type = ?")
+        params.append(market_type)
     rows = _select_all(
         "orderbook_snapshots",
-        where="symbol = ?",
-        params=(symbol,),
+        where=" AND ".join(where),
+        params=tuple(params),
         order="observed_at DESC",
         limit=1,
     )

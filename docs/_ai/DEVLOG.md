@@ -1,5 +1,15 @@
 # Development Log
 
+## 2026-07-11 — Orderbook full instrument identity
+
+- `OrderbookSnapshot` and `orderbook_snapshots` now carry market_type. Existing rows are migrated to `unknown` rather than guessed; new InstrumentId-driven collection writes the real spot/perp type.
+- `latest_orderbook` accepts exchange and market type. Market observer and Universe features use exact identity; DB context can accept an exact scope; inspect reports the active member scope; doctor shows the newest row's full identity.
+- A composite exchange+symbol+market_type+time index supports exact latest reads. Production-database backup rehearsal preserved 384/384 rows and created the index.
+- No spread/depth calculation, selection threshold, risk, or execution behavior changed.
+- Validation: focused collector/storage/consumer tests 156 passed; all specs 615 passed / 7 skipped / 6 expected failures; full suite 2692 passed / 14 skipped / 6 expected failures / 0 failed.
+
+---
+
 ## 2026-07-11 — New-listing OHLCV bootstrap
 
 - A zero-history instrument no longer stops when the requested month-start page predates its listing and returns empty.

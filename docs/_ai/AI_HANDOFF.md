@@ -7,7 +7,17 @@
 
 ## Last Updated
 
-2026-07-11 (New-listing OHLCV bootstrap)
+2026-07-11 (Orderbook full instrument identity)
+
+---
+
+## Recent Change (Orderbook full instrument identity — 2026-07-11)
+
+盘口现在从采集到消费都携带交易所、symbol 和 spot/perp。旧的 384 行没有可靠类型，统一标为 `unknown`；新采集写真实类型。Market observer 和 Universe 只读目标市场的盘口，inspect/doctor 显示完整身份。真实库副本迁移 384/384 行全部保留。
+
+没有修改盘口计算公式、筛选阈值、风险或执行。
+
+验证：真实库副本迁移 384/384 行保留；相关测试 156 项、完整规则 615 项、全量 2692 项通过，0 项真实失败。
 
 ---
 

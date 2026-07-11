@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 class OrderbookSnapshot(BaseModel):
     symbol: str
     exchange: str
+    market_type: str
     bid_price: float
     ask_price: float
     spread_bps: float

@@ -882,19 +882,27 @@ def microstructure(
 ):
     """Show latest funding rate, OI, and orderbook data per symbol."""
     from aletheia.storage import repositories as repo
-    from aletheia.storage.repositories import get_active_universe_members
+    from aletheia.storage.repositories import get_active_universe_members, get_universe_asset
     if symbol:
-        symbols = [symbol]
+        instruments = [(symbol, "", "")]
     else:
         members = get_active_universe_members()
-        symbols = [m.get("symbol") for m in members if m.get("symbol")][:limit]
+        instruments = []
+        for member in members[:limit]:
+            asset = get_universe_asset(member.get("asset_id")) or {}
+            if member.get("symbol"):
+                instruments.append((
+                    member["symbol"],
+                    asset.get("venue", ""),
+                    member.get("market_type") or asset.get("market_type", ""),
+                ))
 
     result = []
-    for sym in symbols:
+    for sym, venue, market_type in instruments:
         fr = repo.latest_funding_rate(sym)
         oi = repo.latest_open_interest(sym)
-        ob = repo.latest_orderbook(sym)
-        entry = {"symbol": sym}
+        ob = repo.latest_orderbook(sym, exchange=venue, market_type=market_type)
+        entry = {"symbol": sym, "exchange": venue or None, "market_type": market_type or None}
         if fr:
             entry["funding_rate"] = fr.get("funding_rate")
             entry["predicted_rate"] = fr.get("predicted_rate")

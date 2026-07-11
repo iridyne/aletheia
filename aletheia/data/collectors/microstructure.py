@@ -40,10 +40,12 @@ class MicrostructureCollector:
                         is_perp = sym.market_type == "perp"
                         fetch_sym = sym.to_ccxt_symbol()
                         canonical_sym = sym.symbol
+                        market_type = sym.market_type
                     else:
                         is_perp = False
                         fetch_sym = sym
                         canonical_sym = sym
+                        market_type = "spot"
 
                     exchange.options["defaultType"] = "swap" if is_perp else "spot"
                     market = exchange.market(fetch_sym)
@@ -59,6 +61,7 @@ class MicrostructureCollector:
                         ob,
                         latency_ms,
                         contract_size=contract_size,
+                        market_type=market_type,
                     )
                     if snap:
                         snapshots.append(snap)
@@ -78,6 +81,7 @@ def _parse_orderbook(
     latency_ms: int,
     *,
     contract_size: float = 1.0,
+    market_type: str = "spot",
 ) -> OrderbookSnapshot | None:
     bids = ob.get("bids", [])
     asks = ob.get("asks", [])
@@ -109,6 +113,7 @@ def _parse_orderbook(
     return OrderbookSnapshot(
         symbol=symbol,
         exchange=exchange,
+        market_type=market_type,
         bid_price=best_bid,
         ask_price=best_ask,
         spread_bps=round(spread_bps, 2),

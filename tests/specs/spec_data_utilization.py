@@ -688,3 +688,29 @@ def test_scheduler_persists_coinalyze_outputs(monkeypatch):
     assert len(liq_rows) == 1, "Coinalyze liquidation output was not persisted"
     assert liq_rows[0]["exchange"] == "coinalyze"
     assert liq_rows[0]["quantity_usd"] == 250_000.0
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S15", _CONTRACT, "§orderbook instrument identity", "L2c",
+        "Orderbook snapshots persist market_type and critical consumers query by "
+        "exchange + symbol + market_type rather than symbol alone.",
+        status="implemented",
+    )
+)
+def test_orderbook_identity_reaches_storage_and_consumers():
+    root = _ROOT
+    model = (root / "aletheia/data/models.py").read_text(encoding="utf-8")
+    collector = (root / "aletheia/data/collectors/microstructure.py").read_text(encoding="utf-8")
+    repo = (root / "aletheia/storage/repositories.py").read_text(encoding="utf-8")
+    observer = (root / "aletheia/agents/market_observer.py").read_text(encoding="utf-8")
+    features = (root / "aletheia/universe/features.py").read_text(encoding="utf-8")
+
+    assert "market_type: str" in model
+    assert "market_type=market_type" in collector
+    assert "def latest_orderbook(" in repo and "market_type: str" in repo
+    assert "latest_orderbook(" in observer
+    assert "exchange=venue" in observer and "market_type=market_type" in observer
+    assert "latest_orderbook(" in features
+    assert 'exchange=asset.get("venue"' in features
+    assert 'market_type=asset.get("market_type"' in features

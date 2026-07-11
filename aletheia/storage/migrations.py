@@ -1262,6 +1262,7 @@ CREATE TABLE IF NOT EXISTS orderbook_snapshots (
     id TEXT PRIMARY KEY,
     symbol TEXT NOT NULL,
     exchange TEXT NOT NULL,
+    market_type TEXT NOT NULL DEFAULT 'unknown',
     bid_price REAL NOT NULL,
     ask_price REAL NOT NULL,
     spread_bps REAL NOT NULL,
@@ -1499,6 +1500,7 @@ CREATE INDEX IF NOT EXISTS idx_pred_claims_market ON prediction_market_claims(ma
 # CREATE TABLE above covers fresh DBs; these keep older app.db files current.
 _ADDITIVE_COLUMNS = [
     ("leverage", "trade_proposals", "INTEGER"),
+    ("market_type", "orderbook_snapshots", "TEXT NOT NULL DEFAULT 'unknown'"),
     # A13: link signal_pending pi_decisions back to their source opportunity
     ("opportunity_id", "pi_decisions", "TEXT"),
     # Debate trace fields are audit-only: they explain how debate changed a
@@ -1872,6 +1874,17 @@ def _ensure_market_ohlcv_instrument_identity(db) -> None:
         db.execute("ROLLBACK TO SAVEPOINT market_ohlcv_identity_upgrade")
         db.execute("RELEASE SAVEPOINT market_ohlcv_identity_upgrade")
         raise
+
+
+def _ensure_orderbook_instrument_index(db) -> None:
+    columns = {
+        row["name"] for row in db.execute("PRAGMA table_info(orderbook_snapshots)")
+    }
+    if {"exchange", "symbol", "market_type", "observed_at"} <= columns:
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_orderbook_instrument_ts "
+            "ON orderbook_snapshots(exchange,symbol,market_type,observed_at DESC)"
+        )
 
 
 def _backfill_forward_outcome_instrument_identity(db) -> None:
@@ -2264,6 +2277,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_CONTROLLER_RECOMMENDATIONS_DDL)
     _ensure_columns(db)
     _ensure_market_ohlcv_instrument_identity(db)
+    _ensure_orderbook_instrument_index(db)
     _ensure_filter_evidence_indexes(db)
     _backfill_forward_outcome_instrument_identity(db)
     _ensure_runtime_baseline(db)

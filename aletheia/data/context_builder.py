@@ -278,7 +278,9 @@ def _fmt_usd_compact(value: object) -> str:
 # DB-based convenience (runtime path)
 # ---------------------------------------------------------------------------
 
-def build_market_context_from_db(symbols: list[str]) -> MarketContextSnapshot:
+def build_market_context_from_db(
+    symbols: list[str], *, exchange: str = "", market_type: str = ""
+) -> MarketContextSnapshot:
     """Read latest collector data from SQLite and produce a full context snapshot.
 
     This is the runtime entry point called by the scheduler job after collectors
@@ -293,7 +295,9 @@ def build_market_context_from_db(symbols: list[str]) -> MarketContextSnapshot:
 
     for sym in symbols:
         # Orderbook → TradabilityScore
-        ob = repo.latest_orderbook(sym)
+        ob = repo.latest_orderbook(
+            sym, exchange=exchange, market_type=market_type
+        )
         if ob and _is_fresh(ob.get("observed_at"), now):
             vol = _get_volume(sym)
             tradability[sym] = compute_tradability(

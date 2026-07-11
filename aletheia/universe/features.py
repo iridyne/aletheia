@@ -368,7 +368,11 @@ async def _fetch_single_feature(
         last_ts = int(ohlcv_1h[-1][0]) / 1000
         data_freshness_sec = int(time.time() - last_ts)
 
-    ob_row = repo.latest_orderbook(symbol)
+    ob_row = repo.latest_orderbook(
+        symbol,
+        exchange=asset.get("venue", ""),
+        market_type=asset.get("market_type", "spot"),
+    )
     fr_row = repo.latest_funding_rate(symbol)
     oi_row = repo.latest_open_interest(symbol)
 

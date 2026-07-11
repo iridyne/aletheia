@@ -76,7 +76,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `market_snapshots` | Point-in-time price/volume | symbol, price, volume_24h, change_pct_24h |
-| `orderbook_snapshots` | Order book depth | symbol, bids (JSON), asks (JSON), spread |
+| `orderbook_snapshots` | Order book depth with exact instrument identity | exchange, symbol, market_type, bid/ask, spread, depth, imbalance |
 | `funding_rate_snapshots` | Perpetual funding rates (multi-venue via **exchange** tag) | symbol, exchange, funding_rate, next_funding_time; `exchange="hyperliquid"` / `"hyperliquid_predicted"` are cross-venue feeds **excluded from the primary per-symbol read** (see `latest_funding_rate(exchange=...)`) |
 | `open_interest_snapshots` | Open interest data (multi-venue via **exchange** tag) | symbol, exchange, open_interest, oi_change_pct, **long_short_ratio** (Round 2 Step 1 — Binance globalLongShortAccountRatio); Hyperliquid writes cross-venue OI here, excluded from the primary per-symbol read |
 | `liquidation_events` | Large liquidation events | symbol, side, quantity, price |

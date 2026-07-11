@@ -326,7 +326,9 @@ async def _analyze_symbol(
             from aletheia.data.normalizer import compute_tradability, compute_leverage_state
             from aletheia.data.models import TradabilityScore, LeverageState, MacroSnapshot
 
-            ob = repo.latest_orderbook(symbol)
+            ob = repo.latest_orderbook(
+                symbol, exchange=venue or "", market_type=market_type
+            )
             fr = repo.latest_funding_rate(symbol)
             oi = repo.latest_open_interest(symbol)
             ps = repo.latest_perp_structure(symbol)

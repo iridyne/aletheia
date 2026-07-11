@@ -761,7 +761,7 @@ def _probe_orderbook(report: Report) -> None:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         row = db.execute(
-            "SELECT symbol, observed_at, spread_bps, total_depth_10bps_usd "
+            "SELECT exchange, symbol, market_type, observed_at, spread_bps, total_depth_10bps_usd "
             "FROM orderbook_snapshots "
             "ORDER BY observed_at DESC LIMIT 1"
         ).fetchone()
@@ -783,7 +783,8 @@ def _probe_orderbook(report: Report) -> None:
     spread = row["spread_bps"]
     depth = row["total_depth_10bps_usd"]
     detail = (
-        f"newest orderbook {row['symbol']} ({_fmt_age(age)}), "
+        f"newest orderbook {row['exchange']}:{row['symbol']}:{row['market_type']} "
+        f"({_fmt_age(age)}), "
         f"spread={spread:.2f}bps, depth10=${depth:,.0f}"
     )
     report.add(
