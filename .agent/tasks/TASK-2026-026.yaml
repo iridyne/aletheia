@@ -20,8 +20,7 @@ acceptance:
   removing market or safety context.
 - Automatic block suggestions become non-blocking shadow-only guard candidates and
   cannot historical-auto-promote.
-- Factor and universe exposures persist and stratify on durable secret-free policy
-  epochs.
+- Factor and universe exposures persist and stratify on durable redacted policy epochs.
 ownership:
   branch: fix/learning-attribution-safety
   lease_holder: codex
