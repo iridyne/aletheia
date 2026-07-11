@@ -1,0 +1,33 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-019
+title: Fix remote historical evidence validation
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Keep CI strict for tasks changed by a PR while allowing unchanged historical
+  completed tasks whose feature-branch evidence commits were deleted after squash
+  merge.
+acceptance:
+- Strict checks with changed_since downgrade missing evidence commits only for unchanged
+  historical done tasks.
+- A done task changed in the checked range still fails when its successful evidence
+  commit is missing.
+- Trust-boundary evidence requirements remain unchanged and strict.
+- Remote GitHub Actions passes on the CI fix PR and subsequent UI PR.
+ownership:
+  branch: fix/ci-historical-evidence
+  lease_holder: codex
+  claimed_at: '2026-07-11T17:24:12.490575Z'
+  expires_at: '2026-07-12T01:24:12.490769Z'
+base_commit: 0ae52905445138a0e4901dfc78718c7724ea476c
+next_action:
+  command_key: workflow_tests
+  reason: Add focused regression tests for historical versus changed task evidence
+    before changing validation behavior.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-019.md
+updated_at: '2026-07-11T17:28:18.438064Z'

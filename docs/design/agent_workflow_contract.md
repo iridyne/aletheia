@@ -61,3 +61,11 @@ execution, credentials, gateway state, databases, balances, or positions.
     the normal squash-merge PR flow, mirroring the AW-S08 base_commit
     precedent. A completed task with no successful evidence at all remains an
     error.
+11. **AW-S11 — range-aware historical evidence.** Remote CI checks a PR with
+    `--changed-since`. GitHub cannot fetch feature-branch commits after those
+    branches are deleted, even with a full-depth checkout. A missing evidence
+    object is therefore a warning only when both the completed task packet and
+    its handoff are unchanged in the checked range. If the current range changes
+    either file, missing evidence remains a hard error. Checks without
+    `--changed-since` also remain strict. This prevents stale history from
+    breaking every later PR without allowing a PR to fabricate its own proof.
