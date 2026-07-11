@@ -79,6 +79,20 @@ def test_reindex_all_backfills_missing(tmp_path, monkeypatch):
     reset_db()
 
 
+def test_read_body_relocates_restored_windows_data_path(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.retrieval import _read_body
+
+    target = tmp_path / "knowledge" / "research_notes" / "legacy.md"
+    target.write_text("restored knowledge body", encoding="utf-8")
+
+    body = _read_body(
+        r"C:\Users\old-machine\Projects\aletheia\data\knowledge\research_notes\legacy.md"
+    )
+    assert body == "restored knowledge body"
+    reset_db()
+
+
 def test_retrieve_lessons_returns_results_after_reindex(tmp_path, monkeypatch):
     """End-to-end: create → reindex → retrieve finds lessons."""
     setup_test_env(tmp_path, monkeypatch)

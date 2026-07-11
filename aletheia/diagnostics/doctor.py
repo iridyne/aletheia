@@ -2196,7 +2196,7 @@ def _probe_fts_coverage(report: Report) -> None:
     ).fetchone()
     if not row:
         report.add("fts.coverage", "warn", "knowledge_fts table missing — experience loop disabled",
-                   "run: uv run aletheia kb reindex")
+                   "run: uv run aletheia knowledge reindex")
         return
     eligible = db.execute(
         "SELECT COUNT(*) FROM knowledge_items WHERE confidence='high_confidence' AND (status='active' OR status IS NULL)"
@@ -2213,7 +2213,7 @@ def _probe_fts_coverage(report: Report) -> None:
         report.add("fts.coverage", "warn", detail, "restart gateway to trigger reindex")
     else:
         report.add("fts.coverage", "blocker", detail,
-                   "experience loop severely degraded — restart gateway or run: uv run aletheia kb reindex")
+                   "experience loop severely degraded — restart gateway or run: uv run aletheia knowledge reindex")
 
 
 def _probe_ohlcv_coverage(report: Report) -> None:

@@ -183,9 +183,27 @@ def _read_body(file_path: str | None) -> str:
     if not file_path:
         return ""
     try:
-        from pathlib import Path
+        from pathlib import Path, PurePosixPath, PureWindowsPath
+        from aletheia.config.loader import get_data_dir
+
         p = Path(file_path)
-        return p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
+        if not p.exists():
+            root = get_data_dir().resolve()
+            for path_type in (PureWindowsPath, PurePosixPath):
+                parts = path_type(file_path).parts
+                lowered = [part.lower() for part in parts]
+                if "data" not in lowered:
+                    continue
+                index = lowered.index("data")
+                candidate = root.joinpath(*parts[index + 1:]).resolve()
+                try:
+                    candidate.relative_to(root)
+                except ValueError:
+                    continue
+                if candidate.is_file():
+                    p = candidate
+                    break
+        return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
     except Exception:
         return ""
 

@@ -7,7 +7,13 @@
 
 ## Last Updated
 
-2026-07-11 (Orderbook parser recovery)
+2026-07-11 (Restored knowledge path relocation)
+
+---
+
+## Recent Change (Restored knowledge path relocation — 2026-07-11)
+
+从旧机器恢复的知识记录仍保存 Windows 绝对路径，正文文件虽然已经位于本机 data 目录，FTS 重建却把它们当缺失。检索层现在只按 `data/` 后缀安全重定位到当前 data 根目录，并拒绝任何越界路径；doctor 的重建命令提示也已改为真实存在的 `knowledge reindex`。
 
 ---
 

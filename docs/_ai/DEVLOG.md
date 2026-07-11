@@ -1,5 +1,13 @@
 # Development Log
 
+## 2026-07-11 — Restored knowledge path relocation
+
+- FTS 重建现在可把旧机器保存的 Windows 绝对 `file_path` 安全重定位到本机 data 目录；只接受 `data/` 后缀且解析后必须仍在 data 根目录内。
+- 修正 doctor 中不存在的 `kb reindex` 提示为实际 CLI `knowledge reindex`。
+- 不改知识正文、置信度质量门或交易行为；相关知识检索/维护回归 `31 passed`。
+
+---
+
 ## 2026-07-11 — Orderbook parser recovery
 
 - 修复 OKX/CCXT 盘口档位含第三列订单数时被两变量解包、导致全部 microstructure 标的失败的问题；解析只读取价格和数量，保留尾部字段兼容。
