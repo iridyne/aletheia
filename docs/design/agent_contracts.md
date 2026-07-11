@@ -74,6 +74,7 @@
 - **Guard advisory contract** (spec UP-07, 断口F): guard advisory is built PER-SYMBOL inside `_analyze_symbol` with `{symbol, scanner_family, asset_class}` via `router.build_guard_advisory()` — NOT run-level with a symbol list (which never matched any guard). The run-level memory_block carries only symbol-agnostic lessons.
 - **Downstream contract** (spec UP-06): `key_observations` (the LLM's numeric citations) IS surfaced to the System Operator's layer1 snapshot; previously only a truncated thesis reached the decision.
 - **Bounded-loop fairness contract** (spec GS-S03): the 200-second safety budget remains below the scheduler timeout, but the next cycle begins at the durable successor of the last completed exact instrument. A cancellation or budget break never skips an in-flight or unprocessed instrument.
+- **Pre-filter status contract** (spec OBS-PRE-FILTER-STATUS): `no_sufficient_signal` is a normal rejection recorded in filter evidence, not an agent execution error. It skips the LLM without changing the run to `completed_with_errors`; provider failures, unexpected exceptions, and loop-budget exhaustion remain errors.
 
 #### equity_observer (replaces stock_observer)
 

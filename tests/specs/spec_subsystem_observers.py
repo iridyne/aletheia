@@ -275,3 +275,25 @@ def test_pre_filter_signal_detection():
     import aletheia.agents.market_observer as mo
     assert mo._has_sufficient_signal("| RSI | 1h | 72.3 | rising |") is True
     assert mo._has_sufficient_signal("| RSI | 1h | 51.2 | flat |") is False
+
+
+@spec_claim(
+    SpecClaim(
+        "OBS-PRE-FILTER-STATUS", "agent_contracts",
+        "§market_observer pre_filter_status",
+        "L2a",
+        "正常的 no_sufficient_signal 前置拒绝不得进入 AgentRun errors；"
+        "筛选证据由 filter_decisions 独立保存。",
+        status="implemented",
+    ),
+)
+def test_pre_filter_rejection_returns_without_error():
+    import inspect
+    import aletheia.agents.market_observer as mo
+
+    src = inspect.getsource(mo._analyze_symbol)
+    reject_branch = src.split("if not force_full and not pre_filter_passed:", 1)[1]
+    reject_branch = reject_branch.split("# MO-2", 1)[0]
+    assert "return None, None" in reject_branch, (
+        "正常前置拒绝必须返回无错误结果，不能把 no_sufficient_signal 当成运行故障"
+    )

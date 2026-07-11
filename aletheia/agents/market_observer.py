@@ -480,7 +480,7 @@ async def _analyze_symbol(
 
     if not force_full and not pre_filter_passed:
         logger.debug("pre-filter: no sufficient signal for %s — skipping LLM call", symbol)
-        return None, f"pre_filter_skip:{symbol}:no_sufficient_signal"
+        return None, None
 
     # MO-2 (断口F fix): per-symbol guard advisory. Guards match on symbol +
     # scanner_family, which only exist per-symbol — the run-level memory_block was

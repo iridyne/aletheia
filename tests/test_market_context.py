@@ -242,6 +242,41 @@ def _setup_env(tmp_path, monkeypatch):
     init_tool_registry()
 
 
+def test_observer_pre_filter_rejection_is_not_a_run_error(tmp_path, monkeypatch):
+    """A normal no-signal rejection stays in filter evidence, not AgentRun errors."""
+    _setup_env(tmp_path, monkeypatch)
+
+    import aletheia.agents.market_observer as mo
+    import aletheia.trading.market_context as mc
+
+    async def fake_builder(symbols, market_type="spot", **kwargs):
+        return ("calm verified snapshot", {"fallback": False, "errors": [], "symbols": {}})
+
+    async def unexpected_llm_call(*args, **kwargs):
+        raise AssertionError("pre-filter rejection must skip the LLM")
+
+    monkeypatch.setattr(mc, "build_market_context", fake_builder)
+    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda context: False)
+    monkeypatch.setattr(mo, "llm_structured", unexpected_llm_call)
+
+    from aletheia.agent_runtime.orchestrator import run_agent
+    from aletheia.storage.sqlite import get_db
+
+    result = asyncio.run(run_agent("market_observer", trigger_type="manual"))
+
+    assert result["outputs"] == []
+    assert result["errors"] == []
+    assert result["status"] == "completed"
+    evidence = get_db().execute(
+        "SELECT decision, reason_code FROM filter_decisions "
+        "WHERE filter_name='observer_pre_filter'"
+    ).fetchall()
+    assert evidence
+    assert {(row["decision"], row["reason_code"]) for row in evidence} == {
+        ("rejected", "no_sufficient_signal")
+    }
+
+
 def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
     """Even when LLM is unavailable, observer must record a step trace.
 

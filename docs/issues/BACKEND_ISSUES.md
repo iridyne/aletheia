@@ -13,7 +13,7 @@
 > - 🟠 让数据失真或学习失效（promotion gate 错算 / KB 类型混淆 / PnL 不可信）
 > - 🟡 dead code / cosmetic / future-violation tripwire
 >
-> **最后更新**：2026-07-10 · 维护者：Aletheia Dev
+> **最后更新**：2026-07-11 · 维护者：Aletheia Dev
 > **来源**：6 个并行 subagent 审计（agents+runtime / risk+execution / storage+knowledge /
 > server+config / lifecycle+gateway / model+telegram+update+cli）+ 早期对照表
 
@@ -27,6 +27,8 @@
 - [`opportunity_lifecycle_profitability_repair_plan_2026-07-10.md`](../plans/opportunity_lifecycle_profitability_repair_plan_2026-07-10.md)：按“先修断路和统计真相，再做策略实验”排列的施工计划。
 
 本次确认的最高优先问题：OKX 永续成交额被当 0、`short_bias` 资金费率经济含义相反、同币种现货/永续分配后才去重、漏斗用独立时间窗伪造转化、PI 的 `bear_case` 只声明未接通、提案取价未按最终 market type、pending shadow 被标成 resolved。旧条目和旧审计有大量已修/过时结论，后续以专项报告中的当前源码核实为准。
+
+**2026-07-11 运行状态语义修复**：Market Observer 的 `no_sufficient_signal` 是前置筛选正常拒绝，已有独立 filter evidence 留痕，不应进入 AgentRun `errors`。此前它会把整次扫描标成 `completed_with_errors`，污染 `doctor` 的近期故障列表。现已改为无错误返回；LLM/provider 失败、意外异常和循环超预算仍按真实错误报告。对应契约为 `OBS-PRE-FILTER-STATUS`。
 
 ---
 
