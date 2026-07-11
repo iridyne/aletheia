@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-019
 title: Fix remote historical evidence validation
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -24,9 +24,9 @@ ownership:
   expires_at: '2026-07-12T01:24:12.490769Z'
 base_commit: 0ae52905445138a0e4901dfc78718c7724ea476c
 next_action:
-  command_key: workflow_tests
-  reason: Add focused regression tests for historical versus changed task evidence
-    before changing validation behavior.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: workflow_tests
@@ -37,5 +37,13 @@ verification:
   run_at: '2026-07-11T17:28:55.749767Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 3af1c74c7617428d767682e7bb16886c3cae239a
+  run_at: '2026-07-11T17:32:43.588074Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-019.md
-updated_at: '2026-07-11T17:32:06.064806Z'
+updated_at: '2026-07-11T17:32:43.675929Z'
