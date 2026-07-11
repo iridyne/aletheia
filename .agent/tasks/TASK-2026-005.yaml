@@ -22,8 +22,8 @@ verification:
 - command_key: specs
   command: uv run pytest tests/specs/ -q
   exit_code: 0
-  commit: 065cf5f1db09f6294552f9de2ab14854f51d13ca
-  run_at: '2026-07-11T12:05:01.484647Z'
+  commit: 64ed3785133df4978d07e3eaa990794659db3a9a
+  run_at: '2026-07-11T12:06:57.602845Z'
   result: passed
 handoff: .agent/handoffs/TASK-2026-005.md
-updated_at: '2026-07-11T12:05:01.484794Z'
+updated_at: '2026-07-11T12:06:57.602997Z'
