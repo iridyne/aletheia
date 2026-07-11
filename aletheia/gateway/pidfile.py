@@ -193,6 +193,11 @@ def _pid_alive(pid: int) -> bool:
     """
     if pid <= 0:
         return False
+    # The current process is necessarily alive. This also keeps the helper
+    # correct in test and embedded-runtime contexts whose command line does
+    # not carry a gateway marker.
+    if pid == os.getpid():
+        return True
     if platform.system() == "Windows":
         from aletheia.gateway._win32_proc import pid_alive_win32
         return pid_alive_win32(pid, (_GATEWAY_SUPERVISOR_MARKER, "uvicorn"))
