@@ -193,7 +193,7 @@ Iterate against `http://127.0.0.1:8787/`; do not use `:5173` as the daily entryp
 意图/事实分离：git 同步**意图**（代码+文档），绝不写运行态事实（gateway 进程/app.db/config.yaml/凭证）进任何 git 文档——在另一台机器上必然过期。详见 `docs/_ai/DEV_PROTOCOL.md`。
 
 会话开始：`git pull --ff-only` → `uv sync` → `uv run aletheia agent workflow bootstrap` → `uv run aletheia doctor` → 读 AGENTS.md、当前任务包和其 handoff。`bootstrap` 是 Git 中任务与证据的入口；`doctor` 是本机运行态的唯一来源，两者不可互相替代。
-会话结束：先提交实现，再用 `uv run aletheia agent workflow task verify TASK-ID --command-key KEY` 真实执行登记过的验证；更新结构化 `.agent/handoffs/TASK-*.md`，无剩余工作时运行 `task complete`，最后运行 `uv run aletheia agent workflow check --strict`。CI 会阻止代码/文档变更缺少任务包或交接更新。详细变更史继续 append 到 `docs/_ai/AI_HANDOFF.md`、`DEVLOG.md`，架构决策记入 `docs/_ai/DECISIONS.md`。任务文件只写计划/意图/验证证据，不写运行态。
+会话结束：先提交实现，再用 `uv run aletheia agent workflow task verify TASK-ID --command-key KEY` 真实执行登记过的验证；**每个任务的结构化交接就写在 `.agent/handoffs/TASK-*.md`——这是主渠道**，无剩余工作时运行 `task complete`，最后运行 `uv run aletheia agent workflow check --strict`。CI 会阻止代码/文档变更缺少任务包或交接更新。**`docs/_ai/AI_HANDOFF.md` 已于 2026-07-12 冻结为历史存档**，不再 append；变更日志继续写 `DEVLOG.md`，架构决策记入 `docs/_ai/DECISIONS.md`。任务文件只写计划/意图/验证证据，不写运行态。
 
 Issue 分工：`docs/issues/BACKEND_ISSUES.md`（bugs/contract drift/dead code，带 file:line）；`docs/issues/FRONTEND_ISSUES.md`（UI spec gaps/honesty breaches）。
 

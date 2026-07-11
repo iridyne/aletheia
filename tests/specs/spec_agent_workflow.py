@@ -93,3 +93,12 @@ def test_base_commit_resilience():
     assert "def rebase_base" in rebase_src
     assert '"rebased_at"' in rebase_src
     assert 'in {"in_progress", "blocked"}' in rebase_src
+
+
+@spec_claim(SpecClaim("AW-S09", _CONTRACT, "§invariants", "L2a", "Handoff channel convergence: AGENTS.md points at .agent/handoffs and AI_HANDOFF.md is frozen archival."))
+def test_handoff_channel_is_single_source():
+    agents = (_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    ai_handoff = (_ROOT / "docs/_ai/AI_HANDOFF.md").read_text(encoding="utf-8")
+    assert ".agent/handoffs/TASK-*.md" in agents, "AGENTS.md must name the per-task handoff path"
+    assert "FROZEN AS OF" in ai_handoff, "AI_HANDOFF.md must carry a frozen banner"
+    assert ".agent/handoffs/" in ai_handoff, "AI_HANDOFF.md banner must point to the live channel"
