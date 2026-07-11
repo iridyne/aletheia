@@ -2354,6 +2354,134 @@ CREATE INDEX IF NOT EXISTS idx_filter_shadow_evaluations_experiment
     ON filter_shadow_evaluations(experiment_id, created_at DESC);
 """
 
+_LEARNING_LEDGER_DDL = """
+CREATE TABLE IF NOT EXISTS learning_hypotheses (
+    hypothesis_id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL UNIQUE,
+    cohort_id TEXT NOT NULL,
+    path_id TEXT NOT NULL,
+    overlap_group TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_artifact_ids_json TEXT NOT NULL DEFAULT '[]',
+    scope_json TEXT NOT NULL,
+    action_json TEXT NOT NULL,
+    consumer TEXT NOT NULL,
+    target_horizon TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'proposed',
+    version INTEGER NOT NULL DEFAULT 1,
+    effect_threshold REAL NOT NULL DEFAULT 0,
+    harm_budget_json TEXT NOT NULL DEFAULT '{}',
+    evidence_summary_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    expires_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_learning_hypotheses_path_status
+    ON learning_hypotheses(path_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS learning_experiments (
+    experiment_id TEXT PRIMARY KEY,
+    hypothesis_id TEXT NOT NULL REFERENCES learning_hypotheses(hypothesis_id),
+    stage TEXT NOT NULL,
+    assignment_salt TEXT NOT NULL,
+    allocation_pct REAL NOT NULL,
+    min_samples_per_arm INTEGER NOT NULL,
+    min_market_days INTEGER NOT NULL,
+    primary_metric TEXT NOT NULL,
+    promotion_gate_json TEXT NOT NULL DEFAULT '{}',
+    harm_gate_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'registered',
+    started_at TEXT,
+    ended_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_learning_experiments_hypothesis
+    ON learning_experiments(hypothesis_id, status);
+
+CREATE TABLE IF NOT EXISTS learning_exposures (
+    exposure_id TEXT PRIMARY KEY,
+    dedup_key TEXT NOT NULL UNIQUE,
+    experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id),
+    hypothesis_id TEXT NOT NULL REFERENCES learning_hypotheses(hypothesis_id),
+    assignment TEXT NOT NULL,
+    consumer TEXT NOT NULL,
+    consumer_stage TEXT NOT NULL,
+    path_id TEXT NOT NULL,
+    overlap_group TEXT NOT NULL,
+    candidate_key TEXT,
+    opportunity_id TEXT,
+    proposal_id TEXT,
+    decision_id TEXT,
+    observer_run_id TEXT,
+    position_id TEXT,
+    before_json TEXT NOT NULL DEFAULT '{}',
+    after_json TEXT NOT NULL DEFAULT '{}',
+    manifest_json TEXT NOT NULL DEFAULT '{}',
+    outcome_candidate_key TEXT,
+    outcome_source TEXT,
+    outcome_contract_version TEXT NOT NULL,
+    code_commit TEXT,
+    policy_version TEXT,
+    concurrent_policy_epoch TEXT NOT NULL,
+    exposed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_learning_exposures_experiment
+    ON learning_exposures(experiment_id, assignment, exposed_at);
+CREATE INDEX IF NOT EXISTS idx_learning_exposures_entity
+    ON learning_exposures(candidate_key, opportunity_id, decision_id);
+
+CREATE TABLE IF NOT EXISTS learning_contribution_verdicts (
+    verdict_id TEXT PRIMARY KEY,
+    experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id),
+    hypothesis_id TEXT NOT NULL REFERENCES learning_hypotheses(hypothesis_id),
+    window_start TEXT NOT NULL,
+    window_end TEXT NOT NULL,
+    unique_treatment_n INTEGER NOT NULL,
+    unique_control_n INTEGER NOT NULL,
+    baseline REAL,
+    observed REAL,
+    delta REAL,
+    confidence_low REAL,
+    confidence_high REAL,
+    harm_metrics_json TEXT NOT NULL DEFAULT '{}',
+    verdict TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_learning_verdicts_experiment
+    ON learning_contribution_verdicts(experiment_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS learning_job_health (
+    job_id TEXT PRIMARY KEY,
+    schedule_key TEXT NOT NULL,
+    last_expected_at TEXT,
+    last_started_at TEXT,
+    last_succeeded_at TEXT,
+    next_due_at TEXT,
+    input_watermark TEXT,
+    backlog_count INTEGER NOT NULL DEFAULT 0,
+    oldest_backlog_at TEXT,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    last_error TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS learning_policy_epochs (
+    epoch_id TEXT PRIMARY KEY,
+    epoch_kind TEXT NOT NULL,
+    effective_values_hash TEXT NOT NULL,
+    effective_values_json TEXT NOT NULL,
+    affected_path_ids_json TEXT NOT NULL,
+    source_event_id TEXT,
+    safety_required INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(epoch_kind, effective_values_hash, started_at)
+);
+"""
+
 
 
 def _ensure_knowledge_fts_outcome_column(db) -> None:
@@ -2387,6 +2515,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_COLLECTOR_HEALTH_STATE_DDL)
     db.executescript(_CONTROLLER_RECOMMENDATIONS_DDL)
     db.executescript(_FILTER_SHADOW_EXPERIMENTS_DDL)
+    db.executescript(_LEARNING_LEDGER_DDL)
     _ensure_columns(db)
     _ensure_market_ohlcv_instrument_identity(db)
     _ensure_orderbook_instrument_index(db)

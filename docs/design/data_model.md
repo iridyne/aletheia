@@ -71,6 +71,20 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `news_items` | External news signals | source, headline, sentiment, symbols (JSON) |
 | `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
 
+### C-bis. Measured Learning Ledger (6 tables)
+
+| Table | Purpose | Key columns |
+|-------|---------|-------------|
+| `learning_hypotheses` | Canonical scoped Learning hypothesis | hypothesis_id, fingerprint, path_id, scope/action JSON, status, version |
+| `learning_experiments` | Registered shadow/paper experiment | experiment_id, hypothesis_id, assignment salt, gates, status |
+| `learning_exposures` | Immutable record of one actual/control influence | dedup_key, assignment, entity ids, before/after/manifest, policy epoch |
+| `learning_contribution_verdicts` | Append-only measured verdict window | unique arm counts, delta/interval, harm metrics, verdict |
+| `learning_job_health` | Durable expected-run/backlog health | schedule, watermarks, failures, status |
+| `learning_policy_epochs` | Non-sensitive effective-policy attribution boundary | effective-values hash/JSON, affected paths, safety flag, interval |
+
+These tables are additive and observational in Phase 1. Their existence does not activate a
+Learning treatment or change universe, ranker, prompt, sizing, risk, execution, or live behavior.
+
 ### D. Market Data Collection (11 tables)
 
 | Table | Purpose | Key columns |

@@ -417,11 +417,11 @@ These claims are target SDD. Each implementation batch must first add its claims
 
 | Claim | Level | Requirement | Status |
 | --- | --- | --- | --- |
-| LE-S01 | L2a | hypothesis/exposure/experiment stores exist with stable ids | missing |
+| LE-S01 | L2a | hypothesis/exposure/experiment stores exist with stable ids | implemented |
 | LE-S02 | L2a | Learning imports no exchange auth/client or live unlock route | missing |
 | LE-S03 | L2a | autonomous Learning jobs share one effective enable gate | missing |
 | LE-S04 | L2a | every behavior-changing Learning producer/consumer is declared in the path registry | implemented |
-| LE-B01 | L2b | repeated source/action/scope creates one hypothesis fingerprint | missing |
+| LE-B01 | L2b | repeated source/action/scope creates one hypothesis fingerprint | implemented |
 | LE-B02 | L2b | duplicate artifacts do not multiply contribution sample size | implemented |
 | LE-B03 | L2b | incomplete/synthetic evidence is ineligible | missing |
 | LE-B04 | L2b | reviewer defers when the exact scope misses its sample gate | missing |
@@ -443,6 +443,7 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B20 | L2b | universe family calibration records clean prospective neutral/treatment exposures before score influence | missing |
 | LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — deterministic secret-free epoch semantics exist; persistence/adapters remain |
 | LE-B22 | L2b | factor producer, Operator context, ranker trace, and exposure use the same stable `factor_key` identity | missing |
+| LE-B23 | L2b | retrying one exposure dedup key stores one immutable influence record | implemented |
 | LE-C01 | L2c | no promotion without unique samples, time span, and outcome links | missing |
 | LE-C02 | L2c | negative/unsafe holdout automatically demotes or refreezes | missing |
 | LE-C03 | L2c | refreeze restores static baseline without deleting evidence | missing |
