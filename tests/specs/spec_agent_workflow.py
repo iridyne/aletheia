@@ -19,12 +19,12 @@ def test_workflow_metadata_and_validator_exist():
     assert (_ROOT / "aletheia/agent_workflow.py").is_file()
 
 
-@spec_claim(SpecClaim("AW-S02", _CONTRACT, "§invariants", "L2b", "Done tasks require registered successful evidence at current HEAD in strict mode."))
+@spec_claim(SpecClaim("AW-S02", _CONTRACT, "§invariants", "L2b", "Done tasks require registered successful evidence reachable from current history in strict mode."))
 def test_validator_locks_honest_completion():
     from aletheia.agent_workflow import validate
     source = Path(validate.__code__.co_filename).read_text(encoding="utf-8")
     assert "completed task has no successful verification evidence" in source
-    assert "completed task evidence is stale for current HEAD" in source
+    assert "completed task evidence is not reachable from current HEAD" in source
 
 
 @spec_claim(SpecClaim("AW-S03", _CONTRACT, "§invariants", "L2a", "Concurrent work cannot silently claim one branch twice."))

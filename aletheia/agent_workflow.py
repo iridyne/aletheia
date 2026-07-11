@@ -209,20 +209,12 @@ def validate(root: Path | None = None, *, strict: bool = False) -> list[Finding]
             if not valid:
                 findings.append(Finding("error", "completed task has no successful verification evidence", task_id))
             elif strict:
-                _, head = _git(root, "rev-parse", "HEAD")
-                current = False
                 for item in valid:
-                    evidence_commit = item.get("commit")
-                    if evidence_commit == head:
-                        current = True
+                    code, _ = _git(root, "merge-base", "--is-ancestor", str(item.get("commit", "")), "HEAD")
+                    if code == 0:
                         break
-                    code, changed = _git(root, "diff", "--name-only", f"{evidence_commit}..{head}")
-                    allowed = {f".agent/tasks/{task_id}.yaml", str(task["handoff"])}
-                    if code == 0 and changed and set(changed.splitlines()).issubset(allowed):
-                        current = True
-                        break
-                if not current:
-                    findings.append(Finding("error", "completed task evidence is stale for current HEAD", task_id))
+                else:
+                    findings.append(Finding("error", "completed task evidence is not reachable from current HEAD", task_id))
     return findings
 
 

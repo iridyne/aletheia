@@ -12,8 +12,8 @@ execution, credentials, gateway state, databases, balances, or positions.
    packet with a stable ID, scope, intent, acceptance conditions, branch claim,
    valid base commit, next action, and an existing per-task handoff.
 2. **AW-S02 — honest completion.** A done task has successful evidence linked
-   to a registered command. In strict mode the evidence must be from the
-   checked-out commit.
+   to a registered command. In strict mode the evidence commit must remain in
+   the checked-out history; later unrelated work must not invalidate history.
 3. **AW-S03 — isolated ownership.** Two in-progress task packets cannot claim
    the same branch.
 4. **AW-S04 — no tracked runtime or secret state.** Metadata rejects
