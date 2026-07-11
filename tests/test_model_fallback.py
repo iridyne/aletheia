@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -60,6 +61,8 @@ class FakeProvider:
         self.calls.append(self.model)
         err = self.fail_models.get(self.model)
         if err:
+            if isinstance(err, BaseException):
+                raise err
             raise RuntimeError(err)
         return ModelResponse(content=f"ok:{self.model}", model=self.model, raw={"ok": True})
 
@@ -101,6 +104,43 @@ async def test_complete_with_fallback_uses_detected_models_when_config_list_empt
 
     assert resp.content == "ok:claude-detected"
     assert provider.calls == ["claude-primary", "claude-detected"]
+
+
+@pytest.mark.anyio
+async def test_complete_with_fallback_retries_after_connect_error(tmp_path, monkeypatch):
+    _setup_config(tmp_path, monkeypatch, fallback_models=["claude-fallback"])
+    from aletheia.model_provider import fallback
+
+    provider = FakeProvider(
+        fail_models={"claude-primary": httpx.ConnectError("connection reset")}
+    )
+    resp = await fallback.complete_with_fallback(
+        ModelRequest(messages=[{"role": "user", "content": "x"}]),
+        provider=provider,
+    )
+
+    assert resp.content == "ok:claude-fallback"
+    assert provider.calls == ["claude-primary", "claude-fallback"]
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        httpx.ConnectError("connection reset"),
+        httpx.RemoteProtocolError("peer disconnected"),
+        httpx.ProxyError("proxy unavailable"),
+    ],
+)
+def test_transport_failures_are_transient(exc):
+    from aletheia.model_provider.fallback import is_transient_model_error
+
+    assert is_transient_model_error(exc) is True
+
+
+def test_timeout_does_not_expand_across_the_full_model_chain():
+    from aletheia.model_provider.fallback import is_transient_model_error
+
+    assert is_transient_model_error(httpx.ReadTimeout("provider stalled")) is False
 
 
 @pytest.mark.anyio

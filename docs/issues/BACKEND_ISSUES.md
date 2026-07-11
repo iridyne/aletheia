@@ -30,6 +30,8 @@
 
 **2026-07-11 运行状态语义修复**：Market Observer 的 `no_sufficient_signal` 是前置筛选正常拒绝，已有独立 filter evidence 留痕，不应进入 AgentRun `errors`。此前它会把整次扫描标成 `completed_with_errors`，污染 `doctor` 的近期故障列表。现已改为无错误返回；LLM/provider 失败、意外异常和循环超预算仍按真实错误报告。对应契约为 `OBS-PRE-FILTER-STATUS`。
 
+**2026-07-11 LLM 备用链修复**：`is_transient_model_error()` 原先只识别 HTTP 状态码和错误文本，`httpx.ConnectError` 等网络异常不会进入已配置的备用模型链，第一模型连接抖动会直接终止请求。现将连接/网络读写、远端协议和代理传输错误归为可重试；401 等永久错误仍立即失败。60 秒 timeout 不扩成最多 5 次串行重试，以免突破有界 agent job。对应契约为 `AC-B02b`。
+
 ---
 
 ## §18 Operator 单一真相源 — TS 内存态重启重建缺陷（2026-06-28）

@@ -3109,3 +3109,10 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - CI now runs workflow behavior tests and rejects governed diffs without both task and handoff records; the versioned pre-commit hook applies the same local gate.
 - Migrated completed task packets away from stale implementation next actions and replaced root `CURRENT_TASK.md` with the durable bootstrap pointer.
 - Verification: focused/architecture 40 passed; specs 636 passed, 7 skipped, 6 xfailed; full suite 2837 passed with one pre-existing duplicate Gateway claim ID failure.
+
+## 2026-07-11 — Observer diagnostics and LLM fallback honesty
+
+- Normal `no_sufficient_signal` Market Observer rejections now complete cleanly while retaining filter evidence for negative-feedback analysis.
+- Connection-class `httpx` failures now use configured LLM fallback models; timeout exceptions remain terminal to preserve scheduler wall-clock bounds.
+- Updated focused runtime tests for valid zero-opportunity scans and added executable provider fallback coverage.
+- Renamed the duplicate data-collector stability claim from `GS-S03` to `GS-S04`, restoring unique rule identities without behavioral changes.

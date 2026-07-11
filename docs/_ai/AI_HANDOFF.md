@@ -2089,3 +2089,10 @@ uv run aletheia doctor                        # 取真实事实
 - 冷启动会区分当前证据、历史证据、缺失证据和不可达证据，不再把已完成任务的旧开发指令交给新 Agent。
 - CI 和版本化提交钩子会拦截“代码/文档变了但任务包或交接没更新”。
 - 验证：专项与架构 40 项通过；项目规范 636 项通过。全量 2837 项通过，唯一失败是 `origin/master` 已存在的 Gateway 规范编号重复，本次未触碰 Gateway。
+
+## 2026-07-11 — Observer 运行状态与 LLM 连接恢复
+
+- Market Observer 的正常前置拒绝不再进入 AgentRun 错误通道；拒绝事实继续由 filter evidence 独立保存，真实 provider/异常/预算错误仍保留。
+- LLM `ConnectError`、网络读写、远端协议和代理故障进入已有备用模型链；60 秒 timeout 不扩成多模型串行重试，避免突破有界后台任务。
+- 全量测试发现并纠正 Gateway stability 中两个同名 `GS-S03` 登记；data collector budget 使用 `GS-S04`，只改规则身份，不改运行行为。
+- 后续仍按 `docs/_ai/CURRENT_TASK.md` 的前瞻样本门推进，不因本次可靠性修复自动调整任何筛选参数。

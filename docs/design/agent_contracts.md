@@ -277,7 +277,7 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
 
 ### LLM Fallback (request-level, unified — `model_provider/fallback.py:215-299`)
 
-- `complete_with_fallback()`: on **transient** errors (429/502/503/504, rate-limit — `is_transient_model_error:64`), tries next candidate model (primary → config `fallback_models` → discovered).
+- `complete_with_fallback()`: on **transient** errors (429/502/503/504, rate-limit, connect/network/remote-protocol/proxy transport failures), tries the next candidate model (primary → config `fallback_models` → discovered). Authentication and other permanent 4xx failures do not retry. Timeout exceptions remain terminal so five sequential 60-second model attempts cannot overrun bounded agent jobs.
 - **Cooldown**: a model with ≥2 consecutive failures is benched 300s (`_record_model_failure:116`).
 - Non-transient errors or last-candidate failure → raised. Each agent then catches and degrades (e.g. market_observer → technical-only signals).
 

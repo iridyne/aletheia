@@ -367,6 +367,56 @@ def test_llm_fallback_retries_on_transient_error():
 
 @spec_claim(
     SpecClaim(
+        "AC-B02b", "agent_contracts", "§3 LLM fallback network errors", "L2b",
+        "Connection-class provider failures enter the configured secondary-model chain",
+    ),
+)
+def test_llm_fallback_retries_on_connect_error():
+    import asyncio
+    import httpx
+    import aletheia.model_provider.fallback as fb
+
+    from aletheia.model_provider.base import ModelProvider, ModelRequest, ModelResponse
+
+    call_log: list[str] = []
+
+    class _NetworkProvider(ModelProvider):
+        name = "test_network_provider"
+        model = "primary-model"
+
+        async def complete(self, request: ModelRequest) -> ModelResponse:
+            call_log.append(self.model)
+            if self.model == "primary-model":
+                raise httpx.ConnectError("connection reset")
+            return ModelResponse(content="ok", model=self.model)
+
+        async def list_models(self):
+            return []
+
+    async def _run():
+        original = fb._candidate_models
+
+        async def _stub(provider_name, provider):
+            return ["primary-model", "fallback-model"]
+
+        fb._candidate_models = _stub
+        try:
+            return await fb.complete_with_fallback(
+                ModelRequest(messages=[{"role": "user", "content": "hi"}]),
+                provider_name="test_network_provider",
+                provider=_NetworkProvider(),
+            )
+        finally:
+            fb._candidate_models = original
+
+    fb.reset_model_health()
+    response = asyncio.run(_run())
+    assert response.content == "ok"
+    assert call_log == ["primary-model", "fallback-model"]
+
+
+@spec_claim(
+    SpecClaim(
         "AC-B03", "agent_contracts", "§2 System Operator safety", "L2c",
         "trading_decision.py does NOT import any live execution module "
         "(gateway, bitget_broker, okx_broker, binance_broker) — System Operator advises, never orders",

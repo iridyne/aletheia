@@ -202,12 +202,12 @@ def test_llm_structured_retry_is_bounded(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# GS-S03 — data_collectors fans out under a wall-clock budget < its job timeout
+# GS-S04 — data_collectors fans out under a wall-clock budget < its job timeout
 # ---------------------------------------------------------------------------
 
 @spec_claim(
     SpecClaim(
-        "GS-S03", _CONTRACT, "§data_collectors budget", "L2a",
+        "GS-S04", _CONTRACT, "§data_collectors budget", "L2a",
         "data_collectors bounds its collector fan-out: a wall-clock budget strictly "
         "below the 45s job timeout, via _bounded() per-collector timeouts — so one "
         "stalled collector can't blow the job and abandon a thread (every-2min job).",

@@ -24,6 +24,11 @@ from aletheia.model_provider import router as provider_router
 logger = logging.getLogger("aletheia.model_provider.fallback")
 
 _TRANSIENT_STATUS_CODES = {429, 502, 503, 504}
+_TRANSIENT_TRANSPORT_ERRORS = (
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+    httpx.ProxyError,
+)
 _TRANSIENT_TEXT_MARKERS = (
     "429",
     "502",
@@ -68,6 +73,8 @@ class ModelHealthState:
 
 def is_transient_model_error(exc: BaseException) -> bool:
     """True for model failures worth retrying on another model."""
+    if isinstance(exc, _TRANSIENT_TRANSPORT_ERRORS):
+        return True
     status = getattr(getattr(exc, "response", None), "status_code", None)
     if status in _TRANSIENT_STATUS_CODES:
         return True
