@@ -21,7 +21,14 @@ def _repo(tmp_path: Path, monkeypatch) -> Path:
     subprocess.run(["git", "add", "."], cwd=root, check=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=root, check=True, capture_output=True)
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, text=True, capture_output=True).stdout.strip()
-    task = {"schema_version": 1, "id": "TASK-1", "title": "Task", "status": "in_progress", "scope": {"boundary": "docs"}, "intent": "test", "acceptance": ["works"], "ownership": {"branch": "master"}, "base_commit": head, "next_action": {"command_key": "test", "reason": "run test"}, "blockers": [], "verification": [], "handoff": ".agent/handoffs/TASK-1.md"}
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=root,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    task = {"schema_version": 1, "id": "TASK-1", "title": "Task", "status": "in_progress", "scope": {"boundary": "docs"}, "intent": "test", "acceptance": ["works"], "ownership": {"branch": branch}, "base_commit": head, "next_action": {"command_key": "test", "reason": "run test"}, "blockers": [], "verification": [], "handoff": ".agent/handoffs/TASK-1.md"}
     (root / ".agent/tasks/TASK-1.yaml").write_text(yaml.safe_dump(task), encoding="utf-8")
     (root / ".agent/handoffs/TASK-1.md").write_text("# handoff\n", encoding="utf-8")
     monkeypatch.chdir(root)
