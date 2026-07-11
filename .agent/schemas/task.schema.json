@@ -7,6 +7,7 @@
     "id": {"type": "string", "pattern": "^TASK-[A-Za-z0-9_-]+$"},
     "status": {"enum": ["backlog", "ready", "in_progress", "blocked", "done", "cancelled"]},
     "handoff_version": {"enum": [1]},
+    "packet_type": {"enum": ["standard", "tiny"]},
     "base_commit": {"type": "string", "minLength": 7},
     "handoff": {"type": "string", "pattern": "^\\.agent/handoffs/TASK-[A-Za-z0-9_-]+\\.md$"}
   }

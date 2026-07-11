@@ -2,6 +2,7 @@ schema_version: 1
 id: TASK-2026-002
 title: Show completed branch task during bootstrap
 status: done
+packet_type: tiny
 scope:
   boundary: declare before implementation
   excluded: runtime facts and credentials

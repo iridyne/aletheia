@@ -29,6 +29,12 @@ _HANDOFF_HEADINGS = (
     "Blockers",
     "Risks",
 )
+_TINY_HANDOFF_HEADINGS = (
+    "Purpose",
+    "Changes made",
+    "Verification",
+)
+_PACKET_TYPES = frozenset({"standard", "tiny"})
 _LEGAL_TRANSITIONS = {
     "backlog": {"ready", "cancelled"},
     "ready": {"blocked", "cancelled"},
@@ -222,9 +228,19 @@ def _assert_only_workflow_metadata_dirty(root: Path, task: dict[str, Any]) -> No
         )
 
 
-def _missing_handoff_headings(text: str) -> list[str]:
+def _handoff_headings_for(task: dict[str, Any] | None) -> tuple[str, ...]:
+    """Return the required heading tuple for a task. Tiny packets require 3;
+    everything else (unset / standard / unknown values) requires all 8, keeping
+    backwards compatibility with legacy packets that have no packet_type field."""
+    if isinstance(task, dict) and task.get("packet_type") == "tiny":
+        return _TINY_HANDOFF_HEADINGS
+    return _HANDOFF_HEADINGS
+
+
+def _missing_handoff_headings(text: str, task: dict[str, Any] | None = None) -> list[str]:
     headings = {line[3:].strip() for line in text.splitlines() if line.startswith("## ")}
-    return [heading for heading in _HANDOFF_HEADINGS if heading not in headings]
+    required = _handoff_headings_for(task)
+    return [heading for heading in required if heading not in headings]
 
 
 def claim_task(task_id: str, *, holder: str, hours: int = 8, root: Path | None = None) -> dict[str, Any]:
@@ -245,17 +261,39 @@ def claim_task(task_id: str, *, holder: str, hours: int = 8, root: Path | None =
     return task
 
 
-def create_task(task_id: str, *, title: str, intent: str, root: Path | None = None) -> dict[str, Any]:
-    """Create an unclaimed ready task and its empty handoff packet."""
+def create_task(
+    task_id: str,
+    *,
+    title: str,
+    intent: str,
+    packet_type: str = "standard",
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Create an unclaimed ready task and its empty handoff packet.
+
+    Pass `packet_type="tiny"` for a small fix that would otherwise degrade
+    the 8-heading handoff into filler; the tiny template requires only
+    Purpose / Changes made / Verification.
+    """
     root = repo_root(root)
     if not re.fullmatch(r"TASK-[A-Za-z0-9_-]+", task_id):
         raise ValueError("task ID must start with TASK- and contain only letters, digits, _ or -")
+    if packet_type not in _PACKET_TYPES:
+        raise ValueError(f"packet_type must be one of {sorted(_PACKET_TYPES)}, got {packet_type!r}")
     path = root / ".agent/tasks" / f"{task_id}.yaml"
     if path.exists():
         raise ValueError(f"task already exists: {task_id}")
     _, head = _git(root, "rev-parse", "HEAD")
-    task = {"schema_version": 1, "handoff_version": 1, "id": task_id, "title": title, "status": "ready", "scope": {"boundary": "declare before implementation", "excluded": "runtime facts and credentials"}, "intent": intent, "acceptance": [], "ownership": {}, "base_commit": head, "next_action": {"command_key": "workflow_tests", "reason": "Claim the task and define the first focused verification."}, "blockers": [], "verification": [], "handoff": f".agent/handoffs/{task_id}.md", "updated_at": _now()}
+    task = {"schema_version": 1, "handoff_version": 1, "id": task_id, "title": title, "status": "ready", "packet_type": packet_type, "scope": {"boundary": "declare before implementation", "excluded": "runtime facts and credentials"}, "intent": intent, "acceptance": [], "ownership": {}, "base_commit": head, "next_action": {"command_key": "workflow_tests", "reason": "Claim the task and define the first focused verification."}, "blockers": [], "verification": [], "handoff": f".agent/handoffs/{task_id}.md", "updated_at": _now()}
     _write_yaml(path, task)
+    if packet_type == "tiny":
+        _write_text(root / task["handoff"],
+            f"# {task_id} handoff\n\n"
+            f"## Purpose\n\n{intent}\n\n"
+            "## Changes made\n\n- None yet.\n\n"
+            "## Verification\n\n- Not run yet.\n",
+        )
+        return task
     _write_text(root / task["handoff"],
         f"# {task_id} handoff\n\n"
         f"## Purpose\n\n{intent}\n\n"
@@ -387,7 +425,7 @@ def complete_task(task_id: str, *, root: Path | None = None) -> dict[str, Any]:
     if not current:
         raise ValueError("task completion requires successful verification at current HEAD; run task verify first")
     handoff = root / str(task["handoff"])
-    missing = _missing_handoff_headings(handoff.read_text(encoding="utf-8"))
+    missing = _missing_handoff_headings(handoff.read_text(encoding="utf-8"), task)
     if missing:
         raise ValueError("handoff is missing required headings: " + ", ".join(missing))
     task["status"] = "done"
@@ -407,7 +445,7 @@ def write_handoff(task_id: str, text: str, *, root: Path | None = None) -> Path:
     if _SECRET.search(text):
         raise ValueError("handoff contains secret-like text")
     if task.get("handoff_version") == 1:
-        missing = _missing_handoff_headings(text)
+        missing = _missing_handoff_headings(text, task)
         if missing:
             raise ValueError("handoff is missing required headings: " + ", ".join(missing))
     handoff = root / str(task["handoff"])
@@ -466,9 +504,11 @@ def validate(
         if not handoff.is_file():
             findings.append(Finding("error", f"handoff not found: {task['handoff']}", task_id))
         elif task.get("handoff_version") == 1:
-            missing_headings = _missing_handoff_headings(handoff.read_text(encoding="utf-8"))
+            missing_headings = _missing_handoff_headings(handoff.read_text(encoding="utf-8"), task)
             if missing_headings:
                 findings.append(Finding("error", "handoff is missing required headings: " + ", ".join(missing_headings), task_id))
+        if task.get("packet_type") is not None and task["packet_type"] not in _PACKET_TYPES:
+            findings.append(Finding("error", f"unknown packet_type: {task['packet_type']!r}", task_id))
         code, _ = _git(root, "cat-file", "-e", f"{task['base_commit']}^{{commit}}")
         if code:
             findings.append(Finding("error", "base_commit is not a local Git commit", task_id))

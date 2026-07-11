@@ -629,3 +629,104 @@ def test_check_cli_treats_orphan_base_commit_as_success_with_warnings(tmp_path, 
     assert result.exit_code == 0, result.stdout
     assert "WARNING" in result.stdout
     assert "base_commit is not reachable" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Handoff tiering: standard vs tiny (TASK-2026-013)
+# ---------------------------------------------------------------------------
+
+
+def _tiny_handoff() -> str:
+    return (
+        "# TASK-2 handoff\n\n"
+        "## Purpose\n\nQuick fix.\n\n"
+        "## Changes made\n\n- Adjusted a threshold.\n\n"
+        "## Verification\n\n- Focused workflow test passed.\n"
+    )
+
+
+def test_create_task_tiny_writes_short_template_and_marks_packet_type(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    task = create_task("TASK-2", title="Small", intent="Tiny fix", packet_type="tiny", root=root)
+    assert task["packet_type"] == "tiny"
+    handoff = (root / ".agent/handoffs/TASK-2.md").read_text(encoding="utf-8")
+    assert "## Purpose" in handoff and "## Changes made" in handoff and "## Verification" in handoff
+    assert "Uncommitted work" not in handoff
+    assert "Blockers" not in handoff
+
+
+def test_create_task_defaults_to_standard(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    task = create_task("TASK-2", title="Std", intent="Standard task", root=root)
+    assert task["packet_type"] == "standard"
+    handoff = (root / ".agent/handoffs/TASK-2.md").read_text(encoding="utf-8")
+    assert "## Uncommitted work" in handoff
+    assert "## Blockers" in handoff
+
+
+def test_create_task_rejects_unknown_packet_type(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="packet_type must be one of"):
+        create_task("TASK-2", title="X", intent="bad", packet_type="huge", root=root)
+
+
+def test_tiny_task_completes_with_three_headings(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    subprocess.run(["git", "checkout", "-b", "tiny-branch"], cwd=root, check=True, capture_output=True)
+    create_task("TASK-2", title="Small", intent="Tiny fix", packet_type="tiny", root=root)
+    subprocess.run(["git", "add", ".agent"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "seed tiny"], cwd=root, check=True, capture_output=True)
+    task = claim_task("TASK-2", holder="fresh-agent", root=root)
+    assert task["packet_type"] == "tiny"
+    verify_task("TASK-2", command_key="test", root=root)
+    write_handoff("TASK-2", _tiny_handoff(), root=root)
+    completed = complete_task("TASK-2", root=root)
+    assert completed["status"] == "done"
+
+
+def test_standard_task_still_requires_all_eight_headings(tmp_path, monkeypatch):
+    """The existing 8-heading requirement must not regress for standard packets."""
+    root = _repo(tmp_path, monkeypatch)
+    # TASK-1 in _repo has no packet_type — treated as standard.
+    verify_task("TASK-1", command_key="test", root=root)
+    with pytest.raises(ValueError, match="Uncommitted work"):
+        write_handoff("TASK-1", _tiny_handoff(), root=root)
+
+
+def test_write_handoff_rejects_tiny_text_for_standard_task(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="handoff is missing required headings"):
+        write_handoff("TASK-1", _tiny_handoff(), root=root)
+
+
+def test_validate_rejects_unknown_packet_type(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["packet_type"] = "gigantic"
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    assert any("unknown packet_type" in f.message for f in validate(root))
+
+
+def test_cli_create_tiny_flag(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    result = CliRunner().invoke(
+        workflow_app,
+        ["task", "create", "TASK-2", "--title", "Small", "--intent", "Tiny", "--tiny"],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "(tiny)" in result.stdout
+    task = yaml.safe_load((root / ".agent/tasks/TASK-2.yaml").read_text(encoding="utf-8"))
+    assert task["packet_type"] == "tiny"
+
+
+def test_legacy_task_without_packet_type_still_validates(tmp_path, monkeypatch):
+    """Legacy packets that pre-date this feature must continue to pass validate()."""
+    root = _repo(tmp_path, monkeypatch)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    # ensure no packet_type field is present
+    task.pop("packet_type", None)
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    findings = validate(root)
+    assert not any("packet_type" in f.message for f in findings)
