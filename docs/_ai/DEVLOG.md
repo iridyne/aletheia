@@ -1,5 +1,19 @@
 # Development Log
 
+## 2026-07-11 — Serenity worker failure classification
+
+- The background research thread previously overwrote every unhandled failure as
+  `unknown_error`, even when the underlying provider timeout was known.
+- Research pipeline and thread-boundary failures now share one error-detail and
+  classification path. Empty-message exceptions retain their class name, so an
+  empty `TimeoutError` is stored as `provider_timeout` with a useful description.
+- No research prompt, provider selection, retry schedule, scoring, trading, risk,
+  execution, live, or credential behavior changed.
+- Validation: Serenity workbench 61 tests, related LLM/health/scheduler 75 tests,
+  and all 631 executable rules passed.
+
+---
+
 ## 2026-07-11 — OHLCV issue-ledger correction
 
 - Corrected the stale MDS-05 entry: OHLCV rows are already isolated by exchange,

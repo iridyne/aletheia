@@ -1111,3 +1111,42 @@ def test_classify_error_types():
     assert _classify_error(Exception("Network connection refused")) == "network_error"
     assert _classify_error(Exception("JSON decode error")) == "schema_validation_error"
     assert _classify_error(Exception("Something strange")) == "unknown_error"
+    assert _classify_error(TimeoutError()) == "provider_timeout"
+
+
+def test_enqueue_crash_preserves_empty_timeout_type(monkeypatch):
+    """The worker-thread boundary must not erase a provider timeout as unknown."""
+    import aletheia.agents.research_worker as worker
+
+    recorded = {}
+
+    def fail_run(coro):
+        coro.close()
+        raise TimeoutError()
+
+    class SynchronousThread:
+        def __init__(self, *, target, **_kwargs):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    monkeypatch.setattr(worker.asyncio, "run", fail_run)
+    monkeypatch.setattr(worker.threading, "Thread", SynchronousThread)
+    monkeypatch.setattr(
+        worker,
+        "_mark_failed",
+        lambda run_id, error_type, error_message, stage: recorded.update(
+            run_id=run_id,
+            error_type=error_type,
+            error_message=error_message,
+            stage=stage,
+        ),
+    )
+
+    worker.enqueue_research_run("run-timeout")
+
+    assert recorded["run_id"] == "run-timeout"
+    assert recorded["error_type"] == "provider_timeout"
+    assert recorded["error_message"] == "TimeoutError"
+    assert recorded["stage"] is None

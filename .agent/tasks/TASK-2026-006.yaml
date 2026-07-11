@@ -1,0 +1,23 @@
+schema_version: 1
+id: TASK-2026-006
+title: Classify Serenity worker boundary failures
+status: in_progress
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Preserve exception type when the Serenity worker thread marks a failed research
+  run, including empty-message timeouts.
+acceptance: []
+ownership:
+  branch: iridite/research-worker-error-classification
+  lease_holder: codex
+  claimed_at: '2026-07-11T12:08:48.954175Z'
+  expires_at: '2026-07-11T20:08:48.954324Z'
+base_commit: c0d3964d7df3cde6044fe9db08696e1f31a0bac8
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-006.md
+updated_at: '2026-07-11T12:08:48.954334Z'

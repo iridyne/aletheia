@@ -457,9 +457,10 @@ def enqueue_research_run(run_id: str) -> None:
         try:
             asyncio.run(_process_research_run(run_id))
         except Exception as e:
-            logger.error("Research run %s crashed: %s", run_id, e)
+            detail = _error_detail(e)
+            logger.error("Research run %s crashed: %s", run_id, detail)
             try:
-                _mark_failed(run_id, "unknown_error", str(e), None)
+                _mark_failed(run_id, _classify_error(e), detail, None)
             except Exception:
                 pass
 
@@ -489,10 +490,11 @@ async def _process_research_run(run_id: str) -> None:
     except _RateLimitError as e:
         _handle_rate_limit(run_id, run, str(e))
     except Exception as e:
-        logger.error("Research run %s failed at stage: %s", run_id, e)
+        detail = _error_detail(e)
+        logger.error("Research run %s failed at stage: %s", run_id, detail)
         run_refreshed = repo.get_serenity_research_run(run_id)
         stage = (run_refreshed or run).get("stage")
-        _mark_failed(run_id, _classify_error(e), str(e)[:500], stage)
+        _mark_failed(run_id, _classify_error(e), detail[:500], stage)
 
 
 async def _run_pipeline(run_id: str, run: dict) -> None:
@@ -1059,7 +1061,7 @@ def _schedule_auto_retry(run_id: str, run: dict, retry_count: int) -> None:
 
 
 def _classify_error(e: Exception) -> str:
-    msg = str(e).lower()
+    msg = _error_detail(e).lower()
     if "429" in msg or "rate" in msg:
         return "provider_rate_limit"
     if "timeout" in msg:
@@ -1071,6 +1073,12 @@ def _classify_error(e: Exception) -> str:
     if "json" in msg or "schema" in msg or "parse" in msg:
         return "schema_validation_error"
     return "unknown_error"
+
+
+def _error_detail(e: Exception) -> str:
+    """Keep exception type when providers raise an empty-message error."""
+    message = str(e).strip()
+    return f"{type(e).__name__}: {message}" if message else type(e).__name__
 
 
 class _RateLimitError(Exception):

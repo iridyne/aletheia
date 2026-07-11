@@ -7,7 +7,15 @@
 
 ## Last Updated
 
-2026-07-11 (OHLCV issue-ledger correction)
+2026-07-11 (Serenity worker failure classification)
+
+---
+
+## Recent Change (Serenity worker failure classification — 2026-07-11)
+
+Serenity 的后台研究线程原先在最外层捕获异常后，一律把失败写成 `unknown_error`。因此即使通用 LLM 调用已经识别空消息 timeout，线程边界仍会丢掉类型。现在正常管线和线程兜底都使用同一“异常类名 + 消息”分类；空消息 `TimeoutError` 会留下 `provider_timeout` 和可读原因。
+
+没有改研究 prompt、provider 选择、重试节奏、评分、交易、风险、执行、live 或凭证。Serenity 工作台 61 项、相关 LLM/健康/调度 75 项、完整规则 631 项通过。
 
 ---
 
