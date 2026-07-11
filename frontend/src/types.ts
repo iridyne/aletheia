@@ -365,6 +365,10 @@ export interface SystemStatus {
   paper_execution_mode: string
   execution_target: 'local_paper' | 'external_exchange'
   uses_external_exchange: boolean
+  execution_exchange: string | null
+  market_data_exchange: string
+  exchange_alignment: 'local_paper' | 'aligned' | 'diverged'
+  exchange_diverged: boolean
   live_state: string
   permission_mode: string
   scheduler_enabled: boolean

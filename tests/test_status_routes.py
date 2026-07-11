@@ -142,3 +142,23 @@ async def test_status_reports_local_paper_without_exchange_connection(client):
     assert data["execution_target"] == "local_paper"
     assert data["uses_external_exchange"] is False
     assert data["paper_execution_mode"] == "paper_internal"
+    assert data["exchange_alignment"] == "local_paper"
+    assert data["execution_exchange"] is None
+
+
+@pytest.mark.anyio
+async def test_status_reports_execution_and_data_exchange_divergence(client):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.exchange.name = "bitget"
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    cfg.market_data.ccxt_exchange = "binance"
+    save_config(cfg)
+
+    resp = await client.get("/api/status")
+    data = resp.json()
+    assert data["execution_exchange"] == "okx"
+    assert data["market_data_exchange"] == "binance"
+    assert data["exchange_alignment"] == "diverged"
+    assert data["exchange_diverged"] is True

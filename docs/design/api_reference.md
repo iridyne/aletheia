@@ -49,6 +49,10 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | GET | `/health` | Liveness check (returns `{"status":"ok"}`) |
 | GET | `/ready` | Readiness check (DB, scheduler, exchange) |
 | GET | `/status` | Full system status (gateway, scheduler, exchange, live state, permission) |
+
+`GET /status` exposes `execution_exchange`, `market_data_exchange`,
+`exchange_alignment` (`local_paper|aligned|diverged`), and `exchange_diverged` so
+operators do not infer the real order target from the retained exchange preference.
 | GET | `/version` | Build version info |
 | GET | `/stability` | Uptime and restart history |
 | GET | `/infra/events` | Infrastructure event log (config changes, restarts, errors) |

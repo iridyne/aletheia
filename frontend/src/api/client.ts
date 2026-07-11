@@ -454,7 +454,7 @@ export const api = {
     post<{ old: boolean; new: boolean }>('/settings/autonomous-learning', { enabled }),
   setBypassDistressGate: (enabled: boolean) =>
     post<{ old: boolean; new: boolean }>('/settings/bypass-distress-gate', { enabled }),
-  setExchangeMarkets: (body: { spot: boolean; usdt_futures: boolean; paper_execution_mode?: string }) =>
+  setExchangeMarkets: (body: { spot: boolean; usdt_futures: boolean; paper_execution_mode?: string; confirm_exchange_divergence?: boolean }) =>
     post<Record<string, any>>('/settings/exchange-markets', body),
   setPrimaryExchange: (exchange_id: string) =>
     post<{ exchange_id: string; 'exchange.name': string; 'exchange.paper_execution_mode': string; 'market_data.ccxt_exchange': string; 'risk.allowed_exchange': string }>('/settings/primary-exchange', { exchange_id }),
@@ -816,6 +816,7 @@ export const api = {
   // Market data config
   updateMarketDataConfig: (body: Partial<{
     ccxt_exchange: string; ccxt_fallback: string;
+    confirm_exchange_divergence: boolean;
     ohlcv_cache_ttl_min: number; enable_yfinance_macro: boolean;
     observed_stocks: string[]; observed_stock_tokens: string[]; observed_xstocks: string[];
     observed_prediction_markets: string[];

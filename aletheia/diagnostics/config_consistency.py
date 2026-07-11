@@ -95,17 +95,23 @@ def _check_demo_credentials(cfg: "AletheiaConfig") -> ConfigInconsistency | None
 
 
 def _check_exchange_consistency(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
-    pem = cfg.exchange.paper_execution_mode
-    if pem == "paper_internal":
+    from aletheia.config.exchange_alignment import exchange_alignment
+
+    alignment = exchange_alignment(cfg)
+    if not alignment.diverged:
         return None
-    if cfg.exchange.name != cfg.market_data.ccxt_exchange:
-        return ConfigInconsistency(
-            field_path="exchange.name",
-            severity="info",
-            message=f"Data source ({cfg.market_data.ccxt_exchange}) differs from exchange identity ({cfg.exchange.name})",
-            fix_hint="Use Settings → Primary Exchange to unify, or ignore if intentional",
-        )
-    return None
+    return ConfigInconsistency(
+        field_path="market_data.ccxt_exchange",
+        severity="info",
+        message=(
+            f"Order execution ({alignment.execution_exchange}) and market data "
+            f"({alignment.data_exchange}) use different exchanges"
+        ),
+        fix_hint=(
+            "Use Settings → Primary Exchange to unify, or keep the persistent "
+            "dashboard warning if the split is intentional"
+        ),
+    )
 
 
 def _check_whitelist_empty(cfg: "AletheiaConfig") -> ConfigInconsistency | None:

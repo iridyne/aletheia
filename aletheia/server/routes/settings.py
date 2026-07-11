@@ -313,6 +313,24 @@ class ExchangeMarketsRequest(SettingsRequest):
     spot: bool
     usdt_futures: bool
     paper_execution_mode: Optional[str] = None
+    confirm_exchange_divergence: bool = False
+
+
+def _require_exchange_divergence_confirmation(alignment, confirmed: bool) -> None:
+    if not alignment.diverged or confirmed:
+        return
+    raise HTTPException(
+        409,
+        detail={
+            "code": "exchange_source_divergence_confirmation_required",
+            "message": (
+                "Market data and order execution would use different exchanges. "
+                "Confirm this intentional divergence before saving."
+            ),
+            "execution_exchange": alignment.execution_exchange,
+            "data_exchange": alignment.data_exchange,
+        },
+    )
 
 
 @router.post("/exchange-markets")
@@ -323,6 +341,17 @@ async def set_exchange_markets(req: ExchangeMarketsRequest):
         raise HTTPException(400, "paper_execution_mode must be one of: bitget_demo, paper_internal, binance_testnet, okx_demo, binance_live, okx_live")
     cfg = load_config()
     old = cfg.exchange.model_dump(mode="json")
+    next_paper_mode = req.paper_execution_mode or cfg.exchange.paper_execution_mode
+    from aletheia.config.exchange_alignment import exchange_alignment_for_values
+    alignment = exchange_alignment_for_values(
+        paper_execution_mode=next_paper_mode,
+        data_exchange=cfg.market_data.ccxt_exchange,
+        configured_exchange=cfg.exchange.name,
+    )
+    if req.paper_execution_mode is not None and req.paper_execution_mode != cfg.exchange.paper_execution_mode:
+        _require_exchange_divergence_confirmation(
+            alignment, req.confirm_exchange_divergence,
+        )
     cfg.exchange.enabled_markets = {"spot": req.spot, "usdt_futures": req.usdt_futures}
     if req.paper_execution_mode is not None:
         cfg.exchange.paper_execution_mode = req.paper_execution_mode
@@ -332,7 +361,7 @@ async def set_exchange_markets(req: ExchangeMarketsRequest):
                  "entity_type": "exchange_config", "before": old,
                  "after": cfg.exchange.model_dump(mode="json"),
                  "message": "exchange config updated"})
-    return cfg.exchange.model_dump(mode="json")
+    return {**cfg.exchange.model_dump(mode="json"), "exchange_alignment": alignment.to_dict()}
 
 
 # ---------------------------------------------------------------------------
@@ -1181,6 +1210,7 @@ _SUPPORTED_EXCHANGES = {"binance", "bybit", "okx", "bitget", "gate", "kucoin", "
 class MarketDataConfigUpdate(SettingsRequest):
     ccxt_exchange: Optional[str] = None
     ccxt_fallback: Optional[str] = None
+    confirm_exchange_divergence: bool = False
     ohlcv_cache_ttl_min: Optional[int] = None
     enable_yfinance_macro: Optional[bool] = None
     observed_stocks: Optional[list[str]] = None
@@ -1231,8 +1261,11 @@ async def update_market_data_config(req: MarketDataConfigUpdate):
     """Update market data source parameters."""
     cfg = load_config()
     old = cfg.market_data.model_dump(mode="json")
-    updates = req.model_dump(exclude_none=True)
+    updates = req.model_dump(
+        exclude_none=True, exclude={"confirm_exchange_divergence"},
+    )
 
+    validated_updates: dict = {}
     for field, value in updates.items():
         if field in _MARKET_DATA_BOUNDS:
             lo, hi = _MARKET_DATA_BOUNDS[field]
@@ -1249,6 +1282,26 @@ async def update_market_data_config(req: MarketDataConfigUpdate):
                 raise HTTPException(400, f"'provider' must be one of: {sorted(_MARKET_DATA_PROVIDERS)}")
         if field in {"observed_stocks", "observed_stock_tokens", "observed_xstocks", "observed_prediction_markets", "observed_equities"}:
             value = list(dict.fromkeys(str(s).strip() for s in value if str(s).strip()))
+        validated_updates[field] = value
+
+    from aletheia.config.exchange_alignment import exchange_alignment_for_values
+    next_data_exchange = str(
+        validated_updates.get("ccxt_exchange", cfg.market_data.ccxt_exchange),
+    )
+    alignment = exchange_alignment_for_values(
+        paper_execution_mode=cfg.exchange.paper_execution_mode,
+        data_exchange=next_data_exchange,
+        configured_exchange=cfg.exchange.name,
+    )
+    if (
+        "ccxt_exchange" in validated_updates
+        and next_data_exchange != cfg.market_data.ccxt_exchange
+    ):
+        _require_exchange_divergence_confirmation(
+            alignment, req.confirm_exchange_divergence,
+        )
+
+    for field, value in validated_updates.items():
         setattr(cfg.market_data, field, value)
 
     save_config(cfg)
@@ -1256,8 +1309,12 @@ async def update_market_data_config(req: MarketDataConfigUpdate):
     write_audit({"actor": "human", "source": "dashboard", "event_type": "market_data_config_changed",
                  "entity_type": "market_data_config", "before": old,
                  "after": cfg.market_data.model_dump(mode="json"),
-                 "message": f"Market data config updated: {list(updates.keys())}"})
-    return {"updated": updates, "market_data": cfg.market_data.model_dump(mode="json")}
+                 "message": f"Market data config updated: {list(validated_updates.keys())}"})
+    return {
+        "updated": validated_updates,
+        "market_data": cfg.market_data.model_dump(mode="json"),
+        "exchange_alignment": alignment.to_dict(),
+    }
 
 
 # ---------------------------------------------------------------------------

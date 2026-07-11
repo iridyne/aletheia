@@ -137,6 +137,28 @@ def test_market_data_visibility_surfaces_are_wired():
     assert "/market/data-coverage" in api_doc
 
 
+@spec_claim(
+    SpecClaim(
+        "DU-S18", _CONTRACT, "§execution/data exchange alignment", "L2a",
+        "External execution and primary market-data exchanges share one alignment "
+        "model; divergence requires explicit confirmation in both mutation paths and "
+        "remains visible in status, doctor, Settings, and Overview.",
+    ),
+)
+def test_exchange_source_divergence_is_guarded_and_visible():
+    alignment = (_ROOT / "aletheia" / "config" / "exchange_alignment.py").read_text(encoding="utf-8")
+    settings_route = (_ROOT / "aletheia" / "server" / "routes" / "settings.py").read_text(encoding="utf-8")
+    health_route = (_ROOT / "aletheia" / "server" / "routes" / "health.py").read_text(encoding="utf-8")
+    overview = (_ROOT / "frontend" / "src" / "pages" / "Overview.tsx").read_text(encoding="utf-8")
+    settings_ui = (_ROOT / "frontend" / "src" / "pages" / "Settings.tsx").read_text(encoding="utf-8")
+
+    assert "paper_internal" in alignment and "okx_demo" in alignment
+    assert settings_route.count("confirm_exchange_divergence") >= 2
+    assert "exchange_alignment" in health_route
+    assert "exchange_diverged" in overview
+    assert "confirmExchangeDivergence" in settings_ui
+
+
 # ---------------------------------------------------------------------------
 # DU-S13 — perp structure rows are registered and consumed as observation data
 # ---------------------------------------------------------------------------

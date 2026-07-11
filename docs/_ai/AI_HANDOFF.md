@@ -7,7 +7,19 @@
 
 ## Last Updated
 
-2026-07-11 (market-data observability and OHLCV provenance)
+2026-07-11 (execution/data exchange divergence guard)
+
+---
+
+## Recent Change (Execution/data exchange divergence guard — 2026-07-11)
+
+外部 demo/live 的真实执行场所现在按 `paper_execution_mode` 解析，不再拿可能过期的 `exchange.name` 代替。统一 alignment 同时供设置后端、状态 API、doctor、Settings 和 Overview 使用；本地模拟明确为 local_paper，不产生分叉告警。
+
+修改主行情源或 Paper execution mode 只要会新产生 `X execution / Y data` 分叉，后端先返回 409，前端必须勾选同时写明两个场所的确认框才能保存。Market Data 更新先全部标准化/校验，再确认、应用、保存；400/409 不会留下半修改缓存。现有有意分叉不阻塞无关字段编辑。首页常驻显示 `X exec · Y data`，连接探针改测真实执行场所。
+
+没有自动改配置，没有修改凭证、live 解锁、风险、broker 或订单路由。
+
+验证：聚焦配置/状态/doctor 回归 119 项、完整规则 629 项和前端 production build 通过。单进程全量在既有 `test_infra_doctor_endpoint_matches_contract` 的 TestClient 退出泄漏处等待；中断前 1199 项通过，该节点隔离 1 项通过，节点后分段 1570 项通过、1 项 Settings 原生 checkbox 规范失败已修并回归 75 项通过。合计覆盖 2771 项，0 个剩余真实失败，但不是一次连续全量绿；遗留记为 TST-A01。
 
 ---
 

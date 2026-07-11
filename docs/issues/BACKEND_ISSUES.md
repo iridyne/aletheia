@@ -992,7 +992,7 @@
 | MDS-01 | 增强市场数据在 `market_observer` 中缺少 freshness gate | ✅ | `market_observer` 已委托 `build_market_context_from_db()`；盘口/funding/OI/macro 与 Universe 共用 `data/freshness.py`，链上/跨所 funding/持仓结构同样 fail-closed | 旧行不再拼入 LLM prompt 或 Opportunity 衍生品字段 | 设计见 `docs/design/decision_context_freshness.md` |
 | MDS-02 | `build_market_context_from_db()` 丢失 LSR，多空比写入后不进通用上下文 | ✅ | 通用 DB 路径现传递 `long_short_ratio`，并有真实构建+render 回归测试 | 新鲜 LSR 进入 crowding 和 LLM；过期时随 OI 整行退出 | `tests/test_enriched_data_freshness.py` |
 | MDS-03 | Universe feature 读取 orderbook/funding/OI 时也缺 freshness gate | ✅ | `_load_fresh_enrichment_rows()` 按 exact venue + 统一时效策略读取；live funding 失败只退回新鲜缓存 | 旧 depth/OI/funding 不再污染 scanner，且不以 0 伪装中性 | `tests/test_enriched_data_freshness.py` |
-| MDS-04 | 行情源与执行交易所可被再次手动分叉，只由 doctor 提醒 | 🟠 | 默认 schema 中 `ExchangeConfig.name="bitget"`、`paper_execution_mode="bitget_demo"`，但 `MarketDataConfig.ccxt_exchange="binance"`（`config/schema.py:64-97`）；`settings.py:184-200` 的 Primary Exchange 路由会统一四个字段；但 `settings.py:990-1008` 的 `/settings/market-data` 仍允许单独改 `ccxt_exchange/ccxt_fallback`；doctor 仅通过 `diagnostics/config_consistency.py:_check_exchange_consistency()` 报告 | 研究/选币/LLM 可能基于一个交易所行情，执行却发生在另一个交易所；价差、funding、OI、可交易合约、深度均可能不同。对 demo/live 行为解释会变困难 | 保留“有意分叉”能力，但 Settings UI/后端需要显式二次确认和醒目标记；对于 `paper_execution_mode != paper_internal`，至少在 operator context 和 dashboard 标出 `data_exchange != execution_exchange` |
+| MDS-04 | 行情源与执行交易所可被再次手动分叉，只由 doctor 提醒 | ✅ | 统一 alignment 按 `paper_execution_mode` 解析真实执行场所，不再信任可能过期的 `exchange.name`；Market Data 和 Paper execution 两条修改入口都在产生新分叉时要求显式确认 | `/api/status`、doctor、Settings、Overview 常驻显示 `X exec · Y data`；首页连接探针也改测实际执行场所。本地模拟不报分叉 | 设计见 `docs/design/exchange_source_alignment.md` |
 | MDS-05 | `market_ohlcv` 主键不含 exchange，跨交易所历史会互相覆盖 | 🟡 | `migrations.py:377-388` `PRIMARY KEY (symbol, timeframe, ts)`；`repositories.py:1219-1224` 注释明确“last-writer wins across exchanges” | 当前单主交易所 MVP 可接受；但只要同时拉 Binance/Bitget/Bybit 同一 symbol/timeframe，同一根 K 线只能保留最后写入来源，无法做严格交易所价差、回放或供给质量对比 | 若后续需要跨交易所历史对比，迁移主键为 `(symbol,timeframe,exchange,ts)`；短期至少在 API/文档中声明 `market_ohlcv` 不是 multi-exchange canonical store |
 | MDS-06 | Orderbook 是 REST 点时刻快照，不是连续盘口流 | 🟡 | `data/collectors/microstructure.py:50-55` 每 symbol 调一次 `fetch_order_book(limit=20)`；`data/collectors/microstructure.py:82-90` 只计算 10bps depth 和 top10 imbalance | 能估算执行成本，但不能判断盘口队列变化、撤单速度、冲击恢复，也不能做微结构级回放；不适合把它解释为实时 orderflow | 文档/UI 中称为 “latest orderbook snapshot”；若要升级，再引入 WebSocket/增量 orderbook，但当前 MVP 不建议先扩范围 |
 | MDS-07 | `inspect microstructure` 读取了不存在的 imbalance 字段 | ✅ | CLI 已读取 `imbalance_ratio`，funding/OI 按 active member exact venue 查询，并显示各自 source/observed_at/freshness | 排障不再把已有 imbalance 显示为空，也不会混入另一场所衍生品 | `tests/test_market_data_coverage.py` |
@@ -1047,3 +1047,9 @@
 | ID | 状态 | 问题 | 处理/下一步 |
 |---|---|---|---|
 | OPS-A01 | ✅ | autostart 仅实现 Windows `schtasks`；macOS 永远返回 `not_windows`，整机重启或 supervisor 被杀后无法由项目自身恢复 | 新增用户级 launchd LaunchAgent：登录启动 + 60 秒幂等 gated-start 检查，原子/无凭证 plist、bootstrap/kickstart/bootout、真实状态解析、路径漂移诊断、Settings/doctor/CLI 跨平台说明；不改 supervisor、live、风险或执行 |
+
+## §23 测试生命周期（2026-07-11）
+
+| ID | 状态 | 问题 | 证据/下一步 |
+|---|---|---|---|
+| TST-A01 | 🟡 | 全量单进程运行在 `tests/test_doctor_json.py::test_infra_doctor_endpoint_matches_contract` 的 `TestClient` 退出时可能无限等待 anyio portal 线程 | 顺序运行中 1199 项通过后停在 `TestClient.__exit__ -> portal thread.join()`；采样显示 portal 线程反复构建 SSL context/加载 CA。单独运行该节点 2.52s 通过，节点后 1571 项可分段完成，说明是前序测试泄漏或全局 app lifespan 相互作用。后续用二分文件集定位污染源并修 fixture/app lifespan；此前全量报告必须注明是否单次连续完成，禁止把分段覆盖冒充一次绿灯 |

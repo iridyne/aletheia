@@ -42,7 +42,9 @@ export default function Overview() {
   // always Bitget. Previously an OKX/Binance deployment saw a stale Bitget
   // probe (false-red if bitget creds absent, false-green if bitget was up
   // while the real exchange was down).
-  const exchangeName = String((status as any)?.exchange || 'bitget').toLowerCase()
+  const exchangeName = String(
+    (status as any)?.execution_exchange || (status as any)?.exchange || 'bitget',
+  ).toLowerCase()
   const testExchangeConnection =
     exchangeName === 'okx' ? api.testOkx :
     exchangeName === 'binance' ? api.testBinance :
@@ -209,8 +211,20 @@ export default function Overview() {
                 })()}
                 <StatusRow
                   label="Exchange"
-                  light={!usesExternalExchange ? 'muted' : exchangeHealth?.connected ? 'green' : exchangeHealth ? 'red' : 'yellow'}
-                  value={!usesExternalExchange ? 'Local paper · no exchange' : `${String(s.exchange)} · ${exchangeMode}`}
+                  light={
+                    !usesExternalExchange ? 'muted' :
+                    s.exchange_diverged ? 'yellow' :
+                    exchangeHealth?.connected ? 'green' : exchangeHealth ? 'red' : 'yellow'
+                  }
+                  value={
+                    !usesExternalExchange ? 'Local paper · no exchange' :
+                    s.exchange_diverged
+                      ? `${String(s.execution_exchange)} exec · ${String(s.market_data_exchange)} data`
+                      : `${String(s.execution_exchange || s.exchange)} · ${exchangeMode}`
+                  }
+                  title={s.exchange_diverged
+                    ? 'Order execution and market analysis use different exchanges. This split was explicitly configured.'
+                    : undefined}
                 />
                 <StatusRow
                   label="Model"

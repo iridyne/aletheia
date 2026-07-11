@@ -346,6 +346,69 @@ async def test_settings_rejects_mismatched_or_invalid_config_controls(client):
     resp = await client.post("/api/settings/universe", json={"fallback_symbols": []})
     assert resp.status_code == 400
 
+    resp = await client.post("/api/settings/market-data", json={"ccxt_exchange": "unknown"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_market_data_validation_is_atomic_before_save(client):
+    from aletheia.config.loader import load_config
+
+    before = load_config().market_data.ccxt_fallback
+    resp = await client.post(
+        "/api/settings/market-data",
+        json={"ccxt_fallback": "okx", "ohlcv_cache_ttl_min": 999},
+    )
+    assert resp.status_code == 400
+    assert load_config().market_data.ccxt_fallback == before
+
+
+@pytest.mark.anyio
+async def test_market_data_exchange_divergence_requires_explicit_confirmation(client):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    cfg.exchange.name = "okx"
+    cfg.market_data.ccxt_exchange = "okx"
+    save_config(cfg)
+
+    rejected = await client.post(
+        "/api/settings/market-data",
+        json={"ccxt_exchange": "binance"},
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["code"] == "exchange_source_divergence_confirmation_required"
+    assert load_config().market_data.ccxt_exchange == "okx"
+
+    confirmed = await client.post(
+        "/api/settings/market-data",
+        json={"ccxt_exchange": "binance", "confirm_exchange_divergence": True},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["exchange_alignment"]["status"] == "diverged"
+    assert load_config().market_data.ccxt_exchange == "binance"
+
+
+@pytest.mark.anyio
+async def test_execution_target_change_also_requires_divergence_confirmation(client):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.market_data.ccxt_exchange = "binance"
+    save_config(cfg)
+    body = {"spot": True, "usdt_futures": True, "paper_execution_mode": "okx_demo"}
+
+    rejected = await client.post("/api/settings/exchange-markets", json=body)
+    assert rejected.status_code == 409
+    assert load_config().exchange.paper_execution_mode == "paper_internal"
+
+    body["confirm_exchange_divergence"] = True
+    confirmed = await client.post("/api/settings/exchange-markets", json=body)
+    assert confirmed.status_code == 200
+    assert confirmed.json()["exchange_alignment"]["status"] == "diverged"
+    assert load_config().exchange.paper_execution_mode == "okx_demo"
 
 # --- Codex subscription provider routes ---
 

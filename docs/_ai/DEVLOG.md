@@ -1,5 +1,23 @@
 # Development Log
 
+## 2026-07-11 — Execution/data exchange divergence guard
+
+- Added one alignment model derived from the actual paper execution mode rather
+  than the potentially stale exchange preference name.
+- Market-data source changes and paper execution target changes require an explicit
+  409-confirm-retry when they create a new external exchange split.
+- Market-data mutation now validates and normalizes every field before mutating the
+  cached config, so validation/confirmation failures cannot leave partial state.
+- Status, doctor, Settings, and Overview expose the same alignment. Overview probes
+  the actual execution exchange and persistently labels intentional `X exec · Y data`.
+- Local paper never fabricates an external exchange or divergence warning.
+- No automatic config change and no credential, live, risk, broker, or order change.
+- Validation: focused suites passed 119 and all specs passed 629. Partitioned full
+  coverage reached 2771 tests with no remaining real failure; one pre-existing
+  TestClient shutdown leak prevented a single uninterrupted run (TST-A01).
+
+---
+
 ## 2026-07-11 — Market-data observability and OHLCV provenance
 
 - Split collector execution health from persisted data coverage. The cached sync

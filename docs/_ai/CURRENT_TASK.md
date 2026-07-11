@@ -37,8 +37,9 @@
 13. **已完成**：数据采集 domain 区分成功、空结果、失败、超时、预算跳过、未配置和禁用；doctor/API/Overview 读取同一有界持久状态，交易暂停不再误停公共资料积累。
 14. **已完成**：盘口、funding、OI/LSR、宏观、链上、跨场所 funding 和持仓结构共用 fail-closed 时效策略；旧快照整行退出 Observer/Universe 决策，衍生品按 exact venue 读取，Coinalyze 聚合 OI 不再冒充主交易所数据。
 15. **已完成**：采集任务健康与 SQLite 实际覆盖分开显示；首页可见 8 类数据的 current 状态。OHLCV 保持数组响应并标记 cache/provider/DB 来源，断网按 exact instrument 从本地历史降级；CLI 盘口 imbalance 与衍生品场所诊断已纠正。
-16. **下一阶段**：筛选器达到 20/20 完整净样本后，才实验方向刹车、ranker 和 Kelly/sizing；未达到前只继续积累和核对证据。
-17. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+16. **已完成**：外部执行场所与主行情场所分叉由统一模型判定；两条设置入口产生新分叉前必须明确二次确认，状态 API、doctor、Settings、首页和连接探针读取同一真实执行场所。本地模拟不报分叉。
+17. **下一阶段**：筛选器达到 20/20 完整净样本后，才实验方向刹车、ranker 和 Kelly/sizing；未达到前只继续积累和核对证据。
+18. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
 机会诊断口径已补强：overview 的窗口总数与重建上限分离；controller 的 `--hours`
 真实截断证据；sizing trace 将历史 proposal/fill 事实与当前配置投影分开。后续离线实验只能

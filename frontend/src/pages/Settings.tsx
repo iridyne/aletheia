@@ -1206,9 +1206,34 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
 // EXECUTION TAB — exchange, credentials, mode, markets, live unlock, trading params
 // ─────────────────────────────────────────────────────────────────────────────
 
+function executionExchangeFromPaperMode(mode: string, configuredExchange = ''): string | null {
+  if (mode === 'paper_internal') return null
+  const byMode: Record<string, string> = {
+    bitget_demo: 'bitget',
+    binance_testnet: 'binance',
+    binance_live: 'binance',
+    okx_demo: 'okx',
+    okx_live: 'okx',
+  }
+  return byMode[mode] || configuredExchange || null
+}
+
 function ExecutionTab({ status, settings, qc, onDirty }: any) {
+  const currentPaperMode = String((settings?.exchange as any)?.paper_execution_mode || '')
+  const currentExecutionExchange = executionExchangeFromPaperMode(
+    currentPaperMode, String((settings?.exchange as any)?.name || ''),
+  )
+  const currentDataExchange = String((settings?.market_data as any)?.ccxt_exchange || '')
+  const currentDiverged = currentExecutionExchange !== null
+    && currentExecutionExchange !== currentDataExchange
   return (
     <div>
+      {currentDiverged && (
+        <div className="settings-save-msg err mb-3">
+          Exchange split active: orders execute on <strong>{currentExecutionExchange}</strong>,
+          while market analysis uses <strong>{currentDataExchange}</strong>. Keep this only if intentional.
+        </div>
+      )}
       <Section
         title="Exchange Connection"
         description="Select primary exchange to unify data source, paper execution, and risk allowlist. Then configure API credentials below."
@@ -1414,6 +1439,7 @@ function CapitalEventsCard() {
 
 function MarketDataCard({ settings, qc, onDirty }: any) {
   const md = settings?.market_data || {}
+  const exchangeSettings = settings?.exchange || {}
   const EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'gate', 'kucoin', 'htx']
 
   const [primary, setPrimary] = useState(md.ccxt_exchange || 'binance')
@@ -1425,6 +1451,7 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
   const [stocks, setStocks] = useState(listToCsv(md.observed_stocks))
   const [stockTokens, setStockTokens] = useState(listToCsv(md.observed_stock_tokens))
   const [predMarkets, setPredMarkets] = useState(listToCsv(md.observed_prediction_markets))
+  const [confirmExchangeDivergence, setConfirmExchangeDivergence] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -1437,7 +1464,16 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
     setStocks(listToCsv(md.observed_stocks))
     setStockTokens(listToCsv(md.observed_stock_tokens))
     setPredMarkets(listToCsv(md.observed_prediction_markets))
+    setConfirmExchangeDivergence(false)
   }, [settings])
+
+  const executionExchange = executionExchangeFromPaperMode(
+    String(exchangeSettings.paper_execution_mode || ''),
+    String(exchangeSettings.name || ''),
+  )
+  const createsDivergence = executionExchange !== null
+    && primary !== executionExchange
+    && primary !== String(md.ccxt_exchange || 'binance')
 
   const mut = useMutation({
     mutationFn: () => api.updateMarketDataConfig({
@@ -1450,8 +1486,9 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
       observed_stocks: parseCsvList(stocks),
       observed_stock_tokens: parseCsvList(stockTokens),
       observed_prediction_markets: parseCsvList(predMarkets),
+      confirm_exchange_divergence: confirmExchangeDivergence,
     }),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onSuccess: () => { setConfirmExchangeDivergence(false); setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
@@ -1470,7 +1507,7 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
   return (
     <>
       <Row label="Primary exchange" hint="CCXT exchange ID used for OHLCV and ticker data. Must match a supported CCXT exchange.">
-        <select value={primary} onChange={e => { setPrimary(e.target.value); setMsg(null) }} className="w-auto">
+        <select value={primary} onChange={e => { setPrimary(e.target.value); setConfirmExchangeDivergence(false); setMsg(null) }} className="w-auto">
           {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
         </select>
       </Row>
@@ -1479,6 +1516,15 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
           {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
         </select>
       </Row>
+      {createsDivergence && (
+        <div className="settings-save-msg err mb-2">
+          <Toggle
+            checked={confirmExchangeDivergence}
+            onChange={setConfirmExchangeDivergence}
+            label={`I understand: orders will execute on ${executionExchange}, while market analysis will use ${primary}.`}
+          />
+        </div>
+      )}
       <Row label="OHLCV cache TTL" hint="Minutes to cache candlestick data before re-fetching. Lower = fresher data, higher = fewer API calls.">
         <input type="number" min={1} max={60} value={cacheTtl}
           onChange={e => { setCacheTtl(Math.max(1, Math.min(60, parseInt(e.target.value) || 1))); setMsg(null) }}
@@ -1514,7 +1560,7 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
       </Row>
       {dirty && (
         <div className="flex justify-end" style={{ padding: '0.5rem 0' }}>
-          <button onClick={() => mut.mutate()} disabled={mut.isPending}>
+          <button onClick={() => mut.mutate()} disabled={mut.isPending || (createsDivergence && !confirmExchangeDivergence)}>
             {mut.isPending ? 'Saving…' : 'Save market data config'}
           </button>
         </div>
@@ -1671,17 +1717,32 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: any) {
   const [spot, setSpot] = useState(!!markets.spot)
   const [futures, setFutures] = useState(!!markets.usdt_futures)
   const [paperMode, setPaperMode] = useState(serverPaperMode)
+  const [confirmExchangeDivergence, setConfirmExchangeDivergence] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
     setSpot(!!markets.spot)
     setFutures(!!markets.usdt_futures)
     setPaperMode(serverPaperMode)
+    setConfirmExchangeDivergence(false)
   }, [settings])
 
+  const dataExchange = String((settings?.market_data as any)?.ccxt_exchange || '')
+  const executionExchange = executionExchangeFromPaperMode(
+    paperMode, String((settings?.exchange as any)?.name || ''),
+  )
+  const createsDivergence = paperMode !== serverPaperMode
+    && executionExchange !== null
+    && executionExchange !== dataExchange
+
   const mut = useMutation({
-    mutationFn: () => api.setExchangeMarkets({ spot, usdt_futures: futures, paper_execution_mode: paperMode }),
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    mutationFn: () => api.setExchangeMarkets({
+      spot,
+      usdt_futures: futures,
+      paper_execution_mode: paperMode,
+      confirm_exchange_divergence: confirmExchangeDivergence,
+    }),
+    onSuccess: () => { setConfirmExchangeDivergence(false); setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
@@ -1697,14 +1758,21 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: any) {
         <Toggle checked={futures} label="USDT Futures" onChange={v => { setFutures(v); setMsg(null) }} />
       </Row>
       <Row label="Paper execution mode" hint="Where autonomous paper orders execute. okx_demo = OKX simulated trading (broad coverage); binance_testnet = Binance Futures Testnet (556 pairs); bitget_demo = Bitget demo API (42 pairs); paper_internal = local simulator (no exchange).">
-        <select value={paperMode} onChange={e => { setPaperMode(e.target.value); setMsg(null) }} className="w-auto">
+        <select value={paperMode} onChange={e => { setPaperMode(e.target.value); setConfirmExchangeDivergence(false); setMsg(null) }} className="w-auto">
           <option value="okx_demo">OKX Demo</option>
           <option value="binance_testnet">Binance Testnet</option>
           <option value="bitget_demo">Bitget Demo</option>
           <option value="paper_internal">Paper (internal)</option>
         </select>
+        {createsDivergence && (
+          <Toggle
+            checked={confirmExchangeDivergence}
+            onChange={setConfirmExchangeDivergence}
+            label={`Confirm ${executionExchange} execution with ${dataExchange} market data`}
+          />
+        )}
         {dirty && (
-          <button className="secondary" onClick={() => mut.mutate()} disabled={mut.isPending || (!spot && !futures)}>
+          <button className="secondary" onClick={() => mut.mutate()} disabled={mut.isPending || (!spot && !futures) || (createsDivergence && !confirmExchangeDivergence)}>
             {mut.isPending ? 'Saving…' : 'Save exchange config'}
           </button>
         )}
