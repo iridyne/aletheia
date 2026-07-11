@@ -25,10 +25,10 @@ acceptance:
   blocked candidates without changing guard behavior.
 - Overlap aggregation prevents one outcome from becoming independent credit for several
   channels and requests refreeze when quantitative evidence coverage is lost.
-- Policy epoch semantics are deterministic, secret-free, never withhold safety tightening,
+- Policy epoch semantics are deterministic, safely redacted, never withhold safety tightening,
   and invalidate affected comparisons.
 - Focused regressions, full specs, full tests, doctor, and strict workflow verification
-  pass or any environment-only limitation is reported without changing runtime state.
+  pass or any environment-only limitation is reported without mutating system state.
 ownership:
   branch: feat/learning-phase0-integrity
   lease_holder: codex
