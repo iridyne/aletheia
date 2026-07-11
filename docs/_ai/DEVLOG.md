@@ -1,5 +1,18 @@
 # Development Log
 
+## 2026-07-11 — SQLite capacity diagnostic honesty
+
+- Doctor now combines database size, SQLite freelist pages, and filesystem free
+  space instead of warning on a fixed 500 MB file-size threshold.
+- Low disk remains a warning; large compact databases are informational; offline
+  compaction is suggested only when reusable pages exceed 100 MB and 20%.
+- Removed a recovery hint for a nonexistent maintenance script. No data is deleted
+  and no VACUUM or retention action runs automatically.
+- Validation: doctor tests passed 44; all specs passed 632; one uninterrupted full
+  run passed 2799 tests with 13 skipped and 6 expected failures.
+
+---
+
 ## 2026-07-11 — Optional feed diagnostic honesty
 
 - Coinalyze exposes credential presence as a boolean using the collector's real

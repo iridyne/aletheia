@@ -98,6 +98,44 @@ def test_report_severity_partitions():
     assert [c.name for c in r.warns] == ["b"]
 
 
+def test_db_capacity_large_compact_database_is_informational():
+    severity, label, hint = dx._classify_db_capacity(
+        db_mb=584,
+        free_mb=376_000,
+        reclaimable_mb=2,
+    )
+
+    assert severity == "info"
+    assert label == "large but compact"
+    assert hint is None
+
+
+def test_db_capacity_low_disk_is_warning_without_bad_vacuum_command():
+    severity, label, hint = dx._classify_db_capacity(
+        db_mb=584,
+        free_mb=400,
+        reclaimable_mb=2,
+    )
+
+    assert severity == "warn"
+    assert label == "low disk space"
+    assert "free disk space" in hint
+    assert "db_maintenance.py" not in hint
+    assert "VACUUM" not in hint
+
+
+def test_db_capacity_reports_material_reclaimable_space():
+    severity, label, hint = dx._classify_db_capacity(
+        db_mb=500,
+        free_mb=20_000,
+        reclaimable_mb=125,
+    )
+
+    assert severity == "info"
+    assert label == "maintenance candidate"
+    assert "25%" in hint
+
+
 def test_doctor_reports_unconfigured_coinalyze_as_info(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     monkeypatch.setattr("aletheia.config.secrets.get_secret", lambda _key: None)

@@ -2673,33 +2673,58 @@ def _probe_volume_ranking(report: Report) -> None:
         report.add("data.volume_ranking", "ok", detail)
 
 
+def _classify_db_capacity(
+    *, db_mb: float, free_mb: float, reclaimable_mb: float,
+) -> tuple[str, str, str | None]:
+    """Classify storage pressure separately from normal retained database growth."""
+    minimum_free_mb = max(500.0, db_mb * 1.2)
+    if free_mb < minimum_free_mb:
+        return (
+            "warn",
+            "low disk space",
+            "free disk space before SQLite writes fail; database compaction also needs temporary free space",
+        )
+
+    reclaim_ratio = reclaimable_mb / db_mb if db_mb > 0 else 0.0
+    if reclaimable_mb >= 100 and reclaim_ratio >= 0.20:
+        return (
+            "info",
+            "maintenance candidate",
+            f"{reclaim_ratio:.0%} of the database is reusable freelist space; plan offline compaction only if disk recovery is needed",
+        )
+    if db_mb > 500:
+        return "info", "large but compact", None
+    if db_mb > 200:
+        return "info", "growing", None
+    return "ok", "normal", None
+
+
 def _probe_infra_db_size(report: Report) -> None:
-    """app.db file size and available disk space — a full disk silently kills SQLite writes."""
+    """Report actual disk pressure and freelist waste, not size alone."""
     try:
-        import os
         import shutil
-        from aletheia.storage.sqlite import db_path
+        from aletheia.storage.sqlite import db_path, get_db
         path = db_path()
         db_mb = path.stat().st_size / (1024 * 1024) if path.exists() else 0
         du = shutil.disk_usage(str(path.parent))
         free_mb = du.free / (1024 * 1024)
+        db = get_db()
+        page_size = int(db.execute("PRAGMA page_size").fetchone()[0])
+        freelist_count = int(db.execute("PRAGMA freelist_count").fetchone()[0])
+        reclaimable_mb = page_size * freelist_count / (1024 * 1024)
     except Exception as e:
         report.add("infra.db_size", "info", f"probe error: {e}")
         return
-    detail = f"app.db {db_mb:.0f} MB, disk free {free_mb:.0f} MB"
-    if free_mb < 500:
-        report.add("infra.db_size", "warn",
-                   f"low disk space: {detail}",
-                   "disk nearly full — SQLite writes may fail; free space or run "
-                   "uv run python scripts/db_maintenance.py --vacuum")
-    elif db_mb > 500:
-        report.add("infra.db_size", "warn",
-                   f"app.db large: {detail}",
-                   "run uv run python scripts/db_maintenance.py --vacuum to reclaim space")
-    elif db_mb > 200:
-        report.add("infra.db_size", "info", f"app.db growing: {detail}")
-    else:
-        report.add("infra.db_size", "ok", detail)
+    severity, label, hint = _classify_db_capacity(
+        db_mb=db_mb,
+        free_mb=free_mb,
+        reclaimable_mb=reclaimable_mb,
+    )
+    detail = (
+        f"{label}: app.db {db_mb:.0f} MB, reusable {reclaimable_mb:.1f} MB, "
+        f"disk free {free_mb:.0f} MB"
+    )
+    report.add("infra.db_size", severity, detail, hint)
 
 
 def _probe_content_lesson_guards(report: Report) -> None:

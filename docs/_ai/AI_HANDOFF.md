@@ -7,7 +7,17 @@
 
 ## Last Updated
 
-2026-07-11 (optional feed diagnostic honesty)
+2026-07-11 (SQLite capacity diagnostic honesty)
+
+---
+
+## Recent Change (SQLite capacity diagnostic honesty — 2026-07-11)
+
+doctor 旧逻辑只要 app.db 超过 500MB 就 warn，并推荐一个不存在的维护脚本。现在同时读取文件大小、SQLite freelist 和磁盘余量：低磁盘才 warn；大而紧凑的有效历史库只作 info；可回收页同时超过 100MB 和 20% 才提示安排离线 compact。
+
+没有删除数据，没有自动执行 VACUUM，也没有修改 retention 或 SQLite 写入语义。
+
+验证：doctor 回归 44 项、完整规则 632 项通过；单进程连续全量 `2799 passed, 13 skipped, 6 xfailed`。
 
 ---
 
