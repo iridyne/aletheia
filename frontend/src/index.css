@@ -1968,16 +1968,28 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 
 /* ---------- Cockpit main: feed (main) + right rail ---------- */
 .cockpit-main {
-  display: grid; grid-template-columns: 1fr 310px; gap: var(--space-3);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 22vw, 380px);
+  gap: var(--space-3);
   align-items: start;
 }
-@media (max-width: 900px) { .cockpit-main { grid-template-columns: 1fr; } }
 .cockpit-rail { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .cockpit-rail .card { margin-bottom: 0; }
+@media (max-width: 1100px) {
+  .cockpit-main { grid-template-columns: 1fr; }
+  .cockpit-rail {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+@media (max-width: 700px) {
+  .cockpit-rail { grid-template-columns: 1fr; }
+}
 
-/* Right-rail cards each get a preset max-height + internal scroll so the rail's total
-   height is bounded. Agent Activity (left col) follows this total via ResizeObserver,
-   keeping the two columns equal-height regardless of content. */
+/* Right-rail cards keep independent overflow protection for unusually long approval,
+   risk, or status content. They stay naturally top-aligned and no longer determine the
+   Agent Activity height. */
 .rail-card { display: flex; flex-direction: column; overflow: hidden; }
 .rail-card > :not(h3):not(.flex) { min-height: 0; }
 .desk-panel   { max-height: 360px; }
@@ -2046,9 +2058,6 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 /* ---------- Agent feed ---------- */
 .agent-feed { margin-bottom: 0; }
 .feed-list { display: flex; flex-direction: column; }
-/* When the card is height-capped (Overview rail-sync), scroll inside the list so the
-   card's bottom edge stays aligned with the right rail's last card. */
-.feed-list-scroll { flex: 1; overflow-y: auto; min-height: 0; }
 .feed-row {
   display: flex; align-items: flex-start; gap: var(--space-2);
   width: 100%; text-align: left; background: none; color: var(--text);
@@ -3469,4 +3478,3 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   font-size: 0.8rem;
   color: var(--color-text-muted, #9ca3af);
 }
-

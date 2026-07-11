@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
@@ -58,40 +58,6 @@ export default function Overview() {
   const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
   const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
 
-  // The two columns must stay the same vertical height. The RIGHT rail drives this:
-  // each rail card has its own max-height (overflow → internal scroll), so the rail's
-  // total natural height is bounded. The LEFT (Agent Activity) is the passive follower —
-  // we measure the rail with ResizeObserver and feed that height into AgentFeed as
-  // maxHeight, so AgentFeed scrolls internally to match. No hard ceiling on the feed
-  // itself in 2-col mode; the rail's per-card caps already bound it.
-  // In single-col mode (<=1000px) the layout stacks, so we use SINGLE_COL_CAP as a
-  // sane fallback to keep AgentFeed from becoming a 2000px scroll wall.
-  const SINGLE_COL_CAP = 600
-  const [railEl, setRailEl] = useState<HTMLDivElement | null>(null)
-  const [railHeight, setRailHeight] = useState<number | null>(null)
-  const [twoCol, setTwoCol] = useState<boolean>(() => typeof window !== 'undefined' ? window.innerWidth > 1000 : true)
-  // Measure the rail and re-measure on layout changes. useLayoutEffect ensures we read
-  // the post-paint height; ResizeObserver tracks subsequent rail-content changes.
-  // Callback ref (setRailEl) instead of useRef so this effect re-runs once the rail
-  // actually mounts (the rail is gated behind `if (!status) return Loading`).
-  useLayoutEffect(() => {
-    if (!railEl) return
-    setRailHeight(Math.round(railEl.getBoundingClientRect().height))
-    const ro = new ResizeObserver(entries => {
-      for (const e of entries) setRailHeight(Math.round(e.contentRect.height))
-    })
-    ro.observe(railEl)
-    return () => ro.disconnect()
-  }, [railEl])
-  useEffect(() => {
-    const onResize = () => setTwoCol(window.innerWidth > 1000)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-  const feedCap = twoCol
-    ? (railHeight ?? SINGLE_COL_CAP)
-    : SINGLE_COL_CAP
-
   if (!status) return <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
 
   const s = status as any
@@ -123,9 +89,9 @@ export default function Overview() {
 
       {/* Anchor 2 — agent feed (main) + right rail */}
       <div className="cockpit-main">
-        <AgentFeed maxHeight={feedCap ?? undefined} />
+        <AgentFeed />
 
-        <div className="cockpit-rail" ref={setRailEl}>
+        <div className="cockpit-rail">
           {/* Approval Desk — the one human-in-loop control point */}
           <Card className="rail-card desk-panel">
             <CardHeader title="Approval Desk" />

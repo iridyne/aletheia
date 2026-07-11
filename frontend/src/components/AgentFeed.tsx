@@ -91,7 +91,7 @@ function outputsCount(run: AgentRun): number {
   try { return JSON.parse(run.outputs_created || '[]').length } catch { return 0 }
 }
 
-export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
+export default function AgentFeed() {
   const navigate = useNavigate()
   const [mode, setMode] = useState<FeedMode>(() => {
     try {
@@ -166,14 +166,8 @@ export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
   items.sort((a, b) => safeDate(b.ts) - safeDate(a.ts))
   const visible = items.slice(0, 40)
 
-  // When maxHeight is given, cap the card and scroll the feed list inside —
-  // this is what keeps the Overview agent-feed bottom aligned to the System card.
-  const cardStyle = maxHeight != null
-    ? { maxHeight: `${maxHeight}px`, display: 'flex', flexDirection: 'column' as const }
-    : undefined
-
   return (
-    <div className="card agent-feed" style={cardStyle}>
+    <div className="card agent-feed">
       <div className="flex items-center justify-between mb-3">
         <h3>Agent Activity</h3>
         <div className="seg-toggle">
@@ -192,7 +186,7 @@ export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
       {visible.length === 0 ? (
         <p className="text-muted text-sm">No agent activity yet.</p>
       ) : (
-        <div className={`feed-list${maxHeight != null ? ' feed-list-scroll' : ''}`}>
+        <div className="feed-list">
           {visible.map(it => (
             <button key={it.key} className="feed-row" onClick={() => setSelected(it)}>
               <span className="feed-ts mono">{relTime(it.ts)}</span>
