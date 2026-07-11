@@ -1,7 +1,7 @@
 schema_version: 1
 id: TASK-2026-003
 title: Select latest completed task during cold recovery
-status: in_progress
+status: done
 scope:
   boundary: declare before implementation
   excluded: runtime facts and credentials
@@ -18,6 +18,12 @@ next_action:
   command_key: workflow_tests
   reason: Claim the task and define the first focused verification.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  exit_code: 0
+  commit: d6244f72c6a8654927ac5e41ff2fdf62a50ac6c9
+  run_at: '2026-07-11T05:19:11.608679Z'
+  result: passed
 handoff: .agent/handoffs/TASK-2026-003.md
-updated_at: '2026-07-11T05:18:15.087157Z'
+updated_at: '2026-07-11T05:19:11.608832Z'
