@@ -1,7 +1,7 @@
 schema_version: 1
 id: TASK-2026-006
 title: Classify Serenity worker boundary failures
-status: in_progress
+status: done
 scope:
   boundary: declare before implementation
   excluded: runtime facts and credentials
@@ -18,6 +18,12 @@ next_action:
   command_key: workflow_tests
   reason: Claim the task and define the first focused verification.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  exit_code: 0
+  commit: 324b9a57b7f4d5c6fb340953f0bd383d591d41a4
+  run_at: '2026-07-11T12:11:48.863534Z'
+  result: passed
 handoff: .agent/handoffs/TASK-2026-006.md
-updated_at: '2026-07-11T12:08:48.954334Z'
+updated_at: '2026-07-11T12:11:48.863705Z'
