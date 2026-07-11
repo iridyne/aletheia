@@ -1,0 +1,37 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-018
+title: Show blank AI provider state honestly
+status: done
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Make the Settings page render a fresh empty AI provider configuration as disabled
+  and unselected without changing backend provider behavior.
+acceptance:
+- Provider cards with no saved config render disabled.
+- Default, deep, and fast routing render as not set when no default provider exists.
+- The default-model test is disabled until a default provider is selected.
+ownership:
+  branch: fix/ai-provider-empty-ui
+  lease_holder: codex
+  claimed_at: '2026-07-11T17:11:37.999513Z'
+  expires_at: '2026-07-12T01:11:38.000051Z'
+base_commit: 0ae52905445138a0e4901dfc78718c7724ea476c
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: a97b83417230df7847d93ac0a9c7a5a3a7c10724
+  run_at: '2026-07-11T17:14:47.609872Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-018.md
+updated_at: '2026-07-11T17:14:47.774649Z'
