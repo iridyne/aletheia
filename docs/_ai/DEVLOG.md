@@ -1,5 +1,16 @@
 # Development Log
 
+## 2026-07-11 — OHLCV full instrument identity
+
+- `market_ohlcv` now keys rows by exchange, canonical symbol, market type, timeframe, and timestamp. Spot/perp and venue peers coexist instead of overwriting.
+- The migration preserves every legacy row. A historical `exchange='ccxt'` cannot be reversed to its true venue, so it becomes `legacy_unknown` rather than a fabricated venue; known exchanges remain intact.
+- CCXT persistence now stores derivative candles. The downloader locks primary/fallback to one requested venue, passes an `InstrumentId`, and writes the same exact identity. CLI, nightly active-universe backfill, doctor, and System Operator coverage checks all carry venue and market type.
+- Legacy symbol-only repository readers select one coherent freshest instrument instead of concatenating rows across instruments.
+- Production-database backup rehearsal preserved 89,806/89,806 rows, migrated 27,554 ambiguous rows to `legacy_unknown`, and left zero blank identity fields.
+- Validation: affected data/migration/doctor/analytics tests 163 passed; all specs 614 passed / 7 skipped / 6 expected failures; full suite 2688 passed / 14 skipped / 6 expected failures / 0 failed.
+
+---
+
 ## 2026-07-11 — Trading memo startup catch-up
 
 - `insight_synthesizer` keeps its daily 02:30 CST cron and now receives a one-time scheduler run three minutes after gateway startup. Its existing six-hour limiter skips redundant restart runs when a recent memo exists.

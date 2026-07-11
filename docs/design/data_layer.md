@@ -450,7 +450,7 @@ change-controlled 文件（如 `BitgetClient` Phase 3 改动）需附专项回�
 
 3. **OHLCV 本地持久化——滚动窗口策略**：
    - 参照 OpenBB 的设计：provider 层无状态（纯 fetch+transform），持久化在应用层
-   - 新建 `market_ohlcv` SQLite 表，存储 `(symbol, timeframe, ts, open, high, low, close, volume, provider)`
+   - `market_ohlcv` SQLite 表按 `(exchange, symbol, market_type, timeframe, ts)` 唯一存储；现货、永续和不同 venue 不互相覆盖。无法恢复真实 venue 的旧 `exchange='ccxt'` 行迁移为 `legacy_unknown`，不得冒充当前活动标的覆盖。
    - 滚动窗口：每个 `(symbol, timeframe)` 对保留最近 **500 条**（1h 约 20天，4h 约 83天，1day 约 1.4年）
    - 写入时 `INSERT OR REPLACE`，定期 `DELETE WHERE rowid NOT IN (SELECT rowid FROM ... ORDER BY ts DESC LIMIT 500)`
    - 内存 TTL 缓存（10 min）仍是热路径；SQLite 是冷启动恢复 + 历史回看的持久层

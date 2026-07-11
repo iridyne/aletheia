@@ -184,6 +184,34 @@ async def test_download_error_handling():
     assert result.error is not None
 
 
+@pytest.mark.asyncio
+async def test_download_scopes_fetch_coverage_and_write_to_instrument():
+    provider = AsyncMock()
+    provider.get_ohlcv = AsyncMock(return_value=[])
+    provider.close = AsyncMock()
+
+    with patch("aletheia.config.loader.load_config", return_value=_mock_config()), \
+         patch("aletheia.storage.repositories.get_ohlcv_newest_ts", return_value=None) as newest, \
+         patch("aletheia.storage.repositories.get_ohlcv_coverage",
+               return_value={"bar_count": 0, "oldest_ts": None, "newest_ts": None}) as coverage, \
+         patch("aletheia.storage.repositories.upsert_ohlcv_candles") as upsert, \
+         patch("aletheia.data.ccxt_provider.get_market_data_provider", return_value=provider) as factory:
+        await download_symbol_history(
+            "BTC/USDT", "1h", months=1, exchange="okx", market_type="perp"
+        )
+
+    instrument = provider.get_ohlcv.await_args.args[0]
+    assert str(instrument) == "okx:BTC/USDT:perp"
+    newest.assert_called_once_with(
+        "BTC/USDT", "1h", exchange="okx", market_type="perp"
+    )
+    coverage.assert_called_once_with(
+        "BTC/USDT", "1h", exchange="okx", market_type="perp"
+    )
+    factory.assert_called_once_with("okx", native_ccxt=True, fallback_exchange="okx")
+    upsert.assert_not_called()
+
+
 def test_check_coverage_enough():
     with patch("aletheia.config.loader.load_config", return_value=_mock_config()), \
          patch("aletheia.storage.repositories.get_ohlcv_coverage",

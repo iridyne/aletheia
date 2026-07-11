@@ -30,8 +30,9 @@
 6. **已完成**：订单簿解析兼容 CCXT 三列档位，永续深度按 contractSize 换算；后续仍须给 orderbook 存储和消费者补 market_type。
 7. **已完成**：持仓 reconciliation 按 execution account 隔离；本地模拟仓不会再被外部空仓缓存关闭，跨账户同标的不会互相覆盖。
 8. **已完成**：trading memo 保留每日合成并增加启动补跑，服务错过夜间窗口后可自愈；不存在的“3 个案例事件触发”说明已纠正。
-9. **下一阶段**：补活动标的 OHLCV 和 orderbook market_type；筛选器达到 20/20 完整净样本后才实验方向刹车、ranker 和 Kelly/sizing。
-10. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
+9. **已完成**：OHLCV 表、provider、回填、CLI 和覆盖诊断保留 venue+spot/perp 身份；旧不明 venue 不猜测，标为 legacy_unknown。
+10. **下一阶段**：补 orderbook market_type；筛选器达到 20/20 完整净样本后才实验方向刹车、ranker 和 Kelly/sizing。
+11. 新闻、RWA、股票、FX 先做 observation/shadow capability，不允许绕过现有风控与执行边界。
 
 已经修好的供给/语义问题不要重复施工：OKX 永续成交额、分配前 market 去重、short funding 方向、PI bear_case、market-aware proposal price、pending shadow、因果漏斗和 doctor 市场覆盖。
 

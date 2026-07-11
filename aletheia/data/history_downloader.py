@@ -35,6 +35,7 @@ async def download_symbol_history(
     timeframe: str,
     months: int = 6,
     exchange: str | None = None,
+    market_type: str = "spot",
     progress_callback=None,
 ) -> DownloadResult:
     """Download historical OHLCV data for a symbol, persisting to SQLite.
@@ -46,12 +47,15 @@ async def download_symbol_history(
     """
     from aletheia.config.loader import load_config
     from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
+    from aletheia.data.symbols import InstrumentId
     from aletheia.storage.repositories import (
         get_ohlcv_newest_ts,
         upsert_ohlcv_candles,
     )
 
     cfg = load_config()
+    target_exchange = (exchange or cfg.market_data.ccxt_exchange).lower()
+    instrument = InstrumentId.from_parts(target_exchange, symbol, market_type)
     tf_ms = timeframe_ms(timeframe)
     if tf_ms == 0:
         return DownloadResult(symbol, timeframe, 0, None, None, f"unsupported timeframe: {timeframe}")
@@ -60,16 +64,24 @@ async def download_symbol_history(
     now_ms = int(time.time() * 1000)
     start_ts = now_ms - months * 30 * 24 * 3600 * 1000
 
-    newest_existing = get_ohlcv_newest_ts(symbol, timeframe)
+    newest_existing = get_ohlcv_newest_ts(
+        symbol, timeframe, exchange=target_exchange, market_type=market_type
+    )
 
     # Determine the oldest bar to detect left-gap (history before existing data).
     from aletheia.storage.repositories import get_ohlcv_coverage
-    cov = get_ohlcv_coverage(symbol, timeframe)
+    cov = get_ohlcv_coverage(
+        symbol, timeframe, exchange=target_exchange, market_type=market_type
+    )
     oldest_existing = cov.get("oldest_ts")
     if not newest_existing:
         newest_existing = cov.get("newest_ts")
 
-    provider = get_market_data_provider(exchange=exchange)
+    # Historical backfill must not silently switch venue: every persisted bar is
+    # labeled with target_exchange, so primary and fallback are intentionally equal.
+    provider = get_market_data_provider(
+        target_exchange, native_ccxt=True, fallback_exchange=target_exchange
+    )
     total_fetched = 0
     first_ts: int | None = None
     last_ts: int | None = None
@@ -79,7 +91,10 @@ async def download_symbol_history(
         nonlocal total_fetched, first_ts, last_ts
         if not candles:
             return
-        upsert_ohlcv_candles(symbol, timeframe, candles, exchange=exchange or "")
+        upsert_ohlcv_candles(
+            symbol, timeframe, candles,
+            exchange=target_exchange, market_type=market_type,
+        )
         page_oldest = candles[0].timestamp
         page_newest = candles[-1].timestamp
         first_ts = page_oldest if first_ts is None else min(first_ts, page_oldest)
@@ -94,7 +109,7 @@ async def download_symbol_history(
         while current_since < fetch_until and total_fetched < max_bars:
             try:
                 candles = await provider.get_ohlcv(
-                    symbol, timeframe, limit=_PAGE_SIZE, since=current_since
+                    instrument, timeframe, limit=_PAGE_SIZE, since=current_since
                 )
             except Exception as e:
                 error = str(e)
@@ -129,7 +144,7 @@ async def download_symbol_history(
                     for probe_pages in _LEFT_GAP_PROBE_PAGES:
                         window_since = max(start_ts, left_cursor - probe_pages * tf_ms)
                         candles = await provider.get_ohlcv(
-                            symbol, timeframe, limit=_PAGE_SIZE, since=window_since
+                            instrument, timeframe, limit=_PAGE_SIZE, since=window_since
                         )
                         candles = [
                             c for c in (candles or [])
@@ -174,12 +189,21 @@ async def download_symbol_history(
     )
 
 
-def check_coverage(symbol: str, timeframe: str, min_bars: int | None = None) -> bool:
+def check_coverage(
+    symbol: str,
+    timeframe: str,
+    min_bars: int | None = None,
+    *,
+    exchange: str = "",
+    market_type: str = "",
+) -> bool:
     """Return True if enough local bars exist for backtesting."""
     from aletheia.config.loader import load_config
     from aletheia.storage.repositories import get_ohlcv_coverage
 
     if min_bars is None:
         min_bars = load_config().historical_data.min_bars_for_backtest
-    cov = get_ohlcv_coverage(symbol, timeframe)
+    cov = get_ohlcv_coverage(
+        symbol, timeframe, exchange=exchange, market_type=market_type
+    )
     return cov["bar_count"] >= min_bars

@@ -2244,15 +2244,21 @@ def _probe_ohlcv_coverage(report: Report) -> None:
             sym = m.get("symbol", "")
             if not sym:
                 continue
+            from aletheia.storage.repositories import get_universe_asset
+            asset = get_universe_asset(m.get("asset_id")) or {}
+            venue = asset.get("venue", "")
+            market_type = m.get("market_type") or asset.get("market_type", "")
             bars = db.execute(
-                "SELECT COUNT(*) FROM market_ohlcv WHERE symbol=? AND timeframe='1h'",
-                (sym,),
+                "SELECT COUNT(*) FROM market_ohlcv "
+                "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe='1h'",
+                (venue, sym, market_type),
             ).fetchone()[0]
             if bars < min_bars:
-                gaps.append(f"{sym}({bars})")
+                gaps.append(f"{venue}:{sym}:{market_type}({bars})")
 
         symbols_covered = db.execute(
-            "SELECT COUNT(DISTINCT symbol) FROM market_ohlcv WHERE timeframe='1h'"
+            "SELECT COUNT(DISTINCT exchange || ':' || symbol || ':' || market_type) "
+            "FROM market_ohlcv WHERE timeframe='1h'"
         ).fetchone()[0]
 
         if gaps:

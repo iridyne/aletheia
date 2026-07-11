@@ -98,6 +98,7 @@
 - RWA、股票、FX 分别建立 capability matrix；没有报价、成本、交易时段和合法执行 adapter 前不得标 executable。
 - ✅ XAUT/PAXG 已从“美元稳定币”概念中拆出；它们现在可进入普通 ticker/流动性检查，但不因分类修正获得实盘授权。
 - ✅ 主交易所行情任务保留 venue+spot/perp 身份；volume ranking 的结构化结果按原市场类型回到 Universe。OKX category 3 股票/ETF 合约在正式 capability 接入前保持 observation-only，不混入 crypto 执行池。
+- ✅ OHLCV 存储、provider、活动池回填与覆盖诊断使用 venue+symbol+market_type 完整身份；永续历史不再被跳过，现货行不再冒充活动永续覆盖，旧不明 venue 标为 legacy_unknown。
 
 ## 验证顺序
 

@@ -246,6 +246,27 @@ def test_ohlcv_cache_module_exists():
     assert "set" in fn_names, "OHLCVCache.set() must be defined"
 
 
+@spec_claim(
+    SpecClaim(
+        "DL-S09",
+        "data_layer_contract",
+        "§4 ohlcv instrument identity",
+        "L2c",
+        "market_ohlcv stores and queries candles by exchange + canonical symbol + "
+        "market_type + timeframe + timestamp, so spot/perp and venues cannot overwrite.",
+        status="implemented",
+    )
+)
+def test_ohlcv_storage_uses_full_instrument_identity():
+    migrations = (_ROOT / "aletheia/storage/migrations.py").read_text(encoding="utf-8")
+    repositories = (_ROOT / "aletheia/storage/repositories.py").read_text(encoding="utf-8")
+    downloader = (_ROOT / "aletheia/data/history_downloader.py").read_text(encoding="utf-8")
+
+    assert "PRIMARY KEY (exchange, symbol, market_type, timeframe, ts)" in migrations
+    assert "market_type" in repositories
+    assert "InstrumentId.from_parts" in downloader
+
+
 # ---------------------------------------------------------------------------
 # L2b — Behavioral
 # ---------------------------------------------------------------------------

@@ -69,7 +69,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 |-------|---------|-------------|
 | `knowledge_items` | Research notes, reviews, lessons | item_type, content (TEXT), tags, confidence |
 | `news_items` | External news signals | source, headline, sentiment, symbols (JSON) |
-| `market_ohlcv` | Historical candlestick data | symbol, timeframe, open, high, low, close, volume |
+| `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
 
 ### D. Market Data Collection (9 tables)
 
