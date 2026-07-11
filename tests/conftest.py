@@ -208,6 +208,13 @@ def _shutdown_scheduler_after_test():
         pass
 
 
+@pytest.fixture
+def api_only_runtime(monkeypatch):
+    """Run the real ASGI app without schedulers or external startup probes."""
+    monkeypatch.setenv("ALETHEIA_RUNTIME_MODE", "test")
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ID", "runtime-test-api-only")
+
+
 @pytest.fixture(autouse=True)
 def _block_real_exchange_orders(request, monkeypatch):
     # Tests that verify place_order's own body-building mock httpx instead, so they

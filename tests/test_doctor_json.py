@@ -50,7 +50,7 @@ def test_build_report_to_dict_is_json_serializable():
         assert c["severity"] in VALID_SEVERITIES
 
 
-def test_infra_doctor_endpoint_matches_contract():
+def test_infra_doctor_endpoint_matches_contract(api_only_runtime):
     from fastapi.testclient import TestClient
     from aletheia.server.app import app
 

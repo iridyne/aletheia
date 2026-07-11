@@ -1,5 +1,24 @@
 # Development Log
 
+## 2026-07-11 — Deterministic application shutdown
+
+- Fixed asymmetric FastAPI lifespan ownership: startup account sync, exchange
+  gate, and the LLM/exchange recovery loops are now explicitly stopped.
+- Shutdown stops the scheduler first, cancels and consumes direct child tasks,
+  then stops module-owned recovery loops and remaining daemons. The entire path
+  runs from `finally`, including abnormal lifespan exit.
+- Startup account sync uses a dedicated releasable executor instead of the event
+  loop's default executor, so a stuck broker call cannot hold loop shutdown open.
+- Real-app API tests use an explicit API-only runtime and cannot accidentally
+  start schedulers, account sync, or external startup probes.
+- No startup condition, cadence, broker request, trading, risk, execution, live,
+  or credential behavior changed.
+- Validation: focused lifecycle/connectivity/runtime tests passed 42; all specs
+  passed 629; one uninterrupted full run passed 2775 tests with 13 skipped and
+  6 expected failures. TST-A01 is closed.
+
+---
+
 ## 2026-07-11 — Execution/data exchange divergence guard
 
 - Added one alignment model derived from the actual paper execution mode rather

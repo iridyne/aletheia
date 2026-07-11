@@ -39,6 +39,30 @@ def _reset_connectivity_state():
     conn_mod._consecutive_successes = 0
     conn_mod._last_probe_result = None
     conn_mod._active_resume_task = None
+    conn_mod._uvicorn_loop = None
+
+
+@pytest.mark.asyncio
+async def test_stop_exchange_auto_resume_cancels_and_clears_state():
+    import aletheia.agent_runtime.connectivity as conn_mod
+
+    started = asyncio.Event()
+
+    async def wait_forever():
+        started.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(wait_forever())
+    conn_mod._active_resume_task = task
+    conn_mod._uvicorn_loop = asyncio.get_running_loop()
+    await started.wait()
+
+    await conn_mod.stop_exchange_auto_resume_task()
+
+    assert task.cancelled()
+    assert conn_mod._active_resume_task is None
+    assert conn_mod._uvicorn_loop is None
+    await conn_mod.stop_exchange_auto_resume_task()  # idempotent shutdown
 
 
 # ---------------------------------------------------------------------------

@@ -209,3 +209,20 @@ def start_auto_resume_task(interval_sec: int = 300) -> asyncio.Task | None:
     )
     logger.info("auto_resume: started probe loop (interval=%ds)", interval_sec)
     return _active_task
+
+
+async def stop_auto_resume_task() -> None:
+    """Stop the module-owned probe loop and consume its terminal state."""
+    global _active_task
+    task = _active_task
+    _active_task = None
+    if task is None:
+        return
+    if not task.done():
+        task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:
+        logger.debug("auto_resume: task ended during shutdown: %s", exc)

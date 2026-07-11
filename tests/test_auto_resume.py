@@ -262,6 +262,27 @@ class TestStartAutoResumeTask:
             mod._active_task = None
 
     @pytest.mark.asyncio
+    async def test_stop_cancels_and_clears_owned_task(self):
+        import aletheia.agent_runtime.auto_resume as mod
+        from unittest.mock import patch
+
+        started = asyncio.Event()
+
+        async def wait_forever(_interval):
+            started.set()
+            await asyncio.Event().wait()
+
+        mod._active_task = None
+        with patch.object(mod, "_auto_resume_loop", side_effect=wait_forever):
+            task = mod.start_auto_resume_task(interval_sec=1)
+            await started.wait()
+            await mod.stop_auto_resume_task()
+
+        assert task.cancelled()
+        assert mod._active_task is None
+        await mod.stop_auto_resume_task()  # idempotent shutdown
+
+    @pytest.mark.asyncio
     async def test_does_not_duplicate(self):
         import aletheia.agent_runtime.auto_resume as mod
         from unittest.mock import AsyncMock, patch

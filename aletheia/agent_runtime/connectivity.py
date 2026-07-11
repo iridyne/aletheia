@@ -38,6 +38,27 @@ def set_uvicorn_loop(loop) -> None:
     _uvicorn_loop = loop
 
 
+async def stop_exchange_auto_resume_task() -> None:
+    """Stop any exchange recovery loop, including a cross-thread future."""
+    global _active_resume_task, _uvicorn_loop
+    task = _active_resume_task
+    _active_resume_task = None
+    _uvicorn_loop = None
+    if task is None:
+        return
+    if not task.done():
+        task.cancel()
+    try:
+        if isinstance(task, asyncio.Future):
+            await task
+        else:
+            await asyncio.wrap_future(task)
+    except (asyncio.CancelledError, asyncio.InvalidStateError):
+        pass
+    except Exception as exc:
+        logger.debug("exchange_auto_resume: task ended during shutdown: %s", exc)
+
+
 def _choose_resume_scheduling(uvicorn_loop, running_loop) -> str:
     """Decide how to schedule the auto-resume loop so it survives (#145).
 

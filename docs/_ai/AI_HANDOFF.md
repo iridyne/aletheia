@@ -7,7 +7,17 @@
 
 ## Last Updated
 
-2026-07-11 (execution/data exchange divergence guard)
+2026-07-11 (deterministic application shutdown)
+
+---
+
+## Recent Change (Deterministic application shutdown — 2026-07-11)
+
+网关关闭现在先阻止调度器继续生产任务，再取消并等待 LLM 启动检查、交易所启动检查和账户启动同步，随后停止它们可能派生出的 LLM/交易所自动恢复循环，最后回收 Telegram 与 PI daemon。整段清理位于 `finally`，正常停止、重启和异常离开走同一路径。
+
+账户启动同步不再占用事件循环默认线程池，而使用可独立释放的执行器；即使经纪商同步卡住，也不会让事件循环关闭无限等待。真实 FastAPI 接口测试使用明确的 api-only runtime，不启动调度器、账户同步或外部启动探针。
+
+没有修改后台任务的启动条件、频率、broker 请求语义、交易、风险、执行、live 或凭证。聚焦生命周期/连接/runtime 回归 42 项、完整规则 629 项通过；单进程连续全量 `2775 passed, 13 skipped, 6 xfailed`，原先在 doctor TestClient 退出处的 TST-A01 已关闭。
 
 ---
 

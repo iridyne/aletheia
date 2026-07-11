@@ -253,6 +253,38 @@ async def _llm_startup_gate(cfg) -> None:
             logger.debug("auto_resume task start failed: %s", e)
 
 
+async def _cancel_background_task(task: asyncio.Task | None, label: str) -> None:
+    """Cancel and consume one lifespan-owned task without masking shutdown."""
+    if task is None:
+        return
+    if not task.done():
+        task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:
+        logger.debug("%s task ended during shutdown: %s", label, exc)
+
+
+async def _run_startup_sync(sync_fn) -> None:
+    """Run startup account sync outside the event loop's default executor.
+
+    A cancelled ``asyncio.to_thread`` call remains owned by the loop's default
+    executor, and loop shutdown waits for that worker indefinitely. A dedicated
+    executor can be released without holding gateway/TestClient shutdown hostage;
+    the broker clients still enforce their normal request timeouts.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aletheia-startup-sync")
+    future = executor.submit(sync_fn)
+    try:
+        await asyncio.wrap_future(future)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cfg = bootstrap()
@@ -352,11 +384,15 @@ async def lifespan(app: FastAPI):
         async def _startup_exchange_sync():
             try:
                 from aletheia.portfolio.exchange_sync import sync_all_exchanges
-                await asyncio.to_thread(sync_all_exchanges)
+                await _run_startup_sync(sync_all_exchanges)
                 logger.info("startup exchange sync complete")
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.warning("startup exchange sync failed (non-fatal): %s", e)
-        startup_sync_task = asyncio.create_task(_startup_exchange_sync())
+        startup_sync_task = asyncio.create_task(
+            _startup_exchange_sync(), name="startup_exchange_sync"
+        )
 
     # Exchange connectivity gate — if exchange is unreachable at startup, pause
     # immediately and start auto-resume (same pattern as LLM gate).
@@ -367,7 +403,9 @@ async def lifespan(app: FastAPI):
         # on an ephemeral scheduler-job loop) can schedule its auto-resume task HERE, where it
         # survives — not on the per-job loop that is torn down right after the check runs.
         set_uvicorn_loop(asyncio.get_running_loop())
-        exchange_gate_task = asyncio.create_task(startup_exchange_gate(cfg))
+        exchange_gate_task = asyncio.create_task(
+            startup_exchange_gate(cfg), name="startup_exchange_gate"
+        )
 
     # System Operator event-driven daemon — wakes immediately on signal arrival
     pi_daemon_task = None
@@ -404,45 +442,52 @@ async def lifespan(app: FastAPI):
     # uvicorn loads app.py before Vite finishes its first build, so index.html is
     # missing and the mount never happens. Deferred mount fixes the issue.
     _mount_static_dashboard()
-    yield
-    # Cancel the LLM gate if it's still probing at shutdown (slow/hung provider).
-    if llm_gate_task is not None and not llm_gate_task.done():
-        llm_gate_task.cancel()
-        try:
-            await llm_gate_task
-        except (asyncio.CancelledError, Exception):
-            pass
-    if telegram_task is not None and telegram_bot is not None:
-        try:
-            telegram_bot.stop()
-            telegram_task.cancel()
+    try:
+        yield
+    finally:
+        # Stop producers before consumers so shutdown cannot spawn fresh recovery work.
+        if background_services_enabled:
             try:
-                await telegram_task
-            except asyncio.CancelledError:
+                stop_scheduler()
+            except Exception:
                 pass
-        except Exception:
-            pass
-    if pi_daemon_task is not None and not pi_daemon_task.done():
+
+        await _cancel_background_task(llm_gate_task, "LLM startup gate")
+        await _cancel_background_task(exchange_gate_task, "exchange startup gate")
+        await _cancel_background_task(startup_sync_task, "startup exchange sync")
+
+        # Startup gates can create independent recovery loops after pausing. They are
+        # module-owned rather than direct lifespan children, so stop them explicitly.
         try:
-            from aletheia.agent_runtime.pi_daemon import stop_pi_daemon
-            stop_pi_daemon()
+            from aletheia.agent_runtime.auto_resume import stop_auto_resume_task
+            await stop_auto_resume_task()
+        except Exception as exc:
+            logger.debug("LLM auto-resume shutdown failed: %s", exc)
+        try:
+            from aletheia.agent_runtime.connectivity import stop_exchange_auto_resume_task
+            await stop_exchange_auto_resume_task()
+        except Exception as exc:
+            logger.debug("exchange auto-resume shutdown failed: %s", exc)
+
+        if telegram_task is not None and telegram_bot is not None:
             try:
-                await pi_daemon_task
-            except (asyncio.CancelledError, Exception):
+                telegram_bot.stop()
+                await _cancel_background_task(telegram_task, "Telegram polling")
+            except Exception:
                 pass
-        except Exception:
-            pass
-    if background_services_enabled:
-        try:
-            stop_scheduler()
-        except Exception:
-            pass
-    # Only clean PID file if we wrote it (bare uvicorn / foreground mode).
-    # In supervised mode the PID belongs to the supervisor — don't touch it.
-    if getattr(app.state, "_owns_pid", False):
-        from aletheia.gateway.pidfile import clear_pid
-        clear_pid()
-    logger.info("Aletheia shutting down")
+        if pi_daemon_task is not None:
+            try:
+                from aletheia.agent_runtime.pi_daemon import stop_pi_daemon
+                stop_pi_daemon()
+                await _cancel_background_task(pi_daemon_task, "PI daemon")
+            except Exception:
+                pass
+        # Only clean PID file if we wrote it (bare uvicorn / foreground mode).
+        # In supervised mode the PID belongs to the supervisor — don't touch it.
+        if getattr(app.state, "_owns_pid", False):
+            from aletheia.gateway.pidfile import clear_pid
+            clear_pid()
+        logger.info("Aletheia shutting down")
 
 
 app = FastAPI(title="Aletheia Trading OS", version=__version__, lifespan=lifespan)

@@ -1052,4 +1052,4 @@
 
 | ID | 状态 | 问题 | 证据/下一步 |
 |---|---|---|---|
-| TST-A01 | 🟡 | 全量单进程运行在 `tests/test_doctor_json.py::test_infra_doctor_endpoint_matches_contract` 的 `TestClient` 退出时可能无限等待 anyio portal 线程 | 顺序运行中 1199 项通过后停在 `TestClient.__exit__ -> portal thread.join()`；采样显示 portal 线程反复构建 SSL context/加载 CA。单独运行该节点 2.52s 通过，节点后 1571 项可分段完成，说明是前序测试泄漏或全局 app lifespan 相互作用。后续用二分文件集定位污染源并修 fixture/app lifespan；此前全量报告必须注明是否单次连续完成，禁止把分段覆盖冒充一次绿灯 |
+| TST-A01 | ✅ | 全量单进程运行曾在 `tests/test_doctor_json.py::test_infra_doctor_endpoint_matches_contract` 的 `TestClient` 退出时无限等待 anyio portal 线程 | 根因是生产 lifespan 启动了账户同步、交易所启动探针及其派生自动恢复循环，却没有对称停止；接口测试又以 current 模式误启真实后台网络。现统一执行“停调度器→取消直属任务→停止派生循环→回收 Telegram/PI”，清理放进 `finally`；启动账户同步使用独立可释放执行器，API 合约测试固定为 api-only runtime。新增取消、幂等停止和独立执行器回归；单进程连续全量 `2775 passed, 13 skipped, 6 xfailed`，原卡点及后半段均通过 |
