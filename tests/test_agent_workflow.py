@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -803,9 +804,11 @@ def _done_task_with_evidence_commit(root: Path, commit: str) -> None:
             "commit": commit,
             "result": "passed",
             "recorded_by": "agent_workflow.verify/v1",
+            "command_sha256": hashlib.sha256(b"git status --short").hexdigest(),
         }],
     })
     path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    (root / ".agent/handoffs/TASK-1.md").write_text(_handoff(), encoding="utf-8")
 
 
 def test_strict_accepts_reachable_completed_evidence(tmp_path, monkeypatch):
@@ -860,4 +863,59 @@ def test_strict_errors_on_nonexistent_evidence_commit(tmp_path, monkeypatch):
     findings = validate(root, strict=True)
     assert any(
         f.severity == "error" and "does not exist" in f.message for f in findings
+    ), [(f.severity, f.message) for f in findings]
+
+
+def test_range_strict_warns_for_unchanged_historical_missing_evidence(tmp_path, monkeypatch):
+    """Remote CI cannot fetch deleted feature-branch objects after a squash merge.
+    An unchanged historical task must not break every later PR for that reason."""
+    root = _repo(tmp_path, monkeypatch)
+    _done_task_with_evidence_commit(root, "0" * 40)
+    subprocess.run(["git", "add", ".agent"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "record historical task"],
+        cwd=root, check=True, capture_output=True,
+    )
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, text=True, capture_output=True,
+    ).stdout.strip()
+    (root / "later.txt").write_text("unrelated later work\n", encoding="utf-8")
+    subprocess.run(["git", "add", "later.txt"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "later unrelated change"],
+        cwd=root, check=True, capture_output=True,
+    )
+
+    findings = validate(root, strict=True, changed_since=base)
+    historical = [f for f in findings if "historical" in f.message and "evidence" in f.message]
+    assert historical, [(f.severity, f.message) for f in findings]
+    assert all(f.severity == "warning" for f in historical)
+    assert not any(
+        f.severity == "error" and "evidence commit does not exist" in f.message
+        for f in findings
+    )
+
+
+def test_range_strict_errors_for_changed_task_with_missing_evidence(tmp_path, monkeypatch):
+    """Range awareness must not let the task changed by the current PR invent proof."""
+    root = _repo(tmp_path, monkeypatch)
+    subprocess.run(["git", "add", ".agent"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "record active task"],
+        cwd=root, check=True, capture_output=True,
+    )
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, text=True, capture_output=True,
+    ).stdout.strip()
+    _done_task_with_evidence_commit(root, "0" * 40)
+    subprocess.run(["git", "add", ".agent/tasks/TASK-1.yaml"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "complete current task"],
+        cwd=root, check=True, capture_output=True,
+    )
+
+    findings = validate(root, strict=True, changed_since=base)
+    assert any(
+        f.severity == "error" and "evidence commit does not exist" in f.message
+        for f in findings
     ), [(f.severity, f.message) for f in findings]

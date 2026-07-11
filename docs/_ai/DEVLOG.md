@@ -3116,3 +3116,10 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Connection-class `httpx` failures now use configured LLM fallback models; timeout exceptions remain terminal to preserve scheduler wall-clock bounds.
 - Updated focused runtime tests for valid zero-opportunity scans and added executable provider fallback coverage.
 - Renamed the duplicate data-collector stability claim from `GS-S03` to `GS-S04`, restoring unique rule identities without behavioral changes.
+
+## 2026-07-12 — Remote CI historical evidence resilience
+
+- Range-strict PR checks now distinguish tasks changed by the PR from unchanged completed history.
+- A missing verification commit is a warning only for an unchanged historical task whose deleted feature branch is no longer fetchable by GitHub Actions.
+- Tasks changed in the current PR still fail strictly on missing evidence; trust-boundary evidence requirements are unchanged.
+- Added regression coverage for both the historical-warning path and the current-task hard-failure path.

@@ -119,3 +119,11 @@ def test_squash_merged_evidence_is_tolerated():
     assert "completed task evidence commit does not exist in this repository" in source
     # It proves existence with cat-file before deciding.
     assert 'cat-file", "-e"' in source
+
+
+@spec_claim(SpecClaim("AW-S11", _CONTRACT, "§invariants", "L2b", "Range-strict CI tolerates missing evidence objects only for unchanged historical tasks; changed tasks remain strict."))
+def test_range_strict_evidence_validation_is_change_aware():
+    from aletheia.agent_workflow import validate
+    source = Path(validate.__code__.co_filename).read_text(encoding="utf-8")
+    assert "unchanged historical completed task evidence commit does not exist" in source
+    assert "task_changed_in_range" in source
