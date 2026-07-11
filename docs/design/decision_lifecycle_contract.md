@@ -5,7 +5,7 @@
 > 其他契约**竖切**单个子系统(风控/执行/agent/知识);本契约负责它们之间的交接。
 > **不重复**子系统细节 —— 指向已有契约。
 > **基线**:代码为底(file:line);冲突时文档为准。
-> Last updated: 2026-07-10 · 维护者:Aletheia Dev · 上游:`docs/research/PLATFORM_DOC_DESIGN_REVIEW_2026-06-30.md`
+> Last updated: 2026-07-11 · 维护者:Aletheia Dev · 上游:`docs/research/PLATFORM_DOC_DESIGN_REVIEW_2026-06-30.md`
 
 ---
 
@@ -22,7 +22,8 @@
 跳4 组装    commands.py:evaluate_trading_opportunity → build_enriched_trading_context (3层Context)
 跳5 定夺    trading_decision.py:evaluate → LLM → TradingDecision  ★唯一开仓决策权★
             conviction∈[40,80] 触发 bull/bear debate;conviction < 55 强制 action='skip'
-跳6 提案    submit_decision_as_proposal → guard chain(advisory) → create_paper_proposal(白名单) → gateway.submit_proposal
+跳6 提案    submit_decision_as_proposal → 方向/取价门留下结构化结果 → guard chain(advisory)
+            → create_paper_proposal(白名单) → gateway.submit_proposal
 跳7 风控    risk/engine.py:evaluate_proposal —— 唯一硬门(20关,见 risk_engine_contract)
 跳8 执行    gateway → broker → Order → Fill → Position
 跳9 复盘    平仓后 post_trade_reviewer → knowledge_items(post_trade_review) → 晋级门 + 学习闭环
@@ -84,6 +85,9 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 - `filter_decisions` 保存已有方向的 Observer、Ranker、System Operator 和 Risk 逐关事实，到首个拒绝停止。
 - `filter_candidate_outcomes` 按候选共享一份目标市场净结果，不按筛选关重复结算。
 - Risk 证据必须在权威 `RiskDecision` 落库后追加；证据失败不改变原始批准/拒绝。
+- `TradingDecision.action='trade'` 表示 System Operator 的交易意图，不等于提案已经创建。
+  跳6 的方向过热或目标市场无价格必须写 `stage='proposal_submission'` 的结构化拒绝原因；
+  诊断通过这条证据区分“模型没想交易”和“想交易但提案前被拒绝”。
 
 完整定义见 `docs/design/filter_evidence_contract.md`。
 
@@ -95,7 +99,7 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 |------|--------|----------|-----------|-----------|
 | 机会落库 | `market_observer.py:361` | ranker / Layer1 | 仅 `status='open'` 进排序;reviewed 不重复 | (本契约 DL-S01) |
 | signal_pending | `paper_trader.py:143` | `trading_context.py:463` | TTL cutoff;LIMIT 5 | DL-S03 |
-| 决策→提案 | `trading_decision.py:218` | `gateway.py` | `conviction≥55 且 action∈trade类` 才提案;白名单校验 | DL-C01 + execution_contract §3 |
+| 决策→提案 | `trading_decision.py` | `gateway.py` | `conviction≥55 且 action∈trade类` 才尝试提案；未创建时必须留下 proposal_submission 原因；白名单校验 | DL-C01 + DL-C02 + execution_contract §3 |
 | 提案→风控 | `gateway.py` | `risk/engine.py:67` | `_eval_lock` 串行;每提案恰评估一次;`approved=False` 不执行 | risk_engine_contract / spec_pipeline_risk_gate |
 | 平仓脊柱 | — | — | 见 `execution_contract §10`(退出触发器优先级 / paused 不挡平仓) | PL-PM-01~07 |
 | 筛选证据 | 各关原 writer | filter controller / doctor | 事前输入+参数版本；无方向不生成可学习净结果；Risk 只报告 | filter_evidence_contract / spec_filter_evidence |
@@ -112,6 +116,7 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 - **DL-INV-6 强制反方论证**:新 TradingDecision 的 LLM schema 必须要求非空 `bear_case`,`_parse_decision` 必须透传到提案审计元数据；仅 dataclass 有字段不算实现。
 - **DL-INV-7 筛选事实不反推**:放行/拒绝必须在当次评估时记录，不得从最终 opportunity/proposal 状态倒推中间关卡。
 - **DL-INV-8 无方向不学收益**:无事前 `long/short` 时只衡量能力和覆盖，禁止事后选最赚方向。
+- **DL-INV-9 提案结果不丢失**:`trade/scale_in/flip` 是模型意图；若方向门或目标市场取价使 proposal 未创建，必须返回稳定机器原因并写 `proposal_submission` 筛选证据，禁止只留下无法解释的 `proposal_id=NULL`。
 
 ---
 
@@ -125,6 +130,7 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 | `DL-S04` | L2a | TradingDecision.signal_source 默认 `market_observer`(值域含 `serenity`) |
 | `DL-S06` | L2a | 提案先解析最终 market_type，再把它传给 latest_snapshot 取价 |
 | `DL-C01` | L2c | `_MIN_CONVICTION_TO_TRADE == 55`(改阈值即爆红,强制同步本契约) |
+| `DL-C02` | L2c | trade 类意图未创建 proposal 时保留结构化 proposal_submission 原因 |
 
 `tests/specs/spec_decision_lifecycle.py`。验证:`uv run pytest tests/specs/spec_decision_lifecycle.py -q`。
 筛选证据的结构、行为和跨操作规则在 `tests/specs/spec_filter_evidence.py`。

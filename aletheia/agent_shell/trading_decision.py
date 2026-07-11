@@ -363,8 +363,24 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     snap = latest_snapshot(decision.symbol, market_type=market_type)
     price = float((snap or {}).get("price") or 0)
     if not price:
+        decision.filter_trace.append({
+            "filter_name": "proposal_price_availability",
+            "stage": "proposal_submission",
+            "decision": "rejected",
+            "reason_code": "market_price_unavailable",
+            "inputs": {"symbol": decision.symbol, "market_type": market_type},
+            "parameters": {"minimum_price": 0},
+        })
         logger.warning("no_price_for_decision_proposal: %s", decision.symbol)
-        return None
+        return {"status": "failed", "reason": "market_price_unavailable"}
+    decision.filter_trace.append({
+        "filter_name": "proposal_price_availability",
+        "stage": "proposal_submission",
+        "decision": "passed",
+        "reason_code": "market_price_available",
+        "inputs": {"symbol": decision.symbol, "market_type": market_type},
+        "parameters": {"minimum_price": 0},
+    })
 
     # Guard chain is a PRE-RISK OBSERVABILITY layer (see trust/guard_chain docstring):
     # advisory only. It enriches the audit trail — guard_summary is attached to the

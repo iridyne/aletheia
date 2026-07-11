@@ -27,6 +27,41 @@ def _insert_signal(db, idx: int, action: str = "signal_pending", proposal_id: st
     )
 
 
+def _insert_filter_decision(
+    db,
+    idx: int,
+    *,
+    stage: str,
+    filter_name: str,
+    decision: str = "passed",
+    reason_code: str = "test",
+) -> None:
+    candidate_key = (
+        f"pi_decision:pi-funnel-trade-{idx}"
+        if stage == "proposal_submission"
+        else f"opportunity:opp-funnel-{idx}"
+    )
+    db.execute(
+        "INSERT INTO filter_decisions "
+        "(id, dedup_key, candidate_key, candidate_kind, opportunity_id, symbol, "
+        "market_type, direction, filter_name, stage, decision, reason_code, "
+        "filter_version, evaluated_at) "
+        "VALUES (?, ?, ?, ?, ?, 'BTC/USDT', 'usdt_futures', 'long', ?, ?, ?, ?, 'test-v1', ?)",
+        (
+            f"fd-{stage}-{filter_name}-{idx}",
+            f"dedup-{stage}-{filter_name}-{idx}",
+            candidate_key,
+            "pi_decision" if stage == "proposal_submission" else "opportunity",
+            f"opp-funnel-{idx}",
+            filter_name,
+            stage,
+            decision,
+            reason_code,
+            _iso(),
+        ),
+    )
+
+
 def _insert_proposal(db, idx: int, status: str = "pending", notional: float = 25.0) -> str:
     pid = f"prop-funnel-{idx}"
     db.execute(
@@ -161,6 +196,60 @@ def test_trade_funnel_conversion_uses_linked_opportunity_cohort():
         rate is None or 0.0 <= rate <= 1.0
         for rate in report["conversion_rates"].values()
     )
+
+
+def test_trade_funnel_uses_persisted_ranker_and_submission_evidence():
+    from aletheia.analytics.trade_funnel import (
+        build_trade_funnel_audit,
+        render_trade_funnel_audit,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for idx in (1, 2):
+        _insert_opp(db, idx)
+        _insert_filter_decision(
+            db,
+            idx,
+            stage="paper_ranker",
+            filter_name="execution_eligibility",
+        )
+    _insert_filter_decision(
+        db,
+        1,
+        stage="paper_trader_selection",
+        filter_name="signal_batch_limit",
+    )
+    _insert_signal(db, 1, "signal_pending")
+    _insert_signal(db, 1, "trade")
+    _insert_filter_decision(
+        db,
+        1,
+        stage="proposal_submission",
+        filter_name="direction_bias_brake",
+        decision="rejected",
+        reason_code="direction_overheated",
+    )
+    db.commit()
+
+    report = build_trade_funnel_audit(
+        hours=24,
+        min_sample_size=1,
+        include_ranker_snapshot=False,
+    )
+
+    assert report["counts"]["ranker_candidates"] == 2
+    assert report["counts"]["ranker_eligible"] == 1
+    assert report["causal_cohort_counts"]["ranker_candidates"] == 2
+    assert report["causal_cohort_counts"]["ranker_eligible"] == 1
+    assert report["proposal_submission_reasons"] == [
+        {"reason": "direction_overheated", "count": 1}
+    ]
+    assert report["main_choke_point"]["stage"] == "proposal_submission"
+    assert "direction_overheated" in report["main_choke_point"]["summary"]
+    rendered = render_trade_funnel_audit(report)
+    assert "ranker_candidates: 2" in rendered
+    assert "direction_overheated: 1" in rendered
 
 
 def test_trade_funnel_cohort_uses_latest_terminal_decision_once():

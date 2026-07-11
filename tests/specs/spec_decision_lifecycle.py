@@ -153,3 +153,25 @@ def test_proposal_price_lookup_is_market_type_scoped():
     resolution = body.index("market_type = decision.market_type")
     lookup = body.index("latest_snapshot(decision.symbol, market_type=market_type)")
     assert resolution < lookup
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-C02", "decision_lifecycle_contract", "§4 DL-INV-9 proposal outcome", "L2c",
+        "A trade-like System Operator intent that does not create a proposal must retain a "
+        "structured proposal_submission rejection reason; it must not collapse into an "
+        "unexplained NULL proposal_id.",
+        status="implemented",
+    ),
+)
+def test_failed_proposal_submission_keeps_structured_reason():
+    from aletheia.agent_shell import trading_decision
+
+    src = Path(trading_decision.__file__).read_text(encoding="utf-8")
+    start = src.index("async def submit_decision_as_proposal")
+    end = src.index("\ndef _proposal_direction_overheated", start)
+    body = src[start:end]
+
+    assert "proposal_price_availability" in body
+    assert '"status": "failed"' in body
+    assert '"reason": "market_price_unavailable"' in body

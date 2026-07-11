@@ -62,6 +62,8 @@
 
 实施说明：事件量保留在 `counts`；同批机会转化放在 `causal_cohort_counts`，所有 `conversion_rates` 和主要卡点只读取后者。风险拒绝原因中的动态金额归一后聚类，同时返回一个原始示例。
 
+补充实施：窗口内 ranker 候选和进入选择阶段数量从不可变 filter 证据读取，不在只读审计中重跑当前 ranker。trade 类模型意图若在 proposal submission 被方向门或目标市场取价拦下，漏斗单列稳定原因；`action='trade'` 不再被误解为 proposal 已创建。
+
 ## 阶段 D：净收益结果层
 
 - `universe_forward_outcomes` 增加 market_type；按 spot/perp 分别取价。

@@ -1,5 +1,14 @@
 # Development Log
 
+## 2026-07-11 — Opportunity submission evidence honesty
+
+- Trade 类 System Operator 判断与 proposal 创建结果明确分层：方向集中度或目标市场取价在提案前拒绝时，保留稳定机器原因和 `proposal_submission` 证据；不改模型原始交易意图。
+- 目标市场无有效价格不再静默返回 `None`，而是返回 `market_price_unavailable` 并记录最终 `market_type`。
+- Trade Funnel 从已落库 filter 证据统计历史 ranker 候选、进入选择阶段的候选，以及提案前拒绝原因；只读审计不再重跑当前 ranker，也不再把已知方向刹车统称为未知提交故障。
+- 保持不动：方向刹车参数、风险阈值、仓位、Execution Gateway、live 和凭证。
+
+---
+
 ## 2026-07-10 — Opportunity filter evidence and net control cohorts
 
 - 新增 `filter_decisions`、`filter_decision_batches`、`filter_candidate_outcomes` 和权威设计/可执行检查；业务写入只追加，幂等重试不制造重复证据。

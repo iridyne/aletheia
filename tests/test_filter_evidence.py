@@ -3,6 +3,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -398,3 +399,93 @@ def test_direction_overheat_rejection_is_added_to_operator_trace(monkeypatch):
     assert result["reason"] == "direction_overheated"
     assert decision.filter_trace[-1]["filter_name"] == "direction_bias_brake"
     assert decision.filter_trace[-1]["decision"] == "rejected"
+
+
+def test_missing_proposal_price_returns_structured_rejection_trace(monkeypatch):
+    from aletheia.agent_shell.trading_decision import (
+        TradingDecision,
+        submit_decision_as_proposal,
+    )
+
+    decision = TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=70,
+        reasoning="test",
+        market_type="spot",
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_decision._proposal_direction_overheated",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "aletheia.trading.market_data.latest_snapshot",
+        lambda *args, **kwargs: None,
+    )
+
+    result = asyncio.run(submit_decision_as_proposal(decision, "paper_internal"))
+
+    assert result == {"status": "failed", "reason": "market_price_unavailable"}
+    assert decision.filter_trace[-1] == {
+        "filter_name": "proposal_price_availability",
+        "stage": "proposal_submission",
+        "decision": "rejected",
+        "reason_code": "market_price_unavailable",
+        "inputs": {"symbol": "BTC/USDT", "market_type": "spot"},
+        "parameters": {"minimum_price": 0},
+    }
+
+
+def test_operator_command_surfaces_proposal_submission_reason(monkeypatch):
+    from aletheia.agent_shell import commands
+    from aletheia.agent_shell.trading_decision import TradingDecision
+
+    decision = TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=70,
+        reasoning="test",
+        market_type="spot",
+    )
+    recorded = {}
+
+    async def fake_evaluate(context):
+        return decision
+
+    async def fake_submit(decision, execution_mode):
+        return {"status": "failed", "reason": "market_price_unavailable"}
+
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda: SimpleNamespace(
+            exchange=SimpleNamespace(paper_execution_mode="paper_internal")
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.build_enriched_trading_context",
+        lambda: {
+            "layer1": {
+                "data_health": {"signal_status": "healthy", "ohlcv_ready": True}
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_decision.evaluate_trading_opportunity",
+        fake_evaluate,
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_decision.submit_decision_as_proposal",
+        fake_submit,
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.reflection.record_decision",
+        lambda result: recorded.update(result),
+    )
+
+    result = asyncio.run(commands.evaluate_trading_opportunity({}))
+
+    assert result["proposal_status"] == "failed"
+    assert result["proposal_reason"] == "market_price_unavailable"
+    assert recorded["proposal_reason"] == "market_price_unavailable"

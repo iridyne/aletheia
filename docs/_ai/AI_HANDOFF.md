@@ -7,7 +7,15 @@
 
 ## Last Updated
 
-2026-07-10 (Opportunity filter evidence foundation)
+2026-07-11 (Opportunity submission evidence honesty)
+
+---
+
+## Recent Change (Opportunity submission evidence honesty — 2026-07-11)
+
+System Operator 的 `trade/scale_in/flip` 现在明确表示“模型想交易”，不再被误解为“提案已经创建”。如果提案前的方向集中度检查或目标市场取价拒绝了这次尝试，系统会保存稳定原因；无价格路径不再静默返回空值。
+
+机会漏斗直接读取已经落库的 ranker 和 proposal submission 证据，展示历史候选数、进入选择阶段的数量和已知前置拒绝原因。审计不会重新跑当前 ranker，也没有改变方向刹车参数、风控、仓位、执行或 live 权限。
 
 ---
 

@@ -104,6 +104,7 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 | Ranker execution/direction/confidence/TTL/factor/guard | 是 | 顺序放行与首个拒绝 | 是（guard 只观测） |
 | open-position/cooldown/batch limit | 是 | 当时占用、冷却截止、rank/limit | 是 |
 | System Operator watch/conviction/debate/direction brakes | 是 | 原始/辩论后 conviction、实际暴露快照 | 是，但不在有对照前改门槛 |
+| Proposal submission 方向/取价 | 是 | 方向集中度，最终 market_type，目标市场价格是否可用 | 是；用于解释 trade 意图为何没有 proposal，不自动放宽 |
 | Risk | 是 | `RiskDecision` 为权威，filter 记录只做统一索引 | 报告用，永不自动放宽 |
 | Execution adapter | 是 | order/error/venue reason | 用于成交率/实现率，不是方向 alpha |
 
@@ -159,6 +160,8 @@ Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候
 - outcome 取价失败保持 `failed`/NULL，不用同名现货或过晚价格补齐。
 - `doctor` 分开报告：记录覆盖率、可结算比例、到期未结算数、各 filter 是否达到最小对照样本。
 - `doctor` 同时校验批次里的候选总数是否等于 pass/reject/not-applicable/error 之和。
+- Trade Funnel 优先从 `filter_decisions` 读取窗口内 ranker 历史候选，不在审计时重跑 ranker；
+  `proposal_submission` 拒绝原因必须单列，不能统称为未知的 decision-to-proposal 丢失。
 - `filter_decision_batches` 保留 30 天；`filter_decisions` 和
   `filter_candidate_outcomes` 保留 90 天。它们是分析证据，不是交易因果原件。
 
@@ -170,7 +173,8 @@ Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候
 4. 已完成：固定时点净结果，shadow/control 新行的 instrument 和成本迁移。
 5. 已完成：Universe ticker/tradability 批次证据、allocation 对照、System Operator 和 Risk 统一索引。
 6. 已完成：只读 filter feedback 使用分层收缩净期望，未达样本门只显示证据不足。
-7. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
+7. 已完成：ranker 历史漏斗和 proposal submission 原因直接来自已落库证据；无目标市场价格返回稳定失败原因，不再静默 `None`。
+8. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
 
 ## 10. 完成标准
 

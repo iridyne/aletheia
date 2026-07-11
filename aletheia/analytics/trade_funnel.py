@@ -134,7 +134,10 @@ def build_trade_funnel_audit(
             counts["orders_executed"] = _orders_executed(db, cutoff)
         if _table_exists(db, "positions"):
             counts["positions_opened"] = _count(db, "positions", "opened_at", cutoff)
-        if include_ranker_snapshot and _table_exists(db, "opportunities"):
+        persisted_ranker = _persisted_ranker_counts(db, cutoff)
+        if persisted_ranker["ranker_candidates"] is not None:
+            counts.update(persisted_ranker)
+        elif include_ranker_snapshot and _table_exists(db, "opportunities"):
             snapshot = _ranker_snapshot()
             counts["ranker_candidates"] = snapshot.get("ranker_candidates")
             counts["ranker_eligible"] = snapshot.get("ranker_eligible")
@@ -153,10 +156,19 @@ def build_trade_funnel_audit(
             report["risk_rejection_reasons"] = _risk_rejection_reasons(db, cutoff)
         if _table_exists(db, "orders"):
             report["execution_error_reasons"] = _execution_error_reasons(db, cutoff)
+        report["proposal_submission_reasons"] = _proposal_submission_reasons(
+            db, cutoff, causal_cohort=False,
+        )
+        report["causal_proposal_submission_reasons"] = _proposal_submission_reasons(
+            db, cutoff, causal_cohort=True,
+        )
         if _table_exists(db, "positions"):
             report["position_stats"] = _position_stats(db, cutoff)
         report["main_choke_point"] = _main_choke_point(
-            cohort_counts, report["position_stats"], min_sample_size,
+            cohort_counts,
+            report["position_stats"],
+            min_sample_size,
+            report["causal_proposal_submission_reasons"],
         )
     except sqlite3.OperationalError as exc:
         report["schema_errors"].append(str(exc))
@@ -201,6 +213,8 @@ def render_trade_funnel_audit(report: dict) -> str:
     cohort = report.get("causal_cohort_counts") or {}
     for key in (
         "opportunities_created",
+        "ranker_candidates",
+        "ranker_eligible",
         "signal_pending_written",
         "system_operator_evaluated",
         "decisions_trade",
@@ -214,6 +228,11 @@ def render_trade_funnel_audit(report: dict) -> str:
     ):
         value = cohort.get(key)
         lines.append(f"  {key}: {'n/a' if value is None else value}")
+    submission_reasons = report.get("causal_proposal_submission_reasons") or []
+    if submission_reasons:
+        lines.extend(["", "Pre-proposal rejection reasons:"])
+        for item in submission_reasons:
+            lines.append(f"  {item['reason']}: {item['count']}")
     stats = report.get("position_stats") or {}
     if stats.get("sample_size"):
         lines.extend([
@@ -254,6 +273,10 @@ def compact_trade_funnel_summary(report: dict) -> dict:
         "main_choke_point": report.get("main_choke_point"),
         "counts": report.get("counts"),
         "causal_cohort_counts": report.get("causal_cohort_counts"),
+        "proposal_submission_reasons": report.get("proposal_submission_reasons"),
+        "causal_proposal_submission_reasons": report.get(
+            "causal_proposal_submission_reasons"
+        ),
         "position_stats": report.get("position_stats"),
     }
 
@@ -283,6 +306,8 @@ def _base_report(generated_at: str, window: dict) -> dict:
         },
         "top_dropoffs": [],
         "risk_rejection_reasons": [],
+        "proposal_submission_reasons": [],
+        "causal_proposal_submission_reasons": [],
         "execution_error_reasons": [],
         "position_stats": {
             "sample_size": 0,
@@ -373,6 +398,20 @@ def _causal_cohort_counts(db, cutoff: str) -> dict[str, int | None]:
     counts["open_opportunities"] = _count(
         db, "opportunities", "created_at", cutoff, "status = 'open'",
     )
+    if _table_exists(db, "filter_decisions"):
+        rows = db.execute(
+            "SELECT stage, COUNT(DISTINCT fd.opportunity_id) AS n "
+            "FROM filter_decisions fd "
+            "JOIN opportunities o ON o.id = fd.opportunity_id "
+            "WHERE datetime(o.created_at) >= datetime(?) "
+            "AND fd.stage IN ('paper_ranker', 'paper_trader_selection') "
+            "GROUP BY stage",
+            (cutoff,),
+        ).fetchall()
+        ranker_counts = {str(row["stage"]): int(row["n"]) for row in rows}
+        if ranker_counts:
+            counts["ranker_candidates"] = ranker_counts.get("paper_ranker", 0)
+            counts["ranker_eligible"] = ranker_counts.get("paper_trader_selection", 0)
 
     signal_ids: set[str] = set()
     trade_ids: set[str] = set()
@@ -511,6 +550,27 @@ def _ranker_snapshot() -> dict:
         return {"ranker_candidates": None, "ranker_eligible": None, "error": str(exc)}
 
 
+def _persisted_ranker_counts(db, cutoff: str) -> dict[str, int | None]:
+    """Return historical candidate evaluations without re-running the ranker."""
+    if not _table_exists(db, "filter_decisions"):
+        return {"ranker_candidates": None, "ranker_eligible": None}
+    rows = db.execute(
+        "SELECT stage, COUNT(DISTINCT COALESCE(run_id, '') || ':' || candidate_key) AS n "
+        "FROM filter_decisions "
+        "WHERE datetime(evaluated_at) >= datetime(?) "
+        "AND stage IN ('paper_ranker', 'paper_trader_selection') "
+        "GROUP BY stage",
+        (cutoff,),
+    ).fetchall()
+    counts = {str(row["stage"]): int(row["n"]) for row in rows}
+    if not counts:
+        return {"ranker_candidates": None, "ranker_eligible": None}
+    return {
+        "ranker_candidates": counts.get("paper_ranker", 0),
+        "ranker_eligible": counts.get("paper_trader_selection", 0),
+    }
+
+
 def _conversion_rates(counts: dict) -> dict:
     trade_decisions = _trade_decision_count(counts)
     return {
@@ -580,6 +640,39 @@ def _risk_rejection_reasons(db, cutoff: str) -> list[dict]:
     return result
 
 
+def _proposal_submission_reasons(
+    db,
+    cutoff: str,
+    *,
+    causal_cohort: bool,
+) -> list[dict]:
+    if not _table_exists(db, "filter_decisions"):
+        return []
+    if causal_cohort and _table_exists(db, "opportunities"):
+        rows = db.execute(
+            "SELECT fd.reason_code, COUNT(DISTINCT fd.candidate_key) AS n "
+            "FROM filter_decisions fd "
+            "JOIN opportunities o ON o.id = fd.opportunity_id "
+            "WHERE datetime(o.created_at) >= datetime(?) "
+            "AND fd.stage = 'proposal_submission' AND fd.decision = 'rejected' "
+            "GROUP BY fd.reason_code ORDER BY n DESC, fd.reason_code",
+            (cutoff,),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT reason_code, COUNT(DISTINCT candidate_key) AS n "
+            "FROM filter_decisions "
+            "WHERE datetime(evaluated_at) >= datetime(?) "
+            "AND stage = 'proposal_submission' AND decision = 'rejected' "
+            "GROUP BY reason_code ORDER BY n DESC, reason_code",
+            (cutoff,),
+        ).fetchall()
+    return [
+        {"reason": str(row["reason_code"]), "count": int(row["n"])}
+        for row in rows
+    ]
+
+
 def _risk_reason_bucket(reason: str) -> str:
     """Collapse human-readable numeric details without changing reason tokens."""
     text = reason.strip() or "unknown"
@@ -627,7 +720,12 @@ def _position_stats(db, cutoff: str) -> dict:
     }
 
 
-def _main_choke_point(counts: dict, stats: dict, min_sample_size: int) -> dict:
+def _main_choke_point(
+    counts: dict,
+    stats: dict,
+    min_sample_size: int,
+    proposal_submission_reasons: list[dict] | None = None,
+) -> dict:
     trade_decisions = _trade_decision_count(counts)
     positions = int(counts["positions_opened"] or 0)
     median_notional = stats.get("median_notional_usdt")
@@ -683,12 +781,17 @@ def _main_choke_point(counts: dict, stats: dict, min_sample_size: int) -> dict:
             f"Only {proposals} linked proposals and 0 positions are in this cohort.",
             f"Collect at least {min_sample_size} linked proposals before tuning execution behavior.",
         )
-    if trade_decisions >= min_sample_size and int(counts["proposals_created"] or 0) == 0:
+    if trade_decisions > 0 and int(counts["proposals_created"] or 0) == 0:
+        reasons = proposal_submission_reasons or []
+        reason_text = ", ".join(
+            f"{item['reason']} x{item['count']}" for item in reasons[:3]
+        )
+        suffix = f" Known pre-proposal rejections: {reason_text}." if reason_text else ""
         return _choke(
             "proposal_submission",
-            "warn",
-            f"{trade_decisions} trade-like decisions produced 0 proposals.",
-            "Inspect decision-to-proposal submission and no-price/guard-advisory paths.",
+            "warn" if trade_decisions >= min_sample_size else "insufficient_data",
+            f"{trade_decisions} trade-like decisions produced 0 proposals.{suffix}",
+            "Inspect the structured proposal-submission reasons before changing System Operator behavior.",
         )
     if int(counts["system_operator_evaluated"] or 0) >= min_sample_size and trade_decisions == 0:
         return _choke(

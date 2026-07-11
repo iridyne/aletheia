@@ -1571,6 +1571,8 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         if proposal_result:
             result["proposal_id"] = proposal_result.get("proposal_id")
             result["proposal_status"] = proposal_result.get("status")
+            if proposal_result.get("reason"):
+                result["proposal_reason"] = proposal_result["reason"]
             result["filter_trace"] = decision.filter_trace
         else:
             result["proposal_error"] = "price_unavailable_or_proposal_rejected"
