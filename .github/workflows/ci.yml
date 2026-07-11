@@ -49,6 +49,9 @@ jobs:
       - name: Verify executable contracts
         run: uv run pytest tests/specs/ -q --junitxml=test-results/specs.xml
 
+      - name: Verify agent workflow integrity
+        run: uv run aletheia agent workflow check --strict
+
       - name: Run full regression audit
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_regression }}
         run: uv run pytest tests/ -q --tb=line --junitxml=test-results/full.xml

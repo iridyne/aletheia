@@ -2,23 +2,19 @@
 
 ## Quick Reference
 
-1. **Start session**: /start-session (Claude Code) or read AGENTS.md
-2. **End session**: /end-session (Claude Code) or manually update handoff docs
+1. **Start session**: run `uv run aletheia agent workflow bootstrap`, then read AGENTS.md and the selected task handoff
+2. **End session**: update the selected `.agent/tasks/` packet and `.agent/handoffs/` file, then run `uv run aletheia agent workflow check`
 3. **Cross-device**: Push branch, ensure AI_HANDOFF.md is current, pull on new device
 4. **Secrets**: Never in git. Use OS keyring or encrypted file (.secret.key, secrets.enc are gitignored).
 5. **New project**: Run ~/ai-project-template/scripts/ai-workspace-init.ps1
 
 ## Context Recovery Protocol
 
-1. Read CLAUDE.md
-2. Read AGENTS.md
-3. Read docs/_ai/PROJECT_CONTEXT.md
-4. Read docs/_ai/CURRENT_TASK.md
-5. Read docs/_ai/AI_HANDOFF.md
-6. Read docs/_ai/DECISIONS.md
-7. Read docs/_ai/DISCUSSION_DEVELOPMENT_LESSONS_2026-07-03.md for large-batch fix lessons
-8. Inspect git status
-9. Summarize current state before making changes
+1. Run `uv run aletheia agent workflow bootstrap`
+2. Read AGENTS.md and the selected `.agent/tasks/` + `.agent/handoffs/` pair
+3. Run `uv run aletheia doctor` for local runtime facts
+4. Read relevant decisions and detailed history only when the task requires them
+5. Inspect git status and summarize current state before making changes
 
 ## End-of-Session Protocol
 
