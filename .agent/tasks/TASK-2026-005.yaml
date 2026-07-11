@@ -1,0 +1,23 @@
+schema_version: 1
+id: TASK-2026-005
+title: Correct OHLCV market-data issue ledger
+status: in_progress
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Replace the stale MDS-05 warning with verified full-instrument identity migration
+  and test evidence.
+acceptance: []
+ownership:
+  branch: iridite/mds-ledger-honesty
+  lease_holder: codex
+  claimed_at: '2026-07-11T12:03:36.289209Z'
+  expires_at: '2026-07-11T20:03:36.289351Z'
+base_commit: bfc6fa6c24ea49fb7ee7681fbee27b7c4e968c9d
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-005.md
+updated_at: '2026-07-11T12:03:36.289358Z'

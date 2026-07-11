@@ -7,7 +7,15 @@
 
 ## Last Updated
 
-2026-07-11 (SQLite capacity diagnostic honesty)
+2026-07-11 (OHLCV issue-ledger correction)
+
+---
+
+## Recent Change (OHLCV issue-ledger correction — 2026-07-11)
+
+市场数据问题台账中的 MDS-05 曾保留旧结论，称不同交易所的同一根 K 线会互相覆盖。当前代码早已使用“交易所 + 标的 + 现货/合约 + 周期 + 时间”作为唯一身份，旧库升级也会重建为同一结构；来源无法可靠判断的旧行只放入 `legacy_unknown`，不假装属于真实交易所。
+
+这次只纠正台账，不改采集、行情、评分、交易、风险、执行、live 或凭证。聚焦 OHLCV 身份回归 3 项通过。
 
 ---
 

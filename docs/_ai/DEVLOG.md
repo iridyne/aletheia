@@ -1,5 +1,17 @@
 # Development Log
 
+## 2026-07-11 — OHLCV issue-ledger correction
+
+- Corrected the stale MDS-05 entry: OHLCV rows are already isolated by exchange,
+  canonical symbol, market type, timeframe, and timestamp.
+- The legacy migration preserves only known source identity; unknown historical
+  rows remain under `legacy_unknown` rather than being attributed to a venue.
+- This is documentation-only. No collector, provider, market-data, scoring,
+  trading, risk, execution, live, or credential behavior changed.
+- Validation: focused OHLCV identity tests passed 3 tests.
+
+---
+
 ## 2026-07-11 — SQLite capacity diagnostic honesty
 
 - Doctor now combines database size, SQLite freelist pages, and filesystem free
