@@ -86,3 +86,13 @@ def test_complete_requires_clean_workspace_and_registered_evidence(tmp_path, mon
     import pytest
     with pytest.raises(ValueError, match="workspace is dirty"):
         complete_task("TASK-1", command_key="test", root=root)
+
+
+def test_bootstrap_surfaces_single_completed_task_when_no_active_task(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["status"] = "done"
+    task["verification"] = [{"command_key": "test", "command": "uv run pytest tests/test_agent_workflow.py -q", "exit_code": 0, "commit": task["base_commit"]}]
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    assert bootstrap(root)["task"]["id"] == "TASK-1"

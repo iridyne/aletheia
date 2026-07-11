@@ -232,15 +232,21 @@ def bootstrap(root: Path | None = None) -> dict[str, Any]:
     _, branch = _git(root, "branch", "--show-current")
     _, head = _git(root, "rev-parse", "HEAD")
     _, porcelain = _git(root, "status", "--porcelain")
-    matches = [task for _, task in load_tasks(root) if task.get("status") == "in_progress" and task.get("ownership", {}).get("branch") == branch]
-    return {"repository": str(root), "branch": branch, "head": head, "dirty": bool(porcelain), "task": matches[0] if len(matches) == 1 else None, "task_match_count": len(matches), "findings": [f.__dict__ for f in findings], "runtime_next_command": "uv run aletheia doctor"}
+    branch_tasks = [task for _, task in load_tasks(root) if task.get("ownership", {}).get("branch") == branch]
+    matches = [task for task in branch_tasks if task.get("status") == "in_progress"]
+    selected = matches[0] if len(matches) == 1 else None
+    if selected is None and not matches:
+        completed = [task for task in branch_tasks if task.get("status") in {"done", "cancelled"}]
+        if len(completed) == 1:
+            selected = completed[0]
+    return {"repository": str(root), "branch": branch, "head": head, "dirty": bool(porcelain), "task": selected, "task_match_count": len(matches), "findings": [f.__dict__ for f in findings], "runtime_next_command": "uv run aletheia doctor"}
 
 
 def recovery_test(root: Path | None = None) -> dict[str, Any]:
     """Read-only cold-session assessment; missing information stays missing."""
     payload = bootstrap(root)
     task = payload["task"]
-    return {"recoverable": payload["task_match_count"] == 1 and not any(x["severity"] == "error" for x in payload["findings"]), "task_id": task.get("id") if task else None, "next_action": task.get("next_action") if task else None, "workspace_dirty": payload["dirty"], "runtime_facts_command": payload["runtime_next_command"], "findings": payload["findings"]}
+    return {"recoverable": task is not None and payload["task_match_count"] <= 1 and not any(x["severity"] == "error" for x in payload["findings"]), "task_id": task.get("id") if task else None, "next_action": task.get("next_action") if task else None, "workspace_dirty": payload["dirty"], "runtime_facts_command": payload["runtime_next_command"], "findings": payload["findings"]}
 
 
 def render_bootstrap(payload: dict[str, Any], *, json_out: bool = False) -> str:

@@ -12,7 +12,7 @@ def bootstrap_command(json_out: bool = typer.Option(False, "--json")):
     """Recover the current development task from tracked state and Git."""
     payload = bootstrap()
     typer.echo(render_bootstrap(payload, json_out=json_out))
-    if payload["task_match_count"] != 1 or any(x["severity"] == "error" for x in payload["findings"]):
+    if payload["task"] is None or payload["task_match_count"] > 1 or any(x["severity"] == "error" for x in payload["findings"]):
         raise typer.Exit(1)
 
 @workflow_app.command("check")

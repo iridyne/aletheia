@@ -1,0 +1,23 @@
+schema_version: 1
+id: TASK-2026-002
+title: Show completed branch task during bootstrap
+status: in_progress
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Make cold recovery report the most recent completed task when a branch has
+  no active task.
+acceptance: []
+ownership:
+  branch: iridite/agent-continuity
+  lease_holder: codex
+  claimed_at: '2026-07-11T05:16:57.673475Z'
+  expires_at: '2026-07-11T13:16:57.673611Z'
+base_commit: c79418360bea7a49bc31508d7517681ea90645c9
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-002.md
+updated_at: '2026-07-11T05:16:57.673618Z'
