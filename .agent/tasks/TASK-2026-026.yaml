@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-026
 title: Fix Learning causal attribution and block routing
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -29,8 +29,9 @@ ownership:
   expires_at: '2026-07-12T03:27:41.301836Z'
 base_commit: 6c76523e6a5786c0e1a910c369db470d28012e34
 next_action:
-  command_key: workflow_tests
-  reason: Claim the task and define the first focused verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: specs
@@ -41,5 +42,13 @@ verification:
   run_at: '2026-07-11T19:46:05.253693Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 0a55667c1c421e379ee44aebada76930bd2ca814
+  run_at: '2026-07-11T19:46:39.254848Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-026.md
-updated_at: '2026-07-11T19:46:05.253916Z'
+updated_at: '2026-07-11T19:46:45.095860Z'
