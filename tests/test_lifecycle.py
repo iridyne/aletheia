@@ -340,6 +340,20 @@ def test_verify_started_returns_when_gateway_comes_up(tmp_path, monkeypatch):
     lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=1.0)
 
 
+def test_verify_started_accepts_replacement_after_launcher_sigterm(tmp_path, monkeypatch):
+    """A newer restart may replace the launcher before its gateway binds."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    cfg = lifecycle.load_config()
+    running = iter([False, False, True])
+    monkeypatch.setattr(lifecycle, "is_running", lambda: next(running, True))
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
+    monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda cfg: True)
+    monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: True)
+
+    lifecycle._verify_started(_FakeProc(code=-15), cfg, timeout=0.2, poll_interval=0.01)
+
+
 def test_verify_started_waits_for_api_ready_before_success(tmp_path, monkeypatch):
     """A listening socket alone is not readiness: require the cheap API probe."""
     setup_env(tmp_path, monkeypatch)

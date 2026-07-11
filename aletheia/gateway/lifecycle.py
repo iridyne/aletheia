@@ -2,6 +2,7 @@
 
 import logging
 import platform
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -143,6 +144,9 @@ def _verify_api_ready_accessible(cfg) -> bool:
         return False
 
 
+_REPLACED_LAUNCHER_EXIT_CODES = {-signal.SIGTERM}
+
+
 def _verify_started(proc, cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -> None:
     """Block until the detached gateway is confirmed up, or raise typer.Exit(1).
 
@@ -173,7 +177,13 @@ def _verify_started(proc, cfg, *, timeout: float = 60.0, poll_interval: float = 
         # The detached launcher process exiting non-zero before the gateway is up
         # means the supervisor failed to take hold (import error, instant crash).
         if proc is not None and proc.poll() is not None and proc.returncode != 0:
-            _fail_spawn(f"launcher exited with code {proc.returncode} before gateway came up")
+            if proc.returncode not in _REPLACED_LAUNCHER_EXIT_CODES:
+                _fail_spawn(f"launcher exited with code {proc.returncode} before gateway came up")
+            # A git-hook restart and the OS watchdog can overlap. A newer restart
+            # deliberately sends SIGTERM to this launcher before its replacement
+            # binds the port. Keep waiting for that replacement; timeout still
+            # records a real failure if no healthy gateway takes over.
+            proc = None
         if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
             if not _verify_api_ready_accessible(cfg):
                 time.sleep(poll_interval)

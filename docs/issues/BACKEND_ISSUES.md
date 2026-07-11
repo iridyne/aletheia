@@ -1047,6 +1047,7 @@
 | ID | 状态 | 问题 | 处理/下一步 |
 |---|---|---|---|
 | OPS-A01 | ✅ | autostart 仅实现 Windows `schtasks`；macOS 永远返回 `not_windows`，整机重启或 supervisor 被杀后无法由项目自身恢复 | 新增用户级 launchd LaunchAgent：登录启动 + 60 秒幂等 gated-start 检查，原子/无凭证 plist、bootstrap/kickstart/bootout、真实状态解析、路径漂移诊断、Settings/doctor/CLI 跨平台说明；不改 supervisor、live、风险或执行 |
+| OPS-A02 | ✅ | Git hook 重启与 OS watchdog 并发时，较早的启动器收到 SIGTERM 会立即被记为 `gateway_spawn_failed`，即使替代实例随后已健康接管 | 启动验证将 POSIX SIGTERM 识别为可被替代启动接管的中间状态，继续等待 API/WebUI 就绪；替代实例未在原超时内就绪仍按真实启动失败审计。未改变 watchdog 周期、重启触发、风险或执行 |
 
 ## §23 测试生命周期（2026-07-11）
 

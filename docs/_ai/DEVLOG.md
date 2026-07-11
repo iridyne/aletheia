@@ -1,5 +1,18 @@
 # Development Log
 
+## 2026-07-11 — Gateway restart handoff stability
+
+- Git hook restart and the one-minute OS watchdog can overlap. A newer restart
+  may terminate the older launcher with POSIX SIGTERM before the replacement
+  gateway binds the port.
+- Startup verification now waits for the replacement to pass the existing API
+  and WebUI readiness probes. If no healthy replacement appears before the
+  original timeout, it remains a real audited spawn failure.
+- Watchdog cadence, restart triggers, risk, execution, live state, and
+  credentials are unchanged. Validation: `tests/test_lifecycle.py` 26 passed.
+
+---
+
 ## 2026-07-11 — Market-context instrument identity
 
 - Observer market context now carries exact venue, canonical symbol, and market
