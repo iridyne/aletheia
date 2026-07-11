@@ -165,6 +165,7 @@ async def build_market_context(
     symbols: list[str],
     *,
     market_type: str = "spot",
+    exchange: str | None = None,
     client=None,   # legacy param — ignored, kept for call-site compatibility
     provider=None, # MarketDataProvider; created from config if None
 ) -> tuple[str, dict]:
@@ -196,22 +197,47 @@ async def build_market_context(
     returns_24h: dict[str, float | None] = {}
 
     try:
-        from aletheia.data.symbols import to_ccxt_perp
+        from aletheia.data.symbols import (
+            InstrumentId,
+            MARKET_FUTURES,
+            MARKET_PERP,
+            MARKET_SPOT,
+        )
 
-        is_perp = market_type in ("perp", "usdt_futures")
+        raw_market_type = str(market_type or MARKET_SPOT).lower()
+        instrument_market_type = {
+            "perp": MARKET_PERP,
+            "swap": MARKET_PERP,
+            "usdt_futures": MARKET_PERP,
+            "futures": MARKET_FUTURES,
+        }.get(raw_market_type, MARKET_SPOT)
+        data_exchange = exchange or md_cfg.ccxt_exchange
 
         for sym in symbols:
             sym_debug: dict = {}
             snaps: list[_IndicatorSnap] = []
             closes_1h: list[float] = []
-            # perp instruments need the settle-suffix form for CCXT (BTC/USDT:USDT).
-            fetch_sym = to_ccxt_perp(sym) if is_perp else sym
+            # Strings lose the selected market type inside MarketDataProvider.
+            # Keep identity intact through the provider and its cache.
+            instrument = InstrumentId.from_parts(
+                data_exchange, sym, instrument_market_type,
+            )
             for tf, limit in _TIMEFRAMES:
                 try:
-                    candles = cache.get(sym, tf, limit)
+                    candles = cache.get(
+                        instrument.symbol, tf, limit,
+                        market_type=instrument.market_type,
+                        exchange=instrument.exchange,
+                    )
                     if candles is None:
-                        candles = await provider.get_ohlcv(fetch_sym, timeframe=tf, limit=limit)
-                        cache.set(sym, tf, limit, candles)
+                        candles = await provider.get_ohlcv(
+                            instrument, timeframe=tf, limit=limit,
+                        )
+                        cache.set(
+                            instrument.symbol, tf, limit, candles,
+                            market_type=instrument.market_type,
+                            exchange=instrument.exchange,
+                        )
                 except Exception as e:
                     debug["errors"].append(f"{sym}/{tf}: {e}")
                     logger.warning("OHLCV fetch failed %s/%s: %s", sym, tf, e)
@@ -255,7 +281,7 @@ async def build_market_context(
         from aletheia.trading.market_data import latest_snapshot
         legacy_lines = []
         for sym in symbols:
-            snap = latest_snapshot(sym)
+            snap = latest_snapshot(sym, market_type=instrument_market_type)
             if snap:
                 legacy_lines.append(
                     f"{sym}: price={snap['price']} 24h_change="

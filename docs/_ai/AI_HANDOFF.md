@@ -7,7 +7,17 @@
 
 ## Last Updated
 
-2026-07-11 (Filter settlement cadence diagnostic honesty)
+2026-07-11 (Market-context instrument identity)
+
+---
+
+## Recent Change (Market-context instrument identity — 2026-07-11)
+
+市场观察器构造永续上下文时，原先先把标的改成交易所格式、再作为普通字符串交给行情提供器。字符串没有市场类型，提供器会把它恢复为现货，导致永续品种请求不存在的现货 K 线；缓存也只按币种和周期，现货与永续可能互用。
+
+现在上下文从调用方接收场所，并把 `venue + canonical symbol + market type` 作为完整身份传入提供器和缓存。降级到最近快照时也指定同一市场类型。没有改筛选阈值、风险、执行、仓位、实盘或凭证。
+
+验证：市场上下文 23 项、相关数据/Universe 46 项、完整规则 633 项通过（7 skipped，6 xfailed）。
 
 ---
 

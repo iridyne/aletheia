@@ -1,5 +1,19 @@
 # Development Log
 
+## 2026-07-11 — Market-context instrument identity
+
+- Observer market context now carries exact venue, canonical symbol, and market
+  type through both `MarketDataProvider` and the OHLCV cache.
+- This fixes perpetual contracts being reformatted into plain strings and then
+  reinterpreted as spot requests; the degraded snapshot path now uses the same
+  market type.
+- No filter threshold, risk limit, execution path, sizing, live setting, or
+  credential behavior changed.
+- Validation: market-context tests passed 23; related data/Universe tests passed
+  46; all specs passed 633 with 7 skipped and 6 expected failures.
+
+---
+
 ## 2026-07-11 — Filter settlement cadence diagnostic honesty
 
 - Filter evidence health now separates all due rows into `awaiting_cadence` and

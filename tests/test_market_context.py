@@ -112,6 +112,7 @@ class _FakeProvider:
     def __init__(self, *, fail_after: int | None = None):
         self.fail_after = fail_after
         self.calls = 0
+        self.ohlcv_symbols = []
 
     async def get_ticker(self, symbol):
         from aletheia.data.providers import Ticker
@@ -120,10 +121,11 @@ class _FakeProvider:
 
     async def get_ohlcv(self, symbol, timeframe, limit):
         self.calls += 1
+        self.ohlcv_symbols.append(symbol)
         if self.fail_after is not None and self.calls > self.fail_after:
             raise RuntimeError("simulated network failure")
         # Generate `limit` candles: monotonic uptrend, deterministic per symbol.
-        seed = sum(ord(c) for c in symbol) % 100
+        seed = sum(ord(c) for c in str(symbol)) % 100
         return [
             _FakeCandle(
                 ts=1_700_000_000_000 + i * 60_000,
@@ -156,6 +158,7 @@ def test_build_context_renders_markdown_tables():
     assert "Indicator glossary" in ctx
     # Cross-asset RS table.
     assert "Cross-asset relative strength" in ctx
+    assert ctx.count("Cross-asset relative strength") == 1
     # Debug info populated.
     assert "BTCUSDT" in debug["symbols"]
     assert debug["fallback"] is False
@@ -172,7 +175,7 @@ def test_build_context_falls_back_on_total_failure(tmp_path, monkeypatch):
     # Patch latest_snapshot to return a known shape — the fallback path uses it.
     monkeypatch.setattr(
         "aletheia.trading.market_data.latest_snapshot",
-        lambda sym: {"price": 60000.0, "change_pct_24h": 0.05},
+        lambda sym, market_type=None: {"price": 60000.0, "change_pct_24h": 0.05},
     )
     ctx, debug = asyncio.run(build_market_context(["BTCUSDT"], provider=provider))
     assert "price=60000" in ctx
@@ -192,6 +195,28 @@ def test_build_context_includes_indicators_in_debug():
     # RSI on a pure uptrend should be high (>70).
     assert btc["1h"]["rsi_14"] is not None
     assert btc["1h"]["rsi_14"] > 60
+
+
+def test_build_context_preserves_instrument_identity_and_cache_scope():
+    """Spot and perp reads for one symbol must never share a cache entry."""
+    from aletheia.data.cache import get_cache
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.trading.market_context import build_market_context
+
+    get_cache().invalidate()
+    provider = _FakeProvider()
+
+    asyncio.run(build_market_context(
+        ["CAP/USDT"], market_type="perp", exchange="okx", provider=provider,
+    ))
+    asyncio.run(build_market_context(
+        ["CAP/USDT"], market_type="spot", exchange="okx", provider=provider,
+    ))
+
+    assert provider.calls == 6
+    assert all(isinstance(symbol, InstrumentId) for symbol in provider.ohlcv_symbols)
+    assert {symbol.market_type for symbol in provider.ohlcv_symbols[:3]} == {"perp"}
+    assert {symbol.market_type for symbol in provider.ohlcv_symbols[3:]} == {"spot"}
 
 
 # === Observer integration ===

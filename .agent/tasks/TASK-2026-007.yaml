@@ -1,0 +1,33 @@
+schema_version: 1
+id: TASK-2026-007
+title: Preserve market context instrument identity
+status: in_progress
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Keep venue, canonical symbol, and market type intact when the Observer builds
+  multi-timeframe market context, so perpetual reads and cache entries cannot fall
+  back to spot.
+acceptance:
+- Perpetual context calls preserve exact venue, symbol, and market type through the provider.
+- Spot and perpetual context reads for one symbol cannot share an OHLCV cache entry.
+- Degraded context reads the matching market-type snapshot rather than a symbol-only price.
+ownership:
+  branch: iridite/market-data-completeness
+  lease_holder: codex
+  claimed_at: '2026-07-11T12:34:57.939080Z'
+  expires_at: '2026-07-11T20:34:57.939233Z'
+base_commit: f3d0dee11632c3c3a9980e6aefc3d9597bd92940
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  exit_code: 0
+  commit: pending
+  run_at: '2026-07-11T12:35:00+00:00'
+  result: passed
+handoff: .agent/handoffs/TASK-2026-007.md
+updated_at: '2026-07-11T12:34:57.939241Z'

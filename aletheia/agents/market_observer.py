@@ -306,7 +306,7 @@ async def _analyze_symbol(
 
     try:
         context, ctx_debug = await build_market_context(
-            [symbol], market_type=market_type, provider=provider
+            [symbol], market_type=market_type, exchange=venue, provider=provider
         )
         log_tool(run_id, "build_market_context", "observe", True,
                  output=f"{symbol} fallback={ctx_debug.get('fallback')} "
