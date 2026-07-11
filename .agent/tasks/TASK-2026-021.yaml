@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-021
 title: Audit Learning plan completeness across the full loop
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: documentation-only full-loop Learning audit and design hardening
@@ -29,9 +29,18 @@ ownership:
   expires_at: '2026-07-12T02:02:20.249091Z'
 base_commit: dd230f464d6608209634ef60437c6cd01209c5cd
 next_action:
-  command_key: workflow_tests
-  reason: Verify the expanded full-loop contract and implementation plan.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: e71f903c20b185bb8a517e66ce7681300656f155
+  run_at: '2026-07-11T18:18:54.456869Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-021.md
-updated_at: '2026-07-11T18:02:20.249098Z'
+updated_at: '2026-07-11T18:18:59.724373Z'
