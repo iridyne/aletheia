@@ -68,3 +68,88 @@ def test_risk_defaults_conservative():
     assert cfg.risk.max_live_limited_cap_usdt == 100.0
     assert cfg.risk.max_futures_leverage_live == 2
     assert cfg.risk.allowed_exchange == "bitget"
+
+
+# ---------------------------------------------------------------------------
+# LLM provider defaults: fresh install ships blank (TASK-2026-016)
+# ---------------------------------------------------------------------------
+
+
+def test_fresh_config_has_no_llm_providers():
+    """A brand-new AletheiaConfig must not ship with any pre-configured LLM
+    providers. Every entry should be an explicit user choice, never a stub
+    pointing at localhost that will fail probes on a fresh clone."""
+    cfg = AletheiaConfig()
+    assert cfg.models.providers == {}, (
+        "fresh config must ship with no LLM provider stubs; found: "
+        f"{sorted(cfg.models.providers)}"
+    )
+
+
+def test_fresh_config_has_empty_default_provider():
+    cfg = AletheiaConfig()
+    assert cfg.models.default_provider == "", (
+        "fresh config must not name a default provider; got "
+        f"{cfg.models.default_provider!r}"
+    )
+    assert cfg.models.deep_provider is None
+    assert cfg.models.fast_provider is None
+
+
+def test_provider_config_defaults_to_disabled():
+    """When adding a bare ProviderConfig the user must opt in — the field
+    default must not silently enable a stub."""
+    from aletheia.config.schema import ProviderConfig
+    assert ProviderConfig(type="openai_compatible").enabled is False
+
+
+def test_fresh_config_does_not_gate_startup_on_llm():
+    """A fresh install has no providers configured, so require_llm_at_startup
+    must default off — otherwise the boot gate pauses trading before the
+    operator has any UI path to configure a provider."""
+    cfg = AletheiaConfig()
+    assert cfg.health.require_llm_at_startup is False
+
+
+def test_bootstrap_seeded_config_stays_blank(tmp_path):
+    """The initial data/config.yaml written on first launch reflects the blank
+    defaults — no phantom localhost:8000/8001 providers on disk."""
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path
+    with patch("aletheia.config.loader.DATA_DIR", data_dir), \
+         patch("aletheia.config.loader.CONFIG_PATH", config_file):
+        bootstrap()
+        seeded = load_config()
+        assert seeded.models.providers == {}
+        assert seeded.models.default_provider == ""
+        assert seeded.health.require_llm_at_startup is False
+
+
+def test_existing_config_yaml_is_not_overwritten(tmp_path):
+    """If the operator already committed provider config, loader must preserve
+    it verbatim across the schema-default change."""
+    config_file = tmp_path / "config.yaml"
+    data_dir = tmp_path
+    with patch("aletheia.config.loader.DATA_DIR", data_dir), \
+         patch("aletheia.config.loader.CONFIG_PATH", config_file):
+        # First-run bootstrap creates blank config.
+        bootstrap()
+        # Simulate the operator adding their own provider entry.
+        cfg = load_config()
+        from aletheia.config.schema import ProviderConfig
+        cfg.models.providers["anthropic_compatible"] = ProviderConfig(
+            type="anthropic_compatible",
+            base_url="https://example.internal/",
+            enabled=True,
+            model="databricks-claude-sonnet-4-6",
+        )
+        cfg.models.default_provider = "anthropic_compatible"
+        cfg.health.require_llm_at_startup = True
+        save_config(cfg)
+        # Re-bootstrap must NOT clobber user's settings.
+        bootstrap()
+        reloaded = load_config()
+        assert "anthropic_compatible" in reloaded.models.providers
+        assert reloaded.models.default_provider == "anthropic_compatible"
+        assert reloaded.health.require_llm_at_startup is True
+        assert reloaded.models.providers["anthropic_compatible"].base_url == "https://example.internal/"

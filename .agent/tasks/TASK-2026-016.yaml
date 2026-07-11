@@ -1,0 +1,44 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-016
+title: Blank AI provider defaults for fresh installs
+status: done
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Change schema defaults so a fresh install ships with zero providers, empty
+  default_provider, and require_llm_at_startup=False. Do not touch existing data/config.yaml
+  on live installs; loader path stays intact. Add tests for the empty-default shape
+  and confirm startup gate no-op paths.
+acceptance:
+- 'ModelsConfig defaults: providers is empty dict, default_provider is empty string'
+- ProviderConfig.enabled defaults to False (opt-in)
+- GeneralConfig / RuntimeConfig require_llm_at_startup defaults to False
+- Existing data/config.yaml is not overwritten by loader when it already exists
+- Startup gate treats zero-provider state as 'no LLM required' rather than paused
+  failure when require_llm_at_startup is False
+- New unit tests cover the fresh-default shape; existing test_startup_gate tests remain
+  green
+ownership:
+  branch: worktree-llm-provider-blank-defaults
+  lease_holder: claude-code
+  claimed_at: '2026-07-11T16:28:15.647217Z'
+  expires_at: '2026-07-12T00:28:15.647391Z'
+base_commit: f9de4ba49b45dfb30f7f5aade96df6b254818f13
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 168d5935f7f7b1eab15be6274aa752cdd4838b94
+  run_at: '2026-07-11T16:55:33.944238Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-016.md
+updated_at: '2026-07-11T16:56:04.944404Z'

@@ -27,7 +27,7 @@ async def client(tmp_path, monkeypatch):
 
 def _setup_config(tmp_path, monkeypatch, *, fallback_models=None):
     import aletheia.config.loader as loader
-    from aletheia.config.schema import AletheiaConfig
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
     from aletheia.config.loader import save_config
     from aletheia.model_provider.router import clear_cache
 
@@ -36,7 +36,10 @@ def _setup_config(tmp_path, monkeypatch, *, fallback_models=None):
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     cfg = AletheiaConfig()
     cfg.models.default_provider = "anthropic_compatible"
-    pcfg = cfg.models.providers["anthropic_compatible"]
+    # Providers ship empty now — seed the one under test explicitly.
+    pcfg = cfg.models.providers["anthropic_compatible"] = ProviderConfig(
+        type="anthropic_compatible", enabled=True
+    )
     pcfg.model = "claude-primary"
     pcfg.fallback_models = fallback_models or []
     save_config(cfg)

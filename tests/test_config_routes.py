@@ -41,6 +41,9 @@ def _flatten_keys(value, prefix=""):
 
 @pytest.mark.anyio
 async def test_get_model_config(client):
+    # Providers ship empty now; add one via the API (mirrors a fresh install
+    # where the operator configures a provider through Settings).
+    await client.post("/api/settings/model", json={"provider": "openai_compatible"})
     resp = await client.get("/api/model")
     assert resp.status_code == 200
     data = resp.json()
@@ -414,6 +417,7 @@ async def test_execution_target_change_also_requires_divergence_confirmation(cli
 
 @pytest.mark.anyio
 async def test_get_model_includes_codex_model_no_token(client):
+    await client.post("/api/settings/model", json={"provider": "codex_cli"})
     resp = await client.get("/api/model")
     cx = resp.json()["providers"]["codex_cli"]
     assert "codex_model" in cx
@@ -506,6 +510,9 @@ async def test_model_test_candidate_pass(client, monkeypatch):
         return ModelHealth(provider="openai_compatible", available=True, model=self.model)
     monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", fake_health)
 
+    # Seed the provider (no key) so we can prove the probe adds none.
+    await client.post("/api/settings/model", json={"provider": "openai_compatible"})
+
     secret = "sk-candidate-not-saved-7777"
     resp = await client.post("/api/model/test-candidate", json={
         "provider": "openai_compatible",
@@ -532,6 +539,9 @@ async def test_model_test_candidate_fail(client, monkeypatch):
     async def fake_health(self):
         return ModelHealth(provider="openai_compatible", available=False, error="HTTP 401")
     monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", fake_health)
+
+    # Seed the provider (no key) so we can prove the probe adds none.
+    await client.post("/api/settings/model", json={"provider": "openai_compatible"})
 
     resp = await client.post("/api/model/test-candidate", json={
         "provider": "openai_compatible",

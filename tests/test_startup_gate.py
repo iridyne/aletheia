@@ -16,6 +16,7 @@ import sqlite3
 import pytest
 
 from aletheia.config.schema import AletheiaConfig, ProviderConfig
+from aletheia.config.loader import save_config, _invalidate_config_cache
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -36,10 +37,23 @@ def setup_env(tmp_path, monkeypatch):
 
 def _cfg_with(providers: dict, default: str) -> AletheiaConfig:
     cfg = AletheiaConfig()
+    # The startup/resume gate is off by default now (fresh installs ship with no
+    # providers). These tests exercise the gate's ACTIVE behavior, so opt in;
+    # individual tests that check the disabled path flip it back to False.
+    cfg.health.require_llm_at_startup = True
     cfg.models.providers = {
         name: ProviderConfig(type=name, enabled=en) for name, en in providers.items()
     }
     cfg.models.default_provider = default
+    # Persist to disk so the lifespan gate's fresh on-disk reload (app.py reads a
+    # fresh config, not the caller's snapshot) sees require_llm_at_startup=True.
+    # Without this the reload would fall back to the blank AletheiaConfig() default
+    # (require_llm_at_startup=False), and the auto-resume loop would immediately
+    # un-pause a system the test expects to stay paused. Production always has a
+    # config.yaml on disk, so this mirrors reality. Callers that probe cfg directly
+    # are unaffected; callers that flip require_llm_at_startup=False re-persist.
+    save_config(cfg)
+    _invalidate_config_cache()
     return cfg
 
 

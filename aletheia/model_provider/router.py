@@ -169,6 +169,12 @@ def get_provider(name: str | None = None) -> ModelProvider:
     if name is None:
         name = cfg.models.default_provider
 
+    if not name:
+        raise ValueError(
+            "No LLM provider configured. Add and enable one under "
+            "Settings → AI Model Providers before running agents."
+        )
+
     if name in _cache:
         return _cache[name]
 
@@ -229,6 +235,12 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
     cfg = load_config()
     if name is None:
         name = cfg.models.default_provider
+
+    if not name:
+        raise ValueError(
+            "No LLM provider configured. Add and enable one under "
+            "Settings → AI Model Providers before running agents."
+        )
 
     if name in _cache:
         return _cache[name]
