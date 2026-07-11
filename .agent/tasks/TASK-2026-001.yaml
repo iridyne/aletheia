@@ -17,8 +17,8 @@ ownership:
   expires_at: '2026-07-12T00:00:00Z'
 base_commit: b61458cfb046012be4e79eac0c9efb1ee2704e42
 next_action:
-  command_key: workflow_tests
-  reason: Run the workflow tests after the final cold-start and CI integration checks.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing code.
 blockers: []
 verification:
 - command_key: workflow_tests

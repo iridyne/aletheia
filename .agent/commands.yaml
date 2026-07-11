@@ -1,5 +1,8 @@
 schema_version: 1
 commands:
+  workflow_bootstrap:
+    command: uv run aletheia agent workflow bootstrap
+    purpose: Recover the next task before any new repository change.
   workflow_tests:
     command: uv run pytest tests/test_agent_workflow.py -q
     purpose: Validate session-independent workflow tooling.

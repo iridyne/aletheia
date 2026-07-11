@@ -2081,3 +2081,11 @@ uv run aletheia doctor                        # 取真实事实
 - Trust boundary modules (risk/, execution/, auth.py, secrets.py) require user authorization.
 - Frontend must be rebuilt after source changes: `cd frontend && npm run build`
 - After backend .py changes: `uv run aletheia gateway restart --no-browser`
+
+## 2026-07-11 — Agent 工作交接机制加固
+
+- 完成记录不再由工具直接写“测试通过”；必须显式执行登记过的命令，且失败不留成功证据。
+- 任务只能用当前实现提交上的真实验证完成；交接文件必须包含固定栏目，完成后的下一步统一回到冷启动入口。
+- 冷启动会区分当前证据、历史证据、缺失证据和不可达证据，不再把已完成任务的旧开发指令交给新 Agent。
+- CI 和版本化提交钩子会拦截“代码/文档变了但任务包或交接没更新”。
+- 验证：专项与架构 40 项通过；项目规范 636 项通过。全量 2837 项通过，唯一失败是 `origin/master` 已存在的 Gateway 规范编号重复，本次未触碰 Gateway。

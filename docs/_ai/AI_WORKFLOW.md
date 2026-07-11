@@ -2,8 +2,8 @@
 
 ## Quick Reference
 
-1. **Start session**: run `uv run aletheia agent workflow bootstrap`, then read AGENTS.md and the selected task handoff
-2. **End session**: update the selected `.agent/tasks/` packet and `.agent/handoffs/` file, then run `uv run aletheia agent workflow check`
+1. **Start session**: run `uv run aletheia agent workflow bootstrap`, then read AGENTS.md and the selected task handoff. `Evidence: historical` is context, not permission to continue the completed task.
+2. **End session**: run `task verify` for an approved command, update the selected `.agent/tasks/` packet and structured handoff, then run `task complete` and `workflow check --strict`
 3. **Cross-device**: Push branch, ensure AI_HANDOFF.md is current, pull on new device
 4. **Secrets**: Never in git. Use OS keyring or encrypted file (.secret.key, secrets.enc are gitignored).
 5. **New project**: Run ~/ai-project-template/scripts/ai-workspace-init.ps1
@@ -18,12 +18,12 @@
 
 ## End-of-Session Protocol
 
-1. Update docs/_ai/AI_HANDOFF.md
-2. Update docs/_ai/CURRENT_TASK.md
-3. Append docs/_ai/DEVLOG.md
-4. Append docs/_ai/DECISIONS.md if architectural decisions were made
-5. Summarize changed files
-6. Identify next recommended action
+1. Commit the implementation so verification runs against a stable `HEAD`.
+2. Run `uv run aletheia agent workflow task verify TASK-ID --command-key KEY`.
+3. Update the task's structured `.agent/handoffs/TASK-ID.md`.
+4. Run `uv run aletheia agent workflow task complete TASK-ID` when no work remains.
+5. Run `uv run aletheia agent workflow check --strict` and commit the task/handoff evidence.
+6. Append detailed history to `AI_HANDOFF.md` / `DEVLOG.md`, and decisions to `DECISIONS.md`, only when useful.
 
 ## SDD Development Cycle（非 trivial 功能必须遵循）
 

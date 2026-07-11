@@ -14,8 +14,8 @@ ownership:
   expires_at: '2026-07-11T14:53:12.658025Z'
 base_commit: 0d5497c934ba8ff5e331208ca50add40e79730d1
 next_action:
-  command_key: workflow_tests
-  reason: Claim the task and define the first focused verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing code.
 blockers: []
 verification:
 - command_key: workflow_tests

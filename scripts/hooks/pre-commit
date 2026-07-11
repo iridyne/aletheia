@@ -23,10 +23,19 @@ if git diff --cached -U0 | grep -qE "$SECRETS_PATTERN"; then
     exit 1
 fi
 
-# Reminder about handoff docs (non-blocking)
-if git diff --cached --name-only | grep -qE '^(aletheia/|frontend/|tests/|docs/)'; then
+# Session-continuity gate: governed changes must carry both durable records.
+if git diff --cached --name-only | grep -qE '^(aletheia/|frontend/|tests/|docs/|scripts/|\.github/|\.agent/(commands\.yaml|project\.yaml|schemas/)|AGENTS\.md$|CURRENT_TASK\.md$|README\.md$|pyproject\.toml$|uv\.lock$)'; then
     if ! git diff --cached --name-only | grep -qE '^\.agent/(tasks|handoffs)/'; then
-        echo "${YELLOW}Reminder: code/docs changed without a tracked task packet or handoff update.${NC}"
+        echo "${RED}ERROR: code/docs changed without a tracked task packet or handoff update.${NC}"
+        exit 1
+    fi
+    if ! git diff --cached --name-only | grep -qE '^\.agent/tasks/'; then
+        echo "${RED}ERROR: code/docs changed without a task packet update.${NC}"
+        exit 1
+    fi
+    if ! git diff --cached --name-only | grep -qE '^\.agent/handoffs/'; then
+        echo "${RED}ERROR: code/docs changed without a handoff update.${NC}"
+        exit 1
     fi
 fi
 

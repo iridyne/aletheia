@@ -19,12 +19,17 @@ def test_workflow_metadata_and_validator_exist():
     assert (_ROOT / "aletheia/agent_workflow.py").is_file()
 
 
-@spec_claim(SpecClaim("AW-S02", _CONTRACT, "§invariants", "L2b", "Done tasks require registered successful evidence reachable from current history in strict mode."))
+@spec_claim(SpecClaim("AW-S02", _CONTRACT, "§invariants", "L2b", "Completion requires a registered command actually executed successfully at current HEAD."))
 def test_validator_locks_honest_completion():
-    from aletheia.agent_workflow import validate
+    from aletheia.agent_workflow import complete_task, validate, verify_task
     source = Path(validate.__code__.co_filename).read_text(encoding="utf-8")
+    verify_source = Path(verify_task.__code__.co_filename).read_text(encoding="utf-8")
+    complete_source = Path(complete_task.__code__.co_filename).read_text(encoding="utf-8")
     assert "completed task has no successful verification evidence" in source
     assert "completed task evidence is not reachable from current HEAD" in source
+    assert "subprocess.run(shlex.split(command)" in verify_source
+    assert '"recorded_by": "agent_workflow.verify/v1"' in verify_source
+    assert 'item.get("commit") == head' in complete_source
 
 
 @spec_claim(SpecClaim("AW-S03", _CONTRACT, "§invariants", "L2a", "Concurrent work cannot silently claim one branch twice."))
@@ -48,3 +53,22 @@ def test_bootstrap_does_not_execute_recorded_task_commands():
     assert '"status", "--porcelain"' in source
     assert "runtime_next_command" in source
     assert "subprocess.run" not in source[source.index("def bootstrap"):]
+
+
+@spec_claim(SpecClaim("AW-S06", _CONTRACT, "§invariants", "L2b", "New handoffs are structured and done tasks return to bootstrap."))
+def test_handoff_and_done_state_are_deterministic():
+    from aletheia.agent_workflow import _HANDOFF_HEADINGS, complete_task
+    assert "Exact next action" in _HANDOFF_HEADINGS
+    source = Path(complete_task.__code__.co_filename).read_text(encoding="utf-8")
+    assert '"command_key": "workflow_bootstrap"' in source
+
+
+@spec_claim(SpecClaim("AW-S07", _CONTRACT, "§invariants", "L2b", "Governed changes require task and handoff updates in strict range checks."))
+def test_change_range_enforcement_is_wired_to_ci():
+    workflow = (_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    hook = (_ROOT / "scripts/hooks/pre-commit").read_text(encoding="utf-8")
+    assert "--changed-since" in workflow
+    assert "governed changes require a tracked task packet update" in Path(
+        __import__("aletheia.agent_workflow", fromlist=["x"]).__file__
+    ).read_text(encoding="utf-8")
+    assert "exit 1" in hook

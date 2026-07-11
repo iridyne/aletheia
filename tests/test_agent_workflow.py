@@ -3,9 +3,59 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
+from typer.testing import CliRunner
 
-from aletheia.agent_workflow import bootstrap, claim_task, complete_task, create_task, recovery_test, validate, write_handoff
+from aletheia.cli.agent_workflow import workflow_app
+from aletheia.agent_workflow import (
+    bootstrap,
+    claim_task,
+    complete_task,
+    create_task,
+    recovery_test,
+    update_task,
+    validate,
+    verify_task,
+    write_handoff,
+)
+
+
+def _handoff() -> str:
+    return """# TASK-1 handoff
+
+## Purpose
+
+Prove cold recovery.
+
+## Changes made
+
+- Added the requested workflow behavior.
+
+## Uncommitted work
+
+- Task packet and this handoff only.
+
+## Verification
+
+- Registered workflow test passed.
+
+## Remaining work
+
+- None.
+
+## Exact next action
+
+- Run workflow bootstrap before claiming another task.
+
+## Blockers
+
+- None.
+
+## Risks
+
+- None known.
+"""
 
 
 def _repo(tmp_path: Path, monkeypatch) -> Path:
@@ -13,7 +63,14 @@ def _repo(tmp_path: Path, monkeypatch) -> Path:
     (root / ".agent/tasks").mkdir(parents=True)
     (root / ".agent/handoffs").mkdir()
     (root / ".agent/project.yaml").write_text("schema_version: 1\n", encoding="utf-8")
-    (root / ".agent/commands.yaml").write_text("commands:\n  test:\n    command: uv run pytest tests/test_agent_workflow.py -q\n", encoding="utf-8")
+    (root / ".agent/commands.yaml").write_text(
+        "commands:\n"
+        "  test:\n"
+        "    command: git status --short\n"
+        "  workflow_bootstrap:\n"
+        "    command: uv run aletheia agent workflow bootstrap\n",
+        encoding="utf-8",
+    )
     subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
@@ -28,7 +85,7 @@ def _repo(tmp_path: Path, monkeypatch) -> Path:
         text=True,
         capture_output=True,
     ).stdout.strip()
-    task = {"schema_version": 1, "id": "TASK-1", "title": "Task", "status": "in_progress", "scope": {"boundary": "docs"}, "intent": "test", "acceptance": ["works"], "ownership": {"branch": branch}, "base_commit": head, "next_action": {"command_key": "test", "reason": "run test"}, "blockers": [], "verification": [], "handoff": ".agent/handoffs/TASK-1.md"}
+    task = {"schema_version": 1, "handoff_version": 1, "id": "TASK-1", "title": "Task", "status": "in_progress", "scope": {"boundary": "docs"}, "intent": "test", "acceptance": ["works"], "ownership": {"branch": branch}, "base_commit": head, "next_action": {"command_key": "test", "reason": "run test"}, "blockers": [], "verification": [], "handoff": ".agent/handoffs/TASK-1.md"}
     (root / ".agent/tasks/TASK-1.yaml").write_text(yaml.safe_dump(task), encoding="utf-8")
     (root / ".agent/handoffs/TASK-1.md").write_text("# handoff\n", encoding="utf-8")
     monkeypatch.chdir(root)
@@ -61,6 +118,18 @@ def test_secret_like_task_metadata_is_rejected(tmp_path, monkeypatch):
     assert any("forbidden" in x.message for x in validate(root))
 
 
+def test_task_identity_and_handoff_path_must_match_filename(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["id"] = "TASK-DIFFERENT"
+    task["handoff"] = ".agent/handoffs/TASK-WRONG.md"
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    messages = {finding.message for finding in validate(root)}
+    assert "task ID does not match its filename" in messages
+    assert "handoff path does not match task ID" in messages
+
+
 def test_claim_and_handoff_only_change_selected_task(tmp_path, monkeypatch):
     root = _repo(tmp_path, monkeypatch)
     path = root / ".agent/tasks/TASK-1.yaml"
@@ -69,8 +138,8 @@ def test_claim_and_handoff_only_change_selected_task(tmp_path, monkeypatch):
     path.write_text(yaml.safe_dump(task), encoding="utf-8")
     claimed = claim_task("TASK-1", holder="fresh-agent", root=root)
     assert claimed["status"] == "in_progress"
-    handoff = write_handoff("TASK-1", "# Purpose\nContinue safely.", root=root)
-    assert handoff.read_text(encoding="utf-8") == "# Purpose\nContinue safely.\n"
+    handoff = write_handoff("TASK-1", _handoff(), root=root)
+    assert handoff.read_text(encoding="utf-8") == _handoff()
     assert recovery_test(root)["recoverable"] is True
 
 
@@ -90,9 +159,179 @@ def test_create_task_writes_pair(tmp_path, monkeypatch):
 
 def test_complete_requires_clean_workspace_and_registered_evidence(tmp_path, monkeypatch):
     root = _repo(tmp_path, monkeypatch)
-    import pytest
-    with pytest.raises(ValueError, match="workspace is dirty"):
-        complete_task("TASK-1", command_key="test", root=root)
+    with pytest.raises(ValueError, match="successful verification at current HEAD"):
+        complete_task("TASK-1", root=root)
+
+
+def test_verify_task_executes_registered_command_and_records_machine_proof(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    task = verify_task("TASK-1", command_key="test", root=root)
+    evidence = task["verification"][-1]
+    assert evidence["exit_code"] == 0
+    assert evidence["result"] == "passed"
+    assert evidence["recorded_by"] == "agent_workflow.verify/v1"
+    assert evidence["commit"] == subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, text=True, capture_output=True
+    ).stdout.strip()
+
+
+def test_verify_task_does_not_record_a_failed_command(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    commands = yaml.safe_load((root / ".agent/commands.yaml").read_text(encoding="utf-8"))
+    commands["commands"]["fail"] = {"command": "git show definitely-not-a-ref"}
+    (root / ".agent/commands.yaml").write_text(yaml.safe_dump(commands), encoding="utf-8")
+    subprocess.run(["git", "add", ".agent/commands.yaml"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "register failing command"], cwd=root, check=True, capture_output=True)
+    with pytest.raises(ValueError, match="verification command failed"):
+        verify_task("TASK-1", command_key="fail", root=root)
+    task = yaml.safe_load((root / ".agent/tasks/TASK-1.yaml").read_text(encoding="utf-8"))
+    assert task["verification"] == []
+
+
+def test_complete_requires_structured_handoff_and_sets_safe_next_action(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    verify_task("TASK-1", command_key="test", root=root)
+    with pytest.raises(ValueError, match="handoff is missing required headings"):
+        complete_task("TASK-1", root=root)
+    write_handoff("TASK-1", _handoff(), root=root)
+    completed = complete_task("TASK-1", root=root)
+    assert completed["status"] == "done"
+    assert completed["next_action"]["command_key"] == "workflow_bootstrap"
+    assert "complete" in completed["next_action"]["reason"].lower()
+
+
+def test_complete_rejects_verification_from_an_older_head(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    verify_task("TASK-1", command_key="test", root=root)
+    write_handoff("TASK-1", _handoff(), root=root)
+    subprocess.run(["git", "add", ".agent"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "record evidence"], cwd=root, check=True, capture_output=True)
+    (root / "README.md").write_text("changed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "change implementation"], cwd=root, check=True, capture_output=True)
+    with pytest.raises(ValueError, match="successful verification at current HEAD"):
+        complete_task("TASK-1", root=root)
+
+
+def test_done_task_rejects_implementation_next_action(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["status"] = "done"
+    task["verification"] = [{
+        "command_key": "test",
+        "command": "git status --short",
+        "exit_code": 0,
+        "commit": task["base_commit"],
+        "result": "passed",
+        "recorded_by": "agent_workflow.verify/v1",
+    }]
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    assert any("completed task next action" in finding.message for finding in validate(root, strict=True))
+
+
+def test_bootstrap_labels_historical_evidence_instead_of_presenting_it_as_current(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task.update({
+        "status": "done",
+        "next_action": {"command_key": "workflow_bootstrap", "reason": "Task complete; claim new work."},
+        "verification": [{
+            "command_key": "test",
+            "command": "git status --short",
+            "exit_code": 0,
+            "commit": task["base_commit"],
+            "result": "passed",
+            "recorded_by": "agent_workflow.verify/v1",
+        }],
+    })
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    (root / "README.md").write_text("newer history\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "newer history"], cwd=root, check=True, capture_output=True)
+    payload = bootstrap(root)
+    assert payload["task_source"] == "branch_history"
+    assert payload["evidence"]["freshness"] == "historical"
+    assert payload["next_action"]["command_key"] == "workflow_bootstrap"
+
+
+def test_update_task_enforces_legal_transition_and_registered_next_command(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="illegal task transition"):
+        update_task("TASK-1", status="ready", root=root)
+    with pytest.raises(ValueError, match="unknown command key"):
+        update_task("TASK-1", next_command_key="missing", next_reason="no", root=root)
+    updated = update_task(
+        "TASK-1",
+        next_command_key="workflow_bootstrap",
+        next_reason="Inspect repository state.",
+        root=root,
+    )
+    assert updated["next_action"]["command_key"] == "workflow_bootstrap"
+
+
+def test_strict_change_check_requires_task_and_handoff_in_governed_diff(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    write_handoff("TASK-1", _handoff(), root=root)
+    subprocess.run(["git", "add", ".agent"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "start task"], cwd=root, check=True, capture_output=True)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, text=True, capture_output=True
+    ).stdout.strip()
+    (root / "README.md").write_text("governed change\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "untracked work"], cwd=root, check=True, capture_output=True)
+    messages = {finding.message for finding in validate(root, strict=True, changed_since=base)}
+    assert "governed changes require a tracked task packet update" in messages
+    assert "governed changes require a tracked handoff update" in messages
+
+    task_path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+    task["updated_at"] = "2026-02-01T00:00:00Z"
+    task_path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    (root / ".agent/handoffs/TASK-1.md").write_text(_handoff().replace("None known.", "Low."), encoding="utf-8")
+    subprocess.run(["git", "add", ".agent"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "record handoff"], cwd=root, check=True, capture_output=True)
+    messages = {finding.message for finding in validate(root, strict=True, changed_since=base)}
+    assert "governed changes require a tracked task packet update" not in messages
+    assert "governed changes require a tracked handoff update" not in messages
+
+
+def test_check_cli_supports_json_and_task_filter(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    write_handoff("TASK-1", _handoff(), root=root)
+    result = CliRunner().invoke(workflow_app, ["check", "--task", "TASK-1", "--json"])
+    assert result.exit_code == 0
+    assert yaml.safe_load(result.stdout) == {"valid": True, "findings": []}
+
+
+def test_complete_cli_runs_verification_before_marking_done(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    write_handoff("TASK-1", _handoff(), root=root)
+    result = CliRunner().invoke(
+        workflow_app,
+        ["task", "complete", "TASK-1", "--command-key", "test"],
+    )
+    assert result.exit_code == 0, result.stdout
+    task = yaml.safe_load((root / ".agent/tasks/TASK-1.yaml").read_text(encoding="utf-8"))
+    assert task["status"] == "done"
+    assert task["verification"][-1]["recorded_by"] == "agent_workflow.verify/v1"
+
+
+def test_versioned_hook_blocks_governed_change_without_task_and_handoff(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    (root / "README.md").write_text("governed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+    hook = Path(__file__).resolve().parents[1] / "scripts/hooks/pre-commit"
+    blocked = subprocess.run(["sh", str(hook)], cwd=root, text=True, capture_output=True)
+    assert blocked.returncode == 1
+    assert "without a tracked task packet or handoff update" in blocked.stdout
+
+    write_handoff("TASK-1", _handoff(), root=root)
+    subprocess.run(["git", "add", ".agent/tasks/TASK-1.yaml", ".agent/handoffs/TASK-1.md"], cwd=root, check=True)
+    allowed = subprocess.run(["sh", str(hook)], cwd=root, text=True, capture_output=True)
+    assert allowed.returncode == 0, allowed.stdout
 
 
 def test_bootstrap_surfaces_single_completed_task_when_no_active_task(tmp_path, monkeypatch):
