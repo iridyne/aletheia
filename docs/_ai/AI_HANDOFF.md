@@ -7,7 +7,24 @@
 
 ## Last Updated
 
-2026-07-11 (Market-context instrument identity)
+2026-07-11 (Cross-platform service runtime honesty)
+
+---
+
+## Recent Change (Cross-platform service runtime honesty — 2026-07-11)
+
+macOS 的 launchd 不会继承 fnm 交互终端的临时 PATH，导致主网关虽然在线，Node
+operator shell 却持续启动失败。现在 Node 启动保留 Windows/PATH 发现，并依次支持
+显式覆盖、fnm default、Volta、asdf、mise、Homebrew 和 `/usr/local` 稳定路径；不把
+一次终端会话的 multishell 路径写死。
+
+doctor 新增独立 `operator.shell` 状态，不再用四小时一次的 Python operator assessment
+冒充 Node 命令层健康。网关重启历史也区分“当前仍失败”和“历史失败后已经恢复”：审计
+证据仍保留，高频重启仍告警，但当前 gateway/backend 健康时不再被旧 spawn failure
+持续判为不健康。
+
+没有修改 operator 权限、命令内容、交易、风险、执行、live 或凭证。跨平台原则与验证
+清单见 `docs/_ai/CROSS_PLATFORM_SERVICE_ENVIRONMENT.md`。
 
 ---
 

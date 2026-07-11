@@ -1048,12 +1048,15 @@
 |---|---|---|---|
 | OPS-A01 | ✅ | autostart 仅实现 Windows `schtasks`；macOS 永远返回 `not_windows`，整机重启或 supervisor 被杀后无法由项目自身恢复 | 新增用户级 launchd LaunchAgent：登录启动 + 60 秒幂等 gated-start 检查，原子/无凭证 plist、bootstrap/kickstart/bootout、真实状态解析、路径漂移诊断、Settings/doctor/CLI 跨平台说明；不改 supervisor、live、风险或执行 |
 | OPS-A02 | ✅ | Git hook 重启与 OS watchdog 并发时，较早的启动器收到 SIGTERM 会立即被记为 `gateway_spawn_failed`，即使替代实例随后已健康接管 | 启动验证将 POSIX SIGTERM 识别为可被替代启动接管的中间状态，继续等待 API/WebUI 就绪；替代实例未在原超时内就绪仍按真实启动失败审计。未改变 watchdog 周期、重启触发、风险或执行 |
+| OPS-A03 | ✅ | `doctor` 把 24 小时内已经恢复的 `gateway_spawn_failed` 永久算作当前 warn，健康网关仍显示系统不健康 | 历史失败继续计数展示；只有当前网关/后端未恢复或 24 小时事件达到高频阈值时才 warn。当前健康时明确标为 recovered/info，不删除审计证据 |
+| OPS-A04 | ✅ | macOS launchd 不继承 fnm 交互终端 PATH，网关在线但 Node operator shell 每轮启动均报找不到 `node`；`doctor` 又只检查四小时 Python assessment loop | Node 解析保留 Windows/PATH 行为，并增加显式覆盖及 fnm default/Volta/asdf/mise/Homebrew 稳定路径；`doctor` 新增独立 `operator.shell` 心跳检查，区分在线、离线、过期和未启动。未改变 operator 权限、命令或交易行为 |
 
 ## §23 测试生命周期（2026-07-11）
 
 | ID | 状态 | 问题 | 证据/下一步 |
 |---|---|---|---|
 | TST-A01 | ✅ | 全量单进程运行曾在 `tests/test_doctor_json.py::test_infra_doctor_endpoint_matches_contract` 的 `TestClient` 退出时无限等待 anyio portal 线程 | 根因是生产 lifespan 启动了账户同步、交易所启动探针及其派生自动恢复循环，却没有对称停止；接口测试又以 current 模式误启真实后台网络。现统一执行“停调度器→取消直属任务→停止派生循环→回收 Telegram/PI”，清理放进 `finally`；启动账户同步使用独立可释放执行器，API 合约测试固定为 api-only runtime。新增取消、幂等停止和独立执行器回归；单进程连续全量 `2775 passed, 13 skipped, 6 xfailed`，原卡点及后半段均通过 |
+| TST-A02 | ⏳ | `spec_gateway_stability.py` 的 bounded-loop fairness 与 data-collector budget 重复使用 `GS-S03`，导致完整测试的 claim 唯一性检查失败；单跑 `tests/specs/` 不会发现该结构错误 | 在独立任务中为 data-collector budget 分配未占用编号并同步对应文档引用；不与运行态修复混提 |
 
 ## §24 每日研究调度连续性（2026-07-11）
 

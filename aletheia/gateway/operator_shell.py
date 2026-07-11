@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import json
 import os
 import platform
+import shutil
 import subprocess
 import threading
 import time
@@ -21,6 +22,36 @@ def operator_shell_root() -> Path:
     return Path(__file__).resolve().parents[2] / "operator-shell"
 
 
+def resolve_node_executable() -> str:
+    """Resolve Node without relying on an interactive shell's PATH.
+
+    macOS launchd does not inherit fnm/nvm shell initialization. Prefer an
+    explicit override or PATH, then check stable locations used by common
+    user-level Node managers and package managers.
+    """
+    override = os.environ.get("ALETHEIA_NODE_BINARY", "").strip()
+    if override:
+        return override
+
+    discovered = shutil.which("node")
+    if discovered:
+        return discovered
+
+    home = Path.home()
+    candidates = (
+        home / ".local" / "share" / "fnm" / "aliases" / "default" / "bin" / "node",
+        home / ".volta" / "bin" / "node",
+        home / ".asdf" / "shims" / "node",
+        home / ".local" / "share" / "mise" / "shims" / "node",
+        Path("/opt/homebrew/bin/node"),
+        Path("/usr/local/bin/node"),
+    )
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return "node"
+
+
 def build_operator_shell_command(cfg) -> list[str] | None:
     root = operator_shell_root()
     preflight = root / "node_modules" / "tsx" / "dist" / "preflight.cjs"
@@ -32,7 +63,7 @@ def build_operator_shell_command(cfg) -> list[str] | None:
     # CLI wrapper. On Windows the wrapper can transiently fork/exit, which makes
     # the Python supervisor track the short-lived parent instead of the durable
     # operator process.
-    return ["node", "--require", str(preflight), "--import", loader.as_uri(), str(entry)]
+    return [resolve_node_executable(), "--require", str(preflight), "--import", loader.as_uri(), str(entry)]
 
 
 def _current_runtime_id() -> str:

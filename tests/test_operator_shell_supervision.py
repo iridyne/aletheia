@@ -36,6 +36,7 @@ def test_build_operator_shell_command_uses_local_tsx_runtime(tmp_path, monkeypat
     entry.write_text("console.log('ok')", encoding="utf-8")
 
     monkeypatch.setattr(operator_shell, "operator_shell_root", lambda: root)
+    monkeypatch.setattr(operator_shell, "resolve_node_executable", lambda: "node")
 
     cmd = operator_shell.build_operator_shell_command(load_config())
 
@@ -46,6 +47,46 @@ def test_build_operator_shell_command_uses_local_tsx_runtime(tmp_path, monkeypat
     assert cmd[3] == "--import"
     assert cmd[4] == loader.as_uri()
     assert cmd[5] == str(entry)
+
+
+def test_resolve_node_executable_uses_stable_fnm_default_when_service_path_lacks_node(
+    tmp_path, monkeypatch,
+):
+    from aletheia.gateway import operator_shell
+
+    node = tmp_path / ".local" / "share" / "fnm" / "aliases" / "default" / "bin" / "node"
+    node.parent.mkdir(parents=True)
+    node.write_text("node", encoding="utf-8")
+    node.chmod(0o755)
+
+    monkeypatch.delenv("ALETHEIA_NODE_BINARY", raising=False)
+    monkeypatch.setattr(operator_shell.shutil, "which", lambda name: None)
+    monkeypatch.setattr(operator_shell.Path, "home", classmethod(lambda cls: tmp_path))
+
+    assert operator_shell.resolve_node_executable() == str(node)
+
+
+def test_resolve_node_executable_prefers_explicit_cross_platform_override(monkeypatch):
+    from aletheia.gateway import operator_shell
+
+    configured = r"C:\Program Files\nodejs\node.exe"
+    monkeypatch.setenv("ALETHEIA_NODE_BINARY", configured)
+    monkeypatch.setattr(
+        operator_shell.shutil,
+        "which",
+        lambda name: (_ for _ in ()).throw(AssertionError("PATH lookup should not run")),
+    )
+
+    assert operator_shell.resolve_node_executable() == configured
+
+
+def test_resolve_node_executable_keeps_path_discovery_for_windows_and_shell_runs(monkeypatch):
+    from aletheia.gateway import operator_shell
+
+    monkeypatch.delenv("ALETHEIA_NODE_BINARY", raising=False)
+    monkeypatch.setattr(operator_shell.shutil, "which", lambda name: "/service/path/node")
+
+    assert operator_shell.resolve_node_executable() == "/service/path/node"
 
 
 def _make_operator_shell_fixture(tmp_path, monkeypatch):

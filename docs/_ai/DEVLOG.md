@@ -1,5 +1,21 @@
 # Development Log
 
+## 2026-07-11 — Cross-platform service runtime honesty
+
+- Gateway restart history now separates an active failure from a historical
+  spawn failure followed by a currently healthy gateway/backend. High restart
+  volume remains a warning and the original audit events remain intact.
+- The Node operator shell no longer depends solely on an interactive PATH. It
+  keeps explicit/PATH discovery for Windows and shell runs, then checks stable
+  fnm, Volta, asdf, mise, Homebrew, and `/usr/local` locations for service runs.
+- Doctor now reports `operator.shell` independently from the four-hour Python
+  operator assessment loop, including offline/stale details and a Node-specific
+  recovery hint.
+- Trading, risk, execution, live state, credentials, and operator permissions
+  are unchanged.
+
+---
+
 ## 2026-07-11 — Gateway restart handoff stability
 
 - Git hook restart and the one-minute OS watchdog can overlap. A newer restart

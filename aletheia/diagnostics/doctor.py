@@ -571,13 +571,26 @@ def _probe_gateway_restart_history(report: Report) -> None:
     top = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:4]
     top_text = ", ".join(f"{name}={n}" for name, n in top)
     latest = f", latest={latest_bucket} {_fmt_age(_age_minutes(latest_ts.isoformat()) if latest_ts else None)}"
-    severity: Severity = "warn" if critical_seen or total >= 10 else "info"
+    gateway_ready = any(
+        check.name == "process.gateway" and check.severity == "ok"
+        for check in report.checks
+    )
+    backend_checks = [check for check in report.checks if check.name == "process.backend"]
+    backend_ready = not backend_checks or any(check.severity == "ok" for check in backend_checks)
+    recovered = critical_seen and gateway_ready and backend_ready
+    severity: Severity = "warn" if total >= 10 or (critical_seen and not recovered) else "info"
     fix_hint = ""
     if total >= 10:
         fix_hint = "high restart volume — check git hook churn, frontdoor port loss, and supervisor errors"
-    if critical_seen:
+    elif critical_seen and not recovered:
         fix_hint = "spawn/give-up event seen — inspect data/logs/errors.log and frontdoor-errors.log"
-    report.add("process.restart_history", severity, f"24h restart/liveness events={total}; {top_text}{latest}", fix_hint)
+    recovered_text = "; historical failure recovered, current gateway healthy" if recovered else ""
+    report.add(
+        "process.restart_history",
+        severity,
+        f"24h restart/liveness events={total}; {top_text}{latest}{recovered_text}",
+        fix_hint,
+    )
 
 
 def _probe_config_gates(report: Report) -> None:
@@ -1788,6 +1801,59 @@ def _probe_operator_loop(report: Report) -> None:
         report.add("operator.loop", "info", f"probe error: {e}")
 
 
+def _probe_operator_shell(report: Report) -> None:
+    """Report command-shell liveness separately from the four-hour assessment loop."""
+    try:
+        from aletheia.agent_shell.operator_store import get_latest_heartbeat
+        from aletheia.config.loader import load_config
+
+        cfg = load_config()
+        if not cfg.operator.enabled:
+            report.add("operator.shell", "info", "operator command shell disabled in config")
+            return
+
+        heartbeat = get_latest_heartbeat("operator")
+        if heartbeat is None:
+            gateway_ready = any(
+                check.name == "process.gateway" and check.severity == "ok"
+                for check in report.checks
+            )
+            report.add(
+                "operator.shell",
+                "warn" if gateway_ready else "info",
+                "no operator command-shell heartbeat yet",
+                "check operator-shell dependencies and restart the gateway" if gateway_ready else "",
+            )
+            return
+
+        status = str(heartbeat.get("status") or "offline")
+        age = _age_minutes(heartbeat.get("last_seen_at"))
+        stale_after_minutes = float(cfg.operator.heartbeat_stale_after_sec) / 60.0
+        stale = age is None or age > stale_after_minutes
+        mode = str(heartbeat.get("mode") or "unknown")
+        error = " ".join(str(heartbeat.get("last_error") or "").split())[:240]
+
+        if status == "online" and not stale:
+            report.add("operator.shell", "ok", f"online ({mode}), heartbeat {_fmt_age(age)}")
+            return
+
+        detail = f"{status} ({mode}), heartbeat {_fmt_age(age)}"
+        if stale:
+            detail += "; heartbeat stale"
+        if error:
+            detail += f"; last error: {error}"
+        lower_error = error.lower()
+        if "node" in lower_error and (
+            "no such file" in lower_error or "not found" in lower_error
+        ):
+            hint = "install Node in a stable fnm/Homebrew location, then restart the gateway"
+        else:
+            hint = "inspect data/logs/operator-shell-errors.log and restart the gateway"
+        report.add("operator.shell", "warn", detail, hint)
+    except Exception as e:
+        report.add("operator.shell", "info", f"probe error: {e}")
+
+
 def _probe_webui_static(report: Report) -> None:
     """WebUI 静态文件完整性检查（新增诊断维度）。"""
     from pathlib import Path
@@ -2854,6 +2920,7 @@ def build_report() -> Report:
         # content-quality (Phase 2): "is the AI's output garbage", not "is the loop alive"
         *_CONTENT_PROBES,
         _probe_health,
+        _probe_operator_shell,
         _probe_operator_loop,
         _probe_webui_static,
         _probe_git_hooks,

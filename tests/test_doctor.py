@@ -1079,6 +1079,139 @@ def test_gateway_restart_history_warns_on_spawn_failures(tmp_path, monkeypatch):
     assert "spawn/give-up" in c.fix_hint
 
 
+def test_gateway_restart_history_treats_spawn_failure_as_recovered_when_gateway_is_healthy(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.files.jsonl import write_audit
+
+    write_audit({
+        "actor": "system",
+        "source": "watchdog",
+        "event_type": "gateway_spawn_failed",
+        "entity_type": "gateway",
+        "entity_id": "gateway",
+        "message": "Gateway spawn failed: launcher exited with code 1",
+    })
+
+    r = dx.Report(generated_at="t")
+    r.add("process.gateway", "ok", "running")
+    r.add("process.backend", "ok", "backend ready")
+    dx._probe_gateway_restart_history(r)
+
+    c = next(c for c in r.checks if c.name == "process.restart_history")
+    assert c.severity == "info"
+    assert "gateway_spawn_failed=1" in c.detail
+    assert "recovered" in c.detail
+    assert c.fix_hint == ""
+
+
+def test_gateway_restart_history_keeps_high_volume_warning_after_recovery(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.files.jsonl import write_audit
+
+    for _ in range(10):
+        write_audit({
+            "actor": "system",
+            "source": "git_hook",
+            "event_type": "gateway_restart",
+            "entity_type": "gateway",
+            "entity_id": "gateway",
+            "message": "Restart requested (git_hook)",
+        })
+
+    r = dx.Report(generated_at="t")
+    r.add("process.gateway", "ok", "running")
+    r.add("process.backend", "ok", "backend ready")
+    dx._probe_gateway_restart_history(r)
+
+    c = next(c for c in r.checks if c.name == "process.restart_history")
+    assert c.severity == "warn"
+    assert "high restart volume" in c.fix_hint
+
+
+def test_operator_shell_probe_warns_with_actionable_node_hint(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.operator_store import record_heartbeat
+
+    record_heartbeat(
+        agent_id="operator",
+        status="offline",
+        mode="Degraded",
+        permission_mode="ReadOnly",
+        is_busy=False,
+        current_task_id=None,
+        current_intent="Operator shell unavailable",
+        queue_size=0,
+        last_error="Operator shell start failed: [Errno 2] No such file or directory: 'node'",
+        model_provider=None,
+        session_id="operator-main",
+    )
+
+    r = dx.Report(generated_at="t")
+    dx._probe_operator_shell(r)
+
+    c = next(c for c in r.checks if c.name == "operator.shell")
+    assert c.severity == "warn"
+    assert "offline" in c.detail
+    assert "No such file or directory" in c.detail
+    assert "Node" in c.fix_hint
+    assert "restart" in c.fix_hint
+
+
+def test_operator_shell_probe_reports_fresh_online_heartbeat(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.operator_store import record_heartbeat
+
+    record_heartbeat(
+        agent_id="operator",
+        status="online",
+        mode="Observing",
+        permission_mode="ReadOnly",
+        is_busy=False,
+        current_task_id=None,
+        current_intent=None,
+        queue_size=0,
+        last_error=None,
+        model_provider="anthropic_compatible",
+        session_id="operator-main",
+    )
+
+    r = dx.Report(generated_at="t")
+    dx._probe_operator_shell(r)
+
+    c = next(c for c in r.checks if c.name == "operator.shell")
+    assert c.severity == "ok"
+    assert "online" in c.detail
+
+
+def test_operator_shell_probe_warns_when_online_heartbeat_is_stale(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.operator_store import record_heartbeat
+
+    record_heartbeat(
+        agent_id="operator",
+        status="online",
+        mode="Observing",
+        permission_mode="ReadOnly",
+        is_busy=False,
+        current_task_id=None,
+        current_intent=None,
+        queue_size=0,
+        last_error=None,
+        model_provider="anthropic_compatible",
+        session_id="operator-main",
+        last_seen_at=_iso_ago(10),
+    )
+
+    r = dx.Report(generated_at="t")
+    dx._probe_operator_shell(r)
+
+    c = next(c for c in r.checks if c.name == "operator.shell")
+    assert c.severity == "warn"
+    assert "heartbeat stale" in c.detail
+
+
 # --- loop.reconcile_thrash probe (A, 2026-07-01) ---
 
 def _insert_churn(symbol, direction="short", entry=100.0):

@@ -1,0 +1,28 @@
+schema_version: 1
+id: TASK-2026-009
+title: Make runtime diagnostics distinguish recovered and active failures
+status: in_progress
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Classify recovered gateway restart failures as history, restore operator shell
+  Node discovery under macOS launchd, and report current operator shell degradation
+  honestly in doctor without changing trading behavior.
+acceptance:
+- Recovered gateway spawn failures remain visible as history but do not make doctor unhealthy while the current gateway and backend are ready.
+- High restart volume and unrecovered spawn/supervisor failures still produce actionable warnings.
+- The operator shell resolves Node from stable user-manager or package-manager paths when the service PATH does not contain node.
+- Doctor reports the current operator shell heartbeat independently from the four-hour operator assessment loop, including an actionable Node hint when applicable.
+ownership:
+  branch: iridite/doctor-runtime-honesty
+  lease_holder: codex
+  claimed_at: '2026-07-11T13:30:56.178760Z'
+  expires_at: '2026-07-11T21:30:56.178935Z'
+base_commit: c4df25e84d3c79505db1a15658288c05d3135d87
+next_action:
+  command_key: workflow_tests
+  reason: Add focused regression tests for recovered restart history, service-safe Node discovery, and operator shell health reporting.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-009.md
+updated_at: '2026-07-11T13:30:56.178943Z'
