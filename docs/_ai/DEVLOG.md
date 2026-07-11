@@ -1,5 +1,14 @@
 # Development Log
 
+## 2026-07-11 — New-listing OHLCV bootstrap
+
+- A zero-history instrument no longer stops when the requested month-start page predates its listing and returns empty.
+- The downloader probes progressively closer 500/100/24/6-bar windows, then backfills left from the discovered listing window and catches up right to the present. Existing incremental downloads use the same backward helper.
+- This is generic new-listing recovery, not a CAP-specific exception. Storage identity, market values, selection, risk, and execution are unchanged.
+- Validation: focused history/data tests 25 passed; full suite 2689 passed / 14 skipped / 6 expected failures / 0 failed.
+
+---
+
 ## 2026-07-11 — OHLCV full instrument identity
 
 - `market_ohlcv` now keys rows by exchange, canonical symbol, market type, timeframe, and timestamp. Spot/perp and venue peers coexist instead of overwriting.

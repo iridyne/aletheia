@@ -1036,3 +1036,4 @@
 | OPR-G02 | ✅ | MicrostructureCollector 把 CCXT 盘口档位强制解包为两列，OKX 实际三列导致全部标的失败、orderbook 永久 0 行 | 档位解析改为只读取前两列并兼容尾部订单数；永续深度按 market `contractSize` 把合约张数换成基础币数量后再计算 USD。真实 spot/perp 请求和聚焦回归覆盖，不改交易/风控 |
 | OPR-G03 | ⏳ | `orderbook_snapshots` 仍缺 market_type，symbol-only 消费者可能混用同名现货/永续盘口 | 当前 Universe 同 symbol 市场去重只降低暴露，不能替代完整身份。后续独立迁移增加 market_type、复合索引和 typed `latest_orderbook`，同步 market observer/universe/context/inspect 消费者 |
 | OPR-G04 | ✅ | `market_ohlcv` 主键缺 venue/market_type，永续不落库；回填又把 provider 已写入的真实 venue 二次覆盖成 `ccxt`，doctor 用现货行冒充活动永续覆盖 | 表迁移为 exchange+symbol+market_type+timeframe+ts 复合主键；旧 `ccxt` 行标记 `legacy_unknown`，不猜 venue；provider 可落永续，下载器锁定单一 venue并传 InstrumentId，CLI/夜间任务/doctor/System Operator 覆盖检查均按活动成员完整身份。旧 symbol-only 读取最多选择一个最新数据集，不跨市场拼接 |
+| OPR-G05 | ✅ | 新上市标的在本地 0 历史时，从一个月前请求可能返回空页，下载器立即停止；CAP 永续现场表现为 4h 有 89 根而 1h 为 0 | 空库远起点为空后按 500/100/24/6 根窗口逐步靠近当前；发现首批数据后复用同一向左补齐逻辑，再向右追到当前。增量与空库不再维护两套不同的上市探测行为 |

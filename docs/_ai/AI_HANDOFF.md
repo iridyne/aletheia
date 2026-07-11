@@ -7,7 +7,15 @@
 
 ## Last Updated
 
-2026-07-11 (OHLCV full instrument identity)
+2026-07-11 (New-listing OHLCV bootstrap)
+
+---
+
+## Recent Change (New-listing OHLCV bootstrap — 2026-07-11)
+
+本地完全没有历史的新币，如果从一个月前起查为空，现在会按 500/100/24/6 根窗口逐步靠近上市时间；找到数据后先向左补、再向右追到当前。修复 CAP 永续 4h 有数据但 1h 错误停在 0 的通用根因，不写标的特例。
+
+验证：相关测试 25 项、全量 2689 项通过，0 项真实失败。
 
 ---
 

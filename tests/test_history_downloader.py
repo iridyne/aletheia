@@ -212,6 +212,41 @@ async def test_download_scopes_fetch_coverage_and_write_to_instrument():
     upsert.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_empty_new_listing_probes_near_now_then_backfills_left():
+    """A venue may return empty when `since` predates a new listing."""
+    tf_ms = 3_600_000
+    now_ms = 1_800_000_000_000
+    recent_start = now_ms - 100 * tf_ms
+    older_start = recent_start - 50 * tf_ms
+
+    provider = AsyncMock()
+    provider.get_ohlcv = AsyncMock(side_effect=[
+        [],  # requested month start is before listing
+        [],  # 500h probe is still before listing
+        _make_candles(recent_start, 100),  # 100h probe discovers the listing
+        [],  # 500h left probe is before listing
+        _make_candles(older_start, 50),  # closer left probe finds earlier bars
+        [],  # right edge is already current
+    ])
+    provider.close = AsyncMock()
+
+    with patch("aletheia.config.loader.load_config", return_value=_mock_config()), \
+         patch("aletheia.data.history_downloader.time.time", return_value=now_ms / 1000), \
+         patch("aletheia.storage.repositories.get_ohlcv_newest_ts", return_value=None), \
+         patch("aletheia.storage.repositories.get_ohlcv_coverage",
+               return_value={"bar_count": 0, "oldest_ts": None, "newest_ts": None}), \
+         patch("aletheia.storage.repositories.upsert_ohlcv_candles"), \
+         patch("aletheia.data.ccxt_provider.get_market_data_provider", return_value=provider):
+        result = await download_symbol_history(
+            "CAP/USDT", "1h", months=1, exchange="okx", market_type="perp"
+        )
+
+    assert result.bars_fetched == 150
+    assert result.oldest_ts == older_start
+    assert result.newest_ts == recent_start + 99 * tf_ms
+
+
 def test_check_coverage_enough():
     with patch("aletheia.config.loader.load_config", return_value=_mock_config()), \
          patch("aletheia.storage.repositories.get_ohlcv_coverage",

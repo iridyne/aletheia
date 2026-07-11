@@ -132,46 +132,79 @@ async def download_symbol_history(
 
             await asyncio.sleep(_RATE_LIMIT_SEC)
 
+    async def _fetch_backward(left_cursor: int) -> None:
+        """Walk left from a known bar, probing closer when pre-listing pages are empty."""
+        nonlocal error
+        while left_cursor > start_ts + tf_ms and total_fetched < max_bars:
+            candles = []
+            window_since = max(start_ts, left_cursor - _PAGE_SIZE * tf_ms)
+            try:
+                for probe_pages in _LEFT_GAP_PROBE_PAGES:
+                    window_since = max(start_ts, left_cursor - probe_pages * tf_ms)
+                    candles = await provider.get_ohlcv(
+                        instrument, timeframe, limit=_PAGE_SIZE, since=window_since
+                    )
+                    candles = [
+                        c for c in (candles or [])
+                        if window_since <= c.timestamp < left_cursor
+                    ]
+                    if candles:
+                        break
+            except Exception as e:
+                error = str(e)
+                logger.warning(
+                    "history_downloader: fetch failed %s %s since=%d: %s",
+                    symbol, timeframe, window_since, e,
+                )
+                break
+
+            if not candles:
+                break
+
+            _record_page(candles)
+            left_cursor = candles[0].timestamp
+
+            if len(candles) < _PAGE_SIZE:
+                break
+
+            await asyncio.sleep(_RATE_LIMIT_SEC)
+
     try:
         if oldest_existing and newest_existing:
             # Left gap: fetch near the local oldest bar first. Querying from the
             # distant requested start can return an empty page for new listings.
-            left_cursor = oldest_existing
-            while left_cursor > start_ts + tf_ms and total_fetched < max_bars:
-                candles = []
-                window_since = max(start_ts, left_cursor - _PAGE_SIZE * tf_ms)
-                try:
-                    for probe_pages in _LEFT_GAP_PROBE_PAGES:
-                        window_since = max(start_ts, left_cursor - probe_pages * tf_ms)
-                        candles = await provider.get_ohlcv(
-                            instrument, timeframe, limit=_PAGE_SIZE, since=window_since
-                        )
-                        candles = [
-                            c for c in (candles or [])
-                            if window_since <= c.timestamp < left_cursor
-                        ]
-                        if candles:
-                            break
-                except Exception as e:
-                    error = str(e)
-                    logger.warning("history_downloader: fetch failed %s %s since=%d: %s",
-                                   symbol, timeframe, window_since, e)
-                    break
-
-                if not candles:
-                    break
-
-                _record_page(candles)
-                left_cursor = candles[0].timestamp
-
-                if len(candles) < _PAGE_SIZE:
-                    break
-
-                await asyncio.sleep(_RATE_LIMIT_SEC)
-
+            await _fetch_backward(oldest_existing)
             await _fetch_forward(newest_existing + tf_ms, now_ms)
         else:
             await _fetch_forward(start_ts, now_ms)
+            if total_fetched == 0 and error is None:
+                # Some exchanges return [] when since predates a new listing.
+                # Probe progressively closer to now to discover the first usable
+                # window, then reuse the normal left/right gap logic.
+                bootstrap = []
+                for probe_pages in _LEFT_GAP_PROBE_PAGES:
+                    probe_since = max(start_ts, now_ms - probe_pages * tf_ms)
+                    try:
+                        bootstrap = await provider.get_ohlcv(
+                            instrument, timeframe, limit=_PAGE_SIZE, since=probe_since
+                        )
+                    except Exception as e:
+                        error = str(e)
+                        logger.warning(
+                            "history_downloader: bootstrap failed %s %s since=%d: %s",
+                            symbol, timeframe, probe_since, e,
+                        )
+                        break
+                    bootstrap = [
+                        c for c in (bootstrap or [])
+                        if probe_since <= c.timestamp < now_ms
+                    ]
+                    if bootstrap:
+                        break
+                if bootstrap:
+                    _record_page(bootstrap)
+                    await _fetch_backward(bootstrap[0].timestamp)
+                    await _fetch_forward(bootstrap[-1].timestamp + tf_ms, now_ms)
     finally:
         await provider.close()
 
