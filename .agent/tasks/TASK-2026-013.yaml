@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-013
 title: 'Tier handoffs: standard vs tiny'
-status: in_progress
+status: done
 scope:
   boundary: declare before implementation
   excluded: runtime facts and credentials
@@ -28,9 +28,18 @@ ownership:
   expires_at: '2026-07-11T23:54:52.935742Z'
 base_commit: 8e26595e200459ee156f9ba6e4466b656ae9bd75
 next_action:
-  command_key: workflow_tests
-  reason: Add red tests for both tiers before implementation.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 39eceecc8d0748e416045a27aad3d4eff4b6aa7c
+  run_at: '2026-07-11T15:58:10.031532Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-013.md
-updated_at: '2026-07-11T15:54:58.632689Z'
+updated_at: '2026-07-11T15:58:22.915295Z'
