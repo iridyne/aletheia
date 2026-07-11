@@ -932,6 +932,50 @@ def test_batch_synthesis_jobs_all_registered():
         )
 
 
+@spec_claim(
+    SpecClaim(
+        "LP-S16", "learning_pipeline", "§batch synthesis startup catch-up", "L2a",
+        "insight_synthesizer keeps its daily cron cadence but also receives a "
+        "next_run_time within five minutes of scheduler startup, so missing the "
+        "overnight window cannot leave trading_memo expired until the next day.",
+        status="implemented",
+    )
+)
+def test_insight_synthesizer_has_startup_catchup():
+    import ast
+    import pathlib
+
+    root = pathlib.Path(_project_root())
+    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    tree = ast.parse(sched_src)
+
+    target = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+        job_id = keywords.get("id")
+        if isinstance(job_id, ast.Constant) and job_id.value == "insight_synthesizer":
+            target = node
+            break
+
+    assert target is not None, "insight_synthesizer scheduler job is not registered"
+    assert len(target.args) >= 2 and isinstance(target.args[1], ast.Constant)
+    assert target.args[1].value == "cron", "daily cron cadence must remain intact"
+
+    keywords = {kw.arg: kw.value for kw in target.keywords if kw.arg}
+    next_run = keywords.get("next_run_time")
+    assert next_run is not None, (
+        "insight_synthesizer needs a startup catch-up next_run_time; otherwise a "
+        "gateway that misses 02:30 CST leaves the memo stale until the next day"
+    )
+    rendered = ast.unparse(next_run)
+    assert "datetime.now()" in rendered and "timedelta" in rendered
+    assert "minutes=3" in rendered.replace(" ", ""), (
+        f"startup catch-up must run within five minutes; got {rendered}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # KL-B01 (L2b implemented) — 时间衰减推翻路径（three-path fusion §方案2）
 # ---------------------------------------------------------------------------

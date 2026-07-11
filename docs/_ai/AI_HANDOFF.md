@@ -7,7 +7,15 @@
 
 ## Last Updated
 
-2026-07-11 (Data-model claim ID uniqueness)
+2026-07-11 (Trading memo startup catch-up)
+
+---
+
+## Recent Change (Trading memo startup catch-up — 2026-07-11)
+
+交易备忘录仍按每天北京时间 02:30 正常合成，但 scheduler 启动 3 分钟后会补跑一次；已有备忘录不足 6 小时时沿用原有限流直接跳过。这样服务错过夜间窗口后能自行恢复，不会等到第二天。模块中未实现的“新增 3 个案例事件触发”说明已删除。没有修改备忘录内容规则、排序加减分、风险或执行。
+
+验证：学习/调度与架构聚焦测试 51 项、完整规则 613 项、全量 2684 项通过，0 项真实失败。
 
 ---
 

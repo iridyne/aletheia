@@ -199,7 +199,7 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 
 #### insight_synthesizer
 
-- **Trigger**: daily 02:30 CST (= 18:30 UTC previous day)
+- **Trigger**: daily 02:30 CST (= 18:30 UTC previous day) + startup catch-up after 3min; internal 6h rate limit skips redundant restart runs
 - **Inputs**: knowledge_items, opportunities, positions, strategy performance
 - **LLM**: Yes
 - **Outputs**: Synthesized insights; reasoning_feedback piggyback (per-bucket statistics)

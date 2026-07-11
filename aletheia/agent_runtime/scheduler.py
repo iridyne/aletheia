@@ -403,6 +403,10 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("insight_synthesizer", _run_insight_synthesizer), "cron", hour=2, minute=30,
         id="insight_synthesizer", misfire_grace_time=600, executor="agents", timezone="Asia/Shanghai",
+        # A gateway that was offline at 02:30 must repair an expired memo after
+        # boot instead of waiting another day. The synthesizer's own 6h limiter
+        # makes this cheap on ordinary restarts with a recent memo.
+        next_run_time=datetime.now() + timedelta(minutes=3),
     )
     _scheduler.add_job(
         _guarded("confidence_calibration", _run_confidence_calibration), "interval", hours=6,

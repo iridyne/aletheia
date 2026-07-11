@@ -39,7 +39,7 @@
 | `prediction_observer` | 30min | polymarket/kalshi API | prediction_market_runs + opportunities | paper_trader_ranker, divergence_scanner | ✅ |
 | `guard_promotion` | cron 04:00 CST | guard_candidate knowledge_items | trading_guard(active) | ✅ 学习任务(引擎删除后从 backtest_orchestrator 重挂,Position C) |
 | `dreaming_daily` | cron 02:00 CST | knowledge_items + positions | knowledge_items(dreaming_log), serenity_* tables | ⚠️ serenity 4表仅API消费 |
-| `insight_synthesizer` | cron 02:30 CST | knowledge_items + market_snapshots | trading_memo(knowledge_items) | retrieve_lessons() | ✅ |
+| `insight_synthesizer` | cron 02:30 CST + boot 3min catch-up（6h限流） | knowledge_items + market_snapshots | trading_memo(knowledge_items) | retrieve_lessons() | ✅ |
 | `confidence_calibration` | 6h | predictions + outcomes | calibration reports | UI(analytics) | ⚠️ |
 | `filter_controller_observe` | 6h（配置开启时） | 逐 filter/version/family/direction/market/horizon 的 pass/reject 净结果 | controller_recommendations(shadow_only) | CLI/API 诊断；不写 config | ✅ 只读 |
 | `pi_operator_loop` | cron 每4h:15 CST | system health + strategies + positions | operator_actions, PiDecision(recommendations) | pi_daemon(wake signal) | ✅ |

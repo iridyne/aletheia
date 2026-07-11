@@ -6,7 +6,8 @@ outputs a TradingMemo consumed by:
   - market_observer via memory_block injection
   - paper_trader_ranker via scoring adjustments (future phase)
 
-Scheduling: daily at 02:30 CST + event-driven when post_trade_reviewer produces 3+ new case studies.
+Scheduling: daily at 02:30 CST plus a rate-limited startup catch-up. The startup
+run repairs a stale memo when the gateway missed its overnight window.
 """
 from __future__ import annotations
 

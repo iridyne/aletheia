@@ -1,5 +1,15 @@
 # Development Log
 
+## 2026-07-11 — Trading memo startup catch-up
+
+- `insight_synthesizer` keeps its daily 02:30 CST cron and now receives a one-time scheduler run three minutes after gateway startup. Its existing six-hour limiter skips redundant restart runs when a recent memo exists.
+- This repairs the real failure mode where downtime across the ten-minute cron misfire window left `trading_memo` expired until another overnight cycle.
+- The module header no longer claims an event trigger after three case studies; no such wiring exists. Scheduling contracts and the system map now describe the implemented daily plus startup behavior.
+- Memo statistics, ranker adjustments, LLM prompt, risk, and execution behavior are unchanged.
+- Validation: focused learning/scheduler and architecture tests 51 passed; all specs 613 passed / 7 skipped / 6 expected failures; full suite 2684 passed / 14 skipped / 6 expected failures / 0 failed.
+
+---
+
 ## 2026-07-11 — Unique local-paper data-model claim ID
 
 - The local paper account structural check now uses `DM-S23`; `DM-S08` remains the established proposal hash-chain check.
