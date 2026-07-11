@@ -13,6 +13,7 @@ from aletheia.agent_workflow import (
     claim_task,
     complete_task,
     create_task,
+    rebase_base,
     recovery_test,
     update_task,
     validate,
@@ -529,3 +530,102 @@ def test_check_staged_cli_ignores_non_boundary_paths(tmp_path, monkeypatch):
         input="frontend/src/pages/Home.tsx\n",
     )
     assert result.exit_code == 0, result.stdout
+
+
+# ---------------------------------------------------------------------------
+# base_commit rebase resilience (TASK-2026-012)
+# ---------------------------------------------------------------------------
+
+
+def _make_orphan_base(root: Path) -> str:
+    """Return a real-but-orphan commit hash by branching off, then abandoning it."""
+    subprocess.run(["git", "checkout", "-b", "orphan-side"], cwd=root, check=True, capture_output=True)
+    (root / "sidefile").write_text("side\n", encoding="utf-8")
+    subprocess.run(["git", "add", "sidefile"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "orphan side"], cwd=root, check=True, capture_output=True)
+    orphan = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, text=True, capture_output=True
+    ).stdout.strip()
+    # Return to the primary branch (recorded on TASK-1 ownership); leave the
+    # orphan commit reachable via reflog only.
+    branch = yaml.safe_load((root / ".agent/tasks/TASK-1.yaml").read_text(encoding="utf-8"))["ownership"]["branch"]
+    subprocess.run(["git", "checkout", branch], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "branch", "-D", "orphan-side"], cwd=root, check=True, capture_output=True)
+    return orphan
+
+
+def test_validate_reports_orphan_base_commit_as_warning_not_error(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    orphan = _make_orphan_base(root)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["base_commit"] = orphan
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    findings = validate(root, strict=True)
+    reachability = [f for f in findings if "base_commit is not reachable" in f.message]
+    assert reachability, "expected an orphan-base finding"
+    assert all(f.severity == "warning" for f in reachability), [(f.severity, f.message) for f in reachability]
+
+
+def test_validate_still_treats_nonexistent_base_commit_as_error(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["base_commit"] = "0" * 40
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    findings = validate(root)
+    missing = [f for f in findings if "base_commit is not a local Git commit" in f.message]
+    assert missing and missing[0].severity == "error"
+
+
+def test_rebase_base_resets_to_head_and_records_rebased_at(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    orphan = _make_orphan_base(root)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["base_commit"] = orphan
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    rebased = rebase_base("TASK-1", root=root)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, text=True, capture_output=True
+    ).stdout.strip()
+    assert rebased["base_commit"] == head
+    assert "rebased_at" in rebased and rebased["rebased_at"].endswith("Z")
+    findings = validate(root)
+    assert not any("base_commit is not reachable" in f.message for f in findings)
+
+
+def test_rebase_base_rejects_done_tasks(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["status"] = "done"
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    with pytest.raises(ValueError, match="only in-progress or blocked tasks"):
+        rebase_base("TASK-1", root=root)
+
+
+def test_rebase_base_cli(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    orphan = _make_orphan_base(root)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["base_commit"] = orphan
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    result = CliRunner().invoke(workflow_app, ["task", "rebase-base", "TASK-1"])
+    assert result.exit_code == 0, result.stdout
+    assert "Rebased base_commit" in result.stdout
+
+
+def test_check_cli_treats_orphan_base_commit_as_success_with_warnings(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    write_handoff("TASK-1", _handoff(), root=root)
+    orphan = _make_orphan_base(root)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["base_commit"] = orphan
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    result = CliRunner().invoke(workflow_app, ["check"])
+    assert result.exit_code == 0, result.stdout
+    assert "WARNING" in result.stdout
+    assert "base_commit is not reachable" in result.stdout

@@ -1,0 +1,41 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-012
+title: Resilient base_commit under rebase and squash-merge
+status: done
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Downgrade base_commit orphan to a warning (not an error), add a rebase-base
+  CLI to explicitly reset base_commit=HEAD with a rebased_at stamp, and cover both
+  paths with focused tests.
+acceptance:
+- validate() emits a warning (severity 'warning') instead of an error when base_commit
+  exists but is not a HEAD ancestor
+- validate() still emits an error when base_commit is not a real Git commit
+- CLI 'agent workflow task rebase-base TASK-ID' resets base_commit=HEAD and records
+  rebased_at
+- rebase-base rejects tasks not in in_progress/blocked
+- spec_agent_workflow.py adds a claim for the resilience behavior
+ownership:
+  branch: worktree-agent-workflow-rebase-base
+  lease_holder: claude-code
+  claimed_at: '2026-07-11T15:47:51.478317Z'
+  expires_at: '2026-07-11T23:47:51.478474Z'
+base_commit: 8e26595e200459ee156f9ba6e4466b656ae9bd75
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 9aced147eb3b15a21a58325aa4de5f2d6b681589
+  run_at: '2026-07-11T15:53:49.518525Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-012.md
+updated_at: '2026-07-11T15:54:23.865970Z'

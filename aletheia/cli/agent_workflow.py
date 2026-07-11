@@ -9,6 +9,7 @@ from aletheia.agent_workflow import (
     complete_task,
     create_task,
     load_tasks,
+    rebase_base,
     recovery_test,
     render_bootstrap,
     repo_root,
@@ -92,6 +93,17 @@ def verify(task_id: str, command_key: str = typer.Option(..., "--command-key")):
         raise typer.Exit(1)
     evidence = task["verification"][-1]
     typer.echo(f"Verified {task['id']} at {evidence['commit'][:7]} with {command_key}.")
+
+
+@task_app.command("rebase-base")
+def rebase_base_command(task_id: str):
+    """Reset the task's base_commit to current HEAD after a rebase/squash-merge."""
+    try:
+        task = rebase_base(task_id)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Rebased base_commit of {task['id']} to {task['base_commit'][:7]}.")
 
 
 @task_app.command("update")

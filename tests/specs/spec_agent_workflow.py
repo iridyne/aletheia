@@ -72,3 +72,14 @@ def test_change_range_enforcement_is_wired_to_ci():
         __import__("aletheia.agent_workflow", fromlist=["x"]).__file__
     ).read_text(encoding="utf-8")
     assert "exit 1" in hook
+
+
+@spec_claim(SpecClaim("AW-S08", _CONTRACT, "§invariants", "L2b", "base_commit resilience: orphaned base is a warning, and rebase_base can reset it."))
+def test_base_commit_resilience():
+    from aletheia.agent_workflow import rebase_base, validate
+    validate_src = Path(validate.__code__.co_filename).read_text(encoding="utf-8")
+    rebase_src = Path(rebase_base.__code__.co_filename).read_text(encoding="utf-8")
+    assert 'Finding("warning", "base_commit is not reachable' in validate_src
+    assert "def rebase_base" in rebase_src
+    assert '"rebased_at"' in rebase_src
+    assert 'in {"in_progress", "blocked"}' in rebase_src
