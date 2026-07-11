@@ -28,8 +28,8 @@ def _should_alert(symbol: str) -> bool:
     import time
 
     now = time.monotonic()
-    last = _last_fallback_alert.get(symbol, 0.0)
-    if now - last < _FALLBACK_DEDUP_SEC:
+    last = _last_fallback_alert.get(symbol)
+    if last is not None and now - last < _FALLBACK_DEDUP_SEC:
         return False
     _last_fallback_alert[symbol] = now
     return True
