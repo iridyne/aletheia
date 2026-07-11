@@ -1,0 +1,36 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-013
+title: 'Tier handoffs: standard vs tiny'
+status: in_progress
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Add task packet field packet_type (standard | tiny) so small fixes stop degrading
+  into 8-heading ceremony. Tiny handoffs require 3 headings (Purpose, Changes made,
+  Verification); the standard 8-heading rule stays for larger tasks. Add create-task
+  --tiny switch, retro-classify legacy tiny tasks 002-004, and update AW-S06.
+acceptance:
+- Task packet schema accepts optional packet_type in {standard, tiny}; default is
+  standard for back-compat
+- Tiny packets require handoff to carry Purpose, Changes made, Verification (3 headings);
+  standard still requires all 8
+- create_task grows a --tiny switch that writes packet_type=tiny and a 3-heading template
+- complete_task and write_handoff dispatch heading requirements by packet_type
+- Legacy TASK-2026-002/003/004 are retro-classified as tiny (schema field only; text
+  unchanged)
+- spec_agent_workflow.py AW-S06 covers both tiers and .agent/schemas/task.schema.json
+  permits packet_type
+ownership:
+  branch: worktree-agent-workflow-handoff-tiering
+  lease_holder: claude-code
+  claimed_at: '2026-07-11T15:54:52.935568Z'
+  expires_at: '2026-07-11T23:54:52.935742Z'
+base_commit: 8e26595e200459ee156f9ba6e4466b656ae9bd75
+next_action:
+  command_key: workflow_tests
+  reason: Add red tests for both tiers before implementation.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-013.md
+updated_at: '2026-07-11T15:54:58.632689Z'

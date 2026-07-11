@@ -25,9 +25,14 @@ execution, credentials, gateway state, databases, balances, or positions.
    the latest completed task as history; it reports whether evidence is
    current, historical, missing, or unreachable, includes dirty-worktree state,
    and never runs a command recorded in task metadata.
-6. **AW-S06 — deterministic handoff and terminal state.** New task packets use
-   a fixed handoff structure. A done task cannot retain an implementation next
-   action; it must send a new session back through workflow bootstrap.
+6. **AW-S06 — deterministic handoff and terminal state.** New task packets
+   declare a `packet_type` — `standard` (default) requires the 8-heading
+   handoff (`Purpose`, `Changes made`, `Uncommitted work`, `Verification`,
+   `Remaining work`, `Exact next action`, `Blockers`, `Risks`); `tiny`
+   requires only `Purpose`, `Changes made`, `Verification`. Packets without a
+   `packet_type` field are treated as `standard` for backward compatibility.
+   A done task cannot retain an implementation next action; it must send a
+   new session back through workflow bootstrap.
 7. **AW-S07 — enforced adoption.** Strict range validation and CI reject
    governed source/documentation changes unless the same change range updates
    both a task packet and its handoff.

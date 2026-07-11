@@ -61,14 +61,27 @@ def claim(task_id: str, holder: str = typer.Option(..., "--holder"), hours: int 
     typer.echo(f"Claimed {task['id']} on {task['ownership']['branch']}.")
 
 @task_app.command("create")
-def create(task_id: str, title: str = typer.Option(..., "--title"), intent: str = typer.Option(..., "--intent")):
+def create(
+    task_id: str,
+    title: str = typer.Option(..., "--title"),
+    intent: str = typer.Option(..., "--intent"),
+    tiny: bool = typer.Option(False, "--tiny", help="Use the 3-heading tiny handoff instead of the 8-heading standard one."),
+):
     """Create a ready task packet and matching handoff template."""
     try:
-        task = create_task(task_id, title=title, intent=intent)
+        task = create_task(
+            task_id,
+            title=title,
+            intent=intent,
+            packet_type="tiny" if tiny else "standard",
+        )
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1)
-    typer.echo(f"Created {task['id']}; claim it from its dedicated branch before editing code.")
+    typer.echo(
+        f"Created {task['id']} ({task.get('packet_type', 'standard')}); "
+        "claim it from its dedicated branch before editing code."
+    )
 
 @task_app.command("complete")
 def complete(task_id: str, command_key: str | None = typer.Option(None, "--command-key")):

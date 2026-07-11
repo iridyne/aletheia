@@ -55,10 +55,20 @@ def test_bootstrap_does_not_execute_recorded_task_commands():
     assert "subprocess.run" not in source[source.index("def bootstrap"):]
 
 
-@spec_claim(SpecClaim("AW-S06", _CONTRACT, "§invariants", "L2b", "New handoffs are structured and done tasks return to bootstrap."))
+@spec_claim(SpecClaim("AW-S06", _CONTRACT, "§invariants", "L2b", "New handoffs are structured (standard 8-heading or tiny 3-heading) and done tasks return to bootstrap."))
 def test_handoff_and_done_state_are_deterministic():
-    from aletheia.agent_workflow import _HANDOFF_HEADINGS, complete_task
+    from aletheia.agent_workflow import (
+        _HANDOFF_HEADINGS,
+        _TINY_HANDOFF_HEADINGS,
+        complete_task,
+        _handoff_headings_for,
+    )
     assert "Exact next action" in _HANDOFF_HEADINGS
+    assert set(_TINY_HANDOFF_HEADINGS) == {"Purpose", "Changes made", "Verification"}
+    # Tiny tasks require the 3-heading subset; unmarked/standard tasks require all 8.
+    assert _handoff_headings_for({"packet_type": "tiny"}) == _TINY_HANDOFF_HEADINGS
+    assert _handoff_headings_for({}) == _HANDOFF_HEADINGS
+    assert _handoff_headings_for(None) == _HANDOFF_HEADINGS
     source = Path(complete_task.__code__.co_filename).read_text(encoding="utf-8")
     assert '"command_key": "workflow_bootstrap"' in source
 
