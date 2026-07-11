@@ -141,6 +141,7 @@ async def test_complete_exec_argv_no_removed_flags(monkeypatch):
     )
     captured = []
     procs = {"exec": _FakeProc(stdout=stdout, returncode=0)}
+    monkeypatch.setattr("aletheia.model_provider.codex_cli.shutil.which", lambda c: "/usr/bin/codex")
     monkeypatch.setattr("asyncio.create_subprocess_exec", _fake_exec_factory(captured, procs))
 
     from aletheia.model_provider.base import ModelRequest
