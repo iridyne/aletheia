@@ -205,3 +205,32 @@ def test_inspect_status_json(cli_db):
     assert "portfolio" in data
     assert "pnl" in data
     assert "orders" in data
+
+
+def test_inspect_agent_runs_uses_current_agent_run_fields(cli_db):
+    import json as json_mod
+
+    from aletheia.storage.models import AgentRun
+    from aletheia.storage.repositories import insert_agent_run
+
+    insert_agent_run(
+        AgentRun(
+            agent_name="paper_trader",
+            trigger_type="scheduled",
+            permission_mode="Observe",
+            status="failed",
+            started_at="2026-01-01T00:00:00+00:00",
+            ended_at="2026-01-01T00:01:00+00:00",
+            errors='["provider timeout"]',
+        )
+    )
+
+    result = runner.invoke(app, ["inspect", "agent-runs", "--json"])
+
+    assert result.exit_code == 0
+    rows = json_mod.loads(result.output)
+    assert len(rows) == 1
+    assert rows[0]["agent"] == "paper_trader"
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["duration_s"] == 60.0
+    assert rows[0]["error"] == "provider timeout"

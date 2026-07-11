@@ -306,6 +306,71 @@ def test_doctor_reports_filter_evidence_registration(tmp_path, monkeypatch):
     assert "outcome_candidates=1/1" in check.detail
 
 
+def test_recent_failures_reads_agent_runs_using_current_columns(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.models import AgentRun
+    from aletheia.storage.repositories import insert_agent_run
+
+    started_at = _iso_ago(30)
+    ended_at = _iso_ago(20)
+    insert_agent_run(
+        AgentRun(
+            agent_name="paper_trader",
+            trigger_type="scheduled",
+            permission_mode="Observe",
+            status="failed",
+            started_at=started_at,
+            ended_at=ended_at,
+            errors='["provider timeout"]',
+        )
+    )
+
+    failures = dx._recent_failures(limit=5)
+
+    assert len(failures) == 1
+    assert failures[0]["agent_name"] == "paper_trader"
+    assert failures[0]["status"] == "failed"
+    assert failures[0]["started_at"] == started_at
+    assert failures[0]["finished_at"] == ended_at
+    assert failures[0]["error"] == "provider timeout"
+
+
+def test_recent_failures_excludes_completed_runs_with_empty_error_lists(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.models import AgentRun
+    from aletheia.storage.repositories import insert_agent_run
+
+    insert_agent_run(
+        AgentRun(
+            agent_name="position_reconciler",
+            trigger_type="scheduled",
+            permission_mode="Observe",
+            status="completed",
+            started_at=_iso_ago(20),
+            ended_at=_iso_ago(19),
+            errors="[]",
+        )
+    )
+    insert_agent_run(
+        AgentRun(
+            agent_name="market_observer",
+            trigger_type="scheduled",
+            permission_mode="Observe",
+            status="stale",
+            started_at=_iso_ago(18),
+            ended_at=_iso_ago(17),
+            errors='["startup reconciled incomplete run"]',
+        )
+    )
+
+    failures = dx._recent_failures(limit=5)
+
+    assert len(failures) == 1
+    assert failures[0]["agent_name"] == "market_observer"
+    assert failures[0]["status"] == "stale"
+    assert failures[0]["error"] == "startup reconciled incomplete run"
+
+
 def _seed_pending_filter_outcomes(*, count: int, due_at: str) -> None:
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.sqlite import get_db

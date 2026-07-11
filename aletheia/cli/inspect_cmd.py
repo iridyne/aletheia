@@ -1004,6 +1004,7 @@ def agent_runs(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show agent run history with status and duration."""
+    from aletheia.agent_runtime.run_view import finished_at, summarize_run_errors
     from aletheia.storage.repositories import list_agent_runs
     rows = list_agent_runs(limit=limit)
     if agent:
@@ -1011,7 +1012,7 @@ def agent_runs(
     display = []
     for r in rows:
         started = r.get("started_at") or ""
-        completed = r.get("completed_at") or ""
+        completed = finished_at(r) or ""
         duration_s = None
         if started and completed:
             try:
@@ -1025,7 +1026,7 @@ def agent_runs(
             "agent": r.get("agent_name"),
             "status": r.get("status"),
             "duration_s": duration_s,
-            "error": (r.get("error") or "")[:60],
+            "error": summarize_run_errors(r.get("errors") or r.get("error"))[:60],
             "started_at": started,
         })
     _output(display, json_output)

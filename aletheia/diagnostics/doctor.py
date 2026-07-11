@@ -255,26 +255,34 @@ def _diagnostic_logs(*, tail_lines: int) -> dict:
 
 def _recent_failures(limit: int = 12) -> list[dict]:
     try:
+        from aletheia.agent_runtime.run_view import finished_at, summarize_run_errors
         from aletheia.storage.sqlite import get_db
         db = get_db()
         rows = db.execute(
-            "SELECT id, agent_name, status, started_at, finished_at, error "
+            "SELECT id, agent_name, status, started_at, "
+            "ended_at AS finished_at, errors AS error "
             "FROM agent_runs "
-            "WHERE status NOT IN ('completed', 'success') OR error IS NOT NULL "
+            "WHERE status NOT IN ('completed', 'success') "
+            "OR COALESCE(NULLIF(errors, ''), '[]') <> '[]' "
             "ORDER BY COALESCE(finished_at, started_at) DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [
-            {
-                "id": row["id"],
-                "agent_name": row["agent_name"],
-                "status": row["status"],
-                "started_at": row["started_at"],
-                "finished_at": row["finished_at"],
-                "error": _shorten_secret_safe(row["error"]),
-            }
-            for row in rows
-        ]
+        failures: list[dict] = []
+        for row in rows:
+            summary = summarize_run_errors(row["error"])
+            if row["status"] in ("completed", "success") and not summary:
+                continue
+            failures.append(
+                {
+                    "id": row["id"],
+                    "agent_name": row["agent_name"],
+                    "status": row["status"],
+                    "started_at": row["started_at"],
+                    "finished_at": finished_at(dict(row)),
+                    "error": _shorten_secret_safe(summary),
+                }
+            )
+        return failures
     except Exception as e:
         return [{"error": f"could not read agent_runs: {e}"}]
 
