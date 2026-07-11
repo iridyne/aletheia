@@ -29,7 +29,7 @@ from aletheia.storage.sqlite import get_db
 logger = logging.getLogger("aletheia.retrieval")
 
 # Only these reach a decision. The quality gate that stops noise becoming "experience".
-_ALLOWED_CONFIDENCE = ("high_confidence", "medium_confidence")
+_ALLOWED_CONFIDENCE = ("high_confidence",)
 
 # Recency half-life: a lesson loses half its recency weight every N days.
 _RECENCY_HALF_LIFE_DAYS = 30.0
