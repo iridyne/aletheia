@@ -189,21 +189,46 @@ def test_all_broker_clients_implement_verified_position_exit():
         assert "get_verified_position_exit" in _source(path), path
 
 
-@_missing("RG-11/RG-16: administrative close still reuses normal economic close")
 @spec_claim(
     SpecClaim(
         "OI-B03", "outcome_integrity", "§6 close/accounting split", "L2b",
         "Administrative-unverified closure may converge state and audit but does not fabricate "
         "fees, slippage, realized PnL, paper cash settlement, or outcome-only hooks; verified "
         "strategy close retains exact economic settlement and causal ids.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_portfolio_has_separate_verified_and_administrative_close_paths():
-    source = _source("aletheia/portfolio/pnl.py")
-    assert "close_verified_position" in source
-    assert "close_administrative_position" in source
-    assert "outcome_hook_eligible" in source
+    from aletheia.portfolio.outcome_closure import close_position_administrative
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        id="oi-b03-admin", symbol="BTC/USDT", market_type="usdt_futures",
+        direction="long", quantity=1.0, entry_price=100.0, current_price=101.0,
+        execution_mode="paper_internal", realized_pnl=5.0,
+    )
+    repo.insert_position(position)
+    result = close_position_administrative(
+        position.id, reason="reconciled_gone",
+        reconciliation_identity={
+            "broker_id": "paper_internal", "account_environment": "local",
+            "account_scope": "oi-b03", "execution_mode": "paper_internal",
+            "position_id": position.id, "symbol": position.symbol,
+            "market_type": position.market_type, "direction": position.direction,
+        },
+        reconciliation_evidence={"candidate": "oi-b03"},
+    )
+    stored = repo._select_one("positions", position.id)
+    assert result["closure_type"] == "administrative"
+    assert stored["realized_pnl"] is None
+    assert stored["exit_fee"] is None
+    assert stored["slippage_cost"] is None
+    assert stored["outcome_eligible"] == 0
+    assert not repo.has_paper_account_position_event("position_closed", position.id)
+    reconciler = _source("aletheia/portfolio/position_reconciler.py")
+    assert "settle_ready_disappearance_candidates" in reconciler
+    assert "def reconcile_close_orphan" not in reconciler
 
 
 @spec_claim(

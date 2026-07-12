@@ -3183,3 +3183,16 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
   quantity, fee, realized PnL and time without storing raw private responses.
 - Order placement, live authority, position state, PnL/cash accounting and Risk were unchanged;
   RG-T07 will consume the protocol when it introduces verified/admin close separation.
+
+## 2026-07-12 — Verified versus administrative close accounting
+
+- Added separate verified and administrative closure services. Verified closure requires
+  matching account/instrument identity, exact fill quantity, known entry fee and quote-currency
+  exit fees; it settles weighted fill economics and eligible outcome evidence once.
+- Administrative closure now converges lifecycle state and durable audit only. Realized PnL,
+  exit fee and slippage remain unavailable; paper cash and outcome-only hooks are untouched.
+- Ready demo disappearance candidates now run the broker-neutral direct query after incident
+  gates. Verified fills settle strategy economics, confirmed absence without fills closes
+  administratively, and inconclusive evidence stays open. Live remains alert-only.
+- Removed the dormant Bitget-only TPSL/fallback orphan closer and blocked synthetic reasons from
+  the legacy close API. Added raw versus eligible daily PnL names without changing Risk yet.

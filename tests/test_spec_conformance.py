@@ -274,9 +274,9 @@ class TestConformanceStructure:
         # as implemented.
         # TASK-2026-034 makes OI-S02 GREEN with the dependency-neutral central
         # classifier/read model, durable incident/Learning refreeze, and disappearance
-        # confirmation and broker-neutral verified exit. Six OI behavior/history
-        # claims remain missing.
-        MAX_MISSING = 11
+        # confirmation, broker-neutral verified exit, and verified/admin accounting
+        # split. Five OI behavior/history claims remain missing.
+        MAX_MISSING = 10
         # #153: 5 self-heal specs moved to partial (OL-C08, OL-S13, SH-S01, SH-C02, SH-B03).
         # TASK-2026-022 adds six explicitly bounded Learning-evolution claims whose
         # Phase-0 cores are implemented but whose consumer-wide persistence/UI/

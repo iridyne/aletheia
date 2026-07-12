@@ -233,6 +233,9 @@ RG-T06/T07 前继续制造伪经济，ready candidate 当前明确保持 open，
 
 ### Phase 5 — 平仓状态与经济结算分流（RG-T07）
 
+状态：已实现 verified/admin 两入口、精确 fill/fee 结算、行政关闭无经济副作用、幂等 cash/hook、
+ready demo candidate 三态路由和 live alert-only；Risk authoritative loss 仍由 RG-T09 迁移。
+
 范围：portfolio close orchestration、PnL/cash、post-close hook；不修改开仓、仓位大小或风险阈值。
 
 工作：
