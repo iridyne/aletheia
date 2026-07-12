@@ -1,5 +1,6 @@
 """Shared helpers for agents: LLM calls with graceful degradation + tool logging."""
 
+import asyncio
 import logging
 import json
 from collections.abc import AsyncIterator
@@ -9,6 +10,12 @@ from aletheia.model_provider.router import get_provider
 from aletheia.model_provider.fallback import complete_with_fallback
 
 logger = logging.getLogger("aletheia.agents")
+
+# Must stay below the observer loop budget (200s) and observer job timeout (240s).
+# The provider may allow 300s for long research generations, but structured observer
+# calls need their own total budget across all repair attempts so scheduler cancellation
+# never abandons the event-loop thread mid-request.
+_LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC = 180.0
 
 
 def _exception_detail(exc: BaseException) -> str:
@@ -130,9 +137,17 @@ async def llm_structured(
     # complete_with_fallback so its fallback/health/cooldown keying matches the
     # provider actually in use, not cfg.models.default_provider.
     provider_name = provider
+    schema_dict: dict = {}
+
+    def _failure(error: str) -> tuple[dict | None, str]:
+        if fallback_to_defaults:
+            return _schema_defaults_dict(schema_dict), f"{error}(fallback)"
+        return None, error
+
     try:
         provider = get_provider(provider_name)
-        schema_json = json.dumps(schema.model_json_schema() if hasattr(schema, "model_json_schema") else {})
+        schema_dict = schema.model_json_schema() if hasattr(schema, "model_json_schema") else {}
+        schema_json = json.dumps(schema_dict)
         base_messages = [
             {"role": "user", "content": user},
             {"role": "user", "content": (
@@ -144,6 +159,8 @@ async def llm_structured(
         # exhausts the token budget on internal reasoning and returns empty text output.
         # Other models ignore this prefix safely.
         structured_system = f"/no_think\n{system}" if system else "/no_think"
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC
 
         # 3 attempts with escalating token budget + corrective strategy:
         #   attempt 0: base max_tokens at temperature 0.3, standard prompt
@@ -179,15 +196,30 @@ async def llm_structured(
                     f"Reply with ONLY the corrected JSON. Start with '{{' and end with '}}'. "
                     f"No extra text, no explanation."
                 )})
-            resp = await complete_with_fallback(
-                ModelRequest(
-                    messages=messages, system=structured_system,
-                    temperature=0.3 if attempt == 0 else 0.0,
-                    max_tokens=attempt_max_tokens,
-                ),
-                provider=provider,
-                provider_name=provider_name,
-            )
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                logger.warning("LLM structured call exhausted %.0fs total wall-clock budget",
+                               _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC)
+                _record_llm(False)
+                return _failure("llm_unavailable: structured_timeout")
+            try:
+                resp = await asyncio.wait_for(
+                    complete_with_fallback(
+                        ModelRequest(
+                            messages=messages, system=structured_system,
+                            temperature=0.3 if attempt == 0 else 0.0,
+                            max_tokens=attempt_max_tokens,
+                        ),
+                        provider=provider,
+                        provider_name=provider_name,
+                    ),
+                    timeout=remaining,
+                )
+            except TimeoutError:
+                logger.warning("LLM structured call exceeded %.0fs total wall-clock budget",
+                               _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC)
+                _record_llm(False)
+                return _failure("llm_unavailable: structured_timeout")
             content = (resp.content or "").strip()
             usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
             output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))
@@ -208,9 +240,7 @@ async def llm_structured(
                     logger.warning("LLM structured call: empty content with %d output_tokens — "
                                    "reasoning model exhausted budget on reasoning phase",
                                    output_tokens)
-                    if fallback_to_defaults:
-                        return _schema_defaults_dict(schema_dict), "structured_empty_content(fallback)"
-                    return None, "structured_empty_content"
+                    return _failure("structured_empty_content")
                 if attempt < max_attempts - 1:
                     logger.warning(
                         "LLM structured call: empty content, no output_tokens — retrying "
@@ -219,16 +249,21 @@ async def llm_structured(
                     continue
                 logger.warning("LLM structured call: empty content, no completion tokens")
                 _record_llm(False)
-                if fallback_to_defaults:
-                    return _schema_defaults_dict(schema_dict), "llm_unavailable: empty_response(fallback)"
-                return None, "llm_unavailable: empty_response"
+                return _failure("llm_unavailable: empty_response")
 
             data = _extract_json_object(content)
             if isinstance(data, dict):
                 _record_llm(True)
                 return data, None
             if data is not None:
-                return None, "structured_non_dict"
+                last_err = "structured_non_dict"
+                if attempt < max_attempts - 1:
+                    logger.warning(
+                        "LLM structured call: JSON value is not an object (attempt %d/%d) — retrying",
+                        attempt + 1, max_attempts,
+                    )
+                    continue
+                break
 
             # Parse failed — check if output was truncated (near token limit)
             truncated = output_tokens > 0 and output_tokens >= attempt_max_tokens * 0.9
@@ -250,18 +285,16 @@ async def llm_structured(
             last_err = "structured_parse_error: no valid JSON object found in response"
 
         logger.warning("LLM structured call: no valid JSON after %d attempts", max_attempts)
-        if fallback_to_defaults:
-            return _schema_defaults_dict(schema_dict), f"{last_err}(fallback)"
-        return None, last_err
+        return _failure(last_err)
     except json.JSONDecodeError as e:
         # Bad JSON but the LLM did respond — not an outage, don't trip health counter
         logger.warning("LLM structured call: JSON parse failed: %s", e)
-        return None, f"structured_parse_error: {e}"
+        return _failure(f"structured_parse_error: {e}")
     except Exception as e:
         detail = _exception_detail(e)
         logger.warning("LLM structured call failed: %s", detail)
         _record_llm(False)
-        return None, f"llm_unavailable: {detail}"
+        return _failure(f"llm_unavailable: {detail}")
 
 
 def _schema_defaults_dict(schema_dict: dict) -> dict:
@@ -274,7 +307,12 @@ def _schema_defaults_dict(schema_dict: dict) -> dict:
     result: dict = {}
     props = schema_dict.get("properties", {})
     for key, prop in props.items():
+        if "default" in prop:
+            result[key] = prop["default"]
+            continue
         typ = prop.get("type", "string")
+        if isinstance(typ, list):
+            typ = next((item for item in typ if item != "null"), "string")
         if typ == "array":
             result[key] = []
         elif typ == "object":

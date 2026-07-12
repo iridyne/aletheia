@@ -3277,3 +3277,13 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
   wrong-account/live fail-closed behavior, all three broker evidence adapters and history repair.
 - No production behavior changed. Real paper scheduler/process-restart soak, owner-database
   maintenance and cash compensation were not run; live remained untouched.
+
+## 2026-07-12 — Structured LLM retry integrity and wall-clock bound
+
+- Fixed the new repair/default mode so it preserves the JSON schema, accepts the existing
+  provider-name contract and returns marked schema defaults on every opt-in terminal failure.
+- Valid non-object JSON now enters the bounded repair loop instead of failing immediately; the
+  final repair prompt is proven to contain the previous malformed output.
+- All three attempts now share a 180-second wall-clock budget below Observer loop/job limits,
+  cancelling a hanging 300-second-capable provider before scheduler thread abandonment.
+- Full merged-candidate suite: 3055 passed with no ordinary failures or warnings.

@@ -113,6 +113,23 @@ class _Schema:
         return {"type": "object", "properties": {"x": {"type": "integer"}}}
 
 
+class _DefaultsSchema:
+    @staticmethod
+    def model_json_schema():
+        return {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer"},
+                "ratio": {"type": "number"},
+                "enabled": {"type": "boolean"},
+                "items": {"type": "array"},
+                "metadata": {"type": "object"},
+                "note": {"type": ["string", "null"]},
+                "threshold": {"type": "integer", "default": 7},
+            },
+        }
+
+
 def _patch_llm(monkeypatch_obj, responses):
     """Patch helpers.complete_with_fallback to yield queued responses in order."""
     from aletheia.agents import helpers
@@ -220,7 +237,7 @@ def test_llm_structured_repair_mode_on_final_attempt(monkeypatch):
     from aletheia.agents import helpers
     captured_messages = []
 
-    async def fake_complete(req, provider=None):
+    async def fake_complete(req, provider=None, provider_name=None):
         captured_messages.append(req.messages)
         # First two: bad JSON; third: valid (after seeing repair prompt)
         if len(captured_messages) < 3:
@@ -239,6 +256,9 @@ def test_llm_structured_repair_mode_on_final_attempt(monkeypatch):
     last_msg = captured_messages[2][-1]["content"]
     assert "FIX THIS JSON" in last_msg, (
         "third attempt should use repair-mode prompt with 'FIX THIS JSON'"
+    )
+    assert "not json at all" in last_msg, (
+        "repair-mode prompt must include the previous malformed output"
     )
 
 
@@ -263,7 +283,7 @@ def test_llm_structured_fallback_to_defaults(monkeypatch):
     ])
     # Without fallback — returns None
     data_none, err_none = asyncio.run(
-        helpers.llm_structured("sys", "user", schema=_Schema, fallback_to_defaults=False)
+        helpers.llm_structured("sys", "user", schema=_DefaultsSchema, fallback_to_defaults=False)
     )
     assert data_none is None
     assert err_none is not None
@@ -271,14 +291,72 @@ def test_llm_structured_fallback_to_defaults(monkeypatch):
 
     # With fallback — returns default dict, error string marked with (fallback)
     data_def, err_def = asyncio.run(
-        helpers.llm_structured("sys", "user", schema=_Schema, fallback_to_defaults=True)
+        helpers.llm_structured("sys", "user", schema=_DefaultsSchema, fallback_to_defaults=True)
     )
-    assert data_def is not None, "fallback mode must return a dict even on total failure"
-    assert isinstance(data_def, dict)
-    assert "x" in data_def, "default dict must include schema properties"
+    assert data_def == {
+        "count": 0,
+        "ratio": 0,
+        "enabled": False,
+        "items": [],
+        "metadata": {},
+        "note": None,
+        "threshold": 7,
+    }
     assert err_def is not None and "fallback" in err_def, (
         "error string must indicate this is a fallback result"
     )
+
+
+# ---------------------------------------------------------------------------
+# GS-S05 / GS-B08 — structured retries have one total budget below observer caps
+# ---------------------------------------------------------------------------
+
+@spec_claim(
+    SpecClaim(
+        "GS-S05", _CONTRACT, "§structured retry wall-clock", "L2a",
+        "llm_structured has one total wall-clock budget below the market-observer "
+        "loop budget and scheduler timeout, independent of the provider timeout.",
+    ),
+)
+def test_llm_structured_budget_is_below_observer_caps():
+    from aletheia.agents import helpers, market_observer
+    from aletheia.agent_runtime.scheduler import _ASYNC_JOB_TIMEOUT_SEC
+
+    assert helpers._LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC < market_observer._MARKET_OBSERVER_LOOP_BUDGET_SEC
+    assert helpers._LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC < _ASYNC_JOB_TIMEOUT_SEC["market_observer"]
+    source = Path(helpers.__file__).read_text(encoding="utf-8")
+    assert "asyncio.wait_for" in source
+
+
+@spec_claim(
+    SpecClaim(
+        "GS-B08", _CONTRACT, "§structured retry wall-clock", "L2b",
+        "A provider call that exceeds the total structured budget is cancelled and "
+        "returns structured_timeout instead of waiting for the outer scheduler timeout.",
+    ),
+)
+def test_llm_structured_cancels_hanging_provider_before_job_timeout(monkeypatch):
+    from aletheia.agents import helpers
+
+    cancelled = {"value": False}
+
+    async def hang(req, provider=None, provider_name=None):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled["value"] = True
+            raise
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", hang)
+    monkeypatch.setattr(helpers, "get_provider", lambda provider_name=None: object())
+    monkeypatch.setattr(helpers, "_record_llm", lambda ok: None)
+    monkeypatch.setattr(helpers, "_LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC", 0.01)
+
+    data, err = asyncio.run(helpers.llm_structured("sys", "user", schema=_Schema))
+
+    assert data is None
+    assert err == "llm_unavailable: structured_timeout"
+    assert cancelled["value"] is True
 
 
 # ---------------------------------------------------------------------------

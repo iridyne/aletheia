@@ -840,8 +840,8 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     # Per-instrument loop: each instrument gets its own LLM call + Opportunity row.
     # instrument.market_type is the authoritative type; no more config-derived guessing.
     #
-    # WALL-CLOCK BUDGET (gateway-stability fix): each instrument is one LLM call that can
-    # take up to the provider timeout (60s) under LLM-provider contention. With a large
+    # WALL-CLOCK BUDGET (gateway-stability fix): each instrument is one structured LLM call
+    # capped below this loop budget even when its provider permits a longer research timeout. With a large
     # universe this can blow the 240s job timeout → _run_async_with_timeout cancels the
     # coroutine mid-flight → SelectorEventLoop teardown stalls → the daemon thread is
     # abandoned and LEAKS (the "abandoned threads 3→5" cascade that starves the frontdoor).

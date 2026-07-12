@@ -113,3 +113,65 @@ async def test_llm_structured_threads_provider_name_to_complete_with_fallback():
     assert err is None
     assert data == {"value": 42}
     assert captured["provider_name"] == "deep_provider_xyz"
+
+
+@pytest.mark.asyncio
+async def test_llm_structured_opt_in_defaults_survive_provider_failure():
+    """Opt-in non-critical callers receive marked defaults even on provider failure."""
+    from aletheia.agents import helpers
+
+    class FallbackSchema:
+        @staticmethod
+        def model_json_schema():
+            return {
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer"},
+                    "items": {"type": "array"},
+                },
+            }
+
+    async def fail(*_args, **_kwargs):
+        raise ConnectionError("offline")
+
+    with patch.object(helpers, "complete_with_fallback", fail), \
+         patch.object(helpers, "get_provider", lambda _name: object()), \
+         patch.object(helpers, "_record_llm"):
+        data, err = await helpers.llm_structured(
+            "sys", "user", schema=FallbackSchema, fallback_to_defaults=True,
+        )
+
+    assert data == {"count": 0, "items": []}
+    assert err == "llm_unavailable: ConnectionError: offline(fallback)"
+
+
+@pytest.mark.asyncio
+async def test_llm_structured_repairs_valid_non_object_json():
+    """A valid JSON list is still invalid for the object schema and must be retried."""
+    from aletheia.agents import helpers
+    from aletheia.model_provider.base import ModelResponse
+
+    class ObjectSchema:
+        @staticmethod
+        def model_json_schema():
+            return {"type": "object", "properties": {"value": {"type": "integer"}}}
+
+    responses = iter([
+        ModelResponse(content="[]", raw={"usage": {"completion_tokens": 1}}),
+        ModelResponse(content='{"value": 9}', raw={"usage": {"completion_tokens": 3}}),
+    ])
+    calls = 0
+
+    async def complete(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return next(responses)
+
+    with patch.object(helpers, "complete_with_fallback", complete), \
+         patch.object(helpers, "get_provider", lambda _name: object()), \
+         patch.object(helpers, "_record_llm"):
+        data, err = await helpers.llm_structured("sys", "user", schema=ObjectSchema)
+
+    assert data == {"value": 9}
+    assert err is None
+    assert calls == 2

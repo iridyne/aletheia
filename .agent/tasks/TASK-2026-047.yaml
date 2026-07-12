@@ -1,0 +1,37 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-047
+title: Repair structured LLM retry and fallback regressions
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Restore structured LLM repair retry and schema-derived fallback defaults,
+  align provider-name test doubles with the current helper contract, and add focused
+  regression coverage; exclude Outcome Integrity, Risk, execution, exchanges, trading
+  decisions, live authority, credentials, and runtime restarts.
+acceptance:
+- The final structured retry preserves provider_name compatibility and includes the
+  previous malformed output in its repair prompt.
+- fallback_to_defaults remains opt-in and disabled for all production callers; when
+  enabled, every terminal failure path returns schema-derived defaults with an explicit
+  fallback marker instead of raising or NameError.
+- All structured retry attempts share a 180-second wall-clock budget below the observer
+  loop and scheduler caps, and a hanging provider is demonstrably cancelled.
+- Focused helper/observer/model tests, complete specs, architecture fitness, and full
+  tests pass with no new warnings or non-Outcome failures.
+ownership:
+  branch: fix/llm-structured-retry-regressions
+  lease_holder: codex
+  claimed_at: '2026-07-12T09:25:19.890097Z'
+  expires_at: '2026-07-12T17:25:19.890249Z'
+base_commit: a671d9e9297ee2de2cd4d8e2c12a99c39ef3e681
+next_action:
+  command_key: specs
+  reason: Run complete specs and architecture on the merged master-plus-origin baseline
+    before committing.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-047.md
+updated_at: '2026-07-12T09:32:20.258223Z'
