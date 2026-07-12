@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-056
 title: Publish durable Learning lifecycle authority
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -28,9 +28,18 @@ ownership:
   expires_at: '2026-07-13T00:46:49.733951Z'
 base_commit: 58cdbc04564a81111412a460238d291c8813181f
 next_action:
-  command_key: specs
-  reason: Verify AT-02 lifecycle and authority behavior against the merged AT-01 baseline.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: dd6f82b8ca9812b2167d04209217bf4b35429d3b
+  run_at: '2026-07-12T16:48:04.965238Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-056.md
-updated_at: '2026-07-12T16:46:49.846433Z'
+updated_at: '2026-07-12T16:48:21.500803Z'
