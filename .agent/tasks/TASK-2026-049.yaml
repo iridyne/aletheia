@@ -7,9 +7,10 @@ packet_type: standard
 scope:
   boundary: documentation-only consolidation of the former repository-root owner discussion into the product, design, issue, testing, and historical-process documentation layers
   excluded: production-code behavior, frontend behavior, risk/execution semantics, runtime configuration or facts, credentials, database changes, and live/paper trading actions
-intent: Classify the former repository-root owner note into durable product intent,
-current subsystem contracts, issue backlog, and archived process history; remove the
-standalone source only after every retained statement has a canonical destination.
+intent: >-
+  Classify the former repository-root owner note into durable product intent,
+  current subsystem contracts, issue backlog, and archived process history; remove the
+  standalone source only after every retained statement has a canonical destination.
 acceptance:
 - Every durable product choice from the former discussion has a canonical, linked home in the existing documentation pyramid; dated process evidence remains explicitly historical.
 - Product scope no longer claims that an executable RuleSet/DSL/backtest engine is a current Aletheia capability or decision source.
