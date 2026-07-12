@@ -62,7 +62,7 @@ Operator 调参的交易结果。
 |---|---:|---|---|---|---|
 | RG-01 | P0 | fixed-source | `paper_internal` 曾进入外部仓位对账 | 假平仓、重复开仓、退出链失真 | 保持 `local_only`，增加完整 E2E 和运行探针 |
 | RG-02 | P0 | fixed-source | 非当前 broker 的新鲜缓存曾被当权威源 | close/adopt thrash，归因断裂 | 账户作用域和 view completeness 继续 fail-closed |
-| RG-03 | P0 | fixed-core | `trade_stats`/family/strategy KPI 曾直接统计全部 closed rows | judgement 指标已统一读取 verified eligible outcomes | T10 为 owner 展示 raw/genuine 双口径 |
+| RG-03 | P0 | fixed-reporting | `trade_stats`/family/strategy KPI 曾直接统计全部 closed rows | 判断指标只用已验证结果，接口同时解释原始与排除数量 | T12 保留跨消费者 E2E |
 | RG-04 | P0 | fixed-core | Operator 7d WR/PF/streak 曾使用 raw closed rows | Operator、策略表现和 PI context 只消费 eligible cohort | T12 保留行为不变回归 |
 | RG-05 | P0 | fixed-core | conviction calibration 曾接受未验证关闭和旧 active 报告 | 校准只用 eligible，报告带版本/时间且旧版或过期拒读 | T11 archive/supersede 历史报告并重建 |
 | RG-06 | P0 | fixed-core | System Operator alpha observed leg 曾接受行政性关闭 | observed leg 已统一为 eligible realized outcome | T12 保留 genuine-vs-administrative E2E |
@@ -71,8 +71,8 @@ Operator 调参的交易结果。
 | RG-09 | P0 | fixed-core | 旧路径一次可信快照缺失即可行政性 close | 已改为 durable candidate、独立完整 observations；ready 后仍等待 T06/T07 | T12 覆盖重启/部分失败/双视图 E2E |
 | RG-10 | P0 | fixed-core | `_try_get_tpsl_fill_price` 写死 Bitget | 三家只读 verified-exit protocol 已交付；尚未接入关闭编排 | RG-T07 使用三态结果分流 verified/admin close，不再调用 broker-specific fallback |
 | RG-11 | P0 | fixed-core | 行政性 close 曾复用普通 `close_position` | verified/admin 入口已分流，行政关闭不再制造费用、滑点、PnL、现金或 outcome hook | RG-T08～T10 继续迁移读取/展示消费者，T12 做 E2E |
-| RG-12 | P0 | fixed-risk | `today_realized_pnl` 曾同时用于账户、Risk、PI 和表现 | Risk 已改用独立 authoritative account snapshot；PI 已用 eligible strategy PnL | T10 完成 dashboard/CLI 双口径展示 |
-| RG-13 | P0 | open | CLI/API/equity curve 默认只显示混合 raw 结果 | owner 无法判断真实策略表现 | raw 与 genuine 双口径并列、清楚标注排除数量 |
+| RG-12 | P0 | fixed-risk | `today_realized_pnl` 曾同时用于账户、Risk、PI 和表现 | Risk 使用独立账户损失；PI、CLI 与页面使用已验证策略结果 | T12 保留分流 E2E |
+| RG-13 | P0 | fixed-reporting | CLI/API/equity curve 默认只显示混合 raw 结果 | 原始账户事件与已验证策略结果已并列，排除数量和原因可见 | T12 保留混合样本 E2E |
 | RG-14 | P1 | fixed-behavior | behavior consumers 已统一到中央 read model 并由枚举扫描禁止本地 reason set | 新原因只需更新中央分类；判断路径不会漏过滤 | T10 对合法 raw 展示读取增加双口径保护 |
 | RG-15 | P1 | fixed-storage | data model 原缺 close category、fill provenance、eligibility、verification | 无法结构化证明一个结果是否可学习 | additive schema 与 durable observation storage 已交付；历史 backfill 仍由 RG-T11 完成 |
 | RG-16 | P1 | fixed-core | post-close hooks 曾没有统一 eligibility gate | verified close gate 与其余 Learning/归因/策略消费者现均只接受 eligible outcome | T12 保留跨消费者回归 |
@@ -91,7 +91,7 @@ Operator 调参的交易结果。
 | Consumer | 当前角色 | 目标语义 | 审计结论 |
 |---|---|---|---|
 | `portfolio.pnl.close_position` | 状态、PnL、现金、hook | 按 closure semantics 分流 | fixed-core |
-| `today_realized_pnl` | Risk + PI + dashboard | 拆成 account loss / strategy PnL | partial — Risk/PI 已拆，T10 展示待办 |
+| `today_realized_pnl` | Risk + PI + dashboard | 拆成 account loss / strategy PnL | fixed — Risk 独立，PI/CLI/dashboard 使用 verified strategy cohort |
 | `analytics.trade_stats` | CLI/API/UI/PI | eligible | fixed-behavior |
 | `analytics.family_scorecard` | UI + PI | eligible | fixed-behavior |
 | `build_strategy_kpis` | PI strategy context | eligible | fixed-behavior |

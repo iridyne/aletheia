@@ -127,10 +127,10 @@ operators do not infer the real order target from the retained exchange preferen
 | GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |
 | GET | `/analytics/learning-funnel` | Learning write/consume visibility, lesson status counts, conservative contradiction count |
 
-### Analytics outcome-integrity response target（OI-C04, not implemented）
+### Analytics outcome-integrity responses（OI-C04, implemented）
 
 The existing trade-statistics, strategy-KPI, family-scorecard, confidence-calibration, cost-summary,
-and equity-curve endpoints remain present. Their target response contract adds explicit cohort
+and equity-curve endpoints remain present. Their response contract adds explicit cohort
 metadata instead of silently changing one unlabelled number:
 
 | Field | Meaning |
@@ -142,11 +142,13 @@ metadata instead of silently changing one unlabelled number:
 | `outcome_semantics_version` | classifier/read-model version used |
 | `cohort_state` | `available` / `insufficient` / `unavailable` |
 
-Judgement metrics default to the eligible cohort. Raw/account series and genuine strategy series may
-both be returned, but each series carries a stable label and cannot substitute for the other. Missing
+Judgement metrics default to the eligible cohort. `/analytics/equity-curve` returns
+`raw_recorded_points` and `genuine_points` with stable labels; its compatibility `points` field is an
+alias of `genuine_points`. Current unrealized PnL remains a separate field and is not folded into either
+realized curve. Cost responses expose verified totals and a separate `raw_recorded_costs` object.
+Strategy KPI and family scorecard responses wrap their rows under `strategies` and `families` so the
+same cohort metadata can be returned without hiding its scope. Missing
 or insufficient genuine data is not serialized as a zero return, zero win rate, or healthy state.
-This paragraph is target documentation; current endpoint behavior remains tracked as RG-13 until
-`OI-C04` becomes GREEN and `api_reference` response-shape specs are updated.
 
 > Backtest endpoints (`/analytics/backtest/runs`, `/runs/{id}`, `/compare/{id}`,
 > `/backtest-paper-drift`) and `/analytics/strategy-evidence` were deleted with the

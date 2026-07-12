@@ -67,6 +67,9 @@ def _seed_positions(days_ago_list: list[int], pnl: float = 1.0) -> None:
             quantity=1.0, entry_price=100.0, current_price=100.0 + pnl,
             realized_pnl=pnl, execution_mode="paper_internal",
             status="closed", opened_at=opened_at, closed_at=closed_at,
+            close_category="strategy", exit_price_source="local_fill",
+            exit_fill_verified=True, outcome_eligible=True,
+            outcome_exclusion_reason="eligible", outcome_semantics_version="oi-v1",
         )
         insert_position(pos)
 

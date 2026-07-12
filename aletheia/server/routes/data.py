@@ -1853,11 +1853,15 @@ def _parse_brief_to_profile(brief: str) -> dict:
 # ── Edge Lab: analytics endpoints ───────────────────────────────────────────
 
 @router.get("/analytics/family-scorecard")
-async def get_family_scorecard():
+def get_family_scorecard():
     """Per-scanner_family performance statistics (win_rate, expectancy, alpha)."""
     _ensure_db()
+    from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     from aletheia.analytics.family_scorecard import compute_family_scorecard
-    return compute_family_scorecard()
+    return {
+        "families": compute_family_scorecard(),
+        **build_outcome_cohort_summary(),
+    }
 
 
 @router.get("/analytics/shadow-trades")

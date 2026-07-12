@@ -98,7 +98,12 @@ def classify_closure(row: dict[str, Any]) -> ClosureSemantics:
     if row.get("status") not in (None, "closed"):
         return _semantics("unknown", False, "position_not_closed", row)
 
-    if not any(key in row for key in _STRUCTURED_KEYS):
+    structured_values = {key: row.get(key) for key in _STRUCTURED_KEYS}
+    has_structured_evidence = any(
+        value not in (None, "", False, "unknown", "unavailable", "unclassified")
+        for value in structured_values.values()
+    )
+    if not has_structured_evidence:
         return _semantics(
             "unknown", False, "legacy_unverified_close", row,
             evidence_source="legacy_reason",
@@ -199,6 +204,54 @@ def administrative_closures(**filters) -> list[dict]:
         row for row in raw_account_events(**filters)
         if classify_closure(row).category in {"administrative", "maintenance"}
     ]
+
+
+def build_outcome_cohort_summary(**filters) -> dict[str, Any]:
+    """Describe raw close events and the verified judgement cohort side by side."""
+    try:
+        rows = raw_account_events(**filters)
+    except Exception:
+        return {
+            "raw_event_count": None,
+            "eligible_outcome_count": None,
+            "excluded_outcome_count": None,
+            "outcome_exclusion_reasons": {"account_event_read_failed": 1},
+            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+            "cohort_state": "unavailable",
+            "raw_recorded_realized_pnl": None,
+            "raw_economics_unavailable_count": None,
+            "eligible_realized_pnl": None,
+        }
+
+    eligible_count = 0
+    eligible_pnl = 0.0
+    raw_recorded_pnl = 0.0
+    raw_recorded_count = 0
+    exclusion_reasons: dict[str, int] = {}
+    for row in rows:
+        raw_pnl = _to_float(row.get("realized_pnl"))
+        if raw_pnl is not None:
+            raw_recorded_pnl += raw_pnl
+            raw_recorded_count += 1
+        assessment = assess_position_closure(row)
+        if assessment.eligible:
+            eligible_count += 1
+            eligible_pnl += float(raw_pnl)
+        else:
+            exclusion_reasons[assessment.reason] = exclusion_reasons.get(assessment.reason, 0) + 1
+
+    raw_count = len(rows)
+    return {
+        "raw_event_count": raw_count,
+        "eligible_outcome_count": eligible_count,
+        "excluded_outcome_count": raw_count - eligible_count,
+        "outcome_exclusion_reasons": dict(sorted(exclusion_reasons.items())),
+        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        "cohort_state": "available" if eligible_count else "insufficient",
+        "raw_recorded_realized_pnl": round(raw_recorded_pnl, 8) if raw_recorded_count else None,
+        "raw_economics_unavailable_count": raw_count - raw_recorded_count,
+        "eligible_realized_pnl": round(eligible_pnl, 8) if eligible_count else None,
+    }
 
 
 def is_current_outcome_artifact(

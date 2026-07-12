@@ -312,6 +312,9 @@ semantics version/staleness 被拒读，不能等历史清理后才安全。
 
 #### RG-T10：CLI/API/UI 诚实双口径
 
+状态：✅ 2026-07-12 完成。CLI、分析接口和现有绩效组件默认展示已验证策略结果，
+同时并列原始关闭事件、排除数量与原因；权益图保留两条明确标注的曲线，未实现新页面或改变交易行为。
+
 范围：inspect/performance CLI、analytics API、Overview/相关表现页面；不改变交易行为。
 
 工作：

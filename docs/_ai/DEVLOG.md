@@ -3246,3 +3246,13 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
   explicitly unavailable. New proposals fail closed without inventing a daily-loss breach or
   auto-tripping the kill switch; a genuine loss still triggers the existing brake.
 - Added controlled-boundary and OI-C03 regressions. Reporting/API/UI dual semantics remain RG-T10.
+
+## 2026-07-12 — Honest raw and verified outcome reporting
+
+- CLI performance views and analytics responses now default judgement metrics to verified strategy
+  outcomes while exposing raw close counts, exclusions, reasons and the active semantics version.
+- The Overview equity view renders separately labelled raw-recorded and verified-strategy curves;
+  current unrealized PnL remains separate. Empty verified cohorts render unavailable/insufficient
+  instead of zero, green, or a formatting crash.
+- Strategy, family, confidence and cost responses carry the same cohort explanation. No Risk,
+  close accounting, execution, exchange, live-authority, credential or historical record changed.

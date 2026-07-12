@@ -349,23 +349,30 @@ def test_risk_does_not_use_strategy_or_unverified_realized_pnl():
     assert "assess_position_closure" in account_source
 
 
-@_missing("RG-13: analytics API does not expose honest raw/genuine dual semantics")
 @spec_claim(
     SpecClaim(
         "OI-C04", "outcome_integrity", "§11 operator-facing dual reporting", "L2c",
         "Trade stats and equity reporting expose raw event, eligible outcome, excluded outcome, "
         "exclusion reason, and semantics-version fields; judgement defaults to genuine and an "
         "unavailable cohort is never rendered as zero or healthy.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_analytics_routes_expose_raw_and_genuine_cohorts():
-    source = _source("aletheia/server/routes/analytics.py")
+    source = _source("aletheia/analytics/outcome_integrity.py")
     for token in (
         "raw_event_count", "eligible_outcome_count", "excluded_outcome_count",
         "outcome_exclusion_reasons", "outcome_semantics_version",
     ):
         assert token in source
+    routes = _source("aletheia/server/routes/analytics.py")
+    assert "raw_recorded_points" in routes
+    assert "genuine_points" in routes
+    assert '"points": genuine_points' in routes
+    assert '"total_realized": genuine_total' in routes
+    frontend = _source("frontend/src/charts/PnLChart.tsx")
+    assert "Raw recorded account events" in frontend
+    assert "Verified strategy curve" in frontend
 
 
 @_missing("RG-20/RG-21: additive history classification/supersede tool is absent")

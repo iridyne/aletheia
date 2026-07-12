@@ -184,6 +184,7 @@ def build_trade_stats() -> dict:
         "total_pnl": round(total_pnl, 4) if total_count else None,
     }
 
+    from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     return {
         "by_source": by_source,
         "by_family": by_family,
@@ -191,6 +192,7 @@ def build_trade_stats() -> dict:
         "totals": totals,
         "outcome_status": "available" if total_count else "insufficient",
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        **build_outcome_cohort_summary(),
     }
 
 
