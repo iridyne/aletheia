@@ -285,6 +285,10 @@ Bitget 使用 mix fills cursor，OKX 使用 fills-history bill cursor，Binance 
 
 ### 11.3 行政关闭副作用禁区
 
+状态：RG-T07 / OI-B03 已实现。`portfolio.outcome_closure` 提供 verified 与 administrative 两个不可
+互换的入口；ready demo disappearance candidate 只有经过 RG-T06 三态直查后才可调用。Live 仍是
+alert-only，active reconciliation incident 仍先阻断收口。
+
 administrative-unverified close 不得：
 
 - 用 entry/mark/current fallback 伪造退出 fill；
@@ -293,7 +297,14 @@ administrative-unverified close 不得：
 - 被 Risk 当成权威账户损失。
 
 它必须保留 causal ids、actor/source、确认依据和审计事件。原始历史值永久保留，新增结构化字段只描述
-其 provenance 和 eligibility。对应 `OI-B01~B04`、`OI-C03`。
+其 provenance 和 eligibility。当前实现把 realized PnL、exit fee、slippage 留为 unavailable，不改
+current/entry price，不写 paper cash，不触发 shadow/Serenity outcome hook。verified close 要求完整 scoped
+identity、精确数量、quote-currency fee 和 `verified_fill`，用成交加权价与实际 exit fee 结算一次；缺 fee、
+错币种、数量不符或 identity 不符都保持 open。旧 `reconcile_close_orphan` 与 Bitget-only TPSL fallback 已
+删除，旧 `close_position` 也拒绝 synthetic reason。对应 `OI-B01~B04`、`OI-C03`。
+
+PnL 读取已拆出 `today_raw_closed_realized_pnl()` 与 `today_eligible_strategy_pnl()`；旧
+`today_realized_pnl()` 暂保留 raw 兼容语义，Risk 的 authoritative account loss 由 RG-T09 单独迁移。
 
 ### 11.4 中央关闭语义与三种读取口径（OI-S02 implemented）
 

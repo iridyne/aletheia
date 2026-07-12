@@ -49,10 +49,6 @@ def test_one_complete_absence_creates_candidate_but_never_closes(tmp_path, monke
     )
 
     from aletheia.portfolio import position_reconciler as reconciler
-    monkeypatch.setattr(
-        reconciler, "reconcile_close_orphan",
-        lambda item: (_ for _ in ()).throw(AssertionError("one view must not close")),
-    )
     result = reconciler.run_reconcile("demo")
 
     assert result["closed_orphans"] == []
@@ -83,10 +79,6 @@ def test_same_snapshot_retry_is_idempotent_and_second_view_confirms_without_clos
     )
 
     from aletheia.portfolio import position_reconciler as reconciler
-    monkeypatch.setattr(
-        reconciler, "reconcile_close_orphan",
-        lambda item: (_ for _ in ()).throw(AssertionError("T05 never closes")),
-    )
     first = reconciler.run_reconcile("demo")
     retry = reconciler.run_reconcile("demo")
     assert retry["disappearance"]["observations"][0]["inserted"] is False
