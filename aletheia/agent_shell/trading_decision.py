@@ -1205,7 +1205,6 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "- skip: no action now",
         "- close: close an existing position",
         "- reduce: reduce an existing position size",
-        "- watch: mark a symbol for observation (interested but not ready)",
         "- scale_in: add to an existing winning position",
         "- flip: reverse direction (close existing + open opposite)",
         "",
