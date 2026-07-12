@@ -3192,3 +3192,12 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Corrected the status-route regression to accept the intentionally empty model-provider
   value on a fresh configuration instead of requiring the backend to invent one.
 - No runtime behavior changed; the full suite now has no ordinary failures.
+
+## 2026-07-12 — Awaitable test lifecycle enforcement
+
+- Fixed broker and TPSL test doubles that returned or raised without closing already-created
+  coroutine objects, which caused delayed warnings to be attributed to unrelated later tests.
+- Added one reusable closing runner plus unit and subprocess coverage proving deliberate
+  coroutine leaks fail the test run.
+- Promoted unawaited-coroutine and pytest unraisable-exception warnings to errors. Production
+  behavior is unchanged; the remaining Starlette TestClient dependency warning stays visible.

@@ -1,0 +1,35 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-040
+title: Make broker test awaitable handling warning-free
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Eliminate leaked coroutine objects from broker and TPSL tests, add a reusable
+  test-only awaitable-consumption helper and a warning gate that prevents recurrence;
+  exclude Outcome Integrity, position closure/accounting, reconciliation, Learning,
+  Risk, exchange production behavior, live authority, and runtime restarts.
+acceptance:
+- Every sync test double standing in for a coroutine runner deterministically closes
+  the already-created coroutine before returning or raising.
+- Repository pytest policy turns unawaited-coroutine RuntimeWarnings and pytest unraisable
+  exceptions into failures, with a subprocess behavioral test proving the gate.
+- Focused tests, complete specs, architecture fitness, and the full suite pass with
+  zero unawaited-coroutine warnings and no production or Outcome Integrity behavior
+  changes.
+ownership:
+  branch: fix/awaitable-test-hygiene
+  lease_holder: codex
+  claimed_at: '2026-07-12T06:12:13.311739Z'
+  expires_at: '2026-07-12T14:12:13.311904Z'
+base_commit: 1db52e02df7c1aca2067c50e455a9d543afd4e14
+next_action:
+  command_key: specs
+  reason: Commit the warning-hygiene change, then record the registered full spec
+    verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-040.md
+updated_at: '2026-07-12T06:19:30.186414Z'

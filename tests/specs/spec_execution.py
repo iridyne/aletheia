@@ -10,6 +10,7 @@ import textwrap
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
+from tests.async_test_utils import closing_coro_runner
 
 
 # ---------------------------------------------------------------------------
@@ -251,11 +252,13 @@ def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
     monkeypatch.setattr(repo, "insert_order", _spy_insert)
     monkeypatch.setattr(bitget_broker, "insert_order", _spy_insert)
 
-    # Patch _run_coro so the exchange call raises immediately.
-    def _raise(_coro):
-        raise ConnectionError("exchange unavailable")
-
-    monkeypatch.setattr(bitget_broker, "_run_coro", _raise)
+    # Close the already-created coroutine before simulating an exchange failure;
+    # otherwise the leak is reported later against an unrelated test.
+    monkeypatch.setattr(
+        bitget_broker,
+        "_run_coro",
+        closing_coro_runner(ConnectionError("exchange unavailable")),
+    )
 
     with pytest.raises(ConnectionError):
         bitget_broker.execute_live_order(

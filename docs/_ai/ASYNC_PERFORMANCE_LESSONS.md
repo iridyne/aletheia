@@ -133,6 +133,7 @@ market ticker @15s）。在 Settings 页打开期间，这些持续占用后端 
 □ 新轮询间隔 >= 30s（除非 handler 是纯内存操作）
 □ ensure_data_dirs / 类似"初始化"操作只跑一次，不在热路径上
 □ audit/log 写入在 POST handler 里是否可接受（考虑 async queue）
+□ 同步测试替身收到已创建的 coroutine 时，是否执行、await 或显式 close
 ```
 
 ---
@@ -145,3 +146,24 @@ market ticker @15s）。在 Settings 页打开期间，这些持续占用后端 
 | `pnl.py:compute_portfolio()` | SELECT * FROM positions WHERE status='closed' LIMIT 10000 | GET /api/portfolio 在 421MB DB 上慢 | 加分页或只返回 summary |
 | `data.py:start_agent_run()` | inline await run_agent() = 全 LLM 调用在 HTTP 请求内 | POST /api/agent-runs/start 可能 60s+ | 改为 fire-and-forget + job_id 轮询 |
 | `frontdoor_route.py` | 每次代理请求读 frontdoor-route.json | 每 /api/* 一次磁盘读 | 加 10s TTL 缓存 |
+
+---
+
+## 6. 异步测试替身必须拥有传入 coroutine 的生命周期
+
+Broker 的同步包装器接收的是**已经创建好的 coroutine 对象**。测试若把包装器替换成
+`MagicMock(return_value=...)` 或直接 `side_effect=Exception(...)`，调用结果虽然符合断言，
+但传入的 coroutine 既没有运行、也没有关闭。它通常要等到后续测试触发垃圾回收才报警，
+所以警告可能错误地显示在 OpenAPI、表现统计或其他完全无关的测试名下。
+
+测试规则：
+
+- 需要真实执行时，使用真正的事件循环 runner。
+- 只想模拟返回值或错误时，使用 `tests.async_test_utils.closing_coro_runner(...)`，
+  先关闭传入 coroutine，再返回或抛错。
+- 不得把 coroutine 存进列表只为统计调用次数；关闭后记录普通标记或检查 mock 调用。
+- `pyproject.toml` 将未等待 coroutine 和 pytest 的 unraisable exception 设为错误，
+  不得用过滤器隐藏。
+
+这条门禁保护的是测试可信度：如果协程泄漏只作为 warning，测试可以全绿，但警告归因、
+资源生命周期和后续测试隔离都是假的。
