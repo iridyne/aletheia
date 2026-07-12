@@ -2,7 +2,7 @@
 
 > Complete endpoint index for Aletheia Trading OS backend (FastAPI on :8788, proxied via :8787).
 > All endpoints prefixed with `/api/` unless noted. Auth: none (local-only by design).
-> Last updated: 2026-07-03 (Learning SDD/API alignment)
+> Last updated: 2026-07-12 (paper-Learning settings alignment)
 
 ---
 
@@ -211,6 +211,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 |--------|------|-------------|
 | GET | `/settings` | Full config as JSON |
 | POST | `/settings/autonomous-learning` | Learning loop toggles |
+| POST | `/settings/learning` | Paper-only Learning experiment controls: contribution measurement, lifecycle automation, paper influence path allowlist, auto-refreeze, evaluation interval, and final-stage allocation. Lifecycle automation and paper influence default off; this endpoint cannot enable live trading. |
 | POST | `/settings/bypass-distress-gate` | Explicit operator bypass for distress gate checks |
 | POST | `/settings/exchange-markets` | Observed symbols list |
 | POST | `/settings/primary-exchange` | Primary exchange selection |

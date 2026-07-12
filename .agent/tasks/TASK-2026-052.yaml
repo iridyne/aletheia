@@ -1,0 +1,40 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-052
+title: Harden Learning authority identity checks
+status: in_progress
+packet_type: standard
+scope:
+  boundary: 'Learning paper-authority identity checks for the AT-02 lifecycle: predecessor,
+    hypothesis, stage evidence, policy epoch, metric, and declared-horizon binding;
+    plus the missing API-reference entry for the already implemented paper-Learning
+    settings endpoint'
+  excluded: runtime facts and credentials; live trading; Risk, Execution, Exchange,
+    Universe, Ranker, Guard, Operator, Sizing, allocation defaults, and lifecycle/scheduler
+    semantics
+intent: Close the AT-02 authority gap by binding approved measurement evidence to
+  the same hypothesis, predecessor experiment, and declared horizon before any paper
+  influence can be authorized.
+acceptance:
+- A supported paper-stage experiment authorizes only when its activation verdict belongs
+  to its closed predecessor and the same hypothesis, and its declared horizon matches
+  the hypothesis.
+- A current-stage measurement from a different hypothesis cannot authorize paper influence.
+- Missing or malformed parent/hypothesis identity fails closed without changing any
+  experiment state.
+- The existing paper-Learning settings endpoint is listed in the canonical API reference.
+- Focused lifecycle/authority/spec regressions and the strict workflow check pass.
+ownership:
+  branch: iridite/learning-authority-identity-gates
+  lease_holder: codex
+  claimed_at: '2026-07-12T14:37:07.263700Z'
+  expires_at: '2026-07-12T22:37:07.263865Z'
+base_commit: d3b3d9ca86c067ac9e9f7f1039c8e31831565afa
+next_action:
+  command_key: specs
+  reason: Identity binding and API-reference drift are fixed; record the final executable-contract
+    proof after the implementation commit.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-052.md
+updated_at: '2026-07-12T14:45:03.772125Z'
