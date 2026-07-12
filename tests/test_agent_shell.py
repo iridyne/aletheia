@@ -331,7 +331,9 @@ async def test_trading_decision_brakes_one_sided_recent_proposals(tmp_path, monk
 
     decision = await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
 
-    assert decision.action == "watch"
+    # The proposal-loop repair removed "watch" from the executable action set:
+    # a brake rejection must terminate this opportunity as an explicit skip.
+    assert decision.action == "skip"
     assert "directional proposal brake" in decision.reasoning
     debate.assert_not_awaited()
 
