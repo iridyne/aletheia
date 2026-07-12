@@ -281,11 +281,12 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             direction = candidate.get("direction")
             from aletheia.storage.models import PiDecision
             from aletheia.storage.repositories import insert_pi_decision
+            _sig_conviction = min(int(candidate.get("trade_score", 0)), 95)
             pi_dec = PiDecision(
                 symbol=candidate["symbol"],
                 direction=direction,
                 action="signal_pending",
-                conviction=0,
+                conviction=_sig_conviction,
                 reasoning=(
                     f"Ranker candidate: score={candidate.get('trade_score')} "
                     f"scanner={candidate.get('scanner_family')} "
