@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-031
 title: Plan reconciled-gone integrity remediation
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: documentation-only incident audit, implementation plan, issue ledger,
@@ -31,8 +31,9 @@ ownership:
   expires_at: '2026-07-12T12:04:42.640592Z'
 base_commit: 6468f765683f30b5da0f981db4c6b27570d1f6e6
 next_action:
-  command_key: architecture
-  reason: Review the documentation diff, then run the registered architecture verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: architecture
@@ -43,5 +44,13 @@ verification:
   run_at: '2026-07-12T04:15:12.666246Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 3cd3a510aba252a7fe78234990e43f9038adcd8e
+  run_at: '2026-07-12T04:15:39.619842Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-031.md
-updated_at: '2026-07-12T04:15:12.666452Z'
+updated_at: '2026-07-12T04:15:39.757779Z'
