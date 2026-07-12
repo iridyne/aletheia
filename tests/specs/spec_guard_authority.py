@@ -212,13 +212,18 @@ def test_audit_and_reversible_downgrade(tmp_path, monkeypatch):
     assert meta_learned["shadow_only"] is True
     assert meta_learned["block_candidate"] is False
     assert meta_learned["enforcement"] == "advisory"
+    assert meta_learned["score_penalty"] == 0  # fully observe-only, even under old code
     assert meta_learned["pre_shadow_enforcement"] == "blocking"
     assert meta_learned["pre_shadow_block_candidate"] is True
+    assert meta_learned["pre_shadow_score_penalty"] == 10.0
     assert "shadow-only" in meta_learned["tags"]
 
     meta_seed, _ = parse_frontmatter(guards_dir / "seed.md")
     assert meta_seed["block_candidate"] is True  # seed safety guard never touched
     assert "shadow_only" not in meta_seed
+
+    # Idempotent: a second run finds nothing left to downgrade.
+    assert downgrade_learned_guards_to_shadow(dry_run=True)["would_downgrade"] == 0
 
     # Post-downgrade audit shows nothing still enforcing.
     assert all(not r["still_enforcing"] for r in audit_auto_guards())

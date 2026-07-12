@@ -331,8 +331,17 @@ def downgrade_learned_guards_to_shadow(*, dry_run: bool = True) -> dict:
                 if guard_origin(meta) != "learned":
                     continue
                 scanned += 1
-                already_shadow = bool(meta.get("shadow_only")) and not bool(meta.get("block_candidate"))
-                if already_shadow and str(meta.get("enforcement")) == "advisory":
+                # Fully observe-only = shadow + advisory + no block + no penalty. Zeroing
+                # the penalty too means even the pre-restart gateway (which applies
+                # score_penalty regardless of shadow_only) stops changing behavior; the
+                # new evaluate_guards seam enforces the same thing post-restart.
+                fully_observe = (
+                    bool(meta.get("shadow_only"))
+                    and not bool(meta.get("block_candidate"))
+                    and str(meta.get("enforcement")) == "advisory"
+                    and float(meta.get("score_penalty") or 0) == 0
+                )
+                if fully_observe:
                     continue
                 before = {
                     "enforcement": meta.get("enforcement"),
@@ -351,6 +360,7 @@ def downgrade_learned_guards_to_shadow(*, dry_run: bool = True) -> dict:
                 new_meta["shadow_only"] = True
                 new_meta["enforcement"] = "advisory"
                 new_meta["block_candidate"] = False
+                new_meta["score_penalty"] = 0
                 tags = list(new_meta.get("tags") or [])
                 if "shadow-only" not in tags:
                     tags.append("shadow-only")
