@@ -97,11 +97,21 @@ def get_open_experiment(hypothesis_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def get_latest_verdict(experiment_id: str) -> dict | None:
+def get_latest_verdict(experiment_id: str, *, authority_only: bool = False) -> dict | None:
+    """Return the newest verdict, optionally restricted to authority decisions.
+
+    Measurement verdicts intentionally use a separate vocabulary
+    (``positive``/``neutral``/``negative``/``insufficient_data``/``invalid``).
+    They are durable evidence, never a signal to change a consumer's authority.
+    """
+    clauses = ["experiment_id=?"]
+    params: list[str] = [experiment_id]
+    if authority_only:
+        clauses.append("verdict IN ('promote', 'refreeze')")
     row = get_db().execute(
-        "SELECT * FROM learning_contribution_verdicts WHERE experiment_id=? "
+        "SELECT * FROM learning_contribution_verdicts WHERE " + " AND ".join(clauses) + " "
         "ORDER BY created_at DESC LIMIT 1",
-        (experiment_id,),
+        tuple(params),
     ).fetchone()
     return dict(row) if row else None
 
@@ -119,6 +129,7 @@ def get_latest_verdict_for_cohort(
     row = get_db().execute(
         "SELECT * FROM learning_contribution_verdicts "
         "WHERE experiment_id=? AND policy_epoch=? AND stage=? "
+        "AND verdict IN ('promote', 'refreeze') "
         "ORDER BY created_at DESC LIMIT 1",
         (experiment_id, policy_epoch, stage),
     ).fetchone()

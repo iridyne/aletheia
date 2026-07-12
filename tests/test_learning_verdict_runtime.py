@@ -373,6 +373,42 @@ def test_measurement_verdict_never_authorizes_or_changes_learning_lifecycle():
     assert get_record("learning_experiments", experiment.experiment_id)["status"] == "active"
 
 
+def test_measurement_verdict_does_not_shadow_an_existing_authority_verdict():
+    hypothesis, experiment = _experiment()
+    _exposure(experiment, hypothesis, candidate="authority-treatment", assignment="treatment")
+    _exposure(experiment, hypothesis, candidate="authority-control", assignment="control")
+    _outcome("authority-treatment", net=1.0)
+    _outcome("authority-control", net=0.0)
+    from aletheia.learning.ledger import insert_record
+    from aletheia.learning.models import LearningContributionVerdict, LearningExperiment
+    from aletheia.learning.experiments import _verdict_authorizes
+
+    insert_record("learning_contribution_verdicts", LearningContributionVerdict(
+        verdict_id="manual-authority-promotion",
+        experiment_id=experiment.experiment_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        window_start=_iso(-1),
+        window_end=_iso(-1, 1),
+        unique_treatment_n=1,
+        unique_control_n=1,
+        baseline=0.0,
+        observed=1.0,
+        delta=1.0,
+        harm_metrics_json='{"breached":false}',
+        verdict="promote",
+        reason="separately authorized historical decision",
+        policy_epoch="epoch-a",
+        stage=experiment.stage,
+        created_at=_iso(-1, 1),
+    ))
+    assert _verdict_authorizes(LearningExperiment(**experiment.model_dump()), "epoch-a") is True
+
+    measurement = _run(experiment.experiment_id)[0]
+
+    assert measurement.verdict in {"positive", "neutral"}
+    assert _verdict_authorizes(LearningExperiment(**experiment.model_dump()), "epoch-a") is True
+
+
 def test_undeclared_learning_path_is_not_processed_or_persisted():
     hypothesis, experiment = _experiment(path_id="ranker_case_score")
     _exposure(experiment, hypothesis, candidate="other-treatment", assignment="treatment")
