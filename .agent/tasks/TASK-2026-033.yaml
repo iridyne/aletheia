@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-033
 title: Add outcome integrity persistence schema
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: Position persistence fields, additive SQLite DDL/migrations, durable disappearance
@@ -34,9 +34,9 @@ ownership:
   expires_at: '2026-07-12T12:29:30.835092Z'
 base_commit: 6a732adfbac796b17703dd7d7740476582a71d5d
 next_action:
-  command_key: specs
-  reason: Inspect current Position schema, migrations, repository serialization, and
-    migration-test patterns before implementing additive fields.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: specs
@@ -47,5 +47,13 @@ verification:
   run_at: '2026-07-12T04:39:44.542077Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: b10d2daf0ed3e58d534b42520214d0a8cc36633d
+  run_at: '2026-07-12T04:40:27.098812Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-033.md
-updated_at: '2026-07-12T04:39:44.542285Z'
+updated_at: '2026-07-12T04:40:39.177879Z'
