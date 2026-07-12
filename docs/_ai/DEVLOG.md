@@ -3218,3 +3218,20 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Expanded OI-C02 into an enumerated behavior-consumer guard with genuine-vs-administrative
   regressions. Risk daily loss, raw/genuine API/UI reporting and historical remediation remain
   isolated follow-up tasks.
+
+## 2026-07-12 — Awaitable test lifecycle enforcement
+
+- Fixed broker and TPSL test doubles that returned or raised without closing already-created
+  coroutine objects, which caused delayed warnings to be attributed to unrelated later tests.
+- Added one reusable closing runner plus unit and subprocess coverage proving deliberate
+  coroutine leaks fail the test run.
+- Promoted unawaited-coroutine and pytest unraisable-exception warnings to errors. Production
+  behavior is unchanged; the remaining Starlette TestClient dependency warning stays visible.
+
+## 2026-07-12 — Starlette TestClient httpx2 migration
+
+- Added Starlette's supported `httpx2` client as a development-only dependency; runtime network
+  code continues to use the existing `httpx[socks]` stack.
+- Verified all existing synchronous ASGI TestClient suites without changing route or API tests.
+- Promoted Starlette deprecation warnings to failures. The full suite now emits no warnings;
+  two unrelated Outcome Integrity baseline test failures remain explicit.

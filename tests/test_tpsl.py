@@ -15,6 +15,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.async_test_utils import closing_coro_runner
+
 
 # ─── BitgetClient TPSL methods ───────────────────────────────────────────────
 
@@ -119,26 +121,25 @@ def test_try_place_tpsl_stores_ids_on_success(tmp_path):
     mock_client.place_tpsl_order = AsyncMock(side_effect=["sl-id-1", "tp-id-1"])
     mock_cfg = MagicMock()
 
-    with patch("aletheia.execution.bitget_broker._run_coro", side_effect=lambda coro: coro.__next__() if False else _sync_run(coro)):
-        with patch("aletheia.execution.bitget_broker._run_coro") as mock_run, \
-             patch("aletheia.execution.bitget_broker.update_position") as mock_update:
-            mock_run.side_effect = ["sl-id-1", "tp-id-1"]
+    with patch(
+        "aletheia.execution.bitget_broker._run_coro",
+        side_effect=closing_coro_runner("sl-id-1", "tp-id-1"),
+    ), patch("aletheia.execution.bitget_broker.update_position") as mock_update:
+        _try_place_tpsl(
+            client=mock_client,
+            position_id="pos-1",
+            exchange_symbol="BTCUSDT",
+            hold_side="long",
+            size=0.01,
+            stop_price=95000.0,
+            take_profit_price=105000.0,
+            cfg=mock_cfg,
+        )
 
-            _try_place_tpsl(
-                client=mock_client,
-                position_id="pos-1",
-                exchange_symbol="BTCUSDT",
-                hold_side="long",
-                size=0.01,
-                stop_price=95000.0,
-                take_profit_price=105000.0,
-                cfg=mock_cfg,
-            )
-
-            mock_update.assert_called_once()
-            stored = json.loads(mock_update.call_args[1]["exchange_tpsl_order_id"])
-            assert stored["sl"] == "sl-id-1"
-            assert stored["tp"] == "tp-id-1"
+        mock_update.assert_called_once()
+        stored = json.loads(mock_update.call_args[1]["exchange_tpsl_order_id"])
+        assert stored["sl"] == "sl-id-1"
+        assert stored["tp"] == "tp-id-1"
 
 
 def test_try_place_tpsl_non_fatal_on_failure():
@@ -148,7 +149,10 @@ def test_try_place_tpsl_non_fatal_on_failure():
     mock_client = MagicMock()
     mock_cfg = MagicMock()
 
-    with patch("aletheia.execution.bitget_broker._run_coro", side_effect=RuntimeError("API down")), \
+    with patch(
+        "aletheia.execution.bitget_broker._run_coro",
+        side_effect=closing_coro_runner(RuntimeError("API down"), RuntimeError("API down")),
+    ), \
          patch("aletheia.execution.bitget_broker.update_position") as mock_update:
         _try_place_tpsl(
             client=mock_client, position_id="pos-2", exchange_symbol="BTCUSDT",
@@ -168,6 +172,7 @@ def test_try_cancel_tpsl_cancels_both_orders():
     cancelled = []
 
     def fake_run(coro):
+        coro.close()
         cancelled.append("called")
         return {"cancelled": True}
 
@@ -203,7 +208,8 @@ def test_replace_exchange_stop_cancel_and_replace():
     calls = []
 
     def fake_run(coro):
-        calls.append(coro)
+        coro.close()
+        calls.append("called")
         return "new-sl-id"
 
     with patch("aletheia.execution.bitget_broker._run_coro", side_effect=fake_run), \
@@ -262,7 +268,7 @@ def test_sync_exchange_closed_marks_position_closed():
          patch("aletheia.exchanges.bitget.client.BitgetClient", return_value=mock_client_inst), \
          patch("aletheia.data.symbols.to_canonical", side_effect=lambda s: "SOL/USDT"), \
          patch("asyncio.get_running_loop", side_effect=RuntimeError("no loop")), \
-         patch("asyncio.run", return_value=[ExchangePos()]):
+         patch("asyncio.run", side_effect=closing_coro_runner([ExchangePos()])):
         synced = _sync_exchange_closed(mock_cfg)
 
     assert synced == 1

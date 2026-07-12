@@ -46,7 +46,12 @@ packages = ["aletheia"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py", "spec_*.py"]
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "error:coroutine .* was never awaited:RuntimeWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+    "error::starlette.exceptions.StarletteDeprecationWarning",
+]
 markers = [
     "fast: default AI feedback set; cheap local tests suitable for every bug-fix loop",
     "integration: tests that cross route, DB, scheduler, broker, runtime, or service boundaries",
@@ -79,6 +84,7 @@ root = true
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.5,<3",
     "hypothesis>=6.155.3",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
