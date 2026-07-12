@@ -1,0 +1,217 @@
+"""Deterministic, measurement-only contribution verdict calculations."""
+
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass
+from datetime import datetime
+import json
+import math
+import random
+from statistics import fmean
+from typing import Any
+
+from aletheia.learning.cohorts import ContributionCohort, CohortSample
+
+
+METRIC_VERSION = "universe_family_calibration_net_return_v1"
+BOOTSTRAP_SEED = 20260712
+BOOTSTRAP_RESAMPLES = 2000
+_PRACTICAL_NEUTRAL_DELTA_PCT = 0.10
+
+
+@dataclass(frozen=True)
+class VerdictEvaluation:
+    baseline: float | None
+    observed: float | None
+    delta: float | None
+    confidence_low: float | None
+    confidence_high: float | None
+    harm_metrics: dict[str, Any]
+    verdict: str
+    reason: str
+
+
+def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
+    """Classify one already-isolated cohort without changing any authority state."""
+    treatment = cohort.treatment_samples
+    control = cohort.control_samples
+    treatment_values = [sample.net_return_pct for sample in treatment]
+    control_values = [sample.net_return_pct for sample in control]
+    observed = fmean(treatment_values) if treatment_values else None
+    baseline = fmean(control_values) if control_values else None
+    delta = observed - baseline if observed is not None and baseline is not None else None
+    confidence_low, confidence_high = _bootstrap_interval(treatment_values, control_values)
+    harm_metrics = _harm_metrics(cohort, treatment, control, delta)
+
+    if cohort.invalid_reasons:
+        return VerdictEvaluation(
+            baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
+            "invalid", _reason("invalid evidence", cohort.invalid_reasons),
+        )
+    if _insufficient(cohort, treatment, control):
+        return VerdictEvaluation(
+            baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
+            "insufficient_data", "insufficient unique prospective treatment/control samples or time span",
+        )
+    assert delta is not None
+    if harm_metrics["breached"]:
+        return VerdictEvaluation(
+            baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
+            "negative", _reason("harm gate breached", harm_metrics["breach_reasons"]),
+        )
+    if delta < 0:
+        return VerdictEvaluation(
+            baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
+            "negative", "treatment cost-aware mean trails control",
+        )
+    threshold = max(_PRACTICAL_NEUTRAL_DELTA_PCT, float(cohort.hypothesis.effect_threshold or 0.0))
+    if delta < threshold or confidence_low is None or confidence_low <= 0:
+        return VerdictEvaluation(
+            baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
+            "neutral", "effect is within the practical-neutral band or confidence is inconclusive",
+        )
+    return VerdictEvaluation(
+        baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
+        "positive", "cost-aware treatment mean exceeds control with deterministic confidence and no harm breach",
+    )
+
+
+def _insufficient(
+    cohort: ContributionCohort,
+    treatment: list[CohortSample],
+    control: list[CohortSample],
+) -> bool:
+    required = max(1, int(cohort.experiment.min_samples_per_arm))
+    if len(treatment) < required or len(control) < required:
+        return True
+    entries = [_parse_time(sample.entry_ts) for sample in cohort.samples]
+    times = [entry for entry in entries if entry is not None]
+    if len(times) != len(cohort.samples):
+        return True
+    span_days = (max(times) - min(times)).total_seconds() / 86_400 if times else 0.0
+    return span_days < max(0, int(cohort.experiment.min_market_days))
+
+
+def _bootstrap_interval(treatment: list[float], control: list[float]) -> tuple[float | None, float | None]:
+    if not treatment or not control:
+        return None, None
+    rng = random.Random(BOOTSTRAP_SEED)
+    deltas = []
+    for _ in range(BOOTSTRAP_RESAMPLES):
+        treated = fmean(treatment[rng.randrange(len(treatment))] for _ in treatment)
+        baseline = fmean(control[rng.randrange(len(control))] for _ in control)
+        deltas.append(treated - baseline)
+    deltas.sort()
+    return _quantile(deltas, 0.10), _quantile(deltas, 0.90)
+
+
+def _harm_metrics(
+    cohort: ContributionCohort,
+    treatment: list[CohortSample],
+    control: list[CohortSample],
+    delta: float | None,
+) -> dict[str, Any]:
+    treatment_loss_rate = _loss_rate(treatment)
+    control_loss_rate = _loss_rate(control)
+    loss_rate_delta = (
+        treatment_loss_rate - control_loss_rate
+        if treatment_loss_rate is not None and control_loss_rate is not None else None
+    )
+    treatment_mae_p95 = _mae_p95(treatment)
+    control_mae_p95 = _mae_p95(control)
+    mae_p95_worsening = (
+        treatment_mae_p95 - control_mae_p95
+        if treatment_mae_p95 is not None and control_mae_p95 is not None else None
+    )
+    gates = _harm_gates(cohort)
+    breached: list[str] = []
+    if loss_rate_delta is not None and loss_rate_delta > gates["max_loss_rate_increase"]:
+        breached.append("loss_rate_increase")
+    if mae_p95_worsening is not None and mae_p95_worsening > gates["max_mae_p95_worsening_pct"]:
+        breached.append("mae_p95_worsening")
+    return {
+        "metric_version": METRIC_VERSION,
+        "bootstrap_seed": BOOTSTRAP_SEED,
+        "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
+        "policy_epoch": cohort.key.policy_epoch,
+        "horizon": cohort.key.horizon,
+        "outcome_contract_version": cohort.key.outcome_contract_version,
+        "raw_exposure_n": cohort.raw_exposure_n,
+        "duplicate_exposure_n": cohort.duplicate_exposure_n,
+        "duplicate_outcome_n": cohort.duplicate_outcome_n,
+        "exclusion_reasons": dict(sorted(cohort.exclusion_reasons.items())),
+        "invalid_reasons": dict(sorted(cohort.invalid_reasons.items())),
+        "treatment_loss_rate": treatment_loss_rate,
+        "control_loss_rate": control_loss_rate,
+        "loss_rate_delta": loss_rate_delta,
+        "treatment_mae_p95_abs_pct": treatment_mae_p95,
+        "control_mae_p95_abs_pct": control_mae_p95,
+        "mae_p95_worsening_pct": mae_p95_worsening,
+        "harm_gates": gates,
+        "net_delta_pct": delta,
+        "breached": bool(breached),
+        "breach_reasons": breached,
+    }
+
+
+def _harm_gates(cohort: ContributionCohort) -> dict[str, float]:
+    gates: dict[str, float] = {
+        "max_loss_rate_increase": 1.0,
+        "max_mae_p95_worsening_pct": 0.25,
+    }
+    for raw in (cohort.hypothesis.harm_budget_json, cohort.experiment.harm_gate_json):
+        try:
+            configured = json.loads(raw or "{}")
+        except (TypeError, ValueError):
+            configured = {}
+        if not isinstance(configured, dict):
+            continue
+        for key in tuple(gates):
+            value = _finite_float(configured.get(key))
+            if value is not None:
+                gates[key] = value
+    return gates
+
+
+def _loss_rate(samples: list[CohortSample]) -> float | None:
+    if not samples:
+        return None
+    return sum(sample.net_return_pct < 0 for sample in samples) / len(samples)
+
+
+def _mae_p95(samples: list[CohortSample]) -> float | None:
+    values = [-sample.mae_pct for sample in samples if sample.mae_pct is not None]
+    return _quantile(values, 0.95) if values else None
+
+
+def _quantile(values: list[float], probability: float) -> float:
+    if not values:
+        raise ValueError("cannot calculate quantile of no values")
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * probability
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return float(ordered[lower])
+    return float(ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower))
+
+
+def _parse_time(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return None
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _reason(prefix: str, reasons: Any) -> str:
+    names = sorted(reasons if not isinstance(reasons, Counter) else reasons.keys())
+    return f"{prefix}: {', '.join(names)}"

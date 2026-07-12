@@ -271,6 +271,12 @@ An artifact can promote only when:
 `insufficient_data`, `neutral`, `positive`, and `negative` are distinct verdicts. Absence
 of evidence is never positive. A positive verdict expires unless continuously renewed.
 
+Current runtime scope: the contribution evaluator is measurement-only and accepts only
+prospective `universe_family_calibration` exposures. It isolates experiment, policy epoch,
+horizon, and outcome-contract version; links only the exact registered candidate outcome; and
+persists deterministic confidence, harm, and exclusion details. Its `positive` result is not an
+authority promotion signal, so it cannot enable a treatment or alter a multiplier.
+
 ## 8. Automatic Demotion And Refreeze
 
 Every active artifact is continuously evaluated on a rolling window and an immutable
@@ -444,6 +450,8 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — deterministic policy epochs now persist and stratify universe, factor, ranker, and sizing exposures; prompt-bundle treatment exposure remains |
 | LE-B22 | L2b | factor producer, Operator context, ranker trace, and exposure use the same stable `factor_key` identity | implemented |
 | LE-B23 | L2b | retrying one exposure dedup key stores one immutable influence record | implemented |
+| LE-V01 | L2b | universe calibration verdict runtime uses exact, prospective, cost-aware treatment/control cohorts | implemented — measurement-only evaluator |
+| LE-V02 | L2c | deterministic verdict storage cannot alter Learning authority or experiment lifecycle | implemented — evaluator writes only its idempotent measurement record |
 | LE-C01 | L2c | no promotion without unique samples, time span, and outcome links | implemented |
 | LE-C02 | L2c | negative/unsafe holdout automatically demotes or refreezes | implemented |
 | LE-C03 | L2c | refreeze restores static baseline without deleting evidence | implemented |

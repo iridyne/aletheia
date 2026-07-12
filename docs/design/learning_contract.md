@@ -84,9 +84,11 @@ loop contributes positively. Current behavior has these contract-relevant limita
   behaviorally neutral until sufficient prospective treatment/control outcomes exist;
 - factor identity is standardized as `factor_key` through producer, ranker, Operator context and
   prompt rendering, with immutable before/after exposure records;
-- positive/negative experiment verdict calculation is still a separate evaluator responsibility;
-  the authority adapter independently verifies real linked samples and fails closed if a verdict
-  is absent, stale, under-sampled, or contradicted by a newer refreeze verdict;
+- the first contribution evaluator now measures only prospective
+  `universe_family_calibration` exposure cohorts against exact settled, cost-aware fixed-horizon
+  outcomes. It persists positive/neutral/negative/insufficient/invalid measurement verdicts but
+  does not emit the authority adapter's `promote`/`refreeze` values, so the multiplier remains
+  refrozen at its static baseline;
 - automatic lesson `block_*` suggestions are rewritten as non-blocking `shadow-only` guard
   candidates, never coerced into Risk Engine category `risk`, and excluded from historical
   auto-promotion until prospective evaluation or explicit owner action;
