@@ -2,14 +2,15 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-035
 title: Refreeze Learning on reconciliation integrity incidents
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: reconciliation incident detector and persistence, demo reconcile circuit
-    breaker, behavior-changing Learning gates, doctor, focused tests and matching SDD
+    breaker, behavior-changing Learning gates, doctor, focused tests and matching
+    SDD
   excluded: orphan classification, close accounting, exchange queries/clients, PnL/cash,
-    Risk behavior or limits, orders, live authority, credentials, gateway restart and
-    runtime database mutation
+    Risk behavior or limits, orders, live authority, credentials, gateway restart
+    and runtime database mutation
 intent: Generalize reconciliation thrash detection from adopted-only reopen rows to
   any scoped native or adopted reopen after an administrative close, persist and deduplicate
   integrity incidents, block destructive reconciliation cycles, globally refreeze
@@ -37,10 +38,18 @@ ownership:
   expires_at: '2026-07-12T12:59:13.329653Z'
 base_commit: 9e7910948e6548c266c174e5e092395c6bff78d3
 next_action:
-  command_key: specs
-  reason: Review and commit the implementation, then register the full SDD proof and
-    complete the task after the broader suite finishes.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: cb85752b65973176d629619fca68694cae40d88e
+  run_at: '2026-07-12T05:20:21.024427Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-035.md
-updated_at: '2026-07-12T04:59:13.442864Z'
+updated_at: '2026-07-12T05:20:39.964103Z'
