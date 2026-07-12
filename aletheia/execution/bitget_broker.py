@@ -54,6 +54,19 @@ def _run_coro(coro):
         return pool.submit(asyncio.run, coro).result()
 
 
+
+def _ensure_mix_margin(client, required_usd: float, dry_run: bool = False) -> None:
+    """Top up the mix (futures) wallet from UTA before a futures order."""
+    if required_usd <= 0 or dry_run:
+        return
+    try:
+        from aletheia.exchanges.bitget.client import DemoFundingUnavailable
+        _run_coro(client.transfer(required_usd))
+    except DemoFundingUnavailable:
+        raise
+    except Exception as e:
+        logger.warning("mix margin precheck skipped: %s", e)
+
 def execute_live_order(
     proposal_id: str,
     risk_decision_id: str | None,
@@ -104,6 +117,12 @@ def execute_live_order(
         status="pending",
     )
     insert_order(order)
+
+    required_margin = 0.0
+    if market_type != 'spot' and quantity and price and leverage:
+        required_margin = float(quantity) * float(price) / float(leverage)
+    if market_type != 'spot' and required_margin > 0:
+        _ensure_mix_margin(client, required_margin)
 
     try:
         order_resp = _run_coro(client.place_order(OrderRequest(

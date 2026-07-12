@@ -55,6 +55,11 @@ class OrderRequest:
     hold_side: str | None = None  # "long" | "short" — required for a hedge-mode close
     leverage: int | None = None   # USDT-futures: set on the exchange before an open
 
+class DemoFundingUnavailable(RuntimeError):
+    """mix wallet short and cannot be topped up automatically."""
+
+
+
 
 @dataclass
 class OrderResponse:
@@ -479,6 +484,35 @@ class BitgetClient:
         if not accounts:
             return {}
         return accounts[0]
+
+
+    async def transfer(self, amount: float, coin: str = "USDT") -> dict | None:
+        """Move `amount` of `coin` from unified/spot wallet into mix (USDT-FUTURES)."""
+        import json as _json
+        try:
+            mix = await self.get_mix_account("USDT-FUTURES")
+            available = float(mix.get("available") or 0)
+        except Exception:
+            available = 0.0
+        need = amount - available
+        if need <= 1.0:
+            return None
+        path = "/api/v2/spot/wallet/transfer"
+        body_data = {"coin": coin, "amount": f"{need:.2f}", "fromAccount": "spot", "toAccount": "mix_usdt"}
+        body = _json.dumps(body_data)
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=20) as http:
+            resp = await http.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        code = data.get("code")
+        if code == "40404":
+            raise DemoFundingUnavailable(
+                f"mix wallet short by ${need:.2f}; Bitget transfer endpoint "
+                f"unavailable on this key (40404). Seed the demo futures wallet manually."
+            )
+        if code != "00000":
+            raise DemoFundingUnavailable(f"Bitget transfer failed: {data.get('msg')} (code {code})")
+        return data.get("data", {})
 
     async def get_uta_account(self) -> dict:
         """Get UTA (Unified Trading Account) account assets — v3 API.
