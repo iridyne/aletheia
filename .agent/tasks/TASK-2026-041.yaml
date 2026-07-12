@@ -1,6 +1,6 @@
 schema_version: 1
 handoff_version: 1
-id: TASK-2026-040
+id: TASK-2026-041
 title: Make broker test awaitable handling warning-free
 status: done
 packet_type: standard
@@ -39,5 +39,5 @@ verification:
   run_at: '2026-07-12T06:20:41.588668Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
-handoff: .agent/handoffs/TASK-2026-040.md
+handoff: .agent/handoffs/TASK-2026-041.md
 updated_at: '2026-07-12T06:20:49.449526Z'
