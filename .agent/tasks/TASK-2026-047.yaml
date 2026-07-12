@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-047
 title: Repair structured LLM retry and fallback regressions
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -28,10 +28,18 @@ ownership:
   expires_at: '2026-07-12T17:25:19.890249Z'
 base_commit: a671d9e9297ee2de2cd4d8e2c12a99c39ef3e681
 next_action:
-  command_key: specs
-  reason: Run complete specs and architecture on the merged master-plus-origin baseline
-    before committing.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: c28fa864cc4d4403eae64980bcf8b3246a665f39
+  run_at: '2026-07-12T09:38:16.857647Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-047.md
-updated_at: '2026-07-12T09:32:20.258223Z'
+updated_at: '2026-07-12T09:38:24.125942Z'
