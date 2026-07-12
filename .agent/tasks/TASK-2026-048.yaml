@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-048
 title: Integrate and soak Outcome Integrity
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: Git-only integration of the completed RG-T05 through RG-T12 commits onto
@@ -36,10 +36,9 @@ ownership:
   expires_at: '2026-07-12T17:28:35.558484Z'
 base_commit: 44a9fb007f875222221a7060d51306a9fffd6eca
 next_action:
-  command_key: workflow_tests
-  reason: After controlled owner-checkout deployment and paper-only multi-cycle/restart
-    observation, record out-of-Git runtime evidence, update the handoff without runtime
-    facts, and complete the task.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: specs
@@ -50,5 +49,13 @@ verification:
   run_at: '2026-07-12T09:42:35.776777Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 325eba0c9445df4b1eda86e1c4fb3ad48b8f1d40
+  run_at: '2026-07-12T10:01:06.077442Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-048.md
-updated_at: '2026-07-12T09:43:32.389105Z'
+updated_at: '2026-07-12T10:01:06.096035Z'
