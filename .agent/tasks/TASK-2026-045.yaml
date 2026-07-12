@@ -2,37 +2,41 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-045
 title: Remediate polluted outcome history without deletion
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: dry-run-first maintenance module and CLI, additive classification of unstamped
     closed positions, archival/supersession metadata for polluted derived knowledge,
-    versioned clean-window anchor and incident exclusions, paper-cash compensation candidate
-    report, outcome-integrity doctor summary, existing API response metadata type,
-    focused OI-B05/OI-C05 tests and matching docs
-  excluded: deleting or rewriting original close/cash/audit events, applying cash compensation,
-    guessing ambiguous legacy exits, rebuilding through LLM/network calls, Risk, execution,
-    exchanges, trading decisions, live authority, credentials, config schema, frontend,
-    frontend UI/pages, gateway restart, and applying maintenance to the owner runtime database
+    versioned clean-window anchor and incident exclusions, paper-cash compensation
+    candidate report, outcome-integrity doctor summary, existing API response metadata
+    type, focused OI-B05/OI-C05 tests and matching docs
+  excluded: deleting or rewriting original close/cash/audit events, applying cash
+    compensation, guessing ambiguous legacy exits, rebuilding through LLM/network
+    calls, Risk, execution, exchanges, trading decisions, live authority, credentials,
+    config schema, frontend, frontend UI/pages, gateway restart, and applying maintenance
+    to the owner runtime database
 intent: Add a dry-run-first idempotent history remediation tool, versioned clean-window
   exclusions, derived-artifact supersession, and paper-cash compensation candidates
   without deleting or rewriting original trading, cash, knowledge, or audit records
   and without applying compensation.
 acceptance:
-- Dry-run and apply produce the same planned classification/archive/candidate counts on one
-  immutable snapshot; apply is transactional, additive and idempotent, with no DELETE and no
-  mutation of original economic values, close timestamps, cash events or audit events.
-- Only deterministic administrative/maintenance reasons are backfilled; ambiguous legacy
-  closes remain explicitly ineligible/unverified and are never promoted to strategy outcomes.
-- Polluted active derived knowledge is archived, remains queryable for audit, and records a
-  durable batch id, reason, prior identity and superseded_by identity/version without deletion.
+- Dry-run and apply produce the same planned classification/archive/candidate counts
+  on one immutable snapshot; apply is transactional, additive and idempotent, with
+  no DELETE and no mutation of original economic values, close timestamps, cash events
+  or audit events.
+- Only deterministic administrative/maintenance reasons are backfilled; ambiguous
+  legacy closes remain explicitly ineligible/unverified and are never promoted to
+  strategy outcomes.
+- Polluted active derived knowledge is archived, remains queryable for audit, and
+  records a durable batch id, reason, prior identity and superseded_by identity/version
+  without deletion.
 - Paper cash discrepancies are emitted as owner_approval_required compensation candidates;
   the tool has no path that inserts/applies a compensating capital event.
 - A versioned clean-window anchor excludes pre-anchor, incident-window and unknown-version
   rows; post-anchor evidence still uses central outcome eligibility and stays insufficient
   when samples are absent.
-- OI-B05/OI-C05 and focused maintenance/doctor tests are GREEN; docs and issue ledger are
-  synchronized, with no runtime maintenance apply, Risk/execution/exchange/live/credential
+- OI-B05/OI-C05 and focused maintenance/doctor tests are GREEN; docs and issue ledger
+  are synchronized, with no runtime maintenance apply, Risk/execution/exchange/live/credential
   or original-history mutation.
 ownership:
   branch: fix/outcome-history-remediation
@@ -41,9 +45,18 @@ ownership:
   expires_at: '2026-07-12T15:11:04.426502Z'
 base_commit: 7028cfc9480c89f1743d71d4a6da6d6c7a1bbeb5
 next_action:
-  command_key: specs
-  reason: Add RED history-remediation and clean-window regressions before implementation.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 6f206874a41dd21ecf7a29a8fc78def7d2fb4c19
+  run_at: '2026-07-12T07:38:48.594288Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-045.md
-updated_at: '2026-07-12T07:11:04.426509Z'
+updated_at: '2026-07-12T07:38:54.665799Z'
