@@ -1,0 +1,36 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-056
+title: Publish durable Learning lifecycle authority
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Rebase and publish the completed AT-02 paper lifecycle and fail-closed authority
+  resolver while keeping Learning influence and lifecycle automation disabled by default
+  and preserving the accepted cohort identity gates.
+acceptance:
+- Positive, neutral, negative, insufficient, and invalid measurements map to deterministic
+  stage actions with durable idempotent records.
+- Learning influence and lifecycle automation remain disabled by default; no live,
+  Risk, execution, or credential authority is added.
+- Legacy authority can only use a verdict from the exact current policy epoch and
+  stage; old verdicts cannot grant new authority.
+- The new config fields have matching Settings controls and scheduler/documentation
+  tables stay synchronized.
+- Focused lifecycle tests, all specs, frontend build, architecture, doctor, and strict
+  workflow validation pass after rebase.
+ownership:
+  branch: feat/learning-lifecycle-authority
+  lease_holder: codex-root
+  claimed_at: '2026-07-12T16:46:49.733786Z'
+  expires_at: '2026-07-13T00:46:49.733951Z'
+base_commit: 58cdbc04564a81111412a460238d291c8813181f
+next_action:
+  command_key: specs
+  reason: Verify AT-02 lifecycle and authority behavior against the merged AT-01 baseline.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-056.md
+updated_at: '2026-07-12T16:46:49.846433Z'
