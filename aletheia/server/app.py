@@ -287,6 +287,13 @@ async def _run_startup_sync(sync_fn) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Bump aletheia logger to DEBUG level. The default Python logging level
+    # (WARNING) silently drops all info/debug output from our modules.
+    # Uvicorn already configures root logging handlers, so we just set level.
+    _aletheia_logger = logging.getLogger("aletheia")
+    if _aletheia_logger.level == logging.NOTSET:
+        _aletheia_logger.setLevel(logging.DEBUG)
+
     cfg = bootstrap()
     # Apply proxy config to process env before any HTTP client or scheduler runs.
     # Ensures watchdog-started processes (which inherit no session env vars) still

@@ -273,11 +273,10 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
 
     try:
         # Build per-coin breakdown. Strategy:
-        # 1. Try spot/account/assets — works for live keys, returns real coin balances.
-        # 2. If spot returns empty (demo keys), fall back to mix/account/accounts which
-        #    gives total usdtEquity but only one USDT "coin". We still fetch mix for
-        #    total equity even when spot has data (mix is the authoritative total).
-        # 3. Each non-USDT coin value is coin_qty * USDT_ticker_price.
+        # 1. Try spot/account/assets — works for live classic accounts, returns real coin balances.
+        # 2. Try mix/account/accounts — futures account, authoritative for classic demo accounts.
+        # 3. If both return zero/empty, try UTA v3 API (unified trading account).
+        # 4. Each non-USDT coin value is coin_qty * USDT_ticker_price (or usdValue from UTA).
         coin_usdt: dict[str, float] = {}  # coin → USDT value
 
         # Spot holdings (live accounts / coins held in spot wallet)
@@ -300,7 +299,7 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
         except Exception as e:
             logger.info("exchange_sync: spot balances skipped (%s)", e)
 
-        # Mix (futures) account — authoritative total equity for demo accounts
+        # Mix (futures) account — authoritative total equity for classic demo accounts
         usdt_avail = 0.0
         usdt_frozen = 0.0
         futures_upnl = 0.0
@@ -312,12 +311,42 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
                 usdt_avail = float(mix_acct.get("available") or 0)
                 usdt_frozen = float(mix_acct.get("locked") or 0)
                 futures_upnl = float(mix_acct.get("unrealizedPL") or mix_acct.get("crossedUnrealizedPL") or 0)
-                # If spot returned nothing (demo), use mix USDT as the whole balance
+                # If spot returned nothing (classic demo), use mix USDT as the whole balance
                 if not coin_usdt and equity_from_mix > 0:
                     coin_usdt["USDT"] = equity_from_mix
                 logger.info("exchange_sync: mix equity=%.4f avail=%.4f", equity_from_mix, usdt_avail)
         except Exception as e:
             logger.info("exchange_sync: mix account skipped (%s), falling back to spot", e)
+
+        # UTA (Unified Trading Account) — fallback when classic spot+mix both return zero.
+        # Unified accounts (v3 API) hold multi-coin assets that are invisible to v2 endpoints.
+        if not coin_usdt and (equity_from_mix is None or equity_from_mix <= 0):
+            try:
+                uta_acct = _run_async(client.get_uta_account())
+                if uta_acct:
+                    uta_equity = float(uta_acct.get("usdtEquity") or 0)
+                    uta_unrealised = float(uta_acct.get("usdtUnrealisedPnl") or uta_acct.get("unrealisedPnl") or 0)
+                    assets = uta_acct.get("assets") or []
+                    if assets:
+                        for a in assets:
+                            coin = (a.get("coin") or "").upper()
+                            usd_val = float(a.get("usdValue") or 0)
+                            avail = float(a.get("available") or 0)
+                            locked = float(a.get("locked") or 0)
+                            if usd_val > 0:
+                                coin_usdt[coin] = coin_usdt.get(coin, 0) + usd_val
+                            if coin == "USDT":
+                                usdt_avail += avail
+                                usdt_frozen += locked
+                        futures_upnl += uta_unrealised
+                        if uta_equity > 0:
+                            equity_from_mix = uta_equity
+                        logger.info(
+                            "exchange_sync: UTA account equity=%.4f assets=%d",
+                            uta_equity, len(assets),
+                        )
+            except Exception as e:
+                logger.info("exchange_sync: UTA account skipped (%s)", e)
 
         # Futures positions — unrealized PnL and open count
         positions_count = 0

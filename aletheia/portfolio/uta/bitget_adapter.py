@@ -56,6 +56,32 @@ class BitgetDemoAdapter:
         except Exception as e:
             logger.debug("bitget mix account skipped: %s", e)
 
+        # UTA (Unified Trading Account) fallback — when classic spot+mix both return zero
+        if not coin_usdt and (equity_from_mix is None or equity_from_mix <= 0):
+            try:
+                uta_acct = await client.get_uta_account()
+                if uta_acct:
+                    uta_equity = float(uta_acct.get("usdtEquity") or 0)
+                    uta_unrealised = float(uta_acct.get("usdtUnrealisedPnl") or uta_acct.get("unrealisedPnl") or 0)
+                    assets = uta_acct.get("assets") or []
+                    if assets:
+                        for a in assets:
+                            coin = (a.get("coin") or "").upper()
+                            usd_val = float(a.get("usdValue") or 0)
+                            avail = float(a.get("available") or 0)
+                            locked = float(a.get("locked") or 0)
+                            if usd_val > 0:
+                                coin_usdt[coin] = coin_usdt.get(coin, 0) + usd_val
+                            if coin == "USDT":
+                                usdt_avail += avail
+                                usdt_frozen += locked
+                        futures_upnl += uta_unrealised
+                        if uta_equity > 0:
+                            equity_from_mix = uta_equity
+                        logger.debug("bitget UTA account equity=%.4f assets=%d", uta_equity, len(assets))
+            except Exception as e:
+                logger.debug("bitget UTA account skipped: %s", e)
+
         equity = equity_from_mix if equity_from_mix is not None else sum(coin_usdt.values())
         total = equity if equity > 0 else 1.0
         breakdown = [

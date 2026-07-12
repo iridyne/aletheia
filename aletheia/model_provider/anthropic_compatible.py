@@ -48,7 +48,7 @@ class AnthropicCompatibleProvider(ModelProvider):
             payload["temperature"] = request.temperature
         if request.system:
             payload["system"] = request.system
-        async with httpx_client(timeout=60) as client:
+        async with httpx_client(timeout=300) as client:  # was 60s, too short for 8192-tok generation on LongCat
             resp = await client.post(f"{self.base_url}/v1/messages", json=payload, headers=self._headers())
             raise_for_status_without_secrets(resp)
             data = resp.json()

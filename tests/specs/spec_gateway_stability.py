@@ -154,27 +154,29 @@ def test_llm_structured_retries_and_recovers(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# GS-B02 — empty content is NOT retried (retry can't help, only adds load)
+# GS-B02 — empty content with reasoning-budget exhaustion IS retried with more tokens
 # ---------------------------------------------------------------------------
 
 @spec_claim(
     SpecClaim(
         "GS-B02", _CONTRACT, "§structured retry", "L2b",
-        "Empty content with completion_tokens>0 (reasoning-budget exhaustion) returns "
-        "structured_empty_content immediately WITHOUT a retry — retry cannot help and "
-        "would only add provider load under contention.",
+        "Empty content with completion_tokens>0 (reasoning-budget exhaustion) is "
+        "retried with an increased token budget — reasoning models often exhaust the "
+        "budget on the thinking phase and produce empty text; more tokens lets them "
+        "complete the output. Still bounded at max_attempts to avoid runaway load.",
     ),
 )
-def test_llm_structured_does_not_retry_empty(monkeypatch):
+def test_llm_structured_retries_empty_with_more_tokens(monkeypatch):
     from aletheia.agents import helpers
     calls = _patch_llm(monkeypatch, [
-        _Resp("", completion_tokens=42),  # empty but tokens spent → reasoning exhaustion
-        _Resp('{"x": 1}'),                # would succeed IF retried — must NOT be reached
+        _Resp("", completion_tokens=42),   # attempt 0: empty, reasoning exhausted
+        _Resp("", completion_tokens=100),  # attempt 1: still empty with more budget
+        _Resp('{"x": 1}'),                 # attempt 2: succeeds with 2x budget
     ])
     data, err = asyncio.run(helpers.llm_structured("sys", "user", schema=_Schema))
-    assert data is None
-    assert err == "structured_empty_content", f"unexpected err: {err}"
-    assert calls["n"] == 1, "empty content must NOT trigger a retry"
+    assert data == {"x": 1}, f"should recover after retry with more tokens, got err: {err}"
+    assert err is None
+    assert calls["n"] == 3, "should retry twice (3 total attempts) for empty+reasoning"
 
 
 # ---------------------------------------------------------------------------
@@ -184,8 +186,8 @@ def test_llm_structured_does_not_retry_empty(monkeypatch):
 @spec_claim(
     SpecClaim(
         "GS-B03", _CONTRACT, "§structured retry", "L2b",
-        "Retry is bounded at one: two consecutive non-JSON replies return a "
-        "structured_parse_error (no infinite retry loop).",
+        "Retry is bounded at two retries (3 total attempts): three consecutive non-JSON "
+        "replies return a structured_parse_error (no infinite retry loop).",
     ),
 )
 def test_llm_structured_retry_is_bounded(monkeypatch):
@@ -193,12 +195,90 @@ def test_llm_structured_retry_is_bounded(monkeypatch):
     calls = _patch_llm(monkeypatch, [
         _Resp("no json here"),
         _Resp("still no json"),
-        _Resp('{"x": 9}'),  # must NOT be reached — retry is bounded at 2 attempts
+        _Resp("nope still not json"),
+        _Resp('{"x": 9}'),  # must NOT be reached — retry is bounded at 3 attempts
     ])
     data, err = asyncio.run(helpers.llm_structured("sys", "user", schema=_Schema))
     assert data is None
     assert err is not None and "structured_parse_error" in err
-    assert calls["n"] == 2, "must attempt at most twice (one retry)"
+    assert calls["n"] == 3, "must attempt at most 3 times (two retries)"
+
+
+# ---------------------------------------------------------------------------
+# GS-B06 — repair-mode: third attempt sends back the previous bad output
+# ---------------------------------------------------------------------------
+
+@spec_claim(
+    SpecClaim(
+        "GS-B06", _CONTRACT, "§structured retry", "L2b",
+        "The third (final) retry uses 'repair mode': it sends the model's previous "
+        "bad output back and asks to fix it, rather than re-generating from scratch. "
+        "This recovers from malformed JSON that the model would otherwise keep repeating.",
+    ),
+)
+def test_llm_structured_repair_mode_on_final_attempt(monkeypatch):
+    from aletheia.agents import helpers
+    captured_messages = []
+
+    async def fake_complete(req, provider=None):
+        captured_messages.append(req.messages)
+        # First two: bad JSON; third: valid (after seeing repair prompt)
+        if len(captured_messages) < 3:
+            return _Resp("not json at all")
+        return _Resp('{"x": 42}')
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", fake_complete)
+    monkeypatch.setattr(helpers, "get_provider", lambda provider_name=None: object())
+    monkeypatch.setattr(helpers, "_record_llm", lambda ok: None)
+
+    data, err = asyncio.run(helpers.llm_structured("sys", "user", schema=_Schema))
+    assert err is None, f"should recover on third attempt, got: {err}"
+    assert data == {"x": 42}
+    assert len(captured_messages) == 3, "should have made 3 attempts"
+    # Third attempt messages should contain "FIX THIS JSON" (repair mode)
+    last_msg = captured_messages[2][-1]["content"]
+    assert "FIX THIS JSON" in last_msg, (
+        "third attempt should use repair-mode prompt with 'FIX THIS JSON'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# GS-B07 — fallback_to_defaults returns schema defaults on total failure
+# ---------------------------------------------------------------------------
+
+@spec_claim(
+    SpecClaim(
+        "GS-B07", _CONTRACT, "§structured retry", "L2b",
+        "When fallback_to_defaults=True and all retries fail, llm_structured returns "
+        "a dict filled with schema-appropriate defaults (None/0/[]/{}) instead of None. "
+        "Callers use this for non-critical paths where 'something' beats 'nothing'.",
+    ),
+)
+def test_llm_structured_fallback_to_defaults(monkeypatch):
+    from aletheia.agents import helpers
+    _patch_llm(monkeypatch, [
+        _Resp("bad"),
+        _Resp("worse"),
+        _Resp("terrible"),
+    ])
+    # Without fallback — returns None
+    data_none, err_none = asyncio.run(
+        helpers.llm_structured("sys", "user", schema=_Schema, fallback_to_defaults=False)
+    )
+    assert data_none is None
+    assert err_none is not None
+    assert "fallback" not in err_none
+
+    # With fallback — returns default dict, error string marked with (fallback)
+    data_def, err_def = asyncio.run(
+        helpers.llm_structured("sys", "user", schema=_Schema, fallback_to_defaults=True)
+    )
+    assert data_def is not None, "fallback mode must return a dict even on total failure"
+    assert isinstance(data_def, dict)
+    assert "x" in data_def, "default dict must include schema properties"
+    assert err_def is not None and "fallback" in err_def, (
+        "error string must indicate this is a fallback result"
+    )
 
 
 # ---------------------------------------------------------------------------

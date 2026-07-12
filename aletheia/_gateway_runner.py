@@ -468,6 +468,8 @@ def _record_frontdoor_restart(port: int, pid: int) -> None:
 
 
 def main():
+    from aletheia.logging_config import configure_logging
+    configure_logging()
     no_browser = "--no-browser" in sys.argv
     cfg = bootstrap()
     if not no_browser and cfg.app.auto_open_browser:

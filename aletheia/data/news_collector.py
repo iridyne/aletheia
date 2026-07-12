@@ -78,7 +78,14 @@ def _fetch_feed_sync(url: str) -> list[dict]:
 
 
 async def fetch_news_feeds() -> dict:
-    """Fetch all enabled RSS feeds, dedup, write new items to DB."""
+    """Fetch all enabled RSS feeds, dedup, write new items to DB.
+
+    NOTE: LLM sentiment analysis was removed from this function's tail step.
+    News analysis is too slow when the LLM provider has high latency/low reliability,
+    and it routinely caused the 120s news_fetch job to time out (abandoned thread).
+    The analyzer can still be called separately if needed, but it no longer blocks
+    the RSS fetch pipeline.
+    """
     cfg = load_config()
     if not cfg.news.enabled:
         return {"fetched": 0, "new": 0}
@@ -94,7 +101,13 @@ async def fetch_news_feeds() -> dict:
 
     for feed_cfg in active_feeds:
         try:
-            entries = await loop.run_in_executor(None, _fetch_feed_sync, feed_cfg.url)
+            entries = await asyncio.wait_for(
+                loop.run_in_executor(None, _fetch_feed_sync, feed_cfg.url),
+                timeout=20,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("news fetch timed out for %s (20s)", feed_cfg.name)
+            continue
         except Exception as e:
             logger.warning("news fetch failed for %s: %s", feed_cfg.name, e)
             continue
@@ -147,15 +160,6 @@ async def fetch_news_feeds() -> dict:
         logger.info("news: fetched %d items from %d feeds, %d new", total_fetched, len(active_feeds), total_new)
     else:
         logger.debug("news: fetched %d items from %d feeds, 0 new", total_fetched, len(active_feeds))
-
-    # Tail step: LLM sentiment analysis on newly fetched items
-    try:
-        from aletheia.data.news_analyzer import analyze_pending_news
-        analyzed = await analyze_pending_news(batch_size=15)
-        if analyzed:
-            logger.info("news: analyzed %d new items", analyzed)
-    except Exception as e:
-        logger.warning("news analysis step failed (non-fatal): %s", e)
 
     return {"fetched": total_fetched, "new": total_new}
 

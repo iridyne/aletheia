@@ -89,6 +89,11 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
     : anchor.position.strategy_id ?? proposal?.strategy_id ?? null
   const opportunityId = proposal?.opportunity_id ?? null
 
+  // Extract the human-readable thesis from agent_rationale (strip JSON tail), truncate for display.
+  const rationaleText = proposal?.agent_rationale
+    ? (() => { const i = proposal.agent_rationale.indexOf('\n---\n'); const t = i > 0 ? proposal.agent_rationale.slice(0, i) : proposal.agent_rationale; return t.length > 350 ? t.slice(0, 350) + '…' : t; })()
+    : null
+
   return (
     <div className="causal-chain">
       {/* 1 — OPPORTUNITY */}
@@ -120,7 +125,7 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
                 <div className="mono cc-id">{proposalId}</div>
                 {proposal
                   ? <div>{proposal.direction?.toUpperCase()} {fmtSymbol(proposal.symbol, proposal.market_type)} · {proposal.execution_mode}
-                      {proposal.agent_rationale && <div className="cc-why">{proposal.agent_rationale.slice(0, 160)}{proposal.agent_rationale.length > 160 ? '…' : ''}</div>}
+                      {rationaleText && <div className="cc-why">{rationaleText}</div>}
                     </div>
                   : <div className="text-muted text-sm">(detail not in recent list)</div>}
               </>

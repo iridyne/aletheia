@@ -299,7 +299,11 @@ async def _analyze_symbol(
     Returns (opportunity_id, error_str). Both may be None if the symbol is
     simply skipped (no permission, neutral signal, etc.).
     """
+    import time as _time
     from aletheia.trading.market_context import build_market_context
+
+    _t_start = _time.monotonic()
+    _step_times: dict[str, float] = {}
 
     # Derivatives state for the Opportunity row (perp only; stays None for spot).
     funding_rate_val: float | None = None
@@ -307,14 +311,20 @@ async def _analyze_symbol(
     oi_delta_val: float | None = None
 
     try:
+        _t0 = _time.monotonic()
         context, ctx_debug = await build_market_context(
             [symbol], market_type=market_type, exchange=venue, provider=provider
         )
+        _step_times["build_market_context"] = _time.monotonic() - _t0
         log_tool(run_id, "build_market_context", "observe", True,
                  output=f"{symbol} fallback={ctx_debug.get('fallback')} "
                         f"errs={len(ctx_debug.get('errors', []))}")
+        logger.debug("[MO] %s (%s): build_market_context done in %.1fs, fallback=%s",
+                     symbol, market_type, _step_times["build_market_context"],
+                     ctx_debug.get("fallback"))
 
         # Append enriched microstructure/derivatives/macro context if available.
+        _t0 = _time.monotonic()
         try:
             from aletheia.data.context_builder import (
                 build_market_context_from_db,
@@ -387,7 +397,13 @@ async def _analyze_symbol(
             )
             if enriched:
                 context = context + "\n\n" + enriched
-        except Exception:
+            _step_times["enriched_context"] = _time.monotonic() - _t0
+            logger.debug("[MO] %s (%s): enriched context done in %.1fs",
+                         symbol, market_type, _step_times["enriched_context"])
+        except Exception as _e:
+            _step_times["enriched_context"] = _time.monotonic() - _t0
+            logger.debug("[MO] %s (%s): enriched context skipped (%.1fs): %s",
+                         symbol, market_type, _step_times["enriched_context"], _e)
             pass  # enriched context is optional; never break the main path
 
         # Append fresh prediction market signals relevant to this symbol.
@@ -421,6 +437,9 @@ async def _analyze_symbol(
 
     except Exception as e:
         from aletheia.trading.market_data import latest_snapshot
+        _total_duration = _time.monotonic() - _t_start
+        logger.warning("[MO] %s (%s): market_context build FAILED after %.1fs — %s",
+                       symbol, market_type, _total_duration, e)
         snap = latest_snapshot(symbol)
         log_tool(run_id, "get_market_snapshot", "observe", True, output=symbol)
         if snap:
@@ -520,6 +539,11 @@ async def _analyze_symbol(
         output_data=context[:1000],
     )
 
+    _t0 = _time.monotonic()
+    logger.info("[MO] %s (%s): starting LLM structured call, ctx_len=%d, memory=%d chars",
+                symbol, market_type, len(context), len(sym_memory))
+    logger.warning("[MO DIAG] %s (%s): LLM call start — ctx_len=%d, scanner=%s",
+                   symbol, market_type, len(context), scanner_family or "none")
     read, err = await llm_structured(
         system=_SYSTEM_PROMPT,
         user=f"/no_think\nMarket data for {symbol}:\n{context}{sym_memory}{scanner_hint}\n\nReturn the market read JSON.",
@@ -527,6 +551,8 @@ async def _analyze_symbol(
         max_tokens=2048,
         provider=get_provider_for_tier("deep"),
     )
+    _llm_duration = _time.monotonic() - _t0
+    _step_times["llm_structured"] = _llm_duration
     log_tool(run_id, "llm_structured", "observe", True)
 
     direction = "neutral"
@@ -541,7 +567,18 @@ async def _analyze_symbol(
         llm_error = err or "no_structured_read"
         record_step(run_id, f"market_read_skipped:{symbol}",
                     input_data=None, output_data=llm_error)
+        logger.warning("[MO] %s (%s): LLM call FAILED after %.1fs — error=%s",
+                       symbol, market_type, _llm_duration, llm_error)
+        logger.warning("[MO DIAG] %s (%s): LLM FAILED — dur=%.1fs, err=%s",
+                       symbol, market_type, _llm_duration, llm_error)
         return None, f"{market_type}:{symbol}:llm_unavailable: {llm_error}"
+
+    logger.info("[MO] %s (%s): LLM call SUCCESS in %.1fs — direction=%s, confidence=%s, score=%s",
+                symbol, market_type, _llm_duration,
+                read.get("direction_bias"), read.get("confidence"), read.get("confidence_score"))
+    logger.warning("[MO DIAG] %s (%s): LLM OK — dur=%.1fs, dir=%s, conf=%s, score=%s",
+                   symbol, market_type, _llm_duration,
+                   read.get("direction_bias"), read.get("confidence"), read.get("confidence_score"))
 
     llm_error = None
     d = str(read.get("direction_bias", "")).lower()
@@ -654,17 +691,31 @@ async def _analyze_symbol(
     except Exception:
         pass
     log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
+    _total_duration = _time.monotonic() - _t_start
+    _step_times["total"] = _total_duration
+    logger.info("[MO] %s (%s): DONE — total=%.1fs, steps=%s, opp_id=%s",
+                symbol, market_type, _total_duration,
+                {k: f"{v:.1f}s" for k, v in _step_times.items()},
+                opp.id)
     return opp.id, llm_error
 
 
 @register_agent("market_observer")
 async def run_market_observer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Observe market state and create one Opportunity per symbol."""
+    import time as _time
+    _run_start = _time.monotonic()
     outputs: list[str] = []
     errors: list[str] = []
+    _success_count = 0
+    _fail_count = 0
+    _skip_count = 0
+
+    logger.info("[MO] run started: permission=%s, run_id=%s", permission_mode, run_id)
 
     if not is_tool_permitted("get_market_snapshot", permission_mode):
         errors.append("get_market_snapshot not permitted in current mode")
+        logger.warning("[MO] run aborted: no permission for get_market_snapshot")
         return {"outputs": outputs, "errors": errors}
 
     cfg = load_config()
@@ -802,6 +853,8 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     # calls were a file read + YAML parse each iteration).
     _force_full = getattr(getattr(cfg, "observer", None), "force_full_scan", False)
     _loop_deadline = _time.monotonic() + _MARKET_OBSERVER_LOOP_BUDGET_SEC
+    logger.warning("[MO DIAG] run start: %d instruments, force_full=%s, budget=%.0fs",
+                   len(instruments), _force_full, _MARKET_OBSERVER_LOOP_BUDGET_SEC)
     for _idx, instrument in enumerate(instruments):
         if _time.monotonic() > _loop_deadline:
             _skipped = len(instruments) - _idx
@@ -843,10 +896,15 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             )
             if opp_id:
                 outputs.append(f"opportunity:{opp_id}")
-            if err:
+                _success_count += 1
+            elif err and "pre_filter_skip" in err:
+                _skip_count += 1
+            elif err:
+                _fail_count += 1
                 errors.append(f"{instrument}:{err}")
             completed_attempt = True
         except Exception as e:
+            _fail_count += 1
             errors.append(f"{instrument}:unexpected:{e}")
             completed_attempt = True
         finally:

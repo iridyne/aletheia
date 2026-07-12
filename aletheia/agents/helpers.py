@@ -107,13 +107,24 @@ def _extract_json_object(text: str):
     return None
 
 
-async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 1024, provider: str | None = None) -> tuple[dict | None, str | None]:
+async def llm_structured(
+    system: str,
+    user: str,
+    *,
+    schema,
+    max_tokens: int = 2048,
+    provider: str | None = None,
+    fallback_to_defaults: bool = False,
+) -> tuple[dict | None, str | None]:
     """Call the provider's structured() and return (parsed_dict, error).
 
     Never raises — absorbs provider errors AND the JSON-parse failure in the
     provider impl, returning (None, error) so the caller can fall back cleanly.
     `schema` is a Pydantic model class (uses model_json_schema()).
     provider: explicit provider name (or None → use default_provider).
+    fallback_to_defaults: if True and all retries fail, return a dict filled
+        with schema defaults / None values instead of None. Use this only for
+        non-critical paths where "best effort" is better than nothing.
     """
     # #161 fix (mirrors llm_complete): thread the tier's provider name into
     # complete_with_fallback so its fallback/health/cooldown keying matches the
@@ -134,51 +145,113 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 10
         # Other models ignore this prefix safely.
         structured_system = f"/no_think\n{system}" if system else "/no_think"
 
-        # Bounded retry (gateway-stability fix): under LLM-provider contention a
-        # capable model intermittently prepends prose / returns non-JSON. One
-        # corrective retry at temperature 0 recovers most of these cheaply. We retry
-        # ONLY the parse-failure case (non-empty content, no JSON) — empty content
-        # (reasoning-budget exhaustion / outage) is not retried (retry can't help and
-        # only adds load). market_observer's wall-clock budget caps total time.
+        # 3 attempts with escalating token budget + corrective strategy:
+        #   attempt 0: base max_tokens at temperature 0.3, standard prompt
+        #   attempt 1: +50% tokens, temperature 0, stronger JSON-only prompt
+        #   attempt 2: 2x tokens, temperature 0, repair-mode prompt (send back previous bad output)
+        last_bad_output = ""
         last_err = "structured_parse_error: no valid JSON object found in response"
-        for attempt in range(2):
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            # Escalate token budget on each retry
+            attempt_max_tokens = max_tokens
+            if attempt == 1:
+                attempt_max_tokens = int(max_tokens * 1.5)
+            elif attempt >= 2:
+                attempt_max_tokens = max_tokens * 2
+
             messages = list(base_messages)
             if attempt == 1:
+                # Stronger corrective prompt + emphasize immediate JSON output
                 messages.append({"role": "user", "content": (
-                    "Your previous reply was NOT valid JSON. Output ONLY the JSON object "
-                    "now: start with '{' and end with '}', no prose, no code fences."
+                    "IMPORTANT: Your previous reply was invalid. "
+                    "Output ONLY the JSON object now. "
+                    "Do NOT include any thinking, explanation, or markdown. "
+                    "Start your reply with '{' and end with '}'. Nothing else."
+                )})
+            elif attempt >= 2:
+                # Final attempt: repair mode — show the model its previous bad output
+                # and ask it to fix it. Simpler task than generating from scratch.
+                repair_hint = last_bad_output[:500] if last_bad_output else "(empty)"
+                messages.append({"role": "user", "content": (
+                    f"FIX THIS JSON. Your previous output was:\n"
+                    f"```\n{repair_hint}\n```\n"
+                    f"Reply with ONLY the corrected JSON. Start with '{{' and end with '}}'. "
+                    f"No extra text, no explanation."
                 )})
             resp = await complete_with_fallback(
                 ModelRequest(
                     messages=messages, system=structured_system,
-                    temperature=0.3 if attempt == 0 else 0.0, max_tokens=max_tokens,
+                    temperature=0.3 if attempt == 0 else 0.0,
+                    max_tokens=attempt_max_tokens,
                 ),
                 provider=provider,
                 provider_name=provider_name,
             )
             content = (resp.content or "").strip()
+            usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
+            output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))
+            last_bad_output = content
+
             if not content:
-                # LLM connected and ran (usage tokens > 0) but returned empty text.
-                # This is a parse failure, NOT an LLM outage — do not trip the health
-                # monitor's failure counter (which would pause the scheduler). Not
-                # retried: empty = reasoning-budget exhaustion, retry won't help.
-                usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
-                if usage.get("completion_tokens", 0) > 0:
-                    logger.warning("LLM structured call: empty content with %d completion_tokens — "
+                if output_tokens > 0:
+                    # Reasoning model exhausted budget on thinking phase → retry with more
+                    if attempt < max_attempts - 1:
+                        next_budget = int(max_tokens * (1.5 if attempt == 0 else 2))
+                        logger.warning(
+                            "LLM structured call: empty content with %d output_tokens "
+                            "(reasoning model exhausted budget) — retrying with %d tokens "
+                            "(attempt %d/%d)",
+                            output_tokens, next_budget, attempt + 1, max_attempts,
+                        )
+                        continue
+                    logger.warning("LLM structured call: empty content with %d output_tokens — "
                                    "reasoning model exhausted budget on reasoning phase",
-                                   usage["completion_tokens"])
+                                   output_tokens)
+                    if fallback_to_defaults:
+                        return _schema_defaults_dict(schema_dict), "structured_empty_content(fallback)"
                     return None, "structured_empty_content"
+                if attempt < max_attempts - 1:
+                    logger.warning(
+                        "LLM structured call: empty content, no output_tokens — retrying "
+                        "(attempt %d/%d)", attempt + 1, max_attempts,
+                    )
+                    continue
                 logger.warning("LLM structured call: empty content, no completion tokens")
                 _record_llm(False)
+                if fallback_to_defaults:
+                    return _schema_defaults_dict(schema_dict), "llm_unavailable: empty_response(fallback)"
                 return None, "llm_unavailable: empty_response"
+
             data = _extract_json_object(content)
             if isinstance(data, dict):
                 _record_llm(True)
                 return data, None
             if data is not None:
                 return None, "structured_non_dict"
-            # parse failure → loop to retry once (attempt 1)
-        logger.warning("LLM structured call: no valid JSON after corrective retry")
+
+            # Parse failed — check if output was truncated (near token limit)
+            truncated = output_tokens > 0 and output_tokens >= attempt_max_tokens * 0.9
+            if truncated and attempt < max_attempts - 1:
+                logger.warning(
+                    "LLM structured call: parse failure, output likely truncated "
+                    "(%d/%d tokens used) — retrying with more tokens (attempt %d/%d)",
+                    output_tokens, attempt_max_tokens, attempt + 1, max_attempts,
+                )
+                continue
+
+            # Parse failure, not obviously truncated → corrective retry
+            if attempt < max_attempts - 1:
+                logger.warning(
+                    "LLM structured call: parse failure (attempt %d/%d), content_len=%d — retrying",
+                    attempt + 1, max_attempts, len(content),
+                )
+                continue
+            last_err = "structured_parse_error: no valid JSON object found in response"
+
+        logger.warning("LLM structured call: no valid JSON after %d attempts", max_attempts)
+        if fallback_to_defaults:
+            return _schema_defaults_dict(schema_dict), f"{last_err}(fallback)"
         return None, last_err
     except json.JSONDecodeError as e:
         # Bad JSON but the LLM did respond — not an outage, don't trip health counter
@@ -189,6 +262,30 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 10
         logger.warning("LLM structured call failed: %s", detail)
         _record_llm(False)
         return None, f"llm_unavailable: {detail}"
+
+
+def _schema_defaults_dict(schema_dict: dict) -> dict:
+    """Build a safe default dict from a JSON schema's properties.
+
+    Fills each field with None / empty list / empty dict depending on type.
+    Used for fallback_to_defaults mode so callers get a structurally-valid
+    (if content-free) result even when the LLM is unusable.
+    """
+    result: dict = {}
+    props = schema_dict.get("properties", {})
+    for key, prop in props.items():
+        typ = prop.get("type", "string")
+        if typ == "array":
+            result[key] = []
+        elif typ == "object":
+            result[key] = {}
+        elif typ == "integer" or typ == "number":
+            result[key] = 0
+        elif typ == "boolean":
+            result[key] = False
+        else:
+            result[key] = None
+    return result
 
 
 async def llm_stream(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None) -> AsyncIterator[StreamChunk]:

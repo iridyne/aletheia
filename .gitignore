@@ -33,6 +33,9 @@ CLAUDE.local.md
 # External skill toolkits (not part of this repo)
 .baoyu-skills/
 
+# Trae local/private state
+.trae/
+
 # Codex local/private state
 .codex/auth*
 .codex/session*

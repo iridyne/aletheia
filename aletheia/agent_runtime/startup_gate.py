@@ -47,11 +47,12 @@ def _is_dns_error(exc: BaseException) -> bool:
 
 # A real completion can be slow on a cold gateway endpoint; keep the probe short
 # enough that startup isn't blocked for long, but long enough for a genuine call.
-# Reasoning models (e.g. Qwen3.5) need more budget: 5 tokens are exhausted by the
-# reasoning phase with nothing left for text output — bump to 32 so there's room
-# for both phases. The completion_tokens fallback below covers edge cases.
+# Reasoning models (e.g. Qwen3.5, LongCat-2.0) need more budget: the thinking
+# block consumes tokens before any text block is emitted. Bump to 512 so there's
+# room for both phases. The completion_tokens/output_tokens fallback covers edge
+# cases where the budget is still exhausted on reasoning alone.
 _PROBE_TIMEOUT_SEC = 20
-_PROBE_MAX_TOKENS = 32
+_PROBE_MAX_TOKENS = 512
 
 
 def _ordered_enabled_providers(cfg) -> list[str]:
@@ -81,8 +82,11 @@ async def _probe_one(name: str) -> dict:
             return {"provider": name, "usable": True, "error": None}
         # Reasoning models may still exhaust the budget on the reasoning phase;
         # completion_tokens > 0 proves the model ran — treat as usable.
+        # Some providers (LongCat, OpenAI-compatible) name the field output_tokens
+        # instead of completion_tokens; check both.
         usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
-        if usage.get("completion_tokens", 0) > 0:
+        completion = usage.get("completion_tokens", usage.get("output_tokens", 0))
+        if completion > 0:
             return {"provider": name, "usable": True, "error": None}
         return {"provider": name, "usable": False, "error": "empty_response"}
     except asyncio.TimeoutError:

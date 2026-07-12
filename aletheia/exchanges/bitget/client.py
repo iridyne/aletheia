@@ -415,6 +415,21 @@ class BitgetClient:
             return {}
         return accounts[0]
 
+    async def get_uta_account(self) -> dict:
+        """Get UTA (Unified Trading Account) account assets — v3 API.
+
+        Returns the full UTA account with all assets. Only works for unified
+        accounts; classic accounts return an error (code != 00000).
+        """
+        path = "/api/v3/account/assets"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget UTA API error: {data.get('msg')}")
+        return data.get("data", {}) or {}
+
     async def get_open_orders(self, market_type: str = "spot") -> list[dict]:
         """Get unfilled (open) orders (§19.3)."""
         if market_type == "spot":

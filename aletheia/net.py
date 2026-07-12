@@ -10,6 +10,9 @@ transport automatically retries the request via direct connection and
 invalidates the proxy cache so subsequent calls also bypass the proxy until
 the TTL expires and re-probes.
 
+Request retry: transient network errors (timeouts, connection errors, 5xx)
+are retried with exponential backoff before surfacing the failure.
+
 Usage:
     from aletheia.net import httpx_client, aiohttp_session
 
@@ -25,6 +28,7 @@ import logging
 import os
 import socket
 import time
+import asyncio
 from urllib.parse import urlparse
 
 import aiohttp
@@ -123,9 +127,12 @@ def _is_proxy_reachable(url: str) -> bool:
     Result is cached for _PROXY_CACHE_TTL seconds so the scheduler doesn't
     pay a TCP round-trip on every job invocation.
 
-    If called from a running asyncio event loop, returns the cached value
-    immediately (stale OK) and schedules a background refresh — never blocks
-    the event loop with a synchronous TCP connect.
+    If called from a running asyncio event loop:
+    - With a fresh cache: returns the cached value immediately (stale OK) and
+      schedules a background refresh — never blocks the event loop.
+    - With NO cache at all (cold start): blocks on the probe via executor so
+      the first request uses the correct path. A 1s TCP probe is negligible
+      vs. the cost of sending traffic direct when a proxy is required.
     """
     import asyncio
 
@@ -144,9 +151,11 @@ def _is_proxy_reachable(url: str) -> bool:
             # Schedule background refresh, return stale value now
             loop.run_in_executor(None, _probe_proxy_sync, url)
             return cached[0]
-        # No cache at all — return False (assume direct) and kick off probe
-        loop.run_in_executor(None, _probe_proxy_sync, url)
-        return False
+        # No cache at all — synchronously probe via thread pool so cold-start
+        # requests don't silently go direct when the proxy is required.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(_probe_proxy_sync, url).result(timeout=2)
 
     # Not on event loop — safe to block
     return _probe_proxy_sync(url)
@@ -248,6 +257,82 @@ def apply_proxy_env() -> None:
     os.environ["no_proxy"] = no_proxy_val
 
 
+# Transient error types worth retrying at the transport level.
+# These are all network-layer or server-overload issues — never 4xx client errors.
+_TRANSIENT_EXCEPTIONS = (
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.PoolTimeout,
+    httpx.ConnectError,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.RemoteProtocolError,
+    httpx.NetworkError,
+)
+_TRANSIENT_STATUS_CODES = (500, 502, 503, 504, 507, 508, 520, 522, 524, 429)
+
+
+class _RetryingTransport(httpx.AsyncBaseTransport):
+    """Transport wrapper that retries transient failures with exponential backoff.
+
+    Wraps an inner transport and retries on:
+      - ConnectTimeout, ReadTimeout, ConnectError, etc.
+      - HTTP 5xx status codes + 429 (rate limit)
+
+    Retry count and backoff are configurable via httpx_client(retry=...).
+    Default: 2 retries (3 total attempts) with 0.5s initial backoff.
+    """
+
+    def __init__(
+        self,
+        inner: httpx.AsyncBaseTransport,
+        max_retries: int = 2,
+        initial_backoff: float = 0.5,
+    ) -> None:
+        self._inner = inner
+        self._max_retries = max_retries
+        self._initial_backoff = initial_backoff
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        last_exc: BaseException | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                response = await self._inner.handle_async_request(request)
+                if response.status_code in _TRANSIENT_STATUS_CODES and attempt < self._max_retries:
+                    # Consume the response body so the connection can be reused
+                    try:
+                        await response.aread()
+                    except Exception:
+                        pass
+                    wait = self._initial_backoff * (2 ** attempt)
+                    logger.debug(
+                        "HTTP %d from %s — retrying in %.1fs (attempt %d/%d)",
+                        response.status_code, request.url, wait,
+                        attempt + 1, self._max_retries + 1,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                return response
+            except _TRANSIENT_EXCEPTIONS as e:
+                last_exc = e
+                if attempt < self._max_retries:
+                    wait = self._initial_backoff * (2 ** attempt)
+                    logger.debug(
+                        "Transient %s for %s — retrying in %.1fs (attempt %d/%d)",
+                        type(e).__name__, request.url, wait,
+                        attempt + 1, self._max_retries + 1,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                raise
+        assert last_exc is not None
+        raise last_exc
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
 class _ProxyFallbackTransport(httpx.AsyncBaseTransport):
     """Transport that tries proxy first; on proxy-layer errors, retries direct.
 
@@ -280,7 +365,12 @@ class _ProxyFallbackTransport(httpx.AsyncBaseTransport):
         await self._direct_transport.aclose()
 
 
-def httpx_client(timeout: float = 30, **kwargs) -> httpx.AsyncClient:
+def httpx_client(
+    timeout: float = 30,
+    *,
+    retry: int | None = None,
+    **kwargs,
+) -> httpx.AsyncClient:
     """Return an httpx.AsyncClient wired to the managed proxy path.
 
     - enforce=True: a proxy-only client (fail-closed). A proxy-layer error
@@ -290,13 +380,37 @@ def httpx_client(timeout: float = 30, **kwargs) -> httpx.AsyncClient:
       retries direct on proxy-layer errors (availability first).
     - no proxy configured (or non-enforce + unreachable): a direct client.
 
+    retry: number of retries for transient network errors (default 2).
+           Set to 0 to disable retry entirely. Uses exponential backoff.
+
     Callers use it identically to a plain httpx.AsyncClient — zero changes needed.
     """
+    max_retries = 2 if retry is None else retry
     proxy = _effective_proxy()
     if proxy:
         if _enforce():
+            # Enforce mode: proxy-only, but still retry transient errors on the proxy path
+            if max_retries > 0:
+                transport = _RetryingTransport(
+                    httpx.AsyncHTTPTransport(proxy=proxy),
+                    max_retries=max_retries,
+                )
+                return httpx.AsyncClient(
+                    transport=transport,
+                    timeout=timeout,
+                    **kwargs,
+                )
             return httpx.AsyncClient(proxy=proxy, timeout=timeout, **kwargs)
-        transport = _ProxyFallbackTransport(proxy)
+        transport: httpx.AsyncBaseTransport = _ProxyFallbackTransport(proxy)
+        if max_retries > 0:
+            transport = _RetryingTransport(transport, max_retries=max_retries)
+        return httpx.AsyncClient(
+            transport=transport,
+            timeout=timeout,
+            **kwargs,
+        )
+    if max_retries > 0:
+        transport = _RetryingTransport(httpx.AsyncHTTPTransport(), max_retries=max_retries)
         return httpx.AsyncClient(
             transport=transport,
             timeout=timeout,

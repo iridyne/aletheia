@@ -118,6 +118,16 @@ def _record_job_failure(job_id: str, error: str) -> None:
             action="Check logs or config; job will retry next cycle",
             dedupe_sec=300,
         )
+        try:
+            from aletheia.infra.errors import record_error
+            record_error(
+                source="scheduler",
+                message=f"{job_id} failed {count} consecutive times: {error[:200]}",
+                level="warning",
+                extra={"job_id": job_id, "consecutive": count},
+            )
+        except Exception:
+            pass
 
 
 # Volume scanner results cache (populated by data_collectors Phase B, ~10 min cadence).
@@ -508,6 +518,17 @@ def _run_serenity_startup_catchup() -> None:
         logger.info("Serenity startup catch-up: %s", result["status"])
     except Exception as exc:
         logger.warning("Serenity startup catch-up failed: %s", exc)
+        try:
+            from aletheia.infra.errors import record_error
+            record_error(
+                source="serenity",
+                message=f"serenity startup catch-up failed: {exc}",
+                exc=exc,
+                level="warning",
+                extra={"stage": "startup_catchup"},
+            )
+        except Exception:
+            pass
         _record_job_failure("serenity_startup_catchup", str(exc))
 
 
@@ -580,7 +601,7 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=60, executor="io",
     )
     _scheduler.add_job(
-        _guarded("market_observer", _run_market_observer), "interval", minutes=15, id="market_observer",
+        _guarded("market_observer", _run_market_observer), "interval", minutes=10, id="market_observer",
         misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=75),
         executor="observer",
     )
@@ -747,7 +768,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     # the learning pipeline.  Runs unconditionally (not gated on universe.enabled)
     # so the attribution chain keeps ticking even when the universe scan is off.
     _scheduler.add_job(
-        _guarded("outcome_settler", _run_outcome_settler), "interval", minutes=15,
+        _guarded("outcome_settler", _run_outcome_settler), "interval", minutes=10,
         id="outcome_settler", misfire_grace_time=120, max_instances=1, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=120),
     )

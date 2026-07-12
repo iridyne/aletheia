@@ -352,12 +352,12 @@ function ProposalRationale({ rationale }: { rationale: string | null }) {
           <ConvictionMeter conviction={meta.conviction} debateRan={meta.debate_ran}
             bull={meta.debate_bull} bear={meta.debate_bear} />
           <span className="proposal-rationale-label">WHY</span>
-          <span>{text.length > 180 ? text.slice(0, 180) + '…' : text}</span>
+          <span>{text.length > 400 ? text.slice(0, 400) + '…' : text}</span>
         </>
       ) : (
         <>
           <span className="proposal-rationale-label">WHY</span>
-          <span>{text.length > 220 ? text.slice(0, 220) + '…' : text}</span>
+          <span>{text.length > 500 ? text.slice(0, 500) + '…' : text}</span>
         </>
       )}
     </div>
