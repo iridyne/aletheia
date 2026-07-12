@@ -3129,3 +3129,9 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - A missing verification commit is a warning only for an unchanged historical task whose deleted feature branch is no longer fetchable by GitHub Actions.
 - Tasks changed in the current PR still fail strictly on missing evidence; trust-boundary evidence requirements are unchanged.
 - Added regression coverage for both the historical-warning path and the current-task hard-failure path.
+
+## 2026-07-12 — Fluid Overview activity layout
+
+- Removed the Overview height synchronization that capped Agent Activity to the right-rail height and forced a nested feed scrollbar.
+- Agent Activity now grows naturally with the existing latest-40 item limit; its data, modes, polling, and detail drawer behavior are unchanged.
+- The Overview right rail now uses a fluid 320px-380px desktop column, switches to two columns at medium width, and returns to one column on narrow screens.

@@ -1,0 +1,53 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-029
+title: Make Overview activity layout fluid
+status: done
+packet_type: standard
+scope:
+  boundary: frontend Overview layout only
+  excluded: backend behavior, trading behavior, feed data, controls, and polling
+intent: Remove the Agent Activity height cap, decouple it from the right rail, and
+  make the Overview rail responsive at canonical breakpoints without changing backend
+  or trading behavior.
+acceptance:
+- Agent Activity has no measured or fixed vertical cap and uses the page scroll instead
+  of an internal feed scrollbar.
+- The Overview keeps the latest 40 feed items and does not change feed data, controls,
+  polling, or trading behavior.
+- Above 1100px the cockpit uses a fluid 320px-380px right rail; from 701px through
+  1100px the rail cards form two columns; at 700px and below they form one column.
+- Right-rail cards keep their independent overflow protection and remain naturally
+  top-aligned instead of stretching to match the feed.
+- Frontend build and focused layout regression tests pass, and rendered styles are
+  checked at desktop, medium, and narrow viewport widths.
+ownership:
+  branch: iridite/overview-fluid-layout
+  lease_holder: codex
+  claimed_at: '2026-07-11T17:09:54.325195Z'
+  expires_at: '2026-07-12T01:09:54.325388Z'
+base_commit: 0ae52905445138a0e4901dfc78718c7724ea476c
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 72f57c5177a3207ddf6d7fd79ee1a85453b7966f
+  run_at: '2026-07-11T17:19:57.364093Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 75bb86f1ecd6150c268bbc4861e126cb72b5bd23
+  run_at: '2026-07-11T17:21:43.002143Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-029.md
+updated_at: '2026-07-12T00:00:00Z'
