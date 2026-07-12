@@ -275,3 +275,45 @@ def _insert_trade(db, idx: int, pnl_pct: float, closed_at: str) -> None:
         "1, 1, 'eligible', 'oi-v1', ?, ?)",
         (f"le-pos-{idx}", 100 + pnl_pct, pnl_pct, proposal, _iso(20), closed_at),
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "LE-B24", _CONTRACT, "§shadow vs treatment", "L2b",
+        "A shadow-stage cohort (no treatment actually applied) is measurable but NOT "
+        "causally eligible; it yields shadow_trial_only, never a causal promote signal.",
+        status="implemented",
+    ),
+    SpecClaim(
+        "LE-B25", _CONTRACT, "§shadow vs treatment", "L2b",
+        "A cohort where the treatment arm was actually applied is causally eligible.",
+        status="implemented",
+    ),
+)
+def test_shadow_cohort_is_not_causally_eligible():
+    from aletheia.learning.contribution import ContributionObservation, aggregate_observations
+
+    # Shadow: both arms ran baseline (authority_applied False everywhere). Even with a
+    # clean treatment/control return spread, this must NOT be read as causal.
+    shadow = aggregate_observations([
+        ContributionObservation("universe_family_calibration", "universe", "u:a", "4h",
+                                 "treatment", 0.5, "h", authority_applied=False),
+        ContributionObservation("universe_family_calibration", "universe", "u:b", "4h",
+                                 "control", -0.2, "h", authority_applied=False),
+    ])
+    assert shadow.data_quality_status == "green"      # measurable
+    assert shadow.intervention_applied_n == 0
+    assert shadow.causal_eligible is False
+    assert shadow.authority_action == "shadow_trial_only"
+    assert shadow.authority_action != "hold"          # cannot feed a promote verdict
+
+    # Real intervention: the treatment arm actually had the treatment applied.
+    real = aggregate_observations([
+        ContributionObservation("universe_family_calibration", "universe", "u:a", "4h",
+                                 "treatment", 0.5, "h", authority_applied=True),
+        ContributionObservation("universe_family_calibration", "universe", "u:b", "4h",
+                                 "control", -0.2, "h", authority_applied=False),
+    ])
+    assert real.intervention_applied_n == 1
+    assert real.causal_eligible is True
+    assert real.authority_action == "hold"
