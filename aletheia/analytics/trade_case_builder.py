@@ -303,10 +303,14 @@ def _create_factor_guard_candidate(
         "severity": "warning",
         "score_penalty": min(25, int(loss_rate * 30)),
         "block_candidate": False,
+        # Learned/auto guard: shadow-only, observe-only. It cannot auto-promote to a
+        # block; enforcement is suppressed until an experiment grants authority.
+        "auto_generated": True,
+        "shadow_only": True,
         "applies_to": {"asset_class": ["crypto"]},
         "predicates": predicates,
         "evidence_refs": [r.get("position_id") for r in losses[:5] if r.get("position_id")],
-        "tags": ["auto-generated", "factor-pattern", scanner],
+        "tags": ["auto-generated", "factor-pattern", "shadow-only", scanner],
     }
 
     body = (
@@ -315,7 +319,10 @@ def _create_factor_guard_candidate(
         f"(loss rate: {loss_rate:.0%}).\n"
         f"Average loss: {avg_loss:.2f}%.\n\n"
         f"## Status\n\n"
-        f"Auto-generated guard candidate. Requires human review before promotion to active.\n"
+        f"Auto-generated **shadow-only** guard candidate. It is observed for learning "
+        f"but does NOT block or penalize trades. It cannot auto-promote to an active "
+        f"block; paper-block authority requires explicit owner action or a positive "
+        f"`ranker_learned_guard` experiment verdict (AT-01 + AT-02).\n"
     )
 
     try:

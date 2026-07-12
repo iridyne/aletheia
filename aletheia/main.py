@@ -18,6 +18,7 @@ from aletheia.cli.risk_cmd import risk_app
 from aletheia.cli.update_cmd import update_app
 from aletheia.cli.runtime_cmd import runtime_app
 from aletheia.cli.knowledge_cmd import knowledge_app
+from aletheia.cli.guard_cmd import guard_app
 from aletheia.cli.doctor_cmd import doctor_app
 from aletheia.cli.audit_cmd import audit_app
 from aletheia.cli.operator import agent_app
@@ -60,6 +61,7 @@ app.add_typer(sizing_app, name="sizing", help="Read-only sizing trace audit.", h
 # Operator/debug tools with NO web equivalent — kept (only some subcommands; see code).
 app.add_typer(bitget_app, name="bitget", help="Bitget connection (test deprecated → dashboard; sync is a debug tool).")
 app.add_typer(knowledge_app, name="knowledge", help="Knowledge base / experience-loop tools (reindex, search).")
+app.add_typer(guard_app, name="guard", help="Trading-guard admin: audit learned guards, downgrade to shadow-only.")
 
 # [DEPRECATED → dashboard] superseded by the web UI; still work, kept as an escape hatch.
 app.add_typer(model_app, name="model", help="[deprecated → Settings] Model provider commands.")

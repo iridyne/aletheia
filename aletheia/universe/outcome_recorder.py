@@ -494,9 +494,13 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
                     "market_type": market_type,
                     "entry_ts": row.get("entry_ts", ""),
                     "auto_generated": True,
+                    # Learned/auto guard: shadow-only, observe-only. Cannot auto-promote
+                    # to a block; enforcement suppressed until an experiment authorizes.
+                    "shadow_only": True,
+                    "block_candidate": False,
                     "tier": 1,
                 },
-                tags=["auto_generated", "tier1_evolution"],
+                tags=["auto_generated", "tier1_evolution", "shadow-only"],
             )
             generated += 1
             logger.info(
@@ -543,7 +547,7 @@ scanner_family=`{family}` 选出 `{symbol}`，方向 {direction_label}，
 - outcome_id: {outcome_id}
 - snapshot_id: {snapshot_id}
 
-## 候选规则（待人工确认）
+## 候选规则（shadow-only，观察态）
 
 当 `{family}` scanner 选出 {direction} 信号，且 4h 成本后净收益为 {net:+.2f}%，
 说明本次入场的时机或信号强度判断存在问题。
@@ -551,7 +555,8 @@ scanner_family=`{family}` 选出 `{symbol}`，方向 {direction_label}，
 建议：
 - 回溯该时点的 RSI、Vol z-score、ATR 等指标值，确认是否存在共性
 - 若多次类似形态均出现亏损，可考虑在 scanners.py 中提高该族的门槛
-- 确认无误后升级为 trading_guard，将阻止后续同类信号进入执行队列
 
-**此条目为自动生成，medium_confidence，不会参与 LLM 检索。须人工审核后升级。**
+**此条目为自动生成，medium_confidence，不参与 LLM 检索，且为 shadow-only：只用于观察/学习，
+不会阻断或扣分任何交易。它无法自动升级为阻断——paper-block 权限需要 owner 显式操作，
+或 `ranker_learned_guard` 实验给出正向 verdict（AT-01 + AT-02）后才可能获得。**
 """

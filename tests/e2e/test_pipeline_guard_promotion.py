@@ -1,16 +1,18 @@
-"""E2E: guard self-evolution chain — candidate → reachable → promoted to active.
+"""E2E: guard self-evolution chain under the P0 shadow-only regime (2026-07-12).
 
-The Tier-1 guard chain was dead (105 candidates, 0 promotions, doctor
-loop.guard_promotion) because of three breaks (L-Bug-D):
-  1. guard_candidate frontmatter was unparseable (# Title before the --- block);
-  2. load_trading_guards only scanned knowledge/guards/, never guard_candidates/;
-  3. candidate metadata lacked status / guard_id / a matchable applies_to.
+History: the Tier-1 guard chain was once dead (L-Bug-D: 105 candidates, 0 promotions);
+it was repaired, then over-corrected — auto guards auto-promoted from bare historical
+loss-rate correlation into active HARD BLOCKS while their bodies claimed "requires human
+review before promotion", bypassing the Learning experiment/authority chain entirely.
 
-This exercises the REAL chain end-to-end (no module mocking; real DB):
-create a candidate → it is reachable by load_trading_guards(status="candidate") →
-with a repeated losing pattern, run_promotion_check promotes it to active.
-(B0 auto_promote_enabled is the production go-live toggle; the e2e default config
-has it on so the mechanism itself is verified.)
+The corrected chain (verified end-to-end here, real DB, no module mocking):
+  1. an auto-generated candidate is reachable by load_trading_guards(status="candidate")
+     and is created SHADOW-ONLY (observe-only);
+  2. with a repeated losing pattern AND auto_promote_enabled=True, run_promotion_check
+     still does NOT promote it — a learned guard needs experiment authority
+     (ranker_learned_guard: AT-01 verdict + AT-02 path authority), which is fail-closed;
+  3. the promotion MECHANISM itself is intact: an owner-authored (manual, non-shadow)
+     candidate can still be promoted via the explicit owner route.
 """
 
 from datetime import datetime, timezone
@@ -41,9 +43,9 @@ def _losing_momentum_long_trade(i: int):
 
 
 class TestGuardPromotionChain:
-    def test_candidate_reachable_and_promoted(self, e2e_db):
+    def test_auto_candidate_is_shadow_and_not_auto_promoted(self, e2e_db):
         from aletheia.knowledge.manager import create_guard_candidate
-        from aletheia.knowledge.guards import load_trading_guards
+        from aletheia.knowledge.guards import load_trading_guards, guard_origin
         from aletheia.analytics.guard_promotion import run_promotion_check
 
         # 1) create an auto-style candidate (mirrors outcome_recorder's metadata)
@@ -56,30 +58,58 @@ class TestGuardPromotionChain:
                       "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}]},
         )
 
-        # 2) reachable by the promoter, with applies_to bridged from flat fields
+        # 2) reachable by the promoter, classified learned, and FORCED shadow-only at creation
         cands = load_trading_guards(status="candidate")
         mine = [g for g in cands if g.guard_id == guard_id]
-        assert mine, f"candidate not reachable by load_trading_guards: {[g.guard_id for g in cands]}"
+        assert mine, f"candidate not reachable: {[g.guard_id for g in cands]}"
         g = mine[0]
+        assert guard_origin(g) == "learned"
+        assert g.shadow_only is True, "auto candidate must be created shadow-only"
         assert g.applies_to.symbol == ["SOL/USDT"]
-        assert g.applies_to.scanner_family == ["momentum"]
-        assert g.applies_to.direction == ["long"]
 
         # 3) a repeated losing momentum/long pattern (>= min_matching_trades=3, 100% loss)
         for i in range(3):
             _losing_momentum_long_trade(i)
 
-        # 4) automatic promotion requires a healthy durable reviewer checkpoint.
+        # 4) a healthy durable reviewer checkpoint (so refreeze does not mask the result)
         from aletheia.learning.control import record_learning_job_success
         record_learning_job_success("lesson_reviewer")
 
-        # 5) promotion check (e2e default config has auto_promote_enabled=True)
+        # 5) even with auto_promote_enabled=True and strong loss evidence, a learned
+        #    shadow guard is NOT auto-promoted — it lacks experiment authority (fail-closed).
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        cfg.guard.auto_promote_enabled = True
         result = run_promotion_check()
-        assert result.get("promotions", 0) >= 1, f"candidate should be promoted: {result}"
+        assert result.get("promotions", 0) == 0, f"learned guard must not auto-promote: {result}"
 
-        # 5) the candidate is now an ACTIVE guard (moved to guards/, status=active)
+        # 6) it stays a shadow candidate; it never became an active blocker
+        assert not any(x.guard_id == guard_id for x in load_trading_guards(status="active"))
+        still = [x for x in load_trading_guards(status="candidate") if x.guard_id == guard_id]
+        assert still and still[0].shadow_only is True
+
+    def test_manual_candidate_can_still_be_promoted_by_owner(self, e2e_db):
+        """The promotion MECHANISM is intact: an owner-authored (non-shadow, non-learned)
+        candidate is promotable via the explicit owner route."""
+        from aletheia.knowledge.manager import create_guard_candidate
+        from aletheia.knowledge.guards import load_trading_guards, guard_origin
+        from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
+
+        guard_id = "manual-sol-momentum-block"
+        create_guard_candidate(
+            title="Owner guard: block SOL momentum",
+            content="Owner-authored block on SOL/USDT momentum longs.",
+            metadata={"guard_id": guard_id, "status": "candidate", "symbol": "SOL/USDT",
+                      "scanner_family": "momentum", "direction": "long",
+                      "enforcement": "blocking", "block_candidate": True,
+                      "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}]},
+        )
+        cand = [g for g in load_trading_guards(status="candidate") if g.guard_id == guard_id]
+        assert cand and guard_origin(cand[0]) == "manual"
+        assert cand[0].shadow_only is False  # manual candidate not forced shadow
+
+        assert promote_guard_candidate_to_active(
+            guard_id, actor_type="human", actor_id="owner", reason="owner_review") is True
         active = [g for g in load_trading_guards(status="active") if g.guard_id == guard_id]
-        assert active, "promoted guard should now load as active"
-        assert active[0].applies_to.symbol == ["SOL/USDT"]
-        # ...and no longer appears as a candidate
-        assert not any(g.guard_id == guard_id for g in load_trading_guards(status="candidate"))
+        assert active, "owner-authored guard should promote to active"
+        assert active[0].block_candidate is True

@@ -129,6 +129,14 @@ _SEED_GUARDS = [
 ]
 
 
+def seed_guard_ids() -> frozenset[str]:
+    """guard_ids of the built-in safety guards. These are the ``seed`` origin in
+    guard_origin(): they are hand-authored safety controls, must never be touched by
+    the automatic learned-guard promotion/deprecation path, and keep full enforcement
+    authority (unlike learned/shadow guards)."""
+    return frozenset(str(seed["meta"]["guard_id"]) for seed in _SEED_GUARDS)
+
+
 def ensure_seed_guards() -> list[str]:
     """Write seed guard files if they don't exist. Returns list of created filenames."""
     guards_dir = get_data_dir() / "knowledge" / "guards"

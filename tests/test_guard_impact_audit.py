@@ -7,13 +7,16 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 
-def _write_guard(tmp_path: Path, *, guard_id: str = "auto_momentum_long_test") -> None:
+def _write_guard(tmp_path: Path, *, guard_id: str = "manual_momentum_long_test") -> None:
+    # A manual (owner-authored) blocking guard: learned/auto guards no longer block at
+    # enforcement (P0 2026-07-12 shadow-only regime), so the impact audit — which
+    # measures the counterfactual of ACTUAL blocks — is exercised with a real blocker.
     guards = tmp_path / "knowledge" / "guards"
     guards.mkdir(parents=True, exist_ok=True)
     (guards / f"{guard_id}.md").write_text(
         """---
-guard_id: auto_momentum_long_test
-title: auto momentum long test
+guard_id: manual_momentum_long_test
+title: manual momentum long test
 status: active
 scope: paper_entry
 enforcement: blocking
@@ -196,7 +199,7 @@ def test_guard_impact_flags_positive_blocked_outcome_as_overbroad_suspect(tmp_pa
     assert report["active_blocking_guards"]["total"] == 1
     assert report["candidate_flow"]["guard_blocked_candidates"] == 1
     row = report["blocked_candidates"][0]
-    assert row["matched_guards"][0]["guard_id"] == "auto_momentum_long_test"
+    assert row["matched_guards"][0]["guard_id"] == "manual_momentum_long_test"
     assert row["matched_guards"][0]["classification"] == ["symbol-specific", "family-wide", "direction-wide"]
     assert row["matched_guards"][0]["evidence_symbol"] == "SEED/USDT"
     assert row["outcomes"]["forward"]["4h"]["direction_adjusted_return_pct"] == 2.5

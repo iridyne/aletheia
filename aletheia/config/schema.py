@@ -733,7 +733,12 @@ class StrategyFactoryConfig(BaseModel):
 class GuardConfig(BaseModel):
     enabled: bool = True
     enforce_in_paper_ranker: bool = True
-    auto_promote_enabled: bool = True
+    # P0 (2026-07-12): default OFF. Automatic promotion of learned/auto guards to
+    # active hard blocks bypassed the Learning experiment/authority chain and turned
+    # historical loss-rate correlation into causal hard blocks. Auto guards are now
+    # permanently shadow-only (see knowledge/guards.py guard_origin + evaluate_guards
+    # seam); owner must explicitly opt in AND only manual/authorized guards promote.
+    auto_promote_enabled: bool = False
     min_matching_trades: int = 3
     max_score_penalty: float = 40.0
 

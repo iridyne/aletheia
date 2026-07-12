@@ -269,6 +269,30 @@ def create_trading_guard(
     return item
 
 
+def _force_shadow_only_if_auto(metadata: dict | None) -> dict | None:
+    """Every auto-generated guard candidate is created shadow-only (P0 2026-07-12).
+
+    A learned/auto guard may observe but must never block or penalize until an
+    experiment grants authority. Stamping shadow-only at the single creation
+    chokepoint means no producer (trade_case_builder, outcome_recorder, guard_routing)
+    can accidentally mint an auto candidate that the promotion job could turn into a
+    hard block. Owner-authored (manual) candidates are left untouched.
+    """
+    if not metadata:
+        return metadata
+    auto = bool(metadata.get("auto_generated")) or str(metadata.get("guard_id") or "").startswith("auto_")
+    if not auto:
+        return metadata
+    meta = dict(metadata)
+    meta["shadow_only"] = True
+    meta["block_candidate"] = False
+    tags = list(meta.get("tags") or [])
+    if "shadow-only" not in tags:
+        tags.append("shadow-only")
+    meta["tags"] = tags
+    return meta
+
+
 def create_guard_candidate(
     title: str,
     content: str,
@@ -276,7 +300,12 @@ def create_guard_candidate(
     strategy_id: str | None = None,
     tags: list[str] | None = None,
 ) -> KnowledgeItem:
-    """Create a guard candidate (medium_confidence, not retrievable)."""
+    """Create a guard candidate (medium_confidence, not retrievable).
+
+    Auto-generated candidates are forced shadow-only here — the single creation
+    chokepoint for all guard producers.
+    """
+    metadata = _force_shadow_only_if_auto(metadata)
     path = write_guard_candidate(title, content, metadata)
     item = KnowledgeItem(
         item_type="guard_candidate",

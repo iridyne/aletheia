@@ -13,7 +13,7 @@ import logging
 
 from aletheia.config.loader import load_config, get_data_dir
 from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
-from aletheia.knowledge.guards import load_trading_guards
+from aletheia.knowledge.guards import load_trading_guards, guard_origin
 
 logger = logging.getLogger("aletheia.analytics.guard_promotion")
 
@@ -44,6 +44,7 @@ def run_promotion_check() -> dict:
 
     from aletheia.analytics.guard_effectiveness import _rows_matching_guard, _clean_rows
     from aletheia.analytics.trade_attribution import build_trade_attribution_rows
+    from aletheia.knowledge.guards import learned_guard_block_authorized
 
     # #159: this job MUTATES live guard state, so only learn loss-rates from genuine
     # post-clean-window trade outcomes — synthetic/administrative closes (reconciler
@@ -51,13 +52,22 @@ def run_promotion_check() -> dict:
     rows = _clean_rows(build_trade_attribution_rows(limit=500))
     promotions = 0
     deprecations = 0
+    skipped_non_learned = 0
+    skipped_unauthorized = 0
 
     for guard in candidates:
-        # Automatic lesson block suggestions enter guard shadow evaluation first.
-        # Historical matching trades cannot auto-promote them into blockers; a
-        # later prospective evaluator or explicit owner action must remove this tag.
-        if "shadow-only" in set(guard.tags or []):
+        # Fix 6 (P0 2026-07-12): safety-type seed/manual guards are owner-controlled
+        # and must NEVER be processed by the automatic learned-guard job. Only learned
+        # (auto-generated) guards flow through here.
+        if guard_origin(guard) != "learned":
+            skipped_non_learned += 1
             continue
+        # Fix 3: shadow-only learned guards are observe-only. The automatic job never
+        # promotes them and never strips their shadow-only marker.
+        if guard.shadow_only or "shadow-only" in set(guard.tags or []):
+            skipped_unauthorized += 1
+            continue
+
         matched = _rows_matching_guard(guard, rows)
         if len(matched) < min_trades:
             continue
@@ -65,21 +75,34 @@ def run_promotion_check() -> dict:
         losses = [r for r in matched if float(r.get("realized_pnl", 0)) < 0]
         loss_rate = len(losses) / len(matched) if matched else 0
 
-        if loss_rate >= 0.6:
-            if _promote_guard_to_active(guard.guard_id, loss_rate):
-                promotions += 1
-                logger.info("Promoted guard %s to active (loss_rate=%.0f%%)",
-                            guard.guard_id, loss_rate * 100)
-        elif loss_rate < 0.3 and len(matched) >= min_trades * 2:
+        # Auto-deprecation of an ineffective learned guard is safe cleanup.
+        if loss_rate < 0.3 and len(matched) >= min_trades * 2:
             if _update_guard_status(guard.guard_id, "deprecated"):
                 deprecations += 1
                 logger.info("Deprecated guard %s (loss_rate=%.0f%%, not effective)",
                             guard.guard_id, loss_rate * 100)
+            continue
+
+        # Fixes 4/5: historical loss-rate correlation is NOT causal block authority.
+        # A learned guard is promoted to an active block ONLY when the
+        # ranker_learned_guard experiment authorizes it (AT-01 verdict + AT-02 path
+        # authority). Fail-closed on master → nothing auto-promotes into a blocker.
+        if loss_rate >= 0.6:
+            if learned_guard_block_authorized(guard) and _promote_guard_to_active(guard.guard_id, loss_rate):
+                promotions += 1
+                logger.info("Promoted guard %s to active (loss_rate=%.0f%%, experiment-authorized)",
+                            guard.guard_id, loss_rate * 100)
+            else:
+                skipped_unauthorized += 1
+                logger.info("guard_promotion: %s meets loss threshold but lacks experiment "
+                            "authority — kept observe-only (fail-closed)", guard.guard_id)
 
     return {
         "promotions": promotions,
         "deprecations": deprecations,
         "candidates_checked": len(candidates),
+        "skipped_non_learned": skipped_non_learned,
+        "skipped_unauthorized": skipped_unauthorized,
     }
 
 
@@ -112,13 +135,18 @@ def promote_guard_candidate_to_active(
                 source_meta = dict(meta)
                 active_meta = dict(meta)
                 active_meta["status"] = "active"
-                # Ensure penalty values are set so guard actually affects scoring
-                if not active_meta.get("score_penalty"):
-                    active_meta["score_penalty"] = 10.0
-                if not active_meta.get("enforcement"):
-                    active_meta["enforcement"] = "blocking"
-                if not active_meta.get("block_candidate"):
-                    active_meta["block_candidate"] = True
+                # Fix 3 (P0 2026-07-12): a shadow-only candidate stays observe-only even
+                # when promoted — never strip shadow_only / the "shadow-only" tag and
+                # never force it into a block. Only non-shadow (owner/manual) guards get
+                # the blocking defaults that make evaluate_guards enforce.
+                is_shadow = bool(meta.get("shadow_only")) or "shadow-only" in set(meta.get("tags") or [])
+                if not is_shadow:
+                    if not active_meta.get("score_penalty"):
+                        active_meta["score_penalty"] = 10.0
+                    if not active_meta.get("enforcement"):
+                        active_meta["enforcement"] = "blocking"
+                    if not active_meta.get("block_candidate"):
+                        active_meta["block_candidate"] = True
 
                 if search_dir == candidates_dir:
                     if not active_existing:
@@ -234,3 +262,108 @@ def _update_guard_status(guard_id: str, new_status: str) -> bool:
                 continue
 
     return False
+
+
+# ---------------------------------------------------------------------------
+# Fix 7: audit + reversible shadow-downgrade of learned active guards
+# ---------------------------------------------------------------------------
+
+def audit_auto_guards() -> list[dict]:
+    """READ-ONLY audit of learned (auto-generated) guards that are active.
+
+    Reports which learned guards the old auto-promotion chain turned into blockers
+    or scorers. Mutates nothing. Use ``downgrade_learned_guards_to_shadow`` to fix.
+    """
+    out: list[dict] = []
+    for guard in load_trading_guards(status="active"):
+        if guard_origin(guard) != "learned":
+            continue
+        out.append({
+            "guard_id": guard.guard_id,
+            "title": guard.title,
+            "enforcement": guard.enforcement,
+            "block_candidate": guard.block_candidate,
+            "score_penalty": guard.score_penalty,
+            "shadow_only": guard.shadow_only,
+            "tags": list(guard.tags or []),
+            # A learned guard is a live behavior-changer only if it still blocks or
+            # scores AND is not already shadow-only.
+            "still_enforcing": (guard.block_candidate or guard.score_penalty > 0) and not guard.shadow_only,
+        })
+    return out
+
+
+def _record_guard_downgrade_event(guard_id: str, before: dict) -> None:
+    try:
+        from aletheia.storage.event_store import get_event_store
+        from aletheia.storage.models import PSEvent
+
+        get_event_store().append(PSEvent(
+            event_type="GUARD_DOWNGRADED_TO_SHADOW",
+            aggregate_type="trading_guard",
+            aggregate_id=guard_id,
+            actor_type="human",
+            actor_id="guard_shadow_downgrade",
+            payload_json=json.dumps({"guard_id": guard_id, "before": before}, sort_keys=True),
+        ))
+    except Exception:
+        logger.debug("Failed to record guard downgrade event", exc_info=True)
+
+
+def downgrade_learned_guards_to_shadow(*, dry_run: bool = True) -> dict:
+    """Downgrade every learned active guard to shadow-only (observe-only).
+
+    Reversible and auditable: original enforcement/block/penalty are stored in
+    ``pre_shadow_*`` frontmatter keys, an event is recorded, and the file is kept
+    (never deleted). Owner-controlled seed/manual guards are never touched.
+
+    dry_run=True (default) reports what would change without writing.
+    """
+    guards_dir = get_data_dir() / "knowledge" / "guards"
+    changed: list[dict] = []
+    scanned = 0
+    if guards_dir.exists():
+        for path in sorted(guards_dir.glob("*.md")):
+            try:
+                meta, body = parse_frontmatter(path)
+                if not meta or meta.get("status") != "active":
+                    continue
+                if guard_origin(meta) != "learned":
+                    continue
+                scanned += 1
+                already_shadow = bool(meta.get("shadow_only")) and not bool(meta.get("block_candidate"))
+                if already_shadow and str(meta.get("enforcement")) == "advisory":
+                    continue
+                before = {
+                    "enforcement": meta.get("enforcement"),
+                    "block_candidate": meta.get("block_candidate"),
+                    "score_penalty": meta.get("score_penalty"),
+                    "shadow_only": meta.get("shadow_only"),
+                }
+                changed.append({"guard_id": meta.get("guard_id"), "path": str(path), "before": before})
+                if dry_run:
+                    continue
+                new_meta = dict(meta)
+                # Preserve originals once (idempotent) for rollback.
+                new_meta.setdefault("pre_shadow_enforcement", meta.get("enforcement"))
+                new_meta.setdefault("pre_shadow_block_candidate", meta.get("block_candidate"))
+                new_meta.setdefault("pre_shadow_score_penalty", meta.get("score_penalty"))
+                new_meta["shadow_only"] = True
+                new_meta["enforcement"] = "advisory"
+                new_meta["block_candidate"] = False
+                tags = list(new_meta.get("tags") or [])
+                if "shadow-only" not in tags:
+                    tags.append("shadow-only")
+                new_meta["tags"] = tags
+                path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
+                _record_guard_downgrade_event(str(meta.get("guard_id")), before)
+            except Exception as e:
+                logger.warning("Failed to downgrade guard at %s: %s", path, e)
+                continue
+
+    return {
+        "dry_run": dry_run,
+        "scanned_learned_active": scanned,
+        ("would_downgrade" if dry_run else "downgraded"): len(changed),
+        "guards": changed,
+    }
