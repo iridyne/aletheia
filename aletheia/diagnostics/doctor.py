@@ -1542,42 +1542,33 @@ def _probe_learning_retrieval(report: Report) -> None:
             else:
                 report.add("loop.retrieval_pool", "ok", detail)
 
-        # --- 2. guard promotion stall ---------------------------------------
-        # Active guards live in the file system (knowledge/guards/*.md with status=active),
-        # not in knowledge_items. Count from files for an honest signal.
-        candidates = db.execute(
-            "SELECT COUNT(*) FROM knowledge_items WHERE item_type='guard_candidate'"
-        ).fetchone()[0]
-        active_guards = 0
+        # --- 2. guard promotion / shadow-candidate pool ---------------------
+        # Both counts come from FILES (knowledge/guards + guard_candidates by
+        # frontmatter status), never knowledge_items: the DB can retain legacy /
+        # cross-platform file paths, and only the frontmatter status is authoritative
+        # for the guard lifecycle.
+        active_guards = pending_candidates = 0
         try:
             from aletheia.knowledge.guards import load_trading_guards
             active_guards = len(load_trading_guards(status="active"))
+            pending_candidates = len(load_trading_guards(status="candidate"))
         except Exception:
             pass
-        auto_promote = True
+        auto_promote = False
         try:
             from aletheia.config.loader import load_config
             auto_promote = load_config().guard.auto_promote_enabled
         except Exception:
             pass
-        if candidates == 0:
-            report.add("loop.guard_promotion", "info", "no guard_candidates yet")
-        elif active_guards == 0:
-            if not auto_promote:
-                report.add("loop.guard_promotion", "info",
-                           f"{candidates} guard_candidate(s) pending, 0 promoted "
-                           f"(auto_promote_enabled=false — promotion disabled in config)",
-                           "set guard.auto_promote_enabled=true in Settings to enable promotion")
-            else:
-                report.add(
-                    "loop.guard_promotion", "warn",
-                    f"{candidates} guard_candidate piled up, 0 promoted to trading_guard",
-                    "promotion chain may be broken — check predicates frontmatter in "
-                    "guard_candidates files and knowledge/guards/ directory. "
-                    "Round 2 Fix L-Bug-D (audit 断点 B2/B3)")
-        else:
-            report.add("loop.guard_promotion", "ok",
-                       f"{active_guards} active guards, {candidates} candidates")
+        # P0 2026-07-12: learned/auto guards are shadow-only and can never auto-promote
+        # into blockers (that needs the ranker_learned_guard experiment). A backlog of
+        # shadow candidates is expected observation feed, NOT a broken promotion chain.
+        detail = f"{active_guards} active guard(s), {pending_candidates} pending shadow candidate(s)"
+        fix = None
+        if auto_promote:
+            fix = ("guard.auto_promote_enabled=true — learned guards still cannot "
+                   "auto-promote, but disable it in Settings to match the intended default")
+        report.add("loop.guard_promotion", "ok", detail, fix)
     except Exception as e:
         report.add("loop.retrieval_pool", "info", f"probe error: {e}")
 
