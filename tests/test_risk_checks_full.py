@@ -40,6 +40,31 @@ def _unlock_live_auto(tmp_path):
     save_config(cfg)
 
 
+def _verified_paper_close(position: Position, exit_price: float) -> None:
+    from aletheia.execution.verified_exit import VerifiedExitFill, VerifiedExitResult
+    from aletheia.portfolio.outcome_closure import close_position_verified
+
+    close_position_verified(
+        position.id,
+        VerifiedExitResult(
+            state="verified_fill", reason="test_local_fill",
+            broker_id="paper_internal", account_environment="local",
+            account_scope="risk-test", execution_mode="paper_internal",
+            position_id=position.id, symbol=position.symbol,
+            market_type=position.market_type, direction=position.direction,
+            position_absent=True, history_complete=True,
+            history_start_ms=1, history_end_ms=2, pages=1,
+            source_endpoint="test_local_fill",
+            fills=(VerifiedExitFill(
+                fill_id=f"exit-{position.id}", order_id=None, price=exit_price,
+                quantity=position.quantity, fee=0.0, fee_currency="USDT",
+                realized_pnl=None, filled_at_ms=2,
+            ),),
+        ),
+        reason="stop_loss",
+    )
+
+
 # --- max_daily_loss (global brake) ---
 
 def test_daily_loss_within_limit_approves(tmp_path, monkeypatch):
@@ -53,7 +78,6 @@ def test_daily_loss_within_limit_approves(tmp_path, monkeypatch):
 
 def test_daily_loss_exceeded_blocks_and_trips_kill_switch(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.portfolio.pnl import close_position
     from aletheia.risk import kill_switch
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
@@ -61,10 +85,11 @@ def test_daily_loss_exceeded_blocks_and_trips_kill_switch(tmp_path, monkeypatch)
     save_config(cfg)
 
     # Capital base = max_live_limited_cap_usdt default 100; max_daily_loss_pct 1.0 → $1 limit.
-    pos = Position(symbol="BTCUSDT", market_type="spot", direction="long",
-                   quantity=1.0, entry_price=100.0, execution_mode="paper_internal")
+    pos = Position(symbol="BTC/USDT", market_type="spot", direction="long",
+                   quantity=1.0, entry_price=100.0, entry_fee=0.0,
+                   execution_mode="paper_internal")
     repo.insert_position(pos)
-    close_position(pos.id, exit_price=90.0)  # realized -10, exceeds $1 limit
+    _verified_paper_close(pos, 90.0)
 
     p = TradeProposal(symbol="ETHUSDT", market_type="spot", direction="long",
                       execution_mode="paper_internal", quantity=0.001, price=3000)
@@ -417,12 +442,13 @@ def test_kill_switch_trip_blocks_subsequent_proposal(tmp_path, monkeypatch):
     cfg.risk.max_daily_loss_pct = 1.0  # 1% of cap(100) = $1 limit
     cfg.risk.kill_switch_enabled_demo = True  # default False; paper_internal is demo-mode
     save_config(cfg)
-    repo.insert_position(Position(
-        symbol="BTCUSDT", market_type="spot", direction="long",
+    loss_position = Position(
+        symbol="BTC/USDT", market_type="spot", direction="long",
         quantity=0.01, entry_price=60000, current_price=54000,
-        execution_mode="paper_internal", status="closed", realized_pnl=-50.0,
-        closed_at=datetime.now(timezone.utc).isoformat(),
-    ))
+        entry_fee=0.0, execution_mode="paper_internal",
+    )
+    repo.insert_position(loss_position)
+    _verified_paper_close(loss_position, 54000.0)
 
     p1 = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
                        execution_mode="paper_internal", quantity=0.0004, price=60000, stop_price=58800)

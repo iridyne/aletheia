@@ -329,20 +329,24 @@ def test_behavior_changing_consumers_use_one_eligible_read_model():
     assert "assess_realized_position" in reflection
 
 
-@_missing("RG-12: Risk daily loss still consumes the ambiguous today_realized_pnl")
 @spec_claim(
     SpecClaim(
         "OI-C03", "outcome_integrity", "§10 authoritative account loss", "L2c",
         "Risk daily-loss protection reads an authoritative account-loss source that excludes "
         "unverified exit economics, while strategy-performance PnL is a separate query; missing "
         "account truth is unavailable/fail-closed rather than falsely healthy.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_risk_does_not_use_strategy_or_unverified_realized_pnl():
     source = _source("aletheia/risk/engine.py")
     assert "today_realized_pnl" not in source
     assert "authoritative_account_realized_loss" in source
+    assert "account_loss_unavailable" in source
+    account_source = _source("aletheia/portfolio/account_loss.py")
+    assert "eligible_strategy_outcomes" not in account_source
+    assert "paper_account_events" in account_source
+    assert "assess_position_closure" in account_source
 
 
 @_missing("RG-13: analytics API does not expose honest raw/genuine dual semantics")

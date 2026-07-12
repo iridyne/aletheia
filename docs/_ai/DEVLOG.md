@@ -3235,3 +3235,14 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Verified all existing synchronous ASGI TestClient suites without changing route or API tests.
 - Promoted Starlette deprecation warnings to failures. The full suite now emits no warnings;
   two unrelated Outcome Integrity baseline test failures remain explicit.
+
+## 2026-07-12 — Authoritative Risk daily loss
+
+- Replaced Risk check #8's ambiguous position-performance sum with a dedicated account-loss
+  snapshot. Risk thresholds, capital bases, ordering and kill-switch policy are unchanged.
+- Local paper results now require exact agreement between verified close economics and the
+  append-only cash ledger; exchange-backed results require verified current-semantics economics.
+- Administrative, maintenance, legacy, incomplete or ledger-mismatched closes make account loss
+  explicitly unavailable. New proposals fail closed without inventing a daily-loss breach or
+  auto-tripping the kill switch; a genuine loss still triggers the existing brake.
+- Added controlled-boundary and OI-C03 regressions. Reporting/API/UI dual semantics remain RG-T10.

@@ -304,7 +304,8 @@ identity、精确数量、quote-currency fee 和 `verified_fill`，用成交加�
 删除，旧 `close_position` 也拒绝 synthetic reason。对应 `OI-B01~B04`、`OI-C03`。
 
 PnL 读取已拆出 `today_raw_closed_realized_pnl()` 与 `today_eligible_strategy_pnl()`；旧
-`today_realized_pnl()` 暂保留 raw 兼容语义，Risk 的 authoritative account loss 由 RG-T09 单独迁移。
+`today_realized_pnl()` 暂保留 raw 兼容语义。Risk 已由 RG-T09 迁移到独立
+`authoritative_account_realized_loss()`，不再消费该兼容指标。
 
 ### 11.4 中央关闭语义与三种读取口径（OI-S02 implemented）
 

@@ -35,18 +35,36 @@ def test_realized_losses_trip_breaker_via_close(tmp_path, monkeypatch):
     cfg.risk.kill_switch_enabled_demo = True  # default False; paper_internal is demo-mode
     save_config(cfg)
 
-    from aletheia.portfolio.pnl import close_position, today_realized_pnl
+    from aletheia.execution.verified_exit import VerifiedExitFill, VerifiedExitResult
+    from aletheia.portfolio.outcome_closure import close_position_verified
+    from aletheia.portfolio.pnl import today_realized_pnl
     from aletheia.risk.engine import evaluate_proposal
     from aletheia.risk import kill_switch
 
     # cap = max_live_limited_cap_usdt (100) * max_daily_loss_pct (1.0%) = $1 limit.
-    pos = Position(symbol="BTCUSDT", market_type="spot", direction="long",
-                   quantity=1.0, entry_price=100.0, execution_mode="paper_internal")
+    pos = Position(symbol="BTC/USDT", market_type="spot", direction="long",
+                   quantity=1.0, entry_price=100.0, entry_fee=0.0,
+                   execution_mode="paper_internal")
     repo.insert_position(pos)
-    close_position(pos.id, exit_price=90.0, reason="stop_loss")  # gross -10, minus fees
-    # gross (90-100)*1 = -10, minus round-trip fees -> still far past the $1 cap
-    # 0.0006 = paper_internal fee both sides after PR#35 demo/live fee-parity fix.
-    expected = -10.0 - (100.0 + 90.0) * 1.0 * 0.0006
+    close_position_verified(
+        pos.id,
+        VerifiedExitResult(
+            state="verified_fill", reason="test_local_fill",
+            broker_id="paper_internal", account_environment="local",
+            account_scope="breaker-test", execution_mode="paper_internal",
+            position_id=pos.id, symbol=pos.symbol, market_type=pos.market_type,
+            direction=pos.direction, position_absent=True, history_complete=True,
+            history_start_ms=1, history_end_ms=2, pages=1,
+            source_endpoint="test_local_fill",
+            fills=(VerifiedExitFill(
+                fill_id=f"exit-{pos.id}", order_id=None, price=90.0,
+                quantity=1.0, fee=0.0, fee_currency="USDT",
+                realized_pnl=None, filled_at_ms=2,
+            ),),
+        ),
+        reason="stop_loss",
+    )
+    expected = -10.0
     assert today_realized_pnl() == pytest.approx(expected)
 
     p = TradeProposal(symbol="ETHUSDT", market_type="spot", direction="long",

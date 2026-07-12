@@ -293,6 +293,11 @@ semantics version/staleness 被拒读，不能等历史清理后才安全。
 
 #### RG-T09：Risk daily-loss 单独整改
 
+状态：已实现。Risk check #8 现读取独立 authoritative account snapshot；本地 paper close 必须
+与现金账本逐笔一致，exchange-backed close 必须具备当前版本的 verified exact economics。未知或
+不一致的账户结果显式阻断新 proposal，但不伪造日损 breach、不自动触发 kill switch。阈值、资本基数
+和 check 顺序未改变。
+
 范围：`aletheia/risk/` 受控边界；不得顺带改风险限额。
 
 工作：

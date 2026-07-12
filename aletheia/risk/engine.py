@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_canonical
+from aletheia.portfolio.account_loss import authoritative_account_realized_loss
 from aletheia.storage.models import RiskDecision, TradeProposal
 from aletheia.storage.repositories import insert_risk_decision, list_positions
 
@@ -270,7 +271,6 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     #    Respects kill_switch_enabled_live / kill_switch_enabled_demo toggles:
     #    the daily-loss violation is always recorded, but the kill switch only
     #    auto-trips when the matching toggle is enabled.
-    from aletheia.portfolio.pnl import today_realized_pnl
     # Capital base is mode-specific (CR-RE-03): demo daily-loss must scale off the
     # DEMO base (starting_capital_usdt), not the much smaller live cap. Using the
     # live cap ($100) for a demo account meant a ~$1 daily-loss limit, so any small
@@ -281,8 +281,11 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     else:
         capital_base = risk.starting_capital_usdt or 0.0
     daily_loss_limit = capital_base * (risk.max_daily_loss_pct / 100.0)
-    realized = today_realized_pnl(execution_mode=proposal.execution_mode)
-    if daily_loss_limit > 0 and realized <= -daily_loss_limit:
+    account_loss = authoritative_account_realized_loss(proposal.execution_mode)
+    realized = account_loss.realized_pnl_usdt
+    if not account_loss.available or realized is None:
+        violations.append(f"account_loss_unavailable:{account_loss.reason}")
+    elif daily_loss_limit > 0 and realized <= -daily_loss_limit:
         violations.append(f"max_daily_loss_exceeded:{realized}<=-{daily_loss_limit}")
         is_live = _is_live(proposal.execution_mode)
         ks_enabled = risk.kill_switch_enabled_live if is_live else risk.kill_switch_enabled_demo

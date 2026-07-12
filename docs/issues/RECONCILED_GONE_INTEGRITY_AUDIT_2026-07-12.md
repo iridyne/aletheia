@@ -71,7 +71,7 @@ Operator 调参的交易结果。
 | RG-09 | P0 | fixed-core | 旧路径一次可信快照缺失即可行政性 close | 已改为 durable candidate、独立完整 observations；ready 后仍等待 T06/T07 | T12 覆盖重启/部分失败/双视图 E2E |
 | RG-10 | P0 | fixed-core | `_try_get_tpsl_fill_price` 写死 Bitget | 三家只读 verified-exit protocol 已交付；尚未接入关闭编排 | RG-T07 使用三态结果分流 verified/admin close，不再调用 broker-specific fallback |
 | RG-11 | P0 | fixed-core | 行政性 close 曾复用普通 `close_position` | verified/admin 入口已分流，行政关闭不再制造费用、滑点、PnL、现金或 outcome hook | RG-T08～T10 继续迁移读取/展示消费者，T12 做 E2E |
-| RG-12 | P0 | open | `today_realized_pnl` 同时用于账户、Risk、PI 和表现 | 一个含混数字跨越安全/判断语义 | 明确拆分 authoritative account loss 与 eligible strategy PnL |
+| RG-12 | P0 | fixed-risk | `today_realized_pnl` 曾同时用于账户、Risk、PI 和表现 | Risk 已改用独立 authoritative account snapshot；PI 已用 eligible strategy PnL | T10 完成 dashboard/CLI 双口径展示 |
 | RG-13 | P0 | open | CLI/API/equity curve 默认只显示混合 raw 结果 | owner 无法判断真实策略表现 | raw 与 genuine 双口径并列、清楚标注排除数量 |
 | RG-14 | P1 | fixed-behavior | behavior consumers 已统一到中央 read model 并由枚举扫描禁止本地 reason set | 新原因只需更新中央分类；判断路径不会漏过滤 | T10 对合法 raw 展示读取增加双口径保护 |
 | RG-15 | P1 | fixed-storage | data model 原缺 close category、fill provenance、eligibility、verification | 无法结构化证明一个结果是否可学习 | additive schema 与 durable observation storage 已交付；历史 backfill 仍由 RG-T11 完成 |
@@ -91,7 +91,7 @@ Operator 调参的交易结果。
 | Consumer | 当前角色 | 目标语义 | 审计结论 |
 |---|---|---|---|
 | `portfolio.pnl.close_position` | 状态、PnL、现金、hook | 按 closure semantics 分流 | fixed-core |
-| `today_realized_pnl` | Risk + PI + dashboard | 拆成 account loss / strategy PnL | partial — PI 已拆，Risk/T10 待办 |
+| `today_realized_pnl` | Risk + PI + dashboard | 拆成 account loss / strategy PnL | partial — Risk/PI 已拆，T10 展示待办 |
 | `analytics.trade_stats` | CLI/API/UI/PI | eligible | fixed-behavior |
 | `analytics.family_scorecard` | UI + PI | eligible | fixed-behavior |
 | `build_strategy_kpis` | PI strategy context | eligible | fixed-behavior |
@@ -100,7 +100,7 @@ Operator 调参的交易结果。
 | `alpha_attribution._system_operator_alpha` | contribution | eligible | fixed-behavior |
 | `server.analytics.equity_curve` | operator display | raw/genuine 两条显式曲线 | open |
 | `portfolio.compute_portfolio` | account display | raw account，字段名诚实 | review |
-| `risk.engine` daily loss | safety | authoritative account loss，不能用 unverified fallback PnL | open |
+| `risk.engine` daily loss | safety | authoritative account loss，不能用 unverified fallback PnL | fixed-controlled |
 | `factor_feedback` | signal gate | eligible | protected + enumerated |
 | `guard_promotion/effectiveness` | hard-block authority | eligible + clean floor | protected + enumerated |
 | `insight_synthesizer` | memo prompt | eligible + clean floor | fixed-behavior + fresh gate |
