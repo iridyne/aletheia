@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-050
 title: Explain every trade entry and exit decision
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -28,8 +28,9 @@ ownership:
   expires_at: '2026-07-12T19:20:48.340976Z'
 base_commit: 1574bed87f5502b537fd42913e9569f490755f0b
 next_action:
-  command_key: workflow_tests
-  reason: Add the missing-state contract and focused failing tests before implementation.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: workflow_tests
@@ -56,5 +57,13 @@ verification:
   run_at: '2026-07-12T11:44:07.790944Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: f2bd38f1aa82bfbc655909aedfd51355bc40baef
+  run_at: '2026-07-12T11:44:58.116647Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-050.md
-updated_at: '2026-07-12T11:44:07.791166Z'
+updated_at: '2026-07-12T11:44:58.248996Z'
