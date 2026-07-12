@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-054
 title: Define bug classes and reset behavior windows
-status: in_progress
+status: done
 packet_type: tiny
 scope:
   boundary: declare before implementation
@@ -24,10 +24,18 @@ ownership:
   expires_at: '2026-07-13T00:30:26.200213Z'
 base_commit: 6b80174f610c714b215d300d91402dd6023f0af6
 next_action:
-  command_key: workflow_tests
-  reason: Verify workflow metadata and strict task integrity after the documentation-only
-    change.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 3255edfbc1acd6e0ca63fc9efe14724f1f6b8af2
+  run_at: '2026-07-12T16:32:09.110260Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-054.md
-updated_at: '2026-07-12T16:31:33.426285Z'
+updated_at: '2026-07-12T16:32:19.743531Z'
