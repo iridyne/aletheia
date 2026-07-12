@@ -3,7 +3,7 @@
 > **角色**:定义订单从 proposal 到交易所的完整通路,及其原子性/幂等/对账保证。
 > **基线**:代码为底(file:line),意图差距标 ⚠️;冲突时文档为准。
 > **不变式来源**:[trust_and_change_control §1, §6.3](../governance/trust_and_change_control.md)。
-> Last updated: 2026-06-21 · 维护者:Aletheia Dev
+> Last updated: 2026-07-12 · 维护者:Aletheia Dev
 
 ---
 
@@ -147,6 +147,8 @@ trade_proposals.id
 | 逻辑 | 读交易所 live open orders → 本地 `status=submitted` 但不在交易所 open 的 → 标 `filled` | `reconciliation.py:38-85` |
 | 红线 | **对账绝不下单/撤单**,只比对状态 + 写收敛/审计记录([trust §1.3](../governance/trust_and_change_control.md)) | — |
 | 防伪 | 对账从不创建虚假 Fill,仅更新 `order.status` | `reconciliation.py:77` |
+
+**Spec claim**：`EX-C04`（对账模块不得导入下单函数）。
 
 Position reconciler 的匹配身份必须包含执行账户作用域：`execution_mode + broker_id +
 account_environment + canonical symbol + market_type + direction`；双方都带非敏感 account fingerprint

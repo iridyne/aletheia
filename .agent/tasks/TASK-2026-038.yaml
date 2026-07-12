@@ -1,0 +1,34 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-038
+title: Fix baseline spec identity and blank-provider status coverage
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Remove the duplicate execution rule identifier and align status-route tests
+  with honest blank model-provider configuration; exclude Outcome Integrity, reconciliation,
+  Learning, Risk, execution behavior, exchange adapters, live state, and runtime restarts.
+acceptance:
+- Execution contract claim identifiers are unique, with executable venue constraints
+  retaining EX-B05 and the reconciliation no-order invariant recorded as EX-C04 in
+  code and SDD.
+- A fresh blank model-provider configuration is reported honestly as an empty value
+  by status-route coverage; production status behavior is not changed or fabricated.
+- Focused tests, full specs, architecture fitness, full test suite, and strict workflow
+  checks pass without touching Outcome Integrity, exchange adapters, Risk, Learning,
+  live state, or runtime processes.
+ownership:
+  branch: fix/baseline-spec-status-fixes
+  lease_holder: codex
+  claimed_at: '2026-07-12T05:50:25.346846Z'
+  expires_at: '2026-07-12T13:50:25.347000Z'
+base_commit: 362fc0a1573e4e363e5bde98c380ead7647b73b1
+next_action:
+  command_key: specs
+  reason: Record the passing full spec suite after committing the implementation.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-038.md
+updated_at: '2026-07-12T05:54:48.912375Z'

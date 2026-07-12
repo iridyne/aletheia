@@ -3171,3 +3171,12 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
   candidate ready only for the later verified-exit phase. The scheduler no longer invokes the
   fallback-price orphan close, so RG-T06/T07 can add real exit evidence and honest accounting
   without new synthetic PnL being created in the interim.
+
+## 2026-07-12 — Baseline verification cleanup
+
+- Split two unrelated execution rules that accidentally shared `EX-B05`: executable venue
+  order constraints retain that identifier, while the reconciliation no-order invariant is
+  now `EX-C04` in both executable coverage and the execution design document.
+- Corrected the status-route regression to accept the intentionally empty model-provider
+  value on a fresh configuration instead of requiring the backend to invent one.
+- No runtime behavior changed; the full suite now has no ordinary failures.

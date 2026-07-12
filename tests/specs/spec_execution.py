@@ -321,13 +321,13 @@ def test_re_execute_already_executed_proposal_rejected(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# EX-B05 — reconciliation never imports place_order
+# EX-C04 — reconciliation never imports place_order
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
-        "EX-B05", "execution_contract", "§6 reconciliation invariant", "L2c",
+        "EX-C04", "execution_contract", "§6 reconciliation invariant", "L2c",
         "reconciliation.py never imports a place_order function (reconciliation must not place orders)",
     ),
 )
