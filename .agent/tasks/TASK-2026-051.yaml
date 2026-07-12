@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-051
 title: Make the active trading mainline executable and replayable
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -33,8 +33,9 @@ ownership:
   expires_at: '2026-07-13T15:08:39.879363Z'
 base_commit: 001dce8153c35ba9ea9b146899d1f9cacee30fd1
 next_action:
-  command_key: workflow_tests
-  reason: Claim the task and define the first focused verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: architecture
@@ -53,5 +54,13 @@ verification:
   run_at: '2026-07-12T15:36:15.356878Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 896e4c626c50f9e09c15b65f3596531a454bf012
+  run_at: '2026-07-12T15:36:57.075003Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-051.md
-updated_at: '2026-07-12T15:36:15.357122Z'
+updated_at: '2026-07-12T15:36:57.214470Z'
