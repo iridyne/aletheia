@@ -131,6 +131,42 @@ Never claim a trading, risk, live, or secret-handling fix is complete without te
 
 ---
 
+## Bug Triage Protocol
+
+发现问题后**先分类，再行动**。不同类型处理方式不同，混用会污染实验数据或拖慢核心稳定。
+
+### A 类 — 立刻修，不触发实验重置
+
+| 场景 | 例子 |
+|------|------|
+| 系统崩溃 / 挂起 | 数据库死锁、网络无限挂起 |
+| 数据写错位置 | 写错表、identity 丢失 |
+| 数字造假 | accounting/outcome 算错、exchange adapter 明确报错 |
+| 安全边界绕过 | 任何绕过权限/信任边界的路径 |
+
+修完即可，不需要关闭实验窗口。
+
+### B 类 — 可以修，但必须开新实验窗口
+
+| 场景 | 例子 |
+|------|------|
+| 决策逻辑变化 | 排名公式、prompt/context、阈值 |
+| Guard 行为变化 | Guard 规则、shadow 模式、惩罚分 |
+| 资金/配额逻辑 | sizing、family quota |
+| 权重/投票逻辑 | debate 权重 |
+
+操作顺序：**关闭当前 experiment → 新 policy epoch → 新 observation window**，然后再合并修复。B 类结果不能与旧 epoch 数据混用。
+
+### C 类 — 暂缓，等活动核心稳定
+
+新 Agent、新资产、新 UI 页面、新自进化模式、新策略功能、新复杂抽象。
+
+不是永远不做——是等 A/B 类问题清零、核心稳定之后再动。
+
+> 完整说明和裁决示例见 `docs/governance/BUG_TRIAGE_PROTOCOL.md`
+
+---
+
 ## Spec-Driven Development (SDD)
 
 Spec as Code：L2 契约文档的关键断言已编码为 `tests/specs/spec_*.py` 中的可执行测试。

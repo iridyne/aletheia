@@ -1,0 +1,33 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-054
+title: Define bug classes and reset behavior windows
+status: in_progress
+packet_type: tiny
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Publish the A/B/C bug classification and require a fresh policy epoch and
+  observation window for behavior-changing fixes, without changing Learning runtime
+  behavior.
+acceptance:
+- AGENTS.md contains a concise A/B/C bug triage rule and points to the detailed governance
+  document.
+- Every behavior-changing B-class fix must close the old experiment, start a new policy
+  epoch, and count a fresh observation window without mixing old evidence.
+- No runtime, Learning, Risk, execution, credential, or live-trading behavior changes
+  are included.
+ownership:
+  branch: iridite/bug-triage-window-reset
+  lease_holder: codex-root
+  claimed_at: '2026-07-12T16:30:26.200049Z'
+  expires_at: '2026-07-13T00:30:26.200213Z'
+base_commit: 6b80174f610c714b215d300d91402dd6023f0af6
+next_action:
+  command_key: workflow_tests
+  reason: Verify workflow metadata and strict task integrity after the documentation-only
+    change.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-054.md
+updated_at: '2026-07-12T16:31:33.426285Z'
