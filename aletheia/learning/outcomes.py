@@ -6,68 +6,44 @@ consumers migrate in later phases; unknown economics always fail closed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
 from typing import Any
 
-from aletheia.analytics.close_reasons import is_synthetic_close
 from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
-
-
-@dataclass(frozen=True)
-class OutcomeAssessment:
-    eligible: bool
-    reason: str
-    outcome_key: str | None = None
-    horizon: str | None = None
-    net_return_pct: float | None = None
-    source: str | None = None
+from aletheia.analytics.outcome_integrity import (
+    OutcomeAssessment,
+    assess_position_closure,
+)
 
 
 def assess_realized_position(row: dict[str, Any]) -> OutcomeAssessment:
     closed_at = row.get("closed_at")
     if not _at_or_after_floor(closed_at):
         return OutcomeAssessment(False, "dirty_or_missing_close_time", source="realized_position")
-    if is_synthetic_close(row.get("close_reason")):
-        return OutcomeAssessment(False, "synthetic_close", source="realized_position")
-    pnl = _to_float(row.get("realized_pnl"))
-    entry = _to_float(row.get("entry_price"))
-    quantity = _to_float(row.get("quantity"))
-    if pnl is None or entry is None or quantity is None or entry <= 0 or quantity <= 0:
-        return OutcomeAssessment(False, "incomplete_realized_economics", source="realized_position")
-    key = row.get("position_id") or row.get("id")
-    if not key:
-        return OutcomeAssessment(False, "missing_outcome_identity", source="realized_position")
-    return OutcomeAssessment(
-        True,
-        "eligible",
-        outcome_key=f"position:{key}",
-        horizon="realized_close",
-        net_return_pct=pnl / (entry * quantity) * 100.0,
-        source="realized_position",
-    )
+    return assess_position_closure(row)
 
 
 def assess_candidate_outcome(row: dict[str, Any]) -> OutcomeAssessment:
     if str(row.get("status") or "").lower() != "settled":
-        return OutcomeAssessment(False, "unsettled", source="candidate_outcome")
+        return OutcomeAssessment(False, "unsettled", category="candidate", source="candidate_outcome")
     if not _at_or_after_floor(row.get("entry_ts")):
-        return OutcomeAssessment(False, "dirty_or_missing_entry_time", source="candidate_outcome")
+        return OutcomeAssessment(False, "dirty_or_missing_entry_time", category="candidate", source="candidate_outcome")
     if str(row.get("direction") or "").lower() not in {"long", "short"}:
-        return OutcomeAssessment(False, "missing_direction", source="candidate_outcome")
+        return OutcomeAssessment(False, "missing_direction", category="candidate", source="candidate_outcome")
     net = _to_float(row.get("net_return_pct"))
     if net is None:
-        return OutcomeAssessment(False, "net_economics_unavailable", source="candidate_outcome")
+        return OutcomeAssessment(False, "net_economics_unavailable", category="candidate", source="candidate_outcome")
     if not row.get("cost_model_version"):
-        return OutcomeAssessment(False, "missing_cost_model_version", source="candidate_outcome")
+        return OutcomeAssessment(False, "missing_cost_model_version", category="candidate", source="candidate_outcome")
     key = row.get("outcome_candidate_key")
     horizon = row.get("horizon")
     if not key or not horizon:
-        return OutcomeAssessment(False, "missing_outcome_identity", source="candidate_outcome")
+        return OutcomeAssessment(False, "missing_outcome_identity", category="candidate", source="candidate_outcome")
     return OutcomeAssessment(
         True,
         "eligible",
+        category="candidate",
         outcome_key=f"candidate:{key}",
         horizon=str(horizon),
         net_return_pct=net,

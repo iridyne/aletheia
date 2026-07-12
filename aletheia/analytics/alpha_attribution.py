@@ -649,7 +649,9 @@ def _trade_pnl_before_after(db, event_at: str, days: int, group: dict) -> tuple[
     after_end = _utcnow().isoformat()
     rows = db.execute(
         "SELECT p.id AS position_id, p.symbol, p.direction, p.realized_pnl, p.entry_price, p.quantity, "
-        "p.close_reason, p.closed_at, o.scanner_family "
+        "p.close_reason, p.closed_at, p.close_category, p.exit_price_source, "
+        "p.exit_fill_verified, p.outcome_eligible, p.outcome_exclusion_reason, "
+        "p.outcome_semantics_version, o.scanner_family "
         "FROM positions p "
         "LEFT JOIN trade_proposals tp ON tp.id = p.proposal_id "
         "LEFT JOIN opportunities o ON o.id = tp.opportunity_id "

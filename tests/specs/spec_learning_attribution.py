@@ -22,9 +22,12 @@ def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
     was_in_tx = db.in_transaction
     db.execute(
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
-        "execution_mode,status,source,opened_at,realized_pnl,closed_at,close_reason) "
+        "execution_mode,status,source,opened_at,realized_pnl,closed_at,close_reason,"
+        "close_category,exit_price_source,exit_fill_verified,outcome_eligible,"
+        "outcome_exclusion_reason,outcome_semantics_version) "
         "VALUES ('unrelated','BTC/USDT','perp','long',1,100,'paper_internal','closed',"
-        "'native','2026-07-10T00:00:00+00:00',10,'2026-07-10T04:00:00+00:00','take_profit')"
+        "'native','2026-07-10T00:00:00+00:00',10,'2026-07-10T04:00:00+00:00',"
+        "'take_profit','strategy','local_fill',1,1,'eligible','oi-v1')"
     )
     if not was_in_tx:
         db.commit()

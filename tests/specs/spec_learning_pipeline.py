@@ -1227,7 +1227,11 @@ def test_factor_feedback_excludes_synthetic_closes():
                 "confidence": "high", "late_entry_penalty": 0,
                 "position_id": f"{reason}:{pnl}", "entry_price": 100.0, "quantity": 1.0,
                 "closed_at": "2026-07-10T00:00:00+00:00",
-                "realized_pnl": pnl, "close_reason": reason}
+                "realized_pnl": pnl, "close_reason": reason,
+                "close_category": "strategy", "exit_price_source": "local_fill",
+                "exit_fill_verified": True, "outcome_eligible": True,
+                "outcome_exclusion_reason": "eligible",
+                "outcome_semantics_version": "oi-v1"}
 
     # All-synthetic factor → excluded → no history.
     all_synth = [_row("reconciled_gone", p) for p in (5.0, -3.0, 4.0, -2.0, 6.0)]

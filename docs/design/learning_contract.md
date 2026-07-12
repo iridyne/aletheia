@@ -430,10 +430,10 @@ the target `LE-*` positive-contribution claims or of profitability.
 
 ## 11. Outcome Integrity Handoff
 
-`aletheia/learning/outcomes.py` currently provides a conservative Learning-only adapter and already
-rejects central synthetic close reasons. This is a partial safety net, not the final global source of
-truth: several Operator, calibration, alpha, Risk and performance consumers still read closed
-positions through independent paths.
+`aletheia/learning/outcomes.py` now composes the dependency-neutral
+`aletheia/analytics/outcome_integrity.py` assessment and then applies Learning's clean-window rules.
+The global classifier/read model is delivered, but consumer migration remains incomplete: several
+Operator, calibration, alpha, Risk and performance paths still read closed positions independently.
 
 The target contract is `learning_evolution_contract.md §14` plus
 `tests/specs/spec_outcome_integrity.py`. Until OI-C01/OI-C02/OI-C05 are GREEN:

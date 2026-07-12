@@ -155,6 +155,9 @@ operator-facing reporting ────────────► raw + genuine,
 
 #### RG-T03：中央 read model 和架构护栏
 
+状态：中央分类、三种读取口径及 Learning adapter composition 已实现；全消费者架构护栏和迁移继续由
+RG-T08～T10 完成。
+
 范围：analytics/data 中立层与查询；不迁移业务消费者。
 
 工作：

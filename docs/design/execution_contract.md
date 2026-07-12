@@ -273,3 +273,18 @@ administrative-unverified close 不得：
 
 它必须保留 causal ids、actor/source、确认依据和审计事件。原始历史值永久保留，新增结构化字段只描述
 其 provenance 和 eligibility。对应 `OI-B01~B04`、`OI-C03`。
+
+### 11.4 中央关闭语义与三种读取口径（OI-S02 implemented）
+
+`aletheia/analytics/outcome_integrity.py` 是不依赖 Learning、Risk、Execution、exchange 或 agent shell
+的中央语义层，版本为 `oi-v1`。它提供三个不可互换的入口：
+
+- `raw_account_events()`：所有 closed 状态事件，只用于账本、审计、诊断和明确标注的 raw 展示；
+- `eligible_strategy_outcomes()`：仅当前版本、strategy category、真实 fill 已验证、价格来源可信、
+  identity/时间/经济字段完整的结果；
+- `administrative_closures()`：行政性和维护性关闭，永久保留但不进入 judgement。
+
+已知 synthetic reason 的分类优先于行上其他字段，不能用 `outcome_eligible=1` 覆盖
+`reconciled_gone` 或 maintenance reason。无结构化证据的旧行是 `legacy_unverified_close`，PnL 数值本身
+不能证明退出。现有 `analytics.close_reasons` 只是兼容 facade，reason registry 只在中央模块维护。
+当前交付的是语义和读取能力；Operator、KPI、Risk、API/UI 等迁移仍由 `OI-C02~C04` 约束。

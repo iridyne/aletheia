@@ -59,9 +59,11 @@ def _insert_trade_chain(db, idx: int, pnl_pct: float, scanner: str = "momentum",
     db.execute(
         "INSERT INTO positions "
         "(id, symbol, market_type, direction, quantity, entry_price, current_price, realized_pnl, "
-        "execution_mode, proposal_id, status, close_reason, opened_at, closed_at) "
+        "execution_mode, proposal_id, status, close_reason, close_category, "
+        "exit_price_source, exit_fill_verified, outcome_eligible, outcome_exclusion_reason, "
+        "outcome_semantics_version, opened_at, closed_at) "
         "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 1, 100, ?, ?, 'paper_internal', ?, "
-        "'closed', 'signal_exit', ?, ?)",
+        "'closed', 'signal_exit', 'strategy', 'local_fill', 1, 1, 'eligible', 'oi-v1', ?, ?)",
         (pos_id, 100 + pnl_pct, pnl_pct, prop_id, _iso(days_ago=2), closed),
     )
 

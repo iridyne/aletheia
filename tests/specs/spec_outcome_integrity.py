@@ -88,14 +88,13 @@ def test_position_schema_has_additive_outcome_evidence_fields():
     assert "position_disappearance_observations" in combined
 
 
-@_missing("RG-03/RG-14: neutral central outcome read model is not implemented")
 @spec_claim(
     SpecClaim(
         "OI-S02", "outcome_integrity", "§3 central outcome semantics", "L2a",
         "A dependency-neutral analytics module owns ClosureSemantics/OutcomeAssessment and "
         "explicit raw_account_events, eligible_strategy_outcomes, and administrative_closures "
         "read models; Learning composes it rather than owning the global classifier.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_dependency_neutral_outcome_read_model_exists():
@@ -106,6 +105,14 @@ def test_dependency_neutral_outcome_read_model_exists():
         "eligible_strategy_outcomes", "administrative_closures",
     ):
         assert token in source
+    for forbidden in (
+        "aletheia.learning", "aletheia.risk", "aletheia.execution",
+        "aletheia.exchanges", "aletheia.agent_shell",
+    ):
+        assert forbidden not in source
+    learning_source = _source("aletheia/learning/outcomes.py")
+    assert "assess_position_closure" in learning_source
+    assert "SYNTHETIC_CLOSE_REASONS" not in learning_source
 
 
 @_missing("RG-09: one view miss can still flow directly to orphan close")

@@ -73,7 +73,7 @@ Operator 调参的交易结果。
 | RG-11 | P0 | open | 行政性 close 复用普通 `close_position` | 伪造手续费、滑点、PnL、现金结算和部分下游 hook | verified strategy close 与 administrative close 分流 |
 | RG-12 | P0 | open | `today_realized_pnl` 同时用于账户、Risk、PI 和表现 | 一个含混数字跨越安全/判断语义 | 明确拆分 authoritative account loss 与 eligible strategy PnL |
 | RG-13 | P0 | open | CLI/API/equity curve 默认只显示混合 raw 结果 | owner 无法判断真实策略表现 | raw 与 genuine 双口径并列、清楚标注排除数量 |
-| RG-14 | P1 | open | central close-reason set 存在，但消费者仍有硬编码/部分集合 | 新原因加入后再次漏过滤 | 禁止消费者维护本地 reason set，架构测试锁定 |
+| RG-14 | P1 | partial-core | 中央 outcome semantics/read model 已交付，但消费者仍有硬编码/部分集合 | 新原因加入后未迁移消费者仍可能漏过滤 | 继续禁止消费者维护本地 reason set，并在 RG-T08～T10 完成架构锁定 |
 | RG-15 | P1 | fixed-storage | data model 原缺 close category、fill provenance、eligibility、verification | 无法结构化证明一个结果是否可学习 | additive schema 与 durable observation storage 已交付；历史 backfill 仍由 RG-T11 完成 |
 | RG-16 | P1 | open | post-close hooks 没有统一 eligibility gate | shadow/Serenity/后续新 hook 可能被行政性事件触发 | hook policy 明确 raw-only 与 outcome-only |
 | RG-17 | P1 | open | doctor ratio 只手写排除部分 synthetic reason | 诊断自身与中央语义漂移 | doctor 复用中央分类，并分别报告历史比例/活动指纹 |

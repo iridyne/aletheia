@@ -265,7 +265,12 @@ def _insert_trade(db, idx: int, pnl_pct: float, closed_at: str) -> None:
     )
     db.execute(
         "INSERT INTO positions "
-        "(id, symbol, market_type, direction, quantity, entry_price, current_price, realized_pnl, execution_mode, proposal_id, status, close_reason, opened_at, closed_at) "
-        "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 1, 100, ?, ?, 'paper_internal', ?, 'closed', 'signal_exit', ?, ?)",
+        "(id, symbol, market_type, direction, quantity, entry_price, current_price, "
+        "realized_pnl, execution_mode, proposal_id, status, close_reason, "
+        "close_category, exit_price_source, exit_fill_verified, outcome_eligible, "
+        "outcome_exclusion_reason, outcome_semantics_version, opened_at, closed_at) "
+        "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 1, 100, ?, ?, "
+        "'paper_internal', ?, 'closed', 'signal_exit', 'strategy', 'local_fill', "
+        "1, 1, 'eligible', 'oi-v1', ?, ?)",
         (f"le-pos-{idx}", 100 + pnl_pct, pnl_pct, proposal, _iso(20), closed_at),
     )

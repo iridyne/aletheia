@@ -1,5 +1,8 @@
-"""Single source of truth: is a position close a genuine trade outcome, or an
-administrative/synthetic bookkeeping close?
+"""Compatibility facade for the central outcome-integrity close-reason registry.
+
+The single source of truth now lives in ``analytics.outcome_integrity``. Is a
+position close a genuine trade outcome, or an administrative/synthetic bookkeeping
+close?
 
 Synthetic closes are NOT real strategy exits — they close the local row at a
 last-known / administrative price, not a strategy-driven fill:
@@ -24,14 +27,12 @@ report raw account state (equity, open positions) do not use this.
 """
 from __future__ import annotations
 
-SYNTHETIC_CLOSE_REASONS = frozenset({
-    "reconciled_gone",
-    "demo_validation_cleanup",
-    "units_bug_cleanup",
-    "retry_after_fix",
-})
-
-
-def is_synthetic_close(reason: str | None) -> bool:
-    """True if `reason` is an administrative/synthetic close, not a trade outcome."""
-    return str(reason or "").strip() in SYNTHETIC_CLOSE_REASONS
+# Compatibility surface for existing consumers.  The registry and classifier now
+# live with the complete closure semantics so new reasons cannot drift across two
+# competing sources of truth.
+from aletheia.analytics.outcome_integrity import (  # noqa: F401
+    ADMINISTRATIVE_CLOSE_REASONS,
+    MAINTENANCE_CLOSE_REASONS,
+    SYNTHETIC_CLOSE_REASONS,
+    is_synthetic_close,
+)

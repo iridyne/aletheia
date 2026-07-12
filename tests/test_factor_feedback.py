@@ -119,6 +119,9 @@ def test_lookup_factor_signal_with_matching_history():
             "realized_pnl": 5.0, "holding_hours": 4.0, "close_reason": "take_profit",
             "position_id": "p1", "entry_price": 100.0, "quantity": 1.0,
             "closed_at": "2026-07-01T01:00:00+00:00",
+            "close_category": "strategy", "exit_price_source": "local_fill",
+            "exit_fill_verified": True, "outcome_eligible": True,
+            "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
         },
         {
             "scanner_family": "momentum", "symbol": "BTC/USDT", "direction": "long",
@@ -126,6 +129,9 @@ def test_lookup_factor_signal_with_matching_history():
             "realized_pnl": 3.0, "holding_hours": 2.0, "close_reason": "take_profit",
             "position_id": "p2", "entry_price": 100.0, "quantity": 1.0,
             "closed_at": "2026-07-01T02:00:00+00:00",
+            "close_category": "strategy", "exit_price_source": "local_fill",
+            "exit_fill_verified": True, "outcome_eligible": True,
+            "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
         },
         {
             "scanner_family": "momentum", "symbol": "BTC/USDT", "direction": "long",
@@ -133,6 +139,9 @@ def test_lookup_factor_signal_with_matching_history():
             "realized_pnl": -1.0, "holding_hours": 1.0, "close_reason": "stop_loss",
             "position_id": "p3", "entry_price": 100.0, "quantity": 1.0,
             "closed_at": "2026-07-01T03:00:00+00:00",
+            "close_category": "strategy", "exit_price_source": "local_fill",
+            "exit_fill_verified": True, "outcome_eligible": True,
+            "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
         },
     ]
     with patch("aletheia.analytics.factor_feedback.build_trade_attribution_rows", return_value=fake_rows):
@@ -167,6 +176,9 @@ def test_build_factor_feedback_groups():
             "realized_pnl": 10.0, "holding_hours": 4.0, "close_reason": "take_profit",
             "position_id": "g1", "entry_price": 100.0, "quantity": 1.0,
             "closed_at": "2026-07-01T01:00:00+00:00",
+            "close_category": "strategy", "exit_price_source": "local_fill",
+            "exit_fill_verified": True, "outcome_eligible": True,
+            "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
         },
         {
             "scanner_family": "momentum", "symbol": "ETH/USDT", "direction": "short",
@@ -174,6 +186,9 @@ def test_build_factor_feedback_groups():
             "realized_pnl": -2.0, "holding_hours": 1.0, "close_reason": "stop_loss",
             "position_id": "g2", "entry_price": 100.0, "quantity": 1.0,
             "closed_at": "2026-07-01T02:00:00+00:00",
+            "close_category": "strategy", "exit_price_source": "local_fill",
+            "exit_fill_verified": True, "outcome_eligible": True,
+            "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
         },
     ]
     with patch("aletheia.analytics.factor_feedback.build_trade_attribution_rows", return_value=fake_rows):

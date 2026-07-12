@@ -1089,5 +1089,5 @@
 | RG-03～06 | 🔴 | trade KPI、Operator、校准和 System Operator alpha 仍可能把行政性关闭当策略结果 | 建立中央 eligible outcome read model，逐一迁移所有行为改变型消费者 |
 | RG-07～10 | 🔴 | detector 漏 native reopen；Learning 未全局 refreeze；一次 miss 可 close；真实退出恢复写死 Bitget | 统一事故指纹、durable confirmation、三 broker verified-exit protocol，错误时 fail-closed |
 | RG-11～13 | 🔴 | 行政关闭复用普通 close，可能伪造经济字段；account loss、strategy PnL 和页面统计含混 | 平仓语义分流、拆分账户/策略口径、CLI/API/UI raw+genuine 双口径 |
-| RG-14～19 | 🟠（RG-15 storage ✅） | close reason、hook、doctor、Learning 连续性和 SDD 保护分散；RG-15 的 additive provenance/eligibility 与 durable observation storage 已交付，历史分类尚未执行 | 继续完成中央分类、历史 backfill、统一 hook gate、doctor 和枚举式消费者保护 |
+| RG-14～19 | 🟠（RG-14 core / RG-15 storage ✅） | 中央 outcome semantics/read model 和 additive provenance/eligibility storage 已交付；消费者迁移、历史分类、hook、doctor、Learning 连续性仍未闭合 | 继续完成 RG-T08～T11 的消费者迁移、历史 backfill、统一 hook gate、doctor 和枚举式保护 |
 | RG-20～22 | 🟠 / owner decision | 历史现金、派生知识和盈利窗口仍受污染 | additive backfill，archive/supersede，版本化 clean window；现金补偿只在 owner 批准后追加事件 |
