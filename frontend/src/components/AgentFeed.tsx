@@ -1,4 +1,4 @@
-import { useState, useEffect, useReducer } from 'react'
+import { useState, useEffect, useLayoutEffect, useReducer, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
@@ -26,6 +26,8 @@ type FeedMode = 'narrative' | 'ops' | 'both'
 const MODE_KEY = 'aletheia.feedMode'
 const MODES: FeedMode[] = ['narrative', 'ops', 'both']
 const MODE_LABEL: Record<FeedMode, string> = { narrative: 'Narrative', ops: 'Ops', both: 'Both' }
+const VIEWPORT_BOTTOM_GAP = 16
+const MIN_FEED_HEIGHT = 240
 
 // #120 fix: the run/proposal status vocabulary carries several failure
 // values that used to slip through as accent/yellow — collect them so the
@@ -93,6 +95,8 @@ function outputsCount(run: AgentRun): number {
 
 export default function AgentFeed() {
   const navigate = useNavigate()
+  const cardRef = useRef<HTMLDivElement>(null)
+  const [availableHeight, setAvailableHeight] = useState<number | null>(null)
   const [mode, setMode] = useState<FeedMode>(() => {
     try {
       const v = localStorage.getItem(MODE_KEY) as FeedMode | null
@@ -109,6 +113,61 @@ export default function AgentFeed() {
   // Re-render every 30s to update relative timestamps
   const [, forceUpdate] = useReducer(x => x + 1, 0)
   useEffect(() => { const t = setInterval(forceUpdate, 30000); return () => clearInterval(t) }, [])
+
+  // Overview owns the page scroll, but this card owns its activity-list scroll. Its
+  // rendered top is dynamic because the setup banner and PnL data above it load
+  // asynchronously, so derive the card height from the actual DOM position instead of
+  // a hard-coded header offset. Browser zoom also emits a viewport resize and is
+  // handled by the same measurement.
+  useLayoutEffect(() => {
+    const card = cardRef.current
+    if (!card) return
+
+    let animationFrame = 0
+    const measure = () => {
+      const top = card.getBoundingClientRect().top
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight
+      const nextHeight = Math.max(
+        MIN_FEED_HEIGHT,
+        Math.floor(viewportHeight - top - VIEWPORT_BOTTOM_GAP),
+      )
+      setAvailableHeight(current => current === nextHeight ? current : nextHeight)
+    }
+    const scheduleMeasure = () => {
+      window.cancelAnimationFrame(animationFrame)
+      animationFrame = window.requestAnimationFrame(measure)
+    }
+
+    // Data and setup state above the card can change its top without resizing the
+    // browser. Observe those layout drivers and watch for the setup banner mounting.
+    const resizeObserver = new ResizeObserver(scheduleMeasure)
+    const observeLayoutDrivers = () => {
+      const main = card.closest('main')
+      main?.querySelectorAll('.page-title, .setup-banner, .pnl-zone')
+        .forEach(element => resizeObserver.observe(element))
+    }
+    const mutationRoot = card.closest('main')
+    const mutationObserver = new MutationObserver(() => {
+      observeLayoutDrivers()
+      scheduleMeasure()
+    })
+
+    observeLayoutDrivers()
+    if (mutationRoot) {
+      mutationObserver.observe(mutationRoot, { childList: true, subtree: true })
+    }
+    window.addEventListener('resize', scheduleMeasure)
+    window.visualViewport?.addEventListener('resize', scheduleMeasure)
+    measure()
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame)
+      window.removeEventListener('resize', scheduleMeasure)
+      window.visualViewport?.removeEventListener('resize', scheduleMeasure)
+      resizeObserver.disconnect()
+      mutationObserver.disconnect()
+    }
+  }, [])
 
   const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000 })
   const { data: opportunities = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })
@@ -167,7 +226,11 @@ export default function AgentFeed() {
   const visible = items.slice(0, 40)
 
   return (
-    <div className="card agent-feed">
+    <div
+      ref={cardRef}
+      className="card agent-feed agent-feed-viewport"
+      style={availableHeight == null ? undefined : { height: `${availableHeight}px` }}
+    >
       <div className="flex items-center justify-between mb-3">
         <h3>Agent Activity</h3>
         <div className="seg-toggle">
@@ -186,7 +249,7 @@ export default function AgentFeed() {
       {visible.length === 0 ? (
         <p className="text-muted text-sm">No agent activity yet.</p>
       ) : (
-        <div className="feed-list">
+        <div className="feed-list feed-list-scroll">
           {visible.map(it => (
             <button key={it.key} className="feed-row" onClick={() => setSelected(it)}>
               <span className="feed-ts mono">{relTime(it.ts)}</span>

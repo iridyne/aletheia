@@ -88,6 +88,19 @@ Reading order = money first (PnL) → what the AI is doing (feed, main width) �
 YOU (right rail: pending proposals = the one human-in-loop control point) + system health.
 Bloomberg dense zoning + OpenAlice agent-narrative-primary, control secondary.
 
+### Owner clarification — viewport-bounded activity (2026-07-12)
+
+The Agent Activity card is not content-height and is not tied to the right rail. Its visible
+height is the browser viewport height minus the card's actual rendered top position and the
+normal page-bottom gap. This keeps its bottom edge inside the current viewport even when
+browser zoom, window height, the setup banner, or the PnL zone changes the space above it.
+
+- The card header remains visible; only the activity rows scroll inside the card.
+- Resize/zoom and asynchronous layout changes above the card trigger a remeasurement.
+- When less than 240px remains, the card uses a 240px usability floor and the page scrolls.
+- The existing latest-40 limit, three feed modes, polling, and detail drawer are unchanged.
+- The right rail remains naturally sized and independent from the feed height.
+
 ## Backend tasks parked (need explicit authorization when we start)
 1. **Real exchange balance** for hero account value (portfolio-sync-gap). `client.py` already
    has `get_balances()` / `get_account()` / `get_positions()` (read-only, implemented).

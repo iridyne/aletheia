@@ -1,0 +1,34 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-030
+title: Constrain Overview activity to viewport
+status: in_progress
+packet_type: standard
+scope:
+  boundary: frontend Overview and Agent Activity layout only
+  excluded: backend APIs, feed data, item limit, polling, trading, risk, runtime state,
+    and credentials
+intent: Make the Overview Agent Activity card fill only the remaining visible viewport
+  height and scroll its list internally while preserving data, controls, polling,
+  and trading behavior.
+acceptance:
+- Agent Activity height equals the visible viewport height remaining below its current
+  top edge, less the normal page-bottom spacing.
+- Browser resize and zoom changes recalculate the available height without reloading.
+- The card header stays visible while the feed list scrolls inside the card.
+- The latest-40 item limit, modes, polling, detail drawer, and right-rail behavior remain
+  unchanged.
+- Focused layout tests and the production frontend build pass.
+ownership:
+  branch: fix/overview-viewport-feed
+  lease_holder: codex
+  claimed_at: '2026-07-12T03:34:56.475086Z'
+  expires_at: '2026-07-12T11:34:56.475250Z'
+base_commit: c3274c95df3e2ca8543dd55b26377555ccd9bb5b
+next_action:
+  command_key: architecture
+  reason: Commit the completed frontend change, then record architecture verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-030.md
+updated_at: '2026-07-12T03:34:56.475257Z'

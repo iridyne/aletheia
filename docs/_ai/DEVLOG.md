@@ -3135,3 +3135,14 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Removed the Overview height synchronization that capped Agent Activity to the right-rail height and forced a nested feed scrollbar.
 - Agent Activity now grows naturally with the existing latest-40 item limit; its data, modes, polling, and detail drawer behavior are unchanged.
 - The Overview right rail now uses a fluid 320px-380px desktop column, switches to two columns at medium width, and returns to one column on narrow screens.
+
+## 2026-07-12 — Overview activity follows the visible viewport
+
+- Owner feedback clarified that the prior natural-height change fixed the wrong behavior:
+  a 1225x1533 viewport rendered Agent Activity from y=514 to a 2027px card height.
+- Agent Activity now uses the space remaining from its actual top edge to the viewport
+  bottom (with the normal 16px page gap), with a 240px minimum for very short viewports.
+- The card header stays visible and the latest-40 rows scroll inside the card. Browser
+  resize/zoom and asynchronous setup/PnL layout changes trigger remeasurement.
+- Feed data, modes, polling, detail drawers, right-rail layout, backend, and trading
+  behavior are unchanged.

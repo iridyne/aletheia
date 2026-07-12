@@ -2057,7 +2057,19 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 
 /* ---------- Agent feed ---------- */
 .agent-feed { margin-bottom: 0; }
+.agent-feed-viewport {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 .feed-list { display: flex; flex-direction: column; }
+.agent-feed-viewport .feed-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
 .feed-row {
   display: flex; align-items: flex-start; gap: var(--space-2);
   width: 100%; text-align: left; background: none; color: var(--text);
