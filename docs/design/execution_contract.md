@@ -264,6 +264,9 @@ ready 本身不触发关闭，等待 §11.2/§11.3 的后续任务。
 
 ### 11.2 Broker-neutral verified exit
 
+状态：RG-T06 / OI-B02 已实现只读 protocol 与三家 adapter；尚未触发关闭或结算，调用编排由
+RG-T07 接入。
+
 Execution 层定义统一 verified-position-exit protocol；Bitget、OKX、Binance adapter 都返回结构化三态：
 
 - `verified_fill`：含 broker fill/order identity、价格、数量、fee、时间和 provenance；
@@ -271,7 +274,12 @@ Execution 层定义统一 verified-position-exit protocol；Bitget、OKX、Binan
 - `inconclusive`：无法证明，持仓保持 open/candidate，不关闭。
 
 symbol 仍只在 adapter 边界转换，查询身份必须包含 venue、market type、account environment；不得用
-Bitget-only TPSL 历史解释其他 broker。
+Bitget-only TPSL 历史解释其他 broker。每次查询先直查同账户仓位，再按明确时间窗完整翻页读取私有成交：
+Bitget 使用 mix fills cursor，OKX 使用 fills-history bill cursor，Binance 使用 futures user-trade id。
+缺页游标、重复游标、保留时间窗不足、权限/网络错误、响应字段缺失、方向或数量歧义全部返回
+`inconclusive`。只有当前仓位明确 absent、历史完整且反向平仓 fill 覆盖本地数量时才是
+`verified_fill`；完整历史确实无 fill 才是 `confirmed_absent_without_fill`。原始私有响应不落库，标准化
+结果不含 credential 或 signer material。
 
 ### 11.3 行政关闭副作用禁区
 

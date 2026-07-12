@@ -1,0 +1,42 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-037
+title: Add broker-neutral verified exit protocol
+status: in_progress
+packet_type: standard
+scope:
+  boundary: broker-neutral verified-exit types/protocol, read-only Bitget/OKX/Binance
+    position and private fill-history queries, normalization/provenance, focused client
+    regressions, OI-B02, contracts, task packet and handoff
+  excluded: order placement/cancellation, signer semantics, credential storage, live
+    authority, position closing, PnL/cash accounting, Risk, candidate orchestration,
+    API/UI, runtime database mutation and gateway process
+intent: 'Implement RG-T06: a fail-closed verified-position-exit protocol for Bitget,
+  OKX, and Binance without changing order placement, live authority, close accounting,
+  or risk behavior.'
+acceptance:
+- One typed protocol requires full broker/environment/execution-mode/symbol/market/
+  direction/position identity and returns only verified_fill,
+  confirmed_absent_without_fill, or inconclusive.
+- Bitget, OKX and Binance clients implement read-only direct-position plus paginated
+  private-fill-history evidence at the adapter boundary.
+- A fully covered history with a directly absent position can return verified fill or
+  confirmed absent without fill; partial pagination, unavailable history, permissions,
+  malformed responses and network errors always return inconclusive.
+- Returned provenance contains public venue/account context and normalized fill ids,
+  prices, quantities, fees and timestamps without credential or signing material.
+- OI-B02 is a GREEN behavior test and focused client/spec/architecture regressions pass;
+  Execution Gateway order invariants remain unchanged.
+ownership:
+  branch: feat/verified-exit-protocol
+  lease_holder: codex
+  claimed_at: '2026-07-12T05:40:26.839252Z'
+  expires_at: '2026-07-12T17:40:26.839404Z'
+base_commit: 362fc0a1573e4e363e5bde98c380ead7647b73b1
+next_action:
+  command_key: spec_execution
+  reason: Write broker-contract and fail-closed RED tests before changing controlled clients.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-037.md
+updated_at: '2026-07-12T05:40:26.839414Z'

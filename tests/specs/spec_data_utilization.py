@@ -159,6 +159,35 @@ def test_exchange_source_divergence_is_guarded_and_visible():
     assert "confirmExchangeDivergence" in settings_ui
 
 
+@spec_claim(
+    SpecClaim(
+        "DU-S19", _CONTRACT, "§verified exit private history", "L2a",
+        "Bitget, OKX, and Binance private position/fill history is registered and "
+        "consumed only through the fail-closed VerifiedExitResult contract.",
+    ),
+)
+def test_verified_exit_private_history_is_registered_and_bounded():
+    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(
+        encoding="utf-8"
+    )
+    protocol = (_ROOT / "aletheia" / "execution" / "verified_exit.py").read_text(
+        encoding="utf-8"
+    )
+    assert "Broker 私有仓位/成交历史" in doc
+    for state in (
+        "verified_fill", "confirmed_absent_without_fill", "inconclusive",
+    ):
+        assert state in protocol
+    for relative in (
+        "aletheia/exchanges/bitget/client.py",
+        "aletheia/exchanges/okx/client.py",
+        "aletheia/exchanges/binance/client.py",
+    ):
+        source = (_ROOT / relative).read_text(encoding="utf-8")
+        assert "get_verified_position_exit" in source
+        assert "inconclusive_verified_exit" in source
+
+
 # ---------------------------------------------------------------------------
 # DU-S13 — perp structure rows are registered and consumed as observation data
 # ---------------------------------------------------------------------------
