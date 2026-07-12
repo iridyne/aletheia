@@ -3172,6 +3172,18 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
   fallback-price orphan close, so RG-T06/T07 can add real exit evidence and honest accounting
   without new synthetic PnL being created in the interim.
 
+## 2026-07-12 — Broker-neutral verified exit evidence
+
+- Added one read-only `VerifiedExitRequest`/`VerifiedExitResult` contract with explicit
+  `verified_fill`, `confirmed_absent_without_fill`, and `inconclusive` states.
+- Bitget, OKX, and Binance now verify the scoped position directly and page their own private
+  fill history at the venue adapter boundary. Missing/repeated cursors, unavailable history,
+  malformed responses, permissions and network failures remain inconclusive.
+- Normalized fill provenance retains venue/account/instrument identity, fill/order ids, price,
+  quantity, fee, realized PnL and time without storing raw private responses.
+- Order placement, live authority, position state, PnL/cash accounting and Risk were unchanged;
+  RG-T07 will consume the protocol when it introduces verified/admin close separation.
+
 ## 2026-07-12 — Baseline verification cleanup
 
 - Split two unrelated execution rules that accidentally shared `EX-B05`: executable venue

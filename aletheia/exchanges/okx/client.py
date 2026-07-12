@@ -54,6 +54,20 @@ class OrderResponse:
 SUPPORTED_MARKET_TYPES = frozenset({"spot", "usdt_futures"})
 
 
+def _okx_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _okx_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def is_leveraged_market(market_type: str) -> bool:
     """Spot carries no leverage / no contracts / no funding; usdt_futures (perp) does."""
     return market_type != "spot"
@@ -344,6 +358,130 @@ class OKXClient:
         except ccxt.BaseError as e:
             logger.error("OKX get_positions failed: %s", e)
             raise RuntimeError(f"OKX positions: {e}") from e
+
+    async def get_verified_position_exit(self, request):
+        """Verify one disappeared position from direct state and private fills."""
+        from aletheia.execution.verified_exit import (
+            VerifiedExitFill,
+            classify_verified_exit,
+            inconclusive_verified_exit,
+            private_history_window_available,
+        )
+
+        expected_mode = "okx_demo" if self._mode == "demo" else "okx_live_limited"
+        if (
+            request.broker_id != expected_mode
+            or request.execution_mode != expected_mode
+            or request.account_environment != self._mode
+        ):
+            return inconclusive_verified_exit(request, "account_identity_mismatch")
+        if request.market_type != "usdt_futures":
+            return inconclusive_verified_exit(request, "unsupported_market_type")
+        if not private_history_window_available(request):
+            return inconclusive_verified_exit(request, "history_window_unavailable")
+
+        endpoint = "/api/v5/trade/fills-history"
+        try:
+            positions = await self.get_positions()
+            present = any(
+                to_canonical(str(position.get("symbol") or "")) == request.symbol
+                and str(position.get("side") or "").lower() == request.direction
+                and float(position.get("quantity") or 0) > 0
+                for position in positions
+            )
+            if present:
+                return classify_verified_exit(
+                    request, position_absent=False, history_complete=False,
+                    close_fills=(), ambiguous_activity=False, pages=0,
+                    source_endpoint=endpoint,
+                )
+
+            exchange = self._ensure_exchange()
+            ccxt_symbol = okx_ccxt_symbol(request.market_type, request.symbol)
+            market = exchange.market(ccxt_symbol)
+            instrument_id = str((market or {}).get("id") or "")
+            if not instrument_id:
+                raise ValueError("OKX instrument identity unavailable")
+            contract_size = await self._contract_size(ccxt_symbol)
+            raw_fills: list[dict] = []
+            cursor = None
+            pages = 0
+            complete = False
+            for _ in range(100):
+                params = {
+                    "instType": "SWAP",
+                    "instId": instrument_id,
+                    "begin": str(request.history_start_ms),
+                    "end": str(request.history_end_ms),
+                    "limit": "100",
+                }
+                if cursor:
+                    params["after"] = cursor
+                payload = await exchange.private_get_trade_fills_history(params)
+                if not isinstance(payload, dict) or str(payload.get("code")) != "0":
+                    raise RuntimeError("private fill history rejected")
+                page = payload.get("data")
+                if not isinstance(page, list):
+                    raise ValueError("malformed private fill history")
+                pages += 1
+                raw_fills.extend(page)
+                if len(page) < 100:
+                    complete = True
+                    break
+                next_cursor = str(page[-1].get("billId") or "")
+                if not next_cursor or next_cursor == cursor:
+                    break
+                cursor = next_cursor
+
+            close_fills: list[VerifiedExitFill] = []
+            ambiguous = False
+            expected_side = "sell" if request.direction == "long" else "buy"
+            for raw in raw_fills:
+                timestamp = _okx_int(raw.get("ts") or raw.get("fillTime"))
+                if not request.history_start_ms <= timestamp <= request.history_end_ms:
+                    continue
+                if str(raw.get("instId") or "") != instrument_id:
+                    ambiguous = True
+                    continue
+                pos_side = str(raw.get("posSide") or "").lower()
+                side = str(raw.get("side") or "").lower()
+                closes_direction = side == expected_side and pos_side in {
+                    request.direction, "net",
+                }
+                if not closes_direction:
+                    ambiguous = True
+                    continue
+                fill_id = str(raw.get("billId") or raw.get("tradeId") or "")
+                price = _okx_float(raw.get("fillPx"))
+                contracts = _okx_float(raw.get("fillSz"))
+                if not fill_id or not price or not contracts or timestamp < 1:
+                    ambiguous = True
+                    continue
+                fee = _okx_float(raw.get("fee"))
+                pnl = _okx_float(raw.get("fillPnl"))
+                close_fills.append(VerifiedExitFill(
+                    fill_id=fill_id,
+                    order_id=str(raw.get("ordId") or "") or None,
+                    price=price,
+                    quantity=contracts * contract_size,
+                    fee=abs(fee) if fee is not None else None,
+                    fee_currency=str(raw.get("feeCcy") or "") or None,
+                    realized_pnl=pnl,
+                    filled_at_ms=timestamp,
+                ))
+            return classify_verified_exit(
+                request,
+                position_absent=True,
+                history_complete=complete,
+                close_fills=tuple(close_fills),
+                ambiguous_activity=ambiguous,
+                pages=pages,
+                source_endpoint=endpoint,
+            )
+        except Exception:
+            return inconclusive_verified_exit(
+                request, "broker_query_failed", source_endpoint=endpoint,
+            )
 
     async def fetch_balance(self) -> dict:
         """Fetch account balance. Returns CCXT unified balance."""

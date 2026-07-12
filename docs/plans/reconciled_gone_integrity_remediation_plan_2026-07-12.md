@@ -214,6 +214,9 @@ RG-T06/T07 前继续制造伪经济，ready candidate 当前明确保持 open，
 
 #### RG-T06：broker-neutral verified-exit protocol
 
+状态：已实现统一只读三态协议和 Bitget/OKX/Binance 直查/分页/标准化；错误与不完整历史 fail-closed。
+本任务不接入 close/accounting，等待 RG-T07 分流。
+
 范围：Execution/exchange client 受控边界；这是单独审批和单独回归任务。
 
 工作：

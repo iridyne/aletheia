@@ -150,18 +150,37 @@ def test_reconciler_declares_durable_disappearance_candidates():
     assert "async def run_positions_reconcile():" not in routes
 
 
-@_missing("RG-10: verified exit recovery is still broker-specific")
 @spec_claim(
     SpecClaim(
         "OI-B02", "outcome_integrity", "§5 broker-neutral verified exit", "L2b",
         "Bitget, OKX, and Binance implement one verified-position-exit protocol whose result is "
         "verified_fill, confirmed_absent_without_fill, or inconclusive; network and pagination "
         "failures are inconclusive.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_all_broker_clients_implement_verified_position_exit():
     assert importlib.util.find_spec("aletheia.execution.verified_exit") is not None
+    from aletheia.execution.verified_exit import (
+        VerifiedExitRequest,
+        classify_verified_exit,
+    )
+
+    request = VerifiedExitRequest(
+        broker_id="bitget_demo", account_environment="demo",
+        account_scope="logical-account", execution_mode="bitget_demo",
+        position_id="p1", symbol="BTC/USDT", market_type="usdt_futures",
+        direction="long", quantity=1.0, history_start_ms=1,
+        history_end_ms=2,
+    )
+    assert classify_verified_exit(
+        request, position_absent=True, history_complete=True, close_fills=(),
+        ambiguous_activity=False, pages=1, source_endpoint="private-fills",
+    ).state == "confirmed_absent_without_fill"
+    assert classify_verified_exit(
+        request, position_absent=True, history_complete=False, close_fills=(),
+        ambiguous_activity=False, pages=1, source_endpoint="private-fills",
+    ).state == "inconclusive"
     for path in (
         "aletheia/exchanges/bitget/client.py",
         "aletheia/exchanges/okx/client.py",

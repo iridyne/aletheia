@@ -64,6 +64,7 @@
 | OHLCV 多周期（1h/4h/1d） | CCXTProvider（market_context._TIMEFRAMES 锁定三周期；DU-S07） | `market_snapshots` | market_context.build_market_context → 多周期技术块 → LLM | ✅；上下文读取和缓存均保留 venue+symbol+market_type，现货与永续不得互用 |
 | Opportunity 固定持有期结果 | outcome_recorder（目标 instrument OHLCV/ticker + 入场 spread/funding + 配置 fee/slippage） | `universe_forward_outcomes` | net calibration / family edge → System Operator；doctor；debate/guard/flow/thesis 审计；净亏损 guard candidate | ✅，历史 gross-only 行只解释不学习 |
 | Opportunity 筛选证据 | Universe ticker/tradability、Observer、Ranker、System Operator、Risk 的事前判断；结果复用目标 instrument 的固定时点成本模型 | `filter_decision_batches` / `filter_decisions` / `filter_candidate_outcomes` | filter controller（只读）、doctor、shadow/control 净结果、后续受控实验 | ✅，无方向门只报覆盖；风控/交易所能力永不自动放宽 |
+| Broker 私有仓位/成交历史 | Bitget/OKX/Binance execution adapter 按完整 account+instrument identity 直查 | 不保存原始响应；只返回标准化 `VerifiedExitResult` | `execution.verified_exit` → 后续 RG-T07 verified/admin close 分流 | ✅ 只读、按 venue 分页；网络/权限/游标/时间窗/歧义失败统一 `inconclusive`，不影响下单路径 |
 
 ---
 
@@ -97,5 +98,6 @@
 | DU-S07 | L2a | `market_context._TIMEFRAMES` 包含 `'1h'`、`'4h'`、`'1d'` 三值（OHLCV 多周期全量采集，防缩减） |
 | DU-S12 | L2a | 默认新闻源包含 SEC/CFTC/Ethereum Foundation 官方 RSS，且 §3 登记为 NewsCollector→`news_items`→market_observer/research_worker |
 | DU-T01 | L2b | 离线注入 CoinalyzeCollector 输出，断言 scheduler 写入 `open_interest_snapshots` 与 `liquidation_events`（不依赖真实 API key） |
+| DU-S19 | L2a | 三家 execution adapter 的私有仓位/成交历史已登记，统一消费为 `VerifiedExitResult` 三态；原始响应不落库，失败不得伪装 absent |
 
 **维护规则**：新增数据源 → 同步在 §3 登记表加行 + 声明消费者 + 加 DU-* claim（R5）。

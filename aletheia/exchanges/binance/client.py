@@ -22,6 +22,20 @@ from aletheia.data.symbols import to_ccxt_perp
 logger = logging.getLogger("aletheia.binance_client")
 
 
+def _binance_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _binance_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class OrderRequest:
     symbol: str  # canonical BTC/USDT (converted to CCXT perp format internally)
@@ -177,6 +191,129 @@ class BinanceClient:
         except ccxt.BaseError as e:
             logger.error("Binance %s get_positions failed: %s", self._mode, e)
             raise RuntimeError(f"Binance {self._mode} positions: {e}") from e
+
+    async def get_verified_position_exit(self, request):
+        """Verify one disappeared position from direct state and private trades."""
+        from aletheia.data.symbols import to_canonical
+        from aletheia.execution.verified_exit import (
+            VerifiedExitFill,
+            classify_verified_exit,
+            inconclusive_verified_exit,
+            private_history_window_available,
+        )
+
+        expected_mode = (
+            "binance_testnet" if self._mode == "testnet" else "binance_live_limited"
+        )
+        if (
+            request.broker_id != expected_mode
+            or request.execution_mode != expected_mode
+            or request.account_environment != self._mode
+        ):
+            return inconclusive_verified_exit(request, "account_identity_mismatch")
+        if request.market_type != "usdt_futures":
+            return inconclusive_verified_exit(request, "unsupported_market_type")
+        if not private_history_window_available(request):
+            return inconclusive_verified_exit(request, "history_window_unavailable")
+
+        endpoint = "/fapi/v1/userTrades"
+        try:
+            positions = await self.get_positions()
+            present = any(
+                to_canonical(str(position.get("symbol") or "")) == request.symbol
+                and str(position.get("side") or "").lower() == request.direction
+                and float(position.get("quantity") or 0) > 0
+                for position in positions
+            )
+            if present:
+                return classify_verified_exit(
+                    request, position_absent=False, history_complete=False,
+                    close_fills=(), ambiguous_activity=False, pages=0,
+                    source_endpoint=endpoint,
+                )
+
+            exchange = self._ensure_exchange()
+            ccxt_symbol = to_ccxt_perp(request.symbol)
+            raw_fills: list[dict] = []
+            pages = 0
+            complete = False
+            from_id = None
+            for _ in range(100):
+                params = {"endTime": request.history_end_ms}
+                since = request.history_start_ms if from_id is None else None
+                if from_id is not None:
+                    params["fromId"] = from_id
+                page = await exchange.fetch_my_trades(
+                    ccxt_symbol, since=since, limit=1000, params=params,
+                )
+                if not isinstance(page, list):
+                    raise ValueError("malformed private trade history")
+                pages += 1
+                raw_fills.extend(page)
+                if len(page) < 1000:
+                    complete = True
+                    break
+                last_id = str(page[-1].get("id") or "")
+                if not last_id.isdigit():
+                    break
+                next_id = str(int(last_id) + 1)
+                if next_id == from_id:
+                    break
+                from_id = next_id
+
+            close_fills: list[VerifiedExitFill] = []
+            ambiguous = False
+            expected_side = "sell" if request.direction == "long" else "buy"
+            for raw in raw_fills:
+                timestamp = _binance_int(raw.get("timestamp"))
+                if not request.history_start_ms <= timestamp <= request.history_end_ms:
+                    continue
+                if to_canonical(str(raw.get("symbol") or "")) != request.symbol:
+                    ambiguous = True
+                    continue
+                info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
+                position_side = str(info.get("positionSide") or "").lower()
+                side = str(raw.get("side") or info.get("side") or "").lower()
+                closes_direction = side == expected_side and position_side in {
+                    request.direction, "both",
+                }
+                if not closes_direction:
+                    ambiguous = True
+                    continue
+                fill_id = str(raw.get("id") or info.get("id") or "")
+                price = _binance_float(raw.get("price") or info.get("price"))
+                quantity = _binance_float(raw.get("amount") or info.get("qty"))
+                if not fill_id or not price or not quantity or timestamp < 1:
+                    ambiguous = True
+                    continue
+                fee_data = raw.get("fee") if isinstance(raw.get("fee"), dict) else {}
+                fee = _binance_float(fee_data.get("cost") or info.get("commission"))
+                pnl = _binance_float(info.get("realizedPnl"))
+                close_fills.append(VerifiedExitFill(
+                    fill_id=fill_id,
+                    order_id=str(raw.get("order") or info.get("orderId") or "") or None,
+                    price=price,
+                    quantity=quantity,
+                    fee=abs(fee) if fee is not None else None,
+                    fee_currency=str(
+                        fee_data.get("currency") or info.get("commissionAsset") or ""
+                    ) or None,
+                    realized_pnl=pnl,
+                    filled_at_ms=timestamp,
+                ))
+            return classify_verified_exit(
+                request,
+                position_absent=True,
+                history_complete=complete,
+                close_fills=tuple(close_fills),
+                ambiguous_activity=ambiguous,
+                pages=pages,
+                source_endpoint=endpoint,
+            )
+        except Exception:
+            return inconclusive_verified_exit(
+                request, "broker_query_failed", source_endpoint=endpoint,
+            )
 
     async def fetch_balance(self) -> dict:
         """Fetch account balance. Returns CCXT unified balance."""
