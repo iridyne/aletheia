@@ -57,6 +57,40 @@ _BIAS_BRAKE_MAX_DIRECTION_PCT = 0.90
 _BIAS_BRAKE_BYPASS_CONVICTION = 85
 
 
+# ── bias-brake deadlock breaker ────────────────────────────────────────
+_BREAKER_STREAK_THRESHOLD = 15   # consecutive same-dir brake skips before auto-bypass
+_STREAK_LOOKBACK_HOURS = 6       # how far back to count the streak
+
+
+def _brake_streak(direction):
+    """Count consecutive brake-rejected skip decisions for `direction`."""
+    if direction not in ("long", "short"):
+        return 0
+    try:
+        from aletheia.storage.sqlite import get_db
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=_STREAK_LOOKBACK_HOURS)).isoformat()
+        rows = get_db().execute(
+            "SELECT direction, reasoning FROM pi_decisions "
+            "WHERE action='skip' AND created_at >= ? "
+            "ORDER BY created_at DESC LIMIT 200",
+            (cutoff,),
+        ).fetchall()
+    except Exception:
+        return 0
+    streak = 0
+    for r in rows:
+        if r["direction"] != direction:
+            continue
+        reasoning = r["reasoning"] or ""
+        if "directional proposal brake" in reasoning or ("brake" in reasoning.lower() and "direction" in reasoning.lower()):
+            streak += 1
+        else:
+            break
+    return streak
+
+
+
 @dataclass
 class TradingDecision:
     action: str              # "trade" | "skip" | "close" | "reduce"
@@ -203,11 +237,24 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
 
     bias_brake_reason = _proposal_bias_brake_reason(decision)
     if bias_brake_reason:
-        decision.filter_trace.append({
-            "filter_name": "direction_bias_brake",
-            "stage": "system_operator",
-            "decision": "rejected",
-            "reason_code": "proposal_direction_concentration",
+        # Deadlock breaker: after N consecutive same-direction brake
+        # skips, auto-bypass the brake so a trending market can still
+        # produce trades instead of endlessly skipping.
+        streak = _brake_streak(decision.direction) if decision.direction else 0
+        if streak >= _BREAKER_STREAK_THRESHOLD:
+            decision.filter_trace.append({
+                "filter_name": "direction_bias_brake",
+                "stage": "system_operator",
+                "decision": "bypassed",
+                "reason_code": "deadlock_breaker",
+                "inputs": {"streak": streak, "threshold": _BREAKER_STREAK_THRESHOLD},
+            })
+        else:
+            decision.filter_trace.append({
+                "filter_name": "direction_bias_brake",
+                "stage": "system_operator",
+                "decision": "rejected",
+                "reason_code": "proposal_direction_concentration",
             "inputs": {"conviction": decision.conviction, "direction": decision.direction},
             "parameters": {
                 "window_hours": _BIAS_BRAKE_WINDOW_HOURS,
