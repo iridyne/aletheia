@@ -118,6 +118,9 @@ The first target slice is implemented without changing trading behavior:
 
 - `learning/registry.py` declares current Learning and adjacent paths, authority ceilings,
   overlap groups, outcome sources, and static fallbacks;
+- `trust/behavior_authority.py` is the final, small consumer-side inventory for
+  paper-candidate blocking; declared Learning paths still have no effect unless that
+  behavior gate admits the exact source and prospective path authority;
 - `learning/evidence.py` gives narrative and diagnostic artifacts zero quantitative sample weight;
 - `learning/outcomes.py` provides a shared fail-closed adapter for genuine realized positions and
   settled cost-aware candidate outcomes; consumer migration is intentionally partial;

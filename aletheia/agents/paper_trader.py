@@ -28,7 +28,6 @@ from aletheia.agents.helpers import log_tool
 from aletheia.agents.paper_trader_ranker import build_paper_candidates
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
-from aletheia.execution.paper_tools import create_paper_proposal
 from aletheia.storage.repositories import update_opportunity, list_positions
 
 logger = logging.getLogger("aletheia.agents.paper_trader")

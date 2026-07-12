@@ -246,9 +246,23 @@ def learned_guard_block_authorized(guard: TradingGuard) -> bool:
 def _guard_influence_suppressed(guard: TradingGuard) -> bool:
     """A learned/shadow guard observes only — it can neither block nor penalize
     until authorized. Seed and manual safety guards are never suppressed."""
-    if guard.shadow_only or guard_origin(guard) == "learned":
-        return not learned_guard_block_authorized(guard)
-    return False
+    from aletheia.trust.behavior_authority import authorize_candidate_block
+
+    origin = guard_origin(guard)
+    source = {
+        "seed": "seed_guard",
+        "manual": "manual_guard",
+        "learned": "learned_guard",
+    }[origin]
+    prospective_authority = (
+        learned_guard_block_authorized(guard) if origin == "learned" else False
+    )
+    authorized = authorize_candidate_block(
+        source=source,
+        prospective_authority=prospective_authority,
+        learning_path_id=("ranker_learned_guard" if origin == "learned" else None),
+    )
+    return guard.shadow_only or not authorized
 
 
 def evaluate_guards(
