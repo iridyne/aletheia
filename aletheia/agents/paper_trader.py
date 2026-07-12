@@ -35,7 +35,7 @@ logger = logging.getLogger("aletheia.agents.paper_trader")
 
 _BASE_NOTIONAL_USDT = 25.0  # legacy fallback; prefer cfg.trading.default_notional_usdt
 _ATR_TARGET_PCT = 1.5  # legacy fallback; prefer cfg.trading.vol_target_pct
-_RECENT_SIGNAL_COOLDOWN_MINUTES = 120
+_RECENT_SIGNAL_COOLDOWN_MINUTES = 30
 
 
 @dataclass

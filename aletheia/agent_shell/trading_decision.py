@@ -53,7 +53,7 @@ _MAX_CONVICTION_MULTIPLIER = 2.0    # cap: 2× base notional at 100% conviction
 _MIN_CONVICTION_MULTIPLIER = 0.5    # floor: 0.5× base notional at low conviction
 _BIAS_BRAKE_WINDOW_HOURS = 24
 _BIAS_BRAKE_MIN_PROPOSALS = 20
-_BIAS_BRAKE_MAX_DIRECTION_PCT = 0.80
+_BIAS_BRAKE_MAX_DIRECTION_PCT = 0.90
 _BIAS_BRAKE_BYPASS_CONVICTION = 85
 
 
@@ -120,7 +120,7 @@ class DebateResult:
 _DECISION_SCHEMA = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": ["trade", "skip", "close", "reduce", "watch", "scale_in", "flip"]},
+        "action": {"type": "string", "enum": ["trade", "skip", "close", "reduce", "scale_in", "flip"]},
         "symbol": {"type": "string"},
         "direction": {"type": "string", "enum": ["long", "short"]},
         "conviction": {"type": "integer", "minimum": 0, "maximum": 100},
@@ -757,8 +757,8 @@ def _direction_skew_note(rows: list[dict], label: str) -> str:
     top_dir = "long" if long_n >= short_n else "short"
     return (
         f"  Direction diversity check: {label} is {top}/{len(dirs)} {top_dir}. "
-        "Treat this as input skew, not consensus; actively check the opposite case "
-        "and prefer watch/skip when the setup lacks independent confirmation."
+        "A trending market CAN be one-sided; do not treat skew as a veto. "
+        "Only skip if the setup lacks independent confirmation."
     )
 
 
