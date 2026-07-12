@@ -142,6 +142,7 @@ async def get_settings():
         "news": cfg.news.model_dump(mode="json"),
         "serenity": cfg.serenity.model_dump(mode="json"),
         "controller": cfg.controller.model_dump(mode="json"),
+        "learning": cfg.learning.model_dump(mode="json"),
     }
 
 
@@ -616,6 +617,44 @@ async def update_controller_config(req: ControllerConfigUpdate):
                  "after": cfg.controller.model_dump(mode="json"),
                  "message": f"Controller config updated: {list(updates.keys())}"})
     return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
+# Paper Learning experiment controls (AT-02)
+# ---------------------------------------------------------------------------
+
+class LearningConfigUpdate(SettingsRequest):
+    contribution_evaluation_enabled: Optional[bool] = None
+    lifecycle_automation_enabled: Optional[bool] = None
+    paper_influence_enabled: Optional[bool] = None
+    paper_influence_paths: Optional[list[str]] = None
+    auto_refreeze: Optional[bool] = None
+    evaluation_interval_minutes: Optional[int] = None
+    paper_active_allocation_pct: Optional[float] = None
+
+
+@router.post("/learning")
+async def update_learning_config(req: LearningConfigUpdate):
+    cfg = load_config()
+    old = cfg.learning.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    if "evaluation_interval_minutes" in updates and not (15 <= int(updates["evaluation_interval_minutes"]) <= 1440):
+        raise HTTPException(400, "evaluation_interval_minutes must be between 15 and 1440")
+    if "paper_active_allocation_pct" in updates and not (0 < float(updates["paper_active_allocation_pct"]) <= 0.90):
+        raise HTTPException(400, "paper_active_allocation_pct must be > 0 and <= 0.90")
+    if "paper_influence_paths" in updates:
+        updates["paper_influence_paths"] = sorted({
+            str(path).strip() for path in updates["paper_influence_paths"] if str(path).strip()
+        })
+    for field, value in updates.items():
+        setattr(cfg.learning, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "learning_config_changed",
+                 "entity_type": "learning_config", "before": old,
+                 "after": cfg.learning.model_dump(mode="json"),
+                 "message": f"Learning experiment config updated: {list(updates.keys())}"})
+    return {"updated": updates, "learning": cfg.learning.model_dump(mode="json")}
 
 
 # ---------------------------------------------------------------------------

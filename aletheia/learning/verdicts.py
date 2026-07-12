@@ -132,6 +132,7 @@ def _harm_metrics(
         breached.append("mae_p95_worsening")
     return {
         "metric_version": METRIC_VERSION,
+        "stage": cohort.experiment.stage,
         "bootstrap_seed": BOOTSTRAP_SEED,
         "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
         "policy_epoch": cohort.key.policy_epoch,

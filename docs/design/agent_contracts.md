@@ -3,11 +3,11 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-07-12 (Learning enable gate and durable catch-up)
+> Last updated: 2026-07-12 (separate measurement and paper-lifecycle schedules)
 
 ---
 
-## 1. Scheduler Job Overview (35 recurring jobs with optional jobs enabled + 2 startup one-shots)
+## 1. Scheduler Job Overview (37 recurring jobs with optional jobs enabled + 3 startup one-shots)
 
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
@@ -46,15 +46,19 @@
 | 33 | shadow_resolver | 6h | io | Resolve shadow trades against realised outcomes |
 | 34 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
 | 35 | outcome_settler | 15min | io | Settle outstanding prediction / universe forward outcomes |
-| 36 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
-| 37 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
+| 36 | learning_contribution_evaluator | interval `learning.evaluation_interval_minutes` (default 60) | io | Measure only: append deterministic contribution verdicts and evaluator health even when autonomous Learning is off or runtime is paused |
+| 37 | learning_lifecycle_controller | interval `learning.evaluation_interval_minutes` (default 60) | io | Apply at most one default-closed paper lifecycle action per current experiment; requires autonomous Learning, no pause/integrity incident, lifecycle automation, paper influence, and path allowlist |
+| 38 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
+| 39 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
+| 40 | learning_measurement_startup_catchup | once, 3min after gateway boot | io | Re-run only the current missing contribution-measurement window; independent of autonomous Learning and paper influence |
 
-Learning mutation jobs (rows 10–15, 26, 30–31 and the Learning catch-up) share
+Learning behavior jobs (rows 10–15, 26, 30–31, 37 and the Learning behavior catch-up) share
 `agent.autonomous_learning` as one backend gate. When disabled, no automatic producer,
 reviewer, promoter, controller, or learned rollout runs. Measurement-only
-`outcome_settler` and `shadow_resolver` continue so disabling Learning does not erase
-or delay outcome truth. Successful/failed/skipped runs and reviewer backlog health are
-persisted in `learning_job_health`.
+`outcome_settler`, `shadow_resolver`, and `learning_contribution_evaluator` continue so disabling
+Learning does not erase or delay outcome truth. The evaluator never changes stages or authority;
+the lifecycle controller is a separate gated consumer. Successful/failed/skipped runs and reviewer
+backlog health are persisted in `learning_job_health`.
 
 ### OS Watchdog Contract
 
@@ -276,6 +280,7 @@ All agents share the same SQLite DB. Invariants that MUST hold (full detail in [
 | market_observer | 240s | risk_critic | 300s |
 | paper_trader | 300s | pi_trading_decision | 300s |
 | post_trade_reviewer | 300s | exchange_sync | 60s |
+| learning_contribution_evaluator | 60s | learning_lifecycle_controller | 60s |
 
 Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_sync_with_timeout` (`:141`). `misfire_grace_time` 60-300s per `add_job`.
 

@@ -114,6 +114,10 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
         )
         cohort = cohorts.setdefault(key, ContributionCohort(key, experiment, hypothesis))
         cohort.raw_exposure_n += 1
+        exposure_stage = exposure.get("experiment_stage")
+        if exposure_stage is not None and str(exposure_stage) != experiment.stage:
+            cohort.invalid_reasons["experiment_stage_mismatch"] += 1
+            continue
         if not key.policy_epoch:
             cohort.invalid_reasons["missing_policy_epoch"] += 1
             continue

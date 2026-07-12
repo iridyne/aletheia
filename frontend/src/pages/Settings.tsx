@@ -367,6 +367,11 @@ function AgentModelsTab({ status, settings, qc }: any) {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Filter controller config'),
   })
+  const learningMut = useMutation({
+    mutationFn: (body: any) => api.updateLearningConfig(body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Paper Learning config'),
+  })
 
   const perm = String(status.permission_mode || agent.permission_mode || '')
   const autoLearn = !!agent.autonomous_learning
@@ -384,6 +389,14 @@ function AgentModelsTab({ status, settings, qc }: any) {
   const controllerShadowEnabled = controllerCfg.shadow_enabled !== false
   const controllerObserveHours = Number(controllerCfg.observe_interval_hours ?? 6)
   const controllerMinSamples = Number(controllerCfg.min_samples_gate ?? 20)
+  const learningCfg = (settings?.learning ?? {}) as any
+  const contributionEvaluationEnabled = learningCfg.contribution_evaluation_enabled !== false
+  const lifecycleAutomationEnabled = !!learningCfg.lifecycle_automation_enabled
+  const paperInfluenceEnabled = !!learningCfg.paper_influence_enabled
+  const paperInfluencePaths = Array.isArray(learningCfg.paper_influence_paths) ? learningCfg.paper_influence_paths : []
+  const autoRefreeze = learningCfg.auto_refreeze !== false
+  const evaluationInterval = Number(learningCfg.evaluation_interval_minutes ?? 60)
+  const paperActiveAllocation = Number(learningCfg.paper_active_allocation_pct ?? 0.80)
   const guardCfg = (settings?.guard ?? {}) as any
   const guardAutoPromote = guardCfg.auto_promote_enabled !== false
 
@@ -434,6 +447,48 @@ function AgentModelsTab({ status, settings, qc }: any) {
         </Row>
         <Row label="Bypass distress gate" hint="When ON, historical win-rate/PnL stats are hidden from the System Operator prompt so poor past performance cannot trigger self-protection. Use during demo/test phases only — disable before evaluating real results.">
           <Toggle checked={bypassDistressGate} onChange={v => bypassDistressMut.mutate(v)} disabled={bypassDistressMut.isPending} />
+        </Row>
+      </Section>
+
+      <Section
+        title="Paper Learning Experiments"
+        description="Contribution measurement remains read-only. Lifecycle automation and paper influence are separately default-off, and never affect live trading."
+      >
+        <Row label="Contribution measurement" hint="Evaluate already-recorded shadow exposures and outcomes. This does not grant any influence.">
+          <Toggle checked={contributionEvaluationEnabled} onChange={v => learningMut.mutate({ contribution_evaluation_enabled: v })} disabled={learningMut.isPending} />
+        </Row>
+        <Row label="Lifecycle automation" hint="Allow stage recommendations to be recorded and, only with the gates below, move one paper experiment stage at a time. Default OFF.">
+          <Toggle checked={lifecycleAutomationEnabled} onChange={v => {
+            if (v && !confirm('Enable paper-experiment lifecycle automation? Paper influence remains separately disabled until you turn it on.')) return
+            learningMut.mutate({ lifecycle_automation_enabled: v })
+          }} disabled={learningMut.isPending} />
+        </Row>
+        <Row label="Paper influence" hint="Allow a fully gated paper experiment to use its treatment allocation. Default OFF; this never enables live trading.">
+          <Toggle checked={paperInfluenceEnabled} onChange={v => {
+            if (v && !confirm('Enable paper Learning influence? Only explicitly allowlisted paths can use paper treatment.')) return
+            learningMut.mutate({ paper_influence_enabled: v })
+          }} disabled={learningMut.isPending} />
+        </Row>
+        <Row label="Allowed paper paths" hint="Comma-separated internal path names. Empty means no path can receive paper influence.">
+          <input type="text" defaultValue={paperInfluencePaths.join(', ')} onBlur={e => {
+            const paths = e.currentTarget.value.split(',').map(v => v.trim()).filter(Boolean)
+            if (paths.join(',') !== paperInfluencePaths.join(',')) learningMut.mutate({ paper_influence_paths: paths })
+          }} disabled={learningMut.isPending} className="w-64" />
+        </Row>
+        <Row label="Auto-refreeze" hint="Immediately closes a paper experiment after a negative or invalid measurement verdict. Default ON.">
+          <Toggle checked={autoRefreeze} onChange={v => learningMut.mutate({ auto_refreeze: v })} disabled={learningMut.isPending} />
+        </Row>
+        <Row label="Evaluation interval (minutes)" hint="How often read-only measurement and lifecycle checks run. Default 60; allowed range 15–1440.">
+          <input type="number" min={15} max={1440} step={5} defaultValue={evaluationInterval} onBlur={e => {
+            const v = Math.round(Number(e.currentTarget.value))
+            if (Number.isFinite(v) && v >= 15 && v <= 1440 && v !== evaluationInterval) learningMut.mutate({ evaluation_interval_minutes: v })
+          }} disabled={learningMut.isPending} className="w-24" />
+        </Row>
+        <Row label="Active-stage treatment allocation" hint="Maximum paper treatment share at the final stage. A control holdout is mandatory; hard maximum 90%.">
+          <input type="number" min={0.01} max={0.90} step={0.05} defaultValue={paperActiveAllocation} onBlur={e => {
+            const v = Number(e.currentTarget.value)
+            if (Number.isFinite(v) && v > 0 && v <= 0.90 && v !== paperActiveAllocation) learningMut.mutate({ paper_active_allocation_pct: v })
+          }} disabled={learningMut.isPending} className="w-24" />
         </Row>
       </Section>
 
@@ -3140,6 +3195,10 @@ function AppRows({ settings, qc }: any) {
 function ConfigCoverageCard({ settings }: { settings: any }) {
   const controlled = new Set([
     'agent.permission_mode', 'agent.autonomous_learning', 'agent.bypass_distress_gate',
+    'learning.contribution_evaluation_enabled', 'learning.lifecycle_automation_enabled',
+    'learning.paper_influence_enabled', 'learning.paper_influence_paths',
+    'learning.auto_refreeze', 'learning.evaluation_interval_minutes',
+    'learning.paper_active_allocation_pct',
     'runtime.scheduler_enabled', 'runtime.git_enabled', 'runtime.auto_reload', 'runtime.autostart_on_start',
     'runtime.runtime_continuity_enabled', 'runtime.runtime_continuity_lock_ttl_sec', 'runtime.runtime_continuity_shadow_port_offset',
     'app.auto_open_browser',

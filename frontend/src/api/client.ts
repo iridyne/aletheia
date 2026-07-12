@@ -476,6 +476,11 @@ export const api = {
     post<{ updated: Record<string, any> }>('/settings/serenity', body),
   updateControllerConfig: (body: Partial<{ shadow_enabled: boolean; observe_interval_hours: number; min_samples_gate: number; max_step: number }>) =>
     post<{ updated: Record<string, any> }>('/settings/controller', body),
+  updateLearningConfig: (body: Partial<{
+    contribution_evaluation_enabled: boolean; lifecycle_automation_enabled: boolean
+    paper_influence_enabled: boolean; paper_influence_paths: string[]; auto_refreeze: boolean
+    evaluation_interval_minutes: number; paper_active_allocation_pct: number
+  }>) => post<{ updated: Record<string, any>; learning: Record<string, any> }>('/settings/learning', body),
   updateOperatorConfig: (body: Partial<{ loop_enabled: boolean }>) =>
     post<{ updated: Record<string, any> }>('/settings/operator', body),
   updateGuardConfig: (body: Partial<{ enabled: boolean; enforce_in_paper_ranker: boolean; auto_promote_enabled: boolean; min_matching_trades: number; max_score_penalty: number }>) =>

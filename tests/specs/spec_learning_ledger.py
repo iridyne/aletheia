@@ -9,26 +9,26 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 @spec_claim(SpecClaim(
     "LE-S01", "learning_evolution", "§4 durable ledger", "L2a",
-    "Hypothesis, experiment, exposure, verdict, job-health, and policy-epoch stores exist with stable ids.",
+    "Hypothesis, experiment, exposure, verdict, lifecycle-event, job-health, and policy-epoch stores exist with stable ids.",
     status="implemented",
 ))
 def test_learning_ledger_tables_and_models_exist():
     from aletheia.learning.models import (
         LearningContributionVerdict, LearningExperiment, LearningExposure,
-        LearningHypothesis, LearningJobHealth, LearningPolicyEpoch,
+        LearningHypothesis, LearningJobHealth, LearningLifecycleEvent, LearningPolicyEpoch,
     )
     from aletheia.storage.sqlite import get_db
 
     expected = {
         "learning_hypotheses", "learning_experiments", "learning_exposures",
-        "learning_contribution_verdicts", "learning_job_health", "learning_policy_epochs",
+        "learning_contribution_verdicts", "learning_lifecycle_events", "learning_job_health", "learning_policy_epochs",
     }
     tables = {row[0] for row in get_db().execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert expected <= tables
     for model, field in (
         (LearningHypothesis, "hypothesis_id"), (LearningExperiment, "experiment_id"),
         (LearningExposure, "exposure_id"), (LearningContributionVerdict, "verdict_id"),
-        (LearningJobHealth, "job_id"), (LearningPolicyEpoch, "epoch_id"),
+        (LearningLifecycleEvent, "event_id"), (LearningJobHealth, "job_id"), (LearningPolicyEpoch, "epoch_id"),
     ):
         assert field in model.model_fields
 

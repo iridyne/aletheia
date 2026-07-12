@@ -12,6 +12,7 @@ _TABLE_ID = {
     "learning_experiments": "experiment_id",
     "learning_exposures": "exposure_id",
     "learning_contribution_verdicts": "verdict_id",
+    "learning_lifecycle_events": "event_id",
     "learning_job_health": "job_id",
     "learning_policy_epochs": "epoch_id",
 }
@@ -58,6 +59,10 @@ def insert_experiment(record) -> bool:
 
 def insert_exposure(record) -> bool:
     return insert_record("learning_exposures", record, ignore_duplicates=True)
+
+
+def insert_lifecycle_event(record) -> bool:
+    return insert_record("learning_lifecycle_events", record, ignore_duplicates=True)
 
 
 def upsert_job_health(record) -> None:
@@ -134,6 +139,48 @@ def get_latest_verdict_for_cohort(
         (experiment_id, policy_epoch, stage),
     ).fetchone()
     return dict(row) if row else None
+
+
+def get_latest_measurement_verdict(experiment_id: str) -> dict | None:
+    """Return the newest AT-01 measurement verdict, never a legacy authority row."""
+    row = get_db().execute(
+        "SELECT * FROM learning_contribution_verdicts WHERE experiment_id=? "
+        "AND verdict IN ('positive', 'neutral', 'negative', 'insufficient_data', 'invalid') "
+        "ORDER BY created_at DESC, verdict_id DESC LIMIT 1",
+        (experiment_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_open_experiments(*, path_id: str | None = None) -> list[dict]:
+    clauses = ["e.ended_at IS NULL"]
+    params: list[str] = []
+    if path_id is not None:
+        clauses.append("h.path_id=?")
+        params.append(path_id)
+    rows = get_db().execute(
+        "SELECT e.* FROM learning_experiments e JOIN learning_hypotheses h "
+        "ON h.hypothesis_id=e.hypothesis_id WHERE " + " AND ".join(clauses) + " "
+        "ORDER BY e.created_at, e.experiment_id",
+        tuple(params),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_lifecycle_event_by_dedup_key(dedup_key: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM learning_lifecycle_events WHERE dedup_key=?", (dedup_key,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_lifecycle_events(experiment_id: str, *, limit: int = 100) -> list[dict]:
+    rows = get_db().execute(
+        "SELECT * FROM learning_lifecycle_events WHERE experiment_id=? OR successor_experiment_id=? "
+        "ORDER BY created_at DESC, event_id DESC LIMIT ?",
+        (experiment_id, experiment_id, max(1, int(limit))),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def get_exposure_by_dedup_key(dedup_key: str) -> dict | None:

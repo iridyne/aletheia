@@ -27,6 +27,7 @@ AUTONOMOUS_LEARNING_JOBS: frozenset[str] = frozenset({
     "filter_controller_observe",
     "persona_rollout",
     "learning_startup_catchup",
+    "learning_lifecycle_controller",
 })
 
 DAILY_LEARNING_SCHEDULES: dict[str, tuple[int, int]] = {
@@ -46,6 +47,8 @@ _SCHEDULE_KEYS: dict[str, str] = {
     "filter_controller_observe": "config:controller.observe_interval_hours",
     "persona_rollout": "interval:8h",
     "learning_startup_catchup": "startup:once",
+    "learning_contribution_evaluator": "interval:config.learning.evaluation_interval_minutes",
+    "learning_lifecycle_controller": "interval:config.learning.evaluation_interval_minutes",
 }
 
 _INTERVAL_HOURS = {
@@ -133,6 +136,12 @@ def get_learning_job_health(job_id: str) -> LearningJobHealth:
 
 
 def _next_due(job_id: str, now: datetime) -> str | None:
+    if job_id in {"learning_contribution_evaluator", "learning_lifecycle_controller"}:
+        try:
+            minutes = max(15, int(load_config().learning.evaluation_interval_minutes))
+        except Exception:
+            minutes = 60
+        return (now + timedelta(minutes=minutes)).isoformat()
     if job_id in DAILY_LEARNING_SCHEDULES:
         hour, minute = DAILY_LEARNING_SCHEDULES[job_id]
         local_now = now.astimezone(_CST)
@@ -155,6 +164,23 @@ def current_daily_window(job_id: str, *, now: datetime | None = None) -> str | N
     due = datetime.combine(current.date(), time(hour, minute), tzinfo=_CST)
     window_date = current.date() if current >= due else current.date() - timedelta(days=1)
     return f"{job_id}:{window_date.isoformat()}"
+
+
+def current_measurement_window(job_id: str, *, now: datetime | None = None) -> str:
+    """One bounded UTC-hour window for restart recovery of measurement jobs."""
+    current = (now or utc_now()).astimezone(timezone.utc)
+    return f"{job_id}:{current.strftime('%Y-%m-%dT%H')}"
+
+
+def measurement_catchup_due(job_id: str, *, now: datetime | None = None) -> bool:
+    """Measurement ignores behavior gates but respects its explicit enable flag."""
+    try:
+        cfg = load_config()
+        if not bool(cfg.learning.contribution_evaluation_enabled):
+            return False
+    except Exception:
+        return False
+    return get_learning_job_health(job_id).input_watermark != current_measurement_window(job_id, now=now)
 
 
 def daily_catchup_due(job_id: str, *, now: datetime | None = None) -> bool:
@@ -274,4 +300,43 @@ def record_learning_job_skipped(job_id: str, reason: str) -> None:
         "status": reason,
         "last_error": None,
         "updated_at": now.isoformat(),
+    }))
+
+
+def record_measurement_job_started(job_id: str) -> None:
+    """Persist health for a read-only measurement job outside autonomous gates."""
+    now = utc_now()
+    health = get_learning_job_health(job_id)
+    upsert_job_health(health.model_copy(update={
+        "last_started_at": now.isoformat(), "status": "running", "last_error": None,
+        "updated_at": now.isoformat(),
+    }))
+
+
+def record_measurement_job_success(job_id: str) -> None:
+    now = utc_now()
+    health = get_learning_job_health(job_id)
+    upsert_job_health(health.model_copy(update={
+        "last_succeeded_at": now.isoformat(),
+        "next_due_at": _next_due(job_id, now),
+        "input_watermark": current_measurement_window(job_id, now=now),
+        "consecutive_failures": 0, "status": "healthy", "last_error": None,
+        "updated_at": now.isoformat(),
+    }))
+
+
+def record_measurement_job_failure(job_id: str, error: str) -> None:
+    now = utc_now()
+    health = get_learning_job_health(job_id)
+    upsert_job_health(health.model_copy(update={
+        "consecutive_failures": health.consecutive_failures + 1,
+        "status": "failed", "last_error": str(error)[:1000], "updated_at": now.isoformat(),
+    }))
+
+
+def record_measurement_job_skipped(job_id: str, reason: str) -> None:
+    now = utc_now()
+    health = get_learning_job_health(job_id)
+    upsert_job_health(health.model_copy(update={
+        "status": reason, "last_error": None, "updated_at": now.isoformat(),
     }))
