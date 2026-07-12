@@ -527,6 +527,6 @@ Executable target claims live in `tests/specs/spec_outcome_integrity.py`:
 | OI-S01 | additive closure evidence and durable observation storage | implemented |
 | OI-S02 | dependency-neutral central classifier and explicit read models | implemented |
 | OI-B01/B02/B03 | durable confirmation + verified exit + economic close split | missing |
-| OI-B04/C01 | any-reopen incident + global refreeze | missing |
+| OI-B04/C01 | any-reopen incident + global refreeze | implemented |
 | OI-C02/C03/C04 | all behavior consumers + Risk split + dual reporting | missing |
 | OI-B05/C05 | additive history remediation + versioned clean window | missing |

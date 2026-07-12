@@ -7,7 +7,8 @@ from aletheia.storage.sqlite import get_db
 from aletheia.storage.models import (
     AuditEvent, AgentRun, Opportunity, TradeProposal,
     RiskDecision, Order, Fill, Position, PositionDisappearanceCandidate,
-    PositionDisappearanceObservation, StrategyRecord, KnowledgeItem,
+    PositionDisappearanceObservation, ReconciliationIntegrityIncident,
+    StrategyRecord, KnowledgeItem,
     SerenityTheme, SerenityEvidence, SerenityOpportunity, SerenityRiskGate,
     SerenityReplaySnapshot, SerenityPostMortem, SerenityClaim,
     PaperAccountEvent,
@@ -635,6 +636,53 @@ def list_position_disappearance_observations(
         order="observed_at ASC",
         limit=limit,
     )
+
+
+def insert_reconciliation_integrity_incident(
+    incident: ReconciliationIntegrityIncident,
+) -> None:
+    """Persist one incident; the partial unique index enforces one active row/type."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    data = incident.model_dump()
+    columns = ", ".join(data)
+    placeholders = ", ".join("?" for _ in data)
+    db.execute(
+        f"INSERT INTO reconciliation_integrity_incidents ({columns}) "
+        f"VALUES ({placeholders})",
+        list(data.values()),
+    )
+    if not was_in_tx:
+        db.commit()
+
+
+def get_active_reconciliation_integrity_incident(
+    incident_type: str = "close_reopen_churn",
+) -> dict | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM reconciliation_integrity_incidents "
+        "WHERE incident_type=? AND status='active' "
+        "ORDER BY last_detected_at DESC LIMIT 1",
+        (incident_type,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_reconciliation_integrity_incident(incident_id: str) -> dict | None:
+    return _select_one("reconciliation_integrity_incidents", incident_id)
+
+
+def update_reconciliation_integrity_incident(incident_id: str, **kwargs) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    sets = ", ".join(f"{key} = ?" for key in kwargs)
+    db.execute(
+        f"UPDATE reconciliation_integrity_incidents SET {sets} WHERE id = ?",
+        [*kwargs.values(), incident_id],
+    )
+    if not was_in_tx:
+        db.commit()
 
 
 # --- Strategy Records ---

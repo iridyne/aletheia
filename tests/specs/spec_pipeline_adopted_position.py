@@ -977,10 +977,9 @@ def _mk_churn_signature(repo, Position, symbol, direction="short", entry=100.0):
 @spec_claim(
     SpecClaim(
         "PL-ADOPT-17", "pipeline_adopted_position", "§17 detect_reconcile_thrash", "L2b",
-        "detect_reconcile_thrash flags the close→reopen flip-flop fingerprint (same "
-        "symbol+dir both reconciled_gone-closed AND re-adopted in-window). Trips "
-        "(is_thrashing) at >=2 distinct churned symbols; a single one is an early "
-        "signal only. Regression tripwire for the broker-cache fix.",
+        "detect_reconcile_thrash flags administrative-close → native/adopted reopen "
+        "for the same account-scoped instrument identity. Trips at >=2 identities; "
+        "a single one is an early signal only.",
     ),
 )
 def test_detect_reconcile_thrash_fingerprint(tmp_path, monkeypatch):
@@ -1012,10 +1011,9 @@ def test_detect_reconcile_thrash_fingerprint(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "PL-ADOPT-18", "pipeline_adopted_position", "§18 reconcile_circuit_breaker", "L2c",
-        "run_reconcile suspends the destructive orphan-close + auto-adopt for a cycle "
-        "when detect_reconcile_thrash trips — a runtime self-heal that stops a thrash "
-        "loop at the reconciler without touching code (mirrors LLM/connectivity "
-        "auto-pause). summary flags the suspension; real positions are left intact.",
+        "run_reconcile persists the incident and suspends destructive orphan-close + "
+        "auto-adopt until spaced clean evidence and explicit resolution; restart or one "
+        "clean poll cannot self-clear it, and real positions remain intact.",
     ),
 )
 def test_run_reconcile_circuit_breaker_suspends(tmp_path, monkeypatch):

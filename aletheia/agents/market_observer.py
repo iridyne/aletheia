@@ -747,7 +747,11 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     except Exception:
         pass
 
-    learning_memory_block = memory_block if cfg.agent.autonomous_learning else None
+    try:
+        from aletheia.learning.control import learning_influence_enabled
+        learning_memory_block = memory_block if learning_influence_enabled() else None
+    except Exception:
+        learning_memory_block = None
     if learning_memory_block is None:
         memory_block = ""
 

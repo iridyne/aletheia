@@ -1595,28 +1595,34 @@ def _probe_reconciled_ratio(report: Report) -> None:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         cutoff_72h = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
-        rows = list(db.execute(
-            "SELECT close_reason, closed_at FROM positions "
+        rows = [dict(row) for row in db.execute(
+            "SELECT * FROM positions "
             "WHERE status='closed' AND closed_at >= ? "
             "ORDER BY closed_at DESC LIMIT 50",
             (cutoff_72h,),
-        ))
+        )]
         if not rows:
             report.add("loop.reconciled_ratio", "info",
                        "no closed positions since 2026-06-22")
             return
         from collections import Counter
-        cnt: Counter = Counter(r[0] for r in rows)
-        total = sum(cnt.values())
-        reconciled = cnt.get("reconciled_gone", 0)
-        units_bug = cnt.get("units_bug_cleanup", 0)
-        ai_driven = total - reconciled - units_bug
-        newest_reconciled = next((r[1] for r in rows if r[0] == "reconciled_gone"), None)
+        from aletheia.analytics.outcome_integrity import classify_closure
+        categories: Counter = Counter(classify_closure(row).category for row in rows)
+        total = len(rows)
+        reconciled = categories["administrative"]
+        maintenance = categories["maintenance"]
+        ai_driven = categories["strategy"]
+        unknown = categories["unknown"]
+        newest_reconciled = next((
+            row["closed_at"] for row in rows
+            if classify_closure(row).category == "administrative"
+        ), None)
         newest_reconciled_age = _age_minutes(newest_reconciled) if newest_reconciled else None
         recon_pct = round(reconciled / total * 100, 1) if total else 0
         ai_pct = round(ai_driven / total * 100, 1) if total else 0
-        detail = (f"last {total}: reconciled={reconciled}({recon_pct}%), "
-                  f"units_bug={units_bug}, ai_driven={ai_driven}({ai_pct}%)")
+        detail = (f"last {total}: administrative={reconciled}({recon_pct}%), "
+                  f"maintenance={maintenance}, strategy={ai_driven}({ai_pct}%), "
+                  f"unknown={unknown}")
         if recon_pct > 50:
             active_thrash = False
             try:
@@ -1680,30 +1686,44 @@ def _probe_sizing_policy(report: Report) -> None:
 
 
 def _probe_reconcile_thrash(report: Report) -> None:
-    """Precise detector for the reconciler false-orphan THRASH (distinct from the
-    ambiguous reconciled_ratio): the close→reopen flip-flop fingerprint — the same
-    (symbol, direction) both reconciled_gone-closed AND re-adopted within 30 min.
-
-    Unlike reconciled_ratio (which can be high for legitimate orphan cleanup too),
-    this fingerprint only appears when the reconciler is fighting itself. It is the
-    live REGRESSION tripwire for the 2026-07-01 broker-cache fix + a self-heal
-    signal: run_reconcile's circuit-breaker suspends on the same condition. Read-only.
-    """
+    """Report current churn plus the durable circuit-breaker/recovery state."""
     try:
         from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
+        from aletheia.portfolio.reconciliation_integrity import (
+            clean_observation_gate,
+            get_active_reconciliation_integrity_incident,
+        )
+        from aletheia.learning.control import global_learning_refreeze_reason
         t = detect_reconcile_thrash(window_minutes=30)
+        incident = get_active_reconciliation_integrity_incident()
+        if not t.get("detector_available", True):
+            report.add(
+                "loop.reconcile_thrash", "warn",
+                "reconciliation integrity detector unavailable",
+                "demo reconcile actions must stay suspended until scoped position "
+                "history can be read",
+            )
+            return
         churned = t["churned_symbols"]
         detail = (f"{t['churn_count']} churned in {t['window_minutes']}min "
-                  f"(reconciled_gone={t['reconciled_gone_recent']}, "
-                  f"adopted={t['adopted_recent']}); {', '.join(churned[:5]) or 'none'}")
-        if t["is_thrashing"]:
+                  f"(administrative={t['administrative_close_recent']}, "
+                  f"reopened={t['reopened_recent']}, sources={t['reopened_by_source']}); "
+                  f"{', '.join(churned[:5]) or 'none'}")
+        if incident is not None:
+            gate = clean_observation_gate(incident)
+            freeze = global_learning_refreeze_reason()
             report.add("loop.reconcile_thrash", "warn",
-                       f"reconciler thrash fingerprint: {detail}",
-                       "same symbol both reconciled_gone-closed AND re-adopted in-window "
-                       "= reconciler fighting itself. The run_reconcile circuit-breaker "
-                       "should have suspended; investigate position_reconciler.classify_"
-                       "positions (broker-cache mismatch?) — see ENTRY_EXIT_ASYMMETRY_"
-                       "ANALYSIS_2026-07-01.md")
+                       f"reconcile integrity incident {incident['id']} active; {detail}; "
+                       f"clean gate={gate['observed']}/{gate['required']}; "
+                       f"Learning freeze={freeze}",
+                       "demo adopt/orphan-close and behavior-changing Learning remain "
+                       "frozen; verify account-scoped broker evidence, collect spaced "
+                       "clean observations, then resolve explicitly")
+        elif t["is_thrashing"]:
+            report.add("loop.reconcile_thrash", "warn",
+                       f"current churn has no durable incident yet: {detail}",
+                       "the next reconcile cycle must persist the incident before any "
+                       "demo adopt/orphan-close action")
         elif t["churn_count"] == 1:
             report.add("loop.reconcile_thrash", "info",
                        f"single flip-flop (early signal, not tripping): {detail}")

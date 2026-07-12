@@ -42,11 +42,9 @@ def stable_assignment(experiment: LearningExperiment, candidate_key: str) -> str
     return "treatment" if fraction < experiment.allocation_pct else "control"
 
 
-def _learning_enabled() -> bool:
-    try:
-        return bool(load_config().agent.autonomous_learning)
-    except Exception:
-        return False
+def _learning_gate_reason() -> str | None:
+    from aletheia.learning.control import learning_influence_gate_reason
+    return learning_influence_gate_reason()
 
 
 def _ensure_experiment(
@@ -148,8 +146,9 @@ def apply_numeric_treatment(
     manifest: dict | None = None,
 ) -> InfluenceDecision:
     """Record prospective exposure and apply only an authorized paper treatment."""
-    if not _learning_enabled():
-        return InfluenceDecision(float(baseline), False, "disabled", "autonomous_learning_disabled")
+    gate_reason = _learning_gate_reason()
+    if gate_reason is not None:
+        return InfluenceDecision(float(baseline), False, "disabled", gate_reason)
     if not candidate_key:
         return InfluenceDecision(float(baseline), False, "unassigned", "missing_candidate_key")
 

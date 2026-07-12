@@ -36,7 +36,13 @@ def advance_persona_rollout() -> dict:
     if not t.persona_sizing_enabled:
         return {"action": "hold", "reason": "persona_sizing not enabled (rollout not started)"}
 
-    # Health gate — hold (don't advance) under distress or an active thrash fingerprint.
+    # Health gate — a persisted incident holds across restart and clean retries.
+    from aletheia.learning.control import global_learning_refreeze_reason
+    refreeze = global_learning_refreeze_reason()
+    if refreeze is not None:
+        return {"action": "hold", "reason": refreeze}
+
+    # Secondary health gates retain the immediate detector and distress checks.
     from aletheia.trading.sizing_policy import in_distress
     from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
     if in_distress(cfg):

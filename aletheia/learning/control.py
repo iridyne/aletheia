@@ -67,10 +67,52 @@ def is_autonomous_learning_job(job_id: str) -> bool:
     return job_id in AUTONOMOUS_LEARNING_JOBS
 
 
+def global_learning_refreeze_reason() -> str | None:
+    """Return the durable system-wide Learning freeze, independent of config.
+
+    Read-only settlement and shadow measurement do not call this gate.  Every
+    behavior-changing consumer does, so an integrity incident survives process
+    restart and cannot be bypassed by an enabled config flag.
+    """
+    try:
+        from aletheia.portfolio.reconciliation_integrity import (
+            get_active_reconciliation_integrity_incident,
+        )
+        incident = get_active_reconciliation_integrity_incident()
+    except Exception:
+        return "reconciliation_integrity_state_unavailable"
+    if incident is not None:
+        return f"reconciliation_integrity_incident:{incident['id']}"
+    return None
+
+
+def learning_influence_gate_reason() -> str | None:
+    """One effective gate for all behavior-changing Learning influence."""
+    global_reason = global_learning_refreeze_reason()
+    if global_reason is not None:
+        return global_reason.split(":", 1)[0]
+    try:
+        cfg = load_config()
+    except Exception:
+        return "learning_config_unavailable"
+    if not bool(cfg.agent.autonomous_learning):
+        return "autonomous_learning_disabled"
+    if bool(cfg.runtime.paused):
+        return "runtime_paused"
+    return None
+
+
+def learning_influence_enabled() -> bool:
+    return learning_influence_gate_reason() is None
+
+
 def learning_job_gate_reason(job_id: str) -> str | None:
     """Return why an autonomous job must not run, or ``None`` when allowed."""
     if not is_autonomous_learning_job(job_id):
         return None
+    global_reason = global_learning_refreeze_reason()
+    if global_reason is not None:
+        return global_reason.split(":", 1)[0]
     cfg = load_config()
     if not bool(cfg.agent.autonomous_learning):
         return "disabled"

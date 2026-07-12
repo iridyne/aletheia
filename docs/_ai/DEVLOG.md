@@ -3146,3 +3146,16 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
   resize/zoom and asynchronous setup/PnL layout changes trigger remeasurement.
 - Feed data, modes, polling, detail drawers, right-rail layout, backend, and trading
   behavior are unchanged.
+
+## 2026-07-12 — Durable reconciliation incident and Learning refreeze
+
+- Replaced the adopted-only close/reopen detector with account- and instrument-scoped
+  matching for native or adopted reopens after centrally classified administrative closes.
+- Added a durable, deduplicated incident circuit breaker. Demo reconcile actions remain
+  suspended across restart and clean retries; recovery needs spaced clean observations plus
+  an explicit audited resolution.
+- Connected the incident to every behavior-changing Learning authority/prompt/persona path
+  while leaving read-only measurement available and retaining conservative Risk constraints.
+- Doctor now reports current churn, reopen sources, the durable incident, global Learning
+  freeze reason and recovery progress. OI-B04/OI-C01 are implemented; independent Operator,
+  calibration, alpha, Risk and performance-reader migrations remain explicit planned debt.

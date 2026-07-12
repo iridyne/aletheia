@@ -148,7 +148,9 @@ trade_proposals.id
 | 红线 | **对账绝不下单/撤单**,只比对状态 + 写收敛/审计记录([trust §1.3](../governance/trust_and_change_control.md)) | — |
 | 防伪 | 对账从不创建虚假 Fill,仅更新 `order.status` | `reconciliation.py:77` |
 
-Position reconciler 的匹配身份必须包含执行账户作用域：`execution_mode + canonical symbol + direction`。
+Position reconciler 的匹配身份必须包含执行账户作用域：`execution_mode + broker_id +
+account_environment + canonical symbol + market_type + direction`；双方都带非敏感 account fingerprint
+且值不同时禁止匹配。`source=native/adopted` 只解释仓位如何重新出现，不得限制事故探测。
 外部 Demo/Live 只比较当前执行账户对应的本地仓；其他账户仓位不进入本次分类，不能被当前账户关闭。
 `paper_internal` 是纯本地模拟，没有交易所对应物，始终返回 `sync_status=local_only`，任何 unified/legacy
 外部缓存都不得把它分类为 `orphaned`。可执行检查：`PL-ADOPT-22`。
@@ -288,3 +290,12 @@ administrative-unverified close 不得：
 `reconciled_gone` 或 maintenance reason。无结构化证据的旧行是 `legacy_unverified_close`，PnL 数值本身
 不能证明退出。现有 `analytics.close_reasons` 只是兼容 facade，reason registry 只在中央模块维护。
 当前交付的是语义和读取能力；Operator、KPI、Risk、API/UI 等迁移仍由 `OI-C02~C04` 约束。
+
+### 11.5 持久事故断路器（OI-B04/C01 implemented）
+
+当前语义版本下的 administrative/maintenance close 之后，若同一完整账户与 instrument identity
+出现任何 native 或 adopted open event，短窗内达到两个独立 identity 即形成系统性事故。探测器在
+demo auto-adopt/orphan-close 之前运行；active 事故写入 `reconciliation_integrity_incidents`，使这两个
+动作和所有会改变行为的 Learning 入口跨重启保持冻结。每次继续出现循环会重置干净计数；干净观察
+必须相隔至少五分钟且累计两次，之后仍需明确 actor/reason 才能 resolve。live 继续只分类和告警，不
+获得任何新增自动收口权限。

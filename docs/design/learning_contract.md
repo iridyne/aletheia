@@ -436,9 +436,11 @@ The global classifier/read model is delivered, but consumer migration remains in
 Operator, calibration, alpha, Risk and performance paths still read closed positions independently.
 
 The target contract is `learning_evolution_contract.md §14` plus
-`tests/specs/spec_outcome_integrity.py`. Until OI-C01/OI-C02/OI-C05 are GREEN:
+`tests/specs/spec_outcome_integrity.py`. OI-C01 is now GREEN: an active persisted incident is read by
+the scheduler gate, experiment authority, Operator prompt bundle, market-observer memory, learned
+ranker guards, persona sizing/unlock and persona rollout. Read-only settlement and shadow outcome
+measurement remain available. Until OI-C02/OI-C05 are GREEN:
 
-- a reconciler-thrash incident is not proven to refreeze every Learning consumer;
 - an old calibration/report may still be active after its underlying outcome semantics became stale;
 - “Learning is healthy/effective” cannot be inferred from raw closed-position statistics;
 - existing consumers already protected by `assess_realized_position()` must retain that protection,
@@ -446,3 +448,7 @@ The target contract is `learning_evolution_contract.md §14` plus
 
 This handoff does not authorize Learning to import Risk, Execution, exchange clients, or live routes.
 Risk account loss remains a separate controlled contract, not a Learning outcome.
+
+The incident gate intentionally does not disable an already-active Risk lesson that only tightens a
+safety boundary. Removing a conservative Risk constraint during an incident would weaken safety;
+Risk source semantics are handled separately by OI-C03 and its controlled task.

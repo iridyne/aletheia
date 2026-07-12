@@ -108,6 +108,12 @@ def learned_appetite_adjustment(regime_bucket: str | None, cfg=None) -> float:
     reward → nudge appetite up; negative → down (defensive)."""
     from aletheia.config.loader import load_config
     cfg = cfg or load_config()
+    try:
+        from aletheia.learning.control import learning_influence_enabled
+        if not learning_influence_enabled():
+            return 0.0
+    except Exception:
+        return 0.0
     if not getattr(cfg.trading, "persona_learning_enabled", False):
         return 0.0
     if not regime_bucket:

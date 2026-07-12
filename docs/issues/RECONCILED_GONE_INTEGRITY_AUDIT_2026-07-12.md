@@ -66,8 +66,8 @@ Operator 调参的交易结果。
 | RG-04 | P0 | open | Operator 7d WR/PF/streak 使用 raw closed rows | 可自动减小 sizing 或提出错误调参 | Operator 只消费 genuine cohort，同时显示排除原因 |
 | RG-05 | P0 | open | conviction calibration 不读 `close_reason` | 污染校准被注入交易决策 prompt | 用统一 outcome adapter，归档并重建旧报告 |
 | RG-06 | P0 | open | System Operator alpha 接受仓与 shadows 比较时未排除行政性关闭 | contribution 判断把事故当决策效果 | observed leg 必须是 eligible realized outcome |
-| RG-07 | P0 | open | detector 只认 `reconciled_gone -> adopted` | 漏掉 `reconciled_gone -> native` 本地循环 | 统一 close→any-open 指纹，保留 source 维度 |
-| RG-08 | P0 | open | Learning 设计写“thrash 全局 refreeze”，实现未接入 | 事故期间仍可继续产出/应用 learned state | incident gate 接入统一 Learning control |
+| RG-07 | P0 | fixed-core | 旧 detector 只认 `reconciled_gone -> adopted` | 已改为账户/instrument 作用域的 administrative close→any-open，source 仅说明 | T12 保留 adopted/native E2E |
+| RG-08 | P0 | fixed-core | Learning 设计写“thrash 全局 refreeze”，旧实现未接入 | 持久 incident 已覆盖 scheduler、prompt、ranker、persona/experiment authority | T12 保留重启/恢复 E2E |
 | RG-09 | P0 | open | orphan 一次可信快照缺失即可行政性 close | 瞬时 API/cache gap 可被误当真实消失 | 连续确认或 broker 直查，确认状态可跨重启 |
 | RG-10 | P0 | open | `_try_get_tpsl_fill_price` 写死 Bitget | OKX/Binance 真实退出无法恢复，退化成假经济结果 | broker-neutral verified-exit protocol |
 | RG-11 | P0 | open | 行政性 close 复用普通 `close_position` | 伪造手续费、滑点、PnL、现金结算和部分下游 hook | verified strategy close 与 administrative close 分流 |

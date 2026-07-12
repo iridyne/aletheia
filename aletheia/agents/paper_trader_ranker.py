@@ -726,6 +726,9 @@ def _evaluate_guards_safe(
 ) -> GuardEvaluation | None:
     """Build guard context and evaluate. Returns None on failure (never crashes ranker)."""
     try:
+        from aletheia.learning.control import learning_influence_enabled
+        if not learning_influence_enabled():
+            return None
         cfg = load_config()
         guard_cfg = getattr(cfg, "guard", None)
         if guard_cfg and (not guard_cfg.enabled or not guard_cfg.enforce_in_paper_ranker):

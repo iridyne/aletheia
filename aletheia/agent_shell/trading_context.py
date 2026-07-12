@@ -120,8 +120,8 @@ def build_enriched_trading_context() -> dict[str, Any]:
         gate_operator_learning_context,
     )
     try:
-        from aletheia.config.loader import load_config
-        enabled = bool(load_config().agent.autonomous_learning)
+        from aletheia.learning.control import learning_influence_enabled
+        enabled = learning_influence_enabled()
     except Exception:
         enabled = False
     ctx = gate_operator_learning_context(ctx, enabled=enabled)

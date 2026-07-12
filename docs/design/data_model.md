@@ -1,7 +1,7 @@
 # Data Model Reference
 
 > Complete index of Aletheia Trading OS data layer.
-> ~94 SQLite table declarations, 54 Pydantic models, WAL mode, additive-only migrations.
+> ~95 SQLite table declarations, 58 Pydantic models, WAL mode, additive-only migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
 > Last updated: 2026-07-10
 
@@ -38,7 +38,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 ## 3. Table Groups
 
-### A. Trading Core (13 tables)
+### A. Trading Core (14 tables)
 
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
@@ -51,6 +51,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `positions` | Open/closed positions | symbol, direction, entry_price, quantity, status, realized_pnl | position_manager |
 | `position_disappearance_candidates` | Durable account-scoped position-disappearance confirmation state; never authorizes close by itself | position_id, identity_key, broker_id, account_environment, non-secret account_fingerprint, instrument identity, confirmation_count, direct_query_state, semantics_version | position reconciler (OI-B01 target) |
 | `position_disappearance_observations` | Immutable idempotent evidence for a disappearance candidate | candidate_id, observation_hash, view_identity, completeness/absence flags, direct_query_state, evidence_json | position reconciler (OI-B01 target) |
+| `reconciliation_integrity_incidents` | Restart-safe close/reopen circuit breaker and explicit recovery evidence | scoped fingerprint, status, source mix, detected/clean timestamps, clean count, resolution actor/reason, semantics version | position reconciler + Learning control |
 | `shadow_trades` | What-if trades for comparison | opportunity_id, venue, market_type, outcome_candidate_key, gross_return_pct, net_pnl_pct, estimated costs | analytics |
 | `portfolio_snapshots` | Periodic equity snapshots | total_value_usdt, unrealized_pnl, execution_mode | scheduler job |
 | `paper_account_events` | **Local `paper_internal` cash ledger only**; immutable starting funds, human adjustments, and realized-PnL settlements | action, amount_usdt, cash_balance_before_usdt, cash_balance_after_usdt, actor, source, position_id, note | paper account service |
@@ -240,7 +241,7 @@ production trading state and cannot authorize a parameter change.
 
 ---
 
-## 4. Pydantic Model Index (57 models)
+## 4. Pydantic Model Index (58 models)
 
 All models in `aletheia/storage/models.py`. Key mapping:
 
@@ -260,6 +261,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | Position | positions | Trading |
 | PositionDisappearanceCandidate | position_disappearance_candidates | Trading integrity |
 | PositionDisappearanceObservation | position_disappearance_observations | Trading integrity |
+| ReconciliationIntegrityIncident | reconciliation_integrity_incidents | Trading integrity |
 | MarketRegimeRecord | market_regimes | Data |
 | StrategyRecord | strategy_records | Strategy |
 | KnowledgeItem | knowledge_items | Knowledge |
@@ -411,3 +413,8 @@ disappearance confirmation 使用 `position_disappearance_candidates` 保存作�
 `position_disappearance_observations` 保存 observation hash 去重的不可变证据。两者属于 trust-bearing
 state，不得进入 telemetry prune allowlist。当前只交付存储能力；reconciler 何时创建、累计、清除和
 收口由仍为 missing 的 `OI-B01` 约束，不能因为表已存在就推断行为已经安全。
+
+`reconciliation_integrity_incidents` 保存系统性行政关闭后重新出现的事故。每种事故最多一个 active
+行；重复探测只更新同一行并清零干净观察计数。恢复至少需要两次相隔五分钟的干净观察，再由明确
+actor/reason 执行 resolution。进程重启、一次干净轮询或配置中 Learning 为 enabled 均不能绕过该行。
+该表和两张 disappearance evidence 表一样属于不可裁剪的可信状态。

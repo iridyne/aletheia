@@ -307,52 +307,135 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
 
 
 def detect_reconcile_thrash(window_minutes: int = 30) -> dict:
-    """Detect the false-orphan thrash fingerprint, ROOT-CAUSE-AGNOSTIC.
+    """Detect systemic administrative-close → reopen churn, read-only.
 
-    The signature is a close→reopen flip-flop: the SAME (symbol, direction) is both
-    reconciled_gone-closed AND re-adopted within a short window. That only happens
-    when the reconciler is fighting itself (a real position keeps getting orphaned
-    then re-adopted) — the exact shape of the 2026-07-01 broker-cache thrash. This
-    detector does NOT know or care about the root cause, so it also catches a
-    REGRESSION of that fix, a key-mismatch, or a brand-new broker's version of the
-    same bug. Pure read-only.
-
-    is_thrashing trips at >=2 distinct churned symbols (systemic — two independent
-    symbols flip-flopping in one window is not coincidence; a single one is surfaced
-    as an early signal but does not trip the breaker).
-
-    Returns {window_minutes, reconciled_gone_recent, adopted_recent,
-             churned_symbols (["SYM:dir", ...]), churn_count, is_thrashing}.
+    Native and adopted reopens are both evidence.  Matching is scoped to execution
+    mode, broker/account environment, market type, canonical symbol and direction;
+    explicit unequal account fingerprints never match.  The source label explains
+    how the position reappeared but is not part of the incident definition.
     """
+    from collections import Counter
     from datetime import datetime, timezone, timedelta
+    import json
+    from aletheia.analytics.outcome_integrity import classify_closure
+
     out = {
+        "detector_available": False,
         "window_minutes": window_minutes, "reconciled_gone_recent": 0,
-        "adopted_recent": 0, "churned_symbols": [], "churn_count": 0,
-        "is_thrashing": False,
+        "adopted_recent": 0, "administrative_close_recent": 0,
+        "reopened_recent": 0, "reopened_by_source": {},
+        "churned_symbols": [], "churned_identities": [],
+        "churn_count": 0, "is_thrashing": False,
     }
     try:
         from aletheia.storage.sqlite import get_db
-        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).isoformat()
+        cutoff_dt = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
+        cutoff = cutoff_dt.isoformat()
         db = get_db()
         closed = db.execute(
-            "SELECT symbol, direction FROM positions WHERE status='closed' "
-            "AND close_reason='reconciled_gone' AND closed_at >= ?", (cutoff,)
+            "SELECT * FROM positions WHERE status='closed' AND closed_at >= ?",
+            (cutoff,),
         ).fetchall()
-        adopted = db.execute(
-            "SELECT symbol, direction FROM positions WHERE source='adopted' "
-            "AND opened_at >= ?", (cutoff,)
+        reopened = db.execute(
+            # Opening is an event, not the row's current lifecycle state. A reopened
+            # row may already have closed again by the time the detector runs.
+            "SELECT * FROM positions WHERE opened_at >= ?",
+            (cutoff,),
         ).fetchall()
     except Exception:
         return out
+    out["detector_available"] = True
 
-    closed_keys = {(r["symbol"], _norm_direction(r["direction"] or "")) for r in closed}
-    adopted_keys = {(r["symbol"], _norm_direction(r["direction"] or "")) for r in adopted}
-    churned = sorted(closed_keys & adopted_keys)
-    out["reconciled_gone_recent"] = len(closed)
-    out["adopted_recent"] = len(adopted)
-    out["churned_symbols"] = [f"{s}:{d}" for s, d in churned]
-    out["churn_count"] = len(churned)
-    out["is_thrashing"] = len(churned) >= 2
+    def parse_time(value) -> datetime | None:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except (TypeError, ValueError):
+            return None
+
+    def scoped(row) -> dict:
+        raw = row["reconciliation_identity"] if "reconciliation_identity" in row.keys() else None
+        try:
+            identity = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            identity = {}
+        mode = str(row["execution_mode"] or "unknown")
+        environment = str(identity.get("account_environment") or (
+            "demo" if "demo" in mode or mode == "paper_internal" else "live"
+        ))
+        return {
+            "execution_mode": mode,
+            "broker_id": str(identity.get("broker_id") or mode),
+            "account_environment": environment,
+            "account_fingerprint": str(identity.get("account_fingerprint") or ""),
+            "symbol": str(row["symbol"]),
+            "market_type": str(row["market_type"] or "unknown"),
+            "direction": _norm_direction(row["direction"] or ""),
+        }
+
+    administrative = [dict(row) for row in closed if classify_closure(dict(row)).category
+                      in {"administrative", "maintenance"}]
+    out["reconciled_gone_recent"] = sum(
+        1 for row in closed if row["close_reason"] == "reconciled_gone"
+    )
+    out["adopted_recent"] = sum(1 for row in reopened if row["source"] == "adopted")
+    out["administrative_close_recent"] = len(administrative)
+    out["reopened_recent"] = len(reopened)
+
+    matched: dict[tuple, dict] = {}
+    for closed_row in administrative:
+        closed_at = parse_time(closed_row.get("closed_at"))
+        if closed_at is None:
+            continue
+        close_scope = scoped(closed_row)
+        base_key = tuple(close_scope[key] for key in (
+            "execution_mode", "broker_id", "account_environment", "symbol",
+            "market_type", "direction",
+        ))
+        for reopened_row_raw in reopened:
+            reopened_row = dict(reopened_row_raw)
+            if reopened_row.get("id") == closed_row.get("id"):
+                continue
+            opened_at = parse_time(reopened_row.get("opened_at"))
+            if opened_at is None or opened_at < closed_at:
+                continue
+            reopen_scope = scoped(reopened_row)
+            reopen_key = tuple(reopen_scope[key] for key in (
+                "execution_mode", "broker_id", "account_environment", "symbol",
+                "market_type", "direction",
+            ))
+            if reopen_key != base_key:
+                continue
+            close_account = close_scope["account_fingerprint"]
+            reopen_account = reopen_scope["account_fingerprint"]
+            if close_account and reopen_account and close_account != reopen_account:
+                continue
+            account_scope = close_account or reopen_account or "legacy-unspecified"
+            identity_key = "|".join((*base_key, account_scope))
+            match_key = (*base_key, account_scope)
+            matched[match_key] = {
+                **reopen_scope,
+                "account_fingerprint": account_scope,
+                "identity_key": identity_key,
+                "closed_position_id": closed_row.get("id"),
+                "reopened_position_id": reopened_row.get("id"),
+                "closed_at": closed_row.get("closed_at"),
+                "reopened_at": reopened_row.get("opened_at"),
+                "close_category": classify_closure(closed_row).category,
+                "reopen_source": str(reopened_row.get("source") or "unknown"),
+            }
+
+    identities = sorted(matched.values(), key=lambda item: item["identity_key"])
+    sources = Counter(item["reopen_source"] for item in identities)
+    out["churned_identities"] = identities
+    out["reopened_by_source"] = dict(sorted(sources.items()))
+    out["churned_symbols"] = sorted({
+        f"{item['symbol']}:{item['direction']}" for item in identities
+    })
+    out["churn_count"] = len(identities)
+    out["is_thrashing"] = len(identities) >= 2
     return out
 
 
@@ -730,6 +813,90 @@ def run_reconcile(mode: str | None = None) -> dict:
         "errors": [],
     }
 
+    # Persisted circuit breaker: a systemic administrative-close → reopen pattern
+    # creates one durable incident.  A clean poll records recovery evidence but
+    # never self-clears the incident; explicit resolution is required after the
+    # spaced clean-observation gate.  Classification above stays read-only, while
+    # demo adoption/orphan-close below remain suspended for the whole incident.
+    thrash = detect_reconcile_thrash()
+    if not thrash.get("detector_available", True):
+        summary["recovery_state"] = "detector_unavailable"
+        summary["errors"].append("reconciliation integrity detector unavailable")
+        if account_mode == "demo":
+            summary["suspended"] = True
+            return summary
+    incident = None
+    incident_created = False
+    recovery_state = None
+    try:
+        from aletheia.portfolio.reconciliation_integrity import (
+            clean_observation_gate,
+            get_active_reconciliation_integrity_incident,
+            record_reconciliation_clean_observation,
+            record_reconciliation_integrity_incident,
+        )
+        if thrash["is_thrashing"]:
+            incident, incident_created = record_reconciliation_integrity_incident(thrash)
+            recovery_state = "churn_present"
+        else:
+            incident = get_active_reconciliation_integrity_incident()
+            if incident is not None:
+                incident = record_reconciliation_clean_observation(incident["id"])
+                gate = clean_observation_gate(incident)
+                recovery_state = "clean_gate_met" if gate["met"] else "observing_clean"
+    except Exception as exc:
+        # Failing to establish durable circuit-breaker state must not permit demo
+        # adoption/close actions.  Surface the storage failure and fail closed.
+        logger.exception("Reconcile integrity incident state unavailable")
+        if account_mode == "demo":
+            summary["suspended"] = True
+            summary["recovery_state"] = "incident_state_unavailable"
+            summary["errors"].append(f"integrity incident state: {exc}")
+            return summary
+
+    if incident is not None:
+        summary["incident"] = incident
+        summary["thrash"] = thrash
+        summary["recovery_state"] = recovery_state
+        if account_mode == "demo":
+            summary["suspended"] = True
+
+    if thrash["is_thrashing"]:
+        logger.warning(
+            "Reconcile integrity incident active: churned=%s (administrative=%d, "
+            "reopened=%d, sources=%s). Demo orphan-close + auto-adopt suspended.",
+            thrash["churned_symbols"], thrash["administrative_close_recent"],
+            thrash["reopened_recent"], thrash["reopened_by_source"],
+        )
+        if incident_created:
+            write_audit({
+                "actor": "system", "source": "position_reconciler",
+                "event_type": "reconcile_integrity_incident_opened",
+                "entity_type": "reconciliation_integrity_incident",
+                "entity_id": incident["id"],
+                "message": (
+                    f"Persisted reconcile-integrity incident after "
+                    f"{thrash['churn_count']} scoped close/reopen identities"
+                ),
+                "after": {
+                    "churned_identities": thrash["churned_identities"],
+                    "reopened_by_source": thrash["reopened_by_source"],
+                },
+            })
+            try:
+                from aletheia.notifications import notify_operator
+                notify_operator(
+                    title="Reconcile integrity incident: position churn detected",
+                    message=(f"{thrash['churn_count']} scoped positions closed then "
+                             f"reopened ({', '.join(thrash['churned_symbols'][:5])}). "
+                             f"Demo reconcile actions and behavior-changing Learning "
+                             f"remain frozen until clean evidence and explicit resolution."),
+                    level="warning", event_type="self_heal", entity_type="portfolio",
+                    error_log=False,
+                )
+            except Exception:
+                pass
+
     if account_mode != "demo":
         if result.external or result.orphaned:
             logger.warning(
@@ -738,49 +905,7 @@ def run_reconcile(mode: str | None = None) -> dict:
             )
         return summary
 
-    # Runtime self-heal circuit-breaker (B, 2026-07-01): if the close→reopen
-    # flip-flop fingerprint is present, the reconciler is fighting itself — SUSPEND
-    # the two destructive actions (orphan-close + auto-adopt) for this cycle and
-    # alert, instead of feeding the thrash. Root-cause-agnostic, so it also catches
-    # a REGRESSION of the P0 broker-cache fix or a new broker's version of the bug.
-    # This is a runtime-state guard (skip a cycle), NOT a code change — the same
-    # safety archetype as the LLM-outage / connectivity auto-pause. Re-evaluated
-    # every cycle, so it self-clears once the churn subsides.
-    thrash = detect_reconcile_thrash()
-    if thrash["is_thrashing"]:
-        summary["suspended"] = True
-        summary["thrash"] = thrash
-        logger.warning(
-            "Reconcile SUSPENDED (self-heal): thrash fingerprint — churned=%s "
-            "(reconciled_gone_recent=%d, adopted_recent=%d). Orphan-close + auto-adopt "
-            "skipped this cycle to break the loop.",
-            thrash["churned_symbols"], thrash["reconciled_gone_recent"], thrash["adopted_recent"],
-        )
-        write_audit({
-            "actor": "system", "source": "position_reconciler",
-            "event_type": "reconcile_suspended", "entity_type": "portfolio",
-            "message": (
-                f"Reconcile self-heal: thrash fingerprint detected "
-                f"({thrash['churn_count']} churned symbols) — orphan-close + auto-adopt "
-                f"suspended this cycle"
-            ),
-            "after": {"churned_symbols": thrash["churned_symbols"],
-                      "reconciled_gone_recent": thrash["reconciled_gone_recent"],
-                      "adopted_recent": thrash["adopted_recent"]},
-        })
-        try:
-            from aletheia.notifications import notify_operator
-            notify_operator(
-                title="Reconcile self-heal: position thrash detected",
-                message=(f"{thrash['churn_count']} symbols flip-flopping "
-                         f"({', '.join(thrash['churned_symbols'][:5])}). Orphan-close + "
-                         f"auto-adopt suspended. Likely a reconciler classification / "
-                         f"exchange-cache issue — investigate position_reconciler."),
-                level="warning", event_type="self_heal", entity_type="portfolio",
-                error_log=False,
-            )
-        except Exception:
-            pass
+    if incident is not None:
         return summary
 
     # Demo mode: auto-adopt + orphan close

@@ -151,6 +151,12 @@ def effective_operator_decidable(persona, cfg=None) -> dict:
     from aletheia.config.loader import load_config
     cfg = cfg or load_config()
     static = dict(persona.operator_decidable or {})
+    try:
+        from aletheia.learning.control import learning_influence_enabled
+        if not learning_influence_enabled():
+            return static
+    except Exception:
+        return static
     if not getattr(cfg.trading, "persona_progressive_unlock_enabled", False):
         return static
     ladder = list(persona.unlock_ladder or [])

@@ -171,13 +171,12 @@ def test_portfolio_has_separate_verified_and_administrative_close_paths():
     assert "outcome_hook_eligible" in source
 
 
-@_missing("RG-07: reconcile detector only matches adopted reopen rows")
 @spec_claim(
     SpecClaim(
         "OI-B04", "outcome_integrity", "§7 root-cause-neutral incident fingerprint", "L2b",
         "An administrative close followed by any native or adopted open with the same scoped "
         "account/instrument/direction identity triggers the reconcile incident detector.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_reconcile_incident_detector_is_not_adopted_only():
@@ -190,23 +189,34 @@ def test_reconcile_incident_detector_is_not_adopted_only():
     assert "market_type" in source
 
 
-@_missing("RG-08: reconcile incident is not connected to global Learning refreeze")
 @spec_claim(
     SpecClaim(
         "OI-C01", "outcome_integrity", "§8 incident-wide Learning refreeze", "L2c",
         "A persisted reconcile-integrity incident globally refreezes every behavior-changing "
         "Learning path to its static baseline across restart; read-only measurement remains "
         "available and recovery requires an explicit clean observation gate.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_learning_control_consumes_reconcile_integrity_incident():
-    source = _source("aletheia/learning/control.py")
-    for token in (
-        "reconcile_integrity_incident", "global_learning_refreeze",
-        "clean_observation_gate",
-    ):
-        assert token in source
+    control = _source("aletheia/learning/control.py")
+    integrity = _source("aletheia/portfolio/reconciliation_integrity.py")
+    experiments = _source("aletheia/learning/experiments.py")
+    assert "global_learning_refreeze_reason" in control
+    assert "get_active_reconciliation_integrity_incident" in control
+    assert "clean_observation_gate" in integrity
+    assert "MIN_CLEAN_OBSERVATIONS" in integrity
+    assert "learning_influence_gate_reason" in experiments
+    gated_consumers = {
+        "aletheia/agent_shell/trading_context.py": "learning_influence_enabled",
+        "aletheia/agents/market_observer.py": "learning_influence_enabled",
+        "aletheia/agents/paper_trader_ranker.py": "learning_influence_enabled",
+        "aletheia/trading/sizing_policy.py": "learning_influence_enabled",
+        "aletheia/trading/persona.py": "learning_influence_enabled",
+        "aletheia/trading/persona_rollout.py": "global_learning_refreeze_reason",
+    }
+    for path, gate in gated_consumers.items():
+        assert gate in _source(path), path
 
 
 @_missing("RG-03..06/RG-18/RG-19: behavior consumers have not all migrated")

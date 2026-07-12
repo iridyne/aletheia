@@ -216,6 +216,7 @@ def test_disappearance_evidence_tables_are_not_prunable():
     protected = {
         "position_disappearance_candidates",
         "position_disappearance_observations",
+        "reconciliation_integrity_incidents",
     }
     assert protected.isdisjoint(_PRUNABLE)
     for table in protected:

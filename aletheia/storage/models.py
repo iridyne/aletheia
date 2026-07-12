@@ -418,6 +418,30 @@ class PositionDisappearanceObservation(BaseModel):
     observed_at: str = Field(default_factory=_utcnow)
 
 
+class ReconciliationIntegrityIncident(BaseModel):
+    """Durable circuit-breaker state for systemic close/reopen churn."""
+
+    id: str = Field(default_factory=new_id)
+    incident_type: str = "close_reopen_churn"
+    fingerprint: str
+    status: str = "active"
+    window_minutes: int = 30
+    churn_count: int
+    identities_json: str = "[]"
+    reopen_sources_json: str = "{}"
+    detected_at: str = Field(default_factory=_utcnow)
+    last_detected_at: str = Field(default_factory=_utcnow)
+    last_clean_observed_at: str | None = None
+    clean_observation_count: int = 0
+    resolution_reason: str | None = None
+    resolved_by: str | None = None
+    resolved_at: str | None = None
+    semantics_version: str = "oi-v1"
+    details_json: str = "{}"
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
 class MarketRegimeRecord(BaseModel):
     id: str = Field(default_factory=new_id)
     state: str = "sideways"

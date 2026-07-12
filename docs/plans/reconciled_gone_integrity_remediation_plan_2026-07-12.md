@@ -173,6 +173,9 @@ RG-T08～T10 完成。
 
 ### Phase 3 — 事故检测和 Learning 全局冻结（RG-T04）
 
+状态：已实现 native/adopted 通用探测、持久事故、显式恢复门、Learning 全局冻结和 doctor 展示；
+等待本任务完整验证与合并。
+
 范围：reconciliation incident detector、Learning control、doctor；不改正常下单和风险阈值。
 
 工作：
@@ -245,6 +248,16 @@ RG-T08～T10 完成。
 
 本任务中的每一项都是整体修复的强制完成门，不是“有空再做”的分析优化。只要任一路仍直接使用
 未过滤 closed rows，RG-01～RG-22 就不能整体关闭。
+
+2026-07-12 再核对确认：Operator、conviction calibration、System Operator alpha、Risk account
+loss，以及 trade stats / family scorecard / strategy KPI 等多条表现统计当前仍各自读取。这些不是
+同一个修复的重复项，而是彼此独立的污染入口，全部纳入本 goal。新增 OI-C02/OI-C03 枚举式可执行
+断言继续明确标为欠账，直到每一条路径迁移并有 synthetic-vs-genuine 行为回归后才转 GREEN：
+
+- RG-T08A：trade stats、family scorecard、strategy KPI 等全部表现统计；
+- RG-T08B：Operator 7d 指标、trading context、calibration active report、alpha observed leg；
+- RG-T08C：Learning/output hooks、旧报告 freshness/supersede 和跨消费者架构扫描；
+- RG-T09：Risk authoritative account loss（受控模块，单独审批和测试，不与策略表现混用）。
 
 按行为影响优先迁移：
 

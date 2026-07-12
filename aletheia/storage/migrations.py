@@ -1558,6 +1558,31 @@ _OUTCOME_INTEGRITY_DDL = (
     )""",
     """CREATE INDEX IF NOT EXISTS idx_position_disappearance_observation_candidate
        ON position_disappearance_observations(candidate_id, observed_at ASC)""",
+    """CREATE TABLE IF NOT EXISTS reconciliation_integrity_incidents (
+        id TEXT PRIMARY KEY,
+        incident_type TEXT NOT NULL DEFAULT 'close_reopen_churn',
+        fingerprint TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        window_minutes INTEGER NOT NULL DEFAULT 30,
+        churn_count INTEGER NOT NULL,
+        identities_json TEXT NOT NULL DEFAULT '[]',
+        reopen_sources_json TEXT NOT NULL DEFAULT '{}',
+        detected_at TEXT NOT NULL,
+        last_detected_at TEXT NOT NULL,
+        last_clean_observed_at TEXT,
+        clean_observation_count INTEGER NOT NULL DEFAULT 0,
+        resolution_reason TEXT,
+        resolved_by TEXT,
+        resolved_at TEXT,
+        semantics_version TEXT NOT NULL,
+        details_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS idx_reconciliation_integrity_active_type
+       ON reconciliation_integrity_incidents(incident_type) WHERE status='active'""",
+    """CREATE INDEX IF NOT EXISTS idx_reconciliation_integrity_status_time
+       ON reconciliation_integrity_incidents(status, last_detected_at DESC)""",
 )
 
 _ADDITIVE_COLUMNS = [
