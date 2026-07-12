@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from aletheia.analytics.outcome_integrity import (
-    OUTCOME_SEMANTICS_VERSION,
-    eligible_strategy_outcomes,
-)
+from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+from aletheia.analytics.learning_window import outcome_window_metadata
 
 
 def compute_rolling_trade_stats(days: int = 7) -> dict:
@@ -24,7 +22,7 @@ def compute_rolling_trade_stats(days: int = 7) -> dict:
             "days": days, "total_trades": 0, "wins": 0, "losses": 0,
             "win_rate": None, "total_pnl": None, "avg_pnl": None,
             "best_win": None, "worst_loss": None, "per_symbol": [],
-            "outcome_status": "insufficient", "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+            "outcome_status": "insufficient", **outcome_window_metadata(),
         }
 
     wins = [p for p in recent if (p.get("realized_pnl") or 0) > 0]
@@ -56,7 +54,7 @@ def compute_rolling_trade_stats(days: int = 7) -> dict:
         "worst_loss": round(min(pnls), 2),
         "per_symbol": per_symbol,
         "outcome_status": "available",
-        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        **outcome_window_metadata(),
     }
 
 
@@ -191,7 +189,7 @@ def build_trade_stats() -> dict:
         "hold_distribution": hold_distribution,
         "totals": totals,
         "outcome_status": "available" if total_count else "insufficient",
-        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        **outcome_window_metadata(),
         **build_outcome_cohort_summary(),
     }
 
@@ -252,6 +250,6 @@ def build_strategy_kpis() -> dict[str, dict]:
             "trade_count": tc,
             "win_rate": round(sum(1 for pnl in pnls if pnl > 0) / tc * 100, 1),
             "total_pnl": round(sum(pnls), 2),
-            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+            **outcome_window_metadata(),
         }
     return result

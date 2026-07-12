@@ -49,7 +49,7 @@ def get_equity_curve(
       limit — max data points returned (default 5000)
     """
     from aletheia.analytics.outcome_integrity import (
-        assess_position_closure,
+        assess_reportable_outcome,
         build_outcome_cohort_summary,
         raw_account_events,
     )
@@ -79,7 +79,7 @@ def get_equity_curve(
         closed_after=read_after,
     )
     rows = rows[-max(1, min(limit, 5000)):]
-    genuine_rows = [row for row in rows if assess_position_closure(row).eligible]
+    genuine_rows = [row for row in rows if assess_reportable_outcome(row).eligible]
 
     def _points(source_rows: list[dict]) -> tuple[list[dict], float | None]:
         cumulative = 0.0

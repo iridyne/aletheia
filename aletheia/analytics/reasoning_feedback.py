@@ -11,10 +11,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from aletheia.analytics.outcome_integrity import (
-    OUTCOME_SEMANTICS_VERSION,
     eligible_strategy_outcomes,
     is_current_outcome_artifact,
 )
+from aletheia.analytics.learning_window import outcome_window_metadata
 
 logger = logging.getLogger("aletheia.analytics.reasoning_feedback")
 
@@ -215,7 +215,7 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
             "recommended_pursue": recommended_pursue,
             "high_conviction_win_rate": _win_rate(high_conv),
             "low_conviction_win_rate": _win_rate(low_conv),
-            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+            **outcome_window_metadata(),
         }
 
         _persist_feedback(result)

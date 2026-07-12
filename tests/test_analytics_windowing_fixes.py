@@ -53,15 +53,15 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
 
 
 def _seed_positions(days_ago_list: list[int], pnl: float = 1.0) -> None:
-    """Insert closed positions at N-days-ago timestamps for equity-curve to walk."""
+    """Insert ordered post-clean-window closes for equity-curve truncation."""
     from datetime import datetime, timedelta, timezone
     from aletheia.storage.models import Position
     from aletheia.storage.repositories import insert_position
 
-    now = datetime.now(timezone.utc)
+    now = datetime.fromisoformat("2026-07-12T08:00:00+00:00")
     for i, days_ago in enumerate(days_ago_list):
-        closed_at = (now - timedelta(days=days_ago)).isoformat()
-        opened_at = (now - timedelta(days=days_ago + 1)).isoformat()
+        closed_at = (now + timedelta(minutes=i)).isoformat()
+        opened_at = (now + timedelta(minutes=i - 1)).isoformat()
         pos = Position(
             symbol=f"SEED{i}/USDT", market_type="usdt_futures", direction="long",
             quantity=1.0, entry_price=100.0, current_price=100.0 + pnl,
@@ -84,7 +84,7 @@ async def test_equity_curve_returns_recent_points_when_over_limit(tmp_path, monk
     """#124: with more closes than the LIMIT, the ASC-limit SQL used to keep
     the oldest rows — the equity curve froze. Now we keep the newest."""
     _setup_env(tmp_path, monkeypatch)
-    # Seed 10 closes spanning day-30 back to day-1 (day-30 = oldest).
+    # Seed 10 ordered closes after the versioned clean-window anchor.
     _seed_positions(days_ago_list=list(range(30, 0, -3)))  # 30, 27, 24, ..., 3
 
     from httpx import ASGITransport, AsyncClient

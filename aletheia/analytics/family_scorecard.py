@@ -11,10 +11,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from aletheia.analytics.outcome_integrity import (
-    OUTCOME_SEMANTICS_VERSION,
-    eligible_strategy_outcomes,
-)
+from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+from aletheia.analytics.learning_window import outcome_window_metadata
 
 logger = logging.getLogger("aletheia.analytics.family_scorecard")
 
@@ -105,7 +103,7 @@ def compute_family_scorecard() -> list[dict]:
             "shadow_count": f["shadow_count"],
             "alpha_vs_btc_pct": round(f["total_alpha_pct"] / f["alpha_count"], 2) if f["alpha_count"] > 0 else None,
             "outcome_status": "available" if tc else "insufficient",
-            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+            **outcome_window_metadata(),
         })
     return result
 

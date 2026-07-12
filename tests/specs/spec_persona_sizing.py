@@ -194,7 +194,7 @@ def _closed(repo, Position, regime, pnl, reason="take_profit", entry=100.0, qty=
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=qty, entry_price=entry, execution_mode="okx_demo",
         status="closed", realized_pnl=pnl, close_reason=reason, regime_tag=regime,
-        closed_at="2026-07-02T00:00:00+00:00",
+        closed_at="2026-07-12T08:00:00+00:00",
         close_category="administrative" if synthetic else "strategy",
         exit_price_source="unavailable" if synthetic else "broker_fill",
         exit_fill_verified=not synthetic,

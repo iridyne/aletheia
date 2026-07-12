@@ -55,6 +55,8 @@ def test_cohort_summary_counts_raw_verified_and_exclusion_reasons():
         "raw_recorded_realized_pnl": -994.0,
         "raw_economics_unavailable_count": 1,
         "eligible_realized_pnl": 5.0,
+        "clean_window_anchor_id": "outcome-integrity-v1-2026-07-12",
+        "clean_window_anchor_iso": "2026-07-12T07:10:00+00:00",
     }
 
 

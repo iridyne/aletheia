@@ -10,10 +10,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from aletheia.analytics.outcome_integrity import (
-    OUTCOME_SEMANTICS_VERSION,
     eligible_strategy_outcomes,
     is_current_outcome_artifact,
 )
+from aletheia.analytics.learning_window import outcome_window_metadata
 
 logger = logging.getLogger("aletheia.analytics.confidence_calibration")
 
@@ -140,7 +140,7 @@ def build_calibration_report(window_days: int = CALIBRATION_WINDOW_DAYS) -> dict
             "overconfident_buckets": overconfident,
             "underconfident_buckets": underconfident,
             "calibration_summary": summary,
-            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+            **outcome_window_metadata(),
         }
 
         _persist_report(report)

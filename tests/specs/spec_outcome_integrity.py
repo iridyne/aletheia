@@ -375,14 +375,13 @@ def test_analytics_routes_expose_raw_and_genuine_cohorts():
     assert "Verified strategy curve" in frontend
 
 
-@_missing("RG-20/RG-21: additive history classification/supersede tool is absent")
 @spec_claim(
     SpecClaim(
         "OI-B05", "outcome_integrity", "§12 additive history remediation", "L2b",
         "History remediation is dry-run-first, additive, transactional, idempotent, archives or "
         "supersedes polluted derived artifacts without deletion, and emits paper-cash compensation "
         "candidates without applying them absent owner approval.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_history_remediation_tool_declares_non_destructive_protocol():
@@ -396,14 +395,13 @@ def test_history_remediation_tool_declares_non_destructive_protocol():
     assert "DELETE FROM positions" not in source.upper()
 
 
-@_missing("RG-22: clean-window identity is still an unversioned timestamp constant")
 @spec_claim(
     SpecClaim(
         "OI-C05", "outcome_integrity", "§13 versioned clean window", "L2c",
         "Every performance/Learning cohort records a versioned clean-window anchor and outcome "
         "semantics version; pre-anchor, unknown-version, and incident-window rows are ineligible, "
         "and insufficient post-fix evidence remains insufficient.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_clean_window_has_versioned_anchor_and_incident_exclusions():

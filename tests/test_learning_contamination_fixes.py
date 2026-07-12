@@ -17,10 +17,10 @@ def test_render_calibration_does_not_crash_on_numeric_ece():
 def test_guard_clean_rows_drops_synthetic_and_pre_floor():
     from aletheia.analytics.guard_effectiveness import _clean_rows
     rows = [
-        {"close_reason": "stop_loss", "closed_at": "2026-07-01T00:00:00+00:00", "realized_pnl": -5},      # genuine, post-floor
-        {"close_reason": "reconciled_gone", "closed_at": "2026-07-01T00:00:00+00:00", "realized_pnl": 0}, # synthetic → drop
+        {"close_reason": "stop_loss", "closed_at": "2026-07-12T08:00:00+00:00", "realized_pnl": -5},      # genuine, post-floor
+        {"close_reason": "reconciled_gone", "closed_at": "2026-07-12T08:00:00+00:00", "realized_pnl": 0}, # synthetic → drop
         {"close_reason": "take_profit", "closed_at": "2026-06-01T00:00:00+00:00", "realized_pnl": 5},     # pre-floor → drop
-        {"close_reason": None, "closed_at": "2026-07-02T00:00:00+00:00", "realized_pnl": 3},              # genuine (null reason), post-floor
+        {"close_reason": None, "closed_at": "2026-07-12T08:01:00+00:00", "realized_pnl": 3},              # genuine (null reason), post-floor
     ]
     kept = _clean_rows(rows)
     reasons = [r["close_reason"] for r in kept]
@@ -139,7 +139,7 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
             " gross_return_pct, directional_return_pct, net_return_pct, "
             " min_tradable_edge_pct, cost_model_version, status) "
             "VALUES (?, ?, 'm1', 's1', 'BTC/USDT', 'momentum', 'long', '24h', "
-            " 100.0, datetime('now','-2 days'), datetime('now','-1 day'), datetime('now'), "
+            " 100.0, '2026-07-12T08:00:00+00:00', '2026-07-12T09:00:00+00:00', '2026-07-12T10:00:00+00:00', "
             " ?, ?, ?, ?, 0.05, 'v1', 'settled')",
             (f"fo-{i}", f"candidate-fo-{i}", ret, ret, ret, ret - 0.2),
         )

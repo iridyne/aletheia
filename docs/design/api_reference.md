@@ -141,6 +141,8 @@ metadata instead of silently changing one unlabelled number:
 | `outcome_exclusion_reasons` | stable reason → count map |
 | `outcome_semantics_version` | classifier/read-model version used |
 | `cohort_state` | `available` / `insufficient` / `unavailable` |
+| `clean_window_anchor_id` | versioned identity of the earliest admissible judgement window |
+| `clean_window_anchor_iso` | UTC boundary paired with that identity |
 
 Judgement metrics default to the eligible cohort. `/analytics/equity-curve` returns
 `raw_recorded_points` and `genuine_points` with stable labels; its compatibility `points` field is an

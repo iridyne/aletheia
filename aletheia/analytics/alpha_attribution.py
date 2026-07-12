@@ -15,10 +15,8 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
 
-from aletheia.analytics.outcome_integrity import (
-    OUTCOME_SEMANTICS_VERSION,
-    eligible_strategy_outcomes,
-)
+from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+from aletheia.analytics.learning_window import outcome_window_metadata
 
 
 VERDICT_NAMES = (
@@ -105,7 +103,7 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
     return {
         "generated_at": generated_at,
         "window_days": days,
-        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        **outcome_window_metadata(),
         "verdicts": verdicts,
         "main_bottleneck": _main_bottleneck(verdicts),
     }
@@ -122,7 +120,7 @@ def _empty_report(generated_at: str, days: int, reason: str) -> dict:
     return {
         "generated_at": generated_at,
         "window_days": days,
-        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        **outcome_window_metadata(),
         "verdicts": verdicts,
         "main_bottleneck": _main_bottleneck(verdicts),
     }

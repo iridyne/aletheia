@@ -3256,3 +3256,14 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
   instead of zero, green, or a formatting crash.
 - Strategy, family, confidence and cost responses carry the same cohort explanation. No Risk,
   close accounting, execution, exchange, live-authority, credential or historical record changed.
+
+## 2026-07-12 — Non-destructive outcome-history remediation
+
+- Added a default-dry-run maintenance command for deterministic administrative/maintenance
+  classification, derived-artifact archival and durable supersession markers. Apply is
+  transactional and idempotent; ambiguous legacy closes and original economics remain untouched.
+- Added a versioned clean-window anchor. Strategy/Learning judgement now excludes pre-anchor,
+  incident-window and wrong-version evidence; empty post-fix samples remain insufficient.
+- Paper cash effects are reported as stable owner-approval-required compensation candidates only.
+  No compensation, original cash edit, deletion, Risk, execution, exchange, live or credential
+  path was added or changed.

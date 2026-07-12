@@ -532,5 +532,5 @@ Executable target claims live in `tests/specs/spec_outcome_integrity.py`:
 | OI-B04/C01 | any-reopen incident + global refreeze | implemented |
 | OI-C02 | all behavior-changing consumers use current eligible outcomes | implemented |
 | OI-C03 | authoritative Risk account loss separated from performance PnL | implemented |
-| OI-C04 | operator-facing dual reporting | missing |
-| OI-B05/C05 | additive history remediation + versioned clean window | missing |
+| OI-C04 | operator-facing dual reporting | implemented |
+| OI-B05/C05 | additive history remediation + versioned clean window | implemented |

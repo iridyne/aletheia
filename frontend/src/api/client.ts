@@ -948,6 +948,8 @@ export interface OutcomeCohort {
   raw_recorded_realized_pnl: number | null
   raw_economics_unavailable_count: number | null
   eligible_realized_pnl: number | null
+  clean_window_anchor_id: string
+  clean_window_anchor_iso: string
 }
 
 export interface TradeStats extends OutcomeCohort {

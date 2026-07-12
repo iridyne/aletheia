@@ -6,10 +6,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from aletheia.analytics.outcome_integrity import (
-    OUTCOME_SEMANTICS_VERSION,
-    eligible_strategy_outcomes,
-)
+from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+from aletheia.analytics.learning_window import outcome_window_metadata
 
 
 def compute_scorecard() -> dict:
@@ -43,7 +41,7 @@ def compute_scorecard() -> dict:
         "criteria": criteria,
         "blockers": blockers,
         "computed_at": datetime.now(timezone.utc).isoformat(),
-        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        **outcome_window_metadata(),
     }
 
 

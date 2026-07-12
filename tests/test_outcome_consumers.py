@@ -171,12 +171,14 @@ def test_old_or_stale_calibration_report_is_rejected_before_pi_consumption():
 def test_current_fresh_calibration_report_is_accepted():
     from aletheia.analytics.confidence_calibration import get_latest_calibration_report
     from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
+    from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ID
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
 
     current = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        "clean_window_anchor_id": CLEAN_WINDOW_ANCHOR_ID,
         "total_executed": 5,
         "ece": 0.1,
         "ece_grade": "fair",

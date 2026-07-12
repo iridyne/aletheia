@@ -214,7 +214,7 @@ def test_scorecard_excludes_synthetic_closes():
             symbol=symbol, market_type="usdt_futures", direction=direction,
             quantity=1.0, entry_price=100.0, execution_mode="okx_demo",
             status="closed", realized_pnl=pnl, close_reason=reason,
-            closed_at="2026-07-01T00:00:00+00:00",
+            closed_at="2026-07-12T08:00:00+00:00",
             close_category="administrative" if synthetic else "strategy",
             exit_price_source="unavailable" if synthetic else "broker_fill",
             exit_fill_verified=not synthetic,

@@ -76,12 +76,12 @@ Operator 调参的交易结果。
 | RG-14 | P1 | fixed-behavior | behavior consumers 已统一到中央 read model 并由枚举扫描禁止本地 reason set | 新原因只需更新中央分类；判断路径不会漏过滤 | T10 对合法 raw 展示读取增加双口径保护 |
 | RG-15 | P1 | fixed-storage | data model 原缺 close category、fill provenance、eligibility、verification | 无法结构化证明一个结果是否可学习 | additive schema 与 durable observation storage 已交付；历史 backfill 仍由 RG-T11 完成 |
 | RG-16 | P1 | fixed-core | post-close hooks 曾没有统一 eligibility gate | verified close gate 与其余 Learning/归因/策略消费者现均只接受 eligible outcome | T12 保留跨消费者回归 |
-| RG-17 | P1 | open | doctor ratio 只手写排除部分 synthetic reason | 诊断自身与中央语义漂移 | doctor 复用中央分类，并分别报告历史比例/活动指纹 |
-| RG-18 | P1 | partial-core | calibration/memo/reasoning active 报告现有版本与过期拒读；interval job 补跑水位仍缺 | 旧污染报告不再进入 prompt/policy，但可能尚未归档 | T11 完成 continuity 与 supersede |
+| RG-17 | P1 | fixed-diagnostic | doctor ratio 只手写排除部分 synthetic reason | doctor 已复用中央分类，并增加版本化历史清理预览 | T12 保留诊断一致性 E2E |
+| RG-18 | P1 | partial-core | calibration/memo/reasoning active 报告现有版本与窗口拒读，并可无删除归档/重建；interval job 补跑水位仍缺 | 旧污染报告不再进入 prompt/policy；调度连续性仍需独立处理 | 后续 continuity 任务，不阻塞历史语义隔离 |
 | RG-19 | P1 | fixed-behavior | OI-C02 已枚举所有行为消费者并禁止本地 blacklist | 判断路径由同一可执行保护锁定 | T09/T10/T12 分别补 Risk、展示和 E2E |
-| RG-20 | P1 | decision | 历史 paper cash ledger 含假关闭结算 | 本地模拟余额保留事故造成的虚减 | 保留原事件；owner 决定是否追加补偿事件 |
-| RG-21 | P1 | partial-core | 旧 calibration/memo/reasoning knowledge 仍未归档，但缺版本或过期内容已拒读 | 旧污染内容不再影响新判断，历史状态仍需治理 | T11 archive/supersede 后重新生成，禁止硬删除 |
-| RG-22 | P0 | open | 当前盈利判断仍混用污染窗 | “循环能跑”被误当“循环有 edge” | 版本化 clean-window anchor，只用 post-fix eligible outcomes |
+| RG-20 | P1 | decision-ready | 历史 paper cash ledger 含假关闭结算 | 工具只生成可复核反向候选，不改账 | owner 决定是否另开任务追加补偿事件 |
+| RG-21 | P1 | fixed-tooling | 旧 calibration/memo/reasoning knowledge 需要退出 active 查询 | dry-run/apply 工具归档并写独立 supersession 标记，原内容保留 | 本机是否 apply 由 owner 操作，不写入 Git 事实 |
+| RG-22 | P0 | fixed-window | 当前盈利判断曾混用污染窗 | 版本化窗口排除修复前、事故时段和旧版本结果；无新样本时明确 insufficient | 等 post-anchor 样本，不用旧盈利冒充 edge |
 
 ## 5. 当前消费者矩阵
 

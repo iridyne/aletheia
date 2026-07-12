@@ -203,7 +203,7 @@ class TestFamilyScorecard:
             "outcome_exclusion_reason, outcome_semantics_version) "
             "VALUES ('pos1', 'BTC/USDT', 'spot', 'long', 0.01, 60000.0, 50.0, "
             "'closed', 'tp1', 'paper_internal', 60000.0, 61000.0, "
-            "'2026-01-01T00:00:00', '2026-01-01T12:00:00', 'strategy', "
+            "'2026-07-12T07:30:00+00:00', '2026-07-12T08:00:00+00:00', 'strategy', "
             "'local_fill', 1, 1, 'eligible', 'oi-v1')"
         )
         db.commit()

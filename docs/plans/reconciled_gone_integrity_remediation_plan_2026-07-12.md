@@ -330,6 +330,10 @@ semantics version/staleness 被拒读，不能等历史清理后才安全。
 
 ### Phase 7 — 历史污染治理（RG-T11）
 
+状态：✅ 2026-07-12 代码与操作流程完成。维护命令默认 dry-run，apply 仅做确定性分类、
+归档和 supersession 标记；可安全重建的无 LLM 报告按新窗口重算。paper cash 只输出候选，
+没有执行补偿的入口；是否追加补偿事件仍由 owner 另行决定。Git 中不记录本机是否已 apply。
+
 范围：一次性、幂等、默认 dry-run 的维护工具；不删除历史。
 
 执行顺序：

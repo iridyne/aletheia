@@ -8,7 +8,7 @@ exchange module.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import math
 from typing import Any, Literal
@@ -158,6 +158,19 @@ def assess_position_closure(row: dict[str, Any]) -> OutcomeAssessment:
     )
 
 
+def assess_reportable_outcome(row: dict[str, Any]) -> OutcomeAssessment:
+    """Add the versioned clean-window gate to economic close eligibility."""
+    assessment = assess_position_closure(row)
+    if not assessment.eligible:
+        return assessment
+    from aletheia.analytics.learning_window import assess_outcome_window
+
+    window_reason = assess_outcome_window(row)
+    if window_reason != "eligible":
+        return replace(assessment, eligible=False, reason=window_reason)
+    return assessment
+
+
 def raw_account_events(
     *,
     execution_mode: str | None = None,
@@ -194,7 +207,7 @@ def eligible_strategy_outcomes(**filters) -> list[dict]:
     """Read only closures proven eligible by the current central semantics."""
     return [
         row for row in raw_account_events(**filters)
-        if assess_position_closure(row).eligible
+        if assess_reportable_outcome(row).eligible
     ]
 
 
@@ -208,6 +221,7 @@ def administrative_closures(**filters) -> list[dict]:
 
 def build_outcome_cohort_summary(**filters) -> dict[str, Any]:
     """Describe raw close events and the verified judgement cohort side by side."""
+    from aletheia.analytics.learning_window import outcome_window_metadata
     try:
         rows = raw_account_events(**filters)
     except Exception:
@@ -221,6 +235,7 @@ def build_outcome_cohort_summary(**filters) -> dict[str, Any]:
             "raw_recorded_realized_pnl": None,
             "raw_economics_unavailable_count": None,
             "eligible_realized_pnl": None,
+            **outcome_window_metadata(),
         }
 
     eligible_count = 0
@@ -233,7 +248,7 @@ def build_outcome_cohort_summary(**filters) -> dict[str, Any]:
         if raw_pnl is not None:
             raw_recorded_pnl += raw_pnl
             raw_recorded_count += 1
-        assessment = assess_position_closure(row)
+        assessment = assess_reportable_outcome(row)
         if assessment.eligible:
             eligible_count += 1
             eligible_pnl += float(raw_pnl)
@@ -251,6 +266,7 @@ def build_outcome_cohort_summary(**filters) -> dict[str, Any]:
         "raw_recorded_realized_pnl": round(raw_recorded_pnl, 8) if raw_recorded_count else None,
         "raw_economics_unavailable_count": raw_count - raw_recorded_count,
         "eligible_realized_pnl": round(eligible_pnl, 8) if eligible_count else None,
+        **outcome_window_metadata(),
     }
 
 
@@ -262,6 +278,9 @@ def is_current_outcome_artifact(
 ) -> bool:
     """Admit a derived report only when its semantics and freshness are provable."""
     if artifact.get("outcome_semantics_version") != OUTCOME_SEMANTICS_VERSION:
+        return False
+    from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ID
+    if artifact.get("clean_window_anchor_id") != CLEAN_WINDOW_ANCHOR_ID:
         return False
     generated_at = artifact.get("generated_at")
     if not generated_at:

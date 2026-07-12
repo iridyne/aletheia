@@ -238,11 +238,11 @@ class TestEquityCurveEndpoint:
         # `days` windows the DISPLAYED points (only the in-window trade is emitted)…
         assert len(body["points"]) == 1
         assert body["points"][0]["pnl"] == 3.0
-        # …but in the default full_cumulative mode the running total accumulates over
-        # ALL history, so the curve's end point includes the pre-window +5.0 trade.
-        # This keeps the equity curve's end point identical across 7D/30D/All.
-        assert body["points"][0]["cumulative_pnl"] == 8.0
-        assert body["total_realized"] == 8.0
+        # The verified strategy curve never carries pre-clean-window history forward.
+        # Raw recorded account history remains available on its separately labelled curve.
+        assert body["points"][0]["cumulative_pnl"] == 3.0
+        assert body["total_realized"] == 3.0
+        assert body["raw_recorded_points"][0]["cumulative_pnl"] == 8.0
 
     async def test_respects_limit(self, client):
         c, _ = client

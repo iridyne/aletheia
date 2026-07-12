@@ -17,10 +17,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
 
 from aletheia.analytics.outcome_integrity import (
-    OUTCOME_SEMANTICS_VERSION,
     eligible_strategy_outcomes,
     is_current_outcome_artifact,
 )
+from aletheia.analytics.learning_window import outcome_window_metadata
 
 logger = logging.getLogger("aletheia.analytics.insight_synthesizer")
 
@@ -79,6 +79,8 @@ class TradingMemo(TypedDict):
     key_insight: str  # one-paragraph LLM synthesis
     prior_corrections: list[dict]  # Module J: prior judgments overturned by subsequent results
     outcome_semantics_version: str
+    clean_window_anchor_id: str
+    clean_window_anchor_iso: str
 
 
 def get_latest_memo() -> TradingMemo | None:
@@ -222,7 +224,7 @@ def _build_deterministic_memo(stats: dict) -> TradingMemo:
         "anti_patterns": anti_patterns,
         "direction_summary": direction_summary,
         "key_insight": "",
-        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        **outcome_window_metadata(),
     }
 
 

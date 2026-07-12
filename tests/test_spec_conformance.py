@@ -277,7 +277,7 @@ class TestConformanceStructure:
         # confirmation, broker-neutral verified exit, and verified/admin accounting
         # split, behavior consumers, and authoritative Risk loss. Three OI
         # reporting/history claims remain missing.
-        MAX_MISSING = 7
+        MAX_MISSING = 5
         # #153: 5 self-heal specs moved to partial (OL-C08, OL-S13, SH-S01, SH-C02, SH-B03).
         # TASK-2026-022 adds six explicitly bounded Learning-evolution claims whose
         # Phase-0 cores are implemented but whose consumer-wide persistence/UI/

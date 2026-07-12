@@ -136,6 +136,8 @@ def test_prior_memo_overturned_by_subsequent_results(tmp_path, monkeypatch):
     memo = {
         "generated_at": gen,
         "outcome_semantics_version": "oi-v1",
+        "clean_window_anchor_id": "outcome-integrity-v1-2026-07-12",
+        "clean_window_anchor_iso": "2026-07-12T07:10:00+00:00",
         "valid_until": (now + timedelta(hours=60)).isoformat(),
         "data_window_days": 30, "sample_size": 20,
         "regime_playbook": [
