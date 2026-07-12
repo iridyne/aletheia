@@ -113,10 +113,12 @@ class ReconcileResult:
     external: list[ReconcileItem] = field(default_factory=list)
     orphaned: list[ReconcileItem] = field(default_factory=list)
     sync_status: str = "unconfigured"
+    view_evidence: dict | None = None
 
     def to_dict(self) -> dict:
         return {
             "sync_status": self.sync_status,
+            "view_evidence": self.view_evidence,
             "counts": {
                 "managed": len(self.managed),
                 "external": len(self.external),
@@ -240,10 +242,19 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     for p in in_scope:
         local_by_key[_key(p["symbol"], p["direction"])] = p
     result.sync_status = sync_status
+    if target_execution_mode:
+        from aletheia.portfolio.disappearance_confirmation import build_view_evidence
+        result.view_evidence = build_view_evidence(
+            cached,
+            broker_id=target_execution_mode,
+            account_environment=account_mode,
+            execution_mode=target_execution_mode,
+            complete=(cached is not None and sync_status == "ok"),
+        )
 
     # Without a usable exchange view we cannot classify externals/orphans honestly.
     # Report locals as managed and bail — the caller sees sync_status and knows why.
-    if cached is None or sync_status not in ("ok", "stale"):
+    if cached is None or sync_status != "ok":
         for p in in_scope:
             result.managed.append(
                 ReconcileItem(
@@ -785,10 +796,11 @@ def reconcile_close_orphan(item: ReconcileItem) -> dict:
 
 
 def run_reconcile(mode: str | None = None) -> dict:
-    """Full reconcile cycle: classify → auto-adopt externals → close orphans (demo).
+    """Classify, record disappearance evidence, and optionally adopt demo externals.
 
     Behavior depends on the exchange mode:
-      - demo: auto-adopt externals (if auto_adopt_enabled) + reconcile-close orphans.
+      - demo: auto-adopt externals (if enabled); missing locals become durable
+        candidates but are not closed before verified-exit/accounting phases land.
       - live: classify only + alert (never autonomous adoption or close).
 
     Returns a summary dict suitable for agent-run outputs / API response.
@@ -810,6 +822,10 @@ def run_reconcile(mode: str | None = None) -> dict:
         },
         "adopted": [],
         "closed_orphans": [],
+        "deferred_orphans": [],
+        "disappearance": {
+            "created": 0, "confirmed": 0, "observations": [], "resolved": [],
+        },
         "errors": [],
     }
 
@@ -897,6 +913,32 @@ def run_reconcile(mode: str | None = None) -> dict:
             except Exception:
                 pass
 
+    # Evidence collection is state bookkeeping, not a destructive reconcile action.
+    # A complete view miss creates/advances a durable candidate; a verified exchange
+    # reappearance resolves it. Even a confirmed candidate is only handed to the
+    # later verified-exit phase — T05 never calls the fallback-price close path.
+    try:
+        from aletheia.portfolio.disappearance_confirmation import (
+            process_disappearance_evidence,
+        )
+        summary["disappearance"] = process_disappearance_evidence(
+            orphaned=result.orphaned,
+            managed=result.managed,
+            view_evidence=result.view_evidence,
+        )
+        summary["deferred_orphans"] = [
+            row["position_id"]
+            for row in summary["disappearance"]["observations"]
+            if row["ready_for_verified_exit"]
+        ]
+    except Exception as exc:
+        logger.exception("Reconcile disappearance evidence unavailable")
+        summary["errors"].append(f"disappearance evidence: {exc}")
+        if account_mode == "demo":
+            summary["suspended"] = True
+            summary["recovery_state"] = "disappearance_evidence_unavailable"
+            return summary
+
     if account_mode != "demo":
         if result.external or result.orphaned:
             logger.warning(
@@ -908,7 +950,7 @@ def run_reconcile(mode: str | None = None) -> dict:
     if incident is not None:
         return summary
 
-    # Demo mode: auto-adopt + orphan close
+    # Demo mode: auto-adopt only. Missing-local evidence is handled above.
     if cfg.trading.auto_adopt_enabled:
         for item in result.external:
             try:
@@ -919,14 +961,9 @@ def run_reconcile(mode: str | None = None) -> dict:
                 logger.warning("Reconcile adopt failed: %s", err)
                 summary["errors"].append(err)
 
-    for item in result.orphaned:
-        try:
-            closed = reconcile_close_orphan(item)
-            summary["closed_orphans"].append(closed)
-        except Exception as e:
-            err = f"close orphan {item.symbol} {item.direction}: {e}"
-            logger.warning("Reconcile close failed: %s", err)
-            summary["errors"].append(err)
+    # Do not close candidates here. T06 must recover broker-neutral exit evidence,
+    # and T07 must split verified strategy settlement from administrative state
+    # convergence. Calling reconcile_close_orphan here would fabricate economics.
 
     if summary["adopted"] or summary["closed_orphans"]:
         write_audit({

@@ -411,8 +411,10 @@ All models in `aletheia/storage/models.py`. Key mapping:
 
 disappearance confirmation 使用 `position_disappearance_candidates` 保存作用域身份和确认状态，使用
 `position_disappearance_observations` 保存 observation hash 去重的不可变证据。两者属于 trust-bearing
-state，不得进入 telemetry prune allowlist。当前只交付存储能力；reconciler 何时创建、累计、清除和
-收口由仍为 missing 的 `OI-B01` 约束，不能因为表已存在就推断行为已经安全。
+state，不得进入 telemetry prune allowlist。`OI-B01` 已接入 reconciler：只有新鲜、完整、当前逻辑
+账户的快照缺失才创建/累计；同一 view identity、时间倒退、过期、不完整、错 broker/账户的快照均不
+累计。交易所重新出现会将 pending 行标为 `reappeared` 并保留审计。两次独立完整缺失或未来 adapter
+提供的 direct `confirmed_absent` 只代表“可进入 verified-exit 调查”，不授权本任务平仓或结算。
 
 `reconciliation_integrity_incidents` 保存系统性行政关闭后重新出现的事故。每种事故最多一个 active
 行；重复探测只更新同一行并清零干净观察计数。恢复至少需要两次相隔五分钟的干净观察，再由明确

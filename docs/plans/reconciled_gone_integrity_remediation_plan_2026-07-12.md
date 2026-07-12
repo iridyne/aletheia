@@ -196,6 +196,9 @@ RG-T08～T10 完成。
 
 #### RG-T05：durable disappearance confirmation
 
+状态：已实现候选/观察证据、独立快照去重、过期/错账户拒绝、重连保留和重新出现结案；为避免在
+RG-T06/T07 前继续制造伪经济，ready candidate 当前明确保持 open，不调用旧 fallback close。
+
 范围：portfolio reconciler 和确认状态；不触碰 exchange signer/credentials。
 
 工作：

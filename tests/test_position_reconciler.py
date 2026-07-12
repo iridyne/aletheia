@@ -346,8 +346,8 @@ def test_reconcile_close_orphan_closes_local_position(tmp_path, monkeypatch):
     assert closed[0]["close_reason"] == "reconciled_gone"
 
 
-def test_run_reconcile_demo_adopts_and_closes(tmp_path, monkeypatch):
-    """run_reconcile in demo mode: auto-adopts externals + closes orphans."""
+def test_run_reconcile_demo_adopts_and_records_disappearance(tmp_path, monkeypatch):
+    """Demo may adopt externals, but one missing view only creates evidence."""
     setup_env(tmp_path, monkeypatch)
 
     # Write a config file so load_config works
@@ -383,9 +383,11 @@ def test_run_reconcile_demo_adopts_and_closes(tmp_path, monkeypatch):
     assert len(summary["adopted"]) == 1
     assert summary["adopted"][0]["symbol"] == "SOL/USDT"
     assert summary["adopted"][0]["execution_mode"] == "bitget_demo"
-    assert len(summary["closed_orphans"]) == 1
-    assert summary["closed_orphans"][0]["position_id"] == orphan.id
-    assert summary["closed_orphans"][0]["reason"] == "reconciled_gone"
+    assert summary["closed_orphans"] == []
+    assert summary["disappearance"]["created"] == 1
+    assert summary["disappearance"]["observations"][0]["position_id"] == orphan.id
+    assert summary["disappearance"]["observations"][0]["confirmation_count"] == 1
+    assert orphan.id in {row["id"] for row in repo.list_positions(status="open")}
 
 
 def test_run_reconcile_live_never_adopts(tmp_path, monkeypatch):

@@ -115,23 +115,39 @@ def test_dependency_neutral_outcome_read_model_exists():
     assert "SYNTHETIC_CLOSE_REASONS" not in learning_source
 
 
-@_missing("RG-09: one view miss can still flow directly to orphan close")
 @spec_claim(
     SpecClaim(
         "OI-B01", "outcome_integrity", "§4 durable disappearance confirmation", "L2b",
         "A single complete-view miss creates only a durable disappearance candidate; closure "
         "requires two independent complete observations or a direct broker absent result, and "
         "stale/incomplete/wrong-account views never advance confirmation.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_reconciler_declares_durable_disappearance_candidates():
-    source = _source("aletheia/portfolio/position_reconciler.py")
-    required = (
-        "DisappearanceCandidate", "record_disappearance_observation",
-        "confirmation_count", "direct_broker_verification",
-    )
-    assert all(token in source for token in required)
+    confirmation = _source("aletheia/portfolio/disappearance_confirmation.py")
+    reconciler = _source("aletheia/portfolio/position_reconciler.py")
+    for token in (
+        "PositionDisappearanceCandidate", "record_disappearance_observation",
+        "MIN_INDEPENDENT_COMPLETE_OBSERVATIONS", "DIRECT_CONFIRMED_ABSENT",
+        "view_complete", "view_identity", "confirmation_count",
+    ):
+        assert token in confirmation
+    assert "process_disappearance_evidence" in reconciler
+    run_body = reconciler.split("def run_reconcile", 1)[1]
+    assert "reconcile_close_orphan(item)" not in run_body
+    production_calls = []
+    for path in (ROOT / "aletheia").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        call_count = source.count("reconcile_close_orphan(")
+        if path.name == "position_reconciler.py":
+            call_count -= source.count("def reconcile_close_orphan(")
+        if call_count:
+            production_calls.append(str(path.relative_to(ROOT)))
+    assert production_calls == []
+    routes = _source("aletheia/server/routes/data.py")
+    assert "def run_positions_reconcile():" in routes
+    assert "async def run_positions_reconcile():" not in routes
 
 
 @_missing("RG-10: verified exit recovery is still broker-specific")

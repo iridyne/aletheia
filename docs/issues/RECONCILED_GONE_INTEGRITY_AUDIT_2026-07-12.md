@@ -68,7 +68,7 @@ Operator 调参的交易结果。
 | RG-06 | P0 | open | System Operator alpha 接受仓与 shadows 比较时未排除行政性关闭 | contribution 判断把事故当决策效果 | observed leg 必须是 eligible realized outcome |
 | RG-07 | P0 | fixed-core | 旧 detector 只认 `reconciled_gone -> adopted` | 已改为账户/instrument 作用域的 administrative close→any-open，source 仅说明 | T12 保留 adopted/native E2E |
 | RG-08 | P0 | fixed-core | Learning 设计写“thrash 全局 refreeze”，旧实现未接入 | 持久 incident 已覆盖 scheduler、prompt、ranker、persona/experiment authority | T12 保留重启/恢复 E2E |
-| RG-09 | P0 | open | orphan 一次可信快照缺失即可行政性 close | 瞬时 API/cache gap 可被误当真实消失 | 连续确认或 broker 直查，确认状态可跨重启 |
+| RG-09 | P0 | fixed-core | 旧路径一次可信快照缺失即可行政性 close | 已改为 durable candidate、独立完整 observations；ready 后仍等待 T06/T07 | T12 覆盖重启/部分失败/双视图 E2E |
 | RG-10 | P0 | open | `_try_get_tpsl_fill_price` 写死 Bitget | OKX/Binance 真实退出无法恢复，退化成假经济结果 | broker-neutral verified-exit protocol |
 | RG-11 | P0 | open | 行政性 close 复用普通 `close_position` | 伪造手续费、滑点、PnL、现金结算和部分下游 hook | verified strategy close 与 administrative close 分流 |
 | RG-12 | P0 | open | `today_realized_pnl` 同时用于账户、Risk、PI 和表现 | 一个含混数字跨越安全/判断语义 | 明确拆分 authoritative account loss 与 eligible strategy PnL |

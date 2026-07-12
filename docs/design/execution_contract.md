@@ -159,6 +159,13 @@ Live 作用域从 `exchange.name` 派生对应的 `*_live_limited`，不得硬�
 不可用，不能据此推断本地仓已从交易所消失（`PL-ADOPT-24`）。统一快照当前不包含 Live 账户，禁止用
 Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。
 
+一次新鲜快照里缺少本地持仓，只能创建 `position_disappearance_candidates` 和一条不可变 observation，
+不能直接调用 fallback-price close。重复读取同一个 cache、时间倒退、stale/incomplete/wrong-account
+view 不累计；第二个更新且完整的 view 只把 candidate 标为 ready for verified exit。交易所行在新鲜完整
+view 中重新出现时，pending candidate 以 `reappeared` 结案并写审计。当前逻辑账户 fingerprint 只由
+broker/environment/execution-mode 这类非秘密配置身份生成，绝不读取或散列 credential。T06/T07 交付
+真实退出证据与经济分流前，scheduler 不会把 ready candidate 本地平仓。对应 `OI-B01`。
+
 ---
 
 ## 7. 审计要求
@@ -230,7 +237,7 @@ Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。
 
 **Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓)。`spec_pipeline_position_manager.py`。
 
-## 11. Position 关闭与结果完整性（OI-S01 storage delivered；行为合同待实现）
+## 11. Position 关闭与结果完整性（OI-S01/S02/B01 implemented；其余行为待实现）
 
 `positions.status='closed'` 只表示本地状态生命周期结束，不自动证明发生了策略退出成交。系统必须把
 关闭分为两条不互相冒充的路径：
@@ -251,7 +258,9 @@ Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。
 
 stale、incomplete、缺 broker identity、wrong-account、分页不完整、网络错误和权限错误都是
 `inconclusive`，不能累计确认。candidate 必须跨进程重启保留，同一 observation 不得重复计数；仓位重新
-出现时清除 candidate 并留审计。Live 的不确定消失保持 alert-only/fail-closed，不借本合同扩大自动权限。
+出现时把 candidate 结案为 `reappeared` 并留审计（不删除历史）。Live 的不确定消失保持
+alert-only/fail-closed，不借本合同扩大自动权限。OI-B01 已实现到“ready for verified exit”为止；
+ready 本身不触发关闭，等待 §11.2/§11.3 的后续任务。
 
 ### 11.2 Broker-neutral verified exit
 

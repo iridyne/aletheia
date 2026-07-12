@@ -3159,3 +3159,15 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Doctor now reports current churn, reopen sources, the durable incident, global Learning
   freeze reason and recovery progress. OI-B04/OI-C01 are implemented; independent Operator,
   calibration, alpha, Risk and performance-reader migrations remain explicit planned debt.
+
+## 2026-07-12 — Durable position-disappearance confirmation
+
+- A fresh complete active-account view missing a local position now creates durable,
+  account/instrument-scoped evidence instead of closing after one snapshot.
+- Exact cache retries, time-regressed snapshots, stale/incomplete/wrong-account views do not
+  advance confirmation; evidence survives database reconnection and reappearance resolves the
+  pending candidate with an audit record.
+- Two independent absences (or a future direct confirmed-absent adapter result) make the
+  candidate ready only for the later verified-exit phase. The scheduler no longer invokes the
+  fallback-price orphan close, so RG-T06/T07 can add real exit evidence and honest accounting
+  without new synthetic PnL being created in the interim.
