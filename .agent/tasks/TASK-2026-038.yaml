@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-038
 title: Split verified and administrative position closure
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: explicit verified/admin close services, exact verified-fill settlement,
@@ -25,9 +25,10 @@ acceptance:
   leaves the position and candidate open. Repeated calls never double-close, double-settle
   cash or repeat outcome hooks.
 - Ready demo disappearance candidates use the RG-T06 protocol after incident gates;
-  live remains alert-only and the old fallback-price orphan close has no production path.
-- OI-B03 is GREEN with focused economic/audit/idempotency/spec tests; no opening, Risk,
-  exchange request, live authority or credential behavior changes.
+  live remains alert-only and the old fallback-price orphan close has no production
+  path.
+- OI-B03 is GREEN with focused economic/audit/idempotency/spec tests; no opening,
+  Risk, exchange request, live authority or credential behavior changes.
 ownership:
   branch: fix/outcome-close-accounting-split
   lease_holder: codex
@@ -35,9 +36,18 @@ ownership:
   expires_at: '2026-07-12T17:56:04.599960Z'
 base_commit: 784c3a81f6349ce8f8c9a0bf546cf18d37c46c40
 next_action:
-  command_key: specs
-  reason: Commit the implemented accounting split, then register the full executable-rule verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 3f36bf43701cd4d4e3b1a229b76cf3b8423ca4e4
+  run_at: '2026-07-12T06:11:52.099061Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-038.md
-updated_at: '2026-07-12T05:56:04.599968Z'
+updated_at: '2026-07-12T06:12:27.118096Z'
