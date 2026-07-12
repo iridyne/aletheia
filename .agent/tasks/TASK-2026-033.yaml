@@ -1,0 +1,43 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-033
+title: Add outcome integrity persistence schema
+status: in_progress
+packet_type: standard
+scope:
+  boundary: Position persistence fields, additive SQLite DDL/migrations, durable
+    disappearance evidence models/repositories, focused tests, and matching SDD only
+  excluded: reconciliation classification/action, close accounting, PnL/cash, Risk,
+    Learning consumers, analytics semantics, exchange clients, execution, live state,
+    runtime database mutation, credentials, and gateway process
+intent: Add backward-compatible position closure evidence fields and durable reconciliation
+  observation storage with additive idempotent migrations and repository support,
+  without changing reconciliation, close accounting, Risk, Learning, execution, or
+  broker behavior.
+acceptance:
+- Position storage additively persists closure category, exit-price source, fill verification,
+  outcome eligibility/exclusion, reconciliation identity/evidence, and semantics version
+  with conservative legacy defaults.
+- A trust-bearing durable disappearance-candidate table preserves scoped observations
+  across restart and is not prunable.
+- Fresh database and legacy database migrations are idempotent, transactional where
+  required, preserve every original position economic field, and obey SQLite concurrency
+  rules.
+- Repository/model round trips remain backward compatible and unknown legacy closures
+  default to ineligible rather than eligible.
+- OI-S01 becomes GREEN with focused schema, migration, repository, architecture, and
+  spec tests passing; no reconciliation or close behavior changes.
+ownership:
+  branch: feat/outcome-integrity-schema
+  lease_holder: codex
+  claimed_at: '2026-07-12T04:29:30.834937Z'
+  expires_at: '2026-07-12T12:29:30.835092Z'
+base_commit: 6a732adfbac796b17703dd7d7740476582a71d5d
+next_action:
+  command_key: specs
+  reason: Inspect current Position schema, migrations, repository serialization, and
+    migration-test patterns before implementing additive fields.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-033.md
+updated_at: '2026-07-12T04:29:30.947216Z'

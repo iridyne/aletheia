@@ -140,6 +140,8 @@ operator-facing reporting ────────────► raw + genuine,
 
 #### RG-T02：schema 和 repository
 
+状态：已实现并通过 focused migration/repository/spec tests；行为仍由后续任务负责。
+
 范围：SQLite schema/migration/repository；不改变 reconciler 和 close 行为。
 
 工作：

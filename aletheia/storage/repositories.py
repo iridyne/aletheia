@@ -6,7 +6,8 @@ import json
 from aletheia.storage.sqlite import get_db
 from aletheia.storage.models import (
     AuditEvent, AgentRun, Opportunity, TradeProposal,
-    RiskDecision, Order, Fill, Position, StrategyRecord, KnowledgeItem,
+    RiskDecision, Order, Fill, Position, PositionDisappearanceCandidate,
+    PositionDisappearanceObservation, StrategyRecord, KnowledgeItem,
     SerenityTheme, SerenityEvidence, SerenityOpportunity, SerenityRiskGate,
     SerenityReplaySnapshot, SerenityPostMortem, SerenityClaim,
     PaperAccountEvent,
@@ -564,6 +565,74 @@ def list_strategy_positions(strategy_id: str, status: str | None = None, limit: 
         where="strategy_id = ?",
         params=(strategy_id,),
         order="COALESCE(closed_at, opened_at) ASC",
+        limit=limit,
+    )
+
+
+def insert_position_disappearance_candidate(
+    candidate: PositionDisappearanceCandidate,
+) -> None:
+    """Persist confirmation state; does not perform or authorize a close."""
+    _insert("position_disappearance_candidates", candidate.model_dump())
+
+
+def get_active_position_disappearance_candidate(identity_key: str) -> dict | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM position_disappearance_candidates "
+        "WHERE identity_key=? AND status='pending' LIMIT 1",
+        (identity_key,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def update_position_disappearance_candidate(candidate_id: str, **kwargs) -> None:
+    _update("position_disappearance_candidates", candidate_id, kwargs)
+
+
+def list_position_disappearance_candidates(
+    *, status: str | None = None, limit: int = 100
+) -> list[dict]:
+    if status:
+        return _select_all(
+            "position_disappearance_candidates",
+            where="status = ?",
+            params=(status,),
+            order="updated_at DESC",
+            limit=limit,
+        )
+    return _select_all(
+        "position_disappearance_candidates", order="updated_at DESC", limit=limit
+    )
+
+
+def insert_position_disappearance_observation(
+    observation: PositionDisappearanceObservation,
+) -> bool:
+    """Insert one immutable observation; return False for an exact retry."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    data = observation.model_dump()
+    cols = ", ".join(data.keys())
+    placeholders = ", ".join("?" for _ in data)
+    cur = db.execute(
+        "INSERT OR IGNORE INTO position_disappearance_observations "
+        f"({cols}) VALUES ({placeholders})",
+        list(data.values()),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount == 1
+
+
+def list_position_disappearance_observations(
+    candidate_id: str, *, limit: int = 100
+) -> list[dict]:
+    return _select_all(
+        "position_disappearance_observations",
+        where="candidate_id = ?",
+        params=(candidate_id,),
+        order="observed_at ASC",
         limit=limit,
     )
 

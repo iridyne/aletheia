@@ -150,6 +150,14 @@ CREATE TABLE IF NOT EXISTS positions (
     stop_price REAL,
     take_profit_price REAL,
     close_reason TEXT,
+    close_category TEXT NOT NULL DEFAULT 'unknown',
+    exit_price_source TEXT NOT NULL DEFAULT 'unavailable',
+    exit_fill_verified INTEGER NOT NULL DEFAULT 0,
+    outcome_eligible INTEGER NOT NULL DEFAULT 0,
+    outcome_exclusion_reason TEXT NOT NULL DEFAULT 'unclassified',
+    reconciliation_identity TEXT,
+    reconciliation_evidence TEXT,
+    outcome_semantics_version TEXT,
     source TEXT NOT NULL DEFAULT 'native',
     opened_at TEXT NOT NULL DEFAULT (datetime('now')),
     closed_at TEXT
@@ -1499,6 +1507,59 @@ CREATE INDEX IF NOT EXISTS idx_pred_claims_market ON prediction_market_claims(ma
 
 # Additive column migrations for already-existing databases. (col, table, type)
 # CREATE TABLE above covers fresh DBs; these keep older app.db files current.
+_OUTCOME_INTEGRITY_POSITION_COLUMNS = (
+    ("close_category", "positions", "TEXT NOT NULL DEFAULT 'unknown'"),
+    ("exit_price_source", "positions", "TEXT NOT NULL DEFAULT 'unavailable'"),
+    ("exit_fill_verified", "positions", "INTEGER NOT NULL DEFAULT 0"),
+    ("outcome_eligible", "positions", "INTEGER NOT NULL DEFAULT 0"),
+    ("outcome_exclusion_reason", "positions", "TEXT NOT NULL DEFAULT 'unclassified'"),
+    ("reconciliation_identity", "positions", "TEXT"),
+    ("reconciliation_evidence", "positions", "TEXT"),
+    ("outcome_semantics_version", "positions", "TEXT"),
+)
+
+_OUTCOME_INTEGRITY_DDL = (
+    """CREATE TABLE IF NOT EXISTS position_disappearance_candidates (
+        id TEXT PRIMARY KEY,
+        position_id TEXT NOT NULL REFERENCES positions(id),
+        identity_key TEXT NOT NULL,
+        broker_id TEXT NOT NULL,
+        account_environment TEXT NOT NULL,
+        account_fingerprint TEXT NOT NULL,
+        execution_mode TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        market_type TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        first_observed_at TEXT NOT NULL,
+        last_observed_at TEXT NOT NULL,
+        confirmation_count INTEGER NOT NULL DEFAULT 1,
+        direct_query_state TEXT NOT NULL DEFAULT 'not_attempted',
+        semantics_version TEXT NOT NULL,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS idx_position_disappearance_pending_identity
+       ON position_disappearance_candidates(identity_key) WHERE status='pending'""",
+    """CREATE INDEX IF NOT EXISTS idx_position_disappearance_position_status
+       ON position_disappearance_candidates(position_id, status, updated_at DESC)""",
+    """CREATE TABLE IF NOT EXISTS position_disappearance_observations (
+        id TEXT PRIMARY KEY,
+        candidate_id TEXT NOT NULL REFERENCES position_disappearance_candidates(id),
+        observation_hash TEXT NOT NULL,
+        view_identity TEXT NOT NULL,
+        view_complete INTEGER NOT NULL,
+        position_absent INTEGER NOT NULL,
+        direct_query_state TEXT NOT NULL DEFAULT 'not_attempted',
+        evidence_json TEXT NOT NULL DEFAULT '{}',
+        observed_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(candidate_id, observation_hash)
+    )""",
+    """CREATE INDEX IF NOT EXISTS idx_position_disappearance_observation_candidate
+       ON position_disappearance_observations(candidate_id, observed_at ASC)""",
+)
+
 _ADDITIVE_COLUMNS = [
     ("leverage", "trade_proposals", "INTEGER"),
     ("market_type", "orderbook_snapshots", "TEXT NOT NULL DEFAULT 'unknown'"),
@@ -1535,6 +1596,10 @@ _ADDITIVE_COLUMNS = [
     ("stop_price", "positions", "REAL"),
     ("take_profit_price", "positions", "REAL"),
     ("close_reason", "positions", "TEXT"),
+    # OI-S01 remains visible in the additive registry, but _ensure_columns skips
+    # this group so _ensure_outcome_integrity_schema can apply fields + evidence
+    # tables atomically under one savepoint.
+    *_OUTCOME_INTEGRITY_POSITION_COLUMNS,
     ("proposal_id", "positions", "TEXT"),
     ("order_id", "positions", "TEXT"),
     # Provenance of the causal-chain row: 'native' (Aletheia opened it normally) or
@@ -1801,7 +1866,10 @@ _ADDITIVE_COLUMNS = [
 
 def _ensure_columns(db) -> None:
     import sqlite3
+    outcome_columns = set(_OUTCOME_INTEGRITY_POSITION_COLUMNS)
     for col, table, coltype in _ADDITIVE_COLUMNS:
+        if (col, table, coltype) in outcome_columns:
+            continue
         existing = {r["name"] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
         if col in existing:
             continue
@@ -1814,6 +1882,33 @@ def _ensure_columns(db) -> None:
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e).lower():
                 raise
+
+
+def _ensure_outcome_integrity_schema(db) -> None:
+    """Atomically add closure evidence fields and durable observation tables."""
+    import sqlite3
+
+    db.execute("SAVEPOINT outcome_integrity_schema")
+    try:
+        existing = {
+            row["name"] for row in db.execute("PRAGMA table_info(positions)").fetchall()
+        }
+        for col, table, coltype in _OUTCOME_INTEGRITY_POSITION_COLUMNS:
+            if col in existing:
+                continue
+            try:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
+            existing.add(col)
+        for statement in _OUTCOME_INTEGRITY_DDL:
+            db.execute(statement)
+        db.execute("RELEASE SAVEPOINT outcome_integrity_schema")
+    except sqlite3.Error:
+        db.execute("ROLLBACK TO SAVEPOINT outcome_integrity_schema")
+        db.execute("RELEASE SAVEPOINT outcome_integrity_schema")
+        raise
 
 
 def _ensure_market_ohlcv_instrument_identity(db) -> None:
@@ -2523,6 +2618,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_FILTER_SHADOW_EXPERIMENTS_DDL)
     db.executescript(_LEARNING_LEDGER_DDL)
     _ensure_columns(db)
+    _ensure_outcome_integrity_schema(db)
     _ensure_market_ohlcv_instrument_identity(db)
     _ensure_orderbook_instrument_index(db)
     _ensure_filter_evidence_indexes(db)

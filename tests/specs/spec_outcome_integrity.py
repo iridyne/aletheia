@@ -66,14 +66,13 @@ def test_existing_account_scope_regressions_remain_registered():
     assert not missing, f"existing reconciliation protections disappeared: {missing}"
 
 
-@_missing("RG-15: additive structured closure evidence has not been implemented")
 @spec_claim(
     SpecClaim(
         "OI-S01", "outcome_integrity", "§2 structured closure evidence", "L2a",
         "Position persistence records close category, exit-price provenance, fill verification, "
         "outcome eligibility/exclusion, reconciliation identity/evidence, and semantics version "
         "without rewriting original economic fields.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_position_schema_has_additive_outcome_evidence_fields():
@@ -85,6 +84,8 @@ def test_position_schema_has_additive_outcome_evidence_fields():
         "outcome_semantics_version",
     }
     assert not (required - {name for name in required if name in combined})
+    assert "position_disappearance_candidates" in combined
+    assert "position_disappearance_observations" in combined
 
 
 @_missing("RG-03/RG-14: neutral central outcome read model is not implemented")
@@ -291,4 +292,3 @@ def test_clean_window_has_versioned_anchor_and_incident_exclusions():
         "incident_window", "unknown_semantics_version",
     ):
         assert token in source
-

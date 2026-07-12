@@ -38,7 +38,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 ## 3. Table Groups
 
-### A. Trading Core (10 tables)
+### A. Trading Core (13 tables)
 
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
@@ -49,6 +49,8 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `orders` | Execution orders | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
 | `positions` | Open/closed positions | symbol, direction, entry_price, quantity, status, realized_pnl | position_manager |
+| `position_disappearance_candidates` | Durable account-scoped position-disappearance confirmation state; never authorizes close by itself | position_id, identity_key, broker_id, account_environment, non-secret account_fingerprint, instrument identity, confirmation_count, direct_query_state, semantics_version | position reconciler (OI-B01 target) |
+| `position_disappearance_observations` | Immutable idempotent evidence for a disappearance candidate | candidate_id, observation_hash, view_identity, completeness/absence flags, direct_query_state, evidence_json | position reconciler (OI-B01 target) |
 | `shadow_trades` | What-if trades for comparison | opportunity_id, venue, market_type, outcome_candidate_key, gross_return_pct, net_pnl_pct, estimated costs | analytics |
 | `portfolio_snapshots` | Periodic equity snapshots | total_value_usdt, unrealized_pnl, execution_mode | scheduler job |
 | `paper_account_events` | **Local `paper_internal` cash ledger only**; immutable starting funds, human adjustments, and realized-PnL settlements | action, amount_usdt, cash_balance_before_usdt, cash_balance_after_usdt, actor, source, position_id, note | paper account service |
@@ -238,7 +240,7 @@ production trading state and cannot authorize a parameter change.
 
 ---
 
-## 4. Pydantic Model Index (54 models)
+## 4. Pydantic Model Index (57 models)
 
 All models in `aletheia/storage/models.py`. Key mapping:
 
@@ -256,6 +258,8 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | Order | orders | Trading |
 | Fill | fills | Trading |
 | Position | positions | Trading |
+| PositionDisappearanceCandidate | position_disappearance_candidates | Trading integrity |
+| PositionDisappearanceObservation | position_disappearance_observations | Trading integrity |
 | MarketRegimeRecord | market_regimes | Data |
 | StrategyRecord | strategy_records | Strategy |
 | KnowledgeItem | knowledge_items | Knowledge |
@@ -377,10 +381,10 @@ All models in `aletheia/storage/models.py`. Key mapping:
 - **Transaction-leak cleanup**: scheduler calls `rollback_if_in_transaction()` before/after each job (`sqlite.py:56-69`, `scheduler.py:125-134`) — prevents a daemon thread from permanently holding the WAL writer lock (the historical `database is locked` root cause; see [db-lock memory](../../记忆 aletheia-db-lock-root-cause)).
 - **`isolation_level=None`** is the structural fix: no implicit BEGIN means a failed DML does not leave the thread `in_transaction=True`.
 
-## 10. Outcome Integrity Additive Schema（目标合同，OI-S01 尚未实现）
+## 10. Outcome Integrity Additive Schema（OI-S01 implemented）
 
 `positions` 的原始关闭字段继续作为不可改写的账本事实；追加的结果完整性字段用于说明这些值是否有
-真实退出证据、能否进入策略判断。目标字段语义如下，最终 DDL 名必须与 `OI-S01` 保持一致：
+真实退出证据、能否进入策略判断。已交付字段语义如下，DDL 与 `OI-S01` 保持一致：
 
 | Field | Meaning | Default for legacy/unknown |
 |---|---|---|
@@ -388,7 +392,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | `exit_price_source` | `broker_fill` / `local_fill` / `mark_fallback` / `unavailable` | `unavailable` |
 | `exit_fill_verified` | 是否有不可变 execution/broker fill 原件 | `false` |
 | `outcome_eligible` | 是否允许 judgement/behavior consumer 使用 | `false` |
-| `outcome_exclusion_reason` | 行政关闭、fill 未验证、旧干净窗、归因缺失等稳定原因 | `legacy_unknown` |
+| `outcome_exclusion_reason` | 行政关闭、fill 未验证、旧干净窗、归因缺失等稳定原因 | `unclassified` |
 | `reconciliation_identity` | 无凭证的 broker/environment/account/instrument identity JSON | `NULL` |
 | `reconciliation_evidence` | observation/direct-query evidence 与确认版本 JSON | `NULL` |
 | `outcome_semantics_version` | 生成 eligibility 的稳定语义版本 | `NULL` |
@@ -403,6 +407,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
    archive/supersede；
 6. paper cash remediation 默认只生成 compensation candidate，owner 明确批准后才能另行追加补偿事件。
 
-disappearance confirmation 可使用独立 additive table，至少保存 position id、完整账户/标的身份、
-observation hash、首次/最近观察时间、独立确认次数、direct-query state、status 和 version；它属于
-trust-bearing state，不得进入 telemetry prune allowlist。对应 `OI-S01`、`OI-B01`、`OI-B05`。
+disappearance confirmation 使用 `position_disappearance_candidates` 保存作用域身份和确认状态，使用
+`position_disappearance_observations` 保存 observation hash 去重的不可变证据。两者属于 trust-bearing
+state，不得进入 telemetry prune allowlist。当前只交付存储能力；reconciler 何时创建、累计、清除和
+收口由仍为 missing 的 `OI-B01` 约束，不能因为表已存在就推断行为已经安全。

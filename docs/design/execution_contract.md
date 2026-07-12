@@ -228,7 +228,7 @@ Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。
 
 **Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓)。`spec_pipeline_position_manager.py`。
 
-## 11. Position 关闭与结果完整性（目标合同，OI-* 尚未实现）
+## 11. Position 关闭与结果完整性（OI-S01 storage delivered；行为合同待实现）
 
 `positions.status='closed'` 只表示本地状态生命周期结束，不自动证明发生了策略退出成交。系统必须把
 关闭分为两条不互相冒充的路径：

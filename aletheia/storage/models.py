@@ -338,6 +338,18 @@ class Position(BaseModel):
     stop_price: float | None = None
     take_profit_price: float | None = None
     close_reason: str | None = None
+    # Outcome-integrity evidence is additive and fail-closed.  A closed row is a
+    # local lifecycle fact, not automatically a genuine strategy outcome.  Later
+    # close/reconciliation tasks stamp verified values; legacy and unstamped rows
+    # remain explicitly ineligible without rewriting their original economics.
+    close_category: str = "unknown"
+    exit_price_source: str = "unavailable"
+    exit_fill_verified: bool = False
+    outcome_eligible: bool = False
+    outcome_exclusion_reason: str = "unclassified"
+    reconciliation_identity: str | None = None
+    reconciliation_evidence: str | None = None
+    outcome_semantics_version: str | None = None
     source: str = "native"  # "native" | "adopted" — see TradeProposal.source
     opened_at: str = Field(default_factory=_utcnow)
     closed_at: str | None = None
@@ -362,6 +374,48 @@ class Position(BaseModel):
     # trailing path. 'serenity' positions skip ATR trailing and use
     # cfg.serenity.max_hold_days * 24 as their hold cap.
     trade_school: str = "short_term"
+
+
+class PositionDisappearanceCandidate(BaseModel):
+    """Durable, account-scoped suspicion that an open position disappeared.
+
+    This model stores confirmation state only.  It does not authorize closure;
+    position_reconciler wiring is governed by OI-B01 in a later task.
+    """
+
+    id: str = Field(default_factory=new_id)
+    position_id: str
+    identity_key: str
+    broker_id: str
+    account_environment: str
+    account_fingerprint: str
+    execution_mode: str
+    symbol: str
+    market_type: str
+    direction: str
+    status: str = "pending"
+    first_observed_at: str
+    last_observed_at: str
+    confirmation_count: int = 1
+    direct_query_state: str = "not_attempted"
+    semantics_version: str
+    resolved_at: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+class PositionDisappearanceObservation(BaseModel):
+    """Immutable, idempotent evidence attached to a disappearance candidate."""
+
+    id: str = Field(default_factory=new_id)
+    candidate_id: str
+    observation_hash: str
+    view_identity: str
+    view_complete: bool
+    position_absent: bool
+    direct_query_state: str = "not_attempted"
+    evidence_json: str = "{}"
+    observed_at: str = Field(default_factory=_utcnow)
 
 
 class MarketRegimeRecord(BaseModel):

@@ -267,10 +267,12 @@ class TestConformanceStructure:
         # Bumping any of these upward is a signal that a new gap opened;
         # bumping downward means a fix landed and someone should ratchet
         # this budget down accordingly.
-        # TASK-2026-032 intentionally adds twelve OI-* RED tripwires for the
+        # TASK-2026-032 intentionally added twelve OI-* RED tripwires for the
         # reconciled-gone remediation.  They are split into later implementation
-        # tasks; strict xfail keeps CI honest without representing them as GREEN.
-        MAX_MISSING = 17
+        # tasks; TASK-2026-033 makes OI-S01 GREEN by adding the persistence layer.
+        # Strict xfail keeps the remaining eleven honest without representing them
+        # as implemented.
+        MAX_MISSING = 16
         # #153: 5 self-heal specs moved to partial (OL-C08, OL-S13, SH-S01, SH-C02, SH-B03).
         # TASK-2026-022 adds six explicitly bounded Learning-evolution claims whose
         # Phase-0 cores are implemented but whose consumer-wide persistence/UI/
