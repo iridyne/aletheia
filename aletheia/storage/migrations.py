@@ -1890,6 +1890,17 @@ _ADDITIVE_COLUMNS = [
     ("universe_size", "perp_structure_snapshots", "INTEGER"),
     ("dimension_scores_json", "perp_structure_snapshots", "TEXT NOT NULL DEFAULT '{}'"),
     ("risk_context_json", "perp_structure_snapshots", "TEXT NOT NULL DEFAULT '{}'"),
+    # P0-4 (2026-07-12): contribution verdicts carry full cohort identity so a stale
+    # verdict cannot authorize a treatment after the policy epoch / stage / versions
+    # changed. Authority selects the verdict matching the CURRENT (experiment, epoch,
+    # stage); a verdict lacking a matching stamp cannot grant authority (fail-closed).
+    # NULL on legacy rows → never matches the current cohort → cannot authorize.
+    ("policy_epoch", "learning_contribution_verdicts", "TEXT"),
+    ("stage", "learning_contribution_verdicts", "TEXT"),
+    ("target_horizon", "learning_contribution_verdicts", "TEXT"),
+    ("outcome_contract_version", "learning_contribution_verdicts", "TEXT"),
+    ("metric_version", "learning_contribution_verdicts", "TEXT"),
+    ("code_commit", "learning_contribution_verdicts", "TEXT"),
 ]
 
 

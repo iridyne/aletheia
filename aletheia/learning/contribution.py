@@ -6,6 +6,10 @@ from dataclasses import dataclass
 
 from aletheia.learning.evidence import EvidenceClass, quantitative_sample_weight
 
+# P1-2: two outcome rows for the same identity may differ only by floating noise;
+# beyond this they are a genuine conflict and the cohort fails closed.
+_OUTCOME_VALUE_TOLERANCE = 1e-9
+
 
 @dataclass(frozen=True)
 class ContributionObservation:
@@ -43,6 +47,9 @@ class ContributionAggregation:
     # data completeness but MUST NOT yield a causal promote verdict.
     intervention_applied_n: int = 0
     causal_eligible: bool = False
+    # P1-2: outcome-identity groups whose settled values disagreed beyond tolerance.
+    # Any conflict makes the cohort invalid + refreeze (never silently pick one).
+    conflict_n: int = 0
 
 
 def aggregate_observations(
@@ -74,12 +81,21 @@ def aggregate_observations(
         grouped.setdefault(key, []).append(row)
 
     overlap_n = 0
+    conflict_n = 0
     values: list[float] = []
     for rows in grouped.values():
         identities = {(row.path_id, row.hypothesis_id) for row in rows}
         if len(identities) > 1:
             overlap_n += 1
-        values.append(float(rows[0].net_return_pct))
+        # P1-2: rows sharing one outcome identity must agree on the net return. If the
+        # same instrument+horizon+arm settled to different values (e.g. two cost-model
+        # versions, a double resolver, market-type crossover), we must NOT silently
+        # take the first row — that lets arbitrary DB ordering decide the verdict.
+        nets = [float(r.net_return_pct) for r in rows]
+        if max(nets) - min(nets) > _OUTCOME_VALUE_TOLERANCE:
+            conflict_n += 1
+            continue
+        values.append(nets[0])
 
     raw_n = len(observations)
     eligible_n = len(eligible)
@@ -87,11 +103,14 @@ def aggregate_observations(
     data_quality_status = (
         "no_data" if raw_n == 0
         else "invalid" if eligible_n == 0
+        else "conflicting_outcome_values" if conflict_n > 0
         else "incomplete" if coverage < max(0.0, min(1.0, min_coverage))
         else "green"
     )
-    causal_eligible = intervention_applied_n > 0
-    if data_quality_status in {"invalid", "incomplete"}:
+    causal_eligible = intervention_applied_n > 0 and conflict_n == 0
+    if data_quality_status in {"invalid", "incomplete", "conflicting_outcome_values"}:
+        # A conflicting cohort fails closed: the whole verdict is invalid and refreezes
+        # to the static baseline rather than trusting an arbitrarily-picked value.
         authority_action = "refreeze"
     elif not causal_eligible:
         # Green, measurable data — but nothing was actually applied. Trial-ready only;
@@ -112,4 +131,5 @@ def aggregate_observations(
         unique_values=tuple(values),
         intervention_applied_n=intervention_applied_n,
         causal_eligible=causal_eligible,
+        conflict_n=conflict_n,
     )

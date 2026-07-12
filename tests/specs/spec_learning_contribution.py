@@ -317,3 +317,36 @@ def test_shadow_cohort_is_not_causally_eligible():
     assert real.intervention_applied_n == 1
     assert real.causal_eligible is True
     assert real.authority_action == "hold"
+
+
+@spec_claim(SpecClaim(
+    "LE-B28", _CONTRACT, "§5 conflicting outcomes", "L2b",
+    "Two settled values for one outcome identity that disagree beyond tolerance make "
+    "the cohort invalid and refreeze — never silently take the first row.",
+    status="implemented",
+))
+def test_conflicting_outcome_values_fail_closed():
+    from aletheia.learning.contribution import ContributionObservation, aggregate_observations
+
+    conflict = aggregate_observations([
+        ContributionObservation("ranker_case_score", "ranker", "candidate:x", "4h",
+                                 "treatment", 1.0, "case", authority_applied=True),
+        ContributionObservation("ranker_case_score", "ranker", "candidate:x", "4h",
+                                 "treatment", -2.0, "case", authority_applied=True),
+    ])
+    assert conflict.conflict_n == 1
+    assert conflict.data_quality_status == "conflicting_outcome_values"
+    assert conflict.authority_action == "refreeze"
+    assert conflict.causal_eligible is False
+    assert conflict.unique_values == ()  # a conflicting identity contributes nothing
+
+    # Agreeing duplicates within tolerance still dedup to one clean sample.
+    agree = aggregate_observations([
+        ContributionObservation("ranker_case_score", "ranker", "candidate:y", "4h",
+                                 "treatment", 1.0, "case", authority_applied=True),
+        ContributionObservation("ranker_case_score", "ranker", "candidate:y", "4h",
+                                 "treatment", 1.0, "case", authority_applied=True),
+    ])
+    assert agree.conflict_n == 0
+    assert agree.unique_values == (1.0,)
+    assert agree.authority_action == "hold"

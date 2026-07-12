@@ -13,7 +13,7 @@ from aletheia.learning.hypotheses import hypothesis_fingerprint
 from aletheia.learning.ledger import (
     get_hypothesis_by_fingerprint,
     get_exposure_by_dedup_key,
-    get_latest_verdict,
+    get_latest_verdict_for_cohort,
     linked_settled_exposure_counts,
     get_open_experiment,
     insert_experiment,
@@ -94,7 +94,13 @@ def _ensure_experiment(
 def _verdict_authorizes(experiment: LearningExperiment, policy_epoch: str) -> bool:
     if experiment.status != "active" or not experiment.stage.startswith("paper"):
         return False
-    verdict = get_latest_verdict(experiment.experiment_id)
+    # P0-4: only a verdict computed under the EXACT current cohort (this experiment,
+    # this policy epoch, this stage) may authorize. A stale verdict from a prior epoch
+    # or stage is invisible here — it cannot silently re-grant authority after config /
+    # code (epoch) or lifecycle stage changed.
+    verdict = get_latest_verdict_for_cohort(
+        experiment.experiment_id, policy_epoch=policy_epoch, stage=experiment.stage,
+    )
     if not verdict or verdict.get("verdict") != "promote":
         return False
     if min(int(verdict.get("unique_treatment_n") or 0), int(verdict.get("unique_control_n") or 0)) < experiment.min_samples_per_arm:
@@ -118,6 +124,17 @@ def _verdict_authorizes(experiment: LearningExperiment, policy_epoch: str) -> bo
     return not bool(harm.get("breached"))
 
 
+def _code_fingerprint() -> str | None:
+    """Commit the running process booted on (cached module global — no per-call
+    subprocess, safe in the per-candidate scoring loop). None in tests / CLI where
+    the boot commit was never captured."""
+    try:
+        from aletheia.agent_runtime.build_info import get_boot_commit
+        return get_boot_commit()
+    except Exception:
+        return None
+
+
 def _policy_epoch(path_id: str) -> str:
     try:
         cfg = load_config()
@@ -128,7 +145,26 @@ def _policy_epoch(path_id: str) -> str:
             "scanner_regime_scoring": cfg.universe.scanner_regime_scoring,
             "risk": cfg.risk.model_dump(),
             "trading": cfg.trading.model_dump(),
+            # P1-1: rotate the epoch when the running code changes (captured on
+            # restart), so a verdict from an earlier build cannot authorize the new one
+            # (P0-4 requires an exact epoch match). None in tests → stable.
+            "code_commit": _code_fingerprint(),
         }
+        # P1-1: universe scoring/allocation config materially changes which candidates
+        # win — it is path-relevant behavior the epoch previously ignored, so a change
+        # to it must rotate the universe epoch (and invalidate prior universe verdicts).
+        if path_id == "universe_family_calibration":
+            u = cfg.universe
+            values["universe_behavior"] = {
+                "family_quota": u.family_quota,
+                "family_quota_by_regime": u.family_quota_by_regime,
+                "explore_ratio": u.explore_ratio,
+                "max_candidates": u.max_candidates,
+                "core_pool_size": u.core_pool_size,
+                "min_volume_24h_usdt": u.min_volume_24h_usdt,
+                "max_spread_bps": u.max_spread_bps,
+                "min_depth_10bps_usd": u.min_depth_10bps_usd,
+            }
     except Exception:
         values = {"config": "unavailable"}
     from aletheia.learning.policy_epochs import persist_policy_epoch
@@ -185,6 +221,10 @@ def apply_numeric_treatment(
         outcome_candidate_key=outcome_candidate_key,
         outcome_source="fixed_horizon_candidate" if outcome_candidate_key else None,
         concurrent_policy_epoch=policy_epoch,
+        # P1-1: attribute the exposure to the running build so evidence produced by
+        # different code versions is distinguishable (the fingerprint is also folded
+        # into policy_epoch above, so a rebuild rotates the epoch on restart).
+        code_commit=_code_fingerprint(),
     )
     inserted = insert_exposure(exposure)
     if not inserted:

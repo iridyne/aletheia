@@ -102,11 +102,15 @@ def test_authorized_numeric_treatment_records_before_after():
         outcome_candidate_key=_insert_settled_outcome(control_candidate), **common,
     )
     now = datetime.now(timezone.utc)
+    # P0-4: the verdict must carry the current cohort identity (epoch + stage) or it
+    # cannot authorize. Read the epoch the exposures were stamped with.
+    epoch = get_record("learning_exposures", shadow.exposure_id)["concurrent_policy_epoch"]
     insert_record("learning_contribution_verdicts", LearningContributionVerdict(
         experiment_id=shadow.experiment_id, hypothesis_id=shadow.hypothesis_id,
         window_start=(now - timedelta(days=14)).isoformat(), window_end=now.isoformat(),
         unique_treatment_n=1, unique_control_n=1, baseline=0.0, observed=0.2,
         delta=0.2, verdict="promote", reason="prospective net improvement",
+        policy_epoch=epoch, stage="paper_10",
     ))
     applied_candidate = next(
         f"applied:{i}" for i in range(1000)
@@ -187,11 +191,12 @@ def test_negative_verdict_refreezes_to_static_baseline():
         outcome_candidate_key=_insert_settled_outcome(control_candidate), **kwargs,
     )
     now = datetime.now(timezone.utc)
+    epoch = get_record("learning_exposures", created.exposure_id)["concurrent_policy_epoch"]
     positive = LearningContributionVerdict(
         experiment_id=experiment.experiment_id, hypothesis_id=experiment.hypothesis_id,
         window_start=(now - timedelta(days=14)).isoformat(), window_end=now.isoformat(),
         unique_treatment_n=1, unique_control_n=1, verdict="promote", reason="positive",
-        created_at=now.isoformat(),
+        created_at=now.isoformat(), policy_epoch=epoch, stage="paper_10",
     )
     insert_record("learning_contribution_verdicts", positive)
     authorized_candidate = next(
@@ -329,3 +334,165 @@ def test_operator_factor_context_uses_factor_key(monkeypatch):
     layer = trading_context._build_layer1_snapshot()
     assert layer["factor_feedback"][0]["factor_key"] == "momentum:BTC/USDT:long:high:clean"
     assert "key" not in layer["factor_feedback"][0]
+
+
+@spec_claim(SpecClaim(
+    "LE-B26", "learning_evolution", "§9.8 universe selection bias", "L2b",
+    "Every exposed universe candidate (treatment or control, selected or dropped) gets an "
+    "exposure-aligned settled outcome, so contribution compares full arms, not survivors.",
+    status="implemented",
+))
+def test_dropped_experiment_candidates_settle_into_both_arms():
+    from aletheia.universe.service import _register_experiment_candidate_outcomes
+    from aletheia.learning.models import LearningExposure
+    from aletheia.learning.ledger import insert_exposure, linked_settled_exposure_counts
+    from aletheia.storage.sqlite import get_db
+
+    epoch, exp = "epoch-p03", "exp-p03"
+    ck_t = "universe:featT:momentum:long:perp"
+    ck_c = "universe:featC:momentum:long:perp"
+    for ck, arm in ((ck_t, "treatment"), (ck_c, "control")):
+        insert_exposure(LearningExposure(
+            dedup_key=f"{exp}:{ck}:paper_10:{epoch}",
+            experiment_id=exp, hypothesis_id="h-p03", assignment=arm,
+            consumer="universe_allocator", consumer_stage="opportunity_score:paper_10",
+            path_id="universe_family_calibration", overlap_group="universe",
+            candidate_key=ck, outcome_candidate_key=f"{ck}:4h",
+            outcome_source="fixed_horizon_candidate", concurrent_policy_epoch=epoch,
+        ))
+
+    # Neither candidate became a Universe member — both were "dropped" by allocation.
+    # Full-arm registration must still create a settleable, exposure-aligned outcome.
+    now = datetime.now(timezone.utc).isoformat()
+    scored = [
+        {"learning_candidate_key": ck_t, "symbol": "SOL/USDT", "venue": "okx",
+         "market_type": "perp", "scanner_direction": "long", "last_price": 100.0},
+        {"learning_candidate_key": ck_c, "symbol": "SOL/USDT", "venue": "okx",
+         "market_type": "perp", "scanner_direction": "long", "last_price": 100.0},
+    ]
+
+    class _MD:
+        ccxt_exchange = "okx"
+
+    class _Cfg:
+        market_data = _MD()
+
+    assert _register_experiment_candidate_outcomes(scored, _Cfg(), entry_ts=now) >= 2
+
+    # Before settlement neither arm is backed yet.
+    assert linked_settled_exposure_counts(exp, policy_epoch=epoch) == {"control": 0, "treatment": 0}
+
+    # Settle the 4h outcome for BOTH candidates (what the settlement job does).
+    db = get_db()
+    was = db.in_transaction
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.3, "
+        "cost_model_version='test-v1', settled_at=? "
+        "WHERE outcome_candidate_key IN (?, ?) AND horizon='4h'",
+        (now, ck_t, ck_c),
+    )
+    if not was:
+        db.commit()
+
+    counts = linked_settled_exposure_counts(exp, policy_epoch=epoch)
+    assert counts["treatment"] >= 1
+    # The DROPPED control candidate is counted — the arm is no longer selection-biased.
+    assert counts["control"] >= 1
+
+
+@spec_claim(SpecClaim(
+    "LE-C15", "learning_evolution", "§8 verdict cohort identity", "L2c",
+    "A promote verdict stamped with a different policy epoch cannot authorize the "
+    "treatment: stale evidence never grants authority to a new cohort.",
+    status="implemented",
+))
+def test_stale_epoch_verdict_does_not_authorize():
+    from aletheia.learning.experiments import apply_numeric_treatment, stable_assignment
+    from aletheia.learning.ledger import get_record, insert_record
+    from aletheia.learning.models import LearningContributionVerdict, LearningExperiment
+    from aletheia.storage.sqlite import get_db
+
+    common = dict(
+        path_id="ranker_factor_filter",
+        scope={"factor_key": "momentum:ETH/USDT:long:high:clean"},
+        action={"type": "score_delta", "delta": -10.0},
+        source_cohort="factor_feedback:v2", target_horizon="4h",
+        baseline=50.0, treatment=40.0, consumer="paper_ranker", consumer_stage="score",
+    )
+    shadow = apply_numeric_treatment(candidate_key="candidate:seed2", **common)
+    db = get_db()
+    was = db.in_transaction
+    db.execute(
+        "UPDATE learning_experiments SET stage='paper_10', status='active', "
+        "min_samples_per_arm=1 WHERE experiment_id=?",
+        (shadow.experiment_id,),
+    )
+    if not was:
+        db.commit()
+    experiment = LearningExperiment(**get_record("learning_experiments", shadow.experiment_id))
+    t = next(f"t:{i}" for i in range(1000) if stable_assignment(experiment, f"t:{i}") == "treatment")
+    c = next(f"c:{i}" for i in range(1000) if stable_assignment(experiment, f"c:{i}") == "control")
+    apply_numeric_treatment(candidate_key=t, outcome_candidate_key=_insert_settled_outcome(t), **common)
+    apply_numeric_treatment(candidate_key=c, outcome_candidate_key=_insert_settled_outcome(c), **common)
+
+    now = datetime.now(timezone.utc)
+    # A genuine "promote" verdict — but stamped with a STALE policy epoch (config/code
+    # has since moved on). It must NOT authorize the current cohort.
+    insert_record("learning_contribution_verdicts", LearningContributionVerdict(
+        experiment_id=shadow.experiment_id, hypothesis_id=shadow.hypothesis_id,
+        window_start=(now - timedelta(days=14)).isoformat(), window_end=now.isoformat(),
+        unique_treatment_n=1, unique_control_n=1, verdict="promote", reason="stale",
+        policy_epoch="STALE-EPOCH", stage="paper_10",
+    ))
+    applied_candidate = next(
+        f"a:{i}" for i in range(1000)
+        if stable_assignment(experiment, f"a:{i}") == "treatment"
+    )
+    decision = apply_numeric_treatment(candidate_key=applied_candidate, **common)
+    assert not decision.applied
+    assert decision.value == 50.0  # baseline — a stale-epoch verdict grants no authority
+
+
+@spec_claim(SpecClaim(
+    "LE-B27", "learning_evolution", "§ exposure fingerprint", "L2b",
+    "The policy epoch rotates when the running build (code fingerprint) or universe "
+    "behavior config changes, and each exposure is stamped with the running build.",
+    status="implemented",
+))
+def test_policy_epoch_rotates_on_code_and_config_change(monkeypatch):
+    from aletheia.learning import experiments as exp
+    import aletheia.agent_runtime.build_info as build_info
+    from aletheia.config.loader import load_config
+    from aletheia.learning.ledger import get_record
+
+    base_cfg = load_config()
+    monkeypatch.setattr(exp, "load_config", lambda: base_cfg)
+
+    monkeypatch.setattr(build_info, "get_boot_commit", lambda: "commit-AAA")
+    e1 = exp._policy_epoch("universe_family_calibration")
+    assert e1 == exp._policy_epoch("universe_family_calibration")  # deterministic
+
+    monkeypatch.setattr(build_info, "get_boot_commit", lambda: "commit-BBB")
+    assert exp._policy_epoch("universe_family_calibration") != e1  # rebuild rotates it
+
+    changed = base_cfg.model_copy(update={
+        "universe": base_cfg.universe.model_copy(
+            update={"explore_ratio": base_cfg.universe.explore_ratio + 0.13})
+    })
+    monkeypatch.setattr(exp, "load_config", lambda: base_cfg)
+    e_base = exp._policy_epoch("universe_family_calibration")
+    monkeypatch.setattr(exp, "load_config", lambda: changed)
+    assert exp._policy_epoch("universe_family_calibration") != e_base  # config change rotates it
+
+    # Each exposure is stamped with the running build.
+    monkeypatch.setattr(build_info, "get_boot_commit", lambda: "commit-XYZ")
+    monkeypatch.setattr(exp, "load_config", lambda: base_cfg)
+    d = exp.apply_numeric_treatment(
+        path_id="ranker_factor_filter",
+        scope={"factor_key": "momentum:BTC/USDT:long:high:clean"},
+        action={"type": "score_delta", "delta": -10.0},
+        source_cohort="factor_feedback:v2", target_horizon="4h",
+        candidate_key="fp-candidate", baseline=50.0, treatment=40.0,
+        consumer="paper_ranker", consumer_stage="score",
+    )
+    assert get_record("learning_exposures", d.exposure_id)["code_commit"] == "commit-XYZ"
