@@ -424,7 +424,10 @@ def prune_learned_guard_candidates(*, dry_run: bool = True) -> dict:
                 if guard_origin(meta) != "learned":
                     continue
                 scanned += 1
-                changed.append({"guard_id": meta.get("guard_id"), "path": str(path)})
+                # Old pre-fix candidates (L-Bug-D) lack guard_id — fall back to the
+                # file stem so the audit trail still identifies each one.
+                gid = str(meta.get("guard_id") or path.stem)
+                changed.append({"guard_id": gid, "path": str(path)})
                 if dry_run:
                     continue
                 new_meta = dict(meta)
@@ -432,7 +435,7 @@ def prune_learned_guard_candidates(*, dry_run: bool = True) -> dict:
                 new_meta.setdefault("deprecated_reason", "stale_shadow_candidate_cleanup")
                 path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
                 _update_candidate_row_status(path)
-                _record_guard_candidate_deprecated_event(str(meta.get("guard_id")), str(path))
+                _record_guard_candidate_deprecated_event(gid, str(path))
             except Exception as e:
                 logger.warning("Failed to prune guard candidate at %s: %s", path, e)
                 continue

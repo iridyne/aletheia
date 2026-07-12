@@ -252,16 +252,24 @@ def test_prune_deprecates_learned_candidates_only(tmp_path, monkeypatch):
               "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}]}
     (cand_dir / "manual.md").write_text(render_frontmatter(manual, "body"), encoding="utf-8")
 
-    # Dry-run: only the learned candidate is targeted; nothing written.
+    # Old pre-fix candidate: auto_generated but NO guard_id — must still be pruned,
+    # identified by file stem in the audit trail.
+    legacy = {"type": "Trading Guard", "status": "candidate", "scope": "paper_entry",
+              "auto_generated": True,
+              "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}]}
+    (cand_dir / "legacy_no_id.md").write_text(render_frontmatter(legacy, "body"), encoding="utf-8")
+
+    # Dry-run: both learned candidates targeted (incl. the id-less one via stem); manual skipped.
     dry = prune_learned_guard_candidates(dry_run=True)
-    assert dry["would_deprecate"] == 1
-    assert dry["guard_ids"] == ["auto_momentum_long_x"]
+    assert dry["would_deprecate"] == 2
+    assert set(dry["guard_ids"]) == {"auto_momentum_long_x", "legacy_no_id"}
     assert parse_frontmatter(cand_dir / "learned.md")[0]["status"] == "candidate"
 
-    # Apply: learned deprecated (file kept), manual untouched.
+    # Apply: learned deprecated (files kept), manual untouched.
     applied = prune_learned_guard_candidates(dry_run=False)
-    assert applied["deprecated"] == 1
+    assert applied["deprecated"] == 2
     assert parse_frontmatter(cand_dir / "learned.md")[0]["status"] == "deprecated"
+    assert parse_frontmatter(cand_dir / "legacy_no_id.md")[0]["status"] == "deprecated"
     assert (cand_dir / "learned.md").exists()  # soft delete — file kept for audit
     assert parse_frontmatter(cand_dir / "manual.md")[0]["status"] == "candidate"
 
