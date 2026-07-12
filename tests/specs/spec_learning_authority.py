@@ -329,3 +329,67 @@ def test_operator_factor_context_uses_factor_key(monkeypatch):
     layer = trading_context._build_layer1_snapshot()
     assert layer["factor_feedback"][0]["factor_key"] == "momentum:BTC/USDT:long:high:clean"
     assert "key" not in layer["factor_feedback"][0]
+
+
+@spec_claim(SpecClaim(
+    "LE-B26", "learning_evolution", "§9.8 universe selection bias", "L2b",
+    "Every exposed universe candidate (treatment or control, selected or dropped) gets an "
+    "exposure-aligned settled outcome, so contribution compares full arms, not survivors.",
+    status="implemented",
+))
+def test_dropped_experiment_candidates_settle_into_both_arms():
+    from aletheia.universe.service import _register_experiment_candidate_outcomes
+    from aletheia.learning.models import LearningExposure
+    from aletheia.learning.ledger import insert_exposure, linked_settled_exposure_counts
+    from aletheia.storage.sqlite import get_db
+
+    epoch, exp = "epoch-p03", "exp-p03"
+    ck_t = "universe:featT:momentum:long:perp"
+    ck_c = "universe:featC:momentum:long:perp"
+    for ck, arm in ((ck_t, "treatment"), (ck_c, "control")):
+        insert_exposure(LearningExposure(
+            dedup_key=f"{exp}:{ck}:paper_10:{epoch}",
+            experiment_id=exp, hypothesis_id="h-p03", assignment=arm,
+            consumer="universe_allocator", consumer_stage="opportunity_score:paper_10",
+            path_id="universe_family_calibration", overlap_group="universe",
+            candidate_key=ck, outcome_candidate_key=f"{ck}:4h",
+            outcome_source="fixed_horizon_candidate", concurrent_policy_epoch=epoch,
+        ))
+
+    # Neither candidate became a Universe member — both were "dropped" by allocation.
+    # Full-arm registration must still create a settleable, exposure-aligned outcome.
+    now = datetime.now(timezone.utc).isoformat()
+    scored = [
+        {"learning_candidate_key": ck_t, "symbol": "SOL/USDT", "venue": "okx",
+         "market_type": "perp", "scanner_direction": "long", "last_price": 100.0},
+        {"learning_candidate_key": ck_c, "symbol": "SOL/USDT", "venue": "okx",
+         "market_type": "perp", "scanner_direction": "long", "last_price": 100.0},
+    ]
+
+    class _MD:
+        ccxt_exchange = "okx"
+
+    class _Cfg:
+        market_data = _MD()
+
+    assert _register_experiment_candidate_outcomes(scored, _Cfg(), entry_ts=now) >= 2
+
+    # Before settlement neither arm is backed yet.
+    assert linked_settled_exposure_counts(exp, policy_epoch=epoch) == {"control": 0, "treatment": 0}
+
+    # Settle the 4h outcome for BOTH candidates (what the settlement job does).
+    db = get_db()
+    was = db.in_transaction
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.3, "
+        "cost_model_version='test-v1', settled_at=? "
+        "WHERE outcome_candidate_key IN (?, ?) AND horizon='4h'",
+        (now, ck_t, ck_c),
+    )
+    if not was:
+        db.commit()
+
+    counts = linked_settled_exposure_counts(exp, policy_epoch=epoch)
+    assert counts["treatment"] >= 1
+    # The DROPPED control candidate is counted — the arm is no longer selection-biased.
+    assert counts["control"] >= 1

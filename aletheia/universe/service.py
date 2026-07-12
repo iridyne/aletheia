@@ -78,6 +78,58 @@ def _dedupe_by_symbol_preferred_market(allocated: list[dict], cfg) -> list[dict]
     return sorted(seen_symbols.values(), key=lambda x: x["total_score"], reverse=True)
 
 
+def _register_experiment_candidate_outcomes(scored: list[dict], cfg, *, entry_ts: str) -> int:
+    """P0-3: settle the FULL experiment arms, not just the survivors.
+
+    A Universe Learning exposure is created for every calibrated candidate during
+    scoring (allocator.compute_total_score), before allocation narrows the pool.
+    Forward outcomes, however, were only registered for the members that were
+    selected — so a candidate whose treatment multiplier pushed it out of the
+    Universe silently had no outcome. Missing outcomes then correlate with the
+    treatment itself → post-treatment selection bias (the verdict compares two
+    self-selected survivor subsets, not treatment-vs-control on the same pool).
+
+    Register an exposure-aligned fixed-horizon candidate outcome for EVERY exposed
+    candidate (treatment or control, selected or dropped), keyed by the exposure's
+    ``candidate_key``. linked_settled_exposure_counts joins the filter_candidate_outcomes
+    branch as ``outcome_candidate_key || ':' || horizon``, which equals the exposure's
+    ``outcome_candidate_key`` (``candidate_key:horizon``) — so both arms settle in full.
+    """
+    from aletheia.analytics.filter_evidence import ensure_candidate_outcomes
+
+    default_venue = getattr(getattr(cfg, "market_data", None), "ccxt_exchange", None)
+    registered = 0
+    for item in scored:
+        key = item.get("learning_candidate_key")
+        if not key:
+            continue
+        try:
+            registered += ensure_candidate_outcomes(
+                outcome_candidate_key=key,
+                venue=item.get("venue") or default_venue,
+                symbol=item.get("symbol"),
+                market_type=item.get("market_type", "spot"),
+                direction=item.get("scanner_direction") or item.get("direction"),
+                scanner_family=item.get("scanner_family"),
+                regime_tag=None,
+                entry_price_usd=item.get("last_price"),
+                entry_spread_bps=item.get("spread_bps"),
+                funding_rate_at_entry=item.get("funding_rate"),
+                entry_ts=entry_ts,
+            )
+        except Exception:
+            logger.debug(
+                "experiment candidate outcome registration skipped for %s",
+                item.get("symbol"), exc_info=True,
+            )
+    if registered:
+        logger.info(
+            "Registered %d experiment candidate outcome row(s) across full arms "
+            "(selection-bias fix)", registered,
+        )
+    return registered
+
+
 class UniverseService:
     """Main orchestrator for the dynamic universe pipeline."""
 
@@ -353,6 +405,14 @@ class UniverseService:
                 )
             except Exception as e:
                 logger.debug("Universe causal control cohort logging skipped: %s", e)
+
+            # P0-3: settle the full treatment/control arms (every exposed candidate),
+            # not only the allocator's survivors, so the contribution verdict is not
+            # corrupted by post-treatment selection bias.
+            try:
+                _register_experiment_candidate_outcomes(scored, cfg, entry_ts=now.isoformat())
+            except Exception as e:
+                logger.debug("experiment candidate outcome registration skipped: %s", e)
 
             # Emit deterministic opportunities for high-scoring members (LLM-free path)
             try:
