@@ -1,6 +1,7 @@
 """Portfolio PnL computation + snapshots (guide §7 portfolio/)."""
 
 import logging
+import json
 from datetime import datetime, timezone
 
 from aletheia.storage.models import PortfolioSnapshot
@@ -100,6 +101,93 @@ def _realized_pnl(direction: str, entry: float, exit_price: float, qty: float) -
     return (entry - exit_price) * qty  # short/sell
 
 
+def build_exit_reasoning(
+    position: dict,
+    *,
+    exit_price: float | None,
+    reason: str,
+    actor: str = "system",
+    source: str = "position_lifecycle",
+    reasoning: str | None = None,
+    is_ai_judgment: bool = False,
+    trigger: dict | None = None,
+) -> dict:
+    """Build an honest close explanation from facts known at close time.
+
+    Mechanical close reasons are deliberately described as rule triggers, not
+    new AI opinions.  Callers with an actual System Operator review may provide
+    its original text and mark it as an AI judgment.  This function never
+    synthesizes an AI justification when none was recorded.
+    """
+    known_trigger: dict = {"exit_price": exit_price}
+    if reason == "stop_loss":
+        known_trigger["configured_stop_price"] = position.get("stop_price")
+        default_reason = "Protective stop was reached; this is the rule committed at entry, not a new AI judgment."
+    elif reason == "take_profit":
+        known_trigger["configured_take_profit_price"] = position.get("take_profit_price")
+        default_reason = "Take-profit target was reached; this is the rule committed at entry, not a new AI judgment."
+    elif reason == "max_hold":
+        known_trigger["opened_at"] = position.get("opened_at")
+        default_reason = "The configured maximum holding period elapsed; this is an automatic lifecycle rule, not a new AI judgment."
+    elif reason == "market_signal_exit":
+        known_trigger["market_signal_reason"] = position.get("last_market_signal_reason")
+        default_reason = "The market-aware exit rule fired; this is an automatic lifecycle rule, not a new AI judgment."
+    elif reason == "exchange_bracket_triggered":
+        default_reason = "The exchange reported that the pre-existing protective bracket closed the position; no new AI judgment was recorded."
+    elif reason in {"verified_exit", "reconciled_gone"}:
+        default_reason = "The position was closed from verified reconciliation evidence; no AI trade judgment was recorded."
+    else:
+        default_reason = "The position was closed through the recorded lifecycle path; no AI trade judgment was recorded."
+    if trigger:
+        known_trigger.update(trigger)
+    text = reasoning.strip()[:1200] if isinstance(reasoning, str) and reasoning.strip() else default_reason
+    return {
+        "version": "trade_decision_rationale.v1",
+        "actor": actor,
+        "source": source,
+        "reason_code": reason,
+        "reason": text,
+        "is_ai_judgment": bool(is_ai_judgment),
+        "trigger": known_trigger,
+    }
+
+
+def persist_exit_reasoning(
+    position_id: str,
+    *,
+    actor: str,
+    source: str,
+    reason: str,
+    reasoning: str | None,
+    is_ai_judgment: bool,
+    trigger: dict | None = None,
+) -> bool:
+    """Replace a generic close explanation only after the position is closed.
+
+    Exchange brokers close through their own adapters, which call
+    :func:`close_position` after a confirmed fill.  A later AI-specific write is
+    therefore allowed only on an already-closed position; a failed close cannot
+    acquire an explanation that would make the dashboard lie.
+    """
+    from aletheia.storage import repositories as repo
+
+    row = repo._select_one("positions", position_id)
+    if row is None or row.get("status") != "closed":
+        return False
+    payload = build_exit_reasoning(
+        row,
+        exit_price=row.get("current_price"),
+        reason=reason,
+        actor=actor,
+        source=source,
+        reasoning=reasoning,
+        is_ai_judgment=is_ai_judgment,
+        trigger=trigger,
+    )
+    update_position(position_id, exit_reasoning=json.dumps(payload, sort_keys=True))
+    return True
+
+
 def close_position(position_id: str, exit_price: float, reason: str = "manual") -> dict:
     """Close an open position at exit_price, realizing PnL. Returns the result.
 
@@ -163,6 +251,11 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
     # hold_h was always 0. Stamp the value into row too so the Serenity hook
     # sees the honest close time.
     closed_at = datetime.now(timezone.utc).isoformat()
+    exit_reasoning = build_exit_reasoning(
+        row,
+        exit_price=exit_price,
+        reason=reason,
+    )
     update_position(
         position_id,
         status="closed",
@@ -175,6 +268,7 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         entry_fee=round(entry_fee, 8),
         exit_fee=round(exit_fee, 8),
         slippage_cost=slippage_cost,
+        exit_reasoning=json.dumps(exit_reasoning, sort_keys=True),
     )
     row["closed_at"] = closed_at  # so the Serenity hook computes real hold_h
     if row.get("execution_mode") == "paper_internal":

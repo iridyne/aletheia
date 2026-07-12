@@ -1709,6 +1709,9 @@ Return JSON: {_json.dumps(schema)}"""
                     close_position_routed(
                         pos["id"], reason="pi_agent_portfolio_review",
                         fallback_exit_price=float(price),
+                        decision_reasoning=str(review.get("reasoning") or ""),
+                        decision_actor="system_operator",
+                        decision_source="portfolio_review",
                     )
                     closed_count += 1
                 except Exception as e:

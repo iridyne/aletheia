@@ -338,6 +338,10 @@ class Position(BaseModel):
     stop_price: float | None = None
     take_profit_price: float | None = None
     close_reason: str | None = None
+    # JSON record written only after a close succeeds. It names the real actor
+    # and source (AI, automatic protection, manual, or reconciliation), avoiding
+    # any retrospective invention of an AI rationale for a mechanical close.
+    exit_reasoning: str | None = None
     # Outcome-integrity evidence is additive and fail-closed.  A closed row is a
     # local lifecycle fact, not automatically a genuine strategy outcome.  Later
     # close/reconciliation tasks stamp verified values; legacy and unstamped rows

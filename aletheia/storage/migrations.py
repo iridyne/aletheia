@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS positions (
     stop_price REAL,
     take_profit_price REAL,
     close_reason TEXT,
+    exit_reasoning TEXT,
     close_category TEXT NOT NULL DEFAULT 'unknown',
     exit_price_source TEXT NOT NULL DEFAULT 'unavailable',
     exit_fill_verified INTEGER NOT NULL DEFAULT 0,
@@ -1813,6 +1814,9 @@ _ADDITIVE_COLUMNS = [
     ("oi_price_divergence", "universe_feature_snapshots", "INTEGER"),
     # Decision explainability: System Operator reasoning chain at entry time
     ("decision_reasoning", "positions", "TEXT"),
+    # Close explainability: immutable-at-close source/actor/trigger record.
+    # NULL remains the honest state for historical closures that predate it.
+    ("exit_reasoning", "positions", "TEXT"),
     # Cost visibility: itemized fee/slippage for transparency
     ("entry_fee", "positions", "REAL"),
     ("exit_fee", "positions", "REAL"),

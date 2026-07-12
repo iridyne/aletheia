@@ -8,15 +8,15 @@ import { fmtSymbol } from '../lib/format'
  * Causal-chain inspector (WEBUI_PAGE_MAP.md — cross-cutting, lives in Trades & Positions).
  *
  * Renders the immutable trust §1.1 chain:
- *   opportunity → strategy → proposal → risk_decision → order → fill → position
+ *   opportunity → strategy → proposal → entry reasoning → risk_decision → order → fill → position → close reasoning
  *
- * HONESTY (trust §1.1 — do NOT fake the chain):
- *  - A Position stores proposal_id and order_id. Anchored on a position, the full chain
- *    resolves via proposal_id → proposal → opportunity_id/strategy_id, and order_id → order → fill.
- *  - For adopted positions (source="adopted"): proposal.opportunity_id is null and no risk_decision
- *    exists — these render as "none" (honest absence), not "not recorded" (data loss).
- *  - A null pointer on a record (e.g. proposal.opportunity_id == null) renders "none".
- *  - If a linked record isn't found in the fetched list, we say so with a note.
+ * HONESTY:
+ *  - Entry reasoning is parsed only from the proposal's persisted immutable metadata.
+ *    Config defaults, market snapshots and leverage caps carry their own source label;
+ *    they are never presented as an AI-chosen value.
+ *  - Close reasoning is read only from positions.exit_reasoning after a real close.
+ *    A protective/routed/reconciled close is labelled by its real actor/source.
+ *  - Older rows without either record render "not recorded" rather than a plausible story.
  */
 
 type Anchor =
@@ -24,6 +24,15 @@ type Anchor =
   | { kind: 'position'; position: Position }
 
 type NodeState = 'present' | 'empty' | 'missing'
+type JsonRecord = Record<string, unknown>
+
+const ENTRY_PARAMETER_LABELS: Array<[string, string]> = [
+  ['entry_price', 'Entry price'],
+  ['stop_loss', 'Stop loss'],
+  ['take_profit', 'Take profit'],
+  ['notional_usdt', 'Notional'],
+  ['leverage', 'Leverage'],
+]
 
 function CausalNode({
   stage, state, facts, onOpen, note,
@@ -50,12 +59,92 @@ function CausalNode({
   )
 }
 
+function asRecord(value: unknown): JsonRecord | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as JsonRecord
+    : null
+}
+
+function parseEntryParameters(proposal: TradeProposal | null): JsonRecord | null {
+  const rationale = proposal?.agent_rationale
+  if (!rationale) return null
+  const separator = rationale.indexOf('\n---\n')
+  if (separator < 0) return null
+  try {
+    const meta = asRecord(JSON.parse(rationale.slice(separator + 5)))
+    return asRecord(meta?.entry_parameters)
+  } catch {
+    return null
+  }
+}
+
+function parseExitReasoning(position: Position | null): JsonRecord | null {
+  if (!position?.exit_reasoning) return null
+  try {
+    return asRecord(JSON.parse(position.exit_reasoning))
+  } catch {
+    return null
+  }
+}
+
+function printable(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—'
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '—'
+  if (typeof value === 'boolean') return value ? 'yes' : 'no'
+  return String(value)
+}
+
+function EntryReasoningFacts({ parameters }: { parameters: JsonRecord }) {
+  return (
+    <div>
+      {ENTRY_PARAMETER_LABELS.map(([key, label]) => {
+        const item = asRecord(parameters[key])
+        if (!item) return null
+        const value = key === 'notional_usdt'
+          ? item.actual_value
+          : item.final_value
+        return (
+          <div key={key} className="cc-entry-reason">
+            <div><b>{label}</b> <span className="mono">{printable(value)}</span>{' '}
+              <span className="text-muted text-sm">· {printable(item.value_source)}</span>
+            </div>
+            <div className="cc-why">{printable(item.reason) === '—' ? 'AI rationale not recorded.' : printable(item.reason)}</div>
+            {key === 'notional_usdt' && (
+              <div className="text-muted text-sm">estimated loss at stop: {printable(item.estimated_loss_at_stop_usdt)} USDT</div>
+            )}
+            {key === 'leverage' && item.estimated_margin_usdt != null && (
+              <div className="text-muted text-sm">estimated margin: {printable(item.estimated_margin_usdt)} USDT</div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function CloseReasoningFacts({ reasoning }: { reasoning: JsonRecord }) {
+  const trigger = asRecord(reasoning.trigger)
+  return (
+    <div>
+      <div>{printable(reasoning.reason_code)} · {printable(reasoning.actor)} / {printable(reasoning.source)}</div>
+      <div className="cc-why">{printable(reasoning.reason)}</div>
+      {trigger && <div className="text-muted text-sm mono">
+        exit @ {printable(trigger.exit_price)}
+        {trigger.configured_stop_price != null && ` · stop ${printable(trigger.configured_stop_price)}`}
+        {trigger.configured_take_profit_price != null && ` · target ${printable(trigger.configured_take_profit_price)}`}
+      </div>}
+    </div>
+  )
+}
+
 export default function CausalChain({ anchor }: { anchor: Anchor }) {
   const navigate = useNavigate()
   const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
   const { data: orders = [] } = useQuery({ queryKey: ['trades'], queryFn: api.getTrades })
+  // Needed for an order anchor to find the resulting position. React Query shares
+  // this request with TradesPositions, so this is normally a cache read.
+  const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
 
-  // Resolve the anchoring proposal id (both order and position carry it).
   const proposalId = anchor.kind === 'order'
     ? anchor.order.proposal_id
     : anchor.position.proposal_id ?? null
@@ -63,7 +152,6 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
     ? (proposals as TradeProposal[]).find(p => p.id === proposalId) || null
     : null
 
-  // If proposal not in the batch list (limit=50), fetch by ID directly.
   const { data: proposalById } = useQuery({
     queryKey: ['proposal', proposalId],
     queryFn: () => api.getProposal(proposalId as string),
@@ -78,151 +166,75 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
   })
   const risk = riskData?.decision
 
-  // Resolve the order for position anchors.
   const resolvedOrder: Order | null = anchor.kind === 'position' && anchor.position.order_id
     ? (orders as Order[]).find(o => o.id === anchor.position.order_id) ?? null
     : null
+  const resolvedPosition: Position | null = anchor.kind === 'position'
+    ? anchor.position
+    : (positions as Position[]).find(p => p.order_id === anchor.order.id) ?? null
 
-  // strategy_id: position has it directly; also available via proposal.
   const strategyId = anchor.kind === 'order'
     ? proposal?.strategy_id ?? null
     : anchor.position.strategy_id ?? proposal?.strategy_id ?? null
   const opportunityId = proposal?.opportunity_id ?? null
+  const entryParameters = parseEntryParameters(proposal)
+  const exitReasoning = parseExitReasoning(resolvedPosition)
 
-  // Extract the human-readable thesis from agent_rationale (strip JSON tail), truncate for display.
   const rationaleText = proposal?.agent_rationale
-    ? (() => { const i = proposal.agent_rationale.indexOf('\n---\n'); const t = i > 0 ? proposal.agent_rationale.slice(0, i) : proposal.agent_rationale; return t.length > 350 ? t.slice(0, 350) + '…' : t; })()
+    ? (() => { const i = proposal.agent_rationale.indexOf('\n---\n'); const t = i > 0 ? proposal.agent_rationale.slice(0, i) : proposal.agent_rationale; return t.length > 350 ? t.slice(0, 350) + '…' : t })()
     : null
 
   return (
     <div className="causal-chain">
-      {/* 1 — OPPORTUNITY */}
       {proposalId
         ? proposal
-          ? <CausalNode
-              stage="Opportunity"
-              state={opportunityId ? 'present' : 'empty'}
-              facts={<span className="mono">{opportunityId}</span>}
-              onOpen={opportunityId ? () => navigate('/agent-activity') : undefined}
-            />
+          ? <CausalNode stage="Opportunity" state={opportunityId ? 'present' : 'empty'} facts={<span className="mono">{opportunityId}</span>} onOpen={opportunityId ? () => navigate('/agent-activity') : undefined} />
           : <CausalNode stage="Opportunity" state="missing" note="proposal not in recent list" />
         : <CausalNode stage="Opportunity" state="empty" />}
 
-      {/* 2 — STRATEGY */}
-      <CausalNode
-        stage="Strategy"
-        state={strategyId ? 'present' : 'empty'}
-        facts={<span className="mono">{strategyId}</span>}
-      />
+      <CausalNode stage="Strategy" state={strategyId ? 'present' : 'empty'} facts={<span className="mono">{strategyId}</span>} />
 
-      {/* 3 — PROPOSAL */}
       {proposalId
-        ? <CausalNode
-            stage="Proposal"
-            state="present"
-            facts={
-              <>
-                <div className="mono cc-id">{proposalId}</div>
-                {proposal
-                  ? <div>{proposal.direction?.toUpperCase()} {fmtSymbol(proposal.symbol, proposal.market_type)} · {proposal.execution_mode}
-                      {rationaleText && <div className="cc-why">{rationaleText}</div>}
-                    </div>
-                  : <div className="text-muted text-sm">(detail not in recent list)</div>}
-              </>
-            }
-            onOpen={() => navigate('/proposals')}
-          />
+        ? <CausalNode stage="Proposal" state="present" facts={<><div className="mono cc-id">{proposalId}</div>{proposal ? <div>{proposal.direction?.toUpperCase()} {fmtSymbol(proposal.symbol, proposal.market_type)} · {proposal.execution_mode}{rationaleText && <div className="cc-why">{rationaleText}</div>}</div> : <div className="text-muted text-sm">(detail not in recent list)</div>}</>} onOpen={() => navigate('/proposals')} />
         : <CausalNode stage="Proposal" state="empty" />}
 
-      {/* 4 — RISK DECISION */}
+      {proposal
+        ? entryParameters
+          ? <CausalNode stage="Entry Reasoning" state="present" facts={<EntryReasoningFacts parameters={entryParameters} />} />
+          : <CausalNode stage="Entry Reasoning" state="missing" note="proposal predates parameter rationale" />
+        : <CausalNode stage="Entry Reasoning" state={proposalId ? 'missing' : 'empty'} note={proposalId ? 'proposal not available' : undefined} />}
+
       {risk
-        ? <CausalNode
-            stage="Risk Decision"
-            state="present"
-            facts={
-              <>
-                {anchor.kind === 'order' && anchor.order.risk_decision_id && <div className="mono cc-id">{anchor.order.risk_decision_id}</div>}
-                <div>
-                  {(risk.approved === true || risk.approved === 1 || risk.decision === 'approved') ? 'approved' : 'flagged'}
-                  {risk.risk_score != null && <span className="mono"> · score {risk.risk_score}</span>}
-                  {risk.message && <div className="text-muted text-sm">{risk.message}</div>}
-                </div>
-              </>
-            }
-            onOpen={() => navigate('/risk')}
-          />
+        ? <CausalNode stage="Risk Decision" state="present" facts={<>{anchor.kind === 'order' && anchor.order.risk_decision_id && <div className="mono cc-id">{anchor.order.risk_decision_id}</div>}<div>{(risk.approved === true || risk.approved === 1 || risk.decision === 'approved') ? 'approved' : 'flagged'}{risk.risk_score != null && <span className="mono"> · score {risk.risk_score}</span>}{risk.message && <div className="text-muted text-sm">{risk.message}</div>}</div></>} onOpen={() => navigate('/risk')} />
         : <CausalNode stage="Risk Decision" state="empty" />}
 
-      {/* 5 — ORDER */}
       {anchor.kind === 'order'
-        ? <CausalNode
-            stage="Order"
-            state="present"
-            facts={
-              <>
-                <div className="mono cc-id">{anchor.order.id}</div>
-                <div>{anchor.order.direction?.toUpperCase()} {anchor.order.quantity} {fmtSymbol(anchor.order.symbol, anchor.order.market_type)} @ {anchor.order.price ?? 'mkt'} · {anchor.order.status}</div>
-              </>
-            }
-          />
+        ? <CausalNode stage="Order" state="present" facts={<><div className="mono cc-id">{anchor.order.id}</div><div>{anchor.order.direction?.toUpperCase()} {anchor.order.quantity} {fmtSymbol(anchor.order.symbol, anchor.order.market_type)} @ {anchor.order.price ?? 'mkt'} · {anchor.order.status}</div></>} />
         : anchor.position.order_id
-          ? <CausalNode
-              stage="Order"
-              state="present"
-              facts={resolvedOrder ? (
-                <>
-                  <div className="mono cc-id">{anchor.position.order_id}</div>
-                  <div>{resolvedOrder.direction?.toUpperCase()} {resolvedOrder.quantity} {fmtSymbol(resolvedOrder.symbol, resolvedOrder.market_type)} @ {resolvedOrder.price ?? 'mkt'} · {resolvedOrder.status}</div>
-                </>
-              ) : (
-                <>
-                  <div className="mono cc-id">{anchor.position.order_id}</div>
-                  <div className="text-muted text-sm">(order detail not in recent list)</div>
-                </>
-              )}
-            />
+          ? <CausalNode stage="Order" state="present" facts={resolvedOrder ? <><div className="mono cc-id">{anchor.position.order_id}</div><div>{resolvedOrder.direction?.toUpperCase()} {resolvedOrder.quantity} {fmtSymbol(resolvedOrder.symbol, resolvedOrder.market_type)} @ {resolvedOrder.price ?? 'mkt'} · {resolvedOrder.status}</div></> : <><div className="mono cc-id">{anchor.position.order_id}</div><div className="text-muted text-sm">(order detail not in recent list)</div></>} />
           : <CausalNode stage="Order" state="empty" />}
 
-      {/* 6 — FILL */}
       {anchor.kind === 'order'
         ? anchor.order.filled_at
-          ? <CausalNode
-              stage="Fill"
-              state="present"
-              facts={
-                <div>
-                  filled @ {anchor.order.price ?? '—'} · {anchor.order.filled_at.slice(0, 16)}
-                  {anchor.order.exchange_order_id && <div className="mono cc-id">ex: {anchor.order.exchange_order_id}</div>}
-                </div>
-              }
-            />
+          ? <CausalNode stage="Fill" state="present" facts={<div>filled @ {anchor.order.price ?? '—'} · {anchor.order.filled_at.slice(0, 16)}{anchor.order.exchange_order_id && <div className="mono cc-id">ex: {anchor.order.exchange_order_id}</div>}</div>} />
           : <CausalNode stage="Fill" state="empty" />
         : resolvedOrder?.filled_at
-          ? <CausalNode
-              stage="Fill"
-              state="present"
-              facts={
-                <div>
-                  filled @ {resolvedOrder.price ?? '—'} · {resolvedOrder.filled_at.slice(0, 16)}
-                  {resolvedOrder.exchange_order_id && <div className="mono cc-id">ex: {resolvedOrder.exchange_order_id}</div>}
-                </div>
-              }
-            />
+          ? <CausalNode stage="Fill" state="present" facts={<div>filled @ {resolvedOrder.price ?? '—'} · {resolvedOrder.filled_at.slice(0, 16)}{resolvedOrder.exchange_order_id && <div className="mono cc-id">ex: {resolvedOrder.exchange_order_id}</div>}</div>} />
           : <CausalNode stage="Fill" state="empty" />}
 
-      {/* 7 — POSITION */}
-      {anchor.kind === 'position'
-        ? <CausalNode
-            stage="Position"
-            state="present"
-            facts={
-              <>
-                <div className="mono cc-id">{anchor.position.id}</div>
-                <div>{anchor.position.direction?.toUpperCase()} {anchor.position.quantity} {fmtSymbol(anchor.position.symbol, anchor.position.market_type)} · {anchor.position.status}</div>
-              </>
-            }
-          />
-        : <CausalNode stage="Position" state="missing" note="orders store no resulting-position link" />}
+      {resolvedPosition
+        ? <CausalNode stage="Position" state="present" facts={<><div className="mono cc-id">{resolvedPosition.id}</div><div>{resolvedPosition.direction?.toUpperCase()} {resolvedPosition.quantity} {fmtSymbol(resolvedPosition.symbol, resolvedPosition.market_type)} · {resolvedPosition.status}</div></>} />
+        : anchor.kind === 'order'
+          ? <CausalNode stage="Position" state="missing" note="no position record found for this order" />
+          : <CausalNode stage="Position" state="empty" />}
+
+      {resolvedPosition
+        ? resolvedPosition.status === 'open'
+          ? <CausalNode stage="Close Reasoning" state="empty" />
+          : exitReasoning
+            ? <CausalNode stage="Close Reasoning" state="present" facts={<CloseReasoningFacts reasoning={exitReasoning} />} />
+            : <CausalNode stage="Close Reasoning" state="missing" note="closed position predates exit explanation" />
+        : <CausalNode stage="Close Reasoning" state="empty" />}
     </div>
   )
 }

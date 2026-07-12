@@ -75,6 +75,7 @@ export interface Position {
   stop_price: number | null
   take_profit_price: number | null
   close_reason: string | null
+  exit_reasoning?: string | null
   source?: string  // "native" | "adopted"
   opened_at: string
   closed_at: string | null

@@ -71,6 +71,7 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 | `opportunity_id` / `strategy_id` / `scanner_family` | `str \| None` | R0 归因,由 `_attach_opportunity_context` 回填(`trading_decision.py:909`)。 |
 | `signal_source` | `str` | 机会来源,默认 `market_observer`;`serenity` 表示解析 `serenity_opportunities.id`(`:85`)。值域 = {`market_observer`,`serenity`}。 |
 | `bear_case` | `str` | S4 强制反方论证。新 LLM 决策 schema 必填；空值仅允许历史记录。 |
+| `parameter_rationale` | `dict[str,str]` | 新开仓的五项 AI 理由：`entry_price` / `stop_loss` / `take_profit` / `notional_usdt` / `leverage`。仅 LLM 解析路径要求齐全；缺项在跳6留下 `missing_parameter_rationale`，不创建 proposal。最终数值和来源由跳6快照，详见 `trade_decision_rationale_contract.md`。 |
 
 ### 2.3 signal_pending 载体 (跳2→4 接缝)
 
@@ -99,7 +100,7 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 |------|--------|----------|-----------|-----------|
 | 机会落库 | `market_observer.py:361` | ranker / Layer1 | 仅 `status='open'` 进排序;reviewed 不重复 | (本契约 DL-S01) |
 | signal_pending | `paper_trader.py:143` | `trading_context.py:463` | TTL cutoff;LIMIT 5 | DL-S03 |
-| 决策→提案 | `trading_decision.py` | `gateway.py` | `conviction≥55 且 action∈trade类` 才尝试提案；未创建时必须留下 proposal_submission 原因；白名单校验 | DL-C01 + DL-C02 + execution_contract §3 |
+| 决策→提案 | `trading_decision.py` | `gateway.py` | `conviction≥55 且 action∈trade类` 才尝试提案；LLM 开仓还必须有五项参数理由；未创建时必须留下 proposal_submission 原因；白名单校验 | DL-C01 + DL-C02 + TDR-C01 + execution_contract §3 |
 | 提案→风控 | `gateway.py` | `risk/engine.py:67` | `_eval_lock` 串行;每提案恰评估一次;`approved=False` 不执行 | risk_engine_contract / spec_pipeline_risk_gate |
 | 平仓脊柱 | — | — | 见 `execution_contract §10`(退出触发器优先级 / paused 不挡平仓) | PL-PM-01~07 |
 | 筛选证据 | 各关原 writer | filter controller / doctor | 事前输入+参数版本；无方向不生成可学习净结果；Risk 只报告 | filter_evidence_contract / spec_filter_evidence |
@@ -117,6 +118,7 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 - **DL-INV-7 筛选事实不反推**:放行/拒绝必须在当次评估时记录，不得从最终 opportunity/proposal 状态倒推中间关卡。
 - **DL-INV-8 无方向不学收益**:无事前 `long/short` 时只衡量能力和覆盖，禁止事后选最赚方向。
 - **DL-INV-9 提案结果不丢失**:`trade/scale_in/flip` 是模型意图；若方向门或目标市场取价使 proposal 未创建，必须返回稳定机器原因并写 `proposal_submission` 筛选证据，禁止只留下无法解释的 `proposal_id=NULL`。
+- **DL-INV-10 参数理由不伪造**:System Operator 的新开仓须带五项参数理由；提案快照必须把最终值与 `market_snapshot` / `default_config` / `risk_cap_clamped` 等实际来源分开，不能把后端计算说成 AI 选择。详见 `trade_decision_rationale_contract.md`。
 
 ---
 

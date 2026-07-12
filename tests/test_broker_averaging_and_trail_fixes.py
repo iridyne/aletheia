@@ -189,6 +189,13 @@ def test_live_broker_averaging_in_accumulates_entry_fee_and_recomputes_liquidati
     async def _fake_set_leverage(self, *args, **kwargs):
         return None
 
+    async def _fake_transfer(self, *args, **kwargs):
+        # The broker makes a best-effort mix-wallet top-up before submitting a
+        # Bitget futures order. This is an averaging calculation unit test, so
+        # it must not reach the real transfer endpoint just because its fake
+        # credentials made the client constructor succeed.
+        return None
+
     async def _fake_close(self):
         return None
 
@@ -201,6 +208,7 @@ def test_live_broker_averaging_in_accumulates_entry_fee_and_recomputes_liquidati
     client_cls = getattr(_client_mod, client_classes[client_module])
     monkeypatch.setattr(client_cls, "place_order", _fake_place_order)
     monkeypatch.setattr(client_cls, "close", _fake_close, raising=False)
+    monkeypatch.setattr(client_cls, "transfer", _fake_transfer, raising=False)
     if hasattr(client_cls, "set_leverage"):
         monkeypatch.setattr(client_cls, "set_leverage", _fake_set_leverage)
 

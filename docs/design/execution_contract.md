@@ -32,11 +32,11 @@ trade_proposals.id
 
 | 环 | 结构 | 状态流 | 位置 |
 |----|------|--------|------|
-| Proposal | `TradeProposal(symbol, direction, quantity, price, execution_mode...)` | `pending→approved→executed` / `→rejected` / `→error` | `models.py:102` |
+| Proposal | `TradeProposal(symbol, direction, quantity, price, execution_mode...)`; `agent_rationale.entry_parameters` carries the immutable final-value/source/reason snapshot for AI-originated entries | `pending→approved→executed` / `→rejected` / `→error` | `models.py:102` |
 | RiskDecision | 见 [risk_engine_contract §3](risk_engine_contract.md) | 不可变(一次写) | `models.py:125` |
 | Order | `Order(proposal_id, risk_decision_id, symbol, direction, qty, price, mode, status)` | `pending→submitted→filled` / `→error` | `models.py:136` |
 | Fill | `Fill(order_id, fill_price, fill_quantity, fee)` | 不可变 | `models.py:155` |
-| Position | `Position(symbol, direction, qty, entry_price, stop_price, take_profit_price, mode...)` + 入场环境(btc_entry_price/regime_tag) | `open→closed` | `models.py:165` |
+| Position | `Position(symbol, direction, qty, entry_price, stop_price, take_profit_price, mode...)` + 入场环境(btc_entry_price/regime_tag) + `exit_reasoning` (actual close actor/source/trigger) | `open→closed` | `models.py:165` |
 
 **Proposal 状态契约([trust §1.2](../governance/trust_and_change_control.md)):**
 - `pending`=无人工批准 · `approved`=人工/允许的工作流批准 · `executed`=订单成功创建 · `rejected`=人工或风控拒 · `error`=批准后执行失败。

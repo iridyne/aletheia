@@ -10,6 +10,7 @@ from typing import Any
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 from aletheia.data.symbols import to_canonical
 from aletheia.execution.verified_exit import VerifiedExitResult
+from aletheia.portfolio.pnl import build_exit_reasoning
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 
@@ -67,6 +68,15 @@ def close_position_administrative(
         "reconciliation_identity": _json(reconciliation_identity),
         "reconciliation_evidence": _json(reconciliation_evidence),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        "exit_reasoning": _json(build_exit_reasoning(
+            row,
+            exit_price=None,
+            reason=reason,
+            actor=actor,
+            source=source,
+            is_ai_judgment=False,
+            trigger={"closure_type": "administrative", "economic_outcome": "unavailable"},
+        )),
     }
     with repo.transaction():
         repo.update_position(position_id, **updates)
@@ -163,6 +173,15 @@ def close_position_verified(
             **(reconciliation_context or {}),
         }),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        "exit_reasoning": _json(build_exit_reasoning(
+            row,
+            exit_price=exit_price,
+            reason=reason,
+            actor=actor,
+            source=source,
+            is_ai_judgment=False,
+            trigger={"closure_type": "verified_strategy", "fill_count": len(evidence.fills)},
+        )),
     }
     closed_row = {**row, **updates}
     with repo.transaction():

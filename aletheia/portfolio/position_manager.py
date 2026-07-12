@@ -32,6 +32,9 @@ def close_position_routed(
     fallback_exit_price: float | None = None,
     *,
     allow_live: bool = False,
+    decision_reasoning: str | None = None,
+    decision_actor: str = "system",
+    decision_source: str = "position_lifecycle",
 ) -> dict:
     """Close a position through the correct path for its execution_mode.
 
@@ -64,20 +67,37 @@ def close_position_routed(
         )
     if mode in ("bitget_demo", "bitget_live_limited"):
         from aletheia.execution.bitget_broker import close_demo_position
-        return close_demo_position(position_id, reason=reason)
-    if mode in ("binance_testnet", "binance_live_limited"):
+        result = close_demo_position(position_id, reason=reason)
+    elif mode in ("binance_testnet", "binance_live_limited"):
         from aletheia.execution.binance_broker import close_testnet_position
-        return close_testnet_position(position_id, reason=reason)
-    if mode in ("okx_demo", "okx_live_limited"):
+        result = close_testnet_position(position_id, reason=reason)
+    elif mode in ("okx_demo", "okx_live_limited"):
         from aletheia.execution.okx_broker import close_okx_position
-        return close_okx_position(position_id, reason=reason)
-    # paper_internal — pure local simulation; needs a mark to realize PnL.
-    if fallback_exit_price is None:
-        px = _latest_price(row["symbol"]) if row else None
-        if px is None:
-            raise RuntimeError(f"no price available to close paper position {position_id}")
-        fallback_exit_price = float(px)
-    return close_position(position_id, exit_price=fallback_exit_price, reason=reason)
+        result = close_okx_position(position_id, reason=reason)
+    else:
+        # paper_internal — pure local simulation; needs a mark to realize PnL.
+        if fallback_exit_price is None:
+            px = _latest_price(row["symbol"]) if row else None
+            if px is None:
+                raise RuntimeError(f"no price available to close paper position {position_id}")
+            fallback_exit_price = float(px)
+        result = close_position(position_id, exit_price=fallback_exit_price, reason=reason)
+
+    # Only overwrite the generic factual explanation after a confirmed close.
+    # This deliberately sits outside the broker dispatch: no exchange adapter or
+    # order semantics change, and a failed exchange close cannot look complete.
+    if decision_reasoning:
+        from aletheia.portfolio.pnl import persist_exit_reasoning
+        persist_exit_reasoning(
+            position_id,
+            actor=decision_actor,
+            source=decision_source,
+            reason=reason,
+            reasoning=decision_reasoning,
+            is_ai_judgment=decision_actor == "system_operator",
+            trigger={"trigger_type": "operator_review"} if decision_actor == "system_operator" else None,
+        )
+    return result
 
 
 def _parse_dt(value: str | None) -> datetime | None:

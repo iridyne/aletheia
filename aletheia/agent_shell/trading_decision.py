@@ -137,6 +137,16 @@ class TradingDecision:
     # Persisted only after the authoritative PiDecision row is written.
     filter_trace: list[dict] = field(default_factory=list)
     sizing_trace: dict = field(default_factory=dict)
+    # One concise AI reason for each value that expresses an entry.  The final
+    # numbers are still resolved by submit_decision_as_proposal from the market
+    # snapshot, configured defaults, and venue/risk caps; this only explains why
+    # the AI considers those five choices appropriate.  Empty/missing values are
+    # retained as explicitly absent evidence, never filled in after the fact.
+    parameter_rationale: dict[str, str] = field(default_factory=dict)
+    # Set only for decisions parsed from the System Operator's LLM response.
+    # Programmatic/historical callers retain compatibility, while an AI trade
+    # cannot silently bypass the explanation requirement.
+    parameter_rationale_required: bool = False
 
 
 @dataclass
@@ -174,6 +184,19 @@ _DECISION_SCHEMA = {
         # (entry/stop/tp/reward:risk) is always complete before the limit order.
         "stop_price": {"type": "number"},
         "take_profit": {"type": "number"},
+        # Required for trade-like actions by the prompt below.  It remains
+        # optional in the top-level schema because skip/close/reduce decisions
+        # do not have five new-entry parameters to explain.
+        "parameter_rationale": {
+            "type": "object",
+            "properties": {
+                "entry_price": {"type": "string"},
+                "stop_loss": {"type": "string"},
+                "take_profit": {"type": "string"},
+                "notional_usdt": {"type": "string"},
+                "leverage": {"type": "string"},
+            },
+        },
         "risk_factors": {"type": "array", "items": {"type": "string"}},
         "supporting_signals": {"type": "array", "items": {"type": "string"}},
         "opposing_signals": {"type": "array", "items": {"type": "string"}},
@@ -377,6 +400,31 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     if decision.action not in ("trade", "scale_in", "flip") or not decision.symbol or not decision.direction:
         return None
 
+    missing_parameter_reasons = [
+        key for key in _ENTRY_PARAMETER_KEYS
+        if not isinstance(decision.parameter_rationale.get(key), str)
+        or not decision.parameter_rationale[key].strip()
+    ]
+    if decision.parameter_rationale_required and missing_parameter_reasons:
+        decision.filter_trace.append({
+            "filter_name": "parameter_rationale_gate",
+            "stage": "proposal_submission",
+            "decision": "rejected",
+            "reason_code": "missing_parameter_rationale",
+            "inputs": {"action": decision.action},
+            "parameters": {"required_fields": list(_ENTRY_PARAMETER_KEYS)},
+            "missing": missing_parameter_reasons,
+        })
+        logger.info(
+            "proposal skipped: LLM decision omitted parameter reasons (%s)",
+            ", ".join(missing_parameter_reasons),
+        )
+        return {
+            "status": "skipped",
+            "reason": "missing_parameter_rationale",
+            "missing": missing_parameter_reasons,
+        }
+
     overheated = _proposal_direction_overheated(decision.direction, decision.conviction)
     if overheated:
         decision.filter_trace.append({
@@ -495,6 +543,30 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     _reward_per_unit = abs(take_profit - price)
     risk_reward = round(_reward_per_unit / _risk_per_unit, 2) if _risk_per_unit > 0 else None
 
+    # Leverage only applies to futures. Clamp the PI's request to the per-asset-tier
+    # cap (the risk engine enforces the same cap as a hard reject — clamping here keeps
+    # the proposal inside the gate so a sane futures trade is not silently rejected for
+    # an over-eager leverage number). Spot carries no leverage.
+    leverage: int | None = None
+    leverage_cap: int | None = None
+    if market_type == "usdt_futures" and decision.leverage and decision.leverage > 1:
+        from aletheia.trading.instruments import get_max_leverage
+        is_live = "live" in (execution_mode or "")
+        leverage_cap = get_max_leverage(decision.symbol, is_live, cfg)
+        leverage = max(1, min(decision.leverage, leverage_cap))
+
+    entry_parameters = _build_entry_parameter_snapshot(
+        decision=decision,
+        market_type=market_type,
+        entry_price=price,
+        quantity=quantity,
+        stop_price=stop_price,
+        take_profit=take_profit,
+        requested_notional=notional,
+        leverage=leverage,
+        leverage_cap=leverage_cap,
+    )
+
     decision_meta = {
         "conviction": decision.conviction,
         "debate_ran": decision.debate_ran,
@@ -515,6 +587,10 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         "scanner_family": decision.scanner_family,
         "sizing_learning": decision.sizing_trace,
         "guards": guard_summary,
+        # Immutable proposal evidence for why each entry value was used.  The
+        # proposal hash covers agent_rationale, so this snapshot cannot be
+        # silently changed without breaking the Trading-as-Git chain.
+        "entry_parameters": entry_parameters,
     }
     # Cap ONLY the human thesis; append the full JSON AFTER capping so the JSON
     # is always whole. Do NOT re-truncate the combined string (the old `[:500]`
@@ -523,17 +599,6 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     if len(thesis) > _MAX_RATIONALE_TEXT:
         thesis = thesis[:_MAX_RATIONALE_TEXT].rstrip() + "…"
     rationale = f"{thesis}\n---\n{json.dumps(decision_meta)}"
-
-    # Leverage only applies to futures. Clamp the PI's request to the per-asset-tier
-    # cap (the risk engine enforces the same cap as a hard reject — clamping here keeps
-    # the proposal inside the gate so a sane futures trade is not silently rejected for
-    # an over-eager leverage number). Spot carries no leverage.
-    leverage: int | None = None
-    if market_type == "usdt_futures" and decision.leverage and decision.leverage > 1:
-        from aletheia.trading.instruments import get_max_leverage
-        is_live = "live" in (execution_mode or "")
-        cap = get_max_leverage(decision.symbol, is_live, cfg)
-        leverage = max(1, min(decision.leverage, cap))
 
     return create_paper_proposal(
         symbol=decision.symbol,
@@ -551,6 +616,91 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         agent_rationale=rationale,
         trade_school=trade_school,
     )
+
+
+_ENTRY_PARAMETER_KEYS = (
+    "entry_price",
+    "stop_loss",
+    "take_profit",
+    "notional_usdt",
+    "leverage",
+)
+
+
+def _build_entry_parameter_snapshot(
+    *,
+    decision: TradingDecision,
+    market_type: str,
+    entry_price: float,
+    quantity: float,
+    stop_price: float,
+    take_profit: float,
+    requested_notional: float,
+    leverage: int | None,
+    leverage_cap: int | None,
+) -> dict[str, dict]:
+    """Build the immutable, honest explanation of the final entry values.
+
+    AI provides only short reasons.  This function owns the numerical facts and
+    their source labels after defaults/caps are applied, so a dashboard cannot
+    mistake a configured fallback or a risk-cap clamp for an AI-selected value.
+    """
+    supplied = decision.parameter_rationale if isinstance(decision.parameter_rationale, dict) else {}
+
+    def reason_for(key: str) -> str | None:
+        value = supplied.get(key)
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        return value[:600] if value else None
+
+    actual_notional = round(quantity * entry_price, 8)
+    estimated_loss = round(quantity * abs(entry_price - stop_price), 8)
+    requested_leverage = decision.leverage if market_type == "usdt_futures" else None
+    final_leverage = leverage or 1
+    if market_type != "usdt_futures":
+        leverage_source = "not_applicable_spot"
+    elif requested_leverage and leverage_cap and final_leverage != requested_leverage:
+        leverage_source = "risk_cap_clamped"
+    elif requested_leverage and requested_leverage > 1:
+        leverage_source = "ai_requested"
+    else:
+        leverage_source = "default_1x"
+
+    return {
+        "entry_price": {
+            "final_value": entry_price,
+            "value_source": "market_snapshot",
+            "reason": reason_for("entry_price"),
+        },
+        "stop_loss": {
+            "final_value": stop_price,
+            "value_source": "ai_requested" if decision.stop_price is not None else "default_config",
+            "distance_pct": round(abs(entry_price - stop_price) / entry_price * 100, 6) if entry_price else None,
+            "reason": reason_for("stop_loss"),
+        },
+        "take_profit": {
+            "final_value": take_profit,
+            "value_source": "ai_requested" if decision.take_profit is not None else "default_config",
+            "distance_pct": round(abs(take_profit - entry_price) / entry_price * 100, 6) if entry_price else None,
+            "reason": reason_for("take_profit"),
+        },
+        "notional_usdt": {
+            "requested_value": requested_notional,
+            "actual_value": actual_notional,
+            "estimated_loss_at_stop_usdt": estimated_loss,
+            "value_source": "ai_requested" if decision.position_size_usdt is not None else "default_config",
+            "reason": reason_for("notional_usdt"),
+        },
+        "leverage": {
+            "requested_value": requested_leverage,
+            "final_value": final_leverage,
+            "maximum_allowed": leverage_cap,
+            "estimated_margin_usdt": round(actual_notional / final_leverage, 8) if final_leverage else None,
+            "value_source": leverage_source,
+            "reason": reason_for("leverage"),
+        },
+    }
 
 
 def _proposal_direction_overheated(
@@ -1259,6 +1409,12 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "reasoning, bear_case (required: strongest concrete reason this decision can fail), "
         "risk_factors, supporting_signals, opposing_signals, "
         "key_assumptions (array of ≤3 short strings: critical premises this decision rests on).",
+        "",
+        "For every trade, scale_in, or flip action, also return parameter_rationale with five "
+        "short, setup-specific reasons: entry_price, stop_loss, take_profit, notional_usdt, "
+        "and leverage. Explain why each exact choice fits this trade now. These are shown to "
+        "the operator next to the final values. Do not claim that you calculated a value that "
+        "the system will derive from a market snapshot, configured default, or risk cap.",
     ]
 
     return "\n".join(parts)
@@ -1401,6 +1557,14 @@ def _parse_decision(raw: dict) -> TradingDecision:
         except (TypeError, ValueError):
             return default
 
+    raw_parameter_rationale = raw.get("parameter_rationale")
+    parameter_rationale: dict[str, str] = {}
+    if isinstance(raw_parameter_rationale, dict):
+        for key in _ENTRY_PARAMETER_KEYS:
+            value = raw_parameter_rationale.get(key)
+            if isinstance(value, str) and value.strip():
+                parameter_rationale[key] = value.strip()[:600]
+
     return TradingDecision(
         action=raw.get("action", "skip") if raw.get("action") != "watch" else "skip",  # watch removed from enum; treat as skip
         symbol=raw.get("symbol"),
@@ -1416,6 +1580,8 @@ def _parse_decision(raw: dict) -> TradingDecision:
         supporting_signals=raw.get("supporting_signals", []),
         opposing_signals=raw.get("opposing_signals", []),
         key_assumptions=key_assumptions,
+        parameter_rationale=parameter_rationale,
+        parameter_rationale_required=True,
     )
 
 
