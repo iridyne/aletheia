@@ -1,0 +1,33 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-055
+title: Publish read-only contribution verdict engine
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Rebase and publish the completed AT-01 measurement-only contribution verdict
+  engine without enabling Learning influence, changing lifecycle authority, or touching
+  Risk, execution, credentials, or live trading.
+acceptance:
+- Only prospective universe_family_calibration exposures with exact clean fixed-horizon
+  outcomes are measured.
+- Measurement verdicts remain read-only and cannot grant, revoke, or shadow cohort-bound
+  behavior authority.
+- AT-02 lifecycle and scheduler wiring are excluded from this PR.
+- Focused Learning tests, all specs, architecture, doctor, and strict workflow validation
+  are run after rebase.
+ownership:
+  branch: feat/contribution-verdict-engine
+  lease_holder: codex-root
+  claimed_at: '2026-07-12T16:39:32.993048Z'
+  expires_at: '2026-07-13T00:39:32.993243Z'
+base_commit: ffb4e53cbd7c334eb5a56ba7f4286fa21a5e4a4b
+next_action:
+  command_key: specs
+  reason: Verify the rebased AT-01 decision-chain behavior before publication.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-055.md
+updated_at: '2026-07-12T16:39:33.116715Z'
