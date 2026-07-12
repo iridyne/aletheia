@@ -1,6 +1,6 @@
 schema_version: 1
 handoff_version: 1
-id: TASK-2026-038
+id: TASK-2026-039
 title: Split verified and administrative position closure
 status: done
 packet_type: standard
@@ -49,5 +49,5 @@ verification:
   run_at: '2026-07-12T06:11:52.099061Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
-handoff: .agent/handoffs/TASK-2026-038.md
+handoff: .agent/handoffs/TASK-2026-039.md
 updated_at: '2026-07-12T06:12:27.118096Z'
