@@ -216,7 +216,7 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
                 "bypass_conviction": _BIAS_BRAKE_BYPASS_CONVICTION,
             },
         })
-        decision.action = "watch"
+        decision.action = "skip"
         decision.reasoning = f"{decision.reasoning} [{bias_brake_reason}]"
         return decision
     if trade_intent:
