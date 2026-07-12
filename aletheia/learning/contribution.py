@@ -17,6 +17,12 @@ class ContributionObservation:
     net_return_pct: float
     hypothesis_id: str | None = None
     evidence_class: EvidenceClass = EvidenceClass.SETTLED_QUANTITATIVE
+    # Whether the treatment was ACTUALLY applied to this exposure (from the exposure
+    # manifest's authority_applied / before!=after). In a shadow-stage experiment both
+    # arms run at baseline, so authority_applied is False for every observation — the
+    # treatment/control return difference is then noise, not a causal contribution.
+    # Callers building observations from exposures MUST copy the manifest value here.
+    authority_applied: bool = False
 
 
 @dataclass(frozen=True)
@@ -31,6 +37,12 @@ class ContributionAggregation:
     data_quality_status: str
     authority_action: str
     unique_values: tuple[float, ...]
+    # P0-2 (2026-07-12): how many treatment-arm observations actually had the
+    # treatment applied, and whether a causal (positive/negative) contribution may be
+    # derived at all. A shadow-only cohort (no real intervention) is measurable for
+    # data completeness but MUST NOT yield a causal promote verdict.
+    intervention_applied_n: int = 0
+    causal_eligible: bool = False
 
 
 def aggregate_observations(
@@ -50,6 +62,12 @@ def aggregate_observations(
         and bool(row.outcome_key)
         and bool(row.horizon)
     ]
+    # P0-2: a causal contribution requires that the treatment arm was actually
+    # intervened on. Shadow-stage observations (authority_applied=False on both arms)
+    # only demonstrate the cohort is measurable — they cannot be read as causal.
+    intervention_applied_n = sum(
+        1 for row in eligible if row.assignment == "treatment" and row.authority_applied
+    )
     grouped: dict[tuple[str, str, str, str], list[ContributionObservation]] = {}
     for row in eligible:
         key = (row.overlap_group, row.outcome_key, row.horizon, row.assignment)
@@ -72,6 +90,15 @@ def aggregate_observations(
         else "incomplete" if coverage < max(0.0, min(1.0, min_coverage))
         else "green"
     )
+    causal_eligible = intervention_applied_n > 0
+    if data_quality_status in {"invalid", "incomplete"}:
+        authority_action = "refreeze"
+    elif not causal_eligible:
+        # Green, measurable data — but nothing was actually applied. Trial-ready only;
+        # never a causal promote signal (prevents fake shadow "positive contribution").
+        authority_action = "shadow_trial_only"
+    else:
+        authority_action = "hold"
     return ContributionAggregation(
         raw_n=raw_n,
         eligible_n=eligible_n,
@@ -81,6 +108,8 @@ def aggregate_observations(
         overlap_n=overlap_n,
         attribution_status="not_identifiable" if overlap_n else "identifiable",
         data_quality_status=data_quality_status,
-        authority_action="refreeze" if data_quality_status in {"invalid", "incomplete"} else "hold",
+        authority_action=authority_action,
         unique_values=tuple(values),
+        intervention_applied_n=intervention_applied_n,
+        causal_eligible=causal_eligible,
     )

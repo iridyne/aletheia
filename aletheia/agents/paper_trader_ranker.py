@@ -286,8 +286,15 @@ def _evaluate_candidate(
     }
     factor_signal = lookup_factor_signal(candidate_for_factor)
 
-    # P1-4: hard_blocked is a hard reject — high confidence cannot override a confirmed loser
-    if factor_signal.get("authority_applied") and factor_signal.get("status") == "hard_blocked":
+    # P1-4: hard_blocked can reject only through the central behavior inventory;
+    # historical status or an inline ranker condition is never authority by itself.
+    from aletheia.trust.behavior_authority import authorize_candidate_block
+    factor_block_authorized = authorize_candidate_block(
+        source="factor_filter",
+        prospective_authority=bool(factor_signal.get("authority_applied")),
+        learning_path_id="ranker_factor_filter",
+    )
+    if factor_block_authorized and factor_signal.get("status") == "hard_blocked":
         _filter_step(
             filter_trace, "factor_hard_block", "rejected", "factor_hard_blocked",
             inputs={"factor_key": factor_signal.get("factor_key"),

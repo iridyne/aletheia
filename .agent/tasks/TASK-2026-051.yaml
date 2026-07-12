@@ -1,0 +1,66 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-051
+title: Make the active trading mainline executable and replayable
+status: done
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: 'Implement the five requested runtime assurance layers in order: a machine-checkable
+  active runtime scope, a deterministic real-SQLite golden path, production reachability
+  tests, a sanitized replay fixture with explicit baselines, and a behavior-authority
+  registry enforced at consumers; preserve existing risk, execution, credential, and
+  live-trading semantics.'
+acceptance:
+- A machine-readable active runtime scope fixes crypto paper_internal as the admitted
+  mainline and architecture checks prevent scanner, Learning, Guard, Operator, UI,
+  Risk, execution, and causal-link bypasses.
+- A deterministic System Operator fixture drives one BTC/USDT opportunity through
+  real migrations, SQLite, repositories, Risk, paper execution, verified close, genuine
+  outcome, and review without mocking intermediate business modules.
+- Production reachability tests prove scheduler outcome settlement and a registered
+  Learning consumer create real downstream rows linked to exact net outcomes.
+- A sanitized fixed runtime replay SQLite pack and explicit baseline compare candidate,
+  decision, proposal, approval, position, genuine-outcome, and Learning-authority
+  metrics.
+- A small behavior-authority registry declares allowed and forbidden paper-candidate
+  blockers, and executable checks require every behavior consumer to use it.
+ownership:
+  branch: feat/runtime-mainline-assurance
+  lease_holder: codex
+  claimed_at: '2026-07-12T15:08:39.879192Z'
+  expires_at: '2026-07-13T15:08:39.879363Z'
+base_commit: 001dce8153c35ba9ea9b146899d1f9cacee30fd1
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: ce695ea427f9ebe3cba08f747bdd2ea92132795c
+  run_at: '2026-07-12T15:36:06.460811Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: ce695ea427f9ebe3cba08f747bdd2ea92132795c
+  run_at: '2026-07-12T15:36:15.356878Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 896e4c626c50f9e09c15b65f3596531a454bf012
+  run_at: '2026-07-12T15:36:57.075003Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-051.md
+updated_at: '2026-07-12T15:36:57.214470Z'

@@ -10,6 +10,10 @@
 > for implementation truth see the linked L2 contracts and executable tests.
 > Last updated: 2026-07-12.
 
+The currently admitted executable subset is declared separately in
+[ACTIVE_RUNTIME_SCOPE](ACTIVE_RUNTIME_SCOPE.md). That file is machine checked and
+must stay smaller than, or equal to, this broader product direction.
+
 ---
 
 ## 1. Direction of travel

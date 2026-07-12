@@ -1,0 +1,24 @@
+{
+  "candidate_count": 6,
+  "decision_distribution": {
+    "skip": 2,
+    "trade": 4
+  },
+  "fixture_version": "runtime_replay_v1",
+  "genuine_outcome_count": 0,
+  "learning_authority": {
+    "applied": 0,
+    "refrozen": 4
+  },
+  "position_results": {
+    "closed_loss": 1,
+    "closed_win": 1,
+    "open": 1
+  },
+  "proposal_count": 4,
+  "risk_decisions": {
+    "approved": 3,
+    "rejected": 1
+  },
+  "settled_net_outcome_count": 6
+}
