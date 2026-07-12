@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-040
 title: Make broker test awaitable handling warning-free
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -26,10 +26,18 @@ ownership:
   expires_at: '2026-07-12T14:12:13.311904Z'
 base_commit: 1db52e02df7c1aca2067c50e455a9d543afd4e14
 next_action:
-  command_key: specs
-  reason: Commit the warning-hygiene change, then record the registered full spec
-    verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 525c22ceeb4fde0493c0e0ca81134bea8827af44
+  run_at: '2026-07-12T06:20:41.588668Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-040.md
-updated_at: '2026-07-12T06:19:30.186414Z'
+updated_at: '2026-07-12T06:20:49.449526Z'
