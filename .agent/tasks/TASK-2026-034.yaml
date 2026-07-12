@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-034
 title: Implement central outcome integrity read model
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: dependency-neutral analytics outcome semantics/read queries, central close-reason
@@ -33,9 +33,9 @@ ownership:
   expires_at: '2026-07-12T12:41:43.280329Z'
 base_commit: 03fc6e9283f86523095e376cc858dbbf713f243d
 next_action:
-  command_key: specs
-  reason: Inspect current close-reason, Learning outcome, query, and filter conventions
-    before writing RED central-read-model tests.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: specs
@@ -46,5 +46,13 @@ verification:
   run_at: '2026-07-12T04:55:54.691275Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 4aef10fbae8a77b4b3dbc01515e7489ed3c8fa57
+  run_at: '2026-07-12T04:56:29.271276Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-034.md
-updated_at: '2026-07-12T04:55:54.691486Z'
+updated_at: '2026-07-12T04:56:44.456533Z'
