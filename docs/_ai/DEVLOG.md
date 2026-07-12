@@ -3196,3 +3196,12 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
   administratively, and inconclusive evidence stays open. Live remains alert-only.
 - Removed the dormant Bitget-only TPSL/fallback orphan closer and blocked synthetic reasons from
   the legacy close API. Added raw versus eligible daily PnL names without changing Risk yet.
+
+## 2026-07-12 — Baseline verification cleanup
+
+- Split two unrelated execution rules that accidentally shared `EX-B05`: executable venue
+  order constraints retain that identifier, while the reconciliation no-order invariant is
+  now `EX-C04` in both executable coverage and the execution design document.
+- Corrected the status-route regression to accept the intentionally empty model-provider
+  value on a fresh configuration instead of requiring the backend to invent one.
+- No runtime behavior changed; the full suite now has no ordinary failures.
