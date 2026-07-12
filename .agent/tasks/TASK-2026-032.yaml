@@ -7,8 +7,8 @@ packet_type: standard
 scope:
   boundary: SDD design documents, executable spec claims, conformance registration,
     and the reconciled-gone implementation plan only
-  excluded: production code, database contents, runtime state, trading behavior,
-    risk limits, exchange clients, execution behavior, credentials, and gateway process
+  excluded: production code, database contents, runtime state, trading behavior, risk
+    limits, exchange clients, execution behavior, credentials, and gateway process
 intent: Define the SDD and executable claims for verified versus administrative position
   closure, durable reconciliation confirmation, cross-broker exit evidence, behavior-consumer
   eligibility, global Learning refreeze, honest reporting, and additive history remediation
@@ -38,6 +38,14 @@ next_action:
   reason: Inspect existing SDD patterns and add the outcome-integrity contract and
     missing claims.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: f9f59714b4ab79db83938d76997831c34fa3bba3
+  run_at: '2026-07-12T04:24:03.331555Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-032.md
-updated_at: '2026-07-12T04:17:02.252608Z'
+updated_at: '2026-07-12T04:24:03.331806Z'
