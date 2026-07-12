@@ -26,6 +26,8 @@
 | `portfolio_snapshot` | 10min | portfolio_snapshots | risk_engine(drawdown scale), UI, Telegram | ✅ |
 | `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes，Learning treatment/control exposures，filter_decision_batches/filter_decisions/filter_candidate_outcomes | paper_trader_ranker、System Operator family edge、filter controller、risk live-evidence、doctor、guard candidate | ✅ 历史 family 校准只提 shadow 假设；无真实前瞻两组结果时保持 1.0 中性倍率 |
 | `outcome_settler` | 15min | 更新 universe_forward_outcomes + filter_candidate_outcomes；同步新 shadow 净结果 | 净收益校准、filter controller、alpha attribution、doctor | ✅ |
+| `learning_contribution_evaluator` | `learning.evaluation_interval_minutes`（默认60min） | learning_contribution_verdicts, learning_job_health | paper lifecycle read model、operator inspection | ✅ 只测量：即使自主学习关闭或系统暂停也可运行；不改阶段、不启用影响 |
+| `learning_measurement_startup_catchup` | gateway 启动后3min一次 | learning_job_health 当前小时水位 | contribution evaluator | ✅ 只补当前缺失测量窗口，已完成则 no-op |
 | `cleanup` | cron 03:17 | 删除超保留期的分析/遥测行；filter batch 30d、decision/outcome 90d | SQLite 稳定性 + `data_pruned` audit | ✅，不触碰交易因果表 |
 | `ohlcv_nightly_backfill` | cron(可配) | market_ohlcv | (历史 OHLCV 存储;backtest 消费者随引擎删除 Position C) | ✅ |
 | `ohlcv_active_backfill` | 5–60min(可配，默认10min) | market_ohlcv + ohlcv_backfill_state | 活动 Universe 指标、结果结算、doctor；单轮1–10个精确 instrument/timeframe，失败退避 | ✅，不阻塞 universe_refresh |
@@ -54,10 +56,13 @@
 | `insight_synthesizer` | cron 02:30 CST + durable boot catch-up | knowledge_items + market_snapshots | trading_memo(knowledge_items) | retrieve_lessons() | ✅ |
 | `confidence_calibration` | 6h | predictions + outcomes | calibration reports | UI(analytics) | ⚠️ |
 | `filter_controller_observe` | 6h（配置开启时） | 逐 filter/version/family/direction/market/horizon 的 pass/reject 净结果与未来首次样本 | controller_recommendations + filter_shadow_experiments/evaluations | CLI/API 诊断；只登记和评估 shadow，不写 config | ✅ 只读 |
+| `learning_lifecycle_controller` | `learning.evaluation_interval_minutes`（默认60min） | 当前阶段测量结果、实验/策略版本、Learning 设置 | learning_lifecycle_events + 后继纸面实验或冻结状态 | ✅ 与测量分离；仅在完整安全开关、路径白名单和无完整性事故时改变纸面状态 |
 | `pi_operator_loop` | cron 每4h:15 CST + boot 2min catch-up（assessment 3h45m 防重） | system health + strategies + positions | operator_assessment, operator_actions, PiDecision(recommendations) | pi_daemon(wake signal) | ✅ |
 
 上表中会产出、审核、晋级或自动应用 Learning 状态的任务统一受
-`agent.autonomous_learning` 控制；结果结算和 shadow 结果核验不受该开关影响。
+`agent.autonomous_learning` 控制；结果结算、shadow 结果核验和 contribution measurement
+不受该开关影响。生命周期控制仍同时要求未暂停、无完整性事故、已启用生命周期与纸面影响，
+并且路径在白名单中。
 
 ---
 

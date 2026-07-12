@@ -14,6 +14,10 @@
 > shadow experiments. Paper influence requires stable treatment/control assignment,
 > minimum time, unique linked cost-aware outcomes, and a positive verdict; negative or
 > invalid evidence restores the static baseline immediately.
+> Lifecycle update (2026-07-12): the supported universe calibration path now has a durable,
+> restart-safe paper lifecycle. Measurement remains separate from lifecycle action; every stage
+> promotion creates a fresh experiment and salt, while paper influence and lifecycle automation
+> remain default-off. This does not add live authority.
 > Attribution update (2026-07-12): Operator Learning channels persist as one bundle
 > manifest, observer advisory memory has its own Opportunity-linked manifest, reflection
 > is causal-id-only, and automatic block suggestions route to non-blocking guard shadow
@@ -905,7 +909,8 @@ Rollout ladder:
 6. paper active with continual holdout;
 7. any live influence requires a separate owner decision and task.
 
-At every rung, negative/invalid verdict returns to the previous safe rung automatically.
+At every rung, negative evidence refreezes the current paper experiment and invalid evidence also
+marks it invalid; in both cases the consumer authority falls back to its static baseline immediately.
 
 ## 12. SDD Delivery Matrix
 
@@ -922,6 +927,7 @@ Implementation mapping:
 | Phase 4 | `spec_pi_decision_chain.py`, `spec_insight_feedback_loop.py`, `spec_learning_experiments.py` | LE-B07/14/15, LE-C04/07/09/10 |
 | Phase 5 | `spec_persona_sizing.py`, `spec_learning_experiments.py` | LE-B10, LE-C02/03/07 |
 | Phase 6 | `spec_skill_store.py`, `spec_learning_evolution.py` | LE-C02/05/07 |
+| Lifecycle runtime | `spec_learning_lifecycle.py`, `test_learning_lifecycle.py`, `test_learning_lifecycle_scheduler.py` | LE-L01/02/03 |
 
 SDD sequence for every new claim:
 

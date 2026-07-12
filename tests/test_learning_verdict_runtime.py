@@ -373,7 +373,7 @@ def test_measurement_verdict_never_authorizes_or_changes_learning_lifecycle():
     assert get_record("learning_experiments", experiment.experiment_id)["status"] == "active"
 
 
-def test_measurement_verdict_does_not_shadow_an_existing_authority_verdict():
+def test_measurement_verdict_does_not_shadow_an_existing_authority_verdict(monkeypatch):
     hypothesis, experiment = _experiment()
     _exposure(experiment, hypothesis, candidate="authority-treatment", assignment="treatment")
     _exposure(experiment, hypothesis, candidate="authority-control", assignment="control")
@@ -382,6 +382,13 @@ def test_measurement_verdict_does_not_shadow_an_existing_authority_verdict():
     from aletheia.learning.ledger import insert_record
     from aletheia.learning.models import LearningContributionVerdict, LearningExperiment
     from aletheia.learning.experiments import _verdict_authorizes
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.learning.authority as authority
+
+    cfg = AletheiaConfig()
+    cfg.learning.paper_influence_enabled = True
+    cfg.learning.paper_influence_paths = [hypothesis.path_id]
+    monkeypatch.setattr(authority, "load_config", lambda: cfg)
 
     insert_record("learning_contribution_verdicts", LearningContributionVerdict(
         verdict_id="manual-authority-promotion",

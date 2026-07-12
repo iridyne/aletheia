@@ -7,6 +7,18 @@ from datetime import datetime, timedelta, timezone
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
+def _enable_legacy_paper_authority(monkeypatch, path_id: str) -> None:
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.learning.authority as authority
+
+    cfg = AletheiaConfig()
+    cfg.agent.autonomous_learning = True
+    cfg.runtime.paused = False
+    cfg.learning.paper_influence_enabled = True
+    cfg.learning.paper_influence_paths = [path_id]
+    monkeypatch.setattr(authority, "load_config", lambda: cfg)
+
+
 def _insert_settled_outcome(candidate_key: str) -> str:
     """Insert one clean cost-aware outcome and return its exposure link key."""
     from aletheia.storage.sqlite import get_db
@@ -58,7 +70,7 @@ def test_stable_assignment_survives_retries():
         "and real clean cost-aware outcome links.", status="implemented",
     ),
 )
-def test_authorized_numeric_treatment_records_before_after():
+def test_authorized_numeric_treatment_records_before_after(monkeypatch):
     from aletheia.learning.experiments import apply_numeric_treatment, stable_assignment
     from aletheia.learning.ledger import get_record, insert_record
     from aletheia.learning.models import LearningContributionVerdict
@@ -72,6 +84,7 @@ def test_authorized_numeric_treatment_records_before_after():
         baseline=50.0, treatment=40.0, consumer="paper_ranker",
         consumer_stage="score",
     )
+    _enable_legacy_paper_authority(monkeypatch, common["path_id"])
     shadow = apply_numeric_treatment(candidate_key="candidate:seed", **common)
     db = get_db()
     was_in_tx = db.in_transaction
@@ -149,7 +162,7 @@ def test_authorized_numeric_treatment_records_before_after():
         status="implemented",
     ),
 )
-def test_negative_verdict_refreezes_to_static_baseline():
+def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
     from aletheia.learning.experiments import apply_numeric_treatment, stable_assignment
     from aletheia.learning.ledger import get_record, insert_record
     from aletheia.learning.models import LearningContributionVerdict, LearningExperiment
@@ -163,6 +176,7 @@ def test_negative_verdict_refreezes_to_static_baseline():
         baseline=70.0, treatment=77.0, consumer="universe_allocator",
         consumer_stage="opportunity_score",
     )
+    _enable_legacy_paper_authority(monkeypatch, kwargs["path_id"])
     created = apply_numeric_treatment(candidate_key="seed", **kwargs)
     db = get_db()
     was_in_tx = db.in_transaction

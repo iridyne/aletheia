@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 from uuid import uuid4
@@ -11,10 +10,9 @@ from uuid import uuid4
 from aletheia.config.loader import load_config
 from aletheia.learning.hypotheses import hypothesis_fingerprint
 from aletheia.learning.ledger import (
+    get_record,
     get_hypothesis_by_fingerprint,
     get_exposure_by_dedup_key,
-    get_latest_verdict_for_cohort,
-    linked_settled_exposure_counts,
     get_open_experiment,
     insert_experiment,
     insert_exposure,
@@ -92,36 +90,14 @@ def _ensure_experiment(
 
 
 def _verdict_authorizes(experiment: LearningExperiment, policy_epoch: str) -> bool:
-    if experiment.status != "active" or not experiment.stage.startswith("paper"):
+    """Compatibility shim for callers; all authority lives in one resolver."""
+    from aletheia.learning.authority import resolve_learning_authority
+    hypothesis = get_record("learning_hypotheses", experiment.hypothesis_id)
+    if hypothesis is None:
         return False
-    # P0-4: only a verdict computed under the EXACT current cohort (this experiment,
-    # this policy epoch, this stage) may authorize. A stale verdict from a prior epoch
-    # or stage is invisible here — it cannot silently re-grant authority after config /
-    # code (epoch) or lifecycle stage changed.
-    verdict = get_latest_verdict_for_cohort(
-        experiment.experiment_id, policy_epoch=policy_epoch, stage=experiment.stage,
-    )
-    if not verdict or verdict.get("verdict") != "promote":
-        return False
-    if min(int(verdict.get("unique_treatment_n") or 0), int(verdict.get("unique_control_n") or 0)) < experiment.min_samples_per_arm:
-        return False
-    linked = linked_settled_exposure_counts(
-        experiment.experiment_id, policy_epoch=policy_epoch,
-    )
-    if min(linked["treatment"], linked["control"]) < experiment.min_samples_per_arm:
-        return False
-    try:
-        start = datetime.fromisoformat(str(verdict["window_start"]).replace("Z", "+00:00"))
-        end = datetime.fromisoformat(str(verdict["window_end"]).replace("Z", "+00:00"))
-    except (KeyError, TypeError, ValueError):
-        return False
-    if (end - start).days < experiment.min_market_days:
-        return False
-    try:
-        harm = json.loads(verdict.get("harm_metrics_json") or "{}")
-    except (TypeError, ValueError):
-        return False
-    return not bool(harm.get("breached"))
+    return resolve_learning_authority(
+        str(hypothesis.get("path_id") or ""), experiment, policy_epoch,
+    ).authorized
 
 
 def _code_fingerprint() -> str | None:
@@ -149,6 +125,10 @@ def _policy_epoch(path_id: str) -> str:
             # restart), so a verdict from an earlier build cannot authorize the new one
             # (P0-4 requires an exact epoch match). None in tests → stable.
             "code_commit": _code_fingerprint(),
+            # Lifecycle and paper-influence settings change the effective
+            # consumer policy, so a successor cannot inherit authority across
+            # a settings change.
+            "learning": cfg.learning.model_dump(),
         }
         # P1-1: universe scoring/allocation config materially changes which candidates
         # win — it is path-relevant behavior the epoch previously ignored, so a change
@@ -194,7 +174,9 @@ def apply_numeric_treatment(
     )
     assignment = stable_assignment(experiment, candidate_key)
     policy_epoch = _policy_epoch(path_id)
-    authorized = _verdict_authorizes(experiment, policy_epoch)
+    from aletheia.learning.authority import resolve_learning_authority
+    authority = resolve_learning_authority(path_id, experiment, policy_epoch)
+    authorized = authority.authorized
     applied = authorized and assignment == "treatment"
     value = float(treatment if applied else baseline)
     stage = experiment.stage if authorized else "shadow_refrozen"
@@ -216,10 +198,11 @@ def apply_numeric_treatment(
             **(manifest or {}),
             "proposed_value": float(treatment),
             "authority_applied": applied,
-            "authority_reason": "prospective_verdict" if authorized else "refrozen_without_prospective_verdict",
+            "authority_reason": authority.reason,
         }, sort_keys=True),
         outcome_candidate_key=outcome_candidate_key,
         outcome_source="fixed_horizon_candidate" if outcome_candidate_key else None,
+        experiment_stage=experiment.stage,
         concurrent_policy_epoch=policy_epoch,
         # P1-1: attribute the exposure to the running build so evidence produced by
         # different code versions is distinguishable (the fingerprint is also folded
@@ -233,6 +216,6 @@ def apply_numeric_treatment(
             exposure = LearningExposure(**stored)
     return InfluenceDecision(
         value, applied, assignment,
-        "prospective_verdict" if applied else "baseline_refreeze",
+        authority.reason if applied else f"baseline:{authority.reason}",
         hypothesis.hypothesis_id, experiment.experiment_id, exposure.exposure_id,
     )

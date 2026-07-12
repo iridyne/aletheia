@@ -1587,6 +1587,12 @@ _OUTCOME_INTEGRITY_DDL = (
 )
 
 _ADDITIVE_COLUMNS = [
+    # AT-02: immutable stage boundaries around the AT-01 measurement ledger.
+    ("parent_experiment_id", "learning_experiments", "TEXT"),
+    ("activation_verdict_id", "learning_experiments", "TEXT"),
+    ("stage_generation", "learning_experiments", "INTEGER NOT NULL DEFAULT 0"),
+    ("experiment_stage", "learning_exposures", "TEXT"),
+    ("stage", "learning_contribution_verdicts", "TEXT"),
     ("leverage", "trade_proposals", "INTEGER"),
     ("market_type", "orderbook_snapshots", "TEXT NOT NULL DEFAULT 'unknown'"),
     # A13: link signal_pending pi_decisions back to their source opportunity
@@ -2530,6 +2536,9 @@ CREATE TABLE IF NOT EXISTS learning_experiments (
     promotion_gate_json TEXT NOT NULL DEFAULT '{}',
     harm_gate_json TEXT NOT NULL DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'registered',
+    parent_experiment_id TEXT REFERENCES learning_experiments(experiment_id),
+    activation_verdict_id TEXT REFERENCES learning_contribution_verdicts(verdict_id),
+    stage_generation INTEGER NOT NULL DEFAULT 0,
     started_at TEXT,
     ended_at TEXT,
     created_at TEXT NOT NULL
@@ -2561,6 +2570,7 @@ CREATE TABLE IF NOT EXISTS learning_exposures (
     outcome_candidate_key TEXT,
     outcome_source TEXT,
     outcome_contract_version TEXT NOT NULL,
+    experiment_stage TEXT,
     code_commit TEXT,
     policy_version TEXT,
     concurrent_policy_epoch TEXT NOT NULL,
@@ -2575,6 +2585,7 @@ CREATE TABLE IF NOT EXISTS learning_contribution_verdicts (
     verdict_id TEXT PRIMARY KEY,
     experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id),
     hypothesis_id TEXT NOT NULL REFERENCES learning_hypotheses(hypothesis_id),
+    stage TEXT,
     window_start TEXT NOT NULL,
     window_end TEXT NOT NULL,
     unique_treatment_n INTEGER NOT NULL,
@@ -2591,6 +2602,23 @@ CREATE TABLE IF NOT EXISTS learning_contribution_verdicts (
 );
 CREATE INDEX IF NOT EXISTS idx_learning_verdicts_experiment
     ON learning_contribution_verdicts(experiment_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS learning_lifecycle_events (
+    event_id TEXT PRIMARY KEY,
+    dedup_key TEXT NOT NULL UNIQUE,
+    hypothesis_id TEXT NOT NULL REFERENCES learning_hypotheses(hypothesis_id),
+    experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id),
+    successor_experiment_id TEXT,
+    verdict_id TEXT REFERENCES learning_contribution_verdicts(verdict_id),
+    from_stage TEXT NOT NULL,
+    to_stage TEXT,
+    action TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    policy_epoch TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_learning_lifecycle_experiment
+    ON learning_lifecycle_events(experiment_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS learning_job_health (
     job_id TEXT PRIMARY KEY,

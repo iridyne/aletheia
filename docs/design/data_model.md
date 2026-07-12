@@ -74,21 +74,22 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `news_items` | External news signals | source, headline, sentiment, symbols (JSON) |
 | `market_ohlcv` | Historical candlestick data; rows are isolated by full instrument identity | exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume |
 
-### C-bis. Measured Learning Ledger (6 tables)
+### C-bis. Measured Learning Ledger (7 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `learning_hypotheses` | Canonical scoped Learning hypothesis | hypothesis_id, fingerprint, path_id, scope/action JSON, status, version |
-| `learning_experiments` | Registered shadow/paper experiment | experiment_id, hypothesis_id, assignment salt, gates, status |
-| `learning_exposures` | Immutable record of one actual/control influence; ranker score components and persona sizing store baseline/proposed/actual values here | dedup_key, assignment, entity ids, before/after/manifest, outcome_candidate_key, policy epoch |
-| `learning_contribution_verdicts` | Append-only measured verdict window | unique arm counts, delta/interval, harm metrics, verdict |
+| `learning_experiments` | One isolated shadow or paper stage | experiment_id, hypothesis_id, parent experiment, activation verdict, stage generation, assignment salt, allocation, status |
+| `learning_exposures` | Immutable record of one actual/control influence; ranker score components and persona sizing store baseline/proposed/actual values here | dedup_key, assignment, entity ids, before/after/manifest, outcome_candidate_key, experiment stage, policy epoch |
+| `learning_contribution_verdicts` | Append-only measured verdict window | stage, unique arm counts, delta/interval, harm metrics, measurement verdict |
+| `learning_lifecycle_events` | Durable transition or blocked-promotion audit record | event_id, dedup key, experiment/successor/verdict ids, from/to stage, action, reason, policy epoch |
 | `learning_job_health` | Durable expected-run/backlog health | schedule, watermarks, failures, status |
 | `learning_policy_epochs` | Non-sensitive effective-policy attribution boundary | effective-values hash/JSON, affected paths, safety flag, interval |
 
 These tables were additive/observational in Phase 1. Current universe, factor, ranker, and sizing
-consumers now write refrozen prospective exposures; only an active paper experiment with enough
-linked cost-aware outcomes and a positive verdict may apply a treatment. The ledger grants no
-risk, execution, credential, or live authority.
+consumers now write refrozen prospective exposures; only an active, stage-isolated paper
+experiment with enough linked cost-aware outcomes and separately validated lifecycle authority may
+apply a treatment. The ledger grants no risk, execution, credential, or live authority.
 
 ### D. Market Data Collection (11 tables)
 

@@ -907,6 +907,21 @@ class ControllerConfig(BaseModel):
     max_step: float = 0.10
 
 
+class LearningConfig(BaseModel):
+    """One default-closed configuration surface for paper Learning experiments."""
+
+    # Measurement is safe and remains available even if every authority gate is off.
+    contribution_evaluation_enabled: bool = True
+    # All behavior-changing controls default off; an empty allowlist is an
+    # additional independent fail-closed gate.
+    lifecycle_automation_enabled: bool = False
+    paper_influence_enabled: bool = False
+    paper_influence_paths: list[str] = Field(default_factory=list)
+    auto_refreeze: bool = True
+    evaluation_interval_minutes: int = Field(default=60, ge=15, le=1_440)
+    paper_active_allocation_pct: float = Field(default=0.80, gt=0.0, le=0.90)
+
+
 class AletheiaConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
@@ -935,3 +950,4 @@ class AletheiaConfig(BaseModel):
     news: NewsConfig = Field(default_factory=NewsConfig)
     serenity: SerenityConfig = Field(default_factory=SerenityConfig)
     controller: ControllerConfig = Field(default_factory=ControllerConfig)
+    learning: LearningConfig = Field(default_factory=LearningConfig)

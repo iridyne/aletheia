@@ -50,6 +50,9 @@ class LearningExperiment(BaseModel):
     promotion_gate_json: str = "{}"
     harm_gate_json: str = "{}"
     status: str = "registered"
+    parent_experiment_id: str | None = None
+    activation_verdict_id: str | None = None
+    stage_generation: int = 0
     started_at: str | None = None
     ended_at: str | None = None
     created_at: str = Field(default_factory=_now)
@@ -77,6 +80,7 @@ class LearningExposure(BaseModel):
     outcome_candidate_key: str | None = None
     outcome_source: str | None = None
     outcome_contract_version: str = "v1"
+    experiment_stage: str | None = None
     code_commit: str | None = None
     policy_version: str | None = None
     concurrent_policy_epoch: str
@@ -87,6 +91,7 @@ class LearningContributionVerdict(BaseModel):
     verdict_id: str = Field(default_factory=_id)
     experiment_id: str
     hypothesis_id: str
+    stage: str | None = None
     window_start: str
     window_end: str
     unique_treatment_n: int
@@ -110,6 +115,21 @@ class LearningContributionVerdict(BaseModel):
     outcome_contract_version: str = "v1"
     metric_version: str | None = None
     code_commit: str | None = None
+
+
+class LearningLifecycleEvent(BaseModel):
+    event_id: str = Field(default_factory=_id)
+    dedup_key: str
+    hypothesis_id: str
+    experiment_id: str
+    successor_experiment_id: str | None = None
+    verdict_id: str | None = None
+    from_stage: str
+    to_stage: str | None = None
+    action: str
+    reason: str
+    policy_epoch: str | None = None
+    created_at: str = Field(default_factory=_now)
 
 
 class LearningJobHealth(BaseModel):
@@ -139,4 +159,3 @@ class LearningPolicyEpoch(BaseModel):
     started_at: str
     ended_at: str | None = None
     created_at: str = Field(default_factory=_now)
-

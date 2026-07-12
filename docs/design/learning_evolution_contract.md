@@ -277,6 +277,36 @@ horizon, and outcome-contract version; links only the exact registered candidate
 persists deterministic confidence, harm, and exclusion details. Its `positive` result is not an
 authority promotion signal, so it cannot enable a treatment or alter a multiplier.
 
+### 7.1 Current paper lifecycle
+
+The lifecycle controller is a separate, default-closed consumer of that measurement. It never
+rewrites a measurement verdict into `promote` or any other authority word. For the supported
+`universe_family_calibration` path, the mapping is fixed:
+
+| Measurement result | Lifecycle response |
+| --- | --- |
+| `positive` | recommend one-stage promotion |
+| `neutral` / `insufficient_data` | hold the current stage |
+| `negative` | refreeze the current experiment |
+| `invalid` | mark the current experiment invalid and refreeze its hypothesis |
+
+Stages are isolated experiments, not a mutable allocation counter:
+`shadow` → `paper_10` → `paper_25` → `paper_50` → `paper_active`.
+Each promotion closes the predecessor, creates one successor with a new assignment salt, and
+requires fresh evidence in that successor before another promotion. Paper treatment is capped at
+90%; the final-stage default is 80%, leaving a permanent control holdout.
+
+Every applied transition has one durable, deduplicated lifecycle event with the source verdict,
+stage change, reason, effective policy epoch, and successor identity. The event and experiment
+state change commit together; the JSONL audit is appended after that durable commit. Repeating a
+job after restart therefore returns the existing transition instead of creating a second successor.
+
+Measurement remains schedulable even while autonomous behavior is off or paused. The separate
+lifecycle controller is allowed to change paper state only when reconciliation integrity is clear,
+autonomous Learning is enabled, runtime is not paused, lifecycle automation is enabled, paper
+influence is enabled, and the path is explicitly allowlisted. No setting here can grant live,
+execution, risk, or credential authority.
+
 ## 8. Automatic Demotion And Refreeze
 
 Every active artifact is continuously evaluated on a rolling window and an immutable
@@ -296,6 +326,11 @@ Automatic response:
 
 Refreeze restores the last known static baseline. It must not delete hypotheses,
 exposures, outcomes, or prior policy versions.
+
+For the current paper lifecycle, automatic refreeze is enabled by default but still respects the
+same controller safety gate above. Independently, the authority resolver returns the static
+baseline immediately when it sees a current `negative` or `invalid` measurement, even before a
+later controller run persists the lifecycle state.
 
 ## 9. Consumer Contracts
 
@@ -452,6 +487,9 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B23 | L2b | retrying one exposure dedup key stores one immutable influence record | implemented |
 | LE-V01 | L2b | universe calibration verdict runtime uses exact, prospective, cost-aware treatment/control cohorts | implemented — measurement-only evaluator |
 | LE-V02 | L2c | deterministic verdict storage cannot alter Learning authority or experiment lifecycle | implemented — evaluator writes only its idempotent measurement record |
+| LE-L01 | L2b | measurement verdicts map to distinct lifecycle actions without changing their vocabulary | implemented |
+| LE-L02 | L2c | stage transitions are transactional, idempotent, isolated, and default-closed for paper influence | implemented |
+| LE-L03 | L2c | measurement and lifecycle control use separate restart-safe single-instance schedules | implemented |
 | LE-C01 | L2c | no promotion without unique samples, time span, and outcome links | implemented |
 | LE-C02 | L2c | negative/unsafe holdout automatically demotes or refreezes | implemented |
 | LE-C03 | L2c | refreeze restores static baseline without deleting evidence | implemented |

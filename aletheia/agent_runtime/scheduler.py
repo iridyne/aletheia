@@ -41,6 +41,8 @@ _ESSENTIAL_JOBS: set[str] = {
     "tpsl_fill_check",
     "outcome_settler",
     "shadow_resolver",
+    "learning_contribution_evaluator",
+    "learning_measurement_startup_catchup",
 }
 
 # Track which jobs were selectively paused (for targeted resume).
@@ -80,6 +82,8 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "lesson_reviewer": 300.0,
     "shadow_resolver": 60.0,
     "outcome_settler": 120.0,
+    "learning_contribution_evaluator": 60.0,
+    "learning_lifecycle_controller": 60.0,
     # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
     # asyncio.run() internally. Without a bound, a stuck exchange session can
     # block the scheduler pool for the full IOCP drain (~255s on Windows) and
@@ -771,6 +775,27 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("outcome_settler", _run_outcome_settler), "interval", minutes=10,
         id="outcome_settler", misfire_grace_time=120, max_instances=1, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=120),
+    )
+    # AT-01 evaluator is measurement-only and remains available while autonomous
+    # Learning is disabled or layered pause is active.  Lifecycle control is a
+    # separate autonomous job and is stopped by the shared Learning gate.
+    _learning_interval = max(15, int(cfg.learning.evaluation_interval_minutes))
+    _scheduler.add_job(
+        _guarded("learning_contribution_evaluator", _run_learning_contribution_evaluator),
+        "interval", minutes=_learning_interval, id="learning_contribution_evaluator",
+        misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
+        next_run_time=datetime.now() + timedelta(minutes=2),
+    )
+    _scheduler.add_job(
+        _guarded("learning_measurement_startup_catchup", _run_measurement_startup_catchup),
+        "date", run_date=datetime.now() + timedelta(minutes=3),
+        id="learning_measurement_startup_catchup", misfire_grace_time=None, executor="io",
+    )
+    _scheduler.add_job(
+        _guarded("learning_lifecycle_controller", _run_learning_lifecycle_controller),
+        "interval", minutes=_learning_interval, id="learning_lifecycle_controller",
+        misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
+        next_run_time=datetime.now() + timedelta(minutes=4),
     )
     # Market data collectors (microstructure/derivatives/macro and optional feeds).
     # Single job, runs every 2 min, uses internal phase counter to control
@@ -1774,6 +1799,36 @@ def _run_learning_startup_catchup():
     except Exception as e:
         logger.warning("learning_startup_catchup failed: %s", e)
         _record_job_failure("learning_startup_catchup", str(e))
+
+
+def _run_learning_contribution_evaluator():
+    try:
+        from aletheia.learning.lifecycle import run_contribution_evaluator
+        return _run_sync_with_timeout("learning_contribution_evaluator", run_contribution_evaluator)
+    except Exception as e:
+        logger.warning("learning_contribution_evaluator failed: %s", e)
+        _record_job_failure("learning_contribution_evaluator", str(e))
+
+
+def _run_learning_lifecycle_controller():
+    try:
+        from aletheia.learning.lifecycle import run_lifecycle_controller
+        return _run_sync_with_timeout("learning_lifecycle_controller", run_lifecycle_controller)
+    except Exception as e:
+        logger.warning("learning_lifecycle_controller failed: %s", e)
+        _record_job_failure("learning_lifecycle_controller", str(e))
+
+
+def _run_measurement_startup_catchup():
+    """Recover at most one current measurement window, independent of autonomy."""
+    try:
+        from aletheia.learning.control import measurement_catchup_due
+        if measurement_catchup_due("learning_contribution_evaluator"):
+            return _run_learning_contribution_evaluator()
+        return {"status": "fresh"}
+    except Exception as e:
+        logger.warning("learning_measurement_startup_catchup failed: %s", e)
+        _record_job_failure("learning_measurement_startup_catchup", str(e))
 
 
 def _cleanup_stale_scanner_runs():

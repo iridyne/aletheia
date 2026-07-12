@@ -154,6 +154,39 @@ async def test_universe_settings_are_visible_and_persisted(client):
 
 
 @pytest.mark.anyio
+async def test_learning_lifecycle_defaults_are_visible_and_paper_influence_stays_closed(client):
+    response = await client.get("/api/settings")
+    assert response.status_code == 200
+    learning = response.json()["learning"]
+    assert learning == {
+        "contribution_evaluation_enabled": True,
+        "lifecycle_automation_enabled": False,
+        "paper_influence_enabled": False,
+        "paper_influence_paths": [],
+        "auto_refreeze": True,
+        "evaluation_interval_minutes": 60,
+        "paper_active_allocation_pct": 0.80,
+    }
+
+
+@pytest.mark.anyio
+async def test_learning_settings_persist_and_cap_active_paper_allocation(client):
+    response = await client.post("/api/settings/learning", json={
+        "lifecycle_automation_enabled": True,
+        "paper_influence_enabled": True,
+        "paper_influence_paths": [" universe_family_calibration ", "universe_family_calibration"],
+        "paper_active_allocation_pct": 0.80,
+    })
+    assert response.status_code == 200
+    learning = response.json()["learning"]
+    assert learning["paper_influence_paths"] == ["universe_family_calibration"]
+    assert learning["paper_active_allocation_pct"] == 0.80
+
+    rejected = await client.post("/api/settings/learning", json={"paper_active_allocation_pct": 0.91})
+    assert rejected.status_code == 400
+
+
+@pytest.mark.anyio
 async def test_settings_response_covers_sanitized_config_schema(client):
     """Every non-secret config.yaml key should be visible on Settings."""
     resp = await client.get("/api/settings")

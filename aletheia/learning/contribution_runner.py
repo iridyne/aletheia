@@ -63,6 +63,7 @@ def _build_verdict(
         verdict_id=verdict_id,
         experiment_id=cohort.key.experiment_id,
         hypothesis_id=cohort.key.hypothesis_id,
+        stage=cohort.experiment.stage,
         window_start=window_start,
         window_end=window_end,
         unique_treatment_n=len(cohort.treatment_samples),
