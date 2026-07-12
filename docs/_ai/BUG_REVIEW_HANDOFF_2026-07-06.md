@@ -17,7 +17,7 @@
 
 - Record every finding locally. Do not keep important discoveries only in chat.
 - Move toward full project coverage. Do not repeatedly re-check already covered areas.
-- Use root `discussion.md` as a high-value reference/gold standard when product intent is unclear.
+- Use [Product Direction](../product/DIRECTION.md) as the high-value reference for durable product intent; use the relevant L2 contract for implementation detail.
 - New bug records should be short, Markdown-structured, and fix-oriented:
   - title
   - domain
@@ -37,7 +37,7 @@
 ## Files To Read First
 
 - `AGENTS.md`
-- `discussion.md`
+- `docs/product/DIRECTION.md`
 - `docs/_ai/FULL_BUG_REVIEW_2026-07-06.md`
 - `docs/_ai/BUG_REVIEW_HANDOFF_2026-07-06.md`
 - Relevant SDD contract docs under `docs/design/`
@@ -200,4 +200,3 @@ uv run pytest tests/test_frontend_navigation_ia.py -q
 ```
 
 For any focused fix, run the new focused regression first, then the closest existing test file. Do not claim a trust/risk/execution/secrets/live fix is complete without test evidence.
-

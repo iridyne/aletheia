@@ -1,11 +1,16 @@
 # Discussion Final Status - 2026-07-03
 
-来源: `discussion.md`, `docs/_ai/DISCUSSION_ACTION_PLAN.md`, and the
+来源: 2026-07-03 owner 口述（现见 [Product Direction](../product/DIRECTION.md)）、`docs/_ai/DISCUSSION_ACTION_PLAN.md`, and the
 `integration/discussion-2026-07-03` branch.
+
+> **Historical snapshot.** It describes a July 3 integration state, not the
+> current machine or current backlog. Read Product Direction and the relevant
+> issue ledger for current intent and open work; use `aletheia doctor` for
+> machine-local facts.
 
 ## Short Answer
 
-At the start of this continuation, not every issue from `discussion.md` had been
+At the start of this continuation, not every issue from the owner direction had been
 fixed. The remaining work has now been split into dedicated branches and either
 fixed, audited with evidence, or isolated as an owner decision that should not be
 silently changed by an agent.

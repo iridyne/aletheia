@@ -1,6 +1,6 @@
 """Focused regression for #97 — System Operator naming registry.
 
-`discussion.md` renamed "PI Agent" → "System Operator". The underlying
+The Product Direction renamed "PI Agent" → "System Operator". The underlying
 config field, REST path, and audit event names are LEGACY (`pi_daemon`) and
 preserved for backwards compat, but this test locks in:
 

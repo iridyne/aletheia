@@ -1,15 +1,19 @@
 # Discussion Remaining Plan 2026-07-03
 
-来源: `discussion.md`, `docs/_ai/DISCUSSION_ACTION_PLAN.md`, 以及已验证的
+来源: 2026-07-03 owner 口述（现见 [Product Direction](../product/DIRECTION.md)）、`docs/_ai/DISCUSSION_ACTION_PLAN.md`, 以及已验证的
 `integration/discussion-2026-07-03` 集成分支。
 
-结论: `discussion.md` 中的问题尚未全部修复。上一轮已经完成并集成验证了 12 个可核验
+> **Historical plan.** Its branch names and status labels are retained as
+> provenance only. New work must be selected through `workflow bootstrap` and
+> reconciled with the current L2 contract and issue ledger.
+
+结论: 当时 owner direction 中的问题尚未全部修复。上一轮已经完成并集成验证了 12 个可核验
 落地点, 但还有一批属于「部分完成」「尚未实测」「需要 owner 决策」的问题。本文作为
 下一轮目标和执行计划。
 
 ## 1. 总体状态
 
-| 编号 | discussion 问题 | 当前状态 | 原因 |
+| 编号 | 当时的方向问题 | 当前状态 | 原因 |
 |---|---|---|---|
 | D01 | 顶栏 BTC/ETH/SOL 价格横线 | 已修 | 改为每个 major 各取最新 1 条, 不再受全市场最近 20 条窗口挤出 |
 | D02 | 页面切换缺少加载反馈 | 部分完成 | 已有全局 fetch progress bar + stale cache; 尚未做端到端页面切换性能采样 |

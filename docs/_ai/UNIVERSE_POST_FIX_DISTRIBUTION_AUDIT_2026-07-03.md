@@ -1,6 +1,6 @@
 # Universe Post-Fix Distribution Audit 2026-07-03
 
-来源: `discussion.md` D03, `docs/_ai/DISCUSSION_REMAINING_PLAN_2026-07-03.md` P1-2。
+来源: [Product Direction §3](../product/DIRECTION.md#3-learning-is-an-evidence-pipeline-not-a-page) 的 Universe diversity 要求，`docs/_ai/DISCUSSION_REMAINING_PLAN_2026-07-03.md` P1-2。
 
 边界: 本次只做 Universe 分布复测。测试使用隔离 SQLite 临时库; 生产 `data/app.db` 只读采样。
 未写生产 DB, 未改风险、执行、live、凭证或下单路径。

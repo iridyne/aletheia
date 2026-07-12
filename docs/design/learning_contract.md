@@ -2,7 +2,7 @@
 
 > Contract level: L2. This file is normative for the Learning subsystem.
 > Last aligned: 2026-07-12 Learning authority hardening.
-> Reference intent: root `discussion.md` Learning section.
+> Reference intent: [Product Direction §3](../product/DIRECTION.md#3-learning-is-an-evidence-pipeline-not-a-page).
 > Target extension: `learning_evolution_contract.md` defines the measured
 > self-improvement lifecycle and tracks each implemented/remaining claim.
 

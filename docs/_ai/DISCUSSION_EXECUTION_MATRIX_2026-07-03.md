@@ -1,6 +1,10 @@
 # Discussion Execution Matrix 2026-07-03
 
-来源: `discussion.md` owner 口述 + `docs/_ai/DISCUSSION_ACTION_PLAN.md` 初版拆解。
+来源: 2026-07-03 owner 口述（现已整理至 [Product Direction](../product/DIRECTION.md)）+
+`docs/_ai/DISCUSSION_ACTION_PLAN.md` 初版拆解。
+
+> **Historical execution matrix.** It records the July 3 branches and evidence;
+> it must not be used as a statement of current deployment or backlog status.
 
 目标: 把 owner 指出的 10 类问题落到可验证的分支、测试和量化指标上。当前策略是
 MVP trust hardening, 只补断点, 不扩张交易权限、不新建交易通道、不绕过 Execution

@@ -812,7 +812,7 @@ class PiDaemonConfig(BaseModel):
 
     #97 note (2026-07-07): the class name and the top-level config field
     `pi_daemon` are LEGACY — the subsystem is the System Operator daemon
-    (per discussion.md renaming, "PI Agent" → "System Operator"). The
+    (per Product Direction naming, "PI Agent" → "System Operator"). The
     legacy `pi_daemon` field name is preserved as a backwards-compatible
     key so existing config.yaml files, audit trails, and API contracts
     keep working. New UI copy and prose docs must use "System Operator

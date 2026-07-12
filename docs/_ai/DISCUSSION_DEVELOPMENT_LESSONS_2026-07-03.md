@@ -1,6 +1,7 @@
 # Discussion Batch Development Lessons - 2026-07-03
 
-本文沉淀自 `discussion.md` 这一轮大批量修复。目标不是复述每个提交,而是给后续 AI
+本文沉淀自 2026-07-03 owner direction 这一轮大批量修复。其长期取舍已整理至
+[Product Direction](../product/DIRECTION.md)。目标不是复述每个提交,而是给后续 AI
 继续开发时使用的操作经验,避免重复踩坑、重复测量、重复开分支。
 
 ## 1. 先把长问题拆成可验证清单
@@ -9,7 +10,7 @@ owner 的长文通常不是一个任务,而是一组相关问题。不要直接�
 
 推荐流程:
 
-1. 读 `discussion.md` 和 `docs/_ai/DISCUSSION_ACTION_PLAN.md`。
+1. 读 [Product Direction](../product/DIRECTION.md) 和 `docs/_ai/DISCUSSION_ACTION_PLAN.md`。
 2. 拆成稳定编号,例如 D01-D15。
 3. 每一项写清楚:
    - 现象是什么。
@@ -350,4 +351,3 @@ owner 曾提出是否把 Python 后端迁到 TypeScript。当前结论是不迁�
 - 保持 `reduce_size` advisory-only,除非 owner 重新批准硬风控。
 - 观察 Serenity 真交易关闭后的 post-mortem / feedback 闭环。
 - 如继续优化前端延迟,先复测 `/api/operator/recommendations` post-restart p50/p90,再动下一个慢点。
-

@@ -1,9 +1,9 @@
 # Aletheia Trading OS — Product Requirements Document
 
-> Last updated: 2026-06-21
+> Last updated: 2026-07-12
 > Status: Living document — authoritative source for "what we're building and why"
 > 顶层愿景（赌什么 / 为谁 / 什么叫赢）见 **[VISION.md](VISION.md)**；本文件承接它，定义范围与边界。
-> Companion docs: [VISION.md](VISION.md) · [METRICS.md](METRICS.md) · [PHASE_GATES.md](PHASE_GATES.md)
+> Companion docs: [VISION.md](VISION.md) · [DIRECTION.md](DIRECTION.md) · [METRICS.md](METRICS.md) · [PHASE_GATES.md](PHASE_GATES.md)
 
 ---
 
@@ -11,7 +11,7 @@
 
 **一句话**：Aletheia 是一个本地优先的 AI 原生加密货币交易操作系统，让单人交易者拥有机构级的研究、决策、执行和学习能力。
 
-**展开**：Aletheia 不是一个信号机器人，也不是一个量化回测平台。它是一个完整的交易 OS——从市场感知、信号发现、策略假设生成、纸上验证、风控把关到最终执行，全流程由 AI agent 编排驱动。人类设定边界（风控限制、可交易资产、资金上限、是否允许实盘），AI 在这些边界内自主研究、学习和交易。
+**展开**：Aletheia 不是一个信号机器人，也不是一个量化回测平台。它是一个完整的交易 OS——从市场感知、信号发现、System Operator 判断、纸上验证、风控把关到最终执行，全流程由 AI agent 编排驱动。人类设定边界（风控限制、可交易资产、资金上限、是否允许实盘），AI 在这些边界内自主研究、学习和交易。
 
 **哲学内核**：Aletheia（古希腊语"真理/揭示"）——系统必须使每一笔交易、每一个策略、每一次决策可追溯到证据。不存在黑盒决策。
 
@@ -37,7 +37,7 @@
 | 人无法 24/7 盯盘 | 7 类 scanner agent 持续扫描市场 |
 | 交易决策受情绪/FOMO 驱动 | System Operator 结构化决策（Bull/Bear debate + conviction sizing） |
 | 交易经验不积累 | Knowledge Base + FTS5 检索 + 自动 review + dreaming 整理 |
-| 策略无法系统性验证 | RuleSet DSL + Backtest pipeline + Paper trading 自动评估 |
+| 判断无法被经验纠正 | 有因果链的结果、复盘、知识检索和受控的 Learning 影响；没有可验证贡献就回退中性基线 |
 | 风控依赖自律 | Risk Engine 硬限不可被 agent 绕过 |
 | 无法追踪决策质量 | Confidence calibration + Reasoning feedback loop |
 
@@ -61,7 +61,7 @@
 |------|------|------|
 | 数据采集 | Crypto market data (BTC/ETH/SOL + universe), OHLCV, funding rate, taker ratio | Done |
 | 信号发现 | Market Observer, Scanner chain, Universe forward outcomes | Done |
-| 策略 | RuleSet DSL, Strategy Lifecycle (paper-live), Backtest pipeline | Done |
+| 交易判断 | System Operator 是唯一开仓决策者；历史 strategy records 仅保留归因，不存在可执行 RuleSet/DSL/backtest 引擎 | Done |
 | 决策 | System Operator (sole decision maker), Bull/Bear debate, conviction sizing | Done |
 | 执行 | Paper broker, Bitget demo, Binance testnet, TPSL exchange orders | Done |
 | 风控 | Risk Engine (hard limits), position sizing, correlation risk, daily-loss kill switch | Done |
@@ -85,6 +85,7 @@
 | 功能 | 原因 |
 |------|------|
 | Agent 自动生成可执行 Python 策略代码 | 安全风险不可控 |
+| 重建以 RuleSet/DSL/backtest 为实际交易决策源的策略工厂 | 与当前 agentic 决策路线冲突，且会重新制造名实不符的执行链 |
 | End-to-end RL | 数据不足 + 不透明 |
 | 多用户 SaaS | 违背 local-first 原则 |
 | 高频交易 | 不是目标用户场景 |
@@ -134,8 +135,7 @@
 | Scanner | 市场扫描 agent，产出信号/机会，但不做决策 |
 | Opportunity | Scanner 发现的潜在交易机会（未决策） |
 | Proposal | System Operator 产出的交易提案（待 Risk Engine 审批） |
-| RuleSet | 结构化策略规则（DSL 定义，可回测，可执行） |
-| Strategy Lifecycle | 策略从假设到纸上验证到实盘候选到实盘的晋级路径 |
+| Legacy strategy record | 历史归因记录；不驱动开仓、不包含可执行 RuleSet/DSL 引擎 |
 | Guard Pipeline | 执行前的检查链（Risk Engine 硬限不可绕过） |
 | Kill Switch | 紧急熔断：触发后所有交易活动停止直到人工恢复 |
 | Conviction Sizing | 基于 System Operator confidence 的 fractional Kelly 仓位计算 |
@@ -155,3 +155,4 @@
 - 路线图：[ROADMAP](../status/ROADMAP.md)
 - 阶段门控：[PHASE_GATES](PHASE_GATES.md)
 - 指标定义：[METRICS](METRICS.md)
+- 稳定产品取舍：[Product Direction](DIRECTION.md)

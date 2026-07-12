@@ -5,6 +5,7 @@
 ```
 Layer 1: WHY (产品定义)          — What we're building and why
   └─ product/PRD.md              ← Product requirements, scope, glossary
+  └─ product/DIRECTION.md        ← Durable owner product direction and non-goals
   └─ product/METRICS.md          ← North-star metric + phase KPIs + Go-Live Scorecard
   └─ product/PHASE_GATES.md      ← Pass/fail checklists for each phase gate
 
@@ -74,6 +75,7 @@ Layer 4: WHERE (状态追踪)         — Current progress
 
 **Product definition (Layer 1):**
 - [PRD](product/PRD.md) — what/why/who, functional scope, glossary
+- [Product Direction](product/DIRECTION.md) — durable product choices distilled from owner direction
 - [METRICS](product/METRICS.md) — north-star metric, phase KPIs, Go-Live Scorecard criteria
 - [PHASE_GATES](product/PHASE_GATES.md) — pass/fail checklists for each phase
 

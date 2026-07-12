@@ -1,13 +1,13 @@
 # Learning To Operator Context Audit 2026-07-03
 
-来源: `discussion.md` D04/D09。
+来源: [Product Direction §3](../product/DIRECTION.md#3-learning-is-an-evidence-pipeline-not-a-page) 的 Learning / System Operator 要求。
 
 边界: 本次只审计 Learning / Knowledge / analytics 如何进入 System Operator context 和
 prompt。未改 Risk Engine、Execution Gateway、live unlock、凭证、下单语义。
 
 ## 1. 结论
 
-`discussion.md` 中“Learning 不能被 System Operator 消费”的风险在当前集成分支上
+产品方向中“Learning 不能被 System Operator 消费”的风险在当时的集成分支上
 不是完全成立。现有代码已经有三条已测试的 prompt 注入路径:
 
 1. `trade_case_study` -> `trading_context.layer3.lessons` -> `trading_decision` prompt

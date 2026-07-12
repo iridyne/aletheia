@@ -295,7 +295,7 @@ Fixes land on branch `fix/bug-review-fixes` (off `iridite/bug_fix` HEAD), one co
 
 Covered or substantially covered:
 
-- `discussion.md` product direction and gold-standard expectations.
+- [Product Direction](../product/DIRECTION.md) and its linked gold-standard expectations.
 - SDD/spec conformance tests and conformance matrix.
 - API reference and scheduler documentation drift.
 - Settings/config UI coverage.
@@ -680,13 +680,13 @@ Expected direction: explicitly disallow or model borrow/short support per xStock
 
 ## Strategy / Evolve / Product Direction Findings
 
-### 25. Strategy Factory remains despite `discussion.md` direction
+### 25. Strategy Factory remains despite Product Direction
 
 Impact: owner-facing UI suggests a strategy factory/backtest/Optuna capability that the product direction says should be removed or not emphasized.
 
 Evidence:
 
-- `discussion.md` says rule/DSL/backtest path is wrong and should be removed.
+- Product Direction says the RuleSet/DSL/backtest path is wrong and should be removed.
 - `frontend/src/pages/Settings.tsx` still exposes Strategy Factory/backtest/Optuna controls.
 - `aletheia/server/routes/settings.py` still persists `/settings/strategy_factory`.
 - `aletheia/config/schema.py` still defines `StrategyFactoryConfig`.
@@ -919,7 +919,7 @@ Expected direction: move telemetry out of `knowledge_items` or mark archived.
 
 ### 45. Top ticker is not real-time
 
-Impact: `discussion.md` expects BTC/ETH/SOL real-time prices, but UI reads DB snapshots.
+Impact: Product Direction expects BTC/ETH/SOL real-time prices, but UI reads DB snapshots.
 
 Evidence:
 
@@ -1747,12 +1747,11 @@ Expected direction: aggregate by `(symbol, market_type, direction)` and return `
 
 ### 97. System Operator rename is not complete across active config/API/audit contracts
 
-Impact: `discussion.md` explicitly says the old "PI Agent" name has been replaced by "System Operator" and asks that this rename be applied thoroughly. The visible settings label has mostly moved to "System Operator daemon", but active config fields, REST paths, client method names, and audit event/entity names still use `pi_daemon`. That keeps the old mental model alive in the product contract and makes SDD/API docs harder to reason about: new contributors and future tests have to know that "PI daemon" and "System Operator daemon" are the same subsystem.
+Impact: Product Direction explicitly says the old "PI Agent" name has been replaced by "System Operator" and asks that this rename be applied thoroughly. The visible settings label has mostly moved to "System Operator daemon", but active config fields, REST paths, client method names, and audit event/entity names still use `pi_daemon`. That keeps the old mental model alive in the product contract and makes SDD/API docs harder to reason about: new contributors and future tests have to know that "PI daemon" and "System Operator daemon" are the same subsystem.
 
 Evidence:
 
-- `discussion.md:24` says the top-level AI agent was formerly PI Agent and is now System Operator, and asks that the rename be applied more thoroughly across the project.
-- `discussion.md:100` repeats that "PI agent" is now "system operator" and says not to forget the rename.
+- Product Direction §2 says the top-level AI agent was formerly PI Agent and is now System Operator, and asks that the rename be applied more thoroughly across the project.
 - `frontend/src/pages/Settings.tsx:553` shows the user-facing setting as `System Operator daemon (event-driven)`, so the UI copy has partly moved.
 - `frontend/src/pages/Settings.tsx:69` still keeps `pi daemon` as a Settings search alias.
 - `frontend/src/pages/Settings.tsx:341-342` calls `api.updatePiDaemonConfig(...)`.
@@ -1767,11 +1766,11 @@ Expected direction: choose a migration plan that separates external compatibilit
 
 ### 98. Entry-plan gate checks that stop/TP/RR exist, but not that they are on the correct side of entry
 
-Impact: `discussion.md` says every entry must commit entry price, stop loss, take profit, and expected reward:risk before opening, so the trade is a planned bet rather than a gambler-style entry. The current gate enforces field presence for native limit entries, but it does not validate the geometry of the plan. A long proposal can carry a stop above entry and a take-profit below entry, or a short can carry the inverse, and the risk engine still treats the entry plan as complete. Because `trading_decision.py` computes reward:risk with absolute distances, an inverted plan can still produce a positive `risk_reward` and pass the current gate.
+Impact: Product Direction §4 says every entry must commit entry price, stop loss, take profit, and expected reward:risk before opening, so the trade is a planned bet rather than a gambler-style entry. The current gate enforces field presence for native limit entries, but it does not validate the geometry of the plan. A long proposal can carry a stop above entry and a take-profit below entry, or a short can carry the inverse, and the risk engine still treats the entry plan as complete. Because `trading_decision.py` computes reward:risk with absolute distances, an inverted plan can still produce a positive `risk_reward` and pass the current gate.
 
 Evidence:
 
-- `discussion.md:66` says that before entry the system must clearly confirm entry price, take-profit/stop-loss points, and expected reward:risk.
+- Product Direction §4 says that before entry the system must clearly confirm entry price, take-profit/stop-loss points, and expected reward:risk.
 - `aletheia/storage/models.py:122-129` documents the same entry-discipline intent: entry, stop, take-profit, and reward:risk must be committed before the limit order.
 - `aletheia/risk/engine.py:100-117` checks only missing/zero fields for native limit entries: `price`, `stop_price`, `take_profit`, and positive `risk_reward`. It does not check `stop_price < price < take_profit` for long or `take_profit < price < stop_price` for short.
 - `aletheia/agent_shell/trading_decision.py:319-321` computes `_risk_per_unit = abs(price - stop_price)` and `_reward_per_unit = abs(take_profit - price)`, so an upside-down stop/TP pair can still become a positive `risk_reward`.
@@ -2856,8 +2855,8 @@ Expected direction: re-review the lessons that actually influence the system: `s
 - `rg -n "promote_strategy\\(|create_strategy\\(|check_promotion_gates\\(|check_live_limited_gates\\(" aletheia tests frontend/src -S` found the old strategy FSM functions only inside `strategy_lifecycle.py`, while docs mark strategy tables read-only; `operator_recommendations.py` still references deleted `strategy_designer`.
 - Manual read of `frontend/src/api/client.ts`, `aletheia/server/routes/data.py`, and `tests/test_frontend_navigation_ia.py` found stale `setStrategyVenue()` frontend API client code for a deleted backend endpoint, while the IA regression test only scans `.tsx` files.
 - Manual read of `aletheia/analytics/trade_insights.py`, `frontend/src/api/client.ts`, and `frontend/src/charts/TradeInsightsPanel.tsx` found the symbol-direction analytics matrix groups by symbol+direction without `market_type`, returns no `market_type`, and renders the row by stripping `/USDT`.
-- Manual read of `discussion.md`, `frontend/src/pages/Settings.tsx`, `frontend/src/api/client.ts`, `aletheia/server/routes/settings.py`, and `aletheia/config/schema.py` found the System Operator visible label has partly moved, but active config/API/audit contracts still use `pi_daemon`/`PI daemon`.
-- Manual read of `discussion.md`, `storage/models.py`, `risk/engine.py`, `agent_shell/trading_decision.py`, and `spec_pi_decision_chain.py`, plus a temporary `uv run python -` reproduction with risk-decision persistence monkeypatched out, found wrong-side stop/TP geometry passes the native limit entry-plan gate.
+- Manual read of [Product Direction](../product/DIRECTION.md), `frontend/src/pages/Settings.tsx`, `frontend/src/api/client.ts`, `aletheia/server/routes/settings.py`, and `aletheia/config/schema.py` found the System Operator visible label has partly moved, but active config/API/audit contracts still use `pi_daemon`/`PI daemon`.
+- Manual read of [Product Direction](../product/DIRECTION.md), `storage/models.py`, `risk/engine.py`, `agent_shell/trading_decision.py`, and `spec_pi_decision_chain.py`, plus a temporary `uv run python -` reproduction with risk-decision persistence monkeypatched out, found wrong-side stop/TP geometry passes the native limit entry-plan gate.
 - Manual read of `docs/design/learning_contract.md`, `agents/dreaming_agent.py`, `agents/lesson_reviewer.py`, `storage/migrations.py`, `storage/repositories.py`, and `tests/specs/spec_learning_pipeline.py` found `block_scanner` lessons can be promoted using only global/symbol evidence, even though scanner-family outcome data exists.
 - Manual read of `docs/design/serenity_contract.md`, `aletheia/trading/serenity_evidence.py`, `aletheia/agents/research_worker.py`, `aletheia/server/routes/data.py`, `tests/test_serenity_routes.py`, and `tests/specs/spec_serenity_evidence.py`, plus a temporary `uv run python -` scoring reproduction, found manual Serenity opportunity creation can turn a submitted self/proposed `evidence_tier` into authoritative `assessed_tier` without evidence-derived assessment.
 - Manual read of `frontend/src/api/client.ts`, `frontend/src/pages/SerenityLens.tsx`, and `aletheia/server/routes/data.py` found the Serenity opportunity detail UI types and renders proposed `evidence_tier` as "Tier" instead of the authoritative `assessed_tier`.

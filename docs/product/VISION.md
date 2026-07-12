@@ -5,7 +5,7 @@
 > 门控看 [PHASE_GATES](PHASE_GATES.md)，参考系看 [north_star](../references/north_star.md)。
 > 那 5 份是理性骨架（做什么 / 怎么验证）；本文件是骨架里的那口气（为什么值得做）。
 >
-> Last updated: 2026-06-21 · 维护者：Aletheia Dev
+> Last updated: 2026-07-12 · 维护者：Aletheia Dev
 
 ---
 
@@ -35,6 +35,11 @@
 Aletheia 赌的就是这件事：**搭好装置，阿尔法会作为学习的自然产物涌现出来。**
 这同时也是一场实验——如果装置真的产生学习，我们会看到它；如果不产生，
 我们会在押上真金白银**之前**就便宜地知道这条路不通。
+
+这里的“学习装置”不是页面上累积了多少笔记，而是从市场观察、决策、执行结果到下一次
+有因果记录的判断的完整闭环。没有可归因的结果、对照和降级机制，就不能把一段叙述当作
+经验或阿尔法。具体产品取舍见 [Product Direction](DIRECTION.md)，评价轮次的准入仍只看
+[EXPERIMENT_PROTOCOL](EXPERIMENT_PROTOCOL.md)。
 
 ---
 

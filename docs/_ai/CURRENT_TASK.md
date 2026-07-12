@@ -167,7 +167,7 @@ uv run aletheia opportunity audit --view thesis
 扫一眼真值,看上述指标是否仍在累积。改动让某项指标退化时再回头调。代码改动后记得
 `uv run aletheia gateway restart --no-browser`,scheduler 跑的是内存中的旧代码。
 
-**大批量修复前置阅读**:如果下一次任务类似 `discussion.md` 这种跨前端、后端、测试、
+**大批量修复前置阅读**:如果下一次任务是跨前端、后端、测试、
 文档、运行验证的长问题,先读 `docs/_ai/DISCUSSION_DEVELOPMENT_LESSONS_2026-07-03.md`。
 该文档总结了本轮 20+ worktree 批量修复的拆解、量化、性能、pytest、worktree 收尾和
 owner 决策边界经验。
@@ -245,7 +245,7 @@ draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降
 人工审核后才可启用；后续不要把 draft skill 自动接入 risk/execution/live/credential/order
 路径。
 
-**SDD 文档对齐工作线（2026-07-03）**:Learning 范围已按 `discussion.md` 金标准完成
+**SDD 文档对齐工作线（2026-07-03）**:Learning 范围已按 [Product Direction](../product/DIRECTION.md) 完成
 契约/API/spec 注释对齐。下一步才扩展到全项目 SDD 文档漂移扫描；不要把历史 plans/issues
 里的旧问题描述当成当前事实，先对照代码和现行 L2 契约。
 
