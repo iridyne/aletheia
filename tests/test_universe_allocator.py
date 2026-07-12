@@ -235,15 +235,16 @@ def test_get_family_multipliers_insufficient_samples(monkeypatch):
 
 
 def test_get_family_multipliers_above_threshold(monkeypatch):
-    """Family with enough samples and high hit rate gets boost > 1.0 (per-family horizon)."""
+    """Family with enough samples and positive net expectancy gets boost > 1.0."""
     import aletheia.storage.repositories as _repo
     monkeypatch.setattr(_repo, "calibration_stats", lambda: [
-        {"scanner_family": "momentum", "horizon": "4h", "n": 50, "win_count": 35},
+        {"scanner_family": "momentum", "horizon": "4h", "n": 50,
+         "win_count": 35, "avg_return": 1.5, "min_return": -2.0},
     ])
     result = get_family_multipliers()
     assert "momentum" in result
     assert result["momentum"] > 1.0
-    assert result["momentum"] <= 1.40
+    assert result["momentum"] <= 1.10  # bounded to 1.0 + max_step
 
 
 def test_calibration_keeps_direction_and_market_cohorts_separate(monkeypatch):
@@ -252,11 +253,11 @@ def test_calibration_keeps_direction_and_market_cohorts_separate(monkeypatch):
     monkeypatch.setattr(_repo, "calibration_stats", lambda: [
         {
             "scanner_family": "momentum", "direction": "long", "market_type": "spot",
-            "horizon": "4h", "n": 50, "win_count": 38,
+            "horizon": "4h", "n": 50, "win_count": 38, "avg_return": 1.2, "min_return": -1.5,
         },
         {
             "scanner_family": "momentum", "direction": "short", "market_type": "perp",
-            "horizon": "4h", "n": 50, "win_count": 12,
+            "horizon": "4h", "n": 50, "win_count": 12, "avg_return": -1.2, "min_return": -3.0,
         },
     ])
 
@@ -265,6 +266,30 @@ def test_calibration_keeps_direction_and_market_cohorts_separate(monkeypatch):
     assert result["momentum:long:spot"] > 1.0
     assert result["momentum:short:perp"] < 1.0
     assert "momentum" not in result
+
+
+def test_calibration_penalizes_high_winrate_negative_expectancy(monkeypatch):
+    """P1-3: a family that wins often but bleeds money (small wins, big losses → negative
+    net expectancy) is PENALIZED, not boosted. Win rate alone would have boosted it."""
+    import aletheia.storage.repositories as _repo
+    monkeypatch.setattr(_repo, "calibration_stats", lambda: [
+        {"scanner_family": "momentum", "horizon": "4h", "n": 60,
+         "win_count": 48, "avg_return": -0.8, "min_return": -6.0},  # 80% win rate, negative net
+    ])
+    result = get_family_multipliers()
+    assert result["momentum"] < 1.0  # penalized on net expectancy, despite 80% win rate
+
+
+def test_calibration_downside_harm_forbids_boost(monkeypatch):
+    """P1-3: a positive-mean family with a catastrophic worst-case outcome gets no boost."""
+    import aletheia.storage.repositories as _repo
+    monkeypatch.setattr(_repo, "calibration_stats", lambda: [
+        {"scanner_family": "momentum", "horizon": "4h", "n": 60,
+         "win_count": 40, "avg_return": 1.0, "min_return": -30.0},  # positive mean, fat tail
+    ])
+    result = get_family_multipliers()
+    # No boost — the multiplier is neutral (1.0), never > 1.0, because of the tail risk.
+    assert result.get("momentum", 1.0) <= 1.0
 
 
 def test_total_score_uses_exact_calibration_cohort(cfg):

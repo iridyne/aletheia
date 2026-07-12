@@ -12,6 +12,15 @@ logger = logging.getLogger("aletheia.universe.allocator")
 
 # Calibration: minimum samples before adjusting a family's weight
 _MIN_CALIBRATION_SAMPLES = 50
+# P1-3: calibrate on cost-aware NET EXPECTANCY, not win rate. A family can win often
+# yet bleed money (small wins, occasional large losses); win rate would boost it, net
+# expectancy correctly penalizes it.
+#  - shrink the sample mean toward neutral for small n (empirical Bayes)
+#  - REF net return earns the full ±max_step of adjustment
+#  - a catastrophic worst-case single outcome forbids any BOOST (downside harm)
+_CALIBRATION_SHRINKAGE = 50
+_CALIBRATION_REF_NET_PCT = 1.0
+_CALIBRATION_HARM_FLOOR_PCT = -15.0
 # US-13: explore candidates below this total_score are too weak to promote into the
 # executable universe (they would be flagged execution_eligible with a near-zero score).
 _EXPLORE_MIN_SCORE = 20.0
@@ -69,10 +78,20 @@ def get_family_multipliers(max_step: float = 0.10) -> dict[str, float]:
         n = row.get("n", 0)
         if n < _MIN_CALIBRATION_SAMPLES:
             continue
-        hit_rate = row.get("win_count", 0) / n
-        # Linear map: 0.5 → 1.0, 0.65+ → 1+max_step, 0.35- → 1-max_step
-        adjustment = (hit_rate - 0.5) * (max_step / 0.15)
+        avg_net = row.get("avg_return")
+        if avg_net is None:
+            continue
+        # Shrink the cost-aware mean net return toward neutral for small samples, then
+        # map to a bounded score adjustment. A negative net expectancy penalizes the
+        # family even if its hit rate is high.
+        shrunk = float(avg_net) * n / (n + _CALIBRATION_SHRINKAGE)
+        adjustment = shrunk / _CALIBRATION_REF_NET_PCT * max_step
         adjustment = max(-max_step, min(max_step, adjustment))
+        # Downside harm: never BOOST a family whose worst settled outcome was
+        # catastrophic (a fat left tail is not alpha). Penalties are still allowed.
+        min_return = row.get("min_return")
+        if adjustment > 0 and min_return is not None and float(min_return) < _CALIBRATION_HARM_FLOOR_PCT:
+            adjustment = 0.0
         direction = row.get("direction")
         market_type = row.get("market_type")
         key = (
