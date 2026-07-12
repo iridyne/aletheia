@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-038
 title: Fix baseline spec identity and blank-provider status coverage
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -26,9 +26,18 @@ ownership:
   expires_at: '2026-07-12T13:50:25.347000Z'
 base_commit: 362fc0a1573e4e363e5bde98c380ead7647b73b1
 next_action:
-  command_key: specs
-  reason: Record the passing full spec suite after committing the implementation.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 1e87345c2c6b22d5d78336c16f6fe11909a9c33f
+  run_at: '2026-07-12T05:55:52.476554Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-038.md
-updated_at: '2026-07-12T05:54:48.912375Z'
+updated_at: '2026-07-12T05:55:57.016835Z'
