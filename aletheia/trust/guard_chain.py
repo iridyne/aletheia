@@ -16,6 +16,10 @@ Usage:
 
 from __future__ import annotations
 
+from aletheia.analytics.outcome_integrity import (
+    eligible_strategy_outcomes,
+)
+
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -99,9 +103,8 @@ def _guard_recent_loss_streak(proposal: dict) -> GuardResult:
     strategy_id = proposal.get("strategy_id")
     if not strategy_id:
         return GuardResult(guard="recent_loss_streak", verdict="pass", reason="no strategy")
-    positions = repo.list_positions(status="closed")
     strategy_positions = sorted(
-        [p for p in positions if p.get("strategy_id") == strategy_id],
+        [p for p in eligible_strategy_outcomes() if p.get("strategy_id") == strategy_id],
         key=lambda p: p.get("closed_at", ""),
         reverse=True,
     )[:5]

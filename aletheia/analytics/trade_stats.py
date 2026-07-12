@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from aletheia.analytics.outcome_integrity import (
+    OUTCOME_SEMANTICS_VERSION,
+    eligible_strategy_outcomes,
+)
+
 
 def compute_rolling_trade_stats(days: int = 7) -> dict:
     """Compute windowed trade stats for the last N days.
@@ -11,17 +16,15 @@ def compute_rolling_trade_stats(days: int = 7) -> dict:
     Returns: {total_trades, wins, losses, win_rate, total_pnl, avg_pnl,
               best_win, worst_loss, per_symbol: [{symbol, trades, wins, pnl}]}
     """
-    from aletheia.storage.repositories import list_positions
-
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    closed = list_positions(status="closed", limit=500)
-    recent = [p for p in closed if (p.get("closed_at") or "") >= cutoff]
+    recent = eligible_strategy_outcomes(closed_after=cutoff)
 
     if not recent:
         return {
             "days": days, "total_trades": 0, "wins": 0, "losses": 0,
-            "win_rate": 0.0, "total_pnl": 0.0, "avg_pnl": 0.0,
-            "best_win": 0.0, "worst_loss": 0.0, "per_symbol": [],
+            "win_rate": None, "total_pnl": None, "avg_pnl": None,
+            "best_win": None, "worst_loss": None, "per_symbol": [],
+            "outcome_status": "insufficient", "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
         }
 
     wins = [p for p in recent if (p.get("realized_pnl") or 0) > 0]
@@ -52,6 +55,8 @@ def compute_rolling_trade_stats(days: int = 7) -> dict:
         "best_win": round(max(pnls), 2),
         "worst_loss": round(min(pnls), 2),
         "per_symbol": per_symbol,
+        "outcome_status": "available",
+        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
     }
 
 
@@ -104,21 +109,22 @@ def compute_order_stats(days: int = 7) -> dict:
 
 def build_trade_stats() -> dict:
     """Compute closed-position stats grouped by strategy source and scanner family."""
-    from aletheia.storage.sqlite import get_db
     from aletheia.analytics.family_scorecard import compute_family_scorecard
+    from aletheia.storage import repositories as repo
+    import json
 
-    db = get_db()
-
-    rows = db.execute(
-        "SELECT "
-        "  CASE WHEN json_extract(s.parameters, '$.ruleset') IS NOT NULL "
-        "       THEN 'ruleset' ELSE 'opportunity' END AS source_type, "
-        "  p.realized_pnl, p.entry_price, p.quantity, "
-        "  p.opened_at, p.closed_at "
-        "FROM positions p "
-        "LEFT JOIN strategy_records s ON s.id = p.strategy_id "
-        "WHERE p.status = 'closed'"
-    ).fetchall()
+    strategies = {str(row["id"]): row for row in repo.list_strategies(limit=10_000)}
+    rows = []
+    for position in eligible_strategy_outcomes():
+        strategy = strategies.get(str(position.get("strategy_id") or ""), {})
+        try:
+            parameters = json.loads(strategy.get("parameters") or "{}")
+        except (TypeError, ValueError):
+            parameters = {}
+        rows.append({
+            **position,
+            "source_type": "ruleset" if parameters.get("ruleset") is not None else "opportunity",
+        })
 
     source_agg: dict[str, dict] = {}
     all_hold_hours: list[float] = []
@@ -135,8 +141,8 @@ def build_trade_stats() -> dict:
         a = source_agg[src]
         a["trade_count"] += 1
 
-        pnl = r["realized_pnl"] or 0.0
-        notional = (r["entry_price"] or 1.0) * (r["quantity"] or 1.0)
+        pnl = r.get("realized_pnl") or 0.0
+        notional = (r.get("entry_price") or 1.0) * (r.get("quantity") or 1.0)
         pnl_pct = pnl / notional * 100.0 if notional > 0 else 0.0
         total_pnl += pnl
         if pnl > 0:
@@ -146,7 +152,7 @@ def build_trade_stats() -> dict:
         a["total_pnl"] += pnl
         a["total_pnl_pct"] += pnl_pct
 
-        hours = _hold_hours(r["opened_at"], r["closed_at"])
+        hours = _hold_hours(r.get("opened_at"), r.get("closed_at"))
         if hours is not None:
             a["total_hold"] += hours
             all_hold_hours.append(hours)
@@ -158,10 +164,10 @@ def build_trade_stats() -> dict:
         by_source.append({
             "source_type": src,
             "trade_count": tc,
-            "win_rate": round(a["wins"] / tc * 100, 1) if tc else 0.0,
-            "avg_hold_hours": round(a["total_hold"] / tc, 1) if tc else 0.0,
-            "expectancy_pct": round(a["total_pnl_pct"] / tc, 2) if tc else 0.0,
-            "total_pnl": round(a["total_pnl"], 4),
+            "win_rate": round(a["wins"] / tc * 100, 1) if tc else None,
+            "avg_hold_hours": round(a["total_hold"] / tc, 1) if tc else None,
+            "expectancy_pct": round(a["total_pnl_pct"] / tc, 2) if tc else None,
+            "total_pnl": round(a["total_pnl"], 4) if tc else None,
         })
 
     by_family = compute_family_scorecard()
@@ -172,10 +178,10 @@ def build_trade_stats() -> dict:
 
     totals = {
         "trade_count": total_count,
-        "win_rate": round(total_wins / total_count * 100, 1) if total_count else 0.0,
-        "avg_hold_hours": round(sum(all_hold_hours) / len(all_hold_hours), 1) if all_hold_hours else 0.0,
-        "median_hold_hours": round(sorted_hold[len(sorted_hold) // 2], 2) if sorted_hold else 0.0,
-        "total_pnl": round(total_pnl, 4),
+        "win_rate": round(total_wins / total_count * 100, 1) if total_count else None,
+        "avg_hold_hours": round(sum(all_hold_hours) / len(all_hold_hours), 1) if all_hold_hours else None,
+        "median_hold_hours": round(sorted_hold[len(sorted_hold) // 2], 2) if sorted_hold else None,
+        "total_pnl": round(total_pnl, 4) if total_count else None,
     }
 
     return {
@@ -183,6 +189,8 @@ def build_trade_stats() -> dict:
         "by_family": by_family,
         "hold_distribution": hold_distribution,
         "totals": totals,
+        "outcome_status": "available" if total_count else "insufficient",
+        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
     }
 
 
@@ -229,29 +237,19 @@ def build_strategy_kpis() -> dict[str, dict]:
 
     Returns a dict keyed by strategy_id.
     """
-    from aletheia.storage.repositories import get_db
-
-    db = get_db()
-    rows = db.execute(
-        """
-        SELECT strategy_id,
-               COUNT(*) as trade_count,
-               SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-               COALESCE(SUM(realized_pnl), 0) as total_pnl
-        FROM positions
-        WHERE status = 'closed' AND strategy_id IS NOT NULL
-        GROUP BY strategy_id
-        """
-    ).fetchall()
+    grouped: dict[str, list[dict]] = {}
+    for row in eligible_strategy_outcomes():
+        strategy_id = row.get("strategy_id")
+        if strategy_id:
+            grouped.setdefault(str(strategy_id), []).append(row)
     result = {}
-    for r in rows:
-        row = dict(r)
-        tc = row["trade_count"]
-        result[row["strategy_id"]] = {
+    for strategy_id, rows in grouped.items():
+        pnls = [float(row["realized_pnl"]) for row in rows]
+        tc = len(rows)
+        result[strategy_id] = {
             "trade_count": tc,
-            "win_rate": round(row["wins"] / tc * 100, 1) if tc > 0 else 0.0,
-            "total_pnl": round(row["total_pnl"], 2),
+            "win_rate": round(sum(1 for pnl in pnls if pnl > 0) / tc * 100, 1),
+            "total_pnl": round(sum(pnls), 2),
+            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
         }
     return result
-
-

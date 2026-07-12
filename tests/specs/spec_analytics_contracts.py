@@ -209,11 +209,18 @@ def test_scorecard_excludes_synthetic_closes():
     from aletheia.analytics import go_live_scorecard as sc
 
     def _closed(symbol, direction, pnl, reason):
+        synthetic = reason == "reconciled_gone"
         repo.insert_position(Position(
             symbol=symbol, market_type="usdt_futures", direction=direction,
             quantity=1.0, entry_price=100.0, execution_mode="okx_demo",
             status="closed", realized_pnl=pnl, close_reason=reason,
             closed_at="2026-07-01T00:00:00+00:00",
+            close_category="administrative" if synthetic else "strategy",
+            exit_price_source="unavailable" if synthetic else "broker_fill",
+            exit_fill_verified=not synthetic,
+            outcome_eligible=not synthetic,
+            outcome_exclusion_reason="administrative_close" if synthetic else "eligible",
+            outcome_semantics_version="oi-v1",
         ))
 
     # Genuine cohort: 2 wins (+10 each), 1 loss (-5) → WR 66.7%, PF 20/5 = 4.0

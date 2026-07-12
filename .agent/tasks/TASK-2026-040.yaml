@@ -1,0 +1,49 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-040
+title: Migrate outcome behavior consumers
+status: in_progress
+packet_type: standard
+scope:
+  boundary: central eligible-outcome reads for trade statistics, family and strategy
+    KPIs, Operator metrics and recommendations, PI trading context, conviction
+    calibration, System Operator alpha, Learning/promotion/sizing/go-live consumers,
+    stale derived-report rejection, enumerated architecture tests, focused regressions,
+    OI-C02 and matching contracts
+  excluded: Risk daily-loss behavior and limits, raw account/audit/reconciliation
+    readers, API/UI dual reporting, historical row mutation/backfill or artifact
+    archival, close/accounting writes, exchange and signer behavior, live authority,
+    credentials, gateway restart, and runtime database mutation
+intent: Make Operator, Learning, calibration, alpha, and strategy-performance consumers
+  use eligible verified outcomes only, reject stale derived reports, and fail closed
+  on insufficient samples without changing Risk, API/UI, close accounting, exchange,
+  or live behavior.
+acceptance:
+- Every enumerated behavior-changing closed-position consumer uses the central eligible
+  strategy-outcome read model; no consumer keeps a local close-reason blacklist or
+  silently falls back to raw closed rows.
+- Administrative, maintenance, legacy, incomplete, old-version, and incident-window
+  rows do not change trade/family/strategy KPIs, Operator actions, PI context,
+  calibration, alpha, Learning output, promotion, sizing, or go-live judgement.
+- A valid current-semantics verified strategy outcome changes the matching consumer as
+  expected; insufficient eligible evidence is represented as unavailable/insufficient,
+  not zero, neutral-health, or raw fallback.
+- Derived reports that can influence PI or policy carry the current outcome semantics
+  version and generation time; missing, old-version, or stale active reports are
+  rejected before consumption.
+- OI-C02 is GREEN with an enumerated source guard plus synthetic-vs-genuine behavioral
+  regressions; Risk, API/UI, historical remediation, close accounting, exchange, and
+  live behavior remain unchanged.
+ownership:
+  branch: fix/outcome-consumer-migration
+  lease_holder: codex
+  claimed_at: '2026-07-12T06:15:44.602538Z'
+  expires_at: '2026-07-12T18:15:44.602707Z'
+base_commit: 1103074bdb7977aa8c0aa416cf3261f8d2f6e2b7
+next_action:
+  command_key: specs
+  reason: Commit the implemented consumer migration, then register the full executable-rule verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-040.md
+updated_at: '2026-07-12T06:15:44.602718Z'

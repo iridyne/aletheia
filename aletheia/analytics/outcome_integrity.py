@@ -9,6 +9,7 @@ exchange module.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import math
 from typing import Any, Literal
 
@@ -198,6 +199,31 @@ def administrative_closures(**filters) -> list[dict]:
         row for row in raw_account_events(**filters)
         if classify_closure(row).category in {"administrative", "maintenance"}
     ]
+
+
+def is_current_outcome_artifact(
+    artifact: dict[str, Any],
+    *,
+    max_age: timedelta,
+    now: datetime | None = None,
+) -> bool:
+    """Admit a derived report only when its semantics and freshness are provable."""
+    if artifact.get("outcome_semantics_version") != OUTCOME_SEMANTICS_VERSION:
+        return False
+    generated_at = artifact.get("generated_at")
+    if not generated_at:
+        return False
+    try:
+        generated = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if generated.tzinfo is None:
+        generated = generated.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    age = current - generated.astimezone(timezone.utc)
+    return timedelta(0) <= age <= max_age
 
 
 def is_synthetic_close(reason: str | None) -> bool:

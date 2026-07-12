@@ -135,6 +135,7 @@ def test_prior_memo_overturned_by_subsequent_results(tmp_path, monkeypatch):
     gen = (now - timedelta(hours=12)).isoformat()
     memo = {
         "generated_at": gen,
+        "outcome_semantics_version": "oi-v1",
         "valid_until": (now + timedelta(hours=60)).isoformat(),
         "data_window_days": 30, "sample_size": 20,
         "regime_playbook": [
@@ -155,10 +156,13 @@ def test_prior_memo_overturned_by_subsequent_results(tmp_path, monkeypatch):
     for i in range(4):
         conn.execute(
             "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
-            "execution_mode,status,opened_at,realized_pnl,regime_tag) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "execution_mode,status,opened_at,closed_at,realized_pnl,regime_tag,close_reason,"
+            "close_category,exit_price_source,exit_fill_verified,outcome_eligible,"
+            "outcome_exclusion_reason,outcome_semantics_version) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (f"pos{i}", "BTC/USDT", "perp", "long", 1.0, 100.0,
-             "paper_internal", "closed", opened, -5.0, None),
+             "paper_internal", "closed", opened, now.isoformat(), -5.0, None,
+             "verified_exit", "strategy", "local_fill", 1, 1, "eligible", "oi-v1"),
         )
     conn.commit()
 

@@ -33,7 +33,10 @@ def _losing_momentum_long_trade(i: int):
                    quantity=1.0, entry_price=100.0, current_price=95.0,
                    execution_mode="paper_internal", status="closed", realized_pnl=-5.0,
                    close_reason="stop_loss", proposal_id=prop.id, opportunity_id=opp.id,
-                   closed_at=datetime.now(timezone.utc).isoformat())
+                   closed_at=datetime.now(timezone.utc).isoformat(),
+                   close_category="strategy", exit_price_source="local_fill",
+                   exit_fill_verified=True, outcome_eligible=True,
+                   outcome_exclusion_reason="eligible", outcome_semantics_version="oi-v1")
     repo.insert_position(pos)
 
 

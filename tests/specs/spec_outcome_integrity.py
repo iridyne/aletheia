@@ -34,6 +34,25 @@ BEHAVIOR_CHANGING_CLOSED_POSITION_CONSUMERS = (
     "aletheia/analytics/alpha_attribution.py",
     "aletheia/agent_shell/operator_loop.py",
     "aletheia/agent_shell/trading_context.py",
+    "aletheia/analytics/trade_attribution.py",
+    "aletheia/analytics/insight_synthesizer.py",
+    "aletheia/analytics/reasoning_feedback.py",
+    "aletheia/analytics/memo_effectiveness.py",
+    "aletheia/analytics/go_live_scorecard.py",
+    "aletheia/trading/sizing_policy.py",
+    "aletheia/trading/strategy_lifecycle.py",
+    "aletheia/trust/guard_chain.py",
+    "aletheia/agent_shell/trading_decision.py",
+    "aletheia/analytics/sizing_trace.py",
+    "aletheia/agent_shell/operator_recommendations.py",
+)
+
+ATTRIBUTION_DERIVED_OUTCOME_CONSUMERS = (
+    "aletheia/analytics/factor_feedback.py",
+    "aletheia/analytics/guard_promotion.py",
+    "aletheia/analytics/guard_effectiveness.py",
+    "aletheia/analytics/trade_case_builder.py",
+    "aletheia/analytics/trade_path.py",
 )
 
 
@@ -279,21 +298,35 @@ def test_learning_control_consumes_reconcile_integrity_incident():
         assert gate in _source(path), path
 
 
-@_missing("RG-03..06/RG-18/RG-19: behavior consumers have not all migrated")
 @spec_claim(
     SpecClaim(
         "OI-C02", "outcome_integrity", "§9 behavior-consumer eligibility", "L2c",
         "Every enumerated KPI, Operator, calibration, alpha, and trading-context consumer reads "
         "eligible_strategy_outcomes from the central model; insufficient evidence never falls "
         "back to unlabelled raw closed rows or a stale semantics version.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_behavior_changing_consumers_use_one_eligible_read_model():
     for path in BEHAVIOR_CHANGING_CLOSED_POSITION_CONSUMERS:
         source = _source(path)
         assert "eligible_strategy_outcomes" in source, path
-        assert "outcome_semantics_version" in source, path
+        assert "SYNTHETIC_CLOSE_REASONS" not in source, path
+        assert "is_synthetic_close" not in source, path
+    for artifact_consumer in (
+        "aletheia/analytics/confidence_calibration.py",
+        "aletheia/analytics/insight_synthesizer.py",
+        "aletheia/analytics/reasoning_feedback.py",
+        "aletheia/analytics/memo_effectiveness.py",
+    ):
+        assert "is_current_outcome_artifact" in _source(artifact_consumer)
+    for path in ATTRIBUTION_DERIVED_OUTCOME_CONSUMERS:
+        source = _source(path)
+        assert "build_trade_attribution_rows" in source, path
+        assert "status = 'closed'" not in source, path
+        assert 'status="closed"' not in source, path
+    reflection = _source("aletheia/agent_shell/reflection.py")
+    assert "assess_realized_position" in reflection
 
 
 @_missing("RG-12: Risk daily loss still consumes the ambiguous today_realized_pnl")

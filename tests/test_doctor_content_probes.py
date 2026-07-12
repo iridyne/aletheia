@@ -86,10 +86,12 @@ def test_memo_quality_expired_warns(db):
 
 def test_memo_quality_valid_is_ok(db):
     import json
+    generated_at = _ago(hours=1)
     _ins(db, "knowledge_items", id="m2", item_type="trading_memo", title="memo",
          tags=json.dumps({"valid_until": _ahead(days=1)}),
-         content=json.dumps({"regime_playbook": [{"r": 1}], "valid_until": _ahead(days=1)}),
-         created_at=_ago(hours=1))
+         content=json.dumps({"regime_playbook": [{"r": 1}], "valid_until": _ahead(days=1),
+                             "generated_at": generated_at, "outcome_semantics_version": "oi-v1"}),
+         created_at=generated_at)
     assert _verdict(dx._probe_content_memo_quality).severity == "ok"
 
 

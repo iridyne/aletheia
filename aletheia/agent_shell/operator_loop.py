@@ -21,6 +21,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from aletheia.analytics.outcome_integrity import (
+    OUTCOME_SEMANTICS_VERSION,
+    eligible_strategy_outcomes,
+)
 from aletheia.config.loader import load_config, save_config
 from aletheia.storage import repositories as repo
 
@@ -326,6 +330,7 @@ class SystemAssessment:
     win_rate_7d: float | None = None
     total_pnl_7d: float | None = None
     profit_factor_7d: float | None = None
+    outcome_semantics_version: str = OUTCOME_SEMANTICS_VERSION
     hours_since_last_trade: float | None = None
     recent_streak: int = 0  # positive = wins, negative = losses
     exit_composition_7d: dict = field(default_factory=dict)  # close_reason → count
@@ -416,15 +421,11 @@ def build_system_assessment() -> SystemAssessment:
         assessment.trades_48h = sum(
             1 for f in fills_all if (f.get("filled_at") or "") > cutoff_48h
         )
-        fills_7d = [f for f in fills_all if (f.get("filled_at") or "") > cutoff_7d]
         # A9 (LEARNING_LOOP_AUDIT §18.2): realized_pnl lives on POSITIONS, not fills
         # (the Fill model has no realized_pnl column), so the old fills-based math made
         # win_rate/total_pnl/profit_factor permanently 0/None. Compute from closed
         # positions, which carry realized_pnl.
-        closed_7d = [
-            p for p in repo.list_positions(status="closed", limit=500)
-            if (p.get("closed_at") or "") > cutoff_7d
-        ]
+        closed_7d = eligible_strategy_outcomes(closed_after=cutoff_7d)
         if closed_7d:
             pnls = [(p.get("realized_pnl") or 0) for p in closed_7d]
             wins = sum(1 for v in pnls if v > 0)
@@ -466,6 +467,7 @@ def build_system_assessment() -> SystemAssessment:
                 else:
                     break
             assessment.recent_streak = streak
+        assessment.outcome_semantics_version = OUTCOME_SEMANTICS_VERSION
     except Exception as e:
         logger.debug("assessment: trading performance error: %s", e)
 
@@ -539,12 +541,10 @@ def _get_strategy_performance(strategy_id: str) -> dict | None:
         # realized_pnl, so the old query raised (unknown column) and this helper always
         # returned None. Closed positions carry both — use them.
         cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
-        positions = repo._select_all(
-            "positions",
-            where="strategy_id = ? AND status = 'closed' AND closed_at > ?",
-            params=(strategy_id, cutoff),
-            limit=100,
-        )
+        positions = [
+            row for row in eligible_strategy_outcomes(closed_after=cutoff)
+            if str(row.get("strategy_id") or "") == strategy_id
+        ]
         if not positions:
             return None
         pnls = [(p.get("realized_pnl") or 0) for p in positions]
@@ -554,6 +554,7 @@ def _get_strategy_performance(strategy_id: str) -> dict | None:
             "win_rate": wins / len(positions) * 100,
             "expectancy": sum(pnls) / len(positions),
             "total_pnl": sum(pnls),
+            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
         }
     except Exception:
         return None
@@ -1413,6 +1414,7 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
             "trades_48h": assessment.trades_48h,
             "win_rate_7d": assessment.win_rate_7d,
             "profit_factor_7d": assessment.profit_factor_7d,
+            "outcome_semantics_version": assessment.outcome_semantics_version,
             "hours_since_last_trade": assessment.hours_since_last_trade,
             "recent_streak": assessment.recent_streak,
             "exit_composition_7d": assessment.exit_composition_7d,

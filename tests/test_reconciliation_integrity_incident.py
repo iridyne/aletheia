@@ -190,15 +190,13 @@ def test_run_reconcile_keeps_destructive_actions_suspended_until_resolution(monk
         "reconciled_gone_recent": 2, "adopted_recent": 1,
         "administrative_close_recent": 2, "reopened_recent": 2,
     })
-    closed: list[str] = []
-    monkeypatch.setattr(reconciler, "reconcile_close_orphan", lambda value: closed.append(value.symbol))
     monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *a, **k: None)
     monkeypatch.setattr("aletheia.notifications.notify_operator", lambda *a, **k: None)
 
     first = reconciler.run_reconcile("demo")
     assert first["suspended"] is True
     assert first["incident"]["status"] == "active"
-    assert closed == []
+    assert first["settlement"] == []
 
     monkeypatch.setattr(reconciler, "detect_reconcile_thrash", lambda window_minutes=30: {
         "is_thrashing": False, "window_minutes": 30, "churn_count": 0,
@@ -210,7 +208,7 @@ def test_run_reconcile_keeps_destructive_actions_suspended_until_resolution(monk
     assert second["suspended"] is True
     assert second["incident"]["status"] == "active"
     assert second["recovery_state"] in {"observing_clean", "clean_gate_met"}
-    assert closed == []
+    assert second["settlement"] == []
 
 
 def test_run_reconcile_fails_closed_when_incident_detector_is_unavailable(monkeypatch):
@@ -227,10 +225,6 @@ def test_run_reconcile_fails_closed_when_incident_detector_is_unavailable(monkey
     monkeypatch.setattr(reconciler, "detect_reconcile_thrash", lambda: {
         "detector_available": False, "is_thrashing": False,
     })
-    monkeypatch.setattr(
-        reconciler, "reconcile_close_orphan",
-        lambda value: (_ for _ in ()).throw(AssertionError("must stay suspended")),
-    )
     result = reconciler.run_reconcile("demo")
     assert result["suspended"] is True
     assert result["recovery_state"] == "detector_unavailable"

@@ -15,6 +15,11 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
 
+from aletheia.analytics.outcome_integrity import (
+    OUTCOME_SEMANTICS_VERSION,
+    eligible_strategy_outcomes,
+)
+
 
 VERDICT_NAMES = (
     "Universe Alpha",
@@ -100,6 +105,7 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
     return {
         "generated_at": generated_at,
         "window_days": days,
+        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
         "verdicts": verdicts,
         "main_bottleneck": _main_bottleneck(verdicts),
     }
@@ -116,6 +122,7 @@ def _empty_report(generated_at: str, days: int, reason: str) -> dict:
     return {
         "generated_at": generated_at,
         "window_days": days,
+        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
         "verdicts": verdicts,
         "main_bottleneck": _main_bottleneck(verdicts),
     }
@@ -312,17 +319,22 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
 
 
 def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
-    rows = db.execute(
-        "SELECT tp.id AS proposal_id, tp.opportunity_id, p.realized_pnl, "
-        "p.entry_price, p.quantity, p.closed_at "
-        "FROM trade_proposals tp "
-        "JOIN positions p ON p.proposal_id = tp.id "
-        "WHERE tp.status = 'executed' "
-        "AND p.status = 'closed' "
-        "AND tp.opportunity_id IS NOT NULL "
-        "AND datetime(p.closed_at) >= datetime(?)",
-        (cutoff,),
-    ).fetchall()
+    rows = []
+    for position in eligible_strategy_outcomes(closed_after=cutoff):
+        proposal_id = position.get("proposal_id")
+        if not proposal_id:
+            continue
+        proposal = db.execute(
+            "SELECT id AS proposal_id, opportunity_id FROM trade_proposals "
+            "WHERE id = ? AND status = 'executed' AND opportunity_id IS NOT NULL",
+            (proposal_id,),
+        ).fetchone()
+        if proposal:
+            rows.append({
+                **position,
+                "proposal_id": proposal["proposal_id"],
+                "opportunity_id": proposal["opportunity_id"],
+            })
 
     accepted: list[float] = []
     shadows: list[float] = []
@@ -640,43 +652,45 @@ def _dedupe_learning_events(events: list[dict]) -> list[dict]:
 
 
 def _trade_pnl_before_after(db, event_at: str, days: int, group: dict) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, float]]:
-    from aletheia.learning.outcomes import assess_realized_position
-
     event_dt = _parse_dt(event_at)
     if event_dt is None:
         return {}, {}, {}, {}
     before_start = (event_dt - timedelta(days=days)).isoformat()
     after_end = _utcnow().isoformat()
-    rows = db.execute(
-        "SELECT p.id AS position_id, p.symbol, p.direction, p.realized_pnl, p.entry_price, p.quantity, "
-        "p.close_reason, p.closed_at, p.close_category, p.exit_price_source, "
-        "p.exit_fill_verified, p.outcome_eligible, p.outcome_exclusion_reason, "
-        "p.outcome_semantics_version, o.scanner_family "
-        "FROM positions p "
-        "LEFT JOIN trade_proposals tp ON tp.id = p.proposal_id "
-        "LEFT JOIN opportunities o ON o.id = tp.opportunity_id "
-        "WHERE p.status = 'closed' "
-        "AND p.closed_at IS NOT NULL "
-        "AND datetime(p.closed_at) >= datetime(?) "
-        "AND datetime(p.closed_at) <= datetime(?)",
-        (before_start, after_end),
-    ).fetchall()
+    rows = []
+    for position in eligible_strategy_outcomes(
+        closed_after=before_start, closed_before=after_end,
+    ):
+        scanner_family = None
+        proposal_id = position.get("proposal_id")
+        if proposal_id:
+            metadata = db.execute(
+                "SELECT o.scanner_family FROM trade_proposals tp "
+                "LEFT JOIN opportunities o ON o.id = tp.opportunity_id "
+                "WHERE tp.id = ?",
+                (proposal_id,),
+            ).fetchone()
+            scanner_family = metadata["scanner_family"] if metadata else None
+        rows.append({
+            **position,
+            "position_id": position["id"],
+            "scanner_family": scanner_family,
+        })
 
     before: dict[str, float] = {}
     after: dict[str, float] = {}
     control_before: dict[str, float] = {}
     control_after: dict[str, float] = {}
     for row in rows:
-        row_dict = dict(row)
-        outcome = assess_realized_position(row_dict)
-        if not outcome.eligible or outcome.net_return_pct is None or not outcome.outcome_key:
+        notional = float(row.get("entry_price") or 0) * float(row.get("quantity") or 0)
+        if notional <= 0:
             continue
-        pnl_pct = outcome.net_return_pct
-        closed_at = _parse_dt(row["closed_at"])
+        pnl_pct = float(row["realized_pnl"]) / notional * 100.0
+        closed_at = _parse_dt(row.get("closed_at"))
         if closed_at is None:
             continue
         matches = _matches_learning_group(row, group)
-        position_id = outcome.outcome_key
+        position_id = f"position:{row['position_id']}"
         if matches and closed_at < event_dt:
             before[position_id] = pnl_pct
         elif matches:

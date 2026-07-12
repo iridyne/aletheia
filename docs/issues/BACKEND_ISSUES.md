@@ -1086,8 +1086,8 @@
 | ID 范围 | 状态 | 问题 | 处理/下一步 |
 |---|---|---|---|
 | RG-01～02 | 源头已修，待 E2E | `paper_internal` 与外部账户、非当前 broker 缓存曾发生错误解释，制造 false orphan | 保留账户作用域修复；补 scheduler E2E、跨 broker/incomplete view 回归和运行探针 |
-| RG-03～06 | 🔴 | trade KPI、Operator、校准和 System Operator alpha 仍可能把行政性关闭当策略结果 | 建立中央 eligible outcome read model，逐一迁移所有行为改变型消费者 |
+| RG-03～06 | ✅ core / 待 T12 | trade KPI、Operator、PI context、校准和 System Operator alpha 已统一读取 verified eligible outcomes；旧版/过期派生报告拒读 | T11 归档/重建历史报告，T12 做跨消费者 E2E |
 | RG-07～10 | ✅ core / 待 T12 | detector、Learning refreeze、durable confirmation 与三 broker verified-exit protocol 已完成核心修复 | RG-T07 接入 honest close/accounting；RG-T12 保留重启、部分失败和三 broker E2E |
 | RG-11～13 | RG-11 ✅ / RG-12～13 🔴 | verified/admin close 与经济副作用已分流；account loss、strategy PnL 和页面统计仍含混 | RG-T09 拆权威账户损失，RG-T10 做 CLI/API/UI raw+genuine 双口径 |
-| RG-14～19 | 🟠（RG-14 core / RG-15 storage ✅） | 中央 outcome semantics/read model 和 additive provenance/eligibility storage 已交付；消费者迁移、历史分类、hook、doctor、Learning 连续性仍未闭合 | 继续完成 RG-T08～T11 的消费者迁移、历史 backfill、统一 hook gate、doctor 和枚举式保护 |
+| RG-14～19 | 🟠（behavior gate / storage ✅） | 行为消费者、hook 与枚举式保护已统一；历史分类、doctor、interval continuity 和报告 supersede 仍未闭合 | 继续完成 RG-T10～T11 的展示、历史 backfill、doctor 和派生内容治理 |
 | RG-20～22 | 🟠 / owner decision | 历史现金、派生知识和盈利窗口仍受污染 | additive backfill，archive/supersede，版本化 clean window；现金补偿只在 owner 批准后追加事件 |

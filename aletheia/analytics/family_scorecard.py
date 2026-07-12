@@ -11,6 +11,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from aletheia.analytics.outcome_integrity import (
+    OUTCOME_SEMANTICS_VERSION,
+    eligible_strategy_outcomes,
+)
+
 logger = logging.getLogger("aletheia.analytics.family_scorecard")
 
 
@@ -26,26 +31,33 @@ def compute_family_scorecard() -> list[dict]:
     db = get_db()
     families: dict[str, dict] = {}
 
-    # Aggregate from closed positions joined to scanner_family via proposal→opportunity
-    rows = db.execute(
-        "SELECT COALESCE(o.scanner_family, 'unknown') AS scanner_family, "
-        "       p.realized_pnl, p.entry_price, p.quantity, "
-        "       p.btc_entry_price, p.btc_exit_price, p.opened_at, p.closed_at "
-        "FROM positions p "
-        "LEFT JOIN trade_proposals tp ON tp.id = p.proposal_id "
-        "LEFT JOIN opportunities o ON o.id = tp.opportunity_id "
-        "WHERE p.status = 'closed'"
-    ).fetchall()
+    # Metadata joins do not decide eligibility; the central read model does.
+    rows = []
+    for position in eligible_strategy_outcomes():
+        scanner_family = "unknown"
+        proposal_id = position.get("proposal_id")
+        if proposal_id:
+            proposal = db.execute(
+                "SELECT opportunity_id FROM trade_proposals WHERE id = ?", (proposal_id,),
+            ).fetchone()
+            if proposal and proposal["opportunity_id"]:
+                opportunity = db.execute(
+                    "SELECT scanner_family FROM opportunities WHERE id = ?",
+                    (proposal["opportunity_id"],),
+                ).fetchone()
+                if opportunity and opportunity["scanner_family"]:
+                    scanner_family = opportunity["scanner_family"]
+        rows.append({**position, "scanner_family": scanner_family})
 
     for r in rows:
-        family = r["scanner_family"] or "unknown"
+        family = r.get("scanner_family") or "unknown"
         if family not in families:
             families[family] = _empty_family(family)
         f = families[family]
         f["trade_count"] += 1
 
-        pnl = r["realized_pnl"] or 0.0
-        notional = (r["entry_price"] or 1.0) * (r["quantity"] or 1.0)
+        pnl = r.get("realized_pnl") or 0.0
+        notional = (r.get("entry_price") or 1.0) * (r.get("quantity") or 1.0)
         pnl_pct = (pnl / notional * 100.0) if notional > 0 else 0.0
 
         if pnl > 0:
@@ -53,8 +65,8 @@ def compute_family_scorecard() -> list[dict]:
         f["total_pnl_pct"] += pnl_pct
 
         # Alpha vs BTC
-        btc_entry = r["btc_entry_price"]
-        btc_exit = r["btc_exit_price"]
+        btc_entry = r.get("btc_entry_price")
+        btc_exit = r.get("btc_exit_price")
         if btc_entry and btc_exit and btc_entry > 0:
             btc_return = (btc_exit - btc_entry) / btc_entry * 100.0
             alpha = pnl_pct - btc_return
@@ -62,8 +74,8 @@ def compute_family_scorecard() -> list[dict]:
             f["alpha_count"] += 1
 
         # Hold time
-        opened = _parse_iso(r["opened_at"])
-        closed = _parse_iso(r["closed_at"])
+        opened = _parse_iso(r.get("opened_at"))
+        closed = _parse_iso(r.get("closed_at"))
         if opened and closed:
             hours = (closed - opened).total_seconds() / 3600.0
             f["total_hold_hours"] += hours
@@ -87,11 +99,13 @@ def compute_family_scorecard() -> list[dict]:
         result.append({
             "family": family,
             "trade_count": tc,
-            "win_rate": round(f["wins"] / tc * 100.0, 1) if tc > 0 else 0.0,
-            "expectancy_pct": round(f["total_pnl_pct"] / tc, 2) if tc > 0 else 0.0,
-            "avg_hold_hours": round(f["total_hold_hours"] / tc, 1) if tc > 0 else 0.0,
+            "win_rate": round(f["wins"] / tc * 100.0, 1) if tc > 0 else None,
+            "expectancy_pct": round(f["total_pnl_pct"] / tc, 2) if tc > 0 else None,
+            "avg_hold_hours": round(f["total_hold_hours"] / tc, 1) if tc > 0 else None,
             "shadow_count": f["shadow_count"],
             "alpha_vs_btc_pct": round(f["total_alpha_pct"] / f["alpha_count"], 2) if f["alpha_count"] > 0 else None,
+            "outcome_status": "available" if tc else "insufficient",
+            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
         })
     return result
 

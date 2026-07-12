@@ -28,6 +28,10 @@ from __future__ import annotations
 
 import logging
 
+from aletheia.analytics.outcome_integrity import (
+    eligible_strategy_outcomes,
+)
+
 logger = logging.getLogger("aletheia.trading.sizing_policy")
 
 MAX_ADJ = 0.30           # max |appetite| nudge the learner may apply
@@ -40,27 +44,20 @@ def _clean_bucket_rewards(regime_bucket: str) -> list[float]:
 
     Excludes synthetic/administrative closes and NULL-pnl rows. Reward is per-trade
     realized_pnl as a fraction of entry notional (risk-normalized across sizes)."""
-    from aletheia.storage.sqlite import get_db
-    from aletheia.analytics.close_reasons import is_synthetic_close
     try:
-        db = get_db()
-        rows = db.execute(
-            "SELECT realized_pnl, entry_price, quantity, close_reason "
-            "FROM positions WHERE status='closed' AND regime_tag=? "
-            "AND realized_pnl IS NOT NULL ORDER BY closed_at DESC LIMIT ?",
-            (regime_bucket, _WINDOW),
-        ).fetchall()
+        rows = [
+            row for row in reversed(eligible_strategy_outcomes())
+            if row.get("regime_tag") == regime_bucket
+        ][:_WINDOW]
     except Exception as e:
         logger.debug("sizing_policy reward query failed: %s", e)
         return []
     out: list[float] = []
     for r in rows:
-        if is_synthetic_close(r["close_reason"]):
-            continue
-        notional = float(r["entry_price"] or 0) * float(r["quantity"] or 0)
+        notional = float(r.get("entry_price") or 0) * float(r.get("quantity") or 0)
         if notional <= 0:
             continue
-        out.append(float(r["realized_pnl"] or 0) / notional * 100.0)  # pct
+        out.append(float(r.get("realized_pnl") or 0) / notional * 100.0)  # pct
     return out
 
 
@@ -69,18 +66,8 @@ def clean_close_count() -> int:
 
     Drives the progressive-unlock gate (P4): params unfreeze as clean evidence
     accrues. Read-only; 0 on error."""
-    from aletheia.storage.sqlite import get_db
-    from aletheia.analytics.close_reasons import SYNTHETIC_CLOSE_REASONS
     try:
-        syn = tuple(SYNTHETIC_CLOSE_REASONS)
-        ph = ",".join("?" * len(syn))
-        row = get_db().execute(
-            f"SELECT COUNT(*) FROM positions WHERE status='closed' "
-            f"AND realized_pnl IS NOT NULL "
-            f"AND (close_reason IS NULL OR close_reason NOT IN ({ph}))",
-            syn,
-        ).fetchone()
-        return int(row[0] or 0)
+        return len(eligible_strategy_outcomes())
     except Exception:
         return 0
 

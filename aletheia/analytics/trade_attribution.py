@@ -11,6 +11,7 @@ import json
 import logging
 from typing import Any
 
+from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.storage import repositories as repo
 
 logger = logging.getLogger("aletheia.analytics.trade_attribution")
@@ -22,7 +23,7 @@ def build_trade_attribution_rows(limit: int = 500) -> list[dict]:
     Each row joins position back through the full causal chain. Missing joins
     produce None fields, never errors.
     """
-    positions = repo.list_positions(status="closed", limit=limit)
+    positions = list(reversed(eligible_strategy_outcomes()))[:limit]
     rows: list[dict] = []
 
     for pos in positions:

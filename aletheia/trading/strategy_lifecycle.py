@@ -243,7 +243,14 @@ def check_promotion_gates(strategy_id: str) -> dict:
     # Paper/development evidence is tied to paper/demo execution modes only.
     orders = list_strategy_orders(strategy_id, execution_mode_prefix="paper")
     fills = list_strategy_fills(strategy_id, execution_mode_prefix="paper")
-    closed_positions = list_strategy_positions(strategy_id, status="closed")
+    from aletheia.analytics.outcome_integrity import (
+        OUTCOME_SEMANTICS_VERSION,
+        eligible_strategy_outcomes,
+    )
+    closed_positions = [
+        row for row in eligible_strategy_outcomes()
+        if str(row.get("strategy_id") or "") == strategy_id
+    ]
     risk_decisions = list_strategy_risk_decisions(strategy_id)
 
     # §5.8: strategy-specific reviews first, then global fallback (MVP spec allows it).
@@ -330,6 +337,7 @@ def check_promotion_gates(strategy_id: str) -> dict:
         "critical_risk_violations": critical_violations,
         "post_trade_reviews": len(strategy_specific_reviews),
         "post_trade_reviews_used": post_trade_reviews_used,
+        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
     }
     return {"passed": len(failures) == 0, "failures": failures, "metrics": metrics}
 

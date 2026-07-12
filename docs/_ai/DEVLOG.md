@@ -3205,3 +3205,16 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Corrected the status-route regression to accept the intentionally empty model-provider
   value on a fresh configuration instead of requiring the backend to invent one.
 - No runtime behavior changed; the full suite now has no ordinary failures.
+
+## 2026-07-12 — Verified-outcome consumer migration
+
+- Migrated trade/family/strategy KPIs, Operator 7d performance, PI trading context,
+  conviction calibration and System Operator alpha to the central verified eligible-outcome
+  cohort. Administrative, maintenance, legacy and incomplete closes no longer alter judgement.
+- Migrated attribution, memo/reasoning, persona sizing, promotion, go-live and loss-streak
+  consumers and removed their local synthetic-close blacklists.
+- Versioned calibration, memo, reasoning and alpha artifacts; missing-version or stale active
+  reports now fail closed before prompt or policy consumption.
+- Expanded OI-C02 into an enumerated behavior-consumer guard with genuine-vs-administrative
+  regressions. Risk daily loss, raw/genuine API/UI reporting and historical remediation remain
+  isolated follow-up tasks.
