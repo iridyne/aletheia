@@ -5,12 +5,12 @@ title: Implement central outcome integrity read model
 status: in_progress
 packet_type: standard
 scope:
-  boundary: dependency-neutral analytics outcome semantics/read queries, central
-    close-reason registry, Learning adapter composition, evidence-field propagation
-    in already-protected Learning analytics, focused tests, and matching SDD
-  excluded: broad Operator/KPI/calibration/Risk/API/UI consumer migration,
-    reconciliation, close accounting, PnL/cash, exchange clients, execution, live
-    state, runtime database mutation, credentials, and gateway process
+  boundary: dependency-neutral analytics outcome semantics/read queries, central close-reason
+    registry, Learning adapter composition, evidence-field propagation in already-protected
+    Learning analytics, focused tests, and matching SDD
+  excluded: broad Operator/KPI/calibration/Risk/API/UI consumer migration, reconciliation,
+    close accounting, PnL/cash, exchange clients, execution, live state, runtime database
+    mutation, credentials, and gateway process
 intent: Implement dependency-neutral closure semantics and explicit raw, eligible-strategy,
   and administrative position read models; make Learning compose the central assessment
   while preserving its clean-window gates, without migrating behavior consumers yet.
@@ -37,6 +37,14 @@ next_action:
   reason: Inspect current close-reason, Learning outcome, query, and filter conventions
     before writing RED central-read-model tests.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 8bf399523b4ed0f65a9f05fcbdf9ec7a98224e59
+  run_at: '2026-07-12T04:55:54.691275Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-034.md
-updated_at: '2026-07-12T04:41:43.399232Z'
+updated_at: '2026-07-12T04:55:54.691486Z'
