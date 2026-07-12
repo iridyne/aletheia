@@ -67,6 +67,18 @@ def _stub_exchange_secrets(monkeypatch):
             monkeypatch.setattr(mod, "get_secret", lambda *a, **k: "test-secret", raising=False)
         except Exception:
             pass
+    # Skip the external-API order-constraints fetch in CI/offline environments.
+    # The gateway calls prepare_exchange_quantity before executing any real-exchange
+    # proposal; without network access it raises ConstraintUnavailable → rejected.
+    # Tests already mock place_order; returning the quantity unchanged is correct
+    # because the tests assert post-fill DB state, not size normalisation.
+    import aletheia.execution.order_constraints as _oc
+    monkeypatch.setattr(_oc, "prepare_exchange_quantity", lambda _mode, _sym, _mtype, qty, _price: qty)
+    import aletheia.execution.gateway as _gw
+    monkeypatch.setattr(_gw, "_prepare_exchange_quantity", lambda _mode, _sym, _mtype, qty, _price: (qty, None))
+    # Also prevent the OKX demo symbol-list refresh from hitting the network.
+    import aletheia.execution.okx_broker as _okx
+    monkeypatch.setattr(_okx, "_get_demo_symbols", lambda *a, **k: None)
 
 
 # Each broker: (label, module path, OrderResponse class path, default execution_mode)
