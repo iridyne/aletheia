@@ -1,0 +1,44 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-047
+title: Integrate and soak Outcome Integrity
+status: in_progress
+packet_type: standard
+scope:
+  boundary: Git-only integration of the completed RG-T05 through RG-T12 commits
+    onto the latest origin/master, conflict resolution that preserves both Outcome
+    Integrity and newer proposal-loop behavior, combined verification, and an
+    operational paper-only soak plan whose runtime observations stay outside Git
+  excluded: live unlock/order placement, risk-limit or credential changes, owner
+    database history remediation, cash compensation, manual database edits, destructive
+    main-checkout operations, and any runtime claim not directly observed
+intent: Integrate the completed RG-T05 through RG-T12 Outcome Integrity chain onto
+  the latest origin/master in an isolated worktree, resolve only integration conflicts,
+  verify the combined tree, then prepare a controlled paper-only runtime soak without
+  enabling live, changing risk limits, credentials, owner history, or cash compensation.
+acceptance:
+- The integrated branch contains the latest origin/master changes and all RG-T05
+  through RG-T12 production, test, reporting, remediation, and audit changes without
+  dropping either side during conflict resolution.
+- Focused Outcome Integrity, controlled Risk/execution specs, all specs, architecture,
+  conformance, and the full repository suite pass on the combined tree.
+- Deployment/restart is attempted only from a clean main checkout carrying the exact
+  verified tree; live stays disabled, paper execution stays local, and no owner database
+  maintenance or compensation is applied.
+- A real paper-only observation covers multiple reconciliation cycles and one controlled
+  restart, with runtime evidence stored outside Git and raw/genuine counts recomputed
+  read-only; if safe deployment prerequisites are absent, the task records the precise
+  operational blocker without claiming soak completion.
+ownership:
+  branch: iridite/outcome-integrity-integration
+  lease_holder: codex
+  claimed_at: '2026-07-12T09:28:35.558335Z'
+  expires_at: '2026-07-12T17:28:35.558484Z'
+base_commit: 44a9fb007f875222221a7060d51306a9fffd6eca
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-047.md
+updated_at: '2026-07-12T09:28:35.558492Z'
