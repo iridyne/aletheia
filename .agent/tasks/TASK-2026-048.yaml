@@ -27,8 +27,8 @@ acceptance:
   maintenance or compensation is applied.
 - A real paper-only observation covers multiple reconciliation cycles and one controlled
   restart, with runtime evidence stored outside Git and raw/genuine counts recomputed
-  read-only; if safe deployment prerequisites are absent, the task records the precise
-  operational blocker without claiming soak completion.
+  read-only; Git records only the intended procedure and never claims an observation
+  that was not performed on the target machine.
 ownership:
   branch: iridite/outcome-integrity-integration
   lease_holder: codex
