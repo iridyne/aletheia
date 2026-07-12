@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-052
 title: Harden Learning authority identity checks
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: 'Learning paper-authority identity checks for the AT-02 lifecycle: predecessor,
@@ -31,10 +31,34 @@ ownership:
   expires_at: '2026-07-12T22:37:07.263865Z'
 base_commit: d3b3d9ca86c067ac9e9f7f1039c8e31831565afa
 next_action:
-  command_key: specs
-  reason: Identity binding and API-reference drift are fixed; record the final executable-contract
-    proof after the implementation commit.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 3c9054d27aba6fa809f2e8330ea6f37913feaec7
+  run_at: '2026-07-12T14:58:28.970251Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 3c9054d27aba6fa809f2e8330ea6f37913feaec7
+  run_at: '2026-07-12T14:58:50.806106Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 3c9054d27aba6fa809f2e8330ea6f37913feaec7
+  run_at: '2026-07-12T14:59:08.778406Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-052.md
-updated_at: '2026-07-12T14:45:03.772125Z'
+updated_at: '2026-07-12T14:59:08.795884Z'
