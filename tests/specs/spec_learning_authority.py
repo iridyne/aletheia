@@ -451,3 +451,48 @@ def test_stale_epoch_verdict_does_not_authorize():
     decision = apply_numeric_treatment(candidate_key=applied_candidate, **common)
     assert not decision.applied
     assert decision.value == 50.0  # baseline — a stale-epoch verdict grants no authority
+
+
+@spec_claim(SpecClaim(
+    "LE-B27", "learning_evolution", "§ exposure fingerprint", "L2b",
+    "The policy epoch rotates when the running build (code fingerprint) or universe "
+    "behavior config changes, and each exposure is stamped with the running build.",
+    status="implemented",
+))
+def test_policy_epoch_rotates_on_code_and_config_change(monkeypatch):
+    from aletheia.learning import experiments as exp
+    import aletheia.agent_runtime.build_info as build_info
+    from aletheia.config.loader import load_config
+    from aletheia.learning.ledger import get_record
+
+    base_cfg = load_config()
+    monkeypatch.setattr(exp, "load_config", lambda: base_cfg)
+
+    monkeypatch.setattr(build_info, "get_boot_commit", lambda: "commit-AAA")
+    e1 = exp._policy_epoch("universe_family_calibration")
+    assert e1 == exp._policy_epoch("universe_family_calibration")  # deterministic
+
+    monkeypatch.setattr(build_info, "get_boot_commit", lambda: "commit-BBB")
+    assert exp._policy_epoch("universe_family_calibration") != e1  # rebuild rotates it
+
+    changed = base_cfg.model_copy(update={
+        "universe": base_cfg.universe.model_copy(
+            update={"explore_ratio": base_cfg.universe.explore_ratio + 0.13})
+    })
+    monkeypatch.setattr(exp, "load_config", lambda: base_cfg)
+    e_base = exp._policy_epoch("universe_family_calibration")
+    monkeypatch.setattr(exp, "load_config", lambda: changed)
+    assert exp._policy_epoch("universe_family_calibration") != e_base  # config change rotates it
+
+    # Each exposure is stamped with the running build.
+    monkeypatch.setattr(build_info, "get_boot_commit", lambda: "commit-XYZ")
+    monkeypatch.setattr(exp, "load_config", lambda: base_cfg)
+    d = exp.apply_numeric_treatment(
+        path_id="ranker_factor_filter",
+        scope={"factor_key": "momentum:BTC/USDT:long:high:clean"},
+        action={"type": "score_delta", "delta": -10.0},
+        source_cohort="factor_feedback:v2", target_horizon="4h",
+        candidate_key="fp-candidate", baseline=50.0, treatment=40.0,
+        consumer="paper_ranker", consumer_stage="score",
+    )
+    assert get_record("learning_exposures", d.exposure_id)["code_commit"] == "commit-XYZ"
