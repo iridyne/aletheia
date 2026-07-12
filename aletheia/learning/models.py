@@ -100,6 +100,16 @@ class LearningContributionVerdict(BaseModel):
     verdict: str
     reason: str
     created_at: str = Field(default_factory=_now)
+    # P0-4 (2026-07-12): cohort identity. Authority requires the verdict to match the
+    # CURRENT experiment epoch/stage/versions — a verdict computed under a stale policy
+    # epoch (config/code changed) or a different stage must never be reused. The AT-01
+    # verdict runner MUST stamp these from the exposures it aggregated.
+    policy_epoch: str | None = None
+    stage: str | None = None
+    target_horizon: str | None = None
+    outcome_contract_version: str = "v1"
+    metric_version: str | None = None
+    code_commit: str | None = None
 
 
 class LearningJobHealth(BaseModel):

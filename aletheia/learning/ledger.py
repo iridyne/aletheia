@@ -106,6 +106,25 @@ def get_latest_verdict(experiment_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def get_latest_verdict_for_cohort(
+    experiment_id: str, *, policy_epoch: str, stage: str,
+) -> dict | None:
+    """Latest verdict computed under the EXACT current cohort (P0-4).
+
+    A verdict only grants authority if it was produced for this experiment under the
+    same policy epoch and stage. A verdict stamped with a different (or NULL) epoch or
+    stage is invisible here — so a stale positive verdict cannot authorize a treatment
+    after config/code (epoch) or lifecycle stage changed.
+    """
+    row = get_db().execute(
+        "SELECT * FROM learning_contribution_verdicts "
+        "WHERE experiment_id=? AND policy_epoch=? AND stage=? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (experiment_id, policy_epoch, stage),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def get_exposure_by_dedup_key(dedup_key: str) -> dict | None:
     row = get_db().execute(
         "SELECT * FROM learning_exposures WHERE dedup_key=?", (dedup_key,)

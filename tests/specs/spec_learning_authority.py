@@ -102,11 +102,15 @@ def test_authorized_numeric_treatment_records_before_after():
         outcome_candidate_key=_insert_settled_outcome(control_candidate), **common,
     )
     now = datetime.now(timezone.utc)
+    # P0-4: the verdict must carry the current cohort identity (epoch + stage) or it
+    # cannot authorize. Read the epoch the exposures were stamped with.
+    epoch = get_record("learning_exposures", shadow.exposure_id)["concurrent_policy_epoch"]
     insert_record("learning_contribution_verdicts", LearningContributionVerdict(
         experiment_id=shadow.experiment_id, hypothesis_id=shadow.hypothesis_id,
         window_start=(now - timedelta(days=14)).isoformat(), window_end=now.isoformat(),
         unique_treatment_n=1, unique_control_n=1, baseline=0.0, observed=0.2,
         delta=0.2, verdict="promote", reason="prospective net improvement",
+        policy_epoch=epoch, stage="paper_10",
     ))
     applied_candidate = next(
         f"applied:{i}" for i in range(1000)
@@ -187,11 +191,12 @@ def test_negative_verdict_refreezes_to_static_baseline():
         outcome_candidate_key=_insert_settled_outcome(control_candidate), **kwargs,
     )
     now = datetime.now(timezone.utc)
+    epoch = get_record("learning_exposures", created.exposure_id)["concurrent_policy_epoch"]
     positive = LearningContributionVerdict(
         experiment_id=experiment.experiment_id, hypothesis_id=experiment.hypothesis_id,
         window_start=(now - timedelta(days=14)).isoformat(), window_end=now.isoformat(),
         unique_treatment_n=1, unique_control_n=1, verdict="promote", reason="positive",
-        created_at=now.isoformat(),
+        created_at=now.isoformat(), policy_epoch=epoch, stage="paper_10",
     )
     insert_record("learning_contribution_verdicts", positive)
     authorized_candidate = next(
@@ -393,3 +398,56 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
     assert counts["treatment"] >= 1
     # The DROPPED control candidate is counted — the arm is no longer selection-biased.
     assert counts["control"] >= 1
+
+
+@spec_claim(SpecClaim(
+    "LE-C15", "learning_evolution", "§8 verdict cohort identity", "L2c",
+    "A promote verdict stamped with a different policy epoch cannot authorize the "
+    "treatment: stale evidence never grants authority to a new cohort.",
+    status="implemented",
+))
+def test_stale_epoch_verdict_does_not_authorize():
+    from aletheia.learning.experiments import apply_numeric_treatment, stable_assignment
+    from aletheia.learning.ledger import get_record, insert_record
+    from aletheia.learning.models import LearningContributionVerdict, LearningExperiment
+    from aletheia.storage.sqlite import get_db
+
+    common = dict(
+        path_id="ranker_factor_filter",
+        scope={"factor_key": "momentum:ETH/USDT:long:high:clean"},
+        action={"type": "score_delta", "delta": -10.0},
+        source_cohort="factor_feedback:v2", target_horizon="4h",
+        baseline=50.0, treatment=40.0, consumer="paper_ranker", consumer_stage="score",
+    )
+    shadow = apply_numeric_treatment(candidate_key="candidate:seed2", **common)
+    db = get_db()
+    was = db.in_transaction
+    db.execute(
+        "UPDATE learning_experiments SET stage='paper_10', status='active', "
+        "min_samples_per_arm=1 WHERE experiment_id=?",
+        (shadow.experiment_id,),
+    )
+    if not was:
+        db.commit()
+    experiment = LearningExperiment(**get_record("learning_experiments", shadow.experiment_id))
+    t = next(f"t:{i}" for i in range(1000) if stable_assignment(experiment, f"t:{i}") == "treatment")
+    c = next(f"c:{i}" for i in range(1000) if stable_assignment(experiment, f"c:{i}") == "control")
+    apply_numeric_treatment(candidate_key=t, outcome_candidate_key=_insert_settled_outcome(t), **common)
+    apply_numeric_treatment(candidate_key=c, outcome_candidate_key=_insert_settled_outcome(c), **common)
+
+    now = datetime.now(timezone.utc)
+    # A genuine "promote" verdict — but stamped with a STALE policy epoch (config/code
+    # has since moved on). It must NOT authorize the current cohort.
+    insert_record("learning_contribution_verdicts", LearningContributionVerdict(
+        experiment_id=shadow.experiment_id, hypothesis_id=shadow.hypothesis_id,
+        window_start=(now - timedelta(days=14)).isoformat(), window_end=now.isoformat(),
+        unique_treatment_n=1, unique_control_n=1, verdict="promote", reason="stale",
+        policy_epoch="STALE-EPOCH", stage="paper_10",
+    ))
+    applied_candidate = next(
+        f"a:{i}" for i in range(1000)
+        if stable_assignment(experiment, f"a:{i}") == "treatment"
+    )
+    decision = apply_numeric_treatment(candidate_key=applied_candidate, **common)
+    assert not decision.applied
+    assert decision.value == 50.0  # baseline — a stale-epoch verdict grants no authority

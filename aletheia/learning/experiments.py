@@ -13,7 +13,7 @@ from aletheia.learning.hypotheses import hypothesis_fingerprint
 from aletheia.learning.ledger import (
     get_hypothesis_by_fingerprint,
     get_exposure_by_dedup_key,
-    get_latest_verdict,
+    get_latest_verdict_for_cohort,
     linked_settled_exposure_counts,
     get_open_experiment,
     insert_experiment,
@@ -94,7 +94,13 @@ def _ensure_experiment(
 def _verdict_authorizes(experiment: LearningExperiment, policy_epoch: str) -> bool:
     if experiment.status != "active" or not experiment.stage.startswith("paper"):
         return False
-    verdict = get_latest_verdict(experiment.experiment_id)
+    # P0-4: only a verdict computed under the EXACT current cohort (this experiment,
+    # this policy epoch, this stage) may authorize. A stale verdict from a prior epoch
+    # or stage is invisible here — it cannot silently re-grant authority after config /
+    # code (epoch) or lifecycle stage changed.
+    verdict = get_latest_verdict_for_cohort(
+        experiment.experiment_id, policy_epoch=policy_epoch, stage=experiment.stage,
+    )
     if not verdict or verdict.get("verdict") != "promote":
         return False
     if min(int(verdict.get("unique_treatment_n") or 0), int(verdict.get("unique_control_n") or 0)) < experiment.min_samples_per_arm:
