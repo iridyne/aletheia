@@ -1,0 +1,52 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-028
+title: Enforce exchange order constraints before submission
+status: done
+packet_type: standard
+scope:
+  boundary: execution gateway order-size preparation only
+  excluded: credentials, signer logic, live unlock, and risk-limit changes
+intent: Prevent real exchange orders below the executable venue minimum quantity,
+  amount, or increment, and reject when executable rules are unavailable or stale.
+acceptance:
+- Real exchange modes obtain constraints from their own executable venue, not the
+  market-data venue.
+- Before risk evaluation, quantity is rounded up to the venue increment and meets
+  minimum quantity and minimum notional; the adjusted value is what risk evaluates
+  and submits.
+- Unknown, unavailable, stale, or unsupported venue constraints reject exchange execution
+  without placing an order; paper_internal behavior remains unchanged.
+- Focused tests cover venue mapping, quantities below minimum, increment rounding,
+  minimum notional, unavailable rules, risk receiving the adjusted quantity, and no
+  exchange call on rejection.
+ownership:
+  branch: fix/exchange-order-constraints
+  lease_holder: codex
+  claimed_at: '2026-07-11T17:21:17.836519Z'
+  expires_at: '2026-07-12T01:21:17.837182Z'
+base_commit: 0ae52905445138a0e4901dfc78718c7724ea476c
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: spec_execution
+  command: uv run pytest tests/specs/spec_execution.py -q
+  command_sha256: 720c18646fdff18ca745c955c9570fbd12535011a9f360bd59e50bccf435a3c6
+  exit_code: 0
+  commit: 4bfce591413b9956d7317c7cadcae1f70c285762
+  run_at: '2026-07-11T17:32:36.272957Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: spec_pipeline_execution_chain
+  command: uv run pytest tests/specs/spec_pipeline_execution_chain.py -q
+  command_sha256: f06ee972e4516060bd13766427550e64b56131f492277be553dbd72f7e297494
+  exit_code: 0
+  commit: 4bfce591413b9956d7317c7cadcae1f70c285762
+  run_at: '2026-07-11T17:32:40.791161Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-028.md
+updated_at: '2026-07-12T00:00:00Z'
