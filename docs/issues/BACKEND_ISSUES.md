@@ -1091,3 +1091,4 @@
 | RG-11～13 | ✅ | close 经济副作用、Risk account loss 与 owner-facing 表现统计已分流 | T12 保留跨层 E2E；页面并列原始事件、已验证结果和排除原因 |
 | RG-14～19 | 🟠（仅 continuity 待办） | 行为消费者、hook、doctor、历史分类和报告 supersede 已统一；interval continuity 仍是独立待办 | T12 做跨层 E2E；另行补 interval job 连续性 |
 | RG-20～22 | ✅ tooling / owner decision | 派生知识和盈利窗口已隔离；历史现金可生成补偿候选但未获批准 | owner 如决定补偿，另开任务只追加事件；不得修改原账 |
+| RG-T12 | ✅ automated / ⏳ soak | verified/admin close 已跨 cash、Risk、Learning、reporting 做 isolated E2E | 真实 paper 多周期 + 进程重启 soak 未运行；不得据 Git 声称已完成 |

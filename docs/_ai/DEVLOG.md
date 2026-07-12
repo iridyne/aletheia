@@ -3267,3 +3267,13 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Paper cash effects are reported as stable owner-approval-required compensation candidates only.
   No compensation, original cash edit, deletion, Risk, execution, exchange, live or credential
   path was added or changed.
+
+## 2026-07-12 — Outcome-integrity cross-layer completion audit
+
+- Added deterministic E2E scenarios proving verified and administrative close meanings remain
+  consistent across paper cash, authoritative Risk input, Learning eligibility and raw/genuine
+  reporting, including repeat-close safety and native/adopted reopen refreeze.
+- Added OI-C06 as an executable inventory covering local-only reconciliation, durable restart,
+  wrong-account/live fail-closed behavior, all three broker evidence adapters and history repair.
+- No production behavior changed. Real paper scheduler/process-restart soak, owner-database
+  maintenance and cash compensation were not run; live remained untouched.

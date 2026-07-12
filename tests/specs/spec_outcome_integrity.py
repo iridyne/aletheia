@@ -411,3 +411,54 @@ def test_clean_window_has_versioned_anchor_and_incident_exclusions():
         "incident_window", "unknown_semantics_version",
     ):
         assert token in source
+
+
+@spec_claim(
+    SpecClaim(
+        "OI-C06", "outcome_integrity", "§14 cross-layer lifecycle", "L2c",
+        "Deterministic E2E coverage proves verified and administrative closes preserve one "
+        "meaning across cash, Risk, Learning and reporting; durable disappearance, restart, "
+        "account isolation, live alert-only, reopen refreeze, three-broker evidence and history "
+        "idempotency remain covered without real orders or live authority.",
+        status="implemented",
+    )
+)
+def test_cross_layer_outcome_lifecycle_has_final_e2e_inventory():
+    lifecycle = _source("tests/e2e/test_outcome_integrity_full_lifecycle.py")
+    for token in (
+        "close_position_verified", "close_position_administrative",
+        "authoritative_account_realized_loss", "evaluate_proposal",
+        "assess_realized_position", "build_outcome_cohort_summary",
+        "get_equity_curve", "global_learning_refreeze_reason",
+    ):
+        assert token in lifecycle
+
+    coverage = {
+        "tests/test_disappearance_confirmation.py": (
+            "test_one_complete_absence_creates_candidate_but_never_closes",
+            "test_stale_or_wrong_account_view_never_advances_candidate",
+            "test_candidate_and_observations_survive_database_reconnection",
+            "test_live_disappearance_records_evidence_but_remains_alert_only",
+        ),
+        "tests/specs/spec_pipeline_adopted_position.py": (
+            "test_run_reconcile_non_bitget_no_orphan_close",
+            "test_paper_internal_is_outside_exchange_reconciliation_scope",
+        ),
+        "tests/test_verified_exit.py": (
+            "test_bitget_verified_exit_uses_direct_position_and_close_fill",
+            "test_okx_verified_exit_normalizes_contract_quantity",
+            "test_binance_verified_exit_and_network_error_fail_closed",
+        ),
+        "tests/test_outcome_history_remediation.py": (
+            "test_history_remediation_dry_run_apply_and_repeat_are_non_destructive",
+            "test_apply_rolls_back_classification_when_archive_step_fails",
+        ),
+    }
+    for path, tests in coverage.items():
+        source = _source(path)
+        for test_name in tests:
+            assert f"def {test_name}" in source, f"{path} missing {test_name}"
+    audit = _source("docs/status/OUTCOME_INTEGRITY_FINAL_AUDIT_2026-07-12.md")
+    assert "not run" in audit.lower()
+    assert "not approved and not applied" in audit.lower()
+    assert "live remains disabled" in audit.lower()

@@ -83,6 +83,9 @@ Operator 调参的交易结果。
 | RG-21 | P1 | fixed-tooling | 旧 calibration/memo/reasoning knowledge 需要退出 active 查询 | dry-run/apply 工具归档并写独立 supersession 标记，原内容保留 | 本机是否 apply 由 owner 操作，不写入 Git 事实 |
 | RG-22 | P0 | fixed-window | 当前盈利判断曾混用污染窗 | 版本化窗口排除修复前、事故时段和旧版本结果；无新样本时明确 insufficient | 等 post-anchor 样本，不用旧盈利冒充 edge |
 
+自动化完成审计见 `docs/status/OUTCOME_INTEGRITY_FINAL_AUDIT_2026-07-12.md`。跨层 E2E 已完成；
+真实 paper scheduler 多周期和进程重启 soak 未运行，继续作为运行态验收，不在 Git 中伪造完成事实。
+
 ## 5. 当前消费者矩阵
 
 本表是实施时必须逐项关闭的清单。`raw` 不代表一定错误；只有标为 account/audit 的 raw 消费是

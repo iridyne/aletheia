@@ -351,6 +351,10 @@ semantics version/staleness 被拒读，不能等历史清理后才安全。
 
 ### Phase 8 — 端到端、浸泡和完成审计（RG-T12）
 
+状态：✅ 自动化 E2E / ⏳ 真实 paper soak。跨层 isolated-DB 证据和 OI-C06 已完成；
+真实 scheduler 多周期 + 进程重启 soak 本任务未运行，不能从 Git 推断。live、风险限额、owner
+运行库和 cash compensation 均未触碰。自动化完成不等于实盘或实验解锁。
+
 必须覆盖以下场景：
 
 | 场景 | 期望结果 |
@@ -364,7 +368,7 @@ semantics version/staleness 被拒读，不能等历史清理后才安全。
 | 重启发生在第一次 miss 之后 | confirmation 继续且不重复累计同一 view |
 | live mode 出现不确定消失 | alert-only/fail-closed，不自动制造退出 |
 | broker/account/environment 交错快照 | 彼此完全隔离 |
-| synthetic 行加入统计库 | CLI/API/UI、Operator、calibration、Risk、Learning、cash、genuine curve 不变 |
+| synthetic 行加入统计库 | 判断/学习/cash/genuine curve 不吸收该行；Risk 不制造亏损或触发 kill switch，但因账户真值未知而明确 unavailable/fail-closed |
 | 历史迁移重复执行 | classification、archive、supersede 和 dry-run 幂等 |
 
 验证层级：

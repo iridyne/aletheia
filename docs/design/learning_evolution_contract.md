@@ -534,3 +534,4 @@ Executable target claims live in `tests/specs/spec_outcome_integrity.py`:
 | OI-C03 | authoritative Risk account loss separated from performance PnL | implemented |
 | OI-C04 | operator-facing dual reporting | implemented |
 | OI-B05/C05 | additive history remediation + versioned clean window | implemented |
+| OI-C06 | cross-layer lifecycle E2E and final evidence inventory | implemented |
