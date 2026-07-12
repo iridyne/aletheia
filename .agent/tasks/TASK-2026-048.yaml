@@ -1,6 +1,6 @@
 schema_version: 1
 handoff_version: 1
-id: TASK-2026-047
+id: TASK-2026-048
 title: Integrate and soak Outcome Integrity
 status: in_progress
 packet_type: standard
@@ -40,5 +40,5 @@ next_action:
   reason: Claim the task and define the first focused verification.
 blockers: []
 verification: []
-handoff: .agent/handoffs/TASK-2026-047.md
+handoff: .agent/handoffs/TASK-2026-048.md
 updated_at: '2026-07-12T09:28:35.558492Z'
