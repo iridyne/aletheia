@@ -778,8 +778,12 @@ def _fmt_feature_line(f: dict) -> str:
     div = f.get("oi_price_divergence")
     crowding = f.get("crowding_signal", False)
 
+    if rsi is None and atr is None:
+        return f"  {sym}: price={f.get('price', '?')}"
+    rsi_s = f"{rsi:.0f}" if rsi is not None else "?"
+    atr_s = f"{atr:.1f}" if atr is not None else "?"
     base = (
-        f"  {sym}: RSI={rsi:.0f} ATR={atr:.1f}% "
+        f"  {sym}: RSI={rsi_s} ATR={atr_s}% "
         f"1h={r1:+.1f}% 4h={r4:+.1f}% 24h={r24:+.1f}% "
         f"FR={fr_str} OI_Δ={oi if oi is not None else '?'}"
     )
@@ -1353,7 +1357,7 @@ def _parse_decision(raw: dict) -> TradingDecision:
             return default
 
     return TradingDecision(
-        action=raw.get("action", "skip"),
+        action=raw.get("action", "skip") if raw.get("action") != "watch" else "skip",  # watch removed from enum; treat as skip
         symbol=raw.get("symbol"),
         direction=raw.get("direction"),
         conviction=_int(raw.get("conviction", 0)),
