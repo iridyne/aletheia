@@ -7,8 +7,8 @@ packet_type: standard
 scope:
   boundary: documentation-only incident audit, implementation plan, issue ledger,
     task packet, and handoff
-  excluded: production code, database contents, gateway process, trading, risk,
-    reconciliation or Learning runtime behavior, credentials, and live state
+  excluded: production code, database contents, gateway process, trading, risk, reconciliation
+    or Learning runtime behavior, credentials, and live state
 intent: Persist the reconciled_gone incident findings and define a complete staged
   remediation plan across reconciliation, outcome accounting, operator analytics,
   Learning, SDD, data history, and end-to-end regression coverage.
@@ -34,6 +34,14 @@ next_action:
   command_key: architecture
   reason: Review the documentation diff, then run the registered architecture verification.
 blockers: []
-verification: []
+verification:
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 00d6d5583139eaa56fe39895a7f874fefc693e9a
+  run_at: '2026-07-12T04:15:12.666246Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-031.md
-updated_at: '2026-07-12T04:14:15.736037Z'
+updated_at: '2026-07-12T04:15:12.666452Z'
