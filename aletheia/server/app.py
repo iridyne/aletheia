@@ -290,6 +290,11 @@ async def lifespan(app: FastAPI):
     # Bump aletheia logger to DEBUG level. The default Python logging level
     # (WARNING) silently drops all info/debug output from our modules.
     # Uvicorn already configures root logging handlers, so we just set level.
+    try:
+        from aletheia.logging_config import configure_logging
+        configure_logging()
+    except Exception:
+        pass
     _aletheia_logger = logging.getLogger("aletheia")
     if _aletheia_logger.level == logging.NOTSET:
         _aletheia_logger.setLevel(logging.DEBUG)
@@ -426,7 +431,7 @@ async def lifespan(app: FastAPI):
                 heartbeat_sec=cfg.pi_daemon.heartbeat_sec,
             )
         except Exception as e:
-            logger.warning("PI daemon failed to start: %s", e)
+            logger.warning("PI daemon failed to start: %s", e, exc_info=True)
 
     telegram_bot = None
     telegram_task = None
