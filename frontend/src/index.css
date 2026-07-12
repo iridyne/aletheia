@@ -162,6 +162,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 /* ---------- Topbar (breadcrumb + global status) ---------- */
 .topbar {
   display: flex; justify-content: space-between; align-items: center;
+  gap: var(--space-3);
   padding: 0 var(--space-6); height: var(--header-height); background: var(--surface);
   border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10;
 }
@@ -1160,10 +1161,11 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 /* ---------- Command Center Heartbeat Zone ---------- */
 .cc-heartbeat-zone {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-4);
   margin-bottom: var(--space-4);
 }
-@media (max-width: 1000px) {
+@media (max-width: 1300px) {
   .cc-heartbeat-zone { flex-direction: column; }
 }
 .cc-heartbeat-card {
