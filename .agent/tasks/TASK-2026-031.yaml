@@ -1,0 +1,39 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-031
+title: Plan reconciled-gone integrity remediation
+status: in_progress
+packet_type: standard
+scope:
+  boundary: documentation-only incident audit, implementation plan, issue ledger,
+    task packet, and handoff
+  excluded: production code, database contents, gateway process, trading, risk,
+    reconciliation or Learning runtime behavior, credentials, and live state
+intent: Persist the reconciled_gone incident findings and define a complete staged
+  remediation plan across reconciliation, outcome accounting, operator analytics,
+  Learning, SDD, data history, and end-to-end regression coverage.
+acceptance:
+- The stable audit records RG-01 through RG-22, consumer coverage, architecture causes,
+  SDD gaps, profit-loop impact, and forbidden shortcuts without embedding machine
+  runtime facts.
+- The remediation plan maps every RG item to staged tasks, dependencies, controlled-boundary
+  decision gates, additive history handling, focused and end-to-end tests, rollback
+  behavior, and an explicit completion definition.
+- BACKEND_ISSUES.md links the canonical audit and plan, while the exact machine snapshot
+  remains only in gitignored data/observation.
+- This planning task changes no trading, risk, reconciliation, Learning runtime behavior,
+  database contents, credentials, or gateway process.
+- Documentation checks, architecture fitness, and strict workflow validation pass.
+ownership:
+  branch: plan/reconciled-gone-remediation
+  lease_holder: codex
+  claimed_at: '2026-07-12T04:04:42.640463Z'
+  expires_at: '2026-07-12T12:04:42.640592Z'
+base_commit: 6468f765683f30b5da0f981db4c6b27570d1f6e6
+next_action:
+  command_key: architecture
+  reason: Review the documentation diff, then run the registered architecture verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-031.md
+updated_at: '2026-07-12T04:14:15.736037Z'

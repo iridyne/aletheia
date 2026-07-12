@@ -1076,3 +1076,18 @@
 | LLM-A01 | ✅ | provider 超时可抛空消息 `TimeoutError`；通用 helper 只保存 `str(e)`，日志/研究记录退化为 `llm_unavailable:`，Serenity 再误归 `unknown_error`。即使通用 helper 已补类名，Serenity 后台线程最外层仍曾把任意崩溃硬写为 `unknown_error`。methodology 单次 16384 输出预算又比正常 lens 高一倍，更易撞 60s 边界 | 通用 helper 在消息为空时保留异常类名，complete/structured/stream 共用；Serenity 正常管线和后台线程兜底统一以“异常类名 + 消息”分类和保存，空消息 timeout 可识别为 `provider_timeout`。methodology 专用 prompt/单-lens 不变，单次输出预算与已验证的标准 lens 对齐为 8192 |
 | DATA-A01 | ✅ | Coinalyze 默认开关为 true 但凭证可选；doctor 只看开关，把“未配置”报成 OI/清算两个 warn，且把平静期无清算事件当故障，与 collector-health 的 unconfigured/idle 语义冲突 | collector 暴露只返回布尔值的凭证存在性接口，doctor 复用真实 secret→env 双路径。disabled/unconfigured 均为 info；只有 configured 且 OI 无数据/过期才 warn；清算无事件始终为 idle/info，不读取或输出密钥 |
 | DATA-A02 | ✅ | doctor 仅因 app.db >500MB 就 warn，并推荐不存在的 `scripts/db_maintenance.py --vacuum`；实际本机 freelist 约2MB，584MB 几乎全是有效页，VACUUM 无收益 | 容量诊断改为文件大小、PRAGMA freelist 和磁盘余量三因素：空闲不足 `max(500MB, 1.2×db)` 才 warn；大而紧凑为 info；可回收空间同时≥100MB且≥20%才提示离线维护候选。移除无效命令，不删除任何数据、不自动 compact |
+
+## §26 Reconciled-gone 结果完整性（2026-07-12）
+
+> 完整审计见 `docs/issues/RECONCILED_GONE_INTEGRITY_AUDIT_2026-07-12.md`，实施顺序见
+> `docs/plans/reconciled_gone_integrity_remediation_plan_2026-07-12.md`。本节只保留主问题入口；
+> 单机数量和当前进程状态只写入 gitignored `data/observation/`，不在此固化。
+
+| ID 范围 | 状态 | 问题 | 处理/下一步 |
+|---|---|---|---|
+| RG-01～02 | 源头已修，待 E2E | `paper_internal` 与外部账户、非当前 broker 缓存曾发生错误解释，制造 false orphan | 保留账户作用域修复；补 scheduler E2E、跨 broker/incomplete view 回归和运行探针 |
+| RG-03～06 | 🔴 | trade KPI、Operator、校准和 System Operator alpha 仍可能把行政性关闭当策略结果 | 建立中央 eligible outcome read model，逐一迁移所有行为改变型消费者 |
+| RG-07～10 | 🔴 | detector 漏 native reopen；Learning 未全局 refreeze；一次 miss 可 close；真实退出恢复写死 Bitget | 统一事故指纹、durable confirmation、三 broker verified-exit protocol，错误时 fail-closed |
+| RG-11～13 | 🔴 | 行政关闭复用普通 close，可能伪造经济字段；account loss、strategy PnL 和页面统计含混 | 平仓语义分流、拆分账户/策略口径、CLI/API/UI raw+genuine 双口径 |
+| RG-14～19 | 🟠 | close reason、hook、doctor、Learning 连续性和 SDD 保护分散 | 中央分类、结构化 provenance/eligibility、统一 hook gate、枚举式可执行合同 |
+| RG-20～22 | 🟠 / owner decision | 历史现金、派生知识和盈利窗口仍受污染 | additive backfill，archive/supersede，版本化 clean window；现金补偿只在 owner 批准后追加事件 |
