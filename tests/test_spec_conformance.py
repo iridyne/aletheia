@@ -130,6 +130,11 @@ def _import_all_specs():
         spec_pipeline_paper_attribution,
         spec_operator_contract_parity,
         spec_operator_single_source,
+        # Outcome integrity (OI-*): closes the semantic gap between a raw local
+        # position state transition and a genuine strategy outcome.  OI-B00 retains
+        # the current broker/account scoping regressions; the remaining strict-xfail
+        # claims are the staged RG-01..RG-22 remediation contract. 2026-07-12.
+        spec_outcome_integrity,
         # #34: these spec files existed but were never imported here, so their claims
         # (skill store, universe distribution audit) were absent from the conformance
         # matrix — register them so they are actually loaded and counted. Also removed a
@@ -262,7 +267,10 @@ class TestConformanceStructure:
         # Bumping any of these upward is a signal that a new gap opened;
         # bumping downward means a fix landed and someone should ratchet
         # this budget down accordingly.
-        MAX_MISSING = 5
+        # TASK-2026-032 intentionally adds twelve OI-* RED tripwires for the
+        # reconciled-gone remediation.  They are split into later implementation
+        # tasks; strict xfail keeps CI honest without representing them as GREEN.
+        MAX_MISSING = 17
         # #153: 5 self-heal specs moved to partial (OL-C08, OL-S13, SH-S01, SH-C02, SH-B03).
         # TASK-2026-022 adds six explicitly bounded Learning-evolution claims whose
         # Phase-0 cores are implemented but whose consumer-wide persistence/UI/

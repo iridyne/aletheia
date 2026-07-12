@@ -475,3 +475,57 @@ It is complete when it can do all of the following in a reproducible paper envir
 
 Production positive contribution remains an empirical result, not a software guarantee.
 The software guarantee is that unproven or harmful learning cannot silently expand its authority.
+
+## 14. Position Outcome Integrity And Incident Refreeze（OI-* target）
+
+The Learning shared outcome adapter is only a transitional protection. Global closure semantics
+belong in a dependency-neutral analytics layer so Operator, calibration, alpha, Risk separation,
+reporting, and Learning cannot drift into different definitions of a “trade.” Learning composes that
+central assessment with its own clean-window, attribution, sample-floor, and experiment gates.
+
+### 14.1 Mandatory behavior-consumer migration
+
+The following are part of the Learning/full-profit loop even when their code is outside
+`aletheia/learning/`; they are completion gates, not optional analytics cleanup:
+
+| Consumer | Required outcome semantics | OI claim |
+|---|---|---|
+| trade statistics, family scorecard, strategy KPI | eligible genuine outcomes only | OI-C02 |
+| Operator 7d win rate / PF / streak / strategy performance | eligible; insufficient never falls back to raw | OI-C02 |
+| conviction calibration and active PI calibration prompt | eligible + current semantics version + fresh report | OI-C02/C05 |
+| System Operator alpha observed leg | eligible realized outcome | OI-C02 |
+| trading context performance | eligible; exposes excluded count where shown | OI-C02/C04 |
+| Risk daily loss | separate authoritative account-loss source, never Learning/performance PnL | OI-C03 |
+| CLI/API/UI performance | raw and genuine cohorts explicitly labelled | OI-C04 |
+
+No module may keep a local synthetic-close string set. Adding a close category or changing semantics
+updates the central classifier and its version once. Behavior-changing consumers must use
+`eligible_strategy_outcomes`; raw readers are limited to account state, audit, reconciliation, and
+explicitly labelled operator reporting.
+
+### 14.2 Reconciliation incident response
+
+An administrative close followed by any native or adopted reopen with the same scoped
+broker/account/environment/instrument/direction identity is a data-integrity incident. It globally
+refreezes every Learning authority path to its last static baseline across restart. Read-only
+measurement and incident reporting remain available. Recovery requires explicit incident resolution
+and a clean observation gate; one normal poll cannot automatically unfreeze Learning.
+
+### 14.3 Stale derived artifacts
+
+Calibration reports, Operator assessments, contribution reports, and derived knowledge carry
+`outcome_semantics_version` and clean-window identity. A missing/old version is rejected before prompt
+or policy consumption, even before historical remediation runs. Historical repair archives or
+supersedes polluted artifacts and regenerates them from eligible evidence; it never hard-deletes the
+originals.
+
+Executable target claims live in `tests/specs/spec_outcome_integrity.py`:
+
+| Claim | Requirement | Status |
+|---|---|---|
+| OI-B00 | retain current broker/account/local-only protections | implemented |
+| OI-S01/S02 | additive closure evidence + central read model | missing |
+| OI-B01/B02/B03 | durable confirmation + verified exit + economic close split | missing |
+| OI-B04/C01 | any-reopen incident + global refreeze | missing |
+| OI-C02/C03/C04 | all behavior consumers + Risk split + dual reporting | missing |
+| OI-B05/C05 | additive history remediation + versioned clean window | missing |

@@ -227,3 +227,49 @@ Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。
 - ⚠️ **live 对账仍受 paused**:`_run_reconciliation`(live-only,`scheduler.py:822`)仍有 paused 门,本次未改(live 默认禁用,且仅做收敛检测,优先级低)。若未来 live 常开,应一并对齐本节语义。
 
 **Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓)。`spec_pipeline_position_manager.py`。
+
+## 11. Position 关闭与结果完整性（目标合同，OI-* 尚未实现）
+
+`positions.status='closed'` 只表示本地状态生命周期结束，不自动证明发生了策略退出成交。系统必须把
+关闭分为两条不互相冒充的路径：
+
+| 路径 | 必需证据 | 允许的副作用 | 结果资格 |
+|---|---|---|---|
+| verified strategy close | 本地 execution fill，或当前 broker/account/instrument 的可验证退出 fill | 真实 fee、slippage、PnL、cash settlement、outcome-only hook | 通过其余干净窗/归因门后可 eligible |
+| administrative close | 持久确认仓位已消失，但无可验证退出 fill | 状态收敛、审计、告警 | 永远 ineligible；不得制造经济字段 |
+
+### 11.1 消失确认
+
+一个 complete position view 的单次 miss 只能创建 durable disappearance candidate。只有以下任一条件
+满足后，系统才可判断仓位确实不再存在：
+
+1. 两次独立、完整、同 broker/account/environment 的视图连续 absent；或
+2. broker 直查明确返回 `confirmed_absent_without_fill`；或
+3. broker 直查返回 `verified_fill`。
+
+stale、incomplete、缺 broker identity、wrong-account、分页不完整、网络错误和权限错误都是
+`inconclusive`，不能累计确认。candidate 必须跨进程重启保留，同一 observation 不得重复计数；仓位重新
+出现时清除 candidate 并留审计。Live 的不确定消失保持 alert-only/fail-closed，不借本合同扩大自动权限。
+
+### 11.2 Broker-neutral verified exit
+
+Execution 层定义统一 verified-position-exit protocol；Bitget、OKX、Binance adapter 都返回结构化三态：
+
+- `verified_fill`：含 broker fill/order identity、价格、数量、fee、时间和 provenance；
+- `confirmed_absent_without_fill`：确认已不存在，但找不到足以证明经济结果的 fill；
+- `inconclusive`：无法证明，持仓保持 open/candidate，不关闭。
+
+symbol 仍只在 adapter 边界转换，查询身份必须包含 venue、market type、account environment；不得用
+Bitget-only TPSL 历史解释其他 broker。
+
+### 11.3 行政关闭副作用禁区
+
+administrative-unverified close 不得：
+
+- 用 entry/mark/current fallback 伪造退出 fill；
+- 新增手续费、滑点、已实现策略 PnL或 `paper_account_events` 结算；
+- 触发 calibration、shadow resolution、strategy KPI、Learning case/reviewer 等 outcome-only hook；
+- 被 Risk 当成权威账户损失。
+
+它必须保留 causal ids、actor/source、确认依据和审计事件。原始历史值永久保留，新增结构化字段只描述
+其 provenance 和 eligibility。对应 `OI-B01~B04`、`OI-C03`。

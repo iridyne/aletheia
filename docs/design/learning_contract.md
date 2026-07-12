@@ -427,3 +427,22 @@ Important tripwires:
 
 These current claims remain valid regression coverage. They must not be represented as proof of
 the target `LE-*` positive-contribution claims or of profitability.
+
+## 11. Outcome Integrity Handoff
+
+`aletheia/learning/outcomes.py` currently provides a conservative Learning-only adapter and already
+rejects central synthetic close reasons. This is a partial safety net, not the final global source of
+truth: several Operator, calibration, alpha, Risk and performance consumers still read closed
+positions through independent paths.
+
+The target contract is `learning_evolution_contract.md §14` plus
+`tests/specs/spec_outcome_integrity.py`. Until OI-C01/OI-C02/OI-C05 are GREEN:
+
+- a reconciler-thrash incident is not proven to refreeze every Learning consumer;
+- an old calibration/report may still be active after its underlying outcome semantics became stale;
+- “Learning is healthy/effective” cannot be inferred from raw closed-position statistics;
+- existing consumers already protected by `assess_realized_position()` must retain that protection,
+  but their local adapter must eventually compose the neutral central outcome model.
+
+This handoff does not authorize Learning to import Risk, Execution, exchange clients, or live routes.
+Risk account loss remains a separate controlled contract, not a Learning outcome.

@@ -127,6 +127,27 @@ operators do not infer the real order target from the retained exchange preferen
 | GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |
 | GET | `/analytics/learning-funnel` | Learning write/consume visibility, lesson status counts, conservative contradiction count |
 
+### Analytics outcome-integrity response target（OI-C04, not implemented）
+
+The existing trade-statistics, strategy-KPI, family-scorecard, confidence-calibration, cost-summary,
+and equity-curve endpoints remain present. Their target response contract adds explicit cohort
+metadata instead of silently changing one unlabelled number:
+
+| Field | Meaning |
+|---|---|
+| `raw_event_count` | all matching immutable close/account events |
+| `eligible_outcome_count` | genuine outcomes allowed in judgement metrics |
+| `excluded_outcome_count` | raw events excluded from judgement |
+| `outcome_exclusion_reasons` | stable reason → count map |
+| `outcome_semantics_version` | classifier/read-model version used |
+| `cohort_state` | `available` / `insufficient` / `unavailable` |
+
+Judgement metrics default to the eligible cohort. Raw/account series and genuine strategy series may
+both be returned, but each series carries a stable label and cannot substitute for the other. Missing
+or insufficient genuine data is not serialized as a zero return, zero win rate, or healthy state.
+This paragraph is target documentation; current endpoint behavior remains tracked as RG-13 until
+`OI-C04` becomes GREEN and `api_reference` response-shape specs are updated.
+
 > Backtest endpoints (`/analytics/backtest/runs`, `/runs/{id}`, `/compare/{id}`,
 > `/backtest-paper-drift`) and `/analytics/strategy-evidence` were deleted with the
 > rules engine (Position C, 2026-07-02).

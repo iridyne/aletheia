@@ -238,6 +238,9 @@ operator-facing reporting ────────────► raw + genuine,
 
 #### RG-T08：Operator、Learning 和 PI 判断消费者
 
+本任务中的每一项都是整体修复的强制完成门，不是“有空再做”的分析优化。只要任一路仍直接使用
+未过滤 closed rows，RG-01～RG-22 就不能整体关闭。
+
 按行为影响优先迁移：
 
 1. `analytics.trade_stats`；
