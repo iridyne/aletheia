@@ -1183,13 +1183,10 @@ def build_recommendations(limit: int = 10) -> list[dict]:
             }
         )
 
-    recent_closed_positions = repo._select_all(
-        "positions",
-        where="status = ? AND closed_at IS NOT NULL AND closed_at > ?",
-        params=("closed", cutoff_24h),
-        order="closed_at DESC",
-        limit=20,
-    )
+    from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+    recent_closed_positions = list(reversed(
+        eligible_strategy_outcomes(closed_after=cutoff_24h)
+    ))[:20]
     recent_post_trade_reviews = repo._select_all(
         "knowledge_items",
         where="item_type = ? AND created_at > ?",

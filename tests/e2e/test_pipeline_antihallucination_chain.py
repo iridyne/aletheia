@@ -23,7 +23,8 @@ from aletheia.storage import repositories as repo
 def _run_paper_trade(symbol, entry, exit_price, *, opportunity_id, strategy_id):
     """Open a paper position through the real gateway, then close it. Returns position id."""
     from aletheia.execution.gateway import submit_proposal
-    from aletheia.portfolio.pnl import close_position
+    from aletheia.execution.verified_exit import VerifiedExitFill, VerifiedExitResult
+    from aletheia.portfolio.outcome_closure import close_position_verified
 
     res = submit_proposal(
         symbol=symbol, market_type="spot", direction="long",
@@ -33,7 +34,26 @@ def _run_paper_trade(symbol, entry, exit_price, *, opportunity_id, strategy_id):
     )
     assert res["status"] == "executed", f"paper proposal should execute, got {res}"
     pos_id = res["position_id"]
-    close_position(pos_id, exit_price=exit_price, reason="take_profit")
+    position = repo._select_one("positions", pos_id)
+    quantity = float(position["quantity"])
+    close_position_verified(
+        pos_id,
+        VerifiedExitResult(
+            state="verified_fill", reason="local_paper_fill",
+            broker_id="paper_internal", account_environment="local",
+            account_scope="e2e", execution_mode="paper_internal",
+            position_id=pos_id, symbol=symbol, market_type="spot",
+            direction="long", position_absent=True, history_complete=True,
+            history_start_ms=1, history_end_ms=2, pages=1,
+            source_endpoint="local_paper_fill",
+            fills=(VerifiedExitFill(
+                fill_id=f"exit-{pos_id}", order_id=None, price=exit_price,
+                quantity=quantity, fee=0.0, fee_currency="USDT",
+                realized_pnl=None, filled_at_ms=2,
+            ),),
+        ),
+        reason="take_profit",
+    )
     return pos_id
 
 

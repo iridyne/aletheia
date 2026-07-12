@@ -317,37 +317,18 @@ def test_zero_quantity_exchange_rows_ignored(tmp_path, monkeypatch):
 # --- P3 tests: orphan close + run_reconcile orchestration ---
 
 
-def test_reconcile_close_orphan_closes_local_position(tmp_path, monkeypatch):
-    """Orphaned position (local open, exchange gone) gets closed with reason='reconciled_gone'."""
-    setup_env(tmp_path, monkeypatch)
-    pos = Position(
-        symbol="ETH/USDT", market_type="usdt_futures", direction="long",
-        quantity=2.0, entry_price=3000.0, current_price=3100.0,
-        execution_mode="bitget_demo",
-    )
-    repo.insert_position(pos)
-    _stub_cache(monkeypatch, [])
+def test_legacy_fallback_orphan_close_is_removed():
+    """No caller can turn current/entry fallback price into a synthetic close."""
+    import inspect
+    from aletheia.portfolio import position_reconciler
 
-    from aletheia.portfolio.position_reconciler import classify_positions, reconcile_close_orphan
-    result = classify_positions()
-    assert len(result.orphaned) == 1
-
-    # Stub the audit writer so it doesn't hit real filesystem
-    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *a, **kw: None)
-
-    close_result = reconcile_close_orphan(result.orphaned[0])
-    assert close_result["position_id"] == pos.id
-    assert close_result["reason"] == "reconciled_gone"
-    assert close_result["exit_price"] == 3100.0
-
-    # Verify position is now closed in DB
-    closed = repo.list_positions(status="closed")
-    assert len(closed) == 1
-    assert closed[0]["close_reason"] == "reconciled_gone"
+    source = inspect.getsource(position_reconciler)
+    assert "def reconcile_close_orphan" not in source
+    assert "def _try_get_tpsl_fill_price" not in source
 
 
-def test_run_reconcile_demo_adopts_and_closes(tmp_path, monkeypatch):
-    """run_reconcile in demo mode: auto-adopts externals + closes orphans."""
+def test_run_reconcile_demo_adopts_and_records_disappearance(tmp_path, monkeypatch):
+    """Demo may adopt externals, but one missing view only creates evidence."""
     setup_env(tmp_path, monkeypatch)
 
     # Write a config file so load_config works
@@ -383,9 +364,11 @@ def test_run_reconcile_demo_adopts_and_closes(tmp_path, monkeypatch):
     assert len(summary["adopted"]) == 1
     assert summary["adopted"][0]["symbol"] == "SOL/USDT"
     assert summary["adopted"][0]["execution_mode"] == "bitget_demo"
-    assert len(summary["closed_orphans"]) == 1
-    assert summary["closed_orphans"][0]["position_id"] == orphan.id
-    assert summary["closed_orphans"][0]["reason"] == "reconciled_gone"
+    assert summary["closed_orphans"] == []
+    assert summary["disappearance"]["created"] == 1
+    assert summary["disappearance"]["observations"][0]["position_id"] == orphan.id
+    assert summary["disappearance"]["observations"][0]["confirmation_count"] == 1
+    assert orphan.id in {row["id"] for row in repo.list_positions(status="open")}
 
 
 def test_run_reconcile_live_never_adopts(tmp_path, monkeypatch):

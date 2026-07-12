@@ -495,9 +495,10 @@ def status(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """One-shot system dashboard: portfolio, PnL, orders, universe, data quality."""
+    from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     from aletheia.analytics.trade_stats import compute_rolling_trade_stats, compute_order_stats
     from aletheia.data.price_feed import cache_stats
-    from aletheia.portfolio.pnl import today_realized_pnl, mark_positions_to_market
+    from aletheia.portfolio.pnl import mark_positions_to_market
     from aletheia.storage.repositories import (
         get_active_universe_snapshot, get_active_universe_members,
     )
@@ -534,10 +535,15 @@ def status(
         pass
 
     # PnL
-    today_pnl = today_realized_pnl()
+    today_start = datetime.now(timezone.utc).date().isoformat()
+    today_cohort = build_outcome_cohort_summary(closed_after=today_start)
+    today_pnl = today_cohort["eligible_realized_pnl"]
     rolling = compute_rolling_trade_stats(days=days)
     pnl_section = {
-        "today_realized": round(today_pnl, 2),
+        "today_realized": round(today_pnl, 2) if today_pnl is not None else None,
+        "cohort": build_outcome_cohort_summary(
+            closed_after=(datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        ),
         **{k: rolling[k] for k in (
             "days", "total_trades", "wins", "losses", "win_rate",
             "total_pnl", "avg_pnl", "best_win", "worst_loss",
@@ -587,8 +593,17 @@ def status(
 
     typer.echo("")
     typer.echo(f"=== PnL ({days}d) ===")
-    typer.echo(f"  today: {pnl_section['today_realized']} USDT  |  {days}d: {rolling['total_pnl']} USDT ({rolling['total_trades']} trades, {rolling['win_rate']}% win)")
-    typer.echo(f"  best: {rolling['best_win']}  worst: {rolling['worst_loss']}  avg: {rolling['avg_pnl']}")
+    cohort = pnl_section["cohort"]
+    typer.echo(
+        "  raw closes: "
+        f"{cohort['raw_event_count']}  verified: {cohort['eligible_outcome_count']}  "
+        f"excluded: {cohort['excluded_outcome_count']}"
+    )
+    if rolling["total_pnl"] is None:
+        typer.echo("  insufficient verified outcomes")
+    else:
+        typer.echo(f"  today: {pnl_section['today_realized']} USDT  |  {days}d: {rolling['total_pnl']} USDT ({rolling['total_trades']} trades, {rolling['win_rate']}% win)")
+        typer.echo(f"  best: {rolling['best_win']}  worst: {rolling['worst_loss']}  avg: {rolling['avg_pnl']}")
 
     typer.echo("")
     typer.echo(f"=== Orders ({days}d) ===")
@@ -622,22 +637,26 @@ def pnl(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Detailed PnL breakdown: today, rolling window, per-symbol, open positions."""
+    from aletheia.analytics.outcome_integrity import (
+        build_outcome_cohort_summary,
+        eligible_strategy_outcomes,
+    )
     from aletheia.analytics.trade_stats import compute_rolling_trade_stats
-    from aletheia.portfolio.pnl import today_realized_pnl, mark_positions_to_market
-    from aletheia.storage.repositories import list_positions
+    from aletheia.portfolio.pnl import mark_positions_to_market
 
     # Today detail
     today_str = datetime.now(timezone.utc).date().isoformat()
-    closed = list_positions(status="closed", limit=200)
+    closed = eligible_strategy_outcomes(closed_after=today_str, limit=200)
     today_closed = [
         p for p in closed
         if (p.get("closed_at") or "")[:10] == today_str
     ]
-    today_total = today_realized_pnl()
+    today_cohort = build_outcome_cohort_summary(closed_after=today_str)
+    today_total = today_cohort["eligible_realized_pnl"]
     today_detail = [
         {
             "symbol": p["symbol"], "direction": p["direction"],
-            "pnl": round(p.get("realized_pnl", 0), 2),
+            "pnl": round(float(p["realized_pnl"]), 2),
             "close_reason": p.get("close_reason", "?"),
         }
         for p in today_closed
@@ -659,8 +678,11 @@ def pnl(
     ]
 
     result = {
-        "today": {"date": today_str, "realized": round(today_total, 2), "trades": today_detail},
+        "today": {"date": today_str, "realized": round(today_total, 2) if today_total is not None else None, "trades": today_detail},
         "rolling": rolling,
+        "cohort": build_outcome_cohort_summary(
+            closed_after=(datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        ),
         "open_positions": positions_out,
     }
 
@@ -670,14 +692,32 @@ def pnl(
 
     # Human-readable
     typer.echo(f"=== Today ({today_str} UTC) ===")
-    typer.echo(f"  realized: {today_total:.2f} USDT ({len(today_detail)} trades)")
+    if today_total is None:
+        typer.echo("  realized: unavailable (insufficient verified outcomes)")
+    else:
+        typer.echo(f"  realized: {today_total:.2f} USDT ({len(today_detail)} verified outcomes)")
     for t in today_detail:
         typer.echo(f"  {t['symbol']} {t['direction']}: {t['pnl']:+.2f} ({t['close_reason']})")
 
     typer.echo("")
     typer.echo(f"=== {days}-Day Rolling ===")
-    typer.echo(f"  trades: {rolling['total_trades']}  wins: {rolling['wins']}  losses: {rolling['losses']}  win_rate: {rolling['win_rate']}%")
-    typer.echo(f"  total: {rolling['total_pnl']:+.2f}  avg: {rolling['avg_pnl']:+.2f}  best: {rolling['best_win']:+.2f}  worst: {rolling['worst_loss']:+.2f}")
+    cohort = result["cohort"]
+    typer.echo(
+        "  raw closes: "
+        f"{cohort['raw_event_count']}  verified: {cohort['eligible_outcome_count']}  "
+        f"excluded: {cohort['excluded_outcome_count']}"
+    )
+    if cohort["outcome_exclusion_reasons"]:
+        reasons = ", ".join(
+            f"{reason}={count}"
+            for reason, count in cohort["outcome_exclusion_reasons"].items()
+        )
+        typer.echo(f"  exclusions: {reasons}")
+    if rolling["total_pnl"] is None:
+        typer.echo("  insufficient verified outcomes")
+    else:
+        typer.echo(f"  trades: {rolling['total_trades']}  wins: {rolling['wins']}  losses: {rolling['losses']}  win_rate: {rolling['win_rate']}%")
+        typer.echo(f"  total: {rolling['total_pnl']:+.2f}  avg: {rolling['avg_pnl']:+.2f}  best: {rolling['best_win']:+.2f}  worst: {rolling['worst_loss']:+.2f}")
 
     if rolling["per_symbol"]:
         typer.echo("")

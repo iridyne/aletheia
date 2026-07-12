@@ -587,6 +587,18 @@ def get_active_position_disappearance_candidate(identity_key: str) -> dict | Non
     return dict(row) if row else None
 
 
+def get_active_position_disappearance_candidate_for_position(
+    position_id: str,
+) -> dict | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM position_disappearance_candidates "
+        "WHERE position_id=? AND status='pending' ORDER BY updated_at DESC LIMIT 1",
+        (position_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def update_position_disappearance_candidate(candidate_id: str, **kwargs) -> None:
     _update("position_disappearance_candidates", candidate_id, kwargs)
 

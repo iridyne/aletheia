@@ -22,6 +22,15 @@ from aletheia.storage.models import Position, PortfolioSnapshot
 from aletheia.storage import repositories as repo
 from aletheia.portfolio.pnl import compute_portfolio, compute_and_store_snapshot
 
+VERIFIED_OUTCOME = {
+    "close_category": "strategy",
+    "exit_price_source": "local_fill",
+    "exit_fill_verified": True,
+    "outcome_eligible": True,
+    "outcome_exclusion_reason": "eligible",
+    "outcome_semantics_version": "oi-v1",
+}
+
 
 def _setup(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
@@ -72,13 +81,13 @@ class TestRealizedPnlIsolation:
         repo.insert_position(Position(
             symbol="BTC/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=100.0, realized_pnl=10.0,
-            status="closed", execution_mode="paper_internal",
+            status="closed", execution_mode="paper_internal", **VERIFIED_OUTCOME,
             closed_at=datetime.now(timezone.utc).isoformat(),
         ))
         repo.insert_position(Position(
             symbol="ETH/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=50.0, realized_pnl=25.0,
-            status="closed", execution_mode="okx_demo",
+            status="closed", execution_mode="okx_demo", **VERIFIED_OUTCOME,
             closed_at=datetime.now(timezone.utc).isoformat(),
         ))
         summary = compute_portfolio(execution_mode="paper_internal")
@@ -90,13 +99,13 @@ class TestRealizedPnlIsolation:
         repo.insert_position(Position(
             symbol="BTC/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=100.0, realized_pnl=10.0,
-            status="closed", execution_mode="paper_internal",
+            status="closed", execution_mode="paper_internal", **VERIFIED_OUTCOME,
             closed_at=datetime.now(timezone.utc).isoformat(),
         ))
         repo.insert_position(Position(
             symbol="ETH/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=50.0, realized_pnl=25.0,
-            status="closed", execution_mode="okx_demo",
+            status="closed", execution_mode="okx_demo", **VERIFIED_OUTCOME,
             closed_at=datetime.now(timezone.utc).isoformat(),
         ))
         summary = compute_portfolio(execution_mode=None)
@@ -114,13 +123,13 @@ class TestSnapshotConsistency:
         repo.insert_position(Position(
             symbol="BTC/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=100.0, realized_pnl=10.0,
-            status="closed", execution_mode="paper_internal",
+            status="closed", execution_mode="paper_internal", **VERIFIED_OUTCOME,
             closed_at=datetime.now(timezone.utc).isoformat(),
         ))
         repo.insert_position(Position(
             symbol="ETH/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=50.0, realized_pnl=25.0,
-            status="closed", execution_mode="okx_demo",
+            status="closed", execution_mode="okx_demo", **VERIFIED_OUTCOME,
             closed_at=datetime.now(timezone.utc).isoformat(),
         ))
         snap = compute_and_store_snapshot(execution_mode="paper_internal")
@@ -131,13 +140,13 @@ class TestSnapshotConsistency:
         repo.insert_position(Position(
             symbol="BTC/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=100.0, realized_pnl=10.0,
-            status="closed", execution_mode="paper_internal",
+            status="closed", execution_mode="paper_internal", **VERIFIED_OUTCOME,
             closed_at=datetime.now(timezone.utc).isoformat(),
         ))
         repo.insert_position(Position(
             symbol="ETH/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=50.0, realized_pnl=25.0,
-            status="closed", execution_mode="okx_demo",
+            status="closed", execution_mode="okx_demo", **VERIFIED_OUTCOME,
             closed_at=datetime.now(timezone.utc).isoformat(),
         ))
         # Inject fake exchange cache so Row 2 is written
@@ -174,13 +183,13 @@ class TestEquityCurveEndpoint:
         repo.insert_position(Position(
             symbol="BTC/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=100.0, realized_pnl=5.0,
-            status="closed", execution_mode="paper_internal",
+            status="closed", execution_mode="paper_internal", **VERIFIED_OUTCOME,
             closed_at=now.isoformat(),
         ))
         repo.insert_position(Position(
             symbol="ETH/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=50.0, realized_pnl=3.0,
-            status="closed", execution_mode="okx_demo",
+            status="closed", execution_mode="okx_demo", **VERIFIED_OUTCOME,
             closed_at=(now + timedelta(minutes=1)).isoformat(),
         ))
         resp = await c.get("/api/analytics/equity-curve")
@@ -195,13 +204,13 @@ class TestEquityCurveEndpoint:
         repo.insert_position(Position(
             symbol="BTC/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=100.0, realized_pnl=5.0,
-            status="closed", execution_mode="paper_internal",
+            status="closed", execution_mode="paper_internal", **VERIFIED_OUTCOME,
             closed_at=now.isoformat(),
         ))
         repo.insert_position(Position(
             symbol="ETH/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=50.0, realized_pnl=3.0,
-            status="closed", execution_mode="okx_demo",
+            status="closed", execution_mode="okx_demo", **VERIFIED_OUTCOME,
             closed_at=(now + timedelta(minutes=1)).isoformat(),
         ))
         resp = await c.get("/api/analytics/equity-curve?execution_mode=paper_internal")
@@ -215,13 +224,13 @@ class TestEquityCurveEndpoint:
         repo.insert_position(Position(
             symbol="BTC/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=100.0, realized_pnl=5.0,
-            status="closed", execution_mode="paper_internal",
+            status="closed", execution_mode="paper_internal", **VERIFIED_OUTCOME,
             closed_at=(now - timedelta(days=10)).isoformat(),
         ))
         repo.insert_position(Position(
             symbol="ETH/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=50.0, realized_pnl=3.0,
-            status="closed", execution_mode="paper_internal",
+            status="closed", execution_mode="paper_internal", **VERIFIED_OUTCOME,
             closed_at=now.isoformat(),
         ))
         resp = await c.get("/api/analytics/equity-curve?days=7")
@@ -229,11 +238,11 @@ class TestEquityCurveEndpoint:
         # `days` windows the DISPLAYED points (only the in-window trade is emitted)…
         assert len(body["points"]) == 1
         assert body["points"][0]["pnl"] == 3.0
-        # …but in the default full_cumulative mode the running total accumulates over
-        # ALL history, so the curve's end point includes the pre-window +5.0 trade.
-        # This keeps the equity curve's end point identical across 7D/30D/All.
-        assert body["points"][0]["cumulative_pnl"] == 8.0
-        assert body["total_realized"] == 8.0
+        # The verified strategy curve never carries pre-clean-window history forward.
+        # Raw recorded account history remains available on its separately labelled curve.
+        assert body["points"][0]["cumulative_pnl"] == 3.0
+        assert body["total_realized"] == 3.0
+        assert body["raw_recorded_points"][0]["cumulative_pnl"] == 8.0
 
     async def test_respects_limit(self, client):
         c, _ = client
@@ -242,7 +251,7 @@ class TestEquityCurveEndpoint:
             repo.insert_position(Position(
                 symbol="BTC/USDT", market_type="spot", direction="long",
                 quantity=1.0, entry_price=100.0, realized_pnl=1.0,
-                status="closed", execution_mode="paper_internal",
+                status="closed", execution_mode="paper_internal", **VERIFIED_OUTCOME,
                 closed_at=(now + timedelta(minutes=i)).isoformat(),
             ))
         resp = await c.get("/api/analytics/equity-curve?limit=5")

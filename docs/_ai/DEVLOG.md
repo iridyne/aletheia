@@ -3159,3 +3159,121 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Doctor now reports current churn, reopen sources, the durable incident, global Learning
   freeze reason and recovery progress. OI-B04/OI-C01 are implemented; independent Operator,
   calibration, alpha, Risk and performance-reader migrations remain explicit planned debt.
+
+## 2026-07-12 — Durable position-disappearance confirmation
+
+- A fresh complete active-account view missing a local position now creates durable,
+  account/instrument-scoped evidence instead of closing after one snapshot.
+- Exact cache retries, time-regressed snapshots, stale/incomplete/wrong-account views do not
+  advance confirmation; evidence survives database reconnection and reappearance resolves the
+  pending candidate with an audit record.
+- Two independent absences (or a future direct confirmed-absent adapter result) make the
+  candidate ready only for the later verified-exit phase. The scheduler no longer invokes the
+  fallback-price orphan close, so RG-T06/T07 can add real exit evidence and honest accounting
+  without new synthetic PnL being created in the interim.
+
+## 2026-07-12 — Broker-neutral verified exit evidence
+
+- Added one read-only `VerifiedExitRequest`/`VerifiedExitResult` contract with explicit
+  `verified_fill`, `confirmed_absent_without_fill`, and `inconclusive` states.
+- Bitget, OKX, and Binance now verify the scoped position directly and page their own private
+  fill history at the venue adapter boundary. Missing/repeated cursors, unavailable history,
+  malformed responses, permissions and network failures remain inconclusive.
+- Normalized fill provenance retains venue/account/instrument identity, fill/order ids, price,
+  quantity, fee, realized PnL and time without storing raw private responses.
+- Order placement, live authority, position state, PnL/cash accounting and Risk were unchanged;
+  RG-T07 will consume the protocol when it introduces verified/admin close separation.
+
+## 2026-07-12 — Verified versus administrative close accounting
+
+- Added separate verified and administrative closure services. Verified closure requires
+  matching account/instrument identity, exact fill quantity, known entry fee and quote-currency
+  exit fees; it settles weighted fill economics and eligible outcome evidence once.
+- Administrative closure now converges lifecycle state and durable audit only. Realized PnL,
+  exit fee and slippage remain unavailable; paper cash and outcome-only hooks are untouched.
+- Ready demo disappearance candidates now run the broker-neutral direct query after incident
+  gates. Verified fills settle strategy economics, confirmed absence without fills closes
+  administratively, and inconclusive evidence stays open. Live remains alert-only.
+- Removed the dormant Bitget-only TPSL/fallback orphan closer and blocked synthetic reasons from
+  the legacy close API. Added raw versus eligible daily PnL names without changing Risk yet.
+
+## 2026-07-12 — Baseline verification cleanup
+
+- Split two unrelated execution rules that accidentally shared `EX-B05`: executable venue
+  order constraints retain that identifier, while the reconciliation no-order invariant is
+  now `EX-C04` in both executable coverage and the execution design document.
+- Corrected the status-route regression to accept the intentionally empty model-provider
+  value on a fresh configuration instead of requiring the backend to invent one.
+- No runtime behavior changed; the full suite now has no ordinary failures.
+
+## 2026-07-12 — Verified-outcome consumer migration
+
+- Migrated trade/family/strategy KPIs, Operator 7d performance, PI trading context,
+  conviction calibration and System Operator alpha to the central verified eligible-outcome
+  cohort. Administrative, maintenance, legacy and incomplete closes no longer alter judgement.
+- Migrated attribution, memo/reasoning, persona sizing, promotion, go-live and loss-streak
+  consumers and removed their local synthetic-close blacklists.
+- Versioned calibration, memo, reasoning and alpha artifacts; missing-version or stale active
+  reports now fail closed before prompt or policy consumption.
+- Expanded OI-C02 into an enumerated behavior-consumer guard with genuine-vs-administrative
+  regressions. Risk daily loss, raw/genuine API/UI reporting and historical remediation remain
+  isolated follow-up tasks.
+
+## 2026-07-12 — Awaitable test lifecycle enforcement
+
+- Fixed broker and TPSL test doubles that returned or raised without closing already-created
+  coroutine objects, which caused delayed warnings to be attributed to unrelated later tests.
+- Added one reusable closing runner plus unit and subprocess coverage proving deliberate
+  coroutine leaks fail the test run.
+- Promoted unawaited-coroutine and pytest unraisable-exception warnings to errors. Production
+  behavior is unchanged; the remaining Starlette TestClient dependency warning stays visible.
+
+## 2026-07-12 — Starlette TestClient httpx2 migration
+
+- Added Starlette's supported `httpx2` client as a development-only dependency; runtime network
+  code continues to use the existing `httpx[socks]` stack.
+- Verified all existing synchronous ASGI TestClient suites without changing route or API tests.
+- Promoted Starlette deprecation warnings to failures. The full suite now emits no warnings;
+  two unrelated Outcome Integrity baseline test failures remain explicit.
+
+## 2026-07-12 — Authoritative Risk daily loss
+
+- Replaced Risk check #8's ambiguous position-performance sum with a dedicated account-loss
+  snapshot. Risk thresholds, capital bases, ordering and kill-switch policy are unchanged.
+- Local paper results now require exact agreement between verified close economics and the
+  append-only cash ledger; exchange-backed results require verified current-semantics economics.
+- Administrative, maintenance, legacy, incomplete or ledger-mismatched closes make account loss
+  explicitly unavailable. New proposals fail closed without inventing a daily-loss breach or
+  auto-tripping the kill switch; a genuine loss still triggers the existing brake.
+- Added controlled-boundary and OI-C03 regressions. Reporting/API/UI dual semantics remain RG-T10.
+
+## 2026-07-12 — Honest raw and verified outcome reporting
+
+- CLI performance views and analytics responses now default judgement metrics to verified strategy
+  outcomes while exposing raw close counts, exclusions, reasons and the active semantics version.
+- The Overview equity view renders separately labelled raw-recorded and verified-strategy curves;
+  current unrealized PnL remains separate. Empty verified cohorts render unavailable/insufficient
+  instead of zero, green, or a formatting crash.
+- Strategy, family, confidence and cost responses carry the same cohort explanation. No Risk,
+  close accounting, execution, exchange, live-authority, credential or historical record changed.
+
+## 2026-07-12 — Non-destructive outcome-history remediation
+
+- Added a default-dry-run maintenance command for deterministic administrative/maintenance
+  classification, derived-artifact archival and durable supersession markers. Apply is
+  transactional and idempotent; ambiguous legacy closes and original economics remain untouched.
+- Added a versioned clean-window anchor. Strategy/Learning judgement now excludes pre-anchor,
+  incident-window and wrong-version evidence; empty post-fix samples remain insufficient.
+- Paper cash effects are reported as stable owner-approval-required compensation candidates only.
+  No compensation, original cash edit, deletion, Risk, execution, exchange, live or credential
+  path was added or changed.
+
+## 2026-07-12 — Outcome-integrity cross-layer completion audit
+
+- Added deterministic E2E scenarios proving verified and administrative close meanings remain
+  consistent across paper cash, authoritative Risk input, Learning eligibility and raw/genuine
+  reporting, including repeat-close safety and native/adopted reopen refreeze.
+- Added OI-C06 as an executable inventory covering local-only reconciliation, durable restart,
+  wrong-account/live fail-closed behavior, all three broker evidence adapters and history repair.
+- No production behavior changed. Real paper scheduler/process-restart soak, owner-database
+  maintenance and cash compensation were not run; live remained untouched.

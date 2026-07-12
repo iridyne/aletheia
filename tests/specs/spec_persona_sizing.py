@@ -189,11 +189,18 @@ def test_operator_decidable_param_is_context_decided(tmp_path, monkeypatch):
 
 
 def _closed(repo, Position, regime, pnl, reason="take_profit", entry=100.0, qty=1.0):
+    synthetic = reason == "reconciled_gone"
     repo.insert_position(Position(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=qty, entry_price=entry, execution_mode="okx_demo",
         status="closed", realized_pnl=pnl, close_reason=reason, regime_tag=regime,
-        closed_at="2026-07-02T00:00:00+00:00",
+        closed_at="2026-07-12T08:00:00+00:00",
+        close_category="administrative" if synthetic else "strategy",
+        exit_price_source="unavailable" if synthetic else "broker_fill",
+        exit_fill_verified=not synthetic,
+        outcome_eligible=not synthetic,
+        outcome_exclusion_reason="administrative_close" if synthetic else "eligible",
+        outcome_semantics_version="oi-v1",
     ))
 
 

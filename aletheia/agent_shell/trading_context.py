@@ -15,6 +15,10 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from aletheia.analytics.outcome_integrity import (
+    OUTCOME_SEMANTICS_VERSION,
+    eligible_strategy_outcomes,
+)
 from aletheia.data.position_x import build_position_x_agent_context
 
 logger = logging.getLogger("aletheia.agent_shell.trading_context")
@@ -222,10 +226,19 @@ def _build_layer1_snapshot() -> dict[str, Any]:
     # Today's realized PnL (scoped to active execution mode so PI sees
     # the same figure as the paper dashboard, not a cross-mode total).
     try:
-        from aletheia.portfolio.pnl import today_realized_pnl
         from aletheia.config.loader import load_config as _load_cfg
         _mode = _load_cfg().exchange.paper_execution_mode or "paper_internal"
-        layer["today_pnl"] = round(today_realized_pnl(execution_mode=_mode), 2)
+        today_start = f"{datetime.now(timezone.utc).date().isoformat()}T00:00:00+00:00"
+        today_outcomes = eligible_strategy_outcomes(
+            execution_mode=_mode, closed_after=today_start,
+        )
+        layer["today_pnl"] = (
+            round(sum(float(row["realized_pnl"]) for row in today_outcomes), 2)
+            if today_outcomes else None
+        )
+        layer["today_pnl_status"] = "available" if today_outcomes else "insufficient"
+        layer["today_pnl_semantics"] = "eligible_strategy_outcomes"
+        layer["outcome_semantics_version"] = OUTCOME_SEMANTICS_VERSION
     except Exception:
         layer["today_pnl"] = None
 
@@ -509,19 +522,7 @@ def _build_layer2_short_term() -> dict[str, Any]:
 
     # Recent closed positions — aggregate stats
     try:
-        from aletheia.storage.repositories import list_positions
-        closed = list_positions(status="closed", limit=200)
-        # Exclude one-time technical/reconcile closes (e.g. units_bug_cleanup —
-        # the 3 contractSize-inflated positions force-closed 2026-06-23). These
-        # are migration debt, NOT strategy performance; counting them poisoned the
-        # 7d stats (total_pnl -13.46 vs real +9.80, worst -23.13 vs real -6.95),
-        # making the System Operator see a phantom crisis and skip every signal.
-        _NON_STRATEGY_CLOSE_REASONS = {"units_bug_cleanup", "reconciled_gone"}
-        recent = [
-            p for p in closed
-            if (p.get("closed_at") or "") >= cutoff
-            and p.get("close_reason") not in _NON_STRATEGY_CLOSE_REASONS
-        ]
+        recent = eligible_strategy_outcomes(closed_after=cutoff)
 
         if recent:
             wins = [p for p in recent if (p.get("realized_pnl") or 0) > 0]
@@ -538,6 +539,7 @@ def _build_layer2_short_term() -> dict[str, Any]:
                 "avg_pnl_per_trade": round(avg_return, 2),
                 "worst_loss": round(min((p.get("realized_pnl", 0) for p in recent), default=0), 2),
                 "best_win": round(max((p.get("realized_pnl", 0) for p in recent), default=0), 2),
+                "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
             }
 
             # Per-symbol breakdown (top 5 by trade count)
@@ -559,6 +561,7 @@ def _build_layer2_short_term() -> dict[str, Any]:
         else:
             layer["outcome_stats"] = None
             layer["per_symbol"] = []
+            layer["outcome_status"] = "insufficient"
 
     except Exception:
         layer["outcome_stats"] = None
@@ -597,6 +600,8 @@ def _build_layer2_short_term() -> dict[str, Any]:
         from aletheia.analytics.trade_stats import build_trade_stats
         trade_stats = build_trade_stats()
         layer["trade_analytics"] = {
+            "outcome_status": trade_stats.get("outcome_status", "insufficient"),
+            "outcome_semantics_version": trade_stats.get("outcome_semantics_version"),
             "totals": trade_stats.get("totals", {}),
             "by_source": (trade_stats.get("by_source") or [])[:4],
             "by_family": sorted(

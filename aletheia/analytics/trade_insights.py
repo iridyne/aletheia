@@ -13,19 +13,15 @@ _SINCE_UTC = "2026-06-22"
 
 
 def build_trade_insights() -> dict:
-    from aletheia.storage.sqlite import get_db
+    from aletheia.analytics.outcome_integrity import (
+        build_outcome_cohort_summary,
+        eligible_strategy_outcomes,
+    )
 
-    db = get_db()
-    rows = db.execute(
-        "SELECT id, symbol, market_type, direction, realized_pnl, entry_price, quantity, "
-        "       opened_at, closed_at, regime_tag, close_reason, stop_price "
-        "FROM positions "
-        "WHERE status = 'closed' AND closed_at >= ? "
-        "ORDER BY closed_at ASC",
-        (_SINCE_UTC,),
-    ).fetchall()
+    rows = eligible_strategy_outcomes(closed_after=_SINCE_UTC)
 
     return {
+        **build_outcome_cohort_summary(closed_after=_SINCE_UTC),
         "since":                  _SINCE_UTC,
         "trade_count":            len(rows),
         "equity_curve":           _equity_curve(rows),

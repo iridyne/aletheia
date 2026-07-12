@@ -855,11 +855,17 @@ export const api = {
 
   // Trade Analytics panel
   getTradeStats: () => fetchJson<TradeStats>('/analytics/trade-stats'),
-  getStrategyKpis: () => fetchJson<Record<string, { trade_count: number; win_rate: number; total_pnl: number }>>('/analytics/strategy-kpis'),
-  getEquityCurve: (days?: number) => fetchJson<{
-    points: { time: string; pnl: number; cumulative_pnl: number }[];
+  getStrategyKpis: () => fetchJson<OutcomeCohort & { strategies: Record<string, { trade_count: number; win_rate: number; total_pnl: number }> }>('/analytics/strategy-kpis'),
+  getEquityCurve: (days?: number) => fetchJson<OutcomeCohort & {
+    default_curve: 'genuine_verified';
+    raw_curve_label: string;
+    genuine_curve_label: string;
+    raw_recorded_points: EquityPoint[];
+    genuine_points: EquityPoint[];
+    points: EquityPoint[];
     current_unrealized: number;
-    total_realized: number;
+    total_realized: number | null;
+    raw_total_recorded_realized: number | null;
   }>(`/analytics/equity-curve${days ? `?days=${days}` : ''}`),
   getTradeInsights: () => fetchJson<TradeInsights>('/analytics/trade-insights'),
   getThesisLineage: (params: {
@@ -912,18 +918,18 @@ export const api = {
 export interface TradeStatsSource {
   source_type: 'ruleset' | 'opportunity'
   trade_count: number
-  win_rate: number
-  avg_hold_hours: number
-  expectancy_pct: number
-  total_pnl: number
+  win_rate: number | null
+  avg_hold_hours: number | null
+  expectancy_pct: number | null
+  total_pnl: number | null
 }
 
 export interface TradeStatsFamily {
   family: string
   trade_count: number
-  win_rate: number
-  avg_hold_hours: number
-  expectancy_pct: number
+  win_rate: number | null
+  avg_hold_hours: number | null
+  expectancy_pct: number | null
 }
 
 export interface HoldBucket {
@@ -932,16 +938,30 @@ export interface HoldBucket {
   pct: number
 }
 
-export interface TradeStats {
+export interface OutcomeCohort {
+  raw_event_count: number | null
+  eligible_outcome_count: number | null
+  excluded_outcome_count: number | null
+  outcome_exclusion_reasons: Record<string, number>
+  outcome_semantics_version: string
+  cohort_state: 'available' | 'insufficient' | 'unavailable'
+  raw_recorded_realized_pnl: number | null
+  raw_economics_unavailable_count: number | null
+  eligible_realized_pnl: number | null
+  clean_window_anchor_id: string
+  clean_window_anchor_iso: string
+}
+
+export interface TradeStats extends OutcomeCohort {
   by_source: TradeStatsSource[]
   by_family: TradeStatsFamily[]
   hold_distribution: HoldBucket[]
   totals: {
     trade_count: number
-    win_rate: number
-    avg_hold_hours: number
-    median_hold_hours: number
-    total_pnl: number
+    win_rate: number | null
+    avg_hold_hours: number | null
+    median_hold_hours: number | null
+    total_pnl: number | null
   }
 }
 
@@ -1064,7 +1084,7 @@ export interface ExitReasonEntry {
   pnl_contribution_pct: number
 }
 
-export interface TradeInsights {
+export interface TradeInsights extends OutcomeCohort {
   since: string         // ISO date, e.g. "2026-06-22" — all metrics cover closed_at >= since
   trade_count: number
   equity_curve: EquityPoint[]
@@ -1103,12 +1123,19 @@ export interface GoLiveScorecard {
   computed_at: string
 }
 
-export interface CostSummary {
-  total_entry_fees: number
-  total_exit_fees: number
-  total_fees: number
-  total_slippage: number
-  total_costs: number
+export interface CostSummary extends OutcomeCohort {
+  total_entry_fees: number | null
+  total_exit_fees: number | null
+  total_fees: number | null
+  total_slippage: number | null
+  total_costs: number | null
+  raw_recorded_costs: {
+    total_entry_fees: number | null
+    total_exit_fees: number | null
+    total_fees: number | null
+    total_slippage: number | null
+    total_costs: number | null
+  }
 }
 
 export interface CalibrationBucket {

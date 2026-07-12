@@ -106,6 +106,11 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
     Writes a position_closed audit event (trust §1.4). `reason` is recorded as
     close_reason (e.g. stop_loss / take_profit / max_hold / manual).
     """
+    from aletheia.analytics.close_reasons import is_synthetic_close
+    if is_synthetic_close(reason):
+        raise ValueError(
+            "administrative close reasons must use close_position_administrative"
+        )
     from aletheia.storage import repositories as repo
     from aletheia.files.jsonl import write_audit
     row = repo._select_one("positions", position_id)
@@ -218,8 +223,8 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
     return {"position_id": position_id, "realized_pnl": realized, "exit_price": exit_price, "reason": reason}
 
 
-def today_realized_pnl(execution_mode: str | None = None) -> float:
-    """Sum realized PnL of positions closed today (UTC). Source for §21.3 max_daily_loss."""
+def today_raw_closed_realized_pnl(execution_mode: str | None = None) -> float:
+    """Raw stored realized values; administrative unavailable values contribute nothing."""
     from aletheia.storage.repositories import _select_all
     today = datetime.now(timezone.utc).date().isoformat()
     rows = _select_all("positions", where="status = ?", params=("closed",), limit=1000)
@@ -236,6 +241,23 @@ def today_realized_pnl(execution_mode: str | None = None) -> float:
             continue
         total += r.get("realized_pnl") or 0.0
     return round(total, 8)
+
+
+def today_eligible_strategy_pnl(execution_mode: str | None = None) -> float:
+    """Today's PnL only from centrally verified, economically complete outcomes."""
+    from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    rows = eligible_strategy_outcomes(
+        execution_mode=execution_mode,
+        closed_after=f"{today}T00:00:00+00:00",
+    )
+    return round(sum(float(row.get("realized_pnl") or 0.0) for row in rows), 8)
+
+
+def today_realized_pnl(execution_mode: str | None = None) -> float:
+    """Compatibility raw metric; Risk migration to authoritative loss is RG-T09."""
+    return today_raw_closed_realized_pnl(execution_mode=execution_mode)
 
 
 def today_pnl_by_symbol(execution_mode: str | None = None) -> dict[str, float]:
@@ -276,8 +298,8 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         mode_closed = [p for p in all_closed if p.get("execution_mode") == execution_mode]
     else:
         mode_closed = all_closed
-    total_realized = sum(p.get("realized_pnl", 0.0) for p in mode_closed)
-    all_realized = sum(p.get("realized_pnl", 0.0) for p in all_closed)
+    total_realized = sum(float(p.get("realized_pnl") or 0.0) for p in mode_closed)
+    all_realized = sum(float(p.get("realized_pnl") or 0.0) for p in all_closed)
 
     # Exposure by symbol
     exposure: dict[str, float] = {}

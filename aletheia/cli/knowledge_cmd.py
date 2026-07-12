@@ -1,8 +1,29 @@
 """Knowledge base CLI commands (experience loop, §6)."""
 
+import json
 import typer
 
 knowledge_app = typer.Typer(no_args_is_help=True)
+
+
+@knowledge_app.command("remediate-outcomes")
+def remediate_outcomes(
+    apply: bool = typer.Option(
+        False, "--apply",
+        help="Apply additive classification/archive changes. Default is dry-run.",
+    ),
+):
+    """Plan non-destructive outcome-history remediation; apply only when requested.
+
+    Paper-cash compensation is always report-only and still requires a separate owner
+    decision. This command cannot apply it.
+    """
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.maintenance.outcome_integrity import remediate_outcome_history
+
+    run_migrations()
+    result = remediate_outcome_history(dry_run=not apply)
+    typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 @knowledge_app.command()

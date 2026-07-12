@@ -136,26 +136,26 @@ def test_explicit_read_models_partition_closed_positions():
     rows = [
         Position(
             **common, id="eligible", close_reason="take_profit",
-            closed_at="2026-07-12T05:00:00+00:00", close_category="strategy",
+            closed_at="2026-07-12T08:00:00+00:00", close_category="strategy",
             exit_price_source="local_fill", exit_fill_verified=True,
             outcome_eligible=True, outcome_exclusion_reason="eligible",
             outcome_semantics_version="oi-v1",
         ),
         Position(
             **common, id="admin", close_reason="reconciled_gone",
-            closed_at="2026-07-12T05:01:00+00:00",
+            closed_at="2026-07-12T08:01:00+00:00",
         ),
         Position(
             **common, id="maintenance", close_reason="units_bug_cleanup",
-            closed_at="2026-07-12T05:02:00+00:00",
+            closed_at="2026-07-12T08:02:00+00:00",
         ),
         Position(
             **common, id="unknown", close_reason="manual",
-            closed_at="2026-07-12T05:03:00+00:00",
+            closed_at="2026-07-12T08:03:00+00:00",
         ),
         Position(
             **{**common, "execution_mode": "okx_demo"}, id="other-mode",
-            close_reason="take_profit", closed_at="2026-07-12T05:04:00+00:00",
+            close_reason="take_profit", closed_at="2026-07-12T08:04:00+00:00",
             close_category="strategy", exit_price_source="broker_fill",
             exit_fill_verified=True, outcome_eligible=True,
             outcome_exclusion_reason="eligible", outcome_semantics_version="oi-v1",
@@ -166,8 +166,8 @@ def test_explicit_read_models_partition_closed_positions():
 
     kwargs = {
         "execution_mode": "paper_internal",
-        "closed_after": "2026-07-12T05:00:00+00:00",
-        "closed_before": "2026-07-12T05:04:00+00:00",
+        "closed_after": "2026-07-12T08:00:00+00:00",
+        "closed_before": "2026-07-12T08:04:00+00:00",
     }
     assert {row["id"] for row in raw_account_events(**kwargs)} == {
         "eligible", "admin", "maintenance", "unknown",

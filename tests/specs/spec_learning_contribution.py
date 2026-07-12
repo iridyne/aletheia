@@ -109,7 +109,7 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
     from aletheia.learning.outcomes import assess_candidate_outcome, assess_realized_position
 
     now = datetime.now(timezone.utc)
-    clean = (now - timedelta(days=1)).isoformat()
+    clean = now.isoformat()
     dirty = "2026-06-24T00:00:00+00:00"
 
     assert not assess_realized_position({
@@ -204,7 +204,8 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
 
 
 def _iso(days_ago: int) -> str:
-    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+    anchor = datetime.fromisoformat("2026-07-12T07:10:01+00:00")
+    return (anchor + timedelta(seconds=(30 - days_ago) * 10)).isoformat()
 
 
 @spec_claim(

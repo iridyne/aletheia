@@ -34,6 +34,25 @@ BEHAVIOR_CHANGING_CLOSED_POSITION_CONSUMERS = (
     "aletheia/analytics/alpha_attribution.py",
     "aletheia/agent_shell/operator_loop.py",
     "aletheia/agent_shell/trading_context.py",
+    "aletheia/analytics/trade_attribution.py",
+    "aletheia/analytics/insight_synthesizer.py",
+    "aletheia/analytics/reasoning_feedback.py",
+    "aletheia/analytics/memo_effectiveness.py",
+    "aletheia/analytics/go_live_scorecard.py",
+    "aletheia/trading/sizing_policy.py",
+    "aletheia/trading/strategy_lifecycle.py",
+    "aletheia/trust/guard_chain.py",
+    "aletheia/agent_shell/trading_decision.py",
+    "aletheia/analytics/sizing_trace.py",
+    "aletheia/agent_shell/operator_recommendations.py",
+)
+
+ATTRIBUTION_DERIVED_OUTCOME_CONSUMERS = (
+    "aletheia/analytics/factor_feedback.py",
+    "aletheia/analytics/guard_promotion.py",
+    "aletheia/analytics/guard_effectiveness.py",
+    "aletheia/analytics/trade_case_builder.py",
+    "aletheia/analytics/trade_path.py",
 )
 
 
@@ -115,37 +134,72 @@ def test_dependency_neutral_outcome_read_model_exists():
     assert "SYNTHETIC_CLOSE_REASONS" not in learning_source
 
 
-@_missing("RG-09: one view miss can still flow directly to orphan close")
 @spec_claim(
     SpecClaim(
         "OI-B01", "outcome_integrity", "§4 durable disappearance confirmation", "L2b",
         "A single complete-view miss creates only a durable disappearance candidate; closure "
         "requires two independent complete observations or a direct broker absent result, and "
         "stale/incomplete/wrong-account views never advance confirmation.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_reconciler_declares_durable_disappearance_candidates():
-    source = _source("aletheia/portfolio/position_reconciler.py")
-    required = (
-        "DisappearanceCandidate", "record_disappearance_observation",
-        "confirmation_count", "direct_broker_verification",
-    )
-    assert all(token in source for token in required)
+    confirmation = _source("aletheia/portfolio/disappearance_confirmation.py")
+    reconciler = _source("aletheia/portfolio/position_reconciler.py")
+    for token in (
+        "PositionDisappearanceCandidate", "record_disappearance_observation",
+        "MIN_INDEPENDENT_COMPLETE_OBSERVATIONS", "DIRECT_CONFIRMED_ABSENT",
+        "view_complete", "view_identity", "confirmation_count",
+    ):
+        assert token in confirmation
+    assert "process_disappearance_evidence" in reconciler
+    run_body = reconciler.split("def run_reconcile", 1)[1]
+    assert "reconcile_close_orphan(item)" not in run_body
+    production_calls = []
+    for path in (ROOT / "aletheia").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        call_count = source.count("reconcile_close_orphan(")
+        if path.name == "position_reconciler.py":
+            call_count -= source.count("def reconcile_close_orphan(")
+        if call_count:
+            production_calls.append(str(path.relative_to(ROOT)))
+    assert production_calls == []
+    routes = _source("aletheia/server/routes/data.py")
+    assert "def run_positions_reconcile():" in routes
+    assert "async def run_positions_reconcile():" not in routes
 
 
-@_missing("RG-10: verified exit recovery is still broker-specific")
 @spec_claim(
     SpecClaim(
         "OI-B02", "outcome_integrity", "§5 broker-neutral verified exit", "L2b",
         "Bitget, OKX, and Binance implement one verified-position-exit protocol whose result is "
         "verified_fill, confirmed_absent_without_fill, or inconclusive; network and pagination "
         "failures are inconclusive.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_all_broker_clients_implement_verified_position_exit():
     assert importlib.util.find_spec("aletheia.execution.verified_exit") is not None
+    from aletheia.execution.verified_exit import (
+        VerifiedExitRequest,
+        classify_verified_exit,
+    )
+
+    request = VerifiedExitRequest(
+        broker_id="bitget_demo", account_environment="demo",
+        account_scope="logical-account", execution_mode="bitget_demo",
+        position_id="p1", symbol="BTC/USDT", market_type="usdt_futures",
+        direction="long", quantity=1.0, history_start_ms=1,
+        history_end_ms=2,
+    )
+    assert classify_verified_exit(
+        request, position_absent=True, history_complete=True, close_fills=(),
+        ambiguous_activity=False, pages=1, source_endpoint="private-fills",
+    ).state == "confirmed_absent_without_fill"
+    assert classify_verified_exit(
+        request, position_absent=True, history_complete=False, close_fills=(),
+        ambiguous_activity=False, pages=1, source_endpoint="private-fills",
+    ).state == "inconclusive"
     for path in (
         "aletheia/exchanges/bitget/client.py",
         "aletheia/exchanges/okx/client.py",
@@ -154,21 +208,46 @@ def test_all_broker_clients_implement_verified_position_exit():
         assert "get_verified_position_exit" in _source(path), path
 
 
-@_missing("RG-11/RG-16: administrative close still reuses normal economic close")
 @spec_claim(
     SpecClaim(
         "OI-B03", "outcome_integrity", "§6 close/accounting split", "L2b",
         "Administrative-unverified closure may converge state and audit but does not fabricate "
         "fees, slippage, realized PnL, paper cash settlement, or outcome-only hooks; verified "
         "strategy close retains exact economic settlement and causal ids.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_portfolio_has_separate_verified_and_administrative_close_paths():
-    source = _source("aletheia/portfolio/pnl.py")
-    assert "close_verified_position" in source
-    assert "close_administrative_position" in source
-    assert "outcome_hook_eligible" in source
+    from aletheia.portfolio.outcome_closure import close_position_administrative
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        id="oi-b03-admin", symbol="BTC/USDT", market_type="usdt_futures",
+        direction="long", quantity=1.0, entry_price=100.0, current_price=101.0,
+        execution_mode="paper_internal", realized_pnl=5.0,
+    )
+    repo.insert_position(position)
+    result = close_position_administrative(
+        position.id, reason="reconciled_gone",
+        reconciliation_identity={
+            "broker_id": "paper_internal", "account_environment": "local",
+            "account_scope": "oi-b03", "execution_mode": "paper_internal",
+            "position_id": position.id, "symbol": position.symbol,
+            "market_type": position.market_type, "direction": position.direction,
+        },
+        reconciliation_evidence={"candidate": "oi-b03"},
+    )
+    stored = repo._select_one("positions", position.id)
+    assert result["closure_type"] == "administrative"
+    assert stored["realized_pnl"] is None
+    assert stored["exit_fee"] is None
+    assert stored["slippage_cost"] is None
+    assert stored["outcome_eligible"] == 0
+    assert not repo.has_paper_account_position_event("position_closed", position.id)
+    reconciler = _source("aletheia/portfolio/position_reconciler.py")
+    assert "settle_ready_disappearance_candidates" in reconciler
+    assert "def reconcile_close_orphan" not in reconciler
 
 
 @spec_claim(
@@ -219,66 +298,90 @@ def test_learning_control_consumes_reconcile_integrity_incident():
         assert gate in _source(path), path
 
 
-@_missing("RG-03..06/RG-18/RG-19: behavior consumers have not all migrated")
 @spec_claim(
     SpecClaim(
         "OI-C02", "outcome_integrity", "§9 behavior-consumer eligibility", "L2c",
         "Every enumerated KPI, Operator, calibration, alpha, and trading-context consumer reads "
         "eligible_strategy_outcomes from the central model; insufficient evidence never falls "
         "back to unlabelled raw closed rows or a stale semantics version.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_behavior_changing_consumers_use_one_eligible_read_model():
     for path in BEHAVIOR_CHANGING_CLOSED_POSITION_CONSUMERS:
         source = _source(path)
         assert "eligible_strategy_outcomes" in source, path
-        assert "outcome_semantics_version" in source, path
+        assert "SYNTHETIC_CLOSE_REASONS" not in source, path
+        assert "is_synthetic_close" not in source, path
+    for artifact_consumer in (
+        "aletheia/analytics/confidence_calibration.py",
+        "aletheia/analytics/insight_synthesizer.py",
+        "aletheia/analytics/reasoning_feedback.py",
+        "aletheia/analytics/memo_effectiveness.py",
+    ):
+        assert "is_current_outcome_artifact" in _source(artifact_consumer)
+    for path in ATTRIBUTION_DERIVED_OUTCOME_CONSUMERS:
+        source = _source(path)
+        assert "build_trade_attribution_rows" in source, path
+        assert "status = 'closed'" not in source, path
+        assert 'status="closed"' not in source, path
+    reflection = _source("aletheia/agent_shell/reflection.py")
+    assert "assess_realized_position" in reflection
 
 
-@_missing("RG-12: Risk daily loss still consumes the ambiguous today_realized_pnl")
 @spec_claim(
     SpecClaim(
         "OI-C03", "outcome_integrity", "§10 authoritative account loss", "L2c",
         "Risk daily-loss protection reads an authoritative account-loss source that excludes "
         "unverified exit economics, while strategy-performance PnL is a separate query; missing "
         "account truth is unavailable/fail-closed rather than falsely healthy.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_risk_does_not_use_strategy_or_unverified_realized_pnl():
     source = _source("aletheia/risk/engine.py")
     assert "today_realized_pnl" not in source
     assert "authoritative_account_realized_loss" in source
+    assert "account_loss_unavailable" in source
+    account_source = _source("aletheia/portfolio/account_loss.py")
+    assert "eligible_strategy_outcomes" not in account_source
+    assert "paper_account_events" in account_source
+    assert "assess_position_closure" in account_source
 
 
-@_missing("RG-13: analytics API does not expose honest raw/genuine dual semantics")
 @spec_claim(
     SpecClaim(
         "OI-C04", "outcome_integrity", "§11 operator-facing dual reporting", "L2c",
         "Trade stats and equity reporting expose raw event, eligible outcome, excluded outcome, "
         "exclusion reason, and semantics-version fields; judgement defaults to genuine and an "
         "unavailable cohort is never rendered as zero or healthy.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_analytics_routes_expose_raw_and_genuine_cohorts():
-    source = _source("aletheia/server/routes/analytics.py")
+    source = _source("aletheia/analytics/outcome_integrity.py")
     for token in (
         "raw_event_count", "eligible_outcome_count", "excluded_outcome_count",
         "outcome_exclusion_reasons", "outcome_semantics_version",
     ):
         assert token in source
+    routes = _source("aletheia/server/routes/analytics.py")
+    assert "raw_recorded_points" in routes
+    assert "genuine_points" in routes
+    assert '"points": genuine_points' in routes
+    assert '"total_realized": genuine_total' in routes
+    frontend = _source("frontend/src/charts/PnLChart.tsx")
+    assert "Raw recorded account events" in frontend
+    assert "Verified strategy curve" in frontend
 
 
-@_missing("RG-20/RG-21: additive history classification/supersede tool is absent")
 @spec_claim(
     SpecClaim(
         "OI-B05", "outcome_integrity", "§12 additive history remediation", "L2b",
         "History remediation is dry-run-first, additive, transactional, idempotent, archives or "
         "supersedes polluted derived artifacts without deletion, and emits paper-cash compensation "
         "candidates without applying them absent owner approval.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_history_remediation_tool_declares_non_destructive_protocol():
@@ -292,14 +395,13 @@ def test_history_remediation_tool_declares_non_destructive_protocol():
     assert "DELETE FROM positions" not in source.upper()
 
 
-@_missing("RG-22: clean-window identity is still an unversioned timestamp constant")
 @spec_claim(
     SpecClaim(
         "OI-C05", "outcome_integrity", "§13 versioned clean window", "L2c",
         "Every performance/Learning cohort records a versioned clean-window anchor and outcome "
         "semantics version; pre-anchor, unknown-version, and incident-window rows are ineligible, "
         "and insufficient post-fix evidence remains insufficient.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_clean_window_has_versioned_anchor_and_incident_exclusions():
@@ -309,3 +411,54 @@ def test_clean_window_has_versioned_anchor_and_incident_exclusions():
         "incident_window", "unknown_semantics_version",
     ):
         assert token in source
+
+
+@spec_claim(
+    SpecClaim(
+        "OI-C06", "outcome_integrity", "§14 cross-layer lifecycle", "L2c",
+        "Deterministic E2E coverage proves verified and administrative closes preserve one "
+        "meaning across cash, Risk, Learning and reporting; durable disappearance, restart, "
+        "account isolation, live alert-only, reopen refreeze, three-broker evidence and history "
+        "idempotency remain covered without real orders or live authority.",
+        status="implemented",
+    )
+)
+def test_cross_layer_outcome_lifecycle_has_final_e2e_inventory():
+    lifecycle = _source("tests/e2e/test_outcome_integrity_full_lifecycle.py")
+    for token in (
+        "close_position_verified", "close_position_administrative",
+        "authoritative_account_realized_loss", "evaluate_proposal",
+        "assess_realized_position", "build_outcome_cohort_summary",
+        "get_equity_curve", "global_learning_refreeze_reason",
+    ):
+        assert token in lifecycle
+
+    coverage = {
+        "tests/test_disappearance_confirmation.py": (
+            "test_one_complete_absence_creates_candidate_but_never_closes",
+            "test_stale_or_wrong_account_view_never_advances_candidate",
+            "test_candidate_and_observations_survive_database_reconnection",
+            "test_live_disappearance_records_evidence_but_remains_alert_only",
+        ),
+        "tests/specs/spec_pipeline_adopted_position.py": (
+            "test_run_reconcile_non_bitget_no_orphan_close",
+            "test_paper_internal_is_outside_exchange_reconciliation_scope",
+        ),
+        "tests/test_verified_exit.py": (
+            "test_bitget_verified_exit_uses_direct_position_and_close_fill",
+            "test_okx_verified_exit_normalizes_contract_quantity",
+            "test_binance_verified_exit_and_network_error_fail_closed",
+        ),
+        "tests/test_outcome_history_remediation.py": (
+            "test_history_remediation_dry_run_apply_and_repeat_are_non_destructive",
+            "test_apply_rolls_back_classification_when_archive_step_fails",
+        ),
+    }
+    for path, tests in coverage.items():
+        source = _source(path)
+        for test_name in tests:
+            assert f"def {test_name}" in source, f"{path} missing {test_name}"
+    audit = _source("docs/status/OUTCOME_INTEGRITY_FINAL_AUDIT_2026-07-12.md")
+    assert "not run" in audit.lower()
+    assert "not approved and not applied" in audit.lower()
+    assert "live remains disabled" in audit.lower()

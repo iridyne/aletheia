@@ -1086,8 +1086,9 @@
 | ID 范围 | 状态 | 问题 | 处理/下一步 |
 |---|---|---|---|
 | RG-01～02 | 源头已修，待 E2E | `paper_internal` 与外部账户、非当前 broker 缓存曾发生错误解释，制造 false orphan | 保留账户作用域修复；补 scheduler E2E、跨 broker/incomplete view 回归和运行探针 |
-| RG-03～06 | 🔴 | trade KPI、Operator、校准和 System Operator alpha 仍可能把行政性关闭当策略结果 | 建立中央 eligible outcome read model，逐一迁移所有行为改变型消费者 |
-| RG-07～10 | 🔴 | detector 漏 native reopen；Learning 未全局 refreeze；一次 miss 可 close；真实退出恢复写死 Bitget | 统一事故指纹、durable confirmation、三 broker verified-exit protocol，错误时 fail-closed |
-| RG-11～13 | 🔴 | 行政关闭复用普通 close，可能伪造经济字段；account loss、strategy PnL 和页面统计含混 | 平仓语义分流、拆分账户/策略口径、CLI/API/UI raw+genuine 双口径 |
-| RG-14～19 | 🟠（RG-14 core / RG-15 storage ✅） | 中央 outcome semantics/read model 和 additive provenance/eligibility storage 已交付；消费者迁移、历史分类、hook、doctor、Learning 连续性仍未闭合 | 继续完成 RG-T08～T11 的消费者迁移、历史 backfill、统一 hook gate、doctor 和枚举式保护 |
-| RG-20～22 | 🟠 / owner decision | 历史现金、派生知识和盈利窗口仍受污染 | additive backfill，archive/supersede，版本化 clean window；现金补偿只在 owner 批准后追加事件 |
+| RG-03～06 | ✅ core / 待 T12 | trade KPI、Operator、PI context、校准和 System Operator alpha 已统一读取 verified eligible outcomes；旧版/过期派生报告拒读 | T11 归档/重建历史报告，T12 做跨消费者 E2E |
+| RG-07～10 | ✅ core / 待 T12 | detector、Learning refreeze、durable confirmation 与三 broker verified-exit protocol 已完成核心修复 | RG-T07 接入 honest close/accounting；RG-T12 保留重启、部分失败和三 broker E2E |
+| RG-11～13 | ✅ | close 经济副作用、Risk account loss 与 owner-facing 表现统计已分流 | T12 保留跨层 E2E；页面并列原始事件、已验证结果和排除原因 |
+| RG-14～19 | 🟠（仅 continuity 待办） | 行为消费者、hook、doctor、历史分类和报告 supersede 已统一；interval continuity 仍是独立待办 | T12 做跨层 E2E；另行补 interval job 连续性 |
+| RG-20～22 | ✅ tooling / owner decision | 派生知识和盈利窗口已隔离；历史现金可生成补偿候选但未获批准 | owner 如决定补偿，另开任务只追加事件；不得修改原账 |
+| RG-T12 | ✅ automated / ⏳ soak | verified/admin close 已跨 cash、Risk、Learning、reporting 做 isolated E2E | 真实 paper 多周期 + 进程重启 soak 未运行；不得据 Git 声称已完成 |

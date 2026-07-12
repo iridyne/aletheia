@@ -16,6 +16,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
 
+from aletheia.analytics.outcome_integrity import (
+    eligible_strategy_outcomes,
+    is_current_outcome_artifact,
+)
+from aletheia.analytics.learning_window import outcome_window_metadata
+
 logger = logging.getLogger("aletheia.analytics.insight_synthesizer")
 
 # Quality gate constants
@@ -72,6 +78,9 @@ class TradingMemo(TypedDict):
     direction_summary: dict[str, Any]
     key_insight: str  # one-paragraph LLM synthesis
     prior_corrections: list[dict]  # Module J: prior judgments overturned by subsequent results
+    outcome_semantics_version: str
+    clean_window_anchor_id: str
+    clean_window_anchor_iso: str
 
 
 def get_latest_memo() -> TradingMemo | None:
@@ -94,7 +103,11 @@ def get_latest_memo() -> TradingMemo | None:
             if not content:
                 continue
             try:
-                return json.loads(content)
+                memo = json.loads(content)
+                if is_current_outcome_artifact(
+                    memo, max_age=timedelta(hours=MAX_MEMO_AGE_HOURS),
+                ):
+                    return memo
             except (json.JSONDecodeError, TypeError):
                 continue
         return None
@@ -164,32 +177,14 @@ async def synthesize_trading_memo(window_days: int = 30) -> TradingMemo | None:
 def _gather_statistics(window_days: int) -> dict[str, Any] | None:
     """Gather all statistics needed for memo generation."""
     try:
-        from aletheia.storage.sqlite import get_db
         from aletheia.storage.repositories import get_latest_market_regime
         from aletheia.analytics.learning_window import clean_window_cutoff
-
-        from aletheia.analytics.close_reasons import SYNTHETIC_CLOSE_REASONS
-
-        db = get_db()
         # Clean-window floor: never ingest pre-2026-06-25T15:22 dirty Round 1 data.
         cutoff = clean_window_cutoff(
             (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
         )
 
-        # #160: exclude synthetic/administrative closes (reconciler sweeps, cleanups) —
-        # they are not trade outcomes, and this memo steers the System Operator prompt,
-        # so fitting regime/direction/anti-pattern rules on fabricated exits mis-teaches it.
-        _syn = tuple(SYNTHETIC_CLOSE_REASONS)
-        _ph = ",".join(["?"] * len(_syn))
-        rows = db.execute(
-            "SELECT id, symbol, direction, realized_pnl, entry_price, quantity, "
-            "       opened_at, closed_at, regime_tag "
-            "FROM positions "
-            "WHERE status = 'closed' AND closed_at >= ? "
-            f"  AND (close_reason IS NULL OR close_reason NOT IN ({_ph})) "
-            "ORDER BY closed_at ASC",
-            (cutoff, *_syn),
-        ).fetchall()
+        rows = eligible_strategy_outcomes(closed_after=cutoff)
 
         if not rows:
             return None
@@ -229,6 +224,7 @@ def _build_deterministic_memo(stats: dict) -> TradingMemo:
         "anti_patterns": anti_patterns,
         "direction_summary": direction_summary,
         "key_insight": "",
+        **outcome_window_metadata(),
     }
 
 

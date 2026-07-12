@@ -10,12 +10,19 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from aletheia.analytics.outcome_integrity import (
+    eligible_strategy_outcomes,
+    is_current_outcome_artifact,
+)
+from aletheia.analytics.learning_window import outcome_window_metadata
+
 logger = logging.getLogger("aletheia.analytics.reasoning_feedback")
 
 MIN_SAMPLE_SIZE = 3
 MIN_APPROVAL_TO_ANALYZE = 5
 MIN_FEEDBACK_INTERVAL_HOURS = 6
 FEEDBACK_WINDOW_DAYS = 30
+MAX_ACTIVE_FEEDBACK_AGE = timedelta(hours=24)
 
 
 def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | None:
@@ -39,14 +46,9 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
                 tp.status AS proposal_status,
                 tp.agent_rationale,
                 tp.direction,
-                p.realized_pnl,
-                p.close_reason,
-                p.regime_tag,
                 pd.conviction,
                 pd.reasoning AS pi_reasoning
             FROM trade_proposals tp
-            LEFT JOIN positions p
-                ON p.proposal_id = tp.id AND p.status = 'closed'
             LEFT JOIN pi_decisions pd
                 ON pd.proposal_id = tp.id
             WHERE tp.created_at >= ?
@@ -58,7 +60,20 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
         if not rows:
             return None
 
-        proposals = [dict(r) for r in rows]
+        outcomes_by_proposal = {
+            str(row["proposal_id"]): row
+            for row in eligible_strategy_outcomes(closed_after=cutoff)
+            if row.get("proposal_id")
+        }
+        proposals = []
+        for raw in rows:
+            proposal = dict(raw)
+            outcome = outcomes_by_proposal.get(str(proposal["proposal_id"]))
+            proposal.update({
+                "realized_pnl": outcome.get("realized_pnl") if outcome else None,
+                "regime_tag": outcome.get("regime_tag") if outcome else None,
+            })
+            proposals.append(proposal)
         total = len(proposals)
 
         # Classify each proposal
@@ -66,7 +81,6 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
         executed_losses = []
         rejected = []
 
-        from aletheia.analytics.close_reasons import is_synthetic_close
         for p in proposals:
             status = p.get("proposal_status", "")
             pnl = p.get("realized_pnl")
@@ -75,7 +89,7 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
             # #160: a synthetic/administrative close (reconciler sweep, cleanup) is not
             # a genuine win/loss — exclude it from the executed-win/loss classification
             # that feeds recommended_pursue/avoid patterns into the Layer-2 prompt.
-            elif pnl is not None and not is_synthetic_close(p.get("close_reason")):
+            elif pnl is not None:
                 if pnl > 0:
                     executed_wins.append(p)
                 else:
@@ -201,6 +215,7 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
             "recommended_pursue": recommended_pursue,
             "high_conviction_win_rate": _win_rate(high_conv),
             "low_conviction_win_rate": _win_rate(low_conv),
+            **outcome_window_metadata(),
         }
 
         _persist_feedback(result)
@@ -220,7 +235,11 @@ def get_latest_reasoning_feedback() -> dict | None:
             content = item.get("content")
             if content:
                 try:
-                    return json.loads(content)
+                    feedback = json.loads(content)
+                    if is_current_outcome_artifact(
+                        feedback, max_age=MAX_ACTIVE_FEEDBACK_AGE,
+                    ):
+                        return feedback
                 except (json.JSONDecodeError, TypeError):
                     continue
         return None

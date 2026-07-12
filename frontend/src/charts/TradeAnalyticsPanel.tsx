@@ -19,13 +19,15 @@ import { api } from '../api/client'
 import type { TradeStatsSource, TradeStatsFamily, HoldBucket } from '../api/client'
 import { Card } from '../components/ui'
 
-function fmtHours(h: number): string {
+function fmtHours(h: number | null): string {
+  if (h === null) return '—'
   if (h < 1) return `${Math.round(h * 60)}m`
   if (h < 24) return `${h.toFixed(1)}h`
   return `${(h / 24).toFixed(1)}d`
 }
 
-function fmtPnl(v: number): string {
+function fmtPnl(v: number | null): string {
+  if (v === null) return '—'
   return `${v >= 0 ? '+' : ''}${v.toFixed(2)}`
 }
 
@@ -101,9 +103,9 @@ function SourceSection({ rows }: { rows: TradeStatsSource[] }) {
           color={colors[r.source_type] ?? 'var(--muted)'}
           stats={[
             { label: 'n', value: `${r.trade_count}` },
-            { label: 'wr', value: `${r.win_rate.toFixed(0)}%`, tone: r.win_rate >= 50 ? 'pos' : 'neg' },
+            { label: 'wr', value: r.win_rate === null ? '—' : `${r.win_rate.toFixed(0)}%`, tone: r.win_rate === null ? undefined : r.win_rate >= 50 ? 'pos' : 'neg' },
             { label: 'hold', value: fmtHours(r.avg_hold_hours) },
-            { label: 'exp', value: `${r.expectancy_pct >= 0 ? '+' : ''}${r.expectancy_pct.toFixed(2)}%`, tone: r.expectancy_pct >= 0 ? 'pos' : 'neg' },
+            { label: 'exp', value: r.expectancy_pct === null ? '—' : `${r.expectancy_pct >= 0 ? '+' : ''}${r.expectancy_pct.toFixed(2)}%`, tone: r.expectancy_pct === null ? undefined : r.expectancy_pct >= 0 ? 'pos' : 'neg' },
           ]}
         />
       ))}
@@ -135,9 +137,9 @@ function FamilySection({ rows }: { rows: TradeStatsFamily[] }) {
           color={FAMILY_COLORS[r.family] ?? 'var(--muted)'}
           stats={[
             { label: 'n', value: `${r.trade_count}` },
-            { label: 'wr', value: `${r.win_rate.toFixed(0)}%`, tone: r.win_rate >= 50 ? 'pos' : 'neg' },
+            { label: 'wr', value: r.win_rate === null ? '—' : `${r.win_rate.toFixed(0)}%`, tone: r.win_rate === null ? undefined : r.win_rate >= 50 ? 'pos' : 'neg' },
             { label: 'hold', value: fmtHours(r.avg_hold_hours) },
-            { label: 'exp', value: `${r.expectancy_pct >= 0 ? '+' : ''}${r.expectancy_pct.toFixed(2)}%`, tone: r.expectancy_pct >= 0 ? 'pos' : 'neg' },
+            { label: 'exp', value: r.expectancy_pct === null ? '—' : `${r.expectancy_pct >= 0 ? '+' : ''}${r.expectancy_pct.toFixed(2)}%`, tone: r.expectancy_pct === null ? undefined : r.expectancy_pct >= 0 ? 'pos' : 'neg' },
           ]}
         />
       ))}
@@ -189,22 +191,27 @@ export default function TradeAnalyticsPanel() {
   }
 
   const t = data.totals
-  const pnlTone = t.total_pnl >= 0 ? 'pos' : 'neg'
+  const pnlTone = t.total_pnl === null ? 'neutral' : t.total_pnl >= 0 ? 'pos' : 'neg'
+  const reasons = Object.entries(data.outcome_exclusion_reasons)
+    .map(([reason, count]) => `${reason.replace(/_/g, ' ')}: ${count}`)
+    .join(' · ')
 
   return (
     <div>
       {/* Totals row */}
       <div className="analytics-grid">
-        <MetricTile label="Closed Trades" value={`${t.trade_count}`} />
+        <MetricTile label="Raw close events" value={data.raw_event_count === null ? '—' : `${data.raw_event_count}`} />
+        <MetricTile label="Verified strategy outcomes" value={data.eligible_outcome_count === null ? '—' : `${data.eligible_outcome_count}`} />
+        <MetricTile label="Excluded" value={data.excluded_outcome_count === null ? '—' : `${data.excluded_outcome_count}`} sub={reasons || undefined} />
         <MetricTile
           label="Win Rate"
-          value={`${t.win_rate.toFixed(1)}%`}
-          tone={t.win_rate >= 50 ? 'pos' : 'neg'}
+          value={t.win_rate === null ? '—' : `${t.win_rate.toFixed(1)}%`}
+          tone={t.win_rate === null ? 'neutral' : t.win_rate >= 50 ? 'pos' : 'neg'}
         />
         <MetricTile
           label="Total PnL"
-          value={`${fmtPnl(t.total_pnl)} USDT`}
-          tone={t.total_pnl >= 0 ? 'pos' : 'neg'}
+          value={t.total_pnl === null ? '—' : `${fmtPnl(t.total_pnl)} USDT`}
+          tone={pnlTone}
         />
         <MetricTile
           label="Avg Hold Time"

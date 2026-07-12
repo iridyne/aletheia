@@ -75,8 +75,8 @@ def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanne
         "cost_model_version,status) VALUES (?,?,?,?,?,?,?,?,100,?,?,?,?,0.05,?,?)",
         (
             oid, f"candidate-{oid}" if complete else None, "member", "snapshot", symbol,
-            scanner, direction, "24h", "2026-07-10T00:00:00+00:00",
-            "2026-07-11T00:00:00+00:00", "2026-07-11T00:00:00+00:00", 1.0,
+            scanner, direction, "24h", "2026-07-12T08:00:00+00:00",
+            "2026-07-12T09:00:00+00:00", "2026-07-12T09:00:00+00:00", 1.0,
             "v1" if complete else None, "settled",
         ),
     )

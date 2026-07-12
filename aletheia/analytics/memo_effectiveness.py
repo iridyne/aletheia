@@ -21,8 +21,13 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from math import exp, log
+
+from aletheia.analytics.outcome_integrity import (
+    eligible_strategy_outcomes,
+    is_current_outcome_artifact,
+)
 
 logger = logging.getLogger("aletheia.analytics.memo_effectiveness")
 
@@ -68,7 +73,6 @@ def evaluate_prior_memo() -> dict | None:
     """
     try:
         from aletheia.storage.repositories import list_knowledge_items, update_knowledge_item
-        from aletheia.storage.sqlite import get_db
 
         items = list_knowledge_items(item_type="trading_memo", limit=1)
         if not items:
@@ -79,6 +83,8 @@ def evaluate_prior_memo() -> dict | None:
             memo = json.loads(prior.get("content") or "{}")
         except (json.JSONDecodeError, TypeError):
             return None
+        if not is_current_outcome_artifact(memo, max_age=timedelta(hours=72)):
+            return None
         generated_at = memo.get("generated_at")
         if not memo_id or not generated_at:
             return None
@@ -86,12 +92,10 @@ def evaluate_prior_memo() -> dict | None:
         now_iso = datetime.now(timezone.utc).isoformat()
 
         # Trades the memo could have influenced: opened at/after it was formed.
-        db = get_db()
-        rows = db.execute(
-            "SELECT direction, regime_tag, realized_pnl "
-            "FROM positions WHERE status = 'closed' AND opened_at >= ?",
-            (generated_at,),
-        ).fetchall()
+        rows = [
+            row for row in eligible_strategy_outcomes()
+            if str(row.get("opened_at") or "") >= str(generated_at)
+        ]
 
         verdict = {
             "memo_id": memo_id,
@@ -106,8 +110,8 @@ def evaluate_prior_memo() -> dict | None:
             from collections import defaultdict
             grouped: dict[tuple, list[bool]] = defaultdict(list)
             for r in rows:
-                key = (_norm_regime(r["regime_tag"]), r["direction"])
-                grouped[key].append((r["realized_pnl"] or 0) > 0)
+                key = (_norm_regime(r.get("regime_tag")), r.get("direction"))
+                grouped[key].append((r.get("realized_pnl") or 0) > 0)
 
             correct = 0
             judged = 0

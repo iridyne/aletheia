@@ -26,14 +26,14 @@ def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
         "close_category,exit_price_source,exit_fill_verified,outcome_eligible,"
         "outcome_exclusion_reason,outcome_semantics_version) "
         "VALUES ('unrelated','BTC/USDT','perp','long',1,100,'paper_internal','closed',"
-        "'native','2026-07-10T00:00:00+00:00',10,'2026-07-10T04:00:00+00:00',"
+        "'native','2026-07-12T08:00:00+00:00',10,'2026-07-12T09:00:00+00:00',"
         "'take_profit','strategy','local_fill',1,1,'eligible','oi-v1')"
     )
     if not was_in_tx:
         db.commit()
 
     assert "unavailable" in reflection._compute_outcome(
-        "BTC/USDT", None, "2026-07-10T00:00:00+00:00"
+        "BTC/USDT", None, "2026-07-12T08:00:00+00:00"
     ).lower()
     from aletheia.storage.models import TradeProposal
     from aletheia.storage.repositories import insert_trade_proposal
@@ -46,11 +46,11 @@ def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
     if not was_in_tx:
         db.commit()
     exact = reflection._compute_outcome(
-        "IGNORED/USDT", "proposal-linked", "2026-07-10T00:00:00+00:00"
+        "IGNORED/USDT", "proposal-linked", "2026-07-12T08:00:00+00:00"
     )
     assert "causally linked" in exact.lower() and "+10.00" in exact
     assert "unavailable" in reflection._compute_missed_opportunity(
-        None, "market_observer", "long", "2026-07-10T00:00:00+00:00"
+        None, "market_observer", "long", "2026-07-12T08:00:00+00:00"
     ).lower()
 
 

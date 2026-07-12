@@ -76,6 +76,46 @@ def test_risk_engine_has_minimum_check_count():
 
 
 @spec_claim(
+    SpecClaim(
+        "RE-B20", "risk_engine_contract", "§2 check 8 authoritative account loss", "L2b",
+        "Daily-loss protection blocks when account truth is unavailable without fabricating a "
+        "threshold breach, and exact authoritative loss retains the existing threshold check.",
+    )
+)
+def test_daily_loss_uses_authoritative_account_snapshot(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.portfolio.account_loss import AccountLossSnapshot
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        execution_mode="paper_internal", quantity=0.001, price=100.0,
+    )
+    repo.insert_trade_proposal(proposal)
+    monkeypatch.setattr(
+        eng, "authoritative_account_realized_loss",
+        lambda mode: AccountLossSnapshot(
+            available=False, realized_pnl_usdt=None, loss_usdt=None,
+            source="unavailable", reason="account_event_read_failed", event_count=0,
+        ),
+    )
+    unavailable = eng.evaluate_proposal(proposal)
+    assert "account_loss_unavailable:account_event_read_failed" in unavailable.violations
+    assert not any(v.startswith("max_daily_loss_exceeded") for v in unavailable.violations)
+
+    monkeypatch.setattr(
+        eng, "authoritative_account_realized_loss",
+        lambda mode: AccountLossSnapshot(
+            available=True, realized_pnl_usdt=-100.0, loss_usdt=100.0,
+            source="paper_account_ledger", reason="available", event_count=1,
+        ),
+    )
+    breached = eng.evaluate_proposal(proposal)
+    assert any(v.startswith("max_daily_loss_exceeded:-100.0") for v in breached.violations)
+
+
+@spec_claim(
     SpecClaim("RE-B01", "risk_engine_contract", "§3 persistence", "L2b",
               "Every evaluate_proposal persists exactly one RiskDecision row"),
 )

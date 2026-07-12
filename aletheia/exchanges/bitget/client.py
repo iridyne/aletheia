@@ -86,6 +86,71 @@ class Position:
     mark_price: float = 0.0  # current exchange mark price (for honest valuation)
 
 
+def _bitget_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bitget_float(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number
+
+
+def _bitget_fill_closes_direction(raw: dict, direction: str) -> bool:
+    trade_side = str(raw.get("tradeSide") or "").lower()
+    side = str(raw.get("side") or "").lower()
+    if direction in trade_side and (
+        "close" in trade_side
+        or trade_side.startswith(("reduce_", "burst_", "delivery_", "dte_sys_adl_"))
+    ):
+        return True
+    if trade_side == "close":
+        # Bitget hedge-mode fills retain the position's open side.
+        return side == ("buy" if direction == "long" else "sell")
+    if trade_side.startswith(("reduce_", "burst_", "delivery_", "dte_sys_adl_")):
+        return side == ("sell" if direction == "long" else "buy")
+    return False
+
+
+def _bitget_verified_fill(raw: dict):
+    from aletheia.execution.verified_exit import VerifiedExitFill
+
+    fill_id = str(raw.get("tradeId") or raw.get("execId") or "")
+    price = _bitget_float(raw.get("price") or raw.get("execPrice"))
+    quantity = _bitget_float(
+        raw.get("baseVolume") or raw.get("execQty") or raw.get("size")
+    )
+    timestamp = _bitget_int(raw.get("cTime") or raw.get("createdTime"))
+    if not fill_id or not price or not quantity or timestamp < 1:
+        return None
+    details = raw.get("feeDetail") or []
+    if isinstance(details, dict):
+        details = [details]
+    fee_values = []
+    fee_currency = None
+    for detail in details if isinstance(details, list) else []:
+        fee = _bitget_float(detail.get("totalFee") or detail.get("fee"))
+        if fee is not None:
+            fee_values.append(abs(fee))
+        fee_currency = fee_currency or detail.get("feeCoin")
+    pnl = _bitget_float(raw.get("profit") or raw.get("execPnl"))
+    return VerifiedExitFill(
+        fill_id=fill_id,
+        order_id=str(raw.get("orderId") or "") or None,
+        price=price,
+        quantity=quantity,
+        fee=sum(fee_values) if fee_values else None,
+        fee_currency=str(fee_currency) if fee_currency else None,
+        realized_pnl=pnl,
+        filled_at_ms=timestamp,
+    )
+
+
 class BitgetClient:
     """Native Bitget adapter supporting spot + USDT futures, demo + live."""
 
@@ -477,6 +542,108 @@ class BitgetClient:
         if data.get("code") != "00000":
             raise RuntimeError(f"Bitget API error: {data.get('msg')}")
         return data.get("data", []) or []
+
+    async def get_verified_position_exit(self, request):
+        """Read direct position + complete private futures fills; never mutate state."""
+        from aletheia.data.symbols import to_bitget, to_canonical
+        from aletheia.execution.verified_exit import (
+            VerifiedExitFill,
+            classify_verified_exit,
+            inconclusive_verified_exit,
+            private_history_window_available,
+        )
+
+        expected_mode = "bitget_demo" if self.mode == "demo" else "bitget_live_limited"
+        if (
+            request.broker_id != expected_mode
+            or request.execution_mode != expected_mode
+            or request.account_environment != self.mode
+        ):
+            return inconclusive_verified_exit(request, "account_identity_mismatch")
+        if request.market_type != "usdt_futures":
+            return inconclusive_verified_exit(request, "unsupported_market_type")
+        if not private_history_window_available(request):
+            return inconclusive_verified_exit(request, "history_window_unavailable")
+
+        endpoint = "/api/v2/mix/order/fills"
+        try:
+            positions = await self.get_positions()
+            present = any(
+                to_canonical(position.symbol) == request.symbol
+                and str(position.side).lower() == request.direction
+                and float(position.quantity) > 0
+                for position in positions
+            )
+            if present:
+                return classify_verified_exit(
+                    request, position_absent=False, history_complete=False,
+                    close_fills=(), ambiguous_activity=False, pages=0,
+                    source_endpoint=endpoint,
+                )
+
+            symbol = to_bitget(request.symbol)
+            raw_fills: list[dict] = []
+            cursor = None
+            pages = 0
+            complete = False
+            for _ in range(100):
+                path = (
+                    f"{endpoint}?productType=USDT-FUTURES&symbol={symbol}"
+                    f"&startTime={request.history_start_ms}"
+                    f"&endTime={request.history_end_ms}&limit=100"
+                )
+                if cursor:
+                    path += f"&idLessThan={cursor}"
+                headers = self._headers("GET", path)
+                async with httpx_client(timeout=15) as client:
+                    response = await client.get(f"{self._base}{path}", headers=headers)
+                    payload = response.json()
+                if payload.get("code") != "00000":
+                    raise RuntimeError("private fill history rejected")
+                data = payload.get("data")
+                if not isinstance(data, dict) or not isinstance(data.get("fillList"), list):
+                    raise ValueError("malformed private fill history")
+                page = data["fillList"]
+                pages += 1
+                raw_fills.extend(page)
+                if len(page) < 100:
+                    complete = True
+                    break
+                next_cursor = str(data.get("endId") or "")
+                if not next_cursor or next_cursor == cursor:
+                    break
+                cursor = next_cursor
+
+            close_fills: list[VerifiedExitFill] = []
+            ambiguous = False
+            for raw in raw_fills:
+                timestamp = _bitget_int(raw.get("cTime") or raw.get("createdTime"))
+                if not request.history_start_ms <= timestamp <= request.history_end_ms:
+                    continue
+                if to_canonical(str(raw.get("symbol") or "")) != request.symbol:
+                    ambiguous = True
+                    continue
+                if not _bitget_fill_closes_direction(raw, request.direction):
+                    ambiguous = True
+                    continue
+                normalized = _bitget_verified_fill(raw)
+                if normalized is None:
+                    ambiguous = True
+                else:
+                    close_fills.append(normalized)
+            return classify_verified_exit(
+                request,
+                position_absent=True,
+                history_complete=complete,
+                close_fills=tuple(close_fills),
+                ambiguous_activity=ambiguous,
+                pages=pages,
+                source_endpoint=endpoint,
+            )
+        except Exception:
+            return inconclusive_verified_exit(
+                request, "broker_query_failed", source_endpoint=endpoint,
+            )
 
     # ─── TPSL Trigger Orders ─────────────────────────────────────────────────
 

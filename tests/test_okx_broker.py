@@ -6,6 +6,8 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from tests.async_test_utils import closing_coro_runner
+
 
 @pytest.fixture(autouse=True)
 def _reset_module_state():
@@ -108,7 +110,10 @@ class TestSymbolFilter:
             "spot": frozenset({"BTC/USDT", "ETH/USDT"}),
         }
 
-        with patch("aletheia.execution.okx_broker._run_coro", return_value=fake_result):
+        with patch(
+            "aletheia.execution.okx_broker._run_coro",
+            side_effect=closing_coro_runner(fake_result),
+        ):
             count = mod.refresh_okx_demo_symbols()
 
         assert count == 5  # 3 swap + 2 spot

@@ -367,6 +367,8 @@ def test_layer2_trade_analytics_collected(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
     expected = {
+        "outcome_status": "available",
+        "outcome_semantics_version": "oi-v1",
         "totals": {"trade_count": 4, "win_rate": 50.0, "total_pnl": 12.5, "avg_hold_hours": 5.0},
         "by_source": [{"source_type": "opportunity", "trade_count": 3, "win_rate": 66.7, "total_pnl": 15.0}],
         "by_family": [{"family": "momentum", "trade_count": 2, "win_rate": 50.0, "total_pnl": 3.0}],

@@ -436,7 +436,7 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B13 | L2b | factor feedback uses clean exact-scope evidence and prospective exposure before influence | implemented |
 | LE-B14 | L2b | observer and operator prompt bundles persist exact manifests and causal outcome links | implemented |
 | LE-B15 | L2b | reflection cannot infer eligible outcomes from symbol-only or unbounded time matching | implemented |
-| LE-B16 | L2b | all paths share versioned cost-aware outcome eligibility and source precedence | partial — shared fail-closed adapter exists; remaining consumers migrate in later phases |
+| LE-B16 | L2b | all paths share versioned cost-aware outcome eligibility and source precedence | implemented — behavior consumers use the central eligible cohort and stale derived reports fail closed |
 | LE-B17 | L2b | narrative/LLM artifacts cannot independently increase samples or promotion confidence | implemented |
 | LE-B18 | L2b | exit-policy advisor remains read-only with no settings or position-management consumer | implemented |
 | LE-B19 | L2b | automatic `block_*` recommendations enter guard shadow evaluation, not Risk Engine via category coercion | implemented |
@@ -526,7 +526,12 @@ Executable target claims live in `tests/specs/spec_outcome_integrity.py`:
 | OI-B00 | retain current broker/account/local-only protections | implemented |
 | OI-S01 | additive closure evidence and durable observation storage | implemented |
 | OI-S02 | dependency-neutral central classifier and explicit read models | implemented |
-| OI-B01/B02/B03 | durable confirmation + verified exit + economic close split | missing |
+| OI-B01 | durable scoped disappearance confirmation | implemented |
+| OI-B02 | broker-neutral verified exit evidence | implemented |
+| OI-B03 | verified/admin economic close split | implemented |
 | OI-B04/C01 | any-reopen incident + global refreeze | implemented |
-| OI-C02/C03/C04 | all behavior consumers + Risk split + dual reporting | missing |
-| OI-B05/C05 | additive history remediation + versioned clean window | missing |
+| OI-C02 | all behavior-changing consumers use current eligible outcomes | implemented |
+| OI-C03 | authoritative Risk account loss separated from performance PnL | implemented |
+| OI-C04 | operator-facing dual reporting | implemented |
+| OI-B05/C05 | additive history remediation + versioned clean window | implemented |
+| OI-C06 | cross-layer lifecycle E2E and final evidence inventory | implemented |

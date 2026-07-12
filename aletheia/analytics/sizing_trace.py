@@ -276,14 +276,13 @@ def _conviction_for_proposal(db, proposal: dict) -> int | None:
 def _paper_trade_count(db, strategy_id: str | None, created_at: str | None) -> int:
     if not strategy_id or not _table_exists(db, "positions"):
         return 0
-    row = db.execute(
-        "SELECT COUNT(*) AS n FROM positions "
-        "WHERE strategy_id = ? AND status = 'closed' "
-        "AND execution_mode NOT LIKE '%live%' "
-        "AND (? IS NULL OR datetime(opened_at) < datetime(?))",
-        (strategy_id, created_at, created_at),
-    ).fetchone()
-    return int(row["n"] if row else 0)
+    from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+    rows = eligible_strategy_outcomes(closed_before=created_at) if created_at else eligible_strategy_outcomes()
+    return sum(
+        1 for row in rows
+        if str(row.get("strategy_id") or "") == strategy_id
+        and "live" not in str(row.get("execution_mode") or "")
+    )
 
 
 def _latest_atr_pct(db, symbol: str | None) -> float | None:

@@ -432,19 +432,20 @@ the target `LE-*` positive-contribution claims or of profitability.
 
 `aletheia/learning/outcomes.py` now composes the dependency-neutral
 `aletheia/analytics/outcome_integrity.py` assessment and then applies Learning's clean-window rules.
-The global classifier/read model is delivered, but consumer migration remains incomplete: several
-Operator, calibration, alpha, Risk and performance paths still read closed positions independently.
+The global classifier/read model, behavior-consumer migration, owner-facing dual reporting and
+versioned clean-window gate are delivered. Risk account loss remains deliberately separate from
+strategy performance.
 
 The target contract is `learning_evolution_contract.md §14` plus
 `tests/specs/spec_outcome_integrity.py`. OI-C01 is now GREEN: an active persisted incident is read by
 the scheduler gate, experiment authority, Operator prompt bundle, market-observer memory, learned
 ranker guards, persona sizing/unlock and persona rollout. Read-only settlement and shadow outcome
-measurement remain available. Until OI-C02/OI-C05 are GREEN:
+measurement remain available. OI-C02 and OI-C05 are now GREEN, so:
 
-- an old calibration/report may still be active after its underlying outcome semantics became stale;
+- old or wrong-window calibration/reports are rejected and can be archived by the dry-run-first
+  remediation tool;
 - “Learning is healthy/effective” cannot be inferred from raw closed-position statistics;
-- existing consumers already protected by `assess_realized_position()` must retain that protection,
-  but their local adapter must eventually compose the neutral central outcome model.
+- existing consumers protected by the central model must retain that protection.
 
 This handoff does not authorize Learning to import Risk, Execution, exchange clients, or live routes.
 Risk account loss remains a separate controlled contract, not a Learning outcome.

@@ -390,7 +390,7 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
 
     repo.insert_position(
         Position(
-            symbol="BTCUSDT",
+            symbol="BTC/USDT",
             market_type="spot",
             direction="long",
             quantity=0.1,
@@ -400,6 +400,14 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
             status="closed",
             opened_at=datetime.now(timezone.utc).isoformat(),
             closed_at=datetime.now(timezone.utc).isoformat(),
+            realized_pnl=1.0,
+            close_reason="verified_exit",
+            close_category="strategy",
+            exit_price_source="local_fill",
+            exit_fill_verified=True,
+            outcome_eligible=True,
+            outcome_exclusion_reason="eligible",
+            outcome_semantics_version="oi-v1",
         )
     )
 
@@ -740,7 +748,7 @@ async def test_operator_recommendations_include_trade_review_report_refresh_due_
 
     insert_position(
         Position(
-            symbol="BTCUSDT",
+            symbol="BTC/USDT",
             market_type="spot",
             direction="long",
             quantity=0.1,
@@ -750,6 +758,14 @@ async def test_operator_recommendations_include_trade_review_report_refresh_due_
             status="closed",
             opened_at=datetime.now(timezone.utc).isoformat(),
             closed_at=datetime.now(timezone.utc).isoformat(),
+            realized_pnl=1.0,
+            close_reason="verified_exit",
+            close_category="strategy",
+            exit_price_source="local_fill",
+            exit_fill_verified=True,
+            outcome_eligible=True,
+            outcome_exclusion_reason="eligible",
+            outcome_semantics_version="oi-v1",
         )
     )
 

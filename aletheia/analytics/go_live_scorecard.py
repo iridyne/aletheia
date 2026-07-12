@@ -6,6 +6,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+from aletheia.analytics.learning_window import outcome_window_metadata
+
 
 def compute_scorecard() -> dict:
     """Compute the go-live readiness scorecard. Pure read-only, no side effects."""
@@ -38,28 +41,20 @@ def compute_scorecard() -> dict:
         "criteria": criteria,
         "blockers": blockers,
         "computed_at": datetime.now(timezone.utc).isoformat(),
+        **outcome_window_metadata(),
     }
 
 
 def _genuine_closed_pnls(order_by_closed_at: bool = False) -> list[float]:
     """realized_pnl of GENUINE closed positions (synthetic/administrative excluded).
 
-    Reconciler orphan sweeps (reconciled_gone) and bug/demo cleanups are not trade
-    outcomes; counting them pollutes PF / win-rate / drawdown / volume (Win-line A).
-    NULL close_reason is kept (unknown ≠ synthetic). See close_reasons.py +
-    docs/research/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
+    Reconciler orphan sweeps, maintenance closes, legacy rows and incomplete economics
+    are not verified outcomes; counting them pollutes PF / win-rate / drawdown / volume.
     """
-    from aletheia.storage.sqlite import get_db
-    from aletheia.analytics.close_reasons import SYNTHETIC_CLOSE_REASONS
-    syn = tuple(SYNTHETIC_CLOSE_REASONS)
-    placeholders = ",".join("?" * len(syn))
-    order = " ORDER BY closed_at ASC" if order_by_closed_at else ""
-    sql = (
-        "SELECT realized_pnl FROM positions WHERE status='closed' "
-        f"AND (close_reason IS NULL OR close_reason NOT IN ({placeholders})){order}"
-    )
-    rows = get_db().execute(sql, syn).fetchall()
-    return [r[0] for r in rows if r[0] is not None]
+    rows = eligible_strategy_outcomes()
+    if not order_by_closed_at:
+        rows = list(reversed(rows))
+    return [float(row["realized_pnl"]) for row in rows]
 
 
 def _criterion(key: str, label: str, score: float, weight: float, detail: str) -> dict:
@@ -127,12 +122,7 @@ def check_kill_condition_consecutive_rounds(window_days: int = 14) -> dict:
     Two consecutive kill rounds → recommend terminating the experiment.
     """
     try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        rows = db.execute(
-            "SELECT realized_pnl, closed_at FROM positions "
-            "WHERE status='closed' ORDER BY closed_at DESC"
-        ).fetchall()
+        rows = list(reversed(eligible_strategy_outcomes()))
         if not rows:
             return {"consecutive_kill_rounds": 0, "kill_threshold": 0.5, "window_days": window_days}
 
@@ -144,11 +134,14 @@ def check_kill_condition_consecutive_rounds(window_days: int = 14) -> dict:
         for i in range(8):  # check up to 8 trailing windows
             start = now - timedelta(days=window_days * (i + 1))
             end = now - timedelta(days=window_days * i)
-            window_rows = [r for r in rows if start.isoformat()[:10] <= str(r[1])[:10] < end.isoformat()[:10]]
+            window_rows = [
+                row for row in rows
+                if start.isoformat()[:10] <= str(row.get("closed_at"))[:10] < end.isoformat()[:10]
+            ]
             if not window_rows:
                 break  # no data → stop counting
-            gp = sum(r[0] for r in window_rows if r[0] > 0)
-            gl = sum(abs(r[0]) for r in window_rows if r[0] < 0)
+            gp = sum(float(row["realized_pnl"]) for row in window_rows if float(row["realized_pnl"]) > 0)
+            gl = sum(abs(float(row["realized_pnl"])) for row in window_rows if float(row["realized_pnl"]) < 0)
             pf = gp / gl if gl > 0 else 99.0
             if pf < kill_floor:
                 consecutive += 1
@@ -167,17 +160,14 @@ def compute_pnl_by_trade_school() -> dict:
     Returns {trade_school: {"profit_factor": float, "win_rate": float, "count": int}}.
     """
     try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        rows = db.execute(
-            "SELECT COALESCE(trade_school, 'short_term') AS trade_school, realized_pnl "
-            "FROM positions WHERE status='closed'"
-        ).fetchall()
+        rows = eligible_strategy_outcomes()
         result: dict = {}
         from collections import defaultdict
         buckets: dict = defaultdict(list)
-        for r in rows:
-            buckets[r[0]].append(r[1] or 0.0)
+        for row in rows:
+            buckets[row.get("trade_school") or "short_term"].append(
+                float(row["realized_pnl"])
+            )
         for school, pnls in buckets.items():
             gross_profit = sum(p for p in pnls if p > 0)
             gross_loss = sum(abs(p) for p in pnls if p < 0)
@@ -336,12 +326,15 @@ def _check_calibration() -> dict:
         score = compute_calibration_score()
         report = get_latest_calibration_report()
         if not report:
-            detail = "no data yet"
+            return _criterion(
+                "calibration", "Conviction Calibration (ECE<0.10)",
+                0, 0.10, "insufficient current-semantics data",
+            )
         else:
             total = report.get("total_executed", 0)
             ece = report.get("ece")
             grade = report.get("ece_grade", "?")
             detail = f"ECE={ece:.3f} ({grade}), {total} trades" if ece is not None else f"{total} trades"
-        return _criterion("calibration", "Conviction Calibration (ECE<0.10)", score, 0.10, detail)
+        return _criterion("calibration", "Conviction Calibration (ECE<0.10)", float(score or 0), 0.10, detail)
     except Exception:
-        return _criterion("calibration", "Conviction Calibration (ECE<0.10)", 50, 0.10, "unavailable")
+        return _criterion("calibration", "Conviction Calibration (ECE<0.10)", 0, 0.10, "unavailable")

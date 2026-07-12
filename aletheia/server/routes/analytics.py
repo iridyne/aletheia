@@ -30,8 +30,9 @@ def get_trade_stats():
 @router.get("/strategy-kpis")
 def get_strategy_kpis():
     """Per-strategy KPI summary: trade_count, win_rate, total_pnl."""
+    from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     from aletheia.analytics.trade_stats import build_strategy_kpis
-    return build_strategy_kpis()
+    return {"strategies": build_strategy_kpis(), **build_outcome_cohort_summary()}
 
 
 @router.get("/equity-curve")
@@ -47,6 +48,11 @@ def get_equity_curve(
       days — only include positions closed within the last N days
       limit — max data points returned (default 5000)
     """
+    from aletheia.analytics.outcome_integrity import (
+        assess_reportable_outcome,
+        build_outcome_cohort_summary,
+        raw_account_events,
+    )
     from aletheia.storage.sqlite import get_db
     from aletheia.config.loader import load_config
     db = get_db()
@@ -63,53 +69,44 @@ def get_equity_curve(
     # keeps the curve's end point identical across 7D/30D/90D/All (a real equity
     # curve). In window_relative mode the cumulative restarts at 0 inside the
     # window, so we DO filter by days at the SQL level (period-attribution view).
-    conditions = ["status = 'closed'", "closed_at IS NOT NULL"]
-    params: list = []
-    if execution_mode:
-        conditions.append("execution_mode = ?")
-        params.append(execution_mode)
-    if days and days > 0 and mode == "window_relative":
-        conditions.append("closed_at >= datetime('now', ?)")
-        params.append(f"-{days} days")
-
-    where = " AND ".join(conditions)
-    # #124 fix: `ORDER BY closed_at ASC LIMIT ?` truncates to the OLDEST N rows,
-    # so under full_cumulative when the account has more closes than `limit` we
-    # never see any recent points — the equity curve is frozen on ancient
-    # history. Take the NEWEST N via a subquery (DESC LIMIT) and re-sort ASC in
-    # the outer query so the cumulative accumulation below still walks in
-    # chronological order. This preserves both invariants: (a) any point that
-    # makes it into `rows` is one of the most recent closes, and (b) the loop
-    # can still build a monotonic running sum against `closed_at`.
-    sql = (
-        f"SELECT realized_pnl, closed_at FROM ("
-        f"  SELECT realized_pnl, closed_at FROM positions WHERE {where} "
-        f"  ORDER BY closed_at DESC LIMIT ?"
-        f") ORDER BY closed_at ASC"
-    )
-    params.append(limit)
-    rows = db.execute(sql, params).fetchall()
-
-    # Window cutoff (full_cumulative only): accumulate over everything but emit
-    # points whose closed_at is within the requested window. Compared as ISO
-    # strings — both sides are tz-aware UTC isoformat, lexicographically ordered.
     cutoff: str | None = None
-    if days and days > 0 and mode == "full_cumulative":
+    if days and days > 0:
         from datetime import datetime, timedelta, timezone
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    read_after = cutoff if mode == "window_relative" else None
+    rows = raw_account_events(
+        execution_mode=execution_mode,
+        closed_after=read_after,
+    )
+    rows = rows[-max(1, min(limit, 5000)):]
+    genuine_rows = [row for row in rows if assess_reportable_outcome(row).eligible]
 
-    cum = 0.0
-    points = []
-    for r in rows:
-        pnl = r["realized_pnl"] or 0.0
-        cum += pnl  # always over full history in full_cumulative mode
-        if cutoff is not None and (r["closed_at"] or "") < cutoff:
-            continue  # accumulated into cum, but outside the visible window
-        points.append({
-            "time": r["closed_at"],
-            "pnl": round(pnl, 4),
-            "cumulative_pnl": round(cum, 4),
-        })
+    def _points(source_rows: list[dict]) -> tuple[list[dict], float | None]:
+        cumulative = 0.0
+        recorded = 0
+        points: list[dict] = []
+        for row in source_rows:
+            value = row.get("realized_pnl")
+            if value is None:
+                continue
+            pnl = float(value)
+            cumulative += pnl
+            recorded += 1
+            if cutoff is not None and str(row.get("closed_at") or "") < cutoff:
+                continue
+            points.append({
+                "time": row["closed_at"],
+                "pnl": round(pnl, 4),
+                "cumulative_pnl": round(cumulative, 4),
+            })
+        return points, round(cumulative, 4) if recorded else None
+
+    raw_points, raw_total = _points(rows)
+    genuine_points, genuine_total = _points(genuine_rows)
+    cohort = build_outcome_cohort_summary(
+        execution_mode=execution_mode,
+        closed_after=cutoff,
+    )
 
     # Unrealized PnL for open positions (same mode filter if specified)
     upnl_conditions = ["status='open'"]
@@ -140,9 +137,17 @@ def get_equity_curve(
             pass
 
     return {
-        "points": points,
+        **cohort,
+        "default_curve": "genuine_verified",
+        "raw_curve_label": "raw_recorded_account_events",
+        "genuine_curve_label": "verified_strategy_outcomes",
+        "raw_recorded_points": raw_points,
+        "genuine_points": genuine_points,
+        # Compatibility aliases now explicitly default to the genuine cohort.
+        "points": genuine_points,
         "current_unrealized": total_upnl,
-        "total_realized": round(cum, 4),
+        "total_realized": genuine_total,
+        "raw_total_recorded_realized": raw_total,
     }
 
 
@@ -158,8 +163,13 @@ def get_strategy_performance():
     """Per-strategy detailed performance KPIs. Backtest run summary removed with
     the rules engine (Position C 2026-07-02); latest_backtest kept as an empty
     object for response-shape back-compat."""
+    from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     from aletheia.analytics.trade_stats import build_strategy_kpis
-    return {"strategies": build_strategy_kpis(), "latest_backtest": {}}
+    return {
+        "strategies": build_strategy_kpis(),
+        "latest_backtest": {},
+        **build_outcome_cohort_summary(),
+    }
 
 
 @router.get("/go-live-scorecard")
@@ -171,23 +181,43 @@ def get_go_live_scorecard():
 
 @router.get("/cost-summary")
 def get_cost_summary():
-    """Aggregate fee/slippage totals across all closed positions."""
-    from aletheia.storage.sqlite import get_db
-    db = get_db()
-    row = db.execute(
-        "SELECT SUM(COALESCE(entry_fee,0)) as total_entry_fees, "
-        "SUM(COALESCE(exit_fee,0)) as total_exit_fees, "
-        "SUM(COALESCE(slippage_cost,0)) as total_slippage "
-        "FROM positions WHERE status='closed'"
-    ).fetchone()
-    total_fees = round((row["total_entry_fees"] or 0) + (row["total_exit_fees"] or 0), 8)
-    total_slippage = round(row["total_slippage"] or 0, 8)
+    """Verified outcome costs plus separately labelled raw recorded costs."""
+    from aletheia.analytics.outcome_integrity import (
+        build_outcome_cohort_summary,
+        eligible_strategy_outcomes,
+        raw_account_events,
+    )
+
+    def _costs(rows: list[dict]) -> dict[str, float | None]:
+        if not rows or not any(
+            row.get(field) is not None
+            for row in rows
+            for field in ("entry_fee", "exit_fee", "slippage_cost")
+        ):
+            return {
+                "total_entry_fees": None,
+                "total_exit_fees": None,
+                "total_fees": None,
+                "total_slippage": None,
+                "total_costs": None,
+            }
+        entry = sum(float(row.get("entry_fee") or 0) for row in rows)
+        exit_ = sum(float(row.get("exit_fee") or 0) for row in rows)
+        slippage = sum(float(row.get("slippage_cost") or 0) for row in rows)
+        return {
+            "total_entry_fees": round(entry, 8),
+            "total_exit_fees": round(exit_, 8),
+            "total_fees": round(entry + exit_, 8),
+            "total_slippage": round(slippage, 8),
+            "total_costs": round(entry + exit_ + slippage, 8),
+        }
+
+    verified = _costs(eligible_strategy_outcomes())
+    raw = _costs(raw_account_events())
     return {
-        "total_entry_fees": round(row["total_entry_fees"] or 0, 8),
-        "total_exit_fees": round(row["total_exit_fees"] or 0, 8),
-        "total_fees": total_fees,
-        "total_slippage": total_slippage,
-        "total_costs": round(total_fees + total_slippage, 8),
+        **verified,
+        "raw_recorded_costs": raw,
+        **build_outcome_cohort_summary(),
     }
 
 
@@ -198,7 +228,9 @@ def get_confidence_calibration():
     report = get_latest_calibration_report()
     if not report:
         report = build_calibration_report()
-    return report or {"status": "no_data", "buckets": [], "ece": None, "ece_grade": "insufficient_data"}
+    from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
+    result = report or {"status": "no_data", "buckets": [], "ece": None, "ece_grade": "insufficient_data"}
+    return {**result, **build_outcome_cohort_summary()}
 
 
 @router.get("/reasoning-feedback")

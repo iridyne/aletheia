@@ -1654,6 +1654,31 @@ def _probe_reconciled_ratio(report: Report) -> None:
         report.add("loop.reconciled_ratio", "info", f"probe error: {e}")
 
 
+def _probe_outcome_history_integrity(report: Report) -> None:
+    """Read-only cleanup readiness for classified history and derived artifacts."""
+    try:
+        from aletheia.maintenance.outcome_integrity import remediate_outcome_history
+
+        plan = remediate_outcome_history(dry_run=True)
+        classifications = int(plan["classification"]["planned"])
+        archives = int(plan["archive"]["planned"])
+        compensation = len(plan["compensation_candidates"])
+        detail = (
+            f"anchor={plan['clean_window_anchor_id']}; "
+            f"classification_pending={classifications}; archive_pending={archives}; "
+            f"cash_compensation_candidates={compensation} (owner approval required)"
+        )
+        if classifications or archives:
+            report.add(
+                "loop.outcome_history", "info", detail,
+                "preview with `aletheia knowledge remediate-outcomes`; apply is opt-in",
+            )
+        else:
+            report.add("loop.outcome_history", "ok", detail)
+    except Exception as e:
+        report.add("loop.outcome_history", "info", f"probe error: {e}")
+
+
 def _probe_sizing_policy(report: Report) -> None:
     """Persona-learning (P3) health: is the sizing learner active, and is any active
     regime bucket bleeding (negative clean reward while nudging appetite)? Dormant by
@@ -2933,6 +2958,7 @@ def build_report() -> Report:
         _probe_round1,
         _probe_knowledge_flood,
         _probe_learning_retrieval,
+        _probe_outcome_history_integrity,
         _probe_reconciled_ratio,
         _probe_reconcile_thrash,
         _probe_sizing_policy,

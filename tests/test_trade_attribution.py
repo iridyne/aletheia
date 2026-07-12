@@ -129,8 +129,8 @@ def test_build_rows_with_full_chain():
     }
     fake_risk_decision = {"id": "rd-1", "proposal_id": "prop-1", "approved": True, "violations": "[]"}
 
-    with patch("aletheia.analytics.trade_attribution.repo") as mock_repo:
-        mock_repo.list_positions.return_value = [fake_position]
+    with patch("aletheia.analytics.trade_attribution.eligible_strategy_outcomes", return_value=[fake_position]), \
+            patch("aletheia.analytics.trade_attribution.repo") as mock_repo:
         mock_repo.get_trade_proposal.return_value = fake_proposal
         mock_repo.get_order.return_value = {"id": "ord-1"}
         mock_repo.get_opportunity.return_value = fake_opportunity
@@ -167,8 +167,8 @@ def test_build_rows_missing_opportunity():
         "closed_at": "2026-06-14T12:00:00+00:00",
     }
 
-    with patch("aletheia.analytics.trade_attribution.repo") as mock_repo:
-        mock_repo.list_positions.return_value = [fake_position]
+    with patch("aletheia.analytics.trade_attribution.eligible_strategy_outcomes", return_value=[fake_position]), \
+            patch("aletheia.analytics.trade_attribution.repo") as mock_repo:
         mock_repo.get_trade_proposal.return_value = None
         mock_repo.get_order.return_value = None
         mock_repo.get_opportunity.return_value = None
@@ -200,8 +200,8 @@ def test_realized_pnl_pct_calculation():
         "closed_at": "2026-06-14T11:00:00+00:00",
     }
 
-    with patch("aletheia.analytics.trade_attribution.repo") as mock_repo:
-        mock_repo.list_positions.return_value = [fake_position]
+    with patch("aletheia.analytics.trade_attribution.eligible_strategy_outcomes", return_value=[fake_position]), \
+            patch("aletheia.analytics.trade_attribution.repo") as mock_repo:
         mock_repo.get_trade_proposal.return_value = None
         mock_repo.list_risk_decisions.return_value = []
 

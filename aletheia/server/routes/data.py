@@ -787,13 +787,13 @@ async def get_exchange_account():
 
 
 @router.get("/positions/reconciliation")
-async def get_positions_reconciliation():
+def get_positions_reconciliation():
     """Classify every account position as managed / external / orphaned.
 
     Read-only. Joins the cached exchange position view against locally-tracked open
     positions so the UI/operator can see which positions Aletheia did NOT open
     (external — adoption candidates) and which it tracks but the exchange no longer
-    has (orphaned — reconcile-close candidates). Never hits Bitget synchronously.
+    has (orphaned — disappearance-evidence candidates). Never hits Bitget synchronously.
     """
     _ensure_db()
     from aletheia.portfolio.position_reconciler import classify_positions
@@ -801,11 +801,11 @@ async def get_positions_reconciliation():
 
 
 @router.post("/positions/reconcile")
-async def run_positions_reconcile():
-    """Manual trigger: classify → auto-adopt externals → close orphans (demo only).
+def run_positions_reconcile():
+    """Manual trigger: classify, record disappearance evidence, and demo auto-adopt.
 
-    Same logic as the scheduled job but on-demand. Live mode returns classification
-    only (no autonomous action). Surfaces in /api/agent-runs for observability.
+    Missing positions stay open pending verified-exit/accounting phases. Live mode
+    records scoped evidence but takes no adoption/close action.
     """
     _ensure_db()
     from aletheia.portfolio.position_reconciler import run_reconcile
@@ -1853,11 +1853,15 @@ def _parse_brief_to_profile(brief: str) -> dict:
 # ── Edge Lab: analytics endpoints ───────────────────────────────────────────
 
 @router.get("/analytics/family-scorecard")
-async def get_family_scorecard():
+def get_family_scorecard():
     """Per-scanner_family performance statistics (win_rate, expectancy, alpha)."""
     _ensure_db()
+    from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     from aletheia.analytics.family_scorecard import compute_family_scorecard
-    return compute_family_scorecard()
+    return {
+        "families": compute_family_scorecard(),
+        **build_outcome_cohort_summary(),
+    }
 
 
 @router.get("/analytics/shadow-trades")

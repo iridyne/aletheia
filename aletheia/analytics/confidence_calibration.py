@@ -9,11 +9,18 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from aletheia.analytics.outcome_integrity import (
+    eligible_strategy_outcomes,
+    is_current_outcome_artifact,
+)
+from aletheia.analytics.learning_window import outcome_window_metadata
+
 logger = logging.getLogger("aletheia.analytics.confidence_calibration")
 
 MIN_CALIBRATION_SAMPLE = 5
 CALIBRATION_WINDOW_DAYS = 90
 MIN_CALIBRATION_INTERVAL_HOURS = 6
+MAX_ACTIVE_REPORT_AGE = timedelta(hours=24)
 
 # (label, low_inclusive, high_inclusive, expected_win_rate = midpoint/100)
 _BUCKETS = [
@@ -38,23 +45,31 @@ def build_calibration_report(window_days: int = CALIBRATION_WINDOW_DAYS) -> dict
             (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
         )
 
-        rows = db.execute(
-            """
-            SELECT pd.conviction, p.realized_pnl
-            FROM pi_decisions pd
-            INNER JOIN positions p ON p.proposal_id = pd.proposal_id
-            WHERE p.status = 'closed'
-              AND pd.conviction > 0
-              AND pd.action IN ('trade', 'scale_in', 'flip')
-              AND pd.created_at >= ?
-            """,
-            (cutoff,),
-        ).fetchall()
+        rows = []
+        for position in eligible_strategy_outcomes(closed_after=cutoff):
+            proposal_id = position.get("proposal_id")
+            if not proposal_id:
+                continue
+            decision = db.execute(
+                "SELECT conviction FROM pi_decisions "
+                "WHERE proposal_id = ? AND conviction > 0 "
+                "AND action IN ('trade', 'scale_in', 'flip') "
+                "AND created_at >= ? ORDER BY datetime(created_at) DESC LIMIT 1",
+                (proposal_id, cutoff),
+            ).fetchone()
+            if decision:
+                rows.append({
+                    "conviction": decision["conviction"],
+                    "realized_pnl": position["realized_pnl"],
+                })
 
         if not rows:
             return None
 
-        trades = [{"conviction": r[0], "win": (r[1] or 0) > 0} for r in rows]
+        trades = [
+            {"conviction": r["conviction"], "win": (r["realized_pnl"] or 0) > 0}
+            for r in rows
+        ]
         total = len(trades)
 
         if total < MIN_CALIBRATION_SAMPLE:
@@ -125,6 +140,7 @@ def build_calibration_report(window_days: int = CALIBRATION_WINDOW_DAYS) -> dict
             "overconfident_buckets": overconfident,
             "underconfident_buckets": underconfident,
             "calibration_summary": summary,
+            **outcome_window_metadata(),
         }
 
         _persist_report(report)
@@ -144,7 +160,11 @@ def get_latest_calibration_report() -> dict | None:
             content = item.get("content")
             if content:
                 try:
-                    return json.loads(content)
+                    report = json.loads(content)
+                    if is_current_outcome_artifact(
+                        report, max_age=MAX_ACTIVE_REPORT_AGE,
+                    ):
+                        return report
                 except (json.JSONDecodeError, TypeError):
                     continue
         return None
@@ -182,14 +202,14 @@ def render_calibration_for_pi(report: dict) -> str:
     return "\n".join(lines)
 
 
-def compute_calibration_score() -> float:
+def compute_calibration_score() -> float | None:
     """Return 0-100 score for go-live scorecard. 100=perfect, degrades with ECE."""
     report = get_latest_calibration_report()
     if not report:
-        return 50.0  # neutral when no data
+        return None
     total = report.get("total_executed", 0)
     if total < MIN_CALIBRATION_SAMPLE:
-        return 50.0
+        return None
     ece = report.get("ece", 1.0) or 1.0
     # ECE=0 → 100pts, ECE=0.20 → 60pts, ECE=0.50 → 0pts
     score = max(0.0, 100.0 - ece * 200.0)

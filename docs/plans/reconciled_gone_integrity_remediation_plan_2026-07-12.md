@@ -196,6 +196,9 @@ RG-T08～T10 完成。
 
 #### RG-T05：durable disappearance confirmation
 
+状态：已实现候选/观察证据、独立快照去重、过期/错账户拒绝、重连保留和重新出现结案；为避免在
+RG-T06/T07 前继续制造伪经济，ready candidate 当前明确保持 open，不调用旧 fallback close。
+
 范围：portfolio reconciler 和确认状态；不触碰 exchange signer/credentials。
 
 工作：
@@ -210,6 +213,9 @@ RG-T08～T10 完成。
 验收：单 miss、cache 过期、broker 切换、Demo/Live 混合、重启、部分 API 失败均不误关；确认逻辑幂等。
 
 #### RG-T06：broker-neutral verified-exit protocol
+
+状态：已实现统一只读三态协议和 Bitget/OKX/Binance 直查/分页/标准化；错误与不完整历史 fail-closed。
+本任务不接入 close/accounting，等待 RG-T07 分流。
 
 范围：Execution/exchange client 受控边界；这是单独审批和单独回归任务。
 
@@ -226,6 +232,9 @@ RG-T08～T10 完成。
 下单不变量不变。开始本任务前需 owner 确认受控模块实施范围。
 
 ### Phase 5 — 平仓状态与经济结算分流（RG-T07）
+
+状态：已实现 verified/admin 两入口、精确 fill/fee 结算、行政关闭无经济副作用、幂等 cash/hook、
+ready demo candidate 三态路由和 live alert-only；Risk authoritative loss 仍由 RG-T09 迁移。
 
 范围：portfolio close orchestration、PnL/cash、post-close hook；不修改开仓、仓位大小或风险阈值。
 
@@ -246,13 +255,18 @@ RG-T08～T10 完成。
 
 #### RG-T08：Operator、Learning 和 PI 判断消费者
 
+状态：已实现。表现统计、Operator/PI 上下文、校准、System Operator alpha、归因、
+memo/reasoning、persona sizing、promotion、go-live 和 guard 判断统一读取当前版本的 verified
+strategy outcomes；旧版/过期派生报告在进入 prompt 或 policy 前拒读。Risk、双口径展示和历史归档
+仍分别由 RG-T09、T10、T11 完成。
+
 本任务中的每一项都是整体修复的强制完成门，不是“有空再做”的分析优化。只要任一路仍直接使用
 未过滤 closed rows，RG-01～RG-22 就不能整体关闭。
 
 2026-07-12 再核对确认：Operator、conviction calibration、System Operator alpha、Risk account
 loss，以及 trade stats / family scorecard / strategy KPI 等多条表现统计当前仍各自读取。这些不是
 同一个修复的重复项，而是彼此独立的污染入口，全部纳入本 goal。新增 OI-C02/OI-C03 枚举式可执行
-断言继续明确标为欠账，直到每一条路径迁移并有 synthetic-vs-genuine 行为回归后才转 GREEN：
+断言中 OI-C02 已转 GREEN；OI-C03/C04 和历史修复断言继续保持欠账：
 
 - RG-T08A：trade stats、family scorecard、strategy KPI 等全部表现统计；
 - RG-T08B：Operator 7d 指标、trading context、calibration active report、alpha observed leg；
@@ -279,6 +293,11 @@ semantics version/staleness 被拒读，不能等历史清理后才安全。
 
 #### RG-T09：Risk daily-loss 单独整改
 
+状态：已实现。Risk check #8 现读取独立 authoritative account snapshot；本地 paper close 必须
+与现金账本逐笔一致，exchange-backed close 必须具备当前版本的 verified exact economics。未知或
+不一致的账户结果显式阻断新 proposal，但不伪造日损 breach、不自动触发 kill switch。阈值、资本基数
+和 check 顺序未改变。
+
 范围：`aletheia/risk/` 受控边界；不得顺带改风险限额。
 
 工作：
@@ -292,6 +311,9 @@ semantics version/staleness 被拒读，不能等历史清理后才安全。
 来源缺失不会显示虚假健康。开始本任务前需 owner 确认受控模块实施范围。
 
 #### RG-T10：CLI/API/UI 诚实双口径
+
+状态：✅ 2026-07-12 完成。CLI、分析接口和现有绩效组件默认展示已验证策略结果，
+同时并列原始关闭事件、排除数量与原因；权益图保留两条明确标注的曲线，未实现新页面或改变交易行为。
 
 范围：inspect/performance CLI、analytics API、Overview/相关表现页面；不改变交易行为。
 
@@ -307,6 +329,10 @@ semantics version/staleness 被拒读，不能等历史清理后才安全。
 性能符合 async handler 规则。
 
 ### Phase 7 — 历史污染治理（RG-T11）
+
+状态：✅ 2026-07-12 代码与操作流程完成。维护命令默认 dry-run，apply 仅做确定性分类、
+归档和 supersession 标记；可安全重建的无 LLM 报告按新窗口重算。paper cash 只输出候选，
+没有执行补偿的入口；是否追加补偿事件仍由 owner 另行决定。Git 中不记录本机是否已 apply。
 
 范围：一次性、幂等、默认 dry-run 的维护工具；不删除历史。
 
@@ -325,6 +351,10 @@ semantics version/staleness 被拒读，不能等历史清理后才安全。
 
 ### Phase 8 — 端到端、浸泡和完成审计（RG-T12）
 
+状态：✅ 自动化 E2E / ⏳ 真实 paper soak。跨层 isolated-DB 证据和 OI-C06 已完成；
+真实 scheduler 多周期 + 进程重启 soak 本任务未运行，不能从 Git 推断。live、风险限额、owner
+运行库和 cash compensation 均未触碰。自动化完成不等于实盘或实验解锁。
+
 必须覆盖以下场景：
 
 | 场景 | 期望结果 |
@@ -338,7 +368,7 @@ semantics version/staleness 被拒读，不能等历史清理后才安全。
 | 重启发生在第一次 miss 之后 | confirmation 继续且不重复累计同一 view |
 | live mode 出现不确定消失 | alert-only/fail-closed，不自动制造退出 |
 | broker/account/environment 交错快照 | 彼此完全隔离 |
-| synthetic 行加入统计库 | CLI/API/UI、Operator、calibration、Risk、Learning、cash、genuine curve 不变 |
+| synthetic 行加入统计库 | 判断/学习/cash/genuine curve 不吸收该行；Risk 不制造亏损或触发 kill switch，但因账户真值未知而明确 unavailable/fail-closed |
 | 历史迁移重复执行 | classification、archive、supersede 和 dry-run 幂等 |
 
 验证层级：

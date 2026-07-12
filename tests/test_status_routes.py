@@ -124,7 +124,9 @@ async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
     assert data["health_issues"] == ["code_updated_pending_restart:old..new"]
     assert data["boot_commit"] == "old"
     assert data["current_commit"] == "new"
-    assert data["model_provider"]
+    # A fresh config intentionally has no default provider. Status must report
+    # that honestly instead of inventing a reassuring provider value.
+    assert data["model_provider"] == ""
 
 
 @pytest.mark.anyio

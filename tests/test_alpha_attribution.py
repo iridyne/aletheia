@@ -6,7 +6,8 @@ from typer.testing import CliRunner
 
 
 def _iso(days_ago: int = 0, hours_after: int = 0) -> str:
-    return (datetime.now(timezone.utc) - timedelta(days=days_ago) + timedelta(hours=hours_after)).isoformat()
+    anchor = datetime.fromisoformat("2026-07-12T07:10:01+00:00")
+    return (anchor + timedelta(seconds=(30 - days_ago) * 10, hours=hours_after)).isoformat()
 
 
 def _ms(iso_ts: str, hours_after: int = 0) -> int:

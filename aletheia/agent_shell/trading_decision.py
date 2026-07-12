@@ -707,13 +707,12 @@ def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
     if not strategy_id:
         return 0
     try:
-        from aletheia.storage.sqlite import get_db
-        row = get_db().execute(
-            "SELECT count(*) FROM positions "
-            "WHERE strategy_id = ? AND status = 'closed' AND execution_mode NOT LIKE '%live%'",
-            (strategy_id,),
-        ).fetchone()
-        return int(row[0]) if row else 0
+        from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+        return sum(
+            1 for row in eligible_strategy_outcomes()
+            if str(row.get("strategy_id") or "") == strategy_id
+            and "live" not in str(row.get("execution_mode") or "")
+        )
     except Exception:
         return 0
 

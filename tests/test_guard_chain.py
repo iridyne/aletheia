@@ -100,8 +100,7 @@ def test_recent_loss_streak_warns():
         {"strategy_id": "s1", "closed_at": f"2026-01-0{i}", "realized_pnl": -5}
         for i in range(5, 0, -1)
     ]
-    with patch("aletheia.trust.guard_chain.repo") as mock_repo:
-        mock_repo.list_positions.return_value = positions
+    with patch("aletheia.trust.guard_chain.eligible_strategy_outcomes", return_value=positions):
         result = _guard_recent_loss_streak({"strategy_id": "s1"})
 
     assert result.verdict == "warn"

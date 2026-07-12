@@ -505,8 +505,8 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
             " net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (new_id(), new_id(), "m", "s", "BTC/USDT", "momentum", "long", "24h",
-             100.0, "2026-07-10T00:00:00+00:00", "2026-07-11T00:00:00+00:00",
-             "2026-07-11T00:00:00+00:00", 102.0, 2.0, 2.0, 2.0,
+             100.0, "2026-07-12T08:00:00+00:00", "2026-07-12T09:00:00+00:00",
+             "2026-07-12T09:00:00+00:00", 102.0, 2.0, 2.0, 2.0,
              1.8, 0.05, "v1", "settled"),
         )
     db.commit()
@@ -1226,7 +1226,7 @@ def test_factor_feedback_excludes_synthetic_closes():
         return {"scanner_family": "momentum", "direction": "long", "symbol": "BTC/USDT",
                 "confidence": "high", "late_entry_penalty": 0,
                 "position_id": f"{reason}:{pnl}", "entry_price": 100.0, "quantity": 1.0,
-                "closed_at": "2026-07-10T00:00:00+00:00",
+                "closed_at": "2026-07-12T08:00:00+00:00",
                 "realized_pnl": pnl, "close_reason": reason,
                 "close_category": "strategy", "exit_price_source": "local_fill",
                 "exit_fill_verified": True, "outcome_eligible": True,

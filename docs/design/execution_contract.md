@@ -3,7 +3,7 @@
 > **角色**:定义订单从 proposal 到交易所的完整通路,及其原子性/幂等/对账保证。
 > **基线**:代码为底(file:line),意图差距标 ⚠️;冲突时文档为准。
 > **不变式来源**:[trust_and_change_control §1, §6.3](../governance/trust_and_change_control.md)。
-> Last updated: 2026-06-21 · 维护者:Aletheia Dev
+> Last updated: 2026-07-12 · 维护者:Aletheia Dev
 
 ---
 
@@ -148,6 +148,8 @@ trade_proposals.id
 | 红线 | **对账绝不下单/撤单**,只比对状态 + 写收敛/审计记录([trust §1.3](../governance/trust_and_change_control.md)) | — |
 | 防伪 | 对账从不创建虚假 Fill,仅更新 `order.status` | `reconciliation.py:77` |
 
+**Spec claim**：`EX-C04`（对账模块不得导入下单函数）。
+
 Position reconciler 的匹配身份必须包含执行账户作用域：`execution_mode + broker_id +
 account_environment + canonical symbol + market_type + direction`；双方都带非敏感 account fingerprint
 且值不同时禁止匹配。`source=native/adopted` 只解释仓位如何重新出现，不得限制事故探测。
@@ -158,6 +160,13 @@ Live 作用域从 `exchange.name` 派生对应的 `*_live_limited`，不得硬�
 统一 Demo 快照中的每条非零仓位必须有 `broker_id`，且只匹配当前执行账户；账户标签缺失时必须降级为
 不可用，不能据此推断本地仓已从交易所消失（`PL-ADOPT-24`）。统一快照当前不包含 Live 账户，禁止用
 Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。
+
+一次新鲜快照里缺少本地持仓，只能创建 `position_disappearance_candidates` 和一条不可变 observation，
+不能直接调用 fallback-price close。重复读取同一个 cache、时间倒退、stale/incomplete/wrong-account
+view 不累计；第二个更新且完整的 view 只把 candidate 标为 ready for verified exit。交易所行在新鲜完整
+view 中重新出现时，pending candidate 以 `reappeared` 结案并写审计。当前逻辑账户 fingerprint 只由
+broker/environment/execution-mode 这类非秘密配置身份生成，绝不读取或散列 credential。T06/T07 交付
+真实退出证据与经济分流前，scheduler 不会把 ready candidate 本地平仓。对应 `OI-B01`。
 
 ---
 
@@ -230,7 +239,7 @@ Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。
 
 **Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓)。`spec_pipeline_position_manager.py`。
 
-## 11. Position 关闭与结果完整性（OI-S01 storage delivered；行为合同待实现）
+## 11. Position 关闭与结果完整性（OI-S01/S02/B01 implemented；其余行为待实现）
 
 `positions.status='closed'` 只表示本地状态生命周期结束，不自动证明发生了策略退出成交。系统必须把
 关闭分为两条不互相冒充的路径：
@@ -251,9 +260,14 @@ Demo 聚合结果解释 Live 仓位；Live 继续只告警、不自动收敛。
 
 stale、incomplete、缺 broker identity、wrong-account、分页不完整、网络错误和权限错误都是
 `inconclusive`，不能累计确认。candidate 必须跨进程重启保留，同一 observation 不得重复计数；仓位重新
-出现时清除 candidate 并留审计。Live 的不确定消失保持 alert-only/fail-closed，不借本合同扩大自动权限。
+出现时把 candidate 结案为 `reappeared` 并留审计（不删除历史）。Live 的不确定消失保持
+alert-only/fail-closed，不借本合同扩大自动权限。OI-B01 已实现到“ready for verified exit”为止；
+ready 本身不触发关闭，等待 §11.2/§11.3 的后续任务。
 
 ### 11.2 Broker-neutral verified exit
+
+状态：RG-T06 / OI-B02 已实现只读 protocol 与三家 adapter；尚未触发关闭或结算，调用编排由
+RG-T07 接入。
 
 Execution 层定义统一 verified-position-exit protocol；Bitget、OKX、Binance adapter 都返回结构化三态：
 
@@ -262,9 +276,18 @@ Execution 层定义统一 verified-position-exit protocol；Bitget、OKX、Binan
 - `inconclusive`：无法证明，持仓保持 open/candidate，不关闭。
 
 symbol 仍只在 adapter 边界转换，查询身份必须包含 venue、market type、account environment；不得用
-Bitget-only TPSL 历史解释其他 broker。
+Bitget-only TPSL 历史解释其他 broker。每次查询先直查同账户仓位，再按明确时间窗完整翻页读取私有成交：
+Bitget 使用 mix fills cursor，OKX 使用 fills-history bill cursor，Binance 使用 futures user-trade id。
+缺页游标、重复游标、保留时间窗不足、权限/网络错误、响应字段缺失、方向或数量歧义全部返回
+`inconclusive`。只有当前仓位明确 absent、历史完整且反向平仓 fill 覆盖本地数量时才是
+`verified_fill`；完整历史确实无 fill 才是 `confirmed_absent_without_fill`。原始私有响应不落库，标准化
+结果不含 credential 或 signer material。
 
 ### 11.3 行政关闭副作用禁区
+
+状态：RG-T07 / OI-B03 已实现。`portfolio.outcome_closure` 提供 verified 与 administrative 两个不可
+互换的入口；ready demo disappearance candidate 只有经过 RG-T06 三态直查后才可调用。Live 仍是
+alert-only，active reconciliation incident 仍先阻断收口。
 
 administrative-unverified close 不得：
 
@@ -274,7 +297,15 @@ administrative-unverified close 不得：
 - 被 Risk 当成权威账户损失。
 
 它必须保留 causal ids、actor/source、确认依据和审计事件。原始历史值永久保留，新增结构化字段只描述
-其 provenance 和 eligibility。对应 `OI-B01~B04`、`OI-C03`。
+其 provenance 和 eligibility。当前实现把 realized PnL、exit fee、slippage 留为 unavailable，不改
+current/entry price，不写 paper cash，不触发 shadow/Serenity outcome hook。verified close 要求完整 scoped
+identity、精确数量、quote-currency fee 和 `verified_fill`，用成交加权价与实际 exit fee 结算一次；缺 fee、
+错币种、数量不符或 identity 不符都保持 open。旧 `reconcile_close_orphan` 与 Bitget-only TPSL fallback 已
+删除，旧 `close_position` 也拒绝 synthetic reason。对应 `OI-B01~B04`、`OI-C03`。
+
+PnL 读取已拆出 `today_raw_closed_realized_pnl()` 与 `today_eligible_strategy_pnl()`；旧
+`today_realized_pnl()` 暂保留 raw 兼容语义。Risk 已由 RG-T09 迁移到独立
+`authoritative_account_realized_loss()`，不再消费该兼容指标。
 
 ### 11.4 中央关闭语义与三种读取口径（OI-S02 implemented）
 

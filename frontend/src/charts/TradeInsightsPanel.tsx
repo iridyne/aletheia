@@ -688,13 +688,15 @@ export default function TradeInsightsPanel() {
   const hasData = data.equity_curve.length > 0
 
   if (!hasData) {
-    return <Card><p className="text-muted text-sm">No closed trades yet — insights will appear once positions are closed.</p></Card>
+    return <Card><p className="text-muted text-sm">No verified strategy outcomes yet. Raw close events: {data.raw_event_count ?? 'unavailable'}; excluded: {data.excluded_outcome_count ?? 'unavailable'}.</p></Card>
   }
 
   return (
     <div className="insights-panel">
       <div className="insights-date-range">
-        Since {data.since} · {data.trade_count} closed trades
+        Since {data.since} · {data.eligible_outcome_count ?? 'unavailable'} verified strategy outcomes
+        {' · '}{data.raw_event_count ?? 'unavailable'} raw close events
+        {' · '}{data.excluded_outcome_count ?? 'unavailable'} excluded
       </div>
       <EquityCurve data={data.equity_curve} />
       <DrawdownCurve data={data.drawdown_curve} />
