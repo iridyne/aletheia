@@ -1,0 +1,32 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-053
+title: Close experiment-integrity PR workflow evidence
+status: in_progress
+packet_type: tiny
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: 'Rebase PR #59 onto the accepted Runtime and bug-triage baseline, preserve
+  its reviewed Learning behavior exactly, and refresh only the workflow evidence required
+  for strict validation.'
+acceptance:
+- 'PR #59 is based on the latest accepted master and retains the same reviewed Learning
+  behavior changes.'
+- Runtime task 051 remains intact and this PR uses the non-conflicting task id 053.
+- Focused regressions and strict workflow validation pass before the rebased branch
+  is pushed.
+ownership:
+  branch: fix/learning-experiment-integrity
+  lease_holder: codex-root
+  claimed_at: '2026-07-12T16:35:36.228406Z'
+  expires_at: '2026-07-13T00:35:36.228568Z'
+base_commit: ac1325e35d3fd0019f1b9ec00e2aa47256526c00
+next_action:
+  command_key: workflow_tests
+  reason: Refresh workflow evidence after rebase without changing Learning behavior
+    or assertions.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-053.md
+updated_at: '2026-07-12T16:35:36.341788Z'
