@@ -377,3 +377,69 @@ def downgrade_learned_guards_to_shadow(*, dry_run: bool = True) -> dict:
         ("would_downgrade" if dry_run else "downgraded"): len(changed),
         "guards": changed,
     }
+
+
+def _record_guard_candidate_deprecated_event(guard_id: str, path: str) -> None:
+    try:
+        from aletheia.storage.event_store import get_event_store
+        from aletheia.storage.models import PSEvent
+
+        get_event_store().append(PSEvent(
+            event_type="GUARD_CANDIDATE_DEPRECATED",
+            aggregate_type="trading_guard",
+            aggregate_id=guard_id,
+            actor_type="human",
+            actor_id="guard_prune_candidates",
+            payload_json=json.dumps(
+                {"guard_id": guard_id, "path": path, "reason": "stale_shadow_candidate_cleanup"},
+                sort_keys=True,
+            ),
+        ))
+    except Exception:
+        logger.debug("Failed to record guard candidate deprecation event", exc_info=True)
+
+
+def prune_learned_guard_candidates(*, dry_run: bool = True) -> dict:
+    """Deprecate stale LEARNED guard candidates (soft, reversible, audited).
+
+    Learned candidates are observe-only and can never auto-promote, so a large
+    backlog is pure noise. This marks each ``status=deprecated`` (KB rule: never
+    hard-delete — the file and DB row are kept for audit) and records an event.
+    Owner-authored (manual) candidates awaiting review are NEVER touched. To undo,
+    flip a file's status back to ``candidate``.
+
+    dry_run=True (default) reports what would change without writing.
+    """
+    candidates_dir = get_data_dir() / "knowledge" / "guard_candidates"
+    changed: list[dict] = []
+    scanned = 0
+    if candidates_dir.exists():
+        for path in sorted(candidates_dir.glob("*.md")):
+            try:
+                meta, body = parse_frontmatter(path)
+                if not meta or meta.get("status") != "candidate":
+                    continue
+                # Only learned candidates — never deprecate a manual candidate the
+                # owner may be reviewing.
+                if guard_origin(meta) != "learned":
+                    continue
+                scanned += 1
+                changed.append({"guard_id": meta.get("guard_id"), "path": str(path)})
+                if dry_run:
+                    continue
+                new_meta = dict(meta)
+                new_meta["status"] = "deprecated"
+                new_meta.setdefault("deprecated_reason", "stale_shadow_candidate_cleanup")
+                path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
+                _update_candidate_row_status(path)
+                _record_guard_candidate_deprecated_event(str(meta.get("guard_id")), str(path))
+            except Exception as e:
+                logger.warning("Failed to prune guard candidate at %s: %s", path, e)
+                continue
+
+    return {
+        "dry_run": dry_run,
+        "scanned_learned_candidates": scanned,
+        ("would_deprecate" if dry_run else "deprecated"): len(changed),
+        "guard_ids": [c["guard_id"] for c in changed],
+    }

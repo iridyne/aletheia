@@ -227,3 +227,43 @@ def test_audit_and_reversible_downgrade(tmp_path, monkeypatch):
 
     # Post-downgrade audit shows nothing still enforcing.
     assert all(not r["still_enforcing"] for r in audit_auto_guards())
+
+
+@spec_claim(SpecClaim(
+    "GA-S08", "guard_authority", "§candidate backlog cleanup", "L2b",
+    "prune_learned_guard_candidates deprecates learned candidates (soft, reversible) "
+    "and never touches manual candidates awaiting owner review."))
+def test_prune_deprecates_learned_candidates_only(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+    from aletheia.analytics.guard_promotion import prune_learned_guard_candidates
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    cand_dir = tmp_path / "knowledge" / "guard_candidates"
+    cand_dir.mkdir(parents=True)
+
+    learned = {"type": "Trading Guard", "guard_id": "auto_momentum_long_x",
+               "status": "candidate", "scope": "paper_entry", "auto_generated": True,
+               "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}]}
+    (cand_dir / "learned.md").write_text(render_frontmatter(learned, "body"), encoding="utf-8")
+
+    manual = {"type": "Trading Guard", "guard_id": "manual-btc-guard",
+              "status": "candidate", "scope": "paper_entry",
+              "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}]}
+    (cand_dir / "manual.md").write_text(render_frontmatter(manual, "body"), encoding="utf-8")
+
+    # Dry-run: only the learned candidate is targeted; nothing written.
+    dry = prune_learned_guard_candidates(dry_run=True)
+    assert dry["would_deprecate"] == 1
+    assert dry["guard_ids"] == ["auto_momentum_long_x"]
+    assert parse_frontmatter(cand_dir / "learned.md")[0]["status"] == "candidate"
+
+    # Apply: learned deprecated (file kept), manual untouched.
+    applied = prune_learned_guard_candidates(dry_run=False)
+    assert applied["deprecated"] == 1
+    assert parse_frontmatter(cand_dir / "learned.md")[0]["status"] == "deprecated"
+    assert (cand_dir / "learned.md").exists()  # soft delete — file kept for audit
+    assert parse_frontmatter(cand_dir / "manual.md")[0]["status"] == "candidate"
+
+    # Idempotent: nothing left to prune.
+    assert prune_learned_guard_candidates(dry_run=True)["would_deprecate"] == 0

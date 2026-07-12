@@ -45,3 +45,23 @@ def shadow_downgrade(
 
     result = downgrade_learned_guards_to_shadow(dry_run=not apply)
     typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+@guard_app.command("prune-candidates")
+def prune_candidates(
+    apply: bool = typer.Option(
+        False, "--apply",
+        help="Apply the deprecation. Default is dry-run (report only).",
+    ),
+):
+    """Deprecate stale LEARNED guard candidates (soft, reversible, audited).
+
+    Learned candidates are observe-only and can never auto-promote, so a backlog is
+    noise. This marks them status=deprecated (kept for audit, never hard-deleted) and
+    records an event. Owner-authored (manual) candidates are never touched. Default
+    is dry-run.
+    """
+    from aletheia.analytics.guard_promotion import prune_learned_guard_candidates
+
+    result = prune_learned_guard_candidates(dry_run=not apply)
+    typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
