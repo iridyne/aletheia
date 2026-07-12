@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-042
 title: Migrate Starlette TestClient to httpx2
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -26,10 +26,18 @@ ownership:
   expires_at: '2026-07-12T14:28:38.001342Z'
 base_commit: c605760bcb475aa5769d09cd583a4f809b6d67ef
 next_action:
-  command_key: specs
-  reason: Commit the development dependency, lockfile, warning gate, documentation,
-    and task evidence; then record full specs.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 789449088424e4bb75138cfd9d93e3f8a470cb0b
+  run_at: '2026-07-12T06:34:50.998475Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-042.md
-updated_at: '2026-07-12T06:33:35.866614Z'
+updated_at: '2026-07-12T06:35:01.942962Z'
