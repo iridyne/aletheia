@@ -167,3 +167,14 @@ Broker 的同步包装器接收的是**已经创建好的 coroutine 对象**。�
 
 这条门禁保护的是测试可信度：如果协程泄漏只作为 warning，测试可以全绿，但警告归因、
 资源生命周期和后续测试隔离都是假的。
+
+---
+
+## 7. TestClient 与运行时 HTTP 客户端是两条依赖边界
+
+Starlette 1.2 起，`starlette.testclient.TestClient` 官方使用 `httpx2`；旧 `httpx` 仅是
+带弃用提示的兼容路径。项目因此把 `httpx2>=2.5,<3` 放在 UV 的 dev dependency group，
+只服务同步 ASGI 测试。生产网络调用仍使用项目原有的 `httpx[socks]`，两者不能互相替换。
+
+`StarletteDeprecationWarning` 已升级为测试失败：测试依赖缺失、回退到旧兼容层或未来再次
+发生不兼容时，必须显式处理，不能靠忽略 warning 保持“假绿”。

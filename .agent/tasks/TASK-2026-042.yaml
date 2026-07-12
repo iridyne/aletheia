@@ -1,0 +1,35 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-042
+title: Migrate Starlette TestClient to httpx2
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Add the officially supported httpx2 development dependency for Starlette TestClient,
+  prove existing synchronous ASGI tests remain compatible, and remove the deprecation
+  warning without filtering it; exclude runtime HTTP clients, production dependencies,
+  APIs, Outcome Integrity, reconciliation, Learning, Risk, trading, live authority,
+  and gateway restarts.
+acceptance:
+- httpx2 is pinned as a development-only dependency while production runtime HTTP
+  code remains on the existing httpx dependency.
+- All existing Starlette/FastAPI TestClient suites pass unchanged under httpx2 and
+  the previous Starlette deprecation warning is absent.
+- Starlette deprecation warnings are promoted to test failures so removing or breaking
+  the supported dependency path cannot regress silently.
+ownership:
+  branch: fix/starlette-httpx2-testclient
+  lease_holder: codex
+  claimed_at: '2026-07-12T06:28:38.001137Z'
+  expires_at: '2026-07-12T14:28:38.001342Z'
+base_commit: c605760bcb475aa5769d09cd583a4f809b6d67ef
+next_action:
+  command_key: specs
+  reason: Commit the development dependency, lockfile, warning gate, documentation,
+    and task evidence; then record full specs.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-042.md
+updated_at: '2026-07-12T06:33:35.866614Z'

@@ -3214,3 +3214,11 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
   coroutine leaks fail the test run.
 - Promoted unawaited-coroutine and pytest unraisable-exception warnings to errors. Production
   behavior is unchanged; the remaining Starlette TestClient dependency warning stays visible.
+
+## 2026-07-12 — Starlette TestClient httpx2 migration
+
+- Added Starlette's supported `httpx2` client as a development-only dependency; runtime network
+  code continues to use the existing `httpx[socks]` stack.
+- Verified all existing synchronous ASGI TestClient suites without changing route or API tests.
+- Promoted Starlette deprecation warnings to failures. The full suite now emits no warnings;
+  two unrelated Outcome Integrity baseline test failures remain explicit.
