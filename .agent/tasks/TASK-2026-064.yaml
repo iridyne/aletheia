@@ -1,0 +1,28 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-064
+title: Gate DCLS failure artifacts in PR CI
+status: in_progress
+packet_type: standard
+scope:
+  boundary: DCLS pull-request CI file list, executable CI claim, and task evidence only
+  excluded: simulator behavior, Operator policy, trading boundaries, runtime deployment, and frontend
+intent: Add the automatic fixed-scenario failure-pack regression to the pull-request
+  DCLS gate and make the executable CI claim enforce that coverage.
+acceptance:
+- Pull-request CI directly runs the ordinary DCLS assertion failure-pack regression.
+- The executable DCLS CI claim fails if that regression is removed from the PR gate.
+- Existing DCLS CI tests and nightly coverage remain unchanged.
+ownership:
+  branch: iridite/dcls-ci-artifact-gate
+  lease_holder: codex-dcls-ci
+  claimed_at: '2026-07-13T06:08:20.063104Z'
+  expires_at: '2026-07-13T14:08:20.063273Z'
+base_commit: 713a6e952026e7cdc5048163e0c96dec3d807860
+next_action:
+  command_key: dcls_ci_gate
+  reason: Verify the PR file list and the automatic failure-pack regression together.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-064.md
+updated_at: '2026-07-13T06:08:20.063281Z'

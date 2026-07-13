@@ -64,6 +64,7 @@ jobs:
           tests/simulation/control_loop/test_sizing_ratchet.py
           tests/simulation/control_loop/test_stateful_control_loop.py
           tests/simulation/control_loop/test_mutation_canaries.py
+          tests/simulation/control_loop/test_failure_artifacts.py
           tests/test_runtime_replay_pack.py
           tests/e2e/test_active_mainline_golden_path.py
           -q --tb=short --junitxml=test-results/dcls.xml
