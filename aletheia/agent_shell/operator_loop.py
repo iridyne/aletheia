@@ -287,7 +287,7 @@ _LEVEL_1_ACTIONS = {
 
 _LEVEL_2_ACTIONS = {
     "increase_sizing",
-    "widen_stop_loss", "neutral_drift",
+    "widen_stop_loss",
     "add_universe_symbol",
     # L2 self-heal actions (operator_layer.md §自愈档位 L2) — require human confirmation.
     # Routed to _create_proposal automatically by classify_action → dispatch path.
@@ -593,8 +593,6 @@ def _execute_level1_action(action: OperatorAction) -> dict:
         result = _action_notify(action)
     elif action.action_type == "trigger_strategy_research":
         result = _action_trigger_strategy_research(action)
-    elif action.action_type.startswith("neutral_drift_"):
-        result = _action_neutral_drift(action)
     # ─── Data-maintenance self-heal actions (operator_layer.md §自愈档位 L1) ───
     # OL-C08/SH-C02: PI approval gate — every L1 self-heal action must record
     # an approval token in pi_decisions before executing. The gate is lightweight
@@ -786,7 +784,6 @@ def _action_loosen_confidence(action: OperatorAction) -> dict:
     if idx <= 0:
         return {"action": "loosen_confidence", "status": "skipped", "reason": "already at loosest"}
     # Never loosen past neutral
-    target_idx = max(idx - 1, neu_idx) if spec.tighten_direction == "up" else min(idx + 1, neu_idx)
     target_idx = idx - 1  # loosen = step down on ladder
     if target_idx < _CONFIDENCE_LADDER.index(spec.neutral):
         target_idx = _CONFIDENCE_LADDER.index(spec.neutral)
@@ -1465,7 +1462,6 @@ def _persist_assessment(summary: dict) -> None:
         title = f"Operator assessment ({ts}) — {actions_n} actions, {executed_n} executed"
 
         # Build a readable content body so _index() can put it in FTS retrieval.
-        health = summary.get("system_health", {})
         results = summary.get("results", [])
         lines = [
             f"## Operator Assessment — {ts}",
@@ -1473,10 +1469,6 @@ def _persist_assessment(summary: dict) -> None:
             f"proposed: {summary.get('actions_proposed',0)}, "
             f"skipped: {summary.get('actions_skipped',0)}",
         ]
-        if health:
-            lines.append(f"\n### System Health")
-            for k, v in health.items():
-                lines.append(f"- {k}: {v}")
         if results:
             lines.append(f"\n### Actions")
             for r in results[:10]:

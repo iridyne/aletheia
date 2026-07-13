@@ -441,7 +441,7 @@ class TestParamDrift:
 
 class TestLoosenRules:
     def test_rule5a_activity_dead_zone_proposes_loosen(self, tmp_path, monkeypatch):
-        """12h+ no trades + confidence tightened → loosen_confidence L2."""
+        """4h+ no trades + confidence tightened → loosen_confidence L1 (auto-execute)."""
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
@@ -462,7 +462,7 @@ class TestLoosenRules:
         actions = decide_actions(assessment)
         loosen = [a for a in actions if a.action_type == "loosen_confidence"]
         assert len(loosen) == 1
-        assert loosen[0].level == 2
+        assert loosen[0].level == 1
 
     def test_rule5a_does_not_fire_if_not_tightened(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)
