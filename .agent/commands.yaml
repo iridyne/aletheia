@@ -57,3 +57,6 @@ commands:
   dcls_ci_gate:
     command: uv run pytest tests/simulation/control_loop/test_failure_artifacts.py tests/specs/spec_deterministic_control_loop.py -q --tb=short
     purpose: Verify pull-request CI directly gates automatic DCLS failure-pack generation.
+  startup_behavior_gate:
+    command: uv run pytest tests/test_startup_behavior_gate.py tests/test_layered_pause.py -q
+    purpose: Verify the Startup Behavior Gate verdict, layered pause + durable blocker, pi_daemon gating, recheck resume, and Health/Doctor surfaces.
