@@ -487,8 +487,8 @@ class TestLoosenRules:
         loosen = [a for a in actions if a.action_type == "loosen_confidence"]
         assert len(loosen) == 0
 
-    def test_rule5b_winning_streak_proposes_sizing_increase(self, tmp_path, monkeypatch):
-        """3+ streak + PF>1.5 + sizing tightened → increase_sizing L2."""
+    def test_rule5b_winning_streak_auto_executes_sizing_increase(self, tmp_path, monkeypatch):
+        """3+ streak + PF>1.5 + tightened sizing + WR>=35 -> Level 1 recovery."""
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
@@ -510,7 +510,31 @@ class TestLoosenRules:
         actions = decide_actions(assessment)
         inc = [a for a in actions if a.action_type == "increase_sizing"]
         assert len(inc) == 1
-        assert inc[0].level == 2
+        assert inc[0].level == 1
+
+    def test_rule5b_suppressed_when_win_rate_low(self, tmp_path, monkeypatch):
+        """increase_sizing and reduce_sizing cannot fire in the same cycle."""
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
+
+        assessment = SystemAssessment(
+            timestamp="2026-01-01T00:00:00Z",
+            ohlcv_ready=True,
+            signal_status="healthy",
+            signal_win_rate=55.0,
+            strategies_paper_running=3,
+            trades_24h=5,
+            recent_streak=4,
+            profit_factor_7d=2.0,
+            win_rate_7d=30.0,
+            param_drift={"min_confidence_to_trade": "neutral",
+                         "max_demo_position_notional_usdt": "tightened",
+                         "default_stop_loss_pct": "neutral"},
+        )
+        actions = decide_actions(assessment)
+        assert not any(a.action_type == "increase_sizing" for a in actions)
+        assert any(a.action_type == "reduce_sizing" for a in actions)
 
     def test_rule5c_tp_dominated_proposes_widen_stop(self, tmp_path, monkeypatch):
         """70%+ TP exits + stop tightened → widen_stop_loss L2."""

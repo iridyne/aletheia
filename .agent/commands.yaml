@@ -18,6 +18,9 @@ commands:
   confidence_incident:
     command: uv run pytest tests/simulation/control_loop/test_confidence_deadlock.py tests/test_operator_loop.py tests/specs/spec_operator_loop.py -q
     purpose: Verify the deterministic confidence-deadlock incident and bounded automatic recovery.
+  sizing_symmetry:
+    command: uv run pytest tests/test_operator_loop.py tests/specs/spec_operator_loop.py -q
+    purpose: Verify bounded sizing recovery, dispatch symmetry, and anti-oscillation guards.
   spec_risk_engine:
     command: uv run pytest tests/specs/spec_risk_engine.py -q
     purpose: Verify risk-engine trust-boundary contract.

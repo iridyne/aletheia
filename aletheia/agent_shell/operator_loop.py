@@ -276,7 +276,7 @@ class OperatorAction:
 _LEVEL_1_ACTIONS = {
     "retire_strategy", "demote_strategy",  # advisory-only under Phase 4d — see note above
     "trigger_optuna_sweep",                # status='not_implemented' at runtime — see note above
-    "tighten_confidence", "loosen_confidence", "reduce_sizing", "tighten_stop_loss",
+    "tighten_confidence", "loosen_confidence", "reduce_sizing", "increase_sizing", "tighten_stop_loss",
     "adjust_scanner_weight", "request_backfill", "notify_operator",
     "trigger_strategy_research",
     # Data-maintenance self-heal actions (operator_layer.md §自愈档位 L1).
@@ -288,7 +288,6 @@ _LEVEL_1_ACTIONS = {
 }
 
 _LEVEL_2_ACTIONS = {
-    "increase_sizing",
     "widen_stop_loss", "neutral_drift",
     "add_universe_symbol",
     # L2 self-heal actions (operator_layer.md §自愈档位 L2) — require human confirmation.
@@ -580,11 +579,13 @@ def _execute_level1_action(action: OperatorAction) -> dict:
         result = _action_loosen_confidence(action)
     elif action.action_type == "reduce_sizing":
         result = _action_reduce_sizing(action)
+    elif action.action_type == "increase_sizing":
+        result = _action_increase_sizing(action)
     elif action.action_type == "tighten_stop_loss":
         result = _action_tighten_stop_loss(action)
-    # NOTE: increase_sizing / widen_stop_loss remain Level-2 loosening actions.
-    # loosen_confidence is the bounded liveness exception: it can only restore a
-    # drought-tightened value to neutral and never below neutral (OL-C07).
+    # NOTE: widen_stop_loss remains a Level-2 loosening action.
+    # loosen_confidence and increase_sizing are bounded liveness exceptions: each
+    # can only restore a tightened value to neutral and never beyond it (OL-C07).
     elif action.action_type == "adjust_scanner_weight":
         result = _action_adjust_scanner_weight(action)
     elif action.action_type == "request_backfill":
@@ -833,7 +834,7 @@ def _action_reduce_sizing(action: OperatorAction) -> dict:
 
 
 def _action_increase_sizing(action: OperatorAction) -> dict:
-    """Loosen sizing back toward neutral (Level 2 proposal)."""
+    """Restore sizing toward neutral (Level 1). Never exceeds neutral."""
     param_name = "max_demo_position_notional_usdt"
     last = _last_action_time("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
@@ -1233,18 +1234,22 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
                     "min_confidence_to_trade from high to neutral medium"),
         ))
 
-    # Rule 5B: Winning streak + high PF → increase sizing
+    # Rule 5B: Winning streak + high PF -> restore sizing toward neutral.
+    # The win-rate guard is disjoint from reduce_sizing (<35), so opposing sizing
+    # actions cannot be emitted in one cycle. The handler's shared parameter
+    # cooldown prevents immediate reversal across adjacent cycles.
     if (assessment.recent_streak >= 3
             and assessment.profit_factor_7d is not None
             and assessment.profit_factor_7d >= 1.5
             and assessment.param_drift.get("max_demo_position_notional_usdt") == "tightened"
+            and (assessment.win_rate_7d is None or assessment.win_rate_7d >= 35)
             and not assessment.kill_switch_active):
         actions.append(OperatorAction(
             action_type="increase_sizing",
-            level=2,
+            level=1,
             params={"increase_pct": 20},
             reason=(f"streak={assessment.recent_streak}, PF={assessment.profit_factor_7d:.2f} "
-                    f"— sizing tightened, proposing increase toward neutral"),
+                    f"— sizing tightened, restoring toward neutral"),
         ))
 
     # Rule 5C: TP-dominated exits → widen stop loss

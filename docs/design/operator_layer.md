@@ -571,8 +571,17 @@ Forbidden Direct Commands
 > 不再让 confidence gate 永久切断候选供应。
 >
 > 每次恢复必须同时写应用日志和 `audit_events`：包含旱情时长、参数名、旧值、
-> 新值和恢复原因。`increase_sizing` 与 `widen_stop_loss` 仍属于 Level 2，
-> 需要有消费者的人工提案路径。
+> 新值和恢复原因。
+
+### increase_sizing — 有界自动恢复例外
+
+> **Owner decision 2026-07-13**：当 sizing 低于 neutral、连续盈利至少 3 笔、
+> `profit_factor_7d >= 1.5` 且 `win_rate_7d >= 35` 时，`increase_sizing`
+> 属于 Level 1 自动恢复动作。它沿用 `reduce_sizing` 的同参数 cooldown 和每日 patch
+> 上限，并且最多恢复到 neutral `200`，不得超过中性值。`win_rate_7d < 35` 时
+> 只允许 `reduce_sizing`，同一周期不得同时 increase/reduce。
+>
+> `widen_stop_loss` 仍属于 Level 2，需要有消费者的人工提案路径。
 
 ### Permission behavior
 
