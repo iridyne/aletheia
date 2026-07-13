@@ -311,14 +311,25 @@ def test_empty_allowlist_and_default_config_always_resolve_to_baseline(monkeypat
 
 
 def _promoted_successor(monkeypatch):
+    # Shadow can no longer auto-promote (LE-L04); a bounded paper_10 successor is
+    # created only through an explicit shadow-trial admission. Build the happy-path
+    # successor the same way, so each identity-gate test mutates exactly one field.
     hypothesis, experiment = _experiment()
-    activation = _measurement(hypothesis, experiment, "positive")
+    activation = _measurement(
+        hypothesis, experiment, "insufficient_data", reason="no_actual_intervention",
+    )
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     from aletheia.learning.ledger import get_record
-    from aletheia.learning.lifecycle import process_lifecycle
+    from aletheia.learning.lifecycle import admit_shadow_trial
     from aletheia.learning.models import LearningExperiment
 
-    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+    result = admit_shadow_trial(
+        experiment.experiment_id,
+        verdict_id=activation.verdict_id,
+        current_policy_epoch="epoch-a",
+        admitted_by="owner",
+        reason="begin bounded paper trial",
+    )
     return hypothesis, experiment, activation, LearningExperiment(**get_record(
         "learning_experiments", result.successor_experiment_id,
     ))
@@ -332,7 +343,8 @@ def test_authority_rejects_activation_with_wrong_declared_horizon(monkeypatch):
     db = get_db()
     was_in_tx = db.in_transaction
     db.execute(
-        "UPDATE learning_contribution_verdicts SET harm_metrics_json=? WHERE verdict_id=?",
+        "UPDATE learning_contribution_verdicts SET target_horizon='1h', harm_metrics_json=? "
+        "WHERE verdict_id=?",
         (json.dumps({
             "policy_epoch": "epoch-a", "horizon": "1h", "outcome_contract_version": "v1",
             "metric_version": "universe_family_calibration_net_return_v1", "breached": False,
