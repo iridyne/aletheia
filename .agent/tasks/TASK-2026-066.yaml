@@ -1,0 +1,64 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-066
+title: Trade Chain Integrity Audit and Business-Usable Repairs
+status: in_progress
+packet_type: standard
+scope:
+  boundary: >-
+    Production trade-chain behavior and evidence, inspected and repaired strictly in
+    business order: Opportunity; Filter/Ranker; System Operator; Proposal; Risk;
+    Execution/Position; Outcome; Attribution/Feedback. Each stage includes both its
+    business-critical internal behavior and its handoff to the next stage. Repository
+    changes may include focused tests, task evidence, and the smallest production fix
+    proven necessary by a real-path replay.
+  excluded: >-
+    New product capability, broad refactors, architecture cleanup, new UI surfaces,
+    runtime database mutation, credentials, exchange signing/authentication, live-mode
+    enablement, and risk-limit changes. Controlled Risk/Execution code may be changed
+    only when real-path evidence proves a defect and focused trust-boundary regression
+    evidence is added first.
+intent: Audit and repair the production trade path in business order from Opportunity
+  through Filter/Ranker, System Operator, Proposal, Risk, Execution/Position, Outcome,
+  and Attribution/Feedback. Cover both cross-module data integrity and each module's
+  business-critical base behavior; make only evidence-backed minimal fixes, preserve
+  trading safety, and record real-path proof for every repair.
+acceptance:
+- The audit follows the named business chain in order rather than repository directory
+  order, and a stage is not considered usable until its own critical behavior and one
+  adjacent handoff are exercised.
+- Opportunity production, deduplication, TTL, confidence, tradability, guards, ranking,
+  and System Operator consumption have no unexplained silent loss or misleading state
+  for the replayed production inputs.
+- System Operator decisions produce exactly the intended Proposal state and preserve
+  opportunity, strategy, symbol, market, session, and explanation identity without a
+  duplicate or abandoned consumption path.
+- Proposal decisions reach Risk and then either an explicit rejection or the single
+  Execution/Position path; causal IDs and canonical symbol/market identity survive,
+  with live trading remaining human-disabled by default.
+- Position closure produces one semantically honest Outcome with fees and realized PnL
+  handled correctly, and duplicate/restart processing is idempotent.
+- Eligible Outcomes retain enough identity and truth metadata to reach Attribution and
+  Feedback consumers; ineligible outcomes carry an explicit reason and are not learned
+  from as genuine evidence.
+- Every repair records real-path proof: the input or sanitized production fixture, the
+  pre-fix break, the first downstream fact that appears after the fix, the persisted
+  database/state change, and an exact reproducible command.
+- Focused regressions, adjacent-stage integration tests, executable specs, architecture
+  checks, strict workflow validation, and applicable trust-boundary checks pass at the
+  final implementation commit.
+ownership:
+  branch: iridite/trade-chain-integrity-audit
+  lease_holder: codex-trade-chain-audit
+  claimed_at: '2026-07-13T07:48:08.118200Z'
+  expires_at: '2026-07-16T07:48:08.118358Z'
+base_commit: c95b2be34d93368182da21fc81f87e71cf5f64e1
+next_action:
+  command_key: provenance
+  reason: >-
+    Map and replay the Opportunity to Filter/Ranker to System Operator slice against a
+    read-only production database snapshot before making the first code change.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-066.md
+updated_at: '2026-07-13T07:48:08.118367Z'
