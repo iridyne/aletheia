@@ -21,10 +21,16 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
         "Contribution measurement remains schedulable while lifecycle control is separately gated, "
         "restart-safe, and single-instance.", status="implemented",
     ),
+    SpecClaim(
+        "LE-L04", "learning_evolution", "§7.1 trial admission", "L2c",
+        "Shadow measurement never auto-promotes into paper authority; shadow to paper_10 requires "
+        "a separate explicit, durable, idempotent trial-admission action.", status="implemented",
+    ),
 )
 def test_lifecycle_runtime_surface_exists():
     from aletheia.learning.authority import resolve_learning_authority
     from aletheia.learning.lifecycle import (
+        admit_shadow_trial,
         inspect_learning_experiment,
         measurement_to_lifecycle_action,
         process_lifecycle,
@@ -32,5 +38,6 @@ def test_lifecycle_runtime_surface_exists():
 
     assert measurement_to_lifecycle_action("positive") == "promote_stage"
     assert callable(process_lifecycle)
+    assert callable(admit_shadow_trial)
     assert callable(resolve_learning_authority)
     assert callable(inspect_learning_experiment)

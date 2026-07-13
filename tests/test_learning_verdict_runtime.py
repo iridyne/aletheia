@@ -15,7 +15,10 @@ def _iso(days: int = 0, minutes: int = 0) -> str:
     return (_BASE + timedelta(days=days, minutes=minutes)).isoformat()
 
 
-def _experiment(*, min_samples: int = 1, min_days: int = 0, path_id: str = "universe_family_calibration"):
+def _experiment(
+    *, min_samples: int = 1, min_days: int = 0,
+    path_id: str = "universe_family_calibration", stage: str = "paper_10",
+):
     from aletheia.learning.ledger import insert_experiment, insert_hypothesis
     from aletheia.learning.models import LearningExperiment, LearningHypothesis
 
@@ -43,7 +46,7 @@ def _experiment(*, min_samples: int = 1, min_days: int = 0, path_id: str = "univ
         min_market_days=min_days,
         harm_gate_json=json.dumps({"max_loss_rate_increase": 0.25, "max_mae_p95_worsening_pct": 0.25}),
         status="active",
-        stage="paper_10",
+        stage=stage,
     )
     assert insert_experiment(experiment)
     return hypothesis, experiment
@@ -59,6 +62,8 @@ def _exposure(
     contract: str = "v1",
     exposed_at: str | None = None,
     outcome_key: str | None = None,
+    authority_applied: bool | None = None,
+    code_commit: str | None = "test-commit",
 ):
     from aletheia.learning.ledger import insert_exposure
     from aletheia.learning.models import LearningExposure
@@ -77,6 +82,14 @@ def _exposure(
         outcome_candidate_key=outcome_key if outcome_key is not None else candidate,
         outcome_source="fixed_horizon_candidate",
         outcome_contract_version=contract,
+        manifest_json=json.dumps({
+            "authority_applied": (
+                assignment == "treatment"
+                if authority_applied is None else authority_applied
+            ),
+        }),
+        experiment_stage=experiment.stage,
+        code_commit=code_commit,
         concurrent_policy_epoch=epoch,
         exposed_at=exposed_at or _iso(),
     )
@@ -313,6 +326,130 @@ def test_negative_delta_or_harm_breach_is_negative():
     assert verdict.delta < 0
     assert metrics["breached"] is True
     assert metrics["breach_reasons"]
+
+
+@pytest.mark.parametrize(
+    "treatment_nets",
+    [(1.0, 1.2), (-1.0, -1.2)],
+    ids=["apparent_positive", "apparent_negative"],
+)
+def test_shadow_without_actual_intervention_is_not_a_causal_verdict(treatment_nets):
+    hypothesis, experiment = _experiment(
+        min_samples=2, min_days=1, stage="shadow",
+    )
+    for day, assignment, net in (
+        (0, "treatment", treatment_nets[0]), (1, "treatment", treatment_nets[1]),
+        (0, "control", 0.0), (1, "control", 0.1),
+    ):
+        candidate = f"shadow-{assignment}-{day}"
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment=assignment,
+            exposed_at=_iso(day),
+            authority_applied=False,
+        )
+        _outcome(candidate, net=net, entry_at=_iso(day, 1))
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+    from aletheia.learning.cohorts import build_experiment_cohorts
+
+    cohort = build_experiment_cohorts(experiment.experiment_id)[0]
+    assert all(sample.authority_applied is False for sample in cohort.samples)
+    assert verdict.verdict == "insufficient_data"
+    assert verdict.reason == "no_actual_intervention"
+    assert metrics["authority_applied_treatment_n"] == 0
+    assert verdict.policy_epoch == "epoch-a"
+    assert verdict.stage == "shadow"
+    assert verdict.target_horizon == "4h"
+    assert verdict.outcome_contract_version == "v1"
+    assert verdict.metric_version == metrics["metric_version"]
+    assert verdict.code_commit == "test-commit"
+
+
+def test_real_shadow_flow_stays_shadow_after_at01_and_at02(monkeypatch):
+    """Real producer -> exposure -> outcome -> AT-01 -> AT-02 integration seam."""
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.learning import authority, control, experiments, lifecycle
+    from aletheia.learning.contribution_runner import evaluate_experiment
+    from aletheia.learning.experiments import apply_numeric_treatment, stable_assignment
+    from aletheia.learning.ledger import get_record
+    from aletheia.learning.models import LearningExperiment
+    from aletheia.storage.sqlite import get_db
+
+    cfg = AletheiaConfig()
+    cfg.learning.lifecycle_automation_enabled = True
+    cfg.learning.paper_influence_enabled = True
+    cfg.learning.paper_influence_paths = ["universe_family_calibration"]
+    for module in (authority, control, experiments, lifecycle):
+        monkeypatch.setattr(module, "load_config", lambda: cfg)
+    monkeypatch.setattr(control, "global_learning_refreeze_reason", lambda: None)
+    monkeypatch.setattr(authority, "global_learning_refreeze_reason", lambda: None)
+    monkeypatch.setattr(lifecycle, "global_learning_refreeze_reason", lambda: None)
+
+    common = dict(
+        path_id="universe_family_calibration",
+        scope={"family": "momentum", "direction": "long", "market_type": "perp"},
+        action={"type": "opportunity_multiplier", "multiplier": 1.1},
+        source_cohort="universe_forward_outcomes:clean_net:v2",
+        target_horizon="4h",
+        baseline=1.0,
+        treatment=1.1,
+        consumer="universe_allocator",
+        consumer_stage="opportunity_score",
+    )
+    first_candidate = "shadow-flow-seed"
+    first = apply_numeric_treatment(
+        candidate_key=first_candidate,
+        outcome_candidate_key=first_candidate,
+        **common,
+    )
+    experiment = LearningExperiment(**get_record("learning_experiments", first.experiment_id))
+    opposite = "control" if first.assignment == "treatment" else "treatment"
+    second_candidate = next(
+        f"shadow-flow-{index}" for index in range(1_000)
+        if stable_assignment(experiment, f"shadow-flow-{index}") == opposite
+    )
+    second = apply_numeric_treatment(
+        candidate_key=second_candidate,
+        outcome_candidate_key=second_candidate,
+        **common,
+    )
+
+    assert first.applied is False
+    assert second.applied is False
+    exposures = [
+        get_record("learning_exposures", first.exposure_id),
+        get_record("learning_exposures", second.exposure_id),
+    ]
+    assert all(json.loads(row["manifest_json"])["authority_applied"] is False for row in exposures)
+
+    db = get_db()
+    db.execute(
+        "UPDATE learning_experiments SET min_samples_per_arm=1, min_market_days=0 "
+        "WHERE experiment_id=?",
+        (experiment.experiment_id,),
+    )
+    db.commit()
+    for candidate, net in ((first_candidate, 1.0), (second_candidate, 0.0)):
+        _outcome(candidate, net=net)
+    verdict = evaluate_experiment(experiment.experiment_id)[0]
+    epoch = exposures[0]["concurrent_policy_epoch"]
+    result = lifecycle.process_lifecycle(
+        experiment.experiment_id,
+        current_policy_epoch=epoch,
+    )
+
+    persisted = get_record("learning_experiments", experiment.experiment_id)
+    assert verdict.verdict == "insufficient_data"
+    assert verdict.reason == "no_actual_intervention"
+    assert result.action == "hold"
+    assert result.successor_experiment_id is None
+    assert persisted["stage"] == "shadow"
+    assert persisted["ended_at"] is None
+    assert db.execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
 
 
 def test_unidentifiable_assignment_overlap_is_invalid_and_not_attributed():

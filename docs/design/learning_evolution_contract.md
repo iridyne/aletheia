@@ -277,6 +277,13 @@ horizon, and outcome-contract version; links only the exact registered candidate
 persists deterministic confidence, harm, and exclusion details. Its `positive` result is not an
 authority promotion signal, so it cannot enable a treatment or alter a multiplier.
 
+The evaluator also reads `authority_applied` from each exposure manifest. A treatment assignment
+that stayed on its baseline is a shadow observation, not an intervention. When every treatment
+sample is still shadow, the cohort may prove that collection and settlement work, but it cannot
+produce a causal `positive` or `negative`; after the ordinary sample/time gates are met it returns
+`insufficient_data` with reason `no_actual_intervention`. Persisted verdicts carry the policy epoch,
+stage, target horizon, outcome-contract version, metric version, and producing code commit.
+
 ### 7.1 Current paper lifecycle
 
 The lifecycle controller is a separate, default-closed consumer of that measurement. It never
@@ -285,16 +292,20 @@ rewrites a measurement verdict into `promote` or any other authority word. For t
 
 | Measurement result | Lifecycle response |
 | --- | --- |
-| `positive` | recommend one-stage promotion |
+| `positive` in a paper stage | recommend one-stage promotion |
 | `neutral` / `insufficient_data` | hold the current stage |
 | `negative` | refreeze the current experiment |
 | `invalid` | mark the current experiment invalid and refreeze its hypothesis |
 
 Stages are isolated experiments, not a mutable allocation counter:
 `shadow` → `paper_10` → `paper_25` → `paper_50` → `paper_active`.
-Each promotion closes the predecessor, creates one successor with a new assignment salt, and
-requires fresh evidence in that successor before another promotion. Paper treatment is capped at
-90%; the final-stage default is 80%, leaving a permanent control holdout.
+The automatic lifecycle controller never moves `shadow` to `paper_10`. That boundary requires a
+separate explicit trial-admission action tied to the current complete
+`insufficient_data/no_actual_intervention` shadow measurement, caller identity, reason, policy
+epoch, and all default-closed paper gates. The admission closes the shadow predecessor and creates
+one `paper_10` successor with a fresh assignment salt. Later paper-stage promotions also close the
+predecessor, create one successor, and require fresh evidence before another promotion. Paper
+treatment is capped at 90%; the final-stage default is 80%, leaving a permanent control holdout.
 
 Every applied transition has one durable, deduplicated lifecycle event with the source verdict,
 stage change, reason, effective policy epoch, and successor identity. The event and experiment
@@ -487,9 +498,11 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B23 | L2b | retrying one exposure dedup key stores one immutable influence record | implemented |
 | LE-V01 | L2b | universe calibration verdict runtime uses exact, prospective, cost-aware treatment/control cohorts | implemented — measurement-only evaluator |
 | LE-V02 | L2c | deterministic verdict storage cannot alter Learning authority or experiment lifecycle | implemented — evaluator writes only its idempotent measurement record |
+| LE-V03 | L2c | shadow assignments with no actually applied treatment cannot produce a causal positive/negative verdict | implemented — exposure manifests feed cohort samples and return `insufficient_data/no_actual_intervention` |
 | LE-L01 | L2b | measurement verdicts map to distinct lifecycle actions without changing their vocabulary | implemented |
 | LE-L02 | L2c | stage transitions are transactional, idempotent, isolated, and default-closed for paper influence | implemented |
 | LE-L03 | L2c | measurement and lifecycle control use separate restart-safe single-instance schedules | implemented |
+| LE-L04 | L2c | shadow cannot auto-promote; `paper_10` requires a separate explicit durable trial admission | implemented |
 | LE-C01 | L2c | no promotion without unique samples, time span, and outcome links | implemented |
 | LE-C02 | L2c | negative/unsafe holdout automatically demotes or refreezes | implemented |
 | LE-C03 | L2c | refreeze restores static baseline without deleting evidence | implemented |
