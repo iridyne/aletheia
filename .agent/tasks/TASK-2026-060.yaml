@@ -1,0 +1,64 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-060
+title: Runtime Session + core entity provenance
+status: done
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Create one runtime_sessions row per Gateway process lifecycle and stamp the
+  seven core trading-fact entities with the producing session identity (expand-only
+  nullable), distinguishing the opening from the closing session on positions, and
+  prove full attribution in the Golden Path.
+acceptance:
+- Each Gateway boot creates one runtime_sessions row (session_id under a runtime_id)
+  recording boot_commit/config_hash/behavior_fingerprint/schema_version/active_scope_id/execution_mode;
+  clean shutdown sets ended_at+shutdown_clean.
+- The seven core entities carry expand-only nullable runtime_session_id/producer_commit/behavior_fingerprint
+  stamped at insert; rows with no active session stay NULL; explicit caller values
+  win.
+- Positions carry closed_* provenance stamped at close so created vs closed session
+  are distinguishable and a position is never collapsed onto the last run.
+- Golden Path asserts same-session chain, producer_commit==boot commit, one config
+  fingerprint, plus a restart scenario (Session A opens, Session B closes).
+- Full suite and strict workflow check remain green.
+ownership:
+  branch: feat/runtime-session-provenance
+  lease_holder: claude
+  claimed_at: '2026-07-13T05:40:37.179600Z'
+  expires_at: '2026-07-13T13:40:37.179758Z'
+base_commit: eddaf9d77dab10effc1237dfbf22fce2b460065a
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: provenance
+  command: uv run pytest tests/test_runtime_session_provenance.py tests/e2e/test_active_mainline_golden_path.py
+    tests/specs/spec_active_runtime_scope.py -q
+  command_sha256: 4fad42c2cb02bc7c5bcbc336f2a69c9cf415ccb3a60adcba2da82659e301ab87
+  exit_code: 0
+  commit: 596fc248168141668026ee20098cbdf155f37fec
+  run_at: '2026-07-13T05:41:37.759310Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 596fc248168141668026ee20098cbdf155f37fec
+  run_at: '2026-07-13T05:41:47.195624Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 596fc248168141668026ee20098cbdf155f37fec
+  run_at: '2026-07-13T05:41:47.934882Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-060.md
+updated_at: '2026-07-13T05:42:17.165378Z'
