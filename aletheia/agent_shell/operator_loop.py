@@ -274,7 +274,7 @@ class OperatorAction:
 _LEVEL_1_ACTIONS = {
     "retire_strategy", "demote_strategy",  # advisory-only under Phase 4d — see note above
     "trigger_optuna_sweep",                # status='not_implemented' at runtime — see note above
-    "tighten_confidence", "reduce_sizing", "tighten_stop_loss",
+    "tighten_confidence", "reduce_sizing", "increase_sizing", "tighten_stop_loss",
     "adjust_scanner_weight", "request_backfill", "notify_operator",
     "trigger_strategy_research",
     # Data-maintenance self-heal actions (operator_layer.md §自愈档位 L1).
@@ -286,7 +286,7 @@ _LEVEL_1_ACTIONS = {
 }
 
 _LEVEL_2_ACTIONS = {
-    "loosen_confidence", "increase_sizing",
+    "loosen_confidence",
     "widen_stop_loss", "neutral_drift",
     "add_universe_symbol",
     # L2 self-heal actions (operator_layer.md §自愈档位 L2) — require human confirmation.
@@ -576,17 +576,24 @@ def _execute_level1_action(action: OperatorAction) -> dict:
         result = _action_tighten_confidence(action)
     elif action.action_type == "reduce_sizing":
         result = _action_reduce_sizing(action)
+    elif action.action_type == "increase_sizing":
+        # Moved to Level 1 (2026-07-13): reduce_sizing was always Level 1 (auto)
+        # while increase_sizing was Level 2 (proposal void), creating the same
+        # structural asymmetry as the loosen_confidence deadlock. increase_sizing
+        # is guarded: never increases past neutral (spec.neutral=200.0), subject
+        # to same cooldown + daily-patch limits, and Rule 5B only fires when
+        # win_rate_7d >= 35 (preventing simultaneous fire with reduce_sizing).
+        result = _action_increase_sizing(action)
     elif action.action_type == "tighten_stop_loss":
         result = _action_tighten_stop_loss(action)
-    # NOTE: loosen_confidence / increase_sizing / widen_stop_loss are Level-2
-    # (loosening = risk-increasing → require human proposal). classify_action
-    # puts them in _LEVEL_2_ACTIONS, so the dispatcher routes them to
-    # _create_proposal and they NEVER reach this Level-1 executor. The former
-    # elif branches here were dead code that contradicted the L1/L2 boundary
-    # (OL-C07, §15.2). Removed 2026-06-23 — if a loosening action ever lands here
-    # it now correctly falls through to the "unknown action type" guard rather
-    # than being silently auto-executed. The handler functions themselves remain
-    # (used by _action_neutral_drift after proposal approval).
+    # NOTE: loosen_confidence / widen_stop_loss remain Level-2 (loosening = risk-
+    # increasing → require human proposal). classify_action puts them in
+    # _LEVEL_2_ACTIONS, so the dispatcher routes them to _create_proposal and they
+    # NEVER reach this Level-1 executor. The former elif branches here were dead
+    # code that contradicted the L1/L2 boundary (OL-C07, §15.2). Removed
+    # 2026-06-23 — if a remaining loosening action ever lands here it now correctly
+    # falls through to the "unknown action type" guard. The handler functions
+    # themselves remain (used by _action_neutral_drift after proposal approval).
     elif action.action_type == "adjust_scanner_weight":
         result = _action_adjust_scanner_weight(action)
     elif action.action_type == "request_backfill":
@@ -835,7 +842,7 @@ def _action_reduce_sizing(action: OperatorAction) -> dict:
 
 
 def _action_increase_sizing(action: OperatorAction) -> dict:
-    """Loosen sizing back toward neutral (Level 2 proposal)."""
+    """Loosen sizing back toward neutral (Level 1, auto-execute). Never exceeds neutral."""
     param_name = "max_demo_position_notional_usdt"
     last = _last_action_time("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
@@ -1225,17 +1232,22 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
         ))
 
     # Rule 5B: Winning streak + high PF → increase sizing
+    # win_rate_7d >= 35 guard prevents simultaneous fire with reduce_sizing (which
+    # fires when win_rate < 35). Cooldown on the config_patch param also prevents
+    # immediate reversal: if reduce_sizing just fired, increase_sizing is blocked
+    # by _COOLDOWN_SECONDS (2h) on the same param.
     if (assessment.recent_streak >= 3
             and assessment.profit_factor_7d is not None
             and assessment.profit_factor_7d >= 1.5
             and assessment.param_drift.get("max_demo_position_notional_usdt") == "tightened"
+            and (assessment.win_rate_7d is None or assessment.win_rate_7d >= 35)
             and not assessment.kill_switch_active):
         actions.append(OperatorAction(
             action_type="increase_sizing",
-            level=2,
+            level=1,
             params={"increase_pct": 20},
             reason=(f"streak={assessment.recent_streak}, PF={assessment.profit_factor_7d:.2f} "
-                    f"— sizing tightened, proposing increase toward neutral"),
+                    f"— sizing tightened, restoring toward neutral"),
         ))
 
     # Rule 5C: TP-dominated exits → widen stop loss
