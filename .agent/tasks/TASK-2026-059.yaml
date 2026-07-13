@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-059
 title: Merge bounded sizing recovery symmetry
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: Bounded Operator sizing recovery and its executable permission contract
@@ -30,7 +30,8 @@ ownership:
 base_commit: 338f5449790f645b830181e7874c64fea804635e
 next_action:
   command_key: workflow_bootstrap
-  reason: Sizing recovery is complete; bootstrap the remaining DCLS MVP after merge.
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: sizing_symmetry
@@ -67,5 +68,14 @@ verification:
   run_at: '2026-07-13T05:29:47.230220Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: sizing_symmetry
+  command: uv run pytest tests/test_operator_loop.py tests/specs/spec_operator_loop.py
+    -q
+  command_sha256: 75e92e731e635f692afe4896f136bb3748de76e8803e959f3fe060ae10c92214
+  exit_code: 0
+  commit: 693d7db82f7c4b50c9759278335654f1c63ddf50
+  run_at: '2026-07-13T05:30:19.221742Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-059.md
-updated_at: '2026-07-13T05:30:09.531177Z'
+updated_at: '2026-07-13T05:30:19.365018Z'
