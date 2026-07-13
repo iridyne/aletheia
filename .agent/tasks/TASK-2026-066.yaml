@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-066
 title: Verified local paper PnL curve
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: paper_internal automatic close persistence, focused outcome reporting
@@ -25,9 +25,9 @@ ownership:
   expires_at: '2026-07-13T15:42:34.529612Z'
 base_commit: c95b2be34d93368182da21fc81f87e71cf5f64e1
 next_action:
-  command_key: specs
-  reason: Add the focused failing local-paper close-to-genuine-curve regression before
-    implementation.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: specs
@@ -46,5 +46,13 @@ verification:
   run_at: '2026-07-13T07:52:00.744970Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 89757f39795261992e63478c7cb309d640ae6cd6
+  run_at: '2026-07-13T07:52:40.726246Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-066.md
-updated_at: '2026-07-13T07:52:00.745127Z'
+updated_at: '2026-07-13T07:52:40.873433Z'
