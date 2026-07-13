@@ -125,6 +125,69 @@ def test_ranker_candidate_context_backfills_opportunity_id():
     assert decision.market_type == "usdt_futures"
 
 
+def test_reviewed_opportunity_roundtrips_through_market_pending_signal(tmp_path, monkeypatch):
+    """A consumed opportunity remains attributable through its signal_pending carrier.
+
+    paper_trader intentionally marks the source row reviewed after enqueueing it, so
+    Layer 1 and the ranker no longer expose that row.  The queued PiDecision must be
+    sufficient for the System Operator to recover the original attribution fields.
+    """
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+
+    opp = Opportunity(
+        symbol="AVAX/USDT",
+        market="usdt_futures",
+        direction_bias="short",
+        scanner_family="short_bias",
+        linked_strategy_id="strategy-short-bias",
+        metadata='{"learning_candidate_key":"candidate-avax-short"}',
+        confidence="high",
+        confidence_score=82,
+        status="reviewed",
+        asset_class="crypto",
+    )
+    insert_opportunity(opp)
+    insert_pi_decision(PiDecision(
+        symbol=opp.symbol,
+        direction=opp.direction_bias,
+        action="signal_pending",
+        conviction=opp.confidence_score or 0,
+        reasoning="queued by paper trader",
+        opportunity_id=opp.id,
+        signal_source="market_observer",
+    ))
+
+    from aletheia.agent_shell.trading_context import build_enriched_trading_context
+    from aletheia.agent_shell.trading_decision import TradingDecision, _attach_opportunity_context
+
+    ctx = build_enriched_trading_context()
+    assert all(row.get("id") != opp.id for row in ctx["layer1"]["opportunities"])
+    pending = next(
+        row for row in ctx["layer2"]["pending_signals"]
+        if row.get("opportunity_id") == opp.id
+    )
+    assert pending["signal_source"] == "market_observer"
+
+    decision = TradingDecision(
+        action="trade",
+        symbol=opp.symbol,
+        direction=opp.direction_bias,
+        conviction=75,
+        reasoning="act on the queued short signal",
+    )
+    _attach_opportunity_context(decision, ctx)
+
+    assert decision.opportunity_id == opp.id
+    assert decision.signal_source == "market_observer"
+    assert decision.scanner_family == "short_bias"
+    assert decision.strategy_id == "strategy-short-bias"
+    assert decision.learning_candidate_key == "candidate-avax-short"
+    assert decision.market_type == "usdt_futures"
+
+
 def test_close_decision_backfills_from_open_position_when_symbol_omitted():
     """Close/reduce decisions judge an existing position and can inherit its chain."""
     from aletheia.agent_shell.trading_decision import TradingDecision, _attach_opportunity_context

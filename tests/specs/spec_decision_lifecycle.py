@@ -98,6 +98,49 @@ def test_signal_pending_seam_present():
 
 @spec_claim(
     SpecClaim(
+        "DL-S07", "decision_lifecycle_contract", "§2.3 signal_pending attribution", "L2b",
+        "A market_observer signal_pending carrier with a real opportunity_id is a valid "
+        "System Operator attribution source even after the originating Opportunity is reviewed.",
+        status="implemented",
+    ),
+)
+def test_market_observer_pending_signal_attaches_opportunity_id():
+    from aletheia.agent_shell.trading_decision import (
+        TradingDecision,
+        _attach_opportunity_context,
+    )
+
+    decision = TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=70,
+        reasoning="consume the queued scanner signal",
+    )
+    ctx = {
+        "layer1": {"opportunities": []},
+        "layer2": {
+            "ranker_candidates": [],
+            "pending_signals": [
+                {
+                    "symbol": "BTC/USDT",
+                    "direction": "long",
+                    "opportunity_id": "opp-market-pending",
+                    "signal_source": "market_observer",
+                }
+            ],
+        },
+        "layer3": {},
+    }
+
+    _attach_opportunity_context(decision, ctx)
+
+    assert decision.opportunity_id == "opp-market-pending"
+    assert decision.signal_source == "market_observer"
+
+
+@spec_claim(
+    SpecClaim(
         "DL-S05", "decision_lifecycle_contract", "§2.3 executable candidate view", "L2b",
         "System Operator context separates executable ranker candidates from excluded "
         "candidate summaries so unsupported/expired/guard-blocked rows do not occupy "

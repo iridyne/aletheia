@@ -78,7 +78,10 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 `paper_trader` 写 `PiDecision(action='signal_pending')`(`paper_trader.py:143/235`);
 `trading_context._build_layer2_short_term` 用 SQL 读回作为 PI 的 Layer2 `pending_signals`
 (`trading_context.py:463-465`:`WHERE action='signal_pending' AND created_at >= ? ORDER BY created_at DESC LIMIT 5`)。
-**不变量**:TTL 由 `created_at >= cutoff` 控制;只取最近 5 条。
+**不变量**:TTL 由 `created_at >= cutoff` 控制;只取最近 5 条。`paper_trader` 成功写入后会把
+来源 Opportunity 标记为 `reviewed`,因此该行不再出现在 Layer1 或 ranker 的 open 视图中;
+`_attach_opportunity_context` 必须把 `pending_signals` 中 `market_observer` 与 `serenity` 两类载体
+都视为有效归因来源,并按 `opportunity_id` 回填来源字段,不得只消费 Serenity 载体。
 
 ### 2.4 Filter Evidence（评估旁路）
 
@@ -131,6 +134,7 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 | `DL-S03` | L2b | trading_context.py 含 signal_pending 查询并填 pending_signals(跳2→4 接缝存在) |
 | `DL-S04` | L2a | TradingDecision.signal_source 默认 `market_observer`(值域含 `serenity`) |
 | `DL-S06` | L2a | 提案先解析最终 market_type，再把它传给 latest_snapshot 取价 |
+| `DL-S07` | L2b | reviewed Opportunity 仍可经 market_observer signal_pending 把 opportunity_id 交给最终决策 |
 | `DL-C01` | L2c | `_MIN_CONVICTION_TO_TRADE == 55`(改阈值即爆红,强制同步本契约) |
 | `DL-C02` | L2c | trade 类意图未创建 proposal 时保留结构化 proposal_submission 原因 |
 

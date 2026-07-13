@@ -1666,10 +1666,48 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
             decision.market_type = c.get("market_type")
         return
 
+    # paper_trader marks an Opportunity reviewed immediately after enqueueing its
+    # signal_pending PiDecision.  That intentionally removes it from Layer 1 and
+    # the open-only ranker view, so the pending carrier is the remaining identity
+    # bridge into the final System Operator decision.
+    pending = (ctx.get("layer2") or {}).get("pending_signals") or []
+    for p in pending:
+        if (p.get("signal_source") or "market_observer") != "market_observer":
+            continue
+        if p.get("symbol") != decision.symbol:
+            continue
+        pdir = p.get("direction")
+        if decision.direction and pdir and pdir != decision.direction:
+            continue
+        oid = p.get("opportunity_id")
+        if not oid:
+            continue
+        decision.opportunity_id = oid
+        decision.signal_source = "market_observer"
+        # Recover the source fields omitted from PiDecision.  The id remains an
+        # honest attribution anchor even if this best-effort lookup fails.
+        try:
+            from aletheia.storage.repositories import get_opportunity
+
+            src_opp = get_opportunity(oid)
+            if src_opp:
+                try:
+                    raw_meta = src_opp.get("metadata") or "{}"
+                    meta = raw_meta if isinstance(raw_meta, dict) else json.loads(raw_meta)
+                except (TypeError, ValueError):
+                    meta = {}
+                decision.learning_candidate_key = meta.get("learning_candidate_key")
+                decision.strategy_id = src_opp.get("linked_strategy_id")
+                decision.scanner_family = src_opp.get("scanner_family")
+                if not decision.market_type and src_opp.get("market"):
+                    decision.market_type = src_opp.get("market")
+        except Exception:
+            pass
+        return
+
     # Serenity direct match (Phase 2 fix): pending_signals carry opportunity_id
     # from auto_promote. Match directly — avoids the layer3 limit=5 truncation
     # that would otherwise sever the attribution chain for promoted opps.
-    pending = (ctx.get("layer2") or {}).get("pending_signals") or []
     for p in pending:
         if p.get("signal_source") != "serenity":
             continue
