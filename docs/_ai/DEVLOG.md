@@ -3322,3 +3322,10 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
   temporary SQLite connection and global config overrides are restored.
 - Added a deliberate ordinary-assertion regression proving all ten required files, copied
   database state, seed/reproduction metadata, and absence of secret field names.
+
+## 2026-07-13 — Deterministic MacroCollector concurrency regression
+
+- Corrected the async concurrency test to replace the current CoinGecko external fetch instead
+  of two stale helper names that are no longer called by `MacroCollector.collect`.
+- Kept the blocking yfinance duration, competing event-loop task and timing ceiling unchanged;
+  production collector behavior, data sources and network policy did not change.

@@ -1,0 +1,43 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-063
+title: Restore MacroCollector async concurrency test
+status: done
+packet_type: standard
+scope:
+  boundary: deterministic MacroCollector async regression boundary and task evidence
+    only
+  excluded: collector production behavior, data semantics, sources, scheduler cadence,
+    network policy, and trading paths
+intent: Fix the clean-master MacroCollector off-loop regression or its stale deterministic
+  test boundary so the full suite can pass without weakening the async performance
+  guarantee.
+acceptance:
+- The MacroCollector concurrency test replaces every external fetch used by the current
+  collect path.
+- The test still proves a blocking 0.5 second yfinance fallback overlaps a competing
+  0.5 second async task.
+- No production collector behavior or wall-clock threshold is changed.
+- The previously failing test and its focused file pass without network access.
+ownership:
+  branch: iridite/async-collector-timing
+  lease_holder: codex-async-collector
+  claimed_at: '2026-07-13T06:00:42.900966Z'
+  expires_at: '2026-07-13T14:00:42.901147Z'
+base_commit: 9fe3d73592bcbfd3c2c51da7d144b04351e8f14e
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: async_collector
+  command: uv run pytest tests/test_data_provider_and_async_fixes.py -q --tb=short
+  command_sha256: 6aa998f563d34041ca2f2b1a90d9acd0fc36a79d79d4754772a323edda5a3d33
+  exit_code: 0
+  commit: b308fc0122bb78ba0b716b5d4be145cf7f72a1b9
+  run_at: '2026-07-13T06:05:51.865851Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-063.md
+updated_at: '2026-07-13T06:05:52.000706Z'

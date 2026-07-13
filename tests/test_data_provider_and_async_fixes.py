@@ -134,18 +134,14 @@ async def test_macro_collector_runs_yfinance_off_loop(monkeypatch):
     async def fake_fng():
         return None, None
 
+    async def fake_coingecko():
+        return None, None, None
+
     monkeypatch.setattr(_macro, "_fetch_tradfi", fake_fetch)
     monkeypatch.setattr(_macro, "_fetch_fred", fake_fred)
     monkeypatch.setattr(_macro, "_fetch_fng", fake_fng)
+    monkeypatch.setattr(_macro, "_fetch_coingecko", fake_coingecko)
     monkeypatch.setenv("FRED_API_KEY", "irrelevant")  # keep FRED branch, returns None
-
-    async def fake_totals():
-        return None, None
-    monkeypatch.setattr(_macro, "_fetch_totals", fake_totals, raising=False)
-
-    async def fake_dominance():
-        return None
-    monkeypatch.setattr(_macro, "_fetch_dominance", fake_dominance, raising=False)
 
     collector = _macro.MacroCollector()
 
