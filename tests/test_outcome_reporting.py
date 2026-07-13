@@ -145,7 +145,11 @@ def test_frontend_keeps_dual_curve_and_cohort_labels_visible():
     curve = (root / "frontend/src/charts/PnLChart.tsx").read_text()
     for token in ("Raw close events", "Verified strategy outcomes", "Excluded"):
         assert token in analytics
-    for token in ("Raw recorded account events", "Verified strategy curve"):
+    for token in (
+        "Raw recorded account events",
+        "Verified strategy curve",
+        "recorded closes do not meet the current verification requirements",
+    ):
         assert token in curve
     assert "display: 'none'" not in analytics
     assert "display: 'none'" not in curve

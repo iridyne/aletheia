@@ -370,8 +370,8 @@ def test_atr_pct_returned_from_feature_snapshots(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "PL-PM-06", "pipeline_position_manager", "§5 audit_events_table", "L2b",
-        "close_position writes an audit_events row with event_type='position_closed' "
-        "in addition to the JSONL audit file",
+        "close_position writes exactly one audit_events row with "
+        "event_type='position_closed' in addition to the JSONL audit file",
         status="implemented",  # write_audit calls _write_audit_row → insert_audit_event
     ),
 )
@@ -414,10 +414,10 @@ def test_close_position_writes_audit_event_row(tmp_path, monkeypatch):
         (pos_id,),
     ).fetchall()
 
-    assert len(audit_rows) >= 1, (
-        f"Expected audit_events row with event_type='position_closed' for position {pos_id!r}, "
-        "found none. PM-2 drift: close_position writes JSONL but audit_events SQLite row missing. "
-        "Check that _write_audit_row() in jsonl.py is called and DB connection is available."
+    assert len(audit_rows) == 1, (
+        "Expected exactly one audit_events row with event_type='position_closed' "
+        f"for position {pos_id!r}, found {len(audit_rows)}. PM-2 drift means "
+        "the SQLite audit is missing or the post-commit JSONL write mirrored a duplicate."
     )
 
 

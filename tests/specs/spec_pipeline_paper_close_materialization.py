@@ -375,9 +375,10 @@ def test_stop_or_tp_materializes_one_close_from_observed_mark(
     monkeypatch.setattr(position_manager, "_latest_price", lambda _symbol: observed_mark)
     audit_observations: list[dict] = []
 
-    def _capture_audit(event):
+    def _capture_audit(event, *, mirror_db=True):
         audit_observations.append({
             "event": event,
+            "mirror_db": mirror_db,
             "in_transaction": get_db().in_transaction,
             "position_status": repo._select_one("positions", position.id)["status"],
             "cash_settled": repo.has_paper_account_position_event(
@@ -419,6 +420,7 @@ def test_stop_or_tp_materializes_one_close_from_observed_mark(
         if item["event"].get("event_type") == "position_closed"
     ]
     assert len(close_audits) == 1
+    assert close_audits[0]["mirror_db"] is False
     assert close_audits[0]["in_transaction"] is False
     assert close_audits[0]["position_status"] == "closed"
     assert close_audits[0]["cash_settled"] is True

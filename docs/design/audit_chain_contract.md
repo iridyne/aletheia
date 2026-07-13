@@ -96,6 +96,12 @@ def _hash_record(line: str) -> str:
 
 两把锁确保在读取 `prev_hash → 构造记录 → 写入` 的全过程是原子性的，不会有两条记录共用同一个 `_prev_hash`。
 
+**SQLite 镜像规则**：`write_audit()` 默认在文件追加成功后把同一事件镜像到
+`audit_events`，供结构化查询。若调用方已经在业务状态事务中提交了同一个
+`AuditEvent`，必须显式传 `mirror_db=False`；该参数只抑制重复的 SQLite 镜像，
+不得跳过 JSONL 追加、`_prev_hash` 注入或两把锁。这样既保留事务内权威审计，
+也避免事务后的文件写入再次制造一条同义数据库记录。
+
 ---
 
 ## §4 跨轮转链接

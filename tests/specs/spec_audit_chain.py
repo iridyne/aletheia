@@ -1,7 +1,7 @@
 """Spec: Audit Chain Contract (audit_chain_contract.md)
 
 Hash-chain append-only JSONL audit log. Trust-boundary subsystem.
-Claims: AU-S01 .. AU-S05.
+Claims: AU-S01 .. AU-S06.
 """
 
 import ast
@@ -257,3 +257,51 @@ def test_trust_boundary_handlers_audit():
         "Trust-boundary handlers without audit trail:\n"
         + "\n".join(f"  - {m}" for m in missing_audit)
     )
+
+
+# ---------------------------------------------------------------------------
+# AU-S06  L2c — transactional authority may suppress only the SQLite mirror
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "AU-S06", "audit_chain_contract", "§3 transactional mirror", "L2c",
+        "mirror_db=False keeps the append-only hash-chain write but does not "
+        "duplicate a SQLite AuditEvent already committed by the caller",
+        status="implemented",
+    ),
+)
+def test_transactional_authority_can_skip_only_sqlite_mirror(
+    audit_tmp, monkeypatch
+):
+    import aletheia.files.jsonl as jsonl_mod
+
+    mirrored: list[str] = []
+    monkeypatch.setattr(
+        jsonl_mod,
+        "_write_audit_row",
+        lambda event: mirrored.append(str(event.get("event_type"))),
+    )
+
+    jsonl_mod.write_audit(
+        {"event_type": "already_committed", "detail": "transactional"},
+        mirror_db=False,
+    )
+    jsonl_mod.write_audit(
+        {"event_type": "default_mirror", "detail": "ordinary"}
+    )
+
+    records = [
+        json.loads(line)
+        for line in (audit_tmp / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [row["event_type"] for row in records] == [
+        "already_committed",
+        "default_mirror",
+    ]
+    assert mirrored == ["default_mirror"]
+    assert records[1]["_prev_hash"] == hashlib.sha256(
+        json.dumps(records[0], default=str, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()

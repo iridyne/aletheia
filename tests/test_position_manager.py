@@ -31,8 +31,63 @@ def setup_env(tmp_path, monkeypatch):
     run_migrations()
 
 
-def _snap(symbol, price):
-    repo.insert_market_snapshot(MarketSnapshot(symbol=symbol, market_type="spot", price=price))
+def _snap(symbol, price, market_type="spot"):
+    repo.insert_market_snapshot(
+        MarketSnapshot(symbol=symbol, market_type=market_type, price=price)
+    )
+
+
+def _position_with_entry_chain(
+    *,
+    symbol,
+    market_type,
+    direction,
+    quantity,
+    entry_price,
+    entry_fee,
+    stop_price,
+    take_profit_price,
+    opened_at=None,
+):
+    """Build the real Opportunity→Proposal→Risk→Order/Fill→Position entry path."""
+    from tests.test_outcome_closure import _insert_entry_chain
+
+    position = Position(
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+        quantity=quantity,
+        entry_price=entry_price,
+        current_price=entry_price,
+        execution_mode="paper_internal",
+        stop_price=stop_price,
+        take_profit_price=take_profit_price,
+        entry_fee=entry_fee,
+        entry_price_source="local_fill",
+        entry_fill_verified=True,
+        funding_cost=0.0,
+        funding_source=(
+            "not_applicable" if market_type == "spot" else "local_simulation"
+        ),
+    )
+    if opened_at is not None:
+        position.opened_at = opened_at
+    opportunity_id, proposal_id, order_id = _insert_entry_chain(
+        position_id=position.id,
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+        quantity=quantity,
+        price=entry_price,
+        execution_mode="paper_internal",
+        entry_fee=entry_fee,
+        opened_at=position.opened_at,
+    )
+    position.opportunity_id = opportunity_id
+    position.proposal_id = proposal_id
+    position.order_id = order_id
+    repo.insert_position(position)
+    return position
 
 
 def test_migration_adds_position_columns(tmp_path, monkeypatch):
@@ -44,11 +99,12 @@ def test_migration_adds_position_columns(tmp_path, monkeypatch):
 
 def test_stop_loss_closes_long(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    p = Position(symbol="BTCUSDT", market_type="spot", direction="long",
-                 quantity=1.0, entry_price=100.0, current_price=100.0,
-                 execution_mode="paper_internal", stop_price=98.0, take_profit_price=110.0)
-    repo.insert_position(p)
-    _snap("BTCUSDT", 97.0)  # below stop
+    p = _position_with_entry_chain(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=1.0, entry_price=100.0, entry_fee=0.06,
+        stop_price=98.0, take_profit_price=110.0,
+    )
+    _snap("BTC/USDT", 97.0)  # below stop
 
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
@@ -64,16 +120,42 @@ def test_stop_loss_closes_long(tmp_path, monkeypatch):
     assert row["current_price"] != 98.0
     expected = (fill_price - 100.0) - (100.0 + fill_price) * 0.0006
     assert row["realized_pnl"] == pytest.approx(expected)
+    assert row["close_category"] == "strategy"
+    assert row["exit_price_source"] == "local_fill"
+    assert row["exit_fill_verified"] == 1
+    assert row["outcome_eligible"] == 1
+    assert row["outcome_exclusion_reason"] == "eligible"
+    assert row["outcome_semantics_version"] == "oi-v1"
     assert len(repo.list_positions(status="open")) == 0
+
+    from aletheia.server.routes.analytics import get_equity_curve
+    curve = get_equity_curve(execution_mode="paper_internal")
+    assert curve["eligible_outcome_count"] == 1
+    assert len(curve["genuine_points"]) == 1
+    assert curve["genuine_points"][0]["pnl"] == pytest.approx(expected, abs=1e-4)
+
+    close_orders = repo._select_all(
+        "orders",
+        where="position_id = ? AND close_reason IS NOT NULL",
+        params=(p.id,),
+        limit=10,
+    )
+    assert len(close_orders) == 1
+    close_fills = repo.get_db().execute(
+        "SELECT * FROM fills WHERE order_id=?",
+        (close_orders[0]["id"],),
+    ).fetchall()
+    assert len(close_fills) == 1
 
 
 def test_take_profit_closes_short(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    p = Position(symbol="ETHUSDT", market_type="usdt_futures", direction="short",
-                 quantity=2.0, entry_price=200.0, current_price=200.0,
-                 execution_mode="paper_internal", stop_price=210.0, take_profit_price=180.0)
-    repo.insert_position(p)
-    _snap("ETHUSDT", 179.0)  # below TP for a short -> take profit
+    p = _position_with_entry_chain(
+        symbol="ETH/USDT", market_type="usdt_futures", direction="short",
+        quantity=2.0, entry_price=200.0, entry_fee=0.24,
+        stop_price=210.0, take_profit_price=180.0,
+    )
+    _snap("ETH/USDT", 179.0, "usdt_futures")  # below TP for a short
 
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
@@ -87,23 +169,25 @@ def test_take_profit_closes_short(tmp_path, monkeypatch):
     assert row["current_price"] != 180.0
     expected = (200.0 - fill_price) * 2.0 - (200.0 + fill_price) * 2.0 * 0.0006
     assert row["realized_pnl"] == pytest.approx(expected)
+    assert row["outcome_eligible"] == 1
 
 
 def test_max_hold_closes(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     old = (datetime.now(timezone.utc) - timedelta(hours=100)).isoformat()
-    p = Position(symbol="SOLUSDT", market_type="spot", direction="long",
-                 quantity=1.0, entry_price=150.0, current_price=150.0,
-                 execution_mode="paper_internal", stop_price=140.0, take_profit_price=170.0)
-    p.opened_at = old
-    repo.insert_position(p)
-    _snap("SOLUSDT", 150.0)  # no stop/TP trigger, but past max hold
+    p = _position_with_entry_chain(
+        symbol="SOL/USDT", market_type="spot", direction="long",
+        quantity=1.0, entry_price=150.0, entry_fee=0.09,
+        stop_price=140.0, take_profit_price=170.0, opened_at=old,
+    )
+    _snap("SOL/USDT", 150.0)  # no stop/TP trigger, but past max hold
 
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
     assert result["closed"] == 1
     row = repo._select_one("positions", p.id)
     assert row["close_reason"] == "max_hold"
+    assert row["outcome_eligible"] == 1
 
 
 def test_no_trigger_leaves_open(tmp_path, monkeypatch):
@@ -122,11 +206,12 @@ def test_no_trigger_leaves_open(tmp_path, monkeypatch):
 
 def test_close_writes_audit(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    p = Position(symbol="BTCUSDT", market_type="spot", direction="long",
-                 quantity=1.0, entry_price=100.0, current_price=100.0,
-                 execution_mode="paper_internal", stop_price=98.0, take_profit_price=110.0)
-    repo.insert_position(p)
-    _snap("BTCUSDT", 97.0)
+    p = _position_with_entry_chain(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=1.0, entry_price=100.0, entry_fee=0.06,
+        stop_price=98.0, take_profit_price=110.0,
+    )
+    _snap("BTC/USDT", 97.0)
 
     from aletheia.portfolio.position_manager import evaluate_open_positions
     evaluate_open_positions()
@@ -136,6 +221,13 @@ def test_close_writes_audit(tmp_path, monkeypatch):
     closed = [e for e in events if e.get("event_type") == "position_closed"]
     assert closed and closed[-1]["entity_id"] == p.id
     assert closed[-1]["entity_type"] == "position"
+    assert closed[-1]["after"]["outcome_eligible"] is True
+
+    durable = [
+        e for e in repo.list_audit_events(limit=20)
+        if e["event_type"] == "position_closed" and e["entity_id"] == p.id
+    ]
+    assert len(durable) == 1
 
 
 def test_live_position_never_auto_closed(tmp_path, monkeypatch):

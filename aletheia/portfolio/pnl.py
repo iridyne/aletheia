@@ -548,7 +548,10 @@ def close_position(
         "message": audit_message,
     }
     try:
-        write_audit(audit_payload)
+        # The authoritative audit row committed with the Position above. Keep
+        # the append-only JSONL chain in sync without mirroring a duplicate row
+        # back into SQLite.
+        write_audit(audit_payload, mirror_db=False)
     except Exception as exc:
         # The database event above is the durable audit authority. A secondary
         # JSONL sink outage after commit must not make the caller retry a close
