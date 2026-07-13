@@ -1,0 +1,34 @@
+name: DCLS Nightly
+
+on:
+  schedule:
+    - cron: "23 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  control-loop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DCLS_MAX_EXAMPLES: 100
+      DCLS_STATEFUL_STEPS: 30
+      DCLS_SEED: 20260713
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked --all-groups
+      - run: uv run pytest tests/simulation/control_loop/ -q --tb=short
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dcls-nightly-artifacts
+          path: test-results/control-loop/
+          if-no-files-found: ignore
+          retention-days: 14

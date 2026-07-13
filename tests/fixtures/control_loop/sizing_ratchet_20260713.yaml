@@ -1,0 +1,30 @@
+schema_version: 1
+incident_id: SIZING-RATCHET-20260713
+owner: operator-control-loop
+domain: paper-sizing-liveness
+initial_state:
+  now: "2026-07-13T04:00:00+00:00"
+  max_demo_position_notional_usdt: 100.0
+  signal_win_rate_24h: 60.0
+  win_rate_7d: 80.0
+  hours_since_last_fill: 1.0
+  kill_switch_active: false
+operation_sequence:
+  - run_operator_cycle
+  - restart
+  - run_operator_cycle_without_new_facts
+independent_invariants:
+  - winning performance restores sizing toward neutral without exceeding neutral
+  - one cycle never emits both reduce_sizing and increase_sizing
+  - recovery is persisted and audited across restart
+  - unchanged facts cannot bypass the same-parameter cooldown
+red_evidence:
+  observed_on: "2026-07-13"
+  observed_failure: "increase_sizing was classified as an unconsumed Level 2 proposal, so sizing could only ratchet downward"
+  failing_ref: 338f5449790f645b830181e7874c64fea804635e
+  command: uv run pytest tests/test_operator_loop.py tests/specs/spec_operator_loop.py -q
+green_evidence:
+  observed_on: "2026-07-13"
+  fixed_ref: 8f16877cce297d7ba028e62deaf4efaa68326c48
+  result: "67 focused Operator and sizing tests passed"
+  command: uv run pytest tests/test_operator_loop.py tests/specs/spec_operator_loop.py -q

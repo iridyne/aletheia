@@ -3301,3 +3301,16 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - All three attempts now share a 180-second wall-clock budget below Observer loop/job limits,
   cancelling a hanging 300-second-capable provider before scheduler thread abandonment.
 - Full merged-candidate suite: 3055 passed with no ordinary failures or warnings.
+
+## 2026-07-13 — Deterministic Operator control-loop simulator MVP
+
+- Added a Python-only, no-network simulation harness around real config persistence, migrated
+  SQLite repositories, Operator assessment/decision/dispatch/handlers, audit rows, candidate
+  filtering and restart behavior. Virtual time replaces sleeps without changing production policy.
+- Locked the confidence-deadlock and sizing-ratchet incidents as fixed scenarios, then added a
+  stateful operation model, independent bounds/liveness/opposition/audit checks and six mutation
+  canaries proving broken classification, decision, dispatch, handlers, bounds and audit are caught.
+- Failed runs leave sanitized seed/config/operation/timeline/database/reproduction packs under
+  `test-results/control-loop/`. PR CI uses a small deterministic budget; nightly CI raises it.
+- DCLS, Operator, all executable specs, architecture and workflow gates passed. The full suite had
+  one unrelated async timing failure that reproduces unchanged on clean master; it remains explicit.

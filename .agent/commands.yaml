@@ -21,6 +21,9 @@ commands:
   sizing_symmetry:
     command: uv run pytest tests/test_operator_loop.py tests/specs/spec_operator_loop.py -q
     purpose: Verify bounded sizing recovery, dispatch symmetry, and anti-oscillation guards.
+  dcls_mvp:
+    command: uv run pytest tests/simulation/control_loop/ tests/specs/spec_deterministic_control_loop.py tests/test_runtime_replay_pack.py tests/e2e/test_active_mainline_golden_path.py -q --tb=short
+    purpose: Verify fixed control-loop incidents, stateful invariants, mutation canaries, replay, artifacts, and the active Golden Path.
   spec_risk_engine:
     command: uv run pytest tests/specs/spec_risk_engine.py -q
     purpose: Verify risk-engine trust-boundary contract.

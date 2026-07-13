@@ -20,6 +20,7 @@ def _import_all_specs():
         spec_api_reference,
         spec_data_layer,
         spec_operator_loop,
+        spec_deterministic_control_loop,
         spec_subsystem_observers,
         spec_audit_chain,
         spec_persona_sizing,
