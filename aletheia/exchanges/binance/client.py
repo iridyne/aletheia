@@ -264,6 +264,7 @@ class BinanceClient:
             close_fills: list[VerifiedExitFill] = []
             ambiguous = False
             expected_side = "sell" if request.direction == "long" else "buy"
+            known_entry_order_ids = set(request.known_entry_order_ids)
             for raw in raw_fills:
                 timestamp = _binance_int(raw.get("timestamp"))
                 if not request.history_start_ms <= timestamp <= request.history_end_ms:
@@ -277,6 +278,11 @@ class BinanceClient:
                 closes_direction = side == expected_side and position_side in {
                     request.direction, "both",
                 }
+                remote_order_id = str(
+                    raw.get("order") or info.get("orderId") or ""
+                ).strip()
+                if remote_order_id in known_entry_order_ids and not closes_direction:
+                    continue
                 if not closes_direction:
                     ambiguous = True
                     continue

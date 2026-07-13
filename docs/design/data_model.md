@@ -1,7 +1,7 @@
 # Data Model Reference
 
 > Complete index of Aletheia Trading OS data layer.
-> ~95 SQLite table declarations, 58 Pydantic models, WAL mode, additive-only migrations.
+> ~95 SQLite table declarations, 59 Pydantic models, WAL mode, additive-only migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
 > Last updated: 2026-07-12
 
@@ -38,7 +38,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 ## 3. Table Groups
 
-### A. Trading Core (14 tables)
+### A. Trading Core (15 tables)
 
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
@@ -49,6 +49,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `orders` | Execution orders | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
 | `positions` | Open/closed positions | symbol, direction, entry_price, quantity, status, realized_pnl, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence) | position_manager / outcome closure |
+| `outcome_hook_jobs` | Durable eligible-close feedback outbox; one row per Position and hook, with leased replay after failure | position_id, hook_type, status, attempts, next_attempt_at, claim_token, last_error | outcome close transaction / outcome_hook_replay |
 | `position_disappearance_candidates` | Durable account-scoped position-disappearance confirmation state; never authorizes close by itself | position_id, identity_key, broker_id, account_environment, non-secret account_fingerprint, instrument identity, confirmation_count, direct_query_state, semantics_version | position reconciler (OI-B01 target) |
 | `position_disappearance_observations` | Immutable idempotent evidence for a disappearance candidate | candidate_id, observation_hash, view_identity, completeness/absence flags, direct_query_state, evidence_json | position reconciler (OI-B01 target) |
 | `reconciliation_integrity_incidents` | Restart-safe close/reopen circuit breaker and explicit recovery evidence | scoped fingerprint, status, source mix, detected/clean timestamps, clean count, resolution actor/reason, semantics version | position reconciler + Learning control |
@@ -184,7 +185,7 @@ production trading state and cannot authorize a parameter change.
 | `serenity_opportunities` | Theme-derived trading opportunities. `evidence_tier` = self-graded proposal; `assessed_tier`/`assessed_by` (additive) = authoritative tier derived from strongest assessed supporting evidence (NULL → scored as `speculative`) |
 | `serenity_risk_gates` | Risk checks for Serenity trades |
 | `serenity_replay_snapshots` | Decision replay for learning |
-| `serenity_post_mortems` | Post-trade analysis |
+| `serenity_post_mortems` | Post-trade analysis; automatic close feedback is idempotent by nullable unique `position_id` (manual/historical rows may remain NULL) |
 | `serenity_research_runs` | Research execution records |
 | `serenity_run_events` | Research run events |
 | `serenity_user_profiles` | Researcher profiles |
@@ -253,7 +254,7 @@ production trading state and cannot authorize a parameter change.
 
 ---
 
-## 4. Pydantic Model Index (58 models)
+## 4. Pydantic Model Index (59 models)
 
 All models in `aletheia/storage/models.py`. Key mapping:
 
@@ -271,6 +272,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | Order | orders | Trading |
 | Fill | fills | Trading |
 | Position | positions | Trading |
+| OutcomeHookJob | outcome_hook_jobs | Trading feedback |
 | PositionDisappearanceCandidate | position_disappearance_candidates | Trading integrity |
 | PositionDisappearanceObservation | position_disappearance_observations | Trading integrity |
 | ReconciliationIntegrityIncident | reconciliation_integrity_incidents | Trading integrity |

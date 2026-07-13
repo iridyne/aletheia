@@ -1,13 +1,12 @@
-"""Missing contracts for the Risk -> Execution -> Position handoff.
+"""Executable contracts for the Risk -> Execution -> Position handoff.
 
-These claims intentionally remain strict xfails until the owner authorizes the
-smallest production repair across the change-controlled Risk and Execution
-modules.  Each test reproduces an observed failure mode without touching Live or
-an exchange network.
+Each test reproduces a repaired failure mode without touching Live or an
+exchange network.
 """
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 import sqlite3
 import threading
@@ -15,10 +14,6 @@ import threading
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
-
-
-def _missing(reason: str):
-    return pytest.mark.xfail(strict=True, reason=reason)
 
 
 def _setup_db(tmp_path, monkeypatch):
@@ -45,7 +40,6 @@ def _setup_db(tmp_path, monkeypatch):
     return conn
 
 
-@_missing("Risk/Execution repair pending: stored Proposal execution intent is still mutable")
 @spec_claim(
     SpecClaim(
         "PL-RX-01",
@@ -54,7 +48,7 @@ def _setup_db(tmp_path, monkeypatch):
         "L2b",
         "Executing a stored Proposal with a different requested execution mode is rejected "
         "before Risk/Execution, and no hash-covered Proposal field is rewritten.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_existing_proposal_mode_mismatch_does_not_rewrite_intent(tmp_path, monkeypatch):
@@ -99,7 +93,6 @@ def test_existing_proposal_mode_mismatch_does_not_rewrite_intent(tmp_path, monke
     assert result["reason_code"] == "execution_mode_mismatch"
 
 
-@_missing("Risk/Execution repair pending: venue-normalized quantity still rewrites Proposal")
 @spec_claim(
     SpecClaim(
         "PL-RX-02",
@@ -108,7 +101,7 @@ def test_existing_proposal_mode_mismatch_does_not_rewrite_intent(tmp_path, monke
         "L2b",
         "Venue quantity normalization is evaluated and submitted, but the original Proposal "
         "quantity and its commit hash remain unchanged.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_normalized_quantity_uses_snapshot_without_mutating_proposal(tmp_path, monkeypatch):
@@ -148,7 +141,9 @@ def test_normalized_quantity_uses_snapshot_without_mutating_proposal(tmp_path, m
         return {
             "order_id": "order-normalized",
             "exchange_order_id": "exchange-normalized",
-            "position_id": None,
+            "order_status": "filled",
+            "fill_id": "fill-normalized",
+            "position_id": "position-normalized",
             "fill_price": kwargs["price"],
         }
 
@@ -175,7 +170,6 @@ def test_normalized_quantity_uses_snapshot_without_mutating_proposal(tmp_path, m
     assert repo._compute_proposal_hash(TradeProposal.model_validate(stored)) == original_hash
 
 
-@_missing("Risk repair pending: RiskDecision has no authoritative/preflight snapshot contract")
 @spec_claim(
     SpecClaim(
         "PL-RX-03",
@@ -185,7 +179,7 @@ def test_normalized_quantity_uses_snapshot_without_mutating_proposal(tmp_path, m
         "A native Order can consume one idempotent authoritative RiskDecision; preflight "
         "checks are labeled separately and the decision records the evaluated quantity and "
         "original Proposal commit hash.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_risk_decision_roles_snapshot_and_authoritative_idempotency(tmp_path, monkeypatch):
@@ -229,7 +223,6 @@ def test_risk_decision_roles_snapshot_and_authoritative_idempotency(tmp_path, mo
     assert stored_quantity == pytest.approx(0.0011)
 
 
-@_missing("Execution repair pending: execute_existing_proposal has no atomic claim")
 @spec_claim(
     SpecClaim(
         "PL-RX-04",
@@ -238,7 +231,7 @@ def test_risk_decision_roles_snapshot_and_authoritative_idempotency(tmp_path, mo
         "L2b",
         "Two concurrent executions of one pending Proposal can enter the side-effecting "
         "pipeline only once; the other caller receives an already-claimed terminal response.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_concurrent_execute_existing_proposal_enters_pipeline_once(tmp_path, monkeypatch):
@@ -303,7 +296,6 @@ def test_concurrent_execute_existing_proposal_enters_pipeline_once(tmp_path, mon
     }
 
 
-@_missing("Execution repair pending: failures before the outer try abandon Proposal as pending")
 @pytest.mark.parametrize(
     "failure_point",
     ("load_config", "risk", "quantity_constraints", "symbol_availability"),
@@ -316,7 +308,7 @@ def test_concurrent_execute_existing_proposal_enters_pipeline_once(tmp_path, mon
         "L2b",
         "A failure during config, Risk, quantity-rule, or symbol prechecks returns a sanitized "
         "error, marks the Proposal terminal, creates no Order, and persists a stable audit reason.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_pre_order_failure_is_terminal_and_sanitized(
@@ -419,7 +411,6 @@ INVALID_NATIVE_PROPOSALS = (
 )
 
 
-@_missing("Risk/Execution repair pending: malformed native Proposal inputs can execute")
 @pytest.mark.parametrize("override, expected_violation", INVALID_NATIVE_PROPOSALS)
 @spec_claim(
     SpecClaim(
@@ -429,7 +420,7 @@ INVALID_NATIVE_PROPOSALS = (
         "L2b",
         "Non-canonical symbols, unknown native enums, and non-positive quantity/price are "
         "rejected before Risk/Order/Fill/Position side effects.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_invalid_native_proposal_fails_closed(
@@ -474,7 +465,6 @@ def test_invalid_native_proposal_fails_closed(
     ).fetchone()[0] == 0
 
 
-@_missing("Execution repair pending: open-order absence is still guessed to mean filled")
 @spec_claim(
     SpecClaim(
         "PL-RX-07",
@@ -483,7 +473,7 @@ def test_invalid_native_proposal_fails_closed(
         "L2b",
         "A submitted Order absent from the exchange open-order list remains unresolved "
         "unless real fill evidence exists; reconciliation never invents filled state.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_reconciliation_absence_without_fill_evidence_stays_unresolved(
@@ -505,6 +495,7 @@ def test_reconciliation_absence_without_fill_evidence_stays_unresolved(
     monkeypatch.setattr(bitget_client.BitgetClient, "get_open_orders", _no_open_orders)
     monkeypatch.setattr(bitget_client.BitgetClient, "get_fills", _no_fills)
     order = Order(
+        source="adopted",
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
@@ -535,7 +526,6 @@ def test_reconciliation_absence_without_fill_evidence_stays_unresolved(
     assert audit["event_type"] == "order_reconciliation_inconclusive"
 
 
-@_missing("Execution repair pending: partially_filled is not in the unresolved state set")
 @spec_claim(
     SpecClaim(
         "PL-RX-08",
@@ -544,7 +534,7 @@ def test_reconciliation_absence_without_fill_evidence_stays_unresolved(
         "L2b",
         "The broker-emitted partially_filled state remains unresolved and is scanned by "
         "reconciliation instead of falling out of the execution lifecycle.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_partially_filled_order_remains_in_reconciliation_working_set(
@@ -560,8 +550,13 @@ def test_partially_filled_order_remains_in_reconciliation_working_set(
     async def _still_open(self, market_type="spot"):
         return [{"orderId": "EX-PARTIAL"}]
 
+    async def _no_fills(self, symbol=None, market_type="spot"):
+        return []
+
     monkeypatch.setattr(bitget_client.BitgetClient, "get_open_orders", _still_open)
+    monkeypatch.setattr(bitget_client.BitgetClient, "get_fills", _no_fills)
     order = Order(
+        source="adopted",
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
@@ -582,7 +577,6 @@ def test_partially_filled_order_remains_in_reconciliation_working_set(
     assert stored["status"] == "partially_filled"
 
 
-@_missing("Execution repair pending: Bitget margin preparation can abandon a pending Order")
 @spec_claim(
     SpecClaim(
         "PL-RX-09",
@@ -591,7 +585,7 @@ def test_partially_filled_order_remains_in_reconciliation_working_set(
         "L2b",
         "A margin-preparation failure happens before exchange submission and leaves the local "
         "Order in an explicit sanitized error state, never pending.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_bitget_margin_preparation_failure_does_not_leave_pending_order(
@@ -618,6 +612,9 @@ def test_bitget_margin_preparation_failure_does_not_leave_pending_order(
         approved=True,
         allowed_execution_mode="bitget_demo",
         proposal_execution_mode="bitget_demo",
+        decision_role="authoritative",
+        evaluated_quantity=proposal.quantity,
+        proposal_commit_hash=proposal.commit_hash,
     )
     repo.insert_risk_decision(decision)
 
@@ -684,7 +681,6 @@ CLOSE_TIMEOUT_CASES = (
 )
 
 
-@_missing("Execution repair pending: close timeout is treated as retryable error")
 @pytest.mark.parametrize(
     "broker_module, client_name, close_name, execution_mode", CLOSE_TIMEOUT_CASES
 )
@@ -696,7 +692,7 @@ CLOSE_TIMEOUT_CASES = (
         "L2b",
         "A close-order timeout is submission_unknown, remains retry-suppressing, and a "
         "second close request cannot reach the exchange again.",
-        status="missing",
+        status="implemented",
     )
 )
 def test_close_timeout_is_unknown_and_suppresses_duplicate_submission(
@@ -757,3 +753,489 @@ def test_close_timeout_is_unknown_and_suppresses_duplicate_submission(
     assert second["already_pending"] is True
     assert calls == [f"close-{position.id}"]
     assert len(repo.list_orders(limit=20)) == 1
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-11",
+        "pipeline_risk_execution_integrity",
+        "§9 native paper adjacent-chain proof",
+        "L2b",
+        "One native paper Proposal reaches exactly one authoritative RiskDecision and one "
+        "Order/Fill/Position chain with immutable intent and complete causal identity.",
+        status="implemented",
+    )
+)
+def test_native_paper_chain_consumes_one_authoritative_decision(
+    tmp_path, monkeypatch
+):
+    db = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.execution.gateway import submit_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity, TradeProposal
+
+    opportunity = Opportunity(
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        thesis="sanitized production-shaped chain replay",
+        confidence="high_confidence",
+        confidence_score=82,
+        source_agent="spec_replay",
+        status="queued",
+    )
+    repo.insert_opportunity(opportunity)
+
+    result = submit_proposal(
+        symbol=opportunity.symbol,
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60_000.0,
+        stop_price=58_000.0,
+        execution_mode="paper_internal",
+        strategy_id="strategy-rx-11",
+        opportunity_id=opportunity.id,
+        agent_rationale="sanitized replay rationale",
+    )
+
+    assert result["status"] == "executed"
+    proposal = dict(db.execute(
+        "SELECT * FROM trade_proposals WHERE id=?", (result["proposal_id"],)
+    ).fetchone())
+    decisions = [dict(row) for row in db.execute(
+        "SELECT * FROM risk_decisions WHERE proposal_id=? ORDER BY rowid",
+        (proposal["id"],),
+    ).fetchall()]
+    authoritative = [
+        row for row in decisions if row["decision_role"] == "authoritative"
+    ]
+    assert len(authoritative) == 1
+
+    order = dict(db.execute(
+        "SELECT * FROM orders WHERE id=?", (result["order_id"],)
+    ).fetchone())
+    fill = dict(db.execute(
+        "SELECT * FROM fills WHERE id=?", (result["fill_id"],)
+    ).fetchone())
+    position = dict(db.execute(
+        "SELECT * FROM positions WHERE id=?", (result["position_id"],)
+    ).fetchone())
+    decision = authoritative[0]
+
+    assert proposal["status"] == "executed"
+    assert proposal["execution_mode"] == "paper_internal"
+    assert repo._compute_proposal_hash(TradeProposal.model_validate(proposal)) == proposal["commit_hash"]
+    assert decision["approved"] == 1
+    assert decision["evaluated_quantity"] == pytest.approx(proposal["quantity"])
+    assert decision["proposal_commit_hash"] == proposal["commit_hash"]
+    assert order["proposal_id"] == proposal["id"]
+    assert order["risk_decision_id"] == decision["id"]
+    assert order["status"] == "filled"
+    assert fill["order_id"] == order["id"]
+    assert position["proposal_id"] == proposal["id"]
+    assert position["order_id"] == order["id"]
+    assert position["opportunity_id"] == opportunity.id
+    for row in (proposal, order, position):
+        assert row["symbol"] == "BTC/USDT"
+        assert row["market_type"] == "spot"
+        assert row["direction"] == "long"
+        assert row["execution_mode"] == "paper_internal"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-12",
+        "pipeline_risk_execution_integrity",
+        "§10 persisted Proposal hash truth",
+        "L2c",
+        "A Proposal commit hash is computed over the exact immutable row persisted after "
+        "runtime provenance is stamped, so current-runtime rows verify from storage.",
+        status="implemented",
+    )
+)
+def test_proposal_hash_covers_persisted_runtime_provenance(tmp_path, monkeypatch):
+    db = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.agent_runtime import runtime_session
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    monkeypatch.setattr(
+        runtime_session,
+        "current_provenance",
+        lambda: {
+            "runtime_session_id": "runtime-rx-12",
+            "producer_commit": "commit-rx-12",
+            "behavior_fingerprint": "fingerprint-rx-12",
+        },
+    )
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(proposal)
+
+    stored = dict(db.execute(
+        "SELECT * FROM trade_proposals WHERE id=?", (proposal.id,)
+    ).fetchone())
+    stored_model = TradeProposal.model_validate(stored)
+
+    assert stored["runtime_session_id"] == "runtime-rx-12"
+    assert proposal.runtime_session_id == stored["runtime_session_id"]
+    assert proposal.producer_commit == stored["producer_commit"]
+    assert proposal.behavior_fingerprint == stored["behavior_fingerprint"]
+    assert repo._compute_proposal_hash(stored_model) == stored["commit_hash"]
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-13",
+        "pipeline_risk_execution_integrity",
+        "§10 authoritative integrity gate",
+        "L2b",
+        "Authoritative Risk fails closed before an Order when the stored Proposal no longer "
+        "matches its commit hash, and the gateway records a stable terminal reason.",
+        status="implemented",
+    )
+)
+def test_authoritative_risk_rejects_tampered_stored_proposal(tmp_path, monkeypatch):
+    db = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.execution import gateway
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="paper_internal",
+        attribution_snapshot="{}",
+    )
+    repo.insert_trade_proposal(proposal)
+    db.execute(
+        "UPDATE trade_proposals SET quantity=? WHERE id=?",
+        (0.002, proposal.id),
+    )
+
+    result = gateway.execute_existing_proposal(proposal.id)
+    stored = repo.get_trade_proposal(proposal.id)
+
+    assert result["status"] == "error"
+    assert result["reason_code"] == "proposal_integrity_failed"
+    assert stored["status"] == "error"
+    assert db.execute(
+        "SELECT COUNT(*) FROM orders WHERE proposal_id=?", (proposal.id,)
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM risk_decisions WHERE proposal_id=? "
+        "AND decision_role='authoritative'",
+        (proposal.id,),
+    ).fetchone()[0] == 0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-14",
+        "pipeline_risk_execution_integrity",
+        "§10 no late Proposal mutation",
+        "L2b",
+        "Executing a stored Proposal without an attribution snapshot never writes a new "
+        "hash-covered snapshot after commit; missing replay context remains honestly missing.",
+        status="implemented",
+    )
+)
+def test_execution_does_not_backfill_hash_covered_attribution_snapshot(
+    tmp_path, monkeypatch
+):
+    db = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.execution import gateway
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="paper_internal",
+        attribution_snapshot=None,
+    )
+    repo.insert_trade_proposal(proposal)
+    original_hash = proposal.commit_hash
+    monkeypatch.setattr(
+        gateway,
+        "evaluate_proposal",
+        lambda _proposal, *, decision_role: SimpleNamespace(
+            approved=True,
+            allowed_execution_mode="paper_internal",
+            decision_id="risk-rx-14",
+            violations=[],
+            message="Approved",
+        ),
+    )
+    monkeypatch.setattr(
+        gateway,
+        "_capture_attribution_snapshot_json",
+        lambda _symbol: json.dumps({"regime_tag": "late-context"}),
+    )
+    monkeypatch.setattr(
+        gateway,
+        "execute_paper_order",
+        lambda **_kwargs: {
+            "order_id": "order-rx-14",
+            "fill_id": "fill-rx-14",
+            "position_id": "position-rx-14",
+        },
+    )
+    monkeypatch.setattr(gateway, "write_audit", lambda _event: None)
+
+    result = gateway._execute_proposal(proposal)
+    stored = dict(db.execute(
+        "SELECT * FROM trade_proposals WHERE id=?", (proposal.id,)
+    ).fetchone())
+
+    assert result["status"] == "executed"
+    assert stored["attribution_snapshot"] is None
+    assert stored["commit_hash"] == original_hash
+    assert repo._compute_proposal_hash(TradeProposal.model_validate(stored)) == original_hash
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-15",
+        "pipeline_risk_execution_integrity",
+        "§11 honest asynchronous execution state",
+        "L2b",
+        "An exchange Order accepted but not filled leaves its Proposal submitted, not "
+        "executed; executed is reserved for a durably materialized Fill/Position chain.",
+        status="implemented",
+    )
+)
+def test_submitted_exchange_order_does_not_mark_proposal_executed(
+    tmp_path, monkeypatch
+):
+    db = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.execution import bitget_broker, gateway
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="bitget_demo",
+    )
+    repo.insert_trade_proposal(proposal)
+    monkeypatch.setattr(
+        gateway,
+        "evaluate_proposal",
+        lambda _proposal, *, decision_role: SimpleNamespace(
+            approved=True,
+            allowed_execution_mode="bitget_demo",
+            decision_id=f"risk-{decision_role}",
+            violations=[],
+            message="Approved",
+        ),
+    )
+    monkeypatch.setattr(
+        gateway, "_prepare_exchange_quantity", lambda *_args: (0.001, None)
+    )
+    monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *_args: None)
+    monkeypatch.setattr(gateway, "write_audit", lambda _event: None)
+    monkeypatch.setattr(
+        bitget_broker,
+        "execute_live_order",
+        lambda **_kwargs: {
+            "order_id": "order-rx-15",
+            "exchange_order_id": "exchange-rx-15",
+            "fill_id": None,
+            "position_id": None,
+            "fill_price": None,
+            "fill_quantity": 0.0,
+        },
+    )
+
+    result = gateway._execute_proposal(proposal)
+    stored = dict(db.execute(
+        "SELECT * FROM trade_proposals WHERE id=?", (proposal.id,)
+    ).fetchone())
+
+    assert result["status"] == "submitted"
+    assert stored["status"] == "submitted"
+    assert result["exchange_order_id"] == "exchange-rx-15"
+
+
+@pytest.mark.parametrize(
+    "broker_module,client_name,close_name,execution_mode",
+    (
+        pytest.param(
+            "aletheia.execution.bitget_broker",
+            "BitgetClient",
+            "close_demo_position",
+            "bitget_demo",
+            id="bitget",
+        ),
+        pytest.param(
+            "aletheia.execution.okx_broker",
+            "OKXClient",
+            "close_okx_position",
+            "okx_demo",
+            id="okx",
+        ),
+        pytest.param(
+            "aletheia.execution.binance_broker",
+            "BinanceClient",
+            "close_testnet_position",
+            "binance_testnet",
+            id="binance",
+        ),
+    ),
+)
+@spec_claim(
+    SpecClaim(
+        "PL-RX-16",
+        "pipeline_risk_execution_integrity",
+        "§12 pre-submission close failure",
+        "L2b",
+        "A close whose exchange client cannot initialize is recorded as a known "
+        "pre-submission error and does not leave a retry-suppressing pending claim.",
+        status="implemented",
+    )
+)
+def test_close_client_initialization_failure_does_not_strand_pending_claim(
+    tmp_path,
+    monkeypatch,
+    broker_module,
+    client_name,
+    close_name,
+    execution_mode,
+):
+    import importlib
+
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    broker = importlib.import_module(broker_module)
+
+    def _client_initialization_failed(*_args, **_kwargs):
+        raise RuntimeError("private-client-initialization-detail")
+
+    monkeypatch.setattr(broker, client_name, _client_initialization_failed)
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=60_000.0,
+        current_price=60_100.0,
+        execution_mode=execution_mode,
+    )
+    repo.insert_position(position)
+
+    with pytest.raises(RuntimeError, match="private-client-initialization-detail"):
+        getattr(broker, close_name)(position.id, reason="stop_loss")
+
+    first_order = repo.list_orders(limit=10)[0]
+    stored_position = repo._select_one("positions", position.id)
+    assert first_order["status"] == "error"
+    assert (
+        first_order["error_reason"]
+        == "close_client_initialization_failed_before_submission"
+    )
+    assert "private-client" not in first_order["error_reason"]
+    assert stored_position["pending_close_status"] == "error"
+
+    with pytest.raises(RuntimeError, match="private-client-initialization-detail"):
+        getattr(broker, close_name)(position.id, reason="stop_loss")
+    assert len(repo.list_orders(limit=10)) == 2
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-17",
+        "pipeline_risk_execution_integrity",
+        "§12 pre-submission entry failure",
+        "L2b",
+        "A Bitget entry whose client cannot initialize is recorded as a known "
+        "pre-submission error and remains safe to retry without exchange ambiguity.",
+        status="implemented",
+    )
+)
+def test_bitget_entry_client_initialization_failure_is_not_submission_unknown(
+    tmp_path, monkeypatch
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import bitget_broker
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import RiskDecision, TradeProposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        order_type="limit",
+        quantity=0.01,
+        price=60_000.0,
+        execution_mode="bitget_demo",
+        status="approved",
+    )
+    repo.insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode=proposal.execution_mode,
+        proposal_execution_mode=proposal.execution_mode,
+        decision_role="authoritative",
+        evaluated_quantity=proposal.quantity,
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    repo.insert_risk_decision(decision)
+
+    def _client_initialization_failed(*_args, **_kwargs):
+        raise RuntimeError("private-client-initialization-detail")
+
+    monkeypatch.setattr(
+        bitget_broker, "BitgetClient", _client_initialization_failed
+    )
+    kwargs = {
+        "proposal_id": proposal.id,
+        "risk_decision_id": decision.id,
+        "symbol": proposal.symbol,
+        "market_type": proposal.market_type,
+        "direction": proposal.direction,
+        "order_type": proposal.order_type,
+        "quantity": proposal.quantity,
+        "price": proposal.price,
+        "execution_mode": proposal.execution_mode,
+    }
+
+    with pytest.raises(RuntimeError, match="private-client-initialization-detail"):
+        bitget_broker.execute_live_order(**kwargs)
+
+    first_order = repo.list_orders(limit=10)[0]
+    assert first_order["status"] == "error"
+    assert (
+        first_order["error_reason"]
+        == "order_client_initialization_failed_before_submission"
+    )
+    assert "private-client" not in first_order["error_reason"]
+
+    with pytest.raises(RuntimeError, match="private-client-initialization-detail"):
+        bitget_broker.execute_live_order(**kwargs)
+    assert len(repo.list_orders(limit=10)) == 2

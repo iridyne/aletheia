@@ -2,6 +2,8 @@
 
 import logging
 import json
+import math
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from aletheia.storage.models import PortfolioSnapshot
@@ -10,6 +12,33 @@ logger = logging.getLogger("aletheia.pnl")
 from aletheia.storage.repositories import (
     list_positions, insert_portfolio_snapshot, update_position, list_market_snapshots,
 )
+
+
+_CLOSE_ECONOMIC_SNAPSHOT_FIELDS = (
+    "symbol",
+    "market_type",
+    "direction",
+    "quantity",
+    "entry_price",
+    "execution_mode",
+    "entry_fee",
+    "funding_cost",
+    "funding_source",
+    "slippage_cost",
+    "entry_price_source",
+    "entry_fill_verified",
+)
+
+
+def _same_snapshot_value(left: object, right: object) -> bool:
+    if left == right:
+        return True
+    return (
+        isinstance(left, float)
+        and isinstance(right, float)
+        and math.isnan(left)
+        and math.isnan(right)
+    )
 
 
 def _latest_price(symbol: str) -> float | None:
@@ -25,6 +54,32 @@ def _btc_price_at_close() -> float | None:
         return float(snap["price"]) if snap else None
     except Exception:
         return None
+
+
+def _close_provenance() -> dict:
+    """Return only available producer identity for the close event."""
+    try:
+        from aletheia.agent_runtime.runtime_session import current_close_provenance
+
+        return {
+            key: value
+            for key, value in current_close_provenance().items()
+            if value is not None
+        }
+    except Exception:
+        return {}
+
+
+def _account_environment(execution_mode: str) -> str:
+    if execution_mode == "paper_internal":
+        return "local"
+    if execution_mode == "binance_testnet":
+        return "testnet"
+    if execution_mode.endswith("_demo"):
+        return "demo"
+    if execution_mode.endswith("_live_limited"):
+        return "live"
+    return "unknown"
 
 
 def _build_exchange_upnl_index() -> dict[tuple[str, str], float]:
@@ -188,11 +243,30 @@ def persist_exit_reasoning(
     return True
 
 
-def close_position(position_id: str, exit_price: float, reason: str = "manual") -> dict:
+def close_position(
+    position_id: str,
+    exit_price: float,
+    reason: str = "manual",
+    *,
+    actual_exit_fee: float | None = None,
+    closed_at: str | None = None,
+    verified_exit_evidence: dict | None = None,
+    materialize_close: Callable[[], None] | None = None,
+    actor: str = "system",
+    source: str = "scheduler",
+) -> dict:
     """Close an open position at exit_price, realizing PnL. Returns the result.
 
     Writes a position_closed audit event (trust §1.4). `reason` is recorded as
-    close_reason (e.g. stop_loss / take_profit / max_hold / manual).
+    close_reason (e.g. stop_loss / take_profit / max_hold / manual). Exchange
+    reconciliation may supply the venue-confirmed exit fee, fill timestamp, and
+    private evidence so every downstream audit/notification/feedback consumer
+    observes the same actual close economics instead of an estimate later being
+    written over it. Local paper fills are authoritative within the simulator;
+    exchange closes without private evidence remain explicitly ineligible. A
+    local broker may pass a database-only ``materialize_close`` callback; it runs
+    inside the same transaction as Position and cash settlement, after the
+    second open-state check and before any post-commit side effect.
     """
     from aletheia.analytics.close_reasons import is_synthetic_close
     if is_synthetic_close(reason):
@@ -228,71 +302,277 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
     entry_fee = row.get("entry_fee")
     if entry_fee is None:
         entry_fee = row["entry_price"] * row["quantity"] * fee_rate
-    exit_fee = exit_price * row["quantity"] * fee_rate
+    if actual_exit_fee is None:
+        exit_fee = exit_price * row["quantity"] * fee_rate
+    else:
+        exit_fee = float(actual_exit_fee)
+        if not math.isfinite(exit_fee) or exit_fee < 0:
+            raise ValueError("actual_exit_fee must be a finite non-negative value")
+    # Spot has no funding leg. Futures funding is part of realized economics,
+    # but only when it came from a durable broker/local ledger.  An unknown or
+    # malformed funding value must not be guessed from current configuration:
+    # the lifecycle may still close, while Outcome/Feedback stays fail-closed.
+    market_type = str(row.get("market_type") or "")
+    if market_type == "spot":
+        funding_cost: float | None = 0.0
+        funding_source = "not_applicable"
+    elif market_type == "usdt_futures":
+        raw_funding_cost = row.get("funding_cost")
+        raw_funding_source = str(row.get("funding_source") or "")
+        try:
+            parsed_funding_cost = float(raw_funding_cost)
+        except (TypeError, ValueError):
+            parsed_funding_cost = math.nan
+        if (
+            math.isfinite(parsed_funding_cost)
+            and raw_funding_source in {"broker_ledger", "local_simulation"}
+        ):
+            funding_cost = parsed_funding_cost
+            funding_source = raw_funding_source
+        else:
+            funding_cost = None
+            funding_source = "unavailable"
+    else:
+        funding_cost = None
+        funding_source = "unavailable"
+
     realized = gross_pnl - entry_fee - exit_fee
+    if funding_cost is not None:
+        realized -= funding_cost
 
     # BTC benchmark at exit for alpha/beta separation
     btc_exit = _btc_price_at_close()
-
-    # Estimate round-trip slippage for cost visibility
-    try:
-        from aletheia.config.loader import load_config as _lc
-        _cfg = _lc()
-        _sbps = _cfg.trading.slippage_bps
-        _entry_slip = row["entry_price"] * row["quantity"] * (_sbps / 10_000.0)
-        _exit_slip = exit_price * row["quantity"] * (_sbps / 10_000.0)
-        slippage_cost = round(_entry_slip + _exit_slip, 8)
-    except Exception:
-        slippage_cost = None
 
     # #103 fix: compute `closed_at` before update_position and reuse it below.
     # _close_serenity_feedback receives `row` — that's the PRE-CLOSE snapshot
     # fetched at line 111, so `row['closed_at']` is None and PostMortem's
     # hold_h was always 0. Stamp the value into row too so the Serenity hook
     # sees the honest close time.
-    closed_at = datetime.now(timezone.utc).isoformat()
+    supplied_closed_at = closed_at is not None
+    if closed_at is None:
+        closed_at = datetime.now(timezone.utc).isoformat()
+    else:
+        parsed_closed_at = datetime.fromisoformat(closed_at.replace("Z", "+00:00"))
+        if parsed_closed_at.tzinfo is None:
+            raise ValueError("closed_at must include an explicit timezone")
+        closed_at = parsed_closed_at.astimezone(timezone.utc).isoformat()
+
+    execution_mode = str(row.get("execution_mode") or "")
+    local_paper_fill = execution_mode == "paper_internal"
+    private_exchange_fill = verified_exit_evidence is not None
+    if private_exchange_fill:
+        if not isinstance(verified_exit_evidence, dict):
+            raise ValueError("verified_exit_evidence must be a mapping")
+        fill_ids = verified_exit_evidence.get("fill_ids")
+        try:
+            evidence_quantity = float(verified_exit_evidence.get("fill_quantity"))
+        except (TypeError, ValueError):
+            evidence_quantity = 0.0
+        tolerance = max(1e-12, float(row["quantity"]) * 1e-9)
+        if (
+            actual_exit_fee is None
+            or not supplied_closed_at
+            or not isinstance(fill_ids, list)
+            or not fill_ids
+            or len(fill_ids) != len(set(fill_ids))
+            or abs(evidence_quantity - float(row["quantity"])) > tolerance
+        ):
+            raise ValueError(
+                "verified exchange close requires complete private fill identity, "
+                "quantity, fee, and timestamp"
+            )
+
+    exit_fill_verified = local_paper_fill or private_exchange_fill
+    from aletheia.analytics.outcome_integrity import (
+        OUTCOME_SEMANTICS_VERSION,
+        outcome_write_eligibility,
+    )
+    from aletheia.portfolio.disappearance_confirmation import (
+        logical_account_fingerprint,
+    )
+
+    account_environment = _account_environment(execution_mode)
+    account_fingerprint = logical_account_fingerprint(
+        broker_id=execution_mode,
+        account_environment=account_environment,
+        execution_mode=execution_mode,
+    )
+    reconciliation_identity = {
+        "broker_id": execution_mode,
+        "account_environment": account_environment,
+        "account_fingerprint": account_fingerprint,
+        "execution_mode": execution_mode,
+        "position_id": position_id,
+        "symbol": row.get("symbol"),
+        "market_type": row.get("market_type"),
+        "direction": row.get("direction"),
+    }
+    if local_paper_fill:
+        outcome_evidence = {
+            "source": "local_paper_fill",
+            "fill_id": f"paper-close:{position_id}:{closed_at}",
+            "fill_price": float(exit_price),
+            "fill_quantity": float(row["quantity"]),
+            "fee": float(exit_fee),
+            "fee_currency": "USDT",
+            "filled_at": closed_at,
+        }
+    elif private_exchange_fill:
+        outcome_evidence = dict(verified_exit_evidence or {})
+    else:
+        outcome_evidence = {
+            "source": "broker_response_unverified",
+            "fill_price": float(exit_price),
+            "fill_quantity": float(row["quantity"]),
+            "fee_estimated": actual_exit_fee is None,
+            "closed_at": closed_at,
+        }
     exit_reasoning = build_exit_reasoning(
         row,
         exit_price=exit_price,
         reason=reason,
     )
-    update_position(
-        position_id,
-        status="closed",
-        current_price=exit_price,
-        realized_pnl=realized,
-        unrealized_pnl=0.0,
-        close_reason=reason,
-        closed_at=closed_at,
-        btc_exit_price=btc_exit,
-        entry_fee=round(entry_fee, 8),
-        exit_fee=round(exit_fee, 8),
-        slippage_cost=slippage_cost,
-        exit_reasoning=json.dumps(exit_reasoning, sort_keys=True),
+    update_fields = {
+        "status": "closed",
+        "current_price": exit_price,
+        "realized_pnl": realized,
+        "unrealized_pnl": 0.0,
+        "close_reason": reason,
+        "closed_at": closed_at,
+        "btc_exit_price": btc_exit,
+        "entry_fee": round(entry_fee, 8),
+        "exit_fee": round(exit_fee, 8),
+        "funding_cost": funding_cost,
+        "funding_source": funding_source,
+        "slippage_cost": (
+            row.get("slippage_cost") if local_paper_fill else None
+        ),
+        "exit_reasoning": json.dumps(exit_reasoning, sort_keys=True),
+        "close_category": "strategy",
+        "exit_price_source": (
+            "local_fill" if local_paper_fill
+            else "broker_fill" if private_exchange_fill
+            else "unavailable"
+        ),
+        "exit_fill_verified": exit_fill_verified,
+        "reconciliation_identity": json.dumps(
+            reconciliation_identity,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        "reconciliation_evidence": json.dumps(
+            outcome_evidence,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ),
+        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+    }
+    outcome_eligible, outcome_exclusion_reason = outcome_write_eligibility(
+        {**row, **update_fields},
+        exit_fill_verified=exit_fill_verified,
     )
+    update_fields.update({
+        "outcome_eligible": outcome_eligible,
+        "outcome_exclusion_reason": outcome_exclusion_reason,
+    })
+    update_fields.update(_close_provenance())
+    audit_before = {
+        "status": row.get("status"),
+        "unrealized_pnl": row.get("unrealized_pnl"),
+    }
+    audit_after = {
+        "status": "closed",
+        "realized_pnl": realized,
+        "close_reason": reason,
+        "outcome_eligible": outcome_eligible,
+        "outcome_exclusion_reason": update_fields["outcome_exclusion_reason"],
+    }
+    audit_message = (
+        f"Position {row.get('symbol')} closed @ {exit_price} ({reason}); "
+        f"realized={realized}; outcome={update_fields['outcome_exclusion_reason']}"
+    )
+    # The Position outcome and the local-paper cash event are one accounting
+    # fact.  Commit them together so a ledger failure cannot leave a closed
+    # Position with unchanged cash (or release an eligible Outcome downstream).
+    # Re-read under the writer claim to make concurrent close attempts fail
+    # closed instead of both publishing close side effects.
+    with repo.transaction(immediate=True):
+        current = repo._select_one("positions", position_id)
+        if current is None:
+            raise ValueError(f"position not found: {position_id}")
+        if current.get("status") != "open":
+            raise ValueError(f"position is not open: {position_id}")
+        changed_fields = [
+            field
+            for field in _CLOSE_ECONOMIC_SNAPSHOT_FIELDS
+            if not _same_snapshot_value(row.get(field), current.get(field))
+        ]
+        if changed_fields:
+            raise RuntimeError(
+                "position economics changed before close; retry with a fresh "
+                f"snapshot ({', '.join(changed_fields)})"
+            )
+        if materialize_close is not None:
+            materialize_close()
+        repo.update_position(position_id, **update_fields)
+        if outcome_eligible:
+            from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
+
+            enqueue_outcome_hook_jobs({**row, **update_fields})
+        if row.get("execution_mode") == "paper_internal":
+            from aletheia.portfolio.paper_account import settle_position_closed
+
+            settle_position_closed(position_id, realized)
+        from aletheia.storage.models import AuditEvent
+
+        repo.insert_audit_event(AuditEvent(
+            actor=actor,
+            source=source,
+            event_type="position_closed",
+            entity_type="position",
+            entity_id=position_id,
+            before_state=json.dumps(audit_before, sort_keys=True),
+            after_state=json.dumps(audit_after, sort_keys=True),
+            message=audit_message,
+        ))
     row["closed_at"] = closed_at  # so the Serenity hook computes real hold_h
-    if row.get("execution_mode") == "paper_internal":
-        from aletheia.portfolio.paper_account import settle_position_closed
-        settle_position_closed(position_id, realized)
-    write_audit({
-        "actor": "system",
-        "source": "scheduler",
+    audit_payload = {
+        "actor": actor,
+        "source": source,
         "event_type": "position_closed",
         "entity_type": "position",
         "entity_id": position_id,
-        "before": {"status": row.get("status"), "unrealized_pnl": row.get("unrealized_pnl")},
-        "after": {"status": "closed", "realized_pnl": realized, "close_reason": reason},
-        "message": f"Position {row.get('symbol')} closed @ {exit_price} ({reason}); realized={realized}",
-    })
+        "before": audit_before,
+        "after": audit_after,
+        "message": audit_message,
+    }
+    try:
+        write_audit(audit_payload)
+    except Exception as exc:
+        # The database event above is the durable audit authority. A secondary
+        # JSONL sink outage after commit must not make the caller retry a close
+        # that has already settled, but it remains visible in process logs.
+        logger.error(
+            "position close JSONL audit sink failed (%s)", type(exc).__name__
+        )
     # Notify operator of trade close (Telegram + toast)
     try:
         from aletheia.notifications import notify_operator
         pnl_emoji = "+" if realized > 0 else ""
+        if outcome_eligible:
+            pnl_message = f"PnL: {pnl_emoji}{realized:.4f} USDT"
+        else:
+            pnl_message = (
+                f"Recorded PnL: {pnl_emoji}{realized:.4f} USDT"
+                "\nOutcome excluded from feedback: "
+                f"{outcome_exclusion_reason}"
+            )
         notify_operator(
             title=f"Position Closed: {row.get('symbol')}",
             message=(
                 f"{row.get('direction')} → {reason} @ {exit_price:.4f}\n"
-                f"PnL: {pnl_emoji}{realized:.4f} USDT"
+                + pnl_message
             ),
             level="info" if realized >= 0 else "warning",
             event_type="trade_notification",
@@ -302,19 +582,27 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         )
     except Exception:
         pass
-    # Resolve shadow trades for this position batch
-    try:
-        from aletheia.analytics.shadow_trades import resolve_shadow_trades_for_position
-        resolve_shadow_trades_for_position(row)
-    except Exception:
-        pass
-    # Serenity feedback loop: write PostMortem + close the source opportunity
-    try:
-        if row.get("trade_school") == "serenity" and row.get("opportunity_id"):
-            _close_serenity_feedback(row, realized, reason)
-    except Exception:
-        pass
-    return {"position_id": position_id, "realized_pnl": realized, "exit_price": exit_price, "reason": reason}
+    if outcome_eligible:
+        try:
+            from aletheia.portfolio.outcome_hooks import process_outcome_hook_jobs
+
+            process_outcome_hook_jobs(position_id=position_id)
+        except Exception as exc:
+            # The durable jobs were committed with the Position. A later worker
+            # will recover them even if the immediate delivery attempt itself fails.
+            logger.warning(
+                "post-commit Outcome hook dispatch failed for %s: %s",
+                position_id,
+                exc,
+            )
+    return {
+        "position_id": position_id,
+        "realized_pnl": realized,
+        "exit_price": exit_price,
+        "reason": reason,
+        "outcome_eligible": outcome_eligible,
+        "outcome_exclusion_reason": update_fields["outcome_exclusion_reason"],
+    }
 
 
 def today_raw_closed_realized_pnl(execution_mode: str | None = None) -> float:
@@ -646,6 +934,7 @@ def _close_serenity_feedback(position: dict, realized_pnl: float, close_reason: 
             failure_bucket = close_reason or "unknown"
 
     pm = SerenityPostMortem(
+        position_id=str(position.get("id") or "") or None,
         opportunity_id=opp_id,
         outcome=outcome,
         failure_bucket=failure_bucket,

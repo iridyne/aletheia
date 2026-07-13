@@ -134,8 +134,12 @@ def test_live_broker_averaging_in_accumulates_entry_fee_and_recomputes_liquidati
                  "aletheia.exchanges.binance.client"):
         monkeypatch.setattr(f"{_mod}.get_secret", _fake_get_secret, raising=False)
 
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage.repositories import _select_one, insert_trade_proposal
+    from aletheia.storage.models import RiskDecision, TradeProposal
+    from aletheia.storage.repositories import (
+        _select_one,
+        insert_risk_decision,
+        insert_trade_proposal,
+    )
 
     # Seed a Position with a KNOWN entry_fee so the accumulation delta is clear.
     entry_price_leg1 = 100.0
@@ -167,6 +171,16 @@ def test_live_broker_averaging_in_accumulates_entry_fee_and_recomputes_liquidati
         status="approved",
     )
     insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode=execution_mode,
+        proposal_execution_mode=execution_mode,
+        decision_role="authoritative",
+        evaluated_quantity=proposal.quantity,
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    insert_risk_decision(decision)
 
     # Stub the exchange client's async surface so no real network happens.
     import importlib
@@ -212,9 +226,21 @@ def test_live_broker_averaging_in_accumulates_entry_fee_and_recomputes_liquidati
     if hasattr(client_cls, "set_leverage"):
         monkeypatch.setattr(client_cls, "set_leverage", _fake_set_leverage)
 
-    _broker.execute_live_order(
+    from tests.specs.spec_pipeline_stop_propagation import (
+        _patch_private_fill_history,
+    )
+
+    _patch_private_fill_history(
+        monkeypatch,
+        broker_module,
+        client_module,
+        fill_price=fill_price_leg2,
+        fee_rate=fee_rate,
+    )
+
+    submission = _broker.execute_live_order(
         proposal_id=proposal.id,
-        risk_decision_id=None,
+        risk_decision_id=decision.id,
         symbol="BTC/USDT",
         market_type="usdt_futures",
         direction="long",
@@ -225,6 +251,14 @@ def test_live_broker_averaging_in_accumulates_entry_fee_and_recomputes_liquidati
         leverage=leverage,
         fee_rate=fee_rate,
     )
+    assert submission["order_status"] == "materialization_missing"
+
+    # Broker acknowledgement does not update accounting state. The averaging
+    # leg becomes durable only after order-matched private fills are reconciled.
+    from aletheia.execution.reconciliation import reconcile
+
+    reconciled = reconcile()
+    assert reconciled["filled"] == 1
 
     # The Position row should now reflect BOTH legs.
     updated = _select_one("positions", position_id)

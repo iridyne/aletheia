@@ -11,12 +11,124 @@ from aletheia.storage import repositories as repo
 from aletheia.storage.models import Position
 
 
+def _insert_entry_chain(
+    *,
+    position_id: str,
+    symbol: str,
+    market_type: str,
+    direction: str,
+    quantity: float,
+    price: float,
+    execution_mode: str,
+    entry_fee: float = 0.0,
+    proposal_id: str | None = None,
+    order_id: str | None = None,
+    opportunity_id: str | None = None,
+    strategy_id: str | None = None,
+) -> tuple[str, str, str]:
+    """Persist the real entry lineage required by an eligible close fixture."""
+    from aletheia.storage.models import (
+        Fill,
+        Opportunity,
+        Order,
+        RiskDecision,
+        TradeProposal,
+    )
+
+    opportunity_id = opportunity_id or f"opportunity-{position_id}"
+    proposal_id = proposal_id or f"proposal-{position_id}"
+    order_id = order_id or f"order-{position_id}"
+    opportunity = Opportunity(
+        id=opportunity_id,
+        symbol=symbol,
+        market="spot" if market_type == "spot" else "perp",
+        direction_bias=direction,
+        source_agent="fixture",
+        scanner_family="fixture",
+        linked_strategy_id=strategy_id,
+    )
+    repo.insert_opportunity(opportunity)
+    proposal = TradeProposal(
+        id=proposal_id,
+        strategy_id=strategy_id,
+        opportunity_id=opportunity.id,
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+        order_type="market",
+        quantity=quantity,
+        price=price,
+        execution_mode=execution_mode,
+        status="executed",
+    )
+    repo.insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        id=f"risk-{position_id}",
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode=execution_mode,
+        proposal_execution_mode=execution_mode,
+        decision_role="authoritative",
+        evaluated_quantity=quantity,
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    repo.insert_risk_decision(decision)
+    repo.insert_order(Order(
+        id=order_id,
+        proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        position_id=position_id,
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+        order_type="market",
+        quantity=quantity,
+        price=price,
+        execution_mode=execution_mode,
+        client_order_id=proposal.id,
+        status="filled",
+    ))
+    repo.insert_fill(Fill(
+        id=f"entry-fill-{position_id}",
+        order_id=order_id,
+        fill_price=price,
+        fill_quantity=quantity,
+        fee=entry_fee,
+        fee_source="reconciled",
+    ))
+    return opportunity.id, proposal.id, order_id
+
+
 def _position(*, execution_mode: str = "paper_internal") -> Position:
+    position_id = "position-close-split"
+    opportunity_id, proposal_id, order_id = _insert_entry_chain(
+        position_id=position_id,
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=2.0,
+        price=100.0,
+        execution_mode=execution_mode,
+        entry_fee=0.2,
+    )
     return Position(
-        id="position-close-split", symbol="BTC/USDT",
+        id=position_id, symbol="BTC/USDT",
         market_type="usdt_futures", direction="long", quantity=2.0,
         entry_price=100.0, current_price=105.0, unrealized_pnl=10.0,
         execution_mode=execution_mode, entry_fee=0.2,
+        entry_price_source=(
+            "local_fill" if execution_mode == "paper_internal" else "broker_fill"
+        ),
+        entry_fill_verified=True,
+        funding_cost=0.0,
+        funding_source=(
+            "local_simulation"
+            if execution_mode == "paper_internal"
+            else "broker_ledger"
+        ),
+        opportunity_id=opportunity_id,
+        proposal_id=proposal_id,
+        order_id=order_id,
     )
 
 
@@ -109,6 +221,7 @@ def test_administrative_close_converges_state_without_economic_side_effects(monk
     after = get_paper_account(event_limit=100)
     assert after["cash_balance_usdt"] == before["cash_balance_usdt"]
     assert not repo.has_paper_account_position_event("position_closed", position.id)
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
     from aletheia.portfolio.pnl import today_eligible_strategy_pnl
     assert today_eligible_strategy_pnl() == 0.0
     assert any(
@@ -140,7 +253,9 @@ def test_verified_close_uses_exact_fill_fees_and_settles_once(monkeypatch):
     hook_calls = []
     monkeypatch.setattr(
         outcome_closure, "_run_outcome_hooks",
-        lambda row, realized, reason: hook_calls.append((row["id"], realized, reason)),
+        lambda row, realized, reason: hook_calls.append(
+            (row["id"], realized, reason, row["closed_at"])
+        ),
     )
 
     evidence = _verified_result(position)
@@ -157,6 +272,11 @@ def test_verified_close_uses_exact_fill_fees_and_settles_once(monkeypatch):
     assert stored["outcome_eligible"] == 1
     assert stored["exit_fee"] == pytest.approx(0.2)
     assert stored["slippage_cost"] is None
+    expected_closed_at = datetime.fromtimestamp(
+        max(fill.filled_at_ms for fill in evidence.fills) / 1000,
+        tz=timezone.utc,
+    ).isoformat()
+    assert stored["closed_at"] == expected_closed_at
     assert get_paper_account(event_limit=100)["cash_balance_usdt"] == pytest.approx(
         before_cash + 21.6
     )
@@ -165,6 +285,7 @@ def test_verified_close_uses_exact_fill_fees_and_settles_once(monkeypatch):
     assert len(hook_calls) == 1
     assert hook_calls[0][0] == position.id
     assert hook_calls[0][1] == pytest.approx(21.6)
+    assert hook_calls[0][3] == expected_closed_at
 
     repeated = outcome_closure.close_position_verified(
         position.id, evidence, reason="take_profit"
@@ -222,6 +343,67 @@ def test_verified_close_rejects_missing_fee_or_quantity_mismatch():
     assert repo._select_one("positions", position.id)["status"] == "open"
 
 
+def test_verified_futures_close_does_not_apply_untrusted_funding_value():
+    """A number without a ledger source is not realized funding economics."""
+    from aletheia.portfolio.outcome_closure import close_position_verified
+
+    position = _position(execution_mode="bitget_demo")
+    position.entry_price_source = "broker_fill"
+    position.entry_fill_verified = True
+    position.proposal_id = "proposal-1"
+    position.order_id = "order-1"
+    position.opportunity_id = "opportunity-1"
+    position.funding_cost = 5.0
+    position.funding_source = "unavailable"
+    repo.insert_position(position)
+
+    result = close_position_verified(position.id, _verified_result(position))
+
+    stored = repo._select_one("positions", position.id)
+    assert result["realized_pnl"] == pytest.approx(21.6)
+    assert stored["funding_cost"] is None
+    assert stored["funding_source"] == "unavailable"
+    assert stored["outcome_eligible"] == 0
+    assert stored["outcome_exclusion_reason"] == "incomplete_funding_economics"
+
+
+def test_verified_close_applies_clean_window_before_running_outcome_hooks(monkeypatch):
+    from aletheia.portfolio import outcome_closure
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    evidence = _verified_result(position)
+    old_ms = int(
+        datetime(2026, 7, 10, tzinfo=timezone.utc).timestamp() * 1000
+    )
+    old_evidence = replace(
+        evidence,
+        fills=tuple(
+            replace(fill, filled_at_ms=old_ms + index * 1000)
+            for index, fill in enumerate(evidence.fills)
+        ),
+    )
+    hook_calls = []
+    monkeypatch.setattr(
+        outcome_closure,
+        "_run_outcome_hooks",
+        lambda row, realized, reason: hook_calls.append(row["id"]),
+    )
+
+    result = outcome_closure.close_position_verified(
+        position.id,
+        old_evidence,
+        reason="take_profit",
+    )
+
+    stored = repo._select_one("positions", position.id)
+    assert result["outcome_eligible"] is False
+    assert result["outcome_exclusion_reason"] == "pre_clean_window"
+    assert stored["outcome_eligible"] == 0
+    assert stored["outcome_exclusion_reason"] == "pre_clean_window"
+    assert hook_calls == []
+
+
 def test_ready_candidate_uses_protocol_and_resolves_after_admin_close(monkeypatch):
     from dataclasses import replace
     from aletheia.portfolio import disappearance_settlement
@@ -264,7 +446,8 @@ def test_ready_candidate_uses_protocol_and_resolves_after_admin_close(monkeypatc
     assert stored_candidate["status"] == "settled_administrative"
 
 
-def test_live_ready_candidate_remains_alert_only_without_client_query(monkeypatch):
+def test_live_ready_candidate_queries_read_only_and_inconclusive_stays_open(monkeypatch):
+    from dataclasses import replace
     from aletheia.portfolio import disappearance_settlement
     from aletheia.storage.models import PositionDisappearanceCandidate
 
@@ -280,14 +463,31 @@ def test_live_ready_candidate_remains_alert_only_without_client_query(monkeypatc
         semantics_version="oi-v1",
     )
     repo.insert_position_disappearance_candidate(candidate)
+    queried_modes = []
+
+    class FakeClient:
+        async def get_verified_position_exit(self, request):
+            queried_modes.append(request.execution_mode)
+            return replace(
+                _verified_result(position),
+                state="inconclusive",
+                reason="fill_history_incomplete",
+                fills=(),
+                history_complete=False,
+                account_environment=request.account_environment,
+                account_scope=request.account_scope,
+            )
+
     monkeypatch.setattr(
-        disappearance_settlement, "_client_for_mode",
-        lambda mode: (_ for _ in ()).throw(AssertionError("live must not query/close")),
+        disappearance_settlement,
+        "_client_for_mode",
+        lambda mode: FakeClient(),
     )
     result = disappearance_settlement.settle_ready_disappearance_candidate(
         candidate.id
     )
-    assert result["reason"] == "live_alert_only"
+    assert queried_modes == ["bitget_live_limited"]
+    assert result["reason"] == "fill_history_incomplete"
     assert repo._select_one("positions", position.id)["status"] == "open"
 
 

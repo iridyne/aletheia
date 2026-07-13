@@ -172,10 +172,15 @@ class ControlLoopHarness:
             direction="long", quantity=0.001, execution_mode="paper_internal",
             status="executed", created_at=filled_at.isoformat(),
         )
+        repo.insert_trade_proposal(proposal)
         decision = RiskDecision(
             id=self._next_id("risk"), proposal_id=proposal.id, approved=True,
             allowed_execution_mode="paper_internal",
-            proposal_execution_mode="paper_internal", created_at=filled_at.isoformat(),
+            proposal_execution_mode="paper_internal",
+            decision_role="authoritative",
+            evaluated_quantity=proposal.quantity,
+            proposal_commit_hash=proposal.commit_hash,
+            created_at=filled_at.isoformat(),
         )
         order = Order(
             id=self._next_id("order"), proposal_id=proposal.id,
@@ -184,7 +189,6 @@ class ControlLoopHarness:
             execution_mode="paper_internal", status="filled",
             created_at=filled_at.isoformat(), filled_at=filled_at.isoformat(),
         )
-        repo.insert_trade_proposal(proposal)
         repo.insert_risk_decision(decision)
         repo.insert_order(order)
         repo.insert_fill(Fill(

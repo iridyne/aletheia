@@ -100,7 +100,7 @@ def test_daily_loss_uses_authoritative_account_snapshot(monkeypatch):
             source="unavailable", reason="account_event_read_failed", event_count=0,
         ),
     )
-    unavailable = eng.evaluate_proposal(proposal)
+    unavailable = eng.evaluate_proposal(proposal, decision_role="preflight")
     assert "account_loss_unavailable:account_event_read_failed" in unavailable.violations
     assert not any(v.startswith("max_daily_loss_exceeded") for v in unavailable.violations)
 
@@ -111,7 +111,7 @@ def test_daily_loss_uses_authoritative_account_snapshot(monkeypatch):
             source="paper_account_ledger", reason="available", event_count=1,
         ),
     )
-    breached = eng.evaluate_proposal(proposal)
+    breached = eng.evaluate_proposal(proposal, decision_role="preflight")
     assert any(v.startswith("max_daily_loss_exceeded:-100.0") for v in breached.violations)
 
 
@@ -1016,8 +1016,16 @@ def test_gateway_has_no_risk_free_broker_path():
     )
     source_text = src_path.read_text(encoding="utf-8")
 
-    # 1. evaluate_proposal must be imported.
-    assert "from aletheia.risk.engine import evaluate_proposal" in source_text, (
+    # 1. evaluate_proposal must be imported (alone or in a grouped import).
+    tree = ast.parse(source_text)
+    imported_risk_names = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "aletheia.risk.engine"
+        for alias in node.names
+    }
+    assert "evaluate_proposal" in imported_risk_names, (
         "gateway.py must import evaluate_proposal from risk engine"
     )
 

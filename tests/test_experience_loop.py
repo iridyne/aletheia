@@ -160,7 +160,7 @@ def _seed_filled_short(strategy_id: str = "s1") -> None:
                                              market_type="futures", direction="short"))
     repo.insert_order(Order(id="o1", proposal_id="p1", symbol="SOL/USDT", market_type="futures",
                             direction="short", order_type="market", quantity=0.3,
-                            execution_mode="bitget_demo"))
+                            execution_mode="bitget_demo", source="adopted"))
     repo.insert_fill(Fill(id="f1", order_id="o1", fill_price=140.0, fill_quantity=0.3))
 
 

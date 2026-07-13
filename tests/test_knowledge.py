@@ -136,6 +136,7 @@ async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monke
     )
     repo.insert_trade_proposal(proposal)
     order = Order(
+        source="adopted",
         proposal_id=proposal.id,
         risk_decision_id="x",
         symbol="BTCUSDT",

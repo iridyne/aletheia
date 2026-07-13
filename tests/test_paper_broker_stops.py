@@ -31,11 +31,18 @@ def test_paper_order_stores_stop_and_tp(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     import pytest
     from aletheia.execution.paper_broker import execute_paper_order
+    from tests.execution_authority import seed_order_authority
+    seed_order_authority(
+        proposal_id="p1", risk_decision_id="r1", symbol="BTC/USDT",
+        market_type="spot", direction="long", order_type="market",
+        quantity=1.0, price=100.0, execution_mode="paper_internal",
+        stop_price=98.0,
+    )
     # default_take_profit_pct=4.0, slippage_bps=5 (default)
     # fill_price = 100 * (1 + 5/10000) = 100.05; TP = 100.05 * 1.04 ≈ 104.052
     result = execute_paper_order(
         proposal_id="p1", risk_decision_id="r1",
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         order_type="market", quantity=1.0, price=100.0,
         execution_mode="paper_internal", stop_price=98.0,
     )
@@ -59,16 +66,27 @@ def test_average_in_accumulates_entry_fee_and_slippage(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "load_config", lambda: _C())
 
     from aletheia.execution.paper_broker import execute_paper_order
+    from tests.execution_authority import seed_order_authority
+    seed_order_authority(
+        proposal_id="p1", risk_decision_id="r1", symbol="BTC/USDT",
+        market_type="spot", direction="long", order_type="market",
+        quantity=1.0, price=100.0, execution_mode="paper_internal",
+    )
     r1 = execute_paper_order(
         proposal_id="p1", risk_decision_id="r1",
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         order_type="market", quantity=1.0, price=100.0,
         execution_mode="paper_internal",
     )
     pid = r1["position_id"]
+    seed_order_authority(
+        proposal_id="p2", risk_decision_id="r2", symbol="BTC/USDT",
+        market_type="spot", direction="long", order_type="market",
+        quantity=2.0, price=110.0, execution_mode="paper_internal",
+    )
     execute_paper_order(
         proposal_id="p2", risk_decision_id="r2",
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         order_type="market", quantity=2.0, price=110.0,
         execution_mode="paper_internal",
     )
@@ -89,17 +107,30 @@ def test_average_in_accumulates_entry_fee_and_slippage(tmp_path, monkeypatch):
 def test_average_in_tightens_stop_to_more_protective(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.execution.paper_broker import execute_paper_order
+    from tests.execution_authority import seed_order_authority
+    seed_order_authority(
+        proposal_id="p1", risk_decision_id="r1", symbol="ETH/USDT",
+        market_type="spot", direction="long", order_type="market",
+        quantity=1.0, price=200.0, execution_mode="paper_internal",
+        stop_price=196.0,
+    )
     r1 = execute_paper_order(
         proposal_id="p1", risk_decision_id="r1",
-        symbol="ETHUSDT", market_type="spot", direction="long",
+        symbol="ETH/USDT", market_type="spot", direction="long",
         order_type="market", quantity=1.0, price=200.0,
         execution_mode="paper_internal", stop_price=196.0,
     )
     # second fill into same position with a higher stop; for a long the tighter
     # (more protective) stop wins -> max(196, 205) = 205 (risk-reducing).
+    seed_order_authority(
+        proposal_id="p2", risk_decision_id="r2", symbol="ETH/USDT",
+        market_type="spot", direction="long", order_type="market",
+        quantity=1.0, price=210.0, execution_mode="paper_internal",
+        stop_price=205.0,
+    )
     execute_paper_order(
         proposal_id="p2", risk_decision_id="r2",
-        symbol="ETHUSDT", market_type="spot", direction="long",
+        symbol="ETH/USDT", market_type="spot", direction="long",
         order_type="market", quantity=1.0, price=210.0,
         execution_mode="paper_internal", stop_price=205.0,
     )

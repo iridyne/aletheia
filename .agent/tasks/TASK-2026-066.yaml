@@ -55,15 +55,16 @@ ownership:
   expires_at: '2026-07-16T07:48:08.118358Z'
 base_commit: c95b2be34d93368182da21fc81f87e71cf5f64e1
 next_action:
-  command_key: spec_pipeline_execution_chain
+  command_key: specs
   reason: >-
-    Turn the focused missing Risk to Execution claims green with the smallest production
-    change, only after explicit owner approval for changes spanning both controlled
-    modules.
+    Commit the completed downstream trade-chain repair, rerun and register same-HEAD
+    Risk, Execution, full-spec, and architecture evidence, then run strict workflow
+    validation.
 blockers:
 - >-
-  Multiple change-controlled modules are required: aletheia/risk and
-  aletheia/execution. Explicit owner approval is pending.
+  B-class Operator timing and Bitget original-order protection changes require the
+  owner to create a new policy epoch and observation window before merge; prior and
+  new observation data must not be mixed.
 verification: []
 handoff: .agent/handoffs/TASK-2026-066.md
-updated_at: '2026-07-13T11:07:14Z'
+updated_at: '2026-07-13T15:06:36Z'

@@ -20,8 +20,15 @@ async def client(tmp_path, monkeypatch):
     reset_db()
     sq._db_conn = None
     import sqlite3
-    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    conn = sqlite3.connect(
+        str(tmp_path / "app.db"),
+        check_same_thread=False,
+        isolation_level=None,
+    )
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
     sq._db_conn = conn
     run_migrations()
     transport = ASGITransport(app=app)
@@ -36,7 +43,7 @@ async def test_approve_proposal_executes_paper(client, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
 
-    p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                       quantity=0.001, price=60000, execution_mode="paper_internal")
     repo.insert_trade_proposal(p)
 
@@ -61,7 +68,7 @@ async def test_approve_proposal_idempotent_after_execute(client, monkeypatch):
     save_config(cfg)
 
     p = TradeProposal(
-        symbol="BTCUSDT",
+        symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         quantity=0.001,
@@ -107,6 +114,119 @@ async def test_approve_missing_proposal_404(client):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("execution_mode", ["bitget_demo", "okx_demo", "bitget_live_limited"])
+async def test_approve_paper_rejects_non_paper_proposal_without_mutation(
+    client, monkeypatch, execution_mode
+):
+    """The paper approval endpoint must never rewrite stored execution intent."""
+    import aletheia.execution.gateway as gateway
+
+    calls = []
+    monkeypatch.setattr(
+        gateway,
+        "execute_existing_proposal",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    p = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60000,
+        execution_mode=execution_mode,
+    )
+    repo.insert_trade_proposal(p)
+
+    resp = await client.post(f"/api/proposals/{p.id}/approve-paper")
+
+    assert resp.status_code == 409
+    stored = repo.get_trade_proposal(p.id)
+    assert stored["status"] == "pending"
+    assert stored["execution_mode"] == execution_mode
+    assert calls == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "unresolved_status",
+    [
+        "approved",
+        "executing",
+        "submitted",
+        "partially_filled",
+        "submission_unknown",
+        "materialization_missing",
+    ],
+)
+async def test_approve_paper_does_not_reapprove_unresolved_execution(
+    client, monkeypatch, unresolved_status
+):
+    """A stale approval request must not resend an order with an unknown outcome."""
+    import aletheia.execution.gateway as gateway
+
+    calls = []
+    monkeypatch.setattr(
+        gateway,
+        "execute_existing_proposal",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    p = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60000,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(p)
+    repo.update_trade_proposal(p.id, status=unresolved_status)
+
+    resp = await client.post(f"/api/proposals/{p.id}/approve-paper")
+
+    assert resp.status_code == 409
+    assert repo.get_trade_proposal(p.id)["status"] == unresolved_status
+    assert calls == []
+
+
+@pytest.mark.anyio
+async def test_approve_paper_sanitizes_unexpected_execution_exception(client, monkeypatch):
+    """Raw exception text must not reach the API response or durable audit log."""
+    import aletheia.execution.gateway as gateway
+
+    sensitive = "api_secret=do-not-leak-this-value"
+
+    def _raise_unexpected(*args, **kwargs):
+        raise RuntimeError(sensitive)
+
+    monkeypatch.setattr(gateway, "execute_existing_proposal", _raise_unexpected)
+    p = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60000,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(p)
+
+    resp = await client.post(f"/api/proposals/{p.id}/approve-paper")
+
+    assert resp.status_code == 200
+    execution = resp.json()["execution"]
+    assert execution == {
+        "status": "error",
+        "reason_code": "paper_execution_failed",
+        "message": "Paper execution could not be completed.",
+    }
+    assert repo.get_trade_proposal(p.id)["status"] == "error"
+    assert sensitive not in resp.text
+    from aletheia.config.loader import get_data_dir
+    audit_text = (get_data_dir() / "logs" / "audit.jsonl").read_text(encoding="utf-8")
+    assert sensitive not in audit_text
+    assert "paper_execution_failed" in audit_text
+
+
+@pytest.mark.anyio
 async def test_portfolio_endpoint(client):
     repo.insert_position(Position(symbol="SOLUSDT", market_type="spot", direction="long",
                                   quantity=10.0, entry_price=150.0, execution_mode="bitget_demo"))
@@ -144,7 +264,7 @@ async def test_paper_order_persists_with_fk_enforcement(tmp_path, monkeypatch):
     cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
 
     from aletheia.execution.gateway import submit_proposal
-    result = submit_proposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    result = submit_proposal(symbol="BTC/USDT", market_type="spot", direction="long",
                              quantity=0.001, price=60000, execution_mode="paper_internal")
     assert result["status"] == "executed"
     assert len(repo.list_orders()) == 1

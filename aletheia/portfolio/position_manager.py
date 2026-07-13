@@ -17,7 +17,7 @@ import logging
 from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config
-from aletheia.portfolio.pnl import close_position, _latest_price
+from aletheia.portfolio.pnl import _latest_price
 from aletheia.storage.repositories import list_positions
 
 logger = logging.getLogger("aletheia.position_manager")
@@ -77,13 +77,22 @@ def close_position_routed(
         from aletheia.execution.okx_broker import close_okx_position
         result = close_okx_position(position_id, reason=reason)
     else:
-        # paper_internal — pure local simulation; needs a mark to realize PnL.
+        # paper_internal — pure local simulation; needs an observed mark. The
+        # paper broker applies adverse close-side slippage and atomically writes
+        # the close Order/Fill with Position and cash settlement.
         if fallback_exit_price is None:
             px = _latest_price(row["symbol"]) if row else None
             if px is None:
                 raise RuntimeError(f"no price available to close paper position {position_id}")
             fallback_exit_price = float(px)
-        result = close_position(position_id, exit_price=fallback_exit_price, reason=reason)
+        from aletheia.execution.paper_broker import close_paper_position
+        result = close_paper_position(
+            position_id,
+            mark_price=fallback_exit_price,
+            reason=reason,
+            actor=decision_actor,
+            source=decision_source,
+        )
 
     # Only overwrite the generic factual explanation after a confirmed close.
     # This deliberately sits outside the broker dispatch: no exchange adapter or
@@ -281,57 +290,6 @@ def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
     return None
 
 
-def _sync_exchange_closed(cfg) -> int:
-    """Detect positions the exchange bracket already closed and mark them locally.
-
-    For bitget_demo positions: fetches live exchange positions and closes any local
-    'open' position that the exchange no longer holds. Only runs when
-    exchange_tpsl_enabled=True to avoid spurious calls in pure-paper mode.
-    Returns count of positions synced.
-    """
-    if not cfg.trading.exchange_tpsl_enabled:
-        return 0
-    demo_positions = [p for p in list_positions(status="open") if p.get("execution_mode") == "bitget_demo"]
-    if not demo_positions:
-        return 0
-
-    try:
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.data.symbols import to_bitget
-        import asyncio
-        from concurrent.futures import ThreadPoolExecutor
-        client = BitgetClient(mode=cfg.exchange.mode)
-        try:
-            asyncio.get_running_loop()
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                exchange_pos = pool.submit(asyncio.run, client.get_positions()).result()
-        except RuntimeError:
-            exchange_pos = asyncio.run(client.get_positions())
-    except Exception as e:
-        logger.warning("_sync_exchange_closed: get_positions failed: %s", e)
-        return 0
-
-    # Build set of (canonical_symbol, hold_side) that exchange still holds
-    exchange_open: set = set()
-    for ep in exchange_pos:
-        qty = float(ep.quantity) if hasattr(ep, "quantity") else 0.0
-        if qty > 0:
-            from aletheia.data.symbols import to_canonical
-            exchange_open.add((to_canonical(ep.symbol), ep.side))
-
-    synced = 0
-    for p in demo_positions:
-        hold_side = "long" if p["direction"] in ("long", "buy") else "short"
-        if (p["symbol"], hold_side) not in exchange_open:
-            exit_price = _latest_price(p["symbol"]) or float(p.get("current_price") or p["entry_price"])
-            try:
-                close_position(p["id"], exit_price=float(exit_price), reason="exchange_bracket_triggered")
-                synced += 1
-            except Exception as e:
-                logger.warning("_sync_exchange_closed: close failed %s: %s", p["id"], e)
-    return synced
-
-
 def evaluate_open_positions() -> dict:
     """Evaluate all open paper positions and close any that hit an exit rule.
 
@@ -342,9 +300,6 @@ def evaluate_open_positions() -> dict:
     closed = 0
     checked = 0
     market_exits = 0
-
-    # Check for exchange-bracket-triggered closes before the local polling loop
-    _sync_exchange_closed(cfg)
 
     # NOTE (P0 defuse, 2026-07-02): RuleSet exit signals no longer auto-close
     # positions. Exit authority is SL/TP/max_hold/market-aware/PI only — a
@@ -419,7 +374,14 @@ def evaluate_open_positions() -> dict:
             # Route through the shared helper so the exchange leg is never skipped
             # (live positions are already filtered out above; demo modes still need
             # their real exchange close, paper closes locally).
-            close_result = close_position_routed(p["id"], reason, fallback_exit_price=exit_price)
+            reference_price = (
+                float(price)
+                if p.get("execution_mode") == "paper_internal"
+                else exit_price
+            )
+            close_result = close_position_routed(
+                p["id"], reason, fallback_exit_price=reference_price,
+            )
             if close_result.get("closed", True):
                 closed += 1
         except Exception as e:

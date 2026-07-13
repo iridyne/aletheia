@@ -1,6 +1,7 @@
 """Data API routes for dashboard consumption."""
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Response
@@ -32,6 +33,7 @@ from aletheia.trading.serenity_evidence import (
 )
 
 router = APIRouter(prefix="/api", tags=["data"])
+logger = logging.getLogger("aletheia.server.routes.data")
 
 VALID_KNOWLEDGE_TYPES = {
     "calibration_report",
@@ -636,19 +638,32 @@ async def get_proposal(proposal_id: str):
 
 
 @router.post("/proposals/{proposal_id}/approve-paper")
-async def approve_proposal(proposal_id: str):
-    """Approve a proposal and route it through the execution gateway (paper)."""
+def approve_proposal(proposal_id: str):
+    """Approve a stored local-paper proposal through the execution gateway."""
     _ensure_db()
     from aletheia.files.jsonl import write_audit
     p = repo.get_trade_proposal(proposal_id)
     if p is None:
         raise HTTPException(404, "Proposal not found")
 
+    execution_mode = str(p.get("execution_mode") or "")
+    if execution_mode != "paper_internal":
+        raise HTTPException(
+            409,
+            "Only a proposal stored for local paper execution can be approved here; "
+            "the stored execution mode was not changed.",
+        )
+
     status = str(p.get("status") or "").lower()
     if status == "executed":
         return {"proposal_id": proposal_id, "execution": {"status": "already_executed", "proposal_id": proposal_id}}
     if status in {"error", "rejected"}:
         return {"proposal_id": proposal_id, "execution": {"status": status, "proposal_id": proposal_id}}
+    if status != "pending":
+        raise HTTPException(
+            409,
+            "This proposal is no longer awaiting paper approval; no order was sent.",
+        )
 
     old_status = status
     repo.update_trade_proposal(proposal_id, status="approved")
@@ -659,13 +674,28 @@ async def approve_proposal(proposal_id: str):
     from aletheia.execution.gateway import execute_existing_proposal
     try:
         result = execute_existing_proposal(proposal_id, execution_mode="paper_internal")
-    except Exception as e:
+    except Exception as exc:
+        # Configuration/exchange exceptions can contain credentials or signed
+        # request details. Keep only the class in process logs and use a stable,
+        # secret-free reason in the API response and durable audit trail.
+        logger.warning(
+            "Paper approval execution failed for proposal %s (%s)",
+            proposal_id,
+            type(exc).__name__,
+        )
         repo.update_trade_proposal(proposal_id, status="error")
         write_audit({"actor": "system", "source": "dashboard", "event_type": "execution_error",
                      "entity_type": "trade_proposal", "entity_id": proposal_id,
                      "before": {"status": "approved"}, "after": {"status": "error"},
-                     "message": f"Execution failed after approval: {e}"})
-        return {"proposal_id": proposal_id, "execution": {"status": "error", "message": str(e)}}
+                     "message": "paper_execution_failed: Paper execution could not be completed."})
+        return {
+            "proposal_id": proposal_id,
+            "execution": {
+                "status": "error",
+                "reason_code": "paper_execution_failed",
+                "message": "Paper execution could not be completed.",
+            },
+        }
     return {"proposal_id": proposal_id, "execution": result}
 
 

@@ -10,7 +10,7 @@ from aletheia.storage.models import (
     PositionDisappearanceObservation, ReconciliationIntegrityIncident,
     StrategyRecord, KnowledgeItem, RuntimeSession,
     SerenityTheme, SerenityEvidence, SerenityOpportunity, SerenityRiskGate,
-    SerenityReplaySnapshot, SerenityPostMortem, SerenityClaim,
+    SerenityReplaySnapshot, SerenityPostMortem, SerenityClaim, OutcomeHookJob,
     PaperAccountEvent,
 )
 
@@ -563,19 +563,47 @@ def _compute_proposal_hash(p: TradeProposal) -> str:
 
 
 def insert_trade_proposal(p: TradeProposal) -> None:
-    if p.commit_hash is None:
-        # Wire parent_hash to the most-recent already-hashed proposal (global
-        # single chain). rowid DESC matches insertion order. NULL parent_hash
-        # is correct for the very first hashed proposal in the table.
+    # Provenance is immutable Proposal identity, so stamp it on both the model
+    # and persisted payload *before* computing the hash. Hashing first produced
+    # a commit that could never be verified from a real runtime-stamped row.
+    stamped = _stamp_provenance(p.model_dump())
+    for field in _PROVENANCE_FIELDS:
+        if field in stamped:
+            setattr(p, field, stamped[field])
+
+    # Pydantic assignment validation is intentionally not global.  A caller can
+    # therefore assign an integer to a float field after construction; SQLite
+    # reads that REAL back as a float, and the same immutable content would hash
+    # differently (59000 vs 59000.0). Revalidate once at the persistence boundary
+    # and copy normalized values onto the caller model before hashing.
+    normalized = TradeProposal.model_validate(p.model_dump())
+    for field, value in normalized.model_dump().items():
+        setattr(p, field, value)
+
+    # Parent lookup + insert is one short writer claim. Without this, two
+    # concurrent proposals can both select the same parent and fork the global
+    # append-only chain even though each individual hash is valid.
+    with transaction(immediate=True):
         db = get_db()
         row = db.execute(
             "SELECT commit_hash FROM trade_proposals "
             "WHERE commit_hash IS NOT NULL "
             "ORDER BY rowid DESC LIMIT 1"
         ).fetchone()
-        p.parent_hash = row[0] if row else None
-        p.commit_hash = _compute_proposal_hash(p)
-    _insert("trade_proposals", _stamp_provenance(p.model_dump()))
+        current_tip = row[0] if row else None
+        if p.commit_hash is None:
+            p.parent_hash = current_tip
+            p.commit_hash = _compute_proposal_hash(p)
+        else:
+            if _compute_proposal_hash(p) != p.commit_hash:
+                raise ValueError("proposal commit hash does not match immutable content")
+            # A caller may pre-compute a valid child of an earlier tip.  The
+            # hash is individually valid but accepting it would fork the global
+            # Proposal chain.  Recompute against the new tip or reject; never
+            # accept two siblings.
+            if p.parent_hash != current_tip:
+                raise ValueError("proposal parent hash is stale")
+        _insert("trade_proposals", p.model_dump())
 
 
 def update_trade_proposal(pid: str, **kwargs) -> None:
@@ -594,6 +622,53 @@ def get_trade_proposal(pid: str) -> dict | None:
 
 def insert_risk_decision(d: RiskDecision) -> None:
     _insert("risk_decisions", _stamp_provenance(d.model_dump()))
+
+
+def get_authoritative_risk_decision(
+    proposal_id: str,
+    proposal_commit_hash: str | None,
+    evaluated_quantity: float | None,
+) -> dict | None:
+    """Return the authoritative decision for one immutable evaluated snapshot."""
+    row = get_db().execute(
+        """
+        SELECT *
+        FROM risk_decisions
+        WHERE proposal_id = ?
+          AND decision_role = 'authoritative'
+          AND proposal_commit_hash IS ?
+          AND evaluated_quantity IS ?
+        ORDER BY rowid ASC
+        LIMIT 1
+        """,
+        (proposal_id, proposal_commit_hash, evaluated_quantity),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def insert_authoritative_risk_decision(d: RiskDecision) -> tuple[dict, bool]:
+    """Insert one authoritative snapshot decision, or return its prior result.
+
+    ``BEGIN IMMEDIATE`` makes the lookup-and-insert atomic across worker threads
+    and processes. The partial unique index is the final guard. Historical rows
+    have ``decision_role='legacy'`` and therefore never make a migration fail.
+    """
+    if d.decision_role != "authoritative":
+        raise ValueError("authoritative decision insert requires decision_role='authoritative'")
+
+    with transaction(immediate=True):
+        existing = get_authoritative_risk_decision(
+            d.proposal_id,
+            d.proposal_commit_hash,
+            d.evaluated_quantity,
+        )
+        if existing is not None:
+            return existing, False
+        insert_risk_decision(d)
+        stored = _select_one("risk_decisions", d.id)
+        if stored is None:  # defensive: an acknowledged insert must be readable
+            raise RuntimeError("authoritative risk decision insert was not persisted")
+        return stored, True
 
 
 def list_risk_decisions(limit: int = 50) -> list[dict]:
@@ -622,7 +697,96 @@ def get_order(oid: str) -> dict | None:
     return _select_one("orders", oid)
 
 
+def validate_native_order_authority(order: Order | dict) -> None:
+    """Fail closed when a new native Order lacks its immutable authority.
+
+    Entry Orders consume exactly one approved authoritative RiskDecision. Close
+    Orders consume the already-open Position they reduce. Adopted exchange state
+    is deliberately exempt because its synthetic chain records observation, not
+    a new Aletheia trading decision.
+    """
+    data = order.model_dump() if isinstance(order, Order) else dict(order)
+    if data.get("source", "native") != "native":
+        return
+
+    position_id = data.get("position_id")
+    position = _select_one("positions", position_id) if position_id else None
+    pending_owner = bool(
+        position
+        and position.get("pending_close_order_id") == data.get("id")
+    )
+    is_close = bool(data.get("close_reason")) or pending_owner
+    if is_close:
+        if position is None:
+            raise ValueError("native close Order requires an existing Position")
+        if position.get("status") != "open":
+            raise ValueError("native close Order requires an open Position")
+        for field in ("proposal_id", "symbol", "market_type", "direction", "execution_mode"):
+            if data.get(field) != position.get(field):
+                raise ValueError(f"native close Order {field} does not match Position")
+        requested = float(data.get("quantity") or 0.0)
+        position_quantity = float(position.get("quantity") or 0.0)
+        tolerance = max(1e-12, position_quantity * 1e-9)
+        if requested <= 0 or abs(requested - position_quantity) > tolerance:
+            raise ValueError("native close Order quantity does not match Position")
+        expected_client_id = f"close-{position_id}"
+        if data.get("client_order_id") != expected_client_id:
+            raise ValueError("native close Order client identity is not durable")
+        return
+
+    proposal_id = data.get("proposal_id")
+    risk_decision_id = data.get("risk_decision_id")
+    if not proposal_id or not risk_decision_id:
+        raise ValueError(
+            "native entry Order requires Proposal and authoritative RiskDecision"
+        )
+    proposal = get_trade_proposal(proposal_id)
+    decision = _select_one("risk_decisions", risk_decision_id)
+    if proposal is None or proposal.get("source") != "native":
+        raise ValueError("native entry Order requires a native Proposal")
+    if decision is None or decision.get("proposal_id") != proposal_id:
+        raise ValueError("native entry Order RiskDecision does not match Proposal")
+    if not bool(decision.get("approved")):
+        raise ValueError("native entry Order requires an approved RiskDecision")
+    if decision.get("decision_role") != "authoritative":
+        raise ValueError("native entry Order requires an authoritative RiskDecision")
+
+    from aletheia.storage.models import TradeProposal
+
+    stored_hash = proposal.get("commit_hash")
+    if not stored_hash or _compute_proposal_hash(
+        TradeProposal.model_validate(proposal)
+    ) != stored_hash:
+        raise ValueError("native entry Order Proposal integrity check failed")
+    if decision.get("proposal_commit_hash") != stored_hash:
+        raise ValueError("native entry Order RiskDecision snapshot is stale")
+
+    evaluated_quantity = decision.get("evaluated_quantity")
+    try:
+        evaluated_quantity = float(evaluated_quantity)
+        order_quantity = float(data.get("quantity"))
+    except (TypeError, ValueError):
+        raise ValueError("native entry Order lacks evaluated quantity authority") from None
+    tolerance = max(1e-12, abs(evaluated_quantity) * 1e-9)
+    if evaluated_quantity <= 0 or abs(order_quantity - evaluated_quantity) > tolerance:
+        raise ValueError("native entry Order quantity exceeds its RiskDecision snapshot")
+
+    execution_mode = data.get("execution_mode")
+    if (
+        decision.get("allowed_execution_mode") != execution_mode
+        or decision.get("proposal_execution_mode") != proposal.get("execution_mode")
+        or execution_mode != proposal.get("execution_mode")
+    ):
+        raise ValueError("native entry Order execution mode lacks matching authority")
+    for field in ("symbol", "market_type", "direction", "order_type"):
+        if data.get(field) != proposal.get(field):
+            raise ValueError(f"native entry Order {field} does not match Proposal")
+    if execution_mode != "paper_internal" and data.get("client_order_id") != proposal_id:
+        raise ValueError("exchange entry Order client identity is not durable")
+
+
 def insert_order(o: Order) -> None:
+    validate_native_order_authority(o)
     _insert("orders", _stamp_provenance(o.model_dump()))
 
 
@@ -632,6 +796,59 @@ def update_order(oid: str, **kwargs) -> None:
 
 def list_orders(limit: int = 100) -> list[dict]:
     return _select_all("orders", limit=limit)
+
+
+def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
+    """Return every unresolved native entry plus its represented local state.
+
+    This query is intentionally unbounded: truncating accepted exchange Orders
+    would let Risk under-count possible exposure.  Close Orders are excluded by
+    both their durable reason and the Position pending-close backlink so older
+    rows that predate ``close_reason`` cannot consume a new-entry allowance.
+    """
+    unresolved_states = (
+        "submitted",
+        "partial",
+        "partially_filled",
+        "submission_unknown",
+        "materialization_missing",
+    )
+    placeholders = ",".join("?" for _ in unresolved_states)
+    rows = get_db().execute(
+        f"""
+        SELECT
+            o.*,
+            COUNT(f.id) AS persisted_fill_count,
+            COALESCE(SUM(f.fill_quantity), 0.0) AS persisted_fill_quantity,
+            COALESCE(SUM(
+                CASE
+                    WHEN f.id IS NOT NULL
+                     AND (f.fill_quantity IS NULL OR f.fill_quantity <= 0)
+                    THEN 1 ELSE 0
+                END
+            ), 0) AS invalid_fill_quantity_count,
+            CASE WHEN EXISTS (
+                SELECT 1
+                FROM positions p
+                WHERE p.status = 'open'
+                  AND (p.id = o.position_id OR p.order_id = o.id)
+            ) THEN 1 ELSE 0 END AS has_open_position
+        FROM orders o
+        LEFT JOIN fills f ON f.order_id = o.id
+        WHERE o.source = 'native'
+          AND o.status IN ({placeholders})
+          AND TRIM(COALESCE(o.close_reason, '')) = ''
+          AND NOT EXISTS (
+              SELECT 1
+              FROM positions closing_position
+              WHERE closing_position.pending_close_order_id = o.id
+          )
+        GROUP BY o.id
+        ORDER BY o.created_at ASC, o.rowid ASC
+        """,
+        unresolved_states,
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def list_strategy_orders(
@@ -1017,8 +1234,28 @@ def list_serenity_replay_snapshots(opportunity_id: str, limit: int = 200) -> lis
     return _select_all("serenity_replay_snapshots", where="opportunity_id = ?", params=(opportunity_id,), order="created_at DESC", limit=limit)
 
 
-def insert_serenity_post_mortem(p: SerenityPostMortem) -> None:
-    _insert("serenity_post_mortems", p.model_dump())
+def insert_serenity_post_mortem(p: SerenityPostMortem) -> bool:
+    data = p.model_dump()
+    if not p.position_id:
+        _insert("serenity_post_mortems", data)
+        return True
+
+    cols = ", ".join(data.keys())
+    placeholders = ", ".join(["?"] * len(data))
+    cursor = get_db().execute(
+        f"INSERT INTO serenity_post_mortems ({cols}) VALUES ({placeholders}) "
+        "ON CONFLICT(position_id) DO NOTHING",
+        list(data.values()),
+    )
+    if cursor.rowcount == 1:
+        return True
+    existing = get_db().execute(
+        "SELECT opportunity_id FROM serenity_post_mortems WHERE position_id = ?",
+        (p.position_id,),
+    ).fetchone()
+    if existing is None or existing["opportunity_id"] != p.opportunity_id:
+        raise ValueError("Serenity post-mortem Position identity conflict")
+    return False
 
 
 def list_serenity_post_mortems(opportunity_id: str | None = None, limit: int = 100) -> list[dict]:
@@ -1028,6 +1265,175 @@ def list_serenity_post_mortems(opportunity_id: str | None = None, limit: int = 1
         where = "opportunity_id = ?"
         params.append(opportunity_id)
     return _select_all("serenity_post_mortems", where=where, params=tuple(params), limit=limit)
+
+
+# --- Durable Outcome hook outbox ---
+
+def enqueue_outcome_hook_job(position_id: str, hook_type: str) -> dict:
+    """Insert one durable hook intent, preserving an existing retry/completion row."""
+    job = OutcomeHookJob(position_id=position_id, hook_type=hook_type)
+    data = job.model_dump()
+    cols = ", ".join(data.keys())
+    placeholders = ", ".join(["?"] * len(data))
+    get_db().execute(
+        f"INSERT INTO outcome_hook_jobs ({cols}) VALUES ({placeholders}) "
+        "ON CONFLICT(position_id, hook_type) DO NOTHING",
+        list(data.values()),
+    )
+    row = get_db().execute(
+        "SELECT * FROM outcome_hook_jobs WHERE position_id = ? AND hook_type = ?",
+        (position_id, hook_type),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("Outcome hook job insert did not persist")
+    return dict(row)
+
+
+def list_outcome_hook_jobs(
+    *,
+    position_id: str | None = None,
+    hook_type: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    conditions: list[str] = []
+    params: list[object] = []
+    if position_id is not None:
+        conditions.append("position_id = ?")
+        params.append(position_id)
+    if hook_type is not None:
+        conditions.append("hook_type = ?")
+        params.append(hook_type)
+    if status is not None:
+        conditions.append("status = ?")
+        params.append(status)
+    return _select_all(
+        "outcome_hook_jobs",
+        where=" AND ".join(conditions) if conditions else None,
+        params=tuple(params),
+        order="created_at ASC, id ASC",
+        limit=limit,
+    )
+
+
+def claim_outcome_hook_job(
+    *,
+    position_id: str | None = None,
+    hook_type: str | None = None,
+    now: str | None = None,
+    stale_after_seconds: int = 300,
+) -> dict | None:
+    """Atomically lease one due job and recover abandoned processing leases."""
+    from aletheia.storage.models import new_id
+
+    now_dt = _parse_outcome_hook_time(now)
+    now_iso = now_dt.isoformat()
+    stale_before = (now_dt - timedelta(seconds=max(0, stale_after_seconds))).isoformat()
+    with transaction(immediate=True):
+        db = get_db()
+        db.execute(
+            "UPDATE outcome_hook_jobs SET status = 'failed', "
+            "next_attempt_at = ?, locked_at = NULL, claim_token = NULL, "
+            "last_error = 'stale_processing_lease', updated_at = ? "
+            "WHERE status = 'processing' AND locked_at IS NOT NULL "
+            "AND datetime(locked_at) <= datetime(?)",
+            (now_iso, now_iso, stale_before),
+        )
+        conditions = [
+            "status IN ('pending', 'failed')",
+            "datetime(next_attempt_at) <= datetime(?)",
+        ]
+        params: list[object] = [now_iso]
+        if position_id is not None:
+            conditions.append("position_id = ?")
+            params.append(position_id)
+        if hook_type is not None:
+            conditions.append("hook_type = ?")
+            params.append(hook_type)
+        row = db.execute(
+            "SELECT * FROM outcome_hook_jobs WHERE "
+            + " AND ".join(conditions)
+            + " ORDER BY datetime(next_attempt_at) ASC, datetime(created_at) ASC, id ASC "
+            "LIMIT 1",
+            params,
+        ).fetchone()
+        if row is None:
+            return None
+        claim_token = new_id()
+        cursor = db.execute(
+            "UPDATE outcome_hook_jobs SET status = 'processing', attempts = attempts + 1, "
+            "locked_at = ?, claim_token = ?, updated_at = ? "
+            "WHERE id = ? AND status IN ('pending', 'failed')",
+            (now_iso, claim_token, now_iso, row["id"]),
+        )
+        if cursor.rowcount != 1:
+            return None
+        claimed = db.execute(
+            "SELECT * FROM outcome_hook_jobs WHERE id = ?",
+            (row["id"],),
+        ).fetchone()
+        return dict(claimed) if claimed is not None else None
+
+
+def mark_outcome_hook_job_completed(
+    job_id: str, claim_token: str, *, now: str | None = None
+) -> bool:
+    now_iso = _parse_outcome_hook_time(now).isoformat()
+    cursor = get_db().execute(
+        "UPDATE outcome_hook_jobs SET status = 'completed', completed_at = ?, "
+        "updated_at = ?, locked_at = NULL, claim_token = NULL, last_error = NULL "
+        "WHERE id = ? AND status = 'processing' AND claim_token = ?",
+        (now_iso, now_iso, job_id, claim_token),
+    )
+    return cursor.rowcount == 1
+
+
+def mark_outcome_hook_job_skipped(
+    job_id: str,
+    claim_token: str,
+    reason: str,
+    *,
+    now: str | None = None,
+) -> bool:
+    now_iso = _parse_outcome_hook_time(now).isoformat()
+    cursor = get_db().execute(
+        "UPDATE outcome_hook_jobs SET status = 'skipped', completed_at = ?, "
+        "updated_at = ?, locked_at = NULL, claim_token = NULL, last_error = ? "
+        "WHERE id = ? AND status = 'processing' AND claim_token = ?",
+        (now_iso, now_iso, reason[:1000], job_id, claim_token),
+    )
+    return cursor.rowcount == 1
+
+
+def mark_outcome_hook_job_failed(
+    job_id: str,
+    claim_token: str,
+    error: str,
+    *,
+    now: str | None = None,
+    retry_delay_seconds: int = 60,
+) -> bool:
+    now_dt = _parse_outcome_hook_time(now)
+    now_iso = now_dt.isoformat()
+    retry_at = (
+        now_dt + timedelta(seconds=max(1, retry_delay_seconds))
+    ).isoformat()
+    cursor = get_db().execute(
+        "UPDATE outcome_hook_jobs SET status = 'failed', next_attempt_at = ?, "
+        "updated_at = ?, locked_at = NULL, claim_token = NULL, last_error = ? "
+        "WHERE id = ? AND status = 'processing' AND claim_token = ?",
+        (retry_at, now_iso, error[:1000], job_id, claim_token),
+    )
+    return cursor.rowcount == 1
+
+
+def _parse_outcome_hook_time(value: str | None) -> datetime:
+    if value is None:
+        return datetime.now(timezone.utc)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 # --- Serenity Research Runs ---
@@ -2981,6 +3387,44 @@ def insert_shadow_trade(shadow) -> None:
 
 def update_shadow_trade(shadow_id: str, **kwargs) -> None:
     _update("shadow_trades", shadow_id, kwargs)
+
+
+def anchor_shadow_trade_exit_price_if_pending(
+    shadow_id: str,
+    *,
+    exit_price: float,
+) -> bool:
+    """Persist the first close-event price without marking the row resolved."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cursor = db.execute(
+        "UPDATE shadow_trades SET exit_price = ? "
+        "WHERE id = ? AND resolved_at IS NULL AND exit_price IS NULL",
+        (exit_price, shadow_id),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cursor.rowcount == 1
+
+
+def resolve_shadow_trade_if_pending(
+    shadow_id: str,
+    *,
+    exit_price: float,
+    pnl_pct: float,
+    resolved_at: str,
+) -> bool:
+    """Resolve one shadow row once, leaving an already-resolved row untouched."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cursor = db.execute(
+        "UPDATE shadow_trades SET exit_price = ?, pnl_pct = ?, resolved_at = ? "
+        "WHERE id = ? AND resolved_at IS NULL",
+        (exit_price, pnl_pct, resolved_at, shadow_id),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cursor.rowcount == 1
 
 
 def list_shadow_trades(

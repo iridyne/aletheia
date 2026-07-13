@@ -38,7 +38,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | `POST /risk/kill-switch` | body `{"active": true\|false, "confirm_release"?: bool}`; human-only. **Engage** (`active=true`): no extra confirm. **Release** (`active=false`): requires `confirm_release=true` — else the route returns 422. | [risk_engine_contract §4](risk_engine_contract.md) |
 | `POST /settings/exchange-credentials` (+ binance/okx) | write-only; GET never returns raw secret | trust §6.3 secrets |
 | `POST /settings/permission-mode` · `/risk` | writes audit; cannot grant `FORBIDDEN_INTENTS` | [live_unlock_contract §6](live_unlock_contract.md) |
-| `POST /proposals/{id}/approve-paper` · `/reject` | must preserve original proposal ID (no duplicate row) | [execution_contract §1](execution_contract.md) |
+| `POST /proposals/{id}/approve-paper` · `/reject` | must preserve original proposal ID (no duplicate row); paper approval accepts only a `pending` proposal whose stored mode is already `paper_internal` and never rewrites exchange intent | [execution_contract §1](execution_contract.md) |
 
 ---
 
@@ -68,7 +68,7 @@ operators do not infer the real order target from the retained exchange preferen
 | GET | `/opportunities` | List recent opportunities (scanner output) |
 | GET | `/proposals` | List trade proposals |
 | GET | `/proposals/{id}` | Get one proposal by id (404 when absent) |
-| POST | `/proposals/{id}/approve-paper` | Approve proposal for paper execution |
+| POST | `/proposals/{id}/approve-paper` | Approve a pending, already-`paper_internal` proposal; non-paper or unresolved proposals return 409 without mutation |
 | POST | `/proposals/{id}/reject` | Reject proposal with reason |
 | GET | `/proposals/{id}/risk-decision` | View risk engine decision for proposal |
 | GET | `/positions` | List positions (open/closed, filterable) |

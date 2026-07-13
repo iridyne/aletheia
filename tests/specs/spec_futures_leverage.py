@@ -6,6 +6,7 @@ risk engine leverage checks, and paper_tools leverage passthrough.
 
 import pytest
 
+from tests.execution_authority import seed_order_authority
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 # ---------------------------------------------------------------------------
@@ -201,6 +202,18 @@ def test_paper_open_records_leverage_and_liquidation(tmp_path, monkeypatch):
     from aletheia.storage import repositories as repo
 
     # 5x long BTC @ 60000 → leverage persisted + liquidation_price ≈ entry*(1-1/5+0.004)
+    seed_order_authority(
+        proposal_id="pf1",
+        risk_decision_id="rf1",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        order_type="market",
+        quantity=0.01,
+        price=60000.0,
+        execution_mode="paper_internal",
+        leverage=5,
+    )
     r5 = execute_paper_order(
         proposal_id="pf1", risk_decision_id="rf1",
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
@@ -213,6 +226,18 @@ def test_paper_open_records_leverage_and_liquidation(tmp_path, monkeypatch):
     assert pos5["liquidation_price"] < 60000.0  # long liq below entry
 
     # 1x spot → no liquidation price
+    seed_order_authority(
+        proposal_id="pf2",
+        risk_decision_id="rf2",
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1.0,
+        price=3000.0,
+        execution_mode="paper_internal",
+        leverage=1,
+    )
     r1 = execute_paper_order(
         proposal_id="pf2", risk_decision_id="rf2",
         symbol="ETH/USDT", market_type="spot", direction="long",

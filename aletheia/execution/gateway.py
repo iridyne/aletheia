@@ -6,18 +6,19 @@ import threading
 import time
 
 from aletheia.config.loader import load_config
-from aletheia.risk.engine import evaluate_proposal
+from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
+from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.paper_broker import (
     capture_paper_attribution_snapshot,
     execute_paper_order,
 )
 from aletheia.storage.models import TradeProposal
 from aletheia.storage.repositories import (
+    get_order,
     get_trade_proposal,
     insert_trade_proposal,
     transaction,
     update_trade_proposal,
-    update_position,
 )
 from aletheia.files.jsonl import write_audit
 
@@ -79,9 +80,11 @@ def submit_proposal(
 
     Flow: Proposal -> Risk Engine -> Permission -> Live State -> Execution -> Fill -> Audit
     """
-    attribution_snapshot = None
-    if execution_mode == "paper_internal":
-        attribution_snapshot = _capture_attribution_snapshot_json(symbol)
+    # Private-fill materialization can happen after the broker call returns.
+    # Capture the read-only decision-time attribution for every execution mode
+    # so that delayed exchange reconciliation does not invent later context or
+    # silently lose the same metadata already preserved for local paper.
+    attribution_snapshot = _capture_attribution_snapshot_json(symbol)
 
     proposal = TradeProposal(
         strategy_id=strategy_id,
@@ -106,28 +109,78 @@ def submit_proposal(
 
 
 def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_internal") -> dict:
-    """Execute a stored proposal without creating a duplicate proposal row."""
-    row = get_trade_proposal(proposal_id)
-    if row is None:
-        return {"status": "not_found", "proposal_id": proposal_id, "message": "Proposal not found"}
+    """Atomically claim and execute one stored proposal without rewriting intent.
 
-    data = dict(row)
-    data["execution_mode"] = execution_mode
-    proposal = TradeProposal.model_validate(data)
-    if proposal.status == "executed":
-        return {
-            "status": "already_executed",
-            "proposal_id": proposal.id,
-            "message": "Proposal has already been executed; no new order was created.",
-        }
-    if proposal.status in {"error", "rejected"}:
-        return {
-            "status": proposal.status,
-            "proposal_id": proposal.id,
-            "message": f"Proposal is already marked as {proposal.status}.",
-        }
-    update_trade_proposal(proposal.id, execution_mode=execution_mode)
-    return _execute_proposal(proposal)
+    The Proposal's execution mode is part of its hash-covered immutable intent.
+    A caller may confirm that mode, but may not use this entry point to change it.
+    The short ``BEGIN IMMEDIATE`` transaction ends before Risk or any broker I/O.
+    """
+    with transaction(immediate=True):
+        row = get_trade_proposal(proposal_id)
+        if row is None:
+            return {
+                "status": "not_found",
+                "proposal_id": proposal_id,
+                "message": "Proposal not found",
+            }
+
+        proposal = TradeProposal.model_validate(dict(row))
+        if execution_mode != proposal.execution_mode:
+            return {
+                "status": "rejected",
+                "reason_code": "execution_mode_mismatch",
+                "proposal_id": proposal.id,
+                "message": (
+                    "Requested execution mode does not match the stored Proposal; "
+                    "no order was created."
+                ),
+            }
+        if proposal.status == "executed":
+            return {
+                "status": "already_executed",
+                "proposal_id": proposal.id,
+                "message": "Proposal has already been executed; no new order was created.",
+            }
+        if proposal.status == "executing":
+            return {
+                "status": "already_claimed",
+                "proposal_id": proposal.id,
+                "message": "Proposal execution is already in progress; no new order was created.",
+            }
+        if proposal.status in {
+            "error",
+            "rejected",
+            "submitted",
+            "partially_filled",
+            "submission_unknown",
+            "materialization_missing",
+        }:
+            return {
+                "status": proposal.status,
+                "proposal_id": proposal.id,
+                "message": (
+                    f"Proposal is already marked as {proposal.status}; "
+                    "no new order was created."
+                ),
+            }
+        update_trade_proposal(proposal.id, status="executing")
+
+    try:
+        return _execute_proposal(proposal)
+    except ProposalIntegrityError as exc:
+        return _terminal_execution_error(
+            proposal,
+            reason_code="proposal_integrity_failed",
+            safe_message="Stored Proposal integrity verification failed; no order was created.",
+            exception=exc,
+        )
+    except Exception as exc:
+        return _terminal_execution_error(
+            proposal,
+            reason_code="execution_pipeline_failed",
+            safe_message="Execution failed before a terminal result was recorded; no retry was sent.",
+            exception=exc,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -223,101 +276,304 @@ def _check_symbol_availability(symbol: str, execution_mode: str, market_type: st
     return None
 
 
+def _reject_for_risk(proposal: TradeProposal, risk_result) -> dict:
+    update_trade_proposal(proposal.id, status="rejected")
+    write_audit({
+        "actor": "system",
+        "source": "execution_gateway",
+        "event_type": "proposal_rejected",
+        "entity_type": "trade_proposal",
+        "entity_id": proposal.id,
+        "before": {"status": proposal.status},
+        "after": {"status": "rejected"},
+        "message": risk_result.message,
+    })
+    return {
+        "status": "rejected",
+        "proposal_id": proposal.id,
+        "risk_violations": getattr(risk_result, "violations", []),
+        "message": risk_result.message,
+    }
+
+
+def _exchange_result_state(result: dict) -> str:
+    """Map broker evidence to an honest, retry-suppressing Proposal state."""
+    order = get_order(result.get("order_id")) if result.get("order_id") else None
+    order_status = str(
+        result.get("order_status") or (order or {}).get("status") or ""
+    ).lower()
+    if (
+        order_status == "filled"
+        and result.get("fill_id")
+        and result.get("position_id")
+    ):
+        return "executed"
+    if order_status in {"partial", "partially_filled"}:
+        return "partially_filled"
+    if order_status in {"submission_unknown", "materialization_missing"}:
+        return order_status
+    # An accepted exchange order without a durable Fill+Position remains
+    # submitted. Order creation alone is not evidence that a trade occurred.
+    return "submitted"
+
+
+def _record_exchange_result(
+    proposal: TradeProposal,
+    execution_proposal: TradeProposal,
+    result: dict,
+    *,
+    channel: str,
+) -> dict:
+    proposal_status = _exchange_result_state(result)
+    update_trade_proposal(proposal.id, status=proposal_status)
+    exchange_order_id = result.get("exchange_order_id")
+    write_audit({
+        "actor": "system",
+        "source": "execution_gateway",
+        "event_type": f"{channel}_order_{proposal_status}",
+        "entity_type": "order",
+        "entity_id": result.get("order_id"),
+        "before": {"status": proposal.status},
+        "after": {"status": proposal_status},
+        "message": (
+            f"{channel.capitalize()} order {proposal_status}: "
+            f"{execution_proposal.symbol} {execution_proposal.direction} "
+            f"{execution_proposal.quantity or 0.0} "
+            f"(exchange_order_id={exchange_order_id or 'unavailable'})"
+        ),
+    })
+    return {"status": proposal_status, "proposal_id": proposal.id, **result}
+
+
+def _terminal_execution_error(
+    proposal: TradeProposal,
+    *,
+    reason_code: str,
+    safe_message: str,
+    exception: BaseException | None = None,
+) -> dict:
+    """Persist a terminal, secret-free gateway failure before returning it."""
+    if exception is not None:
+        # Exception strings from config/exchange libraries can contain secrets.
+        # Retain only the exception class in process logs; the durable audit is a
+        # stable reason code and intentionally contains no raw exception text.
+        logger.warning(
+            "Proposal %s stopped with %s (%s)",
+            proposal.id,
+            reason_code,
+            type(exception).__name__,
+        )
+    with transaction():
+        update_trade_proposal(proposal.id, status="error")
+    write_audit({
+        "actor": "system",
+        "source": "execution_gateway",
+        "event_type": "execution_error",
+        "entity_type": "trade_proposal",
+        "entity_id": proposal.id,
+        "before": {"status": proposal.status},
+        "after": {"status": "error"},
+        "message": f"{reason_code}: {safe_message}",
+    })
+    return {
+        "status": "error",
+        "reason_code": reason_code,
+        "proposal_id": proposal.id,
+        "message": safe_message,
+    }
+
+
+def _record_unresolved_execution(
+    proposal: TradeProposal,
+    error: PostSubmitDBError | SubmissionUnknownError,
+) -> dict:
+    """Persist an accepted-or-possibly-accepted exchange handoff without lying."""
+    if isinstance(error, PostSubmitDBError):
+        status = "materialization_missing"
+        reason_code = "exchange_fill_local_materialization_missing"
+        safe_message = (
+            "The exchange reported an order result, but the local Fill/Position "
+            "chain is incomplete; automatic resubmission is blocked."
+        )
+    else:
+        status = "submission_unknown"
+        reason_code = "exchange_submission_acknowledgement_unknown"
+        safe_message = (
+            "Exchange acceptance could not be confirmed after a transport failure; "
+            "automatic resubmission is blocked."
+        )
+    exchange_order_id = getattr(error, "exchange_order_id", None)
+    update_trade_proposal(proposal.id, status=status)
+    logger.warning(
+        "Proposal %s remains %s (%s)",
+        proposal.id,
+        status,
+        type(error).__name__,
+    )
+    write_audit({
+        "actor": "system",
+        "source": "execution_gateway",
+        "event_type": "execution_unresolved",
+        "entity_type": "trade_proposal",
+        "entity_id": proposal.id,
+        "reason": reason_code,
+        "before": {"status": proposal.status},
+        "after": {
+            "status": status,
+            "exchange_order_id": exchange_order_id,
+        },
+        "message": (
+            f"{reason_code}; automatic resubmission blocked"
+            + (
+                f" (exchange_order_id={exchange_order_id})"
+                if exchange_order_id
+                else ""
+            )
+        ),
+    })
+    return {
+        "status": status,
+        "reason_code": reason_code,
+        "proposal_id": proposal.id,
+        "message": safe_message,
+        "exchange_order_id": exchange_order_id,
+    }
+
+
+def _notify_committed_paper_fill(result: dict) -> None:
+    """Publish a paper fill only after its complete Gateway transaction commits."""
+    payload = result.pop("_notification_payload", None)
+    if not isinstance(payload, dict):
+        return
+    try:
+        from aletheia.notifications import notify_trade_fill
+
+        notify_trade_fill(**payload)
+    except Exception:
+        # Notifications remain best-effort and cannot change committed trading
+        # state or turn a successful execution into an API error.
+        pass
+
+
 def _execute_proposal(proposal: TradeProposal) -> dict:
     """Run risk and execution for an already-created proposal."""
-    cfg = load_config()
+    try:
+        cfg = load_config()
 
-    # Risk check
-    risk_result = evaluate_proposal(proposal)
+        if proposal.execution_mode == "paper_internal":
+            # Local paper has no executable-venue normalization. Its one Risk
+            # result is therefore already the authoritative decision consumed
+            # by the paper broker.
+            risk_result = evaluate_proposal(
+                proposal, decision_role="authoritative"
+            )
+            execution_proposal = proposal
+        else:
+            # Exchange-bound orders retain a fresh preflight hard gate before
+            # venue metadata or any other external preparation. That decision is
+            # never passed to a broker.
+            preflight_result = evaluate_proposal(
+                proposal, decision_role="preflight"
+            )
+            if not preflight_result.approved:
+                return _reject_for_risk(proposal, preflight_result)
 
-    if not risk_result.approved:
-        update_trade_proposal(proposal.id, status="rejected")
-        write_audit({
-            "actor": "system",
-            "source": "execution_gateway",
-            "event_type": "proposal_rejected",
-            "entity_type": "trade_proposal",
-            "entity_id": proposal.id,
-            "before": {"status": proposal.status},
-            "after": {"status": "rejected"},
-            "message": risk_result.message,
-        })
-        return {
-            "status": "rejected",
-            "proposal_id": proposal.id,
-            "risk_violations": risk_result.violations,
-            "message": risk_result.message,
-        }
+            preflight_mode = preflight_result.allowed_execution_mode
+            adjusted_quantity, constraint_error = _prepare_exchange_quantity(
+                preflight_mode,
+                proposal.symbol,
+                proposal.market_type,
+                proposal.quantity or 0.0,
+                proposal.price or 0.0,
+            )
+            if constraint_error:
+                return _reject_for_exchange_constraints(proposal, constraint_error)
 
-    # Execute based on allowed mode
-    allowed_mode = risk_result.allowed_execution_mode
+            # quantity is hash-covered Proposal intent. Venue normalization
+            # creates an immutable evaluated snapshot; it never rewrites storage
+            # or mutates the caller's Proposal object. Every other causal field
+            # is preserved, including opportunity_id=proposal.opportunity_id and
+            # leverage=proposal.leverage.
+            execution_proposal = proposal.model_copy(
+                update={"quantity": adjusted_quantity}
+            )
+            risk_result = evaluate_proposal(
+                execution_proposal, decision_role="authoritative"
+            )
 
-    # The first Risk Engine pass preserves all existing hard gates (especially
-    # live-disabled) before any external call.  Once it has admitted an
-    # exchange-bound proposal, obtain authoritative venue rules, normalize the
-    # size upward, and evaluate that *final* size again before it can be sent.
-    adjusted_quantity, constraint_error = _prepare_exchange_quantity(
-        allowed_mode, proposal.symbol, proposal.market_type,
-        proposal.quantity or 0.0, proposal.price or 0.0,
-    )
-    if constraint_error:
-        return _reject_for_exchange_constraints(proposal, constraint_error)
-    if adjusted_quantity != proposal.quantity:
-        proposal.quantity = adjusted_quantity
-        update_trade_proposal(proposal.id, quantity=adjusted_quantity)
-        risk_result = evaluate_proposal(proposal)
         if not risk_result.approved:
+            return _reject_for_risk(proposal, risk_result)
+
+        # The broker consumes only the authoritative decision and its exact
+        # evaluated snapshot.
+        allowed_mode = risk_result.allowed_execution_mode
+
+        # Symbol availability is the last pre-order check. If it raises, the
+        # Proposal must still reach a durable terminal state with no Order.
+        _unavail = _check_symbol_availability(
+            execution_proposal.symbol,
+            allowed_mode,
+            execution_proposal.market_type,
+        )
+        if _unavail:
             update_trade_proposal(proposal.id, status="rejected")
+            logger.info(
+                "Proposal %s skipped — symbol not on exchange: %s",
+                proposal.id,
+                _unavail,
+            )
             write_audit({
                 "actor": "system", "source": "execution_gateway",
-                "event_type": "proposal_rejected", "entity_type": "trade_proposal",
-                "entity_id": proposal.id, "before": {"status": proposal.status},
-                "after": {"status": "rejected"}, "message": risk_result.message,
+                "event_type": "proposal_skipped", "entity_type": "trade_proposal",
+                "entity_id": proposal.id,
+                "before": {"status": proposal.status},
+                "after": {"status": "rejected"},
+                "message": _unavail,
             })
             return {
-                "status": "rejected", "proposal_id": proposal.id,
-                "risk_violations": risk_result.violations, "message": risk_result.message,
+                "status": "rejected",
+                "proposal_id": proposal.id,
+                "message": _unavail,
             }
-
-    # Symbol availability pre-check: if the exchange doesn't list this symbol,
-    # reject gracefully here instead of letting CCXT throw an opaque error.
-    _unavail = _check_symbol_availability(proposal.symbol, allowed_mode, proposal.market_type)
-    if _unavail:
-        update_trade_proposal(proposal.id, status="rejected")
-        logger.info("Proposal %s skipped — symbol not on exchange: %s", proposal.id, _unavail)
-        write_audit({
-            "actor": "system", "source": "execution_gateway",
-            "event_type": "proposal_skipped", "entity_type": "trade_proposal",
-            "entity_id": proposal.id,
-            "before": {"status": proposal.status},
-            "after": {"status": "rejected"},
-            "message": _unavail,
-        })
-        return {"status": "rejected", "proposal_id": proposal.id, "message": _unavail}
+    except ProposalIntegrityError as exc:
+        return _terminal_execution_error(
+            proposal,
+            reason_code="proposal_integrity_failed",
+            safe_message="Stored Proposal integrity verification failed; no order was created.",
+            exception=exc,
+        )
+    except Exception as exc:
+        return _terminal_execution_error(
+            proposal,
+            reason_code="execution_precheck_failed",
+            safe_message="Execution precheck failed; no order was created.",
+            exception=exc,
+        )
 
     try:
         if allowed_mode == "paper_internal":
-            attribution_snapshot = _ensure_paper_attribution_snapshot(proposal)
+            attribution_snapshot = _ensure_paper_attribution_snapshot(execution_proposal)
             with transaction():
                 result = execute_paper_order(
                     proposal_id=proposal.id,
                     risk_decision_id=risk_result.decision_id,
-                    symbol=proposal.symbol,
-                    market_type=proposal.market_type,
-                    direction=proposal.direction,
-                    order_type=proposal.order_type,
-                    quantity=proposal.quantity or 0.0,
-                    price=proposal.price or 0.0,
+                    symbol=execution_proposal.symbol,
+                    market_type=execution_proposal.market_type,
+                    direction=execution_proposal.direction,
+                    order_type=execution_proposal.order_type,
+                    quantity=execution_proposal.quantity or 0.0,
+                    price=execution_proposal.price or 0.0,
                     execution_mode=allowed_mode,
-                    strategy_id=proposal.strategy_id,
-                    stop_price=proposal.stop_price,
-                    take_profit=proposal.take_profit,
-                    leverage=proposal.leverage,
-                    opportunity_id=proposal.opportunity_id,
-                    trade_school=proposal.trade_school,
+                    strategy_id=execution_proposal.strategy_id,
+                    stop_price=execution_proposal.stop_price,
+                    take_profit=execution_proposal.take_profit,
+                    leverage=execution_proposal.leverage,
+                    opportunity_id=execution_proposal.opportunity_id,
+                    trade_school=execution_proposal.trade_school,
                     attribution_snapshot=attribution_snapshot,
                 )
                 update_trade_proposal(proposal.id, status="executed")
+            _notify_committed_paper_fill(result)
             write_audit({
                 "actor": "system",
                 "source": "execution_gateway",
@@ -327,8 +583,10 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                 "before": {"status": proposal.status},
                 "after": {"status": "executed"},
                 "message": (
-                    f"Paper order filled: {proposal.symbol} {proposal.direction} "
-                    f"{proposal.quantity or 0.0}@{proposal.price or 0.0}"
+                    f"Paper order filled: {execution_proposal.symbol} "
+                    f"{execution_proposal.direction} "
+                    f"{execution_proposal.quantity or 0.0}@"
+                    f"{execution_proposal.price or 0.0}"
                 ),
             })
             return {"status": "executed", "proposal_id": proposal.id, **result}
@@ -338,6 +596,8 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
             # (live_disabled gates real funds only; demo/testnet is risk-free). On any
             # failure we mark the proposal error and audit; we NEVER fall back to a
             # fabricated local fill (honesty: a trade either hit the exchange or didn't).
+            # execution_proposal is a quantity-only copy, so its broker argument
+            # remains semantically trade_school=proposal.trade_school.
             try:
                 if allowed_mode == "binance_testnet":
                     from aletheia.execution.binance_broker import execute_live_order
@@ -345,62 +605,41 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     from aletheia.execution.okx_broker import execute_live_order
                 else:
                     from aletheia.execution.bitget_broker import execute_live_order
-                _cfg = load_config()
-                _tp_pct = _cfg.trading.default_take_profit_pct
-                _entry = proposal.price or 0.0
-                # TP is intentionally NOT pre-computed here — we anchor it to the
-                # actual exchange fill_price returned below, not the snapshot price
-                # in the proposal (which may be stale by the time the order fills).
+                _entry = execution_proposal.price or 0.0
                 result = execute_live_order(
                     proposal_id=proposal.id,
                     risk_decision_id=risk_result.decision_id,
-                    symbol=proposal.symbol,
-                    market_type=proposal.market_type,
-                    direction=proposal.direction,
-                    order_type=proposal.order_type,
-                    quantity=proposal.quantity or 0.0,
+                    symbol=execution_proposal.symbol,
+                    market_type=execution_proposal.market_type,
+                    direction=execution_proposal.direction,
+                    order_type=execution_proposal.order_type,
+                    quantity=execution_proposal.quantity or 0.0,
                     price=_entry,
-                    strategy_id=proposal.strategy_id,
+                    strategy_id=execution_proposal.strategy_id,
                     execution_mode=allowed_mode,
-                    stop_price=proposal.stop_price,
-                    take_profit_price=None,
-                    leverage=proposal.leverage,
-                    opportunity_id=proposal.opportunity_id,
-                    trade_school=proposal.trade_school,
-                )
-                # TP source (2026-07-03): prefer the System Operator's explicit
-                # take_profit from the proposal (an entry now commits to it up
-                # front); fall back to the config-percentage anchored to the
-                # confirmed fill price for legacy proposals that carry no TP.
-                if result.get("position_id"):
-                    _actual_fill = result.get("fill_price") or _entry
-                    if proposal.take_profit:
-                        _tp = proposal.take_profit
-                    elif _tp_pct and _actual_fill > 0:
-                        _tp = round(_actual_fill * (1 + _tp_pct / 100.0), 8) if proposal.direction in ("long", "buy") else round(_actual_fill * (1 - _tp_pct / 100.0), 8)
-                    else:
-                        _tp = None
-                    if _tp:
-                        update_position(result["position_id"], take_profit_price=_tp)
-                update_trade_proposal(proposal.id, status="executed")
-                write_audit({
-                    "actor": "system", "source": "execution_gateway",
-                    "event_type": "demo_order_executed", "entity_type": "order",
-                    "entity_id": result["order_id"],
-                    "before": {"status": proposal.status},
-                    "after": {"status": "executed"},
-                    "message": (
-                        f"Demo order placed: {proposal.symbol} {proposal.direction} "
-                        f"{proposal.quantity or 0.0}@{result.get('fill_price') or proposal.price or 0.0} "
-                        f"(ex:{result['exchange_order_id']})"
+                    stop_price=execution_proposal.stop_price,
+                    take_profit_price=(
+                        execution_proposal.take_profit
+                        if allowed_mode == "bitget_demo"
+                        else None
                     ),
-                })
-                return {"status": "executed", "proposal_id": proposal.id, **result}
+                    leverage=execution_proposal.leverage,
+                    opportunity_id=execution_proposal.opportunity_id,
+                    trade_school=execution_proposal.trade_school,
+                )
+                return _record_exchange_result(
+                    proposal,
+                    execution_proposal,
+                    result,
+                    channel="demo",
+                )
+            except (PostSubmitDBError, SubmissionUnknownError) as e:
+                return _record_unresolved_execution(proposal, e)
             except Exception as e:
                 exchange_oid = getattr(e, "exchange_order_id", None)
                 with transaction():
                     update_trade_proposal(proposal.id, status="error")
-                msg = f"Demo order failed: {e}"
+                msg = f"demo_order_failed: broker execution failed ({type(e).__name__})"
                 if exchange_oid:
                     msg += f" (exchange_order_id={exchange_oid})"
                 write_audit({
@@ -413,12 +652,17 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                 # errors carry request URLs / partial headers. Route through
                 # clean_error_message (already used by broker error paths) and
                 # cap length so the API response stays a summary.
-                return {"status": "error", "proposal_id": proposal.id,
-                        "message": _safe_error_message(str(e)),
-                        "exchange_order_id": exchange_oid}
+                return {
+                    "status": "error",
+                    "proposal_id": proposal.id,
+                    "message": "Broker rejected or failed the order before acceptance was confirmed.",
+                    "exchange_order_id": exchange_oid,
+                }
 
         elif allowed_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited"):
             # Defense in depth: risk engine already checked live_disabled, but re-check here.
+            # The quantity-only execution snapshot likewise preserves
+            # trade_school=proposal.trade_school on this live dispatch path.
             if cfg.live.state == "live_disabled":
                 update_trade_proposal(proposal.id, status="rejected")
                 write_audit({
@@ -439,59 +683,42 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     from aletheia.execution.binance_broker import execute_live_order
                 else:
                     from aletheia.execution.bitget_broker import execute_live_order
-                _cfg2 = load_config()
-                _tp_pct2 = _cfg2.trading.default_take_profit_pct
-                _entry2 = proposal.price or 0.0
+                _entry2 = execution_proposal.price or 0.0
                 result = execute_live_order(
                     proposal_id=proposal.id,
                     risk_decision_id=risk_result.decision_id,
-                    symbol=proposal.symbol,
-                    market_type=proposal.market_type,
-                    direction=proposal.direction,
-                    order_type=proposal.order_type,
-                    quantity=proposal.quantity or 0.0,
+                    symbol=execution_proposal.symbol,
+                    market_type=execution_proposal.market_type,
+                    direction=execution_proposal.direction,
+                    order_type=execution_proposal.order_type,
+                    quantity=execution_proposal.quantity or 0.0,
                     price=_entry2,
-                    strategy_id=proposal.strategy_id,
+                    strategy_id=execution_proposal.strategy_id,
                     execution_mode=allowed_mode,
-                    stop_price=proposal.stop_price,
-                    take_profit_price=None,
-                    leverage=proposal.leverage,
-                    opportunity_id=proposal.opportunity_id,
-                    trade_school=proposal.trade_school,
-                )
-                # TP source (2026-07-03): prefer the System Operator's explicit
-                # take_profit from the proposal; fall back to config-percentage
-                # anchored to the confirmed fill price for legacy proposals.
-                if result.get("position_id"):
-                    _actual_fill2 = result.get("fill_price") or _entry2
-                    if proposal.take_profit:
-                        _tp2 = proposal.take_profit
-                    elif _tp_pct2 and _actual_fill2 > 0:
-                        _tp2 = round(_actual_fill2 * (1 + _tp_pct2 / 100.0), 8) if proposal.direction in ("long", "buy") else round(_actual_fill2 * (1 - _tp_pct2 / 100.0), 8)
-                    else:
-                        _tp2 = None
-                    if _tp2:
-                        update_position(result["position_id"], take_profit_price=_tp2)
-                update_trade_proposal(proposal.id, status="executed")
-                write_audit({
-                    "actor": "system", "source": "execution_gateway",
-                    "event_type": "live_order_executed", "entity_type": "order",
-                    "entity_id": result["order_id"],
-                    "before": {"status": proposal.status},
-                    "after": {"status": "executed"},
-                    "message": (
-                        f"Live order placed: {proposal.symbol} {proposal.direction} "
-                        f"{proposal.quantity or 0.0}@{_actual_fill2} "
-                        f"(ex:{result['exchange_order_id']})"
+                    stop_price=execution_proposal.stop_price,
+                    take_profit_price=(
+                        execution_proposal.take_profit
+                        if allowed_mode == "bitget_live_limited"
+                        else None
                     ),
-                })
-                return {"status": "executed", "proposal_id": proposal.id, **result}
+                    leverage=execution_proposal.leverage,
+                    opportunity_id=execution_proposal.opportunity_id,
+                    trade_school=execution_proposal.trade_school,
+                )
+                return _record_exchange_result(
+                    proposal,
+                    execution_proposal,
+                    result,
+                    channel="live",
+                )
 
+            except (PostSubmitDBError, SubmissionUnknownError) as e:
+                return _record_unresolved_execution(proposal, e)
             except Exception as e:
                 exchange_oid = getattr(e, "exchange_order_id", None)
                 with transaction():
                     update_trade_proposal(proposal.id, status="error")
-                msg = f"Live order failed: {e}"
+                msg = f"live_order_failed: broker execution failed ({type(e).__name__})"
                 if exchange_oid:
                     msg += f" (exchange_order_id={exchange_oid})"
                 write_audit({
@@ -504,9 +731,12 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                 # errors carry request URLs / partial headers. Route through
                 # clean_error_message (already used by broker error paths) and
                 # cap length so the API response stays a summary.
-                return {"status": "error", "proposal_id": proposal.id,
-                        "message": _safe_error_message(str(e)),
-                        "exchange_order_id": exchange_oid}
+                return {
+                    "status": "error",
+                    "proposal_id": proposal.id,
+                    "message": "Broker rejected or failed the order before acceptance was confirmed.",
+                    "exchange_order_id": exchange_oid,
+                }
 
     except Exception as e:
         with transaction():
@@ -515,38 +745,29 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
             "actor": "system", "source": "execution_gateway",
             "event_type": "execution_error", "entity_type": "trade_proposal",
             "entity_id": proposal.id, "before": {"status": proposal.status},
-            "after": {"status": "error"}, "message": f"Execution failed: {e}",
+            "after": {"status": "error"},
+            "message": (
+                "execution_pipeline_failed: broker execution failed "
+                f"({type(e).__name__})"
+            ),
         })
         # #8 fix: same treatment as the inner exception branches — never dump
         # raw exception text to the API response.
-        return {"status": "error", "proposal_id": proposal.id, "message": _safe_error_message(str(e))}
+        return {
+            "status": "error",
+            "proposal_id": proposal.id,
+            "message": "Execution failed; no automatic resubmission was attempted.",
+        }
 
     return {"status": "unknown_mode", "proposal_id": proposal.id}
 
 
-def _safe_error_message(raw: str, max_len: int = 200) -> str:
-    """Clean an exception string for an API-facing error payload.
-
-    #8 fix: prevents raw CCXT / requests exception text from leaking through
-    the /gateway response body. Delegates to the shared clean_error_message
-    which already knows the exchange-specific JSON shapes, then caps at
-    max_len so a stack-trace-flavored message doesn't paint the UI.
-    """
-    from aletheia.execution.broker_utils import clean_error_message
-    cleaned = clean_error_message(raw or "")
-    return (cleaned or "execution error")[:max_len]
-
-
 def _ensure_paper_attribution_snapshot(proposal: TradeProposal) -> dict | None:
-    snapshot = _loads_attribution_snapshot(proposal.attribution_snapshot)
-    if snapshot:
-        return snapshot
-
-    encoded = _capture_attribution_snapshot_json(proposal.symbol)
-    if not encoded:
-        return None
-    update_trade_proposal(proposal.id, attribution_snapshot=encoded)
-    return _loads_attribution_snapshot(encoded)
+    # New paper Proposals capture this before insert. A legacy stored Proposal
+    # with no snapshot must remain honestly missing: backfilling at execution
+    # time would mutate hash-covered intent and pretend late context existed at
+    # decision time.
+    return _loads_attribution_snapshot(proposal.attribution_snapshot)
 
 
 def _capture_attribution_snapshot_json(symbol: str) -> str | None:

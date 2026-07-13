@@ -11,7 +11,15 @@ from datetime import datetime, timezone, timedelta
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import TradeProposal, Position, MarketSnapshot
+from aletheia.storage.models import (
+    Fill,
+    MarketSnapshot,
+    Opportunity,
+    Order,
+    Position,
+    RiskDecision,
+    TradeProposal,
+)
 from aletheia.storage import repositories as repo
 from aletheia.risk.engine import evaluate_proposal
 
@@ -40,11 +48,98 @@ def _unlock_live_auto(tmp_path):
     save_config(cfg)
 
 
+def _verified_paper_position(
+    *,
+    position_id: str,
+    symbol: str,
+    quantity: float,
+    entry_price: float,
+    entry_fee: float = 0.0,
+) -> Position:
+    """Seed one real native entry chain suitable for an eligible close."""
+    opportunity = Opportunity(
+        id=f"opportunity-{position_id}",
+        symbol=symbol,
+        market="spot",
+        direction_bias="long",
+        source_agent="risk-test",
+    )
+    repo.insert_opportunity(opportunity)
+    proposal = TradeProposal(
+        id=f"proposal-{position_id}",
+        opportunity_id=opportunity.id,
+        symbol=symbol,
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=quantity,
+        price=entry_price,
+        execution_mode="paper_internal",
+        status="approved",
+    )
+    repo.insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        id=f"risk-{position_id}",
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode="paper_internal",
+        proposal_execution_mode="paper_internal",
+        decision_role="authoritative",
+        evaluated_quantity=quantity,
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    repo.insert_risk_decision(decision)
+    order = Order(
+        id=f"order-{position_id}",
+        proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        symbol=symbol,
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=quantity,
+        price=entry_price,
+        execution_mode="paper_internal",
+        status="filled",
+    )
+    repo.insert_order(order)
+    repo.insert_fill(Fill(
+        id=f"entry-fill-{position_id}",
+        order_id=order.id,
+        fill_price=entry_price,
+        fill_quantity=quantity,
+        fee=entry_fee,
+        fee_source="reconciled",
+    ))
+    position = Position(
+        id=position_id,
+        symbol=symbol,
+        market_type="spot",
+        direction="long",
+        quantity=quantity,
+        entry_price=entry_price,
+        current_price=entry_price,
+        entry_fee=entry_fee,
+        funding_cost=0.0,
+        funding_source="not_applicable",
+        entry_price_source="local_fill",
+        entry_fill_verified=True,
+        execution_mode="paper_internal",
+        opportunity_id=opportunity.id,
+        proposal_id=proposal.id,
+        order_id=order.id,
+    )
+    repo.insert_position(position)
+    repo.update_order(order.id, position_id=position.id)
+    return position
+
+
 def _verified_paper_close(position: Position, exit_price: float) -> None:
     from aletheia.execution.verified_exit import VerifiedExitFill, VerifiedExitResult
     from aletheia.portfolio.outcome_closure import close_position_verified
 
-    close_position_verified(
+    filled_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    result = close_position_verified(
         position.id,
         VerifiedExitResult(
             state="verified_fill", reason="test_local_fill",
@@ -53,16 +148,19 @@ def _verified_paper_close(position: Position, exit_price: float) -> None:
             position_id=position.id, symbol=position.symbol,
             market_type=position.market_type, direction=position.direction,
             position_absent=True, history_complete=True,
-            history_start_ms=1, history_end_ms=2, pages=1,
+            history_start_ms=filled_at_ms - 1,
+            history_end_ms=filled_at_ms,
+            pages=1,
             source_endpoint="test_local_fill",
             fills=(VerifiedExitFill(
                 fill_id=f"exit-{position.id}", order_id=None, price=exit_price,
                 quantity=position.quantity, fee=0.0, fee_currency="USDT",
-                realized_pnl=None, filled_at_ms=2,
+                realized_pnl=None, filled_at_ms=filled_at_ms,
             ),),
         ),
         reason="stop_loss",
     )
+    assert result["outcome_eligible"] is True
 
 
 # --- max_daily_loss (global brake) ---
@@ -70,7 +168,7 @@ def _verified_paper_close(position: Position, exit_price: float) -> None:
 def test_daily_loss_within_limit_approves(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     # No closed positions today → realized pnl 0 → paper proposal still approves.
-    p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                       execution_mode="paper_internal", quantity=0.001, price=60000)
     repo.insert_trade_proposal(p)
     assert evaluate_proposal(p).approved is True
@@ -85,13 +183,15 @@ def test_daily_loss_exceeded_blocks_and_trips_kill_switch(tmp_path, monkeypatch)
     save_config(cfg)
 
     # Capital base = max_live_limited_cap_usdt default 100; max_daily_loss_pct 1.0 → $1 limit.
-    pos = Position(symbol="BTC/USDT", market_type="spot", direction="long",
-                   quantity=1.0, entry_price=100.0, entry_fee=0.0,
-                   execution_mode="paper_internal")
-    repo.insert_position(pos)
+    pos = _verified_paper_position(
+        position_id="daily-loss-position",
+        symbol="BTC/USDT",
+        quantity=1.0,
+        entry_price=100.0,
+    )
     _verified_paper_close(pos, 90.0)
 
-    p = TradeProposal(symbol="ETHUSDT", market_type="spot", direction="long",
+    p = TradeProposal(symbol="ETH/USDT", market_type="spot", direction="long",
                       execution_mode="paper_internal", quantity=0.001, price=3000)
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
@@ -112,7 +212,7 @@ def test_account_mode_mismatch_blocks_live_when_exchange_demo(tmp_path, monkeypa
     cfg.exchange.mode = "demo"  # but trying a live order
     save_config(cfg)
 
-    p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                       execution_mode="bitget_live_limited", quantity=0.0001, price=60000)
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
@@ -127,11 +227,11 @@ def test_stale_market_data_blocks_live(tmp_path, monkeypatch):
     _unlock_live_auto(tmp_path)
     # Insert a stale snapshot (2 hours old).
     stale = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-    snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000)
+    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000)
     snap.snapshot_at = stale
     repo.insert_market_snapshot(snap)
 
-    p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                       execution_mode="bitget_live_limited", quantity=0.0001, price=60000)
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
@@ -141,9 +241,9 @@ def test_stale_market_data_blocks_live(tmp_path, monkeypatch):
 def test_fresh_market_data_passes_freshness(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
-    snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000)  # fresh now
+    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000)  # fresh now
     repo.insert_market_snapshot(snap)
-    p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                       execution_mode="bitget_live_limited", quantity=0.0001, price=60000)
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
@@ -159,7 +259,7 @@ def test_live_exposure_cap_blocks_new_order(tmp_path, monkeypatch):
     # Existing live exposure already near limit.
     from aletheia.storage.models import Position
     repo.insert_position(Position(
-        symbol="BTCUSDT",
+        symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         quantity=0.001,
@@ -167,11 +267,11 @@ def test_live_exposure_cap_blocks_new_order(tmp_path, monkeypatch):
         current_price=10000.0,
         execution_mode="bitget_live_limited",
     ))
-    snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=10000)
+    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=10000)
     repo.insert_market_snapshot(snap)
 
     p = TradeProposal(
-        symbol="BTCUSDT",
+        symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         execution_mode="bitget_live_limited",
@@ -188,10 +288,10 @@ def test_live_exposure_cap_allows_order_under_limit(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
 
-    snap = MarketSnapshot(symbol="ETHUSDT", market_type="spot", price=2000)
+    snap = MarketSnapshot(symbol="ETH/USDT", market_type="spot", price=2000)
     repo.insert_market_snapshot(snap)
     p = TradeProposal(
-        symbol="ETHUSDT",
+        symbol="ETH/USDT",
         market_type="spot",
         direction="long",
         execution_mode="bitget_live_limited",
@@ -212,7 +312,7 @@ def test_demo_leverage_over_limit_blocks(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
     # demo futures leverage limit default = 5
-    p = TradeProposal(symbol="BTCUSDT", market_type="usdt_futures", direction="long",
+    p = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
                       execution_mode="bitget_demo", quantity=0.001, price=60000)
     p.leverage = 10
     repo.insert_trade_proposal(p)
@@ -224,7 +324,7 @@ def test_demo_leverage_within_limit_ok(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
-    p = TradeProposal(symbol="BTCUSDT", market_type="usdt_futures", direction="long",
+    p = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
                       execution_mode="bitget_demo", quantity=0.001, price=60000)
     p.leverage = 3
     repo.insert_trade_proposal(p)
@@ -239,7 +339,7 @@ def test_single_trade_risk_exceeded_blocks_live(tmp_path, monkeypatch):
     _unlock_live_auto(tmp_path)
     # cap=100, single_trade_risk_pct=0.25 → max risk $0.25.
     # entry 60000, stop 59000 (dist 1000), qty 0.001 → risk = $1 > $0.25 → block.
-    p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                       execution_mode="bitget_live_limited", quantity=0.001, price=60000)
     p.stop_price = 59000
     repo.insert_trade_proposal(p)
@@ -250,9 +350,9 @@ def test_single_trade_risk_exceeded_blocks_live(tmp_path, monkeypatch):
 def test_missing_stop_price_fails_single_trade_risk_check(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
-    snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000)
+    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000)
     repo.insert_market_snapshot(snap)
-    p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                       execution_mode="bitget_live_limited", quantity=0.0001, price=60000)
     # no stop_price → this is a hard fail in strict live mode.
     repo.insert_trade_proposal(p)
@@ -271,9 +371,9 @@ def test_live_family_without_evidence_rejected(tmp_path, monkeypatch):
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
                       scanner_family="momentum")
     repo.insert_opportunity(opp)
-    snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000)
+    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000)
     repo.insert_market_snapshot(snap)
-    p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                       execution_mode="bitget_live_limited", quantity=0.0001, price=60000,
                       opportunity_id=opp.id)
     repo.insert_trade_proposal(p)
@@ -285,10 +385,10 @@ def test_live_family_without_evidence_rejected(tmp_path, monkeypatch):
 def test_live_without_resolvable_family_rejected(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
-    snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000)
+    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000)
     repo.insert_market_snapshot(snap)
     p = TradeProposal(
-        symbol="BTCUSDT",
+        symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         execution_mode="bitget_live_limited",
@@ -323,9 +423,9 @@ def test_live_family_with_clean_window_edge_passes_gate14(tmp_path, monkeypatch)
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
                       scanner_family="momentum")
     repo.insert_opportunity(opp)
-    snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000)
+    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000)
     repo.insert_market_snapshot(snap)
-    p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                       execution_mode="bitget_live_limited", quantity=0.0001, price=60000,
                       opportunity_id=opp.id, stop_price=59000)
     repo.insert_trade_proposal(p)
@@ -359,7 +459,7 @@ def test_demo_position_notional_bounded(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     # default max_demo_position_notional_usdt = 200; 0.01 * 60000 = 600 > 200
     p = TradeProposal(
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         execution_mode="paper_internal", quantity=0.01, price=60000,
     )
     repo.insert_trade_proposal(p)
@@ -376,7 +476,7 @@ def test_demo_single_trade_risk_bounded(tmp_path, monkeypatch):
     # = 0.0025 * 60000 * 0.10 = $15 risk > $2. Notional 150 < 200 so only the
     # risk check should trip.
     p = TradeProposal(
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         execution_mode="paper_internal", quantity=0.0025, price=60000,
         stop_price=54000,
     )
@@ -390,7 +490,7 @@ def test_demo_bounds_within_limits_approve(tmp_path, monkeypatch):
     """A normal small paper trade with a sane stop is still approved."""
     setup_env(tmp_path, monkeypatch)
     p = TradeProposal(
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         execution_mode="paper_internal", quantity=0.0004, price=60000,
         stop_price=58800,  # 2% stop -> risk = 0.0004*60000*0.02 = $0.48 < $2
     )
@@ -421,7 +521,7 @@ def test_evaluate_proposal_is_serialized(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "_evaluate_proposal_locked", spy)
 
     p = TradeProposal(
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         execution_mode="paper_internal", quantity=0.0004, price=60000, stop_price=58800,
     )
     repo.insert_trade_proposal(p)
@@ -442,22 +542,22 @@ def test_kill_switch_trip_blocks_subsequent_proposal(tmp_path, monkeypatch):
     cfg.risk.max_daily_loss_pct = 1.0  # 1% of cap(100) = $1 limit
     cfg.risk.kill_switch_enabled_demo = True  # default False; paper_internal is demo-mode
     save_config(cfg)
-    loss_position = Position(
-        symbol="BTC/USDT", market_type="spot", direction="long",
-        quantity=0.01, entry_price=60000, current_price=54000,
-        entry_fee=0.0, execution_mode="paper_internal",
+    loss_position = _verified_paper_position(
+        position_id="kill-switch-loss-position",
+        symbol="BTC/USDT",
+        quantity=0.01,
+        entry_price=60000,
     )
-    repo.insert_position(loss_position)
     _verified_paper_close(loss_position, 54000.0)
 
-    p1 = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    p1 = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                        execution_mode="paper_internal", quantity=0.0004, price=60000, stop_price=58800)
     repo.insert_trade_proposal(p1)
     r1 = evaluate_proposal(p1)
     assert any("max_daily_loss_exceeded" in v for v in r1.violations)
 
     # Kill switch is now persisted; a brand-new proposal must be rejected for it.
-    p2 = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    p2 = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                        execution_mode="paper_internal", quantity=0.0004, price=60000, stop_price=58800)
     repo.insert_trade_proposal(p2)
     r2 = evaluate_proposal(p2)

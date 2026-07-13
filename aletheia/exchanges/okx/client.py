@@ -436,6 +436,7 @@ class OKXClient:
             close_fills: list[VerifiedExitFill] = []
             ambiguous = False
             expected_side = "sell" if request.direction == "long" else "buy"
+            known_entry_order_ids = set(request.known_entry_order_ids)
             for raw in raw_fills:
                 timestamp = _okx_int(raw.get("ts") or raw.get("fillTime"))
                 if not request.history_start_ms <= timestamp <= request.history_end_ms:
@@ -448,6 +449,9 @@ class OKXClient:
                 closes_direction = side == expected_side and pos_side in {
                     request.direction, "net",
                 }
+                remote_order_id = str(raw.get("ordId") or "").strip()
+                if remote_order_id in known_entry_order_ids and not closes_direction:
+                    continue
                 if not closes_direction:
                     ambiguous = True
                     continue

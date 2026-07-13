@@ -95,6 +95,9 @@ CREATE TABLE IF NOT EXISTS risk_decisions (
     violations TEXT DEFAULT '[]',
     allowed_execution_mode TEXT,
     proposal_execution_mode TEXT,
+    decision_role TEXT NOT NULL DEFAULT 'legacy',
+    evaluated_quantity REAL,
+    proposal_commit_hash TEXT,
     message TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -120,6 +123,9 @@ CREATE TABLE IF NOT EXISTS orders (
     price REAL,
     execution_mode TEXT NOT NULL,
     exchange_order_id TEXT,
+    client_order_id TEXT,
+    position_id TEXT,
+    close_reason TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     source TEXT NOT NULL DEFAULT 'native',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -157,6 +163,8 @@ CREATE TABLE IF NOT EXISTS positions (
     close_reason TEXT,
     exit_reasoning TEXT,
     close_category TEXT NOT NULL DEFAULT 'unknown',
+    entry_price_source TEXT NOT NULL DEFAULT 'unavailable',
+    entry_fill_verified INTEGER NOT NULL DEFAULT 0,
     exit_price_source TEXT NOT NULL DEFAULT 'unavailable',
     exit_fill_verified INTEGER NOT NULL DEFAULT 0,
     outcome_eligible INTEGER NOT NULL DEFAULT 0,
@@ -164,6 +172,8 @@ CREATE TABLE IF NOT EXISTS positions (
     reconciliation_identity TEXT,
     reconciliation_evidence TEXT,
     outcome_semantics_version TEXT,
+    funding_cost REAL,
+    funding_source TEXT NOT NULL DEFAULT 'unavailable',
     source TEXT NOT NULL DEFAULT 'native',
     opened_at TEXT NOT NULL DEFAULT (datetime('now')),
     closed_at TEXT
@@ -402,6 +412,7 @@ CREATE TABLE IF NOT EXISTS serenity_replay_snapshots (
 
 CREATE TABLE IF NOT EXISTS serenity_post_mortems (
     id TEXT PRIMARY KEY,
+    position_id TEXT REFERENCES positions(id),
     opportunity_id TEXT NOT NULL REFERENCES serenity_opportunities(id),
     outcome TEXT NOT NULL,
     failure_bucket TEXT,
@@ -1535,6 +1546,8 @@ CREATE INDEX IF NOT EXISTS idx_pred_claims_market ON prediction_market_claims(ma
 # CREATE TABLE above covers fresh DBs; these keep older app.db files current.
 _OUTCOME_INTEGRITY_POSITION_COLUMNS = (
     ("close_category", "positions", "TEXT NOT NULL DEFAULT 'unknown'"),
+    ("entry_price_source", "positions", "TEXT NOT NULL DEFAULT 'unavailable'"),
+    ("entry_fill_verified", "positions", "INTEGER NOT NULL DEFAULT 0"),
     ("exit_price_source", "positions", "TEXT NOT NULL DEFAULT 'unavailable'"),
     ("exit_fill_verified", "positions", "INTEGER NOT NULL DEFAULT 0"),
     ("outcome_eligible", "positions", "INTEGER NOT NULL DEFAULT 0"),
@@ -1542,6 +1555,8 @@ _OUTCOME_INTEGRITY_POSITION_COLUMNS = (
     ("reconciliation_identity", "positions", "TEXT"),
     ("reconciliation_evidence", "positions", "TEXT"),
     ("outcome_semantics_version", "positions", "TEXT"),
+    ("funding_cost", "positions", "REAL"),
+    ("funding_source", "positions", "TEXT NOT NULL DEFAULT 'unavailable'"),
 )
 
 _OUTCOME_INTEGRITY_DDL = (
@@ -1609,6 +1624,25 @@ _OUTCOME_INTEGRITY_DDL = (
        ON reconciliation_integrity_incidents(incident_type) WHERE status='active'""",
     """CREATE INDEX IF NOT EXISTS idx_reconciliation_integrity_status_time
        ON reconciliation_integrity_incidents(status, last_detected_at DESC)""",
+    """CREATE TABLE IF NOT EXISTS outcome_hook_jobs (
+        id TEXT PRIMARY KEY,
+        position_id TEXT NOT NULL REFERENCES positions(id),
+        hook_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT NOT NULL DEFAULT (datetime('now')),
+        locked_at TEXT,
+        claim_token TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT,
+        UNIQUE(position_id, hook_type)
+    )""",
+    """CREATE INDEX IF NOT EXISTS idx_outcome_hook_jobs_ready
+       ON outcome_hook_jobs(status, next_attempt_at, created_at)""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS idx_serenity_post_mortems_position
+       ON serenity_post_mortems(position_id)""",
 )
 
 _ADDITIVE_COLUMNS = [
@@ -1654,6 +1688,17 @@ _ADDITIVE_COLUMNS = [
     # CR-RE-01: preserve the proposal's original execution_mode on the decision row
     # (allowed_execution_mode gets downgraded to paper_internal on rejection).
     ("proposal_execution_mode", "risk_decisions", "TEXT"),
+    # Risk -> Execution authority repair (2026-07-13). Historical rows remain
+    # ``legacy`` so duplicate decisions already on disk cannot be mistaken for,
+    # or conflict with, the new authoritative snapshot identity.
+    ("decision_role", "risk_decisions", "TEXT NOT NULL DEFAULT 'legacy'"),
+    ("evaluated_quantity", "risk_decisions", "REAL"),
+    ("proposal_commit_hash", "risk_decisions", "TEXT"),
+    # Durable exchange recovery and exact Order -> Position identity.  Nullable
+    # keeps historical Orders honest instead of inventing missing linkage.
+    ("client_order_id", "orders", "TEXT"),
+    ("position_id", "orders", "TEXT"),
+    ("close_reason", "orders", "TEXT"),
     ("strategy_id", "knowledge_items", "TEXT"),
     ("stop_price", "positions", "REAL"),
     ("take_profit_price", "positions", "REAL"),
@@ -1731,6 +1776,8 @@ _ADDITIVE_COLUMNS = [
     ("published_at", "serenity_evidence", "TEXT"),
     ("fetched_at", "serenity_evidence", "TEXT"),
     ("metadata", "serenity_evidence", "TEXT DEFAULT '{}'"),
+    # Durable Outcome-hook replay: one automatic Serenity post-mortem per Position.
+    ("position_id", "serenity_post_mortems", "TEXT"),
     # D2 (2026-06-27): independent-evaluator authoritative tier + provenance.
     # `tier`/`evidence_tier` stay as the generator's self-graded proposal; these
     # columns hold what actually gates scoring/promotion. See serenity_evidence.py.
@@ -2276,8 +2323,17 @@ _CORE_INDEXES_SQL = """
 CREATE INDEX IF NOT EXISTS idx_proposals_strategy_id ON trade_proposals(strategy_id);
 CREATE INDEX IF NOT EXISTS idx_proposals_commit_hash ON trade_proposals(commit_hash);
 CREATE INDEX IF NOT EXISTS idx_orders_proposal_id ON orders(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_orders_client_order_id ON orders(client_order_id);
+CREATE INDEX IF NOT EXISTS idx_orders_position_id ON orders(position_id);
 CREATE INDEX IF NOT EXISTS idx_fills_order_id ON fills(order_id);
 CREATE INDEX IF NOT EXISTS idx_risk_decisions_proposal_id ON risk_decisions(proposal_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_risk_authoritative_snapshot
+ON risk_decisions(
+    proposal_id,
+    COALESCE(proposal_commit_hash, ''),
+    COALESCE(evaluated_quantity, -1.7976931348623157e308)
+)
+WHERE decision_role = 'authoritative';
 CREATE INDEX IF NOT EXISTS idx_positions_strategy_id ON positions(strategy_id);
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 CREATE INDEX IF NOT EXISTS idx_knowledge_items_type_status ON knowledge_items(item_type, status);

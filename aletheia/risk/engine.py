@@ -3,7 +3,9 @@
 Change-controlled module (guide §31.3). Implements the §21.3 check matrix.
 """
 
+import json
 import logging
+import math
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -12,9 +14,21 @@ from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_canonical
 from aletheia.portfolio.account_loss import authoritative_account_realized_loss
 from aletheia.storage.models import RiskDecision, TradeProposal
-from aletheia.storage.repositories import insert_risk_decision, list_positions
+from aletheia.storage.repositories import (
+    _compute_proposal_hash,
+    get_authoritative_risk_decision,
+    get_trade_proposal,
+    insert_authoritative_risk_decision,
+    insert_risk_decision,
+    list_positions,
+    list_unresolved_native_entry_orders_for_risk,
+)
 
 logger = logging.getLogger("aletheia.risk.engine")
+
+
+class ProposalIntegrityError(RuntimeError):
+    """Stored immutable Proposal content no longer matches its commit hash."""
 
 # Live market data older than this (seconds) is considered stale for live orders.
 _MAX_DATA_AGE_SECONDS = 120
@@ -30,9 +44,124 @@ _MAX_DEMO_DATA_AGE_SECONDS = 1800
 # runs jobs on a threadpool, so this lock closes that window.
 _eval_lock = threading.Lock()
 
+_DECISION_ROLES = frozenset({"preflight", "authoritative"})
+_NATIVE_MARKET_TYPES = frozenset({"spot", "usdt_futures"})
+_NATIVE_DIRECTIONS = frozenset({"long", "short"})
+_NATIVE_ORDER_TYPES = frozenset({"market", "limit"})
+_NATIVE_EXECUTION_MODES = frozenset({
+    "paper_internal",
+    "bitget_demo",
+    "bitget_live_limited",
+    "binance_testnet",
+    "binance_live_limited",
+    "okx_demo",
+    "okx_live_limited",
+})
+
+
+@dataclass(frozen=True)
+class _UnresolvedEntryReservation:
+    """Conservative allowance consumed by one unresolved native entry Order."""
+
+    order_id: str
+    symbol: str
+    execution_mode: str
+    price: float | None
+    order_quantity: float | None
+    persisted_fill_quantity: float | None
+    remaining_quantity: float | None
+    reserved_quantity: float | None
+    has_open_position: bool
+    invalid_reasons: tuple[str, ...] = ()
+
 
 def _is_live(execution_mode: str) -> bool:
     return execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited")
+
+
+def _unresolved_entry_reservations() -> list[_UnresolvedEntryReservation]:
+    """Normalize unresolved entry authority without treating bad data as zero.
+
+    A linked open Position already represents the persisted Fill quantity, so
+    only the unfilled remainder is reserved.  If no Position exists, even
+    durable Fills are not represented in portfolio exposure; reserve the full
+    authoritative Order quantity until materialization converges.
+    """
+    reservations: list[_UnresolvedEntryReservation] = []
+    for row in list_unresolved_native_entry_orders_for_risk():
+        invalid: list[str] = []
+
+        try:
+            order_quantity = float(row.get("quantity"))
+        except (TypeError, ValueError):
+            order_quantity = None
+        if (
+            order_quantity is None
+            or not math.isfinite(order_quantity)
+            or order_quantity <= 0
+        ):
+            order_quantity = None
+            invalid.append("unresolved_entry_invalid_quantity")
+
+        try:
+            price = float(row.get("price"))
+        except (TypeError, ValueError):
+            price = None
+        if price is None or not math.isfinite(price) or price <= 0:
+            price = None
+            invalid.append("unresolved_entry_invalid_price")
+
+        try:
+            persisted_fill_quantity = float(
+                row.get("persisted_fill_quantity") or 0.0
+            )
+        except (TypeError, ValueError):
+            persisted_fill_quantity = None
+        invalid_fill_count = int(row.get("invalid_fill_quantity_count") or 0)
+        fill_quantity_valid = (
+            persisted_fill_quantity is not None
+            and math.isfinite(persisted_fill_quantity)
+            and persisted_fill_quantity >= 0
+            and invalid_fill_count == 0
+        )
+        if fill_quantity_valid and order_quantity is not None:
+            tolerance = max(1e-12, order_quantity * 1e-9)
+            if persisted_fill_quantity > order_quantity + tolerance:
+                fill_quantity_valid = False
+        if not fill_quantity_valid:
+            invalid.append("unresolved_entry_invalid_fill_quantity")
+
+        has_open_position = bool(row.get("has_open_position"))
+        remaining_quantity: float | None = None
+        reserved_quantity: float | None = None
+        if order_quantity is not None:
+            if fill_quantity_valid:
+                remaining_quantity = max(
+                    0.0, order_quantity - float(persisted_fill_quantity)
+                )
+            # Invalid Fill aggregation is already fail-closed.  Retain the full
+            # Order as the conservative numeric reservation where possible.
+            reserved_quantity = (
+                remaining_quantity
+                if has_open_position and remaining_quantity is not None
+                else order_quantity
+            )
+
+        reservations.append(_UnresolvedEntryReservation(
+            order_id=str(row.get("id") or ""),
+            symbol=str(row.get("symbol") or ""),
+            execution_mode=str(row.get("execution_mode") or ""),
+            price=price,
+            order_quantity=order_quantity,
+            persisted_fill_quantity=(
+                persisted_fill_quantity if fill_quantity_valid else None
+            ),
+            remaining_quantity=remaining_quantity,
+            reserved_quantity=reserved_quantity,
+            has_open_position=has_open_position,
+            invalid_reasons=tuple(dict.fromkeys(invalid)),
+        ))
+    return reservations
 
 
 def _cached_available_balance_usdt(execution_mode: str) -> float | None:
@@ -128,17 +257,54 @@ class RiskCheckResult:
     decision_id: str | None = None
 
 
-def evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult:
+def evaluate_proposal(
+    proposal: TradeProposal,
+    *,
+    decision_role: str = "authoritative",
+) -> RiskCheckResult:
     """Run all risk checks against a trade proposal. Returns a decision.
 
     Serialized via _eval_lock so a kill-switch trip during one evaluation is
     visible to the next proposal (closes the daily-loss TOCTOU window).
+
+    ``preflight`` always performs a fresh evaluation. ``authoritative`` is
+    idempotent for the proposal's original commit hash plus the quantity actually
+    evaluated, so an execution retry cannot create a second authority row.
     """
+    if decision_role not in _DECISION_ROLES:
+        raise ValueError(f"unsupported risk decision role: {decision_role}")
+
     with _eval_lock:
-        return _evaluate_proposal_locked(proposal)
+        if decision_role == "authoritative":
+            proposal_commit_hash = _verified_original_proposal_commit_hash(proposal)
+            existing = get_authoritative_risk_decision(
+                proposal.id,
+                proposal_commit_hash,
+                proposal.quantity,
+            )
+            if existing is not None:
+                return _risk_result_from_row(existing)
+            # Preserve the historical one-argument private call for the default
+            # role; a few lock-focused tests instrument this boundary directly.
+            return _evaluate_proposal_locked(proposal)
+        return _evaluate_proposal_locked(proposal, decision_role=decision_role)
 
 
-def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
+def _evaluate_proposal_locked(
+    proposal: TradeProposal,
+    decision_role: str = "authoritative",
+) -> RiskCheckResult:
+    native_input_violations = _native_input_violations(proposal)
+    if native_input_violations:
+        # Malformed native intent is not eligible for the configurable risk
+        # formulas. Persist the fail-closed verdict without letting invalid enum
+        # or numeric values reach account, lesson, or portfolio side effects.
+        return _persist_risk_result(
+            proposal,
+            native_input_violations,
+            decision_role=decision_role,
+        )
+
     cfg = load_config()
     risk = cfg.risk
     violations = []
@@ -230,26 +396,55 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     # against serenity quota) are a Phase 2 decision deferred until serenity_executor
     # is implemented. Until then ALL open positions count regardless of trade_school.
     open_positions = list_positions(status="open")
-    if _is_live(proposal.execution_mode):
+    prop_is_live = _is_live(proposal.execution_mode)
+    try:
+        unresolved_entries = _unresolved_entry_reservations()
+    except Exception as exc:
+        # Accepted exchange Orders are part of Risk authority.  A failed local
+        # read cannot be interpreted as zero pending exposure.
+        logger.warning(
+            "unresolved entry exposure unavailable (%s)", type(exc).__name__
+        )
+        unresolved_entries = []
+        violations.append("unresolved_entry_exposure_unavailable")
+    pool_unresolved_entries = [
+        entry for entry in unresolved_entries
+        if _is_live(entry.execution_mode) == prop_is_live
+    ]
+    for reason in sorted({
+        reason
+        for entry in pool_unresolved_entries
+        for reason in entry.invalid_reasons
+    }):
+        violations.append(reason)
+
+    unresolved_entry_slots = sum(
+        1 for entry in pool_unresolved_entries if not entry.has_open_position
+    )
+    if prop_is_live:
         live_positions = [p for p in open_positions if _is_live(p.get("execution_mode", ""))]
-        if len(live_positions) >= risk.max_open_positions_live:
-            violations.append(f"max_live_positions_reached:{len(live_positions)}")
+        live_slot_count = len(live_positions) + unresolved_entry_slots
+        if live_slot_count >= risk.max_open_positions_live:
+            violations.append(f"max_live_positions_reached:{live_slot_count}")
     else:
         demo_positions = [p for p in open_positions if not _is_live(p.get("execution_mode", ""))]
-        if len(demo_positions) >= risk.max_open_positions_demo:
-            violations.append(f"max_demo_positions_reached:{len(demo_positions)}")
+        demo_slot_count = len(demo_positions) + unresolved_entry_slots
+        if demo_slot_count >= risk.max_open_positions_demo:
+            violations.append(f"max_demo_positions_reached:{demo_slot_count}")
 
     # 6b. No duplicate open position for same symbol in the same pool (demo or live).
     #     Prevents the system from opening a second position when one already exists
     #     on a different broker in the same pool (e.g. paper_internal + okx_demo both
     #     holding ETHUSDT short at the same time).
-    prop_is_live = _is_live(proposal.execution_mode)
     same_symbol_open = [
         p for p in open_positions
         if p.get("symbol") == proposal.symbol
         and _is_live(p.get("execution_mode", "")) == prop_is_live
     ]
-    if same_symbol_open:
+    same_symbol_unresolved = any(
+        entry.symbol == proposal.symbol for entry in pool_unresolved_entries
+    )
+    if same_symbol_open or same_symbol_unresolved:
         violations.append(f"symbol_already_open:{proposal.symbol}")
 
     # 7. Short allowed
@@ -329,7 +524,7 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
 
         # 12. Total live exposure limit (open positions + proposed notional).
         if proposal.price and proposal.quantity:
-            current_exposure = _current_live_exposure()
+            current_exposure = _current_live_exposure(unresolved_entries)
             projected = current_exposure + (proposal.price * proposal.quantity)
             live_exposure_cap = risk.max_total_live_exposure_pct / 100.0 * risk.max_live_limited_cap_usdt
             if live_exposure_cap > 0 and projected > live_exposure_cap:
@@ -437,25 +632,118 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
                 f"{projected:.0f}>{per_symbol_cap:.0f}"
             )
 
-    # Determine execution mode
-    if not violations:
-        allowed_mode = proposal.execution_mode
-    else:
-        allowed_mode = "paper_internal"
+    return _persist_risk_result(
+        proposal,
+        violations,
+        decision_role=decision_role,
+    )
 
+
+def _native_input_violations(proposal: TradeProposal) -> list[str]:
+    """Validate native execution intent before configurable risk checks.
+
+    Adopted chains describe exchange facts already observed by reconciliation;
+    they are not new native order intent and retain their separate exception.
+    """
+    if proposal.source != "native":
+        return []
+
+    violations: list[str] = []
+    symbol = proposal.symbol
+    has_canonical_shape = (
+        isinstance(symbol, str)
+        and symbol == symbol.strip()
+        and symbol.count("/") == 1
+        and all(symbol.split("/", 1))
+    )
+    # r-series equity tokens deliberately preserve their lower-case leading
+    # ``r``; every other native symbol must equal the canonical converter output.
+    symbol_is_canonical = has_canonical_shape and symbol == to_canonical(symbol)
+    if has_canonical_shape and not symbol_is_canonical:
+        try:
+            from aletheia.data.symbols import is_stock_token
+
+            symbol_is_canonical = is_stock_token(symbol)
+        except Exception:
+            symbol_is_canonical = False
+    if not symbol_is_canonical:
+        violations.append("invalid_symbol_format")
+
+    if proposal.market_type not in _NATIVE_MARKET_TYPES:
+        violations.append("invalid_market_type")
+    if proposal.direction not in _NATIVE_DIRECTIONS:
+        violations.append("invalid_direction")
+    if proposal.order_type not in _NATIVE_ORDER_TYPES:
+        violations.append("invalid_order_type")
+
+    quantity = proposal.quantity
+    if quantity is None or not math.isfinite(quantity) or quantity <= 0:
+        violations.append("invalid_quantity")
+    price = proposal.price
+    if price is None or not math.isfinite(price) or price <= 0:
+        violations.append("invalid_price")
+    if proposal.execution_mode not in _NATIVE_EXECUTION_MODES:
+        violations.append("invalid_execution_mode")
+    return violations
+
+
+def _verified_original_proposal_commit_hash(
+    proposal: TradeProposal,
+) -> str | None:
+    """Verify and return stored immutable identity for an evaluated model copy."""
+    row = get_trade_proposal(proposal.id)
+    if row is not None:
+        stored = TradeProposal.model_validate(row)
+        if stored.commit_hash is None:
+            raise ProposalIntegrityError("stored proposal has no commit hash")
+        if _compute_proposal_hash(stored) != stored.commit_hash:
+            raise ProposalIntegrityError(
+                "stored proposal content does not match commit hash"
+            )
+        return stored.commit_hash
+    # Direct unit-level evaluations may use an unpersisted model. Gateway paths
+    # always persist first; when a caller supplies a hash, still verify it.
+    if (
+        proposal.commit_hash is not None
+        and _compute_proposal_hash(proposal) != proposal.commit_hash
+    ):
+        raise ProposalIntegrityError("proposal content does not match commit hash")
+    return proposal.commit_hash
+
+
+def _risk_result_from_row(row: dict) -> RiskCheckResult:
+    try:
+        parsed = json.loads(row.get("violations") or "[]")
+        violations = parsed if isinstance(parsed, list) else []
+    except (TypeError, ValueError):
+        violations = []
+    return RiskCheckResult(
+        approved=bool(row.get("approved")),
+        risk_score=float(row.get("risk_score") or 0.0),
+        violations=violations,
+        allowed_execution_mode=row.get("allowed_execution_mode") or "paper_internal",
+        message=row.get("message") or "",
+        decision_id=row.get("id"),
+    )
+
+
+def _persist_risk_result(
+    proposal: TradeProposal,
+    violations: list[str],
+    *,
+    decision_role: str,
+) -> RiskCheckResult:
+    """Persist a role-labelled decision over the immutable evaluated snapshot."""
     approved = len(violations) == 0
-    risk_score = len(violations) * 0.2
-
+    allowed_mode = proposal.execution_mode if approved else "paper_internal"
     result = RiskCheckResult(
         approved=approved,
-        risk_score=min(risk_score, 1.0),
+        risk_score=min(len(violations) * 0.2, 1.0),
         violations=violations,
         allowed_execution_mode=allowed_mode,
         message="Approved" if approved else f"Rejected: {', '.join(violations)}",
     )
 
-    # Persist decision
-    import json
     decision = RiskDecision(
         proposal_id=proposal.id,
         approved=approved,
@@ -466,21 +754,35 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
         # paper_internal on rejection, which erased the live/demo signal that
         # strategy_lifecycle needs to classify a live rejection as critical (CR-RE-01).
         proposal_execution_mode=proposal.execution_mode,
+        decision_role=decision_role,
+        evaluated_quantity=proposal.quantity,
+        proposal_commit_hash=_verified_original_proposal_commit_hash(proposal),
         message=result.message,
     )
-    insert_risk_decision(decision)
-    result.decision_id = decision.id
-    try:
-        from aletheia.analytics.filter_evidence import record_risk_filter_decision
+    created = True
+    if decision_role == "authoritative":
+        stored, created = insert_authoritative_risk_decision(decision)
+        if not created:
+            return _risk_result_from_row(stored)
+        result.decision_id = stored["id"]
+    else:
+        insert_risk_decision(decision)
+        result.decision_id = decision.id
 
-        record_risk_filter_decision(
-            proposal,
-            risk_decision_id=decision.id,
-            approved=approved,
-            violations=violations,
-        )
-    except Exception as evidence_error:
-        logger.warning("risk filter evidence unavailable: %s", evidence_error)
+    # Filter evidence is consumed as the final Risk verdict. Preflight rows stay
+    # visible in risk_decisions but do not double-count the same candidate.
+    if decision_role == "authoritative":
+        try:
+            from aletheia.analytics.filter_evidence import record_risk_filter_decision
+
+            record_risk_filter_decision(
+                proposal,
+                risk_decision_id=result.decision_id,
+                approved=approved,
+                violations=violations,
+            )
+        except Exception as evidence_error:
+            logger.warning("risk filter evidence unavailable: %s", evidence_error)
 
     return result
 
@@ -655,8 +957,10 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
         return 1.0
 
 
-def _current_live_exposure() -> float:
-    """Sum absolute notional exposure for live open positions."""
+def _current_live_exposure(
+    unresolved_entries: list[_UnresolvedEntryReservation] | None = None,
+) -> float:
+    """Sum live Positions plus unresolved entry quantity not represented by them."""
     total = 0.0
     for row in list_positions(status="open"):
         if not _is_live(row.get("execution_mode", "")):
@@ -667,6 +971,16 @@ def _current_live_exposure() -> float:
             total += abs(quantity * price)
         except (TypeError, ValueError):
             continue
+    if unresolved_entries is None:
+        unresolved_entries = _unresolved_entry_reservations()
+    for entry in unresolved_entries:
+        if not _is_live(entry.execution_mode):
+            continue
+        if entry.price is None or entry.reserved_quantity is None:
+            # Evaluation already emits the stable invalid-data violation.  Never
+            # manufacture a numeric exposure from missing authority here.
+            continue
+        total += abs(entry.reserved_quantity * entry.price)
     return total
 
 

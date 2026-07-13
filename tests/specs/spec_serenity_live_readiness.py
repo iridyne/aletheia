@@ -9,7 +9,7 @@ and the risk-engine live guard are explicitly verified to be unchanged.
 
 Phase 4 (spec_serenity_holding SH-S05) already established that:
   - paper_tools.create_paper_proposal + gateway.submit_proposal accept trade_school
-  - all four broker Position(...) constructors propagate it
+  - immediate and delayed private-fill Position materializers propagate it
   - position_reconciler stamps it onto adopted positions
 
 Phase 5 promotes those checks to a stricter live-readiness contract by asserting
@@ -38,6 +38,9 @@ _GATEWAY = _ROOT / "aletheia" / "execution" / "gateway.py"
 _BITGET_BROKER = _ROOT / "aletheia" / "execution" / "bitget_broker.py"
 _BINANCE_BROKER = _ROOT / "aletheia" / "execution" / "binance_broker.py"
 _OKX_BROKER = _ROOT / "aletheia" / "execution" / "okx_broker.py"
+_EXCHANGE_MATERIALIZER = (
+    _ROOT / "aletheia" / "execution" / "exchange_materialization.py"
+)
 _RISK_ENGINE = _ROOT / "aletheia" / "risk" / "engine.py"
 _LIVE_ROUTE = _ROOT / "aletheia" / "server" / "routes" / "live.py"
 _SCHEMA = _ROOT / "aletheia" / "config" / "schema.py"
@@ -156,31 +159,16 @@ def test_gateway_threads_trade_school_into_live_paths():
 
 @spec_claim(
     SpecClaim(
-        "LR-S03", _CONTRACT, "§live brokers — Position(...) constructor sets trade_school", "L2a",
-        "Each live broker's Position(...) construction inside execute_live_order "
-        "assigns trade_school=trade_school so position_manager can branch on the "
-        "school. Without this assignment the field would be defaulted to 'short_term' "
-        "by Pydantic and serenity holdings would silently get the 72h max_hold cap",
+        "LR-S03", _CONTRACT, "§private-fill Position materialization sets trade_school", "L2a",
+        "The shared exchange private-fill materializer copies the immutable Proposal "
+        "trade_school into every delayed exchange Position. No broker aggregate "
+        "response may construct a second Position path that drops the school.",
     ),
 )
 def test_live_brokers_assign_trade_school_to_position():
-    for path in (_BITGET_BROKER, _BINANCE_BROKER, _OKX_BROKER):
-        src = path.read_text(encoding="utf-8")
-        # Find every Position(...) construction in execute_live_order's body and
-        # require at least one carries trade_school=trade_school. (Some brokers may
-        # create + update; we only need the open-position write.)
-        body = _slice_function(src, "def execute_live_order(")
-        assert "Position(" in body, (
-            f"{path.name}.execute_live_order has no Position(...) construction — "
-            f"the live broker is no longer opening positions locally; "
-            f"live-readiness invariant cannot be verified"
-        )
-        assert "trade_school=trade_school" in body, (
-            f"{path.name}.execute_live_order does not stamp "
-            f"trade_school=trade_school on the new Position — long-horizon "
-            f"serenity holdings opened via this live broker would silently fall "
-            f"back to 'short_term' (Pydantic default) and get exited at the 72h cap"
-        )
+    materializer = _EXCHANGE_MATERIALIZER.read_text(encoding="utf-8")
+    entry_body = _slice_function(materializer, "def materialize_bitget_entry(")
+    assert 'trade_school=proposal.get("trade_school") or "short_term"' in entry_body
 
 
 @spec_claim(

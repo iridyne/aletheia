@@ -12,9 +12,9 @@ modes, both real exchange calls:
 Symbol handling: local order/fill/position rows keep the symbol in the format the
 caller passed (canonical BTC/USDT for demo, matching market data + position_manager +
 pnl). Only the exchange call is normalised to Bitget execution format (BTCUSDT).
-Fill price/quantity come from the exchange's confirmed fill — never fabricated from
-the request (falls back to the requested values only when the exchange did not return
-fill detail, in which case the order stays effectively at the requested level).
+Fill price/quantity/fee/time come only from private, order-matched fill history —
+never from the aggregate submission response or the request. Aggregate fill activity
+remains explicitly unresolved until reconciliation creates the local Fill/Position.
 """
 
 import asyncio
@@ -22,33 +22,79 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_bitget
 from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
-from aletheia.execution.broker_utils import clean_error_message
-from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
-from aletheia.execution.stops import merge_protective_stop
-from aletheia.storage.models import Order, Fill, Position
+from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
+from aletheia.files.jsonl import write_audit
+from aletheia.storage.models import Order
 from aletheia.storage.repositories import (
-    insert_order, insert_fill, insert_position, list_positions, update_position,
+    get_trade_proposal,
+    insert_order,
+    transaction,
     update_order,
+    update_position,
 )
+from aletheia.storage.sqlite import get_db
 
 logger = logging.getLogger("aletheia.bitget_broker")
 
-# Round-trip taker fee rates (one side). Demo mirrors live mix taker fee.
+# Retained as the public default for callers; private fill history supplies the
+# actual fee used for durable accounting.
 _LIVE_FEE_RATE = 0.0006
-_DEMO_FEE_RATE = 0.0006
 _OPEN_CLOSE_STATES = {
     "pending", "submitted", "partial", "partially_filled", "submission_unknown",
+    "materialization_missing",
 }
+_RETRY_SUPPRESSING_ORDER_STATES = (
+    "pending", "submitted", "partial", "partially_filled", "submission_unknown",
+    "materialization_missing",
+)
 
 
-def _is_submission_timeout(error: BaseException) -> bool:
-    """Recognize direct and client-wrapped transport timeouts."""
+def _client_mode_for_execution_mode(execution_mode: str) -> str:
+    """Map authoritative Order mode to the matching Bitget account."""
+    if execution_mode == "bitget_demo":
+        return "demo"
+    if execution_mode == "bitget_live_limited":
+        return "live"
+    raise ValueError(f"unsupported Bitget execution mode: {execution_mode!r}")
+
+
+def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:
+    placeholders = ",".join("?" for _ in _RETRY_SUPPRESSING_ORDER_STATES)
+    row = get_db().execute(
+        f"""
+        SELECT id, exchange_order_id, status
+        FROM orders
+        WHERE proposal_id=? AND execution_mode=? AND status IN ({placeholders})
+        ORDER BY rowid ASC
+        LIMIT 1
+        """,
+        (proposal_id, execution_mode, *_RETRY_SUPPRESSING_ORDER_STATES),
+    ).fetchone()
+    if row is None:
+        return
+    if row["status"] == "materialization_missing":
+        raise PostSubmitDBError(
+            "exchange fill awaits local materialization", row["exchange_order_id"],
+        )
+    raise SubmissionUnknownError(
+        exchange_order_id=row["exchange_order_id"], client_oid=proposal_id,
+    )
+
+
+def _is_ambiguous_submission_error(error: BaseException) -> bool:
+    """Recognize transport failures where exchange acceptance is unknowable."""
     current: BaseException | None = error
     while current is not None:
-        if isinstance(current, TimeoutError) or "timeout" in type(current).__name__.lower():
+        name = type(current).__name__.lower()
+        if isinstance(current, (TimeoutError, ConnectionError, BrokenPipeError)) or any(
+            marker in name
+            for marker in (
+                "timeout", "connection", "transport", "network", "readerror",
+                "writeerror", "protocolerror", "brokenpipe", "eoferror",
+            )
+        ):
             return True
         current = current.__cause__ or current.__context__
     return False
@@ -66,6 +112,39 @@ def _run_coro(coro):
         return pool.submit(asyncio.run, coro).result()
 
 
+def _same_optional_price(left: float | None, right: object) -> bool:
+    if left is None or right is None:
+        return left is None and right is None
+    try:
+        return float(left) == float(right)
+    except (TypeError, ValueError):
+        return False
+
+
+def _approved_protection_prices(
+    proposal_id: str,
+    stop_price: float | None,
+    take_profit_price: float | None,
+    *,
+    require_existing: bool = True,
+) -> tuple[float | None, float | None] | None:
+    """Return hash-covered Proposal protection only when the caller matches it."""
+    proposal = get_trade_proposal(proposal_id)
+    if proposal is None:
+        if not require_existing:
+            return None
+        raise ValueError("Bitget order requires an approved Proposal")
+    approved_stop = proposal.get("stop_price")
+    approved_take_profit = proposal.get("take_profit")
+    if not _same_optional_price(stop_price, approved_stop) or not _same_optional_price(
+        take_profit_price, approved_take_profit
+    ):
+        raise ValueError(
+            "Bitget protection must exactly match the approved Proposal"
+        )
+    return approved_stop, approved_take_profit
+
+
 
 def _ensure_mix_margin(client, required_usd: float, dry_run: bool = False) -> None:
     """Top up the mix (futures) wallet from UTA before a futures order."""
@@ -77,7 +156,7 @@ def _ensure_mix_margin(client, required_usd: float, dry_run: bool = False) -> No
     except DemoFundingUnavailable:
         raise
     except Exception as e:
-        logger.warning("mix margin precheck skipped: %s", e)
+        logger.warning("mix margin precheck skipped: %s", type(e).__name__)
 
 def execute_live_order(
     proposal_id: str,
@@ -97,16 +176,21 @@ def execute_live_order(
     opportunity_id: str | None = None,
     trade_school: str = "short_term",
 ) -> dict:
-    """Place a real Bitget order (live or demo) and record order/fill/position locally.
+    """Place a real Bitget order and persist its acknowledgement locally.
 
-    `execution_mode` selects which exchange credentials/record this is tagged as
-    (`bitget_live_limited` real funds, `bitget_demo` simulated). `cfg.exchange.mode`
-    (demo|live) decides the actual client/credentials + paptrading header — the risk
-    engine enforces that the two agree (account_mode_mismatch), so by the time we are
-    here they are consistent.
+    `execution_mode` selects both the authoritative Order record and the Bitget
+    account (`bitget_live_limited` real funds, `bitget_demo` simulated). Mutable
+    exchange config is not allowed to reroute an already-authorized Order. The
+    aggregate submission response is never accounting evidence: private,
+    order-matched fill history is the only path that may create Fill/Position.
     """
-    cfg = load_config()
-    client = BitgetClient(mode=cfg.exchange.mode)
+    _guard_unresolved_submission(proposal_id, execution_mode)
+    approved_protection = _approved_protection_prices(
+        proposal_id,
+        stop_price,
+        take_profit_price,
+        require_existing=False,
+    )
     side = "buy" if direction in ("long", "buy") else "sell"
     # Exchange wants Bitget execution format (BTCUSDT); local rows keep the caller's
     # format (canonical BTC/USDT for demo) so they line up with market data + pnl.
@@ -119,6 +203,7 @@ def execute_live_order(
     order = Order(
         proposal_id=proposal_id,
         risk_decision_id=risk_decision_id,
+        client_order_id=proposal_id,
         symbol=symbol,
         market_type=market_type,
         direction=direction,
@@ -129,6 +214,30 @@ def execute_live_order(
         status="pending",
     )
     insert_order(order)
+    if approved_protection is None:
+        # Some controlled callers create the authority atomically at the Order
+        # persistence boundary. Production's insert_order fails closed if no
+        # Proposal exists; this second read obtains exactly what it validated.
+        approved_protection = _approved_protection_prices(
+            proposal_id,
+            stop_price,
+            take_profit_price,
+        )
+    approved_stop_price, approved_take_profit_price = approved_protection
+    try:
+        client = BitgetClient(
+            mode=_client_mode_for_execution_mode(order.execution_mode),
+        )
+    except Exception:
+        # No exchange method has run yet, so this is a known pre-submission
+        # failure.  Do not strand a retry-suppressing ``pending`` Order merely
+        # because credentials/client setup could not be loaded.
+        update_order(
+            order.id,
+            status="error",
+            error_reason="order_client_initialization_failed_before_submission",
+        )
+        raise
 
     required_margin = 0.0
     if market_type != 'spot' and quantity and price and leverage:
@@ -151,181 +260,157 @@ def execute_live_order(
             symbol=exchange_symbol, market_type=market_type, side=side,
             order_type=order_type, quantity=quantity,
             price=price if order_type == "limit" else None,
-            client_oid=proposal_id, leverage=leverage,
+            client_oid=proposal_id,
+            preset_stop_loss_price=approved_stop_price,
+            preset_take_profit_price=approved_take_profit_price,
+            leverage=leverage,
         )))
     except Exception as e:
-        update_order(order.id, status="error", error_reason=clean_error_message(str(e))[:500])
+        if _is_ambiguous_submission_error(e):
+            update_order(
+                order.id,
+                status="submission_unknown",
+                error_reason="order_submission_transport_acknowledgement_unknown",
+            )
+            write_audit({
+                "actor": "system", "source": "bitget_broker",
+                "event_type": "order_submission_unknown", "entity_type": "order",
+                "entity_id": order.id,
+                "reason": "transport_acknowledgement_unknown",
+                "before": {"status": "pending"},
+                "after": {"status": "submission_unknown"},
+                "message": "Order transport failed after submission began; automatic retry suppressed",
+            })
+            raise SubmissionUnknownError(client_oid=proposal_id) from e
+        update_order(order.id, status="error", error_reason="order_submission_rejected")
         raise
 
     exchange_order_id = order_resp.order_id or ""
-    resolved_status = order_resp.status if order_resp.status in ("filled", "partially_filled") else "submitted"
-    update_order(order.id, exchange_order_id=exchange_order_id, status=resolved_status)
-
-    # Use the exchange's CONFIRMED fill price/qty when it returned them; never
-    # fabricate. Fall back to the requested values only when detail is absent (the
-    # order is still effectively at the requested level until reconciliation refines).
-    filled = order_resp.status in ("filled", "partially_filled")
-    partial = order_resp.status == "partially_filled"
-    fill_price = order_resp.fill_price if (filled and order_resp.fill_price) else price
-    fill_qty = order_resp.filled_quantity if (filled and order_resp.filled_quantity) else quantity
-
-    # Order row is persisted with its exchange id. If anything below fails,
-    # reconciliation can still find this order by exchange_order_id.
-    fill = None
-    try:
-        if filled:
-            fill = Fill(
-                order_id=order.id,
-                fill_price=fill_price,
-                fill_quantity=fill_qty,
-                fee=fill_qty * fill_price * fee_rate,
+    if not exchange_order_id:
+        try:
+            update_order(
+                order.id,
+                status="submission_unknown",
+                error_reason="order_submission_missing_exchange_id",
             )
-            insert_fill(fill)
-            # #109 fix: preserve partial state — the previous code always wrote
-            # status='filled' even when the exchange returned 'partially_filled'.
-            # A downstream `WHERE status='filled'` query then treated a partial
-            # as a full fill, and averaging-in / close paths saw the position
-            # as complete when it was still being filled. Now the row keeps
-            # 'partially_filled' until a follow-up fetch flips it to 'filled'
-            # (or the reconciler observes the exchange marking it complete).
-            order_status = "partially_filled" if partial else "filled"
-            update_order(order.id, status=order_status, filled_at=datetime.now(timezone.utc).isoformat())
-
-            existing = _find_open_position(symbol, market_type, direction, execution_mode, strategy_id)
-            if existing:
-                new_qty = existing["quantity"] + fill_qty
-                new_entry = (existing["entry_price"] * existing["quantity"] + fill_price * fill_qty) / new_qty
-                update_kwargs = {"quantity": new_qty, "entry_price": new_entry, "current_price": fill_price}
-                # Tighten (never loosen) the protective stop when averaging in.
-                merged_stop = merge_protective_stop(direction, stop_price, existing.get("stop_price"))
-                if merged_stop is not None:
-                    update_kwargs["stop_price"] = merged_stop
-                # #140 fix: accumulate entry_fee across averaging-in legs. Without this,
-                # a NULL/0.0 stored fee is kept while realized-PnL closeout re-derives the
-                # (single-leg) fee from the schedule → overstated realized PnL feeds the
-                # learning loop. Paper_broker already does this; the three live brokers
-                # were clones that missed it.
-                new_entry_fee_leg = round(fill_price * fill_qty * fee_rate, 8)
-                existing_entry_fee = existing.get("entry_fee")
-                update_kwargs["entry_fee"] = round((existing_entry_fee or 0.0) + new_entry_fee_leg, 8)
-                # #141 fix: recompute liquidation for the new weighted-average entry.
-                # Display/LLM only — real risk-gate uses the exchange's own liquidation,
-                # this is what surfaces on the UI and in trading_context.
-                existing_lev = existing.get("leverage")
-                if existing_lev and existing_lev > 1:
-                    update_kwargs["liquidation_price"] = liquidation_price_for(
-                        new_entry, direction, existing_lev, symbol,
-                    )
-                update_position(existing["id"], **update_kwargs)
-                position_id = existing["id"]
-            else:
-                # Stamp the same entry-time metadata paper_broker records (btc benchmark,
-                # regime, market summary, reasoning, fees) via the shared helper, so
-                # live-broker positions are not blind to alpha/regime/cost analytics
-                # (clone-divergence guard — see position_enrichment).
-                enrichment = build_entry_enrichment(
-                    symbol=symbol, fill_price=fill_price, quantity=fill_qty,
-                    requested_price=price, fee_rate=fee_rate, proposal_id=proposal_id,
-                )
-                position = Position(
-                    symbol=symbol, market_type=market_type, direction=direction,
-                    quantity=fill_qty, entry_price=fill_price, current_price=fill_price,
-                    execution_mode=execution_mode, strategy_id=strategy_id,
-                    # Causal-chain back-link (trust §1.1): proposal/order/opportunity that opened it.
-                    proposal_id=proposal_id, order_id=order.id, opportunity_id=opportunity_id,
-                    # Futures leverage + estimated liquidation (None for spot/1x).
-                    leverage=leverage,
-                    liquidation_price=liquidation_price_for(fill_price, direction, leverage, symbol),
-                    # Persist protective stop/TP so position_manager acts on the AI's
-                    # intended levels, not just the default-% fallback (regression EC-stop).
-                    stop_price=stop_price, take_profit_price=take_profit_price,
-                    trade_school=trade_school,
-                    **enrichment,
-                )
-                insert_position(position)
-                position_id = position.id
-                # Optionally place exchange-native TPSL bracket (non-fatal on failure)
-                if cfg.trading.exchange_tpsl_enabled and execution_mode in ("bitget_demo", "bitget_live_limited"):
-                    _try_place_tpsl(
-                        client=client,
-                        position_id=position_id,
-                        exchange_symbol=exchange_symbol,
-                        hold_side="long" if direction in ("long", "buy") else "short",
-                        size=fill_qty,
-                        stop_price=stop_price,
-                        take_profit_price=take_profit_price,
-                        cfg=cfg,
-                    )
-            # Notify operator of the fill (best-effort; mirrors paper_broker so demo/live
-            # opens are not silent while only paper opens notify).
-            try:
-                from aletheia.notifications import notify_trade_fill
-                notify_trade_fill(
-                    symbol, direction, fill_qty, fill_price, position_id, execution_mode,
-                    stop_price=stop_price,
-                    take_profit_price=take_profit_price if not existing else None,
-                )
-            except Exception:
-                pass
-        else:
-            position_id = None
+        except Exception:
+            pass
+        write_audit({
+            "actor": "system", "source": "bitget_broker",
+            "event_type": "order_submission_unknown", "entity_type": "order",
+            "entity_id": order.id,
+            "reason": "missing_exchange_order_id",
+            "before": {"status": "pending"},
+            "after": {"status": "submission_unknown"},
+            "message": "Exchange acknowledged submission without an order id; automatic retry suppressed",
+        })
+        raise SubmissionUnknownError(client_oid=proposal_id)
+    # The create-order/detail response is only an acknowledgement handoff. It
+    # does not carry authoritative per-fill identity, fee, currency, or time, so
+    # even a reported fill must wait for exact private-history reconciliation.
+    exchange_reported_fill = order_resp.status in ("filled", "partially_filled")
+    stored_status = "materialization_missing" if exchange_reported_fill else "submitted"
+    try:
+        update_order(
+            order.id,
+            exchange_order_id=exchange_order_id,
+            status=stored_status,
+            error_reason=(
+                "private_fill_evidence_pending" if exchange_reported_fill else None
+            ),
+            filled_at=None,
+        )
     except Exception as e:
-        from aletheia.execution.errors import PostSubmitDBError
-        raise PostSubmitDBError(f"Post-submit DB error: {e}", exchange_order_id) from e
+        raise PostSubmitDBError(
+            "exchange acknowledgement could not be persisted", exchange_order_id,
+        ) from e
+    if exchange_reported_fill:
+        write_audit({
+            "actor": "system", "source": "bitget_broker",
+            "event_type": "order_materialization_pending", "entity_type": "order",
+            "entity_id": order.id,
+            "reason": "private_fill_evidence_pending",
+            "before": {"status": "pending"},
+            "after": {"status": "materialization_missing"},
+            "message": (
+                f"Exchange order {exchange_order_id} reported a fill; local "
+                "Fill/Position waits for order-matched private fill evidence"
+            ),
+        })
 
     return {
         "order_id": order.id,
         "exchange_order_id": exchange_order_id,
-        "fill_id": getattr(fill, "id", None) if filled else None,
-        "position_id": position_id,
-        "fill_price": fill_price if filled else None,
-        "fill_quantity": fill_qty if filled else 0,
+        "order_status": stored_status,
+        "fill_id": None,
+        "position_id": None,
+        "fill_price": None,
+        "fill_quantity": 0,
     }
 
 
-def _find_open_position(
-    symbol: str,
-    market_type: str,
-    direction: str,
-    execution_mode: str,
-    strategy_id: str | None,
-) -> dict | None:
-    for p in list_positions(status="open"):
-        if (p["symbol"] == symbol and p["market_type"] == market_type
-                and p["direction"] == direction
-                and p["execution_mode"] == execution_mode):
-            if strategy_id is not None and p.get("strategy_id") not in (None, "", strategy_id):
-                continue
-            return p
-    return None
+def _claim_close_order(
+    position_id: str, reason: str,
+) -> tuple[dict, Order | None, str | None]:
+    """Atomically claim one Bitget close before any exchange side effect."""
+    from aletheia.storage import repositories as repo
+
+    with transaction(immediate=True):
+        row = repo._select_one("positions", position_id)
+        if row is None:
+            raise ValueError(f"position not found: {position_id}")
+        if row.get("execution_mode") not in ("bitget_demo", "bitget_live_limited"):
+            raise ValueError(
+                f"close_demo_position only handles Bitget modes, got {row.get('execution_mode')!r}"
+            )
+        if row.get("status") != "open":
+            raise ValueError(
+                f"position {position_id} is not open (status={row.get('status')})"
+            )
+        if (
+            row.get("pending_close_order_id")
+            and row.get("pending_close_status") in _OPEN_CLOSE_STATES
+        ):
+            return row, None, None
+
+        requested_at = datetime.now(timezone.utc).isoformat()
+        close_order = Order(
+            proposal_id=row.get("proposal_id"),
+            client_order_id=f"close-{position_id}",
+            position_id=position_id,
+            close_reason=reason,
+            symbol=row["symbol"],
+            market_type=row["market_type"],
+            direction=row["direction"],
+            order_type="market",
+            quantity=float(row["quantity"]),
+            price=row.get("current_price") or row["entry_price"],
+            execution_mode=row["execution_mode"],
+            status="pending",
+        )
+        insert_order(close_order)
+        update_position(
+            position_id,
+            pending_close_order_id=close_order.id,
+            pending_close_status="pending",
+            pending_close_requested_at=requested_at,
+        )
+        return row, close_order, requested_at
 
 
 def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
-    """Close a Bitget position (demo OR live-limited) with a REAL hedge-mode close
-    order, then realize PnL locally. Keeps the exchange and local books consistent
-    (state-consistency is the top priority): a local-only close would leave a
-    dangling real position on the exchange — the exact §1.3 hazard, and on
-    `bitget_live_limited` that dangling position holds REAL funds.
+    """Submit one Bitget hedge-mode close and persist its acknowledgement.
 
     Hedge-mode close (DECISIONS.md 2026-06-09): tradeSide:"close" + holdSide (the
     position's side), with `side` SAME as the original open side — close a long =
-    side:"buy", holdSide:"long". Market order, fills synchronously.
-
-    The local close (pnl.close_position) uses the exchange's confirmed fill price as
-    the exit price — never a fabricated mark. Raises on exchange failure WITHOUT
-    marking the position closed locally, so a failed close never desyncs the books.
+    side:"buy", holdSide:"long". The aggregate response never closes the local
+    Position or creates a Fill; exact private fill history performs that durable
+    materialization later. Exchange rejection likewise leaves the Position open.
     """
     from aletheia.storage import repositories as repo
-    from aletheia.portfolio.pnl import close_position
 
-    row = repo._select_one("positions", position_id)
-    if row is None:
-        raise ValueError(f"position not found: {position_id}")
-    if row.get("execution_mode") not in ("bitget_demo", "bitget_live_limited"):
-        raise ValueError(f"close_demo_position only handles Bitget modes, got {row.get('execution_mode')!r}")
-    if row.get("status") != "open":
-        raise ValueError(f"position {position_id} is not open (status={row.get('status')})")
-    if row.get("pending_close_order_id") and row.get("pending_close_status") in _OPEN_CLOSE_STATES:
+    row, close_order, close_requested_at = _claim_close_order(position_id, reason)
+    if close_order is None:
         existing_order = repo.get_order(row["pending_close_order_id"])
         return {
             "order_id": row["pending_close_order_id"],
@@ -339,11 +424,24 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
             "already_pending": True,
         }
 
-    cfg = load_config()
-    # Derive the client mode from the POSITION's execution_mode, not cfg.exchange.mode:
+    # Derive the client mode from the POSITION's execution_mode, not mutable config:
     # a bitget_live_limited position must close on the live account even if the operator
-    # has since flipped cfg.exchange.mode to demo (mirrors close_testnet_position).
-    client = BitgetClient(mode="live" if row["execution_mode"] == "bitget_live_limited" else "demo")
+    # has since flipped the configured mode (mirrors close_testnet_position).
+    try:
+        client = BitgetClient(
+            mode=_client_mode_for_execution_mode(row["execution_mode"])
+        )
+    except Exception:
+        # The close claim was persisted before client construction. Since no
+        # exchange call began, release its retry suppression as a known error.
+        with transaction():
+            update_order(
+                close_order.id,
+                status="error",
+                error_reason="close_client_initialization_failed_before_submission",
+            )
+            update_position(position_id, pending_close_status="error")
+        raise
     direction = row["direction"]
     is_long = direction in ("long", "buy")
     hold_side = "long" if is_long else "short"
@@ -351,29 +449,6 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
     side = "buy" if is_long else "sell"
     quantity = float(row["quantity"])
     exchange_symbol = to_bitget(row["symbol"])
-
-    # Write a pending close order BEFORE the exchange call (same §1.3 hazard logic).
-    close_requested_at = datetime.now(timezone.utc).isoformat()
-    close_order = Order(
-        proposal_id=row.get("proposal_id"),
-        symbol=row["symbol"],
-        market_type=row["market_type"],
-        # The close order's own side is the reducing side; we still tag the order
-        # direction as the position direction for traceability of what was closed.
-        direction=direction,
-        order_type="market",
-        quantity=quantity,
-        price=row.get("current_price") or row["entry_price"],
-        execution_mode=row["execution_mode"],
-        status="pending",
-    )
-    insert_order(close_order)
-    update_position(
-        position_id,
-        pending_close_order_id=close_order.id,
-        pending_close_status="pending",
-        pending_close_requested_at=close_requested_at,
-    )
 
     try:
         order_resp = _run_coro(client.place_order(OrderRequest(
@@ -383,82 +458,105 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
             hold_side=hold_side,
         )))
     except Exception as e:
-        if _is_submission_timeout(e):
+        if _is_ambiguous_submission_error(e):
             # A transport timeout cannot tell us whether the exchange accepted
             # the close.  Keep it unresolved and suppress automatic resubmission.
             update_order(
                 close_order.id,
                 status="submission_unknown",
-                error_reason="close_submission_timeout_acknowledgement_unknown",
+                error_reason="close_submission_transport_acknowledgement_unknown",
             )
             update_position(position_id, pending_close_status="submission_unknown")
+            write_audit({
+                "actor": "system", "source": "bitget_broker",
+                "event_type": "close_submission_unknown", "entity_type": "order",
+                "entity_id": close_order.id,
+                "reason": "transport_acknowledgement_unknown",
+                "before": {"status": "pending"},
+                "after": {"status": "submission_unknown"},
+                "message": "Close transport failed after submission began; automatic retry suppressed",
+            })
         else:
-            update_order(close_order.id, status="error", error_reason=clean_error_message(str(e))[:500])
+            update_order(close_order.id, status="error", error_reason="close_submission_rejected")
             update_position(position_id, pending_close_status="error")
         raise
 
     exchange_order_id = order_resp.order_id or ""
-    confirmed_close = order_resp.status == "filled"
-    close_status = "filled" if confirmed_close else (
-        "partially_filled" if order_resp.status == "partially_filled" else "submitted"
-    )
-    fee_rate = _DEMO_FEE_RATE
+    if not exchange_order_id:
+        try:
+            update_order(
+                close_order.id,
+                status="submission_unknown",
+                error_reason="close_submission_missing_exchange_id",
+            )
+            update_position(position_id, pending_close_status="submission_unknown")
+        except Exception:
+            pass
+        write_audit({
+            "actor": "system", "source": "bitget_broker",
+            "event_type": "close_submission_unknown", "entity_type": "order",
+            "entity_id": close_order.id,
+            "reason": "missing_exchange_order_id",
+            "before": {"status": "pending"},
+            "after": {"status": "submission_unknown"},
+            "message": "Exchange acknowledged close without an order id; automatic retry suppressed",
+        })
+        raise SubmissionUnknownError(client_oid=f"close-{position_id}")
+    exchange_reported_fill = order_resp.status in {"filled", "partially_filled"}
+    if order_resp.status == "filled":
+        close_status = "materialization_missing"
+    elif order_resp.status == "partially_filled":
+        close_status = "partially_filled"
+    else:
+        close_status = "submitted"
 
-    update_order(
-        close_order.id,
-        exchange_order_id=exchange_order_id,
-        status=close_status,
-        filled_at=datetime.now(timezone.utc).isoformat() if confirmed_close else None,
-    )
-    if not confirmed_close:
-        update_position(
-            position_id,
-            pending_close_order_id=close_order.id,
-            pending_close_status=close_status,
-            pending_close_requested_at=close_requested_at,
+    try:
+        update_order(
+            close_order.id,
+            exchange_order_id=exchange_order_id,
+            status=close_status,
+            error_reason=(
+                "private_fill_evidence_pending" if exchange_reported_fill else None
+            ),
+            filled_at=None,
         )
-        return {
-            "order_id": close_order.id,
-            "exchange_order_id": exchange_order_id,
-            "close_order_id": close_order.id,
-            "status": close_status,
-            "closed": False,
-            "position_id": position_id,
-            "fill_price": None,
-            "fill_quantity": 0,
-        }
-
-    # Only remove exchange protection after the market close is confirmed.
-    if cfg.trading.exchange_tpsl_enabled and row.get("exchange_tpsl_order_id"):
-        _try_cancel_tpsl(client, exchange_symbol, row["exchange_tpsl_order_id"])
-
-    exit_price = order_resp.fill_price if order_resp.fill_price else (
-        row.get("current_price") or row["entry_price"]
-    )
-    fill_qty = order_resp.filled_quantity if order_resp.filled_quantity else quantity
-    insert_fill(Fill(
-        order_id=close_order.id,
-        fill_price=exit_price,
-        fill_quantity=fill_qty,
-        fee=fill_qty * exit_price * fee_rate,
-    ))
-
-    # Realize PnL + write the position_closed audit (pnl.close_position handles both).
-    result = close_position(position_id, exit_price=float(exit_price), reason=reason)
-    result["exchange_order_id"] = exchange_order_id
-    result["close_order_id"] = close_order.id
-    result["status"] = "filled"
-    result["closed"] = True
-    result["fill_price"] = exit_price
-    result["fill_quantity"] = fill_qty
+    except Exception as e:
+        try:
+            update_position(position_id, pending_close_status="materialization_missing")
+        except Exception:
+            pass
+        raise PostSubmitDBError(
+            "exchange close acknowledgement could not be persisted", exchange_order_id,
+        ) from e
     update_position(
         position_id,
-        pending_close_order_id=None,
-        pending_close_status=None,
-        pending_close_requested_at=None,
-        exchange_tpsl_order_id=None,
+        pending_close_order_id=close_order.id,
+        pending_close_status=close_status,
+        pending_close_requested_at=close_requested_at,
     )
-    return result
+    if exchange_reported_fill:
+        write_audit({
+            "actor": "system", "source": "bitget_broker",
+            "event_type": "close_materialization_pending", "entity_type": "order",
+            "entity_id": close_order.id,
+            "reason": "private_fill_evidence_pending",
+            "before": {"status": "pending"},
+            "after": {"status": close_status},
+            "message": (
+                f"Exchange close {exchange_order_id} reported fill activity; "
+                "local closure waits for order-matched private fill evidence"
+            ),
+        })
+    return {
+        "order_id": close_order.id,
+        "exchange_order_id": exchange_order_id,
+        "close_order_id": close_order.id,
+        "status": close_status,
+        "closed": False,
+        "position_id": position_id,
+        "fill_price": None,
+        "fill_quantity": 0,
+    }
 
 
 # ─── TPSL bracket helpers ────────────────────────────────────────────────────
@@ -486,7 +584,7 @@ def _try_place_tpsl(
             if sl_id:
                 tpsl_ids["sl"] = sl_id
         except Exception as e:
-            logger.warning("TPSL SL placement failed for %s: %s", position_id, e)
+            logger.warning("TPSL SL placement failed for %s: %s", position_id, type(e).__name__)
 
     if take_profit_price:
         try:
@@ -497,7 +595,7 @@ def _try_place_tpsl(
             if tp_id:
                 tpsl_ids["tp"] = tp_id
         except Exception as e:
-            logger.warning("TPSL TP placement failed for %s: %s", position_id, e)
+            logger.warning("TPSL TP placement failed for %s: %s", position_id, type(e).__name__)
 
     if tpsl_ids:
         update_position(position_id, exchange_tpsl_order_id=_json.dumps(tpsl_ids))
@@ -518,7 +616,7 @@ def _try_cancel_tpsl(client: BitgetClient, exchange_symbol: str, tpsl_json: str)
             try:
                 _run_coro(client.cancel_plan_order(exchange_symbol, oid))
             except Exception as e:
-                logger.warning("cancel TPSL %s %s failed: %s", key, oid, e)
+                logger.warning("cancel TPSL %s %s failed: %s", key, oid, type(e).__name__)
 
 
 def replace_exchange_stop(position_id: str, new_stop_price: float) -> None:
@@ -529,8 +627,9 @@ def replace_exchange_stop(position_id: str, new_stop_price: float) -> None:
     row = repo._select_one("positions", position_id)
     if not row or not row.get("exchange_tpsl_order_id"):
         return
-    cfg = load_config()
-    client = BitgetClient(mode=cfg.exchange.mode)
+    client = BitgetClient(
+        mode=_client_mode_for_execution_mode(row.get("execution_mode"))
+    )
     exchange_symbol = to_bitget(row["symbol"])
     hold_side = "long" if row["direction"] in ("long", "buy") else "short"
 
@@ -546,7 +645,7 @@ def replace_exchange_stop(position_id: str, new_stop_price: float) -> None:
         try:
             _run_coro(client.cancel_plan_order(exchange_symbol, old_sl))
         except Exception as e:
-            logger.warning("cancel old SL %s failed: %s", old_sl, e)
+            logger.warning("cancel old SL %s failed: %s", old_sl, type(e).__name__)
 
     try:
         new_sl_id = _run_coro(client.place_tpsl_order(
@@ -557,4 +656,4 @@ def replace_exchange_stop(position_id: str, new_stop_price: float) -> None:
         tpsl_ids["sl"] = new_sl_id
         update_position(position_id, exchange_tpsl_order_id=_json.dumps(tpsl_ids))
     except Exception as e:
-        logger.warning("replace SL for %s failed: %s", position_id, e)
+        logger.warning("replace SL for %s failed: %s", position_id, type(e).__name__)

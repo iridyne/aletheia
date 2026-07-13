@@ -196,6 +196,19 @@ def test_execution_chain_atomicity_on_fill_error(tmp_path, monkeypatch):
     from aletheia.execution import paper_broker
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
+    from tests.execution_authority import seed_order_authority
+
+    seed_order_authority(
+        proposal_id="prop-pl-ec-03",
+        risk_decision_id="rd-pl-ec-03",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60000.0,
+        execution_mode="paper_internal",
+    )
 
     # Spy on insert_order to capture the created order id
     captured_order_id = {}

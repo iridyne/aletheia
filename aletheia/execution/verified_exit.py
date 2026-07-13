@@ -35,6 +35,11 @@ class VerifiedExitRequest:
     quantity: float
     history_start_ms: int
     history_end_ms: int
+    # Exact exchange Order identities for entry legs already represented by the
+    # local Position.  Providers may ignore only these known opening fills while
+    # scanning a complete private history window; any other non-close activity
+    # remains ambiguous and therefore fail-closed.
+    known_entry_order_ids: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         required = (
@@ -55,6 +60,14 @@ class VerifiedExitRequest:
         if self.history_start_ms < 1 or self.history_end_ms <= self.history_start_ms:
             raise ValueError("verified-exit history window is invalid")
         object.__setattr__(self, "symbol", to_canonical(self.symbol))
+        normalized_entry_ids = tuple(
+            dict.fromkeys(
+                str(value).strip()
+                for value in self.known_entry_order_ids
+                if str(value).strip()
+            )
+        )
+        object.__setattr__(self, "known_entry_order_ids", normalized_entry_ids)
 
 
 @dataclass(frozen=True)
@@ -95,6 +108,14 @@ class VerifiedExitProvider(Protocol):
     async def get_verified_position_exit(
         self, request: VerifiedExitRequest
     ) -> VerifiedExitResult: ...
+
+
+def _usable_fee(value: float | None) -> bool:
+    try:
+        fee = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(fee) and fee >= 0
 
 
 def private_history_window_available(
@@ -205,10 +226,12 @@ def classify_verified_exit(
         )
     if any(
         not fill.fill_id
+        or not fill.order_id
         or not math.isfinite(fill.price)
         or fill.price <= 0
         or not math.isfinite(fill.quantity)
         or fill.quantity <= 0
+        or not _usable_fee(fill.fee)
         or not request.history_start_ms <= fill.filled_at_ms <= request.history_end_ms
         for fill in close_fills
     ):

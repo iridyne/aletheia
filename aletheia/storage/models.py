@@ -302,6 +302,16 @@ class RiskDecision(_Provenanced):
     # branch permanently dead (CR-RE-01). Keep both: allowed_* = what may execute,
     # proposal_execution_mode = what was requested.
     proposal_execution_mode: str | None = None
+    # ``preflight`` is a fresh, advisory check before venue quantity
+    # normalization. ``authoritative`` is the one decision an Order may consume.
+    # Rows written before this distinction remain explicitly ``legacy`` instead
+    # of being retroactively promoted to authority.
+    decision_role: str = "legacy"
+    # Immutable evaluated snapshot identity.  The proposal hash continues to
+    # identify the originally committed intent while evaluated_quantity records
+    # the final size Risk actually assessed.
+    evaluated_quantity: float | None = None
+    proposal_commit_hash: str | None = None
     message: str | None = None
     created_at: str = Field(default_factory=_utcnow)
 
@@ -318,6 +328,17 @@ class Order(_Provenanced):
     price: float | None = None
     execution_mode: str
     exchange_order_id: str | None = None
+    # Stable exchange-side idempotency/recovery key.  This is persisted before
+    # submission so a timeout that loses the venue order id can still be
+    # reconciled through private order/fill history without resubmitting.
+    client_order_id: str | None = None
+    # Direct Position identity for close Orders and for entry Orders after local
+    # materialization.  It removes the ambiguous proposal/symbol guesswork when
+    # an averaging leg or delayed exchange fill is reconciled later.
+    position_id: str | None = None
+    # Close Orders persist the lifecycle reason before exchange submission so a
+    # delayed private fill can close the Position with the original explanation.
+    close_reason: str | None = None
     status: str = "pending"
     source: str = "native"  # "native" | "adopted" — see TradeProposal.source
     created_at: str = Field(default_factory=_utcnow)
@@ -379,6 +400,8 @@ class Position(_Provenanced):
     # close/reconciliation tasks stamp verified values; legacy and unstamped rows
     # remain explicitly ineligible without rewriting their original economics.
     close_category: str = "unknown"
+    entry_price_source: str = "unavailable"
+    entry_fill_verified: bool = False
     exit_price_source: str = "unavailable"
     exit_fill_verified: bool = False
     outcome_eligible: bool = False
@@ -404,6 +427,11 @@ class Position(_Provenanced):
     decision_reasoning: str | None = None
     entry_fee: float | None = None
     exit_fee: float | None = None
+    # Signed quote-currency funding paid over the holding period. Positive is a
+    # cost and negative is a credit. Futures outcomes remain fail-closed while
+    # this is unknown; spot closes stamp zero with source="not_applicable".
+    funding_cost: float | None = None
+    funding_source: str = "unavailable"
     slippage_cost: float | None = None
     # Execution-level school discriminator (Phase 4). Mirrors TradeProposal.trade_school
     # — defaults 'short_term' so legacy + adopted positions stay on the 72h cap + ATR
@@ -688,6 +716,7 @@ class SerenityReplaySnapshot(BaseModel):
 
 class SerenityPostMortem(BaseModel):
     id: str = Field(default_factory=new_id)
+    position_id: str | None = None
     opportunity_id: str
     outcome: str
     failure_bucket: str | None = None
@@ -696,6 +725,21 @@ class SerenityPostMortem(BaseModel):
     summary: str
     created_by: str = "system"
     created_at: str = Field(default_factory=_utcnow)
+
+
+class OutcomeHookJob(BaseModel):
+    id: str = Field(default_factory=new_id)
+    position_id: str
+    hook_type: str
+    status: str = "pending"
+    attempts: int = 0
+    next_attempt_at: str = Field(default_factory=_utcnow)
+    locked_at: str | None = None
+    claim_token: str | None = None
+    last_error: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+    completed_at: str | None = None
 
 
 class SerenityResearchRun(BaseModel):

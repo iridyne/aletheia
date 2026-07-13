@@ -16,35 +16,55 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 ))
 def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
     from aletheia.agent_shell import reflection
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+    from tests.test_outcome_closure import _insert_entry_chain
 
-    db = get_db()
-    was_in_tx = db.in_transaction
-    db.execute(
-        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
-        "execution_mode,status,source,opened_at,realized_pnl,closed_at,close_reason,"
-        "close_category,exit_price_source,exit_fill_verified,outcome_eligible,"
-        "outcome_exclusion_reason,outcome_semantics_version) "
-        "VALUES ('unrelated','BTC/USDT','perp','long',1,100,'paper_internal','closed',"
-        "'native','2026-07-12T08:00:00+00:00',10,'2026-07-12T09:00:00+00:00',"
-        "'take_profit','strategy','local_fill',1,1,'eligible','oi-v1')"
+    opportunity_id, proposal_id, order_id = _insert_entry_chain(
+        position_id="unrelated",
+        proposal_id="proposal-linked",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        price=100.0,
+        execution_mode="paper_internal",
     )
-    if not was_in_tx:
-        db.commit()
+    insert_position(Position(
+        id="unrelated",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=110.0,
+        execution_mode="paper_internal",
+        status="closed",
+        source="native",
+        opened_at="2026-07-12T08:00:00+00:00",
+        realized_pnl=10.0,
+        closed_at="2026-07-12T09:00:00+00:00",
+        close_reason="take_profit",
+        entry_fee=0.0,
+        exit_fee=0.0,
+        funding_cost=0.0,
+        funding_source="local_simulation",
+        entry_price_source="local_fill",
+        entry_fill_verified=True,
+        close_category="strategy",
+        exit_price_source="local_fill",
+        exit_fill_verified=True,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+        outcome_semantics_version="oi-v1",
+        opportunity_id=opportunity_id,
+        proposal_id=proposal_id,
+        order_id=order_id,
+    ))
 
     assert "unavailable" in reflection._compute_outcome(
         "BTC/USDT", None, "2026-07-12T08:00:00+00:00"
     ).lower()
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage.repositories import insert_trade_proposal
-    insert_trade_proposal(TradeProposal(
-        id="proposal-linked", symbol="BTC/USDT", market_type="perp",
-        direction="long", quantity=1, price=100,
-    ))
-    was_in_tx = db.in_transaction
-    db.execute("UPDATE positions SET proposal_id='proposal-linked' WHERE id='unrelated'")
-    if not was_in_tx:
-        db.commit()
     exact = reflection._compute_outcome(
         "IGNORED/USDT", "proposal-linked", "2026-07-12T08:00:00+00:00"
     )

@@ -40,6 +40,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "position_reconcile",
     "tpsl_fill_check",
     "outcome_settler",
+    "outcome_hook_replay",
     "shadow_resolver",
     "learning_contribution_evaluator",
     "learning_measurement_startup_catchup",
@@ -706,6 +707,16 @@ def init_scheduler() -> BackgroundScheduler | None:
         id="shadow_resolver", misfire_grace_time=300, executor="io",
     )
     _scheduler.add_job(
+        _guarded("outcome_hook_replay", _run_outcome_hook_replay),
+        "interval",
+        minutes=1,
+        id="outcome_hook_replay",
+        misfire_grace_time=60,
+        max_instances=1,
+        executor="io",
+        next_run_time=datetime.now() + timedelta(seconds=15),
+    )
+    _scheduler.add_job(
         _guarded("health_check", _run_health_check), "interval", minutes=10, id="health_check",
         misfire_grace_time=120, executor="io",
     )
@@ -1183,12 +1194,30 @@ def _run_shadow_resolver():
         _record_job_failure("shadow_resolver", str(e))
 
 
+def _run_outcome_hook_replay():
+    """Replay committed Outcome hook intents even while decision jobs are paused."""
+    try:
+        from aletheia.portfolio.outcome_hooks import process_outcome_hook_jobs
+
+        summary = process_outcome_hook_jobs(limit=50)
+        if summary["failed"]:
+            message = f"{summary['failed']} Outcome hook deliveries remain retryable"
+            logger.warning("outcome_hook_replay: %s", message)
+            _record_job_failure("outcome_hook_replay", message)
+        elif summary["completed"] or summary["skipped"]:
+            logger.info(
+                "outcome_hook_replay: completed=%d skipped=%d",
+                summary["completed"],
+                summary["skipped"],
+            )
+    except Exception as e:
+        logger.warning("outcome_hook_replay job failed: %s", e)
+        _record_job_failure("outcome_hook_replay", str(e))
+
+
 def _run_reconciliation():
     cfg = load_config()
     if cfg.runtime.paused:
-        return
-    # Only meaningful in live mode; reconcile() itself early-returns otherwise.
-    if cfg.exchange.mode != "live":
         return
     try:
         from aletheia.execution.reconciliation import reconcile
@@ -1394,11 +1423,7 @@ def _run_position_reconcile():
 
 
 def _run_tpsl_fill_check():
-    """Fast TPSL fill detection — catches triggered SL/TP before the 5min reconciler.
-
-    Scans open positions with exchange_tpsl_order_id, queries Bitget plan order
-    history, and proactively closes positions with accurate fill prices when a
-    TPSL has been triggered on the exchange.
+    """Bridge triggered Bitget TPSL plans into private-fill reconciliation.
 
     #90 fix: the body is wrapped in `_run_sync_with_timeout` (45s cap; see
     _ASYNC_JOB_TIMEOUT_SEC['tpsl_fill_check']) so a stuck Bitget session can't
@@ -1415,6 +1440,66 @@ def _run_tpsl_fill_check():
         return None
 
 
+def _claim_observed_tpsl_close(
+    position_id: str,
+    *,
+    execute_order_id: str,
+    reason: str,
+):
+    """Atomically register an observed Bitget TPSL execution without placing it."""
+    from datetime import datetime, timezone
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order
+
+    execute_order_id = str(execute_order_id or "").strip()
+    if not execute_order_id:
+        raise ValueError("TPSL execute order identity unavailable")
+    with repo.transaction(immediate=True):
+        position = repo._select_one("positions", position_id)
+        if position is None or position.get("status") != "open":
+            return None, False
+        execution_mode = position.get("execution_mode")
+        if execution_mode not in {"bitget_demo", "bitget_live_limited"}:
+            raise ValueError(
+                "automatic TPSL close registration requires a supported Bitget mode"
+            )
+        pending_id = position.get("pending_close_order_id")
+        if pending_id:
+            existing = repo.get_order(pending_id)
+            if (
+                existing is not None
+                and existing.get("exchange_order_id") == execute_order_id
+                and existing.get("position_id") == position_id
+            ):
+                return existing, False
+            raise RuntimeError("TPSL execute order conflicts with pending close claim")
+
+        close_order = Order(
+            proposal_id=position.get("proposal_id"),
+            client_order_id=f"close-{position_id}",
+            position_id=position_id,
+            close_reason=reason,
+            symbol=position["symbol"],
+            market_type=position["market_type"],
+            direction=position["direction"],
+            order_type="market",
+            quantity=float(position["quantity"]),
+            price=None,
+            execution_mode=execution_mode,
+            exchange_order_id=execute_order_id,
+            status="materialization_missing",
+            error_reason="private_fill_evidence_pending",
+        )
+        repo.insert_order(close_order)
+        repo.update_position(
+            position_id,
+            pending_close_order_id=close_order.id,
+            pending_close_status="materialization_missing",
+            pending_close_requested_at=datetime.now(timezone.utc).isoformat(),
+        )
+        return repo.get_order(close_order.id), True
+
+
 def _tpsl_fill_check_body():
     """Inner body of tpsl_fill_check — kept separate so _run_sync_with_timeout
     can wrap it. The outer entry point (`_run_tpsl_fill_check`) is what the
@@ -1427,7 +1512,10 @@ def _tpsl_fill_check_body():
         import asyncio
         import json as _json
         from aletheia.storage.repositories import list_positions
-        from aletheia.portfolio.pnl import close_position
+        from aletheia.data.symbols import to_bitget
+        from aletheia.execution.exchange_materialization import (
+            materialize_bitget_close,
+        )
         from aletheia.exchanges.bitget.client import BitgetClient
 
         positions = list_positions(status="open")
@@ -1440,54 +1528,99 @@ def _tpsl_fill_check_body():
                 tpsl_ids = _json.loads(tpsl_raw) if isinstance(tpsl_raw, str) else tpsl_raw
             except (ValueError, TypeError):
                 continue
-            if isinstance(tpsl_ids, dict) and (tpsl_ids.get("sl") or tpsl_ids.get("tp")):
+            if (
+                p.get("execution_mode") in {"bitget_demo", "bitget_live_limited"}
+                and isinstance(tpsl_ids, dict)
+                and (tpsl_ids.get("sl") or tpsl_ids.get("tp"))
+            ):
                 candidates.append((p, tpsl_ids))
 
         if not candidates:
             return
 
-        client = BitgetClient()
+        grouped = {
+            "bitget_demo": [item for item in candidates if item[0]["execution_mode"] == "bitget_demo"],
+            "bitget_live_limited": [
+                item for item in candidates
+                if item[0]["execution_mode"] == "bitget_live_limited"
+            ],
+        }
+
+        async def _check_account(execution_mode, account_candidates):
+            if not account_candidates:
+                return []
+            account_mode = "demo" if execution_mode == "bitget_demo" else "live"
+            client = BitgetClient(mode=account_mode)
+            materialized = []
+            try:
+                for pos, tpsl_ids in account_candidates:
+                    for plan_type, plan_order_id in (
+                        ("sl", tpsl_ids.get("sl")),
+                        ("tp", tpsl_ids.get("tp")),
+                    ):
+                        if not plan_order_id:
+                            continue
+                        try:
+                            history = await client.get_plan_order_history(
+                                order_id=plan_order_id
+                            )
+                            execute_ids = {
+                                str(row.get("executeOrderId") or "").strip()
+                                for row in history
+                                if isinstance(row, dict)
+                                and str(row.get("orderId") or "")
+                                == str(plan_order_id)
+                                and str(row.get("planStatus") or "").lower()
+                                == "executed"
+                                and str(row.get("executeOrderId") or "").strip()
+                            }
+                            if len(execute_ids) != 1:
+                                continue
+                            execute_order_id = next(iter(execute_ids))
+                            reason = (
+                                "stop_loss" if plan_type == "sl" else "take_profit"
+                            )
+                            close_order, _ = _claim_observed_tpsl_close(
+                                pos["id"],
+                                execute_order_id=execute_order_id,
+                                reason=reason,
+                            )
+                            if close_order is None:
+                                continue
+                            private_fills = await client.get_order_fills(
+                                order_id=execute_order_id,
+                                symbol=to_bitget(pos["symbol"]),
+                                market_type=pos["market_type"],
+                            )
+                            result = materialize_bitget_close(
+                                close_order["id"], private_fills
+                            )
+                            if result.state == "filled":
+                                materialized.append(result)
+                        except Exception as exc:
+                            logger.warning(
+                                "TPSL private reconciliation failed for plan %s (%s)",
+                                plan_order_id,
+                                type(exc).__name__,
+                            )
+                return materialized
+            finally:
+                try:
+                    await client.close()
+                except Exception as exc:
+                    logger.warning(
+                        "TPSL account client close failed (%s)", type(exc).__name__
+                    )
 
         async def _check_all():
-            closed = []
-            for pos, tpsl_ids in candidates:
-                for plan_type, order_id in [("sl", tpsl_ids.get("sl")), ("tp", tpsl_ids.get("tp"))]:
-                    if not order_id:
-                        continue
-                    try:
-                        history = await client.get_plan_order_history(order_id=order_id)
-                        for h in history:
-                            if h.get("orderId") == order_id and h.get("status") == "executed":
-                                price = float(h.get("executePrice") or h.get("triggerPrice") or 0)
-                                if price > 0:
-                                    reason = "stop_loss" if plan_type == "sl" else "take_profit"
-                                    from aletheia.storage.repositories import _select_one
-                                    fresh = _select_one("positions", pos["id"])
-                                    if not fresh or fresh.get("status") != "open":
-                                        break
-                                    result = close_position(pos["id"], price, reason=reason)
-                                    closed.append(result)
-                                    logger.info(
-                                        "TPSL fill detected: %s %s @ %.6f (%s)",
-                                        pos["symbol"], pos["direction"], price, reason,
-                                    )
-                                break
-                    except Exception as e:
-                        logger.debug("TPSL check failed for %s: %s", order_id, e)
-                        continue
-            return closed
+            results = []
+            for execution_mode, account_candidates in grouped.items():
+                results.extend(
+                    await _check_account(execution_mode, account_candidates)
+                )
+            return results
 
-        closed = asyncio.run(_check_all())
-        if closed:
-            from aletheia.files.jsonl import write_audit
-            write_audit({
-                "actor": "system",
-                "source": "tpsl_fill_check",
-                "event_type": "tpsl_proactive_close",
-                "entity_type": "portfolio",
-                "message": f"Proactively closed {len(closed)} positions via TPSL fill detection",
-                "after": {"closed": [c["position_id"] for c in closed]},
-            })
+        return asyncio.run(_check_all())
     except Exception as e:
         logger.warning("tpsl_fill_check job failed: %s", e)
         _record_job_failure("tpsl_fill_check", str(e))

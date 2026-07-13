@@ -840,23 +840,17 @@ def run_reconcile(mode: str | None = None) -> dict:
             summary["recovery_state"] = "disappearance_evidence_unavailable"
             return summary
 
-    if account_mode != "demo":
-        if result.external or result.orphaned:
-            logger.warning(
-                "Live reconcile: %d external, %d orphaned — alert only (no autonomous action)",
-                len(result.external), len(result.orphaned),
-            )
-        return summary
-
-    if incident is not None:
-        return summary
-
     ready_candidate_ids = [
         row["candidate_id"]
         for row in summary["disappearance"]["observations"]
         if row["ready_for_verified_exit"]
     ]
-    if ready_candidate_ids:
+    # Verified settlement is a read-only exchange query followed by local state
+    # convergence. It never adopts an external live Position or sends an order,
+    # and therefore applies to both demo and live accounts once independent
+    # disappearance evidence is ready. An active churn incident still suspends
+    # all automatic convergence to avoid close/reopen thrash.
+    if ready_candidate_ids and incident is None:
         try:
             from aletheia.portfolio.disappearance_settlement import (
                 settle_ready_disappearance_candidates,
@@ -870,6 +864,18 @@ def run_reconcile(mode: str | None = None) -> dict:
             summary["suspended"] = True
             summary["recovery_state"] = "verified_settlement_unavailable"
             return summary
+
+    if account_mode != "demo":
+        if result.external or result.orphaned:
+            logger.warning(
+                "Live reconcile: %d external, %d orphaned — no adoption or "
+                "exchange mutation; ready disappearances use verified local settlement",
+                len(result.external), len(result.orphaned),
+            )
+        return summary
+
+    if incident is not None:
+        return summary
 
     # Demo mode: auto-adopt only. Missing-local evidence is handled above.
     if cfg.trading.auto_adopt_enabled:

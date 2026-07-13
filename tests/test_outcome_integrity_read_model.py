@@ -17,11 +17,22 @@ def _closed_row(**overrides) -> dict:
         "direction": "long",
         "quantity": 0.1,
         "entry_price": 50_000.0,
+        "current_price": 50_250.0,
+        "entry_fee": 0.0,
+        "exit_fee": 0.0,
+        "funding_cost": 0.0,
+        "funding_source": "local_simulation",
         "realized_pnl": 25.0,
         "execution_mode": "paper_internal",
+        "opportunity_id": "opportunity-1",
+        "proposal_id": "proposal-1",
+        "order_id": "order-1",
+        "_attribution_complete": 1,
         "close_reason": "take_profit",
         "closed_at": "2026-07-12T05:00:00+00:00",
         "close_category": "strategy",
+        "entry_price_source": "local_fill",
+        "entry_fill_verified": True,
         "exit_price_source": "local_fill",
         "exit_fill_verified": True,
         "outcome_eligible": True,
@@ -91,7 +102,8 @@ def test_legacy_or_unclassified_close_never_becomes_eligible_from_pnl_alone():
         key: value
         for key, value in _closed_row().items()
         if key not in {
-            "close_category", "exit_price_source", "exit_fill_verified",
+            "close_category", "entry_price_source", "entry_fill_verified",
+            "exit_price_source", "exit_fill_verified",
             "outcome_eligible", "outcome_exclusion_reason",
             "outcome_semantics_version",
         }
@@ -127,19 +139,43 @@ def test_explicit_read_models_partition_closed_positions():
     )
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
+    from tests.test_outcome_closure import _insert_entry_chain
 
     common = {
         "symbol": "BTC/USDT", "market_type": "usdt_futures", "direction": "long",
         "quantity": 0.1, "entry_price": 50_000.0, "realized_pnl": 10.0,
         "execution_mode": "paper_internal", "status": "closed",
     }
+    eligible_opportunity, eligible_proposal, eligible_order = _insert_entry_chain(
+        position_id="eligible",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.1,
+        price=50_000.0,
+        execution_mode="paper_internal",
+    )
+    other_opportunity, other_proposal, other_order = _insert_entry_chain(
+        position_id="other-mode",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.1,
+        price=50_000.0,
+        execution_mode="okx_demo",
+    )
     rows = [
         Position(
             **common, id="eligible", close_reason="take_profit",
             closed_at="2026-07-12T08:00:00+00:00", close_category="strategy",
+            current_price=50_100.0, entry_fee=0.0, exit_fee=0.0,
+            funding_cost=0.0, funding_source="local_simulation",
+            entry_price_source="local_fill", entry_fill_verified=True,
             exit_price_source="local_fill", exit_fill_verified=True,
             outcome_eligible=True, outcome_exclusion_reason="eligible",
             outcome_semantics_version="oi-v1",
+            opportunity_id=eligible_opportunity, proposal_id=eligible_proposal,
+            order_id=eligible_order,
         ),
         Position(
             **common, id="admin", close_reason="reconciled_gone",
@@ -157,8 +193,13 @@ def test_explicit_read_models_partition_closed_positions():
             **{**common, "execution_mode": "okx_demo"}, id="other-mode",
             close_reason="take_profit", closed_at="2026-07-12T08:04:00+00:00",
             close_category="strategy", exit_price_source="broker_fill",
+            current_price=50_100.0, entry_fee=0.0, exit_fee=0.0,
+            funding_cost=0.0, funding_source="broker_ledger",
+            entry_price_source="broker_fill", entry_fill_verified=True,
             exit_fill_verified=True, outcome_eligible=True,
             outcome_exclusion_reason="eligible", outcome_semantics_version="oi-v1",
+            opportunity_id=other_opportunity, proposal_id=other_proposal,
+            order_id=other_order,
         ),
     ]
     for row in rows:

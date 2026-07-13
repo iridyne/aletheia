@@ -116,9 +116,14 @@ def test_prior_memo_overturned_by_subsequent_results(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations
-    from aletheia.storage.models import KnowledgeItem
-    from aletheia.storage.repositories import insert_knowledge_item, list_knowledge_items
+    from aletheia.storage.models import KnowledgeItem, Position
+    from aletheia.storage.repositories import (
+        insert_knowledge_item,
+        insert_position,
+        list_knowledge_items,
+    )
     from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
+    from tests.test_outcome_closure import _insert_entry_chain
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -156,16 +161,47 @@ def test_prior_memo_overturned_by_subsequent_results(tmp_path, monkeypatch):
     # 4 LONG trades opened AFTER the memo, all losses → the "long strong" claim was wrong.
     opened = (now - timedelta(hours=6)).isoformat()
     for i in range(4):
-        conn.execute(
-            "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
-            "execution_mode,status,opened_at,closed_at,realized_pnl,regime_tag,close_reason,"
-            "close_category,exit_price_source,exit_fill_verified,outcome_eligible,"
-            "outcome_exclusion_reason,outcome_semantics_version) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (f"pos{i}", "BTC/USDT", "perp", "long", 1.0, 100.0,
-             "paper_internal", "closed", opened, now.isoformat(), -5.0, None,
-             "verified_exit", "strategy", "local_fill", 1, 1, "eligible", "oi-v1"),
+        position_id = f"pos{i}"
+        opportunity_id, proposal_id, order_id = _insert_entry_chain(
+            position_id=position_id,
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=1.0,
+            price=100.0,
+            execution_mode="paper_internal",
         )
+        insert_position(Position(
+            id=position_id,
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            current_price=95.0,
+            execution_mode="paper_internal",
+            status="closed",
+            opened_at=opened,
+            closed_at=now.isoformat(),
+            realized_pnl=-5.0,
+            regime_tag=None,
+            close_reason="verified_exit",
+            entry_fee=0.0,
+            exit_fee=0.0,
+            funding_cost=0.0,
+            funding_source="local_simulation",
+            entry_price_source="local_fill",
+            entry_fill_verified=True,
+            close_category="strategy",
+            exit_price_source="local_fill",
+            exit_fill_verified=True,
+            outcome_eligible=True,
+            outcome_exclusion_reason="eligible",
+            outcome_semantics_version="oi-v1",
+            opportunity_id=opportunity_id,
+            proposal_id=proposal_id,
+            order_id=order_id,
+        ))
     conn.commit()
 
     verdict = evaluate_prior_memo()

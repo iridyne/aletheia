@@ -28,12 +28,31 @@ def test_adjusted_exchange_quantity_is_rechecked_by_risk_then_submitted(tmp_path
     from aletheia.execution import gateway
 
     seen_by_risk = []
-    monkeypatch.setattr(gateway, "evaluate_proposal", lambda p: (seen_by_risk.append(p.quantity) or _approved()))
+    monkeypatch.setattr(
+        gateway,
+        "evaluate_proposal",
+        lambda p, *, decision_role: (
+            seen_by_risk.append((decision_role, p.quantity)) or _approved()
+        ),
+    )
     monkeypatch.setattr(gateway, "_prepare_exchange_quantity", lambda *args: (0.003, None))
     monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *args: None)
     import aletheia.execution.bitget_broker as broker
     sent = []
-    monkeypatch.setattr(broker, "execute_live_order", lambda **kw: (sent.append(kw["quantity"]) or {"order_id": "o1", "exchange_order_id": "x1"}))
+    monkeypatch.setattr(
+        broker,
+        "execute_live_order",
+        lambda **kw: (
+            sent.append(kw["quantity"])
+            or {
+                "order_id": "o1",
+                "exchange_order_id": "x1",
+                "order_status": "filled",
+                "fill_id": "f1",
+                "position_id": "p1",
+            }
+        ),
+    )
 
     result = gateway.submit_proposal(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
@@ -41,7 +60,7 @@ def test_adjusted_exchange_quantity_is_rechecked_by_risk_then_submitted(tmp_path
     )
 
     assert result["status"] == "executed"
-    assert seen_by_risk == [0.0011, 0.003]
+    assert seen_by_risk == [("preflight", 0.0011), ("authoritative", 0.003)]
     assert sent == [0.003]
 
 
@@ -49,7 +68,11 @@ def test_unavailable_rules_reject_before_any_exchange_order(tmp_path, monkeypatc
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import gateway
 
-    monkeypatch.setattr(gateway, "evaluate_proposal", lambda p: _approved())
+    monkeypatch.setattr(
+        gateway,
+        "evaluate_proposal",
+        lambda _p, *, decision_role: _approved(),
+    )
     monkeypatch.setattr(gateway, "_prepare_exchange_quantity", lambda *args: (0.001, "Executable venue order rules are unavailable or do not support this order. No order was sent."))
     import aletheia.execution.bitget_broker as broker
     monkeypatch.setattr(broker, "execute_live_order", lambda **kw: (_ for _ in ()).throw(AssertionError("exchange must not be called")))

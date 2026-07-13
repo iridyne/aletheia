@@ -1,12 +1,11 @@
 """Spec: Pipeline — Entry-time metadata enrichment + close routing (end-to-end)
 
-Regression lock for the EC-stop sibling bug class: the three real-exchange brokers
-(okx/binance/bitget) constructed the Position row at open WITHOUT the entry-time
+Regression lock for the EC-stop sibling bug class: the three real-exchange paths
+(okx/binance/bitget) historically materialized a Position WITHOUT the entry-time
 metadata that paper_broker records — btc_entry_price, regime_tag,
-entry_market_summary, decision_reasoning, entry_fee, slippage_cost. ca782c7 fixed
-only stop_price/take_profit_price; these six stayed NULL, so every demo/live
-position (the active okx_demo experiment) was blind to alpha/beta separation,
-per-regime learning, and post-trade review.
+entry_market_summary, decision_reasoning, entry_fee, slippage_cost. These fields
+now survive the broker acknowledgement handoff and are applied only when exact
+private fill evidence creates the Position.
 
 A second claim covers the close side: a demo/live position MUST close through its
 exchange broker (real reduce + real exit price), never a local-only close that
@@ -14,18 +13,24 @@ fabricates the exit and leaves a dangling exchange position — routed via the s
 source of truth position_manager.close_position_routed.
 
 Coverage is broker-PARALLEL so a future copy-paste into any one broker cannot
-silently re-drop the metadata. Only the exchange HTTP boundary is mocked.
+silently re-drop the metadata. Only submission and private-history boundaries
+are mocked.
 
 Contract: pipeline_entry_enrichment
 Claim prefix: PL-ENRICH
 """
 
+import json
+
 import pytest
 
+from tests.execution_authority import seed_order_authority
 from tests.specs.spec_meta import SpecClaim, spec_claim
 from tests.specs.spec_pipeline_stop_propagation import (
     _BROKERS,
     _patch_filled_place_order,
+    _patch_private_fill_history,
+    _materialize_exchange_result,
     _setup_db,
     _stub_exchange_secrets,
 )
@@ -40,17 +45,28 @@ def _patch_enrichment_lookups(monkeypatch, *, btc=60000.0, regime="risk_on"):
     import aletheia.execution.position_enrichment as pe
     monkeypatch.setattr(pe, "btc_price_now", lambda: btc)
     monkeypatch.setattr(pe, "current_regime", lambda: regime)
+    from aletheia.execution import gateway
+
+    monkeypatch.setattr(
+        gateway,
+        "capture_paper_attribution_snapshot",
+        lambda symbol: {
+            "btc_entry_price": btc,
+            "regime_tag": regime,
+            "market_context": {"symbol": symbol},
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
-# PL-ENRICH-01  L2b  broker open stamps entry-time metadata (×3 brokers)
+# PL-ENRICH-01  L2b  private fill stamps entry-time metadata (×3 brokers)
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
         "PL-ENRICH-01", "pipeline_entry_enrichment", "§1 open_stamps_metadata", "L2b",
-        "execute_live_order on a confirmed fill stamps btc_entry_price, regime_tag, "
+        "Order-matched private fill materialization stamps btc_entry_price, regime_tag, "
         "entry_fee and slippage_cost onto the new Position (okx/binance/bitget) — none NULL",
     ),
 )
@@ -61,15 +77,37 @@ def test_broker_open_stamps_entry_metadata(
     _setup_db(tmp_path, monkeypatch)
     _stub_exchange_secrets(monkeypatch)
     _patch_filled_place_order(monkeypatch, client_path, fill_price=60000.0)
+    _patch_private_fill_history(
+        monkeypatch, broker_path, client_path, fill_price=60000.0
+    )
     _patch_enrichment_lookups(monkeypatch, btc=60000.0, regime="risk_on")
 
     from aletheia.storage import repositories as repo
 
     broker = __import__(broker_path, fromlist=["execute_live_order"])
+    proposal_id = f"p-enrich-{label}"
+    risk_decision_id = f"rd-enrich-{label}"
+    seed_order_authority(
+        proposal_id=proposal_id,
+        risk_decision_id=risk_decision_id,
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        order_type="market",
+        quantity=0.01,
+        price=59950.0,
+        execution_mode=exec_mode,
+        agent_rationale="direct enrichment rationale",
+        attribution_snapshot=json.dumps({
+            "btc_entry_price": 60000.0,
+            "regime_tag": "risk_on",
+            "market_context": {"source": "spec"},
+        }),
+    )
     # requested price 59950 vs fill 60000 → slippage_cost = 50 * 0.01 = 0.5
     result = broker.execute_live_order(
-        proposal_id=f"p-enrich-{label}",
-        risk_decision_id=None,
+        proposal_id=proposal_id,
+        risk_decision_id=risk_decision_id,
         symbol="BTC/USDT",
         market_type="usdt_futures",
         direction="long",
@@ -79,7 +117,8 @@ def test_broker_open_stamps_entry_metadata(
         execution_mode=exec_mode,
     )
 
-    pos = repo._select_one("positions", result["position_id"])
+    position_id = _materialize_exchange_result(result)
+    pos = repo._select_one("positions", position_id)
     assert pos is not None, f"{label}: position row must exist"
     assert pos["btc_entry_price"] == 60000.0, (
         f"{label}: btc_entry_price dropped (got {pos['btc_entry_price']!r}) — "
@@ -112,6 +151,12 @@ def test_gateway_persists_decision_reasoning(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     _stub_exchange_secrets(monkeypatch)
     _patch_filled_place_order(monkeypatch, "aletheia.exchanges.okx.client", fill_price=1551.57)
+    _patch_private_fill_history(
+        monkeypatch,
+        "aletheia.execution.okx_broker",
+        "aletheia.exchanges.okx.client",
+        fill_price=1551.57,
+    )
     _patch_enrichment_lookups(monkeypatch)
 
     from aletheia.execution.gateway import submit_proposal
@@ -132,11 +177,15 @@ def test_gateway_persists_decision_reasoning(tmp_path, monkeypatch):
         execution_mode="okx_demo",
         agent_rationale=rationale,
     )
-    if result.get("status") != "executed":
-        pytest.fail(f"okx_demo proposal not executed: {result.get('status')} / {result.get('risk_violations')}")
+    if result.get("status") != "materialization_missing":
+        pytest.fail(
+            "okx_demo proposal did not enter private-fill handoff: "
+            f"{result.get('status')} / {result.get('risk_violations')}"
+        )
 
     db = get_db()
-    pos = db.execute("SELECT * FROM positions WHERE id=?", (result["position_id"],)).fetchone()
+    position_id = _materialize_exchange_result(result)
+    pos = db.execute("SELECT * FROM positions WHERE id=?", (position_id,)).fetchone()
     assert pos is not None, "position row must exist"
     assert pos["decision_reasoning"] == rationale, (
         f"decision_reasoning not pulled from the originating proposal "
@@ -175,6 +224,9 @@ def test_close_routes_through_exchange(
     _setup_db(tmp_path, monkeypatch)
     _stub_exchange_secrets(monkeypatch)
     _patch_filled_place_order(monkeypatch, client_path, fill_price=100.0)
+    _patch_private_fill_history(
+        monkeypatch, broker_path, client_path, fill_price=100.0
+    )
     _patch_enrichment_lookups(monkeypatch)
 
     from aletheia.storage import repositories as repo
@@ -182,17 +234,32 @@ def test_close_routes_through_exchange(
     from aletheia.portfolio.position_manager import close_position_routed
 
     broker = __import__(broker_path, fromlist=["execute_live_order"])
+    proposal_id = f"p-close-{label}"
+    risk_decision_id = f"rd-close-{label}"
+    seed_order_authority(
+        proposal_id=proposal_id,
+        risk_decision_id=risk_decision_id,
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        order_type="market",
+        quantity=0.01,
+        price=100.0,
+        execution_mode=exec_mode,
+    )
     opened = broker.execute_live_order(
-        proposal_id=f"p-close-{label}", risk_decision_id=None,
+        proposal_id=proposal_id, risk_decision_id=risk_decision_id,
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         order_type="market", quantity=0.01, price=100.0,
         execution_mode=exec_mode,
     )
-    position_id = opened["position_id"]
-    assert position_id is not None
+    position_id = _materialize_exchange_result(opened)
 
     # Route the close. A local-only close would NOT create a second (close) order row.
     close_position_routed(position_id, reason="spec_close", fallback_exit_price=100.0)
+    from aletheia.execution.reconciliation import reconcile
+
+    reconcile()
 
     pos = repo._select_one("positions", position_id)
     assert pos["status"] == "closed", f"{label}: position must be closed"
@@ -228,6 +295,12 @@ def test_router_refuses_autonomous_live_close(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     _stub_exchange_secrets(monkeypatch)
     _patch_filled_place_order(monkeypatch, "aletheia.exchanges.okx.client", fill_price=100.0)
+    _patch_private_fill_history(
+        monkeypatch,
+        "aletheia.execution.okx_broker",
+        "aletheia.exchanges.okx.client",
+        fill_price=100.0,
+    )
     _patch_enrichment_lookups(monkeypatch)
 
     from aletheia.storage import repositories as repo
@@ -235,14 +308,24 @@ def test_router_refuses_autonomous_live_close(tmp_path, monkeypatch):
     from aletheia.portfolio.position_manager import close_position_routed
     from aletheia.execution.okx_broker import execute_live_order
 
+    seed_order_authority(
+        proposal_id="p-live-guard",
+        risk_decision_id="rd-live-guard",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        order_type="market",
+        quantity=0.01,
+        price=100.0,
+        execution_mode="okx_live_limited",
+    )
     opened = execute_live_order(
-        proposal_id="p-live-guard", risk_decision_id=None,
+        proposal_id="p-live-guard", risk_decision_id="rd-live-guard",
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         order_type="market", quantity=0.01, price=100.0,
         execution_mode="okx_live_limited",
     )
-    position_id = opened["position_id"]
-    assert position_id is not None
+    position_id = _materialize_exchange_result(opened)
 
     # Default (autonomous) path MUST refuse — no exchange close order placed.
     with pytest.raises(RuntimeError, match="live"):
@@ -253,6 +336,9 @@ def test_router_refuses_autonomous_live_close(tmp_path, monkeypatch):
 
     # Explicit human override routes to the real exchange close.
     close_position_routed(position_id, reason="human_close", fallback_exit_price=100.0, allow_live=True)
+    from aletheia.execution.reconciliation import reconcile
+
+    reconcile()
     assert repo._select_one("positions", position_id)["status"] == "closed"
     db = get_db()
     orders = db.execute(

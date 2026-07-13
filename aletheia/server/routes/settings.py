@@ -234,7 +234,7 @@ async def set_paper_account_balance(req: PaperAccountSetBalanceRequest):
 def _close_local_positions(market_type: str | None) -> dict:
     _require_local_paper_mode()
     from aletheia.storage.repositories import list_positions
-    from aletheia.portfolio.pnl import close_position
+    from aletheia.execution.paper_broker import close_paper_position
 
     candidates = [
         row for row in list_positions(status="open", limit=10_000)
@@ -244,7 +244,16 @@ def _close_local_positions(market_type: str | None) -> dict:
     missing_price = [row["id"] for row in candidates if row.get("current_price") is None]
     if missing_price:
         raise HTTPException(409, f"Cannot close local positions without a stored market price: {missing_price}")
-    results = [close_position(row["id"], float(row["current_price"]), reason="manual_bulk_close") for row in candidates]
+    results = [
+        close_paper_position(
+            row["id"],
+            mark_price=float(row["current_price"]),
+            reason="manual_bulk_close",
+            actor="human",
+            source="dashboard",
+        )
+        for row in candidates
+    ]
     from aletheia.portfolio.paper_account import get_paper_account as _get
     after = _get()
     _audit_paper_account_change(

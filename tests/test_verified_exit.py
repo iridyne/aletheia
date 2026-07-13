@@ -48,7 +48,12 @@ def fake_http(monkeypatch):
     return _FakeHTTP
 
 
-def _request(broker_id: str, *, environment: str) -> object:
+def _request(
+    broker_id: str,
+    *,
+    environment: str,
+    known_entry_order_ids: tuple[str, ...] = (),
+) -> object:
     from aletheia.execution.verified_exit import VerifiedExitRequest
 
     return VerifiedExitRequest(
@@ -63,6 +68,7 @@ def _request(broker_id: str, *, environment: str) -> object:
         quantity=0.5,
         history_start_ms=NOW_MS - 60_000,
         history_end_ms=NOW_MS,
+        known_entry_order_ids=known_entry_order_ids,
     )
 
 
@@ -162,6 +168,57 @@ async def test_bitget_verified_exit_uses_direct_position_and_close_fill(fake_htt
 
 
 @pytest.mark.anyio
+async def test_bitget_ignores_only_known_entry_order_fills(fake_http):
+    from aletheia.exchanges.bitget.client import BitgetClient
+
+    entry = {
+        "tradeId": "bg-entry-fill",
+        "orderId": "bg-entry-order",
+        "symbol": "BTCUSDT",
+        "price": "60000",
+        "baseVolume": "0.5",
+        "side": "buy",
+        "tradeSide": "open",
+        "feeDetail": [{"feeCoin": "USDT", "totalFee": "-0.2"}],
+        "cTime": str(NOW_MS - 59_500),
+    }
+    close = {
+        "tradeId": "bg-close-fill",
+        "orderId": "bg-close-order",
+        "symbol": "BTCUSDT",
+        "price": "60100",
+        "baseVolume": "0.5",
+        "side": "buy",
+        "tradeSide": "close",
+        "feeDetail": [{"feeCoin": "USDT", "totalFee": "-0.25"}],
+        "cTime": str(NOW_MS - 59_000),
+    }
+    fake_http.routes = {
+        "/api/v2/mix/position/all-position": {"code": "00000", "data": []},
+        "/api/v2/mix/order/fills": {
+            "code": "00000",
+            "data": {"fillList": [entry, close], "endId": "bg-close-fill"},
+        },
+    }
+    client = BitgetClient(mode="demo")
+    verified = await client.get_verified_position_exit(
+        _request(
+            "bitget_demo",
+            environment="demo",
+            known_entry_order_ids=("bg-entry-order",),
+        )
+    )
+    assert verified.state == "verified_fill"
+    assert [fill.fill_id for fill in verified.fills] == ["bg-close-fill"]
+
+    unknown_entry = await client.get_verified_position_exit(
+        _request("bitget_demo", environment="demo")
+    )
+    assert unknown_entry.state == "inconclusive"
+    assert unknown_entry.reason == "ambiguous_fill_activity"
+
+
+@pytest.mark.anyio
 async def test_bitget_missing_pagination_cursor_is_inconclusive(fake_http):
     from aletheia.exchanges.bitget.client import BitgetClient
 
@@ -244,6 +301,36 @@ class _TruncatedOKX(_FakeOKX):
         }] * 100}
 
 
+class _FakeOKXWithKnownEntry(_FakeOKX):
+    async def private_get_trade_fills_history(self, params):
+        return {"code": "0", "data": [
+            {
+                "billId": "okx-entry-fill",
+                "ordId": "okx-entry-order",
+                "instId": "BTC-USDT-SWAP",
+                "side": "buy",
+                "posSide": "long",
+                "fillPx": "60000",
+                "fillSz": "5",
+                "fee": "-0.2",
+                "feeCcy": "USDT",
+                "ts": str(NOW_MS - 59_500),
+            },
+            {
+                "billId": "okx-close-fill",
+                "ordId": "okx-close-order",
+                "instId": "BTC-USDT-SWAP",
+                "side": "sell",
+                "posSide": "long",
+                "fillPx": "60100",
+                "fillSz": "5",
+                "fee": "-0.25",
+                "feeCcy": "USDT",
+                "ts": str(NOW_MS - 59_000),
+            },
+        ]}
+
+
 @pytest.mark.anyio
 async def test_okx_verified_exit_normalizes_contract_quantity():
     from aletheia.exchanges.okx.client import OKXClient
@@ -258,6 +345,26 @@ async def test_okx_verified_exit_normalizes_contract_quantity():
         )
     assert result.state == "verified_fill"
     assert result.fills[0].quantity == pytest.approx(0.5)
+
+
+@pytest.mark.anyio
+async def test_okx_ignores_only_known_entry_order_fills():
+    from aletheia.exchanges.okx.client import OKXClient
+
+    client = object.__new__(OKXClient)
+    client._mode = "demo"
+    client._exchange = _FakeOKXWithKnownEntry()
+    client._session = None
+    with patch.object(client, "_contract_size", new=AsyncMock(return_value=0.1)):
+        result = await client.get_verified_position_exit(
+            _request(
+                "okx_demo",
+                environment="demo",
+                known_entry_order_ids=("okx-entry-order",),
+            )
+        )
+    assert result.state == "verified_fill"
+    assert [fill.fill_id for fill in result.fills] == ["okx-close-fill"]
 
 
 @pytest.mark.anyio
@@ -307,6 +414,34 @@ class _TruncatedBinance(_FakeBinance):
         }] * 1000
 
 
+class _FakeBinanceWithKnownEntry(_FakeBinance):
+    async def fetch_my_trades(self, symbol, since=None, limit=None, params=None):
+        return [
+            {
+                "id": "bn-entry-fill",
+                "order": "bn-entry-order",
+                "symbol": "BTC/USDT:USDT",
+                "side": "buy",
+                "price": 60_000.0,
+                "amount": 0.5,
+                "fee": {"cost": 0.2, "currency": "USDT"},
+                "timestamp": NOW_MS - 59_500,
+                "info": {"positionSide": "LONG", "realizedPnl": "0"},
+            },
+            {
+                "id": "bn-close-fill",
+                "order": "bn-close-order",
+                "symbol": "BTC/USDT:USDT",
+                "side": "sell",
+                "price": 60_100.0,
+                "amount": 0.5,
+                "fee": {"cost": 0.25, "currency": "USDT"},
+                "timestamp": NOW_MS - 59_000,
+                "info": {"positionSide": "LONG", "realizedPnl": "50"},
+            },
+        ]
+
+
 @pytest.mark.anyio
 async def test_binance_verified_exit_and_network_error_fail_closed():
     from aletheia.exchanges.binance.client import BinanceClient
@@ -326,6 +461,25 @@ async def test_binance_verified_exit_and_network_error_fail_closed():
     )
     assert failed.state == "inconclusive"
     assert failed.reason == "broker_query_failed"
+
+
+@pytest.mark.anyio
+async def test_binance_ignores_only_known_entry_order_fills():
+    from aletheia.exchanges.binance.client import BinanceClient
+
+    client = object.__new__(BinanceClient)
+    client._mode = "testnet"
+    client._exchange = _FakeBinanceWithKnownEntry()
+    client._session = None
+    result = await client.get_verified_position_exit(
+        _request(
+            "binance_testnet",
+            environment="testnet",
+            known_entry_order_ids=("bn-entry-order",),
+        )
+    )
+    assert result.state == "verified_fill"
+    assert [fill.fill_id for fill in result.fills] == ["bn-close-fill"]
 
 
 @pytest.mark.anyio

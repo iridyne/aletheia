@@ -16,6 +16,7 @@ def _insert_closed(
 ) -> None:
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
+    from tests.test_outcome_closure import _insert_entry_chain
 
     now = datetime.now(timezone.utc)
     kwargs = {
@@ -35,11 +36,31 @@ def _insert_closed(
         "closed_at": now.isoformat(),
     }
     if eligible:
+        opportunity_id, proposal_id, order_id = _insert_entry_chain(
+            position_id=position_id,
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=1.0,
+            price=100.0,
+            execution_mode="paper_internal",
+            proposal_id=proposal_id,
+            strategy_id=strategy_id,
+        )
         kwargs.update({
+            "opportunity_id": opportunity_id,
+            "proposal_id": proposal_id,
+            "order_id": order_id,
             "close_reason": "verified_exit",
             "close_category": "strategy",
+            "entry_price_source": "local_fill",
+            "entry_fill_verified": True,
             "exit_price_source": "local_fill",
             "exit_fill_verified": True,
+            "entry_fee": 0.0,
+            "exit_fee": 0.0,
+            "funding_cost": 0.0,
+            "funding_source": "local_simulation",
             "outcome_eligible": True,
             "outcome_exclusion_reason": "eligible",
             "outcome_semantics_version": "oi-v1",

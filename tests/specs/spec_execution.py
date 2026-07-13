@@ -230,16 +230,29 @@ def _setup_db(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "EX-B03", "execution_contract", "§5 atomicity", "L2b",
-        "Order(pending) row exists in DB before exchange call; on exchange failure row remains with status=error",
+        "Order(pending) exists before submission; a transport failure leaves a "
+        "retry-suppressing submission_unknown row rather than claiming rejection",
     ),
 )
 def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
-    """bitget_broker inserts Order(pending) before place_order; if place_order raises
-    the row must still exist with status='error' (contract §5, bitget_broker.py:87-99)."""
+    """The pending row survives an ambiguous transport failure without resubmission."""
     _setup_db(tmp_path, monkeypatch)
 
     from aletheia.execution import bitget_broker
     from aletheia.storage import repositories as repo
+    from tests.execution_authority import seed_order_authority
+
+    seed_order_authority(
+        proposal_id="prop-ex-b03",
+        risk_decision_id="rd-ex-b03",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60000.0,
+        execution_mode="bitget_demo",
+    )
 
     captured_order_id = {}
 
@@ -260,7 +273,9 @@ def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
         closing_coro_runner(ConnectionError("exchange unavailable")),
     )
 
-    with pytest.raises(ConnectionError):
+    from aletheia.execution.errors import SubmissionUnknownError
+
+    with pytest.raises(SubmissionUnknownError):
         bitget_broker.execute_live_order(
             proposal_id="prop-ex-b03",
             risk_decision_id="rd-ex-b03",
@@ -277,7 +292,8 @@ def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
     orders = repo.list_orders(limit=50)
     row = next((o for o in orders if o["id"] == captured_order_id["id"]), None)
     assert row is not None, "Order row must persist after exchange failure"
-    assert row["status"] == "error", f"Expected status='error', got {row['status']!r}"
+    assert row["status"] == "submission_unknown"
+    assert "exchange unavailable" not in (row["error_reason"] or "")
 
 
 # ---------------------------------------------------------------------------
@@ -583,6 +599,19 @@ def test_paper_open_records_opportunity_id(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.paper_broker import execute_paper_order
     from aletheia.storage import repositories as repo
+    from tests.execution_authority import seed_order_authority
+
+    seed_order_authority(
+        proposal_id="po1",
+        risk_decision_id="ro1",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60000.0,
+        execution_mode="paper_internal",
+    )
 
     r = execute_paper_order(
         proposal_id="po1", risk_decision_id="ro1",

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import TradeProposal
+from aletheia.storage.models import RiskDecision, TradeProposal
 from aletheia.storage import repositories as repo
 from aletheia.risk.engine import evaluate_proposal
 from aletheia.execution.gateway import submit_proposal
@@ -31,7 +31,7 @@ def setup_test_env(tmp_path, monkeypatch):
 def test_risk_approves_valid_paper_proposal(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     proposal = TradeProposal(
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         execution_mode="paper_internal", quantity=0.001, price=60000,
     )
     repo.insert_trade_proposal(proposal)
@@ -46,11 +46,11 @@ def test_risk_rejects_disallowed_symbol(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.risk.symbol_filter_mode = "whitelist"
-    cfg.risk.symbol_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.risk.symbol_list = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
     save_config(cfg)
     proposal = TradeProposal(
-        symbol="DOGEUSDT", market_type="spot", direction="long",
-        execution_mode="paper_internal",
+        symbol="DOGE/USDT", market_type="spot", direction="long",
+        execution_mode="paper_internal", quantity=1.0, price=0.1,
     )
     repo.insert_trade_proposal(proposal)
     result = evaluate_proposal(proposal)
@@ -64,11 +64,11 @@ def test_risk_blacklist_mode_allows_non_blocked(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.risk.symbol_filter_mode = "blacklist"
-    cfg.risk.symbol_list = ["DOGEUSDT"]
+    cfg.risk.symbol_list = ["DOGE/USDT"]
     cfg.agent.permission_mode = "Paper"
     save_config(cfg)
     proposal = TradeProposal(
-        symbol="XRPUSDT", market_type="spot", direction="long",
+        symbol="XRP/USDT", market_type="spot", direction="long",
         execution_mode="paper_internal", quantity=0.1, price=1.0,
     )
     repo.insert_trade_proposal(proposal)
@@ -83,11 +83,11 @@ def test_risk_blacklist_mode_rejects_blocked(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.risk.symbol_filter_mode = "blacklist"
-    cfg.risk.symbol_list = ["DOGEUSDT", "SHIBUSDT"]
+    cfg.risk.symbol_list = ["DOGE/USDT", "SHIB/USDT"]
     cfg.agent.permission_mode = "Paper"
     save_config(cfg)
     proposal = TradeProposal(
-        symbol="DOGEUSDT", market_type="spot", direction="long",
+        symbol="DOGE/USDT", market_type="spot", direction="long",
         execution_mode="paper_internal", quantity=100, price=0.1,
     )
     repo.insert_trade_proposal(proposal)
@@ -100,8 +100,8 @@ def test_risk_blacklist_mode_rejects_blocked(tmp_path, monkeypatch):
 def test_risk_rejects_live_when_disabled(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     proposal = TradeProposal(
-        symbol="BTCUSDT", market_type="spot", direction="long",
-        execution_mode="bitget_live_limited",
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        execution_mode="bitget_live_limited", quantity=0.001, price=60000,
     )
     repo.insert_trade_proposal(proposal)
     result = evaluate_proposal(proposal)
@@ -118,8 +118,8 @@ def test_risk_rejects_insufficient_permission(tmp_path, monkeypatch):
     cfg.agent.permission_mode = "Observe"
     save_config(cfg)
     proposal = TradeProposal(
-        symbol="BTCUSDT", market_type="spot", direction="long",
-        execution_mode="bitget_demo",
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        execution_mode="bitget_demo", quantity=0.001, price=60000,
     )
     repo.insert_trade_proposal(proposal)
     result = evaluate_proposal(proposal)
@@ -130,9 +130,31 @@ def test_risk_rejects_insufficient_permission(tmp_path, monkeypatch):
 
 def test_paper_broker_full_flow(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
+    proposal = TradeProposal(
+        id="prop-1",
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.5,
+        price=3000.0,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        id="risk-1",
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode="paper_internal",
+        proposal_execution_mode="paper_internal",
+        decision_role="authoritative",
+        evaluated_quantity=proposal.quantity,
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    repo.insert_risk_decision(decision)
     result = execute_paper_order(
-        proposal_id="prop-1", risk_decision_id="risk-1",
-        symbol="ETHUSDT", market_type="spot", direction="long",
+        proposal_id=proposal.id, risk_decision_id=decision.id,
+        symbol="ETH/USDT", market_type="spot", direction="long",
         order_type="market", quantity=0.5, price=3000.0,
     )
     assert result["fill_price"] == pytest.approx(3000.0, rel=0.01)  # slippage shifts slightly
@@ -147,7 +169,7 @@ def test_paper_broker_full_flow(tmp_path, monkeypatch):
 
     positions = repo.list_positions(status="open")
     assert len(positions) == 1
-    assert positions[0]["symbol"] == "ETHUSDT"
+    assert positions[0]["symbol"] == "ETH/USDT"
     assert positions[0]["entry_price"] == pytest.approx(3000.0, rel=0.01)  # slippage
     reset_db()
 
@@ -161,7 +183,7 @@ def test_execution_gateway_paper_flow(tmp_path, monkeypatch):
     save_config(cfg)
 
     result = submit_proposal(
-        symbol="SOLUSDT", market_type="spot", direction="long",
+        symbol="SOL/USDT", market_type="spot", direction="long",
         quantity=1.0, price=150.0, execution_mode="paper_internal",
     )
     assert result["status"] == "executed"
@@ -178,10 +200,10 @@ def test_execution_gateway_rejects_disallowed(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.risk.symbol_filter_mode = "whitelist"
-    cfg.risk.symbol_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.risk.symbol_list = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
     save_config(cfg)
     result = submit_proposal(
-        symbol="XRPUSDT", market_type="spot", direction="long",
+        symbol="XRP/USDT", market_type="spot", direction="long",
         quantity=10.0, price=0.5, execution_mode="paper_internal",
     )
     assert result["status"] == "rejected"

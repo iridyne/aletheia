@@ -243,22 +243,40 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
 ))
 def test_factor_history_is_shadow_only_until_prospectively_authorized(monkeypatch):
     from aletheia.analytics import factor_feedback
+    from tests.test_outcome_closure import _insert_entry_chain
 
     now = datetime.now(timezone.utc).isoformat()
-    rows = [
-        {
-            "id": f"position-{i}", "position_id": f"position-{i}",
+    rows = []
+    for i in range(12):
+        position_id = f"position-{i}"
+        opportunity_id, proposal_id, order_id = _insert_entry_chain(
+            position_id=position_id,
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=1.0,
+            price=100.0,
+            execution_mode="paper_internal",
+        )
+        rows.append({
+            "id": position_id, "position_id": position_id,
+            "opportunity_id": opportunity_id,
+            "proposal_id": proposal_id,
+            "order_id": order_id,
             "scanner_family": "momentum", "symbol": "BTC/USDT", "direction": "long",
             "confidence_score": 80, "late_entry_penalty": 0, "realized_pnl": -2.0,
-            "entry_price": 100.0, "quantity": 1.0, "closed_at": now,
+            "market_type": "usdt_futures", "execution_mode": "paper_internal",
+            "status": "closed", "entry_price": 100.0, "current_price": 98.0,
+            "quantity": 1.0, "entry_fee": 0.0, "exit_fee": 0.0,
+            "funding_cost": 0.0, "funding_source": "local_simulation",
+            "entry_price_source": "local_fill", "entry_fill_verified": True,
+            "closed_at": now,
             "close_reason": "stop_loss",
             "close_category": "strategy", "exit_price_source": "local_fill",
             "exit_fill_verified": True, "outcome_eligible": True,
             "outcome_exclusion_reason": "eligible",
             "outcome_semantics_version": "oi-v1",
-        }
-        for i in range(12)
-    ]
+        })
     monkeypatch.setattr(factor_feedback, "build_trade_attribution_rows", lambda limit=500: rows)
     signal = factor_feedback.lookup_factor_signal({
         "opportunity_id": "opp-1", "universe_member_id": "member-1",
