@@ -2,20 +2,25 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-060
 title: Build deterministic control-loop simulation MVP
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: Python Operator deterministic simulation, tests, docs, and CI only
-  excluded: Risk, Execution, Exchange, Live, credentials, network, real sleeps, frontend, and runtime deployment
+  excluded: Risk, Execution, Exchange, Live, credentials, network, real sleeps, frontend,
+    and runtime deployment
 intent: Implement the Python-only deterministic Operator control-loop simulator, fixed
   incidents, stateful properties, mutation canaries, failure artifacts, and CI coverage
   without touching Risk, Execution, Exchange, Live, or credentials.
 acceptance:
-- Fixed confidence and sizing incidents use migrated temporary SQLite and production Operator paths.
-- Stateful operations cover signal quality, performance, virtual time, candidates, cycles, outcomes, restart, and result recording.
-- Independent invariants and six mutation canaries prove the tests can detect broken control-loop behavior.
+- Fixed confidence and sizing incidents use migrated temporary SQLite and production
+  Operator paths.
+- Stateful operations cover signal quality, performance, virtual time, candidates,
+  cycles, outcomes, restart, and result recording.
+- Independent invariants and six mutation canaries prove the tests can detect broken
+  control-loop behavior.
 - Failures leave sanitized replay artifacts under test-results/control-loop.
-- PR and nightly CI run bounded deterministic suites including runtime replay and the active Golden Path.
+- PR and nightly CI run bounded deterministic suites including runtime replay and
+  the active Golden Path.
 ownership:
   branch: iridite/dcls-mvp-core
   lease_holder: codex-dcls-mvp
@@ -23,9 +28,20 @@ ownership:
   expires_at: '2026-07-13T13:36:09.816298Z'
 base_commit: 8f16877cce297d7ba028e62deaf4efaa68326c48
 next_action:
-  command_key: dcls_mvp
-  reason: Run the focused DCLS acceptance suite.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: dcls_mvp
+  command: uv run pytest tests/simulation/control_loop/ tests/specs/spec_deterministic_control_loop.py
+    tests/test_runtime_replay_pack.py tests/e2e/test_active_mainline_golden_path.py
+    -q --tb=short
+  command_sha256: 4b0f924c0d7f83157289fae62512904b2abbe4b39773dedc782420b223e78b9f
+  exit_code: 0
+  commit: f2b012e512e70144181cb3069957d6b934f33238
+  run_at: '2026-07-13T05:48:59.297326Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-060.md
-updated_at: '2026-07-13T05:36:09.816307Z'
+updated_at: '2026-07-13T05:49:05.732770Z'
