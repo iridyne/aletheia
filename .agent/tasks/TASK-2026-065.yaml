@@ -1,0 +1,64 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-065
+title: Startup Behavior Gate
+status: done
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Hold AI decisions and new trading paused at Gateway startup until ground-truth
+  checks pass; on failure keep essential data jobs running under a layered pause,
+  record a durable blocker, gate pi_daemon, surface the reason in Health/Doctor, and
+  periodically recheck to resume.
+acceptance:
+- Gateway boots API/Dashboard/essential data jobs while AI decisions + new trading
+  stay paused until checks pass (migrations, SQLite integrity/FK, config vs active
+  runtime scope, exchange sync or paper_internal, no unexplained pending orders/closes,
+  no active reconciliation incident, learning influence/lifecycle/allowlist consistent,
+  no user pause/kill switch).
+- 'On failure: layered pause keeps essential jobs running; durable blocker persisted
+  and survives restart; audited; pi_daemon does not start; periodic recheck resumes
+  when clear.'
+- A human pause / kill switch is never auto-resumed (paused_by_gate marker).
+- Blocker reason surfaced in /api/health and doctor; config flag default off.
+- Focused gate tests, layered-pause tests, specs, and architecture remain green.
+ownership:
+  branch: feat/startup-behavior-gate
+  lease_holder: claude
+  claimed_at: '2026-07-13T06:17:24.412134Z'
+  expires_at: '2026-07-13T14:17:24.412289Z'
+base_commit: a5478d020ce5a466b8bfcc7aaebbb576bfde8784
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: startup_behavior_gate
+  command: uv run pytest tests/test_startup_behavior_gate.py tests/test_layered_pause.py
+    -q
+  command_sha256: 5ebac7e48ccdb1be43edd4f0e994bfd8415ba3d4b412d9fb15d432ae22cf95fd
+  exit_code: 0
+  commit: 67c0a7029df8be5e5bc63bd48c87909e10f98ecb
+  run_at: '2026-07-13T06:17:43.995891Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 67c0a7029df8be5e5bc63bd48c87909e10f98ecb
+  run_at: '2026-07-13T06:17:53.927866Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 67c0a7029df8be5e5bc63bd48c87909e10f98ecb
+  run_at: '2026-07-13T06:17:55.975517Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-065.md
+updated_at: '2026-07-13T06:18:27.034810Z'
