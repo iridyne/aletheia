@@ -1805,6 +1805,48 @@ def _probe_health(report: Report) -> None:
         report.add("health.rollup", "warn", f"degraded: {issues}")
 
 
+def _probe_startup_behavior_gate(report: Report) -> None:
+    """Surface the Startup Behavior Gate's durable blocker as ground truth.
+
+    When the gate is holding the trading loop, this is the single place an
+    operator (or agent) can read WHY new AI decisions and trades are suspended
+    while data collection keeps running."""
+    try:
+        from aletheia.config.loader import load_config
+        from aletheia.agent_runtime.startup_behavior_gate import read_gate_state
+
+        cfg = load_config()
+        if not cfg.health.startup_behavior_gate_enabled:
+            report.add("startup_gate.status", "info", "startup behavior gate disabled")
+            return
+        state = read_gate_state()
+        if not state:
+            report.add("startup_gate.status", "ok", "checks clear — AI/trading permitted")
+            return
+        blockers = ", ".join(state.get("blockers") or []) or "unknown"
+        detail_map = {c.get("name"): c.get("detail") for c in state.get("checks") or []}
+        detail = "; ".join(
+            f"{name}: {detail_map.get(name, '')}" for name in (state.get("blockers") or [])
+        ) or blockers
+        if state.get("paused_by_gate"):
+            report.add(
+                "startup_gate.status", "blocker",
+                f"AI/trading paused; data collection continues. Blockers: {detail}",
+                fix_hint="Resolve the blockers (or fix config); the gate re-checks "
+                         "periodically and resumes automatically when clear.",
+            )
+        else:
+            reason = state.get("user_block_reason") or "held"
+            report.add(
+                "startup_gate.status", "warn",
+                f"gate held by operator/system ({reason}); not auto-resumed",
+                fix_hint="This is a human-owned pause/kill switch — resume from the "
+                         "dashboard or clear the kill switch to lift it.",
+            )
+    except Exception as e:
+        report.add("startup_gate.status", "info", f"startup gate probe error: {e}")
+
+
 def _probe_operator_loop(report: Report) -> None:
     """PI Operator Loop liveness — checks if it has run within expected cadence."""
     try:
@@ -2957,6 +2999,7 @@ def build_report() -> Report:
         # content-quality (Phase 2): "is the AI's output garbage", not "is the loop alive"
         *_CONTENT_PROBES,
         _probe_health,
+        _probe_startup_behavior_gate,
         _probe_operator_shell,
         _probe_operator_loop,
         _probe_webui_static,

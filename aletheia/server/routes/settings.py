@@ -765,6 +765,10 @@ class HealthConfigUpdate(SettingsRequest):
     exchange_probe_failure_threshold: Optional[int] = None
     exchange_auto_resume_interval_sec: Optional[int] = None
     exchange_auto_resume_success_threshold: Optional[int] = None
+    # Startup Behavior Gate (see agent_runtime/startup_behavior_gate.py). Declared
+    # here so the HealthCard round-trips them; without this, extra="forbid" 422s.
+    startup_behavior_gate_enabled: Optional[bool] = None
+    startup_gate_recheck_interval_sec: Optional[int] = None
 
 
 _HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
@@ -783,6 +787,7 @@ _HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
     "exchange_probe_failure_threshold": (1, 20),
     "exchange_auto_resume_interval_sec": (10, 600),
     "exchange_auto_resume_success_threshold": (1, 10),
+    "startup_gate_recheck_interval_sec": (5, 3600),
 }
 
 

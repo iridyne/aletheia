@@ -427,9 +427,35 @@ async def lifespan(app: FastAPI):
             startup_exchange_gate(cfg), name="startup_exchange_gate"
         )
 
-    # System Operator event-driven daemon — wakes immediately on signal arrival
+    # Startup Behavior Gate — hold AI decisions + new trading PAUSED until a set
+    # of ground-truth checks pass (DB integrity, config↔active-scope, exchange
+    # sync / paper_internal, no unexplained pending orders/closes, no active
+    # reconciliation incident, learning influence within bounds, no user
+    # pause/kill switch). Runs as a post-yield task (so the port binds first) but
+    # its checks are all LOCAL/fast reads. On failure it applies a layered pause
+    # (essential data jobs keep running), records a durable blocker, and starts a
+    # recheck loop. Default off — a no-op unless health.startup_behavior_gate_enabled.
+    behavior_gate_task = None
+    gate_permits_pi_daemon = True
+    if background_services_enabled:
+        from aletheia.agent_runtime import startup_behavior_gate as behavior_gate
+        behavior_gate.set_uvicorn_loop(asyncio.get_running_loop())
+        # Fast local verdict decides whether the System Operator daemon may start
+        # at all — "pi_daemon must not start before the gate passes".
+        try:
+            gate_permits_pi_daemon = behavior_gate.gate_allows_startup(cfg)
+        except Exception as e:
+            logger.warning("startup behaviour gate pre-check failed (permitting): %s", e)
+            gate_permits_pi_daemon = True
+        behavior_gate_task = asyncio.create_task(
+            behavior_gate.startup_behavior_gate(cfg), name="startup_behavior_gate"
+        )
+
+    # System Operator event-driven daemon — wakes immediately on signal arrival.
+    # Gated by the Startup Behavior Gate: it must not start while the gate blocks
+    # (the recheck loop restarts it on resume).
     pi_daemon_task = None
-    if background_services_enabled and cfg.pi_daemon.enabled:
+    if background_services_enabled and cfg.pi_daemon.enabled and gate_permits_pi_daemon:
         try:
             from aletheia.agent_runtime.pi_daemon import start_pi_daemon
             pi_daemon_task = start_pi_daemon(
@@ -475,6 +501,14 @@ async def lifespan(app: FastAPI):
         await _cancel_background_task(llm_gate_task, "LLM startup gate")
         await _cancel_background_task(exchange_gate_task, "exchange startup gate")
         await _cancel_background_task(startup_sync_task, "startup exchange sync")
+        await _cancel_background_task(behavior_gate_task, "startup behaviour gate")
+        # The behaviour gate can spawn a module-owned recheck loop after pausing;
+        # stop it explicitly (same pattern as the LLM/exchange auto-resume loops).
+        try:
+            from aletheia.agent_runtime.startup_behavior_gate import stop_startup_gate_recheck
+            await stop_startup_gate_recheck()
+        except Exception as exc:
+            logger.debug("startup gate recheck shutdown failed: %s", exc)
 
         # Startup gates can create independent recovery loops after pausing. They are
         # module-owned rather than direct lifespan children, so stop them explicitly.
