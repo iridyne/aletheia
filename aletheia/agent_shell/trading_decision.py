@@ -1591,12 +1591,13 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
     The System Operator freely picks a symbol+direction from the whole context; this
     matches that pick back to the opportunity it came from so the decision
     records a real opportunity_id (not the hard-coded None that severed the
-    attribution chain). Two signal sources are matched, in priority order:
+    attribution chain). Sources are matched in priority order:
 
-      1. market_observer (Layer 1 `opportunities`) — short-term scanner signals.
-         Wins on a tie because it also carries strategy_id/scanner_family that
-         the learning loop needs; signal_source stays 'market_observer'.
-      2. serenity (Layer 3 `serenity_opportunities`) — research long-hold picks.
+      1. market_observer `pending_signals` — the exact queue carrier emitted by
+         paper_trader. It wins over a different same-symbol open opportunity.
+      2. market_observer Layer 1/ranker candidates — short-term scanner signals.
+         These still win over Serenity on a cross-source tie.
+      3. serenity pending/Layer 3 opportunities — research long-hold picks.
          Matched only if no market_observer opportunity claimed the pick; sets
          signal_source='serenity' so opportunity_id is later resolved against
          serenity_opportunities (NOT opportunities) — the two id spaces are
@@ -1611,6 +1612,45 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
 
     if not decision.symbol:
         return
+
+    # paper_trader marks an Opportunity reviewed immediately after enqueueing its
+    # signal_pending PiDecision. That exact queue id is more specific than a later
+    # same-symbol/direction open row, so consume it before heuristic Layer-1 matches.
+    pending = (ctx.get("layer2") or {}).get("pending_signals") or []
+    for p in pending:
+        if (p.get("signal_source") or "market_observer") != "market_observer":
+            continue
+        if p.get("symbol") != decision.symbol:
+            continue
+        pdir = p.get("direction")
+        if decision.direction and pdir and pdir != decision.direction:
+            continue
+        oid = p.get("opportunity_id")
+        if not oid:
+            continue
+        decision.opportunity_id = oid
+        decision.signal_source = "market_observer"
+        # Recover the source fields omitted from PiDecision. The id remains an
+        # honest attribution anchor even if this best-effort lookup fails.
+        try:
+            from aletheia.storage.repositories import get_opportunity
+
+            src_opp = get_opportunity(oid)
+            if src_opp:
+                try:
+                    raw_meta = src_opp.get("metadata") or "{}"
+                    meta = raw_meta if isinstance(raw_meta, dict) else json.loads(raw_meta)
+                except (TypeError, ValueError):
+                    meta = {}
+                decision.learning_candidate_key = meta.get("learning_candidate_key")
+                decision.strategy_id = src_opp.get("linked_strategy_id")
+                decision.scanner_family = src_opp.get("scanner_family")
+                if not decision.market_type and src_opp.get("market"):
+                    decision.market_type = src_opp.get("market")
+        except Exception:
+            pass
+        return
+
     opps = (ctx.get("layer1") or {}).get("opportunities") or []
     for o in opps:
         if o.get("symbol") != decision.symbol:
@@ -1664,45 +1704,6 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         decision.signal_source = c.get("signal_source") or "market_observer"
         if not decision.market_type and c.get("market_type"):
             decision.market_type = c.get("market_type")
-        return
-
-    # paper_trader marks an Opportunity reviewed immediately after enqueueing its
-    # signal_pending PiDecision.  That intentionally removes it from Layer 1 and
-    # the open-only ranker view, so the pending carrier is the remaining identity
-    # bridge into the final System Operator decision.
-    pending = (ctx.get("layer2") or {}).get("pending_signals") or []
-    for p in pending:
-        if (p.get("signal_source") or "market_observer") != "market_observer":
-            continue
-        if p.get("symbol") != decision.symbol:
-            continue
-        pdir = p.get("direction")
-        if decision.direction and pdir and pdir != decision.direction:
-            continue
-        oid = p.get("opportunity_id")
-        if not oid:
-            continue
-        decision.opportunity_id = oid
-        decision.signal_source = "market_observer"
-        # Recover the source fields omitted from PiDecision.  The id remains an
-        # honest attribution anchor even if this best-effort lookup fails.
-        try:
-            from aletheia.storage.repositories import get_opportunity
-
-            src_opp = get_opportunity(oid)
-            if src_opp:
-                try:
-                    raw_meta = src_opp.get("metadata") or "{}"
-                    meta = raw_meta if isinstance(raw_meta, dict) else json.loads(raw_meta)
-                except (TypeError, ValueError):
-                    meta = {}
-                decision.learning_candidate_key = meta.get("learning_candidate_key")
-                decision.strategy_id = src_opp.get("linked_strategy_id")
-                decision.scanner_family = src_opp.get("scanner_family")
-                if not decision.market_type and src_opp.get("market"):
-                    decision.market_type = src_opp.get("market")
-        except Exception:
-            pass
         return
 
     # Serenity direct match (Phase 2 fix): pending_signals carry opportunity_id

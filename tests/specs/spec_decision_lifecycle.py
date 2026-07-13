@@ -118,7 +118,15 @@ def test_market_observer_pending_signal_attaches_opportunity_id():
         reasoning="consume the queued scanner signal",
     )
     ctx = {
-        "layer1": {"opportunities": []},
+        "layer1": {
+            "opportunities": [
+                {
+                    "id": "opp-competing-open",
+                    "symbol": "BTC/USDT",
+                    "direction_bias": "long",
+                }
+            ]
+        },
         "layer2": {
             "ranker_candidates": [],
             "pending_signals": [

@@ -81,7 +81,9 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 **不变量**:TTL 由 `created_at >= cutoff` 控制;只取最近 5 条。`paper_trader` 成功写入后会把
 来源 Opportunity 标记为 `reviewed`,因此该行不再出现在 Layer1 或 ranker 的 open 视图中;
 `_attach_opportunity_context` 必须把 `pending_signals` 中 `market_observer` 与 `serenity` 两类载体
-都视为有效归因来源,并按 `opportunity_id` 回填来源字段,不得只消费 Serenity 载体。
+都视为有效归因来源,并按 `opportunity_id` 回填来源字段,不得只消费 Serenity 载体。对
+`market_observer` 载体,队列中的精确编号优先于仅靠相同 symbol/direction 匹配到的另一条开放机会;
+Serenity 与 Layer1 同时匹配时仍保持 Layer1 的既有优先级。
 
 ### 2.4 Filter Evidence（评估旁路）
 

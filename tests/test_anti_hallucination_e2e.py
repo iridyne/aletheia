@@ -159,12 +159,24 @@ def test_reviewed_opportunity_roundtrips_through_market_pending_signal(tmp_path,
         opportunity_id=opp.id,
         signal_source="market_observer",
     ))
+    competing = Opportunity(
+        symbol=opp.symbol,
+        market=opp.market,
+        direction_bias=opp.direction_bias,
+        scanner_family="momentum",
+        confidence="high",
+        confidence_score=90,
+        status="open",
+        asset_class="crypto",
+    )
+    insert_opportunity(competing)
 
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
     from aletheia.agent_shell.trading_decision import TradingDecision, _attach_opportunity_context
 
     ctx = build_enriched_trading_context()
     assert all(row.get("id") != opp.id for row in ctx["layer1"]["opportunities"])
+    assert any(row.get("id") == competing.id for row in ctx["layer1"]["opportunities"])
     pending = next(
         row for row in ctx["layer2"]["pending_signals"]
         if row.get("opportunity_id") == opp.id
