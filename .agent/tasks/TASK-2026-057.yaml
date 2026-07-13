@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-057
 title: Fix shadow intervention handoff between AT-01 and AT-02
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -23,10 +23,18 @@ ownership:
   expires_at: '2026-07-14T01:08:34.926975Z'
 base_commit: fe3e262192ef7df05fbd88b20e1a72ed3b3911d8
 next_action:
-  command_key: specs
-  reason: Commit the scoped AT-01/AT-02 fix, then record the full executable-rule
-    verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 29e1508d72e605713fa2aed24a5393adff5e67eb
+  run_at: '2026-07-13T01:28:06.482682Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-057.md
-updated_at: '2026-07-13T01:27:31.954302Z'
+updated_at: '2026-07-13T01:28:15.976862Z'
