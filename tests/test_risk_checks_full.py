@@ -153,7 +153,9 @@ def _verified_paper_close(position: Position, exit_price: float) -> None:
             pages=1,
             source_endpoint="test_local_fill",
             fills=(VerifiedExitFill(
-                fill_id=f"exit-{position.id}", order_id=None, price=exit_price,
+                fill_id=f"exit-{position.id}",
+                order_id=f"local-paper-exit-{position.id}",
+                price=exit_price,
                 quantity=position.quantity, fee=0.0, fee_currency="USDT",
                 realized_pnl=None, filled_at_ms=filled_at_ms,
             ),),

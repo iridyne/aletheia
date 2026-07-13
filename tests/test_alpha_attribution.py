@@ -42,30 +42,30 @@ def _insert_shadow(db, batch: str, opp: str, rank: int, pnl: float, selected: in
 
 
 def _insert_trade_chain(db, idx: int, pnl_pct: float, scanner: str = "momentum", closed_at: str | None = None) -> None:
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
+
     opp_id = f"opp-{idx}"
     prop_id = f"prop-{idx}"
     pos_id = f"pos-{idx}"
     closed = closed_at or _iso(days_ago=1)
-    db.execute(
-        "INSERT INTO opportunities (id, symbol, market, direction_bias, confidence, status, scanner_family) "
-        "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 'high', 'open', ?)",
-        (opp_id, scanner),
-    )
-    db.execute(
-        "INSERT INTO trade_proposals "
-        "(id, opportunity_id, symbol, market_type, direction, quantity, price, execution_mode, status, created_at) "
-        "VALUES (?, ?, 'BTC/USDT', 'usdt_futures', 'long', 1, 100, 'paper_internal', 'executed', ?)",
-        (prop_id, opp_id, _iso(days_ago=2)),
-    )
-    db.execute(
-        "INSERT INTO positions "
-        "(id, symbol, market_type, direction, quantity, entry_price, current_price, realized_pnl, "
-        "execution_mode, proposal_id, status, close_reason, close_category, "
-        "exit_price_source, exit_fill_verified, outcome_eligible, outcome_exclusion_reason, "
-        "outcome_semantics_version, opened_at, closed_at) "
-        "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 1, 100, ?, ?, 'paper_internal', ?, "
-        "'closed', 'signal_exit', 'strategy', 'local_fill', 1, 1, 'eligible', 'oi-v1', ?, ?)",
-        (pos_id, 100 + pnl_pct, pnl_pct, prop_id, _iso(days_ago=2), closed),
+    opened = (datetime.fromisoformat(closed) - timedelta(hours=1)).isoformat()
+    _insert_closed_position_via_producer(
+        position_id=pos_id,
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        realized_pnl=pnl_pct,
+        execution_mode="paper_internal",
+        opened_at=opened,
+        closed_at=closed,
+        close_reason="signal_exit",
+        proposal_id=prop_id,
+        order_id=f"order-{idx}",
+        opportunity_id=opp_id,
+        scanner_family=scanner,
+        confidence="high",
     )
 
 

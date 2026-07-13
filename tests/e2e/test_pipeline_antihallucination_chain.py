@@ -3,18 +3,20 @@
 The invariant being protected (LEARNING_LOOP_AUDIT §R0 + CR-EX-03):
 
     opportunity(id) → proposal(opportunity_id) → position(proposal_id, strategy_id,
-    opportunity_id) → attribution row → trade_case_study(has_full_chain →
-    high_confidence) → FTS retrieval pool
+    opportunity_id) → verified attributable outcome → trade_case_study →
+    FTS retrieval pool
 
 A trade that opened from a real, attributable opportunity becomes a high_confidence
 case study and enters the retrieval pool the PI/ranker learn from. A trade missing
-the opportunity link stays medium_confidence and is kept OUT of the pool — so the
-learning loop cannot be fed by un-attributable (hallucination-prone) cases.
+the opportunity link is excluded before case creation — so the learning loop cannot
+be fed by un-attributable (hallucination-prone) outcomes.
 
 No module-to-module mocking: the proposal goes through the real Execution Gateway,
 risk engine, paper broker, PnL close, case builder, and FTS retrieval. Only the DB is
 the e2e in-process SQLite (network/LLM are never touched on the paper path).
 """
+
+from datetime import datetime, timezone
 
 from aletheia.storage.models import Opportunity, StrategyRecord
 from aletheia.storage import repositories as repo
@@ -36,6 +38,7 @@ def _run_paper_trade(symbol, entry, exit_price, *, opportunity_id, strategy_id):
     pos_id = res["position_id"]
     position = repo._select_one("positions", pos_id)
     quantity = float(position["quantity"])
+    filled_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     close_position_verified(
         pos_id,
         VerifiedExitResult(
@@ -44,12 +47,16 @@ def _run_paper_trade(symbol, entry, exit_price, *, opportunity_id, strategy_id):
             account_scope="e2e", execution_mode="paper_internal",
             position_id=pos_id, symbol=symbol, market_type="spot",
             direction="long", position_absent=True, history_complete=True,
-            history_start_ms=1, history_end_ms=2, pages=1,
+            history_start_ms=filled_at_ms - 1,
+            history_end_ms=filled_at_ms + 1,
+            pages=1,
             source_endpoint="local_paper_fill",
             fills=(VerifiedExitFill(
-                fill_id=f"exit-{pos_id}", order_id=None, price=exit_price,
+                fill_id=f"exit-{pos_id}",
+                order_id=f"local-paper-exit-{pos_id}",
+                price=exit_price,
                 quantity=quantity, fee=0.0, fee_currency="USDT",
-                realized_pnl=None, filled_at_ms=2,
+                realized_pnl=None, filled_at_ms=filled_at_ms,
             ),),
         ),
         reason="take_profit",
@@ -87,25 +94,23 @@ class TestAntiHallucinationChain:
         )
         eth_row = repo._select_one("positions", eth_pos)
         assert eth_row["opportunity_id"] is None
+        assert eth_row["outcome_eligible"] == 0
+        assert eth_row["outcome_exclusion_reason"] == "missing_attribution"
 
         # ── Build case studies from the real closed positions ──
         from aletheia.analytics.trade_case_builder import build_case_studies
         created = build_case_studies()
         by_pos = {c["position_id"]: c["case_study_id"] for c in created}
         assert btc_pos in by_pos, "full-chain closed trade must produce a case study"
-        assert eth_pos in by_pos, "broken-chain trade still produces a case (just lower confidence)"
+        assert eth_pos not in by_pos, "broken-chain trade must not enter the learning corpus"
 
-        # ── The gate: full chain → high_confidence; broken chain → medium ──
+        # ── The gate: only the fully attributed chain becomes a case study ──
         btc_item = repo._select_one("knowledge_items", by_pos[btc_pos])
-        eth_item = repo._select_one("knowledge_items", by_pos[eth_pos])
         assert btc_item["confidence"] == "high_confidence", (
             "a fully-attributed trade (opportunity+proposal+strategy) must be high_confidence"
         )
-        assert eth_item["confidence"] == "medium_confidence", (
-            "an un-attributable trade must NOT be promoted to high_confidence"
-        )
 
-        # ── The pool: retrieval is high_confidence-only, so only the real case surfaces ──
+        # ── The pool: only the real, attributable case can surface ──
         from aletheia.knowledge.retrieval import retrieve_lessons
         lessons = retrieve_lessons("momentum win take_profit", k=10,
                                    item_types=["trade_case_study"])
@@ -114,5 +119,5 @@ class TestAntiHallucinationChain:
             f"full-chain case must be retrievable from the pool; got: {titles}"
         )
         assert not any("ETH" in l.title for l in lessons), (
-            f"broken-chain (medium) case must be kept OUT of the pool; got: {titles}"
+            f"broken-chain outcome must be kept OUT of the pool; got: {titles}"
         )

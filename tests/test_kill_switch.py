@@ -66,7 +66,7 @@ def test_kill_switch_blocks_all_proposals(tmp_path, monkeypatch):
 
     kill_switch.activate(reason="brake")
     proposal = TradeProposal(
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         execution_mode="paper_internal", quantity=0.001, price=60000,
     )
     repo.insert_trade_proposal(proposal)

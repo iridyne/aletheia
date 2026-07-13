@@ -85,7 +85,7 @@ class TestRiskEngineSeam:
             execution_mode="paper_internal",
             stop_price=1740 * 1.02,
         )
-        repo._insert("trade_proposals", proposal.model_dump())
+        repo.insert_trade_proposal(proposal)
 
         from aletheia.risk.engine import evaluate_proposal
         result = evaluate_proposal(proposal)
@@ -106,7 +106,7 @@ class TestRiskEngineSeam:
             price=1740.0,
             execution_mode="paper_internal",
         )
-        repo._insert("trade_proposals", proposal.model_dump())
+        repo.insert_trade_proposal(proposal)
 
         from aletheia.risk.engine import evaluate_proposal
         result = evaluate_proposal(proposal)

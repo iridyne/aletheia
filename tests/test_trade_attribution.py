@@ -106,7 +106,7 @@ def test_build_rows_with_full_chain():
     fake_position = {
         "id": "pos-1", "symbol": "BTC/USDT", "market_type": "usdt_futures",
         "direction": "long", "execution_mode": "bitget_demo", "strategy_id": "strat-1",
-        "proposal_id": "prop-1", "order_id": "ord-1",
+        "opportunity_id": "opp-1", "proposal_id": "prop-1", "order_id": "ord-1",
         "entry_price": "50000", "current_price": "51000",
         "quantity": "0.001", "realized_pnl": "1.0",
         "close_reason": "take_profit", "status": "closed",
@@ -132,11 +132,13 @@ def test_build_rows_with_full_chain():
     with patch("aletheia.analytics.trade_attribution.eligible_strategy_outcomes", return_value=[fake_position]), \
             patch("aletheia.analytics.trade_attribution.repo") as mock_repo:
         mock_repo.get_trade_proposal.return_value = fake_proposal
-        mock_repo.get_order.return_value = {"id": "ord-1"}
+        mock_repo.get_order.return_value = {
+            "id": "ord-1", "proposal_id": "prop-1", "risk_decision_id": "rd-1",
+        }
         mock_repo.get_opportunity.return_value = fake_opportunity
         mock_repo.get_strategy.return_value = fake_strategy
         mock_repo.get_universe_member.return_value = fake_universe_member
-        mock_repo.list_risk_decisions.return_value = [fake_risk_decision]
+        mock_repo._select_one.return_value = fake_risk_decision
 
         rows = build_trade_attribution_rows(limit=10)
 
@@ -154,8 +156,8 @@ def test_build_rows_with_full_chain():
     assert row["realized_pnl_pct"] > 0
 
 
-def test_build_rows_missing_opportunity():
-    """Position without opportunity link still produces a row with None fields."""
+def test_build_rows_missing_opportunity_is_excluded():
+    """A closed row without its entry lineage cannot be attributed safely."""
     fake_position = {
         "id": "pos-2", "symbol": "ETH/USDT", "market_type": "usdt_futures",
         "direction": "short", "execution_mode": "paper_internal",
@@ -178,13 +180,7 @@ def test_build_rows_missing_opportunity():
 
         rows = build_trade_attribution_rows(limit=10)
 
-    assert len(rows) == 1
-    row = rows[0]
-    assert row["position_id"] == "pos-2"
-    assert row["opportunity_id"] is None
-    assert row["scanner_family"] is None
-    assert row["universe_rank"] is None
-    assert row["risk_approved"] is None
+    assert rows == []
 
 
 def test_realized_pnl_pct_calculation():
@@ -192,7 +188,8 @@ def test_realized_pnl_pct_calculation():
     fake_position = {
         "id": "pos-3", "symbol": "BTC/USDT", "market_type": "usdt_futures",
         "direction": "long", "execution_mode": "bitget_demo",
-        "strategy_id": None, "proposal_id": None, "order_id": None,
+        "strategy_id": None, "opportunity_id": "opp-3",
+        "proposal_id": "prop-3", "order_id": "ord-3",
         "entry_price": "50000", "current_price": "50500",
         "quantity": "0.01", "realized_pnl": "5.0",
         "close_reason": "take_profit", "status": "closed",
@@ -202,8 +199,17 @@ def test_realized_pnl_pct_calculation():
 
     with patch("aletheia.analytics.trade_attribution.eligible_strategy_outcomes", return_value=[fake_position]), \
             patch("aletheia.analytics.trade_attribution.repo") as mock_repo:
-        mock_repo.get_trade_proposal.return_value = None
-        mock_repo.list_risk_decisions.return_value = []
+        mock_repo.get_trade_proposal.return_value = {
+            "id": "prop-3", "opportunity_id": "opp-3",
+        }
+        mock_repo.get_order.return_value = {
+            "id": "ord-3", "proposal_id": "prop-3", "risk_decision_id": None,
+        }
+        mock_repo.get_opportunity.return_value = {
+            "id": "opp-3", "source_agent": "market_observer",
+            "scanner_family": "momentum", "status": "proposed",
+            "universe_member_id": None,
+        }
 
         rows = build_trade_attribution_rows(limit=10)
 

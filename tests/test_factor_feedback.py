@@ -1,6 +1,7 @@
 """Unit tests for aletheia.analytics.factor_feedback."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from aletheia.analytics.factor_feedback import (
@@ -10,6 +11,88 @@ from aletheia.analytics.factor_feedback import (
     _compute_group_stats,
     _max_consecutive_losses,
 )
+
+
+def _eligible_factor_row(
+    *,
+    position_id: str,
+    symbol: str,
+    direction: str,
+    realized_pnl: float,
+    holding_hours: float,
+    close_reason: str,
+    closed_at: str,
+    confidence_score: int,
+    confidence: str,
+    late_entry_penalty: float | None,
+) -> dict:
+    """Build a genuine closed Position and return its enriched attribution row."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import (
+        UniverseAsset,
+        UniverseMember,
+        UniverseSnapshot,
+    )
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
+
+    closed = datetime.fromisoformat(closed_at)
+    opened = closed - timedelta(hours=holding_hours)
+    asset_id = f"factor-asset-{symbol.lower().replace('/', '-')}"
+    if repo.get_universe_asset(asset_id) is None:
+        repo.insert_universe_asset(UniverseAsset(
+            id=asset_id,
+            venue="bitget",
+            market_type="usdt_futures",
+            symbol=symbol,
+        ))
+    snapshot_id = f"factor-snapshot-{position_id}"
+    member_id = f"factor-member-{position_id}"
+    repo.insert_universe_snapshot(UniverseSnapshot(
+        id=snapshot_id,
+        created_at=opened.isoformat(),
+        market_type="crypto",
+    ))
+    repo.insert_universe_member(UniverseMember(
+        id=member_id,
+        snapshot_id=snapshot_id,
+        asset_id=asset_id,
+        symbol=symbol,
+        market_type="usdt_futures",
+        rank=1,
+        total_score=80.0,
+        late_entry_penalty=late_entry_penalty,
+        scanner_family="momentum",
+        scanner_direction=direction,
+    ))
+    _insert_closed_position_via_producer(
+        position_id=position_id,
+        symbol=symbol,
+        market_type="usdt_futures",
+        direction=direction,
+        quantity=1.0,
+        entry_price=100.0,
+        realized_pnl=realized_pnl,
+        execution_mode="paper_internal",
+        opened_at=opened.isoformat(),
+        closed_at=closed.isoformat(),
+        close_reason=close_reason,
+        universe_snapshot_id=snapshot_id,
+        universe_member_id=member_id,
+        scanner_family="momentum",
+        confidence=confidence,
+        confidence_score=confidence_score,
+    )
+    from aletheia.analytics.trade_attribution import build_trade_attribution_rows
+
+    row = next(
+        item
+        for item in build_trade_attribution_rows(limit=500)
+        if item["position_id"] == position_id
+    )
+    assert row["universe_member_id"] == member_id
+    assert row["late_entry_penalty"] == late_entry_penalty
+    assert row["holding_hours"] == holding_hours
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -113,36 +196,24 @@ def test_lookup_factor_signal_no_history():
 def test_lookup_factor_signal_with_matching_history():
     """Matching history returns computed status."""
     fake_rows = [
-        {
-            "scanner_family": "momentum", "symbol": "BTC/USDT", "direction": "long",
-            "confidence_score": 75, "confidence": "high", "late_entry_penalty": None,
-            "realized_pnl": 5.0, "holding_hours": 4.0, "close_reason": "take_profit",
-            "position_id": "p1", "entry_price": 100.0, "quantity": 1.0,
-            "closed_at": "2026-07-12T08:01:00+00:00",
-            "close_category": "strategy", "exit_price_source": "local_fill",
-            "exit_fill_verified": True, "outcome_eligible": True,
-            "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
-        },
-        {
-            "scanner_family": "momentum", "symbol": "BTC/USDT", "direction": "long",
-            "confidence_score": 75, "confidence": "high", "late_entry_penalty": None,
-            "realized_pnl": 3.0, "holding_hours": 2.0, "close_reason": "take_profit",
-            "position_id": "p2", "entry_price": 100.0, "quantity": 1.0,
-            "closed_at": "2026-07-12T08:02:00+00:00",
-            "close_category": "strategy", "exit_price_source": "local_fill",
-            "exit_fill_verified": True, "outcome_eligible": True,
-            "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
-        },
-        {
-            "scanner_family": "momentum", "symbol": "BTC/USDT", "direction": "long",
-            "confidence_score": 75, "confidence": "high", "late_entry_penalty": None,
-            "realized_pnl": -1.0, "holding_hours": 1.0, "close_reason": "stop_loss",
-            "position_id": "p3", "entry_price": 100.0, "quantity": 1.0,
-            "closed_at": "2026-07-12T08:03:00+00:00",
-            "close_category": "strategy", "exit_price_source": "local_fill",
-            "exit_fill_verified": True, "outcome_eligible": True,
-            "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
-        },
+        _eligible_factor_row(
+            position_id="p1", symbol="BTC/USDT", direction="long",
+            realized_pnl=5.0, holding_hours=4.0, close_reason="take_profit",
+            closed_at="2026-07-12T08:01:00+00:00", confidence_score=75,
+            confidence="high", late_entry_penalty=None,
+        ),
+        _eligible_factor_row(
+            position_id="p2", symbol="BTC/USDT", direction="long",
+            realized_pnl=3.0, holding_hours=2.0, close_reason="take_profit",
+            closed_at="2026-07-12T08:02:00+00:00", confidence_score=75,
+            confidence="high", late_entry_penalty=None,
+        ),
+        _eligible_factor_row(
+            position_id="p3", symbol="BTC/USDT", direction="long",
+            realized_pnl=-1.0, holding_hours=1.0, close_reason="stop_loss",
+            closed_at="2026-07-12T08:03:00+00:00", confidence_score=75,
+            confidence="high", late_entry_penalty=None,
+        ),
     ]
     with patch("aletheia.analytics.factor_feedback.build_trade_attribution_rows", return_value=fake_rows):
         signal = lookup_factor_signal({
@@ -170,26 +241,18 @@ def test_build_factor_feedback_empty():
 
 def test_build_factor_feedback_groups():
     fake_rows = [
-        {
-            "scanner_family": "momentum", "symbol": "BTC/USDT", "direction": "long",
-            "confidence_score": 75, "confidence": "high", "late_entry_penalty": 5.0,
-            "realized_pnl": 10.0, "holding_hours": 4.0, "close_reason": "take_profit",
-            "position_id": "g1", "entry_price": 100.0, "quantity": 1.0,
-            "closed_at": "2026-07-12T08:01:00+00:00",
-            "close_category": "strategy", "exit_price_source": "local_fill",
-            "exit_fill_verified": True, "outcome_eligible": True,
-            "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
-        },
-        {
-            "scanner_family": "momentum", "symbol": "ETH/USDT", "direction": "short",
-            "confidence_score": 60, "confidence": "medium", "late_entry_penalty": 0.0,
-            "realized_pnl": -2.0, "holding_hours": 1.0, "close_reason": "stop_loss",
-            "position_id": "g2", "entry_price": 100.0, "quantity": 1.0,
-            "closed_at": "2026-07-12T08:02:00+00:00",
-            "close_category": "strategy", "exit_price_source": "local_fill",
-            "exit_fill_verified": True, "outcome_eligible": True,
-            "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
-        },
+        _eligible_factor_row(
+            position_id="g1", symbol="BTC/USDT", direction="long",
+            realized_pnl=10.0, holding_hours=4.0, close_reason="take_profit",
+            closed_at="2026-07-12T08:01:00+00:00", confidence_score=75,
+            confidence="high", late_entry_penalty=5.0,
+        ),
+        _eligible_factor_row(
+            position_id="g2", symbol="ETH/USDT", direction="short",
+            realized_pnl=-2.0, holding_hours=1.0, close_reason="stop_loss",
+            closed_at="2026-07-12T08:02:00+00:00", confidence_score=60,
+            confidence="medium", late_entry_penalty=0.0,
+        ),
     ]
     with patch("aletheia.analytics.factor_feedback.build_trade_attribution_rows", return_value=fake_rows):
         result = build_factor_feedback(limit=10, min_trades=1)

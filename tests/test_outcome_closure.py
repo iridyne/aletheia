@@ -3,12 +3,284 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import json
 
 import pytest
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import Position
+
+
+def _assert_complete_closed_position_fixture(
+    position_id: str,
+    *,
+    expected_outcome_eligible: bool = True,
+) -> dict:
+    """Require the same durable facts that a production strategy close writes."""
+    from aletheia.storage.sqlite import get_db
+
+    position = repo._select_one("positions", position_id)
+    assert position is not None
+    assert position["status"] == "closed"
+    assert bool(position["outcome_eligible"]) is expected_outcome_eligible
+    if expected_outcome_eligible:
+        assert position["outcome_exclusion_reason"] == "eligible"
+    assert json.loads(position["reconciliation_identity"])
+    evidence = json.loads(position["reconciliation_evidence"])
+    assert evidence.get("source")
+
+    db = get_db()
+    entry_order = repo.get_order(position["order_id"])
+    assert entry_order is not None
+    entry_fills = [
+        dict(row) for row in db.execute(
+            "SELECT * FROM fills WHERE order_id = ? ORDER BY rowid ASC",
+            (entry_order["id"],),
+        ).fetchall()
+    ]
+    assert len(entry_fills) == 1
+
+    close_orders = [
+        dict(row) for row in db.execute(
+            "SELECT * FROM orders WHERE position_id = ? "
+            "AND close_reason IS NOT NULL ORDER BY rowid ASC",
+            (position_id,),
+        ).fetchall()
+    ]
+    assert len(close_orders) == 1
+    close_order = close_orders[0]
+    assert close_order["status"] == "filled"
+    assert close_order["client_order_id"] == f"close-{position_id}"
+    close_fills = [
+        dict(row) for row in db.execute(
+            "SELECT * FROM fills WHERE order_id = ? ORDER BY rowid ASC",
+            (close_order["id"],),
+        ).fetchall()
+    ]
+    assert close_fills
+    assert sum(float(fill["fill_quantity"]) for fill in close_fills) == pytest.approx(
+        float(position["quantity"])
+    )
+
+    opened_at = datetime.fromisoformat(position["opened_at"].replace("Z", "+00:00"))
+    closed_at = datetime.fromisoformat(position["closed_at"].replace("Z", "+00:00"))
+    entry_filled_at = datetime.fromisoformat(
+        entry_fills[0]["filled_at"].replace("Z", "+00:00")
+    )
+    close_filled_at = max(
+        datetime.fromisoformat(fill["filled_at"].replace("Z", "+00:00"))
+        for fill in close_fills
+    )
+    entry_created_at = datetime.fromisoformat(
+        entry_order["created_at"].replace("Z", "+00:00")
+    )
+    assert entry_created_at <= entry_filled_at <= opened_at < closed_at
+    assert closed_at <= datetime.now(timezone.utc)
+    assert close_filled_at == closed_at
+
+    jobs = repo.list_outcome_hook_jobs(position_id=position_id)
+    if expected_outcome_eligible:
+        assert jobs
+    else:
+        assert jobs == []
+    assert any(
+        event["event_type"] == "position_closed"
+        and event["entity_id"] == position_id
+        for event in repo.list_audit_events(limit=10_000)
+    )
+
+    close_audits = [
+        dict(row) for row in db.execute(
+            "SELECT * FROM audit_events WHERE entity_type = 'position' "
+            "AND entity_id = ? AND event_type IN "
+            "('position_closed', 'trade_notification') ORDER BY rowid ASC",
+            (position_id,),
+        ).fetchall()
+    ]
+    assert close_audits
+    assert all(
+        datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00"))
+        == closed_at
+        for event in close_audits
+    )
+
+    if position["execution_mode"] == "paper_internal":
+        events = [
+            dict(row) for row in db.execute(
+                "SELECT * FROM paper_account_events ORDER BY rowid ASC"
+            ).fetchall()
+        ]
+        assert sum(
+            event["action"] == "position_opened"
+            and event["position_id"] == position_id
+            for event in events
+        ) == 1
+        assert sum(
+            event["action"] == "position_closed"
+            and event["position_id"] == position_id
+            for event in events
+        ) == 1
+        opened_event = next(
+            event for event in events
+            if event["action"] == "position_opened"
+            and event["position_id"] == position_id
+        )
+        closed_event = next(
+            event for event in events
+            if event["action"] == "position_closed"
+            and event["position_id"] == position_id
+        )
+        assert datetime.fromisoformat(
+            opened_event["created_at"].replace("Z", "+00:00")
+        ) == opened_at
+        assert datetime.fromisoformat(
+            closed_event["created_at"].replace("Z", "+00:00")
+        ) == closed_at
+        assert closed_event["amount_usdt"] == pytest.approx(
+            position["realized_pnl"]
+        )
+        assert closed_event["cash_balance_after_usdt"] == pytest.approx(
+            closed_event["cash_balance_before_usdt"]
+            + closed_event["amount_usdt"]
+        )
+        funding_events = [
+            event for event in events if event["action"] == "initial_funding"
+        ]
+        assert len(funding_events) == 1
+        all_opened_at = [
+            datetime.fromisoformat(event["created_at"].replace("Z", "+00:00"))
+            for event in events
+            if event["action"] == "position_opened"
+        ]
+        funding_at = datetime.fromisoformat(
+            funding_events[0]["created_at"].replace("Z", "+00:00")
+        )
+        assert funding_at <= min(all_opened_at)
+        for previous, current in zip(events, events[1:]):
+            assert current["cash_balance_before_usdt"] == pytest.approx(
+                previous["cash_balance_after_usdt"]
+            )
+        events_by_time = [
+            dict(row) for row in db.execute(
+                "SELECT * FROM paper_account_events "
+                "ORDER BY created_at ASC, "
+                "CASE action WHEN 'initial_funding' THEN 0 "
+                "WHEN 'position_opened' THEN 1 "
+                "WHEN 'position_closed' THEN 3 ELSE 2 END ASC, rowid ASC"
+            ).fetchall()
+        ]
+        assert [event["id"] for event in events_by_time] == [
+            event["id"] for event in events
+        ]
+        for previous, current in zip(events_by_time, events_by_time[1:]):
+            assert current["cash_balance_before_usdt"] == pytest.approx(
+                previous["cash_balance_after_usdt"]
+            )
+    else:
+        assert entry_order["exchange_order_id"]
+        assert close_order["exchange_order_id"]
+        assert entry_fills[0]["fee_source"] == "reconciled"
+        assert all(fill["fee_source"] == "reconciled" for fill in close_fills)
+        assert evidence.get("fill_ids")
+        assert evidence.get("durable_fill_ids")
+
+    for job in jobs:
+        for field in ("created_at", "updated_at", "next_attempt_at"):
+            assert datetime.fromisoformat(
+                job[field].replace("Z", "+00:00")
+            ) == closed_at
+        if job["completed_at"] is not None:
+            assert datetime.fromisoformat(
+                job["completed_at"].replace("Z", "+00:00")
+            ) == closed_at
+
+    return position
+
+
+def _fixture_utc(value: str, *, field: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError(f"{field} must include an explicit timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def _align_historical_producer_run(
+    position_id: str,
+    *,
+    opened_at: str,
+    closed_at: str,
+    local_paper: bool,
+) -> None:
+    """Align one historical close and keep any paper ledger in true time order."""
+    db = repo.get_db()
+    with repo.transaction(immediate=True):
+        if local_paper:
+            db.execute(
+                "UPDATE paper_account_events SET created_at = ? "
+                "WHERE action = 'initial_funding' "
+                "AND created_at > ?",
+                (opened_at, opened_at),
+            )
+            db.execute(
+                "UPDATE paper_account_events SET created_at = ? "
+                "WHERE action = 'position_opened' AND position_id = ?",
+                (opened_at, position_id),
+            )
+            db.execute(
+                "UPDATE paper_account_events SET created_at = ? "
+                "WHERE action = 'position_closed' AND position_id = ?",
+                (closed_at, position_id),
+            )
+        db.execute(
+            "UPDATE audit_events SET timestamp = ? "
+            "WHERE entity_type = 'position' AND entity_id = ? "
+            "AND event_type IN ('position_closed', 'trade_notification')",
+            (closed_at, position_id),
+        )
+        db.execute(
+            "UPDATE outcome_hook_jobs SET created_at = ?, updated_at = ?, "
+            "next_attempt_at = ?, "
+            "completed_at = CASE WHEN completed_at IS NULL THEN NULL ELSE ? END "
+            "WHERE position_id = ?",
+            (closed_at, closed_at, closed_at, closed_at, position_id),
+        )
+
+        if local_paper:
+            # Historical fixtures may be inserted out of chronological order or
+            # overlap in time. Rebuild this isolated test ledger in event-time order
+            # so its physical append order and cached balance snapshots tell the same
+            # story. Event identities, amounts, actors, sources, and notes are kept.
+            events = [
+                dict(row) for row in db.execute(
+                    "SELECT * FROM paper_account_events "
+                    "ORDER BY created_at ASC, "
+                    "CASE action WHEN 'initial_funding' THEN 0 "
+                    "WHEN 'position_opened' THEN 1 "
+                    "WHEN 'position_closed' THEN 3 ELSE 2 END ASC, rowid ASC"
+                ).fetchall()
+            ]
+            db.execute("DELETE FROM paper_account_events")
+            balance = 0.0
+            for event in events:
+                before = round(balance, 8)
+                after = round(before + float(event["amount_usdt"]), 8)
+                if after < -1e-8:
+                    raise AssertionError(
+                        "historical paper fixture would produce negative cash"
+                    )
+                db.execute(
+                    "INSERT INTO paper_account_events "
+                    "(id, action, amount_usdt, cash_balance_before_usdt, "
+                    "cash_balance_after_usdt, actor, source, position_id, note, "
+                    "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        event["id"], event["action"], event["amount_usdt"],
+                        before, max(0.0, after), event["actor"], event["source"],
+                        event["position_id"], event["note"], event["created_at"],
+                    ),
+                )
+                balance = after
 
 
 def _insert_entry_chain(
@@ -25,6 +297,12 @@ def _insert_entry_chain(
     order_id: str | None = None,
     opportunity_id: str | None = None,
     strategy_id: str | None = None,
+    opened_at: str | None = None,
+    universe_snapshot_id: str | None = None,
+    universe_member_id: str | None = None,
+    scanner_family: str = "fixture",
+    confidence: str = "speculative",
+    confidence_score: int | None = None,
 ) -> tuple[str, str, str]:
     """Persist the real entry lineage required by an eligible close fixture."""
     from aletheia.storage.models import (
@@ -35,6 +313,11 @@ def _insert_entry_chain(
         TradeProposal,
     )
 
+    entry_at = (
+        _fixture_utc(opened_at, field="opened_at")
+        if opened_at is not None
+        else datetime.now(timezone.utc)
+    ).isoformat()
     opportunity_id = opportunity_id or f"opportunity-{position_id}"
     proposal_id = proposal_id or f"proposal-{position_id}"
     order_id = order_id or f"order-{position_id}"
@@ -44,8 +327,13 @@ def _insert_entry_chain(
         market="spot" if market_type == "spot" else "perp",
         direction_bias=direction,
         source_agent="fixture",
-        scanner_family="fixture",
+        scanner_family=scanner_family,
+        confidence=confidence,
+        confidence_score=confidence_score,
         linked_strategy_id=strategy_id,
+        universe_snapshot_id=universe_snapshot_id,
+        universe_member_id=universe_member_id,
+        created_at=entry_at,
     )
     repo.insert_opportunity(opportunity)
     proposal = TradeProposal(
@@ -60,6 +348,7 @@ def _insert_entry_chain(
         price=price,
         execution_mode=execution_mode,
         status="executed",
+        created_at=entry_at,
     )
     repo.insert_trade_proposal(proposal)
     decision = RiskDecision(
@@ -71,6 +360,7 @@ def _insert_entry_chain(
         decision_role="authoritative",
         evaluated_quantity=quantity,
         proposal_commit_hash=proposal.commit_hash,
+        created_at=entry_at,
     )
     repo.insert_risk_decision(decision)
     repo.insert_order(Order(
@@ -85,18 +375,328 @@ def _insert_entry_chain(
         quantity=quantity,
         price=price,
         execution_mode=execution_mode,
-        client_order_id=proposal.id,
+        exchange_order_id=(
+            None
+            if execution_mode == "paper_internal"
+            else f"entry-exchange-order-{position_id}"
+        ),
+        client_order_id=(
+            None if execution_mode == "paper_internal" else proposal.id
+        ),
         status="filled",
+        created_at=entry_at,
+        filled_at=entry_at,
     ))
+    if execution_mode == "paper_internal":
+        fill_id = f"paper-entry:{position_id}:{entry_at}"
+        fee_source = "estimated"
+    else:
+        from aletheia.execution.exchange_materialization import (
+            durable_private_fill_id,
+        )
+
+        fill_id = durable_private_fill_id(
+            execution_mode,
+            f"remote-entry-fill-{position_id}",
+        )
+        fee_source = "reconciled"
     repo.insert_fill(Fill(
-        id=f"entry-fill-{position_id}",
+        id=fill_id,
         order_id=order_id,
         fill_price=price,
         fill_quantity=quantity,
         fee=entry_fee,
-        fee_source="reconciled",
+        fee_source=fee_source,
+        filled_at=entry_at,
     ))
     return opportunity.id, proposal.id, order_id
+
+
+def _insert_closed_position_via_producer(
+    *,
+    position_id: str,
+    symbol: str,
+    market_type: str,
+    direction: str,
+    quantity: float,
+    entry_price: float,
+    realized_pnl: float,
+    execution_mode: str,
+    closed_at: str,
+    opened_at: str | None = None,
+    close_reason: str = "verified_exit",
+    entry_fee: float = 0.0,
+    exit_fee: float = 0.0,
+    funding_cost: float = 0.0,
+    strategy_id: str | None = None,
+    proposal_id: str | None = None,
+    order_id: str | None = None,
+    opportunity_id: str | None = None,
+    universe_snapshot_id: str | None = None,
+    universe_member_id: str | None = None,
+    scanner_family: str = "fixture",
+    confidence: str = "speculative",
+    confidence_score: int | None = None,
+    expected_outcome_eligible: bool = True,
+) -> dict:
+    """Open a complete fixture chain, then close it through production PnL."""
+    from aletheia.portfolio.pnl import close_position
+    from aletheia.storage.models import Fill, Order
+
+    closed_dt = _fixture_utc(closed_at, field="closed_at")
+    if closed_dt > datetime.now(timezone.utc):
+        raise ValueError("closed_at cannot be in the future")
+    opened_dt = (
+        _fixture_utc(opened_at, field="opened_at")
+        if opened_at is not None
+        else closed_dt - timedelta(hours=1)
+    )
+    if opened_dt >= closed_dt:
+        raise ValueError("opened_at must be before closed_at")
+    opened_iso = opened_dt.isoformat()
+    closed_iso = closed_dt.isoformat()
+
+    opportunity_id, proposal_id, order_id = _insert_entry_chain(
+        position_id=position_id,
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+        quantity=quantity,
+        price=entry_price,
+        execution_mode=execution_mode,
+        entry_fee=entry_fee,
+        proposal_id=proposal_id,
+        order_id=order_id,
+        opportunity_id=opportunity_id,
+        strategy_id=strategy_id,
+        opened_at=opened_iso,
+        universe_snapshot_id=universe_snapshot_id,
+        universe_member_id=universe_member_id,
+        scanner_family=scanner_family,
+        confidence=confidence,
+        confidence_score=confidence_score,
+    )
+    local_paper = execution_mode == "paper_internal"
+    funding_source = (
+        "not_applicable"
+        if market_type == "spot"
+        else "local_simulation" if local_paper else "broker_ledger"
+    )
+    position = Position(
+        id=position_id,
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+        quantity=quantity,
+        entry_price=entry_price,
+        current_price=entry_price,
+        execution_mode=execution_mode,
+        strategy_id=strategy_id,
+        opportunity_id=opportunity_id,
+        proposal_id=proposal_id,
+        order_id=order_id,
+        entry_price_source="local_fill" if local_paper else "broker_fill",
+        entry_fill_verified=True,
+        entry_fee=entry_fee,
+        funding_cost=funding_cost,
+        funding_source=funding_source,
+        slippage_cost=0.0 if local_paper else None,
+        opened_at=opened_iso,
+    )
+    repo.insert_position(position)
+    repo.update_order(order_id, position_id=position_id)
+    if local_paper:
+        from aletheia.portfolio.paper_account import record_position_opened
+
+        record_position_opened(position_id)
+        opened_event = repo.get_db().execute(
+            "SELECT id FROM paper_account_events "
+            "WHERE action = 'position_opened' AND position_id = ?",
+            (position_id,),
+        ).fetchone()
+        assert opened_event is not None
+
+    target_gross = realized_pnl + entry_fee + exit_fee + funding_cost
+    if direction in {"long", "buy"}:
+        exit_price = entry_price + target_gross / quantity
+    elif direction in {"short", "sell"}:
+        exit_price = entry_price - target_gross / quantity
+    else:
+        raise ValueError(f"unsupported direction: {direction}")
+    if exit_price <= 0:
+        raise ValueError("requested fixture PnL requires a non-positive exit price")
+
+    close_order_id = f"close-order-{position_id}"
+    remote_order_id = f"remote-close-order-{position_id}"
+    close_order = Order(
+        id=close_order_id,
+        proposal_id=proposal_id,
+        client_order_id=f"close-{position_id}",
+        position_id=position_id,
+        close_reason=close_reason,
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+        order_type="market",
+        quantity=quantity,
+        price=exit_price,
+        execution_mode=execution_mode,
+        exchange_order_id=None if local_paper else remote_order_id,
+        status="filled",
+        created_at=closed_iso,
+        filled_at=closed_iso,
+    )
+    if local_paper:
+        close_fill_id = f"paper-close:{position_id}:{closed_iso}"
+        close_fee_source = "estimated"
+        verified_exit_evidence = None
+    else:
+        from aletheia.execution.exchange_materialization import (
+            durable_private_fill_id,
+        )
+
+        remote_fill_id = f"remote-close-fill-{position_id}"
+        close_fill_id = durable_private_fill_id(execution_mode, remote_fill_id)
+        evidence_source, source_endpoint, account_environment = {
+            "bitget_demo": ("bitget_private_close_fills", "private_fills", "demo"),
+            "bitget_live_limited": (
+                "bitget_private_close_fills", "private_fills", "live",
+            ),
+            "okx_demo": (
+                "okx_demo_private_close_fills",
+                "/api/v5/trade/fills-history",
+                "demo",
+            ),
+            "okx_live_limited": (
+                "okx_live_limited_private_close_fills",
+                "/api/v5/trade/fills-history",
+                "live",
+            ),
+            "binance_testnet": (
+                "binance_testnet_private_close_fills",
+                "/fapi/v1/userTrades",
+                "testnet",
+            ),
+            "binance_live_limited": (
+                "binance_live_limited_private_close_fills",
+                "/fapi/v1/userTrades",
+                "live",
+            ),
+        }[execution_mode]
+        close_fee_source = "reconciled"
+        verified_exit_evidence = {
+            "source": evidence_source,
+            "source_endpoint": source_endpoint,
+            "broker_id": execution_mode,
+            "account_environment": account_environment,
+            "execution_mode": execution_mode,
+            "exchange_order_id": remote_order_id,
+            "client_order_id": close_order.client_order_id,
+            "fill_ids": [remote_fill_id],
+            "durable_fill_ids": [close_fill_id],
+            "fill_quantity": quantity,
+            "fee_in_quote": exit_fee,
+            "fills": [{
+                "fill_id": remote_fill_id,
+                "remote_fill_id": remote_fill_id,
+                "durable_fill_id": close_fill_id,
+                "price": exit_price,
+                "quantity": quantity,
+                "fee": exit_fee,
+                "fee_currency": "USDT",
+                "filled_at": closed_iso,
+            }],
+        }
+    close_fill = Fill(
+        id=close_fill_id,
+        order_id=close_order.id,
+        fill_price=exit_price,
+        fill_quantity=quantity,
+        fee=exit_fee,
+        fee_source=close_fee_source,
+        filled_at=closed_iso,
+    )
+
+    def _materialize_close() -> None:
+        repo.insert_order(close_order)
+        repo.insert_fill(close_fill)
+
+    result = close_position(
+        position_id,
+        exit_price=exit_price,
+        reason=close_reason,
+        actual_exit_fee=exit_fee,
+        closed_at=closed_iso,
+        verified_exit_evidence=verified_exit_evidence,
+        materialize_close=_materialize_close,
+        actor="test_fixture",
+        source="production_close_fixture",
+    )
+    if local_paper:
+        closed_event = repo.get_db().execute(
+            "SELECT id FROM paper_account_events "
+            "WHERE action = 'position_closed' AND position_id = ?",
+            (position_id,),
+        ).fetchone()
+        assert closed_event is not None
+    _align_historical_producer_run(
+        position_id,
+        opened_at=opened_iso,
+        closed_at=closed_iso,
+        local_paper=local_paper,
+    )
+    assert result["realized_pnl"] == pytest.approx(realized_pnl)
+    return _assert_complete_closed_position_fixture(
+        position_id,
+        expected_outcome_eligible=expected_outcome_eligible,
+    )
+
+
+def test_historical_paper_fixture_keeps_funding_and_ledger_in_true_time_order():
+    now = datetime.now(timezone.utc)
+    later_opened = now - timedelta(hours=5)
+    later_closed = now - timedelta(hours=1)
+    earlier_opened = now - timedelta(hours=6)
+    earlier_closed = now - timedelta(hours=3)
+
+    # Insert the later trade first and overlap both holding intervals. The helper
+    # must still produce one chronology whose event-time and rowid order agree.
+    for position_id, opened_at, closed_at, realized_pnl in (
+        ("historical-later", later_opened, later_closed, 2.0),
+        ("historical-earlier", earlier_opened, earlier_closed, -1.0),
+    ):
+        _insert_closed_position_via_producer(
+            position_id=position_id,
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            realized_pnl=realized_pnl,
+            execution_mode="paper_internal",
+            opened_at=opened_at.isoformat(),
+            closed_at=closed_at.isoformat(),
+        )
+
+    db = repo.get_db()
+    events = [
+        dict(row) for row in db.execute(
+            "SELECT * FROM paper_account_events ORDER BY rowid ASC"
+        ).fetchall()
+    ]
+    assert datetime.fromisoformat(
+        events[0]["created_at"].replace("Z", "+00:00")
+    ) == earlier_opened
+    assert events[0]["action"] == "initial_funding"
+    assert [event["id"] for event in events] == [
+        row["id"] for row in db.execute(
+            "SELECT id FROM paper_account_events "
+            "ORDER BY created_at ASC, "
+            "CASE action WHEN 'initial_funding' THEN 0 "
+            "WHEN 'position_opened' THEN 1 "
+            "WHEN 'position_closed' THEN 3 ELSE 2 END ASC, rowid ASC"
+        ).fetchall()
+    ]
 
 
 def _position(*, execution_mode: str = "paper_internal") -> Position:

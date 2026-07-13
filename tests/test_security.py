@@ -65,7 +65,7 @@ def test_live_disabled_blocks_live_execution(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Full"; save_config(cfg)
     from aletheia.execution.gateway import submit_proposal
-    result = submit_proposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    result = submit_proposal(symbol="BTC/USDT", market_type="spot", direction="long",
                              quantity=0.001, price=60000, execution_mode="bitget_live_limited")
     assert result["status"] == "rejected"
     assert "live_disabled" in str(result.get("risk_violations", []))

@@ -1161,7 +1161,7 @@ def test_okx_private_reader_normalizes_contract_quantity_and_actual_fee(
 
 @spec_claim(
     SpecClaim(
-        "PL-MBR-04",
+        "PL-MBR-12",
         "pipeline_multibroker_reconciliation",
         "§4 venue evidence normalization",
         "L2a",

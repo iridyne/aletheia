@@ -35,8 +35,17 @@ def setup_env(tmp_path, monkeypatch):
 def test_paper_position_carries_proposal_and_order_fk(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.execution.paper_broker import execute_paper_order
+    from tests.execution_authority import seed_order_authority
+
+    seed_order_authority(
+        proposal_id="prop-1", risk_decision_id="rd-1",
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        order_type="market", quantity=0.001, price=60000.0,
+        execution_mode="paper_internal", strategy_id="strat-1",
+        stop_price=58800.0,
+    )
     r = execute_paper_order(
-        proposal_id="prop-1", risk_decision_id="rd-1", symbol="BTCUSDT",
+        proposal_id="prop-1", risk_decision_id="rd-1", symbol="BTC/USDT",
         market_type="spot", direction="long", order_type="market",
         quantity=0.001, price=60000.0, execution_mode="paper_internal",
         strategy_id="strat-1", stop_price=58800.0,
@@ -51,15 +60,31 @@ def test_averaging_in_preserves_original_opener(tmp_path, monkeypatch):
     """Averaging into an existing position must keep the proposal/order that OPENED it."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.execution.paper_broker import execute_paper_order
+    from tests.execution_authority import seed_order_authority
+
+    seed_order_authority(
+        proposal_id="prop-open", risk_decision_id="rd-1",
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        order_type="market", quantity=0.001, price=60000.0,
+        execution_mode="paper_internal", strategy_id="strat-1",
+        stop_price=58800.0,
+    )
     r1 = execute_paper_order(
-        proposal_id="prop-open", risk_decision_id="rd-1", symbol="BTCUSDT",
+        proposal_id="prop-open", risk_decision_id="rd-1", symbol="BTC/USDT",
         market_type="spot", direction="long", order_type="market",
         quantity=0.001, price=60000.0, execution_mode="paper_internal",
         strategy_id="strat-1", stop_price=58800.0,
     )
     # Second fill, same symbol/direction/strategy → averages into the same position.
+    seed_order_authority(
+        proposal_id="prop-add", risk_decision_id="rd-2",
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        order_type="market", quantity=0.001, price=61000.0,
+        execution_mode="paper_internal", strategy_id="strat-1",
+        stop_price=59000.0,
+    )
     execute_paper_order(
-        proposal_id="prop-add", risk_decision_id="rd-2", symbol="BTCUSDT",
+        proposal_id="prop-add", risk_decision_id="rd-2", symbol="BTC/USDT",
         market_type="spot", direction="long", order_type="market",
         quantity=0.001, price=61000.0, execution_mode="paper_internal",
         strategy_id="strat-1", stop_price=59000.0,

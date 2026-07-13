@@ -562,7 +562,7 @@ def test_universe_member_regime_tag_persists_and_refresh_assigns(tmp_path, monke
 
 @spec_claim(
     SpecClaim(
-        "UP-21", "universe_pipeline", "§instrument-aware collector routing", "L2b",
+        "UP-24", "universe_pipeline", "§instrument-aware collector routing", "L2b",
         "Active universe market-data collection preserves venue and market type as an "
         "InstrumentId; a perp member must not be downgraded to a spot symbol.",
         status="implemented",
