@@ -253,27 +253,21 @@ def test_level_sets_are_disjoint():
 
 @spec_claim(
     SpecClaim(
-        "OL-C07", "operator_layer", "§permission_model loosen_in_level2_only", "L2c",
-        "loosen_confidence/increase_sizing/widen_stop_loss belong to _LEVEL_2_ACTIONS, "
-        "not _LEVEL_1_ACTIONS — these loosening actions require human proposal",
+        "OL-C07", "operator_layer", "§permission_model bounded_confidence_recovery", "L2c",
+        "loosen_confidence is a Level 1 drought-liveness exception bounded at neutral; "
+        "increase_sizing/widen_stop_loss remain Level 2 human proposals",
         status="implemented",
     ),
 )
-def test_loosening_actions_in_level2_not_level1():
-    """Loosening actions must be Level 2 (proposal) only, never Level 1 (auto).
-
-    Fixed 2026-06-23 (OL-C07 / §15.2): the dead elif branches for
-    loosen_confidence/increase_sizing/widen_stop_loss were removed from
-    _execute_level1_action, so the Level-1 executor no longer has any code path
-    that treats a loosening action as auto-executable. The set classification
-    (_LEVEL_2_ACTIONS) and the executor are now consistent.
-    """
+def test_bounded_confidence_recovery_is_the_only_level1_loosen_exception():
+    """Confidence may auto-restore only to neutral; other loosening stays L2."""
     import aletheia.agent_shell.operator_loop as ol
 
-    loosening_actions = {"loosen_confidence", "increase_sizing", "widen_stop_loss"}
+    assert "loosen_confidence" in ol._LEVEL_1_ACTIONS
+    assert "loosen_confidence" not in ol._LEVEL_2_ACTIONS
 
-    # Half of the claim: they ARE in _LEVEL_2_ACTIONS (set classification is correct)
-    missing_from_l2 = loosening_actions - ol._LEVEL_2_ACTIONS
+    proposal_only_actions = {"increase_sizing", "widen_stop_loss"}
+    missing_from_l2 = proposal_only_actions - ol._LEVEL_2_ACTIONS
     assert not missing_from_l2, (
         f"Loosening actions missing from _LEVEL_2_ACTIONS: {missing_from_l2}"
     )
@@ -296,14 +290,19 @@ def test_loosening_actions_in_level2_not_level1():
             if not (isinstance(left, ast.Attribute) and left.attr == "action_type"):
                 continue
             for comp in child.comparators:
-                if isinstance(comp, ast.Constant) and comp.value in loosening_actions:
+                if isinstance(comp, ast.Constant) and comp.value in (
+                    proposal_only_actions | {"loosen_confidence"}
+                ):
                     reachable_in_l1_exec.add(comp.value)
 
-    assert not reachable_in_l1_exec, (
-        f"DRIFT: _execute_level1_action contains handler branches for Level 2 actions: "
-        f"{reachable_in_l1_exec}.  These branches must be removed to restore "
-        f"Level 1 / Level 2 boundary integrity."
+    assert "loosen_confidence" in reachable_in_l1_exec
+    assert not (reachable_in_l1_exec & proposal_only_actions), (
+        "Level 2 proposal-only loosening actions became reachable in the Level 1 executor"
     )
+
+    spec = ol.PARAM_REGISTRY["min_confidence_to_trade"]
+    assert spec.neutral == "medium"
+    assert spec.ladder == ["speculative", "medium", "high"]
 
 
 # ---------------------------------------------------------------------------

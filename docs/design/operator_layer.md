@@ -562,14 +562,17 @@ Forbidden Direct Commands
 > `recommend_retire` / `recommend_demote` 记录，由 System Operator 消费后才真正执行策略生命周期变更。
 > 直接退出/降级不发生；`_execute_level1_action` 调用这两个函数时，返回 `status: "recommended"` 而非 `status: "executed"`。
 
-### loosen_confidence / increase_sizing / widen_stop_loss — Level 分类不一致（已知待清理项）
+### loosen_confidence — 有界自动恢复例外
 
-> ⚠️ **代码不一致**：`loosen_confidence`、`increase_sizing`、`widen_stop_loss` 三个动作
-> 在 `_LEVEL_2_ACTIONS` 集合中定义（`operator_loop.py:265-267`，**权威分类**，需要 proposal），
-> 但同时也出现在 `_execute_level1_action` 的分支中（`operator_loop.py:526-535`）。
-> 以 `_LEVEL_2_ACTIONS` 为准——这三个动作属于 Level 2，不能由 Operator 直接自动执行。
-> `_execute_level1_action` 中的对应分支属于历史遗留，应在后续清理时移除。
-> 本文档 §9 中描述的 "Level 1 auto operations" 不包含这三个动作。
+> **Owner decision 2026-07-13**：当至少 4 小时没有 fill，且
+> `min_confidence_to_trade` 已被收紧为 `high` 时，`loosen_confidence` 属于
+> Level 1 自动恢复动作。它只能恢复到 schema 中性值 `medium`，不得低于中性值；
+> kill switch 开启时不得执行。低 7 日胜率仍由 `reduce_sizing` 独立收紧仓位，
+> 不再让 confidence gate 永久切断候选供应。
+>
+> 每次恢复必须同时写应用日志和 `audit_events`：包含旱情时长、参数名、旧值、
+> 新值和恢复原因。`increase_sizing` 与 `widen_stop_loss` 仍属于 Level 2，
+> 需要有消费者的人工提案路径。
 
 ### Permission behavior
 
