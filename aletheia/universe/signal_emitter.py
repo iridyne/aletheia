@@ -14,7 +14,7 @@ import json
 import logging
 
 from aletheia.storage.models import Opportunity
-from aletheia.storage.repositories import insert_opportunity, find_open_opportunity_by_symbol_snapshot
+from aletheia.storage.repositories import insert_opportunity, find_opportunity_by_symbol_snapshot
 from aletheia.trading.instruments import instrument_market_to_db_market
 from aletheia.analytics.factor_feedback import lookup_factor_signal
 from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
@@ -33,6 +33,78 @@ _HIGH_CONF_THRESHOLD = 60.0
 # Regime bias threshold: if the direction's bias < this value, skip signal
 # unless score compensates (higher score can override weak regime alignment).
 _REGIME_BIAS_THRESHOLD = 0.30
+
+
+def _record_emission_decision(
+    *,
+    member: dict,
+    snapshot_id: str,
+    member_index: int,
+    symbol: str,
+    market_type: str,
+    total_score: float | None,
+    short_enabled: bool,
+    decision: str,
+    reason_code: str,
+    direction: str | None = None,
+    opportunity_id: str | None = None,
+    regime_tag: str | None = None,
+    reason_detail: str | None = None,
+    inputs: dict | None = None,
+) -> None:
+    """Persist one terminal fact for a selected universe member, best effort.
+
+    This is coverage evidence only: no venue or entry price is supplied, so the
+    fact cannot create a learnable outcome or influence trading behavior.
+    """
+    try:
+        from aletheia.analytics.filter_evidence import record_filter_decision
+
+        member_id = str(member.get("id") or "")
+        candidate_key = (
+            f"universe_member:{member_id}"
+            if member_id
+            else f"universe_member_missing:{snapshot_id}:{member_index}"
+        )
+        input_snapshot = {
+            "total_score": total_score,
+            "market_type": market_type,
+        }
+        input_snapshot.update(inputs or {})
+        record_filter_decision(
+            candidate_key=candidate_key,
+            candidate_kind="universe_member",
+            parent_candidate_key=f"universe_snapshot:{snapshot_id}",
+            filter_name="opportunity_emission",
+            stage="signal_emitter",
+            sequence_no=0,
+            decision=decision,
+            reason_code=reason_code,
+            reason_detail=reason_detail,
+            symbol=symbol or "[missing]",
+            market_type=market_type,
+            direction=direction,
+            scanner_family=member.get("scanner_family"),
+            regime_tag=regime_tag,
+            opportunity_id=opportunity_id,
+            universe_snapshot_id=snapshot_id,
+            universe_member_id=member_id or None,
+            inputs=input_snapshot,
+            parameters={
+                "min_score": _MIN_SCORE,
+                "high_confidence_threshold": _HIGH_CONF_THRESHOLD,
+                "regime_bias_threshold": _REGIME_BIAS_THRESHOLD,
+                "short_enabled": short_enabled,
+            },
+        )
+    except Exception as exc:
+        # Evidence must remain fail-open with respect to opportunity generation.
+        logger.warning(
+            "opportunity emission evidence failed snapshot=%s member=%s: %s",
+            snapshot_id,
+            member.get("id"),
+            exc,
+        )
 
 
 def emit_deterministic_opportunities(
@@ -66,20 +138,74 @@ def emit_deterministic_opportunities(
     }
     created = 0
 
-    for m in members:
+    for member_index, m in enumerate(members):
         symbol = m.get("symbol", "")
         member_id = m.get("id")
         family = m.get("scanner_family")
-        total_score = float(m.get("total_score") or 0)
         market_type = m.get("market_type", "spot") or "spot"
+        raw_total_score = m.get("total_score")
+        try:
+            total_score = float(raw_total_score or 0)
+        except (TypeError, ValueError):
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=None,
+                short_enabled=short_enabled,
+                decision="error",
+                reason_code="invalid_total_score",
+                inputs={"raw_total_score_type": type(raw_total_score).__name__},
+            )
+            continue
 
         if not symbol or not member_id or not family:
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="error",
+                reason_code="member_identity_missing",
+                inputs={
+                    "has_symbol": bool(symbol),
+                    "has_member_id": bool(member_id),
+                    "has_scanner_family": bool(family),
+                },
+            )
             continue
         if total_score < _MIN_SCORE:
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="rejected",
+                reason_code="score_below_minimum",
+            )
             continue
 
         feat = feat_by_key.get((symbol, market_type))
         if not feat:
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="rejected",
+                reason_code="feature_missing",
+            )
             continue
 
         # Prefer scanner-intrinsic direction; fallback to _infer_direction
@@ -88,6 +214,18 @@ def emit_deterministic_opportunities(
             logger.warning(
                 "no direction for %s family=%s score=%.0f — skipped",
                 symbol, family, total_score,
+            )
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="rejected",
+                reason_code="direction_missing",
+                inputs={"scanner_direction": feat.get("scanner_direction")},
             )
             continue
 
@@ -105,6 +243,19 @@ def emit_deterministic_opportunities(
                     (factor_sig.get("win_rate") or 0) * 100,
                     factor_sig.get("expectancy") or 0,
                 )
+                _record_emission_decision(
+                    member=m,
+                    snapshot_id=snapshot_id,
+                    member_index=member_index,
+                    symbol=symbol,
+                    market_type=market_type,
+                    total_score=total_score,
+                    short_enabled=short_enabled,
+                    decision="rejected",
+                    reason_code="factor_blocked",
+                    direction=direction,
+                    inputs={"factor_status": factor_sig.get("status")},
+                )
                 continue
         except Exception:
             pass
@@ -116,16 +267,50 @@ def emit_deterministic_opportunities(
                 family, direction, symbol, regime.state,
                 regime.short_bias if direction == "short" else regime.long_bias,
             )
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="rejected",
+                reason_code="regime_filtered",
+                direction=direction,
+                regime_tag=regime.state,
+                inputs={
+                    "direction_bias": (
+                        regime.short_bias if direction == "short" else regime.long_bias
+                    ),
+                },
+            )
             continue
 
-        # De-duplicate: same symbol + market_type already has an open opportunity from
-        # this snapshot.  Same read is a different market (e.g. spot vs perp — same
-        # price, same signal).  Dedup OD-S02 locks: only the first market's opp is a hit.
-        existing = find_open_opportunity_by_symbol_snapshot(
+        # De-duplicate across the whole lifecycle. A reviewed opportunity remains
+        # the identity owner for this member/snapshot and must not be recreated by
+        # a retry or a delayed producer. Same symbol on a different market remains
+        # a distinct candidate. OD-S02 locks.
+        existing = find_opportunity_by_symbol_snapshot(
             symbol, snapshot_id,
             market=instrument_market_to_db_market(market_type),
         )
         if existing:
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="passed",
+                reason_code="existing_opportunity_reused",
+                direction=direction,
+                opportunity_id=existing.get("id"),
+                regime_tag=regime.state if regime else None,
+                inputs={"existing_status": existing.get("status")},
+            )
             continue
 
         confidence = "high" if total_score >= _HIGH_CONF_THRESHOLD else "medium"
@@ -175,9 +360,39 @@ def emit_deterministic_opportunities(
         try:
             insert_opportunity(opp)
             created += 1
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="passed",
+                reason_code="opportunity_emitted",
+                direction=direction,
+                opportunity_id=opp.id,
+                regime_tag=regime.state if regime else None,
+                inputs={"execution_eligible": _exec_eligible},
+            )
             logger.debug("emitted %s %s %s score=%.0f", family, direction, symbol, total_score)
         except Exception as e:
             logger.warning("Failed to emit opportunity for %s: %s", symbol, e)
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="error",
+                reason_code="opportunity_insert_error",
+                direction=direction,
+                opportunity_id=opp.id,
+                regime_tag=regime.state if regime else None,
+                reason_detail=type(e).__name__,
+            )
 
     if created:
         logger.info(

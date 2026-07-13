@@ -222,6 +222,22 @@ def test_snapshot_freshness_is_market_type_scoped(monkeypatch):
 
 @spec_claim(
     SpecClaim(
+        "UP-21", "universe_pipeline", "§signal emission terminal evidence", "L2a",
+        "signal_emitter exposes one terminal evidence writer so every selected universe "
+        "member ends as emitted, reused, rejected, or error instead of silently disappearing.",
+        status="implemented",
+    ),
+)
+def test_signal_emitter_has_terminal_evidence_writer():
+    from aletheia.universe import signal_emitter
+
+    assert hasattr(signal_emitter, "_record_emission_decision")
+    source = inspect.getsource(signal_emitter.emit_deterministic_opportunities)
+    assert source.count("_record_emission_decision(") >= 8
+
+
+@spec_claim(
+    SpecClaim(
         "UP-20", "universe_pipeline", "§contract quote-volume normalization", "L2b",
         "When a linear contract ticker omits quoteVolume, Universe feature collection "
         "derives quote-currency volume from baseVolume × contractSize × last instead "

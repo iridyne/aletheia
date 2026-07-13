@@ -194,6 +194,32 @@ def find_open_opportunity_by_symbol_snapshot(symbol: str, snapshot_id: str, mark
     return dict(row) if row else None
 
 
+def find_opportunity_by_symbol_snapshot(
+    symbol: str,
+    snapshot_id: str,
+    market: str | None = None,
+) -> dict | None:
+    """Find the first opportunity ever created for one snapshot candidate.
+
+    Unlike :func:`find_open_opportunity_by_symbol_snapshot`, this lifecycle
+    identity lookup includes terminal rows.  A delayed producer must not create
+    a second opportunity merely because the first one has already been reviewed.
+    The earliest row is authoritative for legacy databases that already contain
+    duplicates.
+    """
+    db = get_db()
+    sql = (
+        "SELECT * FROM opportunities WHERE symbol = ? AND universe_snapshot_id = ?"
+    )
+    params: list = [symbol, snapshot_id]
+    if market:
+        sql += " AND market = ?"
+        params.append(market)
+    sql += " ORDER BY created_at ASC, rowid ASC LIMIT 1"
+    row = db.execute(sql, params).fetchone()
+    return dict(row) if row else None
+
+
 # --- PI Decisions ---
 
 def insert_pi_decision(decision) -> None:

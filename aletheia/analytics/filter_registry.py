@@ -345,6 +345,23 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         note="Cooldown pass/reject is persisted before the batch cap so a cooling "
              "top-ranked candidate cannot hide a viable lower-ranked candidate.",
     ),
+    _report_only_gate(
+        name="opportunity_emission",
+        stage="signal_emitter",
+        reason_codes=(
+            "invalid_total_score",
+            "member_identity_missing",
+            "score_below_minimum",
+            "feature_missing",
+            "direction_missing",
+            "factor_blocked",
+            "regime_filtered",
+            "opportunity_insert_error",
+        ),
+        current_value="one terminal emission fact per selected universe member",
+        note="Coverage and lifecycle-integrity evidence only. It does not create outcome "
+             "rows, tune thresholds, or alter opportunity eligibility.",
+    ),
     FilterSpec(
         name="observer_pre_filter",
         stage="pre_persistence",

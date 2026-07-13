@@ -21,7 +21,7 @@ from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     insert_opportunity, list_strategies,
-    find_open_opportunity_by_symbol_snapshot, update_opportunity,
+    find_opportunity_by_symbol_snapshot, update_opportunity,
 )
 from aletheia.trading.instruments import (
     observed_instruments_from_config, instrument_market_to_db_market,
@@ -618,15 +618,32 @@ async def _analyze_symbol(
     thesis = " ".join(thesis_parts) if thesis_parts else f"No structured rationale — {symbol} market read (direction={direction})"
 
     # If a deterministic opportunity already exists for this symbol+snapshot+market,
-    # annotate it with LLM insights instead of creating a duplicate. Pass market
-    # so a same-symbol opp from a market is not mistaken for this one's opp.
+    # never create a second lifecycle row.  An open opportunity may be annotated
+    # with the LLM read; a terminal opportunity is immutable decision history and
+    # must not be rewritten by a delayed observer pass.  Pass market so a
+    # same-symbol opp from another market is not mistaken for this one's opp.
     # OD-S02 locks.
     if universe_snapshot_id:
-        existing = find_open_opportunity_by_symbol_snapshot(
+        existing = find_opportunity_by_symbol_snapshot(
             symbol, universe_snapshot_id,
             market=instrument_market_to_db_market(market_type),
         )
         if existing:
+            if existing.get("status") != "open":
+                record_step(
+                    run_id,
+                    f"opportunity_already_terminal:{symbol}",
+                    input_data=None,
+                    output_data=f"opportunity_id={existing['id']} status={existing.get('status')}",
+                )
+                log_tool(
+                    run_id,
+                    "reuse_terminal_opportunity",
+                    "observe",
+                    True,
+                    output=existing["id"],
+                )
+                return existing["id"], llm_error
             updates: dict = {"thesis": thesis}
             if learning_manifest:
                 try:

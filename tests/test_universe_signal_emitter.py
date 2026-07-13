@@ -143,10 +143,11 @@ class TestEmitDeterministicOpportunities:
         def _fake_insert(opp):
             inserted.append(opp)
 
-        with patch("aletheia.universe.signal_emitter.find_open_opportunity_by_symbol_snapshot",
+        with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
                    side_effect=_fake_find), \
              patch("aletheia.universe.signal_emitter.insert_opportunity",
-                   side_effect=_fake_insert):
+                   side_effect=_fake_insert), \
+             patch("aletheia.universe.signal_emitter._record_emission_decision"):
             count = emit_deterministic_opportunities(members, "snap-1", feats)
 
         return count, inserted
@@ -244,8 +245,9 @@ class TestEmitDeterministicOpportunities:
             assert market_type == "perp"
             return []
 
-        with patch("aletheia.universe.signal_emitter.find_open_opportunity_by_symbol_snapshot", return_value=None), \
+        with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot", return_value=None), \
              patch("aletheia.universe.signal_emitter.insert_opportunity", side_effect=inserted.append), \
+             patch("aletheia.universe.signal_emitter._record_emission_decision"), \
              patch("aletheia.universe.snapshot_freshness.list_market_snapshots", side_effect=_snapshots):
             count = emit_deterministic_opportunities(members, "snap-1", feats)
 
@@ -292,11 +294,58 @@ class TestEmitDeterministicOpportunities:
                 raise RuntimeError("db error")
             inserted.append(opp)
 
-        with patch("aletheia.universe.signal_emitter.find_open_opportunity_by_symbol_snapshot",
+        with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
                    return_value=None), \
              patch("aletheia.universe.signal_emitter.insert_opportunity",
-                   side_effect=_failing_insert):
+                   side_effect=_failing_insert), \
+             patch("aletheia.universe.signal_emitter._record_emission_decision"):
             count = emit_deterministic_opportunities(members, "snap-1", feats)
 
         assert count == 1  # only the second one succeeded
         assert len(inserted) == 1
+
+    def test_every_member_persists_one_terminal_emission_fact(self, tmp_path, monkeypatch):
+        from tests.test_entry_logic import setup_env
+
+        setup_env(tmp_path, monkeypatch)
+        members = [
+            _make_member("LOW/USDT", "momentum", 30, member_id="member-low"),
+            _make_member("MISSING/USDT", "momentum", 70, member_id="member-missing"),
+            _make_member("GOOD/USDT", "momentum", 70, member_id="member-good"),
+        ]
+        feats = [
+            _make_feat("LOW/USDT"),
+            _make_feat("GOOD/USDT"),
+        ]
+
+        with patch(
+            "aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
+            return_value=None,
+        ), patch(
+            "aletheia.universe.signal_emitter.insert_opportunity",
+            return_value=None,
+        ), patch(
+            "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
+            return_value=True,
+        ), patch(
+            "aletheia.universe.signal_emitter.lookup_factor_signal",
+            return_value={"status": "watch"},
+        ):
+            count = emit_deterministic_opportunities(members, "snap-1", feats)
+
+        from aletheia.storage.sqlite import get_db
+
+        rows = get_db().execute(
+            "SELECT universe_member_id, decision, reason_code FROM filter_decisions "
+            "WHERE filter_name='opportunity_emission' ORDER BY universe_member_id"
+        ).fetchall()
+        facts = {
+            row["universe_member_id"]: (row["decision"], row["reason_code"])
+            for row in rows
+        }
+        assert count == 1
+        assert facts == {
+            "member-good": ("passed", "opportunity_emitted"),
+            "member-low": ("rejected", "score_below_minimum"),
+            "member-missing": ("rejected", "feature_missing"),
+        }

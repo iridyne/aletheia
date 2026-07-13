@@ -99,6 +99,7 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 | tradability（稳定币/黑名单/volume/spread/freshness） | 否 | 按顺序记每关放行到首个拒绝 | 否，黑名单永不自动调参 |
 | scanner 假设 | 是 | family、direction、各 family score | 是 |
 | quota/explore-exploit | 是 | selected/control、rank、quota、regime | 是，但必须同池比较 |
+| Universe 机会生成 | 可能否 | 每个已选成员最终是已生成、复用、拒绝或写入错误 | 否，只衡量覆盖和身份完整性 |
 | Observer 前置判断 | Universe 路径是；其他路径可能否 | RSI/ATR/keyword 实际值和命中原因 | 仅有事前方向的行 |
 | LLM neutral/无效输出 | 可能否 | schema 结果、方向、置信度，不写 prompt | 仅有事前方向的行 |
 | Ranker execution/direction/confidence/TTL/factor/guard | 是 | 顺序放行与首个拒绝 | 是（guard 只观测） |
@@ -204,7 +205,8 @@ Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候
 7. 已完成：ranker 历史漏斗和 proposal submission 原因直接来自已落库证据；无目标市场价格返回稳定失败原因，不再静默 `None`。
 8. 已完成：反馈统计按真实 stage 分组并展示事发参数；同名同参数关卡跨阶段不再因幂等键碰撞丢证据。
 9. 已完成：可回放单调阈值的前瞻 shadow 登记、严格起始边界、固定停止门和版本失效保护；只观察，不自动应用。
-10. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
+10. 已完成：Universe 已选成员在机会生成阶段逐个保存终态；同一 snapshot、symbol、market 的已评估机会仍占有原身份，迟到的 Observer 不再重复创建或事后改写。
+11. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
 
 ## 10. 诊断时间窗口与 sizing 口径
 

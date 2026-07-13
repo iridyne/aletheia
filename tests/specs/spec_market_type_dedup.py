@@ -97,15 +97,64 @@ def test_repo_accepts_market_kwarg():
 
 
 @spec_claim(
+    SpecClaim(
+        "OD-S02e", "data_layer_contract", "§3 lifecycle identity dedup", "L2b",
+        "Opportunity identity lookup for one universe snapshot includes reviewed rows, so a "
+        "later observer pass cannot create a second opportunity or rewrite terminal history.",
+        status="implemented",
+    ),
+)
+def test_lifecycle_lookup_reuses_reviewed_opportunity(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage import repositories
+
+    original = Opportunity(
+        symbol="WLD/USDT",
+        market="usdt_futures",
+        direction_bias="long",
+        confidence="medium",
+        status="reviewed",
+        universe_snapshot_id="snapshot-reviewed",
+        universe_member_id="member-reviewed",
+        scanner_family="momentum",
+    )
+    repositories.insert_opportunity(original)
+    duplicate = Opportunity(
+        symbol=original.symbol,
+        market=original.market,
+        direction_bias="long",
+        confidence="medium",
+        status="open",
+        universe_snapshot_id=original.universe_snapshot_id,
+        universe_member_id=original.universe_member_id,
+        scanner_family=original.scanner_family,
+    )
+    repositories.insert_opportunity(duplicate)
+
+    found = repositories.find_opportunity_by_symbol_snapshot(
+        original.symbol,
+        original.universe_snapshot_id,
+        market=original.market,
+    )
+
+    assert found is not None
+    assert found["id"] == original.id
+    assert found["status"] == "reviewed"
+
+
+@spec_claim(
     SpecClaim("OD-S02b", "data_layer_contract", "§3 signal_emitter passes market", "L2a",
-              "signal_emitter passes market= to find_open_opportunity_by_symbol_snapshot "
+              "signal_emitter passes market= to the lifecycle identity lookup "
               "so same-symbol opps in different markets don't collide (OD-S02 lock)"),
 )
 def test_signal_emitter_passes_market_filter():
     from aletheia.universe import signal_emitter
     src = inspect.getsource(signal_emitter.emit_deterministic_opportunities)
-    assert "market=" in src and "instrument_market_to_db_market" in src, (
-        "signal_emitter must pass market= to find_open_opportunity_by_symbol_snapshot"
+    assert "market=" in src and "find_opportunity_by_symbol_snapshot" in src, (
+        "signal_emitter must pass market= to the lifecycle identity lookup"
     )
 
 
@@ -143,15 +192,20 @@ def test_universe_member_dedup_respects_preferred_market():
 
 @spec_claim(
     SpecClaim("OD-S02c", "data_layer_contract", "§3 market_observer passes market", "L2a",
-              "market_observer passes market= to find_open_opportunity_by_symbol_snapshot "
+              "market_observer passes market= to the lifecycle identity lookup "
               "so same-symbol opps in different markets don't overwrite each other"),
 )
 def test_market_observer_passes_market_filter():
     from aletheia.agents import market_observer
     src = inspect.getsource(market_observer._analyze_symbol)
-    assert "market=" in src and "find_open_opportunity_by_symbol_snapshot" in src, (
+    assert "market=" in src and "find_opportunity_by_symbol_snapshot" in src, (
         "market_observer._analyze_symbol must pass market= to "
-        "find_open_opportunity_by_symbol_snapshot"
+        "find_opportunity_by_symbol_snapshot"
+    )
+    terminal_guard = 'existing.get("status") != "open"'
+    assert terminal_guard in src
+    assert src.index(terminal_guard) < src.index("update_opportunity"), (
+        "a reviewed opportunity must return before observer annotation can rewrite it"
     )
 
 
