@@ -15,7 +15,7 @@ acceptance:
 - An unhandled ordinary assertion inside a DCLS harness writes all ten required replay
   artifacts before database cleanup.
 - Both fixed incident tests run inside the automatic artifact boundary.
-- Evidence config is explicitly checked for secret field names and the copied SQLite
+- Evidence config is restricted to an explicit safe allowlist and the copied SQLite
   contains the failing state.
 - Existing DCLS behavior and executable contract remain green.
 ownership:
