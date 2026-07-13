@@ -197,3 +197,35 @@ def test_position_carries_active_mainline_causal_ids():
     from aletheia.storage.models import Position
 
     assert {"proposal_id", "order_id", "opportunity_id"} <= set(Position.model_fields)
+
+
+@spec_claim(SpecClaim(
+    "AR-S08", "active_runtime_scope", "runtime session provenance", "L2a",
+    "Each Gateway boot creates one runtime_sessions row (session under a runtime_id), "
+    "and the seven core trading-fact entities carry the producing session's identity "
+    "(runtime_session_id, producer_commit, behavior_fingerprint) as expand-only nullable "
+    "fields. Positions additionally carry closed_* fields so the closing (outcome) session "
+    "is distinguishable from the opening session. Full attribution is proved by the Golden Path.",
+    status="implemented",
+))
+def test_core_entities_carry_runtime_session_provenance():
+    from aletheia.storage.models import (
+        Opportunity, PiDecision, TradeProposal, RiskDecision, Order, Fill, Position,
+        RuntimeSession,
+    )
+
+    provenance = {"runtime_session_id", "producer_commit", "behavior_fingerprint"}
+    for model in (Opportunity, PiDecision, TradeProposal, RiskDecision, Order, Fill, Position):
+        assert provenance <= set(model.model_fields), (
+            f"{model.__name__} missing provenance fields: {provenance - set(model.model_fields)}"
+        )
+
+    # Positions carry a distinct outcome-producer identity stamped at close.
+    assert {"closed_runtime_session_id", "closed_producer_commit",
+            "closed_behavior_fingerprint"} <= set(Position.model_fields)
+
+    # The Runtime Session row records the identity every boot.
+    assert {
+        "session_id", "runtime_id", "boot_commit", "config_hash", "schema_version",
+        "active_scope_id", "execution_mode", "started_at", "ended_at", "shutdown_clean",
+    } <= set(RuntimeSession.model_fields)

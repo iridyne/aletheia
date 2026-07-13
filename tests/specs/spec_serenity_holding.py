@@ -63,8 +63,8 @@ _SETTINGS_TSX = _ROOT / "frontend" / "src" / "pages" / "Settings.tsx"
 )
 def test_trade_school_field_on_models():
     src = _MODELS.read_text(encoding="utf-8")
-    # TradeProposal class block
-    tp_start = src.index("class TradeProposal(BaseModel):")
+    # TradeProposal class block (base-class-agnostic: it may inherit a mixin)
+    tp_start = src.index("class TradeProposal(")
     tp_end = src.index("\nclass ", tp_start + 1)
     tp_block = src[tp_start:tp_end]
     assert "trade_school" in tp_block, (
@@ -75,8 +75,8 @@ def test_trade_school_field_on_models():
         "TradeProposal.trade_school default is not 'short_term' — legacy proposals "
         "would adopt an undefined school"
     )
-    # Position class block
-    pos_start = src.index("class Position(BaseModel):")
+    # Position class block (base-class-agnostic: it may inherit a mixin)
+    pos_start = src.index("class Position(")
     pos_end = src.index("\nclass ", pos_start + 1)
     pos_block = src[pos_start:pos_end]
     assert "trade_school" in pos_block, (

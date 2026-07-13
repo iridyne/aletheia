@@ -18,12 +18,18 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import MarketSnapshot, Opportunity
 
+    from aletheia.agent_runtime import runtime_session as rs
+
     cfg = load_config()
     cfg.exchange.paper_execution_mode = "paper_internal"
     cfg.agent.permission_mode = "Paper"
     cfg.agent.autonomous_learning = False
     cfg.agent.bypass_distress_gate = True
     save_config(cfg)
+
+    # Session A owns everything produced in this boot (opportunity → position).
+    rs.reset_current_session()
+    session_a = rs.start_runtime_session(cfg)
 
     snapshot = MarketSnapshot(
         id="golden-snapshot",
@@ -130,6 +136,27 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     assert position["order_id"] == order["id"]
     assert position["opportunity_id"] == opportunity.id
 
+    # --- Provenance: every new entity in the chain carries Session A's identity,
+    # the producer commit equals the boot commit, and the config fingerprint is
+    # consistent across the whole chain. This is the "full attribution" guarantee.
+    chain_rows = [opportunities[0], decision, proposal, risk, order, fill, position]
+    for row in chain_rows:
+        assert row["runtime_session_id"] == session_a["session_id"], (
+            f"chain row not attributed to Session A: {dict(row).get('runtime_session_id')}"
+        )
+        assert row["producer_commit"] == session_a["boot_commit"]
+        assert row["behavior_fingerprint"] == session_a["behavior_fingerprint"]
+    assert len({row["behavior_fingerprint"] for row in chain_rows}) == 1, (
+        "config fingerprint must be identical across one trade chain"
+    )
+
+    # --- Restart: end Session A, boot Session B. Session B will CLOSE the position
+    # opened by Session A — the two producers must stay distinguishable.
+    rs.end_runtime_session(clean=True)
+    session_b = rs.start_runtime_session(cfg)
+    assert session_b["session_id"] != session_a["session_id"]
+    assert session_b["runtime_id"] == session_a["runtime_id"]
+
     from aletheia.execution.verified_exit import VerifiedExitFill, VerifiedExitResult
     from aletheia.portfolio.outcome_closure import close_position_verified
 
@@ -175,6 +202,14 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     assert closed["outcome_eligible"] == 1
     assert closed["exit_fill_verified"] == 1
     assert closed["close_category"] == "strategy"
+
+    # Created by Session A, closed by Session B — the position is NOT collapsed
+    # onto the last run. position_created_session != position_closed_session.
+    assert closed["runtime_session_id"] == session_a["session_id"]
+    assert closed["closed_runtime_session_id"] == session_b["session_id"]
+    assert closed["runtime_session_id"] != closed["closed_runtime_session_id"]
+    assert closed["closed_producer_commit"] == session_b["boot_commit"]
+    rs.reset_current_session()
 
     from aletheia.agents import post_trade_reviewer
     from aletheia.agent_runtime.tool_registry import init_tool_registry
