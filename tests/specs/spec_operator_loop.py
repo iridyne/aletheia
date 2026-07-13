@@ -254,19 +254,21 @@ def test_level_sets_are_disjoint():
 @spec_claim(
     SpecClaim(
         "OL-C07", "operator_layer", "§permission_model bounded_confidence_recovery", "L2c",
-        "loosen_confidence is a Level 1 drought-liveness exception bounded at neutral; "
-        "increase_sizing/widen_stop_loss remain Level 2 human proposals",
+        "loosen_confidence and increase_sizing are Level 1 liveness exceptions bounded "
+        "at neutral; widen_stop_loss remains a Level 2 human proposal",
         status="implemented",
     ),
 )
-def test_bounded_confidence_recovery_is_the_only_level1_loosen_exception():
-    """Confidence may auto-restore only to neutral; other loosening stays L2."""
+def test_bounded_neutral_recoveries_are_the_only_level1_loosen_exceptions():
+    """Confidence and sizing may auto-restore only to neutral; widening stays L2."""
     import aletheia.agent_shell.operator_loop as ol
 
     assert "loosen_confidence" in ol._LEVEL_1_ACTIONS
     assert "loosen_confidence" not in ol._LEVEL_2_ACTIONS
+    assert "increase_sizing" in ol._LEVEL_1_ACTIONS
+    assert "increase_sizing" not in ol._LEVEL_2_ACTIONS
 
-    proposal_only_actions = {"increase_sizing", "widen_stop_loss"}
+    proposal_only_actions = {"widen_stop_loss"}
     missing_from_l2 = proposal_only_actions - ol._LEVEL_2_ACTIONS
     assert not missing_from_l2, (
         f"Loosening actions missing from _LEVEL_2_ACTIONS: {missing_from_l2}"
@@ -291,11 +293,12 @@ def test_bounded_confidence_recovery_is_the_only_level1_loosen_exception():
                 continue
             for comp in child.comparators:
                 if isinstance(comp, ast.Constant) and comp.value in (
-                    proposal_only_actions | {"loosen_confidence"}
+                    proposal_only_actions | {"loosen_confidence", "increase_sizing"}
                 ):
                     reachable_in_l1_exec.add(comp.value)
 
     assert "loosen_confidence" in reachable_in_l1_exec
+    assert "increase_sizing" in reachable_in_l1_exec
     assert not (reachable_in_l1_exec & proposal_only_actions), (
         "Level 2 proposal-only loosening actions became reachable in the Level 1 executor"
     )
@@ -303,6 +306,9 @@ def test_bounded_confidence_recovery_is_the_only_level1_loosen_exception():
     spec = ol.PARAM_REGISTRY["min_confidence_to_trade"]
     assert spec.neutral == "medium"
     assert spec.ladder == ["speculative", "medium", "high"]
+    sizing = ol.PARAM_REGISTRY["max_demo_position_notional_usdt"]
+    assert sizing.neutral == 200.0
+    assert sizing.tighten_direction == "down"
 
 
 # ---------------------------------------------------------------------------

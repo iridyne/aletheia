@@ -1,0 +1,31 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-059
+title: Merge bounded sizing recovery symmetry
+status: in_progress
+packet_type: standard
+scope:
+  boundary: Bounded Operator sizing recovery and its executable permission contract
+  excluded: Confidence behavior, Risk, Execution, Exchange, Live, credentials, UI, and runtime facts
+intent: 'Integrate the verified PR #68 sizing recovery into the post-#69 Operator
+  permission model, preserve neutral bounds and anti-oscillation, and merge it before
+  resuming DCLS.'
+acceptance:
+- increase_sizing is classified and dispatched as Level 1 only when recovery conditions are safe.
+- Sizing recovery uses production config persistence, never exceeds neutral 200, and retains cooldown plus daily patch limits.
+- win_rate_7d below 35 suppresses increase_sizing so reduce and increase cannot occur in one cycle.
+- OL-C07 and operator_layer document both bounded recovery exceptions without weakening widen_stop_loss proposal authority.
+- Existing confidence incident, all Operator specs, architecture, and strict workflow checks remain green.
+ownership:
+  branch: iridite/sizing-symmetry-merge
+  lease_holder: codex
+  claimed_at: '2026-07-13T05:27:50.337296Z'
+  expires_at: '2026-07-13T13:27:50.337439Z'
+base_commit: 338f5449790f645b830181e7874c64fea804635e
+next_action:
+  command_key: sizing_symmetry
+  reason: Verify the integrated sizing recovery against the post-confidence Operator contract.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-059.md
+updated_at: '2026-07-13T05:27:50.337448Z'
