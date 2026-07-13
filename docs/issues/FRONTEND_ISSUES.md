@@ -66,7 +66,7 @@
   - 影响：审批者要知道"这个 proposal 来自哪个 opportunity（thesis 是什么）/ 哪个 strategy（lifecycle 状态）"必须切页 → 滚 → 找 ID → 切回——实际等于无法做这件事
   - 最小修复：抽屉里显示 strategy/opportunity 链接；点进去跳到对应详情页
 
-- ✅ **批准入口已限制为原始本地模拟意图，并要求明确确认（TASK-2026-066）**
+- ✅ **批准入口已限制为原始本地模拟意图，并要求明确确认（TASK-2026-067）**
   - 修复：列表与详情统一只对 `status=pending + execution_mode=paper_internal` 显示 `Approve Local Paper`；确认框展示方向、格式化交易对和“本地模拟、不向交易所下单”。
   - 后端同样拒绝 Demo/Live 或已进入执行中的 proposal，返回 409 且不改状态、不调用 gateway；执行异常只返回脱敏后的稳定错误。
   - 验证：前端生产构建通过；审批 UI 与路由回归 20 项通过。

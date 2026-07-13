@@ -1,6 +1,6 @@
 schema_version: 1
 handoff_version: 1
-id: TASK-2026-066
+id: TASK-2026-067
 title: Trade Chain Integrity Audit and Business-Usable Repairs
 status: in_progress
 packet_type: standard
@@ -141,5 +141,5 @@ verification:
   run_at: '2026-07-13T16:12:37.153986Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
-handoff: .agent/handoffs/TASK-2026-066.md
+handoff: .agent/handoffs/TASK-2026-067.md
 updated_at: '2026-07-13T16:16:55Z'
