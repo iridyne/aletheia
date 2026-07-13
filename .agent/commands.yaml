@@ -45,3 +45,6 @@ commands:
   doctor:
     command: uv run aletheia doctor
     purpose: Probe local runtime facts; never stored as Git state.
+  provenance:
+    command: uv run pytest tests/test_runtime_session_provenance.py tests/e2e/test_active_mainline_golden_path.py tests/specs/spec_active_runtime_scope.py -q
+    purpose: Verify Runtime Session lifecycle, core-entity provenance stamping, and Golden Path full attribution (same-session chain + restart open/close).

@@ -19,6 +19,21 @@ def _json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def _close_provenance() -> dict:
+    """Outcome-producer identity to stamp on the position at close.
+
+    Records the session that CLOSED the position (closed_runtime_session_id, …),
+    distinct from the session that opened it. Returns {} when no session is active
+    so we never overwrite with NULLs. Best-effort — never blocks a real close.
+    """
+    try:
+        from aletheia.agent_runtime.runtime_session import current_close_provenance
+
+        return {k: v for k, v in current_close_provenance().items() if v is not None}
+    except Exception:
+        return {}
+
+
 def _load_open(position_id: str) -> tuple[dict, dict | None]:
     row = repo._select_one("positions", position_id)
     if row is None:
@@ -78,6 +93,7 @@ def close_position_administrative(
             trigger={"closure_type": "administrative", "economic_outcome": "unavailable"},
         )),
     }
+    updates.update(_close_provenance())
     with repo.transaction():
         repo.update_position(position_id, **updates)
         repo.insert_audit_event(AuditEvent(
@@ -184,6 +200,7 @@ def close_position_verified(
         )),
     }
     closed_row = {**row, **updates}
+    updates.update(_close_provenance())
     with repo.transaction():
         repo.update_position(position_id, **updates)
         if row.get("execution_mode") == "paper_internal":

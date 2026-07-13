@@ -1,47 +1,64 @@
 schema_version: 1
 handoff_version: 1
 id: TASK-2026-060
-title: Build deterministic control-loop simulation MVP
+title: Runtime Session + core entity provenance
 status: done
 packet_type: standard
 scope:
-  boundary: Python Operator deterministic simulation, tests, docs, and CI only
-  excluded: Risk, Execution, Exchange, Live, credentials, network, real sleeps, frontend,
-    and runtime deployment
-intent: Implement the Python-only deterministic Operator control-loop simulator, fixed
-  incidents, stateful properties, mutation canaries, failure artifacts, and CI coverage
-  without touching Risk, Execution, Exchange, Live, or credentials.
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Create one runtime_sessions row per Gateway process lifecycle and stamp the
+  seven core trading-fact entities with the producing session identity (expand-only
+  nullable), distinguishing the opening from the closing session on positions, and
+  prove full attribution in the Golden Path.
 acceptance:
-- Fixed confidence and sizing incidents use migrated temporary SQLite and production
-  Operator paths.
-- Stateful operations cover signal quality, performance, virtual time, candidates,
-  cycles, outcomes, restart, and result recording.
-- Independent invariants and six mutation canaries prove the tests can detect broken
-  control-loop behavior.
-- Failures leave sanitized replay artifacts under test-results/control-loop.
-- PR and nightly CI run bounded deterministic suites including runtime replay and
-  the active Golden Path.
+- Each Gateway boot creates one runtime_sessions row (session_id under a runtime_id)
+  recording boot_commit/config_hash/behavior_fingerprint/schema_version/active_scope_id/execution_mode;
+  clean shutdown sets ended_at+shutdown_clean.
+- The seven core entities carry expand-only nullable runtime_session_id/producer_commit/behavior_fingerprint
+  stamped at insert; rows with no active session stay NULL; explicit caller values
+  win.
+- Positions carry closed_* provenance stamped at close so created vs closed session
+  are distinguishable and a position is never collapsed onto the last run.
+- Golden Path asserts same-session chain, producer_commit==boot commit, one config
+  fingerprint, plus a restart scenario (Session A opens, Session B closes).
+- Full suite and strict workflow check remain green.
 ownership:
-  branch: iridite/dcls-mvp-core
-  lease_holder: codex-dcls-mvp
-  claimed_at: '2026-07-13T05:36:09.816122Z'
-  expires_at: '2026-07-13T13:36:09.816298Z'
-base_commit: 8f16877cce297d7ba028e62deaf4efaa68326c48
+  branch: feat/runtime-session-provenance
+  lease_holder: claude
+  claimed_at: '2026-07-13T05:40:37.179600Z'
+  expires_at: '2026-07-13T13:40:37.179758Z'
+base_commit: eddaf9d77dab10effc1237dfbf22fce2b460065a
 next_action:
   command_key: workflow_bootstrap
   reason: Task complete; run bootstrap and create or claim a new task before changing
     code.
 blockers: []
 verification:
-- command_key: dcls_mvp
-  command: uv run pytest tests/simulation/control_loop/ tests/specs/spec_deterministic_control_loop.py
-    tests/test_runtime_replay_pack.py tests/e2e/test_active_mainline_golden_path.py
-    -q --tb=short
-  command_sha256: 4b0f924c0d7f83157289fae62512904b2abbe4b39773dedc782420b223e78b9f
+- command_key: provenance
+  command: uv run pytest tests/test_runtime_session_provenance.py tests/e2e/test_active_mainline_golden_path.py
+    tests/specs/spec_active_runtime_scope.py -q
+  command_sha256: 4fad42c2cb02bc7c5bcbc336f2a69c9cf415ccb3a60adcba2da82659e301ab87
   exit_code: 0
-  commit: f2b012e512e70144181cb3069957d6b934f33238
-  run_at: '2026-07-13T05:48:59.297326Z'
+  commit: 596fc248168141668026ee20098cbdf155f37fec
+  run_at: '2026-07-13T05:41:37.759310Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 596fc248168141668026ee20098cbdf155f37fec
+  run_at: '2026-07-13T05:41:47.195624Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 596fc248168141668026ee20098cbdf155f37fec
+  run_at: '2026-07-13T05:41:47.934882Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-060.md
-updated_at: '2026-07-13T05:49:05.732770Z'
+updated_at: '2026-07-13T05:42:17.165378Z'
