@@ -151,6 +151,16 @@ def list_opportunities(limit: int = 50) -> list[dict]:
     return _select_all("opportunities", limit=limit)
 
 
+def list_open_opportunities(limit: int = 50) -> list[dict]:
+    """Return the ranker's bounded working set without reviewed-history crowd-out."""
+    return _select_all(
+        "opportunities",
+        where="status = 'open'",
+        order="created_at DESC, rowid DESC",
+        limit=limit,
+    )
+
+
 def get_opportunity(oid: str) -> dict | None:
     return _select_one("opportunities", oid)
 

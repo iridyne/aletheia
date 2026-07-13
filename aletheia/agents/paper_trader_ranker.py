@@ -23,7 +23,7 @@ from aletheia.data.symbols import to_canonical
 from aletheia.storage.repositories import (
     get_ohlcv_candles,
     get_universe_member,
-    list_opportunities,
+    list_open_opportunities,
 )
 from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation
 from aletheia.regime.detector import get_current_regime, MarketRegime
@@ -76,7 +76,9 @@ def build_paper_candidates(limit: int = 50) -> list[dict]:
     scan_limit = min(_MAX_OPPORTUNITY_SCAN_LIMIT, max(requested_limit, requested_limit * 5))
 
     candidates: list[dict] = []
-    opportunities = list_opportunities(limit=scan_limit)
+    # Apply the cap to the actual working set. Querying all statuses first let a
+    # busy stream of reviewed rows bury still-open opportunities beyond the cap.
+    opportunities = list_open_opportunities(limit=scan_limit)
 
     for opp in opportunities:
         candidate = _evaluate_candidate(opp, cfg, now_iso, _symbol_allowed, min_conf, global_venue)
@@ -195,6 +197,21 @@ def _evaluate_candidate(
         filter_trace, "ranker_confidence_gate", "passed", "confidence_at_or_above",
         inputs={"confidence": confidence}, parameters={"minimum": min_conf},
     )
+
+    # The Opportunity carrier keeps its own expiry even when its Universe member
+    # cannot be loaded. Do not let a missing parent row turn an expired signal fresh.
+    if opp.get("valid_until") and opp["valid_until"] < now_iso:
+        _filter_step(
+            filter_trace, "family_ttl", "rejected", "opportunity_valid_until_expired",
+            inputs={"valid_until": opp.get("valid_until"), "now": now_iso},
+            parameters={"source": "opportunity.valid_until"},
+        )
+        return _make_candidate(
+            opp,
+            skip_reason="ttl_expired",
+            direction=direction,
+            filter_trace=filter_trace,
+        )
 
     # Universe TTL gate
     universe_member = None

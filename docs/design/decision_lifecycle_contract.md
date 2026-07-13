@@ -55,8 +55,9 @@
 | `direction_bias` | `str \| None` | `long` / `short` / `neutral`。跳2 `paper_trader_ranker` 直接读它定方向。 |
 | `confidence` | `str` | **分类**置信度,默认 `speculative`(同 `VALID_CONFIDENCES`)。**不是**数值。 |
 | `confidence_score` | `int \| None` | **数值**置信度(0–100),跳2 打分用。与 `confidence`(分类)是两个字段,勿混。 |
-| `status` | `str` | 状态机:`open`(可被排序消费)→ `reviewed`(已评估,防重复)。仅 `open` 进跳2。 |
+| `status` | `str` | 状态机:`open`(可被排序消费)→ `reviewed`(已评估,防重复)。跳2 直接查询 `open` 工作集后再应用数量上限,避免大量 reviewed 历史把仍开放的行挤出扫描窗口。 |
 | `scanner_family` | `str \| None` | 来源扫描器族,跳5 透传进归因链(风控 #16 部门集中度解析用)。 |
+| `valid_until` | `str \| None` | 机会自身的失效时间。即使关联 Universe member 缺失,跳2 仍须按此字段拒绝过期机会。 |
 
 ### 2.2 TradingDecision (`agent_shell/trading_decision.py:56`,dataclass)
 

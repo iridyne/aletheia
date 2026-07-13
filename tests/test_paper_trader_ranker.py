@@ -20,6 +20,7 @@ def _make_opp(
     universe_member_id=None,
     scanner_family="momentum",
     source_agent="market_observer",
+    valid_until=None,
 ):
     return {
         "id": oid,
@@ -34,6 +35,7 @@ def _make_opp(
         "universe_member_id": universe_member_id,
         "scanner_family": scanner_family,
         "source_agent": source_agent,
+        "valid_until": valid_until,
     }
 
 
@@ -50,7 +52,7 @@ def _patch_deps(opps, strategies=None, universe_member=None, factor_status="watc
     # Position C (2026-07-02): the ranker no longer resolves StrategyRecords, so
     # list_strategies / get_strategy are no longer module attributes to patch.
     patches["aletheia.agents.paper_trader_ranker.load_config"] = MagicMock(return_value=_mock_config())
-    patches["aletheia.agents.paper_trader_ranker.list_opportunities"] = MagicMock(return_value=opps)
+    patches["aletheia.agents.paper_trader_ranker.list_open_opportunities"] = MagicMock(return_value=opps)
     patches["aletheia.agents.paper_trader_ranker.get_universe_member"] = MagicMock(return_value=universe_member)
     patches["aletheia.agents.paper_trader_ranker.tradable_symbols_from_config"] = MagicMock(return_value=["BTC/USDT", "ETH/USDT"])
     patches["aletheia.agents.paper_trader_ranker.lookup_factor_signal"] = MagicMock(return_value={
@@ -122,6 +124,19 @@ def test_expired_universe_member_skipped():
         candidates = build_paper_candidates(limit=50)
     assert len(candidates) == 1
     assert candidates[0]["skip_reason"] == "ttl_expired"
+
+
+def test_expired_opportunity_valid_until_skipped_without_member():
+    """Opportunity.valid_until remains authoritative if its member row is unavailable."""
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates
+
+    opps = [_make_opp(valid_until="2020-01-01T00:00:00+00:00")]
+    with _patch_deps(opps, universe_member=None):
+        candidates = build_paper_candidates(limit=50)
+
+    assert len(candidates) == 1
+    assert candidates[0]["skip_reason"] == "ttl_expired"
+    assert candidates[0]["filter_trace"][-1]["reason_code"] == "opportunity_valid_until_expired"
 
 
 def test_blocked_factor_diagnostic_is_neutral_without_authority():
@@ -217,7 +232,7 @@ def test_candidate_builder_overfetches_past_skipped_front_page():
     cfg.exchange.paper_execution_mode = "bitget_demo"
 
     with patch("aletheia.agents.paper_trader_ranker.load_config", return_value=cfg), \
-         patch("aletheia.agents.paper_trader_ranker.list_opportunities", side_effect=list_page) as list_mock, \
+         patch("aletheia.agents.paper_trader_ranker.list_open_opportunities", side_effect=list_page) as list_mock, \
          patch("aletheia.agents.paper_trader_ranker.get_universe_member", return_value=None), \
          patch("aletheia.agents.paper_trader_ranker.tradable_symbols_from_config", return_value=["BTC/USDT", "ETH/USDT"]), \
          patch("aletheia.agents.paper_trader_ranker.lookup_factor_signal", return_value={
@@ -233,6 +248,59 @@ def test_candidate_builder_overfetches_past_skipped_front_page():
     assert len(candidates) <= 10
     assert best is not None
     assert best["opportunity_id"] == "executable-1"
+
+
+def test_open_candidate_is_not_buried_by_reviewed_history(tmp_path, monkeypatch):
+    """The ranker must query its open working set before applying its scan cap."""
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import insert_opportunity
+
+    open_opp = Opportunity(
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        confidence="high",
+        confidence_score=90,
+        status="open",
+        scanner_family="momentum",
+    )
+    insert_opportunity(open_opp)
+    for index in range(501):
+        insert_opportunity(Opportunity(
+            symbol=f"REVIEWED{index}/USDT",
+            market="spot",
+            direction_bias="long",
+            confidence="high",
+            confidence_score=90,
+            status="reviewed",
+            scanner_family="momentum",
+        ))
+
+    cfg = _mock_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.universe.scanner_regime_scoring = {}
+    factor = {
+        "factor_key": "test",
+        "status": "active",
+        "authority_applied": False,
+        "score_delta": 0.0,
+        "reason": "test",
+    }
+
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates
+
+    with patch("aletheia.agents.paper_trader_ranker.load_config", return_value=cfg), \
+         patch("aletheia.agents.paper_trader_ranker.tradable_symbols_from_config", return_value=["BTC/USDT"]), \
+         patch("aletheia.agents.paper_trader_ranker.lookup_factor_signal", return_value=factor), \
+         patch("aletheia.agents.paper_trader_ranker._evaluate_guards_safe", return_value=None), \
+         patch("aletheia.agents.paper_trader_ranker._lesson_penalty", return_value=0.0), \
+         patch("aletheia.agents.paper_trader_ranker._memo_scoring", return_value=0.0):
+        candidates = build_paper_candidates(limit=50)
+
+    assert [row["opportunity_id"] for row in candidates] == [open_opp.id]
 
 
 # ---------------------------------------------------------------------------

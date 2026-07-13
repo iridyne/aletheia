@@ -425,3 +425,22 @@ def test_paper_trader_skips_recent_duplicate_signal_pair(tmp_path, monkeypatch):
 
     assert after == before
     assert any("skip_recent_signal:BTC/USDT:long" in o for o in result.get("outputs", []))
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-06", "pipeline_paper_trade", "§2 open candidate working set", "L2b",
+        "The ranker queries open opportunities directly before applying its bounded scan limit, "
+        "so reviewed history cannot permanently hide a still-open candidate.",
+        status="implemented",
+    ),
+)
+def test_ranker_queries_open_working_set_directly():
+    import inspect
+
+    from aletheia.agents import paper_trader_ranker
+    from aletheia.storage import repositories
+
+    assert hasattr(repositories, "list_open_opportunities")
+    source = inspect.getsource(paper_trader_ranker.build_paper_candidates)
+    assert "list_open_opportunities" in source
