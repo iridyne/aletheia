@@ -202,17 +202,6 @@ export class RecommendationEngine {
     return `Improve Command Center behavior around \`${commandName}\` so repeated failed attempts to ${label} surface clearer guidance and a better next action.`
   }
 
-  private promotionTargetState(strategyState: string | null | undefined): string | null {
-    const normalized = String(strategyState || '').trim()
-    if (normalized === 'paper_running') {
-      return 'paper_passed'
-    }
-    if (normalized === 'paper_passed') {
-      return 'live_candidate'
-    }
-    return null
-  }
-
   private artifactFreshnessMinutes(artifact: PersistedOperatorArtifact): number | null {
     const parsed = Date.parse(artifact.created_at)
     if (Number.isNaN(parsed)) {
@@ -666,88 +655,6 @@ export class RecommendationEngine {
         metadata: {
           missing_review_strategy_ids: missingReviewStrategyIds,
           closed_position_count: reviewSummary?.recent_closed_positions.length || 0,
-        },
-      })
-    }
-
-    const needsPromotionProposalIds =
-      strategySummary?.needs_operator_promotion_proposal_strategy_ids || []
-    if (!snapshot.status.paused && needsPromotionProposalIds.length > 0) {
-      const firstCandidate =
-        strategySummary?.active_paper_strategies.find(
-          item => String(item.id || '') === needsPromotionProposalIds[0],
-        ) || null
-      const firstEvaluation =
-        strategySummary?.recent_strategy_evaluations.find(
-          item => String(item.strategy_id || '') === needsPromotionProposalIds[0],
-        ) || null
-      const strategyName =
-        firstCandidate && typeof firstCandidate.name === 'string'
-          ? firstCandidate.name
-          : null
-      const evaluationStrategy =
-        firstEvaluation &&
-        typeof firstEvaluation.evaluation === 'object' &&
-        firstEvaluation.evaluation &&
-        !Array.isArray(firstEvaluation.evaluation) &&
-        typeof (firstEvaluation.evaluation as Record<string, unknown>).strategy === 'object' &&
-        (firstEvaluation.evaluation as Record<string, unknown>).strategy &&
-        !Array.isArray((firstEvaluation.evaluation as Record<string, unknown>).strategy)
-          ? ((firstEvaluation.evaluation as Record<string, unknown>).strategy as Record<string, unknown>)
-          : null
-      const targetState =
-        this.promotionTargetState(
-          typeof evaluationStrategy?.state === 'string'
-            ? evaluationStrategy.state
-            : typeof firstCandidate?.state === 'string'
-              ? firstCandidate.state
-              : null,
-        ) || 'paper_passed'
-      recommendations.push({
-        id: 'strategy-promotion-proposal-due',
-        kind: 'strategy_promotion_proposal_due',
-        severity: 'medium',
-        summary:
-          needsPromotionProposalIds.length === 1
-            ? `Strategy ${strategyName || needsPromotionProposalIds[0]} passed recent promotion checks and should be proposed for ${targetState} human review.`
-            : `${needsPromotionProposalIds.length} strategies passed recent promotion checks and should be proposed for human review.`,
-        taskType: 'create_repair_proposal',
-        metadata: {
-          strategy_ids: needsPromotionProposalIds,
-          strategy_id: needsPromotionProposalIds[0],
-          strategy_name: strategyName,
-          target_state: targetState,
-          proposal_command: 'propose_strategy_promotion',
-        },
-      })
-    }
-
-    const liveLimitedEnablementIds =
-      strategySummary?.needs_operator_live_limited_enablement_strategy_ids || []
-    if (!snapshot.status.paused && liveLimitedEnablementIds.length > 0) {
-      const firstCandidate =
-        strategySummary?.live_candidate_strategies.find(
-          item => String(item.id || '') === liveLimitedEnablementIds[0],
-        ) || null
-      const strategyName =
-        firstCandidate && typeof firstCandidate.name === 'string'
-          ? firstCandidate.name
-          : null
-      recommendations.push({
-        id: 'live-limited-enablement-proposal-due',
-        kind: 'live_limited_enablement_proposal_due',
-        severity: 'medium',
-        summary:
-          liveLimitedEnablementIds.length === 1
-            ? `Strategy ${strategyName || liveLimitedEnablementIds[0]} passed live-limited safety checks and should create a human-reviewed live-limited enablement proposal.`
-            : `${liveLimitedEnablementIds.length} live-candidate strategies passed live-limited safety checks and should create enablement proposals for human review.`,
-        taskType: 'create_repair_proposal',
-        metadata: {
-          strategy_ids: liveLimitedEnablementIds,
-          strategy_id: liveLimitedEnablementIds[0],
-          strategy_name: strategyName,
-          target_state: 'live_limited',
-          proposal_command: 'propose_live_limited_enablement',
         },
       })
     }

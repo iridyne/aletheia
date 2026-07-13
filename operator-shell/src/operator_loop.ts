@@ -2079,12 +2079,6 @@ export class OperatorLoop {
     kind: 'diagnostic_session' | 'strategy_session'
     title: string
   } {
-    if (decision.commandName === 'propose_live_limited_enablement') {
-      return {
-        kind: 'strategy_session',
-        title: 'Live-Limited Enablement Proposal',
-      }
-    }
     return {
       kind: 'diagnostic_session',
       title: 'Repair Decision',
