@@ -169,6 +169,78 @@ def test_opportunity_producers_do_not_bypass_ranker_when_waking_operator():
 
 @spec_claim(
     SpecClaim(
+        "DL-S09", "decision_lifecycle_contract", "§2.4 terminal decision identity", "L2b",
+        "A watch/skip System Operator result persists the symbol and direction it evaluated, "
+        "alongside opportunity_id and signal_source, instead of creating an anonymous audit row.",
+        status="implemented",
+    ),
+)
+def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell import commands, reflection
+    from aletheia.agent_shell.trading_decision import TradingDecision
+    from aletheia.storage.sqlite import get_db
+
+    decision = TradingDecision(
+        action="skip",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=48,
+        reasoning="candidate evaluated but not selected",
+        market_type="usdt_futures",
+        opportunity_id="opp-skip-identity",
+        signal_source="market_observer",
+        scanner_family="momentum",
+    )
+
+    async def fake_evaluate(_context):
+        return decision
+
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda: SimpleNamespace(
+            exchange=SimpleNamespace(paper_execution_mode="paper_internal")
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.build_enriched_trading_context",
+        lambda: {
+            "layer1": {
+                "data_health": {"signal_status": "healthy", "ohlcv_ready": True}
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_decision.evaluate_trading_opportunity",
+        fake_evaluate,
+    )
+    monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
+
+    result = asyncio.run(commands.evaluate_trading_opportunity({}))
+
+    row = get_db().execute(
+        "SELECT symbol, direction, opportunity_id, signal_source FROM pi_decisions "
+        "WHERE action='skip' AND opportunity_id=?",
+        (decision.opportunity_id,),
+    ).fetchone()
+    assert result["symbol"] == "BTC/USDT"
+    assert result["direction"] == "long"
+    assert row is not None
+    assert dict(row) == {
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "opportunity_id": "opp-skip-identity",
+        "signal_source": "market_observer",
+    }
+
+
+@spec_claim(
+    SpecClaim(
         "DL-S05", "decision_lifecycle_contract", "§2.3 executable candidate view", "L2b",
         "System Operator context separates executable ranker candidates from excluded "
         "candidate summaries so unsupported/expired/guard-blocked rows do not occupy "

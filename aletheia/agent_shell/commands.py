@@ -1539,6 +1539,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
 
     result: dict = {
         "action": decision.action,
+        # Identity belongs to every evaluated terminal decision, not only trades.
+        # A watch/skip with a source opportunity must remain explainable later.
+        "symbol": decision.symbol,
+        "direction": decision.direction,
         "conviction": decision.conviction,
         "reasoning": decision.reasoning[:300],
         "debate_ran": decision.debate_ran,
@@ -1558,6 +1562,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "opposing_signals": decision.opposing_signals,
         "market_type": decision.market_type,
         "scanner_family": decision.scanner_family,
+        "position_size_usdt": decision.position_size_usdt,
         "filter_trace": decision.filter_trace,
         # One bundle-level attribution unit for all overlapping Learning prompt channels.
         "learning_manifest": ctx.get("learning_manifest") or {},
@@ -1565,10 +1570,6 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
 
     # trade / scale_in / flip all produce proposals
     if decision.action in ("trade", "scale_in", "flip") and decision.symbol:
-        result["symbol"] = decision.symbol
-        result["direction"] = decision.direction
-        result["position_size_usdt"] = decision.position_size_usdt
-
         proposal_result = await submit_decision_as_proposal(decision, execution_mode)
         if proposal_result:
             result["proposal_id"] = proposal_result.get("proposal_id")
