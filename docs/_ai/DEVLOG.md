@@ -3329,3 +3329,9 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
   of two stale helper names that are no longer called by `MacroCollector.collect`.
 - Kept the blocking yfinance duration, competing event-loop task and timing ceiling unchanged;
   production collector behavior, data sources and network policy did not change.
+
+## 2026-07-13 — DCLS pull-request artifact gate
+
+- Added the automatic ordinary-assertion failure-pack test to the explicit PR DCLS command.
+- Strengthened the executable CI claim so the artifact regression cannot silently fall out of
+  pull-request coverage while remaining present only in nightly runs.
