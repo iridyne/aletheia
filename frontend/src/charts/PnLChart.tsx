@@ -20,6 +20,7 @@ export default function PnLChart({ days }: Props) {
   const rawPoints = data?.raw_recorded_points ?? []
   const genuinePoints = data?.genuine_points ?? []
   const currentUnrealized = data?.current_unrealized ?? 0
+  const excludedOutcomeCount = data?.excluded_outcome_count ?? 0
 
   // Backend closed_at is tz-aware UTC (`...+00:00`). isoToEpochSeconds normalizes
   // it correctly — the old inline `endsWith('Z') ? : +'Z'` turned `+00:00` into an
@@ -103,6 +104,11 @@ export default function PnLChart({ days }: Props) {
       <p className="metric-caveat" style={{ marginBottom: '4px' }}>
         verified realized: {realizedTxt} · current unrealized (separate): {currentUnrealized >= 0 ? '+' : ''}{currentUnrealized.toFixed(2)} USDT
       </p>
+      {rawRows.length > 0 && genuineRows.length === 0 && (
+        <p className="hint" style={{ marginBottom: '4px' }}>
+          No verified strategy outcomes yet. {excludedOutcomeCount} recorded closes do not meet the current verification requirements; the gray line remains raw account history only.
+        </p>
+      )}
       {hasData
         ? <div ref={containerRef} style={{ width: '100%' }} />
         : <p className="hint">No verified strategy outcomes yet. Raw account events may still be excluded or lack economic evidence.</p>}

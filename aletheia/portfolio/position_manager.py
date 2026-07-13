@@ -75,13 +75,26 @@ def close_position_routed(
         from aletheia.execution.okx_broker import close_okx_position
         result = close_okx_position(position_id, reason=reason)
     else:
-        # paper_internal — pure local simulation; needs a mark to realize PnL.
+        # Local simulation needs a mark to realize PnL. New paper_internal rows
+        # carry their exact entry fee, so settle them through the central verified
+        # outcome path. Legacy rows without that economic evidence still close via
+        # the old lifecycle path but remain honestly excluded from verified results.
         if fallback_exit_price is None:
             px = _latest_price(row["symbol"]) if row else None
             if px is None:
                 raise RuntimeError(f"no price available to close paper position {position_id}")
             fallback_exit_price = float(px)
-        result = close_position(position_id, exit_price=fallback_exit_price, reason=reason)
+        if mode == "paper_internal" and row.get("entry_fee") is not None:
+            from aletheia.portfolio.outcome_closure import close_local_paper_position_verified
+            result = close_local_paper_position_verified(
+                position_id,
+                exit_price=fallback_exit_price,
+                reason=reason,
+                actor=decision_actor,
+                source=decision_source,
+            )
+        else:
+            result = close_position(position_id, exit_price=fallback_exit_price, reason=reason)
 
     # Only overwrite the generic factual explanation after a confirmed close.
     # This deliberately sits outside the broker dispatch: no exchange adapter or

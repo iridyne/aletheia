@@ -46,7 +46,8 @@ def test_stop_loss_closes_long(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     p = Position(symbol="BTCUSDT", market_type="spot", direction="long",
                  quantity=1.0, entry_price=100.0, current_price=100.0,
-                 execution_mode="paper_internal", stop_price=98.0, take_profit_price=110.0)
+                 execution_mode="paper_internal", stop_price=98.0, take_profit_price=110.0,
+                 entry_fee=0.06)
     repo.insert_position(p)
     _snap("BTCUSDT", 97.0)  # below stop
 
@@ -61,14 +62,27 @@ def test_stop_loss_closes_long(tmp_path, monkeypatch):
     # 0.0006 = paper_internal fee both sides after PR#35 demo/live fee-parity fix.
     expected = -2.0 - (100.0 + 98.0) * 1.0 * 0.0006
     assert row["realized_pnl"] == pytest.approx(expected)
+    assert row["close_category"] == "strategy"
+    assert row["exit_price_source"] == "local_fill"
+    assert row["exit_fill_verified"] == 1
+    assert row["outcome_eligible"] == 1
+    assert row["outcome_exclusion_reason"] == "eligible"
+    assert row["outcome_semantics_version"] == "oi-v1"
     assert len(repo.list_positions(status="open")) == 0
+
+    from aletheia.server.routes.analytics import get_equity_curve
+    curve = get_equity_curve(execution_mode="paper_internal")
+    assert curve["eligible_outcome_count"] == 1
+    assert len(curve["genuine_points"]) == 1
+    assert curve["genuine_points"][0]["pnl"] == pytest.approx(expected, abs=1e-4)
 
 
 def test_take_profit_closes_short(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     p = Position(symbol="ETHUSDT", market_type="usdt_futures", direction="short",
                  quantity=2.0, entry_price=200.0, current_price=200.0,
-                 execution_mode="paper_internal", stop_price=210.0, take_profit_price=180.0)
+                 execution_mode="paper_internal", stop_price=210.0, take_profit_price=180.0,
+                 entry_fee=0.24)
     repo.insert_position(p)
     _snap("ETHUSDT", 179.0)  # below TP for a short -> take profit
 
@@ -81,6 +95,7 @@ def test_take_profit_closes_short(tmp_path, monkeypatch):
     # 0.0006 = paper_internal fee both sides after PR#35 demo/live fee-parity fix.
     expected = 40.0 - (200.0 + 180.0) * 2.0 * 0.0006
     assert row["realized_pnl"] == pytest.approx(expected)
+    assert row["outcome_eligible"] == 1
 
 
 def test_max_hold_closes(tmp_path, monkeypatch):
@@ -88,7 +103,8 @@ def test_max_hold_closes(tmp_path, monkeypatch):
     old = (datetime.now(timezone.utc) - timedelta(hours=100)).isoformat()
     p = Position(symbol="SOLUSDT", market_type="spot", direction="long",
                  quantity=1.0, entry_price=150.0, current_price=150.0,
-                 execution_mode="paper_internal", stop_price=140.0, take_profit_price=170.0)
+                 execution_mode="paper_internal", stop_price=140.0, take_profit_price=170.0,
+                 entry_fee=0.09)
     p.opened_at = old
     repo.insert_position(p)
     _snap("SOLUSDT", 150.0)  # no stop/TP trigger, but past max hold
@@ -98,6 +114,7 @@ def test_max_hold_closes(tmp_path, monkeypatch):
     assert result["closed"] == 1
     row = repo._select_one("positions", p.id)
     assert row["close_reason"] == "max_hold"
+    assert row["outcome_eligible"] == 1
 
 
 def test_no_trigger_leaves_open(tmp_path, monkeypatch):
@@ -118,7 +135,8 @@ def test_close_writes_audit(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     p = Position(symbol="BTCUSDT", market_type="spot", direction="long",
                  quantity=1.0, entry_price=100.0, current_price=100.0,
-                 execution_mode="paper_internal", stop_price=98.0, take_profit_price=110.0)
+                 execution_mode="paper_internal", stop_price=98.0, take_profit_price=110.0,
+                 entry_fee=0.06)
     repo.insert_position(p)
     _snap("BTCUSDT", 97.0)
 
@@ -130,6 +148,13 @@ def test_close_writes_audit(tmp_path, monkeypatch):
     closed = [e for e in events if e.get("event_type") == "position_closed"]
     assert closed and closed[-1]["entity_id"] == p.id
     assert closed[-1]["entity_type"] == "position"
+    assert closed[-1]["after"]["outcome_eligible"] is True
+
+    verified = [
+        e for e in repo.list_audit_events(limit=20)
+        if e["event_type"] == "position_verified_closed" and e["entity_id"] == p.id
+    ]
+    assert len(verified) == 1
 
 
 def test_live_position_never_auto_closed(tmp_path, monkeypatch):

@@ -9,7 +9,12 @@ from typing import Any
 
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 from aletheia.data.symbols import to_canonical
-from aletheia.execution.verified_exit import VerifiedExitResult
+from aletheia.execution.verified_exit import (
+    VerifiedExitFill,
+    VerifiedExitRequest,
+    VerifiedExitResult,
+    classify_verified_exit,
+)
 from aletheia.portfolio.pnl import build_exit_reasoning
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
@@ -234,6 +239,118 @@ def close_position_verified(
         "exit_price": exit_price,
         "exit_fee": exit_fee,
     }
+
+
+def close_local_paper_position_verified(
+    position_id: str,
+    *,
+    exit_price: float,
+    reason: str,
+    actor: str = "system",
+    source: str = "position_manager",
+) -> dict:
+    """Settle one local simulated exit as a complete, auditable fill.
+
+    ``paper_internal`` is the broker: it owns both the local position and the
+    deterministic fill price/fee, so no exchange-history query is needed.  This
+    helper still builds the shared verified-exit evidence object and delegates
+    all accounting/persistence to ``close_position_verified`` rather than
+    stamping outcome flags independently.
+
+    Legacy local rows without a recorded entry fee are deliberately rejected by
+    this helper; their complete economics cannot be proven after the fact.
+    """
+    row = repo._select_one("positions", position_id)
+    if row is None:
+        raise ValueError(f"position not found: {position_id}")
+    if row.get("execution_mode") != "paper_internal":
+        raise ValueError("local verified close requires paper_internal execution mode")
+    if row.get("entry_fee") is None:
+        raise ValueError("local verified close requires known entry fee")
+    if exit_price <= 0:
+        raise ValueError("local verified close requires a positive exit price")
+
+    now = datetime.now(timezone.utc)
+    now_ms = int(now.timestamp() * 1000)
+    try:
+        opened = datetime.fromisoformat(str(row.get("opened_at") or "").replace("Z", "+00:00"))
+        if opened.tzinfo is None:
+            opened = opened.replace(tzinfo=timezone.utc)
+        opened_ms = int(opened.timestamp() * 1000)
+    except (TypeError, ValueError):
+        opened_ms = now_ms - 1
+    history_start_ms = max(1, min(opened_ms, now_ms - 1))
+
+    from aletheia.config.loader import load_config
+    fee_rate = float(load_config().trading.execution_fee_pct) / 100.0
+    quantity = float(row["quantity"])
+    canonical_symbol = to_canonical(str(row["symbol"]))
+    _, _, quote = canonical_symbol.partition("/")
+    request = VerifiedExitRequest(
+        broker_id="paper_internal",
+        account_environment="local",
+        account_scope="local-paper-account",
+        execution_mode="paper_internal",
+        position_id=position_id,
+        symbol=canonical_symbol,
+        market_type=str(row["market_type"]),
+        direction=str(row["direction"]).lower(),
+        quantity=quantity,
+        history_start_ms=history_start_ms,
+        history_end_ms=now_ms,
+    )
+    evidence = classify_verified_exit(
+        request,
+        position_absent=True,
+        history_complete=True,
+        close_fills=(VerifiedExitFill(
+            fill_id=f"local-exit:{position_id}:{now_ms}",
+            order_id=row.get("order_id"),
+            price=float(exit_price),
+            quantity=quantity,
+            fee=round(float(exit_price) * quantity * fee_rate, 8),
+            fee_currency=quote,
+            realized_pnl=None,
+            filled_at_ms=now_ms,
+        ),),
+        ambiguous_activity=False,
+        pages=1,
+        source_endpoint="local-paper-ledger",
+    )
+    result = close_position_verified(
+        position_id,
+        evidence,
+        reason=reason,
+        actor=actor,
+        source=source,
+    )
+    # Preserve the established append-only operator audit stream for automatic
+    # local closes. The central verified close above records the richer
+    # ``position_verified_closed`` database event; this compatibility event keeps
+    # existing JSONL consumers and the audit hash chain informed as well.
+    from aletheia.files.jsonl import write_audit
+    write_audit({
+        "actor": actor,
+        "source": source,
+        "event_type": "position_closed",
+        "entity_type": "position",
+        "entity_id": position_id,
+        "before": {
+            "status": row.get("status"),
+            "unrealized_pnl": row.get("unrealized_pnl"),
+        },
+        "after": {
+            "status": "closed",
+            "realized_pnl": result["realized_pnl"],
+            "close_reason": reason,
+            "outcome_eligible": True,
+        },
+        "message": (
+            f"Position {row.get('symbol')} closed @ {exit_price} ({reason}); "
+            f"realized={result['realized_pnl']}"
+        ),
+    })
+    return result
 
 
 def close_position_from_verified_exit(
