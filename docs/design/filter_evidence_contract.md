@@ -178,6 +178,11 @@ shadow treatment 各自达到 20 个完整净结果和 70% 覆盖后才判定；
 5. 未满 limit 则放行；已满后其余候选记 `signal_batch_limit=rejected`。
 
 Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候选，不能在冷却/持仓检查之前就标记“已选中”。
+`signal_batch_limit=passed` 只代表被选中；真正写入队列另记
+`signal_enqueue=passed|rejected|error`。`signal_pending` 与 Opportunity 的 `queued` 状态必须同一
+事务提交，任一步失败都回滚，不得留下“已入队但来源仍 open”的孤儿状态。
+入队时只允许条件迁移 `open→queued`;批次计划过期、来源已是 `reviewed/expired` 时记录
+`signal_enqueue=rejected / opportunity_not_open`,不得写 pending,更不得把终态倒退。
 
 ## 8. 失败与运维语义
 

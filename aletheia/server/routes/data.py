@@ -1701,6 +1701,7 @@ async def promote_serenity_theme(theme_id: str):
             pi_dec = PiDecision(
                 symbol=opp.get("symbol"),
                 direction=opp.get("direction"),
+                market_type=opp.get("market_type"),
                 action="signal_pending",
                 conviction=0,
                 reasoning=f"Serenity promote: theme={theme_id[:8]} opp={opp['id'][:8]}",

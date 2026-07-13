@@ -119,15 +119,17 @@ def test_layer3_surfaces_serenity_id():
 @spec_claim(
     SpecClaim(
         "SA-S05", _CONTRACT, "§3.2 pending_signals carry opportunity_id for direct attribution", "L2a",
-        "trading_context pending_signals query selects opportunity_id + signal_source "
+        "trading_context unresolved pending queue selects opportunity_id + signal_source "
         "columns — the direct attribution path that bypasses layer3 limit=5 truncation",
     ),
 )
 def test_pending_signals_carry_opportunity_id():
     src = _TRADING_CONTEXT.read_text(encoding="utf-8")
-    # Find the Phase 4b block and verify the SQL query includes opportunity_id
-    phase4b_idx = src.index("Phase 4b")
-    region = src[phase4b_idx:phase4b_idx + 600]
+    # The query lives in a dedicated queue helper so prompt construction and queue
+    # accounting cannot drift into separate implementations.
+    helper_idx = src.index("def _build_pending_signal_queue")
+    helper_end = src.index("\ndef ", helper_idx + 1)
+    region = src[helper_idx:helper_end]
     assert "opportunity_id" in region, (
         "pending_signals query does not SELECT opportunity_id — serenity attribution "
         "relies on layer3 limit=5 which silently truncates promoted opps"

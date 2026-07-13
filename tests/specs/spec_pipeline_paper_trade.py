@@ -297,7 +297,7 @@ def test_paper_trader_signal_has_opportunity_id(tmp_path, monkeypatch):
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     init_tool_registry()
 
-    opp_id = _insert_opportunity(conn, symbol="BTC/USDT", confidence_score=0.9)
+    opp_id = _insert_opportunity(conn, symbol="BTC/USDT", confidence_score=90)
     _insert_market_snapshot(conn, "BTC/USDT", price=60000.0)
 
     import asyncio
@@ -335,17 +335,15 @@ def test_paper_trader_signal_has_opportunity_id(tmp_path, monkeypatch):
     SpecClaim(
         "PL-PT-05", "pipeline_paper_trade", "§2 signal_consumed", "L2b",
         "After a successful signal_pending is written, the originating opportunity "
-        "row has status updated away from 'open' to prevent duplicate signals",
+        "row becomes queued; reviewed is reserved for a persisted final Operator decision.",
         status="implemented",
     ),
 )
 def test_paper_trader_marks_opportunity_consumed(tmp_path, monkeypatch):
-    """After a signal_pending is written, the source opportunity must not be 'open'.
+    """After signal_pending, the source waits in queued until a final decision exists.
 
-    Fixed 2026-06-24 (PT-1, freeze exception): paper_trader now calls
-    update_opportunity(opp_id, status='reviewed') after writing each signal_pending,
-    so the next cycle won't re-emit the same opportunity as a duplicate signal
-    (which the System Operator read as "pipeline data integrity compromised" → all-skip).
+    queued prevents re-emission without falsely claiming the System Operator has
+    already evaluated the opportunity.
     """
     conn = _setup_db(tmp_path, monkeypatch)
 
@@ -377,11 +375,7 @@ def test_paper_trader_marks_opportunity_consumed(tmp_path, monkeypatch):
     ).fetchone()
 
     assert opp_row is not None, "Opportunity row missing after paper_trader run"
-    assert opp_row["status"] != "open", (
-        f"Opportunity {opp_id!r} still has status='open' after signal_pending was written. "
-        "PT-1: opportunity is not marked as consumed — next run will re-process it, "
-        "creating duplicate signals and breaking the signal deduplication guarantee."
-    )
+    assert opp_row["status"] == "queued"
 
 
 def test_paper_trader_skips_recent_duplicate_signal_pair(tmp_path, monkeypatch):
@@ -531,3 +525,155 @@ def test_paper_trader_marks_ttl_rejection_expired(tmp_path, monkeypatch):
     assert status == "expired"
     assert pending == 0
     assert any("skip:BTC/USDT:ttl_expired" in row for row in result["outputs"])
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-09", "pipeline_paper_trade", "§2 pending signal expiry", "L2b",
+        "A queued opportunity with no final decision becomes expired after the pending "
+        "evaluation window, instead of remaining queued forever.",
+        status="implemented",
+    ),
+)
+def test_stale_queued_opportunity_becomes_expired(tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    conn = _setup_db(tmp_path, monkeypatch)
+    opp_id = _insert_opportunity(conn, symbol="BTC/USDT", confidence_score=90)
+    conn.execute("UPDATE opportunities SET status='queued' WHERE id=?", (opp_id,))
+    conn.commit()
+
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+
+    insert_pi_decision(PiDecision(
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        action="signal_pending",
+        reasoning="stale queue fixture",
+        opportunity_id=opp_id,
+        signal_source="market_observer",
+        created_at=(datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat(),
+    ))
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+
+    init_tool_registry()
+    import asyncio
+    from aletheia.agents.paper_trader import run_paper_trader
+
+    result = asyncio.run(run_paper_trader(permission_mode="Paper"))
+
+    status = conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opp_id,),
+    ).fetchone()[0]
+    assert status == "expired"
+    assert "expired_pending:1" in result["outputs"]
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-10", "pipeline_paper_trade", "§2 atomic signal enqueue", "L2b",
+        "signal_pending insertion and open→queued transition are atomic; a status-write "
+        "failure leaves no orphan pending row and records signal_enqueue=error.",
+        status="implemented",
+    ),
+)
+def test_signal_enqueue_rolls_back_when_queued_transition_fails(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    opp_id = _insert_opportunity(conn, symbol="BTC/USDT", confidence_score=90)
+    _insert_market_snapshot(conn, "BTC/USDT", price=60000.0)
+
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agents import paper_trader
+
+    init_tool_registry()
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
+        lambda source=None: None,
+        raising=False,
+    )
+    def fail_queued_transition(oid):
+        raise RuntimeError("queued transition failed")
+
+    monkeypatch.setattr(
+        paper_trader, "transition_open_opportunity_to_queued", fail_queued_transition
+    )
+
+    import asyncio
+
+    asyncio.run(paper_trader.run_paper_trader(permission_mode="Paper"))
+
+    pending = conn.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' AND opportunity_id=?",
+        (opp_id,),
+    ).fetchone()[0]
+    status = conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opp_id,),
+    ).fetchone()[0]
+    evidence = conn.execute(
+        "SELECT decision, reason_code FROM filter_decisions "
+        "WHERE opportunity_id=? AND filter_name='signal_enqueue'",
+        (opp_id,),
+    ).fetchone()
+    assert pending == 0
+    assert status == "open"
+    assert evidence is not None
+    assert tuple(evidence) == ("error", "signal_enqueue_error")
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-11", "pipeline_paper_trade", "§2 monotonic enqueue transition", "L2b",
+        "A stale paper-trader plan may claim only an open Opportunity. If another actor already "
+        "finalized it, enqueue creates no pending row and never regresses reviewed to queued.",
+        status="implemented",
+    ),
+)
+def test_stale_signal_plan_cannot_regress_reviewed_opportunity(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    opp_id = _insert_opportunity(conn, symbol="BTC/USDT", confidence_score=90)
+    _insert_market_snapshot(conn, "BTC/USDT", price=60000.0)
+
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agents import paper_trader
+
+    init_tool_registry()
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
+        lambda source=None: None,
+        raising=False,
+    )
+    original_transition = paper_trader.transition_open_opportunity_to_queued
+
+    def finalize_before_stale_plan(oid):
+        conn.execute("UPDATE opportunities SET status='reviewed' WHERE id=?", (oid,))
+        return original_transition(oid)
+
+    monkeypatch.setattr(
+        paper_trader,
+        "transition_open_opportunity_to_queued",
+        finalize_before_stale_plan,
+    )
+
+    import asyncio
+
+    result = asyncio.run(paper_trader.run_paper_trader(permission_mode="Paper"))
+
+    pending = conn.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' AND opportunity_id=?",
+        (opp_id,),
+    ).fetchone()[0]
+    status = conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opp_id,),
+    ).fetchone()[0]
+    evidence = conn.execute(
+        "SELECT decision, reason_code FROM filter_decisions "
+        "WHERE opportunity_id=? AND filter_name='signal_enqueue'",
+        (opp_id,),
+    ).fetchone()
+
+    assert pending == 0
+    assert status == "reviewed"
+    assert tuple(evidence) == ("rejected", "opportunity_not_open")
+    assert "skip_stale_plan:BTC/USDT" in result["outputs"]

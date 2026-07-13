@@ -1645,6 +1645,11 @@ _ADDITIVE_COLUMNS = [
     # Phase 2 (Serenity Option A): discriminator for which table opportunity_id
     # points at ('market_observer' → opportunities; 'serenity' → serenity_opportunities).
     ("signal_source", "pi_decisions", "TEXT"),
+    # Pending/final Operator rows must remain instrument-scoped even when their
+    # source opportunity is unavailable. Legacy rows stay NULL.
+    ("market_type", "pi_decisions", "TEXT"),
+    ("proposal_status", "pi_decisions", "TEXT"),
+    ("proposal_reason", "pi_decisions", "TEXT"),
     ("stop_price", "trade_proposals", "REAL"),
     # CR-RE-01: preserve the proposal's original execution_mode on the decision row
     # (allowed_execution_mode gets downgraded to paper_internal on rejection).
@@ -2353,10 +2358,13 @@ CREATE TABLE IF NOT EXISTS pi_decisions (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     symbol TEXT,
     direction TEXT,
+    market_type TEXT,
     action TEXT NOT NULL DEFAULT 'skip',
     conviction INTEGER NOT NULL DEFAULT 0,
     reasoning TEXT DEFAULT '',
     proposal_id TEXT,
+    proposal_status TEXT,
+    proposal_reason TEXT,
     debate_ran INTEGER NOT NULL DEFAULT 0,
     debate_initial_conviction INTEGER,
     debate_bull_confidence INTEGER,

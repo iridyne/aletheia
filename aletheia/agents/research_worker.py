@@ -854,6 +854,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                 pi_dec = PiDecision(
                     symbol=opp.get("symbol"),
                     direction=opp.get("direction"),
+                    market_type=opp.get("market_type"),
                     action="signal_pending",
                     conviction=0,
                     reasoning=f"Auto-promote: score={score_result['score']} opp={opp_id[:8]}",

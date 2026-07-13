@@ -311,6 +311,29 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         note="Identity/idempotency boundary; a final decision is never re-queued as pending.",
     ),
     _report_only_gate(
+        name="signal_enqueue",
+        stage="paper_trader_enqueue",
+        reason_codes=("signal_enqueue_error", "opportunity_not_open"),
+        current_value="signal_pending insert and opportunity queued transition are atomic",
+        note="State-consistency evidence; selection is not reported as delivered until the "
+             "queue row and source lifecycle transition commit together.",
+    ),
+    _report_only_gate(
+        name="proposal_identity",
+        stage="proposal_submission",
+        reason_codes=("invalid_action", "missing_symbol", "missing_direction"),
+        current_value="trade-like action requires symbol and direction",
+        note="Carrier completeness boundary. Failures are durable on PiDecision and are "
+             "never repaired by guessing identity after the fact.",
+    ),
+    _report_only_gate(
+        name="proposal_submission",
+        stage="proposal_submission",
+        reason_codes=("submission_exception", "no_submission_result"),
+        current_value="every trade intent has a durable submission status and reason",
+        note="Submission exceptions persist only a stable reason code; provider detail is not stored.",
+    ),
+    _report_only_gate(
         name="duplicate_symbol",
         stage="paper_trader_selection",
         reason_codes=("duplicate_symbol",),

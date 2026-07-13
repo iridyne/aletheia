@@ -28,7 +28,12 @@ from aletheia.agents.helpers import log_tool
 from aletheia.agents.paper_trader_ranker import build_paper_candidates
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
-from aletheia.storage.repositories import update_opportunity, list_positions
+from aletheia.storage.repositories import (
+    expire_stale_queued_opportunities,
+    list_positions,
+    transition_open_opportunity_to_queued,
+    update_opportunity,
+)
 
 logger = logging.getLogger("aletheia.agents.paper_trader")
 
@@ -237,6 +242,13 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
 
     execution_mode = _resolve_execution_mode(cfg.exchange.paper_execution_mode)
 
+    try:
+        expired_pending = expire_stale_queued_opportunities()
+        if expired_pending:
+            outputs.append(f"expired_pending:{expired_pending}")
+    except Exception as exc:
+        logger.warning("pending opportunity expiry unavailable: %s", exc)
+
     # Snapshot of currently open symbols — used to skip redundant signal writes.
     open_symbols: set[str] = {p["symbol"] for p in list_positions(status="open")}
     recent_signal_pairs = _recent_signal_pairs()
@@ -303,11 +315,12 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             sym = candidate["symbol"]
             direction = candidate.get("direction")
             from aletheia.storage.models import PiDecision
-            from aletheia.storage.repositories import insert_pi_decision
+            from aletheia.storage.repositories import insert_pi_decision, transaction
             _sig_conviction = min(int(candidate.get("trade_score", 0)), 95)
             pi_dec = PiDecision(
                 symbol=candidate["symbol"],
                 direction=direction,
+                market_type=candidate.get("market_type") or candidate.get("market"),
                 action="signal_pending",
                 conviction=_sig_conviction,
                 reasoning=(
@@ -319,19 +332,32 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 opportunity_id=candidate.get("opportunity_id"),
                 debate_ran=False,
             )
-            insert_pi_decision(pi_dec)
-            # Mark the source opportunity reviewed so the next paper_trader cycle
-            # doesn't re-rank and re-emit it as a duplicate signal_pending. Without
-            # this, the same open opportunity was re-written every 5min — ETH short
-            # appeared 4x in pending signals, and the System Operator read the duplicates
-            # as "pipeline data integrity compromised" and skipped every decision
-            # (PT-1, freeze exception 2026-06-24). Mirrors the reviewed-marking
-            # already done for permanently-skipped candidates at line ~113.
-            if candidate.get("opportunity_id"):
-                try:
-                    update_opportunity(candidate["opportunity_id"], status="reviewed")
-                except Exception as _e:
-                    logger.debug("opportunity reviewed-mark failed: %s", _e)
+            claimed = True
+            with transaction():
+                # Claim the source before writing its carrier. A plan may be stale by
+                # the time this loop executes; only open→queued is legal, so a final
+                # reviewed/expired row can never be moved backwards to queued.
+                if candidate.get("opportunity_id"):
+                    claimed = transition_open_opportunity_to_queued(
+                        candidate["opportunity_id"]
+                    )
+                if claimed:
+                    insert_pi_decision(pi_dec)
+            if not claimed:
+                _persist_signal_enqueue_evidence(
+                    candidate,
+                    run_id=run_id,
+                    decision="rejected",
+                    reason_code="opportunity_not_open",
+                )
+                outputs.append(f"skip_stale_plan:{candidate.get('symbol')}")
+                continue
+            _persist_signal_enqueue_evidence(
+                candidate,
+                run_id=run_id,
+                decision="passed",
+                reason_code="signal_enqueued",
+            )
             if direction:
                 recent_signal_pairs.add((sym, direction))
             signals_written += 1
@@ -342,7 +368,14 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             except Exception:
                 pass
         except Exception as e:
-            logger.debug("signal_pending write failed for %s: %s", candidate.get("symbol"), e)
+            _persist_signal_enqueue_evidence(
+                candidate,
+                run_id=run_id,
+                decision="error",
+                reason_code="signal_enqueue_error",
+                reason_detail=type(e).__name__,
+            )
+            logger.warning("signal_pending write failed for %s: %s", candidate.get("symbol"), e)
 
     # Counterfactual selection must reflect candidates actually emitted after all
     # occupancy/cooldown checks, not the theoretical rank-1 before those checks.
@@ -403,6 +436,39 @@ def _persist_filter_evidence(
                 )
     except Exception as exc:
         logger.warning("paper trader filter evidence unavailable: %s", exc)
+
+
+def _persist_signal_enqueue_evidence(
+    candidate: dict,
+    *,
+    run_id: str | None,
+    decision: str,
+    reason_code: str,
+    reason_detail: str | None = None,
+) -> None:
+    """Record actual queue insertion outcome separately from batch selection."""
+    try:
+        from aletheia.analytics.filter_evidence import record_candidate_filter_trace
+
+        record_candidate_filter_trace(
+            candidate,
+            run_id=run_id,
+            trace=[{
+                "filter_name": "signal_enqueue",
+                "stage": "paper_trader_enqueue",
+                "decision": decision,
+                "reason_code": reason_code,
+                "reason_detail": reason_detail,
+                "inputs": {"target_opportunity_status": "queued"},
+                "parameters": {},
+            }],
+        )
+    except Exception as exc:
+        logger.warning(
+            "signal enqueue evidence unavailable opportunity=%s: %s",
+            candidate.get("opportunity_id"),
+            exc,
+        )
 
 
 # Position C (2026-07-02): _handle_ruleset_entry removed with the rules engine.

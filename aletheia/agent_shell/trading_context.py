@@ -23,6 +23,9 @@ from aletheia.data.position_x import build_position_x_agent_context
 
 logger = logging.getLogger("aletheia.agent_shell.trading_context")
 
+_PENDING_SIGNAL_VISIBLE_LIMIT = 5
+_PENDING_SIGNAL_MAX_AGE_MINUTES = 30
+
 
 def _dedupe_symbol_direction(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     """Keep the first item for each symbol/direction pair."""
@@ -37,6 +40,79 @@ def _dedupe_symbol_direction(items: list[dict[str, Any]], limit: int) -> list[di
         if len(out) >= limit:
             break
     return out
+
+
+def _build_pending_signal_queue(
+    *,
+    limit: int = _PENDING_SIGNAL_VISIBLE_LIMIT,
+    max_age_minutes: int = _PENDING_SIGNAL_MAX_AGE_MINUTES,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Return the oldest unresolved queue slice plus honest backlog metadata."""
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
+    unresolved = (
+        "p.action = 'signal_pending' "
+        "AND (COALESCE(p.signal_source, 'market_observer') = 'serenity' "
+        "     OR p.created_at >= ?) "
+        "AND (p.opportunity_id IS NULL OR NOT EXISTS ("
+        "  SELECT 1 FROM pi_decisions f "
+        "  WHERE f.action != 'signal_pending' "
+        "    AND f.opportunity_id = p.opportunity_id "
+        "    AND COALESCE(f.signal_source, 'market_observer') = "
+        "        COALESCE(p.signal_source, 'market_observer')"
+        "))"
+    )
+    rows = db.execute(
+        "SELECT p.symbol, p.direction, p.market_type, p.reasoning, p.created_at, "
+        "p.opportunity_id, p.signal_source FROM pi_decisions p WHERE "
+        + unresolved
+        + " ORDER BY datetime(p.created_at) ASC, p.rowid ASC",
+        (cutoff,),
+    ).fetchall()
+    pending = [
+        {
+            "symbol": row["symbol"],
+            "direction": row["direction"],
+            "market_type": row["market_type"],
+            "reasoning": (row["reasoning"] or "")[:100],
+            "at": row["created_at"],
+            "opportunity_id": row["opportunity_id"],
+            "signal_source": row["signal_source"] or "market_observer",
+        }
+        for row in rows
+    ]
+    unique = (
+        _dedupe_symbol_direction(pending, limit=len(pending))
+        if pending else []
+    )
+    visible_limit = max(int(limit), 0)
+    visible = unique[:visible_limit]
+    expired = db.execute(
+        "SELECT COUNT(*) AS n, MIN(p.created_at) AS oldest_at "
+        "FROM pi_decisions p WHERE p.action = 'signal_pending' AND p.created_at < ? "
+        "AND COALESCE(p.signal_source, 'market_observer') = 'market_observer' "
+        "AND (p.opportunity_id IS NULL OR NOT EXISTS ("
+        "  SELECT 1 FROM pi_decisions f "
+        "  WHERE f.action != 'signal_pending' "
+        "    AND f.opportunity_id = p.opportunity_id "
+        "    AND COALESCE(f.signal_source, 'market_observer') = "
+        "        COALESCE(p.signal_source, 'market_observer')"
+        "))",
+        (cutoff,),
+    ).fetchone()
+    queue = {
+        "read_status": "complete",
+        "unresolved_total": len(unique),
+        "visible_count": len(visible),
+        "overflow_count": max(len(unique) - len(visible), 0),
+        "oldest_at": unique[0]["at"] if unique else None,
+        "max_age_minutes": max_age_minutes,
+        "expired_unconsumed_rows": int(expired["n"] or 0),
+        "oldest_expired_at": expired["oldest_at"],
+    }
+    return visible, queue
 
 
 def _excluded_candidates_summary(items: list[dict[str, Any]], *, examples_per_reason: int = 3) -> list[dict[str, Any]]:
@@ -680,28 +756,26 @@ def _build_layer2_short_term() -> dict[str, Any]:
         layer["ranker_candidates"] = []
     _record_candidate_supply_snapshot(layer)
 
-    # Phase 4b: Pending signals awaiting System Operator evaluation
+    # Phase 4b: Pending signals awaiting System Operator evaluation. This is an actual
+    # unresolved queue view: final decisions are excluded, duplicates are removed
+    # before the visible limit, and oldest work is served first.
     try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
-        rows = db.execute(
-            "SELECT symbol, direction, reasoning, created_at, opportunity_id, signal_source "
-            "FROM pi_decisions "
-            "WHERE action = 'signal_pending' AND created_at >= ? "
-            "ORDER BY created_at DESC LIMIT 5",
-            (cutoff,),
-        ).fetchall()
-        pending_signals = [
-            {
-                "symbol": r[0], "direction": r[1], "reasoning": r[2][:100],
-                "at": r[3], "opportunity_id": r[4], "signal_source": r[5],
-            }
-            for r in rows
-        ]
-        layer["pending_signals"] = _dedupe_symbol_direction(pending_signals, limit=5)
-    except Exception:
+        pending_signals, pending_queue = _build_pending_signal_queue()
+        layer["pending_signals"] = pending_signals
+        layer["pending_queue"] = pending_queue
+    except Exception as exc:
+        logger.warning("pending signal queue unavailable: %s", exc)
         layer["pending_signals"] = []
+        layer["pending_queue"] = {
+            "read_status": "error",
+            "unresolved_total": None,
+            "visible_count": 0,
+            "overflow_count": None,
+            "oldest_at": None,
+            "max_age_minutes": _PENDING_SIGNAL_MAX_AGE_MINUTES,
+            "expired_unconsumed_rows": None,
+            "oldest_expired_at": None,
+        }
 
     return layer
 

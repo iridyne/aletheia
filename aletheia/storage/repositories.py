@@ -69,12 +69,15 @@ def _update(table: str, id_val: str, data: dict) -> None:
 
 
 @contextmanager
-def transaction():
+def transaction(*, immediate: bool = False):
     db = get_db()
     if db.in_transaction:
         yield
         return
-    db.execute("BEGIN")
+    # BEGIN IMMEDIATE is reserved for short compare-and-write claims.  It acquires
+    # SQLite's writer slot before the read so concurrent workers cannot both see
+    # an absent row and then perform the same external side effect.
+    db.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
     try:
         yield
         db.commit()
@@ -169,6 +172,25 @@ def update_opportunity(oid: str, **kwargs) -> None:
     _update("opportunities", oid, kwargs)
 
 
+def transition_open_opportunity_to_queued(oid: str) -> bool:
+    """Claim one still-open Opportunity for queue insertion without state regression."""
+    cur = get_db().execute(
+        "UPDATE opportunities SET status='queued' WHERE id=? AND status='open'",
+        (oid,),
+    )
+    return cur.rowcount == 1
+
+
+def transition_opportunity_to_reviewed(oid: str) -> bool:
+    """Advance a produced/evaluated Opportunity to its terminal reviewed state."""
+    cur = get_db().execute(
+        "UPDATE opportunities SET status='reviewed' "
+        "WHERE id=? AND status IN ('open', 'queued', 'expired')",
+        (oid,),
+    )
+    return cur.rowcount == 1
+
+
 def list_opportunities_by_asset_class(asset_class: str, limit: int = 50) -> list[dict]:
     return _select_all("opportunities", where="asset_class = ?", params=(asset_class,), limit=limit)
 
@@ -228,6 +250,11 @@ def insert_pi_decision(decision) -> None:
     _insert("pi_decisions", _stamp_provenance(data))
 
 
+def update_pi_decision(decision_id: str, **kwargs) -> None:
+    """Update the durable pre-submission claim after its proposal attempt settles."""
+    _update("pi_decisions", decision_id, kwargs)
+
+
 def latest_pi_decision(symbol: str, max_age_minutes: int = 30) -> dict | None:
     """Get the most recent PI decision for a symbol within max_age_minutes."""
     from datetime import datetime, timedelta, timezone
@@ -242,6 +269,49 @@ def latest_pi_decision(symbol: str, max_age_minutes: int = 30) -> dict | None:
 
 def list_pi_decisions(limit: int = 20) -> list[dict]:
     return _select_all("pi_decisions", order="created_at DESC", limit=limit)
+
+
+def find_final_pi_decision_for_opportunity(
+    opportunity_id: str,
+    signal_source: str = "market_observer",
+) -> dict | None:
+    """Return the first authoritative non-pending result for one source identity."""
+    if not opportunity_id:
+        return None
+    row = get_db().execute(
+        "SELECT * FROM pi_decisions WHERE opportunity_id=? "
+        "AND action != 'signal_pending' "
+        "AND COALESCE(signal_source, 'market_observer')=? "
+        "ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 1",
+        (opportunity_id, signal_source or "market_observer"),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def expire_stale_queued_opportunities(max_age_minutes: int = 30) -> int:
+    """Mark market-pipeline opportunities whose pending evaluation window elapsed."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "UPDATE opportunities SET status='expired' WHERE status='queued' "
+        "AND EXISTS ("
+        "  SELECT 1 FROM pi_decisions p "
+        "  WHERE p.action='signal_pending' "
+        "    AND p.opportunity_id=opportunities.id "
+        "    AND COALESCE(p.signal_source, 'market_observer')='market_observer' "
+        "    AND datetime(p.created_at) < datetime(?)"
+        ") AND NOT EXISTS ("
+        "  SELECT 1 FROM pi_decisions f "
+        "  WHERE f.action!='signal_pending' "
+        "    AND f.opportunity_id=opportunities.id "
+        "    AND COALESCE(f.signal_source, 'market_observer')='market_observer'"
+        ")",
+        (cutoff,),
+    )
+    if not was_in_tx:
+        db.commit()
+    return int(cur.rowcount)
 
 
 # --- Capital Events ---

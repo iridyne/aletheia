@@ -234,7 +234,7 @@ production trading state and cannot authorize a parameter change.
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
-| `pi_decisions` | Structured System Operator decisions | decision_type, action, symbol, conviction, reasoning (JSON), opportunity_id, **signal_source**, **learning_manifest_json**, debate trace fields |
+| `pi_decisions` | Structured System Operator decisions | action, symbol, direction, **market_type**, conviction, reasoning, opportunity_id, **signal_source**, proposal_id, **proposal_status**, **proposal_reason**, learning_manifest_json, debate trace fields |
 
 > `signal_source ∈ {'market_observer','serenity'}` (default `'market_observer'`) — discriminator for which table `opportunity_id` resolves against. Both `opportunities.id` (market_observer) and `serenity_opportunities.id` are bare `uuid4().hex[:12]` with no type tag, so the id alone is cross-table ambiguous. Stamped by `_attach_opportunity_context` (market_observer takes precedence). Phase 2 of Serenity Option A — see `docs/plans/serenity_execution_path.md` §3.2.
 

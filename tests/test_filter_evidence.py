@@ -660,8 +660,12 @@ def test_operator_command_surfaces_proposal_submission_reason(monkeypatch):
         fake_submit,
     )
     monkeypatch.setattr(
-        "aletheia.agent_shell.reflection.record_decision",
-        lambda result: recorded.update(result),
+        "aletheia.agent_shell.reflection.claim_decision",
+        lambda result: ({"id": "test-claim"}, True),
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.reflection.finalize_decision",
+        lambda _decision_id, result: recorded.update(result),
     )
 
     result = asyncio.run(commands.evaluate_trading_opportunity({}))
@@ -669,3 +673,32 @@ def test_operator_command_surfaces_proposal_submission_reason(monkeypatch):
     assert result["proposal_status"] == "failed"
     assert result["proposal_reason"] == "market_price_unavailable"
     assert recorded["proposal_reason"] == "market_price_unavailable"
+
+
+@pytest.mark.parametrize(
+    ("symbol", "direction", "reason"),
+    [
+        (None, "long", "missing_symbol"),
+        ("BTC/USDT", None, "missing_direction"),
+    ],
+)
+def test_invalid_trade_identity_returns_stable_submission_reason(symbol, direction, reason):
+    import asyncio
+
+    from aletheia.agent_shell.trading_decision import (
+        TradingDecision,
+        submit_decision_as_proposal,
+    )
+
+    decision = TradingDecision(
+        action="trade",
+        symbol=symbol,
+        direction=direction,
+        conviction=80,
+        reasoning="invalid identity fixture",
+    )
+    result = asyncio.run(submit_decision_as_proposal(decision, "paper_internal"))
+
+    assert result == {"status": "failed", "reason": reason}
+    assert decision.filter_trace[-1]["stage"] == "proposal_submission"
+    assert decision.filter_trace[-1]["reason_code"] == reason

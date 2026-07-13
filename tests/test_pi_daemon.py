@@ -95,6 +95,41 @@ async def test_debounce_batches_signals():
     assert eval_count == 1, f"Expected 1 evaluation, got {eval_count}"
 
 
+async def test_daemon_drains_reported_pending_backlog():
+    """One notification keeps evaluating until the command reports no queue backlog."""
+    remaining = [2, 1, 0]
+    eval_count = 0
+
+    async def fake_evaluate(_params):
+        nonlocal eval_count
+        value = remaining[min(eval_count, len(remaining) - 1)]
+        eval_count += 1
+        return {"action": "skip", "pending_queue_remaining": value}
+
+    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
+         patch("aletheia.config.loader.load_config") as mock_cfg:
+        mock_cfg.return_value.runtime.paused = False
+        mock_cfg.return_value.agent.permission_mode = "Paper"
+
+        loop = asyncio.get_running_loop()
+        task = start_pi_daemon(
+            loop=loop,
+            debounce_sec=0.0,
+            cooldown_sec=0.01,
+            heartbeat_sec=999.0,
+        )
+        await asyncio.sleep(0.02)
+        notify_pi_daemon(source="backlog_test")
+        await asyncio.sleep(0.25)
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    assert eval_count == 3
+
+
 async def test_heartbeat_triggers_evaluation():
     """When no signals arrive, the heartbeat timeout must trigger evaluation."""
     eval_count = 0

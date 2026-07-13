@@ -61,7 +61,12 @@ def test_proposal_rationale_carries_final_parameter_snapshot(monkeypatch):
     monkeypatch.setattr(td, "_proposal_direction_overheated", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         "aletheia.trading.market_data.latest_snapshot",
-        lambda *_a, **_kw: {"price": 100.0},
+        lambda *_a, **_kw: {
+            "id": "snapshot-entry-exact",
+            "price": 100.0,
+            "market_type": "usdt_futures",
+            "snapshot_at": "2026-07-13T08:00:00+00:00",
+        },
     )
     monkeypatch.setattr(
         "aletheia.config.loader.load_config", lambda: AletheiaConfig(),
@@ -110,6 +115,9 @@ def test_proposal_rationale_carries_final_parameter_snapshot(monkeypatch):
         "entry_price", "stop_loss", "take_profit", "notional_usdt", "leverage",
     }
     assert snapshot["entry_price"]["final_value"] == 100.0
+    assert snapshot["entry_price"]["market_snapshot_id"] == "snapshot-entry-exact"
+    assert snapshot["entry_price"]["market_type"] == "usdt_futures"
+    assert snapshot["entry_price"]["snapshot_at"] == "2026-07-13T08:00:00+00:00"
     assert snapshot["stop_loss"]["reason"] == decision.parameter_rationale["stop_loss"]
     assert snapshot["take_profit"]["value_source"] == "default_config"
     assert snapshot["notional_usdt"]["actual_value"] == 25.0

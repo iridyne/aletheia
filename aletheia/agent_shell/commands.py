@@ -1537,6 +1537,16 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     # Run System Operator decision loop
     decision = await _evaluate(ctx)
 
+    def _attach_pending_queue_state(payload: dict) -> None:
+        try:
+            from aletheia.agent_shell.trading_context import _build_pending_signal_queue
+
+            _, queue = _build_pending_signal_queue(limit=0)
+            payload["pending_queue_remaining"] = queue["unresolved_total"]
+            payload["pending_queue"] = queue
+        except Exception:
+            payload["pending_queue_remaining"] = None
+
     result: dict = {
         "action": decision.action,
         # Identity belongs to every evaluated terminal decision, not only trades.
@@ -1563,29 +1573,75 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "market_type": decision.market_type,
         "scanner_family": decision.scanner_family,
         "position_size_usdt": decision.position_size_usdt,
+        "proposal_status": "not_applicable",
+        "proposal_reason": "action_not_trade",
         "filter_trace": decision.filter_trace,
         # One bundle-level attribution unit for all overlapping Learning prompt channels.
         "learning_manifest": ctx.get("learning_manifest") or {},
     }
 
+    trade_like = decision.action in ("trade", "scale_in", "flip")
+    if trade_like:
+        result["proposal_status"] = "submitting"
+        result["proposal_reason"] = None
+
+    # Claim the authoritative final intent before any proposal side effect. The
+    # short BEGIN IMMEDIATE transaction serializes concurrent wakes for the same
+    # causal opportunity; a DB failure propagates and therefore cannot be reported
+    # as a successful proposal submission.
+    from aletheia.agent_shell.reflection import claim_decision, finalize_decision
+
+    claimed_final, claim_created = claim_decision(result)
+    if not claim_created:
+        result.update({
+            "action": claimed_final.get("action"),
+            "symbol": claimed_final.get("symbol"),
+            "direction": claimed_final.get("direction"),
+            "market_type": claimed_final.get("market_type"),
+            "conviction": claimed_final.get("conviction"),
+            "reasoning": claimed_final.get("reasoning") or "",
+            "proposal_id": claimed_final.get("proposal_id"),
+            "proposal_status": claimed_final.get("proposal_status"),
+            "proposal_reason": claimed_final.get("proposal_reason"),
+            "opportunity_id": claimed_final.get("opportunity_id"),
+            "signal_source": claimed_final.get("signal_source") or "market_observer",
+            "idempotent_replay": True,
+        })
+        _attach_pending_queue_state(result)
+        return result
+
     # trade / scale_in / flip all produce proposals
-    if decision.action in ("trade", "scale_in", "flip") and decision.symbol:
-        proposal_result = await submit_decision_as_proposal(decision, execution_mode)
+    if trade_like:
+        try:
+            proposal_result = await submit_decision_as_proposal(decision, execution_mode)
+        except Exception:
+            decision.filter_trace.append({
+                "filter_name": "proposal_submission",
+                "stage": "proposal_submission",
+                "decision": "error",
+                "reason_code": "submission_exception",
+                "inputs": {"action": decision.action},
+                "parameters": {},
+            })
+            proposal_result = {
+                "status": "failed",
+                "reason": "submission_exception",
+            }
         if proposal_result:
             result["proposal_id"] = proposal_result.get("proposal_id")
             result["proposal_status"] = proposal_result.get("status")
-            if proposal_result.get("reason"):
-                result["proposal_reason"] = proposal_result["reason"]
+            result["proposal_reason"] = proposal_result.get("reason")
             result["filter_trace"] = decision.filter_trace
         else:
-            result["proposal_error"] = "price_unavailable_or_proposal_rejected"
+            result["proposal_status"] = "failed"
+            result["proposal_reason"] = "no_submission_result"
+        if result.get("proposal_reason"):
+            result["proposal_error"] = result["proposal_reason"]
 
-    # Record decision for next-cycle reflection loop
-    try:
-        from aletheia.agent_shell.reflection import record_decision
-        record_decision(result)
-    except Exception:
-        pass
+    # Settle the pre-submission claim. A failure is intentionally visible to the
+    # caller; the durable submitting claim prevents a retry from duplicating the
+    # proposal while operations investigates the incomplete finalization.
+    finalize_decision(claimed_final["id"], result)
 
     # Self-heal: emit system_action when data environment is degraded
     try:
@@ -1602,6 +1658,8 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             )
     except Exception:
         pass
+
+    _attach_pending_queue_state(result)
 
     return result
 

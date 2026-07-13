@@ -147,15 +147,18 @@ async def _pi_daemon_loop(
             continue
 
         async with _eval_lock:
-            await _run_evaluation(triggered_by)
+            pending_queue_remaining = await _run_evaluation(triggered_by)
 
-        # Cooldown: discard signals that arrive during rest period
+        # Cooldown bounds LLM cadence. Notifications that arrive during the rest
+        # period remain set, and a reported queue backlog schedules the next item
+        # instead of silently discarding work.
         if cooldown_sec > 0:
             await asyncio.sleep(cooldown_sec)
-            _signal_event.clear()
+        if pending_queue_remaining > 0:
+            _signal_event.set()
 
 
-async def _run_evaluation(triggered_by: str) -> None:
+async def _run_evaluation(triggered_by: str) -> int:
     try:
         from aletheia.agent_shell.commands import evaluate_trading_opportunity
         logger.info("pi_daemon: evaluating (trigger=%s)", triggered_by)
@@ -164,13 +167,20 @@ async def _run_evaluation(triggered_by: str) -> None:
             timeout=300.0,
         )
         action = result.get("action", "unknown") if isinstance(result, dict) else "unknown"
+        remaining = (
+            result.get("pending_queue_remaining", 0)
+            if isinstance(result, dict) else 0
+        )
         logger.info("pi_daemon: evaluation done (trigger=%s, action=%s)", triggered_by, action)
+        return max(int(remaining or 0), 0)
     except asyncio.TimeoutError:
         logger.warning("pi_daemon: evaluate_trading_opportunity timed out after 300s")
+        return 0
     except asyncio.CancelledError:
         raise  # propagate shutdown
     except Exception as exc:
         logger.warning("pi_daemon: evaluation failed: %s", exc)
+        return 0
     finally:
         # Release thread-local SQLite connection to prevent WAL lock across cooldown
         try:

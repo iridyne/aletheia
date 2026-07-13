@@ -20,19 +20,17 @@ logger = logging.getLogger("aletheia.agent_shell.reflection")
 _REFLECTION_FILE = Path("data/pi_reflection.json")
 
 
-def record_decision(decision_result: dict) -> None:
-    """Record the System Operator's latest decision for next-cycle reflection.
-
-    Called after evaluate_trading_opportunity() returns.
-    Persists to both JSON (reflection) and DB (pi_decisions for audit trail).
-    """
-    record = {
+def _reflection_record(decision_result: dict) -> dict:
+    return {
         "action": decision_result.get("action"),
         "symbol": decision_result.get("symbol"),
         "direction": decision_result.get("direction"),
+        "market_type": decision_result.get("market_type"),
         "conviction": decision_result.get("conviction"),
         "reasoning": decision_result.get("reasoning", "")[:200],
         "proposal_id": decision_result.get("proposal_id"),
+        "proposal_status": decision_result.get("proposal_status"),
+        "proposal_reason": decision_result.get("proposal_reason"),
         "opportunity_id": decision_result.get("opportunity_id"),
         # Phase 2 (Serenity Option A): discriminator for which table opportunity_id
         # points at. Default 'market_observer' keeps legacy rows resolving as before.
@@ -40,58 +38,139 @@ def record_decision(decision_result: dict) -> None:
         "decided_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    # JSON file for reflection loop
+
+def _write_reflection_record(record: dict) -> None:
+    """Update the rotating convenience pointer after durable finalization."""
     try:
         _REFLECTION_FILE.parent.mkdir(parents=True, exist_ok=True)
         _REFLECTION_FILE.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         logger.debug("reflection record failed: %s", e)
 
-    # DB persistence for audit trail + downstream consumers (Phase 2 of PI sole decision maker)
-    try:
-        from aletheia.storage.models import PiDecision
-        from aletheia.storage.repositories import insert_pi_decision
-        raw_assumptions = decision_result.get("key_assumptions")
-        assumptions_json = (
-            json.dumps(raw_assumptions) if isinstance(raw_assumptions, list) else "[]"
-        )
-        pi_dec = PiDecision(
-            symbol=record["symbol"],
-            direction=record["direction"],
-            action=record["action"] or "skip",
-            conviction=record.get("conviction") or 0,
-            reasoning=record.get("reasoning") or "",
-            proposal_id=record.get("proposal_id"),
-            opportunity_id=decision_result.get("opportunity_id"),
-            signal_source=record.get("signal_source") or "market_observer",
-            debate_ran=decision_result.get("debate_ran", False),
-            debate_initial_conviction=decision_result.get("debate_initial_conviction"),
-            debate_bull_confidence=(
-                decision_result.get("debate_bull_confidence")
-                if decision_result.get("debate_bull_confidence") is not None
-                else decision_result.get("debate_bull")
-            ),
-            debate_bear_confidence=(
-                decision_result.get("debate_bear_confidence")
-                if decision_result.get("debate_bear_confidence") is not None
-                else decision_result.get("debate_bear")
-            ),
-            debate_adjustment=decision_result.get("debate_adjustment"),
-            bear_case=decision_result.get("bear_case") or "",
-            key_assumptions=assumptions_json,
-            learning_manifest_json=json.dumps(
-                decision_result.get("learning_manifest") or {}, sort_keys=True
-            ),
-        )
-        insert_pi_decision(pi_dec)
-        try:
-            from aletheia.analytics.filter_evidence import record_operator_filter_trace
 
-            record_operator_filter_trace(pi_dec.id, decision_result)
-        except Exception as evidence_error:
-            logger.warning("operator filter evidence unavailable: %s", evidence_error)
-    except Exception as e:
-        logger.debug("pi_decision db persist failed: %s", e)
+def _build_pi_decision(decision_result: dict):
+    from aletheia.storage.models import PiDecision
+
+    record = _reflection_record(decision_result)
+    raw_assumptions = decision_result.get("key_assumptions")
+    assumptions_json = (
+        json.dumps(raw_assumptions) if isinstance(raw_assumptions, list) else "[]"
+    )
+    return PiDecision(
+        symbol=record["symbol"],
+        direction=record["direction"],
+        market_type=record["market_type"],
+        action=record["action"] or "skip",
+        conviction=record.get("conviction") or 0,
+        reasoning=record.get("reasoning") or "",
+        proposal_id=record.get("proposal_id"),
+        proposal_status=record.get("proposal_status"),
+        proposal_reason=record.get("proposal_reason"),
+        opportunity_id=record.get("opportunity_id"),
+        signal_source=record.get("signal_source") or "market_observer",
+        debate_ran=decision_result.get("debate_ran", False),
+        debate_initial_conviction=decision_result.get("debate_initial_conviction"),
+        debate_bull_confidence=(
+            decision_result.get("debate_bull_confidence")
+            if decision_result.get("debate_bull_confidence") is not None
+            else decision_result.get("debate_bull")
+        ),
+        debate_bear_confidence=(
+            decision_result.get("debate_bear_confidence")
+            if decision_result.get("debate_bear_confidence") is not None
+            else decision_result.get("debate_bear")
+        ),
+        debate_adjustment=decision_result.get("debate_adjustment"),
+        bear_case=decision_result.get("bear_case") or "",
+        key_assumptions=assumptions_json,
+        learning_manifest_json=json.dumps(
+            decision_result.get("learning_manifest") or {}, sort_keys=True
+        ),
+    )
+
+
+def claim_decision(decision_result: dict) -> tuple[dict, bool]:
+    """Persist the final intent before any proposal side effect.
+
+    The immediate transaction makes the read+insert one SQLite writer claim. A
+    concurrent wake observes the inserted row and reuses it. The claim row may
+    honestly remain ``proposal_status='submitting'`` after a process crash, but a
+    retry can no longer create an untraceable second proposal.
+    """
+    from aletheia.storage.repositories import (
+        find_final_pi_decision_for_opportunity,
+        insert_pi_decision,
+        transaction,
+        transition_opportunity_to_reviewed,
+    )
+
+    pi_dec = _build_pi_decision(decision_result)
+    with transaction(immediate=True):
+        existing = (
+            find_final_pi_decision_for_opportunity(
+                pi_dec.opportunity_id, pi_dec.signal_source
+            )
+            if pi_dec.opportunity_id else None
+        )
+        if existing:
+            if pi_dec.signal_source == "market_observer":
+                transition_opportunity_to_reviewed(pi_dec.opportunity_id)
+            return existing, False
+        insert_pi_decision(pi_dec)
+        if pi_dec.opportunity_id and pi_dec.signal_source == "market_observer":
+            transition_opportunity_to_reviewed(pi_dec.opportunity_id)
+    return pi_dec.model_dump(), True
+
+
+def finalize_decision(decision_id: str, decision_result: dict) -> dict:
+    """Settle a durable claim and publish its reflection/evidence views."""
+    from aletheia.storage import repositories as repo
+
+    with repo.transaction():
+        row = repo._select_one("pi_decisions", decision_id)
+        if row is None:
+            raise RuntimeError(f"pi_decision claim disappeared: {decision_id}")
+        repo.update_pi_decision(
+            decision_id,
+            symbol=decision_result.get("symbol"),
+            direction=decision_result.get("direction"),
+            market_type=decision_result.get("market_type"),
+            action=decision_result.get("action") or "skip",
+            conviction=decision_result.get("conviction") or 0,
+            reasoning=(decision_result.get("reasoning") or "")[:200],
+            proposal_id=decision_result.get("proposal_id"),
+            proposal_status=decision_result.get("proposal_status"),
+            proposal_reason=decision_result.get("proposal_reason"),
+        )
+        settled = repo._select_one("pi_decisions", decision_id)
+    if settled is None:
+        raise RuntimeError(f"pi_decision finalization unreadable: {decision_id}")
+
+    try:
+        from aletheia.analytics.filter_evidence import record_operator_filter_trace
+
+        record_operator_filter_trace(decision_id, decision_result)
+    except Exception as evidence_error:
+        logger.warning("operator filter evidence unavailable: %s", evidence_error)
+    _write_reflection_record(_reflection_record(decision_result))
+    return settled
+
+
+def record_decision(decision_result: dict) -> dict | None:
+    """Compatibility entry point for callers without proposal side effects.
+
+    The command path uses :func:`claim_decision` before submission and
+    :func:`finalize_decision` afterwards. Direct reflection callers keep their
+    historical best-effort behavior.
+    """
+    try:
+        claimed, created = claim_decision(decision_result)
+        if not created:
+            return claimed
+        return finalize_decision(claimed["id"], decision_result)
+    except Exception as exc:
+        logger.debug("pi_decision db persist failed: %s", exc)
+        return None
 
 
 def get_last_reflection() -> str | None:

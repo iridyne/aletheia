@@ -1164,10 +1164,17 @@ class PiDecision(_Provenanced):
     created_at: str = Field(default_factory=_utcnow)
     symbol: str | None = None
     direction: str | None = None
+    # Self-contained instrument identity for pending and final Operator rows.
+    # Legacy rows remain NULL and may still recover it from the source opportunity.
+    market_type: str | None = None
     action: str = "skip"
     conviction: int = 0
     reasoning: str = ""
     proposal_id: str | None = None
+    # Durable outcome of the proposal-submission attempt. Stable reason codes
+    # explain NULL proposal_id without persisting provider exception text.
+    proposal_status: str | None = None
+    proposal_reason: str | None = None
     # A13 (LEARNING_LOOP_AUDIT / PL-PT-04): link a signal_pending decision back to
     # its source opportunity so the attribution chain is complete on the signal side
     # (mirrors the R0 opportunity_id fix on the proposal side).

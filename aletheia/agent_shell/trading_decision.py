@@ -240,10 +240,15 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     """
     decision_raw = await _assess_opportunity(trading_context)
     if decision_raw is None:
-        return TradingDecision(
+        decision = TradingDecision(
             action="skip", symbol=None, direction=None,
             conviction=0, reasoning="LLM assessment unavailable",
         )
+        # An unavailable assessment is still the terminal result of the oldest
+        # queued signal presented in this call. Preserve that exact identity so
+        # the queue advances instead of writing an anonymous skip forever.
+        _attach_opportunity_context(decision, trading_context)
+        return decision
 
     decision = _parse_decision(decision_raw)
     # R0: match the pick back to its source opportunity (id + scanner_family)
@@ -395,10 +400,28 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     return decision
 
 
-async def submit_decision_as_proposal(decision: TradingDecision, execution_mode: str) -> dict | None:
-    """Submit a TradingDecision as a paper proposal. Returns result dict or None."""
-    if decision.action not in ("trade", "scale_in", "flip") or not decision.symbol or not decision.direction:
-        return None
+async def submit_decision_as_proposal(decision: TradingDecision, execution_mode: str) -> dict:
+    """Submit a trade intent or return one structured, stable failure result."""
+    identity_failure = None
+    if decision.action not in ("trade", "scale_in", "flip"):
+        identity_failure = "invalid_action"
+    elif not decision.symbol:
+        identity_failure = "missing_symbol"
+    elif not decision.direction:
+        identity_failure = "missing_direction"
+    if identity_failure:
+        decision.filter_trace.append({
+            "filter_name": "proposal_identity",
+            "stage": "proposal_submission",
+            "decision": "rejected",
+            "reason_code": identity_failure,
+            "inputs": {"action": decision.action},
+            "parameters": {
+                "required_fields": ["symbol", "direction"],
+                "trade_actions": ["trade", "scale_in", "flip"],
+            },
+        })
+        return {"status": "failed", "reason": identity_failure}
 
     missing_parameter_reasons = [
         key for key in _ENTRY_PARAMETER_KEYS
@@ -565,6 +588,7 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         requested_notional=notional,
         leverage=leverage,
         leverage_cap=leverage_cap,
+        market_snapshot=snap,
     )
 
     decision_meta = {
@@ -638,6 +662,7 @@ def _build_entry_parameter_snapshot(
     requested_notional: float,
     leverage: int | None,
     leverage_cap: int | None,
+    market_snapshot: dict | None = None,
 ) -> dict[str, dict]:
     """Build the immutable, honest explanation of the final entry values.
 
@@ -646,6 +671,7 @@ def _build_entry_parameter_snapshot(
     mistake a configured fallback or a risk-cap clamp for an AI-selected value.
     """
     supplied = decision.parameter_rationale if isinstance(decision.parameter_rationale, dict) else {}
+    snapshot = market_snapshot or {}
 
     def reason_for(key: str) -> str | None:
         value = supplied.get(key)
@@ -671,6 +697,9 @@ def _build_entry_parameter_snapshot(
         "entry_price": {
             "final_value": entry_price,
             "value_source": "market_snapshot",
+            "market_snapshot_id": snapshot.get("id"),
+            "market_type": snapshot.get("market_type"),
+            "snapshot_at": snapshot.get("snapshot_at"),
             "reason": reason_for("entry_price"),
         },
         "stop_loss": {
@@ -1319,13 +1348,21 @@ def _build_assessment_prompt(ctx: dict) -> str:
     pending = layer2.get("pending_signals", [])
     if pending:
         pending_lines = "\n".join(
-            f"  {p['symbol']} {p.get('direction', '?')}: {p.get('reasoning', '')}"
+            f"  {p['symbol']} {p.get('direction', '?')} "
+            f"[{p.get('market_type') or 'unknown market'}]: {p.get('reasoning', '')}"
             for p in pending
+        )
+        queue = layer2.get("pending_queue") or {}
+        queue_line = (
+            f"Queue: {queue.get('unresolved_total', '?')} unresolved, "
+            f"{queue.get('overflow_count', '?')} beyond this visible batch; "
+            "oldest visible signal is listed first."
         )
         parts += [
             "## ⚡ Pending Signals (awaiting your decision)",
             "These signals were collected by the scanner pipeline. You are the sole decision maker —",
-            "evaluate each and decide: trade, skip, or watch.",
+            "make exactly one trade, skip, or watch decision for the oldest suitable visible signal.",
+            queue_line,
             pending_lines, "",
         ]
         skew_note = _direction_skew_note(pending, "pending signals")
@@ -1610,13 +1647,44 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
     if decision.action in {"close", "reduce"} and _attach_position_context(decision, ctx):
         return
 
+    # The exact queued carrier is more specific than a later same-symbol/direction
+    # open row, so consume it before heuristic Layer-1 matches.
+    pending = (ctx.get("layer2") or {}).get("pending_signals") or []
     if not decision.symbol:
+        carrier = next((p for p in pending if p.get("opportunity_id")), None)
+        if carrier is None:
+            return
+        decision.symbol = carrier.get("symbol")
+        decision.direction = carrier.get("direction")
+        decision.market_type = carrier.get("market_type") or decision.market_type
+        decision.opportunity_id = carrier.get("opportunity_id")
+        decision.signal_source = carrier.get("signal_source") or "market_observer"
+        try:
+            if decision.signal_source == "serenity":
+                from aletheia.storage.repositories import get_serenity_opportunity
+
+                source = get_serenity_opportunity(decision.opportunity_id)
+                if source and not decision.market_type:
+                    decision.market_type = source.get("market_type")
+            else:
+                from aletheia.storage.repositories import get_opportunity
+
+                source = get_opportunity(decision.opportunity_id)
+                if source:
+                    decision.strategy_id = source.get("linked_strategy_id")
+                    decision.scanner_family = source.get("scanner_family")
+                    if not decision.market_type:
+                        decision.market_type = source.get("market")
+                    try:
+                        raw_meta = source.get("metadata") or "{}"
+                        meta = raw_meta if isinstance(raw_meta, dict) else json.loads(raw_meta)
+                    except (TypeError, ValueError):
+                        meta = {}
+                    decision.learning_candidate_key = meta.get("learning_candidate_key")
+        except Exception:
+            pass
         return
 
-    # paper_trader marks an Opportunity reviewed immediately after enqueueing its
-    # signal_pending PiDecision. That exact queue id is more specific than a later
-    # same-symbol/direction open row, so consume it before heuristic Layer-1 matches.
-    pending = (ctx.get("layer2") or {}).get("pending_signals") or []
     for p in pending:
         if (p.get("signal_source") or "market_observer") != "market_observer":
             continue
@@ -1630,6 +1698,8 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
             continue
         decision.opportunity_id = oid
         decision.signal_source = "market_observer"
+        if not decision.market_type and p.get("market_type"):
+            decision.market_type = p.get("market_type")
         # Recover the source fields omitted from PiDecision. The id remains an
         # honest attribution anchor even if this best-effort lookup fails.
         try:
@@ -1722,10 +1792,10 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
             continue
         decision.opportunity_id = oid
         decision.signal_source = "serenity"
-        # #102: pending_signals don't carry market_type (the pi_decisions query
-        # omits it and PiDecision has no such column), so a promoted serenity pick
-        # would fall through to the short->perp default. Recover it from the source
-        # serenity_opportunity. Defensive: a lookup miss must not break attribution.
+        if not decision.market_type and p.get("market_type"):
+            decision.market_type = p.get("market_type")
+        # Legacy pending rows lack market_type. Recover it from the source
+        # serenity_opportunity without weakening the attribution anchor.
         if not decision.market_type:
             try:
                 from aletheia.storage.repositories import get_serenity_opportunity
