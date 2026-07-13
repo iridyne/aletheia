@@ -367,6 +367,14 @@ async def lifespan(app: FastAPI):
                 logger.warning("Marked %d stale agent run(s) during startup reconciliation", stale_runs)
         except Exception as e:
             logger.warning("Agent run startup reconciliation failed: %s", e)
+        # Runtime Session: one row per process lifecycle. Created AFTER migrations
+        # (its table must exist) and after record_boot_commit (for the boot commit).
+        # Core trading facts produced this boot inherit its identity. Best-effort.
+        try:
+            from aletheia.agent_runtime.runtime_session import start_runtime_session
+            start_runtime_session(cfg, runtime_context)
+        except Exception as e:
+            logger.warning("Runtime session start failed (non-fatal): %s", e)
     init_tool_registry()
     if background_services_enabled:
         try:
@@ -494,6 +502,15 @@ async def lifespan(app: FastAPI):
                 await _cancel_background_task(pi_daemon_task, "PI daemon")
             except Exception:
                 pass
+        # Mark the Runtime Session ended cleanly. Reaching this finally means an
+        # orderly lifespan exit; a hard kill skips it, leaving ended_at NULL +
+        # shutdown_clean=0 so a crash stays distinguishable from a clean stop.
+        if background_services_enabled:
+            try:
+                from aletheia.agent_runtime.runtime_session import end_runtime_session
+                end_runtime_session(clean=True)
+            except Exception as e:
+                logger.debug("Runtime session end failed: %s", e)
         # Only clean PID file if we wrote it (bare uvicorn / foreground mode).
         # In supervised mode the PID belongs to the supervisor — don't touch it.
         if getattr(app.state, "_owns_pid", False):

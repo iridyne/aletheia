@@ -4,6 +4,11 @@ import sqlite3
 
 from aletheia.storage.sqlite import get_db
 
+# Declared DB schema version recorded on each Runtime Session so a session can be
+# tied to the schema it booted on. There is no per-migration numbering; bump this
+# string when the schema shape changes in a way worth attributing to.
+SCHEMA_VERSION = "aletheia-sqlite-v1"
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -1261,6 +1266,26 @@ CREATE TABLE IF NOT EXISTS universe_policies (
     change_reason TEXT,
     previous_policy_id TEXT
 );
+
+-- Runtime Session (2026-07-13): one row per Gateway PROCESS lifecycle. runtime_id
+-- names the running version; session_id names this specific boot. Core trading
+-- facts reference session_id via their runtime_session_id column. ended_at +
+-- shutdown_clean stay NULL/0 until a clean shutdown records them, so a crash is
+-- distinguishable from a clean exit.
+CREATE TABLE IF NOT EXISTS runtime_sessions (
+    session_id TEXT PRIMARY KEY,
+    runtime_id TEXT NOT NULL DEFAULT 'runtime-local-current',
+    boot_commit TEXT,
+    config_hash TEXT,
+    behavior_fingerprint TEXT,
+    schema_version TEXT,
+    active_scope_id TEXT,
+    execution_mode TEXT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    ended_at TEXT,
+    shutdown_clean INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_runtime_sessions_runtime ON runtime_sessions (runtime_id, started_at DESC);
 """
 
 _DATA_COLLECTORS_DDL = """
@@ -1907,6 +1932,39 @@ _ADDITIVE_COLUMNS = [
     ("outcome_contract_version", "learning_contribution_verdicts", "TEXT"),
     ("metric_version", "learning_contribution_verdicts", "TEXT"),
     ("code_commit", "learning_contribution_verdicts", "TEXT"),
+    # --- Runtime Session provenance (2026-07-13) -------------------------------
+    # Expand-only, nullable. Every core trading-fact row carries the identity of
+    # the process lifecycle (runtime_session) that PRODUCED it, the commit that
+    # process booted on, and a fingerprint of the behaviour-affecting config.
+    # Legacy rows stay NULL — history is never fabricated. See
+    # aletheia/agent_runtime/runtime_session.py + docs/design/data_model.md.
+    ("runtime_session_id", "opportunities", "TEXT"),
+    ("producer_commit", "opportunities", "TEXT"),
+    ("behavior_fingerprint", "opportunities", "TEXT"),
+    ("runtime_session_id", "pi_decisions", "TEXT"),
+    ("producer_commit", "pi_decisions", "TEXT"),
+    ("behavior_fingerprint", "pi_decisions", "TEXT"),
+    ("runtime_session_id", "trade_proposals", "TEXT"),
+    ("producer_commit", "trade_proposals", "TEXT"),
+    ("behavior_fingerprint", "trade_proposals", "TEXT"),
+    ("runtime_session_id", "risk_decisions", "TEXT"),
+    ("producer_commit", "risk_decisions", "TEXT"),
+    ("behavior_fingerprint", "risk_decisions", "TEXT"),
+    ("runtime_session_id", "orders", "TEXT"),
+    ("producer_commit", "orders", "TEXT"),
+    ("behavior_fingerprint", "orders", "TEXT"),
+    ("runtime_session_id", "fills", "TEXT"),
+    ("producer_commit", "fills", "TEXT"),
+    ("behavior_fingerprint", "fills", "TEXT"),
+    # Positions carry BOTH the opening producer identity and — stamped at close —
+    # the outcome producer identity, so a restart between open and close does not
+    # collapse the whole position onto the last run.
+    ("runtime_session_id", "positions", "TEXT"),
+    ("producer_commit", "positions", "TEXT"),
+    ("behavior_fingerprint", "positions", "TEXT"),
+    ("closed_runtime_session_id", "positions", "TEXT"),
+    ("closed_producer_commit", "positions", "TEXT"),
+    ("closed_behavior_fingerprint", "positions", "TEXT"),
 ]
 
 

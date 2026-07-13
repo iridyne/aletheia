@@ -8,11 +8,35 @@ from aletheia.storage.models import (
     AuditEvent, AgentRun, Opportunity, TradeProposal,
     RiskDecision, Order, Fill, Position, PositionDisappearanceCandidate,
     PositionDisappearanceObservation, ReconciliationIntegrityIncident,
-    StrategyRecord, KnowledgeItem,
+    StrategyRecord, KnowledgeItem, RuntimeSession,
     SerenityTheme, SerenityEvidence, SerenityOpportunity, SerenityRiskGate,
     SerenityReplaySnapshot, SerenityPostMortem, SerenityClaim,
     PaperAccountEvent,
 )
+
+_PROVENANCE_FIELDS = ("runtime_session_id", "producer_commit", "behavior_fingerprint")
+
+
+def _stamp_provenance(data: dict) -> dict:
+    """Fill Runtime Session provenance on a core-entity row at insert time.
+
+    Only fills a provenance field that EXISTS in the row and is still None, so an
+    explicit caller value always wins and a row with no active session stays NULL
+    (legacy, never fabricated). Lazy import avoids a repositories↔runtime_session
+    import cycle. Best-effort — a provenance failure must not block a real insert.
+    """
+    try:
+        if not any(f in data and data.get(f) is None for f in _PROVENANCE_FIELDS):
+            return data
+        from aletheia.agent_runtime.runtime_session import current_provenance
+
+        prov = current_provenance()
+        for f in _PROVENANCE_FIELDS:
+            if f in data and data.get(f) is None and prov.get(f) is not None:
+                data[f] = prov[f]
+    except Exception:
+        pass
+    return data
 
 
 def _insert(table: str, data: dict) -> None:
@@ -59,6 +83,36 @@ def transaction():
         raise
 
 
+# --- Runtime Sessions (one row per Gateway process lifecycle) ---
+
+def insert_runtime_session(session: RuntimeSession) -> None:
+    _insert("runtime_sessions", session.model_dump())
+
+
+def update_runtime_session(session_id: str, **kwargs) -> None:
+    db = get_db()
+    sets = ", ".join(f"{k} = ?" for k in kwargs.keys())
+    db.execute(
+        f"UPDATE runtime_sessions SET {sets} WHERE session_id = ?",
+        [*kwargs.values(), session_id],
+    )
+
+
+def get_runtime_session(session_id: str) -> dict | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM runtime_sessions WHERE session_id = ?", (session_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_runtime_sessions(runtime_id: str | None = None, limit: int = 50) -> list[dict]:
+    if runtime_id:
+        return _select_all("runtime_sessions", where="runtime_id = ?",
+                           params=(runtime_id,), order="started_at DESC", limit=limit)
+    return _select_all("runtime_sessions", order="started_at DESC", limit=limit)
+
+
 # --- Audit Events ---
 
 def insert_audit_event(event: AuditEvent) -> None:
@@ -90,7 +144,7 @@ def get_agent_run(run_id: str) -> dict | None:
 # --- Opportunities ---
 
 def insert_opportunity(opp: Opportunity) -> None:
-    _insert("opportunities", opp.model_dump())
+    _insert("opportunities", _stamp_provenance(opp.model_dump()))
 
 
 def list_opportunities(limit: int = 50) -> list[dict]:
@@ -134,7 +188,8 @@ def find_open_opportunity_by_symbol_snapshot(symbol: str, snapshot_id: str, mark
 
 def insert_pi_decision(decision) -> None:
     """Persist a System Operator trading decision to the database."""
-    _insert("pi_decisions", decision.model_dump() if hasattr(decision, "model_dump") else decision)
+    data = decision.model_dump() if hasattr(decision, "model_dump") else dict(decision)
+    _insert("pi_decisions", _stamp_provenance(data))
 
 
 def latest_pi_decision(symbol: str, max_age_minutes: int = 30) -> dict | None:
@@ -414,7 +469,7 @@ def insert_trade_proposal(p: TradeProposal) -> None:
         ).fetchone()
         p.parent_hash = row[0] if row else None
         p.commit_hash = _compute_proposal_hash(p)
-    _insert("trade_proposals", p.model_dump())
+    _insert("trade_proposals", _stamp_provenance(p.model_dump()))
 
 
 def update_trade_proposal(pid: str, **kwargs) -> None:
@@ -432,7 +487,7 @@ def get_trade_proposal(pid: str) -> dict | None:
 # --- Risk Decisions ---
 
 def insert_risk_decision(d: RiskDecision) -> None:
-    _insert("risk_decisions", d.model_dump())
+    _insert("risk_decisions", _stamp_provenance(d.model_dump()))
 
 
 def list_risk_decisions(limit: int = 50) -> list[dict]:
@@ -462,7 +517,7 @@ def get_order(oid: str) -> dict | None:
 
 
 def insert_order(o: Order) -> None:
-    _insert("orders", o.model_dump())
+    _insert("orders", _stamp_provenance(o.model_dump()))
 
 
 def update_order(oid: str, **kwargs) -> None:
@@ -502,7 +557,7 @@ def list_strategy_orders(
 # --- Fills ---
 
 def insert_fill(f: Fill) -> None:
-    _insert("fills", f.model_dump())
+    _insert("fills", _stamp_provenance(f.model_dump()))
 
 
 def list_fills(limit: int = 100) -> list[dict]:
@@ -539,7 +594,7 @@ def list_strategy_fills(
 # --- Positions ---
 
 def insert_position(p: Position) -> None:
-    _insert("positions", p.model_dump())
+    _insert("positions", _stamp_provenance(p.model_dump()))
 
 
 def update_position(pid: str, **kwargs) -> None:

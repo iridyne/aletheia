@@ -121,6 +121,17 @@ apply a treatment. The ledger grants no risk, execution, credential, or live aut
 | `runtime_events` | Event bus persistence | event_type, payload (JSON), emitted_at |
 | `runtime_exclusive_lock` | Distributed lock (single-writer) | lock_name, holder, acquired_at, expires_at |
 | `runtime_ownership` | Task ownership tracking | task_id, owner, claimed_at |
+| `runtime_sessions` | One row per Gateway PROCESS lifecycle (session_id under a runtime_id). Core trading facts reference `session_id` via `runtime_session_id` | session_id, runtime_id, boot_commit, config_hash, behavior_fingerprint, schema_version, active_scope_id, execution_mode, started_at, ended_at, shutdown_clean |
+
+**Runtime Session provenance (expand-only, nullable).** The seven core trading-fact
+tables (`opportunities`, `pi_decisions`, `trade_proposals`, `risk_decisions`,
+`orders`, `fills`, `positions`) carry `runtime_session_id` / `producer_commit` /
+`behavior_fingerprint`, stamped at insert from the producing `runtime_sessions` row.
+`positions` additionally carry `closed_runtime_session_id` / `closed_producer_commit` /
+`closed_behavior_fingerprint`, stamped at close, so a restart between open and close
+keeps the opening and closing (outcome) sessions distinguishable. Legacy rows stay
+NULL — history is never fabricated. See `aletheia/agent_runtime/runtime_session.py`
+and spec `AR-S08`.
 
 ### F. Agent Shell / Command Center (7 tables)
 

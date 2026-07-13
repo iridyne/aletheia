@@ -13,6 +13,38 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class _Provenanced(BaseModel):
+    """Runtime Session provenance carried by every core trading-fact entity.
+
+    All fields are expand-only and nullable: a row produced with no active runtime
+    session (legacy data, out-of-band inserts) keeps them NULL rather than
+    fabricating an identity. Stamped at insert time from the current session.
+      runtime_session_id   — process lifecycle that produced the row
+      producer_commit      — commit that process booted on
+      behavior_fingerprint — fingerprint of the behaviour-affecting config
+    """
+    runtime_session_id: str | None = None
+    producer_commit: str | None = None
+    behavior_fingerprint: str | None = None
+
+
+class RuntimeSession(BaseModel):
+    """One Gateway PROCESS lifecycle. runtime_id names the running version;
+    session_id names this specific boot (a restart is a new session under the same
+    runtime_id). ended_at/shutdown_clean stay unset until a clean shutdown."""
+    session_id: str = Field(default_factory=new_id)
+    runtime_id: str = "runtime-local-current"
+    boot_commit: str | None = None
+    config_hash: str | None = None
+    behavior_fingerprint: str | None = None
+    schema_version: str | None = None
+    active_scope_id: str | None = None
+    execution_mode: str | None = None
+    started_at: str = Field(default_factory=_utcnow)
+    ended_at: str | None = None
+    shutdown_clean: int = 0
+
+
 class AuditEvent(BaseModel):
     id: str = Field(default_factory=new_id)
     timestamp: str = Field(default_factory=_utcnow)
@@ -42,7 +74,7 @@ class AgentRun(BaseModel):
     cost_estimate: float | None = None
 
 
-class Opportunity(BaseModel):
+class Opportunity(_Provenanced):
     id: str = Field(default_factory=new_id)
     symbol: str
     market: str
@@ -208,7 +240,7 @@ class FilterCandidateOutcome(BaseModel):
     status: str = "pending"
 
 
-class TradeProposal(BaseModel):
+class TradeProposal(_Provenanced):
     id: str = Field(default_factory=new_id)
     strategy_id: str | None = None
     opportunity_id: str | None = None
@@ -256,7 +288,7 @@ class TradeProposal(BaseModel):
     parent_hash: str | None = None
 
 
-class RiskDecision(BaseModel):
+class RiskDecision(_Provenanced):
     id: str = Field(default_factory=new_id)
     proposal_id: str
     approved: bool = False
@@ -274,7 +306,7 @@ class RiskDecision(BaseModel):
     created_at: str = Field(default_factory=_utcnow)
 
 
-class Order(BaseModel):
+class Order(_Provenanced):
     id: str = Field(default_factory=new_id)
     proposal_id: str | None = None
     risk_decision_id: str | None = None
@@ -293,7 +325,7 @@ class Order(BaseModel):
     error_reason: str | None = None
 
 
-class Fill(BaseModel):
+class Fill(_Provenanced):
     id: str = Field(default_factory=new_id)
     order_id: str
     fill_price: float
@@ -308,7 +340,7 @@ class Fill(BaseModel):
     filled_at: str = Field(default_factory=_utcnow)
 
 
-class Position(BaseModel):
+class Position(_Provenanced):
     id: str = Field(default_factory=new_id)
     symbol: str
     market_type: str
@@ -378,6 +410,13 @@ class Position(BaseModel):
     # trailing path. 'serenity' positions skip ATR trailing and use
     # cfg.serenity.max_hold_days * 24 as their hold cap.
     trade_school: str = "short_term"
+    # Outcome producer identity — stamped when the position is CLOSED, so a
+    # restart between open and close is visible: runtime_session_id records who
+    # OPENED it (Session A), closed_runtime_session_id who CLOSED it (Session B).
+    # Never collapse the whole position onto the last run.
+    closed_runtime_session_id: str | None = None
+    closed_producer_commit: str | None = None
+    closed_behavior_fingerprint: str | None = None
 
 
 class PositionDisappearanceCandidate(BaseModel):
@@ -1120,7 +1159,7 @@ class UniversePolicy(BaseModel):
     previous_policy_id: str | None = None
 
 
-class PiDecision(BaseModel):
+class PiDecision(_Provenanced):
     id: str = Field(default_factory=new_id)
     created_at: str = Field(default_factory=_utcnow)
     symbol: str | None = None
