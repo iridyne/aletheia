@@ -254,28 +254,49 @@ def test_level_sets_are_disjoint():
 @spec_claim(
     SpecClaim(
         "OL-C07", "operator_layer", "§permission_model loosen_in_level2_only", "L2c",
-        "loosen_confidence/increase_sizing/widen_stop_loss belong to _LEVEL_2_ACTIONS, "
-        "not _LEVEL_1_ACTIONS — these loosening actions require human proposal",
+        "loosen_confidence/widen_stop_loss belong to _LEVEL_2_ACTIONS, not "
+        "_LEVEL_1_ACTIONS — these loosening actions relax risk beyond baseline and "
+        "require a human proposal. increase_sizing is Level 1: a BOUNDED auto-restore "
+        "(capped at neutral, demo-only) symmetric to reduce_sizing — classifying only "
+        "reduce as auto created a ratchet-down deadlock (fixed 2026-07-13).",
         status="implemented",
     ),
 )
 def test_loosening_actions_in_level2_not_level1():
-    """Loosening actions must be Level 2 (proposal) only, never Level 1 (auto).
+    """Beyond-baseline loosening actions must be Level 2 (proposal), never Level 1.
 
-    Fixed 2026-06-23 (OL-C07 / §15.2): the dead elif branches for
-    loosen_confidence/increase_sizing/widen_stop_loss were removed from
-    _execute_level1_action, so the Level-1 executor no longer has any code path
-    that treats a loosening action as auto-executable. The set classification
-    (_LEVEL_2_ACTIONS) and the executor are now consistent.
+    loosen_confidence (lowers the confidence bar to trade) and widen_stop_loss
+    (accepts larger losses) relax risk past the default baseline, so they require
+    a human proposal and must never be reachable from the Level-1 executor.
+
+    increase_sizing is DELIBERATELY NOT in this set (2026-07-13): _action_increase_sizing
+    is capped at spec.neutral (never exceeds the default sizing baseline), demo-only,
+    and shares reduce_sizing's cooldown + daily-patch cap. It only *undoes* a prior
+    auto-reduce, so it is the symmetric inverse of the Level-1 reduce_sizing. Leaving
+    reduce as auto (L1) while increase required manual approval (L2) permanently
+    ratcheted demo sizing down during any losing streak — the same one-way lock as
+    the loosen_confidence deadlock. It is therefore Level 1, and asserted so below.
     """
     import aletheia.agent_shell.operator_loop as ol
 
-    loosening_actions = {"loosen_confidence", "increase_sizing", "widen_stop_loss"}
+    # Beyond-baseline loosening actions — must stay Level 2 (human proposal).
+    loosening_actions = {"loosen_confidence", "widen_stop_loss"}
 
     # Half of the claim: they ARE in _LEVEL_2_ACTIONS (set classification is correct)
     missing_from_l2 = loosening_actions - ol._LEVEL_2_ACTIONS
     assert not missing_from_l2, (
         f"Loosening actions missing from _LEVEL_2_ACTIONS: {missing_from_l2}"
+    )
+
+    # Bounded auto-restore symmetry: increase_sizing and reduce_sizing are BOTH
+    # Level 1, and increase_sizing must NOT be Level 2 (that asymmetry deadlocks).
+    assert "increase_sizing" in ol._LEVEL_1_ACTIONS, (
+        "increase_sizing must be Level 1 (bounded auto-restore, capped at neutral)"
+    )
+    assert "reduce_sizing" in ol._LEVEL_1_ACTIONS, "reduce_sizing must be Level 1"
+    assert "increase_sizing" not in ol._LEVEL_2_ACTIONS, (
+        "increase_sizing must NOT be Level 2 — reduce/increase asymmetry ratchets "
+        "sizing down and never restores it (deadlock)"
     )
 
     # The full invariant: they must NOT be reachable via _execute_level1_action.
