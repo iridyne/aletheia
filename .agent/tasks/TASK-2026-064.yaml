@@ -2,11 +2,13 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-064
 title: Gate DCLS failure artifacts in PR CI
-status: in_progress
+status: done
 packet_type: standard
 scope:
-  boundary: DCLS pull-request CI file list, executable CI claim, and task evidence only
-  excluded: simulator behavior, Operator policy, trading boundaries, runtime deployment, and frontend
+  boundary: DCLS pull-request CI file list, executable CI claim, and task evidence
+    only
+  excluded: simulator behavior, Operator policy, trading boundaries, runtime deployment,
+    and frontend
 intent: Add the automatic fixed-scenario failure-pack regression to the pull-request
   DCLS gate and make the executable CI claim enforce that coverage.
 acceptance:
@@ -20,9 +22,19 @@ ownership:
   expires_at: '2026-07-13T14:08:20.063273Z'
 base_commit: 713a6e952026e7cdc5048163e0c96dec3d807860
 next_action:
-  command_key: dcls_ci_gate
-  reason: Verify the PR file list and the automatic failure-pack regression together.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: dcls_ci_gate
+  command: uv run pytest tests/simulation/control_loop/test_failure_artifacts.py tests/specs/spec_deterministic_control_loop.py
+    -q --tb=short
+  command_sha256: 92cd3b2c32fb22ac4ede97e5ff608b6d0729668ef9af9ed7a5423bd7d684c256
+  exit_code: 0
+  commit: a86b0ae2688b4617e79ba26efdfc21fbac3d6ee0
+  run_at: '2026-07-13T06:09:19.640737Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-064.md
-updated_at: '2026-07-13T06:08:20.063281Z'
+updated_at: '2026-07-13T06:09:19.772795Z'
