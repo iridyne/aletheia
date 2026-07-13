@@ -30,9 +30,9 @@ ownership:
   expires_at: '2026-07-13T13:07:28.614410Z'
 base_commit: 82051a8eaf67d6393fc5596171a791966c357054
 next_action:
-  command_key: confidence_incident
-  reason: Run the fixed confidence incident scenario on the known-bad baseline and
-    capture the expected liveness Red.
+  command_key: workflow_bootstrap
+  reason: Confidence recovery is complete; resume remaining DCLS work only after merge
+    and a fresh bootstrap.
 blockers: []
 verification:
 - command_key: confidence_incident
@@ -61,4 +61,4 @@ verification:
   result: passed
   recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-058.md
-updated_at: '2026-07-13T05:17:59.791531Z'
+updated_at: '2026-07-13T05:23:32.355545Z'
