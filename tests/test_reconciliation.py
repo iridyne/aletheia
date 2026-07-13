@@ -29,18 +29,29 @@ def setup_env(tmp_path, monkeypatch):
     run_migrations()
 
 
-def _patch_open_orders(monkeypatch, open_ids):
+def _patch_open_orders(monkeypatch, open_ids, fill_rows=()):
     from aletheia.exchanges.bitget import client as bg
 
     async def fake_open_orders(self, market_type="spot"):
         return [{"orderId": oid} for oid in open_ids]
 
+    async def fake_fills(self, symbol=None, market_type="spot"):
+        return list(fill_rows)
+
     monkeypatch.setattr(bg.BitgetClient, "get_open_orders", fake_open_orders)
+    monkeypatch.setattr(bg.BitgetClient, "get_fills", fake_fills)
 
 
 def test_submitted_order_no_longer_open_marked_filled(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    _patch_open_orders(monkeypatch, open_ids=[])  # exchange reports nothing open
+    _patch_open_orders(
+        monkeypatch,
+        open_ids=[],
+        fill_rows=[{
+            "orderId": "EX-1",
+            "fillQuantity": "0.001",
+        }],  # private history directly confirms the complete fill
+    )
 
     repo.insert_order(Order(
         symbol="BTCUSDT", market_type="spot", direction="long", order_type="market",
@@ -54,6 +65,46 @@ def test_submitted_order_no_longer_open_marked_filled(tmp_path, monkeypatch):
 
     orders = repo.list_orders()
     assert orders[0]["status"] == "filled"
+
+
+def test_missing_open_order_without_private_fill_stays_unresolved(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _patch_open_orders(monkeypatch, open_ids=[], fill_rows=[])
+
+    repo.insert_order(Order(
+        symbol="BTC/USDT", market_type="spot", direction="long", order_type="market",
+        quantity=0.001, price=60000, execution_mode="bitget_live_limited",
+        exchange_order_id="EX-NO-EVIDENCE", status="submitted",
+    ))
+
+    from aletheia.execution.reconciliation import reconcile
+    result = reconcile()
+
+    assert result["filled"] == 0
+    assert result["inconclusive"] == 1
+    assert repo.list_orders()[0]["status"] == "submitted"
+
+
+def test_incomplete_private_fill_does_not_invent_full_fill(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _patch_open_orders(
+        monkeypatch,
+        open_ids=[],
+        fill_rows=[{"orderId": "EX-PARTIAL-HISTORY", "fillQuantity": "0.0004"}],
+    )
+
+    repo.insert_order(Order(
+        symbol="BTC/USDT", market_type="spot", direction="long", order_type="limit",
+        quantity=0.001, price=60000, execution_mode="bitget_live_limited",
+        exchange_order_id="EX-PARTIAL-HISTORY", status="partially_filled",
+    ))
+
+    from aletheia.execution.reconciliation import reconcile
+    result = reconcile()
+
+    assert result["filled"] == 0
+    assert result["inconclusive"] == 1
+    assert repo.list_orders()[0]["status"] == "partially_filled"
 
 
 def test_still_open_order_left_alone(tmp_path, monkeypatch):

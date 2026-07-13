@@ -39,7 +39,19 @@ logger = logging.getLogger("aletheia.bitget_broker")
 # Round-trip taker fee rates (one side). Demo mirrors live mix taker fee.
 _LIVE_FEE_RATE = 0.0006
 _DEMO_FEE_RATE = 0.0006
-_OPEN_CLOSE_STATES = {"pending", "submitted", "partial"}
+_OPEN_CLOSE_STATES = {
+    "pending", "submitted", "partial", "partially_filled", "submission_unknown",
+}
+
+
+def _is_submission_timeout(error: BaseException) -> bool:
+    """Recognize direct and client-wrapped transport timeouts."""
+    current: BaseException | None = error
+    while current is not None:
+        if isinstance(current, TimeoutError) or "timeout" in type(current).__name__.lower():
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _run_coro(coro):
@@ -122,7 +134,17 @@ def execute_live_order(
     if market_type != 'spot' and quantity and price and leverage:
         required_margin = float(quantity) * float(price) / float(leverage)
     if market_type != 'spot' and required_margin > 0:
-        _ensure_mix_margin(client, required_margin)
+        try:
+            _ensure_mix_margin(client, required_margin)
+        except Exception:
+            # This happens before submission, so the outcome is known: no
+            # exchange order exists.  Persist a stable, non-sensitive reason.
+            update_order(
+                order.id,
+                status="error",
+                error_reason="margin_preparation_failed_before_submission",
+            )
+            raise
 
     try:
         order_resp = _run_coro(client.place_order(OrderRequest(
@@ -361,14 +383,24 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
             hold_side=hold_side,
         )))
     except Exception as e:
-        update_order(close_order.id, status="error", error_reason=clean_error_message(str(e))[:500])
-        update_position(position_id, pending_close_status="error")
+        if _is_submission_timeout(e):
+            # A transport timeout cannot tell us whether the exchange accepted
+            # the close.  Keep it unresolved and suppress automatic resubmission.
+            update_order(
+                close_order.id,
+                status="submission_unknown",
+                error_reason="close_submission_timeout_acknowledgement_unknown",
+            )
+            update_position(position_id, pending_close_status="submission_unknown")
+        else:
+            update_order(close_order.id, status="error", error_reason=clean_error_message(str(e))[:500])
+            update_position(position_id, pending_close_status="error")
         raise
 
     exchange_order_id = order_resp.order_id or ""
     confirmed_close = order_resp.status == "filled"
     close_status = "filled" if confirmed_close else (
-        "partial" if order_resp.status == "partially_filled" else "submitted"
+        "partially_filled" if order_resp.status == "partially_filled" else "submitted"
     )
     fee_rate = _DEMO_FEE_RATE
 

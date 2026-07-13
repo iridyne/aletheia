@@ -31,7 +31,19 @@ from aletheia.storage.repositories import (
 logger = logging.getLogger("aletheia.okx_broker")
 
 _OKX_FEE_RATE = 0.0005  # OKX futures taker fee
-_OPEN_CLOSE_STATES = {"pending", "submitted", "partial"}
+_OPEN_CLOSE_STATES = {
+    "pending", "submitted", "partial", "partially_filled", "submission_unknown",
+}
+
+
+def _is_submission_timeout(error: BaseException) -> bool:
+    """Recognize direct and client-wrapped transport timeouts."""
+    current: BaseException | None = error
+    while current is not None:
+        if isinstance(current, TimeoutError) or "timeout" in type(current).__name__.lower():
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 # ---------------------------------------------------------------------------
 # O(1) Symbol filter cache for OKX demo — market-type-aware
@@ -469,8 +481,16 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
             client_oid=f"close-{position_id}",
         )))
     except Exception as e:
-        update_order(close_order.id, status="error", error_reason=clean_error_message(str(e))[:500])
-        update_position(position_id, pending_close_status="error")
+        if _is_submission_timeout(e):
+            update_order(
+                close_order.id,
+                status="submission_unknown",
+                error_reason="close_submission_timeout_acknowledgement_unknown",
+            )
+            update_position(position_id, pending_close_status="submission_unknown")
+        else:
+            update_order(close_order.id, status="error", error_reason=clean_error_message(str(e))[:500])
+            update_position(position_id, pending_close_status="error")
         raise
     finally:
         try:
@@ -481,7 +501,7 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
     exchange_order_id = order_resp.order_id or ""
     confirmed_close = order_resp.status == "filled"
     close_status = "filled" if confirmed_close else (
-        "partial" if order_resp.status == "partially_filled" else "submitted"
+        "partially_filled" if order_resp.status == "partially_filled" else "submitted"
     )
     update_order(
         close_order.id,

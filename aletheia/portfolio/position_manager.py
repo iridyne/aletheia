@@ -23,7 +23,9 @@ from aletheia.storage.repositories import list_positions
 logger = logging.getLogger("aletheia.position_manager")
 
 _PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
-_OPEN_CLOSE_STATES = {"pending", "submitted", "partial"}
+_OPEN_CLOSE_STATES = {
+    "pending", "submitted", "partial", "partially_filled", "submission_unknown",
+}
 
 
 def close_position_routed(
