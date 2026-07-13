@@ -28,7 +28,7 @@ ownership:
   lease_holder: claude
   claimed_at: '2026-07-13T05:40:37.179600Z'
   expires_at: '2026-07-13T13:40:37.179758Z'
-base_commit: eddaf9d77dab10effc1237dfbf22fce2b460065a
+base_commit: a5bcf8b7c18334ff2e96a03ebeb9663bef2a1321
 next_action:
   command_key: workflow_bootstrap
   reason: Task complete; run bootstrap and create or claim a new task before changing
@@ -40,7 +40,7 @@ verification:
     tests/specs/spec_active_runtime_scope.py -q
   command_sha256: 4fad42c2cb02bc7c5bcbc336f2a69c9cf415ccb3a60adcba2da82659e301ab87
   exit_code: 0
-  commit: 596fc248168141668026ee20098cbdf155f37fec
+  commit: a5bcf8b7c18334ff2e96a03ebeb9663bef2a1321
   run_at: '2026-07-13T05:41:37.759310Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
@@ -48,7 +48,7 @@ verification:
   command: uv run pytest tests/specs/ -q
   command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
   exit_code: 0
-  commit: 596fc248168141668026ee20098cbdf155f37fec
+  commit: a5bcf8b7c18334ff2e96a03ebeb9663bef2a1321
   run_at: '2026-07-13T05:41:47.195624Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
@@ -56,7 +56,7 @@ verification:
   command: uv run pytest tests/test_architecture_fitness.py -q
   command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
   exit_code: 0
-  commit: 596fc248168141668026ee20098cbdf155f37fec
+  commit: a5bcf8b7c18334ff2e96a03ebeb9663bef2a1321
   run_at: '2026-07-13T05:41:47.934882Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
