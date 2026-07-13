@@ -140,6 +140,20 @@ def _recent_signal_pairs(window_minutes: int = _RECENT_SIGNAL_COOLDOWN_MINUTES) 
         return set()
 
 
+def _operator_evaluated_opportunity_ids() -> set[str]:
+    """Opportunity ids that already have a final System Operator decision."""
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        rows = get_db().execute(
+            "SELECT DISTINCT opportunity_id FROM pi_decisions "
+            "WHERE action != 'signal_pending' AND opportunity_id IS NOT NULL"
+        ).fetchall()
+        return {str(row[0]) for row in rows if row[0]}
+    except Exception:
+        return set()
+
+
 def _select_signal_candidates(candidates: list[dict], limit: int = 3) -> list[dict]:
     """Pick a compact signal batch without duplicate symbols or pairs.
 
@@ -174,17 +188,22 @@ def _plan_signal_batch(
     *,
     open_symbols: set[str],
     recent_signal_pairs: set[tuple[str, str]],
+    operator_evaluated_opportunity_ids: set[str] | None = None,
     limit: int = 3,
 ) -> SignalBatchPlan:
     """Apply occupancy/cooldown before the batch cap so lower ranks can backfill."""
     selected: list[dict] = []
     decisions: dict[str, tuple[str, str]] = {}
     seen_symbols: set[str] = set()
+    evaluated_ids = operator_evaluated_opportunity_ids or set()
     for candidate in candidates:
         opp_id = str(candidate.get("opportunity_id") or "")
         symbol = candidate.get("symbol")
         direction = candidate.get("direction")
         if not opp_id or not symbol or not direction:
+            continue
+        if opp_id in evaluated_ids:
+            decisions[opp_id] = ("operator_already_evaluated", "rejected")
             continue
         if symbol in seen_symbols:
             decisions[opp_id] = ("duplicate_symbol", "rejected")
@@ -256,6 +275,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         eligible,
         open_symbols=open_symbols,
         recent_signal_pairs=recent_signal_pairs,
+        operator_evaluated_opportunity_ids=_operator_evaluated_opportunity_ids(),
         limit=3,
     )
     _persist_filter_evidence(candidates, plan, run_id=run_id)
@@ -270,6 +290,9 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             outputs.append(
                 f"skip_recent_signal:{candidate.get('symbol')}:{candidate.get('direction')}"
             )
+        elif filter_name == "operator_already_evaluated":
+            update_opportunity(opp_id, status="reviewed")
+            outputs.append(f"skip_already_evaluated:{candidate.get('symbol')}")
 
     # Write up to 3 candidates after occupancy/cooldown rejects have been removed.
     signals_written = 0

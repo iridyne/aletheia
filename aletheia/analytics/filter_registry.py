@@ -304,6 +304,13 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
              "legacy shadow PnL remains explanatory only until its own migration.",
     ),
     _report_only_gate(
+        name="operator_already_evaluated",
+        stage="paper_trader_selection",
+        reason_codes=("operator_already_evaluated",),
+        current_value="one final System Operator decision per opportunity id",
+        note="Identity/idempotency boundary; a final decision is never re-queued as pending.",
+    ),
+    _report_only_gate(
         name="duplicate_symbol",
         stage="paper_trader_selection",
         reason_codes=("duplicate_symbol",),
@@ -326,10 +333,10 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         stage="paper_trader_selection",
         drop_reason_codes=(),  # cooldown-skipped symbols are not logged today
         config_path="",
-        hardcoded_at="aletheia/agents/paper_trader.py:37 (_RECENT_SIGNAL_COOLDOWN_MINUTES=120)",
-        current_value="120 min",
+        hardcoded_at="aletheia/agents/paper_trader.py (_RECENT_SIGNAL_COOLDOWN_MINUTES=30)",
+        current_value="30 min",
         loosen_direction="down",  # shorter cooldown → more signals
-        neutral=120.0, floor=30.0, ceiling=480.0,
+        neutral=30.0, floor=30.0, ceiling=480.0,
         feedback_source="forward_return",
         family_keyed=False,
         auto_tunable=True,

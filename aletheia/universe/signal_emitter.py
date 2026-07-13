@@ -184,11 +184,6 @@ def emit_deterministic_opportunities(
             "Universe signal emitter: %d deterministic opportunities (snapshot=%s)",
             created, snapshot_id[:8],
         )
-        try:
-            from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
-            notify_pi_daemon(source="signal_emitter")
-        except Exception:
-            pass
 
     return created
 

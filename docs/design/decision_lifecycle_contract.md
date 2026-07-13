@@ -16,8 +16,8 @@
 ```
 跳0 采集    collectors/* → market_snapshots / funding / microstructure 等原始表
 跳0.5 前置门 Universe ticker/tradability → 无方向完整批次证据（不伪造收益）
-跳1 观察    market_observer.py:_analyze_symbol → LLM → Opportunity → insert_opportunity → notify_pi_daemon
-跳2 排序    paper_trader_ranker(纯确定性打分,无LLM) → 前N候选写 PiDecision(action='signal_pending')
+跳1 观察    market_observer.py:_analyze_symbol → LLM → Opportunity → insert_opportunity
+跳2 排序    paper_trader_ranker(纯确定性打分,无LLM) → 前N候选写 PiDecision(action='signal_pending') → notify_pi_daemon
 跳3 唤醒    pi_daemon._run_evaluation(防抖8s/冷却60s/300s兜底) → evaluate_trading_opportunity
 跳4 组装    commands.py:evaluate_trading_opportunity → build_enriched_trading_context (3层Context)
 跳5 定夺    trading_decision.py:evaluate → LLM → TradingDecision  ★唯一开仓决策权★
@@ -125,6 +125,7 @@ Serenity 与 Layer1 同时匹配时仍保持 Layer1 的既有优先级。
 - **DL-INV-8 无方向不学收益**:无事前 `long/short` 时只衡量能力和覆盖，禁止事后选最赚方向。
 - **DL-INV-9 提案结果不丢失**:`trade/scale_in/flip` 是模型意图；若方向门或目标市场取价使 proposal 未创建，必须返回稳定机器原因并写 `proposal_submission` 筛选证据，禁止只留下无法解释的 `proposal_id=NULL`。
 - **DL-INV-10 参数理由不伪造**:System Operator 的新开仓须带五项参数理由；提案快照必须把最终值与 `market_snapshot` / `default_config` / `risk_cap_clamped` 等实际来源分开，不能把后端计算说成 AI 选择。详见 `trade_decision_rationale_contract.md`。
+- **DL-INV-11 排序后唤醒**:市场机会生产者只落 Opportunity；只有 `paper_trader` 在排序并成功写入 `signal_pending` 后唤醒 System Operator。已有非 pending 最终决策的 `opportunity_id` 不得再次入队。
 
 ---
 
@@ -138,6 +139,7 @@ Serenity 与 Layer1 同时匹配时仍保持 Layer1 的既有优先级。
 | `DL-S04` | L2a | TradingDecision.signal_source 默认 `market_observer`(值域含 `serenity`) |
 | `DL-S06` | L2a | 提案先解析最终 market_type，再把它传给 latest_snapshot 取价 |
 | `DL-S07` | L2b | reviewed Opportunity 仍可经 market_observer signal_pending 把 opportunity_id 交给最终决策 |
+| `DL-S08` | L2a | 市场 Opportunity 生产者不绕过 ranker 唤醒 Operator；paper_trader 写 pending 后唤醒 |
 | `DL-C01` | L2c | `_MIN_CONVICTION_TO_TRADE == 55`(改阈值即爆红,强制同步本契约) |
 | `DL-C02` | L2c | trade 类意图未创建 proposal 时保留结构化 proposal_submission 原因 |
 

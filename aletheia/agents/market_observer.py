@@ -685,11 +685,6 @@ async def _analyze_symbol(
         oi_delta_1h=oi_delta_val,
     )
     insert_opportunity(opp)
-    try:
-        from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
-        notify_pi_daemon(source="market_observer")
-    except Exception:
-        pass
     log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
     _total_duration = _time.monotonic() - _t_start
     _step_times["total"] = _total_duration

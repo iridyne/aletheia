@@ -444,3 +444,53 @@ def test_ranker_queries_open_working_set_directly():
     assert hasattr(repositories, "list_open_opportunities")
     source = inspect.getsource(paper_trader_ranker.build_paper_candidates)
     assert "list_open_opportunities" in source
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-07", "pipeline_paper_trade", "§2 evaluated opportunity idempotency", "L2b",
+        "paper_trader does not enqueue a second signal_pending for an opportunity that already "
+        "has an authoritative non-pending System Operator decision.",
+        status="implemented",
+    ),
+)
+def test_paper_trader_does_not_requeue_operator_evaluated_opportunity(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    opp_id = _insert_opportunity(conn, symbol="BTC/USDT", confidence_score=85)
+    _insert_market_snapshot(conn, "BTC/USDT", price=60000.0)
+
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+
+    init_tool_registry()
+    insert_pi_decision(PiDecision(
+        symbol="BTC/USDT",
+        direction="long",
+        action="skip",
+        conviction=50,
+        reasoning="already evaluated directly",
+        opportunity_id=opp_id,
+        signal_source="market_observer",
+    ))
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
+        lambda source=None: None,
+        raising=False,
+    )
+
+    import asyncio
+    from aletheia.agents.paper_trader import run_paper_trader
+
+    result = asyncio.run(run_paper_trader(permission_mode="Paper"))
+
+    pending = conn.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' AND opportunity_id=?",
+        (opp_id,),
+    ).fetchone()[0]
+    status = conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opp_id,),
+    ).fetchone()[0]
+    assert pending == 0
+    assert status == "reviewed"
+    assert any("skip_already_evaluated:BTC/USDT" in row for row in result["outputs"])

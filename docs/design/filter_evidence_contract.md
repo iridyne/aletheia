@@ -171,9 +171,10 @@ shadow treatment 各自达到 20 个完整净结果和 70% 覆盖后才判定；
 正确顺序：
 
 1. 按分数从高到低遍历；
-2. 已持仓则记 `open_position_duplicate=rejected`，继续看下一个；
-3. 冷却中则记 `signal_cooldown=rejected`，继续看下一个；
-4. 未满 limit 则放行；已满后其余候选记 `signal_batch_limit=rejected`。
+2. 同一 `opportunity_id` 已有最终 Operator 决策则记 `operator_already_evaluated=rejected`，不重复入队；
+3. 已持仓则记 `open_position_duplicate=rejected`，继续看下一个；
+4. 冷却中则记 `signal_cooldown=rejected`，继续看下一个；
+5. 未满 limit 则放行；已满后其余候选记 `signal_batch_limit=rejected`。
 
 Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候选，不能在冷却/持仓检查之前就标记“已选中”。
 

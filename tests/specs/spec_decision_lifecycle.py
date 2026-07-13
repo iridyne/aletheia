@@ -149,6 +149,26 @@ def test_market_observer_pending_signal_attaches_opportunity_id():
 
 @spec_claim(
     SpecClaim(
+        "DL-S08", "decision_lifecycle_contract", "§1 ranked operator handoff", "L2a",
+        "Opportunity producers persist opportunities only; paper_trader is the market pipeline "
+        "component that wakes the System Operator after ranking and signal_pending persistence.",
+        status="implemented",
+    ),
+)
+def test_opportunity_producers_do_not_bypass_ranker_when_waking_operator():
+    root = Path(__file__).parents[2]
+    observer = (root / "aletheia" / "agents" / "market_observer.py").read_text(encoding="utf-8")
+    emitter = (root / "aletheia" / "universe" / "signal_emitter.py").read_text(encoding="utf-8")
+    paper_trader = (root / "aletheia" / "agents" / "paper_trader.py").read_text(encoding="utf-8")
+
+    assert "notify_pi_daemon" not in observer
+    assert "notify_pi_daemon" not in emitter
+    assert "insert_pi_decision(pi_dec)" in paper_trader
+    assert "notify_pi_daemon" in paper_trader
+
+
+@spec_claim(
+    SpecClaim(
         "DL-S05", "decision_lifecycle_contract", "§2.3 executable candidate view", "L2b",
         "System Operator context separates executable ranker candidates from excluded "
         "candidate summaries so unsupported/expired/guard-blocked rows do not occupy "
