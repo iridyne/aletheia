@@ -53,6 +53,21 @@ jobs:
       - name: Verify executable contracts
         run: uv run pytest tests/specs/ -q --junitxml=test-results/specs.xml
 
+      - name: Verify deterministic control loop
+        env:
+          DCLS_MAX_EXAMPLES: 8
+          DCLS_STATEFUL_STEPS: 8
+          DCLS_SEED: 20260713
+        run: >-
+          uv run pytest
+          tests/simulation/control_loop/test_confidence_deadlock.py
+          tests/simulation/control_loop/test_sizing_ratchet.py
+          tests/simulation/control_loop/test_stateful_control_loop.py
+          tests/simulation/control_loop/test_mutation_canaries.py
+          tests/test_runtime_replay_pack.py
+          tests/e2e/test_active_mainline_golden_path.py
+          -q --tb=short --junitxml=test-results/dcls.xml
+
       - name: Verify agent workflow behavior
         run: uv run pytest tests/test_agent_workflow.py -q --junitxml=test-results/agent-workflow.xml
 
