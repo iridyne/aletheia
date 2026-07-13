@@ -472,3 +472,288 @@ def test_invalid_native_proposal_fails_closed(
     assert db.execute(
         "SELECT COUNT(*) FROM positions WHERE proposal_id=?", (proposal_id,)
     ).fetchone()[0] == 0
+
+
+@_missing("Execution repair pending: open-order absence is still guessed to mean filled")
+@spec_claim(
+    SpecClaim(
+        "PL-RX-07",
+        "pipeline_risk_execution_integrity",
+        "§6 evidence-based reconciliation",
+        "L2b",
+        "A submitted Order absent from the exchange open-order list remains unresolved "
+        "unless real fill evidence exists; reconciliation never invents filled state.",
+        status="missing",
+    )
+)
+def test_reconciliation_absence_without_fill_evidence_stays_unresolved(
+    tmp_path, monkeypatch
+):
+    db = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution.reconciliation import reconcile
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order
+
+    async def _no_open_orders(self, market_type="spot"):
+        return []
+
+    async def _no_fills(self, symbol=None, market_type="spot"):
+        return []
+
+    monkeypatch.setattr(bitget_client.BitgetClient, "get_open_orders", _no_open_orders)
+    monkeypatch.setattr(bitget_client.BitgetClient, "get_fills", _no_fills)
+    order = Order(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="bitget_live_limited",
+        exchange_order_id="EX-ABSENT-NO-FILL",
+        status="submitted",
+    )
+    repo.insert_order(order)
+
+    result = reconcile()
+    stored = dict(db.execute("SELECT * FROM orders WHERE id=?", (order.id,)).fetchone())
+
+    assert result["filled"] == 0
+    assert result["inconclusive"] == 1
+    assert stored["status"] == "submitted"
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
+    ).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM positions").fetchone()[0] == 0
+    audit = db.execute(
+        "SELECT event_type FROM audit_events WHERE entity_id=? ORDER BY rowid DESC LIMIT 1",
+        (order.id,),
+    ).fetchone()
+    assert audit is not None
+    assert audit["event_type"] == "order_reconciliation_inconclusive"
+
+
+@_missing("Execution repair pending: partially_filled is not in the unresolved state set")
+@spec_claim(
+    SpecClaim(
+        "PL-RX-08",
+        "pipeline_risk_execution_integrity",
+        "§6 partial-fill continuity",
+        "L2b",
+        "The broker-emitted partially_filled state remains unresolved and is scanned by "
+        "reconciliation instead of falling out of the execution lifecycle.",
+        status="missing",
+    )
+)
+def test_partially_filled_order_remains_in_reconciliation_working_set(
+    tmp_path, monkeypatch
+):
+    _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution.reconciliation import reconcile
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order
+
+    async def _still_open(self, market_type="spot"):
+        return [{"orderId": "EX-PARTIAL"}]
+
+    monkeypatch.setattr(bitget_client.BitgetClient, "get_open_orders", _still_open)
+    order = Order(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="limit",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="bitget_live_limited",
+        exchange_order_id="EX-PARTIAL",
+        status="partially_filled",
+    )
+    repo.insert_order(order)
+
+    result = reconcile()
+    stored = repo.get_order(order.id)
+
+    assert result["checked"] == 1
+    assert result["filled"] == 0
+    assert stored["status"] == "partially_filled"
+
+
+@_missing("Execution repair pending: Bitget margin preparation can abandon a pending Order")
+@spec_claim(
+    SpecClaim(
+        "PL-RX-09",
+        "pipeline_risk_execution_integrity",
+        "§7 pre-submit terminal state",
+        "L2b",
+        "A margin-preparation failure happens before exchange submission and leaves the local "
+        "Order in an explicit sanitized error state, never pending.",
+        status="missing",
+    )
+)
+def test_bitget_margin_preparation_failure_does_not_leave_pending_order(
+    tmp_path, monkeypatch
+):
+    db = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.execution import bitget_broker
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import RiskDecision, TradeProposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.001,
+        price=60_000.0,
+        leverage=2,
+        execution_mode="bitget_demo",
+    )
+    repo.insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode="bitget_demo",
+        proposal_execution_mode="bitget_demo",
+    )
+    repo.insert_risk_decision(decision)
+
+    monkeypatch.setattr(
+        bitget_broker, "BitgetClient", lambda *args, **kwargs: SimpleNamespace()
+    )
+
+    def _margin_unavailable(*_args, **_kwargs):
+        raise RuntimeError("private-detail-must-not-persist")
+
+    monkeypatch.setattr(bitget_broker, "_ensure_mix_margin", _margin_unavailable)
+
+    with pytest.raises(RuntimeError):
+        bitget_broker.execute_live_order(
+            proposal_id=proposal.id,
+            risk_decision_id=decision.id,
+            symbol=proposal.symbol,
+            market_type=proposal.market_type,
+            direction=proposal.direction,
+            order_type=proposal.order_type,
+            quantity=proposal.quantity,
+            price=proposal.price,
+            leverage=proposal.leverage,
+            execution_mode="bitget_demo",
+        )
+
+    stored = dict(db.execute(
+        "SELECT * FROM orders WHERE proposal_id=?", (proposal.id,)
+    ).fetchone())
+    assert stored["status"] == "error"
+    assert stored["error_reason"]
+    assert "private-detail-must-not-persist" not in stored["error_reason"]
+    assert stored["exchange_order_id"] is None
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (stored["id"],)
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM positions WHERE proposal_id=?", (proposal.id,)
+    ).fetchone()[0] == 0
+
+
+CLOSE_TIMEOUT_CASES = (
+    pytest.param(
+        "aletheia.execution.bitget_broker",
+        "BitgetClient",
+        "close_demo_position",
+        "bitget_demo",
+        id="bitget",
+    ),
+    pytest.param(
+        "aletheia.execution.okx_broker",
+        "OKXClient",
+        "close_okx_position",
+        "okx_demo",
+        id="okx",
+    ),
+    pytest.param(
+        "aletheia.execution.binance_broker",
+        "BinanceClient",
+        "close_testnet_position",
+        "binance_testnet",
+        id="binance",
+    ),
+)
+
+
+@_missing("Execution repair pending: close timeout is treated as retryable error")
+@pytest.mark.parametrize(
+    "broker_module, client_name, close_name, execution_mode", CLOSE_TIMEOUT_CASES
+)
+@spec_claim(
+    SpecClaim(
+        "PL-RX-10",
+        "pipeline_risk_execution_integrity",
+        "§8 ambiguous close submission",
+        "L2b",
+        "A close-order timeout is submission_unknown, remains retry-suppressing, and a "
+        "second close request cannot reach the exchange again.",
+        status="missing",
+    )
+)
+def test_close_timeout_is_unknown_and_suppresses_duplicate_submission(
+    tmp_path,
+    monkeypatch,
+    broker_module,
+    client_name,
+    close_name,
+    execution_mode,
+):
+    import importlib
+
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    calls: list[str] = []
+
+    class _TimeoutClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def place_order(self, order):
+            calls.append(order.client_oid)
+            raise TimeoutError("private-timeout-detail")
+
+        async def close(self):
+            pass
+
+    broker = importlib.import_module(broker_module)
+    monkeypatch.setattr(broker, client_name, _TimeoutClient)
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=101.0,
+        execution_mode=execution_mode,
+    )
+    repo.insert_position(position)
+
+    try:
+        getattr(broker, close_name)(position.id, reason="stop_loss")
+    except TimeoutError:
+        pass
+
+    after_first = repo._select_one("positions", position.id)
+    orders = repo.list_orders(limit=20)
+    assert after_first["pending_close_status"] == "submission_unknown"
+    assert len(orders) == 1
+    assert orders[0]["status"] == "submission_unknown"
+    assert "private-timeout-detail" not in (orders[0]["error_reason"] or "")
+
+    second = getattr(broker, close_name)(position.id, reason="stop_loss")
+
+    assert second["closed"] is False
+    assert second["already_pending"] is True
+    assert calls == [f"close-{position.id}"]
+    assert len(repo.list_orders(limit=20)) == 1
