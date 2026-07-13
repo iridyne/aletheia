@@ -72,6 +72,7 @@ def _measurement(
     hypothesis, experiment, verdict: str, *, stage: str | None = None,
     epoch: str = "epoch-a", horizon: str = "4h", contract: str = "v1",
     metric: str = "universe_family_calibration_net_return_v1",
+    reason: str = "test measurement",
 ):
     from aletheia.learning.ledger import insert_record
     from aletheia.learning.models import LearningContributionVerdict
@@ -99,8 +100,12 @@ def _measurement(
             "breached": False,
         }),
         verdict=verdict,
-        reason="test measurement",
+        reason=reason,
         created_at=_iso(),
+        policy_epoch=epoch,
+        target_horizon=horizon,
+        outcome_contract_version=contract,
+        metric_version=metric,
     )
     assert insert_record("learning_contribution_verdicts", record)
     return record
@@ -134,7 +139,7 @@ def test_measurement_verdict_maps_to_distinct_lifecycle_action(measurement, acti
 
 
 def test_positive_with_automation_off_only_recommends_and_does_not_transition(monkeypatch):
-    hypothesis, experiment = _experiment()
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     verdict = _measurement(hypothesis, experiment, "positive")
     _configure(monkeypatch, _settings())
     from aletheia.learning.lifecycle import process_lifecycle
@@ -149,7 +154,7 @@ def test_positive_with_automation_off_only_recommends_and_does_not_transition(mo
     assert verdict.verdict == "positive"
 
 
-def test_shadow_positive_promotes_one_stage_with_fresh_successor_and_event(monkeypatch):
+def test_shadow_positive_never_auto_promotes_to_paper(monkeypatch):
     hypothesis, experiment = _experiment()
     verdict = _measurement(hypothesis, experiment, "positive")
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
@@ -159,23 +164,73 @@ def test_shadow_positive_promotes_one_stage_with_fresh_successor_and_event(monke
 
     result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
     old = get_record("learning_experiments", experiment.experiment_id)
-    successor = get_record("learning_experiments", result.successor_experiment_id)
-    event = get_db().execute("SELECT * FROM learning_lifecycle_events").fetchone()
 
-    assert result.action == "promote_stage"
-    assert old["status"] == "closed"
-    assert old["ended_at"] is not None
-    assert successor["stage"] == "paper_10"
-    assert successor["parent_experiment_id"] == experiment.experiment_id
-    assert successor["activation_verdict_id"] == verdict.verdict_id
-    assert successor["assignment_salt"] != experiment.assignment_salt
-    assert successor["stage_generation"] == 1
-    assert event["dedup_key"] == f"{verdict.verdict_id}:shadow:promote_stage"
-    assert event["action"] == "promote_stage"
+    assert result.action == "hold"
+    assert result.recommended_action == "admit_trial"
+    assert result.reason == "shadow_requires_explicit_trial_admission"
+    assert result.successor_experiment_id is None
+    assert old["status"] == "active"
+    assert old["ended_at"] is None
+    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
+    assert verdict.verdict == "positive"
+
+
+def test_explicit_shadow_trial_admission_creates_one_paper_10_successor(monkeypatch):
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "insufficient_data",
+        reason="no_actual_intervention",
+    )
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    from aletheia.learning.authority import resolve_learning_authority
+    from aletheia.learning.lifecycle import admit_shadow_trial
+    from aletheia.learning.ledger import get_record
+    from aletheia.learning.models import LearningExperiment
+    from aletheia.storage.sqlite import get_db
+
+    first = admit_shadow_trial(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        current_policy_epoch="epoch-a",
+        admitted_by="owner",
+        reason="begin bounded paper trial",
+    )
+    second = admit_shadow_trial(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        current_policy_epoch="epoch-a",
+        admitted_by="owner",
+        reason="retry after response loss",
+    )
+    predecessor = get_record("learning_experiments", experiment.experiment_id)
+    successor_row = get_record("learning_experiments", first.successor_experiment_id)
+    successor = LearningExperiment(**successor_row)
+    event = get_db().execute(
+        "SELECT * FROM learning_lifecycle_events WHERE action='admit_trial'"
+    ).fetchone()
+
+    assert first.action == "admit_trial"
+    assert second.successor_experiment_id == first.successor_experiment_id
+    assert predecessor["status"] == "closed"
+    assert predecessor["ended_at"] is not None
+    assert successor.stage == "paper_10"
+    assert successor.parent_experiment_id == experiment.experiment_id
+    assert successor.activation_verdict_id == verdict.verdict_id
+    assert successor.assignment_salt != experiment.assignment_salt
+    assert successor.stage_generation == 1
+    assert event["dedup_key"] == f"{verdict.verdict_id}:shadow:admit_trial"
+    assert event["from_stage"] == "shadow"
+    assert event["to_stage"] == "paper_10"
+    assert "admitted_by=owner" in event["reason"]
+    assert resolve_learning_authority(
+        hypothesis.path_id, successor, "epoch-a",
+    ).authorized is True
 
 
 def test_successor_needs_its_own_measurement_before_it_can_promote_again(monkeypatch):
-    hypothesis, experiment = _experiment()
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     _measurement(hypothesis, experiment, "positive")
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     from aletheia.learning.lifecycle import process_lifecycle
@@ -188,7 +243,7 @@ def test_successor_needs_its_own_measurement_before_it_can_promote_again(monkeyp
 
 
 def test_lifecycle_retry_is_idempotent_and_does_not_duplicate_successor(monkeypatch):
-    hypothesis, experiment = _experiment()
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     _measurement(hypothesis, experiment, "positive")
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     from aletheia.learning.lifecycle import process_lifecycle
@@ -203,7 +258,7 @@ def test_lifecycle_retry_is_idempotent_and_does_not_duplicate_successor(monkeypa
 
 
 def test_failed_successor_insert_rolls_back_event_and_current_stage(monkeypatch):
-    hypothesis, experiment = _experiment()
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     _measurement(hypothesis, experiment, "positive")
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     import aletheia.learning.lifecycle as lifecycle
@@ -224,7 +279,7 @@ def test_failed_successor_insert_rolls_back_event_and_current_stage(monkeypatch)
 
 
 def test_positive_without_paper_influence_records_blocked_recommendation_not_authority(monkeypatch):
-    hypothesis, experiment = _experiment()
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     _measurement(hypothesis, experiment, "positive")
     _configure(monkeypatch, _settings(automation=True, paper=False, paths=[hypothesis.path_id]))
     from aletheia.learning.lifecycle import process_lifecycle
@@ -329,7 +384,7 @@ def test_negative_and_invalid_fail_closed_in_authority_and_lifecycle(monkeypatch
     ],
 )
 def test_positive_with_stale_or_mismatched_cohort_cannot_promote(monkeypatch, epoch, horizon, contract, metric, reason):
-    hypothesis, experiment = _experiment()
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     _measurement(hypothesis, experiment, "positive", epoch=epoch, horizon=horizon, contract=contract, metric=metric)
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     from aletheia.learning.lifecycle import process_lifecycle
@@ -379,7 +434,7 @@ def test_read_only_inspection_reports_lifecycle_recommendation_and_authority(mon
     assert inspection["policy_epoch"] == "epoch-a"
     assert inspection["target_horizon"] == "4h"
     assert inspection["latest_measurement_verdict"] == "positive"
-    assert inspection["recommended_lifecycle_action"] == "promote_stage"
+    assert inspection["recommended_lifecycle_action"] == "admit_trial"
     assert inspection["authority_enabled"] is False
     assert inspection["readiness"]["ready_for_paper_influence"] is False
     assert inspection["treatment_control_progress"]["required_per_arm"] == experiment.min_samples_per_arm
@@ -400,7 +455,7 @@ def test_concurrent_promotion_attempts_create_one_durable_successor(tmp_path, mo
     sqlite._db_conn = None
     run_migrations()
 
-    hypothesis, experiment = _experiment()
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     _measurement(hypothesis, experiment, "positive")
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     from aletheia.learning.lifecycle import process_lifecycle

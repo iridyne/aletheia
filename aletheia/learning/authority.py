@@ -17,6 +17,7 @@ from aletheia.learning.cohorts import SUPPORTED_PATH_ID
 from aletheia.learning.control import global_learning_refreeze_reason
 from aletheia.learning.ledger import (
     get_latest_measurement_verdict,
+    get_trial_admission_event,
     get_latest_verdict_for_cohort,
     get_record,
     linked_settled_exposure_counts,
@@ -100,7 +101,21 @@ def resolve_learning_authority(
     if not experiment.activation_verdict_id:
         return _legacy_authority_adapter(experiment, current_policy_epoch, blocked)
     activation = get_record("learning_contribution_verdicts", experiment.activation_verdict_id)
-    if activation is None or activation.get("verdict") != "positive":
+    trial_admission = None
+    if experiment.stage == "paper_10":
+        trial_admission = get_trial_admission_event(experiment.experiment_id)
+    activation_is_positive = activation is not None and activation.get("verdict") == "positive"
+    activation_is_admitted_trial = (
+        activation is not None
+        and activation.get("verdict") == "insufficient_data"
+        and activation.get("reason") == "no_actual_intervention"
+        and trial_admission is not None
+        and trial_admission.get("verdict_id") == experiment.activation_verdict_id
+        and trial_admission.get("from_stage") == "shadow"
+        and trial_admission.get("to_stage") == "paper_10"
+        and trial_admission.get("policy_epoch") == current_policy_epoch
+    )
+    if not activation_is_positive and not activation_is_admitted_trial:
         return blocked("invalid_activation_verdict")
 
     if current is None:
@@ -111,7 +126,9 @@ def resolve_learning_authority(
             expected_horizon=None,
         )
         return blocked(activation_reason) if activation_reason else AuthorityDecision(
-            True, "activated_by_predecessor", experiment.stage, allocation,
+            True,
+            "admitted_shadow_trial" if activation_is_admitted_trial else "activated_by_predecessor",
+            experiment.stage, allocation,
             experiment.activation_verdict_id, None,
         )
     verdict = str(current.get("verdict") or "")
@@ -170,13 +187,19 @@ def measurement_identity_reason(
         return "measurement_metadata_invalid"
     if str(verdict.get("stage") or "") != str(expected_stage):
         return "stage_mismatch"
-    if str(metrics.get("policy_epoch") or "") != str(current_policy_epoch or ""):
+    policy_epoch = verdict.get("policy_epoch") or metrics.get("policy_epoch")
+    if str(policy_epoch or "") != str(current_policy_epoch or ""):
         return "stale_policy_epoch"
-    if expected_horizon is not None and str(metrics.get("horizon") or "") != expected_horizon:
+    target_horizon = verdict.get("target_horizon") or metrics.get("horizon")
+    if expected_horizon is not None and str(target_horizon or "") != expected_horizon:
         return "horizon_mismatch"
-    if str(metrics.get("outcome_contract_version") or "") != "v1":
+    outcome_contract_version = (
+        verdict.get("outcome_contract_version") or metrics.get("outcome_contract_version")
+    )
+    if str(outcome_contract_version or "") != "v1":
         return "outcome_contract_mismatch"
-    if str(metrics.get("metric_version") or "") != METRIC_VERSION:
+    metric_version = verdict.get("metric_version") or metrics.get("metric_version")
+    if str(metric_version or "") != METRIC_VERSION:
         return "metric_version_mismatch"
     if bool(metrics.get("breached")):
         return "harm_gate_breached"

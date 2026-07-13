@@ -1,0 +1,40 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-057
+title: Fix shadow intervention handoff between AT-01 and AT-02
+status: done
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Carry actual intervention authority from exposure manifests into AT-01 samples,
+  prevent all-shadow evidence from producing causal positive or negative verdicts,
+  keep AT-02 in shadow until an explicit paper_10 trial admission, complete verdict
+  identity, remove the duplicate stage model field, and prove the full shadow flow
+  with one integration test without enabling Learning influence or touching Risk,
+  execution, credentials, or live trading.
+acceptance:
+- A real integration test proves apply_numeric_treatment with authority_applied=false
+  through settled outcomes, AT-01 evaluation, and AT-02 processing remains shadow.
+ownership:
+  branch: iridite/shadow-intervention-contract
+  lease_holder: codex-root
+  claimed_at: '2026-07-13T01:08:34.926835Z'
+  expires_at: '2026-07-14T01:08:34.926975Z'
+base_commit: fe3e262192ef7df05fbd88b20e1a72ed3b3911d8
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 29e1508d72e605713fa2aed24a5393adff5e67eb
+  run_at: '2026-07-13T01:28:06.482682Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-057.md
+updated_at: '2026-07-13T01:28:15.976862Z'

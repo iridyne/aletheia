@@ -18,9 +18,20 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
         "Learning authority, experiment lifecycle, or any trading behavior.",
         status="implemented",
     ),
+    SpecClaim(
+        "LE-V03", "learning_evolution", "§7 actual intervention", "L2c",
+        "AT-01 carries exposure authority into each cohort sample; a fully shadow cohort with no "
+        "applied treatment returns insufficient_data/no_actual_intervention and cannot produce a "
+        "causal positive or negative verdict.",
+        status="implemented",
+    ),
 )
 def test_read_only_verdict_runtime_surface_exists():
+    from dataclasses import fields
+
+    from aletheia.learning.cohorts import CohortSample
     from aletheia.learning.contribution_runner import evaluate_experiment, inspect_experiment
 
     assert callable(evaluate_experiment)
     assert callable(inspect_experiment)
+    assert "authority_applied" in {field.name for field in fields(CohortSample)}

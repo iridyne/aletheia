@@ -110,7 +110,6 @@ class LearningContributionVerdict(BaseModel):
     # epoch (config/code changed) or a different stage must never be reused. The AT-01
     # verdict runner MUST stamp these from the exposures it aggregated.
     policy_epoch: str | None = None
-    stage: str | None = None
     target_horizon: str | None = None
     outcome_contract_version: str = "v1"
     metric_version: str | None = None

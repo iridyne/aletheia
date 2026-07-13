@@ -183,6 +183,16 @@ def list_lifecycle_events(experiment_id: str, *, limit: int = 100) -> list[dict]
     return [dict(row) for row in rows]
 
 
+def get_trial_admission_event(successor_experiment_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM learning_lifecycle_events "
+        "WHERE successor_experiment_id=? AND action='admit_trial' "
+        "ORDER BY created_at DESC, event_id DESC LIMIT 1",
+        (successor_experiment_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def get_exposure_by_dedup_key(dedup_key: str) -> dict | None:
     row = get_db().execute(
         "SELECT * FROM learning_exposures WHERE dedup_key=?", (dedup_key,)

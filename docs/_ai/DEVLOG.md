@@ -1,5 +1,19 @@
 # Development Log
 
+## 2026-07-13 — Shadow intervention handoff honesty
+
+- AT-01 now reads whether a treatment was actually applied from each exposure
+  manifest. Fully shadow cohorts can prove data collection readiness, but return
+  `insufficient_data/no_actual_intervention` instead of causal positive/negative.
+- Contribution verdicts persist their complete cohort identity, and the duplicate
+  typed `stage` field was removed.
+- AT-02 no longer moves shadow experiments into paper automatically. A separate,
+  audited, idempotent admission action is required to create a `paper_10` trial.
+- Learning behavior defaults, Universe scoring, Risk, execution, credentials, and
+  live trading are unchanged.
+
+---
+
 ## 2026-07-11 — Cross-platform service runtime honesty
 
 - Gateway restart history now separates an active failure from a historical

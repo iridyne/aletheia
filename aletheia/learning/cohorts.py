@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import json
 import math
 from typing import Any
 
@@ -29,6 +30,7 @@ class CohortKey:
     policy_epoch: str
     horizon: str
     outcome_contract_version: str
+    code_commit: str
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,7 @@ class CohortSample:
     mae_pct: float | None
     entry_ts: str
     exposed_at: str
+    authority_applied: bool
 
 
 @dataclass
@@ -69,11 +72,15 @@ class ContributionCohort:
             "policy_epoch": self.key.policy_epoch,
             "horizon": self.key.horizon,
             "outcome_contract_version": self.key.outcome_contract_version,
+            "code_commit": self.key.code_commit or None,
             "raw_exposure_n": self.raw_exposure_n,
             "unique_treatment_n": len(self.treatment_samples),
             "unique_control_n": len(self.control_samples),
             "duplicate_exposure_n": self.duplicate_exposure_n,
             "duplicate_outcome_n": self.duplicate_outcome_n,
+            "authority_applied_treatment_n": sum(
+                sample.authority_applied for sample in self.treatment_samples
+            ),
             "exclusion_reasons": dict(sorted(self.exclusion_reasons.items())),
             "invalid_reasons": dict(sorted(self.invalid_reasons.items())),
             "outcome_candidate_keys": sorted(sample.outcome_candidate_key for sample in self.samples),
@@ -111,6 +118,7 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
             str(exposure.get("concurrent_policy_epoch") or ""),
             str(hypothesis.target_horizon or ""),
             str(exposure.get("outcome_contract_version") or ""),
+            str(exposure.get("code_commit") or ""),
         )
         cohort = cohorts.setdefault(key, ContributionCohort(key, experiment, hypothesis))
         cohort.raw_exposure_n += 1
@@ -205,10 +213,20 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
                 mae_pct=_finite_float(outcome.get("mae_pct")),
                 entry_ts=str(outcome["entry_ts"]),
                 exposed_at=str(exposure["exposed_at"]),
+                authority_applied=_manifest_authority_applied(exposure.get("manifest_json")),
             ))
     for cohort in cohorts.values():
         cohort.samples.sort(key=lambda sample: (sample.assignment, sample.outcome_candidate_key))
     return [cohorts[key] for key in sorted(cohorts)]
+
+
+def _manifest_authority_applied(manifest_json: Any) -> bool:
+    """Read only an explicit JSON boolean; missing/malformed manifests fail closed."""
+    try:
+        manifest = json.loads(manifest_json or "{}")
+    except (TypeError, ValueError):
+        return False
+    return isinstance(manifest, dict) and manifest.get("authority_applied") is True
 
 
 def _exact_outcome(

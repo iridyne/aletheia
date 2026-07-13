@@ -54,6 +54,11 @@ def evaluate_cohort(cohort: ContributionCohort) -> VerdictEvaluation:
             baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
             "insufficient_data", "insufficient unique prospective treatment/control samples or time span",
         )
+    if not any(sample.authority_applied for sample in treatment):
+        return VerdictEvaluation(
+            baseline, observed, delta, confidence_low, confidence_high, harm_metrics,
+            "insufficient_data", "no_actual_intervention",
+        )
     assert delta is not None
     if harm_metrics["breached"]:
         return VerdictEvaluation(
@@ -138,11 +143,15 @@ def _harm_metrics(
         "policy_epoch": cohort.key.policy_epoch,
         "horizon": cohort.key.horizon,
         "outcome_contract_version": cohort.key.outcome_contract_version,
+        "code_commit": cohort.key.code_commit or None,
         "raw_exposure_n": cohort.raw_exposure_n,
         "duplicate_exposure_n": cohort.duplicate_exposure_n,
         "duplicate_outcome_n": cohort.duplicate_outcome_n,
         "exclusion_reasons": dict(sorted(cohort.exclusion_reasons.items())),
         "invalid_reasons": dict(sorted(cohort.invalid_reasons.items())),
+        "authority_applied_treatment_n": sum(
+            sample.authority_applied for sample in treatment
+        ),
         "treatment_loss_rate": treatment_loss_rate,
         "control_loss_rate": control_loss_rate,
         "loss_rate_delta": loss_rate_delta,

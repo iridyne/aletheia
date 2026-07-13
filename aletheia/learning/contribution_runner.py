@@ -15,7 +15,7 @@ from typing import Any
 from aletheia.learning.cohorts import ContributionCohort, build_experiment_cohorts
 from aletheia.learning.ledger import get_record, insert_record
 from aletheia.learning.models import LearningContributionVerdict
-from aletheia.learning.verdicts import VerdictEvaluation, evaluate_cohort
+from aletheia.learning.verdicts import METRIC_VERSION, VerdictEvaluation, evaluate_cohort
 from aletheia.storage.sqlite import get_db
 
 
@@ -77,6 +77,11 @@ def _build_verdict(
         verdict=evaluation.verdict,
         reason=evaluation.reason,
         created_at=window_end,
+        policy_epoch=cohort.key.policy_epoch,
+        target_horizon=cohort.key.horizon,
+        outcome_contract_version=cohort.key.outcome_contract_version,
+        metric_version=METRIC_VERSION,
+        code_commit=cohort.key.code_commit or None,
     )
 
 
@@ -88,6 +93,7 @@ def _cohort_fingerprint(cohort: ContributionCohort, evaluation: VerdictEvaluatio
             "policy_epoch": cohort.key.policy_epoch,
             "horizon": cohort.key.horizon,
             "outcome_contract_version": cohort.key.outcome_contract_version,
+            "code_commit": cohort.key.code_commit,
         },
         "samples": [
             {
@@ -98,6 +104,7 @@ def _cohort_fingerprint(cohort: ContributionCohort, evaluation: VerdictEvaluatio
                 "mae_pct": sample.mae_pct,
                 "entry_ts": sample.entry_ts,
                 "exposed_at": sample.exposed_at,
+                "authority_applied": sample.authority_applied,
             }
             for sample in sorted(cohort.samples, key=lambda row: (row.assignment, row.outcome_candidate_key))
         ],
