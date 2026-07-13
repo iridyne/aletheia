@@ -402,6 +402,18 @@ class HealthConfig(BaseModel):
     # operator) while keeping data-collection jobs running. This prevents data
     # gaps during LLM outages. When False, all jobs are halted (legacy behavior).
     layered_pause_enabled: bool = True
+    # Startup Behavior Gate: when True, the gateway boots the API/Dashboard and
+    # essential data jobs but keeps AI decisions + new trading PAUSED until a set
+    # of ground-truth checks pass (DB integrity, config↔active-scope, exchange
+    # sync / paper_internal, no unexplained pending orders/closes, no active
+    # reconciliation incident, learning influence within bounds, no user
+    # pause/kill switch). On failure it records a durable blocker, keeps data
+    # collection running under a layered pause, surfaces the reason in
+    # Doctor/Health, and periodically re-checks. Default off (opt-in), matching
+    # require_llm_at_startup. See agent_runtime/startup_behavior_gate.py.
+    startup_behavior_gate_enabled: bool = False
+    # How often the startup-gate recheck loop re-evaluates while blocked.
+    startup_gate_recheck_interval_sec: int = 60
 
 
 class RetentionConfig(BaseModel):

@@ -3249,6 +3249,7 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'health.auto_resume_enabled', 'health.auto_resume_interval_sec',  // HealthCard (DO-1/CUI-4)
     'health.exchange_probe_interval_sec', 'health.exchange_probe_failure_threshold',
     'health.exchange_auto_resume_interval_sec', 'health.exchange_auto_resume_success_threshold',
+    'health.startup_behavior_gate_enabled', 'health.startup_gate_recheck_interval_sec',  // Startup Behavior Gate
     'network.proxy_protocol', 'network.proxy_host', 'network.proxy_port',
     'network.enforce', 'network.proxy_url', 'network.no_proxy',
     'operator.loop_enabled',
@@ -3337,12 +3338,14 @@ function HealthCard({ settings, qc }: any) {
     { key: 'exchange_probe_failure_threshold', label: 'Exchange fail threshold', unit: '',    min: 1,  max: 20,    step: 1, isInt: true },
     { key: 'exchange_auto_resume_interval_sec', label: 'Exchange resume interval', unit: 'sec', min: 10, max: 600, step: 10, isInt: true },
     { key: 'exchange_auto_resume_success_threshold', label: 'Exchange resume successes', unit: '', min: 1, max: 10, step: 1, isInt: true },
+    { key: 'startup_gate_recheck_interval_sec', label: 'Startup gate recheck interval', unit: 'sec', min: 5, max: 3600, step: 5, isInt: true },
   ]
   const HEALTH_TOGGLES: BoolField[] = [
     { key: 'enabled', label: 'Health monitoring' },
     { key: 'alert_via_telegram', label: 'Telegram alerts' },
     { key: 'alert_via_windows_toast', label: 'Windows toast alerts' },
     { key: 'require_llm_at_startup', label: 'Require LLM at startup' },
+    { key: 'startup_behavior_gate_enabled', label: 'Startup behavior gate' },
     { key: 'self_heal_enabled', label: 'Self-heal enabled' },
     { key: 'self_heal_code_drift', label: 'Restart on code drift' },
     { key: 'self_heal_market_data', label: 'Restart on stale market data' },

@@ -496,6 +496,7 @@ export const api = {
     self_heal_code_drift: boolean; self_heal_market_data: boolean; self_heal_port_cleanup: boolean
     require_llm_at_startup: boolean; startup_gate_max_retries: number; startup_gate_retry_delay_sec: number
     auto_resume_enabled: boolean; auto_resume_interval_sec: number
+    startup_behavior_gate_enabled: boolean; startup_gate_recheck_interval_sec: number
   }>) => post<{ updated: Record<string, any> }>('/settings/health-config', body),
   updateRetentionConfig: (body: Partial<{
     agent_runs_days: number; tool_calls_days: number; run_steps_days: number

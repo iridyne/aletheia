@@ -152,6 +152,18 @@ def compute_health() -> dict:
     if cfg.runtime.paused and cfg.runtime.scheduler_enabled:
         issues.append("trading_paused")
 
+    # Startup Behavior Gate: when the gate holds the trading loop, surface the
+    # SPECIFIC blockers (db integrity, exchange sync, reconciliation incident, …)
+    # so /api/health is honest about *why* — not just that it is paused.
+    try:
+        from aletheia.agent_runtime.startup_behavior_gate import read_gate_state
+        gate_state = read_gate_state()
+        if gate_state and gate_state.get("paused_by_gate"):
+            names = ",".join(gate_state.get("blockers") or []) or "unknown"
+            issues.append(f"startup_gate_blocked:{names}")
+    except Exception:
+        pass
+
     stale_min = _market_data_stale_minutes(cfg)
     if stale_min is not None and stale_min > cfg.health.market_data_max_staleness_min:
         issues.append(f"market_data_stale:{stale_min:.0f}min")
