@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-058
 title: Build deterministic control-loop simulation MVP
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: Operator confidence control-loop regression fixture and production-path
@@ -31,8 +31,8 @@ ownership:
 base_commit: 82051a8eaf67d6393fc5596171a791966c357054
 next_action:
   command_key: workflow_bootstrap
-  reason: Confidence recovery is complete; resume remaining DCLS work only after merge
-    and a fresh bootstrap.
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: confidence_incident
@@ -60,5 +60,14 @@ verification:
   run_at: '2026-07-13T05:17:59.791347Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: confidence_incident
+  command: uv run pytest tests/simulation/control_loop/test_confidence_deadlock.py
+    tests/test_operator_loop.py tests/specs/spec_operator_loop.py -q
+  command_sha256: a09fa4de1319d4acac5849af4a07151f5725b04ca9be4333dd1df9954c98d08a
+  exit_code: 0
+  commit: f81606de102e550b899fac61c2908280c3b60e92
+  run_at: '2026-07-13T05:23:46.915048Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-058.md
-updated_at: '2026-07-13T05:23:32.355545Z'
+updated_at: '2026-07-13T05:23:47.048238Z'
