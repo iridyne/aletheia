@@ -24,6 +24,9 @@ commands:
   dcls_mvp:
     command: uv run pytest tests/simulation/control_loop/ tests/specs/spec_deterministic_control_loop.py tests/test_runtime_replay_pack.py tests/e2e/test_active_mainline_golden_path.py -q --tb=short
     purpose: Verify fixed control-loop incidents, stateful invariants, mutation canaries, replay, artifacts, and the active Golden Path.
+  dcls_artifacts:
+    command: uv run pytest tests/simulation/control_loop/test_confidence_deadlock.py tests/simulation/control_loop/test_sizing_ratchet.py tests/simulation/control_loop/test_failure_artifacts.py tests/specs/spec_deterministic_control_loop.py -q --tb=short
+    purpose: Verify every fixed DCLS scenario automatically leaves a complete sanitized replay pack on failure.
   spec_risk_engine:
     command: uv run pytest tests/specs/spec_risk_engine.py -q
     purpose: Verify risk-engine trust-boundary contract.
