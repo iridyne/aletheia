@@ -258,7 +258,8 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     for c in skipped:
         reason = c.get("skip_reason", "")
         if any(reason.startswith(p) for p in _PERMANENT_SKIP_PREFIXES):
-            update_opportunity(c["opportunity_id"], status="reviewed")
+            terminal_status = "expired" if reason.startswith("ttl_expired") else "reviewed"
+            update_opportunity(c["opportunity_id"], status=terminal_status)
     for c in skipped[:10]:
         outputs.append(f"skip:{c.get('symbol','?')}:{c['skip_reason']}")
 

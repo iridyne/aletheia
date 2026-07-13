@@ -494,3 +494,40 @@ def test_paper_trader_does_not_requeue_operator_evaluated_opportunity(tmp_path, 
     assert pending == 0
     assert status == "reviewed"
     assert any("skip_already_evaluated:BTC/USDT" in row for row in result["outputs"])
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-08", "pipeline_paper_trade", "§2 expired opportunity state", "L2b",
+        "An opportunity rejected because its own valid_until has elapsed becomes expired, "
+        "not reviewed; expiry and System Operator evaluation remain distinct lifecycle facts.",
+        status="implemented",
+    ),
+)
+def test_paper_trader_marks_ttl_rejection_expired(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    opp_id = _insert_opportunity(conn, symbol="BTC/USDT", confidence_score=85)
+    conn.execute(
+        "UPDATE opportunities SET valid_until=? WHERE id=?",
+        ("2020-01-01T00:00:00+00:00", opp_id),
+    )
+    conn.commit()
+
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+
+    init_tool_registry()
+    import asyncio
+    from aletheia.agents.paper_trader import run_paper_trader
+
+    result = asyncio.run(run_paper_trader(permission_mode="Paper"))
+
+    status = conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opp_id,),
+    ).fetchone()[0]
+    pending = conn.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' AND opportunity_id=?",
+        (opp_id,),
+    ).fetchone()[0]
+    assert status == "expired"
+    assert pending == 0
+    assert any("skip:BTC/USDT:ttl_expired" in row for row in result["outputs"])
