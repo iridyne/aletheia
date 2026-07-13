@@ -1,0 +1,73 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-058
+title: Build deterministic control-loop simulation MVP
+status: done
+packet_type: standard
+scope:
+  boundary: Operator confidence control-loop regression fixture and production-path
+    liveness proof
+  excluded: Risk, Execution, Exchange, Live, credentials, UI, runtime state, and general
+    simulation expansion before stable Red/Green
+intent: Freeze the CONFIDENCE-DEADLOCK-20260713 incident as a deterministic production-path
+  regression, prove known-bad Red, then repair the real confidence recovery path before
+  any general DCLS expansion.
+acceptance:
+- CONFIDENCE-DEADLOCK-20260713 is a machine-readable fixture with the recorded 37.2/9.5/34.5h
+  facts and 1 high plus 7 medium candidates.
+- The scenario uses real config persistence, migrations, temporary SQLite, repositories,
+  assessment, decision, dispatch, audit, and confidence filter paths.
+- The known-bad ref fails because of the liveness invariant, not an import, fixture,
+  network, or environment error.
+- A fixed candidate must recover confidence to neutral or persist an explicit visible
+  blocker without an orphan proposal or opposing same-cycle actions.
+- Risk, Execution, Exchange, Live, credentials, UI, and unrelated Operator behavior
+  remain unchanged.
+ownership:
+  branch: iridite/dcls-mvp
+  lease_holder: codex
+  claimed_at: '2026-07-13T05:07:28.614254Z'
+  expires_at: '2026-07-13T13:07:28.614410Z'
+base_commit: 82051a8eaf67d6393fc5596171a791966c357054
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: confidence_incident
+  command: uv run pytest tests/simulation/control_loop/test_confidence_deadlock.py
+    tests/test_operator_loop.py tests/specs/spec_operator_loop.py -q
+  command_sha256: a09fa4de1319d4acac5849af4a07151f5725b04ca9be4333dd1df9954c98d08a
+  exit_code: 0
+  commit: bde03f8d79b15e03329ca5774a0c44e33843ce3c
+  run_at: '2026-07-13T05:17:36.159643Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: bde03f8d79b15e03329ca5774a0c44e33843ce3c
+  run_at: '2026-07-13T05:17:58.934761Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: bde03f8d79b15e03329ca5774a0c44e33843ce3c
+  run_at: '2026-07-13T05:17:59.791347Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: confidence_incident
+  command: uv run pytest tests/simulation/control_loop/test_confidence_deadlock.py
+    tests/test_operator_loop.py tests/specs/spec_operator_loop.py -q
+  command_sha256: a09fa4de1319d4acac5849af4a07151f5725b04ca9be4333dd1df9954c98d08a
+  exit_code: 0
+  commit: f81606de102e550b899fac61c2908280c3b60e92
+  run_at: '2026-07-13T05:23:46.915048Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-058.md
+updated_at: '2026-07-13T05:23:47.048238Z'

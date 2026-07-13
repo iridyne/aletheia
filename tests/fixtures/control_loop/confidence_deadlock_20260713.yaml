@@ -1,0 +1,36 @@
+schema_version: 1
+incident_id: CONFIDENCE-DEADLOCK-20260713
+owner: operator-control-loop
+domain: paper-candidate-liveness
+known_bad_ref: 82051a8eaf67d6393fc5596171a791966c357054
+candidate_ref: 4b366b5bea65e8fc6c99f55a02563c07457097cc
+initial_state:
+  now: "2026-07-13T04:00:00+00:00"
+  min_confidence_to_trade: high
+  signal_win_rate_24h: 37.2
+  win_rate_7d: 9.5
+  hours_since_last_fill: 34.5
+  kill_switch_active: false
+  candidates:
+    high: 1
+    medium: 7
+operation_sequence:
+  - run_operator_cycle
+  - run_candidate_filter_if_recovered
+  - run_operator_cycle_without_new_facts
+independent_invariants:
+  - tightened confidence recovers to neutral or produces a durable visible blocker
+  - every emitted loosen action is applied rejected or held by a verified expiring consumer
+  - recovery lets medium candidates cross the production confidence gate
+  - one cycle never emits both tighten_confidence and loosen_confidence
+  - unchanged facts do not immediately tighten confidence after recovery
+red_evidence:
+  observed_on: "2026-07-13"
+  observed_failure: "liveness invariant failed: confidence stayed tightened with no durable, visible blocker"
+  failing_ref: 82051a8eaf67d6393fc5596171a791966c357054
+  command: uv run pytest tests/simulation/control_loop/test_confidence_deadlock.py -q
+green_evidence:
+  observed_on: "2026-07-13"
+  branch: iridite/dcls-mvp
+  result: "67 focused Operator and confidence incident tests passed"
+  command: uv run pytest tests/simulation/control_loop/test_confidence_deadlock.py tests/test_operator_loop.py tests/specs/spec_operator_loop.py -q
