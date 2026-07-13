@@ -274,7 +274,7 @@ class OperatorAction:
 _LEVEL_1_ACTIONS = {
     "retire_strategy", "demote_strategy",  # advisory-only under Phase 4d — see note above
     "trigger_optuna_sweep",                # status='not_implemented' at runtime — see note above
-    "tighten_confidence", "reduce_sizing", "tighten_stop_loss",
+    "tighten_confidence", "loosen_confidence", "reduce_sizing", "tighten_stop_loss",
     "adjust_scanner_weight", "request_backfill", "notify_operator",
     "trigger_strategy_research",
     # Data-maintenance self-heal actions (operator_layer.md §自愈档位 L1).
@@ -286,7 +286,7 @@ _LEVEL_1_ACTIONS = {
 }
 
 _LEVEL_2_ACTIONS = {
-    "loosen_confidence", "increase_sizing",
+    "increase_sizing",
     "widen_stop_loss", "neutral_drift",
     "add_universe_symbol",
     # L2 self-heal actions (operator_layer.md §自愈档位 L2) — require human confirmation.
@@ -574,19 +574,17 @@ def _execute_level1_action(action: OperatorAction) -> dict:
         result = _action_trigger_optuna_sweep(action)
     elif action.action_type == "tighten_confidence":
         result = _action_tighten_confidence(action)
+    elif action.action_type == "loosen_confidence":
+        # Moved to Level 1 (2026-07-13): tighten was always Level 1 (auto) while
+        # loosen was Level 2 (proposal-only, no approval UI), creating a structural
+        # asymmetry that permanently locked confidence at 'high' during signal
+        # drought. loosen is guarded by _action_loosen_confidence: never loosens
+        # past neutral ('medium'), subject to the same cooldown + daily-patch limits.
+        result = _action_loosen_confidence(action)
     elif action.action_type == "reduce_sizing":
         result = _action_reduce_sizing(action)
     elif action.action_type == "tighten_stop_loss":
         result = _action_tighten_stop_loss(action)
-    # NOTE: loosen_confidence / increase_sizing / widen_stop_loss are Level-2
-    # (loosening = risk-increasing → require human proposal). classify_action
-    # puts them in _LEVEL_2_ACTIONS, so the dispatcher routes them to
-    # _create_proposal and they NEVER reach this Level-1 executor. The former
-    # elif branches here were dead code that contradicted the L1/L2 boundary
-    # (OL-C07, §15.2). Removed 2026-06-23 — if a loosening action ever lands here
-    # it now correctly falls through to the "unknown action type" guard rather
-    # than being silently auto-executed. The handler functions themselves remain
-    # (used by _action_neutral_drift after proposal approval).
     elif action.action_type == "adjust_scanner_weight":
         result = _action_adjust_scanner_weight(action)
     elif action.action_type == "request_backfill":
@@ -1186,9 +1184,19 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     # assessment for observability and for the TS shell's own evaluation.
 
     # Stage 3: Parameter Tuning — TIGHTEN rules (Level 1, with escalation)
+    # Drought guard: when there have been no fills for >= 4h the confidence gate is
+    # already blocking all candidates (or close to it). Tightening further is either
+    # a no-op (already at 'high') or would undo a just-executed loosen before the
+    # system has had any chance to evaluate candidates. Suppress tighten during
+    # drought; it resumes automatically once trading activity returns.
+    _in_drought = (
+        assessment.hours_since_last_trade is not None
+        and assessment.hours_since_last_trade >= 4
+    )
     if (assessment.signal_status == "degraded"
             and assessment.signal_win_rate is not None
-            and assessment.signal_win_rate < 40):
+            and assessment.signal_win_rate < 40
+            and not _in_drought):
         act = OperatorAction(
             action_type="tighten_confidence",
             level=1,
@@ -1208,20 +1216,24 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
         act = _maybe_escalate(act, "max_demo_position_notional_usdt", "tighten")
         actions.append(act)
 
-    # Stage 3: Parameter Tuning — LOOSEN rules (Level 2 proposals)
+    # Stage 3: Parameter Tuning — LOOSEN rules (Level 1, auto-executed)
 
     # Rule 5A: Activity dead-zone → loosen confidence
+    # Threshold is 4h: if confidence is tightened and no fills have arrived in 4h
+    # the ranker's confidence gate is blocking all candidates from reaching the
+    # System Operator. Loosen back to neutral so opportunities can enter the filter
+    # chain and be evaluated on merit. Level 1 (auto) — see note in _execute_level1_action.
     if (assessment.hours_since_last_trade is not None
-            and assessment.hours_since_last_trade >= 12
+            and assessment.hours_since_last_trade >= 4
             and assessment.param_drift.get("min_confidence_to_trade") == "tightened"
             and (assessment.win_rate_7d is None or assessment.win_rate_7d >= 40)
             and not assessment.kill_switch_active):
         actions.append(OperatorAction(
             action_type="loosen_confidence",
-            level=2,
+            level=1,
             params={},
-            reason=(f"no trades in {assessment.hours_since_last_trade:.0f}h, "
-                    f"confidence tightened above neutral — proposing loosen"),
+            reason=(f"no fills in {assessment.hours_since_last_trade:.0f}h with confidence "
+                    "tightened — loosening to let opportunities reach filter evaluation"),
         ))
 
     # Rule 5B: Winning streak + high PF → increase sizing

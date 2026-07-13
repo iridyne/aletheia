@@ -965,12 +965,19 @@ def _get_data_health_summary() -> dict[str, Any]:
         else:
             signal_status = "neutral"
 
+        try:
+            from aletheia.config.loader import load_config as _lc
+            _min_conf = getattr(_lc().trading, "min_confidence_to_trade", "medium")
+        except Exception:
+            _min_conf = "medium"
+
         return {
             "ohlcv_ready": ohlcv_ready,
             "members_with_full_coverage": ready_count,
             "total_members": total_members,
             "signal_win_rate_24h": win_rate,
             "signal_status": signal_status,
+            "min_confidence_to_trade": _min_conf,
         }
     except Exception as e:
         logger.debug("data_health_summary failed: %s", e)
@@ -980,6 +987,7 @@ def _get_data_health_summary() -> dict[str, Any]:
             "total_members": 0,
             "signal_win_rate_24h": None,
             "signal_status": "unknown",
+            "min_confidence_to_trade": "medium",
         }
 
 

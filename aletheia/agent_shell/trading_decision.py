@@ -1145,13 +1145,27 @@ def _build_assessment_prompt(ctx: dict) -> str:
         )
     if data_health.get("signal_status") == "degraded":
         wr = data_health.get("signal_win_rate_24h", "?")
+        current_conf = data_health.get("min_confidence_to_trade", "medium")
         # Labelled signal_accuracy_24h (not win_rate) to avoid colliding with the
         # 7d trade win_rate in the stats block — two same-named metrics let the
         # LLM stack them into a double-crisis reading.
-        health_alerts.append(
-            f"⚠️ SIGNAL DEGRADATION: 24h universe signal_accuracy_24h={wr}% (below 40%). "
-            "Consider: reducing position sizing, tightening stops, skipping low-conviction trades."
-        )
+        if current_conf != "medium":
+            # Confidence gate already tightened by the operator loop — remaining
+            # candidates are pre-filtered to high-confidence only. Avoid a reflexive
+            # full skip that leaves the system with zero evaluated candidates.
+            health_alerts.append(
+                f"⚠️ SIGNAL DEGRADATION: 24h universe signal_accuracy_24h={wr}% (below 40%). "
+                f"NOTE: min_confidence_to_trade is already auto-tightened to '{current_conf}' — "
+                f"all candidates shown are pre-filtered to {current_conf}-confidence only. "
+                "Do NOT skip all candidates reflexively. "
+                "Evaluate remaining setups on their individual merit. "
+                "Use reduced position sizing (0.5–0.75× normal) if trading."
+            )
+        else:
+            health_alerts.append(
+                f"⚠️ SIGNAL DEGRADATION: 24h universe signal_accuracy_24h={wr}% (below 40%). "
+                "Consider: reducing position sizing, tightening stops, skipping low-conviction trades."
+            )
 
     # ── Assemble prompt ──
     parts = []
