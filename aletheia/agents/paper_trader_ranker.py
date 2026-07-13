@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from aletheia.analytics.factor_feedback import lookup_factor_signal
@@ -48,12 +49,31 @@ _EVIDENCE_PENALTY_STATUSES = {"paper_failing": -30, "review_needed": -10, "needs
 _EVIDENCE_BONUS_STATUSES = {"paper_promising": 15}
 
 
+@dataclass(frozen=True)
+class PaperCandidateWorkset:
+    """Bounded scan facts separated from the ranked execution shortlist."""
+
+    ranked_candidates: list[dict]
+    scanned_candidates: list[dict]
+
+
 def build_paper_candidates(limit: int = 50) -> list[dict]:
     """Build and score all eligible paper trade candidates.
 
     Reproduces existing paper_trader gates but evaluates ALL opportunities,
     not just the first valid one. Each candidate gets a trade_score and
     optional skip_reason.
+    """
+    return build_paper_candidate_workset(limit).ranked_candidates
+
+
+def build_paper_candidate_workset(limit: int = 50) -> PaperCandidateWorkset:
+    """Return the top-N execution view plus every candidate in its bounded scan.
+
+    Permanent rejects in the scan must retain their durable reason even when
+    they rank below the execution shortlist.  Keeping the two views separate
+    preserves the caller's top-N execution capacity without losing terminal
+    state work.
     """
     cfg = load_config()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -81,13 +101,24 @@ def build_paper_candidates(limit: int = 50) -> list[dict]:
     opportunities = list_open_opportunities(limit=scan_limit)
 
     for opp in opportunities:
-        candidate = _evaluate_candidate(opp, cfg, now_iso, _symbol_allowed, min_conf, global_venue)
+        candidate = _evaluate_candidate(
+            opp,
+            cfg,
+            now_iso,
+            _symbol_allowed,
+            min_conf,
+            global_venue,
+            symbol_filter_mode=filter_mode,
+        )
         if candidate is not None:
             candidates.append(candidate)
 
     # Sort by trade_score descending
     candidates.sort(key=lambda c: c.get("trade_score", -999), reverse=True)
-    return candidates[:requested_limit]
+    return PaperCandidateWorkset(
+        ranked_candidates=candidates[:requested_limit],
+        scanned_candidates=candidates,
+    )
 
 
 def select_best_candidate(candidates: list[dict]) -> dict | None:
@@ -105,6 +136,8 @@ def _evaluate_candidate(
     symbol_allowed,
     min_conf: str,
     global_venue: str = "bitget_demo",
+    *,
+    symbol_filter_mode: str = "whitelist",
 ) -> dict | None:
     """Evaluate a single opportunity as a paper trade candidate.
 
@@ -164,7 +197,20 @@ def _evaluate_candidate(
 
     # Hard filter: symbol allowed
     if not symbol_allowed(symbol):
-        return None
+        _filter_step(
+            filter_trace,
+            "symbol_filter",
+            "rejected",
+            "symbol_not_allowed",
+            inputs={"symbol": to_canonical(symbol)},
+            parameters={"mode": symbol_filter_mode},
+        )
+        return _make_candidate(
+            opp,
+            skip_reason=f"symbol_not_allowed:{symbol_filter_mode}",
+            direction=direction,
+            filter_trace=filter_trace,
+        )
 
     # Direction gate
     if direction is None:

@@ -103,6 +103,7 @@ class TestP0AutoPromote:
                 pi_dec = PiDecision(
                     symbol=opp["symbol"],
                     direction=opp["direction"],
+                    market_type=opp.get("market_type"),
                     action="signal_pending",
                     conviction=0,
                     reasoning=f"Auto-promote: score={score_result['score']} opp={oid[:8]}",
@@ -306,6 +307,7 @@ class TestPendingSignalDirectMatch:
             "layer2": {
                 "pending_signals": [
                     {"symbol": "SOL/USDT", "direction": "long",
+                     "market_type": "spot",
                      "opportunity_id": "ser-sol-123", "signal_source": "serenity",
                      "reasoning": "auto-promote", "at": "2026-07-01T10:00:00"}
                 ]
@@ -316,8 +318,8 @@ class TestPendingSignalDirectMatch:
         assert decision.opportunity_id == "ser-sol-123"
         assert decision.signal_source == "serenity"
 
-    def test_market_observer_still_wins_over_pending_signal(self):
-        """market_observer match takes priority even when pending_signal exists."""
+    def test_pending_signal_authority_wins_over_unqueued_market_observer(self):
+        """A durable pending carrier outranks an analysis-only open opportunity."""
         from aletheia.agent_shell.trading_decision import (
             TradingDecision, _attach_opportunity_context,
         )
@@ -337,6 +339,7 @@ class TestPendingSignalDirectMatch:
             "layer2": {
                 "pending_signals": [
                     {"symbol": "BTC/USDT", "direction": "long",
+                     "market_type": "spot",
                      "opportunity_id": "ser-btc-888", "signal_source": "serenity",
                      "reasoning": "auto-promote", "at": "2026-07-01T10:00:00"}
                 ]
@@ -344,8 +347,8 @@ class TestPendingSignalDirectMatch:
             "layer3": {"serenity_opportunities": []},
         }
         _attach_opportunity_context(decision, ctx)
-        assert decision.opportunity_id == "mkt-btc-999"
-        assert decision.signal_source == "market_observer"
+        assert decision.opportunity_id == "ser-btc-888"
+        assert decision.signal_source == "serenity"
 
     def test_pending_signal_without_opportunity_id_skipped(self):
         """A pending_signal with no opportunity_id is skipped (honest None)."""

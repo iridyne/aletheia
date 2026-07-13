@@ -110,7 +110,13 @@ def test_normalized_quantity_uses_snapshot_without_mutating_proposal(tmp_path, m
     from aletheia.execution import bitget_broker, gateway
     from aletheia.risk.engine import RiskCheckResult
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import TradeProposal
+    from aletheia.storage.models import (
+        Fill,
+        Order,
+        Position,
+        RiskDecision,
+        TradeProposal,
+    )
 
     proposal = TradeProposal(
         symbol="BTC/USDT",
@@ -122,6 +128,18 @@ def test_normalized_quantity_uses_snapshot_without_mutating_proposal(tmp_path, m
     )
     repo.insert_trade_proposal(proposal)
     original_hash = proposal.commit_hash
+    repo.insert_risk_decision(
+        RiskDecision(
+            id="risk-authoritative",
+            proposal_id=proposal.id,
+            approved=True,
+            allowed_execution_mode=proposal.execution_mode,
+            proposal_execution_mode=proposal.execution_mode,
+            decision_role="authoritative",
+            evaluated_quantity=0.003,
+            proposal_commit_hash=proposal.commit_hash,
+        )
+    )
 
     evaluated_quantities: list[float | None] = []
 
@@ -138,6 +156,45 @@ def test_normalized_quantity_uses_snapshot_without_mutating_proposal(tmp_path, m
 
     def _execute_live_order(**kwargs):
         sent_quantities.append(kwargs["quantity"])
+        repo.insert_order(
+            Order(
+                id="order-normalized",
+                proposal_id=proposal.id,
+                risk_decision_id="risk-authoritative",
+                client_order_id=proposal.id,
+                position_id="position-normalized",
+                symbol=proposal.symbol,
+                market_type=proposal.market_type,
+                direction=proposal.direction,
+                order_type=proposal.order_type,
+                quantity=kwargs["quantity"],
+                price=kwargs["price"],
+                execution_mode=proposal.execution_mode,
+                exchange_order_id="exchange-normalized",
+                status="filled",
+            )
+        )
+        repo.insert_fill(
+            Fill(
+                id="fill-normalized",
+                order_id="order-normalized",
+                fill_price=kwargs["price"],
+                fill_quantity=kwargs["quantity"],
+            )
+        )
+        repo.insert_position(
+            Position(
+                id="position-normalized",
+                proposal_id=proposal.id,
+                order_id="order-normalized",
+                symbol=proposal.symbol,
+                market_type=proposal.market_type,
+                direction=proposal.direction,
+                quantity=kwargs["quantity"],
+                entry_price=kwargs["price"],
+                execution_mode=proposal.execution_mode,
+            )
+        )
         return {
             "order_id": "order-normalized",
             "exchange_order_id": "exchange-normalized",
@@ -257,7 +314,7 @@ def test_concurrent_execute_existing_proposal_enters_pipeline_once(tmp_path, mon
     calls: list[str] = []
     calls_lock = threading.Lock()
 
-    def _side_effecting_pipeline(candidate):
+    def _side_effecting_pipeline(candidate, **_kwargs):
         with calls_lock:
             calls.append(candidate.id)
             call_number = len(calls)
@@ -1030,7 +1087,7 @@ def test_submitted_exchange_order_does_not_mark_proposal_executed(
 
     from aletheia.execution import bitget_broker, gateway
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import TradeProposal
+    from aletheia.storage.models import Order, RiskDecision, TradeProposal
 
     proposal = TradeProposal(
         symbol="BTC/USDT",
@@ -1041,6 +1098,18 @@ def test_submitted_exchange_order_does_not_mark_proposal_executed(
         execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(proposal)
+    repo.insert_risk_decision(
+        RiskDecision(
+            id="risk-authoritative",
+            proposal_id=proposal.id,
+            approved=True,
+            allowed_execution_mode=proposal.execution_mode,
+            proposal_execution_mode=proposal.execution_mode,
+            decision_role="authoritative",
+            evaluated_quantity=proposal.quantity,
+            proposal_commit_hash=proposal.commit_hash,
+        )
+    )
     monkeypatch.setattr(
         gateway,
         "evaluate_proposal",
@@ -1057,17 +1126,38 @@ def test_submitted_exchange_order_does_not_mark_proposal_executed(
     )
     monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *_args: None)
     monkeypatch.setattr(gateway, "write_audit", lambda _event: None)
-    monkeypatch.setattr(
-        bitget_broker,
-        "execute_live_order",
-        lambda **_kwargs: {
+    def _accepted_order(**_kwargs):
+        repo.insert_order(
+            Order(
+                id="order-rx-15",
+                proposal_id=proposal.id,
+                risk_decision_id="risk-authoritative",
+                client_order_id=proposal.id,
+                symbol=proposal.symbol,
+                market_type=proposal.market_type,
+                direction=proposal.direction,
+                order_type=proposal.order_type,
+                quantity=proposal.quantity or 0.0,
+                price=proposal.price,
+                execution_mode=proposal.execution_mode,
+                exchange_order_id="exchange-rx-15",
+                status="submitted",
+            )
+        )
+        return {
             "order_id": "order-rx-15",
             "exchange_order_id": "exchange-rx-15",
+            "order_status": "submitted",
             "fill_id": None,
             "position_id": None,
             "fill_price": None,
             "fill_quantity": 0.0,
-        },
+        }
+
+    monkeypatch.setattr(
+        bitget_broker,
+        "execute_live_order",
+        _accepted_order,
     )
 
     result = gateway._execute_proposal(proposal)
@@ -1239,3 +1329,442 @@ def test_bitget_entry_client_initialization_failure_is_not_submission_unknown(
     with pytest.raises(RuntimeError, match="private-client-initialization-detail"):
         bitget_broker.execute_live_order(**kwargs)
     assert len(repo.list_orders(limit=10)) == 2
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-18",
+        "pipeline_risk_execution_integrity",
+        "§10 evaluated Proposal snapshot identity",
+        "L2b",
+        "Authoritative Risk permits venue quantity normalization only. Any other "
+        "hash-covered difference between the evaluated object and stored Proposal "
+        "fails closed before an authoritative RiskDecision or Order is persisted.",
+        status="implemented",
+    )
+)
+def test_authoritative_risk_rejects_every_non_quantity_hash_field_mismatch(
+    tmp_path, monkeypatch
+):
+    db = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    mutations = {
+        "runtime_session_id": "altered-runtime-session",
+        "producer_commit": "altered-producer-commit",
+        "behavior_fingerprint": "altered-behavior-fingerprint",
+        "id": None,
+        "strategy_id": "altered-strategy",
+        "opportunity_id": "altered-opportunity",
+        "symbol": "ETH/USDT",
+        "market_type": "usdt_futures",
+        "direction": "short",
+        "order_type": "limit",
+        "price": 61_000.0,
+        "leverage": 2,
+        "stop_price": 59_000.0,
+        "take_profit": 63_000.0,
+        "risk_reward": 2.0,
+        "execution_mode": "bitget_demo",
+        "agent_rationale": "altered rationale",
+        "attribution_snapshot": '{"regime_tag":"altered"}',
+        "source": "adopted",
+        "trade_school": "serenity",
+        "created_at": "2099-01-01T00:00:00+00:00",
+        "parent_hash": "altered-parent-hash",
+    }
+    model_fields = set(
+        TradeProposal(
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.001,
+            price=60_000.0,
+        ).model_dump(exclude=repo._PROPOSAL_HASH_EXCLUDES)
+    )
+    assert set(mutations) == model_fields - {"quantity"}
+
+    accepted_fields: list[str] = []
+    unexpected_errors: dict[str, str] = {}
+    proposal_ids: list[str] = []
+    for field, altered_value in mutations.items():
+        proposal = TradeProposal(
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=0.001,
+            price=60_000.0,
+            execution_mode="paper_internal",
+        )
+        repo.insert_trade_proposal(proposal)
+        proposal_ids.append(proposal.id)
+        if field == "id":
+            altered_value = f"{proposal.id}-altered"
+        evaluated = proposal.model_copy(update={field: altered_value})
+
+        try:
+            evaluate_proposal(evaluated, decision_role="authoritative")
+        except ProposalIntegrityError:
+            continue
+        except Exception as exc:  # fail-closed must use the stable integrity error
+            unexpected_errors[field] = type(exc).__name__
+        else:
+            accepted_fields.append(field)
+
+    placeholders = ",".join("?" for _ in proposal_ids)
+    authoritative_count = db.execute(
+        f"SELECT COUNT(*) FROM risk_decisions WHERE decision_role='authoritative' "
+        f"AND proposal_id IN ({placeholders})",
+        proposal_ids,
+    ).fetchone()[0]
+    order_count = db.execute(
+        f"SELECT COUNT(*) FROM orders WHERE proposal_id IN ({placeholders})",
+        proposal_ids,
+    ).fetchone()[0]
+
+    assert (
+        accepted_fields,
+        unexpected_errors,
+        authoritative_count,
+        order_count,
+    ) == ([], {}, 0, 0)
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-19",
+        "pipeline_risk_execution_integrity",
+        "§12 close post-durable audit isolation",
+        "L2c",
+        "After a close Order and Position carry a retry-suppressing exchange state, an "
+        "audit sink failure cannot hide that truth or permit a second close submission.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize(
+    "broker_module,client_name,close_name,execution_mode",
+    CLOSE_TIMEOUT_CASES,
+)
+@pytest.mark.parametrize(
+    ("exchange_outcome", "expected_status"),
+    [
+        ("filled", "materialization_missing"),
+        ("timeout", "submission_unknown"),
+    ],
+)
+def test_close_post_durable_audit_failure_preserves_state_and_suppresses_retry(
+    tmp_path,
+    monkeypatch,
+    caplog,
+    broker_module,
+    client_name,
+    close_name,
+    execution_mode,
+    exchange_outcome,
+    expected_status,
+):
+    import importlib
+
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import post_commit_audit
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    calls: list[str] = []
+
+    class _CloseClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def place_order(self, order):
+            calls.append(order.client_oid)
+            if exchange_outcome == "timeout":
+                raise TimeoutError("exchange close acknowledgement unknown")
+            return SimpleNamespace(
+                order_id=f"venue-close-{exchange_outcome}",
+                status="filled",
+            )
+
+        async def close(self):
+            pass
+
+    def fail_secondary_audit(_event):
+        raise RuntimeError("token=must-not-leak-from-close-audit-sink")
+
+    broker = importlib.import_module(broker_module)
+    monkeypatch.setattr(broker, client_name, _CloseClient)
+    monkeypatch.setattr(post_commit_audit.jsonl, "write_audit", fail_secondary_audit)
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=60_000.0,
+        current_price=60_100.0,
+        execution_mode=execution_mode,
+    )
+    repo.insert_position(position)
+
+    if exchange_outcome == "timeout":
+        with pytest.raises(TimeoutError):
+            getattr(broker, close_name)(position.id, reason="stop_loss")
+    else:
+        result = getattr(broker, close_name)(position.id, reason="stop_loss")
+        assert result["status"] == expected_status
+        assert result["closed"] is False
+
+    stored_position = repo._select_one("positions", position.id)
+    orders = repo.list_orders(limit=20)
+    assert stored_position["pending_close_status"] == expected_status
+    assert len(orders) == 1
+    assert orders[0]["status"] == expected_status
+    assert "RuntimeError" in caplog.text
+    assert "must-not-leak" not in caplog.text
+
+    replay = getattr(broker, close_name)(position.id, reason="stop_loss")
+    assert replay["closed"] is False
+    assert replay["already_pending"] is True
+    assert calls == [f"close-{position.id}"]
+    assert len(repo.list_orders(limit=20)) == 1
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-20",
+        "pipeline_risk_execution_integrity",
+        "§12 entry post-durable audit isolation",
+        "L2c",
+        "Every exchange broker preserves its durable accepted/unresolved entry Order when the "
+        "secondary audit sink fails, and replay cannot submit the same Proposal again.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize(
+    ("broker_module", "client_name", "execution_mode"),
+    [
+        (
+            "aletheia.execution.bitget_broker",
+            "BitgetClient",
+            "bitget_demo",
+        ),
+        (
+            "aletheia.execution.okx_broker",
+            "OKXClient",
+            "okx_demo",
+        ),
+        (
+            "aletheia.execution.binance_broker",
+            "BinanceClient",
+            "binance_testnet",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("exchange_outcome", "expected_status"),
+    [
+        ("filled", "materialization_missing"),
+        ("timeout", "submission_unknown"),
+    ],
+)
+def test_entry_post_durable_audit_failure_preserves_order_and_suppresses_retry(
+    tmp_path,
+    monkeypatch,
+    caplog,
+    broker_module,
+    client_name,
+    execution_mode,
+    exchange_outcome,
+    expected_status,
+):
+    import importlib
+
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import post_commit_audit
+    from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import RiskDecision, TradeProposal
+
+    calls: list[str] = []
+
+    class _EntryClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def place_order(self, order):
+            calls.append(order.client_oid)
+            if exchange_outcome == "timeout":
+                raise TimeoutError("exchange entry acknowledgement unknown")
+            return SimpleNamespace(
+                order_id=f"venue-entry-{exchange_outcome}",
+                status="filled",
+            )
+
+        async def close(self):
+            pass
+
+    def fail_secondary_audit(_event):
+        raise RuntimeError("token=must-not-leak-from-entry-audit-sink")
+
+    broker = importlib.import_module(broker_module)
+    monkeypatch.setattr(broker, client_name, _EntryClient)
+    monkeypatch.setattr(post_commit_audit.jsonl, "write_audit", fail_secondary_audit)
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        order_type="market",
+        quantity=0.01,
+        price=60_000.0,
+        execution_mode=execution_mode,
+        status="approved",
+    )
+    repo.insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode=proposal.execution_mode,
+        proposal_execution_mode=proposal.execution_mode,
+        decision_role="authoritative",
+        evaluated_quantity=proposal.quantity,
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    repo.insert_risk_decision(decision)
+    kwargs = {
+        "proposal_id": proposal.id,
+        "risk_decision_id": decision.id,
+        "symbol": proposal.symbol,
+        "market_type": proposal.market_type,
+        "direction": proposal.direction,
+        "order_type": proposal.order_type,
+        "quantity": proposal.quantity,
+        "price": proposal.price,
+        "execution_mode": proposal.execution_mode,
+    }
+
+    if exchange_outcome == "timeout":
+        with pytest.raises(SubmissionUnknownError):
+            broker.execute_live_order(**kwargs)
+    else:
+        result = broker.execute_live_order(**kwargs)
+        assert result["order_status"] == expected_status
+
+    orders = repo.list_orders(limit=20)
+    assert len(orders) == 1
+    assert orders[0]["status"] == expected_status
+    assert "RuntimeError" in caplog.text
+    assert "must-not-leak" not in caplog.text
+
+    replay_error = (
+        PostSubmitDBError
+        if expected_status == "materialization_missing"
+        else SubmissionUnknownError
+    )
+    with pytest.raises(replay_error):
+        broker.execute_live_order(**kwargs)
+    assert calls == [proposal.id]
+    assert len(repo.list_orders(limit=20)) == 1
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RX-21",
+        "pipeline_risk_execution_integrity",
+        "§12 overfilled close retry suppression",
+        "L2c",
+        "An overfilled close claim is a permanent manual-reconciliation state: every broker "
+        "and the position manager must suppress another close submission.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize(
+    "broker_module,client_name,close_name,execution_mode",
+    CLOSE_TIMEOUT_CASES,
+)
+def test_overfilled_close_claim_never_reaches_exchange_again(
+    tmp_path,
+    monkeypatch,
+    broker_module,
+    client_name,
+    close_name,
+    execution_mode,
+):
+    import importlib
+
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.portfolio import position_manager
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order, Position
+
+    exchange_calls: list[str] = []
+
+    class _MustNotReachExchange:
+        def __init__(self, *args, **kwargs):
+            exchange_calls.append("client_init")
+
+        async def place_order(self, order):
+            exchange_calls.append(order.client_oid)
+            raise AssertionError("overfilled close claim reached exchange")
+
+        async def close(self):
+            pass
+
+    broker = importlib.import_module(broker_module)
+    monkeypatch.setattr(broker, client_name, _MustNotReachExchange)
+    position = Position(
+        id="overfilled-close-position",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=60_000.0,
+        current_price=60_100.0,
+        execution_mode=execution_mode,
+    )
+    repo.insert_position(position)
+    close_order = Order(
+        id="overfilled-close-order",
+        client_order_id=f"close-{position.id}",
+        position_id=position.id,
+        close_reason="stop_loss",
+        symbol=position.symbol,
+        market_type=position.market_type,
+        direction=position.direction,
+        order_type="market",
+        quantity=position.quantity,
+        price=position.current_price,
+        execution_mode=position.execution_mode,
+        exchange_order_id="venue-overfilled-close",
+        status="overfilled",
+    )
+    repo.insert_order(close_order)
+    repo.update_position(
+        position.id,
+        pending_close_order_id=close_order.id,
+        pending_close_status="overfilled",
+    )
+
+    result = getattr(broker, close_name)(position.id, reason="stop_loss")
+
+    stored_position = repo._select_one("positions", position.id)
+    orders = repo.list_orders(limit=20)
+    assert result["already_pending"] is True
+    assert result["status"] == "overfilled"
+    assert exchange_calls == []
+    assert len(orders) == 1
+    assert orders[0]["id"] == close_order.id
+    assert orders[0]["status"] == "overfilled"
+    assert stored_position["pending_close_order_id"] == close_order.id
+    assert stored_position["pending_close_status"] == "overfilled"
+    assert {
+        "pending",
+        "submitted",
+        "partial",
+        "partially_filled",
+        "submission_unknown",
+        "materialization_missing",
+        "overfilled",
+    }.issubset(position_manager._OPEN_CLOSE_STATES)

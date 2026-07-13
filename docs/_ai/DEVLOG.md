@@ -3335,3 +3335,21 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Added the automatic ordinary-assertion failure-pack test to the explicit PR DCLS command.
 - Strengthened the executable CI claim so the artifact regression cannot silently fall out of
   pull-request coverage while remaining present only in nightly runs.
+
+## 2026-07-14 — Trade-chain integrity and honest paper accounting
+
+- Repaired the production Opportunity-to-Operator handoff so permanent rejections are durable,
+  eligible work is FIFO and bounded, and trades require one exact pending identity with atomic
+  Proposal/final-decision persistence and safe historical crash recovery.
+- Added durable execution leasing and exchange-state recovery. Pending entries remain Risk
+  exposure, accepted or uncertain submissions cannot be rewritten as terminal errors, and
+  Bitget/OKX/Binance entry/close audit failures cannot trigger a second exchange submission.
+- Made overfilled closes permanent manual-reconciliation states, preventing automatic close
+  retries that could over-reduce or reverse a venue Position.
+- Removed post-Risk local-paper take-profit invention and configuration-driven native protection
+  drift. Proposal, Risk, Order, and Position now retain the approved snapshot.
+- Kept unknown futures funding and net PnL explicitly unavailable across cash authority,
+  reporting, UI, Outcome, Attribution, and Learning; no funding amount is guessed.
+- Added a real production-code local-paper entry-to-feedback round trip. All executable rules,
+  architecture/trust checks, frontend build, and the full repository suite passed. Local paper
+  futures funding policy and the required new policy epoch remain owner gates before merge.

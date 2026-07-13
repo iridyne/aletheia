@@ -4,7 +4,7 @@
 > 这是 trust 边界的核心——[VISION](../product/VISION.md) 把它定义为"给 AI 买到的犯错许可证"。
 > **基线**:以代码现状为底(file:line 可核),意图差距标 ⚠️;冲突时文档为准,偏差落 [issues](../issues/BACKEND_ISSUES.md)。
 > **不变式来源**:[trust_and_change_control §6.3](../governance/trust_and_change_control.md)。
-> Last updated: 2026-06-21 · 维护者:Aletheia Dev
+> Last updated: 2026-07-14 · 维护者:Aletheia Dev
 
 ---
 
@@ -61,7 +61,13 @@
 >
 > ⚠️ 关卡 #5 的回撤缩放(`_portfolio_drawdown_scale`, engine.py:356):缩放系数(0-5% DD→1.0, 5-10%→1.0→0.5, 10-20%→0.5→0.0, >20%→0)由组合回撤驱动。**回撤的数据源**:交易所模式(okx_demo/*_demo/live)读 `portfolio_snapshots` 的 `exchange_account` 行(真实账户 equity),**不读**每个 mode 自己的行——后者的 `total_value_usdt` 是持仓 notional(Σqty×price)而非 equity,平掉盈利持仓会让 notional 暴跌被误判成回撤、把 cap 缩到 $0 锁死开仓。paper_internal 没有可信的模拟账户权益序列：本地快照是持仓名义金额，外部账户快照属于另一账户，因此它跳过回撤缩放并继续受固定上限、日损和持仓数限制。spec: RE-B05(分段)+ RE-B05a(交易所数据源)+ RE-B05b(本地模拟)。
 
-> 关卡 #5 的账户余额收紧:不在下单时请求交易所，只读取 `exchange_sync` 已缓存的可用 USDT。Bitget demo/live 分别读各自模式缓存；OKX/Binance 读统一缓存中与 execution mode 同名的账户。有效上限始终是 `min(configured_hard_cap, available_usdt)`，因此余额数据只能收紧、不能抬高配置上限。没有缓存时保留配置上限，`paper_internal` 一直使用配置上限。spec: RE-B18。
+> 关卡 #5 的账户余额收紧:不在下单时请求交易所，只读取本地缓存/账本的可用 USDT。Bitget demo/live 分别读各自模式缓存；OKX/Binance 读统一缓存中与 execution mode 同名的账户；`paper_internal` 读独立纸面现金账本。有效上限始终是 `min(configured_hard_cap, available_usdt)`，因此余额数据只能收紧、不能抬高配置上限。外部账户没有缓存时保留配置上限；本地纸面账户若存在尚未补齐 funding/关闭成本的已关闭仓位，则返回可用余额 0 并阻止继续扩张。spec: RE-B18、PL-PCM-06。
+
+> **未决原生入场也占用 Risk 容量**：交易所入场 Order 在真正提交前会先以 `pending` 写入本地；
+> 此时交易所是否已经接受仍未知，不能把它当成零敞口。`pending` 与其他未决状态一样，在对应
+> live/demo 池中继续占用持仓槽位、保留同符号互斥，并把尚未由 open Position 表示的数量计入
+> 名义敞口。若未决 Order 已有部分数量投影为 Position，只补计剩余数量，且不重复占一个槽位；
+> 平仓 Order 不占新增入场容量。spec: `PL-UEE-01~09`。
 
 > **关卡 #8 的权威损失源**：Risk 不再读取 `today_realized_pnl` 或任何策略表现聚合。
 > `paper_internal` 的 verified close 必须与 append-only `paper_account_events` 一一对应且金额一致；
@@ -92,6 +98,13 @@ class RiskCheckResult:
 ```
 
 **契约**:每次评估**必须**持久化一条 `RiskDecision`(`engine.py:267-277`),无论批准或拒绝——这是因果链 `proposal→risk_decision→order` 的一环([trust §1.1](../governance/trust_and_change_control.md))。
+
+**权威快照契约**：交易所最小数量/步长对齐可以让 authoritative Risk 评估使用不同于原 Proposal 的
+`quantity`，并把实际评估量写入 `RiskDecision.evaluated_quantity`；除此之外，所有由原 Proposal
+`commit_hash` 覆盖的字段都必须与存储行完全一致。Risk 会把评估副本的 quantity 还原成存储值后重新
+计算 hash；symbol、market type、方向、价格、杠杆、止损、止盈、execution mode、来源身份等任一字段
+漂移都会抛出 `ProposalIntegrityError`，且不得写 authoritative RiskDecision 或 Order。原始 Proposal
+不因数量对齐而被改写，RiskDecision 仍保存它的 `proposal_commit_hash`。spec: `PL-RX-03/04/05/18`。
 
 ---
 
@@ -130,6 +143,7 @@ config:`trading.default_notional_usdt=25`, `vol_kelly_cap_fraction=0.25`, `vol_s
 3. **纵深防御**:Risk Engine 放行后,Execution Gateway 再查一次 live/account mode(`gateway.py:201`)。
 4. **持久化**:kill switch 落盘,重启保持。
 5. **审计**:所有决策入 DB + JSONL。
+6. **快照绑定**:authoritative Risk 只允许交易所数量归一化；其他 hash-covered Proposal 意图不得替换。
 
 **[trust §6.3](../governance/trust_and_change_control.md) 红线**:不得在未经显式用户批准下削弱或移除任何 risk check;新增 check 必须持久化 RiskDecision 且对 API/UI 可见;测试须覆盖 approved + rejected 两条路径。
 

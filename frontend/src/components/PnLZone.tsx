@@ -131,10 +131,12 @@ function useTooltipPosition(open: boolean) {
 
 function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }: {
   label: string; value: React.ReactNode; tone?: Tone; context?: React.ReactNode
-  onClick?: () => void; tooltip: Record<string, number>
+  onClick?: () => void; tooltip: Record<string, number | null>
 }) {
   const [show, setShow] = useState(false)
-  const entries = Object.entries(tooltip).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+  const entries = Object.entries(tooltip).sort(
+    (a, b) => Math.abs(b[1] ?? 0) - Math.abs(a[1] ?? 0),
+  )
   const toneClass = tone === 'positive' ? 'pnl-positive' : tone === 'negative' ? 'pnl-negative' : tone === 'muted' ? 'text-muted' : ''
   const hasTooltip = entries.length > 0
   const { triggerRef, tooltipRef, pos } = useTooltipPosition(show && hasTooltip)
@@ -176,8 +178,8 @@ function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }
                   routes through the shared helper so future market_type-aware
                   callers change one place. */}
               <span className="mono">{fmtSymbol(sym)}</span>
-              <span className={`mono ${val > 0 ? 'pnl-positive' : val < 0 ? 'pnl-negative' : ''}`}>
-                {val > 0 ? '+' : ''}{fmtNum(val)}
+              <span className={`mono ${val != null && val > 0 ? 'pnl-positive' : val != null && val < 0 ? 'pnl-negative' : ''}`}>
+                {val != null && val > 0 ? '+' : ''}{fmtNum(val)}
               </span>
             </div>
           ))}
@@ -227,6 +229,7 @@ export default function PnLZone() {
   const breakdown: AssetItem[] = p?.exchange_asset_breakdown ?? []
 
   const todayRaw = p?.today_pnl
+  const todayComplete = p?.today_realized_pnl_complete !== false
   const todayNum = todayRaw == null ? null : Number(todayRaw)
   const dayPct = todayNum != null && totalRaw ? (todayNum / Number(totalRaw)) * 100 : null
 
@@ -243,7 +246,7 @@ export default function PnLZone() {
     })
   const positionsCount = Number(p?.positions_count ?? 0)
 
-  const todayPnlBySymbol = (p?.today_pnl_by_symbol || {}) as Record<string, number>
+  const todayPnlBySymbol = (p?.today_pnl_by_symbol || {}) as Record<string, number | null>
   const unrealBySymbol = (p?.unrealized_by_symbol || {}) as Record<string, number>
 
   return (
@@ -288,7 +291,9 @@ export default function PnLZone() {
             label="Today PnL"
             value={todayNum == null ? 'not available' : fmtDelta(todayNum)}
             tone={toneOf(todayNum)}
-            context={todayNum == null ? 'no data' : dayPct != null ? `${fmtDelta(dayPct)}% of managed` : undefined}
+            context={todayNum == null
+              ? todayComplete ? 'no data' : 'funding or close economics unavailable'
+              : dayPct != null ? `${fmtDelta(dayPct)}% of managed` : undefined}
             onClick={() => navigate('/trades?tab=blotter')}
             tooltip={todayPnlBySymbol}
           />
@@ -303,7 +308,7 @@ export default function PnLZone() {
             label="Realized"
             value={fmtDelta(realNum)}
             tone={toneOf(realNum)}
-            context="all-time"
+            context={p?.all_realized_pnl_complete === false ? 'economics incomplete' : 'all-time'}
             onClick={() => navigate('/trades?tab=analytics')}
           />
           <MetricTile

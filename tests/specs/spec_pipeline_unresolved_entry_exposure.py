@@ -335,6 +335,76 @@ def test_unresolved_entry_is_consumed_by_existing_live_exposure_gate(
     assert "max_total_live_exposure_exceeded:101.0>100.0" in result.violations
 
 
+@pytest.mark.parametrize(
+    "reservation_kind",
+    (
+        pytest.param("slot", id="position-slot"),
+        pytest.param("symbol", id="symbol-pool"),
+        pytest.param("notional", id="live-notional"),
+    ),
+)
+@spec_claim(
+    SpecClaim(
+        "PL-UEE-09",
+        "pipeline_unresolved_entry_exposure",
+        "§1 pending native entry reservation",
+        "L2b",
+        "A native exchange entry Order persists as pending before submission and must "
+        "already reserve its Risk position slot, symbol pool, and notional exposure.",
+        status="implemented",
+    )
+)
+def test_pending_native_exchange_entry_reserves_risk_capacity(
+    tmp_path, monkeypatch, reservation_kind
+):
+    _setup_db(tmp_path, monkeypatch)
+    cfg = _risk_config(monkeypatch, demo_slots=1)
+
+    if reservation_kind == "slot":
+        _seed_entry_order(
+            suffix="pending-slot",
+            execution_mode="okx_demo",
+            status="pending",
+        )
+        result = _evaluate_new_proposal(
+            suffix="pending-slot",
+            symbol="SOL/USDT",
+            execution_mode="paper_internal",
+        )
+        assert "max_demo_positions_reached:1" in result.violations
+    elif reservation_kind == "symbol":
+        _seed_entry_order(
+            suffix="pending-symbol",
+            execution_mode="binance_testnet",
+            symbol="ETH/USDT",
+            status="pending",
+        )
+        result = _evaluate_new_proposal(
+            suffix="pending-symbol",
+            symbol="ETH/USDT",
+            execution_mode="okx_demo",
+        )
+        assert "symbol_already_open:ETH/USDT" in result.violations
+    else:
+        cfg.risk.max_live_limited_cap_usdt = 1_000.0
+        cfg.risk.max_total_live_exposure_pct = 10.0
+        _seed_entry_order(
+            suffix="pending-notional",
+            execution_mode="bitget_live_limited",
+            quantity=10.0,
+            price=10.0,
+            status="pending",
+        )
+        result = _evaluate_new_proposal(
+            suffix="pending-notional",
+            symbol="SOL/USDT",
+            execution_mode="bitget_live_limited",
+            quantity=0.1,
+            price=10.0,
+        )
+        assert "max_total_live_exposure_exceeded:101.0>100.0" in result.violations
+
+
 @spec_claim(
     SpecClaim(
         "PL-UEE-08",

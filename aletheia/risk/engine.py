@@ -276,7 +276,10 @@ def evaluate_proposal(
 
     with _eval_lock:
         if decision_role == "authoritative":
-            proposal_commit_hash = _verified_original_proposal_commit_hash(proposal)
+            proposal_commit_hash = _verified_original_proposal_commit_hash(
+                proposal,
+                require_evaluated_snapshot_match=True,
+            )
             existing = get_authoritative_risk_decision(
                 proposal.id,
                 proposal_commit_hash,
@@ -689,6 +692,8 @@ def _native_input_violations(proposal: TradeProposal) -> list[str]:
 
 def _verified_original_proposal_commit_hash(
     proposal: TradeProposal,
+    *,
+    require_evaluated_snapshot_match: bool = False,
 ) -> str | None:
     """Verify and return stored immutable identity for an evaluated model copy."""
     row = get_trade_proposal(proposal.id)
@@ -700,6 +705,22 @@ def _verified_original_proposal_commit_hash(
             raise ProposalIntegrityError(
                 "stored proposal content does not match commit hash"
             )
+        if require_evaluated_snapshot_match:
+            # Venue preparation may normalize quantity, but every other field
+            # covered by the original Proposal hash must remain identical. Put
+            # the stored quantity back into the evaluated copy and verify it
+            # against the stored commit: this uses the canonical hash field set
+            # instead of maintaining a second, drift-prone comparison list.
+            original_quantity_snapshot = proposal.model_copy(
+                update={"quantity": stored.quantity}
+            )
+            if (
+                _compute_proposal_hash(original_quantity_snapshot)
+                != stored.commit_hash
+            ):
+                raise ProposalIntegrityError(
+                    "evaluated proposal content differs from stored proposal"
+                )
         return stored.commit_hash
     # Direct unit-level evaluations may use an unpersisted model. Gateway paths
     # always persist first; when a caller supplies a hash, still verify it.
@@ -756,7 +777,10 @@ def _persist_risk_result(
         proposal_execution_mode=proposal.execution_mode,
         decision_role=decision_role,
         evaluated_quantity=proposal.quantity,
-        proposal_commit_hash=_verified_original_proposal_commit_hash(proposal),
+        proposal_commit_hash=_verified_original_proposal_commit_hash(
+            proposal,
+            require_evaluated_snapshot_match=(decision_role == "authoritative"),
+        ),
         message=result.message,
     )
     created = True

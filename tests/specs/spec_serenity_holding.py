@@ -161,15 +161,15 @@ def test_serenity_config_has_holding_fields():
 @spec_claim(
     SpecClaim(
         "SH-S04", _CONTRACT, "§trading_decision — derive trade_school from signal_source", "L2a",
-        "submit_decision_as_proposal selects trade_school from decision.signal_source "
+        "prepare_decision_as_proposal selects trade_school from decision.signal_source "
         "and picks the matching stop pct (cfg.serenity.stop_loss_pct for serenity, else "
         "cfg.trading.default_stop_loss_pct), then threads trade_school into create_paper_proposal",
     ),
 )
 def test_trading_decision_threads_trade_school():
     src = _TRADING_DECISION.read_text(encoding="utf-8")
-    # Slice submit_decision_as_proposal body
-    start = src.index("async def submit_decision_as_proposal(")
+    # Slice prepare_decision_as_proposal body
+    start = src.index("async def prepare_decision_as_proposal(")
     tail = src[start:]
     # End at next top-level def or # ── marker
     end_def = tail.find("\nasync def ", 1)
@@ -179,15 +179,15 @@ def test_trading_decision_threads_trade_school():
     end = min(candidates) if candidates else len(tail)
     body = tail[:end]
     assert "trade_school" in body, (
-        "submit_decision_as_proposal does not reference trade_school — the "
+        "prepare_decision_as_proposal does not reference trade_school — the "
         "execution-school discriminator never reaches the proposal layer"
     )
     assert "signal_source" in body, (
-        "submit_decision_as_proposal does not consult decision.signal_source — "
+        "prepare_decision_as_proposal does not consult decision.signal_source — "
         "the school cannot be derived without it"
     )
     assert "cfg.serenity.stop_loss_pct" in body or "serenity.stop_loss_pct" in body, (
-        "submit_decision_as_proposal does not branch stop_pct on the serenity school "
+        "prepare_decision_as_proposal does not branch stop_pct on the serenity school "
         "— long-horizon holdings would inherit the tight short-term stop"
     )
 

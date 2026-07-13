@@ -436,7 +436,7 @@ def test_ranker_queries_open_working_set_directly():
     from aletheia.storage import repositories
 
     assert hasattr(repositories, "list_open_opportunities")
-    source = inspect.getsource(paper_trader_ranker.build_paper_candidates)
+    source = inspect.getsource(paper_trader_ranker.build_paper_candidate_workset)
     assert "list_open_opportunities" in source
 
 
@@ -677,3 +677,168 @@ def test_stale_signal_plan_cannot_regress_reviewed_opportunity(tmp_path, monkeyp
     assert status == "reviewed"
     assert tuple(evidence) == ("rejected", "opportunity_not_open")
     assert "skip_stale_plan:BTC/USDT" in result["outputs"]
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-12",
+        "pipeline_paper_trade",
+        "§4 approved take-profit identity",
+        "L2b",
+        "A paper_internal Position inherits take_profit_price exactly from its approved "
+        "Proposal; the broker never adds a config-derived take-profit after approval.",
+        status="implemented",
+    )
+)
+def test_paper_position_take_profit_exactly_matches_approved_proposal(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+
+    import yaml
+
+    (tmp_path / "config.yaml").write_text(
+        yaml.safe_dump({"trading": {"default_take_profit_pct": 4.0}}),
+        encoding="utf-8",
+    )
+
+    from aletheia.execution.gateway import submit_proposal
+
+    result = submit_proposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60_000.0,
+        stop_price=58_000.0,
+        take_profit=None,
+        execution_mode="paper_internal",
+        agent_rationale="approved without a take-profit",
+    )
+
+    proposal = conn.execute(
+        "SELECT id, take_profit FROM trade_proposals WHERE id=?",
+        (result["proposal_id"],),
+    ).fetchone()
+    authority = conn.execute(
+        "SELECT approved FROM risk_decisions WHERE proposal_id=? "
+        "AND decision_role='authoritative'",
+        (result["proposal_id"],),
+    ).fetchone()
+    position = conn.execute(
+        "SELECT take_profit_price FROM positions WHERE id=?",
+        (result["position_id"],),
+    ).fetchone()
+
+    assert result["status"] == "executed"
+    assert authority is not None and authority["approved"] == 1
+    assert proposal["take_profit"] is None
+    assert position["take_profit_price"] == proposal["take_profit"]
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-13",
+        "pipeline_paper_trade",
+        "§2 permanent rejection atomicity",
+        "L2b",
+        "A permanent ranker rejection and its rejected filter fact commit together; "
+        "if evidence persistence fails, the Opportunity remains open and retryable.",
+        status="implemented",
+    )
+)
+def test_permanent_skip_state_rolls_back_without_rejection_fact(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    opportunity_id = _insert_opportunity(conn, symbol="SOL/USDT")
+
+    from aletheia.agents import paper_trader
+
+    candidate = {
+        "opportunity_id": opportunity_id,
+        "symbol": "SOL/USDT",
+        "market_type": "spot",
+        "direction": "long",
+        "skip_reason": "symbol_not_allowed:whitelist",
+        "filter_trace": [{
+            "filter_name": "symbol_filter",
+            "stage": "paper_ranker",
+            "decision": "rejected",
+            "reason_code": "symbol_not_allowed",
+            "inputs": {"symbol": "SOL/USDT"},
+            "parameters": {"mode": "whitelist"},
+        }],
+    }
+
+    def fail_evidence(*_args, **_kwargs):
+        raise RuntimeError("forced evidence failure")
+
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_evidence.record_candidate_filter_trace",
+        fail_evidence,
+    )
+
+    with pytest.raises(RuntimeError, match="forced evidence failure"):
+        paper_trader._finalize_permanent_skip(
+            candidate,
+            terminal_status="reviewed",
+            run_id="atomic-terminal-reject",
+        )
+
+    status = conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opportunity_id,)
+    ).fetchone()[0]
+    evidence = conn.execute(
+        "SELECT COUNT(*) FROM filter_decisions WHERE opportunity_id=?",
+        (opportunity_id,),
+    ).fetchone()[0]
+    assert status == "open"
+    assert evidence == 0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-14",
+        "pipeline_paper_trade",
+        "§2 bounded permanent-rejection workset",
+        "L2b",
+        "The top-N execution shortlist does not truncate permanent rejects already present "
+        "in the ranker's larger bounded scan workset.",
+        status="implemented",
+    )
+)
+def test_permanent_reject_workset_is_separate_from_execution_limit(monkeypatch):
+    from aletheia.agents import paper_trader_ranker as ranker
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    cfg.risk.symbol_filter_mode = "whitelist"
+    cfg.exchange.symbol_list = ["BTC/USDT"]
+    opportunities = [{
+        "id": f"bounded-reject-{index:03d}",
+        "symbol": f"REJECT{index}/USDT",
+        "market": "spot",
+        "direction_bias": "long",
+        "confidence": "high",
+        "confidence_score": 88,
+        "status": "open",
+        "asset_class": "crypto",
+        "execution_eligible": True,
+    } for index in range(51)]
+
+    monkeypatch.setattr(ranker, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        ranker, "list_open_opportunities", lambda *, limit: opportunities[:limit]
+    )
+    monkeypatch.setattr(
+        ranker, "tradable_symbols_from_config", lambda _cfg: ["BTC/USDT"]
+    )
+
+    workset = ranker.build_paper_candidate_workset(limit=50)
+
+    assert len(workset.ranked_candidates) == 50
+    assert len(workset.scanned_candidates) == 51
+    assert all(
+        candidate["skip_reason"].startswith("symbol_not_allowed:")
+        for candidate in workset.scanned_candidates
+    )

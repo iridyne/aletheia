@@ -730,7 +730,7 @@ async def get_trades():
 
 
 @router.get("/trades/export")
-async def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit: int = Query(default=5000, le=50000)):
+def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit: int = Query(default=5000, le=50000)):
     """Export closed positions as CSV for tax/PnL reporting.
 
     #65 fix: previously exported OPEN orders — no realized PnL, no fills, no fees,
@@ -746,7 +746,12 @@ async def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit:
     import io
 
     _ensure_db()
-    rows = repo.list_positions(status="closed", limit=limit)
+    from aletheia.portfolio.pnl import position_realized_pnl_view
+
+    rows = [
+        position_realized_pnl_view(row)
+        for row in repo.list_positions(status="closed", limit=limit)
+    ]
     if not rows:
         return StreamingResponse(
             iter(["no data\n"]),
@@ -757,6 +762,7 @@ async def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit:
     columns = [
         "opened_at", "closed_at", "symbol", "market_type", "direction",
         "quantity", "entry_price", "current_price", "realized_pnl",
+        "realized_pnl_complete", "realized_pnl_unavailable_reason",
         "entry_fee", "exit_fee", "slippage_cost",
         "execution_mode", "close_reason", "btc_entry_price", "btc_exit_price",
         "trade_school", "position_id",
@@ -774,6 +780,8 @@ async def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit:
             row.get("direction", ""), row.get("quantity", ""),
             row.get("entry_price", ""), row.get("current_price", ""),
             row.get("realized_pnl", ""),
+            row.get("realized_pnl_complete", ""),
+            row.get("realized_pnl_unavailable_reason", ""),
             row.get("entry_fee", ""), row.get("exit_fee", ""), row.get("slippage_cost", ""),
             row.get("execution_mode", ""), row.get("close_reason", ""),
             row.get("btc_entry_price", ""), row.get("btc_exit_price", ""),
@@ -789,13 +797,15 @@ async def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit:
 
 
 @router.get("/positions")
-async def get_positions():
+def get_positions():
     _ensure_db()
-    return repo.list_positions()
+    from aletheia.portfolio.pnl import position_realized_pnl_view
+
+    return [position_realized_pnl_view(row) for row in repo.list_positions()]
 
 
 @router.get("/portfolio")
-async def get_portfolio():
+def get_portfolio():
     _ensure_db()
     from aletheia.portfolio.pnl import compute_portfolio
     return compute_portfolio(execution_mode=None)
@@ -1272,6 +1282,11 @@ async def get_reviews_summary():
         order="closed_at DESC",
         limit=20,
     )
+    from aletheia.portfolio.pnl import position_realized_pnl_view
+
+    recent_closed_positions = [
+        position_realized_pnl_view(row) for row in recent_closed_positions
+    ]
     recent_post_trade_reviews = repo._select_all(
         "knowledge_items",
         where="item_type = ? AND created_at > ?",

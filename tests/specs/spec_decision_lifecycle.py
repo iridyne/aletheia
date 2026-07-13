@@ -87,6 +87,16 @@ def test_pi_decision_carries_market_type():
         assert field in PiDecision.model_fields
 
 
+def test_reconciliation_result_keeps_pi_decision_aligned_with_proposal_state():
+    from aletheia.agent_shell.commands import _proposal_status_from_execution_result
+
+    assert _proposal_status_from_execution_result({
+        "status": "reconciliation_required",
+        "proposal_status": "submission_unknown",
+    }) == "submission_unknown"
+    assert _proposal_status_from_execution_result({"status": "executed"}) == "executed"
+
+
 # ---------------------------------------------------------------------------
 # L2b — Behavioral / seam-existence claims
 # ---------------------------------------------------------------------------
@@ -145,12 +155,13 @@ def test_market_observer_pending_signal_attaches_opportunity_id():
         "layer2": {
             "ranker_candidates": [],
             "pending_signals": [
-                {
-                    "symbol": "BTC/USDT",
-                    "direction": "long",
-                    "opportunity_id": "opp-market-pending",
-                    "signal_source": "market_observer",
-                }
+                    {
+                        "symbol": "BTC/USDT",
+                        "direction": "long",
+                        "market_type": "spot",
+                        "opportunity_id": "opp-market-pending",
+                        "signal_source": "market_observer",
+                    }
             ],
         },
         "layer3": {},
@@ -192,8 +203,6 @@ def test_opportunity_producers_do_not_bypass_ranker_when_waking_operator():
 )
 def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeypatch):
     import asyncio
-    from types import SimpleNamespace
-
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -229,10 +238,7 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeyp
         return decision
 
     monkeypatch.setattr(
-        "aletheia.config.loader.load_config",
-        lambda: SimpleNamespace(
-            exchange=SimpleNamespace(paper_execution_mode="paper_internal")
-        ),
+        commands, "_configured_paper_execution_mode", lambda: "paper_internal"
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
@@ -342,8 +348,6 @@ def test_pending_queue_is_oldest_first_unresolved_and_reports_overflow(tmp_path,
 )
 def test_existing_final_decision_blocks_duplicate_proposal(tmp_path, monkeypatch):
     import asyncio
-    from types import SimpleNamespace
-
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -382,10 +386,7 @@ def test_existing_final_decision_blocks_duplicate_proposal(tmp_path, monkeypatch
         return {"proposal_id": "duplicate-proposal", "status": "queued"}
 
     monkeypatch.setattr(
-        "aletheia.config.loader.load_config",
-        lambda: SimpleNamespace(
-            exchange=SimpleNamespace(paper_execution_mode="paper_internal")
-        ),
+        commands, "_configured_paper_execution_mode", lambda: "paper_internal"
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
@@ -429,13 +430,13 @@ def test_existing_final_decision_blocks_duplicate_proposal(tmp_path, monkeypatch
 )
 def test_submission_exception_still_persists_final_decision(tmp_path, monkeypatch):
     import asyncio
-    from types import SimpleNamespace
-
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_shell import commands, reflection
     from aletheia.agent_shell.trading_decision import TradingDecision
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
     from aletheia.storage.sqlite import get_db
 
     decision = TradingDecision(
@@ -448,18 +449,23 @@ def test_submission_exception_still_persists_final_decision(tmp_path, monkeypatc
         opportunity_id="opp-submission-exception",
         signal_source="market_observer",
     )
+    insert_pi_decision(PiDecision(
+        symbol=decision.symbol,
+        direction=decision.direction,
+        market_type=decision.market_type,
+        action="signal_pending",
+        opportunity_id=decision.opportunity_id,
+        signal_source=decision.signal_source,
+    ))
 
     async def fake_evaluate(_context):
         return decision
 
-    async def failing_submit(_decision, _execution_mode):
+    async def failing_prepare(_decision, _execution_mode):
         raise RuntimeError("sensitive provider detail must not persist")
 
     monkeypatch.setattr(
-        "aletheia.config.loader.load_config",
-        lambda: SimpleNamespace(
-            exchange=SimpleNamespace(paper_execution_mode="paper_internal")
-        ),
+        commands, "_configured_paper_execution_mode", lambda: "paper_internal"
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
@@ -474,8 +480,8 @@ def test_submission_exception_still_persists_final_decision(tmp_path, monkeypatc
         fake_evaluate,
     )
     monkeypatch.setattr(
-        "aletheia.agent_shell.trading_decision.submit_decision_as_proposal",
-        failing_submit,
+        "aletheia.agent_shell.trading_decision.prepare_decision_as_proposal",
+        failing_prepare,
     )
     monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
 
@@ -505,14 +511,12 @@ def test_submission_exception_still_persists_final_decision(tmp_path, monkeypatc
 )
 def test_concurrent_duplicate_wake_submits_one_proposal(tmp_path, monkeypatch):
     import asyncio
-    from types import SimpleNamespace
-
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_shell import commands, reflection
     from aletheia.agent_shell.trading_decision import TradingDecision
-    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.models import Opportunity, PiDecision, TradeProposal
     from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
     from aletheia.storage.sqlite import get_db
 
@@ -546,22 +550,34 @@ def test_concurrent_duplicate_wake_submits_one_proposal(tmp_path, monkeypatch):
             signal_source="market_observer",
         )
 
-    submit_calls = 0
-    both_can_finish = asyncio.Event()
-    first_entered = asyncio.Event()
+    prepare_calls = 0
+    execute_calls = 0
+    both_prepared = asyncio.Event()
 
-    async def fake_submit(_decision, _execution_mode):
-        nonlocal submit_calls
-        submit_calls += 1
-        first_entered.set()
-        await both_can_finish.wait()
-        return {"proposal_id": f"proposal-{submit_calls}", "status": "queued"}
+    async def fake_prepare(_decision, _execution_mode):
+        nonlocal prepare_calls
+        prepare_calls += 1
+        if prepare_calls == 2:
+            both_prepared.set()
+        await both_prepared.wait()
+        proposal = TradeProposal(
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.001,
+            price=60_000.0,
+            execution_mode="paper_internal",
+            opportunity_id=opportunity.id,
+        )
+        return {"status": "prepared", "proposal_id": proposal.id, "proposal": proposal}
+
+    def fake_execute(proposal, **_kwargs):
+        nonlocal execute_calls
+        execute_calls += 1
+        return {"proposal_id": proposal.id, "status": "queued"}
 
     monkeypatch.setattr(
-        "aletheia.config.loader.load_config",
-        lambda: SimpleNamespace(
-            exchange=SimpleNamespace(paper_execution_mode="paper_internal")
-        ),
+        commands, "_configured_paper_execution_mode", lambda: "paper_internal"
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
@@ -575,17 +591,15 @@ def test_concurrent_duplicate_wake_submits_one_proposal(tmp_path, monkeypatch):
         fake_evaluate,
     )
     monkeypatch.setattr(
-        "aletheia.agent_shell.trading_decision.submit_decision_as_proposal",
-        fake_submit,
+        "aletheia.agent_shell.trading_decision.prepare_decision_as_proposal",
+        fake_prepare,
     )
+    monkeypatch.setattr("aletheia.execution.gateway._execute_proposal", fake_execute)
     monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
 
     async def run_both():
         first = asyncio.create_task(commands.evaluate_trading_opportunity({}))
-        await first_entered.wait()
         second = asyncio.create_task(commands.evaluate_trading_opportunity({}))
-        await asyncio.sleep(0)
-        both_can_finish.set()
         return await asyncio.gather(first, second)
 
     results = asyncio.run(run_both())
@@ -595,7 +609,8 @@ def test_concurrent_duplicate_wake_submits_one_proposal(tmp_path, monkeypatch):
         (opportunity.id,),
     ).fetchall()
 
-    assert submit_calls == 1
+    assert prepare_calls == 2
+    assert execute_calls == 1
     assert len(finals) == 1
     assert sum(bool(result.get("idempotent_replay")) for result in results) == 1
 
@@ -610,15 +625,13 @@ def test_concurrent_duplicate_wake_submits_one_proposal(tmp_path, monkeypatch):
 )
 def test_final_claim_failure_prevents_proposal_side_effect(tmp_path, monkeypatch):
     import asyncio
-    from types import SimpleNamespace
-
     import pytest
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_shell import commands
     from aletheia.agent_shell.trading_decision import TradingDecision
-    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.models import Opportunity, PiDecision, TradeProposal
     from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
 
     opportunity = Opportunity(
@@ -640,21 +653,30 @@ def test_final_claim_failure_prevents_proposal_side_effect(tmp_path, monkeypatch
             conviction=80, reasoning="valid intent", opportunity_id=opportunity.id,
         )
 
-    submit_calls = 0
+    execute_calls = 0
 
-    async def fake_submit(_decision, _execution_mode):
-        nonlocal submit_calls
-        submit_calls += 1
-        return {"proposal_id": "must-not-exist", "status": "queued"}
+    async def fake_prepare(_decision, _execution_mode):
+        proposal = TradeProposal(
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.001,
+            price=60_000.0,
+            execution_mode="paper_internal",
+            opportunity_id=opportunity.id,
+        )
+        return {"status": "prepared", "proposal_id": proposal.id, "proposal": proposal}
+
+    def fake_execute(proposal, **_kwargs):
+        nonlocal execute_calls
+        execute_calls += 1
+        return {"proposal_id": proposal.id, "status": "queued"}
 
     def fail_final_insert(_decision):
         raise RuntimeError("forced final claim failure")
 
     monkeypatch.setattr(
-        "aletheia.config.loader.load_config",
-        lambda: SimpleNamespace(
-            exchange=SimpleNamespace(paper_execution_mode="paper_internal")
-        ),
+        commands, "_configured_paper_execution_mode", lambda: "paper_internal"
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
@@ -665,9 +687,10 @@ def test_final_claim_failure_prevents_proposal_side_effect(tmp_path, monkeypatch
         fake_evaluate,
     )
     monkeypatch.setattr(
-        "aletheia.agent_shell.trading_decision.submit_decision_as_proposal",
-        fake_submit,
+        "aletheia.agent_shell.trading_decision.prepare_decision_as_proposal",
+        fake_prepare,
     )
+    monkeypatch.setattr("aletheia.execution.gateway._execute_proposal", fake_execute)
     monkeypatch.setattr(
         "aletheia.storage.repositories.insert_pi_decision",
         fail_final_insert,
@@ -675,7 +698,7 @@ def test_final_claim_failure_prevents_proposal_side_effect(tmp_path, monkeypatch
 
     with pytest.raises(RuntimeError, match="forced final claim failure"):
         asyncio.run(commands.evaluate_trading_opportunity({}))
-    assert submit_calls == 0
+    assert execute_calls == 0
 
 
 @spec_claim(
@@ -688,8 +711,6 @@ def test_final_claim_failure_prevents_proposal_side_effect(tmp_path, monkeypatch
 )
 def test_llm_unavailable_skip_consumes_oldest_pending_signal(tmp_path, monkeypatch):
     import asyncio
-    from types import SimpleNamespace
-
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -718,10 +739,7 @@ def test_llm_unavailable_skip_consumes_oldest_pending_signal(tmp_path, monkeypat
         return None
 
     monkeypatch.setattr(
-        "aletheia.config.loader.load_config",
-        lambda: SimpleNamespace(
-            exchange=SimpleNamespace(paper_execution_mode="paper_internal")
-        ),
+        commands, "_configured_paper_execution_mode", lambda: "paper_internal"
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
@@ -796,6 +814,578 @@ def test_serenity_pending_signal_is_not_hidden_by_market_queue_ttl(tmp_path, mon
 
 @spec_claim(
     SpecClaim(
+        "DL-S18", "decision_lifecycle_contract", "§2.3 pending-only operator input", "L2b",
+        "A heartbeat with zero unresolved signal_pending rows cannot turn an open/ranker "
+        "Opportunity into a TradeProposal; paper_trader must create the durable queue carrier first.",
+        status="implemented",
+    ),
+)
+def test_heartbeat_cannot_submit_unqueued_open_or_ranker_opportunity(tmp_path, monkeypatch):
+    import asyncio
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    # pi_daemon deliberately closes its thread-local connection after every
+    # evaluation. Re-open the fixture on the production-derived app.db path so
+    # that post-heartbeat assertions inspect the same durable temporary DB.
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import close_db
+
+    close_db()
+    run_migrations()
+    from aletheia.agent_runtime import pi_daemon
+    from aletheia.agent_shell import reflection, trading_decision
+    from aletheia.agent_shell.trading_context import build_enriched_trading_context
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.execution import gateway
+    from aletheia.storage.models import MarketSnapshot, Opportunity
+    from aletheia.storage.repositories import insert_market_snapshot, insert_opportunity
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.symbol_list = []
+    cfg.risk.symbol_filter_mode = "blacklist"
+    save_config(cfg)
+
+    opportunity = Opportunity(
+        id="opp-heartbeat-not-queued",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        confidence="high",
+        confidence_score=90,
+        source_agent="market_observer",
+        asset_class="crypto",
+        execution_eligible=True,
+        status="open",
+        scanner_family="momentum",
+    )
+    insert_opportunity(opportunity)
+    insert_market_snapshot(
+        MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=100.0)
+    )
+
+    context = build_enriched_trading_context()
+    assert context["layer2"]["pending_queue"]["unresolved_total"] == 0
+    assert any(row.get("id") == opportunity.id for row in context["layer1"]["opportunities"])
+    assert any(
+        row.get("opportunity_id") == opportunity.id
+        for row in context["layer2"]["executable_candidates"]
+    )
+
+    async def choose_unqueued_candidate(_context):
+        return {
+            "action": "trade",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "market_type": "spot",
+            "conviction": 90,
+            "reasoning": "select the visible open ranker candidate",
+            "bear_case": "the breakout can fail",
+            "key_assumptions": ["the stored snapshot remains representative"],
+            "parameter_rationale": {
+                "entry_price": "the current snapshot anchors the entry",
+                "stop_loss": "the stop invalidates the setup",
+                "take_profit": "the target preserves positive reward to risk",
+                "notional_usdt": "the notional is intentionally bounded",
+                "leverage": "spot uses no leverage",
+            },
+        }
+
+    def store_without_executing(proposal, **_kwargs):
+        return {
+            "proposal_id": proposal.id,
+            "status": "stored_only",
+            "reason": "test_blocks_execution_after_persistence",
+        }
+
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", choose_unqueued_candidate)
+    monkeypatch.setattr(gateway, "_execute_proposal", store_without_executing)
+    monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
+
+    asyncio.run(pi_daemon._run_evaluation("heartbeat"))
+
+    db = get_db()
+    pending_count = db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE opportunity_id=? AND action='signal_pending'",
+        (opportunity.id,),
+    ).fetchone()[0]
+    proposals = db.execute(
+        "SELECT id, opportunity_id FROM trade_proposals WHERE opportunity_id=?",
+        (opportunity.id,),
+    ).fetchall()
+    assert pending_count == 0
+    assert not proposals, (
+        "heartbeat formed a TradeProposal from an open/ranker Opportunity with no "
+        f"signal_pending carrier: {[dict(row) for row in proposals]!r}"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S19", "decision_lifecycle_contract", "§4 interrupted submission recovery", "L2b",
+        "A final trade PiDecision stranded in proposal_status=submitting with no matching "
+        "TradeProposal resumes exactly one proposal submission from its durable identity even "
+        "when a retry's non-identity conviction drifts, instead of becoming a permanent no-op.",
+        status="implemented",
+    ),
+)
+def test_submitting_claim_without_proposal_resumes_submission(tmp_path, monkeypatch):
+    import asyncio
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell import commands, reflection, trading_decision
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.execution import gateway
+    from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
+    from aletheia.storage.repositories import (
+        insert_market_snapshot,
+        insert_opportunity,
+        insert_pi_decision,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    save_config(cfg)
+
+    opportunity = Opportunity(
+        id="opp-interrupted-submission",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        confidence="high",
+        confidence_score=90,
+        status="reviewed",
+        scanner_family="momentum",
+    )
+    insert_opportunity(opportunity)
+    insert_market_snapshot(
+        MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=100.0)
+    )
+    insert_pi_decision(PiDecision(
+        id="pending-before-crash",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        action="signal_pending",
+        opportunity_id=opportunity.id,
+        signal_source="market_observer",
+    ))
+    insert_pi_decision(PiDecision(
+        id="final-crash-residue",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        action="trade",
+        conviction=90,
+        reasoning="claimed immediately before the process stopped",
+        proposal_status="submitting",
+        opportunity_id=opportunity.id,
+        signal_source="market_observer",
+    ))
+
+    async def repeat_same_intent(_context):
+        # Deliberately return only the real LLM schema. opportunity_id/source are
+        # absent and must be recovered through the production pending queue.
+        return {
+            "action": "trade",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "market_type": "spot",
+            # The model may rescore the same durable intent after restart. Recovery
+            # authority comes from the original claim identity, not score equality.
+            "conviction": 89,
+            "reasoning": "retry the interrupted durable claim",
+            "bear_case": "the setup can fail",
+            "key_assumptions": ["the stored snapshot remains representative"],
+            "parameter_rationale": {
+                "entry_price": "the current snapshot anchors the retry",
+                "stop_loss": "the stop invalidates the setup",
+                "take_profit": "the target preserves positive reward to risk",
+                "notional_usdt": "the notional remains bounded",
+                "leverage": "spot uses no leverage",
+            },
+        }
+
+    def store_without_executing(proposal, **_kwargs):
+        return {
+            "proposal_id": proposal.id,
+            "status": "stored_only",
+            "reason": "test_blocks_execution_after_persistence",
+        }
+
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", repeat_same_intent)
+    monkeypatch.setattr(gateway, "_execute_proposal", store_without_executing)
+    monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
+
+    result = asyncio.run(commands.evaluate_trading_opportunity({}))
+
+    db = get_db()
+    proposals = db.execute(
+        "SELECT id, opportunity_id FROM trade_proposals WHERE opportunity_id=?",
+        (opportunity.id,),
+    ).fetchall()
+    finals = db.execute(
+        "SELECT id, proposal_id, proposal_status, conviction FROM pi_decisions "
+        "WHERE opportunity_id=? AND action!='signal_pending' ORDER BY created_at, rowid",
+        (opportunity.id,),
+    ).fetchall()
+
+    failures = []
+    if len(proposals) != 1:
+        failures.append(f"expected one recovered TradeProposal, found {len(proposals)}")
+    if len(finals) != 1:
+        failures.append(f"expected one authoritative final PiDecision, found {len(finals)}")
+    elif finals[0]["proposal_status"] == "submitting" or not finals[0]["proposal_id"]:
+        failures.append(f"crash residue was not finalized: {dict(finals[0])!r}")
+    if proposals and finals and finals[0]["proposal_id"] != proposals[0]["id"]:
+        failures.append("final PiDecision does not reference the recovered TradeProposal")
+    if proposals and result.get("proposal_id") != proposals[0]["id"]:
+        failures.append("retry result does not return the recovered TradeProposal")
+    if finals and finals[0]["conviction"] != 90:
+        failures.append("retry rewrote the original durable conviction")
+    assert not failures, "; ".join(failures)
+
+
+def test_submitting_claim_keeps_stale_carrier_visible_for_recovery(
+    tmp_path, monkeypatch
+):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.trading_context import _build_pending_signal_queue
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision, update_pi_decision
+
+    opportunity_id = "opp-stale-submitting-recovery"
+    insert_pi_decision(PiDecision(
+        id="stale-pending-before-claim",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        action="signal_pending",
+        opportunity_id=opportunity_id,
+        signal_source="market_observer",
+        created_at=(datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat(),
+    ))
+    insert_pi_decision(PiDecision(
+        id="unfinished-final-claim",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        action="trade",
+        proposal_status="submitting",
+        opportunity_id=opportunity_id,
+        signal_source="market_observer",
+    ))
+
+    visible, queue = _build_pending_signal_queue(max_age_minutes=30)
+    assert [row["opportunity_id"] for row in visible] == [opportunity_id]
+    assert queue["expired_unconsumed_rows"] == 0
+
+    update_pi_decision("unfinished-final-claim", proposal_status="executed")
+    visible, queue = _build_pending_signal_queue(max_age_minutes=30)
+    assert visible == []
+    assert queue["unresolved_total"] == 0
+
+
+def test_partial_pending_identity_cannot_authorize_trade(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import _has_durable_pending_carrier
+    from aletheia.agent_shell.trading_decision import (
+        TradingDecision,
+        _attach_opportunity_context,
+    )
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+
+    malformed = [
+        {
+            "opportunity_id": "opp-missing-direction",
+            "symbol": "BTC/USDT",
+            "direction": None,
+            "market_type": "usdt_futures",
+            "signal_source": "market_observer",
+        },
+        {
+            "opportunity_id": "opp-missing-market",
+            "symbol": "ETH/USDT",
+            "direction": "short",
+            "market_type": None,
+            "signal_source": "market_observer",
+        },
+    ]
+    for carrier in malformed:
+        insert_pi_decision(PiDecision(action="signal_pending", **carrier))
+        decision = TradingDecision(
+            action="trade",
+            symbol=carrier["symbol"],
+            direction=carrier["direction"] or "long",
+            market_type=carrier["market_type"] or "usdt_futures",
+            conviction=90,
+            reasoning="must not inherit wildcard execution authority",
+        )
+        _attach_opportunity_context(
+            decision, {"layer2": {"pending_signals": [carrier]}}
+        )
+        assert decision.opportunity_id is None
+
+        # Defense in depth: even a caller that already knows the bare id cannot
+        # use a partial carrier as a direction/market wildcard.
+        decision.opportunity_id = carrier["opportunity_id"]
+        assert _has_durable_pending_carrier(decision) is False
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S20",
+        "decision_lifecycle_contract",
+        "§2.3 legacy Serenity carrier identity",
+        "L2b",
+        "A historical Serenity signal_pending row with market_type=NULL may recover "
+        "that field only from its linked durable SerenityOpportunity when id, symbol, "
+        "and direction all match exactly; every mismatch remains non-authoritative.",
+        status="implemented",
+    )
+)
+def test_legacy_serenity_pending_market_recovers_only_from_exact_source(
+    tmp_path, monkeypatch
+):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import _has_durable_pending_carrier
+    from aletheia.agent_shell.trading_context import _build_pending_signal_queue
+    from aletheia.agent_shell.trading_decision import (
+        TradingDecision,
+        _attach_opportunity_context,
+        _resolve_pending_carrier_identity,
+    )
+    from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
+    from aletheia.storage.repositories import (
+        insert_pi_decision,
+        insert_serenity_opportunity,
+        insert_serenity_theme,
+    )
+
+    theme = SerenityTheme(name="legacy carrier recovery")
+    insert_serenity_theme(theme)
+    exact = SerenityOpportunity(
+        id="serenity-legacy-exact",
+        theme_id=theme.id,
+        symbol="SOL/USDT",
+        direction="long",
+        market_type="spot",
+    )
+    insert_serenity_opportunity(exact)
+    insert_pi_decision(PiDecision(
+        symbol=exact.symbol,
+        direction=exact.direction,
+        market_type=None,
+        action="signal_pending",
+        opportunity_id=exact.id,
+        signal_source="serenity",
+    ))
+
+    pending, _queue = _build_pending_signal_queue()
+    legacy = next(row for row in pending if row["opportunity_id"] == exact.id)
+    assert legacy["market_type"] is None
+
+    decision = TradingDecision(
+        action="trade",
+        symbol=exact.symbol,
+        direction=exact.direction,
+        market_type="spot",
+        conviction=90,
+        reasoning="recover only from the exact durable Serenity source",
+    )
+    _attach_opportunity_context(
+        decision,
+        {
+            "layer1": {"opportunities": []},
+            "layer2": {"pending_signals": [legacy]},
+            "layer3": {"serenity_opportunities": []},
+        },
+    )
+    assert (decision.opportunity_id, decision.signal_source, decision.market_type) == (
+        exact.id,
+        "serenity",
+        "spot",
+    )
+    assert _has_durable_pending_carrier(decision) is True
+
+    mismatches = (
+        (
+            "serenity-wrong-symbol", "SOL/USDT", "long", "spot",
+            "BTC/USDT", "long",
+        ),
+        (
+            "serenity-wrong-direction", "ETH/USDT", "long", "spot",
+            "ETH/USDT", "short",
+        ),
+        (
+            "serenity-empty-market", "XRP/USDT", "long", "",
+            "XRP/USDT", "long",
+        ),
+    )
+    for (
+        source_id, source_symbol, source_direction, source_market,
+        pending_symbol, pending_direction,
+    ) in mismatches:
+        source = SerenityOpportunity(
+            id=source_id,
+            theme_id=theme.id,
+            symbol=source_symbol,
+            direction=source_direction,
+            market_type=source_market,
+        )
+        insert_serenity_opportunity(source)
+        insert_pi_decision(PiDecision(
+            symbol=pending_symbol,
+            direction=pending_direction,
+            market_type=None,
+            action="signal_pending",
+            opportunity_id=source.id,
+            signal_source="serenity",
+        ))
+        malformed = {
+            "opportunity_id": source.id,
+            "symbol": pending_symbol,
+            "direction": pending_direction,
+            "market_type": None,
+            "signal_source": "serenity",
+        }
+        assert _resolve_pending_carrier_identity(malformed) is None
+
+        rejected = TradingDecision(
+            action="trade",
+            symbol=pending_symbol,
+            direction=pending_direction,
+            market_type="spot",
+            opportunity_id=source.id,
+            signal_source="serenity",
+            conviction=90,
+            reasoning="mismatched source must not repair authority",
+        )
+        assert _has_durable_pending_carrier(rejected) is False
+
+
+def test_terminal_replay_preserves_canonical_decision_and_proposal_identity(
+    tmp_path, monkeypatch
+):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell import reflection
+    from aletheia.storage.models import PiDecision, TradeProposal
+    from aletheia.storage.repositories import (
+        _select_one,
+        get_trade_proposal,
+        insert_pi_decision,
+        insert_trade_proposal,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    proposal = TradeProposal(
+        id="proposal-terminal-before-finalize",
+        opportunity_id="opp-terminal-before-finalize",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="paper_internal",
+        status="executed",
+    )
+    insert_trade_proposal(proposal)
+    insert_pi_decision(PiDecision(
+        id="decision-terminal-before-finalize",
+        opportunity_id=proposal.opportunity_id,
+        signal_source="market_observer",
+        symbol=proposal.symbol,
+        direction=proposal.direction,
+        market_type=proposal.market_type,
+        action="trade",
+        conviction=91,
+        reasoning="authoritative original intent",
+        proposal_id=proposal.id,
+        proposal_status="submitting",
+    ))
+    monkeypatch.setattr(
+        reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json"
+    )
+
+    replay = {
+        "action": "flip",
+        "symbol": "BTC/USDT",
+        "direction": "short",
+        "market_type": "usdt_futures",
+        "conviction": 1,
+        "reasoning": "stale concurrent replay must not replace the owner",
+        "proposal_id": proposal.id,
+        "proposal_status": "already_executed",
+        "proposal_reason": None,
+        "opportunity_id": proposal.opportunity_id,
+        "signal_source": "market_observer",
+        "filter_trace": [{
+            "filter_name": "replay_only_gate",
+            "stage": "proposal_submission",
+            "decision": "rejected",
+            "reason_code": "replay_only_reason",
+            "inputs": {"replay_conviction": 1},
+            "parameters": {},
+        }],
+    }
+    first = reflection.finalize_decision(
+        "decision-terminal-before-finalize", replay
+    )
+    replay["proposal_status"] = "error"
+    second = reflection.finalize_decision(
+        "decision-terminal-before-finalize", replay
+    )
+
+    expected_identity = {
+        "action": "trade",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "market_type": "spot",
+        "conviction": 91,
+        "reasoning": "authoritative original intent",
+        "proposal_id": proposal.id,
+        "proposal_status": "executed",
+    }
+    assert {key: first[key] for key in expected_identity} == expected_identity
+    assert {key: second[key] for key in expected_identity} == expected_identity
+    assert {
+        key: _select_one("pi_decisions", "decision-terminal-before-finalize")[key]
+        for key in expected_identity
+    } == expected_identity
+    stored_proposal = get_trade_proposal(proposal.id)
+    assert (stored_proposal["direction"], stored_proposal["market_type"]) == (
+        "long",
+        "spot",
+    )
+    replay_evidence = get_db().execute(
+        "SELECT id FROM filter_decisions WHERE candidate_key=? "
+        "AND filter_name='replay_only_gate'",
+        ("pi_decision:decision-terminal-before-finalize",),
+    ).fetchone()
+    assert replay_evidence is None
+
+
+@spec_claim(
+    SpecClaim(
         "DL-S05", "decision_lifecycle_contract", "§2.3 executable candidate view", "L2b",
         "System Operator context separates executable ranker candidates from excluded "
         "candidate summaries so unsupported/expired/guard-blocked rows do not occupy "
@@ -836,7 +1426,7 @@ def test_min_conviction_threshold_is_55():
 @spec_claim(
     SpecClaim(
         "DL-S06", "decision_lifecycle_contract", "§4 DL-INV-5 instrument price", "L2a",
-        "submit_decision_as_proposal resolves the final market_type before calling "
+        "prepare_decision_as_proposal resolves the final market_type before calling "
         "latest_snapshot and passes that market_type into the price lookup.",
     ),
 )
@@ -844,7 +1434,7 @@ def test_proposal_price_lookup_is_market_type_scoped():
     from aletheia.agent_shell import trading_decision
 
     src = Path(trading_decision.__file__).read_text(encoding="utf-8")
-    start = src.index("async def submit_decision_as_proposal")
+    start = src.index("async def prepare_decision_as_proposal")
     end = src.index("\ndef _proposal_direction_overheated", start)
     body = src[start:end]
 
@@ -866,7 +1456,7 @@ def test_failed_proposal_submission_keeps_structured_reason():
     from aletheia.agent_shell import trading_decision
 
     src = Path(trading_decision.__file__).read_text(encoding="utf-8")
-    start = src.index("async def submit_decision_as_proposal")
+    start = src.index("async def prepare_decision_as_proposal")
     end = src.index("\ndef _proposal_direction_overheated", start)
     body = src[start:end]
 

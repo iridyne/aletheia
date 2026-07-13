@@ -400,8 +400,12 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     return decision
 
 
-async def submit_decision_as_proposal(decision: TradingDecision, execution_mode: str) -> dict:
-    """Submit a trade intent or return one structured, stable failure result."""
+async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode: str) -> dict:
+    """Resolve one trade intent into an immutable Proposal without persisting it.
+
+    The caller can commit this Proposal in the same short transaction as the
+    authoritative PiDecision claim.  No Risk or broker side effect happens here.
+    """
     identity_failure = None
     if decision.action not in ("trade", "scale_in", "flip"):
         identity_failure = "invalid_action"
@@ -470,7 +474,6 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     })
 
     from aletheia.trading.market_data import latest_snapshot
-    from aletheia.execution.paper_tools import create_paper_proposal
     from aletheia.config.loader import load_config
     from aletheia.trust.guard_chain import run_guards, summarize
 
@@ -624,10 +627,14 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         thesis = thesis[:_MAX_RATIONALE_TEXT].rstrip() + "…"
     rationale = f"{thesis}\n---\n{json.dumps(decision_meta)}"
 
-    return create_paper_proposal(
+    from aletheia.storage.models import TradeProposal
+    from aletheia.trading.entry_snapshot import capture_attribution_snapshot_json
+
+    proposal = TradeProposal(
         symbol=decision.symbol,
         market_type=market_type,
         direction=decision.direction,
+        order_type="limit",
         quantity=quantity,
         price=price,
         leverage=leverage,
@@ -638,7 +645,37 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         strategy_id=decision.strategy_id,
         opportunity_id=decision.opportunity_id,
         agent_rationale=rationale,
+        attribution_snapshot=capture_attribution_snapshot_json(decision.symbol),
         trade_school=trade_school,
+    )
+    return {"status": "prepared", "proposal_id": proposal.id, "proposal": proposal}
+
+
+async def submit_decision_as_proposal(decision: TradingDecision, execution_mode: str) -> dict:
+    """Compatibility entry point that prepares, persists, and executes one Proposal."""
+    prepared = await prepare_decision_as_proposal(decision, execution_mode)
+    proposal = prepared.get("proposal")
+    if proposal is None:
+        return prepared
+
+    from aletheia.execution.paper_tools import create_paper_proposal
+
+    return create_paper_proposal(
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        order_type=proposal.order_type,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        leverage=proposal.leverage,
+        stop_price=proposal.stop_price,
+        take_profit=proposal.take_profit,
+        risk_reward=proposal.risk_reward,
+        execution_mode=proposal.execution_mode,
+        strategy_id=proposal.strategy_id,
+        opportunity_id=proposal.opportunity_id,
+        agent_rationale=proposal.agent_rationale,
+        trade_school=proposal.trade_school,
     )
 
 
@@ -1622,6 +1659,52 @@ def _parse_decision(raw: dict) -> TradingDecision:
     )
 
 
+def _resolve_pending_carrier_identity(
+    carrier: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return one exact pending identity, recovering only legacy Serenity market type.
+
+    Current ``signal_pending`` producers persist all four authority fields.  Historical
+    Serenity rows predate ``pi_decisions.market_type`` and therefore carry NULL in that
+    one column.  They remain usable only when their durable SerenityOpportunity proves
+    the same id, symbol, and direction and supplies a non-empty market type.  No other
+    partial carrier is treated as a wildcard.
+    """
+    if not isinstance(carrier, dict):
+        return None
+    resolved = dict(carrier)
+    opportunity_id = resolved.get("opportunity_id")
+    symbol = resolved.get("symbol")
+    direction = resolved.get("direction")
+    market_type = resolved.get("market_type")
+    signal_source = resolved.get("signal_source") or "market_observer"
+    if not opportunity_id or not symbol or not direction:
+        return None
+    if market_type:
+        resolved["signal_source"] = signal_source
+        return resolved
+    if signal_source != "serenity":
+        return None
+
+    try:
+        from aletheia.storage.repositories import get_serenity_opportunity
+
+        source = get_serenity_opportunity(opportunity_id)
+    except Exception:
+        return None
+    if (
+        not source
+        or source.get("id") != opportunity_id
+        or source.get("symbol") != symbol
+        or source.get("direction") != direction
+        or not source.get("market_type")
+    ):
+        return None
+    resolved["market_type"] = source["market_type"]
+    resolved["signal_source"] = "serenity"
+    return resolved
+
+
 def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
     """Backfill opportunity_id + signal_source from the source opportunity (R0 + Phase 2).
 
@@ -1632,12 +1715,11 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
 
       1. market_observer `pending_signals` — the exact queue carrier emitted by
          paper_trader. It wins over a different same-symbol open opportunity.
-      2. market_observer Layer 1/ranker candidates — short-term scanner signals.
-         These still win over Serenity on a cross-source tie.
-      3. serenity pending/Layer 3 opportunities — research long-hold picks.
-         Matched only if no market_observer opportunity claimed the pick; sets
-         signal_source='serenity' so opportunity_id is later resolved against
-         serenity_opportunities (NOT opportunities) — the two id spaces are
+      2. serenity `pending_signals` for new-entry actions. Layer 1/ranker rows are
+         analysis-only and cannot outrank durable execution authority.
+      3. market_observer Layer 1/ranker and Serenity Layer 3 for non-entry actions.
+         Serenity sets signal_source='serenity' so opportunity_id is later resolved
+         against serenity_opportunities (NOT opportunities) — the two id spaces are
          indistinguishable bare uuid4().hex[:12] strings.
 
     Best-effort and honest: if the pick maps to neither (e.g. it came from raw
@@ -1649,9 +1731,24 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
 
     # The exact queued carrier is more specific than a later same-symbol/direction
     # open row, so consume it before heuristic Layer-1 matches.
-    pending = (ctx.get("layer2") or {}).get("pending_signals") or []
+    raw_pending = (ctx.get("layer2") or {}).get("pending_signals") or []
+    pending = [
+        resolved
+        for carrier in raw_pending
+        if (resolved := _resolve_pending_carrier_identity(carrier)) is not None
+    ]
     if not decision.symbol:
-        carrier = next((p for p in pending if p.get("opportunity_id")), None)
+        carrier = next(
+            (
+                p
+                for p in pending
+                if p.get("opportunity_id")
+                and p.get("symbol")
+                and p.get("direction")
+                and p.get("market_type")
+            ),
+            None,
+        )
         if carrier is None:
             return
         decision.symbol = carrier.get("symbol")
@@ -1691,15 +1788,20 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         if p.get("symbol") != decision.symbol:
             continue
         pdir = p.get("direction")
-        if decision.direction and pdir and pdir != decision.direction:
+        pmarket = p.get("market_type")
+        if not pdir or not pmarket:
+            continue
+        if decision.direction and pdir != decision.direction:
+            continue
+        if decision.market_type and pmarket != decision.market_type:
             continue
         oid = p.get("opportunity_id")
         if not oid:
             continue
         decision.opportunity_id = oid
         decision.signal_source = "market_observer"
-        if not decision.market_type and p.get("market_type"):
-            decision.market_type = p.get("market_type")
+        decision.direction = decision.direction or pdir
+        decision.market_type = decision.market_type or pmarket
         # Recover the source fields omitted from PiDecision. The id remains an
         # honest attribution anchor even if this best-effort lookup fails.
         try:
@@ -1719,6 +1821,43 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
                     decision.market_type = src_opp.get("market")
         except Exception:
             pass
+        return
+
+    # New-entry actions may only inherit execution authority from the durable
+    # pending queue.  Layer-1 opportunities and ranker candidates remain useful
+    # analysis context, but a heartbeat must not turn either view into a Proposal
+    # before paper_trader/Serenity has emitted the exact queue carrier.
+    if decision.action in {"trade", "scale_in", "flip"}:
+        for p in pending:
+            if p.get("signal_source") != "serenity":
+                continue
+            if p.get("symbol") != decision.symbol:
+                continue
+            pdir = p.get("direction")
+            pmarket = p.get("market_type")
+            if not pdir or not pmarket:
+                continue
+            if decision.direction and pdir != decision.direction:
+                continue
+            if decision.market_type and pmarket != decision.market_type:
+                continue
+            oid = p.get("opportunity_id")
+            if not oid:
+                continue
+            decision.opportunity_id = oid
+            decision.signal_source = "serenity"
+            decision.direction = decision.direction or pdir
+            decision.market_type = decision.market_type or pmarket
+            if not decision.market_type:
+                try:
+                    from aletheia.storage.repositories import get_serenity_opportunity
+
+                    source = get_serenity_opportunity(oid)
+                    if source and source.get("market_type"):
+                        decision.market_type = source["market_type"]
+                except Exception:
+                    pass
+            return
         return
 
     opps = (ctx.get("layer1") or {}).get("opportunities") or []
@@ -1785,15 +1924,20 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         if p.get("symbol") != decision.symbol:
             continue
         pdir = p.get("direction")
-        if decision.direction and pdir and pdir != decision.direction:
+        pmarket = p.get("market_type")
+        if not pdir or not pmarket:
+            continue
+        if decision.direction and pdir != decision.direction:
+            continue
+        if decision.market_type and pmarket != decision.market_type:
             continue
         oid = p.get("opportunity_id")
         if not oid:
             continue
         decision.opportunity_id = oid
         decision.signal_source = "serenity"
-        if not decision.market_type and p.get("market_type"):
-            decision.market_type = p.get("market_type")
+        decision.direction = decision.direction or pdir
+        decision.market_type = decision.market_type or pmarket
         # Legacy pending rows lack market_type. Recover it from the source
         # serenity_opportunity without weakening the attribution anchor.
         if not decision.market_type:

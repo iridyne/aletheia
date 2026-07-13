@@ -155,11 +155,15 @@ def list_opportunities(limit: int = 50) -> list[dict]:
 
 
 def list_open_opportunities(limit: int = 50) -> list[dict]:
-    """Return the ranker's bounded working set without reviewed-history crowd-out."""
+    """Return a bounded FIFO working set without reviewed-history crowd-out.
+
+    Oldest-first ordering guarantees repeated bounded runs advance an existing
+    backlog even while newer Opportunities continue to arrive.
+    """
     return _select_all(
         "opportunities",
         where="status = 'open'",
-        order="created_at DESC, rowid DESC",
+        order="created_at ASC, rowid ASC",
         limit=limit,
     )
 
@@ -281,6 +285,28 @@ def find_final_pi_decision_for_opportunity(
     row = get_db().execute(
         "SELECT * FROM pi_decisions WHERE opportunity_id=? "
         "AND action != 'signal_pending' "
+        "AND COALESCE(signal_source, 'market_observer')=? "
+        "ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 1",
+        (opportunity_id, signal_source or "market_observer"),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def find_pending_pi_decision_for_opportunity(
+    opportunity_id: str,
+    signal_source: str = "market_observer",
+) -> dict | None:
+    """Return the durable queue carrier for one exact source opportunity.
+
+    This intentionally does not hide the row after a final ``submitting`` claim:
+    crash recovery must still prove that the original pending carrier existed.
+    Callers remain responsible for applying the market-observer TTL.
+    """
+    if not opportunity_id:
+        return None
+    row = get_db().execute(
+        "SELECT * FROM pi_decisions WHERE opportunity_id=? "
+        "AND action='signal_pending' "
         "AND COALESCE(signal_source, 'market_observer')=? "
         "ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 1",
         (opportunity_id, signal_source or "market_observer"),
@@ -618,6 +644,94 @@ def get_trade_proposal(pid: str) -> dict | None:
     return _select_one("trade_proposals", pid)
 
 
+def get_proposal_execution_claim(proposal_id: str) -> dict | None:
+    """Return the durable execution owner/lease for one Proposal."""
+    row = get_db().execute(
+        "SELECT * FROM proposal_execution_claims WHERE proposal_id=?",
+        (proposal_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def insert_proposal_execution_claim(
+    proposal_id: str,
+    owner_token: str,
+    claimed_at: str,
+    lease_expires_at: str,
+) -> bool:
+    """Acquire an absent Proposal execution claim without replacing an owner."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "INSERT OR IGNORE INTO proposal_execution_claims "
+        "(proposal_id, owner_token, claimed_at, lease_expires_at) VALUES (?, ?, ?, ?)",
+        (proposal_id, owner_token, claimed_at, lease_expires_at),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount == 1
+
+
+def replace_proposal_execution_claim(
+    proposal_id: str,
+    *,
+    expected_owner_token: str,
+    expected_lease_expires_at: str,
+    owner_token: str,
+    claimed_at: str,
+    lease_expires_at: str,
+) -> bool:
+    """CAS-replace one observed expired execution claim."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "UPDATE proposal_execution_claims "
+        "SET owner_token=?, claimed_at=?, lease_expires_at=? "
+        "WHERE proposal_id=? AND owner_token=? AND lease_expires_at=?",
+        (
+            owner_token,
+            claimed_at,
+            lease_expires_at,
+            proposal_id,
+            expected_owner_token,
+            expected_lease_expires_at,
+        ),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount == 1
+
+
+def release_proposal_execution_claim(proposal_id: str, owner_token: str) -> bool:
+    """CAS-release only the caller's own execution claim."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "DELETE FROM proposal_execution_claims WHERE proposal_id=? AND owner_token=?",
+        (proposal_id, owner_token),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount == 1
+
+
+def proposal_execution_claim_owned(proposal_id: str, owner_token: str) -> bool:
+    """Return whether the exact owner token still controls the Proposal."""
+    return get_db().execute(
+        "SELECT 1 FROM proposal_execution_claims "
+        "WHERE proposal_id=? AND owner_token=? LIMIT 1",
+        (proposal_id, owner_token),
+    ).fetchone() is not None
+
+
+def has_order_for_proposal(proposal_id: str) -> bool:
+    """Return whether any durable Order already represents this Proposal."""
+    return get_db().execute(
+        "SELECT 1 FROM orders WHERE proposal_id=? LIMIT 1",
+        (proposal_id,),
+    ).fetchone() is not None
+
+
 # --- Risk Decisions ---
 
 def insert_risk_decision(d: RiskDecision) -> None:
@@ -807,6 +921,7 @@ def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
     rows that predate ``close_reason`` cannot consume a new-entry allowance.
     """
     unresolved_states = (
+        "pending",
         "submitted",
         "partial",
         "partially_filled",

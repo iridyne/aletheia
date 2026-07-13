@@ -26,6 +26,8 @@ def _approved():
 def test_adjusted_exchange_quantity_is_rechecked_by_risk_then_submitted(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import gateway
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Fill, Order, Position, RiskDecision
 
     seen_by_risk = []
     monkeypatch.setattr(
@@ -39,19 +41,73 @@ def test_adjusted_exchange_quantity_is_rechecked_by_risk_then_submitted(tmp_path
     monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *args: None)
     import aletheia.execution.bitget_broker as broker
     sent = []
+
+    def _persisted_exchange_result(**kw):
+        sent.append(kw["quantity"])
+        proposal = repo.get_trade_proposal(kw["proposal_id"])
+        repo.insert_risk_decision(
+            RiskDecision(
+                id="risk-1",
+                proposal_id=kw["proposal_id"],
+                approved=True,
+                allowed_execution_mode=kw["execution_mode"],
+                proposal_execution_mode=proposal["execution_mode"],
+                decision_role="authoritative",
+                evaluated_quantity=kw["quantity"],
+                proposal_commit_hash=proposal["commit_hash"],
+            )
+        )
+        repo.insert_order(
+            Order(
+                id="o1",
+                proposal_id=kw["proposal_id"],
+                risk_decision_id="risk-1",
+                client_order_id=kw["proposal_id"],
+                position_id="p1",
+                symbol=kw["symbol"],
+                market_type=kw["market_type"],
+                direction=kw["direction"],
+                order_type=kw["order_type"],
+                quantity=kw["quantity"],
+                price=kw["price"],
+                execution_mode=kw["execution_mode"],
+                exchange_order_id="x1",
+                status="filled",
+            )
+        )
+        repo.insert_fill(
+            Fill(
+                id="f1",
+                order_id="o1",
+                fill_price=kw["price"],
+                fill_quantity=kw["quantity"],
+            )
+        )
+        repo.insert_position(
+            Position(
+                id="p1",
+                proposal_id=kw["proposal_id"],
+                order_id="o1",
+                symbol=kw["symbol"],
+                market_type=kw["market_type"],
+                direction=kw["direction"],
+                quantity=kw["quantity"],
+                entry_price=kw["price"],
+                execution_mode=kw["execution_mode"],
+            )
+        )
+        return {
+            "order_id": "o1",
+            "exchange_order_id": "x1",
+            "order_status": "filled",
+            "fill_id": "f1",
+            "position_id": "p1",
+        }
+
     monkeypatch.setattr(
         broker,
         "execute_live_order",
-        lambda **kw: (
-            sent.append(kw["quantity"])
-            or {
-                "order_id": "o1",
-                "exchange_order_id": "x1",
-                "order_status": "filled",
-                "fill_id": "f1",
-                "position_id": "p1",
-            }
-        ),
+        _persisted_exchange_result,
     )
 
     result = gateway.submit_proposal(

@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from aletheia.agent_runtime.orchestrator import run_agent
 import aletheia.config.loader as config_loader
@@ -1519,23 +1519,105 @@ def _emit_self_heal_action(
         pass
 
 
+def _has_durable_pending_carrier(decision) -> bool:
+    """Return whether a new-entry decision owns one exact durable queue carrier."""
+    opportunity_id = getattr(decision, "opportunity_id", None)
+    signal_source = getattr(decision, "signal_source", None) or "market_observer"
+    if not opportunity_id:
+        return False
+
+    from aletheia.storage.repositories import (
+        find_final_pi_decision_for_opportunity,
+        find_pending_pi_decision_for_opportunity,
+    )
+    from aletheia.agent_shell.trading_decision import (
+        _resolve_pending_carrier_identity,
+    )
+
+    pending = _resolve_pending_carrier_identity(
+        find_pending_pi_decision_for_opportunity(opportunity_id, signal_source)
+    )
+    if pending is None:
+        return False
+    # A carrier is execution authority, so partial legacy identity cannot be
+    # treated as a wildcard. Missing direction/market would otherwise let one
+    # queued row authorize the opposite side or a different instrument class.
+    for field in ("symbol", "direction", "market_type"):
+        expected = getattr(decision, field, None)
+        actual = pending.get(field)
+        if not expected or not actual or expected != actual:
+            return False
+
+    if signal_source != "market_observer":
+        return True
+    try:
+        from aletheia.agent_shell.trading_context import _PENDING_SIGNAL_MAX_AGE_MINUTES
+
+        created_at = datetime.fromisoformat(str(pending.get("created_at")).replace("Z", "+00:00"))
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        fresh = created_at >= datetime.now(timezone.utc) - timedelta(
+            minutes=_PENDING_SIGNAL_MAX_AGE_MINUTES
+        )
+    except (TypeError, ValueError):
+        fresh = False
+    if fresh:
+        return True
+
+    # Once a durable claim exists, queue age no longer decides whether its
+    # already-owned submission may recover. This covers both historical orphan
+    # claims and the atomic claim+Proposal commit followed by process death.
+    existing = find_final_pi_decision_for_opportunity(opportunity_id, signal_source)
+    return bool(
+        existing
+        and existing.get("proposal_status") == "submitting"
+    )
+
+
+def _configured_paper_execution_mode() -> str:
+    return str(config_loader.load_config().exchange.paper_execution_mode)
+
+
+def _proposal_status_from_execution_result(execution_result: dict) -> str | None:
+    """Persist the Proposal's real state, not a caller-facing recovery action."""
+    return execution_result.get("proposal_status") or execution_result.get("status")
+
+
 async def evaluate_trading_opportunity(params: dict) -> dict:
     """System Operator evaluates market state and submits a paper proposal if conviction >= 55."""
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
     from aletheia.agent_shell.trading_decision import (
         evaluate_trading_opportunity as _evaluate,
-        submit_decision_as_proposal,
+        prepare_decision_as_proposal,
     )
-    from aletheia.config.loader import load_config
-
-    cfg = load_config()
-    execution_mode = cfg.exchange.paper_execution_mode
+    execution_mode = _configured_paper_execution_mode()
 
     # Build three-layer enriched context
     ctx = build_enriched_trading_context()
 
     # Run System Operator decision loop
     decision = await _evaluate(ctx)
+
+    trade_like = decision.action in ("trade", "scale_in", "flip")
+    if trade_like and not _has_durable_pending_carrier(decision):
+        original_action = decision.action
+        decision.filter_trace.append({
+            "filter_name": "pending_signal_authority",
+            "stage": "proposal_submission",
+            "decision": "rejected",
+            "reason_code": "pending_signal_required",
+            "inputs": {
+                "action": original_action,
+                "opportunity_id": decision.opportunity_id,
+                "signal_source": decision.signal_source,
+            },
+            "parameters": {"required_carrier": "pi_decisions.action=signal_pending"},
+        })
+        decision.action = "skip"
+        decision.reasoning = (
+            f"{decision.reasoning} [pending signal required; no proposal created]"
+        )
+        trade_like = False
 
     def _attach_pending_queue_state(payload: dict) -> None:
         try:
@@ -1580,40 +1662,14 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "learning_manifest": ctx.get("learning_manifest") or {},
     }
 
-    trade_like = decision.action in ("trade", "scale_in", "flip")
     if trade_like:
         result["proposal_status"] = "submitting"
         result["proposal_reason"] = None
 
-    # Claim the authoritative final intent before any proposal side effect. The
-    # short BEGIN IMMEDIATE transaction serializes concurrent wakes for the same
-    # causal opportunity; a DB failure propagates and therefore cannot be reported
-    # as a successful proposal submission.
-    from aletheia.agent_shell.reflection import claim_decision, finalize_decision
-
-    claimed_final, claim_created = claim_decision(result)
-    if not claim_created:
-        result.update({
-            "action": claimed_final.get("action"),
-            "symbol": claimed_final.get("symbol"),
-            "direction": claimed_final.get("direction"),
-            "market_type": claimed_final.get("market_type"),
-            "conviction": claimed_final.get("conviction"),
-            "reasoning": claimed_final.get("reasoning") or "",
-            "proposal_id": claimed_final.get("proposal_id"),
-            "proposal_status": claimed_final.get("proposal_status"),
-            "proposal_reason": claimed_final.get("proposal_reason"),
-            "opportunity_id": claimed_final.get("opportunity_id"),
-            "signal_source": claimed_final.get("signal_source") or "market_observer",
-            "idempotent_replay": True,
-        })
-        _attach_pending_queue_state(result)
-        return result
-
-    # trade / scale_in / flip all produce proposals
+    prepared_proposal = None
     if trade_like:
         try:
-            proposal_result = await submit_decision_as_proposal(decision, execution_mode)
+            prepared_result = await prepare_decision_as_proposal(decision, execution_mode)
         except Exception:
             decision.filter_trace.append({
                 "filter_name": "proposal_submission",
@@ -1623,14 +1679,24 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
                 "inputs": {"action": decision.action},
                 "parameters": {},
             })
-            proposal_result = {
+            prepared_result = {
                 "status": "failed",
                 "reason": "submission_exception",
             }
-        if proposal_result:
-            result["proposal_id"] = proposal_result.get("proposal_id")
-            result["proposal_status"] = proposal_result.get("status")
-            result["proposal_reason"] = proposal_result.get("reason")
+        prepared_proposal = prepared_result.get("proposal") if prepared_result else None
+        if prepared_proposal is not None:
+            # Preparation resolves the executable instrument (including legacy
+            # missing market_type).  Persist the exact same identity on the
+            # PiDecision that will own this Proposal.
+            decision.market_type = prepared_proposal.market_type
+            result["market_type"] = prepared_proposal.market_type
+            result["proposal_id"] = prepared_proposal.id
+            result["proposal_status"] = "submitting"
+            result["proposal_reason"] = None
+        elif prepared_result:
+            result["proposal_id"] = prepared_result.get("proposal_id")
+            result["proposal_status"] = prepared_result.get("status")
+            result["proposal_reason"] = prepared_result.get("reason")
             result["filter_trace"] = decision.filter_trace
         else:
             result["proposal_status"] = "failed"
@@ -1638,10 +1704,97 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         if result.get("proposal_reason"):
             result["proposal_error"] = result["proposal_reason"]
 
-    # Settle the pre-submission claim. A failure is intentionally visible to the
-    # caller; the durable submitting claim prevents a retry from duplicating the
-    # proposal while operations investigates the incomplete finalization.
-    finalize_decision(claimed_final["id"], result)
+    # The prepared Proposal and final PiDecision become visible together in one
+    # BEGIN IMMEDIATE transaction.  Risk/broker work starts only after commit.
+    from aletheia.agent_shell.reflection import (
+        claim_decision,
+        finalize_decision,
+        recover_interrupted_decision,
+    )
+
+    claimed_final, claim_created = claim_decision(result, proposal=prepared_proposal)
+    submission_owner = claim_created
+
+    def _apply_claim_to_result(claim: dict, *, replay: bool) -> None:
+        result.update({
+            "action": claim.get("action"),
+            "symbol": claim.get("symbol"),
+            "direction": claim.get("direction"),
+            "market_type": claim.get("market_type"),
+            "conviction": claim.get("conviction"),
+            "reasoning": claim.get("reasoning") or "",
+            "proposal_id": claim.get("proposal_id"),
+            "proposal_status": claim.get("proposal_status"),
+            "proposal_reason": claim.get("proposal_reason"),
+            "opportunity_id": claim.get("opportunity_id"),
+            "signal_source": claim.get("signal_source") or "market_observer",
+        })
+        if replay:
+            result["idempotent_replay"] = True
+
+    def _return_existing_claim() -> dict:
+        _apply_claim_to_result(claimed_final, replay=True)
+        _attach_pending_queue_state(result)
+        return result
+
+    if not claim_created:
+        interrupted = (
+            claimed_final.get("proposal_status") == "submitting"
+            and not claimed_final.get("proposal_id")
+        )
+        if interrupted and prepared_proposal is not None:
+            claimed_final, recovered = recover_interrupted_decision(
+                claimed_final, result, prepared_proposal
+            )
+            submission_owner = recovered or bool(claimed_final.get("proposal_id"))
+        elif interrupted:
+            # Preparation now produced a stable failure. Settle the legacy claim
+            # instead of leaving it permanently stuck in submitting.
+            claimed_final = finalize_decision(
+                claimed_final["id"],
+                result,
+                publish_filter_evidence=claim_created,
+            )
+            return _return_existing_claim()
+        elif (
+            claimed_final.get("proposal_status") == "submitting"
+            and claimed_final.get("proposal_id")
+        ):
+            submission_owner = True
+        else:
+            return _return_existing_claim()
+
+    if trade_like and claimed_final.get("proposal_id") and submission_owner:
+        from aletheia.execution.gateway import execute_existing_proposal
+
+        proposal_result = execute_existing_proposal(
+            claimed_final["proposal_id"], execution_mode
+        )
+        if proposal_result.get("status") == "already_claimed":
+            return _return_existing_claim()
+        result["proposal_id"] = proposal_result.get("proposal_id")
+        result["proposal_status"] = _proposal_status_from_execution_result(
+            proposal_result
+        )
+        result["proposal_reason"] = (
+            proposal_result.get("reason") or proposal_result.get("reason_code")
+        )
+        result["filter_trace"] = decision.filter_trace
+        if result.get("proposal_reason"):
+            result["proposal_error"] = result["proposal_reason"]
+
+    # Settle the durable claim after the Proposal reaches a visible result.
+    settled_final = finalize_decision(
+        claimed_final["id"],
+        result,
+        publish_filter_evidence=claim_created,
+    )
+    if claim_created:
+        result["proposal_id"] = settled_final.get("proposal_id")
+        result["proposal_status"] = settled_final.get("proposal_status")
+        result["proposal_reason"] = settled_final.get("proposal_reason")
+    else:
+        _apply_claim_to_result(settled_final, replay=True)
 
     # Self-heal: emit system_action when data environment is degraded
     try:

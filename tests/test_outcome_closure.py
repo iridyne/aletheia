@@ -960,7 +960,8 @@ def test_verified_futures_close_does_not_apply_untrusted_funding_value():
     result = close_position_verified(position.id, _verified_result(position))
 
     stored = repo._select_one("positions", position.id)
-    assert result["realized_pnl"] == pytest.approx(21.6)
+    assert result["realized_pnl"] is None
+    assert stored["realized_pnl"] is None
     assert stored["funding_cost"] is None
     assert stored["funding_source"] == "unavailable"
     assert stored["outcome_eligible"] == 0

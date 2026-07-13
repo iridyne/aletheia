@@ -86,7 +86,8 @@ def test_close_short_position_realizes_loss(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio.pnl import close_position
     p = Position(symbol="ETHUSDT", market_type="usdt_futures", direction="short",
-                 quantity=1.0, entry_price=200.0, execution_mode="paper_internal")
+                 quantity=1.0, entry_price=200.0, execution_mode="paper_internal",
+                 funding_cost=0.0, funding_source="local_simulation")
     repo.insert_position(p)
     # price rose against the short → gross loss = (200-220)*1 = -20, minus fees
     result = close_position(p.id, exit_price=220.0)

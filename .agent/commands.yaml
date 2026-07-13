@@ -45,6 +45,15 @@ commands:
   spec_pipeline_execution_chain:
     command: uv run pytest tests/specs/spec_pipeline_execution_chain.py -q
     purpose: Verify end-to-end proposal/risk/order/fill causal chain.
+  trade_chain_roundtrip:
+    command: uv run pytest tests/e2e/test_pipeline_real_paper_roundtrip.py -q
+    purpose: Verify the real local-paper entry, close, Outcome, Attribution, outbox, and feedback chain with one causal identity.
+  trade_chain_full_suite:
+    command: uv run pytest tests/ -q --tb=line
+    purpose: Verify the complete repository suite after the trade-chain repairs.
+  frontend_build:
+    command: cd frontend && npm run build
+    purpose: Verify the dashboard honestly renders unavailable PnL and funding state.
   doctor:
     command: uv run aletheia doctor
     purpose: Probe local runtime facts; never stored as Git state.

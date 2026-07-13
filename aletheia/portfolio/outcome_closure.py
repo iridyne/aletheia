@@ -371,8 +371,12 @@ def close_position_verified(
         else:
             funding_cost = None
             funding_source = "unavailable"
-        funding_for_pnl = funding_cost if funding_cost is not None else 0.0
-        realized = gross - float(entry_fee) - exit_fee - funding_for_pnl
+        # A verified exit Fill closes the execution lifecycle, but unknown
+        # futures funding still makes net realized economics unavailable.  Do
+        # not convert that missing ledger fact into a zero-cost assumption.
+        realized: float | None = None
+        if funding_cost is not None:
+            realized = gross - float(entry_fee) - exit_fee - funding_cost
         closed_at = datetime.fromtimestamp(
             max(fill.filled_at_ms for fill in evidence.fills) / 1000,
             tz=timezone.utc,
@@ -435,7 +439,10 @@ def close_position_verified(
                 },
             )),
         }
-        if strategy_outcome:
+        if strategy_outcome and funding_cost is None:
+            outcome_eligible = False
+            outcome_reason = "incomplete_funding_economics"
+        elif strategy_outcome:
             outcome_eligible, outcome_reason = outcome_write_eligibility(
                 {**current, **updates},
                 exit_fill_verified=True,
@@ -453,7 +460,10 @@ def close_position_verified(
             from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
 
             enqueue_outcome_hook_jobs(closed_row)
-        if current.get("execution_mode") == "paper_internal":
+        if (
+            current.get("execution_mode") == "paper_internal"
+            and realized is not None
+        ):
             from aletheia.portfolio.paper_account import settle_position_closed
             settle_position_closed(position_id, realized)
         repo.insert_audit_event(AuditEvent(

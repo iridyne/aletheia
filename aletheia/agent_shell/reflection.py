@@ -20,6 +20,17 @@ logger = logging.getLogger("aletheia.agent_shell.reflection")
 _REFLECTION_FILE = Path("data/pi_reflection.json")
 
 
+def _validate_proposal_identity(proposal, decision: Any, *, prefix: str) -> None:
+    """Require one prepared Proposal to match its owning PiDecision identity."""
+    getter = decision.get if isinstance(decision, dict) else lambda key: getattr(decision, key)
+    if proposal.opportunity_id != getter("opportunity_id"):
+        raise ValueError(f"{prefix}_opportunity_mismatch")
+    if proposal.symbol != getter("symbol") or proposal.direction != getter("direction"):
+        raise ValueError(f"{prefix}_identity_mismatch")
+    if proposal.market_type != getter("market_type"):
+        raise ValueError(f"{prefix}_market_type_mismatch")
+
+
 def _reflection_record(decision_result: dict) -> dict:
     return {
         "action": decision_result.get("action"),
@@ -89,17 +100,18 @@ def _build_pi_decision(decision_result: dict):
     )
 
 
-def claim_decision(decision_result: dict) -> tuple[dict, bool]:
-    """Persist the final intent before any proposal side effect.
+def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]:
+    """Atomically persist the final intent and its prepared Proposal, if any.
 
     The immediate transaction makes the read+insert one SQLite writer claim. A
-    concurrent wake observes the inserted row and reuses it. The claim row may
-    honestly remain ``proposal_status='submitting'`` after a process crash, but a
-    retry can no longer create an untraceable second proposal.
+    concurrent wake observes the inserted row and reuses it.  Persisting the
+    prepared Proposal in the same transaction removes the historical crash gap
+    where an Opportunity became reviewed while no Proposal existed.
     """
     from aletheia.storage.repositories import (
         find_final_pi_decision_for_opportunity,
         insert_pi_decision,
+        insert_trade_proposal,
         transaction,
         transition_opportunity_to_reviewed,
     )
@@ -113,46 +125,154 @@ def claim_decision(decision_result: dict) -> tuple[dict, bool]:
             if pi_dec.opportunity_id else None
         )
         if existing:
+            # A submitting claim may be resumed, but only with the same immutable
+            # execution identity. Terminal rows simply win and are returned below.
+            if (
+                proposal is not None
+                and existing.get("proposal_status") == "submitting"
+            ):
+                _validate_proposal_identity(
+                    proposal, existing, prefix="existing_claim_prepared_proposal"
+                )
             if pi_dec.signal_source == "market_observer":
                 transition_opportunity_to_reviewed(pi_dec.opportunity_id)
             return existing, False
+        if proposal is not None:
+            _validate_proposal_identity(
+                proposal, pi_dec, prefix="prepared_proposal"
+            )
+            insert_trade_proposal(proposal)
+            pi_dec.proposal_id = proposal.id
+            pi_dec.proposal_status = "submitting"
+            pi_dec.proposal_reason = None
         insert_pi_decision(pi_dec)
         if pi_dec.opportunity_id and pi_dec.signal_source == "market_observer":
             transition_opportunity_to_reviewed(pi_dec.opportunity_id)
     return pi_dec.model_dump(), True
 
 
-def finalize_decision(decision_id: str, decision_result: dict) -> dict:
-    """Settle a durable claim and publish its reflection/evidence views."""
+def recover_interrupted_decision(
+    existing: dict,
+    current_result: dict,
+    proposal,
+) -> tuple[dict, bool]:
+    """Attach one prepared Proposal to a legacy submitting claim exactly once.
+
+    New claims use :func:`claim_decision` and cannot enter this state.  This path
+    exists only so rows created by the old claim-before-Proposal implementation
+    do not remain a permanent idempotent no-op after an upgrade.
+    """
     from aletheia.storage import repositories as repo
 
-    with repo.transaction():
+    decision_id = existing.get("id")
+    if not decision_id:
+        raise ValueError("interrupted_decision_missing_id")
+
+    with repo.transaction(immediate=True):
         row = repo._select_one("pi_decisions", decision_id)
         if row is None:
             raise RuntimeError(f"pi_decision claim disappeared: {decision_id}")
+        if row.get("proposal_id"):
+            return row, False
+        if row.get("proposal_status") != "submitting" or row.get("action") not in {
+            "trade", "scale_in", "flip",
+        }:
+            return row, False
+
+        for field in ("symbol", "direction", "market_type", "action", "opportunity_id"):
+            if row.get(field) != current_result.get(field):
+                raise ValueError(f"interrupted_decision_{field}_mismatch")
+        stored_source = row.get("signal_source") or "market_observer"
+        current_source = current_result.get("signal_source") or "market_observer"
+        if stored_source != current_source:
+            raise ValueError("interrupted_decision_signal_source_mismatch")
+        # Conviction is durable audit context, not execution identity. A model
+        # may rescore the same symbol/direction/instrument after restart; the
+        # original row remains authoritative and must not become unrecoverable
+        # merely because the retry returned (for example) 89 instead of 90.
+        if (
+            proposal.opportunity_id != row.get("opportunity_id")
+            or proposal.symbol != row.get("symbol")
+            or proposal.direction != row.get("direction")
+            or proposal.market_type != row.get("market_type")
+        ):
+            raise ValueError("interrupted_proposal_identity_mismatch")
+
+        repo.insert_trade_proposal(proposal)
         repo.update_pi_decision(
             decision_id,
-            symbol=decision_result.get("symbol"),
-            direction=decision_result.get("direction"),
-            market_type=decision_result.get("market_type"),
-            action=decision_result.get("action") or "skip",
-            conviction=decision_result.get("conviction") or 0,
-            reasoning=(decision_result.get("reasoning") or "")[:200],
-            proposal_id=decision_result.get("proposal_id"),
-            proposal_status=decision_result.get("proposal_status"),
-            proposal_reason=decision_result.get("proposal_reason"),
+            proposal_id=proposal.id,
+            proposal_status="submitting",
+            proposal_reason=None,
         )
+        recovered = repo._select_one("pi_decisions", decision_id)
+    if recovered is None:
+        raise RuntimeError(f"pi_decision recovery unreadable: {decision_id}")
+    return recovered, True
+
+
+def finalize_decision(
+    decision_id: str,
+    decision_result: dict,
+    *,
+    publish_filter_evidence: bool = False,
+) -> dict:
+    """Settle a durable claim and publish its reflection/evidence views."""
+    from aletheia.storage import repositories as repo
+
+    # Serialize the terminal compare-and-set. A replay may observe the Proposal
+    # terminal before the original caller updates PiDecision; it may settle that
+    # submitting row, but it must never rewrite an already-terminal result or any
+    # of the original decision identity.
+    with repo.transaction(immediate=True):
+        row = repo._select_one("pi_decisions", decision_id)
+        if row is None:
+            raise RuntimeError(f"pi_decision claim disappeared: {decision_id}")
+        if row.get("proposal_status") == "submitting":
+            proposal_id = row.get("proposal_id") or decision_result.get("proposal_id")
+            incoming_id = decision_result.get("proposal_id")
+            if row.get("proposal_id") and incoming_id and incoming_id != row.get("proposal_id"):
+                raise ValueError("finalized_proposal_id_mismatch")
+
+            proposal_status = decision_result.get("proposal_status")
+            if proposal_status == "already_executed" and proposal_id:
+                proposal = repo.get_trade_proposal(proposal_id)
+                if proposal is not None:
+                    proposal_status = proposal.get("status")
+
+            repo.update_pi_decision(
+                decision_id,
+                proposal_id=proposal_id,
+                proposal_status=proposal_status,
+                proposal_reason=decision_result.get("proposal_reason"),
+            )
         settled = repo._select_one("pi_decisions", decision_id)
     if settled is None:
         raise RuntimeError(f"pi_decision finalization unreadable: {decision_id}")
 
-    try:
-        from aletheia.analytics.filter_evidence import record_operator_filter_trace
+    if publish_filter_evidence:
+        try:
+            from aletheia.analytics.filter_evidence import record_operator_filter_trace
 
-        record_operator_filter_trace(decision_id, decision_result)
-    except Exception as evidence_error:
-        logger.warning("operator filter evidence unavailable: %s", evidence_error)
-    _write_reflection_record(_reflection_record(decision_result))
+            published_result = dict(decision_result)
+            for field in (
+                "action",
+                "symbol",
+                "direction",
+                "market_type",
+                "conviction",
+                "reasoning",
+                "proposal_id",
+                "proposal_status",
+                "proposal_reason",
+                "opportunity_id",
+                "signal_source",
+            ):
+                published_result[field] = settled.get(field)
+            record_operator_filter_trace(decision_id, published_result)
+        except Exception as evidence_error:
+            logger.warning("operator filter evidence unavailable: %s", evidence_error)
+    _write_reflection_record(_reflection_record(settled))
     return settled
 
 
@@ -167,7 +287,9 @@ def record_decision(decision_result: dict) -> dict | None:
         claimed, created = claim_decision(decision_result)
         if not created:
             return claimed
-        return finalize_decision(claimed["id"], decision_result)
+        return finalize_decision(
+            claimed["id"], decision_result, publish_filter_evidence=True
+        )
     except Exception as exc:
         logger.debug("pi_decision db persist failed: %s", exc)
         return None

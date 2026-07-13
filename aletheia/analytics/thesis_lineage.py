@@ -878,9 +878,12 @@ def _failure_bucket(verdict: str, risk: dict | None, position: dict | None) -> s
 def _actual_pnl(position: dict | None) -> float | None:
     if not position:
         return None
-    realized = _first_number(position.get("realized_pnl")) or 0.0
+    realized = _first_number(position.get("realized_pnl"))
     if (position.get("status") or "").lower() == "open":
-        return _round(realized + (_first_number(position.get("unrealized_pnl")) or 0.0))
+        return _round(
+            (realized or 0.0)
+            + (_first_number(position.get("unrealized_pnl")) or 0.0)
+        )
     return _round(realized)
 
 

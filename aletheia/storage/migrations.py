@@ -87,6 +87,13 @@ CREATE TABLE IF NOT EXISTS trade_proposals (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS proposal_execution_claims (
+    proposal_id TEXT PRIMARY KEY REFERENCES trade_proposals(id) ON DELETE CASCADE,
+    owner_token TEXT NOT NULL,
+    claimed_at TEXT NOT NULL,
+    lease_expires_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS risk_decisions (
     id TEXT PRIMARY KEY,
     proposal_id TEXT NOT NULL REFERENCES trade_proposals(id),

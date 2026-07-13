@@ -160,9 +160,10 @@ def test_pending_signal_direct_match_bypasses_layer3():
     ctx = {
         "layer1": {"opportunities": []},
         "layer2": {
-            "pending_signals": [
-                {"symbol": "BTC/USDT", "direction": "long",
-                 "opportunity_id": "ser-direct-111", "signal_source": "serenity",
+                "pending_signals": [
+                    {"symbol": "BTC/USDT", "direction": "long",
+                     "market_type": "spot",
+                     "opportunity_id": "ser-direct-111", "signal_source": "serenity",
                  "reasoning": "auto-promote", "at": "2026-07-01T12:00:00"}
             ]
         },
@@ -193,7 +194,7 @@ def test_serenity_pick_backfills_id_and_source():
     )
 
     decision = TradingDecision(
-        action="trade", symbol="NVDA", direction="long", conviction=70, reasoning="x"
+        action="skip", symbol="NVDA", direction="long", conviction=70, reasoning="x"
     )
     ctx = {
         "layer1": {"opportunities": []},  # no market_observer match
@@ -226,7 +227,7 @@ def test_market_observer_precedence_over_serenity():
     )
 
     decision = TradingDecision(
-        action="trade", symbol="NVDA", direction="long", conviction=70, reasoning="x"
+        action="skip", symbol="NVDA", direction="long", conviction=70, reasoning="x"
     )
     ctx = {
         "layer1": {

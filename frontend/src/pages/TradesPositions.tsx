@@ -66,6 +66,11 @@ const closedColumns = [
   posCol.accessor('quantity', { header: 'Qty', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('entry_price', { header: 'Entry (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('realized_pnl', { header: 'PnL (USDT)', cell: info => pnlCell(info.getValue()) }),
+  posCol.display({ id: 'pnl_status', header: 'PnL status', cell: ({ row }) =>
+    row.original.realized_pnl_complete === false
+      ? <span className="text-muted">{humanize(row.original.realized_pnl_unavailable_reason || 'economics unavailable')}</span>
+      : <span className="text-muted">complete</span>
+  }),
   posCol.accessor('close_reason', { header: 'Reason', cell: info => info.getValue() ? humanize(info.getValue()!) : '—' }),
   posCol.accessor('closed_at', { header: 'Closed', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
@@ -392,6 +397,12 @@ function PositionDetail({ position }: { position: Position }) {
       <DrawerSection label="PnL">
         <DrawerField label="Unrealized" value={position.unrealized_pnl} mono />
         <DrawerField label="Realized" value={position.realized_pnl} mono />
+        {position.realized_pnl_complete === false && (
+          <DrawerField
+            label="Realized status"
+            value={humanize(position.realized_pnl_unavailable_reason || 'economics unavailable')}
+          />
+        )}
       </DrawerSection>
       {(position.entry_fee != null || position.exit_fee != null || position.slippage_cost != null) && (
         <DrawerSection label="Costs">

@@ -16,6 +16,23 @@ def _open_local_positions() -> list[dict]:
     ]
 
 
+def _unsettled_local_closes() -> list[dict]:
+    """Closed local positions whose net account result is still unknown."""
+    from aletheia.portfolio.pnl import _realized_economics_value
+    from aletheia.storage.sqlite import get_db
+
+    return [
+        position
+        for row in get_db().execute(
+            "SELECT * FROM positions "
+            "WHERE status='closed' AND execution_mode='paper_internal' "
+            "ORDER BY rowid DESC"
+        )
+        for position in [dict(row)]
+        if _realized_economics_value(position) is None
+    ]
+
+
 def _reserved_margin_usdt(positions: list[dict]) -> float:
     total = 0.0
     for position in positions:
@@ -57,11 +74,24 @@ def get_paper_account(event_limit: int = 20) -> dict:
     cash = repo.get_paper_account_cash_balance()
     reserved = _reserved_margin_usdt(positions)
     unrealized = sum(float(position.get("unrealized_pnl") or 0.0) for position in positions)
+    unsettled = _unsettled_local_closes()
+    economics_complete = not unsettled
     return {
         "cash_balance_usdt": round(cash, 8),
         "reserved_margin_usdt": reserved,
-        "available_balance_usdt": round(max(0.0, cash - reserved), 8),
-        "equity_usdt": round(cash + unrealized, 8),
+        # A missing close result makes the spendable account value unknown.
+        # Return zero availability so Risk fails closed until the economics are
+        # reconciled; keep the ledger cash visible but label its completeness.
+        "available_balance_usdt": (
+            round(max(0.0, cash - reserved), 8)
+            if economics_complete
+            else 0.0
+        ),
+        "equity_usdt": (
+            round(cash + unrealized, 8) if economics_complete else None
+        ),
+        "economics_complete": economics_complete,
+        "unsettled_closed_positions_count": len(unsettled),
         "open_positions_count": len(positions),
         "events": repo.list_paper_account_events(limit=event_limit),
     }

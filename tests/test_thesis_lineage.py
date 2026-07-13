@@ -242,6 +242,27 @@ def test_reconstruct_traded_thesis_through_proposal_and_position():
     assert record["verdict"] == "validated"
 
 
+def test_closed_thesis_with_unavailable_net_pnl_stays_unjudged():
+    """Unknown futures economics must not be classified as a zero-return trade."""
+    from aletheia.analytics.thesis_lineage import build_thesis_lineage_records
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, 21)
+    pid = _insert_proposal(db, 21)
+    _insert_decision(db, 21, proposal_id=pid)
+    _insert_risk(db, 21)
+    _insert_order_fill_position(db, 21, pnl=None)
+    db.commit()
+
+    record = build_thesis_lineage_records(days=7)[0]
+
+    assert record["was_traded"] is True
+    assert record["actual_pnl"] is None
+    assert record["actual_pnl_pct"] is None
+    assert record["verdict"] == "pending"
+
+
 def test_decision_can_be_reconstructed_from_proposal_id_when_opportunity_id_missing():
     from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit
     from aletheia.storage.sqlite import get_db

@@ -17,9 +17,9 @@ from datetime import datetime, timezone
 from aletheia.data.symbols import to_binance, to_ccxt_perp
 from aletheia.exchanges.binance.client import BinanceClient, OrderRequest
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
+from aletheia.execution.post_commit_audit import write_post_commit_audit
 from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
-from aletheia.files.jsonl import write_audit
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
     insert_order, insert_fill, insert_position, list_positions, update_position,
@@ -36,7 +36,7 @@ _BINANCE_ACCOUNT_MODES = {
 }
 _OPEN_CLOSE_STATES = {
     "pending", "submitted", "partial", "partially_filled", "submission_unknown",
-    "materialization_missing",
+    "materialization_missing", "overfilled",
 }
 _RETRY_SUPPRESSING_ORDER_STATES = (
     "pending", "submitted", "partial", "partially_filled", "submission_unknown",
@@ -308,7 +308,7 @@ def execute_live_order(
                 status="submission_unknown",
                 error_reason="order_submission_transport_acknowledgement_unknown",
             )
-            write_audit({
+            write_post_commit_audit({
                 "actor": "system", "source": "binance_broker",
                 "event_type": "order_submission_unknown", "entity_type": "order",
                 "entity_id": order.id,
@@ -336,7 +336,7 @@ def execute_live_order(
             )
         except Exception:
             pass
-        write_audit({
+        write_post_commit_audit({
             "actor": "system", "source": "binance_broker",
             "event_type": "order_submission_unknown", "entity_type": "order",
             "entity_id": order.id,
@@ -362,7 +362,7 @@ def execute_live_order(
             "exchange acknowledgement could not be persisted", exchange_order_id,
         ) from e
     if exchange_reported_fill:
-        write_audit({
+        write_post_commit_audit({
             "actor": "system", "source": "binance_broker",
             "event_type": "order_materialization_pending", "entity_type": "order",
             "entity_id": order.id,
@@ -517,7 +517,7 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
                 error_reason="close_submission_transport_acknowledgement_unknown",
             )
             update_position(position_id, pending_close_status="submission_unknown")
-            write_audit({
+            write_post_commit_audit({
                 "actor": "system", "source": "binance_broker",
                 "event_type": "close_submission_unknown", "entity_type": "order",
                 "entity_id": close_order.id,
@@ -547,7 +547,7 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
             update_position(position_id, pending_close_status="submission_unknown")
         except Exception:
             pass
-        write_audit({
+        write_post_commit_audit({
             "actor": "system", "source": "binance_broker",
             "event_type": "close_submission_unknown", "entity_type": "order",
             "entity_id": close_order.id,
@@ -590,7 +590,7 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
         pending_close_requested_at=close_requested_at,
     )
     if exchange_reported_fill:
-        write_audit({
+        write_post_commit_audit({
             "actor": "system", "source": "binance_broker",
             "event_type": "close_materialization_pending", "entity_type": "order",
             "entity_id": close_order.id,

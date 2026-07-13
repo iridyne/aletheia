@@ -281,7 +281,7 @@ def _run_gateway_with_captured_broker(
 ) -> tuple[dict, list[dict]]:
     from aletheia.execution import bitget_broker, gateway, okx_broker
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import TradeProposal
+    from aletheia.storage.models import Order, RiskDecision, TradeProposal
 
     proposal = TradeProposal(
         id=f"proposal-gateway-{execution_mode}-{take_profit}",
@@ -296,6 +296,17 @@ def _run_gateway_with_captured_broker(
         execution_mode=execution_mode,
     )
     repo.insert_trade_proposal(proposal)
+    authoritative_decision = RiskDecision(
+        id=f"risk-authoritative-{execution_mode}",
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode=proposal.execution_mode,
+        proposal_execution_mode=proposal.execution_mode,
+        decision_role="authoritative",
+        evaluated_quantity=proposal.quantity,
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    repo.insert_risk_decision(authoritative_decision)
     captured: list[dict] = []
 
     def _risk_result(execution_proposal, decision_role):
@@ -309,6 +320,23 @@ def _run_gateway_with_captured_broker(
 
     def _execute(**kwargs):
         captured.append(kwargs)
+        repo.insert_order(
+            Order(
+                id=f"order-{execution_mode}",
+                proposal_id=proposal.id,
+                risk_decision_id=authoritative_decision.id,
+                client_order_id=proposal.id,
+                symbol=proposal.symbol,
+                market_type=proposal.market_type,
+                direction=proposal.direction,
+                order_type=proposal.order_type,
+                quantity=proposal.quantity or 0.0,
+                price=proposal.price,
+                execution_mode=proposal.execution_mode,
+                exchange_order_id=f"exchange-{execution_mode}",
+                status="submitted",
+            )
+        )
         return {
             "order_id": f"order-{execution_mode}",
             "exchange_order_id": f"exchange-{execution_mode}",

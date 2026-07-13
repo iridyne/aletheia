@@ -183,11 +183,10 @@ def _materialize_paper_entry(
             update_position(existing["id"], **update_kwargs)
             position_id = existing["id"]
         else:
-            take_profit_price = (
-                take_profit
-                if take_profit
-                else _take_profit_for(direction, fill_price)
-            )
+            # Protection belongs to the immutable Proposal/Risk authority. The
+            # broker may materialize the approved value but must never invent a
+            # new take-profit from mutable config after approval.
+            take_profit_price = take_profit
             filled_take_profit = take_profit_price
             attribution = _paper_position_attribution(
                 symbol, fill_price, attribution_snapshot
@@ -271,13 +270,14 @@ def _already_closed_result(position: dict) -> dict | None:
     order, fill = _existing_paper_close(position["id"])
     if order is None or fill is None or position.get("status") != "closed":
         return None
+    realized = position.get("realized_pnl")
     return {
         "order_id": order["id"],
         "fill_id": fill["id"],
         "position_id": position["id"],
         "fill_price": float(fill["fill_price"]),
         "fill_quantity": float(fill["fill_quantity"]),
-        "realized_pnl": float(position.get("realized_pnl") or 0.0),
+        "realized_pnl": float(realized) if realized is not None else None,
         "exit_price": float(fill["fill_price"]),
         "reason": order["close_reason"],
         "closed": True,
@@ -526,17 +526,6 @@ def _current_regime() -> str:
     except Exception:
         pass
     return "unknown"
-
-
-def _take_profit_for(direction: str, entry_price: float) -> float | None:
-    """Derive a take-profit price from config TP% and direction."""
-    from aletheia.config.loader import load_config
-    pct = load_config().trading.default_take_profit_pct
-    if not pct or entry_price <= 0:
-        return None
-    if direction in ("long", "buy"):
-        return round(entry_price * (1 + pct / 100.0), 8)
-    return round(entry_price * (1 - pct / 100.0), 8)
 
 
 def _find_open_position(

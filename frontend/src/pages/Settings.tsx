@@ -1387,10 +1387,19 @@ function PaperAccountCard({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         ].map(([label, raw]) => (
           <label className="settings-field" key={String(label)}>
             <span>{label}</span>
-            <input readOnly value={`${Number(raw ?? 0).toFixed(2)} USDT`} className="mono" />
+            <input
+              readOnly
+              value={raw == null ? 'unavailable' : `${Number(raw).toFixed(2)} USDT`}
+              className="mono"
+            />
           </label>
         ))}
       </div>
+      {account?.economics_complete === false && (
+        <p className="hint" style={{ marginBottom: '1rem' }}>
+          Account economics unavailable: {account.unsettled_closed_positions_count} closed position(s) still lack complete funding or close costs. New local-paper capacity is held at zero until reconciled.
+        </p>
+      )}
       <Row label="Amount" hint="Add, remove, or set local simulated cash. Setting cash to 0 is preserved and blocks new local paper orders until funded again.">
         <input type="number" min="0" step="0.01" value={amount} onChange={e => { setAmount(e.target.value); setMsg(null) }} placeholder="200" />
         <input value={note} onChange={e => setNote(e.target.value)} placeholder="Reason (shown to agent)" style={{ minWidth: '180px' }} />

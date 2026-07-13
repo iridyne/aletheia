@@ -240,6 +240,65 @@ def test_position_manager_take_profit_triggered(tmp_path, monkeypatch):
     )
 
 
+@spec_claim(
+    SpecClaim(
+        "PL-PM-09",
+        "pipeline_position_manager",
+        "§2 immutable native protection authority",
+        "L2b",
+        "A native Proposal with no approved stop-loss or take-profit must not gain "
+        "either exit later from mutable config defaults.",
+        status="implemented",
+    )
+)
+def test_native_proposal_without_protection_does_not_inherit_mutable_config(
+    tmp_path, monkeypatch
+):
+    _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio.position_manager import _decide_exit
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1.0,
+        price=100.0,
+        execution_mode="paper_internal",
+        stop_price=None,
+        take_profit=None,
+        status="executed",
+    )
+    repo.insert_trade_proposal(proposal)
+    position = {
+        "id": "native-no-protection",
+        "proposal_id": proposal.id,
+        "source": "generated",
+        "symbol": proposal.symbol,
+        "direction": proposal.direction,
+        "entry_price": proposal.price,
+        "stop_price": None,
+        "take_profit_price": None,
+        "trade_school": "short_term",
+    }
+    cfg = AletheiaConfig()
+    cfg.trading.default_stop_loss_pct = 2.0
+    cfg.trading.default_take_profit_pct = 4.0
+    cfg.trading.max_position_hold_hours = 0
+
+    assert _decide_exit(position, price=97.0, cfg=cfg) is None
+    assert _decide_exit(position, price=105.0, cfg=cfg) is None
+
+    cfg.trading.default_stop_loss_pct = 20.0
+    cfg.trading.default_take_profit_pct = 40.0
+    assert _decide_exit(position, price=97.0, cfg=cfg) is None
+    assert _decide_exit(position, price=105.0, cfg=cfg) is None
+
+
 # ---------------------------------------------------------------------------
 # PL-PM-04  L2b  max_hold_exit: position age > max_hold → closed with max_hold reason
 # ---------------------------------------------------------------------------

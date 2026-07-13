@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import log_tool
-from aletheia.agents.paper_trader_ranker import build_paper_candidates
+from aletheia.agents.paper_trader_ranker import build_paper_candidate_workset
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
 from aletheia.storage.repositories import (
@@ -259,27 +259,67 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # deterministic-rule entry/exit path.
 
     # ── Opportunity-driven (ranked) ───────────────────────────────────────────
-    candidates = build_paper_candidates(limit=50)
+    workset = build_paper_candidate_workset(limit=50)
+    candidates = workset.ranked_candidates
 
     _PERMANENT_SKIP_PREFIXES = (
         "neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:",
         "equity_shadow_track", "execution_eligible=False", "universe_not_eligible",
         "ttl_expired", "factor_hard_blocked", "okx_demo_symbol_not_supported",
+        "symbol_not_allowed:",
     )
     skipped = [c for c in candidates if c.get("skip_reason")]
-    for c in skipped:
+    terminal_skips = [
+        c
+        for c in workset.scanned_candidates
+        if c.get("skip_reason")
+        and any(
+            str(c.get("skip_reason") or "").startswith(prefix)
+            for prefix in _PERMANENT_SKIP_PREFIXES
+        )
+    ]
+    for c in terminal_skips:
         reason = c.get("skip_reason", "")
-        if any(reason.startswith(p) for p in _PERMANENT_SKIP_PREFIXES):
-            terminal_status = "expired" if reason.startswith("ttl_expired") else "reviewed"
-            update_opportunity(c["opportunity_id"], status=terminal_status)
-    for c in skipped[:10]:
+        terminal_status = "expired" if reason.startswith("ttl_expired") else "reviewed"
+        try:
+            _finalize_permanent_skip(
+                c,
+                terminal_status=terminal_status,
+                run_id=run_id,
+            )
+        except Exception as exc:
+            errors.append(
+                f"permanent_skip_evidence_failed:{c.get('opportunity_id') or 'unknown'}"
+            )
+            logger.warning(
+                "permanent skip remains retryable opportunity=%s: %s",
+                c.get("opportunity_id"),
+                type(exc).__name__,
+            )
+
+    evidence_candidates = list(candidates)
+    evidence_ids = {str(c.get("opportunity_id") or "") for c in candidates}
+    for candidate in terminal_skips:
+        opportunity_id = str(candidate.get("opportunity_id") or "")
+        if opportunity_id and opportunity_id not in evidence_ids:
+            evidence_candidates.append(candidate)
+            evidence_ids.add(opportunity_id)
+
+    displayed_skips = list(skipped)
+    displayed_ids = {str(c.get("opportunity_id") or "") for c in displayed_skips}
+    for candidate in terminal_skips:
+        opportunity_id = str(candidate.get("opportunity_id") or "")
+        if opportunity_id and opportunity_id not in displayed_ids:
+            displayed_skips.append(candidate)
+            displayed_ids.add(opportunity_id)
+    for c in displayed_skips[:10]:
         outputs.append(f"skip:{c.get('symbol','?')}:{c['skip_reason']}")
 
     # Phase 4a: Path B is now a pure signal collector — write top candidates as
     # signal_pending for System Operator to evaluate (System Operator is the sole decision maker).
     eligible = [c for c in candidates if not c.get("skip_reason")]
     if not eligible:
-        _persist_filter_evidence(candidates, None, run_id=run_id)
+        _persist_filter_evidence(evidence_candidates, None, run_id=run_id)
         if not outputs:
             outputs.append("no_ranked_candidate")
         return {"outputs": outputs, "errors": errors}
@@ -291,7 +331,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         operator_evaluated_opportunity_ids=_operator_evaluated_opportunity_ids(),
         limit=3,
     )
-    _persist_filter_evidence(candidates, plan, run_id=run_id)
+    _persist_filter_evidence(evidence_candidates, plan, run_id=run_id)
     for candidate in eligible:
         opp_id = str(candidate.get("opportunity_id") or "")
         filter_name, verdict = plan.decisions.get(opp_id, ("", ""))
@@ -392,6 +432,48 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         outputs.append("no_signals_written")
 
     return {"outputs": outputs, "errors": errors}
+
+
+def _finalize_permanent_skip(
+    candidate: dict,
+    *,
+    terminal_status: str,
+    run_id: str | None,
+) -> None:
+    """Commit a permanent Opportunity state only with its rejection facts."""
+    from aletheia.analytics.filter_evidence import record_candidate_filter_trace
+    from aletheia.storage.repositories import transaction
+    from aletheia.storage.sqlite import get_db
+
+    expected_rejections = {
+        (
+            str(step.get("filter_name") or ""),
+            str(step.get("stage") or "paper_ranker"),
+            str(step.get("reason_code") or step.get("decision") or ""),
+        )
+        for step in candidate.get("filter_trace") or []
+        if step.get("decision") == "rejected"
+    }
+    if not expected_rejections:
+        raise RuntimeError("permanent_skip_rejection_fact_missing")
+
+    opportunity_id = str(candidate.get("opportunity_id") or "")
+    if not opportunity_id:
+        raise RuntimeError("permanent_skip_opportunity_missing")
+
+    with transaction(immediate=True):
+        record_candidate_filter_trace(candidate, run_id=run_id)
+        actual_rejections = {
+            (str(row[0]), str(row[1]), str(row[2]))
+            for row in get_db().execute(
+                "SELECT filter_name, stage, reason_code FROM filter_decisions "
+                "WHERE opportunity_id=? AND decision='rejected'",
+                (opportunity_id,),
+            ).fetchall()
+        }
+        if not expected_rejections.issubset(actual_rejections):
+            raise RuntimeError("permanent_skip_rejection_fact_not_persisted")
+        update_opportunity(opportunity_id, status=terminal_status)
 
 
 def _persist_filter_evidence(

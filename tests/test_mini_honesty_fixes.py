@@ -33,7 +33,12 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
 
     sq.reset_db()
     sq._db_conn = None
-    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    # Sync FastAPI handlers run in a worker thread and therefore open their own
+    # thread-local connection. Use the production db_path name so both threads
+    # share this isolated test database.
+    conn = sqlite3.connect(
+        str(tmp_path / "app.db"), check_same_thread=False, isolation_level=None,
+    )
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
@@ -82,10 +87,12 @@ async def test_trades_export_returns_closed_positions_with_pnl_columns(tmp_path,
     from aletheia.storage.models import Position
     from aletheia.storage.repositories import insert_position
 
+    expected_realized = 10.0 - 0.06 - 0.066
     pos = Position(
-        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         quantity=1.0, entry_price=100.0, current_price=110.0,
-        realized_pnl=9.85, entry_fee=0.06, exit_fee=0.066,
+        realized_pnl=expected_realized, entry_fee=0.06, exit_fee=0.066,
+        funding_cost=0.0, funding_source="not_applicable",
         execution_mode="bitget_demo", status="closed",
         close_reason="take_profit",
         opened_at="2026-07-06T00:00:00Z", closed_at="2026-07-07T00:00:00Z",
@@ -105,7 +112,7 @@ async def test_trades_export_returns_closed_positions_with_pnl_columns(tmp_path,
     assert "entry_fee" in header
     assert "exit_fee" in header
     assert "BTC/USDT" in text
-    assert "9.85" in text  # the actual realized PnL made it in
+    assert str(expected_realized) in text  # the reproducible realized PnL made it in
 
 
 # ---------------------------------------------------------------------------
@@ -172,3 +179,19 @@ async def test_capital_withdraw_writes_audit_event(tmp_path, monkeypatch):
     entries = [json.loads(line) for line in lines if line.strip()]
     withdraws = [e for e in entries if e.get("event_type") == "capital_withdraw"]
     assert withdraws, f"audit should have capital_withdraw; got {entries}"
+
+
+def test_risk_controls_does_not_render_unknown_daily_loss_as_zero():
+    """The risk console must preserve the backend's unavailable PnL state."""
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "frontend"
+        / "src"
+        / "pages"
+        / "RiskControls.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "Number((portfolio as any)?.today_pnl) || 0" not in source
+    assert "const todayPnlRaw = (portfolio as any)?.today_pnl" in source
+    assert "todayPnlRaw == null ? null" in source
+    assert "row.used == null ? 'Unavailable'" in source

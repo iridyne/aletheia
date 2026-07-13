@@ -211,6 +211,214 @@ def test_execution_not_eligible_skipped():
     assert candidates[0]["skip_reason"] == "execution_eligible=False"
 
 
+@pytest.mark.parametrize(
+    ("filter_mode", "configured_symbols"),
+    [
+        pytest.param("whitelist", ["BTC/USDT"], id="whitelist-miss"),
+        pytest.param("blacklist", ["SOL/USDT"], id="blacklist-hit"),
+    ],
+)
+def test_symbol_policy_rejection_is_durable_and_terminal(
+    tmp_path,
+    monkeypatch,
+    filter_mode,
+    configured_symbols,
+):
+    """A policy-rejected stored Opportunity must not disappear between ranker and evidence."""
+    import asyncio
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agents.paper_trader import run_paper_trader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import get_opportunity, insert_opportunity
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.symbol_list = configured_symbols
+    cfg.risk.symbol_filter_mode = filter_mode
+    save_config(cfg)
+
+    opportunity = Opportunity(
+        id=f"opp-symbol-{filter_mode}",
+        symbol="SOL/USDT",
+        market="spot",
+        direction_bias="long",
+        confidence="high",
+        confidence_score=88,
+        source_agent="market_observer",
+        asset_class="crypto",
+        execution_eligible=True,
+        status="open",
+    )
+    insert_opportunity(opportunity)
+
+    asyncio.run(
+        run_paper_trader(
+            permission_mode="Paper",
+            run_id=f"symbol-policy-{filter_mode}",
+        )
+    )
+
+    status = get_opportunity(opportunity.id)["status"]
+    rows = [
+        dict(row)
+        for row in get_db().execute(
+            "SELECT filter_name, decision, reason_code FROM filter_decisions "
+            "WHERE opportunity_id=? ORDER BY sequence_no",
+            (opportunity.id,),
+        ).fetchall()
+    ]
+    symbol_rejections = [
+        row
+        for row in rows
+        if row["decision"] == "rejected"
+        and "symbol" in f"{row['filter_name']} {row['reason_code']}"
+        and row["reason_code"]
+    ]
+    failures = []
+    if not symbol_rejections:
+        failures.append(f"no durable symbol rejection was written (rows={rows!r})")
+    if status == "open":
+        failures.append("Opportunity silently remained open")
+    assert not failures, f"{filter_mode}: " + "; ".join(failures)
+
+
+def test_symbol_policy_evidence_failure_leaves_opportunity_retryable(
+    tmp_path, monkeypatch
+):
+    """A permanent state must not commit when its mandatory reason did not."""
+    import asyncio
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agents.paper_trader import run_paper_trader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import get_opportunity, insert_opportunity
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.symbol_list = ["BTC/USDT"]
+    cfg.risk.symbol_filter_mode = "whitelist"
+    save_config(cfg)
+
+    opportunity = Opportunity(
+        id="opp-symbol-evidence-failure",
+        symbol="SOL/USDT",
+        market="spot",
+        direction_bias="long",
+        confidence="high",
+        confidence_score=88,
+        source_agent="market_observer",
+        asset_class="crypto",
+        execution_eligible=True,
+        status="open",
+    )
+    insert_opportunity(opportunity)
+
+    def fail_evidence(*_args, **_kwargs):
+        raise RuntimeError("forced evidence write failure")
+
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_evidence.record_candidate_filter_trace",
+        fail_evidence,
+    )
+
+    result = asyncio.run(
+        run_paper_trader(permission_mode="Paper", run_id="symbol-evidence-failure")
+    )
+
+    assert get_opportunity(opportunity.id)["status"] == "open"
+    count = get_db().execute(
+        "SELECT COUNT(*) FROM filter_decisions WHERE opportunity_id=?",
+        (opportunity.id,),
+    ).fetchone()[0]
+    assert count == 0
+    assert any(
+        error.startswith("permanent_skip_evidence_failed:")
+        for error in result["errors"]
+    )
+
+
+def test_permanent_rejection_sweep_advances_past_rank_limit_under_new_arrivals(
+    tmp_path, monkeypatch
+):
+    """Terminal rejects use a bounded scan batch, not the top-50 execution cap."""
+    import asyncio
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agents.paper_trader import run_paper_trader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import insert_opportunity
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.symbol_list = ["BTC/USDT"]
+    cfg.risk.symbol_filter_mode = "whitelist"
+    save_config(cfg)
+
+    def insert_rejected(prefix: str, count: int) -> list[str]:
+        ids = []
+        for index in range(count):
+            opportunity = Opportunity(
+                id=f"{prefix}-{index:03d}",
+                symbol=f"REJECT{index}/USDT",
+                market="spot",
+                direction_bias="long",
+                confidence="high",
+                confidence_score=88,
+                source_agent="market_observer",
+                asset_class="crypto",
+                execution_eligible=True,
+                status="open",
+            )
+            insert_opportunity(opportunity)
+            ids.append(opportunity.id)
+        return ids
+
+    original_ids = insert_rejected("old-symbol-reject", 251)
+    asyncio.run(run_paper_trader(permission_mode="Paper", run_id="terminal-sweep-1"))
+
+    placeholders = ",".join("?" for _ in original_ids)
+    still_open = [
+        row[0]
+        for row in get_db().execute(
+            f"SELECT id FROM opportunities WHERE status='open' AND id IN ({placeholders})",
+            original_ids,
+        ).fetchall()
+    ]
+    assert len(still_open) == 1, "the bounded 250-row rejection sweep did not advance"
+    oldest_backlog_id = still_open[0]
+
+    insert_rejected("new-symbol-reject", 249)
+    asyncio.run(run_paper_trader(permission_mode="Paper", run_id="terminal-sweep-2"))
+
+    row = get_db().execute(
+        "SELECT status FROM opportunities WHERE id=?", (oldest_backlog_id,)
+    ).fetchone()
+    evidence = get_db().execute(
+        "SELECT COUNT(*) FROM filter_decisions WHERE opportunity_id=? "
+        "AND filter_name='symbol_filter' AND decision='rejected' "
+        "AND reason_code='symbol_not_allowed'",
+        (oldest_backlog_id,),
+    ).fetchone()[0]
+    assert row[0] == "reviewed"
+    assert evidence == 1
+
+
 def test_candidate_builder_overfetches_past_skipped_front_page():
     from aletheia.agents.paper_trader_ranker import build_paper_candidates, select_best_candidate
 

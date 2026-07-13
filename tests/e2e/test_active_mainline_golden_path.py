@@ -56,6 +56,26 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     repo.insert_market_snapshot(snapshot)
     repo.insert_opportunity(opportunity)
 
+    # The Operator may consume only the durable Filter/Ranker queue carrier.
+    # Run the real paper-trader handoff instead of letting this golden path
+    # bypass the production Opportunity -> signal_pending boundary.
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agents.paper_trader import run_paper_trader
+
+    # Production bootstrap initializes the permission registry before scheduling
+    # agents; this isolated E2E fixture must reproduce that boundary explicitly.
+    init_tool_registry()
+    ranker_result = await run_paper_trader(
+        permission_mode="Paper",
+        run_id="golden-path-ranker",
+    )
+    assert ranker_result["errors"] == []
+    pending = repo.find_pending_pi_decision_for_opportunity(opportunity.id)
+    assert pending is not None
+    assert pending["symbol"] == opportunity.symbol
+    assert pending["direction"] == opportunity.direction_bias
+    assert pending["market_type"] == opportunity.market
+
     async def deterministic_structured(*args, **kwargs):
         return ({
             "action": "trade",

@@ -370,7 +370,10 @@ class Position(_Provenanced):
     entry_price: float
     current_price: float | None = None
     unrealized_pnl: float = 0.0
-    realized_pnl: float = 0.0
+    # Open positions start at zero.  A closed futures position may remain NULL
+    # when its real funding ledger is unavailable; NULL must never be coerced to
+    # zero because that would fabricate net account economics.
+    realized_pnl: float | None = 0.0
     execution_mode: str
     strategy_id: str | None = None
     # Futures: leverage used to open (None/1 = spot or 1x). liquidation_price is the
@@ -584,7 +587,7 @@ class PortfolioSnapshot(BaseModel):
     id: str = Field(default_factory=new_id)
     total_value_usdt: float
     unrealized_pnl: float = 0.0
-    realized_pnl: float = 0.0
+    realized_pnl: float | None = 0.0
     positions_count: int = 0
     execution_mode: str = "paper_internal"
     exchange_equity_usdt: float | None = None

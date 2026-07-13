@@ -102,7 +102,7 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 | Universe 机会生成 | 可能否 | 每个已选成员最终是已生成、复用、拒绝或写入错误 | 否，只衡量覆盖和身份完整性 |
 | Observer 前置判断 | Universe 路径是；其他路径可能否 | RSI/ATR/keyword 实际值和命中原因 | 仅有事前方向的行 |
 | LLM neutral/无效输出 | 可能否 | schema 结果、方向、置信度，不写 prompt | 仅有事前方向的行 |
-| Ranker execution/direction/confidence/TTL/factor/guard | 是 | 顺序放行与首个拒绝 | 是（guard 只观测） |
+| Ranker symbol policy/execution/direction/confidence/TTL/factor/guard | 是 | 白/黑名单拒绝也必须写 `symbol_filter/symbol_not_allowed` 并终结 Opportunity；永久拒绝扫描批次与 top-N 执行短名单分离，状态与拒绝事实同事务提交 | 是（guard 只观测；symbol policy 不自动放宽） |
 | open-position/cooldown/batch limit | 是 | 当时占用、冷却截止、rank/limit | 是 |
 | System Operator watch/conviction/debate/direction brakes | 是 | 原始/辩论后 conviction、实际暴露快照 | 是，但不在有对照前改门槛 |
 | Proposal submission 方向/取价 | 是 | 方向集中度，最终 market_type，目标市场价格是否可用 | 是；用于解释 trade 意图为何没有 proposal，不自动放宽 |
@@ -184,9 +184,15 @@ Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候
 入队时只允许条件迁移 `open→queued`;批次计划过期、来源已是 `reviewed/expired` 时记录
 `signal_enqueue=rejected / opportunity_not_open`,不得写 pending,更不得把终态倒退。
 
+Ranker 的 `limit=50` 只限制进入打分/入队选择的执行短名单，不限制本次有界扫描中必须收口的
+永久拒绝。`open` 工作集按 oldest-first 推进，单次扫描仍有明确上限；因此旧拒绝不会在持续新流量下
+饿死。永久拒绝必须先确认对应 rejected `filter_decisions` 已在同一事务内可见，再把 Opportunity 改成
+`reviewed/expired`；任何证据写失败都回滚状态并返回稳定错误，留待下轮重试。
+
 ## 8. 失败与运维语义
 
-- 证据写入失败不能改变原交易决定，但必须记 warning/doctor coverage，不得沉默当成完整证据。
+- 一般观察证据写入失败不能改变原交易决定，但必须记 warning/doctor coverage，不得沉默当成完整证据。
+  若某条证据正是 Opportunity 进入永久终态的唯一原因，则证据与状态必须同成同败；失败时保留 `open`。
 - outcome 取价失败保持 `failed`/NULL，不用同名现货或过晚价格补齐。
 - `doctor` 分开报告：记录覆盖率、可结算比例、到期未结算数、各 filter 是否达到最小对照样本。
 - `outcome_settler` 每 15 分钟运行；刚到期的 filter outcome 在 20 分钟宽限内标为
@@ -212,6 +218,7 @@ Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候
 9. 已完成：可回放单调阈值的前瞻 shadow 登记、严格起始边界、固定停止门和版本失效保护；只观察，不自动应用。
 10. 已完成：Universe 已选成员在机会生成阶段逐个保存终态；同一 snapshot、symbol、market 的已评估机会仍占有原身份，迟到的 Observer 不再重复创建或事后改写。
 11. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
+12. 已完成：Ranker 白名单漏项与黑名单命中不再静默 `return None`；拒绝事实与终态原子提交，且独立有界拒绝工作集不会被 top-N 执行上限截掉。
 
 ## 10. 诊断时间窗口与 sizing 口径
 

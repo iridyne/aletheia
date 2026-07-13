@@ -43,6 +43,10 @@ def test_submit_decision_reads_snapshot_for_final_market_type(monkeypatch):
 
     monkeypatch.setattr("aletheia.trading.market_data.latest_snapshot", latest)
     monkeypatch.setattr("aletheia.execution.paper_tools.create_paper_proposal", create)
+    monkeypatch.setattr(
+        "aletheia.trading.entry_snapshot.capture_attribution_snapshot_json",
+        lambda _symbol: None,
+    )
     monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda ctx: [])
     monkeypatch.setattr(
         "aletheia.trust.guard_chain.summarize",
@@ -74,10 +78,16 @@ def test_attribution_survives_conflicting_layer1_via_ranker():
         "layer1": {"opportunities": [
             {"symbol": "BTC/USDT", "direction_bias": "short", "id": "opp-short"},
         ]},
-        "layer2": {"ranker_candidates": [
-            {"symbol": "BTC/USDT", "direction": "long", "opportunity_id": "opp-long",
-             "market_type": "usdt_futures"},
-        ]},
+        "layer2": {
+            "pending_signals": [
+                {"symbol": "BTC/USDT", "direction": "long", "opportunity_id": "opp-long",
+                 "market_type": "usdt_futures", "signal_source": "market_observer"},
+            ],
+            "ranker_candidates": [
+                {"symbol": "BTC/USDT", "direction": "long", "opportunity_id": "opp-long",
+                 "market_type": "usdt_futures"},
+            ],
+        },
     }
     _attach_opportunity_context(dec, ctx)
     assert dec.opportunity_id == "opp-long"          # not severed by the conflicting opp
@@ -90,6 +100,10 @@ def test_serenity_opportunity_market_type_key():
     dec = TradingDecision(action="trade", symbol="TAO/USDT", direction="long",
                           conviction=60, reasoning="")
     ctx = {
+        "layer2": {"pending_signals": [
+            {"symbol": "TAO/USDT", "direction": "long", "opportunity_id": "ser-1",
+             "market_type": "usdt_futures", "signal_source": "serenity"},
+        ]},
         "layer3": {"serenity_opportunities": [
             {"symbol": "TAO/USDT", "direction": "long", "id": "ser-1",
              "market_type": "usdt_futures", "execution_eligible": True,
@@ -119,24 +133,20 @@ def test_make_candidate_emits_market_type():
     assert cand2.get("market_type") == "spot"
 
 
-def test_serenity_pending_signal_recovers_market_type(monkeypatch):
-    """#102: a promoted serenity pending-signal recovers market_type from the source opp."""
-    import aletheia.storage.repositories as repo
-    monkeypatch.setattr(
-        repo, "get_serenity_opportunity",
-        lambda oid: {"market_type": "usdt_futures"} if oid == "ser-pending" else None,
-    )
+def test_serenity_pending_signal_carries_exact_market_type(monkeypatch):
+    """A promoted Serenity carrier includes its executable instrument identity."""
     dec = TradingDecision(action="trade", symbol="TAO/USDT", direction="long",
                           conviction=60, reasoning="")
     ctx = {
         "layer2": {"pending_signals": [
             {"symbol": "TAO/USDT", "direction": "long",
-             "opportunity_id": "ser-pending", "signal_source": "serenity"},
+             "market_type": "usdt_futures", "opportunity_id": "ser-pending",
+             "signal_source": "serenity"},
         ]},
     }
     _attach_opportunity_context(dec, ctx)
     assert dec.opportunity_id == "ser-pending"
     assert dec.signal_source == "serenity"
     assert dec.market_type == "usdt_futures", (
-        "pending-signal branch returned without recovering market_type (#102)"
+        "pending-signal branch dropped the carrier's exact market_type"
     )

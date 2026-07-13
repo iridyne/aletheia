@@ -15,6 +15,11 @@ SLIPPAGE_BPS = 10.0
 FEE_RATE = 0.0006
 
 
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
 def _setup_db(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.files.jsonl as jsonl
@@ -53,6 +58,7 @@ def _config():
             market_aware_exits=SimpleNamespace(enabled=False),
         ),
         serenity=SimpleNamespace(max_hold_days=0),
+        exchange=SimpleNamespace(paper_execution_mode="paper_internal"),
     )
 
 
@@ -136,7 +142,7 @@ def _close_chain(conn, position_id: str):
         "L2b",
         "A Position opened from a committed paper Fill explicitly records that its "
         "entry price is backed by the local-fill authority.",
-        status="implemented",
+            status="implemented",
     )
 )
 def test_paper_entry_stamps_local_fill_authority(tmp_path, monkeypatch):
@@ -515,3 +521,371 @@ def test_paper_close_failure_rolls_back_all_state_and_side_effects(
     assert audits == []
     assert notifications == []
     assert feedback == []
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-06",
+        "pipeline_paper_close_materialization",
+        "§3 unknown futures funding containment",
+        "L2c",
+        "A local-paper futures Position may close its execution lifecycle without "
+        "funding evidence, but cannot publish a numeric realized PnL, settle cash, "
+        "or become an eligible Outcome by implicitly treating unknown funding as zero.",
+            status="implemented",
+    )
+)
+def test_unknown_paper_perp_funding_closes_without_zero_equivalent_cash_settlement(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from aletheia.analytics.outcome_integrity import assess_position_closure
+    from aletheia.execution.paper_broker import (
+        close_paper_position,
+        execute_paper_order,
+    )
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity, RiskDecision, TradeProposal
+
+    # Seed only the immutable upstream authority. Order, Fill, Position, and both
+    # paper-account events must be produced (or withheld) by the real broker paths.
+    opportunity = Opportunity(
+        symbol="BTC/USDT",
+        market="perp",
+        direction_bias="long",
+        thesis="unknown funding must remain economically unavailable",
+        source_agent="market_observer",
+        scanner_family="trend",
+    )
+    repo.insert_opportunity(opportunity)
+    proposal = TradeProposal(
+        opportunity_id=opportunity.id,
+        symbol=opportunity.symbol,
+        market_type="usdt_futures",
+        direction="long",
+        order_type="market",
+        quantity=1.0,
+        price=100.0,
+        execution_mode="paper_internal",
+        leverage=2,
+        status="approved",
+    )
+    repo.insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode=proposal.execution_mode,
+        proposal_execution_mode=proposal.execution_mode,
+        decision_role="authoritative",
+        evaluated_quantity=proposal.quantity,
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    repo.insert_risk_decision(decision)
+
+    opened = execute_paper_order(
+        proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        order_type=proposal.order_type,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        execution_mode=proposal.execution_mode,
+        opportunity_id=opportunity.id,
+        leverage=proposal.leverage,
+    )
+    opened_position = repo._select_one("positions", opened["position_id"])
+    assert opened_position["funding_cost"] is None
+    assert opened_position["funding_source"] == "unavailable"
+    cash_before = repo.get_paper_account_cash_balance()
+
+    result = close_paper_position(
+        opened["position_id"],
+        mark_price=110.0,
+        reason="take_profit",
+    )
+
+    stored = repo._select_one("positions", opened["position_id"])
+    close_order = conn.execute(
+        "SELECT * FROM orders WHERE id=?", (result["order_id"],),
+    ).fetchone()
+    close_fill = conn.execute(
+        "SELECT * FROM fills WHERE id=?", (result["fill_id"],),
+    ).fetchone()
+
+    assert result["closed"] is True
+    assert close_order is not None
+    assert close_order["position_id"] == stored["id"]
+    assert close_order["close_reason"] == "take_profit"
+    assert close_order["status"] == "filled"
+    assert close_fill is not None
+    assert close_fill["order_id"] == close_order["id"]
+    assert close_fill["fill_quantity"] == pytest.approx(proposal.quantity)
+    assert stored["status"] == "closed"
+    assert stored["funding_cost"] is None
+    assert stored["funding_source"] == "unavailable"
+    assert stored["realized_pnl"] is None
+    assert not repo.has_paper_account_position_event(
+        "position_closed", stored["id"],
+    )
+    assert repo.get_paper_account_cash_balance() == pytest.approx(cash_before)
+    assert stored["outcome_eligible"] == 0
+    assert stored["outcome_exclusion_reason"] == "incomplete_funding_economics"
+    assert result["realized_pnl"] is None
+    assert result["outcome_eligible"] is False
+    assert result["outcome_exclusion_reason"] == "incomplete_funding_economics"
+    assessment = assess_position_closure(stored)
+    assert assessment.eligible is False
+    assert assessment.reason == "incomplete_funding_economics"
+    assert repo.list_outcome_hook_jobs(position_id=stored["id"]) == []
+
+    # The read models must preserve the same unavailability.  Converting this
+    # NULL back to zero would still show a fabricated account result and could
+    # authorize another local-paper order against an economically incomplete
+    # balance.
+    from aletheia.portfolio.paper_account import get_paper_account
+    from aletheia.portfolio.pnl import compute_portfolio
+
+    account = get_paper_account(event_limit=100)
+    assert account["economics_complete"] is False
+    assert account["unsettled_closed_positions_count"] == 1
+    assert account["available_balance_usdt"] == 0.0
+    assert account["equity_usdt"] is None
+
+    portfolio = compute_portfolio(execution_mode="paper_internal")
+    assert portfolio["realized_pnl"] is None
+    assert portfolio["realized_pnl_complete"] is False
+    assert portfolio["realized_pnl_unavailable_count"] == 1
+    assert portfolio["today_realized_pnl"] is None
+    assert portfolio["today_realized_pnl_complete"] is False
+    assert portfolio["today_realized_pnl_unavailable_count"] == 1
+    assert portfolio["today_pnl"] is None
+    assert portfolio["today_pnl_by_symbol"][proposal.symbol] is None
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-07",
+        "pipeline_paper_close_materialization",
+        "§3 legacy unknown-funding containment",
+        "L2c",
+        "A legacy local-paper futures close whose numeric PnL omitted unknown "
+        "funding remains economically unavailable and cannot restore spendable "
+        "cash or numeric portfolio totals.",
+        status="implemented",
+    )
+)
+def test_legacy_numeric_paper_perp_close_with_unknown_funding_stays_unavailable(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.portfolio.paper_account import (
+        get_paper_account,
+        record_position_opened,
+        settle_position_closed,
+    )
+    from aletheia.portfolio.pnl import compute_portfolio
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    opened_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    closed_at = datetime.now(timezone.utc)
+    entry_fee = 0.06
+    exit_fee = 0.066
+    legacy_recorded_pnl = 10.0 - entry_fee - exit_fee
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=110.0,
+        unrealized_pnl=0.0,
+        realized_pnl=legacy_recorded_pnl,
+        execution_mode="paper_internal",
+        status="closed",
+        close_reason="take_profit",
+        close_category="strategy",
+        entry_price_source="local_fill",
+        entry_fill_verified=True,
+        exit_price_source="local_fill",
+        exit_fill_verified=True,
+        outcome_eligible=False,
+        outcome_exclusion_reason="incomplete_funding_economics",
+        entry_fee=entry_fee,
+        exit_fee=exit_fee,
+        funding_cost=None,
+        funding_source="unavailable",
+        opened_at=opened_at.isoformat(),
+        closed_at=closed_at.isoformat(),
+    )
+    repo.insert_position(position)
+
+    # Reproduce the pre-fix ledger shape: the incomplete numeric result was
+    # already posted to cash even though the funding leg had no authority.
+    record_position_opened(position.id)
+    settle_position_closed(position.id, legacy_recorded_pnl)
+    assert repo.has_paper_account_position_event(
+        "position_closed", position.id,
+    )
+
+    account = get_paper_account(event_limit=100)
+    assert account["economics_complete"] is False
+    assert account["unsettled_closed_positions_count"] == 1
+    assert account["available_balance_usdt"] == 0.0
+    assert account["equity_usdt"] is None
+
+    portfolio = compute_portfolio(execution_mode="paper_internal")
+    assert portfolio["realized_pnl"] is None
+    assert portfolio["realized_pnl_complete"] is False
+    assert portfolio["realized_pnl_unavailable_count"] == 1
+    assert portfolio["today_realized_pnl"] is None
+    assert portfolio["today_realized_pnl_complete"] is False
+    assert portfolio["today_realized_pnl_unavailable_count"] == 1
+    assert portfolio["today_pnl"] is None
+    assert portfolio["today_pnl_by_symbol"][position.symbol] is None
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-08",
+        "pipeline_paper_close_materialization",
+        "§3 unbounded account completeness",
+        "L2c",
+        "Paper-account authority and portfolio totals inspect the complete close "
+        "history; an old incomplete close cannot disappear behind a display limit.",
+        status="implemented",
+    )
+)
+def test_old_incomplete_close_beyond_ten_thousand_rows_still_freezes_account(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from datetime import datetime, timezone
+
+    from aletheia.portfolio.paper_account import get_paper_account, set_cash_balance
+    from aletheia.portfolio.pnl import compute_portfolio
+
+    closed_at = datetime.now(timezone.utc).isoformat()
+    set_cash_balance(200.0, note="history-limit-regression")
+    with conn:
+        conn.execute(
+            "INSERT INTO positions "
+            "(id,symbol,market_type,direction,quantity,entry_price,current_price,"
+            "unrealized_pnl,realized_pnl,execution_mode,status,entry_fee,exit_fee,"
+            "funding_cost,funding_source,opened_at,closed_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "old-incomplete-futures-close", "BTC/USDT", "usdt_futures",
+                "long", 1.0, 100.0, 110.0, 0.0, 9.8, "paper_internal",
+                "closed", 0.1, 0.1, None, "unavailable", closed_at, closed_at,
+            ),
+        )
+        conn.executemany(
+            "INSERT INTO positions "
+            "(id,symbol,market_type,direction,quantity,entry_price,current_price,"
+            "unrealized_pnl,realized_pnl,execution_mode,status,entry_fee,exit_fee,"
+            "funding_cost,funding_source,opened_at,closed_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+                (
+                    f"new-complete-spot-{index}", "ETH/USDT", "spot", "long",
+                    1.0, 100.0, 100.0, 0.0, 0.0, "paper_internal", "closed",
+                    0.0, 0.0, 0.0, "not_applicable", closed_at, closed_at,
+                )
+                for index in range(10_000)
+            ],
+        )
+
+    account = get_paper_account(event_limit=0)
+    assert account["economics_complete"] is False
+    assert account["unsettled_closed_positions_count"] == 1
+    assert account["available_balance_usdt"] == 0.0
+    assert account["equity_usdt"] is None
+
+    portfolio = compute_portfolio(execution_mode="paper_internal")
+    assert portfolio["realized_pnl"] is None
+    assert portfolio["realized_pnl_complete"] is False
+    assert portfolio["realized_pnl_unavailable_count"] == 1
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-09",
+        "pipeline_paper_close_materialization",
+        "§3 honest position read models",
+        "L2c",
+        "Positions API and CSV export mask legacy numeric futures PnL when its "
+        "funding economics cannot be reproduced.",
+        status="implemented",
+    )
+)
+@pytest.mark.anyio
+async def test_positions_api_and_export_mask_legacy_unknown_funding_pnl(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    import csv
+    import io
+
+    from httpx import ASGITransport, AsyncClient
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    position = Position(
+        id="legacy-api-futures-close",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=110.0,
+        unrealized_pnl=0.0,
+        realized_pnl=9.8,
+        execution_mode="paper_internal",
+        status="closed",
+        close_reason="take_profit",
+        entry_fee=0.1,
+        exit_fee=0.1,
+        funding_cost=None,
+        funding_source="unavailable",
+    )
+    repo.insert_position(position)
+
+    from aletheia.server.app import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        positions_response = await client.get("/api/positions")
+        export_response = await client.get("/api/trades/export?fmt=csv")
+
+    assert positions_response.status_code == 200
+    api_row = next(
+        row for row in positions_response.json() if row["id"] == position.id
+    )
+    assert api_row["realized_pnl"] is None
+    assert api_row["realized_pnl_complete"] is False
+    assert api_row["realized_pnl_unavailable_reason"] == (
+        "incomplete_funding_economics"
+    )
+
+    assert export_response.status_code == 200
+    csv_row = next(csv.DictReader(io.StringIO(export_response.text)))
+    assert csv_row["position_id"] == position.id
+    assert csv_row["realized_pnl"] == ""
+    assert csv_row["realized_pnl_complete"] == "False"
+    assert csv_row["realized_pnl_unavailable_reason"] == (
+        "incomplete_funding_economics"
+    )

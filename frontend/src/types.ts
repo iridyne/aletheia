@@ -67,6 +67,8 @@ export interface Position {
   current_price: number | null
   unrealized_pnl: number | null
   realized_pnl: number | null
+  realized_pnl_complete?: boolean
+  realized_pnl_unavailable_reason?: string | null
   execution_mode: string
   strategy_id: string | null
   proposal_id?: string | null
@@ -305,7 +307,7 @@ export interface PortfolioSnapshot {
   id: string
   total_value_usdt: number
   unrealized_pnl: number
-  realized_pnl: number
+  realized_pnl: number | null
   positions_count: number
   execution_mode: string
   snapshot_at: string
@@ -316,6 +318,12 @@ export interface PortfolioSummary {
   today_pnl: number | null
   unrealized_pnl: number | null
   realized_pnl: number | null
+  all_realized_pnl?: number | null
+  today_realized_pnl?: number | null
+  realized_pnl_complete?: boolean
+  realized_pnl_unavailable_count?: number
+  today_realized_pnl_complete?: boolean
+  today_realized_pnl_unavailable_count?: number
   exposure_by_symbol: Record<string, number> | null
 }
 

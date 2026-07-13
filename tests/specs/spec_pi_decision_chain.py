@@ -65,15 +65,15 @@ def test_guard_chain_is_advisory_not_hard_block():
     assert '"guards": guard_summary' in src, (
         "guard_summary no longer attached to the proposal rationale (lost observability)"
     )
-    # The old hard-block path must be gone: locate submit_decision_as_proposal and
+    # The old hard-block path must be gone: locate prepare_decision_as_proposal and
     # assert no `return None` follows a `guard_summary["blocks"]` test.
     tree = ast.parse(src)
     fn = next(
         (n for n in ast.walk(tree)
-         if isinstance(n, ast.AsyncFunctionDef) and n.name == "submit_decision_as_proposal"),
+         if isinstance(n, ast.AsyncFunctionDef) and n.name == "prepare_decision_as_proposal"),
         None,
     )
-    assert fn is not None, "submit_decision_as_proposal not found"
+    assert fn is not None, "prepare_decision_as_proposal not found"
     for node in ast.walk(fn):
         if isinstance(node, ast.If):
             cond = ast.unparse(node.test)

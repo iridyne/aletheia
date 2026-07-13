@@ -25,6 +25,7 @@ logger = logging.getLogger("aletheia.position_manager")
 _PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
 _OPEN_CLOSE_STATES = {
     "pending", "submitted", "partial", "partially_filled", "submission_unknown",
+    "materialization_missing", "overfilled",
 }
 
 
@@ -121,10 +122,48 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
+def _native_proposal_protection(
+    position: dict,
+    proposal_field: str,
+) -> tuple[bool, float | None]:
+    """Return whether immutable Proposal authority governs a missing level.
+
+    Native positions may use a persisted trailing stop after entry, so callers
+    first honor a non-NULL Position value.  When that value is missing, however,
+    mutable config must not invent protection that Risk never approved.  Recover
+    the original Proposal value when present; an explicit NULL stays NULL.
+
+    Adopted or pre-Proposal legacy positions keep their historical config
+    fallback because they did not originate from a native Risk-approved intent.
+    """
+    proposal_id = position.get("proposal_id")
+    if not proposal_id:
+        return False, None
+    if position.get("source") == "adopted":
+        return False, None
+
+    try:
+        from aletheia.storage.repositories import get_trade_proposal
+
+        proposal = get_trade_proposal(str(proposal_id))
+    except Exception:
+        # A native identity whose authority cannot be read must fail closed.
+        return True, None
+    if proposal is None:
+        return True, None
+    if proposal.get("source") == "adopted":
+        return False, None
+    value = proposal.get(proposal_field)
+    return True, float(value) if value is not None else None
+
+
 def _effective_stop(position: dict, cfg) -> float | None:
     stop = position.get("stop_price")
     if stop:
         return float(stop)
+    governed, proposal_stop = _native_proposal_protection(position, "stop_price")
+    if governed:
+        return proposal_stop
     pct = cfg.trading.default_stop_loss_pct
     entry = position["entry_price"]
     if not pct or entry <= 0:
@@ -138,6 +177,9 @@ def _effective_take_profit(position: dict, cfg) -> float | None:
     tp = position.get("take_profit_price")
     if tp:
         return float(tp)
+    governed, proposal_tp = _native_proposal_protection(position, "take_profit")
+    if governed:
+        return proposal_tp
     pct = cfg.trading.default_take_profit_pct
     entry = position["entry_price"]
     if not pct or entry <= 0:

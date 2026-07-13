@@ -37,19 +37,20 @@ def test_paper_order_stores_stop_and_tp(tmp_path, monkeypatch):
         market_type="spot", direction="long", order_type="market",
         quantity=1.0, price=100.0, execution_mode="paper_internal",
         stop_price=98.0,
+        take_profit=104.0,
     )
-    # default_take_profit_pct=4.0, slippage_bps=5 (default)
-    # fill_price = 100 * (1 + 5/10000) = 100.05; TP = 100.05 * 1.04 ≈ 104.052
+    # The broker may only materialize the immutable Proposal value; it must not
+    # derive a new TP from fill price or mutable config after Risk approval.
     result = execute_paper_order(
         proposal_id="p1", risk_decision_id="r1",
         symbol="BTC/USDT", market_type="spot", direction="long",
         order_type="market", quantity=1.0, price=100.0,
         execution_mode="paper_internal", stop_price=98.0,
+        take_profit=104.0,
     )
     pos = repo._select_one("positions", result["position_id"])
     assert pos["stop_price"] == 98.0
-    # TP is derived from fill_price (after slippage), not raw price
-    assert pos["take_profit_price"] == pytest.approx(104.0, rel=0.01)
+    assert pos["take_profit_price"] == 104.0
 
 
 def test_average_in_accumulates_entry_fee_and_slippage(tmp_path, monkeypatch):

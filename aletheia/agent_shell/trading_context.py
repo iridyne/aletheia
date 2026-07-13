@@ -42,6 +42,34 @@ def _dedupe_symbol_direction(items: list[dict[str, Any]], limit: int) -> list[di
     return out
 
 
+def _dedupe_pending_identity(
+    items: list[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    """Keep one carrier per exact source/instrument identity.
+
+    Spot and futures carriers may legitimately share a canonical symbol and
+    direction.  Collapsing those rows together makes the older market claim the
+    newer one's execution authority, so pending de-duplication must retain the
+    market and source dimensions.
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str | None, str | None, str | None]] = set()
+    for item in items:
+        key = (
+            item.get("signal_source") or "market_observer",
+            item.get("symbol"),
+            item.get("direction"),
+            item.get("market_type"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _build_pending_signal_queue(
     *,
     limit: int = _PENDING_SIGNAL_VISIBLE_LIMIT,
@@ -52,16 +80,33 @@ def _build_pending_signal_queue(
 
     db = get_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
+    # A submitting final is an execution claim, not a terminal decision. Keep
+    # its exact carrier visible so a wake after process death can recover the
+    # already-stored Proposal. Once any non-submitting final exists, the carrier
+    # is terminally consumed and disappears from the queue.
+    submitting_final = (
+        "SELECT 1 FROM pi_decisions f "
+        "WHERE f.action != 'signal_pending' "
+        "  AND f.opportunity_id = p.opportunity_id "
+        "  AND COALESCE(f.signal_source, 'market_observer') = "
+        "      COALESCE(p.signal_source, 'market_observer') "
+        "  AND f.proposal_status = 'submitting'"
+    )
+    terminal_final = (
+        "SELECT 1 FROM pi_decisions f "
+        "WHERE f.action != 'signal_pending' "
+        "  AND f.opportunity_id = p.opportunity_id "
+        "  AND COALESCE(f.signal_source, 'market_observer') = "
+        "      COALESCE(p.signal_source, 'market_observer') "
+        "  AND COALESCE(f.proposal_status, '') != 'submitting'"
+    )
     unresolved = (
         "p.action = 'signal_pending' "
         "AND (COALESCE(p.signal_source, 'market_observer') = 'serenity' "
-        "     OR p.created_at >= ?) "
+        "     OR p.created_at >= ? "
+        f"     OR EXISTS ({submitting_final})) "
         "AND (p.opportunity_id IS NULL OR NOT EXISTS ("
-        "  SELECT 1 FROM pi_decisions f "
-        "  WHERE f.action != 'signal_pending' "
-        "    AND f.opportunity_id = p.opportunity_id "
-        "    AND COALESCE(f.signal_source, 'market_observer') = "
-        "        COALESCE(p.signal_source, 'market_observer')"
+        f"  {terminal_final}"
         "))"
     )
     rows = db.execute(
@@ -83,23 +128,19 @@ def _build_pending_signal_queue(
         }
         for row in rows
     ]
-    unique = (
-        _dedupe_symbol_direction(pending, limit=len(pending))
-        if pending else []
-    )
+    unique = _dedupe_pending_identity(pending, limit=len(pending)) if pending else []
     visible_limit = max(int(limit), 0)
     visible = unique[:visible_limit]
     expired = db.execute(
         "SELECT COUNT(*) AS n, MIN(p.created_at) AS oldest_at "
         "FROM pi_decisions p WHERE p.action = 'signal_pending' AND p.created_at < ? "
         "AND COALESCE(p.signal_source, 'market_observer') = 'market_observer' "
+        "AND NOT EXISTS ("
+        + submitting_final
+        + ") "
         "AND (p.opportunity_id IS NULL OR NOT EXISTS ("
-        "  SELECT 1 FROM pi_decisions f "
-        "  WHERE f.action != 'signal_pending' "
-        "    AND f.opportunity_id = p.opportunity_id "
-        "    AND COALESCE(f.signal_source, 'market_observer') = "
-        "        COALESCE(p.signal_source, 'market_observer')"
-        "))",
+        + terminal_final
+        + "))",
         (cutoff,),
     ).fetchone()
     queue = {

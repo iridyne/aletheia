@@ -179,11 +179,11 @@ def test_native_proposals_enter_gateway_and_risk_before_execution():
 def test_guard_chain_cannot_replace_risk_authority():
     path = ROOT / "aletheia" / "agent_shell" / "trading_decision.py"
     source = path.read_text(encoding="utf-8")
-    start = source.index("async def submit_decision_as_proposal")
+    start = source.index("async def prepare_decision_as_proposal")
     end = source.index("\ndef _proposal_direction_overheated", start)
     body = source[start:end]
     guard_start = body.index("guard_verdicts = run_guards")
-    proposal_start = body.index("create_paper_proposal(", guard_start)
+    proposal_start = body.index("proposal = TradeProposal(", guard_start)
     guard_section = body[guard_start:proposal_start]
     assert "guard_summary[\"blocks\"]" in guard_section
     assert "return None" not in guard_section

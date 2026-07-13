@@ -52,14 +52,18 @@ ownership:
   expires_at: '2026-07-16T07:48:08.118358Z'
 base_commit: c95b2be34d93368182da21fc81f87e71cf5f64e1
 next_action:
-  command_key: specs
-  reason: Commit the final evidence update, run strict workflow validation, and keep
-    the branch unmerged until the owner creates a new policy epoch and observation
-    window for the B-class behavior changes.
+  command_key: trade_chain_full_suite
+  reason: Commit the repaired production chain, then register the real round-trip,
+    full suite, frontend build, trust-boundary commands, and strict workflow evidence
+    on that exact implementation commit. Keep the branch unmerged pending owner gates.
 blockers:
 - B-class Operator timing and Bitget original-order protection changes require the
   owner to create a new policy epoch and observation window before merge; prior and
   new observation data must not be mixed.
+- Local paper futures have no trustworthy per-Position funding producer. The owner
+  must choose between temporarily rejecting new paper_internal futures entries or
+  authorizing a separate immutable funding-event ledger; this branch does not invent
+  funding or claim local futures paper is fully usable.
 verification:
 - command_key: spec_risk_engine
   command: uv run pytest tests/specs/spec_risk_engine.py -q

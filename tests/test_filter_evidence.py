@@ -634,7 +634,7 @@ def test_operator_command_surfaces_proposal_submission_reason(monkeypatch):
     async def fake_evaluate(context):
         return decision
 
-    async def fake_submit(decision, execution_mode):
+    async def fake_prepare(decision, execution_mode):
         return {"status": "failed", "reason": "market_price_unavailable"}
 
     monkeypatch.setattr(
@@ -656,16 +656,19 @@ def test_operator_command_surfaces_proposal_submission_reason(monkeypatch):
         fake_evaluate,
     )
     monkeypatch.setattr(
-        "aletheia.agent_shell.trading_decision.submit_decision_as_proposal",
-        fake_submit,
+        "aletheia.agent_shell.trading_decision.prepare_decision_as_proposal",
+        fake_prepare,
     )
+    monkeypatch.setattr(commands, "_has_durable_pending_carrier", lambda _decision: True)
     monkeypatch.setattr(
         "aletheia.agent_shell.reflection.claim_decision",
-        lambda result: ({"id": "test-claim"}, True),
+        lambda result, proposal=None: ({"id": "test-claim"}, True),
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.reflection.finalize_decision",
-        lambda _decision_id, result: recorded.update(result),
+        lambda _decision_id, result, **_kwargs: (
+            recorded.update(result) or dict(result)
+        ),
     )
 
     result = asyncio.run(commands.evaluate_trading_opportunity({}))

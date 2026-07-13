@@ -18,8 +18,8 @@ from tests.test_entry_logic import setup_env
 
 def test_r0_opportunity_id_flows_opportunity_to_decision(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.storage.models import Opportunity
-    from aletheia.storage.repositories import insert_opportunity
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
 
     opp = Opportunity(
         symbol="BTC/USDT", market="spot", direction_bias="long",
@@ -27,6 +27,14 @@ def test_r0_opportunity_id_flows_opportunity_to_decision(tmp_path, monkeypatch):
         status="open", asset_class="crypto",
     )
     insert_opportunity(opp)
+    insert_pi_decision(PiDecision(
+        symbol=opp.symbol,
+        direction=opp.direction_bias,
+        market_type=opp.market,
+        action="signal_pending",
+        opportunity_id=opp.id,
+        signal_source="market_observer",
+    ))
 
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
     ctx = build_enriched_trading_context()
@@ -113,7 +121,7 @@ def test_ranker_candidate_context_backfills_opportunity_id():
         "layer3": {},
     }
     decision = TradingDecision(
-        action="trade", symbol="UNI/USDT", direction="long",
+        action="skip", symbol="UNI/USDT", direction="long",
         conviction=60, reasoning="ranker candidate looks best",
     )
 
@@ -153,6 +161,7 @@ def test_reviewed_opportunity_roundtrips_through_market_pending_signal(tmp_path,
     insert_pi_decision(PiDecision(
         symbol=opp.symbol,
         direction=opp.direction_bias,
+        market_type=opp.market,
         action="signal_pending",
         conviction=opp.confidence_score or 0,
         reasoning="queued by paper trader",

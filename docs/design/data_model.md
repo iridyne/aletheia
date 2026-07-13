@@ -3,7 +3,7 @@
 > Complete index of Aletheia Trading OS data layer.
 > ~95 SQLite table declarations, 59 Pydantic models, WAL mode, additive-only migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
-> Last updated: 2026-07-12
+> Last updated: 2026-07-14
 
 ---
 
@@ -38,24 +38,25 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 ## 3. Table Groups
 
-### A. Trading Core (15 tables)
+### A. Trading Core (16 tables)
 
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
 | `opportunities` | Scanner output -- trading signals | symbol, direction, confidence, key_observations (JSON) | market_observer |
 | `trade_proposals` | Actionable trade candidates | symbol, direction, entry_price, stop_price, target_price, **`agent_rationale.entry_parameters`** (final entry/stop/target/notional/leverage reasons + value sources), **commit_hash**, **parent_hash** (TaG, P0-1) | paper_trader / System Operator |
-| `risk_decisions` | Risk engine approval/rejection | proposal_id, approved, reasons (JSON) | risk engine |
+| `proposal_execution_claims` | One durable, expiring execution owner per Proposal; kept outside the hash-covered Proposal intent and removed only by owner-token compare-and-set | proposal_id, owner_token, claimed_at, lease_expires_at | execution gateway |
+| `risk_decisions` | Risk engine approval/rejection | proposal_id, approved, reasons (JSON), decision_role, evaluated_quantity, proposal_commit_hash | risk engine |
 | `approvals` | Human approval records | proposal_id, decision, decided_by | frontend |
-| `orders` | Execution orders | symbol, side, quantity, order_type, status | execution gateway |
+| `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
-| `positions` | Open/closed positions | symbol, direction, entry_price, quantity, status, realized_pnl, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence) | position_manager / outcome closure |
+| `positions` | Open/closed positions; a closed future may keep net economics unavailable | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence) | position_manager / outcome closure |
 | `outcome_hook_jobs` | Durable eligible-close feedback outbox; one row per Position and hook, with leased replay after failure | position_id, hook_type, status, attempts, next_attempt_at, claim_token, last_error | outcome close transaction / outcome_hook_replay |
 | `position_disappearance_candidates` | Durable account-scoped position-disappearance confirmation state; never authorizes close by itself | position_id, identity_key, broker_id, account_environment, non-secret account_fingerprint, instrument identity, confirmation_count, direct_query_state, semantics_version | position reconciler (OI-B01 target) |
 | `position_disappearance_observations` | Immutable idempotent evidence for a disappearance candidate | candidate_id, observation_hash, view_identity, completeness/absence flags, direct_query_state, evidence_json | position reconciler (OI-B01 target) |
 | `reconciliation_integrity_incidents` | Restart-safe close/reopen circuit breaker and explicit recovery evidence | scoped fingerprint, status, source mix, detected/clean timestamps, clean count, resolution actor/reason, semantics version | position reconciler + Learning control |
 | `shadow_trades` | What-if trades for comparison | opportunity_id, venue, market_type, outcome_candidate_key, gross_return_pct, net_pnl_pct, estimated costs | analytics |
-| `portfolio_snapshots` | Periodic equity snapshots | total_value_usdt, unrealized_pnl, execution_mode | scheduler job |
-| `paper_account_events` | **Local `paper_internal` cash ledger only**; immutable starting funds, human adjustments, and realized-PnL settlements | action, amount_usdt, cash_balance_before_usdt, cash_balance_after_usdt, actor, source, position_id, note | paper account service |
+| `portfolio_snapshots` | Periodic equity snapshots; realized_pnl may be NULL when included close economics are incomplete | total_value_usdt, unrealized_pnl, nullable realized_pnl, execution_mode | scheduler job |
+| `paper_account_events` | **Local `paper_internal` cash ledger only**; immutable starting funds, human adjustments, and economically complete realized-PnL settlements. Unknown futures funding creates no close-settlement event. | action, amount_usdt, cash_balance_before_usdt, cash_balance_after_usdt, actor, source, position_id, note | paper account service |
 | `market_regimes` | Detected market regimes | regime_type, confidence, indicators (JSON) | market_observer |
 
 ### B. Strategy Management (4 tables)
@@ -412,6 +413,25 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | `reconciliation_identity` | 无凭证的 broker/environment/account/instrument identity JSON | `NULL` |
 | `reconciliation_evidence` | observation/direct-query evidence 与确认版本 JSON | `NULL` |
 | `outcome_semantics_version` | 生成 eligibility 的稳定语义版本 | `NULL` |
+| `funding_cost` | 持仓期间实际 funding；正数为成本、负数为返还 | `NULL` |
+| `funding_source` | `not_applicable` / `broker_ledger` / `local_simulation` / `unavailable` | `unavailable` |
+
+`realized_pnl` 是原始关闭经济字段，不是缺失事实的默认值。open Position 可从 `0` 开始；closed futures
+在没有可信 funding ledger 时必须保留 `NULL`。这种关闭仍有真实 close Order/Fill 和 closed 生命周期，
+但固定为 `incomplete_funding_economics`、不得进入 eligible Outcome/outbox，也不得追加
+`paper_account_events.position_closed`。spot 明确写 funding `0/not_applicable`。
+
+Portfolio 和 paper-account 是从这些原件计算的读模型。只要所含关闭中有 `realized_pnl=NULL`：
+
+- realized 总数及对应 PortfolioSnapshot 字段保持 `NULL`，并由 API 返回 complete=false 与缺失数量；
+- paper 现金账本余额仍作为历史事实可见，但 `equity_usdt=NULL`、`available_balance_usdt=0`；
+- `economics_complete=false`，直到缺失成本和对应现金结算都补齐，不能把未知行按 0 求和。
+
+读模型还会重新核对历史 numeric `realized_pnl`，而不是只检查 NULL：方向、入场/退出价格、数量、
+entry/exit fee 和可信 funding 无法重算出相同净值时，`GET /positions` 与 CSV export 返回
+`realized_pnl=NULL`、`realized_pnl_complete=false` 和稳定缺失原因；数据库原值保留供审计/修复。
+账户授权与 Portfolio 汇总检查完整 closed 历史，不使用 10,000 行之类的展示上限，否则最老坏账会在
+新历史增长后错误释放资金。
 
 迁移规则：
 
