@@ -51,3 +51,6 @@ commands:
   provenance:
     command: uv run pytest tests/test_runtime_session_provenance.py tests/e2e/test_active_mainline_golden_path.py tests/specs/spec_active_runtime_scope.py -q
     purpose: Verify Runtime Session lifecycle, core-entity provenance stamping, and Golden Path full attribution (same-session chain + restart open/close).
+  async_collector:
+    command: uv run pytest tests/test_data_provider_and_async_fixes.py -q --tb=short
+    purpose: Verify fallback market-data routing and that MacroCollector keeps synchronous yfinance work off the event loop without real network calls.
