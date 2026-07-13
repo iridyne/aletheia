@@ -53,9 +53,9 @@ ownership:
 base_commit: c95b2be34d93368182da21fc81f87e71cf5f64e1
 next_action:
   command_key: specs
-  reason: Commit the full-suite and deterministic-simulator integrity follow-up,
-    rerun and register same-HEAD Risk, Execution, pipeline, full-spec, and architecture
-    evidence, then run the whole suite and strict workflow validation.
+  reason: Commit the final evidence update, run strict workflow validation, and keep
+    the branch unmerged until the owner creates a new policy epoch and observation
+    window for the B-class behavior changes.
 blockers:
 - B-class Operator timing and Bitget original-order protection changes require the
   owner to create a new policy epoch and observation window before merge; prior and
@@ -101,5 +101,45 @@ verification:
   run_at: '2026-07-13T15:12:06.744092Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: spec_risk_engine
+  command: uv run pytest tests/specs/spec_risk_engine.py -q
+  command_sha256: 85595110321878d3016585adac757ed968ccb5833aa6a7f78b420108cb88f1b6
+  exit_code: 0
+  commit: 86a9a3f4b0c148e12e77c7ed8c88b2a2fb271c73
+  run_at: '2026-07-13T16:12:23.436209Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: spec_execution
+  command: uv run pytest tests/specs/spec_execution.py -q
+  command_sha256: 720c18646fdff18ca745c955c9570fbd12535011a9f360bd59e50bccf435a3c6
+  exit_code: 0
+  commit: 86a9a3f4b0c148e12e77c7ed8c88b2a2fb271c73
+  run_at: '2026-07-13T16:12:24.657810Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: spec_pipeline_execution_chain
+  command: uv run pytest tests/specs/spec_pipeline_execution_chain.py -q
+  command_sha256: f06ee972e4516060bd13766427550e64b56131f492277be553dbd72f7e297494
+  exit_code: 0
+  commit: 86a9a3f4b0c148e12e77c7ed8c88b2a2fb271c73
+  run_at: '2026-07-13T16:12:25.413756Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 86a9a3f4b0c148e12e77c7ed8c88b2a2fb271c73
+  run_at: '2026-07-13T16:12:36.466295Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 86a9a3f4b0c148e12e77c7ed8c88b2a2fb271c73
+  run_at: '2026-07-13T16:12:37.153986Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-066.md
-updated_at: '2026-07-13T15:12:06.744276Z'
+updated_at: '2026-07-13T16:16:55Z'
