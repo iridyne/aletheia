@@ -24,6 +24,21 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
+
+@spec_claim(SpecClaim(
+    "API-L01", "api_reference", "§Settings", "L2a",
+    "The paper-Learning settings endpoint is documented with its default-closed paper-only scope.",
+    status="implemented",
+))
+def test_learning_settings_endpoint_is_documented():
+    from pathlib import Path
+
+    reference = (Path(__file__).parents[2] / "docs" / "design" / "api_reference.md").read_text(
+        encoding="utf-8",
+    )
+    assert "`/settings/learning`" in reference
+    assert "paper-only" in reference.lower()
+
 # Repository root — all path lookups are relative to this.
 _ROOT = Path(__file__).resolve().parent.parent.parent
 _ROUTES = _ROOT / "aletheia" / "server" / "routes"

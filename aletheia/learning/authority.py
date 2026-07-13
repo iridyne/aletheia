@@ -91,6 +91,11 @@ def resolve_learning_authority(
         return blocked("allocation_without_control_holdout")
     if experiment.stage == "paper_active" and allocation > float(learning.paper_active_allocation_pct):
         return blocked("paper_active_allocation_exceeds_config")
+    hypothesis = get_record("learning_hypotheses", experiment.hypothesis_id)
+    if hypothesis is None:
+        return blocked("hypothesis_not_found")
+    if str(hypothesis.get("path_id") or "") != path_id:
+        return blocked("hypothesis_path_mismatch")
     # A harmful current-stage result must fail closed even when an older
     # activation record is malformed or a controller has not run yet.
     current = get_latest_measurement_verdict(experiment.experiment_id)
@@ -98,6 +103,11 @@ def resolve_learning_authority(
         return blocked(f"current_measurement_{current['verdict']}", current)
     if path_id != SUPPORTED_PATH_ID:
         return _legacy_authority_adapter(experiment, current_policy_epoch, blocked)
+    expected_horizon = str(hypothesis.get("target_horizon") or "")
+    if not expected_horizon:
+        return blocked("hypothesis_horizon_missing")
+    if current is not None and str(current.get("hypothesis_id") or "") != experiment.hypothesis_id:
+        return blocked("measurement_hypothesis_mismatch", current)
     if not experiment.activation_verdict_id:
         return _legacy_authority_adapter(experiment, current_policy_epoch, blocked)
     activation = get_record("learning_contribution_verdicts", experiment.activation_verdict_id)
@@ -117,13 +127,27 @@ def resolve_learning_authority(
     )
     if not activation_is_positive and not activation_is_admitted_trial:
         return blocked("invalid_activation_verdict")
+    predecessor_stage = PREVIOUS_STAGE.get(experiment.stage)
+    if not experiment.parent_experiment_id or not predecessor_stage:
+        return blocked("missing_predecessor_experiment")
+    predecessor = get_record("learning_experiments", experiment.parent_experiment_id)
+    if predecessor is None or str(predecessor.get("hypothesis_id") or "") != experiment.hypothesis_id:
+        return blocked("predecessor_hypothesis_mismatch")
+    if str(predecessor.get("stage") or "") != predecessor_stage:
+        return blocked("predecessor_stage_mismatch")
+    if predecessor.get("ended_at") is None or predecessor.get("status") != "closed":
+        return blocked("predecessor_not_closed")
+    if str(activation.get("experiment_id") or "") != experiment.parent_experiment_id:
+        return blocked("activation_experiment_mismatch")
+    if str(activation.get("hypothesis_id") or "") != experiment.hypothesis_id:
+        return blocked("activation_hypothesis_mismatch")
 
     if current is None:
         # A fresh successor may use its validated predecessor result only while
         # the effective policy is unchanged.
         activation_reason = measurement_identity_reason(
-            activation, PREVIOUS_STAGE.get(experiment.stage, ""), current_policy_epoch,
-            expected_horizon=None,
+            activation, predecessor_stage, current_policy_epoch,
+            expected_horizon=expected_horizon,
         )
         return blocked(activation_reason) if activation_reason else AuthorityDecision(
             True,
@@ -133,7 +157,7 @@ def resolve_learning_authority(
         )
     verdict = str(current.get("verdict") or "")
     identity_reason = measurement_identity_reason(
-        current, experiment.stage, current_policy_epoch, expected_horizon=None,
+        current, experiment.stage, current_policy_epoch, expected_horizon=expected_horizon,
     )
     if identity_reason:
         return blocked(identity_reason, current)

@@ -26,6 +26,11 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
         "Shadow measurement never auto-promotes into paper authority; shadow to paper_10 requires "
         "a separate explicit, durable, idempotent trial-admission action.", status="implemented",
     ),
+    SpecClaim(
+        "LE-L05", "learning_evolution", "§7.1 current paper lifecycle", "L2c",
+        "Paper authority binds activation and current-stage measurements to the same hypothesis, "
+        "closed predecessor, declared horizon, and declared path.", status="implemented",
+    ),
 )
 def test_lifecycle_runtime_surface_exists():
     from aletheia.learning.authority import resolve_learning_authority

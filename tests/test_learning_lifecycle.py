@@ -310,6 +310,159 @@ def test_empty_allowlist_and_default_config_always_resolve_to_baseline(monkeypat
     assert decision.reason == "path_not_allowlisted"
 
 
+def _promoted_successor(monkeypatch):
+    # Shadow can no longer auto-promote (LE-L04); a bounded paper_10 successor is
+    # created only through an explicit shadow-trial admission. Build the happy-path
+    # successor the same way, so each identity-gate test mutates exactly one field.
+    hypothesis, experiment = _experiment()
+    activation = _measurement(
+        hypothesis, experiment, "insufficient_data", reason="no_actual_intervention",
+    )
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import admit_shadow_trial
+    from aletheia.learning.models import LearningExperiment
+
+    result = admit_shadow_trial(
+        experiment.experiment_id,
+        verdict_id=activation.verdict_id,
+        current_policy_epoch="epoch-a",
+        admitted_by="owner",
+        reason="begin bounded paper trial",
+    )
+    return hypothesis, experiment, activation, LearningExperiment(**get_record(
+        "learning_experiments", result.successor_experiment_id,
+    ))
+
+
+def test_authority_rejects_activation_with_wrong_declared_horizon(monkeypatch):
+    hypothesis, _parent, activation, successor = _promoted_successor(monkeypatch)
+    from aletheia.learning.authority import resolve_learning_authority
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    was_in_tx = db.in_transaction
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET target_horizon='1h', harm_metrics_json=? "
+        "WHERE verdict_id=?",
+        (json.dumps({
+            "policy_epoch": "epoch-a", "horizon": "1h", "outcome_contract_version": "v1",
+            "metric_version": "universe_family_calibration_net_return_v1", "breached": False,
+        }), activation.verdict_id),
+    )
+    if not was_in_tx:
+        db.commit()
+
+    from aletheia.learning.ledger import get_record
+    from aletheia.learning.models import LearningExperiment
+    persisted_successor = LearningExperiment(**get_record("learning_experiments", successor.experiment_id))
+    decision = resolve_learning_authority(hypothesis.path_id, persisted_successor, "epoch-a")
+
+    assert decision.authorized is False
+    assert decision.reason == "horizon_mismatch"
+
+
+def test_authority_rejects_activation_from_a_different_predecessor(monkeypatch):
+    hypothesis, _parent, _activation, successor = _promoted_successor(monkeypatch)
+    foreign_hypothesis, foreign_experiment = _experiment(allocation=0.6)
+    foreign_activation = _measurement(foreign_hypothesis, foreign_experiment, "positive")
+    from aletheia.learning.authority import resolve_learning_authority
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    was_in_tx = db.in_transaction
+    db.execute(
+        "UPDATE learning_experiments SET activation_verdict_id=? WHERE experiment_id=?",
+        (foreign_activation.verdict_id, successor.experiment_id),
+    )
+    if not was_in_tx:
+        db.commit()
+
+    from aletheia.learning.ledger import get_record
+    from aletheia.learning.models import LearningExperiment
+    persisted_successor = LearningExperiment(**get_record("learning_experiments", successor.experiment_id))
+    decision = resolve_learning_authority(hypothesis.path_id, persisted_successor, "epoch-a")
+
+    assert decision.authorized is False
+    assert decision.reason == "activation_experiment_mismatch"
+
+
+def test_authority_rejects_current_measurement_from_a_different_hypothesis(monkeypatch):
+    hypothesis, _parent, _activation, successor = _promoted_successor(monkeypatch)
+    foreign_hypothesis, _foreign_experiment = _experiment(allocation=0.6)
+    _measurement(foreign_hypothesis, successor, "positive")
+    from aletheia.learning.authority import resolve_learning_authority
+
+    decision = resolve_learning_authority(hypothesis.path_id, successor, "epoch-a")
+
+    assert decision.authorized is False
+    assert decision.reason == "measurement_hypothesis_mismatch"
+
+
+def test_authority_rejects_current_measurement_with_wrong_declared_horizon(monkeypatch):
+    hypothesis, _parent, _activation, successor = _promoted_successor(monkeypatch)
+    _measurement(hypothesis, successor, "positive", horizon="1h")
+    from aletheia.learning.authority import resolve_learning_authority
+
+    decision = resolve_learning_authority(hypothesis.path_id, successor, "epoch-a")
+
+    assert decision.authorized is False
+    assert decision.reason == "horizon_mismatch"
+
+
+def test_authority_rejects_paper_stage_without_a_closed_predecessor(monkeypatch):
+    hypothesis, _parent, _activation, successor = _promoted_successor(monkeypatch)
+    from aletheia.learning.authority import resolve_learning_authority
+    from aletheia.learning.ledger import get_record
+
+    before = get_record("learning_experiments", successor.experiment_id)
+    decision = resolve_learning_authority(
+        hypothesis.path_id,
+        successor.model_copy(update={"parent_experiment_id": None}),
+        "epoch-a",
+    )
+    after = get_record("learning_experiments", successor.experiment_id)
+
+    assert decision.authorized is False
+    assert decision.reason == "missing_predecessor_experiment"
+    assert after == before
+
+
+def test_authority_rejects_mismatched_hypothesis_path(monkeypatch):
+    hypothesis, _parent, _activation, successor = _promoted_successor(monkeypatch)
+    from aletheia.learning.authority import resolve_learning_authority
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    was_in_tx = db.in_transaction
+    db.execute(
+        "UPDATE learning_hypotheses SET path_id='ranker_factor_filter' WHERE hypothesis_id=?",
+        (hypothesis.hypothesis_id,),
+    )
+    if not was_in_tx:
+        db.commit()
+
+    decision = resolve_learning_authority("universe_family_calibration", successor, "epoch-a")
+
+    assert decision.authorized is False
+    assert decision.reason == "hypothesis_path_mismatch"
+
+
+def test_path_mismatch_cannot_fall_through_to_legacy_authority(monkeypatch):
+    hypothesis, _parent, _activation, successor = _promoted_successor(monkeypatch)
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=["ranker_factor_filter"]))
+    import aletheia.learning.authority as authority
+
+    def legacy_must_not_run(*_args, **_kwargs):
+        pytest.fail("a mismatched hypothesis path reached the legacy authority adapter")
+
+    monkeypatch.setattr(authority, "_legacy_authority_adapter", legacy_must_not_run)
+    decision = authority.resolve_learning_authority("ranker_factor_filter", successor, "epoch-a")
+
+    assert decision.authorized is False
+    assert decision.reason == "hypothesis_path_mismatch"
+
+
 def test_canonical_defaults_keep_numeric_consumers_on_static_baseline(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     import aletheia.learning.authority as authority

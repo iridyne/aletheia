@@ -927,7 +927,7 @@ Implementation mapping:
 | Phase 4 | `spec_pi_decision_chain.py`, `spec_insight_feedback_loop.py`, `spec_learning_experiments.py` | LE-B07/14/15, LE-C04/07/09/10 |
 | Phase 5 | `spec_persona_sizing.py`, `spec_learning_experiments.py` | LE-B10, LE-C02/03/07 |
 | Phase 6 | `spec_skill_store.py`, `spec_learning_evolution.py` | LE-C02/05/07 |
-| Lifecycle runtime | `spec_learning_lifecycle.py`, `test_learning_lifecycle.py`, `test_learning_lifecycle_scheduler.py` | LE-L01/02/03 |
+| Lifecycle runtime | `spec_learning_lifecycle.py`, `test_learning_lifecycle.py`, `test_learning_lifecycle_scheduler.py` | LE-L01/02/03/04 |
 
 SDD sequence for every new claim:
 

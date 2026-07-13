@@ -307,6 +307,13 @@ one `paper_10` successor with a fresh assignment salt. Later paper-stage promoti
 predecessor, create one successor, and require fresh evidence before another promotion. Paper
 treatment is capped at 90%; the final-stage default is 80%, leaving a permanent control holdout.
 
+Before any paper influence is used, the authority check binds the requested path and successor to
+the same hypothesis and its closed predecessor, then requires the activation verdict to belong to
+that predecessor and hypothesis. Both activation and current-stage measurements must also carry the hypothesis's
+declared horizon, current policy epoch, expected stage, outcome-contract version, metric version,
+and an unbreached harm result. Missing, foreign, or malformed identity always returns the static
+baseline.
+
 Every applied transition has one durable, deduplicated lifecycle event with the source verdict,
 stage change, reason, effective policy epoch, and successor identity. The event and experiment
 state change commit together; the JSONL audit is appended after that durable commit. Repeating a
@@ -503,6 +510,7 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-L02 | L2c | stage transitions are transactional, idempotent, isolated, and default-closed for paper influence | implemented |
 | LE-L03 | L2c | measurement and lifecycle control use separate restart-safe single-instance schedules | implemented |
 | LE-L04 | L2c | shadow cannot auto-promote; `paper_10` requires a separate explicit durable trial admission | implemented |
+| LE-L05 | L2c | paper authority binds approved evidence to its same-hypothesis closed predecessor and declared horizon | implemented |
 | LE-C01 | L2c | no promotion without unique samples, time span, and outcome links | implemented |
 | LE-C02 | L2c | negative/unsafe holdout automatically demotes or refreezes | implemented |
 | LE-C03 | L2c | refreeze restores static baseline without deleting evidence | implemented |
