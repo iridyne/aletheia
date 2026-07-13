@@ -20,6 +20,11 @@ def test_sizing_ratchet_recovers_with_real_dispatch_and_persistence(tmp_path):
         now=datetime.fromisoformat(state["now"]),
         initial_sizing=state["max_demo_position_notional_usdt"],
         kill_switch=state["kill_switch_active"],
+        run_id=scenario["incident_id"],
+        reproduce=(
+            "uv run pytest "
+            "tests/simulation/control_loop/test_sizing_ratchet.py -q"
+        ),
     ) as harness:
         harness.change_signal_quality(
             win_rate=state["signal_win_rate_24h"], status="healthy"

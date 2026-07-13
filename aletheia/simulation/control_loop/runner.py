@@ -6,7 +6,9 @@ from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
+import re
 from typing import Any
 from unittest.mock import patch
 
@@ -24,6 +26,10 @@ class ControlLoopHarness:
         initial_confidence: str = "medium",
         initial_sizing: float = 200.0,
         kill_switch: bool = False,
+        artifact_root: Path | None = None,
+        run_id: str | None = None,
+        seed: int = 0,
+        reproduce: str = "uv run pytest tests/simulation/control_loop/ -q",
     ) -> None:
         import aletheia.config.loader as loader
         from aletheia.config.schema import AletheiaConfig
@@ -32,6 +38,14 @@ class ControlLoopHarness:
 
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        default_artifact_root = Path(
+            os.getenv("DCLS_ARTIFACT_ROOT", "test-results/control-loop")
+        )
+        self.artifact_root = Path(artifact_root or default_artifact_root)
+        raw_run_id = run_id or self.root.name or "dcls-failure"
+        self.run_id = re.sub(r"[^A-Za-z0-9._-]+", "-", raw_run_id).strip("-")
+        self.seed = seed
+        self.reproduce = reproduce
         self.clock = VirtualClock(now or datetime(2026, 7, 13, 4, tzinfo=timezone.utc))
         self.operations: list[dict[str, Any]] = []
         self.timeline: list[dict[str, Any]] = []
@@ -70,8 +84,20 @@ class ControlLoopHarness:
     def __enter__(self) -> "ControlLoopHarness":
         return self
 
-    def __exit__(self, *_: object) -> None:
-        self.close()
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        try:
+            if exc is not None:
+                from .artifacts import write_failure_artifacts
+                write_failure_artifacts(
+                    self,
+                    exc,
+                    artifact_root=self.artifact_root,
+                    run_id=self.run_id,
+                    seed=self.seed,
+                    reproduce=self.reproduce,
+                )
+        finally:
+            self.close()
 
     def close(self) -> None:
         from aletheia.storage.sqlite import reset_db

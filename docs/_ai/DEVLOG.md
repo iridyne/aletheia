@@ -3314,3 +3314,11 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
   `test-results/control-loop/`. PR CI uses a small deterministic budget; nightly CI raises it.
 - DCLS, Operator, all executable specs, architecture and workflow gates passed. The full suite had
   one unrelated async timing failure that reproduces unchanged on clean master; it remains explicit.
+
+## 2026-07-13 — Automatic DCLS fixed-scenario failure packs
+
+- Routed both fixed control-loop incidents through the shared harness exception boundary.
+- Any escaping scenario exception now writes the complete sanitized replay pack before the
+  temporary SQLite connection and global config overrides are restored.
+- Added a deliberate ordinary-assertion regression proving all ten required files, copied
+  database state, seed/reproduction metadata, and absence of secret field names.
