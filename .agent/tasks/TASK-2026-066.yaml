@@ -41,7 +41,8 @@ acceptance:
 - Eligible Outcomes retain enough identity and truth metadata to reach Attribution and
   Feedback consumers; ineligible outcomes carry an explicit reason and are not learned
   from as genuine evidence.
-- Every repair records real-path proof: the input or sanitized production fixture, the
+- >-
+  Every repair records real-path proof: the input or sanitized production fixture, the
   pre-fix break, the first downstream fact that appears after the fix, the persisted
   database/state change, and an exact reproducible command.
 - Focused regressions, adjacent-stage integration tests, executable specs, architecture
@@ -54,11 +55,15 @@ ownership:
   expires_at: '2026-07-16T07:48:08.118358Z'
 base_commit: c95b2be34d93368182da21fc81f87e71cf5f64e1
 next_action:
-  command_key: provenance
+  command_key: spec_pipeline_execution_chain
   reason: >-
-    Map and replay the Opportunity to Filter/Ranker to System Operator slice against a
-    read-only production database snapshot before making the first code change.
-blockers: []
+    Turn the focused missing Risk to Execution claims green with the smallest production
+    change, only after explicit owner approval for changes spanning both controlled
+    modules.
+blockers:
+- >-
+  Multiple change-controlled modules are required: aletheia/risk and
+  aletheia/execution. Explicit owner approval is pending.
 verification: []
 handoff: .agent/handoffs/TASK-2026-066.md
-updated_at: '2026-07-13T07:48:08.118367Z'
+updated_at: '2026-07-13T11:00:00Z'
