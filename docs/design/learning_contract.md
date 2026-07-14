@@ -1,7 +1,7 @@
 # Learning Subsystem Contract
 
 > Contract level: L2. This file is normative for the Learning subsystem.
-> Last aligned: 2026-07-12 Learning authority hardening.
+> Last aligned: 2026-07-14 per-path paper authority and causal settlement.
 > Reference intent: [Product Direction §3](../product/DIRECTION.md#3-learning-is-an-evidence-pipeline-not-a-page).
 > Target extension: `learning_evolution_contract.md` defines the measured
 > self-improvement lifecycle and tracks each implemented/remaining claim.
@@ -52,12 +52,12 @@ results can influence a later trading judgment, even when it lives outside `alet
 | --- | --- | --- |
 | Outcome joins | `analytics/trade_attribution.py`, `trade_path.py` | read-only realized-trade joins |
 | Candidate counterfactuals | `analytics/shadow_trades.py`, `filter_evidence.py`, `universe/filter_outcome_recorder.py` | settle skipped/blocked candidate outcomes |
-| Outcome economics | `learning/outcomes.py`, `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | shared fail-closed cost/quality contract governs factor, universe, reviewer, ranker and sizing exposure authority; prompt-bundle treatment settlement remains incomplete |
+| Outcome economics | `learning/outcomes.py`, `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | shared fail-closed cost/quality contract governs factor, universe, reviewer, ranker and sizing exposure authority; observer, Operator and automatic Risk-lesson boolean treatments use the same immutable exposure ledger and only link to real fixed-horizon candidate outcomes |
 | Universe family calibration | `universe/allocator.py::get_family_multipliers`, `learning/experiments.py`, `universe/service.py` | 50-sample retrospective cohorts may propose a bounded 0.9/1.1 shadow treatment; actual paper influence requires stable prospective arms, linked net outcomes, minimum time, and a positive verdict; fallback is 1.0 |
 | Structured cases | `analytics/trade_case_builder.py` | deterministic high-confidence cases and guard candidates |
 | Universe guard producer | `universe/outcome_recorder.py` | derives candidate guards from settled rejected/pass outcomes |
 | Narrative review | `agents/post_trade_reviewer.py` | medium-confidence prose; also triggers deterministic case building |
-| Risk critique | `agents/risk_critic.py` | advisory research note from proposal/risk-decision history |
+| Risk critique and lesson constraint | `agents/risk_critic.py`, `risk/engine.py`, `learning/experiments.py` | critique remains advisory; manual/owner/human Risk lessons remain static safety rules, while an automatic applied lesson stays advisory unless the exact `risk_lesson_constraint` prospective treatment is authorized for that Proposal |
 | Lesson extraction/review | `agents/dreaming_agent.py`, `agents/lesson_reviewer.py` | promotion/overturn requires clean cost-aware outcomes matching every populated symbol/direction/scanner dimension; global history is context only |
 | Memo synthesis | `analytics/insight_synthesizer.py`, `memo_effectiveness.py` | memo reaches observer prompt, ranker score, and Operator prompt |
 | Factor feedback | `analytics/factor_feedback.py`, `learning/experiments.py` | exact clean history is diagnostic and proposes shadow treatments; ranker score/filter authority requires a prospective positive verdict and otherwise stays neutral |
@@ -106,9 +106,11 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - learned trading guards and the advisory trust guard chain have different authority and must not
   be merged or reported as the same mechanism.
 - operator-loop safety/config changes can alter the same candidates/outcomes during a Learning
-  evaluation; factor, universe, ranker, and sizing exposures rotate durable policy epochs, while
-  prompt-bundle treatment exposure still needs migration. Safety tightening must never be
-  withheld merely to make a cleaner experiment.
+  evaluation; factor, universe, ranker, sizing, Observer bundle, Operator bundle and automatic
+  Risk-lesson exposures all rotate durable policy epochs. These B-class behavior changes require a
+  new policy epoch and a from-zero observation window before owner enablement; old-window evidence
+  cannot authorize the new behavior. Safety tightening must never be withheld merely to make a
+  cleaner experiment.
 
 The target lifecycle, registry, prospective experiments, overlap handling, and automatic fallback
 are normative in `learning_evolution_contract.md`. Phase 0 measurement claims are tracked below;
@@ -136,8 +138,9 @@ The first target slice is implemented without changing trading behavior:
 - alpha read models distinguish directional evidence from measured prospective contribution.
 
 This historical Phase 0 slice improved measurement honesty only. Later implemented slices now
-create refrozen paper exposures for ranker and sizing proposals, but still do not modify any
-risk/execution/live authority without the separate prospective gates described above.
+create refrozen paper exposures for ranker, sizing and prompt proposals. Automatic Risk lessons may
+become blocking only through their separate prospective `risk_lesson_constraint` treatment; the
+default/control/error path is advisory. No Learning path grants Execution, exchange or live authority.
 
 ---
 
@@ -199,7 +202,7 @@ Current consumers:
 | Consumer | Reads |
 | --- | --- |
 | `agent_shell/trading_context.py` Layer 3 | `LessonStore().list_all(status="applied", limit=5)` for System Operator prompt context |
-| `risk/engine.py::_check_lesson_constraints` | `status="applied"` lessons; enforces non-expired block actions after dry-run |
+| `risk/engine.py::_check_lesson_constraints` | `status="applied"`, non-expired lessons after dry-run. `manual`/`owner`/`human` sources remain static constraints; automatic sources propose an advisory block and require exact `risk_lesson_constraint` treatment authority linked to `proposal:<id>:4h`. Adapter errors fail closed as `lesson_check_error:internal_failure`. |
 | `lesson_reviewer` | `proposed` for promotion and `accepted` for overturn checks |
 | `doctor` / analytics | Counts and status visibility |
 
@@ -362,6 +365,20 @@ The present promotion gate is evidence-gated but retrospective. Under the target
 historical evidence may nominate a shadow experiment only; active authority requires prospective
 blocked-candidate outcomes, supply-harm checks, continual holdout, and automatic demotion.
 
+Ranker enforcement keeps two authority classes separate:
+
+- shipped seed guards and owner-authored manual guards follow `guard.enabled` and
+  `guard.enforce_in_paper_ranker`; disabling autonomous Learning or paper Learning influence does
+  not disable these static safety rules;
+- learned guards are stored observe-only. Automatic creation preserves their explicit proposed
+  block and score penalty in separate metadata instead of erasing it;
+- for every matching Opportunity, `ranker_learned_guard` uses the existing prospective assignment
+  adapter with baseline `0` and treatment `1`. The exposure records the candidate key,
+  Opportunity id, and the fixed-horizon outcome key when one exists. Control, missing identity,
+  disabled/unallowlisted influence, stale authority, or adapter failure remains observe-only;
+- only an exactly authorized treatment may restore that guard's preserved proposed block/penalty.
+  The treatment never grants Risk, Execution, exchange, or live authority.
+
 ---
 
 ## 8. UI And API Surface
@@ -377,6 +394,9 @@ Current Learning UI surfaces:
 - Active guards
 - Learning funnel counts
 - Conservative contradiction count requiring human review
+- Registry-backed paper-influence path checkboxes. Only paths with a real consumer and prospective
+  authority adapter are selectable; declared-but-unwired paths remain visible and disabled.
+  `advisory_skill` is currently `consumer_unwired` and cannot be saved through Settings.
 
 API endpoints are indexed in `docs/design/api_reference.md`.
 
@@ -455,6 +475,8 @@ measurement remain available. OI-C02 and OI-C05 are now GREEN, so:
 This handoff does not authorize Learning to import Risk, Execution, exchange clients, or live routes.
 Risk account loss remains a separate controlled contract, not a Learning outcome.
 
-The incident gate intentionally does not disable an already-active Risk lesson that only tightens a
-safety boundary. Removing a conservative Risk constraint during an incident would weaken safety;
-Risk source semantics are handled separately by OI-C03 and its controlled task.
+The incident gate does not disable owner/manual/human Risk lessons, because those are static safety
+rules rather than Learning treatments. An automatic lesson has no blocking effect during a global
+refreeze unless the exact current prospective path is independently authorized; unavailable or
+errored authority remains advisory/fail-closed. Risk account-loss semantics remain separately
+controlled by OI-C03.

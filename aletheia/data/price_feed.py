@@ -5,25 +5,34 @@ position_manager and pnl reads check this cache first, falling back to
 SQLite market_snapshots only if the cache is stale or empty.
 
 Design:
-- Module-level dict + threading.Lock (no SQLite writes on the fast path).
+- Legacy symbol-only cache remains the display/PnL surface. Protective closes
+  use a separate exact ``(exchange, canonical symbol, physical market type)``
+  cache.
+- Module-level dicts + threading.Lock (no SQLite writes on the fast path).
 - Staleness threshold: 90s (3x refresh interval). Beyond that, callers
   fall back to the 5-min SQLite snapshots.
-- fail-open: if the refresh fails, stale entries remain until they expire
-  and callers transparently fall back to SQLite.
+- Display/PnL remains fail-open to SQLite. Protective close pricing is fail-closed:
+  its typed SQLite fallback must be no older than 120 seconds.
 - Universe members tick-gated: refreshed every 3rd tick (90s) to stay
   within the scheduler's 45s timeout budget at large symbol counts.
 """
 
 import logging
+import math
 import threading
 from datetime import datetime, timezone
 
 logger = logging.getLogger("aletheia.price_feed")
 
 _price_cache: dict[str, dict] = {}
+# Protective closes need exact symbol + market identity.  Keep this separate from
+# the legacy symbol-only cache consumed by dashboard/display PnL so that adding
+# lifecycle safety does not change that accessor's existing behavior.
+_instrument_price_cache: dict[tuple[str, str, str], dict] = {}
 _cache_lock = threading.Lock()
 
 _STALE_THRESHOLD_SEC = 90.0
+_PROTECTIVE_DB_MAX_AGE_SEC = 120.0
 _UNIVERSE_TICK_EVERY = 3  # universe members refresh every N ticks
 _tick_counter = 0
 _tick_lock = threading.Lock()
@@ -59,13 +68,126 @@ def get_cached_price_with_meta(symbol: str) -> dict | None:
         return dict(entry)
 
 
+def _protective_market_type(market_type: str | None) -> str | None:
+    """Map Position vocabulary to the exact physical cache/snapshot market."""
+    if market_type == "usdt_futures":
+        return "perp"
+    if market_type in {"spot", "perp", "futures"}:
+        return market_type
+    return None
+
+
+def protective_price_venue(
+    execution_mode: str | None,
+    *,
+    configured_data_venue: str | None,
+) -> str | None:
+    """Resolve the only venue whose mark may govern a Position lifecycle.
+
+    Exchange-backed Positions follow the venue encoded in their durable
+    execution mode. Local paper has no execution venue, so it deliberately uses
+    the configured market-data venue. Unknown execution identities fail closed.
+    """
+    mode = str(execution_mode or "").strip().lower()
+    if mode == "paper_internal":
+        venue = str(configured_data_venue or "").strip().lower()
+        return venue or None
+    for venue in ("okx", "bitget", "binance"):
+        if mode.startswith(f"{venue}_"):
+            return venue
+    return None
+
+
+def _valid_fresh_price(entry: dict | None, *, max_age_sec: float) -> float | None:
+    if not entry:
+        return None
+    try:
+        price = float(entry["price"])
+        ts = entry["ts"]
+        age = (datetime.now(timezone.utc) - ts).total_seconds()
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(price) or price <= 0 or age < 0 or age > max_age_sec:
+        return None
+    return price
+
+
+def get_fresh_price_for_protective_close(
+    symbol: str,
+    market_type: str,
+    *,
+    venue: str,
+) -> float | None:
+    """Return a fresh, exact-instrument mark suitable for creating a close Fill.
+
+    The in-memory mark must be younger than the normal 90-second cache limit.
+    The SQLite fallback is deliberately stricter than the display/PnL accessor:
+    it never falls back across venue or spot/perp and rejects rows older than
+    120 seconds.
+    """
+    from aletheia.data.symbols import to_bitget, to_canonical
+
+    canonical = to_canonical(symbol)
+    physical_market = _protective_market_type(market_type)
+    exact_venue = str(venue or "").strip().lower()
+    if physical_market is None or not exact_venue:
+        return None
+
+    with _cache_lock:
+        cache_entry = _instrument_price_cache.get(
+            (exact_venue, canonical, physical_market)
+        )
+        cached = _valid_fresh_price(
+            cache_entry, max_age_sec=_STALE_THRESHOLD_SEC,
+        )
+    if cached is not None:
+        return cached
+
+    from aletheia.storage.repositories import list_market_snapshots
+
+    # Query only exact market identities.  The extra symbol/market spellings are
+    # legacy storage compatibility, not a symbol-only or cross-market fallback.
+    stored_symbols = [canonical]
+    legacy_symbol = to_bitget(canonical)
+    if legacy_symbol != canonical:
+        stored_symbols.append(legacy_symbol)
+    stored_markets = [physical_market]
+    if market_type == "usdt_futures":
+        stored_markets.append("usdt_futures")
+    rows: list[dict] = []
+    for stored_symbol in stored_symbols:
+        for stored_market in stored_markets:
+            rows.extend(list_market_snapshots(
+                symbol=stored_symbol,
+                exchange=exact_venue,
+                market_type=stored_market,
+                limit=1,
+            ))
+    if not rows:
+        return None
+    row = max(rows, key=lambda item: str(item.get("snapshot_at") or ""))
+    raw_ts = row.get("snapshot_at")
+    if not raw_ts:
+        return None
+    try:
+        observed_at = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+    return _valid_fresh_price(
+        {"price": row.get("price"), "ts": observed_at},
+        max_age_sec=_PROTECTIVE_DB_MAX_AGE_SEC,
+    )
+
+
 def get_watched_instruments():
     """Return exact instruments for open positions + executable universe members."""
     from aletheia.config.loader import load_config
     from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
     from aletheia.data.symbols import is_stock_token, stock_token_exchange
 
-    seen: set[str] = set()
+    seen: set[tuple[str, str, str]] = set()
     result: list[InstrumentId] = []
     cfg = load_config()
     default_exchange = cfg.market_data.ccxt_exchange or "binance"
@@ -83,20 +205,34 @@ def get_watched_instruments():
             )
         except ValueError:
             return
-        # The cache is symbol-keyed, so retain one authoritative instrument per
-        # canonical symbol. Open positions are appended before universe members.
-        if instrument.symbol not in seen:
-            seen.add(instrument.symbol)
+        # Protective lifecycle pricing is exact by symbol + physical market, so
+        # same-symbol spot and perp Positions must both remain watched.
+        identity = (
+            instrument.exchange, instrument.symbol, instrument.market_type,
+        )
+        if identity not in seen:
+            seen.add(identity)
             result.append(instrument)
 
     # Always watch open position symbols
     try:
-        from aletheia.storage.repositories import list_positions
-        for p in list_positions(status="open"):
+        from aletheia.storage.repositories import list_all_open_positions
+        for p in list_all_open_positions():
+            position_venue = protective_price_venue(
+                p.get("execution_mode"),
+                configured_data_venue=default_exchange,
+            )
+            if position_venue is None:
+                logger.warning(
+                    "price_feed: unsupported position execution mode id=%s mode=%s",
+                    p.get("id"),
+                    p.get("execution_mode"),
+                )
+                continue
             append_instrument(
                 p.get("symbol", ""),
                 p.get("market_type"),
-                p.get("venue"),
+                position_venue,
             )
     except Exception as e:
         logger.warning("price_feed: failed to get position symbols: %s", e)
@@ -130,7 +266,13 @@ def get_watched_instruments():
 
 def get_watched_symbols() -> list[str]:
     """Backward-compatible canonical-symbol view of the watched instruments."""
-    return [instrument.symbol for instrument in get_watched_instruments()]
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for instrument in get_watched_instruments():
+        if instrument.symbol not in seen:
+            seen.add(instrument.symbol)
+            symbols.append(instrument.symbol)
+    return symbols
 
 
 async def refresh_watched_prices() -> dict:
@@ -181,13 +323,24 @@ async def refresh_watched_prices() -> dict:
                                 prev_entry = _price_cache.get(sym, {})
                                 prev_price = prev_entry.get("price")
                                 volume_24h = getattr(ticker, "volume_24h", None) or prev_entry.get("volume_24h")
-                                _price_cache[sym] = {
+                                entry = {
                                     "price": ticker.last_price,
                                     "ts": now,
                                     "prev_price": prev_price,
                                     "volume_24h": volume_24h,
                                     "provider": getattr(ticker, "provider", None) or "unknown",
+                                    "symbol": sym,
+                                    "market_type": instrument.market_type,
+                                    "exchange": instrument.exchange,
                                 }
+                                _instrument_price_cache[
+                                    (
+                                        instrument.exchange,
+                                        sym,
+                                        instrument.market_type,
+                                    )
+                                ] = dict(entry)
+                                _price_cache[sym] = entry
 
                             if prev_price and prev_price > 0 and cfg.event_triggers.enabled:
                                 pct = (ticker.last_price - prev_price) / prev_price * 100

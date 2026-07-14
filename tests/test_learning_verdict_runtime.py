@@ -389,6 +389,18 @@ def test_real_shadow_flow_stays_shadow_after_at01_and_at02(monkeypatch):
     monkeypatch.setattr(authority, "global_learning_refreeze_reason", lambda: None)
     monkeypatch.setattr(lifecycle, "global_learning_refreeze_reason", lambda: None)
 
+    # Model this as a historical producer run: the fixed 4h outcome must begin
+    # after exposure and finish before the verdict is evaluated.
+    evaluation_now = datetime.now(timezone.utc)
+    historical_exposure_at = evaluation_now - timedelta(hours=5)
+    exposure_model = experiments.LearningExposure
+
+    def historical_exposure(**kwargs):
+        kwargs.setdefault("exposed_at", historical_exposure_at.isoformat())
+        return exposure_model(**kwargs)
+
+    monkeypatch.setattr(experiments, "LearningExposure", historical_exposure)
+
     common = dict(
         path_id="universe_family_calibration",
         scope={"family": "momentum", "direction": "long", "market_type": "perp"},
@@ -433,16 +445,16 @@ def test_real_shadow_flow_stays_shadow_after_at01_and_at02(monkeypatch):
         (experiment.experiment_id,),
     )
     db.commit()
-    # entry_ts must be >= exposed_at (cohorts rejects retrospective outcomes).
-    # exposed_at was stamped as real UTC now() inside apply_numeric_treatment, so
-    # derive entry_at from the actual stored value rather than the frozen _BASE.
-    max_exposed_at = max(row["exposed_at"] for row in exposures)
-    entry_at = (
-        datetime.fromisoformat(max_exposed_at.replace("Z", "+00:00"))
-        + timedelta(minutes=5)
-    ).isoformat()
+    latest_exposure = max(
+        datetime.fromisoformat(str(row["exposed_at"]).replace("Z", "+00:00"))
+        for row in exposures
+    )
+    prospective_entry_at = latest_exposure + timedelta(minutes=1)
+    settled_at = prospective_entry_at + timedelta(hours=4, minutes=1)
+    assert settled_at <= evaluation_now
+    prospective_entry = prospective_entry_at.isoformat()
     for candidate, net in ((first_candidate, 1.0), (second_candidate, 0.0)):
-        _outcome(candidate, net=net, entry_at=entry_at)
+        _outcome(candidate, net=net, entry_at=prospective_entry)
     verdict = evaluate_experiment(experiment.experiment_id)[0]
     epoch = exposures[0]["concurrent_policy_epoch"]
     result = lifecycle.process_lifecycle(

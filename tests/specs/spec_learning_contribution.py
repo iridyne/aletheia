@@ -251,30 +251,58 @@ def test_learning_alpha_deduplicates_duplicate_lessons_and_reports_raw_counts():
 
 
 def _insert_trade(db, idx: int, pnl_pct: float, closed_at: str) -> None:
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+    from tests.test_outcome_closure import _insert_entry_chain
+
     opp = f"le-opp-{idx}"
     proposal = f"le-prop-{idx}"
-    db.execute(
-        "INSERT INTO opportunities (id, symbol, market, direction_bias, confidence, status, scanner_family) "
-        "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 'high', 'open', 'momentum')",
-        (opp,),
+    position_id = f"le-pos-{idx}"
+    opportunity_id, proposal_id, order_id = _insert_entry_chain(
+        position_id=position_id,
+        opportunity_id=opp,
+        proposal_id=proposal,
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        price=100.0,
+        execution_mode="paper_internal",
     )
     db.execute(
-        "INSERT INTO trade_proposals "
-        "(id, opportunity_id, symbol, market_type, direction, quantity, price, execution_mode, status, created_at) "
-        "VALUES (?, ?, 'BTC/USDT', 'usdt_futures', 'long', 1, 100, 'paper_internal', 'executed', ?)",
-        (proposal, opp, _iso(20)),
+        "UPDATE opportunities SET scanner_family='momentum' WHERE id=?",
+        (opportunity_id,),
     )
-    db.execute(
-        "INSERT INTO positions "
-        "(id, symbol, market_type, direction, quantity, entry_price, current_price, "
-        "realized_pnl, execution_mode, proposal_id, status, close_reason, "
-        "close_category, exit_price_source, exit_fill_verified, outcome_eligible, "
-        "outcome_exclusion_reason, outcome_semantics_version, opened_at, closed_at) "
-        "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 1, 100, ?, ?, "
-        "'paper_internal', ?, 'closed', 'signal_exit', 'strategy', 'local_fill', "
-        "1, 1, 'eligible', 'oi-v1', ?, ?)",
-        (f"le-pos-{idx}", 100 + pnl_pct, pnl_pct, proposal, _iso(20), closed_at),
-    )
+    insert_position(Position(
+        id=position_id,
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=100.0 + pnl_pct,
+        realized_pnl=pnl_pct,
+        execution_mode="paper_internal",
+        status="closed",
+        close_reason="signal_exit",
+        entry_fee=0.0,
+        exit_fee=0.0,
+        funding_cost=0.0,
+        funding_source="local_simulation",
+        entry_price_source="local_fill",
+        entry_fill_verified=True,
+        close_category="strategy",
+        exit_price_source="local_fill",
+        exit_fill_verified=True,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+        outcome_semantics_version="oi-v1",
+        opened_at=_iso(20),
+        closed_at=closed_at,
+        opportunity_id=opportunity_id,
+        proposal_id=proposal_id,
+        order_id=order_id,
+    ))
 
 
 @spec_claim(

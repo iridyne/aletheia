@@ -9,9 +9,223 @@ source as the emitted opportunity) and the config-consumption / market_type /
 feature-keying invariants against regression.
 """
 
+import asyncio
+from contextlib import nullcontext
 import inspect
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
+
+
+def _assert_emission_failure_cannot_publish_partial_universe_refresh(
+    tmp_path, monkeypatch, failure_kind, *, caller_owns_transaction=False
+):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseMember, UniverseSnapshot
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe import service
+    from aletheia.universe.signal_emitter import EmissionEvidenceError
+
+    cfg = load_config()
+    cfg.universe.enabled = True
+    cfg.regime.enabled = False
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
+    cfg.exchange.preferred_market_type = "spot"
+    cfg.market_data.ccxt_exchange = "bitget"
+
+    feature = {
+        "asset_id": "asset-emission-retry",
+        "symbol": "BTC/USDT",
+        "venue": "bitget",
+        "market_type": "spot",
+        "last_price": 60_000.0,
+        "quote_volume_24h": 1_000_000_000.0,
+        "spread_bps": 2.0,
+        "execution_eligible": True,
+    }
+    scanner_result = {
+        "scanner_family": "momentum",
+        "scanner_direction": "long",
+        "opportunity_score": 70.0,
+        "all_scores": {"momentum": 70.0},
+        "reasons": ["positive momentum"],
+        "risk_flags": [],
+    }
+    allocated = [{
+        **feature,
+        **scanner_result,
+        "total_score": 70.0,
+        "tradability_score": 90.0,
+        "liquidity_score": 90.0,
+        "ttl_sec": 3600,
+    }]
+    previous = UniverseSnapshot(
+        id="previous-healthy-universe",
+        market_type="crypto",
+        status="active",
+        expires_at="2099-01-01T00:00:00+00:00",
+    )
+    repo.insert_universe_snapshot(previous)
+    repo.insert_universe_member(UniverseMember(
+        id="previous-healthy-member",
+        snapshot_id=previous.id,
+        asset_id="previous-asset",
+        symbol="ETH/USDT",
+        market_type="spot",
+        rank=1,
+        total_score=80.0,
+        scanner_family="momentum",
+        scanner_direction="long",
+        expires_at="2099-01-01T00:00:00+00:00",
+    ))
+
+    async def sync_registry(_cfg):
+        return 1
+
+    async def collect_features(_assets, _cfg, *, scanner_run_id):
+        assert scanner_run_id
+        return [feature]
+
+    async def settle_due():
+        return 0
+
+    failure_code = (
+        "opportunity_emission_evidence_failed:snapshot:member"
+        if failure_kind == "evidence"
+        else "opportunity_emission_runtime_failed:snapshot"
+    )
+
+    def emission_failure(*_args, **_kwargs):
+        error_type = EmissionEvidenceError if failure_kind == "evidence" else RuntimeError
+        raise error_type(failure_code)
+
+    monkeypatch.setattr(service, "load_config", lambda: cfg)
+    monkeypatch.setattr(service.repo, "mark_outlier_outcomes_failed", lambda: 0)
+    monkeypatch.setattr(
+        service.repo,
+        "list_universe_assets",
+        lambda **_kwargs: [feature],
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.registry.sync_registry", sync_registry
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.features.collect_features", collect_features
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.filters.apply_tradability_filters",
+        lambda rows, *_args, **_kwargs: rows,
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.scanners.run_all_scanners",
+        lambda _row: scanner_result,
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.allocator.compute_total_score",
+        lambda *_args, **_kwargs: 70.0,
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.allocator.get_family_multipliers", lambda: {}
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.allocator.allocate_universe",
+        lambda *_args, **_kwargs: allocated,
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder.settle_due", settle_due
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder.register_pending",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.causal_controls.record_universe_control_cohort",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        service,
+        "_register_experiment_candidate_outcomes",
+        lambda *_args, **_kwargs: 0,
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.get_latest_volume_ranking", lambda: None
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.signal_emitter.emit_deterministic_opportunities",
+        emission_failure,
+    )
+
+    caller_transaction = repo.transaction() if caller_owns_transaction else nullcontext()
+    with caller_transaction:
+        result = asyncio.run(service.UniverseService().refresh())
+
+    assert result is None
+    db = get_db()
+    snapshots = db.execute(
+        "SELECT id,status FROM universe_snapshots ORDER BY rowid"
+    ).fetchall()
+    assert [dict(row) for row in snapshots] == [{
+        "id": previous.id,
+        "status": "active",
+    }]
+    members = db.execute(
+        "SELECT id,snapshot_id FROM universe_members ORDER BY rowid"
+    ).fetchall()
+    assert [dict(row) for row in members] == [{
+        "id": "previous-healthy-member",
+        "snapshot_id": previous.id,
+    }]
+    failed_run = db.execute(
+        "SELECT status,snapshot_id,errors FROM universe_scanner_runs "
+        "ORDER BY rowid DESC LIMIT 1"
+    ).fetchone()
+    assert failed_run["status"] == "failed"
+    assert failed_run["snapshot_id"]
+    assert failed_run["snapshot_id"] != previous.id
+    assert failure_code in failed_run["errors"]
+    assert db.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
+
+
+@spec_claim(
+    SpecClaim(
+        "UP-25",
+        "universe_pipeline",
+        "§3 retryable opportunity emission",
+        "L2b",
+        "When deterministic Opportunity emission escapes with any unhandled failure, "
+        "UniverseService rolls back the attempted snapshot publication, keeps the previous "
+        "healthy snapshot active, and records the failed run with the attempted snapshot id.",
+        status="implemented",
+    ),
+)
+def test_emission_evidence_failure_cannot_publish_partial_universe_refresh(
+    tmp_path, monkeypatch
+):
+    _assert_emission_failure_cannot_publish_partial_universe_refresh(
+        tmp_path, monkeypatch, "evidence"
+    )
+
+
+def test_unhandled_emitter_runtime_failure_cannot_publish_partial_universe_refresh(
+    tmp_path, monkeypatch
+):
+    _assert_emission_failure_cannot_publish_partial_universe_refresh(
+        tmp_path, monkeypatch, "runtime"
+    )
+
+
+def test_emission_failure_rolls_back_inside_existing_transaction(
+    tmp_path, monkeypatch
+):
+    _assert_emission_failure_cannot_publish_partial_universe_refresh(
+        tmp_path,
+        monkeypatch,
+        "evidence",
+        caller_owns_transaction=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +432,22 @@ def test_snapshot_freshness_is_market_type_scoped(monkeypatch):
         "BTC/USDT", "perp", now=datetime.now(timezone.utc),
     ) is False
     assert calls == [{"symbol": "BTC/USDT", "market_type": "perp", "limit": 1}]
+
+
+@spec_claim(
+    SpecClaim(
+        "UP-21", "universe_pipeline", "§signal emission terminal evidence", "L2a",
+        "signal_emitter exposes one terminal evidence writer so every selected universe "
+        "member ends as emitted, reused, rejected, or error instead of silently disappearing.",
+        status="implemented",
+    ),
+)
+def test_signal_emitter_has_terminal_evidence_writer():
+    from aletheia.universe import signal_emitter
+
+    assert hasattr(signal_emitter, "_record_emission_decision")
+    source = inspect.getsource(signal_emitter.emit_deterministic_opportunities)
+    assert source.count("_record_emission_decision(") >= 8
 
 
 @spec_claim(
@@ -546,7 +776,7 @@ def test_universe_member_regime_tag_persists_and_refresh_assigns(tmp_path, monke
 
 @spec_claim(
     SpecClaim(
-        "UP-21", "universe_pipeline", "§instrument-aware collector routing", "L2b",
+        "UP-24", "universe_pipeline", "§instrument-aware collector routing", "L2b",
         "Active universe market-data collection preserves venue and market type as an "
         "InstrumentId; a perp member must not be downgraded to a spot symbol.",
         status="implemented",

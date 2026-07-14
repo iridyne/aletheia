@@ -12,17 +12,31 @@ from typer.testing import CliRunner
 def _insert_mixed_cohort() -> None:
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
+    from tests.test_outcome_closure import _insert_entry_chain
 
     common = {
         "symbol": "BTC/USDT", "market_type": "spot", "direction": "long",
         "quantity": 1.0, "entry_price": 100.0, "execution_mode": "paper_internal",
         "status": "closed", "closed_at": datetime.now(timezone.utc).isoformat(),
     }
+    opportunity_id, proposal_id, order_id = _insert_entry_chain(
+        position_id="verified",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        price=100.0,
+        execution_mode="paper_internal",
+    )
     repo.insert_position(Position(
         **common, id="verified", realized_pnl=5.0, close_reason="verified_exit",
+        current_price=105.0, entry_fee=0.0, exit_fee=0.0,
+        funding_cost=0.0, funding_source="not_applicable",
+        entry_price_source="local_fill", entry_fill_verified=True,
         close_category="strategy", exit_price_source="local_fill",
         exit_fill_verified=True, outcome_eligible=True,
         outcome_exclusion_reason="eligible", outcome_semantics_version="oi-v1",
+        opportunity_id=opportunity_id, proposal_id=proposal_id, order_id=order_id,
     ))
     repo.insert_position(Position(
         **common, id="administrative", realized_pnl=0.0,

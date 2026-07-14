@@ -48,7 +48,7 @@ def _promote_fn_body() -> str:
     false-trigger the negative grep in SP-S02.
     """
     src = _DATA_ROUTES.read_text(encoding="utf-8")
-    start = src.index("async def promote_serenity_theme(")
+    start = src.index("def promote_serenity_theme(")
     tail = src[start:]
     end_marker = "\n@router."
     end = tail.index(end_marker, 1)
@@ -113,28 +113,15 @@ def test_promote_does_not_write_draft_strategy_record():
 @spec_claim(
     SpecClaim(
         "SP-S03", _CONTRACT, "§promote enqueues signal_pending PiDecisions", "L2a",
-        "promote_serenity_theme constructs a PiDecision with action='signal_pending', "
-        "signal_source='serenity', and opportunity_id pointing at serenity_opportunities.id, "
-        "and wakes the PI daemon",
+        "promote_serenity_theme delegates the all-or-nothing pending-carrier handoff to "
+        "the repository and wakes the PI daemon only after it commits",
     ),
 )
 def test_promote_writes_signal_pending_pi_decision():
     body = _promote_fn_body()
-    assert "PiDecision(" in body, (
-        "promote_serenity_theme does not construct a PiDecision — Serenity "
-        "themes have no consumer downstream"
-    )
-    assert '"signal_pending"' in body or "'signal_pending'" in body, (
-        "promote_serenity_theme does not set action='signal_pending' — PI's "
-        "pending-queue scan would never pick these rows up"
-    )
-    assert '"serenity"' in body or "'serenity'" in body, (
-        "promote_serenity_theme does not stamp signal_source='serenity' — the "
-        "opportunity_id would be cross-table ambiguous (Phase 2 SA-S01)"
-    )
-    assert "action_intent" in body and "pi_evaluate" in body, (
-        "promote_serenity_theme does not flip the opportunity's action_intent to "
-        "'pi_evaluate' — the research UI would still show 'watch'"
+    assert "enqueue_serenity_theme_for_pi" in body, (
+        "promote_serenity_theme does not call the repository's atomic pending "
+        "handoff — theme state and PI carriers could diverge"
     )
     assert "notify_pi_daemon" in body, (
         "promote_serenity_theme does not wake the PI daemon — signals would sit "
@@ -351,6 +338,58 @@ def test_promote_already_promoted_returns_400():
 
 @spec_claim(
     SpecClaim(
+        "SP-B04", _CONTRACT, "§promote atomic queue handoff", "L2b",
+        "A Serenity theme becomes promoted only when every active opportunity and its "
+        "signal_pending carrier commit together; an insertion failure rolls the whole "
+        "handoff back so the same theme can be retried without duplicate carriers",
+    ),
+)
+def test_promote_queue_handoff_rolls_back_and_remains_retryable(monkeypatch):
+    from aletheia.storage import repositories as repo
+
+    _switch_to_filebacked_db()
+    theme_id, opp_ids = _seed_theme_with_opportunities(n=2)
+    real_insert = repo.insert_pi_decision
+    calls = 0
+
+    def fail_second_insert(decision):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("deterministic queue failure")
+        return real_insert(decision)
+
+    monkeypatch.setattr(repo, "insert_pi_decision", fail_second_insert)
+    client = _make_test_client()
+    failed = client.post(f"/api/serenity/themes/{theme_id}/promote")
+
+    assert failed.status_code == 500
+    assert repo.get_serenity_theme(theme_id)["status"] == "active"
+    opps = repo.list_serenity_opportunities(theme_id=theme_id, limit=10)
+    assert {row["id"]: row["action_intent"] for row in opps} == {
+        opportunity_id: "watch" for opportunity_id in opp_ids
+    }
+    assert [
+        row for row in repo.list_pi_decisions(limit=20)
+        if row.get("signal_source") == "serenity"
+        and row.get("opportunity_id") in set(opp_ids)
+    ] == []
+
+    monkeypatch.setattr(repo, "insert_pi_decision", real_insert)
+    retried = client.post(f"/api/serenity/themes/{theme_id}/promote")
+    assert retried.status_code == 200
+    assert retried.json()["queued"] == 2
+    assert repo.get_serenity_theme(theme_id)["status"] == "promoted"
+    carriers = [
+        row for row in repo.list_pi_decisions(limit=20)
+        if row.get("signal_source") == "serenity"
+        and row.get("opportunity_id") in set(opp_ids)
+    ]
+    assert len(carriers) == 2
+
+
+@spec_claim(
+    SpecClaim(
         "SP-B03", _CONTRACT, "§D5 settings endpoint persists + bounds-checks", "L2b",
         "POST /api/settings/serenity persists auto_promote and rejects out-of-band "
         "min_score_for_pi values",
@@ -394,8 +433,8 @@ _RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
 @spec_claim(
     SpecClaim(
         "SP-S06", _CONTRACT, "§auto_promote pipeline integration", "L2a",
-        "When auto_promote=True and score≥min_score_for_pi, research_worker writes "
-        "signal_pending PiDecision after pipeline stage 4 (generate_opportunities)",
+        "When auto_promote=True and score≥min_score_for_pi, research_worker uses the "
+        "same atomic pending-carrier handoff as manual promotion after pipeline stage 4",
     ),
 )
 def test_research_worker_auto_promote_block_exists():
@@ -406,11 +445,9 @@ def test_research_worker_auto_promote_block_exists():
     assert "score_serenity_opportunity" in src, (
         "research_worker does not call the scorer — can't gate on min_score_for_pi"
     )
-    assert "PiDecision(" in src, (
-        "research_worker does not construct PiDecision — auto-promote has no consumer"
-    )
-    assert "signal_pending" in src, (
-        "research_worker does not set action='signal_pending' — PI queue won't pick up"
+    assert "enqueue_serenity_theme_for_pi" in src, (
+        "research_worker does not use the atomic PI handoff — auto-promote can "
+        "diverge from manual promotion"
     )
     assert "notify_pi_daemon" in src, (
         "research_worker does not wake PI daemon after auto-promote"

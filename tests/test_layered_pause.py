@@ -1,5 +1,8 @@
 """Tests for layered pause: essential jobs continue during AI-driven pause."""
 
+import ast
+import inspect
+import textwrap
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
@@ -201,3 +204,37 @@ class TestEssentialJobsCoverage:
             "pi_operator_loop", "insight_synthesizer", "lesson_reviewer",
         }
         assert _ESSENTIAL_JOBS.isdisjoint(ai_jobs)
+
+    def test_essential_jobs_do_not_self_disable_when_runtime_is_paused(self):
+        """Dispatch policy and each essential job body must agree on layered pause."""
+        from aletheia.agent_runtime import scheduler
+
+        entrypoint_overrides = {
+            "learning_measurement_startup_catchup": "_run_measurement_startup_catchup",
+            "ohlcv_active_backfill": "_run_active_ohlcv_backfill",
+        }
+        violations: list[str] = []
+        for job_id in sorted(scheduler._ESSENTIAL_JOBS):
+            fn_name = entrypoint_overrides.get(job_id, f"_run_{job_id}")
+            fn = getattr(scheduler, fn_name)
+            tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+            if any(
+                isinstance(node, ast.Attribute) and node.attr == "paused"
+                for node in ast.walk(tree)
+            ):
+                violations.append(job_id)
+
+        # The scheduled TPSL entry delegates its real work to this body.
+        tpsl_tree = ast.parse(
+            textwrap.dedent(inspect.getsource(scheduler._tpsl_fill_check_body))
+        )
+        if any(
+            isinstance(node, ast.Attribute) and node.attr == "paused"
+            for node in ast.walk(tpsl_tree)
+        ):
+            violations.append("tpsl_fill_check_body")
+
+        assert violations == [], (
+            "jobs declared essential still return early during layered pause: "
+            f"{violations}"
+        )

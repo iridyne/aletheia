@@ -2,14 +2,122 @@
 
 import logging
 import json
+import math
+from collections.abc import Callable
 from datetime import datetime, timezone
 
+from aletheia.analytics.outcome_integrity import validated_funding_economics
 from aletheia.storage.models import PortfolioSnapshot
 
 logger = logging.getLogger("aletheia.pnl")
 from aletheia.storage.repositories import (
-    list_positions, insert_portfolio_snapshot, update_position, list_market_snapshots,
+    list_all_open_positions,
+    insert_portfolio_snapshot,
+    update_position,
+    list_market_snapshots,
 )
+
+
+_CLOSE_ECONOMIC_SNAPSHOT_FIELDS = (
+    "symbol",
+    "market_type",
+    "direction",
+    "quantity",
+    "entry_price",
+    "execution_mode",
+    "entry_fee",
+    "funding_cost",
+    "funding_source",
+    "slippage_cost",
+    "entry_price_source",
+    "entry_fill_verified",
+)
+
+
+def _same_snapshot_value(left: object, right: object) -> bool:
+    if left == right:
+        return True
+    return (
+        isinstance(left, float)
+        and isinstance(right, float)
+        and math.isnan(left)
+        and math.isnan(right)
+    )
+
+
+def _parse_utc_instant(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _validate_complete_funding_evidence(
+    *,
+    row: dict,
+    position_id: str,
+    closed_at: str,
+    funding_cost: object,
+    funding_source: object,
+    evidence: dict,
+) -> None:
+    """Reject a claimed-complete funding handoff that cannot be replayed."""
+    opened = _parse_utc_instant(row.get("opened_at"))
+    closed = _parse_utc_instant(closed_at)
+    evidence_opened = _parse_utc_instant(evidence.get("opened_at"))
+    evidence_closed = _parse_utc_instant(evidence.get("closed_at"))
+    if (
+        evidence.get("status") != "complete"
+        or evidence.get("source") != funding_source
+        or evidence.get("position_id") != position_id
+        or evidence.get("symbol") != row.get("symbol")
+        or opened is None
+        or closed is None
+        or evidence_opened != opened
+        or evidence_closed != closed
+    ):
+        raise ValueError("funding evidence identity or holding window does not match")
+
+    events = evidence.get("events")
+    if not isinstance(events, list):
+        raise ValueError("funding evidence events must be a list")
+    event_total = 0.0
+    scheduled_instants: list[datetime] = []
+    for event in events:
+        if not isinstance(event, dict):
+            raise ValueError("funding evidence event must be a mapping")
+        scheduled = _parse_utc_instant(event.get("scheduled_at"))
+        try:
+            event_cost = float(event.get("funding_cost"))
+        except (TypeError, ValueError):
+            raise ValueError("funding evidence event cost is invalid") from None
+        if (
+            scheduled is None
+            or not (opened < scheduled <= closed)
+            or not math.isfinite(event_cost)
+            or scheduled in scheduled_instants
+        ):
+            raise ValueError("funding evidence event lies outside the holding window")
+        scheduled_instants.append(scheduled)
+        event_total += event_cost
+    if scheduled_instants != sorted(scheduled_instants):
+        raise ValueError("funding evidence events are not chronological")
+    try:
+        supplied_total = float(funding_cost)
+    except (TypeError, ValueError):
+        raise ValueError("funding evidence has no finite total") from None
+    tolerance = max(1e-12, abs(supplied_total) * 1e-9)
+    if (
+        not math.isfinite(supplied_total)
+        or not math.isfinite(event_total)
+        or abs(event_total - supplied_total) > tolerance
+    ):
+        raise ValueError("funding evidence event sum does not match funding cost")
 
 
 def _latest_price(symbol: str) -> float | None:
@@ -25,6 +133,32 @@ def _btc_price_at_close() -> float | None:
         return float(snap["price"]) if snap else None
     except Exception:
         return None
+
+
+def _close_provenance() -> dict:
+    """Return only available producer identity for the close event."""
+    try:
+        from aletheia.agent_runtime.runtime_session import current_close_provenance
+
+        return {
+            key: value
+            for key, value in current_close_provenance().items()
+            if value is not None
+        }
+    except Exception:
+        return {}
+
+
+def _account_environment(execution_mode: str) -> str:
+    if execution_mode == "paper_internal":
+        return "local"
+    if execution_mode == "binance_testnet":
+        return "testnet"
+    if execution_mode.endswith("_demo"):
+        return "demo"
+    if execution_mode.endswith("_live_limited"):
+        return "live"
+    return "unknown"
 
 
 def _build_exchange_upnl_index() -> dict[tuple[str, str], float]:
@@ -66,7 +200,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     When persist=True (used by scheduler's portfolio_snapshot job), also writes
     the updated price/PnL back to the positions table.
     """
-    positions = list_positions(status="open")
+    positions = list_all_open_positions()
     exc_upnl_index = _build_exchange_upnl_index()
     updated = []
     for p in positions:
@@ -188,11 +322,37 @@ def persist_exit_reasoning(
     return True
 
 
-def close_position(position_id: str, exit_price: float, reason: str = "manual") -> dict:
+def close_position(
+    position_id: str,
+    exit_price: float,
+    reason: str = "manual",
+    *,
+    actual_exit_fee: float | None = None,
+    closed_at: str | None = None,
+    verified_exit_evidence: dict | None = None,
+    materialize_close: Callable[[], None] | None = None,
+    actor: str = "system",
+    source: str = "scheduler",
+    funding_cost: float | None = None,
+    funding_source: str | None = None,
+    funding_evidence: dict | None = None,
+) -> dict:
     """Close an open position at exit_price, realizing PnL. Returns the result.
 
     Writes a position_closed audit event (trust §1.4). `reason` is recorded as
-    close_reason (e.g. stop_loss / take_profit / max_hold / manual).
+    close_reason (e.g. stop_loss / take_profit / max_hold / manual). Exchange
+    reconciliation may supply the venue-confirmed exit fee, fill timestamp, and
+    private evidence so every downstream audit/notification/feedback consumer
+    observes the same actual close economics instead of an estimate later being
+    written over it. Local paper fills are authoritative within the simulator;
+    exchange closes without private evidence remain explicitly ineligible. A
+    local broker may pass a database-only ``materialize_close`` callback; it runs
+    inside the same transaction as Position and cash settlement, after the
+    second open-state check and before any post-commit side effect.  A local
+    futures broker may also pass its completed simulated funding amount, source,
+    and event evidence.  Those facts are validated and committed with the same
+    Position/Fill transaction; callers that omit them retain the legacy behavior
+    of reading already-persisted Position funding fields.
     """
     from aletheia.analytics.close_reasons import is_synthetic_close
     if is_synthetic_close(reason):
@@ -206,6 +366,17 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         raise ValueError(f"position not found: {position_id}")
     if row.get("status") != "open":
         raise ValueError(f"position is not open: {position_id}")
+
+    # Normalize the close boundary before validating any economics that claim
+    # to cover this exact holding window.
+    supplied_closed_at = closed_at is not None
+    if closed_at is None:
+        closed_at = datetime.now(timezone.utc).isoformat()
+    else:
+        parsed_closed_at = datetime.fromisoformat(closed_at.replace("Z", "+00:00"))
+        if parsed_closed_at.tzinfo is None:
+            raise ValueError("closed_at must include an explicit timezone")
+        closed_at = parsed_closed_at.astimezone(timezone.utc).isoformat()
 
     gross_pnl = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
     # Deduct round-trip fees; prefer stored entry_fee (precise) over re-derivation.
@@ -228,73 +399,315 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
     entry_fee = row.get("entry_fee")
     if entry_fee is None:
         entry_fee = row["entry_price"] * row["quantity"] * fee_rate
-    exit_fee = exit_price * row["quantity"] * fee_rate
-    realized = gross_pnl - entry_fee - exit_fee
+    if actual_exit_fee is None:
+        exit_fee = exit_price * row["quantity"] * fee_rate
+    else:
+        exit_fee = float(actual_exit_fee)
+        if not math.isfinite(exit_fee) or exit_fee < 0:
+            raise ValueError("actual_exit_fee must be a finite non-negative value")
+    # Spot has no funding leg. Futures funding is part of realized economics,
+    # but only when it came from a durable broker/local ledger.  An unknown or
+    # malformed funding value must not be guessed from current configuration:
+    # the lifecycle may still close, while Outcome/Feedback stays fail-closed.
+    market_type = str(row.get("market_type") or "")
+    explicit_funding = funding_cost is not None or funding_source is not None
+    raw_funding_cost = funding_cost if explicit_funding else row.get("funding_cost")
+    raw_funding_source = (
+        funding_source if explicit_funding else row.get("funding_source")
+    )
+    if funding_evidence is not None and not isinstance(funding_evidence, dict):
+        raise ValueError("funding_evidence must be a mapping")
+    evidence_status = (
+        funding_evidence.get("status")
+        if isinstance(funding_evidence, dict)
+        else None
+    )
+    # An explicit incomplete computation always supersedes any stale Position
+    # value. A claimed-complete handoff is accepted only when its identity,
+    # window, and per-event sum reproduce the supplied total.
+    if funding_evidence is not None and evidence_status != "complete":
+        raw_funding_cost = None
+        raw_funding_source = "unavailable"
+    elif evidence_status == "complete":
+        _validate_complete_funding_evidence(
+            row=row,
+            position_id=position_id,
+            closed_at=closed_at,
+            funding_cost=raw_funding_cost,
+            funding_source=raw_funding_source,
+            evidence=funding_evidence,
+        )
+    elif explicit_funding and raw_funding_source == "local_simulation":
+        raw_funding_cost = None
+        raw_funding_source = "unavailable"
+    funding_cost, funding_source = validated_funding_economics(
+        market_type=market_type,
+        execution_mode=row.get("execution_mode"),
+        funding_cost=(
+            0.0 if market_type == "spot" else raw_funding_cost
+        ),
+        funding_source=(
+            "not_applicable"
+            if market_type == "spot"
+            else raw_funding_source
+        ),
+    )
+
+    # A futures close is operationally complete once its Fill is durable, but
+    # its *economic* result is not complete until funding is known.  Persisting
+    # gross-minus-fees here used to silently treat unknown funding as zero,
+    # publish a reassuring PnL number, and move local-paper cash by that invented
+    # amount.  Keep the lifecycle closed while leaving the net result unavailable.
+    realized: float | None = None
+    if funding_cost is not None:
+        realized = gross_pnl - entry_fee - exit_fee - funding_cost
 
     # BTC benchmark at exit for alpha/beta separation
     btc_exit = _btc_price_at_close()
 
-    # Estimate round-trip slippage for cost visibility
-    try:
-        from aletheia.config.loader import load_config as _lc
-        _cfg = _lc()
-        _sbps = _cfg.trading.slippage_bps
-        _entry_slip = row["entry_price"] * row["quantity"] * (_sbps / 10_000.0)
-        _exit_slip = exit_price * row["quantity"] * (_sbps / 10_000.0)
-        slippage_cost = round(_entry_slip + _exit_slip, 8)
-    except Exception:
-        slippage_cost = None
+    execution_mode = str(row.get("execution_mode") or "")
+    local_paper_fill = execution_mode == "paper_internal"
+    private_exchange_fill = verified_exit_evidence is not None
+    if private_exchange_fill:
+        if not isinstance(verified_exit_evidence, dict):
+            raise ValueError("verified_exit_evidence must be a mapping")
+        fill_ids = verified_exit_evidence.get("fill_ids")
+        try:
+            evidence_quantity = float(verified_exit_evidence.get("fill_quantity"))
+        except (TypeError, ValueError):
+            evidence_quantity = 0.0
+        tolerance = max(1e-12, float(row["quantity"]) * 1e-9)
+        if (
+            actual_exit_fee is None
+            or not supplied_closed_at
+            or not isinstance(fill_ids, list)
+            or not fill_ids
+            or len(fill_ids) != len(set(fill_ids))
+            or abs(evidence_quantity - float(row["quantity"])) > tolerance
+        ):
+            raise ValueError(
+                "verified exchange close requires complete private fill identity, "
+                "quantity, fee, and timestamp"
+            )
 
-    # #103 fix: compute `closed_at` before update_position and reuse it below.
-    # _close_serenity_feedback receives `row` — that's the PRE-CLOSE snapshot
-    # fetched at line 111, so `row['closed_at']` is None and PostMortem's
-    # hold_h was always 0. Stamp the value into row too so the Serenity hook
-    # sees the honest close time.
-    closed_at = datetime.now(timezone.utc).isoformat()
+    exit_fill_verified = local_paper_fill or private_exchange_fill
+    from aletheia.analytics.outcome_integrity import (
+        OUTCOME_SEMANTICS_VERSION,
+        outcome_write_eligibility,
+    )
+    from aletheia.portfolio.disappearance_confirmation import (
+        logical_account_fingerprint,
+    )
+
+    account_environment = _account_environment(execution_mode)
+    account_fingerprint = logical_account_fingerprint(
+        broker_id=execution_mode,
+        account_environment=account_environment,
+        execution_mode=execution_mode,
+    )
+    reconciliation_identity = {
+        "broker_id": execution_mode,
+        "account_environment": account_environment,
+        "account_fingerprint": account_fingerprint,
+        "execution_mode": execution_mode,
+        "position_id": position_id,
+        "symbol": row.get("symbol"),
+        "market_type": row.get("market_type"),
+        "direction": row.get("direction"),
+    }
+    if local_paper_fill:
+        outcome_evidence = {
+            "source": "local_paper_fill",
+            "fill_id": f"paper-close:{position_id}:{closed_at}",
+            "fill_price": float(exit_price),
+            "fill_quantity": float(row["quantity"]),
+            "fee": float(exit_fee),
+            "fee_currency": "USDT",
+            "filled_at": closed_at,
+        }
+    elif private_exchange_fill:
+        outcome_evidence = dict(verified_exit_evidence or {})
+    else:
+        outcome_evidence = {
+            "source": "broker_response_unverified",
+            "fill_price": float(exit_price),
+            "fill_quantity": float(row["quantity"]),
+            "fee_estimated": actual_exit_fee is None,
+            "closed_at": closed_at,
+        }
+    if funding_evidence is not None:
+        outcome_evidence["funding"] = dict(funding_evidence)
     exit_reasoning = build_exit_reasoning(
         row,
         exit_price=exit_price,
         reason=reason,
     )
-    update_position(
-        position_id,
-        status="closed",
-        current_price=exit_price,
-        realized_pnl=realized,
-        unrealized_pnl=0.0,
-        close_reason=reason,
-        closed_at=closed_at,
-        btc_exit_price=btc_exit,
-        entry_fee=round(entry_fee, 8),
-        exit_fee=round(exit_fee, 8),
-        slippage_cost=slippage_cost,
-        exit_reasoning=json.dumps(exit_reasoning, sort_keys=True),
+    update_fields = {
+        "status": "closed",
+        "current_price": exit_price,
+        "realized_pnl": realized,
+        "unrealized_pnl": 0.0,
+        "close_reason": reason,
+        "closed_at": closed_at,
+        "btc_exit_price": btc_exit,
+        "entry_fee": round(entry_fee, 8),
+        "exit_fee": round(exit_fee, 8),
+        "funding_cost": funding_cost,
+        "funding_source": funding_source,
+        "slippage_cost": (
+            row.get("slippage_cost") if local_paper_fill else None
+        ),
+        "exit_reasoning": json.dumps(exit_reasoning, sort_keys=True),
+        "close_category": "strategy",
+        "exit_price_source": (
+            "local_fill" if local_paper_fill
+            else "broker_fill" if private_exchange_fill
+            else "unavailable"
+        ),
+        "exit_fill_verified": exit_fill_verified,
+        "reconciliation_identity": json.dumps(
+            reconciliation_identity,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        "reconciliation_evidence": json.dumps(
+            outcome_evidence,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ),
+        "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+    }
+    if exit_fill_verified and funding_cost is None:
+        outcome_eligible = False
+        outcome_exclusion_reason = "incomplete_funding_economics"
+    else:
+        outcome_eligible, outcome_exclusion_reason = outcome_write_eligibility(
+            {**row, **update_fields},
+            exit_fill_verified=exit_fill_verified,
+        )
+    update_fields.update({
+        "outcome_eligible": outcome_eligible,
+        "outcome_exclusion_reason": outcome_exclusion_reason,
+    })
+    update_fields.update(_close_provenance())
+    audit_before = {
+        "status": row.get("status"),
+        "unrealized_pnl": row.get("unrealized_pnl"),
+    }
+    audit_after = {
+        "status": "closed",
+        "realized_pnl": realized,
+        "close_reason": reason,
+        "outcome_eligible": outcome_eligible,
+        "outcome_exclusion_reason": update_fields["outcome_exclusion_reason"],
+    }
+    audit_message = (
+        f"Position {row.get('symbol')} closed @ {exit_price} ({reason}); "
+        f"realized={realized}; outcome={update_fields['outcome_exclusion_reason']}"
     )
+    # The Position outcome and the local-paper cash event are one accounting
+    # fact.  Commit them together so a ledger failure cannot leave a closed
+    # Position with unchanged cash (or release an eligible Outcome downstream).
+    # Re-read under the writer claim to make concurrent close attempts fail
+    # closed instead of both publishing close side effects.
+    with repo.transaction(immediate=True):
+        current = repo._select_one("positions", position_id)
+        if current is None:
+            raise ValueError(f"position not found: {position_id}")
+        if current.get("status") != "open":
+            raise ValueError(f"position is not open: {position_id}")
+        changed_fields = [
+            field
+            for field in _CLOSE_ECONOMIC_SNAPSHOT_FIELDS
+            if not _same_snapshot_value(row.get(field), current.get(field))
+        ]
+        if changed_fields:
+            raise RuntimeError(
+                "position economics changed before close; retry with a fresh "
+                f"snapshot ({', '.join(changed_fields)})"
+            )
+        if materialize_close is not None:
+            materialize_close()
+        repo.update_position(position_id, **update_fields)
+        if (
+            outcome_eligible
+            or outcome_exclusion_reason == "attribution_read_failed"
+        ):
+            from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
+
+            enqueue_outcome_hook_jobs({**row, **update_fields})
+        if (
+            row.get("execution_mode") == "paper_internal"
+            and realized is not None
+        ):
+            from aletheia.portfolio.paper_account import settle_position_closed
+
+            settle_position_closed(position_id, realized)
+        from aletheia.storage.models import AuditEvent
+
+        repo.insert_audit_event(AuditEvent(
+            actor=actor,
+            source=source,
+            event_type="position_closed",
+            entity_type="position",
+            entity_id=position_id,
+            before_state=json.dumps(audit_before, sort_keys=True),
+            after_state=json.dumps(audit_after, sort_keys=True),
+            message=audit_message,
+        ))
     row["closed_at"] = closed_at  # so the Serenity hook computes real hold_h
-    if row.get("execution_mode") == "paper_internal":
-        from aletheia.portfolio.paper_account import settle_position_closed
-        settle_position_closed(position_id, realized)
-    write_audit({
-        "actor": "system",
-        "source": "scheduler",
+    audit_payload = {
+        "actor": actor,
+        "source": source,
         "event_type": "position_closed",
         "entity_type": "position",
         "entity_id": position_id,
-        "before": {"status": row.get("status"), "unrealized_pnl": row.get("unrealized_pnl")},
-        "after": {"status": "closed", "realized_pnl": realized, "close_reason": reason},
-        "message": f"Position {row.get('symbol')} closed @ {exit_price} ({reason}); realized={realized}",
-    })
+        "before": audit_before,
+        "after": audit_after,
+        "message": audit_message,
+    }
+    try:
+        # The authoritative audit row committed with the Position above. Keep
+        # the append-only JSONL chain in sync without mirroring a duplicate row
+        # back into SQLite.
+        write_audit(audit_payload, mirror_db=False)
+    except Exception as exc:
+        # The database event above is the durable audit authority. A secondary
+        # JSONL sink outage after commit must not make the caller retry a close
+        # that has already settled, but it remains visible in process logs.
+        logger.error(
+            "position close JSONL audit sink failed (%s)", type(exc).__name__
+        )
     # Notify operator of trade close (Telegram + toast)
     try:
         from aletheia.notifications import notify_operator
-        pnl_emoji = "+" if realized > 0 else ""
+        pnl_emoji = "+" if realized is not None and realized > 0 else ""
+        if realized is None:
+            pnl_message = (
+                "Net PnL unavailable: funding economics are incomplete"
+                "\nOutcome excluded from feedback: "
+                f"{outcome_exclusion_reason}"
+            )
+        elif outcome_eligible:
+            pnl_message = f"PnL: {pnl_emoji}{realized:.4f} USDT"
+        else:
+            pnl_message = (
+                f"Recorded PnL: {pnl_emoji}{realized:.4f} USDT"
+                "\nOutcome excluded from feedback: "
+                f"{outcome_exclusion_reason}"
+            )
         notify_operator(
             title=f"Position Closed: {row.get('symbol')}",
             message=(
                 f"{row.get('direction')} → {reason} @ {exit_price:.4f}\n"
-                f"PnL: {pnl_emoji}{realized:.4f} USDT"
+                + pnl_message
             ),
-            level="info" if realized >= 0 else "warning",
+            level=(
+                "warning"
+                if realized is None or realized < 0
+                else "info"
+            ),
             event_type="trade_notification",
             entity_type="position",
             entity_id=position_id,
@@ -302,28 +715,51 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         )
     except Exception:
         pass
-    # Resolve shadow trades for this position batch
-    try:
-        from aletheia.analytics.shadow_trades import resolve_shadow_trades_for_position
-        resolve_shadow_trades_for_position(row)
-    except Exception:
-        pass
-    # Serenity feedback loop: write PostMortem + close the source opportunity
-    try:
-        if row.get("trade_school") == "serenity" and row.get("opportunity_id"):
-            _close_serenity_feedback(row, realized, reason)
-    except Exception:
-        pass
-    return {"position_id": position_id, "realized_pnl": realized, "exit_price": exit_price, "reason": reason}
+    if outcome_eligible or outcome_exclusion_reason == "attribution_read_failed":
+        try:
+            from aletheia.portfolio.outcome_hooks import process_outcome_hook_jobs
+
+            process_outcome_hook_jobs(position_id=position_id)
+        except Exception as exc:
+            # The durable jobs were committed with the Position. A later worker
+            # will recover them even if the immediate delivery attempt itself fails.
+            logger.warning(
+                "post-commit Outcome hook dispatch failed for %s: %s",
+                position_id,
+                exc,
+            )
+    return {
+        "position_id": position_id,
+        "realized_pnl": realized,
+        "exit_price": exit_price,
+        "reason": reason,
+        "outcome_eligible": outcome_eligible,
+        "outcome_exclusion_reason": update_fields["outcome_exclusion_reason"],
+    }
 
 
-def today_raw_closed_realized_pnl(execution_mode: str | None = None) -> float:
-    """Raw stored realized values; administrative unavailable values contribute nothing."""
-    from aletheia.storage.repositories import _select_all
+def _all_closed_positions(execution_mode: str | None = None) -> list[dict]:
+    """Read the complete closed-position history used for account authority.
+
+    Display endpoints may cap rows, but an authorization or completeness check
+    must not forget an old unresolved close merely because newer history crossed
+    an arbitrary list limit.
+    """
+    from aletheia.storage.sqlite import get_db
+
+    sql = "SELECT * FROM positions WHERE status='closed'"
+    params: tuple = ()
+    if execution_mode:
+        sql += " AND execution_mode=?"
+        params = (execution_mode,)
+    sql += " ORDER BY rowid DESC"
+    return [dict(row) for row in get_db().execute(sql, params)]
+
+
+def _closed_today(execution_mode: str | None = None) -> list[dict]:
     today = datetime.now(timezone.utc).date().isoformat()
-    rows = _select_all("positions", where="status = ?", params=("closed",), limit=1000)
-    total = 0.0
-    for r in rows:
+    matched: list[dict] = []
+    for r in _all_closed_positions(execution_mode):
         closed_at = r.get("closed_at") or ""
         try:
             closed_date = datetime.fromisoformat(closed_at).date().isoformat()
@@ -331,10 +767,130 @@ def today_raw_closed_realized_pnl(execution_mode: str | None = None) -> float:
             continue
         if closed_date != today:
             continue
-        if execution_mode and r.get("execution_mode") != execution_mode:
+        matched.append(r)
+    return matched
+
+
+def _finite_number(value) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _realized_economics_value(row: dict) -> float | None:
+    """Return reproducible net PnL, or ``None`` for incomplete economics.
+
+    This deliberately re-checks stored inputs instead of trusting that a
+    numeric ``realized_pnl`` is complete. Older releases wrote futures PnL
+    after treating missing funding as zero, so NULL-only detection would keep
+    publishing those historical false numbers.
+    """
+    pnl = _finite_number(row.get("realized_pnl"))
+    entry = _finite_number(row.get("entry_price"))
+    exit_price = _finite_number(
+        row.get("current_price")
+        if row.get("current_price") is not None
+        else row.get("exit_price")
+    )
+    quantity = _finite_number(row.get("quantity"))
+    entry_fee = _finite_number(row.get("entry_fee"))
+    exit_fee = _finite_number(row.get("exit_fee"))
+    if (
+        pnl is None
+        or entry is None
+        or exit_price is None
+        or quantity is None
+        or entry_fee is None
+        or exit_fee is None
+        or entry <= 0
+        or exit_price <= 0
+        or quantity <= 0
+        or entry_fee < 0
+        or exit_fee < 0
+    ):
+        return None
+
+    market_type = str(row.get("market_type") or "").lower()
+    funding_cost, _funding_source = validated_funding_economics(
+        market_type=market_type,
+        execution_mode=row.get("execution_mode"),
+        funding_cost=row.get("funding_cost"),
+        funding_source=row.get("funding_source"),
+    )
+    if funding_cost is None:
+        return None
+
+    direction = str(row.get("direction") or "").lower()
+    if direction in {"long", "buy"}:
+        gross = (exit_price - entry) * quantity
+    elif direction in {"short", "sell"}:
+        gross = (entry - exit_price) * quantity
+    else:
+        return None
+    expected = gross - entry_fee - exit_fee - funding_cost
+    tolerance = max(1e-8, abs(expected) * 1e-8, entry * quantity * 1e-10)
+    return pnl if abs(pnl - expected) <= tolerance else None
+
+
+def _complete_realized_total(rows: list[dict]) -> tuple[float | None, int]:
+    """Sum net economics only when every included close is reproducible."""
+    total = 0.0
+    unavailable = 0
+    for row in rows:
+        value = _realized_economics_value(row)
+        if value is None:
+            unavailable += 1
             continue
-        total += r.get("realized_pnl") or 0.0
-    return round(total, 8)
+        total += value
+    return (None, unavailable) if unavailable else (round(total, 8), 0)
+
+
+def position_realized_pnl_view(row: dict) -> dict:
+    """Return one display/export row without trusting legacy numeric PnL.
+
+    The immutable database row remains available for audit and remediation.  The
+    operator-facing read model exposes a number only when the same close inputs
+    can reproduce it, so a legacy futures row cannot look valid on the blotter
+    while portfolio totals correctly say that funding is unknown.
+    """
+    view = dict(row)
+    if str(row.get("status") or "") != "closed":
+        return view
+
+    realized = _realized_economics_value(row)
+    complete = realized is not None
+    view["realized_pnl"] = realized
+    view["realized_pnl_complete"] = complete
+    if complete:
+        view["realized_pnl_unavailable_reason"] = None
+        return view
+
+    market_type = str(row.get("market_type") or "").lower()
+    funding_cost, _funding_source = validated_funding_economics(
+        market_type=market_type,
+        execution_mode=row.get("execution_mode"),
+        funding_cost=row.get("funding_cost"),
+        funding_source=row.get("funding_source"),
+    )
+    if market_type in {"spot", "usdt_futures"} and funding_cost is None:
+        reason = "incomplete_funding_economics"
+    else:
+        reason = str(
+            row.get("outcome_exclusion_reason")
+            or "incomplete_realized_economics"
+        )
+    view["realized_pnl_unavailable_reason"] = reason
+    return view
+
+
+def today_raw_closed_realized_pnl(
+    execution_mode: str | None = None,
+) -> float | None:
+    """Raw stored realized total, or unavailable if any close is incomplete."""
+    total, _ = _complete_realized_total(_closed_today(execution_mode))
+    return total
 
 
 def today_eligible_strategy_pnl(execution_mode: str | None = None) -> float:
@@ -349,30 +905,25 @@ def today_eligible_strategy_pnl(execution_mode: str | None = None) -> float:
     return round(sum(float(row.get("realized_pnl") or 0.0) for row in rows), 8)
 
 
-def today_realized_pnl(execution_mode: str | None = None) -> float:
+def today_realized_pnl(execution_mode: str | None = None) -> float | None:
     """Compatibility raw metric; Risk migration to authoritative loss is RG-T09."""
     return today_raw_closed_realized_pnl(execution_mode=execution_mode)
 
 
-def today_pnl_by_symbol(execution_mode: str | None = None) -> dict[str, float]:
+def today_pnl_by_symbol(
+    execution_mode: str | None = None,
+) -> dict[str, float | None]:
     """Per-symbol realized PnL for positions closed today (UTC)."""
-    from aletheia.storage.repositories import _select_all
-    today = datetime.now(timezone.utc).date().isoformat()
-    rows = _select_all("positions", where="status = ?", params=("closed",), limit=1000)
-    by_sym: dict[str, float] = {}
-    for r in rows:
-        closed_at = r.get("closed_at") or ""
-        try:
-            closed_date = datetime.fromisoformat(closed_at).date().isoformat()
-        except (ValueError, TypeError):
-            continue
-        if closed_date != today:
-            continue
-        if execution_mode and r.get("execution_mode") != execution_mode:
-            continue
-        sym = r.get("symbol", "?")
-        by_sym[sym] = round(by_sym.get(sym, 0.0) + (r.get("realized_pnl") or 0.0), 4)
-    return by_sym
+    grouped: dict[str, list[dict]] = {}
+    for row in _closed_today(execution_mode):
+        grouped.setdefault(str(row.get("symbol") or "?"), []).append(row)
+    return {
+        symbol: (
+            None if total is None else round(total, 4)
+        )
+        for symbol, rows in grouped.items()
+        for total, _ in [_complete_realized_total(rows)]
+    }
 
 
 def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = False) -> dict:
@@ -383,17 +934,20 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
 
     total_unrealized = sum(p["unrealized_pnl"] for p in positions)
     total_notional = sum(p["quantity"] * (p.get("current_price") or p["entry_price"]) for p in positions)
-    total_today_realized = today_realized_pnl(execution_mode=execution_mode)
+    today_closed = _closed_today(execution_mode)
+    total_today_realized, today_realized_unavailable_count = (
+        _complete_realized_total(today_closed)
+    )
 
     # Realized PnL: per-mode for the requested execution_mode (paper dashboard),
     # plus all-mode total for the exchange_account row.
-    all_closed = list_positions(status="closed", limit=10000)
+    all_closed = _all_closed_positions()
     if execution_mode:
         mode_closed = [p for p in all_closed if p.get("execution_mode") == execution_mode]
     else:
         mode_closed = all_closed
-    total_realized = sum(float(p.get("realized_pnl") or 0.0) for p in mode_closed)
-    all_realized = sum(float(p.get("realized_pnl") or 0.0) for p in all_closed)
+    total_realized, realized_unavailable_count = _complete_realized_total(mode_closed)
+    all_realized, all_realized_unavailable_count = _complete_realized_total(all_closed)
 
     # Exposure by symbol
     exposure: dict[str, float] = {}
@@ -413,7 +967,11 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
     final_unrealized = total_unrealized
     final_positions_count = len(positions)
     final_exposure = exposure
-    final_today_pnl = total_unrealized + total_today_realized
+    final_today_pnl = (
+        total_unrealized + total_today_realized
+        if total_today_realized is not None
+        else None
+    )
     # The headline "total value". Defaults to locally-managed notional, but is
     # overridden with real account equity when the exchange cache is live — so the
     # hero number (and the stored snapshot series) is true account value, not a
@@ -462,7 +1020,11 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
                     exc_upnl = cached.get("total_unrealized_pnl")
                 if exc_upnl is not None:
                     final_unrealized = float(exc_upnl)
-                    final_today_pnl = float(exc_upnl) + total_today_realized
+                    final_today_pnl = (
+                        float(exc_upnl) + total_today_realized
+                        if total_today_realized is not None
+                        else None
+                    )
 
                 exc_positions = cached.get("positions") or []
                 if exc_positions:
@@ -500,7 +1062,11 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
                     uta_upnl = unified.get("total_unrealized_pnl")
                     if uta_upnl is not None:
                         final_unrealized = float(uta_upnl)
-                        final_today_pnl = float(uta_upnl) + total_today_realized
+                        final_today_pnl = (
+                            float(uta_upnl) + total_today_realized
+                            if total_today_realized is not None
+                            else None
+                        )
                     if uta_count:
                         final_positions_count = uta_count
         except Exception:
@@ -509,8 +1075,16 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
     return {
         "total_value_usdt": round(final_total_value, 4),
         "unrealized_pnl": round(final_unrealized, 4),
-        "realized_pnl": round(total_realized, 4),
-        "all_realized_pnl": round(all_realized, 4),
+        "realized_pnl": (
+            round(total_realized, 4) if total_realized is not None else None
+        ),
+        "realized_pnl_complete": total_realized is not None,
+        "realized_pnl_unavailable_count": realized_unavailable_count,
+        "all_realized_pnl": (
+            round(all_realized, 4) if all_realized is not None else None
+        ),
+        "all_realized_pnl_complete": all_realized is not None,
+        "all_realized_pnl_unavailable_count": all_realized_unavailable_count,
         # #56 note (2026-07-08): `today_pnl` is a legacy misnomer — it's
         # `unrealized_pnl (lifetime for all currently-open positions) +
         # today_realized_pnl`. It is NOT PnL earned today alone. A card
@@ -522,13 +1096,23 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         # currently persist — parked as a Serenity-adjacent improvement).
         # Kept as-is for API back-compat; UI callers are expected to
         # transition to today_realized_pnl for the honest "Today" number.
-        "today_pnl": round(final_today_pnl, 4),
+        "today_pnl": (
+            round(final_today_pnl, 4) if final_today_pnl is not None else None
+        ),
         "positions_count": final_positions_count,
         "exposure_by_symbol": {k: round(v, 4) for k, v in final_exposure.items()},
         "unrealized_by_symbol": {p["symbol"]: round(p["unrealized_pnl"], 4) for p in positions if p.get("unrealized_pnl")},
         "today_pnl_by_symbol": today_pnl_by_symbol(execution_mode),
         "positions": positions,
-        "today_realized_pnl": round(total_today_realized, 4),
+        "today_realized_pnl": (
+            round(total_today_realized, 4)
+            if total_today_realized is not None
+            else None
+        ),
+        "today_realized_pnl_complete": total_today_realized is not None,
+        "today_realized_pnl_unavailable_count": (
+            today_realized_unavailable_count
+        ),
         # Exchange-account view (closes WEBUI_BACKEND_HANDOFF #3 / portfolio-sync-gap).
         "exchange_equity_usdt": exchange_equity_usdt,
         "exchange_state_age_sec": exchange_state_age_sec,
@@ -646,6 +1230,7 @@ def _close_serenity_feedback(position: dict, realized_pnl: float, close_reason: 
             failure_bucket = close_reason or "unknown"
 
     pm = SerenityPostMortem(
+        position_id=str(position.get("id") or "") or None,
         opportunity_id=opp_id,
         outcome=outcome,
         failure_bucket=failure_bucket,

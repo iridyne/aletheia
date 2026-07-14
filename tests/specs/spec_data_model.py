@@ -237,6 +237,36 @@ def test_collector_health_state_is_bounded_by_domain_primary_key():
     assert "domain TEXT PRIMARY KEY" in migrations
 
 
+@spec_claim(
+    SpecClaim(
+        "DM-S26",
+        "data_model",
+        "§3 durable outcome hook delivery",
+        "L2a",
+        "Eligible Position outcomes use a durable hook-job outbox with one row per "
+        "Position and hook type, while Serenity post-mortems carry a unique Position "
+        "identity so replay after a crash cannot duplicate feedback.",
+        status="implemented",
+    ),
+)
+def test_outcome_hook_outbox_and_serenity_idempotency_schema():
+    from aletheia.storage.migrations import (
+        SCHEMA_SQL,
+        _ADDITIVE_COLUMNS,
+        _OUTCOME_INTEGRITY_DDL,
+    )
+
+    outcome_ddl = "\n".join(_OUTCOME_INTEGRITY_DDL)
+    assert "CREATE TABLE IF NOT EXISTS outcome_hook_jobs" in outcome_ddl
+    assert "UNIQUE(position_id, hook_type)" in outcome_ddl
+    assert "idx_outcome_hook_jobs_ready" in outcome_ddl
+    assert "position_id TEXT" in SCHEMA_SQL.split(
+        "CREATE TABLE IF NOT EXISTS serenity_post_mortems", 1
+    )[1].split(");", 1)[0]
+    assert ("position_id", "serenity_post_mortems", "TEXT") in _ADDITIVE_COLUMNS
+    assert "idx_serenity_post_mortems_position" in outcome_ddl
+
+
 # ---------------------------------------------------------------------------
 # L2b — Behavioral (new claims)
 # ---------------------------------------------------------------------------
@@ -445,6 +475,7 @@ def test_pi_decision_carries_opportunity_id(tmp_path, monkeypatch):
     import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity, PiDecision
     from aletheia.agent_shell.reflection import record_decision
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -460,10 +491,27 @@ def test_pi_decision_carries_opportunity_id(tmp_path, monkeypatch):
     run_migrations()
 
     test_opp_id = "test-opp-abc123"
+    repo.insert_opportunity(Opportunity(
+        id=test_opp_id,
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+    ))
+    repo.insert_pi_decision(PiDecision(
+        id="pending-test-opp-abc123",
+        action="signal_pending",
+        opportunity_id=test_opp_id,
+        signal_source="market_observer",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+    ))
     decision_result = {
         "action": "trade",
         "symbol": "BTC/USDT",
         "direction": "long",
+        "market_type": "spot",
         "conviction": 7,
         "reasoning": "test reasoning",
         "proposal_id": None,

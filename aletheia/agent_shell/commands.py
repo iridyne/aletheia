@@ -3,13 +3,14 @@
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from aletheia.agent_runtime.orchestrator import run_agent
 import aletheia.config.loader as config_loader
 from aletheia.storage.repositories import (
     get_agent_run,
     get_trade_proposal,
+    list_all_open_positions,
     list_agent_runs,
     list_fills,
     list_knowledge_items,
@@ -1519,17 +1520,142 @@ def _emit_self_heal_action(
         pass
 
 
+def _pending_carrier_authority_failure(decision) -> str | None:
+    """Return the fail-closed reason, or None for one executable queue identity."""
+    if any(
+        step.get("reason_code") == "pending_identity_ambiguous"
+        for step in (getattr(decision, "filter_trace", None) or [])
+    ):
+        return "pending_identity_ambiguous"
+
+    opportunity_id = getattr(decision, "opportunity_id", None)
+    signal_source = getattr(decision, "signal_source", None) or "market_observer"
+    if signal_source not in {"market_observer", "serenity"}:
+        return "pending_source_invalid"
+    if not opportunity_id:
+        return "pending_signal_required"
+
+    from aletheia.storage.repositories import (
+        find_final_pi_decision_for_opportunity,
+        find_pending_pi_decision_for_opportunity,
+    )
+    from aletheia.agent_shell.trading_decision import (
+        _resolve_pending_carrier_identity,
+    )
+
+    pending = _resolve_pending_carrier_identity(
+        find_pending_pi_decision_for_opportunity(opportunity_id, signal_source)
+    )
+    if pending is None:
+        return "pending_signal_required"
+    # A carrier is execution authority, so partial legacy identity cannot be
+    # treated as a wildcard. Missing direction/market would otherwise let one
+    # queued row authorize the opposite side or a different instrument class.
+    for field in ("symbol", "direction", "market_type"):
+        expected = getattr(decision, field, None)
+        actual = pending.get(field)
+        if not expected or not actual or expected != actual:
+            return "pending_signal_required"
+
+    if signal_source != "market_observer":
+        return None
+
+    # Queue freshness is not enough: the source Opportunity may have expired
+    # after ranking. Validate its own lifecycle under the writer lock before a
+    # new Proposal claim. An already-durable final claim is recovery authority
+    # and is therefore resumed instead of being cancelled by later TTL/config.
+    from aletheia.storage.repositories import (
+        expire_queued_opportunity_with_ttl_evidence,
+        get_opportunity,
+        transaction,
+    )
+
+    existing = None
+    with transaction(immediate=True):
+        existing = find_final_pi_decision_for_opportunity(
+            opportunity_id, signal_source
+        )
+        if existing is None:
+            source = get_opportunity(opportunity_id)
+            source_status = str((source or {}).get("status") or "")
+            if source_status != "queued":
+                return (
+                    "pending_source_expired"
+                    if source_status == "expired"
+                    else "pending_source_not_queued"
+                )
+            valid_until = source.get("valid_until")
+            if valid_until:
+                try:
+                    expires_at = datetime.fromisoformat(
+                        str(valid_until).replace("Z", "+00:00")
+                    )
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    return "pending_source_expiry_invalid"
+                checked_at = datetime.now(timezone.utc)
+                if expires_at <= checked_at:
+                    expire_queued_opportunity_with_ttl_evidence(
+                        opportunity_id,
+                        evaluated_at=checked_at.isoformat(),
+                        reason_detail=(
+                            "source Opportunity valid_until elapsed before "
+                            "System Operator Proposal preflight"
+                        ),
+                        parameters={
+                            "expiry_basis": "valid_until",
+                            "valid_until": str(valid_until),
+                            "authority_check": "operator_preflight",
+                        },
+                    )
+                    return "pending_source_expired"
+
+    if existing is not None:
+        return None
+    try:
+        from aletheia.agent_shell.trading_context import _PENDING_SIGNAL_MAX_AGE_MINUTES
+
+        created_at = datetime.fromisoformat(str(pending.get("created_at")).replace("Z", "+00:00"))
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        fresh = created_at >= datetime.now(timezone.utc) - timedelta(
+            minutes=_PENDING_SIGNAL_MAX_AGE_MINUTES
+        )
+    except (TypeError, ValueError):
+        fresh = False
+    if fresh:
+        return None
+
+    # Once a durable claim exists, queue age no longer decides whether its
+    # already-owned submission may recover. This covers both historical orphan
+    # claims and the atomic claim+Proposal commit followed by process death.
+    return "pending_signal_required"
+
+
+def _has_durable_pending_carrier(decision) -> bool:
+    """Return whether a new-entry decision owns one exact durable queue carrier."""
+    return _pending_carrier_authority_failure(decision) is None
+
+
+def _configured_paper_execution_mode() -> str:
+    return str(config_loader.load_config().exchange.paper_execution_mode)
+
+
+def _proposal_status_from_execution_result(execution_result: dict) -> str | None:
+    """Persist the Proposal's real state, not a caller-facing recovery action."""
+    return execution_result.get("proposal_status") or execution_result.get("status")
+
+
 async def evaluate_trading_opportunity(params: dict) -> dict:
     """System Operator evaluates market state and submits a paper proposal if conviction >= 55."""
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
     from aletheia.agent_shell.trading_decision import (
+        DecisionUnavailable,
         evaluate_trading_opportunity as _evaluate,
-        submit_decision_as_proposal,
+        prepare_decision_as_proposal,
     )
-    from aletheia.config.loader import load_config
-
-    cfg = load_config()
-    execution_mode = cfg.exchange.paper_execution_mode
+    execution_mode = _configured_paper_execution_mode()
 
     # Build three-layer enriched context
     ctx = build_enriched_trading_context()
@@ -1537,8 +1663,50 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     # Run System Operator decision loop
     decision = await _evaluate(ctx)
 
+    trade_like = decision.action == "trade"
+    rejected_missing_pending_carrier = False
+    pending_authority_failure = (
+        None
+        if trade_like and _has_durable_pending_carrier(decision)
+        else (_pending_carrier_authority_failure(decision) if trade_like else None)
+    )
+    if trade_like and pending_authority_failure:
+        original_action = decision.action
+        decision.filter_trace.append({
+            "filter_name": "pending_signal_authority",
+            "stage": "proposal_submission",
+            "decision": "rejected",
+            "reason_code": pending_authority_failure,
+            "inputs": {
+                "action": original_action,
+                "opportunity_id": decision.opportunity_id,
+                "signal_source": decision.signal_source,
+            },
+            "parameters": {"required_carrier": "pi_decisions.action=signal_pending"},
+        })
+        decision.action = "skip"
+        decision.reasoning = (
+            f"{decision.reasoning} [{pending_authority_failure}; no proposal created]"
+        )
+        trade_like = False
+        rejected_missing_pending_carrier = True
+
+    def _attach_pending_queue_state(payload: dict) -> None:
+        try:
+            from aletheia.agent_shell.trading_context import _build_pending_signal_queue
+
+            _, queue = _build_pending_signal_queue(limit=0)
+            payload["pending_queue_remaining"] = queue["unresolved_total"]
+            payload["pending_queue"] = queue
+        except Exception:
+            payload["pending_queue_remaining"] = None
+
     result: dict = {
         "action": decision.action,
+        # Identity belongs to every evaluated terminal decision, not only trades.
+        # A skip with a source opportunity must remain explainable later.
+        "symbol": decision.symbol,
+        "direction": decision.direction,
         "conviction": decision.conviction,
         "reasoning": decision.reasoning[:300],
         "debate_ran": decision.debate_ran,
@@ -1558,33 +1726,246 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "opposing_signals": decision.opposing_signals,
         "market_type": decision.market_type,
         "scanner_family": decision.scanner_family,
+        "position_size_usdt": decision.position_size_usdt,
+        "proposal_status": "not_applicable",
+        "proposal_reason": "action_not_trade",
         "filter_trace": decision.filter_trace,
         # One bundle-level attribution unit for all overlapping Learning prompt channels.
         "learning_manifest": ctx.get("learning_manifest") or {},
     }
 
-    # trade / scale_in / flip all produce proposals
-    if decision.action in ("trade", "scale_in", "flip") and decision.symbol:
-        result["symbol"] = decision.symbol
-        result["direction"] = decision.direction
-        result["position_size_usdt"] = decision.position_size_usdt
+    if trade_like:
+        result["proposal_status"] = "submitting"
+        result["proposal_reason"] = None
 
-        proposal_result = await submit_decision_as_proposal(decision, execution_mode)
-        if proposal_result:
-            result["proposal_id"] = proposal_result.get("proposal_id")
-            result["proposal_status"] = proposal_result.get("status")
-            if proposal_result.get("reason"):
-                result["proposal_reason"] = proposal_result["reason"]
+    # A trade-like model choice without execution authority is an evaluation
+    # failure, not a terminal System Operator decision. Persisting it through
+    # claim_decision would create an anonymous final (or consume an unqueued
+    # Opportunity) and make the real pending queue look abandoned.
+    if rejected_missing_pending_carrier:
+        result["proposal_reason"] = pending_authority_failure
+        result["operator_decision_persisted"] = False
+        existing_final = None
+        if decision.opportunity_id:
+            from aletheia.storage.repositories import (
+                find_final_pi_decision_for_opportunity,
+            )
+
+            existing_final = find_final_pi_decision_for_opportunity(
+                decision.opportunity_id,
+                decision.signal_source or "market_observer",
+            )
+        if existing_final:
+            result.update({
+                "action": existing_final.get("action"),
+                "symbol": existing_final.get("symbol"),
+                "direction": existing_final.get("direction"),
+                "market_type": existing_final.get("market_type"),
+                "conviction": existing_final.get("conviction"),
+                "reasoning": existing_final.get("reasoning") or "",
+                "proposal_id": existing_final.get("proposal_id"),
+                "proposal_status": existing_final.get("proposal_status"),
+                "proposal_reason": existing_final.get("proposal_reason"),
+                "opportunity_id": existing_final.get("opportunity_id"),
+                "signal_source": (
+                    existing_final.get("signal_source") or "market_observer"
+                ),
+                "idempotent_replay": True,
+                "operator_decision_persisted": True,
+            })
+        _attach_pending_queue_state(result)
+        return result
+
+    prepared_proposal = None
+    if trade_like:
+        try:
+            prepared_result = await prepare_decision_as_proposal(decision, execution_mode)
+        except DecisionUnavailable:
+            # Assessment/preflight unavailability is not a business decision.
+            # Leave the exact queue carrier untouched so the daemon can retry.
+            raise
+        except Exception as exc:
+            decision.filter_trace.append({
+                "filter_name": "proposal_submission",
+                "stage": "proposal_submission",
+                "decision": "error",
+                "reason_code": "proposal_preparation_failed",
+                "inputs": {"action": decision.action},
+                "parameters": {},
+            })
+            raise DecisionUnavailable(
+                "proposal_preparation_failed", stage="proposal_preflight"
+            ) from exc
+        prepared_proposal = prepared_result.get("proposal") if prepared_result else None
+        if prepared_proposal is not None:
+            # Preparation resolves the executable instrument (including legacy
+            # missing market_type).  Persist the exact same identity on the
+            # PiDecision that will own this Proposal.
+            decision.market_type = prepared_proposal.market_type
+            result["market_type"] = prepared_proposal.market_type
+            result["proposal_id"] = prepared_proposal.id
+            result["proposal_status"] = "submitting"
+            result["proposal_reason"] = None
+        elif prepared_result and prepared_result.get("status") == "skipped":
+            # A deterministic direction-quality rejection is a real terminal
+            # business decision. Persist it honestly as skip, not as a trade
+            # claim with proposal_id=NULL.
+            decision.action = "skip"
+            trade_like = False
+            result["action"] = "skip"
+            result["proposal_id"] = None
+            result["proposal_status"] = "not_applicable"
+            result["proposal_reason"] = prepared_result.get("reason")
             result["filter_trace"] = decision.filter_trace
         else:
-            result["proposal_error"] = "price_unavailable_or_proposal_rejected"
+            reason = (
+                prepared_result.get("reason")
+                if isinstance(prepared_result, dict)
+                else "proposal_preparation_unavailable"
+            )
+            raise DecisionUnavailable(
+                reason or "proposal_preparation_unavailable",
+                stage="proposal_preflight",
+            )
+        if trade_like and result.get("proposal_reason"):
+            result["proposal_error"] = result["proposal_reason"]
 
-    # Record decision for next-cycle reflection loop
+    # The prepared Proposal and final PiDecision become visible together in one
+    # BEGIN IMMEDIATE transaction.  Risk/broker work starts only after commit.
+    from aletheia.agent_shell.reflection import (
+        PendingSourceClaimError,
+        claim_decision,
+        finalize_decision,
+        recover_interrupted_decision,
+    )
+
     try:
-        from aletheia.agent_shell.reflection import record_decision
-        record_decision(result)
-    except Exception:
-        pass
+        claimed_final, claim_created = claim_decision(
+            result, proposal=prepared_proposal
+        )
+    except PendingSourceClaimError as exc:
+        decision.filter_trace.append({
+            "filter_name": "pending_source_claim",
+            "stage": "proposal_submission",
+            "decision": "rejected",
+            "reason_code": exc.reason,
+            "inputs": {
+                "opportunity_id": decision.opportunity_id,
+                "signal_source": decision.signal_source,
+            },
+            "parameters": {"required_status": "queued"},
+        })
+        result.update({
+            "action": "skip",
+            "proposal_id": None,
+            "proposal_status": "rejected",
+            "proposal_reason": exc.reason,
+            "proposal_error": exc.reason,
+            "operator_decision_persisted": False,
+            "filter_trace": decision.filter_trace,
+        })
+        _attach_pending_queue_state(result)
+        return result
+    submission_owner = claim_created
+
+    def _apply_claim_to_result(claim: dict, *, replay: bool) -> None:
+        result.update({
+            "action": claim.get("action"),
+            "symbol": claim.get("symbol"),
+            "direction": claim.get("direction"),
+            "market_type": claim.get("market_type"),
+            "conviction": claim.get("conviction"),
+            "reasoning": claim.get("reasoning") or "",
+            "proposal_id": claim.get("proposal_id"),
+            "proposal_status": claim.get("proposal_status"),
+            "proposal_reason": claim.get("proposal_reason"),
+            "opportunity_id": claim.get("opportunity_id"),
+            "signal_source": claim.get("signal_source") or "market_observer",
+        })
+        if replay:
+            result["idempotent_replay"] = True
+
+    def _return_existing_claim() -> dict:
+        _apply_claim_to_result(claimed_final, replay=True)
+        _attach_pending_queue_state(result)
+        return result
+
+    if not claim_created:
+        interrupted = (
+            claimed_final.get("proposal_status") == "submitting"
+            and not claimed_final.get("proposal_id")
+        )
+        if interrupted and prepared_proposal is not None:
+            claimed_final, recovered = recover_interrupted_decision(
+                claimed_final, result, prepared_proposal
+            )
+            submission_owner = recovered or bool(claimed_final.get("proposal_id"))
+        elif interrupted:
+            # The current assessment did not reproduce the executable intent.
+            # It has no authority to settle the older durable trade claim as a
+            # skip/failure; preserve that claim for a later strict matching retry.
+            _apply_claim_to_result(claimed_final, replay=True)
+            result["proposal_status"] = "submitting"
+            result["proposal_reason"] = "recovery_deferred"
+            result["proposal_error"] = "recovery_deferred"
+            result["recovery_deferred"] = True
+            result["operator_decision_persisted"] = True
+            _attach_pending_queue_state(result)
+            return result
+        elif (
+            claimed_final.get("proposal_status") == "submitting"
+            and claimed_final.get("proposal_id")
+        ):
+            # The atomic claim already owns a durable Proposal. A fresh model
+            # assessment is advisory after that commit and cannot replace the
+            # original trade with skip/watch. Resume the stored identity and
+            # execution mode instead of finalizing it as not_applicable.
+            if claimed_final.get("action") != "trade":
+                return _return_existing_claim()
+            _apply_claim_to_result(claimed_final, replay=True)
+            trade_like = True
+            submission_owner = True
+        else:
+            return _return_existing_claim()
+
+    if trade_like and claimed_final.get("proposal_id") and submission_owner:
+        from aletheia.execution.gateway import execute_existing_proposal
+        from aletheia.storage.repositories import get_trade_proposal
+
+        stored_proposal = get_trade_proposal(claimed_final["proposal_id"])
+        proposal_execution_mode = (
+            str(stored_proposal.get("execution_mode"))
+            if stored_proposal and stored_proposal.get("execution_mode")
+            else execution_mode
+        )
+        proposal_result = execute_existing_proposal(
+            claimed_final["proposal_id"], proposal_execution_mode
+        )
+        if proposal_result.get("status") == "already_claimed":
+            return _return_existing_claim()
+        result["proposal_id"] = proposal_result.get("proposal_id")
+        result["proposal_status"] = _proposal_status_from_execution_result(
+            proposal_result
+        )
+        result["proposal_reason"] = (
+            proposal_result.get("reason") or proposal_result.get("reason_code")
+        )
+        result["filter_trace"] = decision.filter_trace
+        if result.get("proposal_reason"):
+            result["proposal_error"] = result["proposal_reason"]
+
+    # Settle the durable claim after the Proposal reaches a visible result.
+    settled_final = finalize_decision(
+        claimed_final["id"],
+        result,
+        publish_filter_evidence=claim_created,
+    )
+    if claim_created:
+        result["proposal_id"] = settled_final.get("proposal_id")
+        result["proposal_status"] = settled_final.get("proposal_status")
+        result["proposal_reason"] = settled_final.get("proposal_reason")
+    else:
+        _apply_claim_to_result(settled_final, replay=True)
 
     # Self-heal: emit system_action when data environment is degraded
     try:
@@ -1602,15 +1983,16 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     except Exception:
         pass
 
+    _attach_pending_queue_state(result)
+
     return result
 
 
 async def review_portfolio_state(params: dict) -> dict:
-    """System Operator reviews open positions for overexposure and optionally closes / reduces."""
+    """System Operator reviews open positions and may close one exact Position."""
     import json as _json
     from aletheia.agent_shell.context import build_app_context
     from aletheia.agents.helpers import llm_structured
-    from aletheia.portfolio.pnl import close_position, _latest_price
 
     ctx = build_app_context(sections=["market", "trading", "risk"])
     open_positions = ctx.get("trading", {}).get("open_positions", [])
@@ -1629,7 +2011,7 @@ async def review_portfolio_state(params: dict) -> dict:
     schema = {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["hold", "close_one", "reduce_exposure"]},
+            "action": {"type": "string", "enum": ["hold", "close_one"]},
             "target_symbol": {"type": "string"},
             "target_market_type": {"type": "string", "description": "spot | perp | usdt_futures — required when both spot and perp of the same symbol are open"},
             "target_direction": {"type": "string", "enum": ["long", "short"]},
@@ -1656,7 +2038,6 @@ Risk limits:
 Review the portfolio and decide:
 - "hold": all positions look fine
 - "close_one": one specific position should be closed (specify target_symbol)
-- "reduce_exposure": overall exposure is too high (specify target_symbol to close)
 
 Be conservative — only recommend closing if there is a clear risk reason.
 
@@ -1672,14 +2053,21 @@ Return JSON: {_json.dumps(schema)}"""
     if err or review is None:
         return {"action": "none", "reason": err or "llm_unavailable"}
 
-    action = review.get("action", "hold")
+    raw_action = str(review.get("action") or "hold")
+    supported_action = raw_action in {"hold", "close_one"}
+    action = raw_action if supported_action else "hold"
+    reasoning = str(review.get("reasoning") or "")[:300]
+    if not supported_action:
+        reasoning = (
+            f"{reasoning} [unsupported_action:{raw_action}; normalized to hold]"
+        ).strip()
     result = {
         "action": action,
-        "reasoning": review.get("reasoning", "")[:300],
+        "reasoning": reasoning,
         "target_symbol": review.get("target_symbol"),
     }
 
-    if action in ("close_one", "reduce_exposure") and (
+    if action == "close_one" and (
         review.get("target_position_id") or review.get("target_symbol")
     ):
         sym = review.get("target_symbol") or ""
@@ -1688,7 +2076,10 @@ Return JSON: {_json.dumps(schema)}"""
         target_id = review.get("target_position_id")
         # #106 fix: progressive tightening. position_id trumps everything;
         # otherwise combine symbol + whatever disambiguators the LLM gave.
-        candidates = list_positions(status="open")
+        # This is execution authority, not a display page. Resolve the requested
+        # target against the complete open set so an older position beyond the
+        # default 50-row list window cannot become impossible to close.
+        candidates = list_all_open_positions()
         if target_id:
             matching = [p for p in candidates if p["id"] == target_id]
         else:
@@ -1699,23 +2090,21 @@ Return JSON: {_json.dumps(schema)}"""
                 matching = [p for p in matching if p["direction"] == direction]
         closed_count = 0
         for pos in matching[:1]:
-            price = _latest_price(sym)
-            if price:
-                try:
-                    # Route by execution_mode: demo/live positions MUST close via their
-                    # exchange broker (real reduce + real exit price), not a local-only
-                    # close that fabricates the exit and desyncs the exchange book.
-                    from aletheia.portfolio.position_manager import close_position_routed
-                    close_position_routed(
-                        pos["id"], reason="pi_agent_portfolio_review",
-                        fallback_exit_price=float(price),
-                        decision_reasoning=str(review.get("reasoning") or ""),
-                        decision_actor="system_operator",
-                        decision_source="portfolio_review",
-                    )
-                    closed_count += 1
-                except Exception as e:
-                    result["close_error"] = str(e)[:100]
+            try:
+                # The router resolves a fresh exact venue+symbol+market mark for
+                # local paper. Position.current_price and symbol-only snapshots are
+                # display facts, never authority for a close Fill.
+                from aletheia.portfolio.position_manager import close_position_routed
+                close_position_routed(
+                    pos["id"], reason="pi_agent_portfolio_review",
+                    fallback_exit_price=None,
+                    decision_reasoning=str(review.get("reasoning") or ""),
+                    decision_actor="system_operator",
+                    decision_source="portfolio_review",
+                )
+                closed_count += 1
+            except Exception as e:
+                result["close_error"] = str(e)[:100]
         result["positions_closed"] = closed_count
 
     return result

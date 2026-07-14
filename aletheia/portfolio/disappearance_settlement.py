@@ -60,6 +60,27 @@ def _run_query(client, request):
     return asyncio.run(query())
 
 
+def _known_entry_order_ids(position: dict) -> tuple[str, ...]:
+    """Return only exchange entry Orders already represented by this Position."""
+    rows = repo.get_db().execute(
+        """
+        SELECT DISTINCT o.exchange_order_id
+        FROM orders o
+        WHERE o.execution_mode = ?
+          AND TRIM(COALESCE(o.exchange_order_id, '')) <> ''
+          AND TRIM(COALESCE(o.close_reason, '')) = ''
+          AND (o.id = ? OR o.position_id = ?)
+        ORDER BY o.exchange_order_id ASC
+        """,
+        (
+            position.get("execution_mode"),
+            position.get("order_id"),
+            position.get("id"),
+        ),
+    ).fetchall()
+    return tuple(str(row["exchange_order_id"]) for row in rows)
+
+
 def settle_ready_disappearance_candidate(candidate_id: str) -> dict:
     candidate = repo._select_one("position_disappearance_candidates", candidate_id)
     if candidate is None:
@@ -74,8 +95,6 @@ def settle_ready_disappearance_candidate(candidate_id: str) -> dict:
     if position.get("status") != "open":
         return {"candidate_id": candidate_id, "closed": False, "reason": "position_not_open"}
     execution_mode = str(position["execution_mode"])
-    if execution_mode.endswith("_live_limited"):
-        return {"candidate_id": candidate_id, "closed": False, "reason": "live_alert_only"}
 
     history_start_ms = _to_ms(position.get("opened_at"))
     if history_start_ms is None:
@@ -98,6 +117,7 @@ def settle_ready_disappearance_candidate(candidate_id: str) -> dict:
         quantity=float(position["quantity"]),
         history_start_ms=history_start_ms,
         history_end_ms=history_end_ms,
+        known_entry_order_ids=_known_entry_order_ids(position),
     )
     try:
         evidence = _run_query(_client_for_mode(execution_mode), request)
@@ -106,21 +126,26 @@ def settle_ready_disappearance_candidate(candidate_id: str) -> dict:
             "candidate_id": candidate_id, "closed": False,
             "reason": "verified_exit_query_failed", "error_type": type(exc).__name__,
         }
-    result = close_position_from_verified_exit(
-        str(position["id"]), evidence,
-        reason=("verified_exit" if evidence.state == "verified_fill" else "reconciled_gone"),
-        candidate_id=candidate_id,
-    )
-    if result.get("closed") or result.get("already_closed"):
-        stamp = datetime.now(timezone.utc).isoformat()
-        status = (
-            "settled_verified"
-            if result.get("closure_type") in {"verified_strategy", "strategy"}
-            else "settled_administrative"
+    # The observed Order/Fill chain, Position closure, and candidate resolution
+    # are one local state transition.  Keeping the outer writer transaction open
+    # makes the nested close transaction join it, so a final candidate-write
+    # failure cannot leave a closed Position with a permanently pending event.
+    with repo.transaction(immediate=True):
+        result = close_position_from_verified_exit(
+            str(position["id"]), evidence,
+            reason="reconciled_gone",
+            candidate_id=candidate_id,
         )
-        repo.update_position_disappearance_candidate(
-            candidate_id, status=status, resolved_at=stamp, updated_at=stamp,
-        )
+        if result.get("closed") or result.get("already_closed"):
+            stamp = datetime.now(timezone.utc).isoformat()
+            status = (
+                "settled_verified"
+                if result.get("closure_type") in {"verified_strategy", "strategy"}
+                else "settled_administrative"
+            )
+            repo.update_position_disappearance_candidate(
+                candidate_id, status=status, resolved_at=stamp, updated_at=stamp,
+            )
     return {"candidate_id": candidate_id, **result}
 
 

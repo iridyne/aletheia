@@ -25,6 +25,8 @@ class TestClosedPositionToPortfolio:
             quantity=0.1,
             entry_price=1700.0,
             execution_mode="paper_internal",
+            funding_cost=0.0,
+            funding_source="local_simulation",
             status="open",
             opened_at=(datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
         )
@@ -43,13 +45,17 @@ class TestClosedPositionToPortfolio:
         paper = Position(
             symbol="BTC/USDT", market_type="usdt_futures", direction="long",
             quantity=0.001, entry_price=60000.0, execution_mode="paper_internal",
-            status="closed", realized_pnl=10.0,
+            current_price=70000.0, status="closed", realized_pnl=10.0,
+            entry_fee=0.0, exit_fee=0.0,
+            funding_cost=0.0, funding_source="local_simulation",
             closed_at=datetime.now(timezone.utc).isoformat(),
         )
         okx = Position(
             symbol="ETH/USDT", market_type="usdt_futures", direction="short",
-            quantity=0.01, entry_price=1800.0, execution_mode="okx_demo",
-            status="closed", realized_pnl=25.0,
+            quantity=0.1, entry_price=1800.0, current_price=1550.0,
+            execution_mode="okx_demo", status="closed", realized_pnl=25.0,
+            entry_fee=0.0, exit_fee=0.0,
+            funding_cost=0.0, funding_source="broker_ledger",
             closed_at=datetime.now(timezone.utc).isoformat(),
         )
         repo.insert_position(paper)
@@ -103,15 +109,21 @@ class TestTodayRealizedForRisk:
         repo.insert_position(Position(
             symbol="BTC/USDT", market_type="spot", direction="long",
             quantity=0.001, entry_price=60000.0,
+            current_price=55000.0,
             execution_mode="okx_demo", status="closed",
             realized_pnl=-5.0,
+            entry_fee=0.0, exit_fee=0.0,
+            funding_cost=0.0, funding_source="not_applicable",
             closed_at=now.isoformat(),
         ))
         repo.insert_position(Position(
             symbol="ETH/USDT", market_type="spot", direction="short",
             quantity=0.01, entry_price=1800.0,
+            current_price=1500.0,
             execution_mode="okx_demo", status="closed",
             realized_pnl=3.0,
+            entry_fee=0.0, exit_fee=0.0,
+            funding_cost=0.0, funding_source="not_applicable",
             closed_at=now.isoformat(),
         ))
         # Yesterday's trade should NOT count
@@ -132,15 +144,21 @@ class TestTodayRealizedForRisk:
         repo.insert_position(Position(
             symbol="BTC/USDT", market_type="spot", direction="long",
             quantity=0.001, entry_price=60000.0,
+            current_price=70000.0,
             execution_mode="paper_internal", status="closed",
             realized_pnl=10.0,
+            entry_fee=0.0, exit_fee=0.0,
+            funding_cost=0.0, funding_source="not_applicable",
             closed_at=now.isoformat(),
         ))
         repo.insert_position(Position(
             symbol="ETH/USDT", market_type="spot", direction="long",
             quantity=0.01, entry_price=1800.0,
+            current_price=3800.0,
             execution_mode="okx_demo", status="closed",
             realized_pnl=20.0,
+            entry_fee=0.0, exit_fee=0.0,
+            funding_cost=0.0, funding_source="not_applicable",
             closed_at=now.isoformat(),
         ))
 

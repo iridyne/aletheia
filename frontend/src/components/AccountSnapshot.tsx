@@ -36,10 +36,13 @@ export default function AccountSnapshot() {
   // pure-today value `today_realized_pnl` when present, fall back to
   // legacy `today_pnl`, then to unrealized (with caveat) as before.
   const todayRealizedRaw = (p as any)?.today_realized_pnl
+  const todayRealizedComplete = (p as any)?.today_realized_pnl_complete !== false
   const legacyTodayPnl = p?.today_pnl
-  const usingUnrealizedFallback = todayRealizedRaw == null && legacyTodayPnl == null && p?.unrealized_pnl != null
-  const usingLegacyTodayFallback = todayRealizedRaw == null && legacyTodayPnl != null
-  const todayPnlRaw = todayRealizedRaw ?? legacyTodayPnl ?? p?.unrealized_pnl
+  const usingUnrealizedFallback = todayRealizedComplete && todayRealizedRaw == null && legacyTodayPnl == null && p?.unrealized_pnl != null
+  const usingLegacyTodayFallback = todayRealizedComplete && todayRealizedRaw == null && legacyTodayPnl != null
+  const todayPnlRaw = todayRealizedComplete
+    ? todayRealizedRaw ?? legacyTodayPnl ?? p?.unrealized_pnl
+    : null
   const todayPnlNum = todayPnlRaw == null ? null : Number(todayPnlRaw)
   const todayPnlText = fmtSigned(todayPnlNum)
   const todayPnlTone: 'positive' | 'negative' | 'muted' = todayPnlNum == null
@@ -58,6 +61,7 @@ export default function AccountSnapshot() {
         value={`${todayPnlText} USDT`}
         tone={todayPnlTone}
         caveat={
+          !todayRealizedComplete ? 'funding or close economics unavailable' :
           usingUnrealizedFallback ? 'unrealized · today figure unavailable' :
           // #56: the legacy today_pnl includes lifetime uPnL of open positions.
           // Surface that so the operator knows the number isn't pure today.

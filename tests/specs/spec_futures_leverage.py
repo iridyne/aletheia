@@ -6,6 +6,7 @@ risk engine leverage checks, and paper_tools leverage passthrough.
 
 import pytest
 
+from tests.execution_authority import seed_order_authority
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 # ---------------------------------------------------------------------------
@@ -201,6 +202,18 @@ def test_paper_open_records_leverage_and_liquidation(tmp_path, monkeypatch):
     from aletheia.storage import repositories as repo
 
     # 5x long BTC @ 60000 → leverage persisted + liquidation_price ≈ entry*(1-1/5+0.004)
+    seed_order_authority(
+        proposal_id="pf1",
+        risk_decision_id="rf1",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        order_type="market",
+        quantity=0.01,
+        price=60000.0,
+        execution_mode="paper_internal",
+        leverage=5,
+    )
     r5 = execute_paper_order(
         proposal_id="pf1", risk_decision_id="rf1",
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
@@ -213,6 +226,18 @@ def test_paper_open_records_leverage_and_liquidation(tmp_path, monkeypatch):
     assert pos5["liquidation_price"] < 60000.0  # long liq below entry
 
     # 1x spot → no liquidation price
+    seed_order_authority(
+        proposal_id="pf2",
+        risk_decision_id="rf2",
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1.0,
+        price=3000.0,
+        execution_mode="paper_internal",
+        leverage=1,
+    )
     r1 = execute_paper_order(
         proposal_id="pf2", risk_decision_id="rf2",
         symbol="ETH/USDT", market_type="spot", direction="long",
@@ -264,8 +289,21 @@ def test_pi_decision_schema_market_type_and_leverage():
               "submit_decision_as_proposal forwards PI market_type + leverage to "
               "create_paper_proposal, clamping leverage to the per-tier cap"),
 )
-async def test_submit_decision_clamps_leverage(monkeypatch):
+async def test_submit_decision_clamps_leverage(tmp_path, monkeypatch):
     import aletheia.agent_shell.trading_decision as td
+    from aletheia.config.loader import load_config
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    venue = load_config().market_data.ccxt_exchange or "binance"
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT",
+        market_type="perp",
+        exchange=venue,
+        price=60000.0,
+    ))
 
     captured = {}
 
@@ -273,11 +311,9 @@ async def test_submit_decision_clamps_leverage(monkeypatch):
         captured.update(kwargs)
         return {"status": "executed", "proposal_id": "x"}
 
-    # Stub the gateway-facing boundary + market data + guard chain so we test only
-    # the decision→proposal forwarding logic (not the execution pipeline).
+    # Stub only the gateway-facing boundary + advisory guard chain. Entry pricing
+    # deliberately goes through the production exact-venue freshness accessor.
     monkeypatch.setattr("aletheia.execution.paper_tools.create_paper_proposal", _fake_create)
-    monkeypatch.setattr("aletheia.trading.market_data.latest_snapshot",
-                        lambda s, market_type=None: {"price": 60000.0})
     monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda ctx: [])
     monkeypatch.setattr("aletheia.trust.guard_chain.summarize",
                         lambda v: {"blocks": [], "details": ""})

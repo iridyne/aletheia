@@ -187,7 +187,15 @@ class TelegramBot:
             from aletheia.portfolio.pnl import today_realized_pnl, compute_portfolio
             realized = today_realized_pnl()
             portfolio = compute_portfolio()
-            unrealized = portfolio.get("unrealized_pnl", 0.0)
+            unrealized = float(portfolio.get("unrealized_pnl") or 0.0)
+            if realized is None:
+                return (
+                    "<b>Today PnL</b>\n"
+                    "Realized: <code>unavailable</code>\n"
+                    f"Unrealized: <code>{unrealized:+.2f} USDT</code>\n"
+                    "Total: <code>unavailable</code>\n"
+                    "Funding or other close economics are incomplete."
+                )
             sign = "+" if realized >= 0 else ""
             return (
                 f"<b>Today PnL</b>\n"

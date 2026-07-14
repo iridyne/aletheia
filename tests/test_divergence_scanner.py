@@ -136,6 +136,7 @@ async def test_divergence_scanner_creates_opportunity(tmp_path, monkeypatch):
         return_value=mock_provider,
     ):
         result = await run_divergence_scanner(permission_mode="Paper")
+        replay = await run_divergence_scanner(permission_mode="Paper")
 
     assert len(result["errors"]) == 0
     assert any("opportunity:" in o for o in result["outputs"])
@@ -149,11 +150,69 @@ async def test_divergence_scanner_creates_opportunity(tmp_path, monkeypatch):
     assert opp["asset_class"] == "crypto"
     assert opp["execution_eligible"] == 1
     assert opp["direction_bias"] == "long"
+    assert opp["market"] == "spot"
+    assert datetime.fromisoformat(opp["valid_until"]) == (
+        datetime.fromisoformat(now) + timedelta(hours=2)
+    )
     assert "divergence" in opp["thesis"].lower()
 
     meta = json.loads(opp["metadata"])
     assert meta["trigger"] == "prediction_divergence"
     assert meta["prob_change_24h"] == 0.15
+    assert meta["prediction_market_id"] == "pm_test_001"
+    assert meta["prediction_external_market_id"] == "ext_001"
+    assert meta["prediction_updated_at"] == now
+    assert meta["instrument_market"] == "spot"
+    assert meta["source_version"]
+    assert any(
+        output.startswith("skip_duplicate_source_version:")
+        for output in replay["outputs"]
+    )
+    mock_provider.get_ticker.assert_awaited_once_with("BTC/USDT")
+
+
+@pytest.mark.asyncio
+async def test_divergence_scanner_short_requires_explicit_perp_fact(tmp_path, monkeypatch):
+    """A bearish prediction cannot be relabeled as futures without a perp fact."""
+    _setup_db(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc).isoformat()
+    from aletheia.storage.repositories import _insert
+    _insert("prediction_markets", {
+        "id": "pm_test_short",
+        "event_id": "ev_test_short",
+        "source": "polymarket",
+        "external_market_id": "ext_short",
+        "question": "Will Bitcoin fall below $70k by end of 2026?",
+        "yes_probability": 0.35,
+        "no_probability": 0.65,
+        "probability_change_24h": -0.15,
+        "volume_24h": 120000.0,
+        "liquidity": 80000.0,
+        "status": "active",
+        "updated_at": now,
+    })
+
+    mock_provider = AsyncMock()
+    mock_provider.get_ticker = AsyncMock(return_value=Ticker(
+        symbol="BTC/USDT",
+        last_price=95000.0,
+        volume_24h=5_000_000_000.0,
+        change_pct_24h=-1.0,
+    ))
+
+    with patch(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        return_value=mock_provider,
+    ):
+        result = await run_divergence_scanner(permission_mode="Paper")
+
+    assert result["errors"] == []
+    assert "skip:BTC/USDT:short_requires_perp_instrument" in result["outputs"]
+    assert repo._select_all(
+        "opportunities", where="source_agent = ?", params=("divergence_scanner",)
+    ) == []
+    mock_provider.get_ticker.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -210,3 +269,142 @@ async def test_divergence_scanner_no_qualifying_markets(tmp_path, monkeypatch):
 
     assert "no_qualifying_markets" in result["outputs"]
     assert len(result["errors"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_divergence_rejections_have_stable_terminal_evidence(tmp_path, monkeypatch):
+    """Every qualifying source row is durably accounted for when it is rejected."""
+    _setup_db(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc).isoformat()
+    from aletheia.storage.repositories import _insert
+
+    rows = [
+        {
+            "id": "pm_unmapped",
+            "event_id": "ev_unmapped",
+            "source": "polymarket",
+            "external_market_id": "ext_unmapped",
+            "question": "Will it rain in London tomorrow?",
+            "yes_probability": 0.7,
+            "no_probability": 0.3,
+            "probability_change_24h": 0.12,
+            "volume_24h": 80_000.0,
+            "liquidity": 60_000.0,
+            "status": "active",
+            "updated_at": now,
+        },
+        {
+            "id": "pm_short",
+            "event_id": "ev_short",
+            "source": "polymarket",
+            "external_market_id": "ext_short_terminal",
+            "question": "Will Bitcoin fall below $70k?",
+            "yes_probability": 0.3,
+            "no_probability": 0.7,
+            "probability_change_24h": -0.12,
+            "volume_24h": 80_000.0,
+            "liquidity": 60_000.0,
+            "status": "active",
+            "updated_at": now,
+        },
+        {
+            "id": "pm_already_priced",
+            "event_id": "ev_already_priced",
+            "source": "polymarket",
+            "external_market_id": "ext_already_priced",
+            "question": "Will Ethereum break $5000?",
+            "yes_probability": 0.7,
+            "no_probability": 0.3,
+            "probability_change_24h": 0.12,
+            "volume_24h": 80_000.0,
+            "liquidity": 60_000.0,
+            "status": "active",
+            "updated_at": now,
+        },
+    ]
+    for row in rows:
+        _insert("prediction_markets", row)
+
+    mock_provider = AsyncMock()
+    mock_provider.get_ticker = AsyncMock(return_value=Ticker(
+        symbol="ETH/USDT",
+        last_price=5000.0,
+        volume_24h=2_000_000_000.0,
+        change_pct_24h=5.0,
+    ))
+
+    with patch(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        return_value=mock_provider,
+    ):
+        result = await run_divergence_scanner(permission_mode="Paper")
+        replay = await run_divergence_scanner(permission_mode="Paper")
+
+    assert result["errors"] == []
+    assert replay["errors"] == []
+    evidence = repo._select_all(
+        "filter_decisions",
+        where="filter_name = ?",
+        params=("prediction_divergence",),
+        order="reason_code ASC",
+    )
+    assert len(evidence) == 3
+    assert len({row["candidate_key"] for row in evidence}) == 3
+    assert all(
+        row["candidate_key"].startswith("prediction_observation:")
+        for row in evidence
+    )
+    assert {row["reason_code"] for row in evidence} == {
+        "price_already_moved",
+        "short_requires_perp_instrument",
+        "symbol_unmapped",
+    }
+
+
+@pytest.mark.asyncio
+async def test_divergence_evidence_failure_cannot_report_success(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc).isoformat()
+    from aletheia.storage.repositories import _insert
+    _insert("prediction_markets", {
+        "id": "pm_evidence_failure",
+        "event_id": "ev_evidence_failure",
+        "source": "polymarket",
+        "external_market_id": "ext_evidence_failure",
+        "question": "Will Bitcoin reach $150k?",
+        "yes_probability": 0.72,
+        "no_probability": 0.28,
+        "probability_change_24h": 0.15,
+        "volume_24h": 120_000.0,
+        "liquidity": 80_000.0,
+        "status": "active",
+        "updated_at": now,
+    })
+
+    mock_provider = AsyncMock()
+    mock_provider.get_ticker = AsyncMock(return_value=Ticker(
+        symbol="BTC/USDT",
+        last_price=95_000.0,
+        volume_24h=5_000_000_000.0,
+        change_pct_24h=1.0,
+    ))
+
+    with patch(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        return_value=mock_provider,
+    ), patch(
+        "aletheia.analytics.filter_evidence.record_filter_decision",
+        side_effect=RuntimeError("db unavailable"),
+    ):
+        result = await run_divergence_scanner(permission_mode="Paper")
+
+    assert not any(output.startswith("opportunity:") for output in result["outputs"])
+    assert len(result["errors"]) == 1
+    assert result["errors"][0].startswith(
+        "divergence_evidence_failed:prediction_observation:"
+    )
+    assert repo.list_opportunities(limit=10) == [], (
+        "Opportunity creation and its terminal producer evidence must be atomic"
+    )

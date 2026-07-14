@@ -14,6 +14,22 @@ def _closed_position(
 ) -> None:
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
+
+    closed_at = datetime.now(timezone.utc).isoformat()
+    if eligible:
+        _insert_closed_position_via_producer(
+            position_id=position_id,
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            realized_pnl=float(pnl or 0.0),
+            execution_mode=mode,
+            closed_at=closed_at,
+        )
+        return
 
     kwargs = {
         "id": position_id,
@@ -26,43 +42,37 @@ def _closed_position(
         "execution_mode": mode,
         "status": "closed",
         "realized_pnl": pnl,
-        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "closed_at": closed_at,
     }
-    if eligible:
-        kwargs.update({
-            "close_reason": "verified_exit",
-            "close_category": "strategy",
-            "exit_price_source": "local_fill" if mode == "paper_internal" else "broker_fill",
-            "exit_fill_verified": True,
-            "outcome_eligible": True,
-            "outcome_exclusion_reason": "eligible",
-            "outcome_semantics_version": "oi-v1",
-        })
-    else:
-        kwargs.update({
-            "close_reason": "reconciled_gone",
-            "close_category": "administrative",
-            "exit_price_source": "unavailable",
-            "exit_fill_verified": False,
-            "outcome_eligible": False,
-            "outcome_exclusion_reason": "administrative_close",
-            "outcome_semantics_version": "oi-v1",
-        })
+    kwargs.update({
+        "close_reason": "reconciled_gone",
+        "close_category": "administrative",
+        "exit_price_source": "unavailable",
+        "exit_fill_verified": False,
+        "outcome_eligible": False,
+        "outcome_exclusion_reason": "administrative_close",
+        "outcome_semantics_version": "oi-v1",
+    })
     repo.insert_position(Position(**kwargs))
 
 
-def _paper_close_event(position_id: str, amount: float) -> None:
+def _corrupt_paper_close_event(position_id: str, amount: float) -> None:
+    """Create an internally continuous ledger mismatch from a real close event."""
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import PaperAccountEvent
 
-    repo.insert_paper_account_event(PaperAccountEvent(
-        action="position_closed",
-        amount_usdt=amount,
-        cash_balance_before_usdt=100.0,
-        cash_balance_after_usdt=100.0 + amount,
-        source="portfolio_pnl",
-        position_id=position_id,
-    ))
+    db = repo.get_db()
+    event = db.execute(
+        "SELECT * FROM paper_account_events "
+        "WHERE action = 'position_closed' AND position_id = ?",
+        (position_id,),
+    ).fetchone()
+    assert event is not None
+    after = float(event["cash_balance_before_usdt"]) + amount
+    db.execute(
+        "UPDATE paper_account_events SET amount_usdt = ?, "
+        "cash_balance_after_usdt = ? WHERE id = ?",
+        (amount, after, event["id"]),
+    )
 
 
 def _proposal():
@@ -79,8 +89,6 @@ def test_authoritative_loss_reconciles_verified_paper_close_to_cash_ledger():
 
     _closed_position("loss", -8.0)
     _closed_position("gain", 3.0)
-    _paper_close_event("loss", -8.0)
-    _paper_close_event("gain", 3.0)
 
     snapshot = authoritative_account_realized_loss("paper_internal")
     assert snapshot.available is True
@@ -93,7 +101,7 @@ def test_mismatched_or_administrative_paper_close_makes_loss_unavailable():
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
 
     _closed_position("verified", -8.0)
-    _paper_close_event("verified", -7.0)
+    _corrupt_paper_close_event("verified", -7.0)
     mismatch = authoritative_account_realized_loss("paper_internal")
     assert mismatch.available is False
     assert mismatch.reason == "paper_ledger_mismatch"
@@ -140,7 +148,6 @@ def test_genuine_authoritative_loss_keeps_existing_threshold_and_trip(monkeypatc
     cfg.risk.kill_switch_enabled_demo = True
     save_config(cfg)
     _closed_position("verified-loss", -10.0)
-    _paper_close_event("verified-loss", -10.0)
 
     proposal = _proposal()
     repo.insert_trade_proposal(proposal)

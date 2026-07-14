@@ -9,6 +9,7 @@ zero behavior change. Claim prefix: PS.
 from __future__ import annotations
 
 import sqlite3
+from itertools import count
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -188,19 +189,46 @@ def test_operator_decidable_param_is_context_decided(tmp_path, monkeypatch):
     assert eff["_risk_appetite"] is not None
 
 
+_CLOSED_IDS = count()
+
+
 def _closed(repo, Position, regime, pnl, reason="take_profit", entry=100.0, qty=1.0):
+    from tests.test_outcome_closure import _insert_entry_chain
+
     synthetic = reason == "reconciled_gone"
+    position_id = f"persona-close-{next(_CLOSED_IDS)}"
+    causal_ids = (None, None, None)
+    if not synthetic:
+        causal_ids = _insert_entry_chain(
+            position_id=position_id,
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=qty,
+            price=entry,
+            execution_mode="okx_demo",
+        )
+    opportunity_id, proposal_id, order_id = causal_ids
     repo.insert_position(Position(
+        id=position_id,
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=qty, entry_price=entry, execution_mode="okx_demo",
+        current_price=entry + pnl / qty,
         status="closed", realized_pnl=pnl, close_reason=reason, regime_tag=regime,
         closed_at="2026-07-12T08:00:00+00:00",
+        entry_fee=0.0, exit_fee=0.0,
+        funding_cost=0.0, funding_source="broker_ledger",
+        entry_price_source="unavailable" if synthetic else "broker_fill",
+        entry_fill_verified=not synthetic,
         close_category="administrative" if synthetic else "strategy",
         exit_price_source="unavailable" if synthetic else "broker_fill",
         exit_fill_verified=not synthetic,
         outcome_eligible=not synthetic,
         outcome_exclusion_reason="administrative_close" if synthetic else "eligible",
         outcome_semantics_version="oi-v1",
+        opportunity_id=opportunity_id,
+        proposal_id=proposal_id,
+        order_id=order_id,
     ))
 
 

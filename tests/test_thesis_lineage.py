@@ -144,13 +144,29 @@ def _insert_risk(db, idx: int, *, approved: bool = True) -> None:
     )
 
 
-def _insert_order_fill_position(db, idx: int, *, pnl: float, status: str = "closed") -> None:
+def _insert_order_fill_position(
+    db,
+    idx: int,
+    *,
+    pnl: float | None,
+    status: str = "closed",
+) -> None:
+    position_id = f"pos-lineage-{idx}"
+    current_price = 105.0 if pnl is None else 100.0 + pnl / 0.2
     db.execute(
         "INSERT INTO orders "
         "(id, proposal_id, risk_decision_id, symbol, market_type, direction, order_type, quantity, price, "
-        "execution_mode, status, created_at, filled_at) "
-        "VALUES (?, ?, ?, 'BTC/USDT', 'usdt_futures', 'long', 'limit', 0.2, 100, 'bitget_demo', 'filled', ?, ?)",
-        (f"order-lineage-{idx}", f"prop-lineage-{idx}", f"risk-lineage-{idx}", _iso(), _iso()),
+        "execution_mode, status, position_id, created_at, filled_at) "
+        "VALUES (?, ?, ?, 'BTC/USDT', 'usdt_futures', 'long', 'limit', 0.2, 100, "
+        "'bitget_demo', 'filled', ?, ?, ?)",
+        (
+            f"order-lineage-{idx}",
+            f"prop-lineage-{idx}",
+            f"risk-lineage-{idx}",
+            position_id,
+            _iso(),
+            _iso(),
+        ),
     )
     db.execute(
         "INSERT INTO fills (id, order_id, fill_price, fill_quantity, fee, filled_at) "
@@ -160,11 +176,16 @@ def _insert_order_fill_position(db, idx: int, *, pnl: float, status: str = "clos
     db.execute(
         "INSERT INTO positions "
         "(id, symbol, market_type, direction, quantity, entry_price, current_price, unrealized_pnl, realized_pnl, "
-        "execution_mode, strategy_id, proposal_id, order_id, opportunity_id, status, close_reason, opened_at, closed_at) "
-        "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 0.2, 100, 105, 0, ?, 'bitget_demo', NULL, ?, ?, ?, ?, "
-        "'take_profit', ?, ?)",
+        "entry_fee, exit_fee, funding_cost, funding_source, execution_mode, strategy_id, proposal_id, order_id, "
+        "opportunity_id, status, close_reason, opened_at, closed_at, close_category, entry_price_source, "
+        "entry_fill_verified, exit_price_source, exit_fill_verified, outcome_eligible, outcome_exclusion_reason, "
+        "outcome_semantics_version) "
+        "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 0.2, 100, ?, 0, ?, 0, 0, 0, 'broker_ledger', "
+        "'bitget_demo', NULL, ?, ?, ?, ?, 'take_profit', ?, ?, 'strategy', 'broker_fill', 1, 'broker_fill', 1, "
+        "1, 'eligible', 'oi-v1')",
         (
-            f"pos-lineage-{idx}",
+            position_id,
+            current_price,
             pnl,
             f"prop-lineage-{idx}",
             f"order-lineage-{idx}",
@@ -240,6 +261,57 @@ def test_reconstruct_traded_thesis_through_proposal_and_position():
     assert record["was_traded"] is True
     assert record["actual_pnl_pct"] == 10.0
     assert record["verdict"] == "validated"
+
+
+def test_closed_thesis_with_unavailable_net_pnl_is_explicitly_unavailable():
+    """Unknown futures economics must not be classified as a zero-return trade."""
+    from aletheia.analytics.thesis_lineage import build_thesis_lineage_records
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, 21)
+    pid = _insert_proposal(db, 21)
+    _insert_decision(db, 21, proposal_id=pid)
+    _insert_risk(db, 21)
+    _insert_order_fill_position(db, 21, pnl=None)
+    db.commit()
+
+    record = build_thesis_lineage_records(days=7)[0]
+
+    assert record["was_traded"] is True
+    assert record["actual_pnl"] is None
+    assert record["actual_pnl_pct"] is None
+    assert record["verdict"] == "outcome_unavailable"
+    assert record["outcome_eligibility_reason"] == "incomplete_realized_economics"
+    assert record["failure_bucket"] is None
+
+
+def test_administrative_close_is_not_reported_as_failed_thesis():
+    from aletheia.analytics.thesis_lineage import build_thesis_lineage_records
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, 24)
+    pid = _insert_proposal(db, 24)
+    _insert_decision(db, 24, proposal_id=pid)
+    _insert_risk(db, 24)
+    _insert_order_fill_position(db, 24, pnl=-2.0)
+    db.execute(
+        "UPDATE positions SET close_reason = 'reconciled_gone', "
+        "close_category = 'administrative', outcome_eligible = 0, "
+        "outcome_exclusion_reason = 'administrative_close' WHERE id = ?",
+        ("pos-lineage-24",),
+    )
+    db.commit()
+
+    record = build_thesis_lineage_records(days=7)[0]
+
+    assert record["was_traded"] is True
+    assert record["actual_pnl"] is None
+    assert record["actual_pnl_pct"] is None
+    assert record["verdict"] == "outcome_unavailable"
+    assert record["outcome_eligibility_reason"] == "administrative_close"
+    assert record["failure_bucket"] is None
 
 
 def test_decision_can_be_reconstructed_from_proposal_id_when_opportunity_id_missing():

@@ -142,11 +142,13 @@ class TestEmitDeterministicOpportunities:
 
         def _fake_insert(opp):
             inserted.append(opp)
+            return opp.model_dump(), True
 
-        with patch("aletheia.universe.signal_emitter.find_open_opportunity_by_symbol_snapshot",
+        with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
                    side_effect=_fake_find), \
-             patch("aletheia.universe.signal_emitter.insert_opportunity",
-                   side_effect=_fake_insert):
+             patch("aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
+                   side_effect=_fake_insert), \
+             patch("aletheia.universe.signal_emitter._record_emission_decision"):
             count = emit_deterministic_opportunities(members, "snap-1", feats)
 
         return count, inserted
@@ -244,8 +246,12 @@ class TestEmitDeterministicOpportunities:
             assert market_type == "perp"
             return []
 
-        with patch("aletheia.universe.signal_emitter.find_open_opportunity_by_symbol_snapshot", return_value=None), \
-             patch("aletheia.universe.signal_emitter.insert_opportunity", side_effect=inserted.append), \
+        with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot", return_value=None), \
+             patch(
+                 "aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
+                 side_effect=lambda opp: (inserted.append(opp) or opp.model_dump(), True),
+             ), \
+             patch("aletheia.universe.signal_emitter._record_emission_decision"), \
              patch("aletheia.universe.snapshot_freshness.list_market_snapshots", side_effect=_snapshots):
             count = emit_deterministic_opportunities(members, "snap-1", feats)
 
@@ -291,12 +297,148 @@ class TestEmitDeterministicOpportunities:
             if call_count == 1:
                 raise RuntimeError("db error")
             inserted.append(opp)
+            return opp.model_dump(), True
 
-        with patch("aletheia.universe.signal_emitter.find_open_opportunity_by_symbol_snapshot",
+        with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
                    return_value=None), \
-             patch("aletheia.universe.signal_emitter.insert_opportunity",
-                   side_effect=_failing_insert):
+             patch("aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
+                   side_effect=_failing_insert), \
+             patch("aletheia.universe.signal_emitter._record_emission_decision"):
             count = emit_deterministic_opportunities(members, "snap-1", feats)
 
         assert count == 1  # only the second one succeeded
         assert len(inserted) == 1
+
+    def test_every_member_persists_one_terminal_emission_fact(self, tmp_path, monkeypatch):
+        from tests.test_entry_logic import setup_env
+
+        setup_env(tmp_path, monkeypatch)
+        members = [
+            _make_member("LOW/USDT", "momentum", 30, member_id="member-low"),
+            _make_member("MISSING/USDT", "momentum", 70, member_id="member-missing"),
+            _make_member("GOOD/USDT", "momentum", 70, member_id="member-good"),
+        ]
+        feats = [
+            _make_feat("LOW/USDT"),
+            _make_feat("GOOD/USDT"),
+        ]
+
+        with patch(
+            "aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
+            return_value=None,
+        ), patch(
+            "aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
+            side_effect=lambda opp: (opp.model_dump(), True),
+        ), patch(
+            "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
+            return_value=True,
+        ), patch(
+            "aletheia.universe.signal_emitter.lookup_factor_signal",
+            return_value={"status": "watch"},
+        ):
+            count = emit_deterministic_opportunities(members, "snap-1", feats)
+
+        from aletheia.storage.sqlite import get_db
+
+        rows = get_db().execute(
+            "SELECT universe_member_id, decision, reason_code FROM filter_decisions "
+            "WHERE filter_name='opportunity_emission' ORDER BY universe_member_id"
+        ).fetchall()
+        facts = {
+            row["universe_member_id"]: (row["decision"], row["reason_code"])
+            for row in rows
+        }
+        assert count == 1
+        assert facts == {
+            "member-good": ("passed", "opportunity_emitted"),
+            "member-low": ("rejected", "score_below_minimum"),
+            "member-missing": ("rejected", "feature_missing"),
+        }
+
+    def test_rejection_evidence_failure_is_not_silent(self):
+        members = [
+            _make_member(
+                "LOW/USDT", "momentum", 30, member_id="member-low-retry"
+            ),
+        ]
+        feats = [_make_feat("LOW/USDT")]
+
+        with patch(
+            "aletheia.analytics.filter_evidence.record_filter_decision",
+            side_effect=RuntimeError("db unavailable"),
+        ), pytest.raises(
+            RuntimeError,
+            match=(
+                "opportunity_emission_evidence_failed:"
+                "snap-1:member-low-retry"
+            ),
+        ):
+            emit_deterministic_opportunities(members, "snap-1", feats)
+
+    @pytest.mark.parametrize("caller_owns_transaction", [False, True])
+    def test_new_opportunity_rolls_back_when_emitted_evidence_fails(
+        self, tmp_path, monkeypatch, caller_owns_transaction
+    ):
+        """The lifecycle row and its producer fact are one durable unit."""
+        from tests.test_entry_logic import setup_env
+
+        setup_env(tmp_path, monkeypatch)
+        from contextlib import nullcontext
+        from aletheia.analytics import filter_evidence
+        from aletheia.storage import repositories as repo
+        from aletheia.storage.sqlite import get_db
+        from aletheia.universe.signal_emitter import EmissionEvidenceError
+
+        members = [
+            _make_member(
+                "BTC/USDT", "momentum", 70, member_id="member-emission-atomic"
+            ),
+        ]
+        feats = [_make_feat("BTC/USDT")]
+        real_insert = filter_evidence.repo.insert_filter_decision
+
+        def fail_only_emitted_fact(fact):
+            if (
+                fact.filter_name == "opportunity_emission"
+                and fact.reason_code == "opportunity_emitted"
+            ):
+                raise RuntimeError("emitted evidence unavailable")
+            return real_insert(fact)
+
+        monkeypatch.setattr(
+            filter_evidence.repo,
+            "insert_filter_decision",
+            fail_only_emitted_fact,
+        )
+        monkeypatch.setattr(
+            "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
+            lambda *_args, **_kwargs: True,
+        )
+        monkeypatch.setattr(
+            "aletheia.universe.signal_emitter.lookup_factor_signal",
+            lambda *_args, **_kwargs: {"status": "watch"},
+        )
+
+        db = get_db()
+        caller_transaction = (
+            repo.transaction() if caller_owns_transaction else nullcontext()
+        )
+        with caller_transaction:
+            with pytest.raises(
+                EmissionEvidenceError,
+                match=(
+                    "opportunity_emission_evidence_failed:"
+                    "snap-1:member-emission-atomic"
+                ),
+            ):
+                emit_deterministic_opportunities(members, "snap-1", feats)
+
+            assert db.execute(
+                "SELECT COUNT(*) FROM opportunities WHERE universe_member_id=?",
+                ("member-emission-atomic",),
+            ).fetchone()[0] == 0
+            assert db.execute(
+                "SELECT COUNT(*) FROM filter_decisions WHERE universe_member_id=? "
+                "AND reason_code='opportunity_emitted'",
+                ("member-emission-atomic",),
+            ).fetchone()[0] == 0

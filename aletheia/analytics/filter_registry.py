@@ -304,6 +304,36 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
              "legacy shadow PnL remains explanatory only until its own migration.",
     ),
     _report_only_gate(
+        name="operator_already_evaluated",
+        stage="paper_trader_selection",
+        reason_codes=("operator_already_evaluated",),
+        current_value="one final System Operator decision per opportunity id",
+        note="Identity/idempotency boundary; a final decision is never re-queued as pending.",
+    ),
+    _report_only_gate(
+        name="signal_enqueue",
+        stage="paper_trader_enqueue",
+        reason_codes=("signal_enqueue_error", "opportunity_not_open"),
+        current_value="signal_pending insert and opportunity queued transition are atomic",
+        note="State-consistency evidence; selection is not reported as delivered until the "
+             "queue row and source lifecycle transition commit together.",
+    ),
+    _report_only_gate(
+        name="proposal_identity",
+        stage="proposal_submission",
+        reason_codes=("invalid_action", "missing_symbol", "missing_direction"),
+        current_value="trade-like action requires symbol and direction",
+        note="Carrier completeness boundary. Failures are durable on PiDecision and are "
+             "never repaired by guessing identity after the fact.",
+    ),
+    _report_only_gate(
+        name="proposal_submission",
+        stage="proposal_submission",
+        reason_codes=("submission_exception", "no_submission_result"),
+        current_value="every trade intent has a durable submission status and reason",
+        note="Submission exceptions persist only a stable reason code; provider detail is not stored.",
+    ),
+    _report_only_gate(
         name="duplicate_symbol",
         stage="paper_trader_selection",
         reason_codes=("duplicate_symbol",),
@@ -326,10 +356,10 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         stage="paper_trader_selection",
         drop_reason_codes=(),  # cooldown-skipped symbols are not logged today
         config_path="",
-        hardcoded_at="aletheia/agents/paper_trader.py:37 (_RECENT_SIGNAL_COOLDOWN_MINUTES=120)",
-        current_value="120 min",
+        hardcoded_at="aletheia/agents/paper_trader.py (_RECENT_SIGNAL_COOLDOWN_MINUTES=30)",
+        current_value="30 min",
         loosen_direction="down",  # shorter cooldown → more signals
-        neutral=120.0, floor=30.0, ceiling=480.0,
+        neutral=30.0, floor=30.0, ceiling=480.0,
         feedback_source="forward_return",
         family_keyed=False,
         auto_tunable=True,
@@ -337,6 +367,23 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         drop_share_hint=0.0,
         note="Cooldown pass/reject is persisted before the batch cap so a cooling "
              "top-ranked candidate cannot hide a viable lower-ranked candidate.",
+    ),
+    _report_only_gate(
+        name="opportunity_emission",
+        stage="signal_emitter",
+        reason_codes=(
+            "invalid_total_score",
+            "member_identity_missing",
+            "score_below_minimum",
+            "feature_missing",
+            "direction_missing",
+            "factor_blocked",
+            "regime_filtered",
+            "opportunity_insert_error",
+        ),
+        current_value="one terminal emission fact per selected universe member",
+        note="Coverage and lifecycle-integrity evidence only. It does not create outcome "
+             "rows, tune thresholds, or alter opportunity eligibility.",
     ),
     FilterSpec(
         name="observer_pre_filter",

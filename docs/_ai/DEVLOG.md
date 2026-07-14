@@ -1,5 +1,25 @@
 # Development Log
 
+## 2026-07-14 — Active paper trade-chain runtime repair
+
+- Repaired the production-shaped paper path from durable Opportunity/pending authority
+  through Operator, Proposal, Risk, paper entry, Position management, routed close,
+  Outcome, Attribution, and Feedback. Dependency outages and unsupported actions now
+  fail closed without consuming retryable work or inventing business state.
+- Local paper Risk and execution now require an exact fresh venue/symbol/market mark,
+  a complete and mathematically consistent entry plan, Proposal snapshot integrity, and
+  proposal-isolated Position lineage. Batch closes no longer partially execute when a
+  required mark is missing.
+- Local futures use explicit schedule-backed funding simulation; exchange-account
+  futures remain ineligible for Learning when real account funding facts are absent.
+  Guard/Learning influence is default-off, path-specific, and treatment-only.
+- Design contracts and Settings API/UI were updated. Isolated proof reached 1193
+  executable specifications and 12 production-shaped adjacent paper paths, but this
+  branch remains unmerged pending latest-master integration, a fresh full-suite run,
+  owner-created policy epoch/window, and exact-mainline runtime soak.
+
+---
+
 ## 2026-07-13 — Shadow intervention handoff honesty
 
 - AT-01 now reads whether a treatment was actually applied from each exposure
@@ -3335,3 +3355,37 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Added the automatic ordinary-assertion failure-pack test to the explicit PR DCLS command.
 - Strengthened the executable CI claim so the artifact regression cannot silently fall out of
   pull-request coverage while remaining present only in nightly runs.
+
+## 2026-07-14 — Trade-chain integrity and honest paper accounting
+
+- Repaired the production Opportunity-to-Operator handoff so permanent rejections are durable,
+  eligible work is FIFO and bounded, and trades require one exact pending identity with atomic
+  Proposal/final-decision persistence and safe historical crash recovery.
+- Added durable execution leasing and exchange-state recovery. Pending entries remain Risk
+  exposure, accepted or uncertain submissions cannot be rewritten as terminal errors, and
+  Bitget/OKX/Binance entry/close audit failures cannot trigger a second exchange submission.
+- Made overfilled closes permanent manual-reconciliation states, preventing automatic close
+  retries that could over-reduce or reverse a venue Position.
+- Removed post-Risk local-paper take-profit invention and configuration-driven native protection
+  drift. Proposal, Risk, Order, and Position now retain the approved snapshot.
+- Kept unknown futures funding and net PnL explicitly unavailable across cash authority,
+  reporting, UI, Outcome, Attribution, and Learning; no funding amount is guessed.
+- Added a real production-code local-paper entry-to-feedback round trip. All executable rules,
+  architecture/trust checks, frontend build, and the full repository suite passed. Local paper
+  futures funding policy and the required new policy epoch remain owner gates before merge.
+
+## 2026-07-14 — Trade-chain completeness hardening
+
+- Separated analytical ranker previews from durable entry authority. Heartbeat evaluation cannot
+  submit an unqueued Opportunity, and exact opportunity/source/symbol/direction/market identity is
+  required before the Operator can create a Proposal.
+- Removed display pagination from trading authority. Risk, close/reduce targeting, price collection,
+  reconciliation, stops, mark-to-market, duplicate suppression, and Operator counts now inspect the
+  complete open Position set while presentation remains explicitly bounded.
+- Added a durable pre-Order Risk reservation in the same database writer transaction as approval,
+  preventing concurrent Proposals from consuming one final slot or exposure allowance twice.
+- Made manual Proposal rejection atomic with reservation release, approval crash residue safely
+  resumable through the idempotent Gateway, and Serenity theme promotion all-or-nothing.
+- Scoped funding provenance to its real account boundary and admitted only centrally eligible
+  Outcomes to review, Kelly samples, Attribution, Feedback, and thesis verdicts. No funding value or
+  PnL is invented where a local or venue funding producer is absent.

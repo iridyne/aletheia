@@ -47,6 +47,15 @@ class TradingGuard(BaseModel):
     severity: GuardSeverity = "info"
     score_penalty: float = 0.0
     block_candidate: bool = False
+    # Automatic guards are persisted as observe-only, but their proposed effect
+    # must remain available for a later prospective treatment.  Keeping the
+    # proposal separate from the current effect prevents shadow storage from
+    # silently destroying the behavior that is actually being evaluated.
+    proposed_score_penalty: float | None = None
+    proposed_block_candidate: bool | None = None
+    # Compatibility with the reversible downgrade written by guard_promotion.
+    pre_shadow_score_penalty: float | None = None
+    pre_shadow_block_candidate: bool | None = None
     # Observe-only marker. A shadow guard is evaluated and its hit is recorded for
     # audit, but it can neither block nor penalize (P0 2026-07-12). All auto-generated
     # guards are created shadow-only; the enforcement seam in evaluate_guards refuses
@@ -174,6 +183,22 @@ def load_trading_guards(
                     severity=meta.get("severity", "info"),
                     score_penalty=float(meta.get("score_penalty", 0)),
                     block_candidate=bool(meta.get("block_candidate", False)),
+                    proposed_score_penalty=(
+                        float(meta["proposed_score_penalty"])
+                        if meta.get("proposed_score_penalty") is not None else None
+                    ),
+                    proposed_block_candidate=(
+                        bool(meta["proposed_block_candidate"])
+                        if meta.get("proposed_block_candidate") is not None else None
+                    ),
+                    pre_shadow_score_penalty=(
+                        float(meta["pre_shadow_score_penalty"])
+                        if meta.get("pre_shadow_score_penalty") is not None else None
+                    ),
+                    pre_shadow_block_candidate=(
+                        bool(meta["pre_shadow_block_candidate"])
+                        if meta.get("pre_shadow_block_candidate") is not None else None
+                    ),
                     shadow_only=bool(meta.get("shadow_only", False)),
                     applies_to=GuardAppliesTo(**applies_to) if isinstance(applies_to, dict) else GuardAppliesTo(),
                     predicates=predicates,
@@ -228,22 +253,76 @@ def guard_origin(guard: "TradingGuard | dict") -> str:
     return "manual"
 
 
-def learned_guard_block_authorized(guard: TradingGuard) -> bool:
-    """Seam for fixes #4/#5 — does a learned guard hold paper-block authority?
+def _learned_guard_proposed_effect(guard: TradingGuard) -> tuple[bool, float]:
+    """Return the effect proposed by a learned Guard, never an invented default."""
+    proposed_block = guard.proposed_block_candidate
+    if proposed_block is None:
+        proposed_block = guard.pre_shadow_block_candidate
+    if proposed_block is None:
+        proposed_block = guard.block_candidate
 
-    FAIL-CLOSED on master: always ``False``. A learned/auto guard gains authority
-    to influence the ranker ONLY through the ``ranker_learned_guard`` Learning path
-    with a positive prospective contribution verdict (AT-01 verdict + AT-02 path
-    authority). That machinery lands with feat/learning-lifecycle-authority; when it
-    does, wire this to consult the experiment exactly as
-    ``factor_feedback.lookup_factor_signal`` does via ``apply_numeric_treatment(
-    path_id="ranker_learned_guard", action={"type": "candidate_block", ...})`` and
-    return True only when the treatment is authorized (``applied``).
+    proposed_penalty = guard.proposed_score_penalty
+    if proposed_penalty is None:
+        proposed_penalty = guard.pre_shadow_score_penalty
+    if proposed_penalty is None:
+        proposed_penalty = guard.score_penalty
+    return bool(proposed_block), max(0.0, float(proposed_penalty or 0.0))
+
+
+def learned_guard_block_authorized(
+    guard: TradingGuard,
+    context: dict | None = None,
+) -> bool:
+    """Return per-candidate authority for one learned Guard treatment.
+
+    The static baseline is observe-only (0).  Every real candidate is assigned
+    through the existing prospective Learning experiment path (treatment=1),
+    which records the candidate, outcome and Opportunity identities.  Missing
+    identity, control assignment, disabled/unallowlisted influence, stale
+    evidence, or any adapter failure all retain the observe-only baseline.
     """
-    return False
+    context = context or {}
+    proposed_block, proposed_penalty = _learned_guard_proposed_effect(guard)
+    if not proposed_block and proposed_penalty <= 0:
+        return False
+    try:
+        from aletheia.learning.experiments import apply_numeric_treatment
+
+        decision = apply_numeric_treatment(
+            path_id="ranker_learned_guard",
+            scope={"guard_id": guard.guard_id},
+            action={
+                "type": "candidate_guard",
+                "guard_id": guard.guard_id,
+                "block_candidate": proposed_block,
+                "score_penalty": proposed_penalty,
+            },
+            source_cohort=f"learned_guard:{guard.guard_id}:v1",
+            target_horizon="4h",
+            candidate_key=context.get("_candidate_key"),
+            baseline=0.0,
+            treatment=1.0,
+            consumer="paper_trader_ranker",
+            consumer_stage="guard_filter",
+            outcome_candidate_key=context.get("_outcome_candidate_key"),
+            opportunity_id=context.get("_opportunity_id"),
+            manifest={
+                "guard_id": guard.guard_id,
+                "proposed_block_candidate": proposed_block,
+                "proposed_score_penalty": proposed_penalty,
+            },
+        )
+        return bool(decision.applied and float(decision.value) == 1.0)
+    except Exception as exc:
+        logger.warning(
+            "Learned Guard authority failed closed for %s: %s",
+            guard.guard_id,
+            type(exc).__name__,
+        )
+        return False
 
 
-def _guard_influence_suppressed(guard: TradingGuard) -> bool:
+def _guard_influence_suppressed(guard: TradingGuard, context: dict) -> bool:
     """A learned/shadow guard observes only — it can neither block nor penalize
     until authorized. Seed and manual safety guards are never suppressed."""
     from aletheia.trust.behavior_authority import authorize_candidate_block
@@ -255,14 +334,17 @@ def _guard_influence_suppressed(guard: TradingGuard) -> bool:
         "learned": "learned_guard",
     }[origin]
     prospective_authority = (
-        learned_guard_block_authorized(guard) if origin == "learned" else False
+        learned_guard_block_authorized(guard, context) if origin == "learned" else False
     )
     authorized = authorize_candidate_block(
         source=source,
         prospective_authority=prospective_authority,
         learning_path_id=("ranker_learned_guard" if origin == "learned" else None),
     )
-    return guard.shadow_only or not authorized
+    # shadow_only is the learned Guard's static baseline, not a permanent veto:
+    # an exact authorized treatment may apply its separately preserved proposal.
+    # Owner-authored manual shadow Guards, however, always remain observe-only.
+    return (guard.shadow_only and origin != "learned") or not authorized
 
 
 def evaluate_guards(
@@ -297,9 +379,15 @@ def evaluate_guards(
         if not _predicates_match(guard.predicates, context):
             continue
 
-        suppressed = _guard_influence_suppressed(guard)
-        effective_block = guard.block_candidate and not suppressed
-        effective_penalty = 0.0 if suppressed else guard.score_penalty
+        origin = guard_origin(guard)
+        proposed_block, proposed_penalty = (
+            _learned_guard_proposed_effect(guard)
+            if origin == "learned"
+            else (guard.block_candidate, guard.score_penalty)
+        )
+        suppressed = _guard_influence_suppressed(guard, context)
+        effective_block = proposed_block and not suppressed
+        effective_penalty = 0.0 if suppressed else proposed_penalty
         reason = f"{guard.title}: predicates matched"
         if suppressed:
             reason += " (shadow: observed only — no block/penalty authority)"

@@ -14,21 +14,84 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from aletheia.data.symbols import to_binance
+from aletheia.data.symbols import to_binance, to_ccxt_perp
 from aletheia.exchanges.binance.client import BinanceClient, OrderRequest
-from aletheia.execution.broker_utils import clean_error_message
+from aletheia.exchanges.submission_errors import (
+    is_ambiguous_submission_error as _is_ambiguous_submission_error,
+)
+from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
+from aletheia.execution.post_commit_audit import write_post_commit_audit
 from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
-    insert_order, insert_fill, insert_position, list_positions, update_position,
-    update_order,
+    find_compatible_open_position,
+    insert_order, insert_fill, insert_position, update_position,
+    update_order, transaction,
 )
+from aletheia.storage.sqlite import get_db
 
 logger = logging.getLogger("aletheia.binance_broker")
 
 _TESTNET_FEE_RATE = 0.0004  # Binance futures taker fee
-_OPEN_CLOSE_STATES = {"pending", "submitted", "partial"}
+_BINANCE_ACCOUNT_MODES = {
+    "binance_testnet": "testnet",
+    "binance_live_limited": "live",
+}
+_OPEN_CLOSE_STATES = {
+    "pending", "submitted", "partial", "partially_filled", "submission_unknown",
+    "materialization_missing", "overfilled",
+}
+_RETRY_SUPPRESSING_ORDER_STATES = (
+    "pending", "submitted", "partial", "partially_filled", "submission_unknown",
+    "materialization_missing",
+)
+
+
+def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:
+    placeholders = ",".join("?" for _ in _RETRY_SUPPRESSING_ORDER_STATES)
+    row = get_db().execute(
+        f"""
+        SELECT id, exchange_order_id, status
+        FROM orders
+        WHERE proposal_id=? AND execution_mode=? AND status IN ({placeholders})
+        ORDER BY rowid ASC
+        LIMIT 1
+        """,
+        (proposal_id, execution_mode, *_RETRY_SUPPRESSING_ORDER_STATES),
+    ).fetchone()
+    if row is None:
+        return
+    if row["status"] == "materialization_missing":
+        raise PostSubmitDBError(
+            "exchange fill awaits local materialization", row["exchange_order_id"],
+        )
+    raise SubmissionUnknownError(
+        exchange_order_id=row["exchange_order_id"], client_oid=proposal_id,
+    )
+
+
+def _validated_fill_economics(
+    status: str,
+    fill_price,
+    filled_quantity,
+    requested_quantity: float,
+) -> tuple[float, float] | None:
+    """Validate that exchange status and reported economics agree."""
+    try:
+        price = float(fill_price)
+        quantity = float(filled_quantity)
+        requested = float(requested_quantity)
+    except (TypeError, ValueError):
+        return None
+    if price <= 0 or quantity <= 0 or requested <= 0:
+        return None
+    tolerance = max(1e-12, requested * 1e-9)
+    if status == "filled" and abs(quantity - requested) <= tolerance:
+        return price, quantity
+    if status == "partially_filled" and quantity < requested - tolerance:
+        return price, quantity
+    return None
 
 
 def _run_coro(coro):
@@ -39,6 +102,139 @@ def _run_coro(coro):
         return asyncio.run(coro)
     with ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, coro).result()
+
+
+def _created_at_ms(value) -> int:
+    """Parse a durable UTC timestamp without inventing a history window."""
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("order creation timestamp unavailable")
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp() * 1000)
+
+
+async def fetch_private_fill_evidence(order: dict) -> list[dict]:
+    """Return complete, account- and order-matched Binance private trades.
+
+    The normalized rows contain actual per-trade fee and exchange time; no
+    requested or aggregate response economics are substituted.
+    """
+    execution_mode = str(order.get("execution_mode") or "")
+    account_mode = _BINANCE_ACCOUNT_MODES.get(execution_mode)
+    if account_mode is None:
+        raise ValueError("Binance reconciliation account mismatch")
+    if order.get("market_type") != "usdt_futures":
+        raise ValueError("Binance reconciliation market type unsupported")
+    exchange_order_id = str(order.get("exchange_order_id") or "").strip()
+    client_order_id = str(order.get("client_order_id") or "").strip()
+    if not exchange_order_id and not client_order_id:
+        raise ValueError("Binance exchange order identity unavailable")
+
+    client = BinanceClient(mode=account_mode)
+    try:
+        exchange = client._ensure_exchange()
+        await exchange.load_markets()
+        ccxt_symbol = to_ccxt_perp(str(order["symbol"]))
+        start_ms = _created_at_ms(order.get("created_at"))
+        end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        raw_fills: list[dict] = []
+        from_id: str | None = None
+        complete = False
+        for _ in range(100):
+            params: dict = {"endTime": end_ms}
+            since = start_ms if from_id is None else None
+            if from_id is not None:
+                params["fromId"] = from_id
+            page = await exchange.fetch_my_trades(
+                ccxt_symbol,
+                since=since,
+                limit=1000,
+                params=params,
+            )
+            if not isinstance(page, list):
+                raise ValueError("Binance private trade history malformed")
+            raw_fills.extend(row for row in page if isinstance(row, dict))
+            if len(page) < 1000:
+                complete = True
+                break
+            last_id = str(page[-1].get("id") or "")
+            if not last_id.isdigit():
+                raise RuntimeError("Binance private trade pagination incomplete")
+            next_id = str(int(last_id) + 1)
+            if next_id == from_id:
+                raise RuntimeError("Binance private trade pagination stalled")
+            from_id = next_id
+        if not complete:
+            raise RuntimeError("Binance private trade history incomplete")
+
+        normalized: list[dict] = []
+        recovered_order_ids: set[str] = set()
+        for row in raw_fills:
+            info = row.get("info") if isinstance(row.get("info"), dict) else {}
+            remote_order_id = str(row.get("order") or info.get("orderId") or "")
+            remote_client_id = str(info.get("clientOrderId") or "")
+            if exchange_order_id:
+                matched_identity = remote_order_id == exchange_order_id
+            else:
+                matched_identity = remote_client_id == client_order_id
+            if not matched_identity:
+                continue
+            if not remote_order_id:
+                raise ValueError("Binance order-matched private trade is incomplete")
+            returned_symbol = str(row.get("symbol") or "").strip()
+            if returned_symbol and returned_symbol != ccxt_symbol:
+                raise ValueError("Binance order-matched private trade symbol mismatch")
+            recovered_order_ids.add(remote_order_id)
+            fee_data = row.get("fee") if isinstance(row.get("fee"), dict) else {}
+            fill_id = str(row.get("id") or info.get("id") or "").strip()
+            try:
+                price = float(row.get("price") or info.get("price"))
+                quantity = float(row.get("amount") or info.get("qty"))
+                timestamp_ms = int(row.get("timestamp") or info.get("time"))
+                raw_fee = (
+                    fee_data.get("cost")
+                    if fee_data.get("cost") not in (None, "")
+                    else info.get("commission")
+                )
+                fee = float(raw_fee)
+            except (TypeError, ValueError):
+                raise ValueError("Binance order-matched private trade is incomplete")
+            fee_currency = str(
+                fee_data.get("currency") or info.get("commissionAsset") or ""
+            ).strip()
+            if (
+                not fill_id
+                or price <= 0
+                or quantity <= 0
+                or timestamp_ms <= 0
+                or not fee_currency
+            ):
+                raise ValueError("Binance order-matched private trade is incomplete")
+            normalized.append({
+                "orderId": remote_order_id,
+                "tradeId": fill_id,
+                "clientOid": str(info.get("clientOrderId") or "") or None,
+                "fillPrice": str(price),
+                "fillQuantity": str(quantity),
+                "fee": str(fee),
+                "feeCoin": fee_currency,
+                "cTime": str(timestamp_ms),
+            })
+        if len(recovered_order_ids) > 1:
+            raise ValueError("Binance client order identity is ambiguous")
+        return normalized
+    finally:
+        try:
+            await client.close()
+        except Exception as exc:
+            logger.warning(
+                "Binance reconciliation client close failed (%s)",
+                type(exc).__name__,
+            )
 
 
 def execute_live_order(
@@ -64,6 +260,7 @@ def execute_live_order(
     Signature matches bitget_broker.execute_live_order for gateway compatibility.
     execution_mode: "binance_testnet" or "binance_live_limited"
     """
+    _guard_unresolved_submission(proposal_id, execution_mode)
     mode = "live" if execution_mode == "binance_live_limited" else "testnet"
     client = BinanceClient(mode=mode)
     side = "buy" if direction in ("long", "buy") else "sell"
@@ -72,6 +269,7 @@ def execute_live_order(
     order = Order(
         proposal_id=proposal_id,
         risk_decision_id=risk_decision_id,
+        client_order_id=proposal_id,
         symbol=symbol,
         market_type=market_type,
         direction=direction,
@@ -91,7 +289,23 @@ def execute_live_order(
             client_oid=proposal_id, leverage=leverage,
         )))
     except Exception as e:
-        update_order(order.id, status="error", error_reason=clean_error_message(str(e))[:500])
+        if _is_ambiguous_submission_error(e):
+            update_order(
+                order.id,
+                status="submission_unknown",
+                error_reason="order_submission_transport_acknowledgement_unknown",
+            )
+            write_post_commit_audit({
+                "actor": "system", "source": "binance_broker",
+                "event_type": "order_submission_unknown", "entity_type": "order",
+                "entity_id": order.id,
+                "reason": "transport_acknowledgement_unknown",
+                "before": {"status": "pending"},
+                "after": {"status": "submission_unknown"},
+                "message": "Order transport failed after submission began; automatic retry suppressed",
+            })
+            raise SubmissionUnknownError(client_oid=proposal_id) from e
+        update_order(order.id, status="error", error_reason="order_submission_rejected")
         raise
     finally:
         try:
@@ -100,98 +314,62 @@ def execute_live_order(
             pass
 
     exchange_order_id = order_resp.order_id or ""
-    resolved_status = order_resp.status if order_resp.status in ("filled", "partially_filled") else "submitted"
-    update_order(order.id, exchange_order_id=exchange_order_id, status=resolved_status)
-
-    filled = order_resp.status in ("filled", "partially_filled")
-    partial = order_resp.status == "partially_filled"
-    fill_price = order_resp.fill_price if (filled and order_resp.fill_price) else price
-    fill_qty = order_resp.filled_quantity if (filled and order_resp.filled_quantity) else quantity
-
-    fill = None
-    try:
-        if filled:
-            fill = Fill(
-                order_id=order.id,
-                fill_price=fill_price,
-                fill_quantity=fill_qty,
-                fee=fill_qty * fill_price * fee_rate,
+    if not exchange_order_id:
+        try:
+            update_order(
+                order.id,
+                status="submission_unknown",
+                error_reason="order_submission_missing_exchange_id",
             )
-            insert_fill(fill)
-            # #109 fix: preserve partial state — see bitget_broker for rationale.
-            order_status = "partially_filled" if partial else "filled"
-            update_order(order.id, status=order_status, filled_at=datetime.now(timezone.utc).isoformat())
-
-            existing = _find_open_position(symbol, market_type, direction, execution_mode, strategy_id)
-            if existing:
-                new_qty = existing["quantity"] + fill_qty
-                new_entry = (existing["entry_price"] * existing["quantity"] + fill_price * fill_qty) / new_qty
-                update_kwargs = {"quantity": new_qty, "entry_price": new_entry, "current_price": fill_price}
-                # #140 fix: accumulate entry_fee across averaging-in legs (see paper_broker).
-                new_entry_fee_leg = round(fill_price * fill_qty * fee_rate, 8)
-                existing_entry_fee = existing.get("entry_fee")
-                update_kwargs["entry_fee"] = round((existing_entry_fee or 0.0) + new_entry_fee_leg, 8)
-                # #141 fix: recompute liquidation for the new weighted-average entry.
-                existing_lev = existing.get("leverage")
-                if existing_lev and existing_lev > 1:
-                    update_kwargs["liquidation_price"] = liquidation_price_for(
-                        new_entry, direction, existing_lev, symbol,
-                    )
-                # Tighten (never loosen) the protective stop when averaging in.
-                merged_stop = merge_protective_stop(direction, stop_price, existing.get("stop_price"))
-                if merged_stop is not None:
-                    update_kwargs["stop_price"] = merged_stop
-                update_position(existing["id"], **update_kwargs)
-                position_id = existing["id"]
-            else:
-                # Stamp the same entry-time metadata paper_broker records (btc benchmark,
-                # regime, market summary, reasoning, fees) via the shared helper, so
-                # live-broker positions are not blind to alpha/regime/cost analytics
-                # (clone-divergence guard — see position_enrichment).
-                enrichment = build_entry_enrichment(
-                    symbol=symbol, fill_price=fill_price, quantity=fill_qty,
-                    requested_price=price, fee_rate=fee_rate, proposal_id=proposal_id,
-                )
-                position = Position(
-                    symbol=symbol, market_type=market_type, direction=direction,
-                    quantity=fill_qty, entry_price=fill_price, current_price=fill_price,
-                    execution_mode=execution_mode, strategy_id=strategy_id,
-                    proposal_id=proposal_id, order_id=order.id, opportunity_id=opportunity_id,
-                    # Futures leverage + estimated liquidation (None for spot/1x).
-                    leverage=leverage,
-                    liquidation_price=liquidation_price_for(fill_price, direction, leverage, symbol),
-                    # Persist protective stop/TP so position_manager acts on the AI's
-                    # intended levels, not just the default-% fallback (regression EC-stop).
-                    stop_price=stop_price, take_profit_price=take_profit_price,
-                    trade_school=trade_school,
-                    **enrichment,
-                )
-                insert_position(position)
-                position_id = position.id
-            # Notify operator of the fill (best-effort; mirrors paper_broker so demo/live
-            # opens are not silent while only paper opens notify).
-            try:
-                from aletheia.notifications import notify_trade_fill
-                notify_trade_fill(
-                    symbol, direction, fill_qty, fill_price, position_id, execution_mode,
-                    stop_price=stop_price,
-                    take_profit_price=take_profit_price if not existing else None,
-                )
-            except Exception:
-                pass
-        else:
-            position_id = None
+        except Exception:
+            pass
+        write_post_commit_audit({
+            "actor": "system", "source": "binance_broker",
+            "event_type": "order_submission_unknown", "entity_type": "order",
+            "entity_id": order.id,
+            "reason": "missing_exchange_order_id",
+            "before": {"status": "pending"},
+            "after": {"status": "submission_unknown"},
+            "message": "Exchange acknowledged submission without an order id; automatic retry suppressed",
+        })
+        raise SubmissionUnknownError(client_oid=proposal_id)
+    exchange_reported_fill = order_resp.status in ("filled", "partially_filled")
+    stored_status = "materialization_missing" if exchange_reported_fill else "submitted"
+    try:
+        update_order(
+            order.id,
+            exchange_order_id=exchange_order_id,
+            status=stored_status,
+            error_reason=(
+                "private_fill_evidence_pending" if exchange_reported_fill else None
+            ),
+        )
     except Exception as e:
-        from aletheia.execution.errors import PostSubmitDBError
-        raise PostSubmitDBError(f"Post-submit DB error: {e}", exchange_order_id) from e
+        raise PostSubmitDBError(
+            "exchange acknowledgement could not be persisted", exchange_order_id,
+        ) from e
+    if exchange_reported_fill:
+        write_post_commit_audit({
+            "actor": "system", "source": "binance_broker",
+            "event_type": "order_materialization_pending", "entity_type": "order",
+            "entity_id": order.id,
+            "reason": "private_fill_evidence_pending",
+            "before": {"status": "pending"},
+            "after": {"status": "materialization_missing"},
+            "message": (
+                f"Exchange order {exchange_order_id} reported a fill; local "
+                "Fill/Position waits for order-matched private fill evidence"
+            ),
+        })
 
     return {
         "order_id": order.id,
         "exchange_order_id": exchange_order_id,
-        "fill_id": getattr(fill, "id", None) if filled else None,
-        "position_id": position_id,
-        "fill_price": fill_price if filled else None,
-        "fill_quantity": fill_qty if filled else 0,
+        "order_status": stored_status,
+        "fill_id": None,
+        "position_id": None,
+        "fill_price": None,
+        "fill_quantity": 0,
     }
 
 
@@ -202,14 +380,61 @@ def _find_open_position(
     execution_mode: str,
     strategy_id: str | None,
 ) -> dict | None:
-    for p in list_positions(status="open"):
-        if (p["symbol"] == symbol and p["market_type"] == market_type
-                and p["direction"] == direction
-                and p["execution_mode"] == execution_mode):
-            if strategy_id is not None and p.get("strategy_id") not in (None, "", strategy_id):
-                continue
-            return p
-    return None
+    return find_compatible_open_position(
+        symbol, market_type, direction, execution_mode, strategy_id
+    )
+
+
+def _claim_close_order(
+    position_id: str, reason: str,
+) -> tuple[dict, Order | None, str | None]:
+    """Atomically claim one Binance close before any exchange side effect."""
+    from aletheia.storage import repositories as repo
+
+    with transaction(immediate=True):
+        row = repo._select_one("positions", position_id)
+        if row is None:
+            raise ValueError(f"position not found: {position_id}")
+        if row.get("execution_mode") not in (
+            "binance_testnet", "binance_live_limited",
+        ):
+            raise ValueError(
+                "close_testnet_position only handles Binance modes, "
+                f"got {row.get('execution_mode')!r}"
+            )
+        if row.get("status") != "open":
+            raise ValueError(
+                f"position {position_id} is not open (status={row.get('status')})"
+            )
+        if (
+            row.get("pending_close_order_id")
+            and row.get("pending_close_status") in _OPEN_CLOSE_STATES
+        ):
+            return row, None, None
+
+        requested_at = datetime.now(timezone.utc).isoformat()
+        close_order = Order(
+            proposal_id=row.get("proposal_id"),
+            client_order_id=f"close-{position_id}",
+            position_id=position_id,
+            close_reason=reason,
+            symbol=row["symbol"],
+            market_type=row["market_type"],
+            direction=row["direction"],
+            order_type="market",
+            quantity=float(row["quantity"]),
+            price=row.get("current_price") or row["entry_price"],
+            execution_mode=row["execution_mode"],
+            status="pending",
+        )
+        insert_order(close_order)
+        update_position(
+            position_id,
+            pending_close_order_id=close_order.id,
+            pending_close_status="pending",
+            pending_close_requested_at=requested_at,
+        )
+        return row, close_order, requested_at
 
 
 def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
@@ -223,14 +448,8 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
     from aletheia.storage import repositories as repo
     from aletheia.portfolio.pnl import close_position
 
-    row = repo._select_one("positions", position_id)
-    if row is None:
-        raise ValueError(f"position not found: {position_id}")
-    if row.get("execution_mode") not in ("binance_testnet", "binance_live_limited"):
-        raise ValueError(f"close_testnet_position only handles Binance modes, got {row.get('execution_mode')!r}")
-    if row.get("status") != "open":
-        raise ValueError(f"position {position_id} is not open (status={row.get('status')})")
-    if row.get("pending_close_order_id") and row.get("pending_close_status") in _OPEN_CLOSE_STATES:
+    row, close_order, close_requested_at = _claim_close_order(position_id, reason)
+    if close_order is None:
         existing_order = repo.get_order(row["pending_close_order_id"])
         return {
             "order_id": row["pending_close_order_id"],
@@ -243,32 +462,24 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
         }
 
     mode = "live" if row["execution_mode"] == "binance_live_limited" else "testnet"
-    client = BinanceClient(mode=mode)
+    try:
+        client = BinanceClient(mode=mode)
+    except Exception:
+        # The durable claim exists, but no exchange method has run. Record a
+        # known pre-submission failure so a later close is not suppressed.
+        with transaction():
+            update_order(
+                close_order.id,
+                status="error",
+                error_reason="close_client_initialization_failed_before_submission",
+            )
+            update_position(position_id, pending_close_status="error")
+        raise
     direction = row["direction"]
     is_long = direction in ("long", "buy")
     # Close = opposite side + reduceOnly
     side = "sell" if is_long else "buy"
     quantity = float(row["quantity"])
-
-    close_requested_at = datetime.now(timezone.utc).isoformat()
-    close_order = Order(
-        proposal_id=row.get("proposal_id"),
-        symbol=row["symbol"],
-        market_type=row["market_type"],
-        direction=direction,
-        order_type="market",
-        quantity=quantity,
-        price=row.get("current_price") or row["entry_price"],
-        execution_mode=row["execution_mode"],
-        status="pending",
-    )
-    insert_order(close_order)
-    update_position(
-        position_id,
-        pending_close_order_id=close_order.id,
-        pending_close_status="pending",
-        pending_close_requested_at=close_requested_at,
-    )
 
     try:
         order_resp = _run_coro(client.place_order(OrderRequest(
@@ -281,8 +492,25 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
             client_oid=f"close-{position_id}",
         )))
     except Exception as e:
-        update_order(close_order.id, status="error", error_reason=clean_error_message(str(e))[:500])
-        update_position(position_id, pending_close_status="error")
+        if _is_ambiguous_submission_error(e):
+            update_order(
+                close_order.id,
+                status="submission_unknown",
+                error_reason="close_submission_transport_acknowledgement_unknown",
+            )
+            update_position(position_id, pending_close_status="submission_unknown")
+            write_post_commit_audit({
+                "actor": "system", "source": "binance_broker",
+                "event_type": "close_submission_unknown", "entity_type": "order",
+                "entity_id": close_order.id,
+                "reason": "transport_acknowledgement_unknown",
+                "before": {"status": "pending"},
+                "after": {"status": "submission_unknown"},
+                "message": "Close transport failed after submission began; automatic retry suppressed",
+            })
+        else:
+            update_order(close_order.id, status="error", error_reason="close_submission_rejected")
+            update_position(position_id, pending_close_status="error")
         raise
     finally:
         try:
@@ -291,52 +519,77 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
             pass
 
     exchange_order_id = order_resp.order_id or ""
-    confirmed_close = order_resp.status == "filled"
-    close_status = "filled" if confirmed_close else (
-        "partial" if order_resp.status == "partially_filled" else "submitted"
+    if not exchange_order_id:
+        try:
+            update_order(
+                close_order.id,
+                status="submission_unknown",
+                error_reason="close_submission_missing_exchange_id",
+            )
+            update_position(position_id, pending_close_status="submission_unknown")
+        except Exception:
+            pass
+        write_post_commit_audit({
+            "actor": "system", "source": "binance_broker",
+            "event_type": "close_submission_unknown", "entity_type": "order",
+            "entity_id": close_order.id,
+            "reason": "missing_exchange_order_id",
+            "before": {"status": "pending"},
+            "after": {"status": "submission_unknown"},
+            "message": "Exchange acknowledged close without an order id; automatic retry suppressed",
+        })
+        raise SubmissionUnknownError(client_oid=f"close-{position_id}")
+    exchange_reported_fill = order_resp.status in {"filled", "partially_filled"}
+    close_status = (
+        "materialization_missing"
+        if order_resp.status == "filled"
+        else "partially_filled"
+        if order_resp.status == "partially_filled"
+        else "submitted"
     )
-    update_order(
-        close_order.id,
-        exchange_order_id=exchange_order_id,
-        status=close_status,
-        filled_at=datetime.now(timezone.utc).isoformat() if confirmed_close else None,
-    )
-    if not confirmed_close:
-        update_position(
-            position_id,
-            pending_close_order_id=close_order.id,
-            pending_close_status=close_status,
-            pending_close_requested_at=close_requested_at,
+    try:
+        update_order(
+            close_order.id,
+            exchange_order_id=exchange_order_id,
+            status=close_status,
+            error_reason=(
+                "private_fill_evidence_pending" if exchange_reported_fill else None
+            ),
+            filled_at=None,
         )
-        return {
-            "order_id": close_order.id,
-            "exchange_order_id": exchange_order_id,
-            "status": close_status,
-            "closed": False,
-            "fill_price": None,
-            "fill_quantity": 0,
-        }
-
-    fill_price = order_resp.fill_price if order_resp.fill_price else float(row.get("current_price") or row["entry_price"])
-    fill_qty = order_resp.filled_quantity if order_resp.filled_quantity else quantity
-
-    fill = Fill(order_id=close_order.id, fill_price=fill_price, fill_quantity=fill_qty,
-                fee=fill_qty * fill_price * _TESTNET_FEE_RATE)
-    insert_fill(fill)
-
-    close_position(position_id, exit_price=fill_price, reason=reason)
+    except Exception as e:
+        try:
+            update_position(position_id, pending_close_status="materialization_missing")
+        except Exception:
+            pass
+        raise PostSubmitDBError(
+            "exchange close acknowledgement could not be persisted", exchange_order_id,
+        ) from e
     update_position(
         position_id,
-        pending_close_order_id=None,
-        pending_close_status=None,
-        pending_close_requested_at=None,
+        pending_close_order_id=close_order.id,
+        pending_close_status=close_status,
+        pending_close_requested_at=close_requested_at,
     )
+    if exchange_reported_fill:
+        write_post_commit_audit({
+            "actor": "system", "source": "binance_broker",
+            "event_type": "close_materialization_pending", "entity_type": "order",
+            "entity_id": close_order.id,
+            "reason": "private_fill_evidence_pending",
+            "before": {"status": "pending"},
+            "after": {"status": close_status},
+            "message": (
+                f"Exchange close {exchange_order_id} reported fill activity; "
+                "local closure waits for order-matched private fill evidence"
+            ),
+        })
 
     return {
         "order_id": close_order.id,
         "exchange_order_id": exchange_order_id,
-        "status": "filled",
-        "closed": True,
-        "fill_price": fill_price,
-        "fill_quantity": fill_qty,
+        "status": close_status,
+        "closed": False,
+        "fill_price": None,
+        "fill_quantity": 0,
     }

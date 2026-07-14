@@ -480,10 +480,14 @@ def test_demo_adopted_position_stop_fires(tmp_path, monkeypatch):
     assert row["stop_price"] is not None, "precondition: stop_price must be set after adopt"
     stop_level = float(row["stop_price"])
 
-    # Inject breach price via monkeypatch on the name in position_manager's namespace.
-    # Short stop is ABOVE entry; breach = stop + margin.
+    # Inject one exact fresh mark at the Position Manager authority seam. Short
+    # stop is ABOVE entry; breach = stop + margin.
     breach_price = stop_level + 10.0
-    monkeypatch.setattr(pm_mod, "_latest_price", lambda sym: breach_price)
+    monkeypatch.setattr(
+        pm_mod,
+        "get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue: breach_price,
+    )
 
     result = evaluate_open_positions()
 

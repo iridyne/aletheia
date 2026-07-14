@@ -1221,16 +1221,44 @@ def test_factor_feedback_excludes_synthetic_closes():
     genuine rows."""
     from unittest.mock import patch
     from aletheia.analytics import factor_feedback as ff
+    from tests.test_outcome_closure import _insert_entry_chain
 
+    genuine_index = 0
     def _row(reason, pnl):
-        return {"scanner_family": "momentum", "direction": "long", "symbol": "BTC/USDT",
+        nonlocal genuine_index
+        synthetic = reason == "reconciled_gone"
+        opportunity_id = proposal_id = order_id = None
+        position_id = f"{reason}:{pnl}"
+        if not synthetic:
+            position_id = f"factor-feedback-{genuine_index}"
+            genuine_index += 1
+            opportunity_id, proposal_id, order_id = _insert_entry_chain(
+                position_id=position_id,
+                symbol="BTC/USDT",
+                market_type="usdt_futures",
+                direction="long",
+                quantity=1.0,
+                price=100.0,
+                execution_mode="paper_internal",
+            )
+        return {"id": position_id, "position_id": position_id,
+                "opportunity_id": opportunity_id, "proposal_id": proposal_id,
+                "order_id": order_id,
+                "scanner_family": "momentum", "direction": "long", "symbol": "BTC/USDT",
                 "confidence": "high", "late_entry_penalty": 0,
-                "position_id": f"{reason}:{pnl}", "entry_price": 100.0, "quantity": 1.0,
+                "market_type": "usdt_futures", "execution_mode": "paper_internal",
+                "status": "closed", "entry_price": 100.0,
+                "current_price": 100.0 + pnl, "quantity": 1.0,
+                "entry_fee": 0.0, "exit_fee": 0.0,
+                "funding_cost": 0.0, "funding_source": "local_simulation",
+                "entry_price_source": "unavailable" if synthetic else "local_fill",
+                "entry_fill_verified": not synthetic,
                 "closed_at": "2026-07-12T08:00:00+00:00",
                 "realized_pnl": pnl, "close_reason": reason,
-                "close_category": "strategy", "exit_price_source": "local_fill",
-                "exit_fill_verified": True, "outcome_eligible": True,
-                "outcome_exclusion_reason": "eligible",
+                "close_category": "administrative" if synthetic else "strategy",
+                "exit_price_source": "unavailable" if synthetic else "local_fill",
+                "exit_fill_verified": not synthetic, "outcome_eligible": not synthetic,
+                "outcome_exclusion_reason": "administrative_close" if synthetic else "eligible",
                 "outcome_semantics_version": "oi-v1"}
 
     # All-synthetic factor → excluded → no history.

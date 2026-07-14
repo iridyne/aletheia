@@ -185,6 +185,40 @@ async def test_learning_settings_persist_and_cap_active_paper_allocation(client)
     rejected = await client.post("/api/settings/learning", json={"paper_active_allocation_pct": 0.91})
     assert rejected.status_code == 400
 
+    unsupported = await client.post(
+        "/api/settings/learning", json={"paper_influence_paths": ["advisory_skill"]},
+    )
+    assert unsupported.status_code == 400
+    unknown = await client.post(
+        "/api/settings/learning", json={"paper_influence_paths": ["made_up_path"]},
+    )
+    assert unknown.status_code == 400
+
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.learning.paper_influence_enabled = False
+    cfg.learning.paper_influence_paths = ["advisory_skill"]
+    save_config(cfg)
+    toggle_only = await client.post(
+        "/api/settings/learning", json={"paper_influence_enabled": True},
+    )
+    assert toggle_only.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_learning_settings_expose_only_wired_paper_path_options(client):
+    response = await client.get("/api/settings")
+    assert response.status_code == 200
+    options = response.json()["learning_path_options"]
+    by_id = {option["path_id"]: option for option in options}
+    assert by_id["ranker_learned_guard"]["supported"] is True
+    assert by_id["advisory_skill"] == {
+        "path_id": "advisory_skill",
+        "label": "proven hypothesis skill",
+        "supported": False,
+        "status": "consumer_unwired",
+    }
+
 
 @pytest.mark.anyio
 async def test_settings_response_covers_sanitized_config_schema(client):

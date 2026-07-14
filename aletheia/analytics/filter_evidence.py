@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -56,6 +57,34 @@ FIRST_EXPOSURE_CTE_SQL = (
 )
 
 
+@contextmanager
+def atomic_opportunity_evidence():
+    """Own a rollback boundary for one Opportunity and its producer fact.
+
+    Repository transactions intentionally join a caller-owned transaction.  A
+    producer needs a stricter guarantee: its new lifecycle row must never survive
+    without the exact evidence that says it was emitted.  Use an IMMEDIATE outer
+    transaction when possible and a unique SAVEPOINT when already nested.
+    """
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    if not db.in_transaction:
+        with repo.transaction(immediate=True):
+            yield
+        return
+
+    savepoint = f"opportunity_evidence_{uuid4().hex}"
+    db.execute(f"SAVEPOINT {savepoint}")
+    try:
+        yield
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+    except Exception:
+        db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+        raise
+
+
 def record_filter_decision(
     *,
     candidate_key: str,
@@ -85,11 +114,13 @@ def record_filter_decision(
     entry_price_usd: float | None = None,
     entry_spread_bps: float | None = None,
     funding_rate_at_entry: float | None = None,
+    raise_on_error: bool = False,
 ) -> str:
     """Persist one gate fact and, when economically identifiable, its outcomes.
 
-    Evidence failures are fail-open with respect to the trading pipeline: callers
-    receive a stable ID and the original decision semantics remain unchanged.
+    Evidence failures are observational by default: callers receive a stable ID
+    and the original decision semantics remain unchanged. Trading handoff callers
+    can request propagation so their surrounding transaction fails closed.
     """
     if decision not in _VALID_DECISIONS:
         raise ValueError(f"unsupported filter decision: {decision}")
@@ -164,6 +195,8 @@ def record_filter_decision(
                 entry_ts=timestamp,
             )
     except Exception as exc:  # observation must not mutate the trading decision
+        if raise_on_error:
+            raise
         logger.warning(
             "filter evidence write failed candidate=%s filter=%s: %s",
             candidate_key,
@@ -182,6 +215,7 @@ def record_filter_decision_batch(
     candidate_facts: list[dict[str, Any]],
     parameters: dict[str, Any] | None = None,
     evaluated_at: str | None = None,
+    raise_on_error: bool = False,
 ) -> str:
     """Persist every high-volume directionless fact in one immutable run batch."""
     if not run_id or not filter_name:
@@ -216,8 +250,12 @@ def record_filter_decision_batch(
         evaluated_at=evaluated_at or _utcnow(),
     )
     try:
-        repo.insert_filter_decision_batch(batch)
+        inserted = repo.insert_filter_decision_batch(batch)
+        if raise_on_error and not inserted:
+            raise RuntimeError("filter_evidence_batch_not_inserted")
     except Exception as exc:
+        if raise_on_error:
+            raise
         logger.warning(
             "filter evidence batch write failed run=%s filter=%s: %s",
             run_id,
@@ -378,6 +416,7 @@ def record_candidate_filter_trace(
     *,
     run_id: str | None = None,
     trace: list[dict[str, Any]] | None = None,
+    raise_on_error: bool = False,
 ) -> int:
     """Persist a candidate's sequential gate trace using one shared outcome seed."""
     opportunity_id = candidate.get("opportunity_id")
@@ -429,9 +468,12 @@ def record_candidate_filter_trace(
                 entry_price_usd=entry_price,
                 entry_spread_bps=_optional_float(candidate.get("entry_spread_bps")),
                 funding_rate_at_entry=_optional_float(candidate.get("funding_rate_at_entry")),
+                raise_on_error=raise_on_error,
             )
             count += 1
         except Exception as exc:
+            if raise_on_error:
+                raise
             logger.warning(
                 "candidate filter trace failed opportunity=%s filter=%s: %s",
                 opportunity_id,
@@ -489,6 +531,57 @@ def record_observer_pre_filter_evidence(
         entry_spread_bps=entry_spread_bps,
         funding_rate_at_entry=funding_rate_at_entry,
     )
+
+
+def record_observer_opportunity_emitted_evidence(
+    *,
+    run_id: str | None,
+    opportunity_id: str,
+    symbol: str,
+    venue: str | None,
+    market_type: str,
+    direction: str,
+    scanner_family: str | None,
+    universe_snapshot_id: str | None,
+    universe_member_id: str | None,
+    confidence: str,
+    confidence_score: int | None,
+) -> str:
+    """Persist the Observer's exact producer handoff for a new Opportunity."""
+    market = _normalize_market(market_type)
+    evidence_id = record_filter_decision(
+        candidate_key=f"opportunity:{opportunity_id}",
+        candidate_kind="opportunity",
+        parent_candidate_key=(
+            f"universe_member:{universe_member_id}" if universe_member_id else None
+        ),
+        run_id=run_id,
+        opportunity_id=opportunity_id,
+        universe_snapshot_id=universe_snapshot_id,
+        universe_member_id=universe_member_id,
+        venue=venue,
+        symbol=symbol,
+        market_type=market,
+        direction=direction,
+        scanner_family=scanner_family,
+        filter_name="opportunity_emission",
+        stage="market_observer",
+        decision="passed",
+        reason_code="opportunity_emitted",
+        inputs={
+            "confidence": confidence,
+            "confidence_score": confidence_score,
+        },
+        parameters={"producer": "market_observer"},
+        raise_on_error=True,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    if get_db().execute(
+        "SELECT 1 FROM filter_decisions WHERE id = ?", (evidence_id,)
+    ).fetchone() is None:
+        raise RuntimeError("observer_opportunity_emission_evidence_not_persisted")
+    return evidence_id
 
 
 def ensure_candidate_outcomes(

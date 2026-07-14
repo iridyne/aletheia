@@ -13,9 +13,22 @@
 > - 🟠 让数据失真或学习失效（promotion gate 错算 / KB 类型混淆 / PnL 不可信）
 > - 🟡 dead code / cosmetic / future-violation tripwire
 >
-> **最后更新**：2026-07-11 · 维护者：Aletheia Dev
+> **最后更新**：2026-07-14 · 维护者：Aletheia Dev
 > **来源**：6 个并行 subagent 审计（agents+runtime / risk+execution / storage+knowledge /
 > server+config / lifecycle+gateway / model+telegram+update+cli）+ 早期对照表
+
+---
+
+## 0c. Trade chain 收口后的独立开放项（TASK-2026-067，2026-07-14）
+
+| ID | 状态 | 问题 | 当前安全边界 / 下一步 |
+|---|---|---|---|
+| TC-X01 | 🔴 待独立修复 | Exchange-backed futures 没有按 Position 归集真实账户 funding/bill 的生产写入器；`outcome_integrity.py` 只接受 `broker_ledger`，当前仓库只有校验和消费，没有对应正向采集链 | 当前会明确留下 `incomplete_funding_economics`，不会把不完整净 PnL 送进 Attribution/Learning。另开 exchange 任务接入私有账单、账户/合约/时间窗匹配和幂等归集，再补真实正向 E2E；不得用 local simulation 代替交易所账单 |
+| TC-X02 | 🟡 待裁决 | Bitget futures 入场的批准 SL/TP 已通过真实 create-order 的 preset 字段提交；但旧的 post-fill `_try_place_tpsl()` 只被测试调用，生产代码不调用，也没有对应动态 TPSL ID 生命周期 | 不把这个 dead helper 当作“preset 未提交”的 blocker。另开 exchange 任务决定删除死代码，或实现可核对的动态 TPSL 创建/更新/取消与持久身份；不要在本次 active-paper 修复中扩大范围 |
+
+TASK-2026-067 的 active `paper_internal` 断路修复已提交在独立分支，但尚未在最新
+`master` 后代上跑全量、创建新 policy epoch/window 或完成主线 runtime soak，因此仍不
+具备合并/上线结论。准确接手步骤见 `.agent/handoffs/TASK-2026-067.md`。
 
 ---
 
@@ -100,20 +113,15 @@
 
 ### 1.2 Live 与执行安全
 
-- **Live order 部分失败产生幻影 fill + position**
-  - 佐证：`execution/bitget_broker.py:52-78` `client.place_order` 返回后无条件 `insert_fill(...)` 并写 Position；`OrderResponse.status` 默认 `"submitted"`（`client.py:55`），broker 写 `status="submitted"`（70 行）但已写 Fill
-  - 影响：违反 trust §1.3 "Live execution failure: do not infer fills unless the exchange confirms them"；同时违反 §1.1 因果链（Fill 存在于未成交的 order）；reconciliation 不能 un-write fills
-  - 最小修复：bitget_broker 在 `OrderResponse.status` 非 `filled`/`partially_filled` 时**不**写 fill，只写 order 行；reconciliation 后续补 fill
+- ✅ **Live/Demo 接单不再产生幻影 Fill 或 Position（TASK-2026-067）**
+  - 修复：Bitget、OKX、Binance 都先持久化带稳定 client ID 的本地 Order；交易所只确认“已接单”时保持 unresolved，不再从请求价格或聚合响应虚构成交。
+  - 只有账户与订单身份精确匹配的私有逐笔成交，才会在同一事务中写入 Fill、Position 与终态 Order；部分成交保持显式状态并继续占用风险敞口。
 
-- **Reconciliation 在部分接口失败时假性收敛**
-  - 佐证：`execution/reconciliation.py:64` `if errors and not open_ids: return ...`；spot 成功但 usdt_futures 失败时，所有 futures order 因 ID 不在 spot open_ids 中被标 `status="filled"` + audit "no longer open on exchange"
-  - 影响：违反 trust §1.3 reconciliation safety——只有部分接口失败时把所有未确认订单当成"已成交"
-  - 最小修复：按 market_type 独立判断 errors；某个 market 有 error 时该 market 的订单跳过本次比对
+- ✅ **Reconciliation 不再以“开放订单列表里消失”推断成交（TASK-2026-067）**
+  - 修复：每个账户、市场和 exact order ID 分开读取私有成交；查询失败、分页不完整、数量不足或身份冲突都保持 inconclusive/unresolved，不写假终态。
 
-- **Live order DB 插入失败 → 交易所有单本地无记录**
-  - 佐证：`execution/gateway.py:152-190` 内层 `try/except Exception as e` 在 181-190；若 `client.place_order` 已成功但后续 `insert_fill`/`insert_position` 抛错，proposal 转 `error` 但**无 order 行、无 fill 行**；audit message 仅 `f"Live order failed: {e}"` 无 `exchange_order_id`
-  - 影响：违反 trust §1.3 反向 hazard——交易所有真实订单，本地无任何痕迹；reconciliation 找不到匹配（无 `exchange_order_id`）；§1.1 因果链彻底断
-  - 最小修复：在 `place_order` 之前先 insert 一条 `pending` order 行；place_order 成功后 update with `exchange_order_id`；DB 异常单独处理为 `error_post_submit` 并保留 exchange_order_id
+- ✅ **交易所提交前已先保存本地权威 Order（TASK-2026-067）**
+  - 修复：提交超时保留 `submission_unknown` 与稳定 client ID；收到 exchange order ID 后即使本地成交物化失败，也保留可对账身份与 `materialization_missing`，不会把未知结果改成普通 error 后重发。
 
 - **`/api/update/apply` 无 confirm、无 audit、无人工门**
   - 佐证：`server/routes/update.py:21-23` POST 无 body 字段、无 confirm、无 `write_audit`，直接 `git pull` + 重启
@@ -243,15 +251,17 @@
   - 影响：`position_manager._effective_stop` 用旧 stop 比较 latest_price——加仓后实际风险敞口大于 `default_stop_loss_pct`；trust §5.5 max_drawdown 数据失真
   - 最小修复：averaging-in 时按 weighted 重算 stop（或保留更紧的那个）；paper_trader 不再传 stop 给 averaging 路径
 
-- **Bitget broker 手续费完全捏造**
-  - 佐证：`execution/bitget_broker.py:76-78` `fee = quantity * price * 0.0006` 硬编码 taker；注释承诺"reconciliation later corrects this"，但 `reconciliation.py` 只更新 status/filled_at，从不更新 fee/fill_price/fill_quantity
-  - 影响：违反 trust §1.3 "do not infer fills unless exchange confirms"——fee 是发明的；下游 PnL gate（§5.4 / §5.5）用错数
-  - 最小修复：reconciliation 增加 `get_fills` 调用，按 fillId 同步 fee/price/qty；或承认 fee 是估算并在 audit 注明
+- ✅ **Bitget 成交价格、数量、手续费改用 exact 私有逐笔证据（TASK-2026-067）**
+  - 修复：本地 durable Fill 使用账户作用域的真实 fill ID；缺价格、数量、手续费币种或成交时间时不物化。Position 的入场均价、累计手续费与平仓结果均从这些 Fill 计算。
 
-- **Bitget `place_order` 不带 `clientOid`，重试可能下双单**
-  - 佐证：`exchanges/bitget/client.py:188-228` body_data 无 clientOid；`OrderResponse.client_oid` 只读响应不发请求
-  - 影响：transient httpx timeout 实际已下单时，上层重试创建两个 order + 两个 fill + averaged position；当前上层未重试（暂安全），但和"幻影 fill"问题叠加风险高
-  - 最小修复：每次 place_order 用 `proposal.id` 派生稳定 clientOid 发出
+- ✅ **Bitget 提交携带稳定 `clientOid`，未知结果不会自动重发（TASK-2026-067）**
+  - 修复：client ID 来自持久 Proposal/Order 身份；重启后 reconciliation 可用它找回 exchange order ID，并继续精确成交物化。
+
+- 🟡 **Order 权威证据仍缺直接 price/leverage 快照核对（TASK-2026-067 审查残余）**
+  - 位置：`aletheia/storage/repositories.py::validate_native_order_authority`、`aletheia/storage/models.py::Order`。
+  - 当前边界：生产 Gateway 只规范化 quantity，price 与 leverage 均从已存 Proposal 原样传给 broker；本轮没有发现现行误传路径。
+  - 剩余风险：Order 校验未直接比较 Proposal.price，且 Order 表没有 leverage 字段，未来新增调用方时无法仅凭 durable Order 证明这两个值没有漂移。
+  - 后续最小修复：给 Order 增加 leverage 快照并迁移数据，同时在插入前按 Proposal/Risk 快照核对 price 与 leverage；需要独立数据模型任务和规格证据。
 
 - **Portfolio 不同步交易所真实账户状态（缺 Exchange Account Sync 层）** 🟠 P2 / north-star
   - 佐证：`portfolio/pnl.py::compute_portfolio` 只查本地 SQLite `positions`/`fills`/`portfolio_snapshots`；`server/routes/data.py /api/portfolio` 直传；`exchanges/bitget/client.py` 暴露 account/positions/orders 但无任何调用方周期性拉取并写入本地视图
@@ -299,10 +309,8 @@
   - 影响：trust §1.4 必填字段不全；下游解析期望全 6 字段时坏掉
   - 最小修复：用 sentinel `entity_id="global"` 或 `entity_id=cfg.runtime.id`
 
-- **Approve_proposal 异常无 try/except，proposal 已转 approved 但失败无 error 状态**
-  - 佐证：`routes/data.py:83-85` `execute_existing_proposal` 抛异常直接 500；proposal 此时为 approved 但无后续 audit、不会自动转 error
-  - 影响：违反 trust §1.3 "Paper execution failure ... set status to error, write audit"
-  - 最小修复：包 try/except，捕获后 update_trade_proposal(status="error") + audit
+- ✅ **Paper 审批异常会落显式 error，且不泄露原始异常（TASK-2026-067）**
+  - 修复：端点仅接受原始 `paper_internal + pending`；执行失败写稳定 `paper_execution_failed`，Proposal 转 error，API/审计不回传异常正文。
 
 ### 2.5 调度层
 
@@ -800,15 +808,14 @@
 |------|-----|------|---------|------|
 | 🔴 | **CR-RE-01** | `aletheia/risk/engine.py:252-256` | 被拒提案的 `allowed_execution_mode` 写死 `"paper_internal"`，原始模式丢失，致 CR-PG-01 dead branch | ✅ **已修** — `RiskDecision` 加 `proposal_execution_mode` 字段(model+migration+engine)，原始模式保留 |
 | 🔴 | **CR-PG-01** | `aletheia/trading/strategy_lifecycle.py:395-408` | `_critical_risk_violations` live 分支因 CR-RE-01 根因永久不可达 | ✅ **已修** — 改用 `proposal_execution_mode` + `"live" in mode` 判定；实测 live 拒绝计数 0→1，dead branch 复活 |
-| 🔴 | **CR-EX-01** | `aletheia/execution/reconciliation.py:21` | `_LIVE_MODE` 硬编码 bitget，OKX/Binance live 订单永久停留 `submitted` | ✅ **部分修+告警** — 加 `_UNRECONCILED_LIVE_MODES` 检测+infra_event 告警(不再静默)；完整对账需 OKX/Binance `get_open_orders`(两 client 均缺此方法)，见 §16.4 |
+| 🔴 | **CR-EX-01** | `aletheia/execution/reconciliation.py` | `_LIVE_MODE` 硬编码 bitget，OKX/Binance live 订单永久停留 `submitted` | ✅ **已修 (TASK-2026-067)** — 三个 broker 均按明确 execution mode/account 读取私有逐笔成交；只在 exact order evidence 完整时物化，未知状态继续保留 |
 | 🔴 | **CR-DL-01** | `repositories.py` OHLCV 窗口 / `instruments.py` symbol 格式 | OHLCV 窗口契约/代码不一致 + tradable_symbols 返 Bitget 格式 | ✅ **symbol 部分已修** — `tradable_symbols_from_config` 改返 canonical(归一化源头)；OHLCV 窗口决议见 §16.4 |
 | 🔴 | **CR-DM-01** | `aletheia/storage/models.py:8` | ID `hex[:12]`(48bit) vs 契约 UUID4 36-char | ✅ **已决议(方案B)** — 改文档对齐代码：12-char hex 是约定，碰撞 P≈2e-7@1e4 行可忽略，full-UUID4 迁移不划算 |
 | 🟠 | **CR-LU-01** | `aletheia/server/routes/live.py:17-45` | live unlock 路由未检查 `operator.permission_mode` | ✅ **已评估-无需改** — operator.permission_mode 管 agent shell 自主权限，非人类 dashboard 操作；实际攻击面已被 FORBIDDEN_INTENTS(enable_live 双锁) + agent 无 HTTP 能力 + tunnel token(`_PROTECTED_PATHS`) + confirm 双门覆盖。加 operator gate 语义错误，不实施 |
-| 🟠 | **CR-EX-03** | `aletheia/execution/bitget_broker.py:141-149` | `Position` 缺 `opportunity_id`，check #16 sector 集中度静默 | ⏳ **待修** — bitget_broker 在 trust boundary；当前无 live/bitget 持仓，非活跃风险。下一 sprint |
+| 🟠 | **CR-EX-03** | `aletheia/execution/bitget_broker.py` | `Position` 缺 `opportunity_id`，check #16 sector 集中度静默 | ✅ **已修 (TASK-2026-067)** — Opportunity→Proposal→Order→Position 身份由权威 Proposal 贯穿，交换端成交物化不再丢失 opportunity_id |
 | 🟠 | **CR-AU-03** | `aletheia/server/routes/bitget.py` | 凭证保存路由可能未写 `secret_rotated` audit | ⏳ **待核实** — AU-S05 spec 已建(检查 trust 路由审计)，需具体核实 bitget credential 路由 |
 
-本会话已处理 6/8（CR-RE-01/CR-PG-01/CR-EX-01/CR-DL-01/CR-DM-01/CR-LU-01）+ OL-C03/OL-C07(§15.1/15.2)。
-剩 CR-EX-03 / CR-AU-03 待下一 sprint（均非当前活跃风险）。
+CR-EX-01 与 CR-EX-03 已在 TASK-2026-067 完成；本表仅剩 CR-AU-03 待后续核实。
 
 ---
 

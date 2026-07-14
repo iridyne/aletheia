@@ -39,6 +39,40 @@ def _setup_db(tmp_path, monkeypatch):
     return conn
 
 
+def _seed_executable_paper_entry(symbol: str, price: float, suffix: str) -> dict:
+    """Persist the exact market and causal facts required by the real Gateway."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot, Opportunity
+
+    opportunity = Opportunity(
+        id=f"execution-chain-opportunity-{suffix}",
+        symbol=symbol,
+        market="spot",
+        direction_bias="long",
+        status="queued",
+    )
+    repo.insert_opportunity(opportunity)
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol=symbol,
+        market_type="spot",
+        exchange="binance",
+        price=price,
+    ))
+    return {
+        "symbol": symbol,
+        "market_type": "spot",
+        "direction": "long",
+        "order_type": "market",
+        "quantity": 0.0005,
+        "price": price,
+        "stop_price": price * 0.95,
+        "take_profit": price * 1.10,
+        "risk_reward": 2.0,
+        "execution_mode": "paper_internal",
+        "opportunity_id": opportunity.id,
+    }
+
+
 # ---------------------------------------------------------------------------
 # PL-EC-01  L2b  happy_path: full causal chain persisted after paper execution
 # ---------------------------------------------------------------------------
@@ -58,20 +92,10 @@ def test_execution_chain_happy_path(tmp_path, monkeypatch):
     from aletheia.execution.gateway import submit_proposal
     from aletheia.storage.sqlite import get_db
 
-    result = submit_proposal(
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=0.001,
-        price=60000.0,
-        stop_price=58000.0,
-        execution_mode="paper_internal",
-    )
-
-    if result.get("status") != "executed":
-        pytest.skip(
-            f"Proposal was not executed (risk rejected): {result.get('risk_violations')}"
-        )
+    result = submit_proposal(**_seed_executable_paper_entry(
+        "BTC/USDT", 60_000.0, "happy",
+    ))
+    assert result.get("status") == "executed", result
 
     proposal_id = result["proposal_id"]
     order_id = result.get("order_id")
@@ -125,15 +149,14 @@ def test_causal_integrity_fk_scan(tmp_path, monkeypatch):
     from aletheia.storage.sqlite import get_db
 
     # Execute two proposals to populate multiple rows
-    for price in (60000.0, 3000.0):
-        submit_proposal(
-            symbol="BTC/USDT" if price > 10000 else "ETH/USDT",
-            market_type="spot",
-            direction="long",
-            quantity=0.001,
-            price=price,
-            execution_mode="paper_internal",
-        )
+    results = []
+    for index, (symbol, price) in enumerate(
+        (("BTC/USDT", 60_000.0), ("ETH/USDT", 3_000.0)), start=1,
+    ):
+        results.append(submit_proposal(**_seed_executable_paper_entry(
+            symbol, price, f"fk-{index}",
+        )))
+    assert [result.get("status") for result in results] == ["executed", "executed"]
 
     db = get_db()
 
@@ -147,6 +170,7 @@ def test_causal_integrity_fk_scan(tmp_path, monkeypatch):
     }
 
     orders = db.execute("SELECT id, proposal_id FROM orders").fetchall()
+    assert len(orders) == 2
     for row in orders:
         assert row["proposal_id"] is not None, (
             f"Order {row['id']} has NULL proposal_id — FK invariant violated"
@@ -157,6 +181,7 @@ def test_causal_integrity_fk_scan(tmp_path, monkeypatch):
         )
 
     fills = db.execute("SELECT id, order_id FROM fills").fetchall()
+    assert len(fills) == 2
     for row in fills:
         assert row["order_id"] is not None, (
             f"Fill {row['id']} has NULL order_id — FK invariant violated"
@@ -167,6 +192,7 @@ def test_causal_integrity_fk_scan(tmp_path, monkeypatch):
         )
 
     positions = db.execute("SELECT id, order_id FROM positions").fetchall()
+    assert len(positions) == 2
     for row in positions:
         assert row["order_id"] is not None, (
             f"Position {row['id']} has NULL order_id — FK invariant violated"
@@ -196,6 +222,19 @@ def test_execution_chain_atomicity_on_fill_error(tmp_path, monkeypatch):
     from aletheia.execution import paper_broker
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
+    from tests.execution_authority import seed_order_authority
+
+    seed_order_authority(
+        proposal_id="prop-pl-ec-03",
+        risk_decision_id="rd-pl-ec-03",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60000.0,
+        execution_mode="paper_internal",
+    )
 
     # Spy on insert_order to capture the created order id
     captured_order_id = {}
@@ -270,19 +309,10 @@ def test_execution_chain_idempotency(tmp_path, monkeypatch):
     from aletheia.execution.gateway import submit_proposal, execute_existing_proposal
     from aletheia.storage import repositories as repo
 
-    result = submit_proposal(
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=0.001,
-        price=60000.0,
-        execution_mode="paper_internal",
-    )
-
-    if result.get("status") != "executed":
-        pytest.skip(
-            "Proposal not executed (risk rejected) — cannot test idempotency guard"
-        )
+    result = submit_proposal(**_seed_executable_paper_entry(
+        "BTC/USDT", 60_000.0, "idempotency",
+    ))
+    assert result.get("status") == "executed", result
 
     proposal_id = result["proposal_id"]
     orders_before = [
@@ -333,17 +363,10 @@ def test_execution_chain_audit_event_in_db(tmp_path, monkeypatch):
     from aletheia.execution.gateway import submit_proposal
     from aletheia.storage.sqlite import get_db
 
-    result = submit_proposal(
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=0.001,
-        price=60000.0,
-        execution_mode="paper_internal",
-    )
-
-    if result.get("status") != "executed":
-        pytest.skip("Proposal not executed (risk rejected)")
+    result = submit_proposal(**_seed_executable_paper_entry(
+        "BTC/USDT", 60_000.0, "audit",
+    ))
+    assert result.get("status") == "executed", result
 
     db = get_db()
     order_id = result.get("order_id")

@@ -83,7 +83,7 @@ def _patch_unconfirmed_close(
     "exchange_status,expected_status",
     [
         ("submitted", "submitted"),
-        ("partially_filled", "partial"),
+        ("partially_filled", "partially_filled"),
     ],
 )
 @pytest.mark.parametrize(

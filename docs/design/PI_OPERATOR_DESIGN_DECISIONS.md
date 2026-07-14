@@ -107,7 +107,7 @@ agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交�
 
 | 层 | 触发方式 | 延迟容忍 | 产出 |
 |----|----------|----------|------|
-| **Trading Decision** (现有) | 每 15min tick | 秒级不重要 | pass/open/scale_in |
+| **Trading Decision** (现有) | 每 15min tick | 秒级不重要 | 当前活跃面仅 `trade/skip`；历史 `pass/open/scale_in` 仅作旧设计记录，不是可执行动作 |
 | **Operator Assessment** (新增) | 每 4h + 事件触发 | 分钟级 | config patch / delegation / alert |
 
 ### pi_decisions 共享总线:action 命名空间(不变式)

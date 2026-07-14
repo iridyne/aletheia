@@ -100,7 +100,7 @@ def test_get_watched_symbols_includes_positions():
     cfg.event_triggers.watch_universe_members = False
 
     with patch("aletheia.config.loader.load_config", return_value=cfg), \
-         patch("aletheia.storage.repositories.list_positions", return_value=positions):
+         patch("aletheia.storage.repositories.list_all_open_positions", return_value=positions):
         syms = price_feed.get_watched_symbols()
 
     assert "BTC/USDT" in syms

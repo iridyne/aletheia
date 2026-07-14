@@ -35,7 +35,7 @@ def reset_daemon_state():
 def test_notify_noop_when_not_started():
     """notify_pi_daemon() must never raise when the daemon is not running."""
     assert not is_daemon_running()
-    notify_pi_daemon(source="test")
+    assert notify_pi_daemon(source="test") is False
     assert daemon_status() == {"running": False, "event_set": False, "lock_held": False}
 
 
@@ -46,7 +46,7 @@ def test_notify_from_sync_thread():
     pd._uvicorn_loop = loop
     pd._signal_event = event
 
-    notify_pi_daemon(source="test_sync")
+    assert notify_pi_daemon(source="test_sync") is True
     loop.run_until_complete(asyncio.sleep(0.01))
     assert event.is_set()
 
@@ -93,6 +93,76 @@ async def test_debounce_batches_signals():
             pass
 
     assert eval_count == 1, f"Expected 1 evaluation, got {eval_count}"
+
+
+async def test_daemon_drains_reported_pending_backlog():
+    """One notification keeps evaluating until the command reports no queue backlog."""
+    remaining = [2, 1, 0]
+    eval_count = 0
+
+    async def fake_evaluate(_params):
+        nonlocal eval_count
+        value = remaining[min(eval_count, len(remaining) - 1)]
+        eval_count += 1
+        return {"action": "skip", "pending_queue_remaining": value}
+
+    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
+         patch("aletheia.config.loader.load_config") as mock_cfg:
+        mock_cfg.return_value.runtime.paused = False
+        mock_cfg.return_value.agent.permission_mode = "Paper"
+
+        loop = asyncio.get_running_loop()
+        task = start_pi_daemon(
+            loop=loop,
+            debounce_sec=0.0,
+            cooldown_sec=0.01,
+            heartbeat_sec=999.0,
+        )
+        await asyncio.sleep(0.02)
+        notify_pi_daemon(source="backlog_test")
+        await asyncio.sleep(0.25)
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    assert eval_count == 3
+
+
+async def test_failed_evaluation_rearms_daemon_signal():
+    """A failed evaluation must be retried without waiting for another producer."""
+    results = [-1, 0]
+    eval_count = 0
+
+    async def fake_run_evaluation(_triggered_by):
+        nonlocal eval_count
+        result = results[min(eval_count, len(results) - 1)]
+        eval_count += 1
+        return result
+
+    with patch.object(pd, "_run_evaluation", new=fake_run_evaluation), \
+         patch("aletheia.config.loader.load_config") as mock_cfg:
+        mock_cfg.return_value.runtime.paused = False
+        mock_cfg.return_value.agent.permission_mode = "Paper"
+
+        loop = asyncio.get_running_loop()
+        task = start_pi_daemon(
+            loop=loop,
+            debounce_sec=0.0,
+            cooldown_sec=0.01,
+            heartbeat_sec=999.0,
+        )
+        await asyncio.sleep(0.02)
+        notify_pi_daemon(source="failure_retry_test")
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    assert eval_count == 2
 
 
 async def test_heartbeat_triggers_evaluation():

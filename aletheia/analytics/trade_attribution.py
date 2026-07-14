@@ -38,17 +38,31 @@ def _build_row(pos: dict) -> dict | None:
     """Build a single attribution row from a closed position."""
     proposal = _safe_get(repo.get_trade_proposal, pos.get("proposal_id"))
     order = _safe_get(repo.get_order, pos.get("order_id")) if pos.get("order_id") else None
-    opportunity = _safe_get(repo.get_opportunity, proposal.get("opportunity_id")) if proposal else None
+    direct_opportunity_id = pos.get("opportunity_id")
+    if (
+        proposal is None
+        or order is None
+        or order.get("proposal_id") != proposal.get("id")
+        or not direct_opportunity_id
+        or proposal.get("opportunity_id") != direct_opportunity_id
+    ):
+        return None
+    opportunity = _safe_get(repo.get_opportunity, direct_opportunity_id)
     strategy = _safe_get(repo.get_strategy, pos.get("strategy_id"))
-    risk_decision = _lookup_risk_decision(proposal.get("id") if proposal else None)
+    risk_decision = _safe_get(
+        lambda decision_id: repo._select_one("risk_decisions", decision_id),
+        order.get("risk_decision_id"),
+    )
     universe_member = _lookup_universe_member(opportunity)
 
     # Serenity fallback: when the position's opportunity_id points to
     # serenity_opportunities (not market_observer's opportunities table),
     # the join above returns None. Fall back to serenity attribution.
     serenity_opp = None
-    if opportunity is None and pos.get("trade_school") == "serenity" and pos.get("opportunity_id"):
-        serenity_opp = _safe_get(repo.get_serenity_opportunity, pos["opportunity_id"])
+    if opportunity is None and pos.get("trade_school") == "serenity":
+        serenity_opp = _safe_get(repo.get_serenity_opportunity, direct_opportunity_id)
+    if opportunity is None and serenity_opp is None:
+        return None
 
     # Compute realized_pnl_pct
     entry_price = float(pos.get("entry_price") or 0)
@@ -97,6 +111,12 @@ def _build_row(pos: dict) -> dict | None:
         "entry_price": entry_price,
         "exit_price": float(pos.get("current_price") or entry_price),
         "quantity": quantity,
+        "entry_fee": pos.get("entry_fee"),
+        "exit_fee": pos.get("exit_fee"),
+        "funding_cost": pos.get("funding_cost"),
+        "funding_source": pos.get("funding_source"),
+        "entry_price_source": pos.get("entry_price_source"),
+        "entry_fill_verified": pos.get("entry_fill_verified"),
         "realized_pnl": realized_pnl,
         "realized_pnl_pct": round(realized_pnl_pct, 4),
         "close_reason": pos.get("close_reason"),
@@ -171,19 +191,6 @@ def _safe_get(fn, key: str | None) -> dict | None:
         return fn(key)
     except Exception:
         return None
-
-
-def _lookup_risk_decision(proposal_id: str | None) -> dict | None:
-    if not proposal_id:
-        return None
-    try:
-        decisions = repo.list_risk_decisions(limit=200)
-        for d in decisions:
-            if d.get("proposal_id") == proposal_id:
-                return d
-    except Exception:
-        pass
-    return None
 
 
 def _lookup_universe_member(opportunity: dict | None) -> dict | None:

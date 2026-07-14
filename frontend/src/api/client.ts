@@ -242,7 +242,14 @@ export const api = {
       confirm: true,
     }),
   getRuntimeEvents: (limit = 100) => fetchJson<any[]>(`/operator/runtime/events?limit=${limit}`),
-  getSettings: () => fetchJson<Record<string, unknown>>('/settings'),
+  getSettings: () => fetchJson<Record<string, unknown> & {
+    learning_path_options: Array<{
+      path_id: string
+      label: string
+      supported: boolean
+      status: 'supported' | 'consumer_unwired' | 'authority_unwired'
+    }>
+  }>('/settings'),
 
   // Post-trade lessons (LessonStore). System Operator consumes them via trading_context.py:592
   // (wired in b9ad957). TTL fields: accepted lessons enter 24h dry-run then expire after 30d.

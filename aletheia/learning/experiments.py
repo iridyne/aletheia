@@ -219,3 +219,34 @@ def apply_numeric_treatment(
         authority.reason if applied else f"baseline:{authority.reason}",
         hypothesis.hypothesis_id, experiment.experiment_id, exposure.exposure_id,
     )
+
+
+def apply_boolean_treatment(
+    *, path_id: str, scope: dict, action: dict, source_cohort: str,
+    target_horizon: str, candidate_key: str | None, consumer: str,
+    consumer_stage: str, outcome_candidate_key: str | None = None,
+    opportunity_id: str | None = None, manifest: dict | None = None,
+) -> InfluenceDecision:
+    """Apply one default-off boolean treatment through the numeric authority seam.
+
+    Prompt injection and learned proposal filters are binary effects, but they must
+    use the same prospective assignment, exact-path allowlist, policy epoch,
+    authority resolver, and immutable exposure ledger as numeric treatments.  A
+    control or refrozen candidate therefore remains ``0.0``/baseline; only an
+    authorized treatment candidate becomes ``1.0``/applied.
+    """
+    return apply_numeric_treatment(
+        path_id=path_id,
+        scope=scope,
+        action=action,
+        source_cohort=source_cohort,
+        target_horizon=target_horizon,
+        candidate_key=candidate_key,
+        baseline=0.0,
+        treatment=1.0,
+        consumer=consumer,
+        consumer_stage=consumer_stage,
+        outcome_candidate_key=outcome_candidate_key,
+        opportunity_id=opportunity_id,
+        manifest=manifest,
+    )

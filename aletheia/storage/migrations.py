@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     source_agent TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     status TEXT NOT NULL DEFAULT 'open',
+    last_ranked_at TEXT,
     linked_strategy_id TEXT
 );
 
@@ -87,6 +88,28 @@ CREATE TABLE IF NOT EXISTS trade_proposals (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS proposal_execution_claims (
+    proposal_id TEXT PRIMARY KEY REFERENCES trade_proposals(id) ON DELETE CASCADE,
+    owner_token TEXT NOT NULL,
+    claimed_at TEXT NOT NULL,
+    lease_expires_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS entry_risk_reservations (
+    proposal_id TEXT PRIMARY KEY REFERENCES trade_proposals(id) ON DELETE CASCADE,
+    proposal_commit_hash TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL,
+    execution_mode TEXT NOT NULL,
+    quantity REAL NOT NULL CHECK(quantity > 0),
+    price REAL NOT NULL CHECK(price > 0),
+    leverage REAL NOT NULL CHECK(leverage > 0),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_entry_risk_reservations_pool
+    ON entry_risk_reservations(execution_mode, symbol, created_at);
+
 CREATE TABLE IF NOT EXISTS risk_decisions (
     id TEXT PRIMARY KEY,
     proposal_id TEXT NOT NULL REFERENCES trade_proposals(id),
@@ -95,6 +118,9 @@ CREATE TABLE IF NOT EXISTS risk_decisions (
     violations TEXT DEFAULT '[]',
     allowed_execution_mode TEXT,
     proposal_execution_mode TEXT,
+    decision_role TEXT NOT NULL DEFAULT 'legacy',
+    evaluated_quantity REAL,
+    proposal_commit_hash TEXT,
     message TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -120,6 +146,9 @@ CREATE TABLE IF NOT EXISTS orders (
     price REAL,
     execution_mode TEXT NOT NULL,
     exchange_order_id TEXT,
+    client_order_id TEXT,
+    position_id TEXT,
+    close_reason TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     source TEXT NOT NULL DEFAULT 'native',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -157,6 +186,8 @@ CREATE TABLE IF NOT EXISTS positions (
     close_reason TEXT,
     exit_reasoning TEXT,
     close_category TEXT NOT NULL DEFAULT 'unknown',
+    entry_price_source TEXT NOT NULL DEFAULT 'unavailable',
+    entry_fill_verified INTEGER NOT NULL DEFAULT 0,
     exit_price_source TEXT NOT NULL DEFAULT 'unavailable',
     exit_fill_verified INTEGER NOT NULL DEFAULT 0,
     outcome_eligible INTEGER NOT NULL DEFAULT 0,
@@ -164,6 +195,8 @@ CREATE TABLE IF NOT EXISTS positions (
     reconciliation_identity TEXT,
     reconciliation_evidence TEXT,
     outcome_semantics_version TEXT,
+    funding_cost REAL,
+    funding_source TEXT NOT NULL DEFAULT 'unavailable',
     source TEXT NOT NULL DEFAULT 'native',
     opened_at TEXT NOT NULL DEFAULT (datetime('now')),
     closed_at TEXT
@@ -402,6 +435,7 @@ CREATE TABLE IF NOT EXISTS serenity_replay_snapshots (
 
 CREATE TABLE IF NOT EXISTS serenity_post_mortems (
     id TEXT PRIMARY KEY,
+    position_id TEXT REFERENCES positions(id),
     opportunity_id TEXT NOT NULL REFERENCES serenity_opportunities(id),
     outcome TEXT NOT NULL,
     failure_bucket TEXT,
@@ -1535,6 +1569,8 @@ CREATE INDEX IF NOT EXISTS idx_pred_claims_market ON prediction_market_claims(ma
 # CREATE TABLE above covers fresh DBs; these keep older app.db files current.
 _OUTCOME_INTEGRITY_POSITION_COLUMNS = (
     ("close_category", "positions", "TEXT NOT NULL DEFAULT 'unknown'"),
+    ("entry_price_source", "positions", "TEXT NOT NULL DEFAULT 'unavailable'"),
+    ("entry_fill_verified", "positions", "INTEGER NOT NULL DEFAULT 0"),
     ("exit_price_source", "positions", "TEXT NOT NULL DEFAULT 'unavailable'"),
     ("exit_fill_verified", "positions", "INTEGER NOT NULL DEFAULT 0"),
     ("outcome_eligible", "positions", "INTEGER NOT NULL DEFAULT 0"),
@@ -1542,6 +1578,8 @@ _OUTCOME_INTEGRITY_POSITION_COLUMNS = (
     ("reconciliation_identity", "positions", "TEXT"),
     ("reconciliation_evidence", "positions", "TEXT"),
     ("outcome_semantics_version", "positions", "TEXT"),
+    ("funding_cost", "positions", "REAL"),
+    ("funding_source", "positions", "TEXT NOT NULL DEFAULT 'unavailable'"),
 )
 
 _OUTCOME_INTEGRITY_DDL = (
@@ -1609,6 +1647,25 @@ _OUTCOME_INTEGRITY_DDL = (
        ON reconciliation_integrity_incidents(incident_type) WHERE status='active'""",
     """CREATE INDEX IF NOT EXISTS idx_reconciliation_integrity_status_time
        ON reconciliation_integrity_incidents(status, last_detected_at DESC)""",
+    """CREATE TABLE IF NOT EXISTS outcome_hook_jobs (
+        id TEXT PRIMARY KEY,
+        position_id TEXT NOT NULL REFERENCES positions(id),
+        hook_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT NOT NULL DEFAULT (datetime('now')),
+        locked_at TEXT,
+        claim_token TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT,
+        UNIQUE(position_id, hook_type)
+    )""",
+    """CREATE INDEX IF NOT EXISTS idx_outcome_hook_jobs_ready
+       ON outcome_hook_jobs(status, next_attempt_at, created_at)""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS idx_serenity_post_mortems_position
+       ON serenity_post_mortems(position_id)""",
 )
 
 _ADDITIVE_COLUMNS = [
@@ -1645,10 +1702,31 @@ _ADDITIVE_COLUMNS = [
     # Phase 2 (Serenity Option A): discriminator for which table opportunity_id
     # points at ('market_observer' → opportunities; 'serenity' → serenity_opportunities).
     ("signal_source", "pi_decisions", "TEXT"),
+    # Pending/final Operator rows must remain instrument-scoped even when their
+    # source opportunity is unavailable. Legacy rows stay NULL.
+    ("market_type", "pi_decisions", "TEXT"),
+    ("proposal_status", "pi_decisions", "TEXT"),
+    ("proposal_reason", "pi_decisions", "TEXT"),
     ("stop_price", "trade_proposals", "REAL"),
     # CR-RE-01: preserve the proposal's original execution_mode on the decision row
     # (allowed_execution_mode gets downgraded to paper_internal on rejection).
     ("proposal_execution_mode", "risk_decisions", "TEXT"),
+    # Risk -> Execution authority repair (2026-07-13). Historical rows remain
+    # ``legacy`` so duplicate decisions already on disk cannot be mistaken for,
+    # or conflict with, the new authoritative snapshot identity.
+    ("decision_role", "risk_decisions", "TEXT NOT NULL DEFAULT 'legacy'"),
+    ("evaluated_quantity", "risk_decisions", "REAL"),
+    ("proposal_commit_hash", "risk_decisions", "TEXT"),
+    # Durable pre-Order Risk allowances need the same economics used by the
+    # account-leverage guard. Existing databases are populated by the verified
+    # authority backfill after these additive columns are present.
+    ("market_type", "entry_risk_reservations", "TEXT"),
+    ("leverage", "entry_risk_reservations", "REAL"),
+    # Durable exchange recovery and exact Order -> Position identity.  Nullable
+    # keeps historical Orders honest instead of inventing missing linkage.
+    ("client_order_id", "orders", "TEXT"),
+    ("position_id", "orders", "TEXT"),
+    ("close_reason", "orders", "TEXT"),
     ("strategy_id", "knowledge_items", "TEXT"),
     ("stop_price", "positions", "REAL"),
     ("take_profit_price", "positions", "REAL"),
@@ -1669,6 +1747,9 @@ _ADDITIVE_COLUMNS = [
     # Numeric calibration the LLM emits alongside the categorical confidence.
     # 0..100; NULL means the model didn't supply one (older rows or bad output).
     ("confidence_score", "opportunities", "INTEGER"),
+    # Bounded paper-trader rotation cursor. The reader reserves capacity for
+    # both NULL rows and oldest non-NULL retries on every normal run.
+    ("last_ranked_at", "opportunities", "TEXT"),
     # Real exchange equity at snapshot time; NULL when exchange is unconfigured/stale.
     ("exchange_equity_usdt", "portfolio_snapshots", "REAL"),
     # Extended ticker fields added with CCXT migration (2026-06-08)
@@ -1726,6 +1807,8 @@ _ADDITIVE_COLUMNS = [
     ("published_at", "serenity_evidence", "TEXT"),
     ("fetched_at", "serenity_evidence", "TEXT"),
     ("metadata", "serenity_evidence", "TEXT DEFAULT '{}'"),
+    # Durable Outcome-hook replay: one automatic Serenity post-mortem per Position.
+    ("position_id", "serenity_post_mortems", "TEXT"),
     # D2 (2026-06-27): independent-evaluator authoritative tier + provenance.
     # `tier`/`evidence_tier` stay as the generator's self-graded proposal; these
     # columns hold what actually gates scoring/promotion. See serenity_evidence.py.
@@ -1966,6 +2049,24 @@ _ADDITIVE_COLUMNS = [
     ("closed_producer_commit", "positions", "TEXT"),
     ("closed_behavior_fingerprint", "positions", "TEXT"),
 ]
+
+
+# Created only after _ensure_columns has added last_ranked_at on an existing
+# database. The leading status key turns status='open' into an indexed SEARCH;
+# the following expressions satisfy each oldest-first ORDER BY without a
+# temporary sort tree. Partial predicates keep prediction rows and the opposite
+# cursor state out of each index.
+_OPPORTUNITY_ROTATION_INDEX_DDL = """
+CREATE INDEX IF NOT EXISTS idx_opportunities_trade_unranked_rotation
+ON opportunities(status, datetime(created_at), id)
+WHERE last_ranked_at IS NULL
+  AND COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity');
+
+CREATE INDEX IF NOT EXISTS idx_opportunities_trade_retry_rotation
+ON opportunities(status, datetime(last_ranked_at), datetime(created_at), id)
+WHERE last_ranked_at IS NOT NULL
+  AND COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity');
+"""
 
 
 def _ensure_columns(db) -> None:
@@ -2271,8 +2372,17 @@ _CORE_INDEXES_SQL = """
 CREATE INDEX IF NOT EXISTS idx_proposals_strategy_id ON trade_proposals(strategy_id);
 CREATE INDEX IF NOT EXISTS idx_proposals_commit_hash ON trade_proposals(commit_hash);
 CREATE INDEX IF NOT EXISTS idx_orders_proposal_id ON orders(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_orders_client_order_id ON orders(client_order_id);
+CREATE INDEX IF NOT EXISTS idx_orders_position_id ON orders(position_id);
 CREATE INDEX IF NOT EXISTS idx_fills_order_id ON fills(order_id);
 CREATE INDEX IF NOT EXISTS idx_risk_decisions_proposal_id ON risk_decisions(proposal_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_risk_authoritative_snapshot
+ON risk_decisions(
+    proposal_id,
+    COALESCE(proposal_commit_hash, ''),
+    COALESCE(evaluated_quantity, -1.7976931348623157e308)
+)
+WHERE decision_role = 'authoritative';
 CREATE INDEX IF NOT EXISTS idx_positions_strategy_id ON positions(strategy_id);
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 CREATE INDEX IF NOT EXISTS idx_knowledge_items_type_status ON knowledge_items(item_type, status);
@@ -2353,10 +2463,13 @@ CREATE TABLE IF NOT EXISTS pi_decisions (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     symbol TEXT,
     direction TEXT,
+    market_type TEXT,
     action TEXT NOT NULL DEFAULT 'skip',
     conviction INTEGER NOT NULL DEFAULT 0,
     reasoning TEXT DEFAULT '',
     proposal_id TEXT,
+    proposal_status TEXT,
+    proposal_reason TEXT,
     debate_ran INTEGER NOT NULL DEFAULT 0,
     debate_initial_conviction INTEGER,
     debate_bull_confidence INTEGER,
@@ -2726,6 +2839,107 @@ def _ensure_knowledge_fts_outcome_column(db) -> None:
         pass
     # _ensure_knowledge_fts will recreate with outcome column
 
+
+def _backfill_entry_risk_reservations(db) -> None:
+    """Carry only provable pre-Order authority across a schema upgrade.
+
+    Historical/partial Risk rows are deliberately ignored. A reservation is
+    created only when the stored Proposal hash, evaluated quantity, native
+    execution identity and approved authoritative row agree exactly and no
+    durable Order has taken over the allowance.
+    """
+    # Upgrade reservations that already existed in the immediately preceding
+    # schema. Only fill the new fields when the row still matches the exact
+    # Proposal and approved authority that created it.
+    db.execute(
+        """
+        UPDATE entry_risk_reservations
+        SET market_type = (
+                SELECT tp.market_type FROM trade_proposals tp
+                WHERE tp.id = entry_risk_reservations.proposal_id
+            ),
+            leverage = (
+                SELECT COALESCE(tp.leverage, 1) FROM trade_proposals tp
+                WHERE tp.id = entry_risk_reservations.proposal_id
+            )
+        WHERE (market_type IS NULL OR leverage IS NULL)
+          AND EXISTS (
+              SELECT 1
+              FROM trade_proposals tp
+              JOIN risk_decisions rd
+                ON rd.proposal_id = tp.id
+               AND rd.decision_role = 'authoritative'
+               AND rd.approved = 1
+               AND rd.proposal_commit_hash = tp.commit_hash
+               AND rd.evaluated_quantity = entry_risk_reservations.quantity
+               AND rd.allowed_execution_mode = tp.execution_mode
+               AND rd.proposal_execution_mode = tp.execution_mode
+              WHERE tp.id = entry_risk_reservations.proposal_id
+                AND entry_risk_reservations.proposal_commit_hash = tp.commit_hash
+                AND entry_risk_reservations.symbol = tp.symbol
+                AND entry_risk_reservations.execution_mode = tp.execution_mode
+                AND entry_risk_reservations.price = tp.price
+                AND tp.market_type IN ('spot', 'usdt_futures')
+                AND COALESCE(tp.leverage, 1) > 0
+          )
+        """
+    )
+    db.execute(
+        """
+        INSERT OR IGNORE INTO entry_risk_reservations (
+            proposal_id,
+            proposal_commit_hash,
+            symbol,
+            market_type,
+            execution_mode,
+            quantity,
+            price,
+            leverage,
+            created_at
+        )
+        SELECT
+            tp.id,
+            tp.commit_hash,
+            tp.symbol,
+            tp.market_type,
+            tp.execution_mode,
+            rd.evaluated_quantity,
+            tp.price,
+            COALESCE(tp.leverage, 1),
+            MIN(rd.created_at)
+        FROM trade_proposals tp
+        JOIN risk_decisions rd
+          ON rd.proposal_id = tp.id
+         AND rd.decision_role = 'authoritative'
+         AND rd.approved = 1
+         AND rd.proposal_commit_hash = tp.commit_hash
+         AND rd.allowed_execution_mode = tp.execution_mode
+         AND rd.proposal_execution_mode = tp.execution_mode
+        WHERE tp.source = 'native'
+          AND tp.status NOT IN ('rejected', 'error', 'executed')
+          AND trim(COALESCE(tp.commit_hash, '')) <> ''
+          AND trim(COALESCE(tp.symbol, '')) <> ''
+          AND tp.market_type IN ('spot', 'usdt_futures')
+          AND tp.execution_mode IN (
+              'paper_internal',
+              'bitget_demo',
+              'bitget_live_limited',
+              'binance_testnet',
+              'binance_live_limited',
+              'okx_demo',
+              'okx_live_limited'
+          )
+          AND rd.evaluated_quantity > 0
+          AND tp.price > 0
+          AND COALESCE(tp.leverage, 1) > 0
+          AND NOT EXISTS (
+              SELECT 1 FROM orders o WHERE o.proposal_id = tp.id
+          )
+        GROUP BY tp.id
+        HAVING COUNT(*) = 1
+        """
+    )
+
 def _run_all_ddl(db) -> None:
     """Execute every DDL statement against db (used for both real and blueprint DBs)."""
     db.executescript(SCHEMA_SQL)
@@ -2744,6 +2958,8 @@ def _run_all_ddl(db) -> None:
     db.executescript(_FILTER_SHADOW_EXPERIMENTS_DDL)
     db.executescript(_LEARNING_LEDGER_DDL)
     _ensure_columns(db)
+    db.executescript(_OPPORTUNITY_ROTATION_INDEX_DDL)
+    _backfill_entry_risk_reservations(db)
     _ensure_outcome_integrity_schema(db)
     _ensure_market_ohlcv_instrument_identity(db)
     _ensure_orderbook_instrument_index(db)

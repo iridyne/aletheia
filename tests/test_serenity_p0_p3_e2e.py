@@ -14,6 +14,30 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock
 
 
+def _seed_promoted_serenity_opportunity(
+    *, opportunity_id: str, symbol: str, direction: str, market_type: str
+) -> None:
+    """Persist the exact Serenity source behind an executable pending carrier."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import SerenityOpportunity, SerenityTheme
+
+    theme = SerenityTheme(
+        name=f"Pending carrier for {opportunity_id}",
+        status="promoted",
+    )
+    repo.insert_serenity_theme(theme)
+    repo.insert_serenity_opportunity(SerenityOpportunity(
+        id=opportunity_id,
+        theme_id=theme.id,
+        symbol=symbol,
+        direction=direction,
+        market_type=market_type,
+        asset_class="crypto",
+        status="active",
+        action_intent="pi_evaluate",
+    ))
+
+
 # ---------------------------------------------------------------------------
 # P0 — auto_promote end-to-end
 # ---------------------------------------------------------------------------
@@ -78,48 +102,14 @@ class TestP0AutoPromote:
         with patch("aletheia.config.loader.load_config", return_value=mock_cfg), \
              patch("aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
                    side_effect=lambda source="unknown": notify_calls.append(source)):
-            # Simulate the auto-promote block from research_worker
-            from aletheia.trading.serenity_scoring import score_serenity_opportunity
-            from aletheia.storage.models import PiDecision
+            from aletheia.agents.research_worker import (
+                _auto_promote_serenity_opportunities,
+            )
 
-            persisted_opps = [opp_id]
-            promoted_theme_ids: set[str] = set()
-            promoted_count = 0
-
-            for oid in persisted_opps:
-                opp = repo.get_serenity_opportunity(oid)
-                assert opp is not None
-                assert opp["status"] == "active"
-
-                evidence = repo.list_serenity_evidence(theme_id=opp["theme_id"], limit=200)
-                gates = repo.list_serenity_risk_gates(opportunity_id=oid, limit=200)
-                score_result = score_serenity_opportunity(opp, evidence=evidence, risk_gates=gates)
-
-                assert score_result["score"] >= mock_cfg.serenity.min_score_for_pi, (
-                    f"Score {score_result['score']} should be >= {mock_cfg.serenity.min_score_for_pi}"
-                )
-
-                repo.update_serenity_opportunity(oid, action_intent="pi_evaluate")
-                pi_dec = PiDecision(
-                    symbol=opp["symbol"],
-                    direction=opp["direction"],
-                    action="signal_pending",
-                    conviction=0,
-                    reasoning=f"Auto-promote: score={score_result['score']} opp={oid[:8]}",
-                    opportunity_id=oid,
-                    signal_source="serenity",
-                    debate_ran=False,
-                )
-                repo.insert_pi_decision(pi_dec)
-                promoted_count += 1
-                promoted_theme_ids.add(opp["theme_id"])
-
-            now_iso = datetime.now(timezone.utc).isoformat()
-            for tid in promoted_theme_ids:
-                repo.update_serenity_theme(tid, status="promoted", promoted_at=now_iso, updated_at=now_iso)
-
-            from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
-            notify_pi_daemon(source="serenity_auto_promote")
+            promoted_count = _auto_promote_serenity_opportunities(
+                [opp_id],
+                mock_cfg,
+            )
 
         # Verify outcomes
         assert promoted_count == 1
@@ -301,11 +291,18 @@ class TestPendingSignalDirectMatch:
             action="trade", symbol="SOL/USDT", direction="long",
             conviction=75, reasoning="test",
         )
+        _seed_promoted_serenity_opportunity(
+            opportunity_id="ser-sol-123",
+            symbol="SOL/USDT",
+            direction="long",
+            market_type="spot",
+        )
         ctx = {
             "layer1": {"opportunities": []},
             "layer2": {
                 "pending_signals": [
                     {"symbol": "SOL/USDT", "direction": "long",
+                     "market_type": "spot",
                      "opportunity_id": "ser-sol-123", "signal_source": "serenity",
                      "reasoning": "auto-promote", "at": "2026-07-01T10:00:00"}
                 ]
@@ -316,8 +313,8 @@ class TestPendingSignalDirectMatch:
         assert decision.opportunity_id == "ser-sol-123"
         assert decision.signal_source == "serenity"
 
-    def test_market_observer_still_wins_over_pending_signal(self):
-        """market_observer match takes priority even when pending_signal exists."""
+    def test_pending_signal_authority_wins_over_unqueued_market_observer(self):
+        """A durable pending carrier outranks an analysis-only open opportunity."""
         from aletheia.agent_shell.trading_decision import (
             TradingDecision, _attach_opportunity_context,
         )
@@ -325,6 +322,12 @@ class TestPendingSignalDirectMatch:
         decision = TradingDecision(
             action="trade", symbol="BTC/USDT", direction="long",
             conviction=80, reasoning="test",
+        )
+        _seed_promoted_serenity_opportunity(
+            opportunity_id="ser-btc-888",
+            symbol="BTC/USDT",
+            direction="long",
+            market_type="spot",
         )
         ctx = {
             "layer1": {
@@ -337,6 +340,7 @@ class TestPendingSignalDirectMatch:
             "layer2": {
                 "pending_signals": [
                     {"symbol": "BTC/USDT", "direction": "long",
+                     "market_type": "spot",
                      "opportunity_id": "ser-btc-888", "signal_source": "serenity",
                      "reasoning": "auto-promote", "at": "2026-07-01T10:00:00"}
                 ]
@@ -344,8 +348,8 @@ class TestPendingSignalDirectMatch:
             "layer3": {"serenity_opportunities": []},
         }
         _attach_opportunity_context(decision, ctx)
-        assert decision.opportunity_id == "mkt-btc-999"
-        assert decision.signal_source == "market_observer"
+        assert decision.opportunity_id == "ser-btc-888"
+        assert decision.signal_source == "serenity"
 
     def test_pending_signal_without_opportunity_id_skipped(self):
         """A pending_signal with no opportunity_id is skipped (honest None)."""
@@ -576,8 +580,10 @@ class TestSerenityFeedbackLoop:
 
     def _setup_serenity_position(self):
         """Create a serenity position with linked opportunity, ready to close."""
+        from aletheia.portfolio.paper_account import record_position_opened
         from aletheia.storage import repositories as repo
-        from aletheia.storage.models import SerenityTheme, SerenityOpportunity
+        from aletheia.storage.models import Position, SerenityTheme, SerenityOpportunity
+        from tests.test_outcome_closure import _insert_entry_chain
 
         theme = SerenityTheme(name="Feedback loop test", status="promoted")
         repo.insert_serenity_theme(theme)
@@ -592,22 +598,43 @@ class TestSerenityFeedbackLoop:
         )
         repo.insert_serenity_opportunity(opp)
 
-        # Insert a position directly (simulating broker open)
-        from aletheia.storage.sqlite import get_db
         from aletheia.storage.models import new_id
         pos_id = new_id()
-        db = get_db()
-        now = datetime.now(timezone.utc).isoformat()
         opened = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
-        db.execute(
-            "INSERT INTO positions (id, symbol, direction, quantity, entry_price, "
-            "current_price, status, execution_mode, trade_school, opportunity_id, "
-            "opened_at, unrealized_pnl, market_type) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (pos_id, "BTC/USDT", "long", 0.01, 60000.0, 62000.0,
-             "open", "paper_internal", "serenity", opp.id, opened, 20.0, "spot"),
+        opportunity_id, proposal_id, order_id = _insert_entry_chain(
+            position_id=pos_id,
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.01,
+            price=60000.0,
+            execution_mode="paper_internal",
+            entry_fee=0.36,
+            opportunity_id=opp.id,
         )
-        db.commit()
+        repo.insert_position(Position(
+            id=pos_id,
+            symbol="BTC/USDT",
+            direction="long",
+            quantity=0.01,
+            entry_price=60000.0,
+            current_price=62000.0,
+            status="open",
+            execution_mode="paper_internal",
+            trade_school="serenity",
+            opportunity_id=opportunity_id,
+            proposal_id=proposal_id,
+            order_id=order_id,
+            opened_at=opened,
+            unrealized_pnl=20.0,
+            market_type="spot",
+            entry_fee=0.36,
+            entry_price_source="local_fill",
+            entry_fill_verified=True,
+            funding_cost=0.0,
+            funding_source="not_applicable",
+        ))
+        record_position_opened(pos_id)
         return pos_id, opp.id, theme.id
 
     def test_close_serenity_position_writes_post_mortem(self):

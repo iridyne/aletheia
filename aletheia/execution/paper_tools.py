@@ -25,7 +25,7 @@ def create_paper_proposal(
     stop_price: float | None = None,
     take_profit: float | None = None,
     risk_reward: float | None = None,
-    order_type: str = "limit",
+    order_type: str = "market",
     agent_rationale: str | None = None,
     trade_school: str = "short_term",
 ) -> dict:
@@ -34,15 +34,15 @@ def create_paper_proposal(
     Raises ValueError if execution_mode is not a paper/demo mode — defense in depth
     so an autonomous caller cannot smuggle a live order through this path.
 
-    order_type defaults to "limit" (2026-07-03, owner discussion #6): a System
-    Operator entry rests as a maker at `price` rather than crossing the spread as
-    a taker, saving fees. Callers that must guarantee a fill (a market close)
-    pass order_type="market" explicitly.
+    paper_internal is an immediate local simulation, so its only honest entry
+    type is market. Exchange demo/testnet callers may still pass limit explicitly.
     """
     if execution_mode not in _PAPER_MODES:
         raise ValueError(
             f"create_paper_proposal only accepts paper modes {_PAPER_MODES}, got {execution_mode!r}"
         )
+    if execution_mode == "paper_internal" and order_type != "market":
+        raise ValueError("paper_internal_market_only")
     if leverage is not None and leverage < 1:
         raise ValueError(f"leverage must be >= 1, got {leverage}")
     return submit_proposal(

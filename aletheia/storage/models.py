@@ -87,6 +87,10 @@ class Opportunity(_Provenanced):
     source_agent: str | None = None
     created_at: str = Field(default_factory=_utcnow)
     status: str = "open"
+    # Rotation cursor for the bounded paper-trader workset. NULL means this
+    # Opportunity has never been evaluated; each normal run reserves capacity
+    # for both NULL rows and the oldest non-NULL retry rows.
+    last_ranked_at: str | None = None
     linked_strategy_id: str | None = None
     # Asset class: "crypto" | "equity" | "prediction". Default "crypto" keeps
     # older rows valid. paper_trader only acts on "crypto" opportunities.
@@ -302,6 +306,16 @@ class RiskDecision(_Provenanced):
     # branch permanently dead (CR-RE-01). Keep both: allowed_* = what may execute,
     # proposal_execution_mode = what was requested.
     proposal_execution_mode: str | None = None
+    # ``preflight`` is a fresh, advisory check before venue quantity
+    # normalization. ``authoritative`` is the one decision an Order may consume.
+    # Rows written before this distinction remain explicitly ``legacy`` instead
+    # of being retroactively promoted to authority.
+    decision_role: str = "legacy"
+    # Immutable evaluated snapshot identity.  The proposal hash continues to
+    # identify the originally committed intent while evaluated_quantity records
+    # the final size Risk actually assessed.
+    evaluated_quantity: float | None = None
+    proposal_commit_hash: str | None = None
     message: str | None = None
     created_at: str = Field(default_factory=_utcnow)
 
@@ -318,6 +332,17 @@ class Order(_Provenanced):
     price: float | None = None
     execution_mode: str
     exchange_order_id: str | None = None
+    # Stable exchange-side idempotency/recovery key.  This is persisted before
+    # submission so a timeout that loses the venue order id can still be
+    # reconciled through private order/fill history without resubmitting.
+    client_order_id: str | None = None
+    # Direct Position identity for close Orders and for entry Orders after local
+    # materialization.  It removes the ambiguous proposal/symbol guesswork when
+    # an averaging leg or delayed exchange fill is reconciled later.
+    position_id: str | None = None
+    # Close Orders persist the lifecycle reason before exchange submission so a
+    # delayed private fill can close the Position with the original explanation.
+    close_reason: str | None = None
     status: str = "pending"
     source: str = "native"  # "native" | "adopted" — see TradeProposal.source
     created_at: str = Field(default_factory=_utcnow)
@@ -349,7 +374,10 @@ class Position(_Provenanced):
     entry_price: float
     current_price: float | None = None
     unrealized_pnl: float = 0.0
-    realized_pnl: float = 0.0
+    # Open positions start at zero.  A closed futures position may remain NULL
+    # when its real funding ledger is unavailable; NULL must never be coerced to
+    # zero because that would fabricate net account economics.
+    realized_pnl: float | None = 0.0
     execution_mode: str
     strategy_id: str | None = None
     # Futures: leverage used to open (None/1 = spot or 1x). liquidation_price is the
@@ -379,6 +407,8 @@ class Position(_Provenanced):
     # close/reconciliation tasks stamp verified values; legacy and unstamped rows
     # remain explicitly ineligible without rewriting their original economics.
     close_category: str = "unknown"
+    entry_price_source: str = "unavailable"
+    entry_fill_verified: bool = False
     exit_price_source: str = "unavailable"
     exit_fill_verified: bool = False
     outcome_eligible: bool = False
@@ -404,6 +434,11 @@ class Position(_Provenanced):
     decision_reasoning: str | None = None
     entry_fee: float | None = None
     exit_fee: float | None = None
+    # Signed quote-currency funding paid over the holding period. Positive is a
+    # cost and negative is a credit. Futures outcomes remain fail-closed while
+    # this is unknown; spot closes stamp zero with source="not_applicable".
+    funding_cost: float | None = None
+    funding_source: str = "unavailable"
     slippage_cost: float | None = None
     # Execution-level school discriminator (Phase 4). Mirrors TradeProposal.trade_school
     # — defaults 'short_term' so legacy + adopted positions stay on the 72h cap + ATR
@@ -556,7 +591,7 @@ class PortfolioSnapshot(BaseModel):
     id: str = Field(default_factory=new_id)
     total_value_usdt: float
     unrealized_pnl: float = 0.0
-    realized_pnl: float = 0.0
+    realized_pnl: float | None = 0.0
     positions_count: int = 0
     execution_mode: str = "paper_internal"
     exchange_equity_usdt: float | None = None
@@ -688,6 +723,7 @@ class SerenityReplaySnapshot(BaseModel):
 
 class SerenityPostMortem(BaseModel):
     id: str = Field(default_factory=new_id)
+    position_id: str | None = None
     opportunity_id: str
     outcome: str
     failure_bucket: str | None = None
@@ -696,6 +732,21 @@ class SerenityPostMortem(BaseModel):
     summary: str
     created_by: str = "system"
     created_at: str = Field(default_factory=_utcnow)
+
+
+class OutcomeHookJob(BaseModel):
+    id: str = Field(default_factory=new_id)
+    position_id: str
+    hook_type: str
+    status: str = "pending"
+    attempts: int = 0
+    next_attempt_at: str = Field(default_factory=_utcnow)
+    locked_at: str | None = None
+    claim_token: str | None = None
+    last_error: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+    completed_at: str | None = None
 
 
 class SerenityResearchRun(BaseModel):
@@ -1164,10 +1215,17 @@ class PiDecision(_Provenanced):
     created_at: str = Field(default_factory=_utcnow)
     symbol: str | None = None
     direction: str | None = None
+    # Self-contained instrument identity for pending and final Operator rows.
+    # Legacy rows remain NULL and may still recover it from the source opportunity.
+    market_type: str | None = None
     action: str = "skip"
     conviction: int = 0
     reasoning: str = ""
     proposal_id: str | None = None
+    # Durable outcome of the proposal-submission attempt. Stable reason codes
+    # explain NULL proposal_id without persisting provider exception text.
+    proposal_status: str | None = None
+    proposal_reason: str | None = None
     # A13 (LEARNING_LOOP_AUDIT / PL-PT-04): link a signal_pending decision back to
     # its source opportunity so the attribution chain is complete on the signal side
     # (mirrors the R0 opportunity_id fix on the proposal side).

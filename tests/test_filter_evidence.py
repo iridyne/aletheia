@@ -583,6 +583,7 @@ def test_direction_overheat_rejection_is_added_to_operator_trace(monkeypatch):
 
 def test_missing_proposal_price_returns_structured_rejection_trace(monkeypatch):
     from aletheia.agent_shell.trading_decision import (
+        DecisionUnavailable,
         TradingDecision,
         submit_decision_as_proposal,
     )
@@ -599,27 +600,27 @@ def test_missing_proposal_price_returns_structured_rejection_trace(monkeypatch):
         "aletheia.agent_shell.trading_decision._proposal_direction_overheated",
         lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(
-        "aletheia.trading.market_data.latest_snapshot",
-        lambda *args, **kwargs: None,
-    )
+    with pytest.raises(DecisionUnavailable) as exc_info:
+        asyncio.run(submit_decision_as_proposal(decision, "paper_internal"))
 
-    result = asyncio.run(submit_decision_as_proposal(decision, "paper_internal"))
-
-    assert result == {"status": "failed", "reason": "market_price_unavailable"}
-    assert decision.filter_trace[-1] == {
-        "filter_name": "proposal_price_availability",
-        "stage": "proposal_submission",
-        "decision": "rejected",
-        "reason_code": "market_price_unavailable",
-        "inputs": {"symbol": "BTC/USDT", "market_type": "spot"},
-        "parameters": {"minimum_price": 0},
-    }
+    assert exc_info.value.reason == "market_price_unavailable"
+    assert exc_info.value.stage == "proposal_preflight"
+    assert decision.filter_trace[-1]["filter_name"] == "proposal_price_availability"
+    assert decision.filter_trace[-1]["decision"] == "rejected"
+    assert decision.filter_trace[-1]["reason_code"] == "market_price_unavailable"
+    assert decision.filter_trace[-1]["inputs"]["symbol"] == "BTC/USDT"
+    assert decision.filter_trace[-1]["inputs"]["market_type"] == "spot"
+    assert decision.filter_trace[-1]["inputs"]["execution_mode"] == "paper_internal"
+    assert decision.filter_trace[-1]["parameters"]["memory_max_age_seconds"] == 90
+    assert decision.filter_trace[-1]["parameters"]["database_max_age_seconds"] == 120
 
 
 def test_operator_command_surfaces_proposal_submission_reason(monkeypatch):
     from aletheia.agent_shell import commands
-    from aletheia.agent_shell.trading_decision import TradingDecision
+    from aletheia.agent_shell.trading_decision import (
+        DecisionUnavailable,
+        TradingDecision,
+    )
 
     decision = TradingDecision(
         action="trade",
@@ -634,8 +635,10 @@ def test_operator_command_surfaces_proposal_submission_reason(monkeypatch):
     async def fake_evaluate(context):
         return decision
 
-    async def fake_submit(decision, execution_mode):
-        return {"status": "failed", "reason": "market_price_unavailable"}
+    async def fake_prepare(decision, execution_mode):
+        raise DecisionUnavailable(
+            "market_price_unavailable", stage="proposal_preflight"
+        )
 
     monkeypatch.setattr(
         "aletheia.config.loader.load_config",
@@ -656,16 +659,54 @@ def test_operator_command_surfaces_proposal_submission_reason(monkeypatch):
         fake_evaluate,
     )
     monkeypatch.setattr(
-        "aletheia.agent_shell.trading_decision.submit_decision_as_proposal",
-        fake_submit,
+        "aletheia.agent_shell.trading_decision.prepare_decision_as_proposal",
+        fake_prepare,
+    )
+    monkeypatch.setattr(commands, "_has_durable_pending_carrier", lambda _decision: True)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.reflection.claim_decision",
+        lambda result, proposal=None: pytest.fail("unavailable preflight must not claim"),
     )
     monkeypatch.setattr(
-        "aletheia.agent_shell.reflection.record_decision",
-        lambda result: recorded.update(result),
+        "aletheia.agent_shell.reflection.finalize_decision",
+        lambda *_args, **_kwargs: pytest.fail("unavailable preflight must not finalize"),
     )
 
-    result = asyncio.run(commands.evaluate_trading_opportunity({}))
+    with pytest.raises(DecisionUnavailable) as exc_info:
+        asyncio.run(commands.evaluate_trading_opportunity({}))
 
-    assert result["proposal_status"] == "failed"
-    assert result["proposal_reason"] == "market_price_unavailable"
-    assert recorded["proposal_reason"] == "market_price_unavailable"
+    assert exc_info.value.reason == "market_price_unavailable"
+    assert exc_info.value.stage == "proposal_preflight"
+    assert recorded == {}
+
+
+@pytest.mark.parametrize(
+    ("symbol", "direction", "reason"),
+    [
+        (None, "long", "missing_symbol"),
+        ("BTC/USDT", None, "missing_direction"),
+    ],
+)
+def test_invalid_trade_identity_returns_stable_submission_reason(symbol, direction, reason):
+    import asyncio
+
+    from aletheia.agent_shell.trading_decision import (
+        DecisionUnavailable,
+        TradingDecision,
+        submit_decision_as_proposal,
+    )
+
+    decision = TradingDecision(
+        action="trade",
+        symbol=symbol,
+        direction=direction,
+        conviction=80,
+        reasoning="invalid identity fixture",
+    )
+    with pytest.raises(DecisionUnavailable) as exc_info:
+        asyncio.run(submit_decision_as_proposal(decision, "paper_internal"))
+
+    assert exc_info.value.reason == reason
+    assert exc_info.value.stage == "proposal_preflight"
+    assert decision.filter_trace[-1]["stage"] == "proposal_submission"
+    assert decision.filter_trace[-1]["reason_code"] == reason

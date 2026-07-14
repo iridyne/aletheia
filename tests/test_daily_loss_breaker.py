@@ -5,12 +5,13 @@ breach the cap, the next proposal is rejected and the kill switch auto-trips.
 """
 
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import Position, TradeProposal
+from aletheia.storage.models import TradeProposal
 from aletheia.storage import repositories as repo
 
 
@@ -35,39 +36,29 @@ def test_realized_losses_trip_breaker_via_close(tmp_path, monkeypatch):
     cfg.risk.kill_switch_enabled_demo = True  # default False; paper_internal is demo-mode
     save_config(cfg)
 
-    from aletheia.execution.verified_exit import VerifiedExitFill, VerifiedExitResult
-    from aletheia.portfolio.outcome_closure import close_position_verified
     from aletheia.portfolio.pnl import today_realized_pnl
     from aletheia.risk.engine import evaluate_proposal
     from aletheia.risk import kill_switch
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     # cap = max_live_limited_cap_usdt (100) * max_daily_loss_pct (1.0%) = $1 limit.
-    pos = Position(symbol="BTC/USDT", market_type="spot", direction="long",
-                   quantity=1.0, entry_price=100.0, entry_fee=0.0,
-                   execution_mode="paper_internal")
-    repo.insert_position(pos)
-    close_position_verified(
-        pos.id,
-        VerifiedExitResult(
-            state="verified_fill", reason="test_local_fill",
-            broker_id="paper_internal", account_environment="local",
-            account_scope="breaker-test", execution_mode="paper_internal",
-            position_id=pos.id, symbol=pos.symbol, market_type=pos.market_type,
-            direction=pos.direction, position_absent=True, history_complete=True,
-            history_start_ms=1, history_end_ms=2, pages=1,
-            source_endpoint="test_local_fill",
-            fills=(VerifiedExitFill(
-                fill_id=f"exit-{pos.id}", order_id=None, price=90.0,
-                quantity=1.0, fee=0.0, fee_currency="USDT",
-                realized_pnl=None, filled_at_ms=2,
-            ),),
-        ),
-        reason="stop_loss",
+    pos_id = "daily-loss-entry"
+    _insert_closed_position_via_producer(
+        position_id=pos_id,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        realized_pnl=-10.0,
+        execution_mode="paper_internal",
+        closed_at=datetime.now(timezone.utc).isoformat(),
+        close_reason="stop_loss",
     )
     expected = -10.0
     assert today_realized_pnl() == pytest.approx(expected)
 
-    p = TradeProposal(symbol="ETHUSDT", market_type="spot", direction="long",
+    p = TradeProposal(symbol="ETH/USDT", market_type="spot", direction="long",
                       execution_mode="paper_internal", quantity=0.001, price=3000)
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)

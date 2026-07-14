@@ -97,15 +97,64 @@ def test_repo_accepts_market_kwarg():
 
 
 @spec_claim(
+    SpecClaim(
+        "OD-S02e", "data_layer_contract", "§3 lifecycle identity dedup", "L2b",
+        "Opportunity identity lookup for one universe snapshot includes reviewed rows, so a "
+        "later observer pass cannot create a second opportunity or rewrite terminal history.",
+        status="implemented",
+    ),
+)
+def test_lifecycle_lookup_reuses_reviewed_opportunity(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage import repositories
+
+    original = Opportunity(
+        symbol="WLD/USDT",
+        market="usdt_futures",
+        direction_bias="long",
+        confidence="medium",
+        status="reviewed",
+        universe_snapshot_id="snapshot-reviewed",
+        universe_member_id="member-reviewed",
+        scanner_family="momentum",
+    )
+    repositories.insert_opportunity(original)
+    duplicate = Opportunity(
+        symbol=original.symbol,
+        market=original.market,
+        direction_bias="long",
+        confidence="medium",
+        status="open",
+        universe_snapshot_id=original.universe_snapshot_id,
+        universe_member_id=original.universe_member_id,
+        scanner_family=original.scanner_family,
+    )
+    repositories.insert_opportunity(duplicate)
+
+    found = repositories.find_opportunity_by_symbol_snapshot(
+        original.symbol,
+        original.universe_snapshot_id,
+        market=original.market,
+    )
+
+    assert found is not None
+    assert found["id"] == original.id
+    assert found["status"] == "reviewed"
+
+
+@spec_claim(
     SpecClaim("OD-S02b", "data_layer_contract", "§3 signal_emitter passes market", "L2a",
-              "signal_emitter passes market= to find_open_opportunity_by_symbol_snapshot "
+              "signal_emitter passes market= to the lifecycle identity lookup "
               "so same-symbol opps in different markets don't collide (OD-S02 lock)"),
 )
 def test_signal_emitter_passes_market_filter():
     from aletheia.universe import signal_emitter
     src = inspect.getsource(signal_emitter.emit_deterministic_opportunities)
-    assert "market=" in src and "instrument_market_to_db_market" in src, (
-        "signal_emitter must pass market= to find_open_opportunity_by_symbol_snapshot"
+    assert "market=" in src and "find_opportunity_by_symbol_snapshot" in src, (
+        "signal_emitter must pass market= to the lifecycle identity lookup"
     )
 
 
@@ -143,15 +192,20 @@ def test_universe_member_dedup_respects_preferred_market():
 
 @spec_claim(
     SpecClaim("OD-S02c", "data_layer_contract", "§3 market_observer passes market", "L2a",
-              "market_observer passes market= to find_open_opportunity_by_symbol_snapshot "
+              "market_observer passes market= to the lifecycle identity lookup "
               "so same-symbol opps in different markets don't overwrite each other"),
 )
 def test_market_observer_passes_market_filter():
     from aletheia.agents import market_observer
     src = inspect.getsource(market_observer._analyze_symbol)
-    assert "market=" in src and "find_open_opportunity_by_symbol_snapshot" in src, (
+    assert "market=" in src and "find_opportunity_by_symbol_snapshot" in src, (
         "market_observer._analyze_symbol must pass market= to "
-        "find_open_opportunity_by_symbol_snapshot"
+        "find_opportunity_by_symbol_snapshot"
+    )
+    terminal_guard = 'existing.get("status") != "open"'
+    assert terminal_guard in src
+    assert src.index(terminal_guard) < src.index("update_open_opportunity"), (
+        "a reviewed opportunity must return before the open-only annotation CAS"
     )
 
 
@@ -220,3 +274,159 @@ async def test_e2e_observer_dedups(tmp_path, monkeypatch):
     assert all(o["market"] == "usdt_futures" for o in opps), (
         f"expected all perp (auto), got markets={[o['market'] for o in opps]}"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "OD-S04",
+        "data_layer_contract",
+        "§3 observer rejection evidence durability",
+        "L2b",
+        "When the Observer rejects a real instrument before the LLM, failure to persist "
+        "that rejection is surfaced as a stable retryable run error and the durable "
+        "round-robin cursor does not advance past the unaccounted input.",
+        status="implemented",
+    ),
+)
+async def test_observer_rejection_evidence_failure_is_retryable(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.orchestrator import run_agent
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.market_data.observed_symbols = ["BTC/USDT"]
+    cfg.market_data.observed_xstocks = []
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
+    cfg.universe.enabled = False
+    save_config(cfg)
+
+    async def quiet_market_context(*args, **kwargs):
+        return "BTC/USDT quiet market", {"fallback": False, "errors": []}
+
+    monkeypatch.setattr(
+        "aletheia.trading.market_context.build_market_context",
+        quiet_market_context,
+    )
+    monkeypatch.setattr(
+        "aletheia.agents.market_observer._has_sufficient_signal",
+        lambda context: False,
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_evidence.repo.insert_filter_decision",
+        lambda decision: (_ for _ in ()).throw(RuntimeError("db unavailable")),
+    )
+
+    result = await run_agent("market_observer", trigger_type="manual")
+
+    assert result["outputs"] == []
+    assert any(
+        "observer_pre_filter_evidence_failed:BTC/USDT" in error
+        for error in result["errors"]
+    )
+    assert get_db().execute(
+        "SELECT 1 FROM filter_decisions WHERE filter_name='observer_pre_filter'"
+    ).fetchone() is None
+    assert get_db().execute(
+        "SELECT 1 FROM settings WHERE key='agent.market_observer.round_robin.v1'"
+    ).fetchone() is None
+
+
+@spec_claim(
+    SpecClaim(
+        "OD-S05",
+        "data_layer_contract",
+        "§3 observer opportunity emission atomicity",
+        "L2b",
+        "A newly created Observer Opportunity and its producer-emitted evidence commit "
+        "together; if that exact fact cannot persist, the Opportunity is rolled back "
+        "and the instrument remains retryable.",
+        status="implemented",
+    ),
+)
+async def test_observer_emitted_evidence_failure_rolls_back_opportunity(
+    tmp_path, monkeypatch
+):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.orchestrator import run_agent
+    from aletheia.analytics import filter_evidence
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.market_data.observed_symbols = ["BTC/USDT"]
+    cfg.market_data.observed_xstocks = []
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
+    cfg.exchange.preferred_market_type = "spot"
+    cfg.universe.enabled = False
+    save_config(cfg)
+
+    async def deterministic_market_context(*_args, **_kwargs):
+        return "BTC/USDT breakout with RSI 68 and positive momentum", {
+            "fallback": False,
+            "errors": [],
+        }
+
+    async def deterministic_read(*_args, **_kwargs):
+        return {
+            "direction_bias": "long",
+            "confidence": "high",
+            "confidence_score": 90,
+            "rationale": "breakout confirmed",
+            "key_observations": ["RSI 68"],
+        }, None
+
+    real_insert = filter_evidence.repo.insert_filter_decision
+
+    def fail_only_observer_emitted_fact(fact):
+        if (
+            fact.filter_name == "opportunity_emission"
+            and fact.stage == "market_observer"
+            and fact.reason_code == "opportunity_emitted"
+        ):
+            raise RuntimeError("observer emitted evidence unavailable")
+        return real_insert(fact)
+
+    monkeypatch.setattr(
+        "aletheia.trading.market_context.build_market_context",
+        deterministic_market_context,
+    )
+    monkeypatch.setattr(
+        "aletheia.agents.market_observer.llm_structured",
+        deterministic_read,
+    )
+    monkeypatch.setattr(
+        "aletheia.agents.market_observer._has_sufficient_signal",
+        lambda _context: True,
+    )
+    monkeypatch.setattr(
+        filter_evidence.repo,
+        "insert_filter_decision",
+        fail_only_observer_emitted_fact,
+    )
+
+    result = await run_agent("market_observer", trigger_type="manual")
+
+    assert result["outputs"] == []
+    assert any(
+        "observer_opportunity_emission_evidence_failed:BTC/USDT" in error
+        for error in result["errors"]
+    )
+    db = get_db()
+    assert db.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM filter_decisions "
+        "WHERE filter_name='observer_pre_filter'"
+    ).fetchone()[0] == 1
+    assert db.execute(
+        "SELECT COUNT(*) FROM filter_decisions "
+        "WHERE filter_name='opportunity_emission' AND stage='market_observer'"
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT 1 FROM settings WHERE key='agent.market_observer.round_robin.v1'"
+    ).fetchone() is None

@@ -71,10 +71,17 @@ def test_decision_inherits_market_type_from_opportunity():
         action="trade", symbol="BTC/USDT", direction="long",
         conviction=70, reasoning="x", market_type=None,
     )
-    ctx = {"layer1": {"opportunities": [
-        {"id": "opp1", "symbol": "BTC/USDT", "market": "spot",
-         "direction_bias": "long", "scanner_family": "f"},
-    ]}}
+    ctx = {
+        "layer1": {"opportunities": [
+            {"id": "opp1", "symbol": "BTC/USDT", "market": "spot",
+             "direction_bias": "long", "scanner_family": "f"},
+        ]},
+        "layer2": {"pending_signals": [
+            {"opportunity_id": "opp1", "symbol": "BTC/USDT",
+             "direction": "long", "market_type": "spot",
+             "signal_source": "market_observer"},
+        ]},
+    }
     _attach_opportunity_context(decision, ctx)
     # Inherits the opportunity's market type rather than defaulting to perp.
     assert decision.market_type == "spot"

@@ -66,11 +66,10 @@
   - 影响：审批者要知道"这个 proposal 来自哪个 opportunity（thesis 是什么）/ 哪个 strategy（lifecycle 状态）"必须切页 → 滚 → 找 ID → 切回——实际等于无法做这件事
   - 最小修复：抽屉里显示 strategy/opportunity 链接；点进去跳到对应详情页
 
-- 🔴 **批准按钮无确认对话**
-  - 佐证：`Proposals.tsx:34-37` `onClick={() => approve.mutate(p.id)}` 直接触发
-  - 规格：trust §3.4 "Approving a proposal must call a route... explicit confirmation"（重在 live；paper 也存在批量误点风险）
-  - 影响：paper 阶段误点代价较小但不为零（占用风险预算 / 触发 stop / 污染 promotion gate 数据）；live 阶段必须强制确认
-  - 最小修复：confirm() 弹窗 + 显示该 proposal 的关键参数让用户复核；live 路径在抽屉里二次确认
+- ✅ **批准入口已限制为原始本地模拟意图，并要求明确确认（TASK-2026-067）**
+  - 修复：列表与详情统一只对 `status=pending + execution_mode=paper_internal` 显示 `Approve Local Paper`；确认框展示方向、格式化交易对和“本地模拟、不向交易所下单”。
+  - 后端同样拒绝 Demo/Live 或已进入执行中的 proposal，返回 409 且不改状态、不调用 gateway；执行异常只返回脱敏后的稳定错误。
+  - 验证：前端生产构建通过；审批 UI 与路由回归 20 项通过。
 
 ### 1.2 §23.1 "agent transparency" 角色基本未实现
 
@@ -567,4 +566,3 @@ grid 4 列、数字 IBM Plex Mono、**0 个残留 Tailwind class**。
   必须保持现有 `Verify-before-commit` + 二次确认 + audit 模式不退化（trust §6.3）
 
 ---
-

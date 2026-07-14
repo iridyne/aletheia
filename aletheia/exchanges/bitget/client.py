@@ -2,9 +2,12 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+import math
+from urllib.parse import urlencode
 
 from aletheia.net import httpx_client
 from aletheia.exchanges.bitget.auth import build_headers
+from aletheia.exchanges.submission_errors import SubmissionResponseUnknownError
 from aletheia.config.secrets import get_secret, redact
 
 
@@ -46,6 +49,11 @@ class OrderRequest:
     quantity: float
     price: float | None = None
     client_oid: str | None = None  # idempotency key — dedups retried submissions
+    # Bitget supports exchange-native protection on the original USDT-futures
+    # entry. These are approved absolute prices, never percentages or values
+    # derived by this client. Spot and close requests deliberately ignore them.
+    preset_stop_loss_price: float | None = None
+    preset_take_profit_price: float | None = None
     # Hedge-mode close (USDT-futures only). The demo/live account runs in hedge
     # ("two-way") mode, where closing is NOT `reduceOnly` — it is `tradeSide:"close"`
     # plus `holdSide` (the side of the position being reduced), with `side` SAME as
@@ -54,6 +62,23 @@ class OrderRequest:
     reduce_only: bool = False
     hold_side: str | None = None  # "long" | "short" — required for a hedge-mode close
     leverage: int | None = None   # USDT-futures: set on the exchange before an open
+
+
+def _validated_preset_protection_price(value: float | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("preset protection price must be finite and positive")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "preset protection price must be finite and positive"
+        ) from None
+    if not math.isfinite(number) or number <= 0:
+        raise ValueError("preset protection price must be finite and positive")
+    return str(value)
+
 
 class DemoFundingUnavailable(RuntimeError):
     """mix wallet short and cannot be topped up automatically."""
@@ -305,6 +330,17 @@ class BitgetClient:
         """Place an order — gated by execution mode externally."""
         import json
 
+        # Validate before leverage setup or order submission so malformed
+        # protection cannot leave any exchange-side effect behind. Validation is
+        # unconditional when a value is supplied; spot/close isolation below
+        # decides only whether a valid value is serialized.
+        preset_stop_loss = _validated_preset_protection_price(
+            order.preset_stop_loss_price
+        )
+        preset_take_profit = _validated_preset_protection_price(
+            order.preset_take_profit_price
+        )
+
         # Futures open: set the intended leverage on the exchange first (skip on a
         # hedge-mode close, which does not change leverage). Fail-closed — set_leverage
         # raises on failure, aborting the order rather than opening at the wrong size.
@@ -343,6 +379,11 @@ class BitgetClient:
                 body_data["holdSide"] = order.hold_side
             else:
                 body_data["tradeSide"] = "open"
+                if order.market_type == "usdt_futures":
+                    if preset_stop_loss is not None:
+                        body_data["presetStopLossPrice"] = preset_stop_loss
+                    if preset_take_profit is not None:
+                        body_data["presetStopSurplusPrice"] = preset_take_profit
 
         if order.price and order.order_type == "limit":
             body_data["price"] = str(order.price)
@@ -357,18 +398,53 @@ class BitgetClient:
 
         async with httpx_client(timeout=15) as client:
             resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
-            data = resp.json()
+            status_code = int(getattr(resp, "status_code", 200) or 0)
+            if status_code >= 500:
+                raise SubmissionResponseUnknownError(
+                    "Bitget create-order acknowledgement returned a server error"
+                )
+            try:
+                data = resp.json()
+            except (ValueError, UnicodeError) as exc:
+                raise SubmissionResponseUnknownError(
+                    "Bitget create-order acknowledgement was unreadable"
+                ) from exc
 
-        if data.get("code") != "00000":
-            raise RuntimeError(f"Bitget order error: {data.get('msg')}")
+        if not isinstance(data, dict):
+            raise SubmissionResponseUnknownError(
+                "Bitget create-order acknowledgement was not an object"
+            )
+        response_code = data.get("code")
+        if not isinstance(response_code, str) or not response_code.strip():
+            raise SubmissionResponseUnknownError(
+                "Bitget create-order acknowledgement had no response code"
+            )
+        if response_code != "00000":
+            response_message = data.get("msg")
+            if (
+                not isinstance(response_message, str)
+                or not response_message.strip()
+            ):
+                raise SubmissionResponseUnknownError(
+                    "Bitget create-order acknowledgement was not a recognizable rejection"
+                )
+            raise RuntimeError(f"Bitget order error: {response_message}")
 
-        order_id = data.get("data", {}).get("orderId", "")
-        if not order_id:
-            raise RuntimeError("Bitget returned success but no orderId in response")
+        response_data = data.get("data")
+        if not isinstance(response_data, dict):
+            raise SubmissionResponseUnknownError(
+                "Bitget create-order success acknowledgement had invalid data"
+            )
+        raw_order_id = response_data.get("orderId")
+        if not isinstance(raw_order_id, str) or not raw_order_id.strip():
+            raise SubmissionResponseUnknownError(
+                "Bitget create-order success acknowledgement had no order id"
+            )
+        order_id = raw_order_id.strip()
 
         resp_obj = OrderResponse(
             order_id=order_id,
-            client_oid=data.get("data", {}).get("clientOid"),
+            client_oid=response_data.get("clientOid"),
         )
 
         # Resolve the real fill status. Mix market orders fill synchronously, so a
@@ -577,6 +653,59 @@ class BitgetClient:
             raise RuntimeError(f"Bitget API error: {data.get('msg')}")
         return data.get("data", []) or []
 
+    async def get_order_fills(
+        self,
+        *,
+        order_id: str,
+        symbol: str,
+        market_type: str = "usdt_futures",
+    ) -> list[dict]:
+        """Return the complete private fill history for one exact futures Order."""
+        if market_type != "usdt_futures":
+            raise ValueError("exact Bitget order fills currently require usdt_futures")
+        order_id = str(order_id or "").strip()
+        symbol = str(symbol or "").strip()
+        if not order_id or not symbol:
+            raise ValueError("exact Bitget fill query requires order_id and symbol")
+
+        endpoint = "/api/v2/mix/order/fills"
+        cursor: str | None = None
+        fills: list[dict] = []
+        for _ in range(100):
+            params = {
+                "productType": "USDT-FUTURES",
+                "symbol": symbol,
+                "orderId": order_id,
+                "limit": "100",
+            }
+            if cursor:
+                params["idLessThan"] = cursor
+            path = f"{endpoint}?{urlencode(params)}"
+            headers = self._headers("GET", path)
+            async with httpx_client(timeout=15) as client:
+                response = await client.get(f"{self._base}{path}", headers=headers)
+                payload = response.json()
+            if payload.get("code") != "00000":
+                raise RuntimeError("Bitget exact private fill history rejected")
+            data = payload.get("data")
+            if not isinstance(data, dict) or not isinstance(data.get("fillList"), list):
+                raise ValueError("Bitget exact private fill history malformed")
+            page = data["fillList"]
+            if any(
+                not isinstance(row, dict)
+                or str(row.get("orderId") or "") != order_id
+                for row in page
+            ):
+                raise ValueError("Bitget exact private fill history mismatched")
+            fills.extend(page)
+            if len(page) < 100:
+                return fills
+            next_cursor = str(data.get("endId") or "")
+            if not next_cursor or next_cursor == cursor:
+                raise RuntimeError("Bitget exact private fill pagination incomplete")
+            cursor = next_cursor
+        raise RuntimeError("Bitget exact private fill history incomplete")
+
     async def get_verified_position_exit(self, request):
         """Read direct position + complete private futures fills; never mutate state."""
         from aletheia.data.symbols import to_bitget, to_canonical
@@ -650,6 +779,7 @@ class BitgetClient:
 
             close_fills: list[VerifiedExitFill] = []
             ambiguous = False
+            known_entry_order_ids = set(request.known_entry_order_ids)
             for raw in raw_fills:
                 timestamp = _bitget_int(raw.get("cTime") or raw.get("createdTime"))
                 if not request.history_start_ms <= timestamp <= request.history_end_ms:
@@ -657,7 +787,13 @@ class BitgetClient:
                 if to_canonical(str(raw.get("symbol") or "")) != request.symbol:
                     ambiguous = True
                     continue
-                if not _bitget_fill_closes_direction(raw, request.direction):
+                remote_order_id = str(raw.get("orderId") or "").strip()
+                closes_direction = _bitget_fill_closes_direction(
+                    raw, request.direction
+                )
+                if remote_order_id in known_entry_order_ids and not closes_direction:
+                    continue
+                if not closes_direction:
                     ambiguous = True
                     continue
                 normalized = _bitget_verified_fill(raw)
@@ -757,10 +893,13 @@ class BitgetClient:
         """Query triggered/filled TPSL order history for USDT-FUTURES.
 
         Returns list of historical plan orders (triggered, filled, cancelled).
-        Each dict contains at minimum: orderId, planType, status, triggerPrice,
-        executePrice (the actual fill price when triggered).
+        Exact executed rows expose ``planStatus`` plus ``executeOrderId``. Plan
+        prices are trigger metadata, not private Fill economics.
         """
-        path = "/api/v2/mix/order/orders-plan-history?productType=USDT-FUTURES"
+        path = (
+            "/api/v2/mix/order/orders-plan-history"
+            "?productType=USDT-FUTURES&planType=profit_loss"
+        )
         if symbol:
             path += f"&symbol={symbol}"
         if order_id:

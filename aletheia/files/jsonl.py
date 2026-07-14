@@ -205,12 +205,15 @@ def _exclusive_file_lock(lock_path: Path):
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
-def write_audit(event: dict) -> None:
+def write_audit(event: dict, *, mirror_db: bool = True) -> None:
     """Write an audit event to audit.jsonl with hash chain.
 
     Each record includes `_prev_hash`: the SHA-256 of the previous line on disk.
     Verification: re-hash each line and confirm it matches the next line's
-    `_prev_hash`.
+    `_prev_hash`. By default the event is also mirrored to ``audit_events``.
+    Callers that already committed the same authoritative ``AuditEvent`` inside
+    their state transaction may pass ``mirror_db=False`` to avoid duplicating
+    that row; the append-only JSONL write and hash chain are unchanged.
     """
     global _last_audit_hash
     if "timestamp" not in event:
@@ -233,8 +236,11 @@ def write_audit(event: dict) -> None:
                        e, event.get("event_type", "?"))
 
     # Also persist into sqlite.audit_events for structured querying when DB is
-    # available (backward-compatible with pure JSONL deployments).
-    _write_audit_row(event)
+    # available (backward-compatible with pure JSONL deployments). Transactional
+    # callers can explicitly suppress only this mirror after inserting the same
+    # authoritative row inside their state transition.
+    if mirror_db:
+        _write_audit_row(event)
 
 
 def _write_audit_row(event: dict) -> None:

@@ -3,11 +3,11 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-07-12 (separate measurement and paper-lifecycle schedules)
+> Last updated: 2026-07-13 (durable Outcome hook replay)
 
 ---
 
-## 1. Scheduler Job Overview (37 recurring jobs with optional jobs enabled + 3 startup one-shots)
+## 1. Scheduler Job Overview (38 recurring jobs with optional jobs enabled + 3 startup one-shots)
 
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
@@ -44,18 +44,20 @@
 | 31 | persona_rollout | 8h | io | Advance dynamic-sizing rollout ladder one health-gated step (no-op unless persona_auto_advance_enabled) |
 | 32 | connectivity_monitor | interval `health.exchange_probe_interval_sec` | fast_io | Probe exchange connectivity; auto-pause on outage; auto-resume when recovered |
 | 33 | shadow_resolver | 6h | io | Resolve shadow trades against realised outcomes |
-| 34 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
-| 35 | outcome_settler | 15min | io | Settle outstanding prediction / universe forward outcomes |
-| 36 | learning_contribution_evaluator | interval `learning.evaluation_interval_minutes` (default 60) | io | Measure only: append deterministic contribution verdicts and evaluator health even when autonomous Learning is off or runtime is paused |
-| 37 | learning_lifecycle_controller | interval `learning.evaluation_interval_minutes` (default 60) | io | Apply at most one default-closed paper lifecycle action per current experiment; requires autonomous Learning, no pause/integrity incident, lifecycle automation, paper influence, and path allowlist |
-| 38 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
-| 39 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
-| 40 | learning_measurement_startup_catchup | once, 3min after gateway boot | io | Re-run only the current missing contribution-measurement window; independent of autonomous Learning and paper influence |
+| 34 | outcome_hook_replay | 1min | io | Replay durable eligible-close feedback jobs; revalidate the closed Position and retry incomplete shadow/Serenity delivery |
+| 35 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
+| 36 | outcome_settler | 10min | io | Settle outstanding prediction / universe forward outcomes |
+| 37 | learning_contribution_evaluator | interval `learning.evaluation_interval_minutes` (default 60) | io | Measure only: append deterministic contribution verdicts and evaluator health even when autonomous Learning is off or runtime is paused |
+| 38 | learning_lifecycle_controller | interval `learning.evaluation_interval_minutes` (default 60) | io | Apply at most one default-closed paper lifecycle action per current experiment; requires autonomous Learning, no pause/integrity incident, lifecycle automation, paper influence, and path allowlist |
+| 39 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
+| 40 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
+| 41 | learning_measurement_startup_catchup | once, 3min after gateway boot | io | Re-run only the current missing contribution-measurement window; independent of autonomous Learning and paper influence |
 
-Learning behavior jobs (rows 10–15, 26, 30–31, 37 and the Learning behavior catch-up) share
+Learning behavior jobs (rows 10–15, 26, 30–31, 38 and the Learning behavior catch-up) share
 `agent.autonomous_learning` as one backend gate. When disabled, no automatic producer,
 reviewer, promoter, controller, or learned rollout runs. Measurement-only
-`outcome_settler`, `shadow_resolver`, and `learning_contribution_evaluator` continue so disabling
+`outcome_settler`, `outcome_hook_replay`, `shadow_resolver`, and
+`learning_contribution_evaluator` continue so disabling
 Learning does not erase or delay outcome truth. The evaluator never changes stages or authority;
 the lifecycle controller is a separate gated consumer. Successful/failed/skipped runs and reviewer
 backlog health are persisted in `learning_job_health`.
@@ -84,7 +86,13 @@ backlog health are persisted in `learning_job_health`.
 - **Error behavior**: Degrades to basic technical-only signals when LLM unavailable
 - **Prompt contract** (2026-07-01, spec UP-08): the per-symbol LLM prompt names the `scanner_family` that surfaced the symbol so the read VALIDATES that family rather than doing a generic scan (MO-4).
 - **Guard advisory contract** (spec UP-07, 断口F): guard advisory is built PER-SYMBOL inside `_analyze_symbol` with `{symbol, scanner_family, asset_class}` via `router.build_guard_advisory()` — NOT run-level with a symbol list (which never matched any guard). The run-level memory_block carries only symbol-agnostic lessons.
-- **Learning attribution**: advisory retrieval + memo + per-symbol learned guard context is one `observer_advisory_bundle` manifest stored in the causal Opportunity metadata. `autonomous_learning=false` removes this bundle but retains market and prediction context.
+- **Learning attribution**: advisory retrieval + memo + per-symbol learned guard context is one
+  `observer_advisory_bundle` manifest stored in the causal Opportunity metadata. The bundle is
+  rendered only for an exact `observer_advisory_bundle` treatment assignment whose path is
+  allowlisted and currently authoritative; control, disabled/default, stale authority, missing
+  candidate identity, or adapter error renders no learned bundle. Universe members use a stable
+  member candidate and fixed-horizon outcome identity; standalone reads stay unlinked when no true
+  outcome producer exists. Market and prediction context is non-Learning input and remains present.
 - **Downstream contract** (spec UP-06): `key_observations` (the LLM's numeric citations) IS surfaced to the System Operator's layer1 snapshot; previously only a truncated thesis reached the decision.
 - **Bounded-loop fairness contract** (spec GS-S03): the 200-second safety budget remains below the scheduler timeout, but the next cycle begins at the durable successor of the last completed exact instrument. A cancellation or budget break never skips an in-flight or unprocessed instrument.
 - **Pre-filter status contract** (spec OBS-PRE-FILTER-STATUS): `no_sufficient_signal` is a normal rejection recorded in filter evidence, not an agent execution error. It skips the LLM without changing the run to `completed_with_errors`; provider failures, unexpected exceptions, and loop-budget exhaustion remain errors.
@@ -171,9 +179,17 @@ backlog health are persisted in `learning_job_health`.
 - **Attribution**: `_attach_opportunity_context` backfills `opportunity_id` + `signal_source`
   (`market_observer` Layer 1 wins on tie; `serenity` Layer 3 is the fallback). `signal_source`
   disambiguates the two bare-uuid id spaces. Phase 2 of Serenity Option A.
-- **Learning attribution**: reflection, memo, reasoning, calibration, trade cases, and structured lessons are one `operator_learning_bundle` manifest persisted on `pi_decisions.learning_manifest_json`; opportunity/proposal columns remain the causal outcome anchors. The observer bundle remains a separate upstream unit.
-- **Actions**: enter/exit/hold/watch/scale_in/flip
-- **Safety**: Never executes orders; outputs decisions that paper_trader/position_manager consume
+- **Learning attribution**: reflection, memo, reasoning, calibration, trade cases, and structured
+  lessons are one `operator_learning_bundle`. It is injected only for an exact allowlisted,
+  authoritative treatment assignment; control/default/error leaves every learned component absent.
+  The stable pending-queue candidate, assignment, hypothesis/experiment and exposure id are
+  persisted on `pi_decisions.learning_manifest_json`. A single normal pending Opportunity links to
+  its real fixed-horizon outcome; mixed/Serenity queues remain honestly unlinked. Opportunity and
+  Proposal columns remain the causal anchors, and the observer bundle stays a separate upstream unit.
+- **Actions**: active entry decision only `trade` / `skip`. The separate portfolio review exposes only `hold` / `close_one` for an explicit Position.
+- **Unsupported legacy outputs**: `close` / `reduce` / `watch` / `scale_in` / `flip` on the entry surface are normalized to an evidenced `skip` and never execute. `reduce_exposure` on portfolio review is treated as `hold`, never as a silent full close.
+- **Availability semantics**: missing assessment, a required debate side, a fresh exact local-paper mark, or complete entry reasons is retryable unavailability; no final PiDecision is written and no pending signal is consumed.
+- **Safety**: Never executes orders directly. A complete `trade` prepares one immutable Proposal for the Gateway; `close_one` uses the central close router with an exact fresh mark.
 
 #### position_manager
 

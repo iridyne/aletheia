@@ -3,7 +3,7 @@
 > **角色**:定义订单从 proposal 到交易所的完整通路,及其原子性/幂等/对账保证。
 > **基线**:代码为底(file:line),意图差距标 ⚠️;冲突时文档为准。
 > **不变式来源**:[trust_and_change_control §1, §6.3](../governance/trust_and_change_control.md)。
-> Last updated: 2026-07-12 · 维护者:Aletheia Dev
+> Last updated: 2026-07-14 · 维护者:Aletheia Dev
 
 ---
 
@@ -32,15 +32,26 @@ trade_proposals.id
 
 | 环 | 结构 | 状态流 | 位置 |
 |----|------|--------|------|
-| Proposal | `TradeProposal(symbol, direction, quantity, price, execution_mode...)`; `agent_rationale.entry_parameters` carries the immutable final-value/source/reason snapshot for AI-originated entries | `pending→approved→executed` / `→rejected` / `→error` | `models.py:102` |
+| Proposal | `TradeProposal(symbol, direction, quantity, price, execution_mode...)`; `agent_rationale.entry_parameters` carries the immutable final-value/source/reason snapshot for AI-originated entries | `pending/approved→executing→executed` / `→rejected` / `→error`; uncertain exchange submission uses `submission_unknown`, incomplete local paper materialization uses `materialization_missing` | `models.py:102` |
 | RiskDecision | 见 [risk_engine_contract §3](risk_engine_contract.md) | 不可变(一次写) | `models.py:125` |
 | Order | `Order(proposal_id, risk_decision_id, symbol, direction, qty, price, mode, status)` | `pending→submitted→filled` / `→error` | `models.py:136` |
 | Fill | `Fill(order_id, fill_price, fill_quantity, fee)` | 不可变 | `models.py:155` |
 | Position | `Position(symbol, direction, qty, entry_price, stop_price, take_profit_price, mode...)` + 入场环境(btc_entry_price/regime_tag) + `exit_reasoning` (actual close actor/source/trigger) | `open→closed` | `models.py:165` |
 
 **Proposal 状态契约([trust §1.2](../governance/trust_and_change_control.md)):**
-- `pending`=无人工批准 · `approved`=人工/允许的工作流批准 · `executed`=订单成功创建 · `rejected`=人工或风控拒 · `error`=批准后执行失败。
+- `pending`=无人工批准 · `approved`=人工/允许的工作流批准 · `executing`=已有持久执行 owner · `executed`=Order/Fill/Position 完整成交链已落库 · `rejected`=人工或风控拒 · `error`=确认未提交的终态失败。
+- `submission_unknown`=交易所边界可能已越过，必须先对账，禁止自动重发；`materialization_missing`=已有 Order 或交易所已报告成交活动，但本地 Fill/Position 物化未完整，禁止重新下单（适用于 local paper 与 exchange）。
 - **不得**用状态变更替代缺失记录:执行发生则 order 必存在,风控发生则 risk_decision 必存在。
+
+**Risk 与执行快照必须是同一份意图**：交易所数量规则可以生成 quantity-only 的执行副本，
+authoritative RiskDecision 记录 `evaluated_quantity` 并绑定原 Proposal 的 `proposal_commit_hash`；broker
+只能消费这份已批准副本。除 quantity 归一化外，任何 hash-covered 字段与存储 Proposal 不同都会在
+Risk 前置失败，不得产生 authoritative RiskDecision 或 Order。
+
+**paper TP 不得事后发明**：paper broker 创建新 Position 时只能原样写入 Risk 已检查的
+`TradeProposal.take_profit`。Proposal 中为 `NULL`，Position 的 `take_profit_price` 也必须为 `NULL`；
+broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-manager 对原生 Proposal 同样只消费
+持久化的批准值；Proposal 明确为 `NULL` 时，不得再用当前 config 生成新的平仓触发器。
 
 ---
 
@@ -55,6 +66,18 @@ trade_proposals.id
 | `bitget/okx/binance_live_limited` | 是(**真实资金**) | 同上 broker 同函数 | — |
 
 `_is_live()` 判定:`execution_mode in (bitget/okx/binance)_live_limited`(`engine.py:35`)。
+
+### 3.0 `paper_internal` 入场真实性
+
+- 本地纸面入场只允许 `order_type='market'`。Proposal builder、paper tool 和 broker 三层都拒绝
+  `limit`，不得把“按报价立即模拟成交”伪装成有挂单/等待成交语义的限价单；交易所 demo/testnet
+  仍可按各自 adapter 能力使用 limit。
+- 入场价只来自配置行情 venue 的同 canonical symbol、同物理 `spot/perp` 新鲜精确 mark；内存
+  mark 必须小于 90 秒，SQLite 精确回退不得超过 120 秒。跨 venue、跨 spot/perp、symbol-only
+  或 stale row 都不能建立 Proposal，pending 留待后续重试。
+- 每个本地 Position 只属于一个 immutable Proposal。相同 symbol/direction/strategy 的另一 Proposal
+  不得在 broker 内并入已有 Position；正常 Gateway/Risk 路径会先拒绝重复暴露，broker 的独立
+  lineage 是最后一道防御，避免费用、保护价和归因跨 Proposal 混合。
 
 ### 3.1 Adapter market_type 能力(交易所无关核心 + 边界适配)
 
@@ -108,7 +131,7 @@ trade_proposals.id
 | 时机 | 新仓首次成交后(叠仓不下) | `bitget_broker.py:153-163` |
 | 内容 | `place_tpsl_order(plan_type=pos_loss/pos_profit, trigger_price, hold_side, size)` | `bitget_broker.py:299-336` |
 | SL | `trigger=proposal.stop_price` | :313 |
-| TP | `trigger=default_take_profit_price`(config/proposal) | `gateway.py:150` |
+| TP | `trigger=proposal.take_profit`（仅使用已获 Risk 批准的值） | `gateway.py`, `bitget_broker.py` |
 | 开关 | `trading.exchange_tpsl_enabled`(`schema.py:341`) | — |
 | 失败 | 非致命,仅 warn,本地 stop/TP 仍生效 | :321 |
 | 持久化 | `position.exchange_tpsl_order_id`(JSON) | :336 |
@@ -117,6 +140,18 @@ trade_proposals.id
 ---
 
 ## 5. 原子性 / 幂等 / 失败语义
+
+`submit_proposal()` 与 `execute_existing_proposal()` 必须汇合到同一执行入口，不能由新提案绕开持久租约直接调用 broker。执行入口在一个短 `BEGIN IMMEDIATE` 事务内写入独立的 `proposal_execution_claims` 行，并把 `pending`/`approved` Proposal 改为 `executing`；租约字段不写入 hash-covered Proposal，避免恢复元数据改写交易意图。
+
+**执行租约与崩溃恢复：**
+
+- 一个 Proposal 同时最多有一个 owner；新鲜租约返回 `already_claimed`，不得进入 Risk/broker 或创建 Order。
+- 租约过期后，只有 `paper_internal` 且尚无 Order 时可以用 owner token + 原过期时间做 compare-and-set 抢回执行权。paper 的 owner 校验与 Order/Fill/Position 物化同处一个 `BEGIN IMMEDIATE` 事务，因此旧 owner 与恢复 owner 不可能各写一套成交。
+- 交易所模式租约过期时，无论本地是否已有 Order，都不得推断“未发送”并自动重试；Proposal 转为 `submission_unknown`，返回 `reconciliation_required`，等待对账。
+- `paper_internal` 已有 Order 但物化不完整时转为 `materialization_missing` 并等待修复，不重新创建订单。
+- 正常完成或终态失败只允许当前 owner 以 token compare-and-set 释放自己的租约，旧 owner 不能删除新 owner 的租约。
+
+可执行检查：`EX-B13`（新鲜租约不重复）、`EX-B14`（paper 崩溃后恰好一套 Order/Fill/Position）、`EX-B15`（交易所过期租约零重发）。
 
 **下单序列(关键:交易所订单数 ≥ 本地记录,永不出现无本地 trace 的真实成交):**
 
@@ -128,15 +163,26 @@ trade_proposals.id
 ```
 位置:`bitget_broker.py:87-99`(okx/binance 同构)。
 
+第 1 步的 `pending` 不是“还没发生所以可忽略”。它代表真实提交是否发生仍未知，必须一直留在 Risk
+工作集中：在对应 live/demo 池占用入场槽位和同符号权利，并把尚未由 open Position 表示的数量加入
+名义敞口，直到后续状态或 Position 事实明确收敛。平仓 Order 不占新增入场容量。
+
 | 场景 | 处理 | 位置 |
 |------|------|------|
 | 下单失败 | Order `status=error`+`error_reason`,proposal→`error` | `gateway.py:183` |
 | 部分成交 | Order `status=submitted`,Fill 仅记已成量,position 按实成量 | `bitget_broker.py:113` |
-| 重复提交 | `client_oid=proposal_id` 作幂等键,交易所去重 | `bitget_broker.py:106` |
+| 并发重复提交 | gateway 持久租约先阻断；交易所仍以 `client_oid=proposal_id` 作第二层幂等保护 | `gateway.py`, `bitget_broker.py:106` |
 
 **失败语义([trust §1.3](../governance/trust_and_change_control.md)):**
 - 失败必须留下可检查状态,**不得删除部分创建的行来掩盖失败**。
 - live 执行失败:保留 proposal 设 `error`,**除非交易所确认否则不推断 fill**。
+- broker 返回 accepted result 且对应 native Order 已持久化后，交易所边界已经跨过；后续本地读取、
+  Proposal 状态同步或审计故障都不得再把 Proposal/API 改成 `error`。网关优先从 identity-linked
+  durable Order 恢复 `submitted`/`partially_filled`；只有 `status=filled` 的同一 Order 同时拥有唯一、
+  非零且 ID 匹配的 Fill 与 Position，才可恢复 `executed`。证据不可读、不完整或 Proposal 状态写入
+  中断时，必须降级为 `submission_unknown`/`materialization_missing`，明确禁止自动重发，且日志/API
+  不得包含原异常正文。连续读取失败是“证据不可用”，不得误当成“已读且无 accepted Order”再写
+  `error`。可执行检查：`PL-PN-06`～`PL-PN-10`。
 
 ---
 
@@ -174,6 +220,16 @@ broker/environment/execution-mode 这类非秘密配置身份生成，绝不读�
 
 每个重要状态转换写 `data/logs/audit.jsonl`,最小字段见 [trust §1.4](../governance/trust_and_change_control.md):`timestamp/actor/source/event_type/entity_type/entity_id/message`,可选 `before/after`。`entity_id` 必须指向实际被改的行;审计消息不得含密钥/签名。
 
+执行边界跨过后，SQLite 中已提交的 Order/Fill/Position/Proposal 或禁止重发的
+`submission_unknown`/`materialization_missing` 是权威事实；此后的 JSONL 审计属于次要写入。
+审计写失败只能记录不含异常正文的 warning（仅异常类型），不得把已提交的
+`submitted`/`executed`/未决状态改写成 `error`，也不得把失败抛给调用方触发重发。
+三家 exchange broker 的 entry 与 close 路径统一使用
+`aletheia.execution.post_commit_audit.write_post_commit_audit`；该 helper 只包裹 JSONL sink，DB 写与
+exchange 调用必须留在 helper 外并保持原失败语义。close 的审计故障必须保留 Order 与 Position 的
+`pending_close_status`，重复 close 由 durable claim 直接返回，不得再次触达 exchange。
+可执行检查：`PL-PN-03`～`PL-PN-05`、`PL-RX-19`、`PL-RX-20`。
+
 ---
 
 ## 8. 已交付
@@ -205,15 +261,22 @@ broker/environment/execution-mode 这类非秘密配置身份生成，绝不读�
 > (#105) 原优先级-4 的 `ruleset_exit` 触发器已随规则引擎(Position C)删除——`_decide_exit`
 > 不再消费 `ruleset_exit_position_ids`,该触发器不再是活跃退出路径,请勿再加回。
 
-**System Operator 退出路径独立**:`review_portfolio_state()`(`commands.py:1922`,LLM 决策)经**同一** `close_position_routed()` 入口平仓,**不进入** `evaluate_open_positions` 自动循环——两条路径汇合于路由中枢,不在触发器优先级链内。
+**System Operator 退出路径独立**:`review_portfolio_state()`(`commands.py:1922`,LLM 决策)只暴露
+`hold / close_one`，其中 `close_one` 按明确 Position 经**同一** `close_position_routed()` 入口平仓，
+且不传调用方 fallback price；manager 必须重新取得精确新鲜 mark。遗留 `reduce_exposure` 只能归一为
+`hold`，不得静默执行整仓关闭。该路径**不进入** `evaluate_open_positions` 自动循环——两条路径汇合于
+路由中枢，不在触发器优先级链内。
 
 ### 10.2 close_position_routed 路由契约(唯一平仓中枢)
 
-`close_position_routed(pos_id, reason, fallback_exit_price)`(`position_manager.py:28-79`)是**唯一**平仓出口,自动循环与 PI 路径都经此:
+`close_position_routed(pos_id, reason, fallback_exit_price)` 是单仓**唯一**平仓出口，自动循环与 Operator 路径都经此；`fallback_exit_price` 仅保留调用兼容，不能授权 `paper_internal` 成交：
 
 - 按 `execution_mode` 分派:`bitget_demo→close_demo_position` / `okx_demo→close_okx_position` / `binance_testnet→close_testnet_position` / `paper_internal→本地 close`。
 - **live 守卫(不变式)**:`live_limited` 模式且 `allow_live=False` → `RaiseError`,阻止自动循环误平**真实资金**持仓(`position_manager.py:59`)。守卫在中枢层,不分散到各调用方。
 - 交易所腿不可跳过:demo 模式仍走真实交易所 close;`paper_internal` 本地撮合。
+- **保护性平仓价格不可伪造**：触发判断和 `paper_internal` close Fill 只使用 Position 精确 `exchange + symbol + market_type` 的新鲜 mark。单仓路由即使收到 `fallback_exit_price`，本地分支也必须忽略它并在 manager 内重新取价。交易所仓由 `execution_mode` 固定 venue（OKX / Bitget / Binance），只有 `paper_internal` 使用配置的 market-data venue。内存 exact-instrument cache 必须小于 90 秒；SQLite 只能回退到同 venue、同 `spot` / `perp`（兼容旧 `usdt_futures` 拼写）且不超过 120 秒的 snapshot。不得用 `Position.current_price`、symbol-only、跨 venue、跨 spot/perp 或过期价格触发/生成退出成交。
+- **逐仓失败必须可见**：一个仓位的 mark 查询、market-aware 评估或 close 异常不得中止其余仓位；`evaluate_open_positions()` 返回稳定的 per-position `errors`，close 异常另计入 `failed_close_count`。`closed=0` 且 close 全失败不能被调度层当作健康空跑。
+- **dashboard 批量平仓先完整预检**：`close_local_positions_batch()` 先无上限枚举目标 `paper_internal` 仓位，并在 manager 内为每个仓位取得上述 exact mark；任一 mark 缺失或读取失败，在第一笔 close 前整体拒绝。预检全部通过后才逐仓物化；若之后出现非行情执行错误，响应必须同时列出 `closed_position_ids` 与逐仓 `failed`，不得把部分成功显示成 close-all 成功。
 
 ### 10.3 paused / kill_switch 对平仓的语义(核心不变量)
 
@@ -229,7 +292,12 @@ broker/environment/execution-mode 这类非秘密配置身份生成，绝不读�
 
 ### 10.4 stop/take-profit 兜底
 
-`_effective_stop` / `_effective_take_profit`(`position_manager.py:92-115`):优先用 position 行记录的 `stop_price`/`take_profit_price`;无记录时回退 config 默认百分比。**无 stop 的仓位仍有兜底保护**,不裸奔。
+`_effective_stop` / `_effective_take_profit` 优先使用 Position 行已经持久化的
+`stop_price` / `take_profit_price`（包括获准的 trailing-stop 更新）。若原生 Position 的值为空，则回看
+其不可变 Proposal：Proposal 有值才使用，Proposal 为 `NULL` 就保持无该触发器，绝不能读取后来变化的
+config 发明保护。只有没有 Proposal 身份的历史仓位，或明确 `source=adopted` 的外部接管仓位，才保留
+config 默认百分比兜底；接管流程会尽量在接管时一次性固化这些值，避免之后漂移。`PL-PM-09` 锁定原生
+Proposal 的这一权限边界。
 `_sync_exchange_closed`(`position_manager.py:311`,`248-296`):每轮先收敛交易所原生 TPSL(bitget demo bracket)已触发的平仓,避免本地-交易所长期 desync。
 
 ### 10.5 已知状态与边界
@@ -237,7 +305,7 @@ broker/environment/execution-mode 这类非秘密配置身份生成，绝不读�
 - ⚠️ **live 人工平仓路径未实现**:`allow_live=True` 全库无调用点(`position_manager.py:53` 仅文档注释);前端无 force-close 按钮,无 `/api/positions/{id}/close` 端点。**当前 `live_limited` 仓位须在交易所界面手动平仓。** 未来加 close 端点**触信任边界**,须走 [trust §6](../governance/trust_and_change_control.md) change-control + 人工确认(`allow_live=True`)。
 - ⚠️ **live 对账仍受 paused**:`_run_reconciliation`(live-only,`scheduler.py:822`)仍有 paused 门,本次未改(live 默认禁用,且仅做收敛检测,优先级低)。若未来 live 常开,应一并对齐本节语义。
 
-**Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓)。`spec_pipeline_position_manager.py`。
+**Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓) + `PL-PM-10~13`(fresh exact venue/market mark / 逐仓 close 与 market-aware 失败可见) + `PL-PCM-05/11~15`(dashboard 全量枚举、mark 预检、单仓 fallback 隔离与部分失败诚实返回)。
 
 ## 11. Position 关闭与结果完整性（OI-S01/S02/B01 implemented；其余行为待实现）
 
@@ -246,7 +314,7 @@ broker/environment/execution-mode 这类非秘密配置身份生成，绝不读�
 
 | 路径 | 必需证据 | 允许的副作用 | 结果资格 |
 |---|---|---|---|
-| verified strategy close | 本地 execution fill，或当前 broker/account/instrument 的可验证退出 fill | 真实 fee、slippage、PnL、cash settlement、outcome-only hook | 通过其余干净窗/归因门后可 eligible |
+| verified strategy close | 本地 execution fill，或当前 broker/account/instrument 的可验证退出 fill；期货还需可信 funding ledger 才有完整净经济结果 | 真实 fee、slippage；仅经济字段完整时才写净 PnL、cash settlement、outcome-only hook | 通过其余干净窗/归因门且 funding 完整后可 eligible |
 | administrative close | 持久确认仓位已消失，但无可验证退出 fill | 状态收敛、审计、告警 | 永远 ineligible；不得制造经济字段 |
 
 ### 11.1 消失确认
@@ -304,7 +372,8 @@ identity、精确数量、quote-currency fee 和 `verified_fill`，用成交加�
 删除，旧 `close_position` 也拒绝 synthetic reason。对应 `OI-B01~B04`、`OI-C03`。
 
 PnL 读取已拆出 `today_raw_closed_realized_pnl()` 与 `today_eligible_strategy_pnl()`；旧
-`today_realized_pnl()` 暂保留 raw 兼容语义。Risk 已由 RG-T09 迁移到独立
+`today_realized_pnl()` 暂保留 raw 兼容入口，但当天任一关闭缺少净经济结果时返回 unavailable，
+不能把该行按 0 相加。Risk 已由 RG-T09 迁移到独立
 `authoritative_account_realized_loss()`，不再消费该兼容指标。
 
 ### 11.4 中央关闭语义与三种读取口径（OI-S02 implemented）
@@ -330,3 +399,34 @@ demo auto-adopt/orphan-close 之前运行；active 事故写入 `reconciliation_
 动作和所有会改变行为的 Learning 入口跨重启保持冻结。每次继续出现循环会重置干净计数；干净观察
 必须相隔至少五分钟且累计两次，之后仍需明确 actor/reason 才能 resolve。live 继续只分类和告警，不
 获得任何新增自动收口权限。
+
+### 11.6 期货资金费用的可证来源与诚实关闭
+
+`paper_internal` 合约使用明确标为 `local_simulation` 的确定性模型：两分钟衍生品采集持续覆盖
+所有未平仓本地合约；按 `opened_at < next_funding_time <= closed_at` 的每个结算事件，采用同一
+主 venue 在结算前 15 分钟内的最后持久快照。每次结算的名义金额只来自该时刻之前已经成交、
+且反链到同一 Position 的 entry Order/Fill；多腿加仓按真实成交时间分段，不能用最终 Position
+名义金额回溯早期结算。Order、Proposal、Risk、Position 的币对、市场、方向、执行模式以及每单
+与整仓数量必须闭合；首笔/primary Fill 必须与 Position `opened_at` 在一秒持久化写序容差内对齐，
+更早且超出该容差的 Fill 视为损坏事实；Fill 恰好落在结算时刻也视为边界不明并 fail closed。完整事件按多头成本为
+正、空头返还为负聚合。开仓锚点、每次结算后的下一 schedule 和平仓后的未来 schedule 必须完整，
+事件快照随 close Order/Fill 在同一事务写入 `reconciliation_evidence.funding`。中央关闭入口再次
+核对证据的 source、Position、symbol、持有时间窗和逐事件合计；不完整/异常结果必须显式覆盖旧
+funding 为 `NULL/unavailable`。这只是可复现的本地模拟，不冒充交易所账户扣款。
+
+exchange-backed futures 仍只接受对应账户私有账单的 `broker_ledger`；公开费率不得替代真实扣款。
+
+真实 close Order/Fill 可以结束执行生命周期，但它不能证明持仓期间的 funding。期货没有可信账户
+账单，或本地模拟的事件窗口不完整时，关闭仍保留真实 Order/Fill 并把 Position 标为 `closed`，同时必须写：
+
+- `funding_cost=NULL`、`funding_source='unavailable'`；
+- `realized_pnl=NULL`，不得把未知 funding 当成 0；
+- `outcome_eligible=false`、`outcome_exclusion_reason='incomplete_funding_economics'`；
+- 不写 `paper_account_events.position_closed`，不创建 eligible Outcome hook，也不进入 Attribution、
+  Feedback 或 Learning。
+
+因此本地 paper 账户继续显示原始现金账本，但这笔现金尚未完成结算，不能当成可花余额：
+`economics_complete=false`、`equity_usdt=NULL`、`available_balance_usdt=0`，直到 funding/关闭成本补齐并
+完成现金账本结算。Portfolio 的相关 realized 汇总同样返回 `NULL` 并附未完成数量，而不是用 0 提供
+一个看似完整的数字。spot 不产生 funding，关闭时明确写 `funding_cost=0`、
+`funding_source='not_applicable'`，不受此冻结影响。

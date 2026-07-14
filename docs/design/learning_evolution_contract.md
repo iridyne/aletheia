@@ -85,6 +85,8 @@ Every reusable Learning path must have one registry entry containing:
 - stable path id, producer, source tables/item types, consumer, and maximum authority;
 - exact scope dimensions, clean-data floor, outcome source and precedence, target horizon;
 - treatment/control unit, overlap group, promotion/harm gates, TTL, and static fallback;
+- explicit `consumer_wired` and Settings-support state, so a declared design path cannot be
+  presented as operator-selectable before its real consumer and authority adapter exist;
 - expected scheduler job, owner-facing health state, and required specs/E2E scenarios.
 
 An undeclared producer may write an inactive diagnostic artifact. An undeclared consumer must
@@ -324,6 +326,11 @@ lifecycle controller is allowed to change paper state only when reconciliation i
 autonomous Learning is enabled, runtime is not paused, lifecycle automation is enabled, paper
 influence is enabled, and the path is explicitly allowlisted. No setting here can grant live,
 execution, risk, or credential authority.
+
+The Settings API accepts only registry entries marked consumer-wired and supported. It rejects
+unknown/unwired values both on direct allowlist updates and when the master influence toggle would
+reactivate an unsupported value left by an older free-text configuration. The UI renders the same
+registry as checkboxes; unsupported entries are visible but disabled.
 
 ## 8. Automatic Demotion And Refreeze
 

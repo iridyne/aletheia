@@ -12,10 +12,16 @@ creation time using live market data and the latest macro snapshot.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 logger = logging.getLogger("aletheia.analytics.shadow_trades")
+
+# Market snapshots are collected every five minutes. A close-time
+# counterfactual may use at most two collection intervals of lag; anything older
+# is not evidence of the market at the Position close event.
+_MAX_EVENT_SNAPSHOT_AGE_SECONDS = 10 * 60
 
 
 def persist_shadow_batch(
@@ -158,7 +164,8 @@ def resolve_stale_shadows(
     cutoff_iso = (datetime.now(timezone.utc) - timedelta(hours=min_age_hours)).isoformat()
     rows = db.execute(
         "SELECT id, symbol, direction, entry_price, created_at FROM shadow_trades "
-        "WHERE resolved_at IS NULL AND outcome_candidate_key IS NULL "
+        "WHERE resolved_at IS NULL AND exit_price IS NULL "
+        "AND outcome_candidate_key IS NULL "
         "AND created_at < ? ORDER BY created_at ASC LIMIT ?",
         (cutoff_iso, limit),
     ).fetchall()
@@ -210,11 +217,65 @@ def _current_price(
     market_type: str | None = None,
     *,
     exact: bool = False,
+    at_or_before: str | None = None,
 ) -> float | None:
-    """Return the latest market price for a symbol, or None."""
+    """Return a market price, optionally pinned to a durable event time."""
     if not symbol:
         return None
     try:
+        if at_or_before is not None:
+            from aletheia.data.symbols import to_bitget, to_canonical
+            from aletheia.storage.sqlite import get_db
+
+            event_dt = _parse_entry_dt(at_or_before)
+            if event_dt is None:
+                return None
+            oldest_usable = (
+                event_dt - timedelta(seconds=_MAX_EVENT_SNAPSHOT_AGE_SECONDS)
+            ).isoformat()
+
+            canonical = to_canonical(symbol)
+            symbols = [canonical]
+            legacy_symbol = to_bitget(canonical)
+            if legacy_symbol != canonical:
+                symbols.append(legacy_symbol)
+            normalized_market = (
+                "perp"
+                if str(market_type or "").lower()
+                in {"perp", "futures", "swap", "usdt_futures"}
+                else "spot" if str(market_type or "").lower() == "spot" else None
+            )
+
+            placeholders = ",".join("?" for _ in symbols)
+            base = (
+                "SELECT price FROM market_snapshots "
+                f"WHERE symbol IN ({placeholders}) "
+                "AND datetime(snapshot_at) <= datetime(?) "
+                "AND datetime(snapshot_at) >= datetime(?)"
+            )
+            params: list[object] = [*symbols, event_dt.isoformat(), oldest_usable]
+            if normalized_market is not None:
+                typed = get_db().execute(
+                    base
+                    + " AND market_type = ? "
+                    "ORDER BY datetime(snapshot_at) DESC, rowid DESC LIMIT 1",
+                    (*params, normalized_market),
+                ).fetchone()
+                if typed is not None:
+                    price = float(typed["price"])
+                    return price if math.isfinite(price) and price > 0 else None
+                # A spot snapshot cannot prove a futures counterfactual (or vice
+                # versa), even when it is temporally fresh.
+                return None
+            fallback = get_db().execute(
+                base + " ORDER BY datetime(snapshot_at) DESC, rowid DESC LIMIT 1",
+                params,
+            ).fetchone()
+            if fallback is None:
+                return None
+            price = float(fallback["price"])
+            return price if math.isfinite(price) and price > 0 else None
+
         from aletheia.trading.market_data import latest_snapshot
         if exact:
             from aletheia.data.symbols import to_canonical
@@ -251,6 +312,41 @@ def _current_regime() -> str:
     return "unknown"
 
 
+def _normalized_market_type(value: object) -> str | None:
+    raw = str(value or "").strip().lower()
+    if raw in {"perp", "futures", "swap", "usdt_futures"}:
+        return "perp"
+    if raw == "spot":
+        return "spot"
+    return None
+
+
+def _verified_position_exit_price(position: dict, shadow: dict) -> float | None:
+    """Reuse exact verified fill economics only for the same instrument."""
+    if not position.get("exit_fill_verified"):
+        return None
+    if position.get("exit_price_source") not in {"local_fill", "broker_fill"}:
+        return None
+    try:
+        from aletheia.data.symbols import to_canonical
+
+        if to_canonical(str(position.get("symbol") or "")) != to_canonical(
+            str(shadow.get("symbol") or "")
+        ):
+            return None
+    except (TypeError, ValueError):
+        return None
+    position_market = _normalized_market_type(position.get("market_type"))
+    shadow_market = _normalized_market_type(shadow.get("market_type"))
+    if position_market is None or position_market != shadow_market:
+        return None
+    try:
+        price = float(position.get("current_price"))
+    except (TypeError, ValueError):
+        return None
+    return price if math.isfinite(price) and price > 0 else None
+
+
 def resolve_shadow_trades_for_position(position: dict) -> int:
     """Resolve all shadow trades matching the position's opportunity.
 
@@ -259,8 +355,12 @@ def resolve_shadow_trades_for_position(position: dict) -> int:
 
     Returns number of rows updated.
     """
-    from aletheia.storage.repositories import _select_all, _update
-    from datetime import datetime, timezone
+    from aletheia.storage.repositories import (
+        _select_all,
+        anchor_shadow_trade_exit_price_if_pending,
+        resolve_shadow_trade_if_pending,
+        transaction,
+    )
 
     opp_id = position.get("opportunity_id") or position.get("proposal_opportunity_id")
     if not opp_id:
@@ -269,7 +369,7 @@ def resolve_shadow_trades_for_position(position: dict) -> int:
     # Find the shadow row that was_selected for this opportunity
     selected_rows = _select_all(
         "shadow_trades",
-        where="opportunity_id = ? AND was_selected = 1 AND resolved_at IS NULL "
+        where="opportunity_id = ? AND was_selected = 1 "
               "AND outcome_candidate_key IS NULL",
         params=(opp_id,),
         limit=1,
@@ -281,6 +381,10 @@ def resolve_shadow_trades_for_position(position: dict) -> int:
     if not batch_id:
         return 0
 
+    event_time = str(position.get("closed_at") or "").strip()
+    if not event_time:
+        raise ValueError("shadow feedback requires the Position close time")
+
     # Resolve ALL shadows in the batch (both selected and counterfactuals)
     batch_rows = _select_all(
         "shadow_trades",
@@ -289,16 +393,75 @@ def resolve_shadow_trades_for_position(position: dict) -> int:
         limit=50,
     )
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    # Phase 1: determine and persist every available first-event price before
+    # resolving any row. `exit_price` is already the durable economic field; an
+    # unresolved row with only this field populated is an anchored-but-undelivered
+    # feedback row. A crash or per-row failure can therefore replay without
+    # sampling a later market price. Historical snapshot lookup is pinned to the
+    # immutable Position.closed_at for a row that had no prior anchor.
+    anchors: dict[str, float] = {}
+    missing_anchor_ids: list[str] = []
+    failures: list[str] = []
+    for row in batch_rows:
+        row_id = str(row.get("id") or "")
+        try:
+            entry = float(row.get("entry_price"))
+        except (TypeError, ValueError):
+            entry = 0.0
+        if not math.isfinite(entry) or entry <= 0:
+            failures.append(f"{row.get('id', 'unknown')}: invalid entry price")
+            continue
+
+        existing_anchor = row.get("exit_price")
+        if existing_anchor is None:
+            exit_price = _verified_position_exit_price(position, row)
+            if exit_price is None:
+                exit_price = _current_price(
+                    row.get("symbol", ""),
+                    market_type=row.get("market_type"),
+                    at_or_before=event_time,
+                )
+            missing_anchor_ids.append(row_id)
+        else:
+            try:
+                exit_price = float(existing_anchor)
+            except (TypeError, ValueError):
+                exit_price = None
+        if (
+            exit_price is None
+            or not math.isfinite(float(exit_price))
+            or float(exit_price) <= 0
+        ):
+            failures.append(f"{row.get('id', 'unknown')}: exit price unavailable")
+            continue
+        anchors[row_id] = float(exit_price)
+
+    if anchors:
+        with transaction(immediate=True):
+            for row_id in missing_anchor_ids:
+                exit_price = anchors.get(row_id)
+                if exit_price is not None:
+                    anchor_shadow_trade_exit_price_if_pending(
+                        row_id,
+                        exit_price=exit_price,
+                    )
+
+    # Refresh after the anchor transaction so a replay always consumes the
+    # stored price, including when another idempotent worker won a CAS race.
+    batch_rows = _select_all(
+        "shadow_trades",
+        where="batch_id = ? AND resolved_at IS NULL",
+        params=(batch_id,),
+        limit=50,
+    )
+
     updated = 0
     for row in batch_rows:
-        entry = row.get("entry_price")
-        if entry is None or entry <= 0:
+        row_id = str(row.get("id") or "")
+        if row_id not in anchors:
             continue
-        symbol = row.get("symbol", "")
-        exit_price = _current_price(symbol)
-        if exit_price is None:
-            continue
+        entry = float(row["entry_price"])
+        exit_price = float(row["exit_price"])
         direction = row.get("direction", "long")
         if direction == "long":
             pnl_pct = round((exit_price - entry) / entry * 100, 3)
@@ -306,12 +469,18 @@ def resolve_shadow_trades_for_position(position: dict) -> int:
             pnl_pct = round((entry - exit_price) / entry * 100, 3)
 
         try:
-            _update("shadow_trades", row["id"], {
-                "exit_price": exit_price,
-                "pnl_pct": pnl_pct,
-                "resolved_at": now_iso,
-            })
-            updated += 1
+            if resolve_shadow_trade_if_pending(
+                row["id"],
+                exit_price=exit_price,
+                pnl_pct=pnl_pct,
+                resolved_at=event_time,
+            ):
+                updated += 1
         except Exception as exc:
             logger.warning("shadow resolve failed for %s: %s", row["id"], exc)
+            failures.append(f"{row['id']}: {type(exc).__name__}: {exc}")
+    if failures:
+        raise RuntimeError(
+            "shadow batch incomplete: " + "; ".join(failures[:10])
+        )
     return updated

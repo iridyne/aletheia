@@ -77,15 +77,15 @@ class TestRiskEngineSeam:
         """A well-formed proposal passes the risk engine."""
         proposal = TradeProposal(
             symbol="ETH/USDT",
-            market_type="usdt_futures",
-            direction="short",
+            market_type="spot",
+            direction="long",
             order_type="market",
             quantity=0.01,
             price=1740.0,
             execution_mode="paper_internal",
-            stop_price=1740 * 1.02,
+            stop_price=1740 * 0.98,
         )
-        repo._insert("trade_proposals", proposal.model_dump())
+        repo.insert_trade_proposal(proposal)
 
         from aletheia.risk.engine import evaluate_proposal
         result = evaluate_proposal(proposal)
@@ -99,18 +99,23 @@ class TestRiskEngineSeam:
 
         proposal = TradeProposal(
             symbol="ETH/USDT",
-            market_type="usdt_futures",
+            market_type="spot",
             direction="long",
             order_type="market",
             quantity=1.0,
             price=1740.0,
             execution_mode="paper_internal",
+            stop_price=1740 * 0.98,
         )
-        repo._insert("trade_proposals", proposal.model_dump())
+        repo.insert_trade_proposal(proposal)
 
         from aletheia.risk.engine import evaluate_proposal
         result = evaluate_proposal(proposal)
         assert result.approved is False
+        assert any(
+            violation.startswith("exceeds_demo_position_notional:")
+            for violation in result.violations
+        ), result.violations
 
 
 class TestPositionCreationSeam:

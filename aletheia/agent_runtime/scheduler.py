@@ -40,6 +40,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "position_reconcile",
     "tpsl_fill_check",
     "outcome_settler",
+    "outcome_hook_replay",
     "shadow_resolver",
     "learning_contribution_evaluator",
     "learning_measurement_startup_catchup",
@@ -667,7 +668,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     # this job fire every 1min, far more often than the contract's ~15min (A5 fix).
     _pi_fallback_min = 15
     _scheduler.add_job(
-        _guarded("pi_trading_decision", _run_pi_trading_decision), "interval", minutes=_pi_fallback_min,
+        _guarded("pi_trading_heartbeat", _run_pi_trading_decision), "interval", minutes=_pi_fallback_min,
         id="pi_trading_decision", misfire_grace_time=120,
         next_run_time=datetime.now() + timedelta(minutes=7), executor="agents",
     )
@@ -704,6 +705,16 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("shadow_resolver", _run_shadow_resolver), "interval", hours=6,
         id="shadow_resolver", misfire_grace_time=300, executor="io",
+    )
+    _scheduler.add_job(
+        _guarded("outcome_hook_replay", _run_outcome_hook_replay),
+        "interval",
+        minutes=1,
+        id="outcome_hook_replay",
+        misfire_grace_time=60,
+        max_instances=1,
+        executor="io",
+        next_run_time=datetime.now() + timedelta(seconds=15),
     )
     _scheduler.add_job(
         _guarded("health_check", _run_health_check), "interval", minutes=10, id="health_check",
@@ -1022,12 +1033,15 @@ def status_snapshot() -> dict:
 
 
 def _run_price_feed():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.data.price_feed import refresh_watched_prices
-        _run_async_with_timeout("price_feed", refresh_watched_prices())
+        result = _run_async_with_timeout("price_feed", refresh_watched_prices())
+        if isinstance(result, dict) and result.get("errors"):
+            logger.warning(
+                "price_feed completed with %d reported errors",
+                len(result["errors"]),
+            )
+            _record_job_failure("price_feed", "price_feed_reported_errors")
     except TimeoutError:
         logger.debug("price_feed job timed out")
         _record_job_failure("price_feed", "timeout")
@@ -1037,9 +1051,6 @@ def _run_price_feed():
 
 
 def _run_connectivity_monitor():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.agent_runtime.connectivity import run_connectivity_check
         _run_async_with_timeout("connectivity_monitor", run_connectivity_check())
@@ -1061,12 +1072,15 @@ def _run_daily_summary():
 
 
 def _run_market_data():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.trading.market_data import collect_market_snapshots
-        _run_async_with_timeout("market_data", collect_market_snapshots())
+        result = _run_async_with_timeout("market_data", collect_market_snapshots())
+        if isinstance(result, dict) and result.get("errors"):
+            logger.warning(
+                "market_data completed with %d reported errors",
+                len(result["errors"]),
+            )
+            _record_job_failure("market_data", "market_data_reported_errors")
     except TimeoutError:
         logger.warning(
             "market_data job timed out after %.0fs",
@@ -1183,16 +1197,39 @@ def _run_shadow_resolver():
         _record_job_failure("shadow_resolver", str(e))
 
 
+def _run_outcome_hook_replay():
+    """Replay committed Outcome hook intents even while decision jobs are paused."""
+    try:
+        from aletheia.portfolio.outcome_hooks import process_outcome_hook_jobs
+
+        summary = process_outcome_hook_jobs(limit=50)
+        if summary["failed"]:
+            message = f"{summary['failed']} Outcome hook deliveries remain retryable"
+            logger.warning("outcome_hook_replay: %s", message)
+            _record_job_failure("outcome_hook_replay", message)
+        elif summary["completed"] or summary["skipped"]:
+            logger.info(
+                "outcome_hook_replay: completed=%d skipped=%d",
+                summary["completed"],
+                summary["skipped"],
+            )
+    except Exception as e:
+        logger.warning("outcome_hook_replay job failed: %s", e)
+        _record_job_failure("outcome_hook_replay", str(e))
+
+
 def _run_reconciliation():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
-    # Only meaningful in live mode; reconcile() itself early-returns otherwise.
-    if cfg.exchange.mode != "live":
-        return
     try:
         from aletheia.execution.reconciliation import reconcile
-        reconcile()
+        summary = reconcile()
+        if isinstance(summary, dict) and summary.get("errors"):
+            logger.warning(
+                "reconciliation completed with %d reported errors",
+                len(summary["errors"]),
+            )
+            _record_job_failure(
+                "reconciliation", "reconciliation_reported_errors"
+            )
     except Exception as e:
         logger.warning("reconciliation job failed: %s", e)
         _record_job_failure("reconciliation", str(e))
@@ -1200,12 +1237,20 @@ def _run_reconciliation():
 
 def _run_exchange_sync():
     """Periodic refresh of the cached real-account view (read-only)."""
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.portfolio.exchange_sync import sync_all_exchanges
-        _run_sync_with_timeout("exchange_sync", sync_all_exchanges)
+        result = _run_sync_with_timeout("exchange_sync", sync_all_exchanges)
+        if result is None:
+            logger.warning("exchange_sync returned no unified state")
+            _record_job_failure("exchange_sync", "exchange_sync_total_failure")
+            return
+        if isinstance(result, dict) and result.get("errors"):
+            logger.warning(
+                "exchange_sync completed with %d reported account errors",
+                len(result["errors"]),
+            )
+            _record_job_failure("exchange_sync", "exchange_sync_reported_errors")
+            return
         _record_job_success("exchange_sync")
     except TimeoutError:
         logger.warning(
@@ -1220,8 +1265,6 @@ def _run_exchange_sync():
 
 def _run_portfolio_snapshot():
     cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.portfolio.pnl import compute_and_store_snapshot
         _live_mode_map = {"bitget": "bitget_live_limited", "okx": "okx_live_limited", "binance": "binance_live_limited"}
@@ -1267,7 +1310,7 @@ def _run_pi_trading_decision():
 
     When pi_daemon is enabled and running, this job simply wakes the daemon
     (which handles debounce, cooldown, and the actual LLM evaluation). The daemon
-    provides sub-second response to signal events; this job is the 5-min safety net.
+    provides sub-second response to signal events; this job is the 15-min safety net.
 
     When pi_daemon is disabled or not running, runs the evaluation inline (legacy path).
     """
@@ -1281,8 +1324,9 @@ def _run_pi_trading_decision():
     try:
         from aletheia.agent_runtime.pi_daemon import is_daemon_running, notify_pi_daemon
         if cfg.pi_daemon.enabled and is_daemon_running():
-            notify_pi_daemon(source="heartbeat")
-            return
+            if notify_pi_daemon(source="heartbeat"):
+                return
+            _record_job_failure("pi_trading_heartbeat", "daemon_notify_failed")
     except Exception:
         pass
 
@@ -1301,6 +1345,7 @@ def _run_pi_trading_decision():
             logger.info("pi_trading_decision: watch %s — %s", result.get("symbol"), result.get("reasoning", "")[:60])
         else:
             logger.debug("pi_trading_decision: %s — %s", action, result.get("reasoning", "")[:80])
+        _record_job_success("pi_trading_decision")
     except TimeoutError:
         logger.warning("pi_trading_decision job timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC.get("pi_trading_decision", 300))
         _record_job_failure("pi_trading_decision", "timeout")
@@ -1354,7 +1399,15 @@ def _run_position_manager():
     # Invariant: execution_contract §10 + spec PL-PM-07.
     try:
         from aletheia.portfolio.position_manager import evaluate_open_positions
-        evaluate_open_positions()
+        summary = evaluate_open_positions()
+        if isinstance(summary, dict) and summary.get("errors"):
+            logger.warning(
+                "position_manager completed with %d reported errors",
+                len(summary["errors"]),
+            )
+            _record_job_failure(
+                "position_manager", "position_manager_reported_errors"
+            )
     except Exception as e:
         logger.warning("position_manager job failed: %s", e)
         _record_job_failure("position_manager", str(e))
@@ -1385,6 +1438,10 @@ def _run_position_reconcile():
             # sees a systematically-failing reconciler (matches the orchestrator convention).
             _recon_status = "completed_with_errors" if summary.get("errors") else "completed"
             end_run(run, status=_recon_status, outputs=outputs, errors=summary.get("errors") or None)
+            if summary.get("errors"):
+                _record_job_failure(
+                    "position_reconcile", "position_reconcile_reported_errors"
+                )
         except Exception as e:
             end_run(run, status="failed", errors=[str(e)])
             raise
@@ -1394,11 +1451,7 @@ def _run_position_reconcile():
 
 
 def _run_tpsl_fill_check():
-    """Fast TPSL fill detection — catches triggered SL/TP before the 5min reconciler.
-
-    Scans open positions with exchange_tpsl_order_id, queries Bitget plan order
-    history, and proactively closes positions with accurate fill prices when a
-    TPSL has been triggered on the exchange.
+    """Bridge triggered Bitget TPSL plans into private-fill reconciliation.
 
     #90 fix: the body is wrapped in `_run_sync_with_timeout` (45s cap; see
     _ASYNC_JOB_TIMEOUT_SEC['tpsl_fill_check']) so a stuck Bitget session can't
@@ -1408,29 +1461,96 @@ def _run_tpsl_fill_check():
     test_scheduler_job_wrappers_have_try_except).
     """
     try:
-        return _run_sync_with_timeout("tpsl_fill_check", _tpsl_fill_check_body)
+        summary = _run_sync_with_timeout(
+            "tpsl_fill_check", _tpsl_fill_check_body
+        )
+        if isinstance(summary, dict) and summary.get("failed_count"):
+            _record_job_failure(
+                "tpsl_fill_check", "tpsl_private_reconciliation_failed"
+            )
+        return summary
     except Exception as e:
         logger.warning("tpsl_fill_check outer wrapper failed: %s", e)
         _record_job_failure("tpsl_fill_check", str(e))
         return None
 
 
+def _claim_observed_tpsl_close(
+    position_id: str,
+    *,
+    execute_order_id: str,
+    reason: str,
+):
+    """Atomically register an observed Bitget TPSL execution without placing it."""
+    from datetime import datetime, timezone
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order
+
+    execute_order_id = str(execute_order_id or "").strip()
+    if not execute_order_id:
+        raise ValueError("TPSL execute order identity unavailable")
+    with repo.transaction(immediate=True):
+        position = repo._select_one("positions", position_id)
+        if position is None or position.get("status") != "open":
+            return None, False
+        execution_mode = position.get("execution_mode")
+        if execution_mode not in {"bitget_demo", "bitget_live_limited"}:
+            raise ValueError(
+                "automatic TPSL close registration requires a supported Bitget mode"
+            )
+        pending_id = position.get("pending_close_order_id")
+        if pending_id:
+            existing = repo.get_order(pending_id)
+            if (
+                existing is not None
+                and existing.get("exchange_order_id") == execute_order_id
+                and existing.get("position_id") == position_id
+            ):
+                return existing, False
+            raise RuntimeError("TPSL execute order conflicts with pending close claim")
+
+        close_order = Order(
+            proposal_id=position.get("proposal_id"),
+            client_order_id=f"close-{position_id}",
+            position_id=position_id,
+            close_reason=reason,
+            symbol=position["symbol"],
+            market_type=position["market_type"],
+            direction=position["direction"],
+            order_type="market",
+            quantity=float(position["quantity"]),
+            price=None,
+            execution_mode=execution_mode,
+            exchange_order_id=execute_order_id,
+            status="materialization_missing",
+            error_reason="private_fill_evidence_pending",
+        )
+        repo.insert_order(close_order)
+        repo.update_position(
+            position_id,
+            pending_close_order_id=close_order.id,
+            pending_close_status="materialization_missing",
+            pending_close_requested_at=datetime.now(timezone.utc).isoformat(),
+        )
+        return repo.get_order(close_order.id), True
+
+
 def _tpsl_fill_check_body():
     """Inner body of tpsl_fill_check — kept separate so _run_sync_with_timeout
     can wrap it. The outer entry point (`_run_tpsl_fill_check`) is what the
-    scheduler dispatches; keep the paused-check + timeout wiring there so the
-    body stays a plain sync function."""
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
+    scheduler dispatches; the body stays a plain sync function and returns an
+    honest partial-work summary for caller-thread health accounting."""
     try:
         import asyncio
         import json as _json
-        from aletheia.storage.repositories import list_positions
-        from aletheia.portfolio.pnl import close_position
+        from aletheia.storage.repositories import list_all_open_positions
+        from aletheia.data.symbols import to_bitget
+        from aletheia.execution.exchange_materialization import (
+            materialize_bitget_close,
+        )
         from aletheia.exchanges.bitget.client import BitgetClient
 
-        positions = list_positions(status="open")
+        positions = list_all_open_positions()
         candidates = []
         for p in positions:
             tpsl_raw = p.get("exchange_tpsl_order_id")
@@ -1440,57 +1560,129 @@ def _tpsl_fill_check_body():
                 tpsl_ids = _json.loads(tpsl_raw) if isinstance(tpsl_raw, str) else tpsl_raw
             except (ValueError, TypeError):
                 continue
-            if isinstance(tpsl_ids, dict) and (tpsl_ids.get("sl") or tpsl_ids.get("tp")):
+            if (
+                p.get("execution_mode") in {"bitget_demo", "bitget_live_limited"}
+                and isinstance(tpsl_ids, dict)
+                and (tpsl_ids.get("sl") or tpsl_ids.get("tp"))
+            ):
                 candidates.append((p, tpsl_ids))
 
         if not candidates:
-            return
+            return {"materialized": [], "failed_count": 0, "errors": []}
 
-        client = BitgetClient()
+        grouped = {
+            "bitget_demo": [item for item in candidates if item[0]["execution_mode"] == "bitget_demo"],
+            "bitget_live_limited": [
+                item for item in candidates
+                if item[0]["execution_mode"] == "bitget_live_limited"
+            ],
+        }
+
+        async def _check_account(execution_mode, account_candidates):
+            if not account_candidates:
+                return {"materialized": [], "errors": []}
+            account_mode = "demo" if execution_mode == "bitget_demo" else "live"
+            client = BitgetClient(mode=account_mode)
+            materialized = []
+            errors = []
+            try:
+                for pos, tpsl_ids in account_candidates:
+                    for plan_type, plan_order_id in (
+                        ("sl", tpsl_ids.get("sl")),
+                        ("tp", tpsl_ids.get("tp")),
+                    ):
+                        if not plan_order_id:
+                            continue
+                        try:
+                            history = await client.get_plan_order_history(
+                                order_id=plan_order_id
+                            )
+                            execute_ids = {
+                                str(row.get("executeOrderId") or "").strip()
+                                for row in history
+                                if isinstance(row, dict)
+                                and str(row.get("orderId") or "")
+                                == str(plan_order_id)
+                                and str(row.get("planStatus") or "").lower()
+                                == "executed"
+                                and str(row.get("executeOrderId") or "").strip()
+                            }
+                            if len(execute_ids) != 1:
+                                continue
+                            execute_order_id = next(iter(execute_ids))
+                            reason = (
+                                "stop_loss" if plan_type == "sl" else "take_profit"
+                            )
+                            close_order, _ = _claim_observed_tpsl_close(
+                                pos["id"],
+                                execute_order_id=execute_order_id,
+                                reason=reason,
+                            )
+                            if close_order is None:
+                                continue
+                            private_fills = await client.get_order_fills(
+                                order_id=execute_order_id,
+                                symbol=to_bitget(pos["symbol"]),
+                                market_type=pos["market_type"],
+                            )
+                            result = materialize_bitget_close(
+                                close_order["id"], private_fills
+                            )
+                            if result.state == "filled":
+                                materialized.append(result)
+                        except Exception as exc:
+                            errors.append({
+                                "execution_mode": execution_mode,
+                                "position_id": pos.get("id"),
+                                "plan_order_id": str(plan_order_id),
+                                "error_type": type(exc).__name__,
+                            })
+                            logger.warning(
+                                "TPSL private reconciliation failed for plan %s (%s)",
+                                plan_order_id,
+                                type(exc).__name__,
+                            )
+                return {"materialized": materialized, "errors": errors}
+            finally:
+                try:
+                    await client.close()
+                except Exception as exc:
+                    logger.warning(
+                        "TPSL account client close failed (%s)", type(exc).__name__
+                    )
 
         async def _check_all():
-            closed = []
-            for pos, tpsl_ids in candidates:
-                for plan_type, order_id in [("sl", tpsl_ids.get("sl")), ("tp", tpsl_ids.get("tp"))]:
-                    if not order_id:
-                        continue
-                    try:
-                        history = await client.get_plan_order_history(order_id=order_id)
-                        for h in history:
-                            if h.get("orderId") == order_id and h.get("status") == "executed":
-                                price = float(h.get("executePrice") or h.get("triggerPrice") or 0)
-                                if price > 0:
-                                    reason = "stop_loss" if plan_type == "sl" else "take_profit"
-                                    from aletheia.storage.repositories import _select_one
-                                    fresh = _select_one("positions", pos["id"])
-                                    if not fresh or fresh.get("status") != "open":
-                                        break
-                                    result = close_position(pos["id"], price, reason=reason)
-                                    closed.append(result)
-                                    logger.info(
-                                        "TPSL fill detected: %s %s @ %.6f (%s)",
-                                        pos["symbol"], pos["direction"], price, reason,
-                                    )
-                                break
-                    except Exception as e:
-                        logger.debug("TPSL check failed for %s: %s", order_id, e)
-                        continue
-            return closed
+            materialized = []
+            errors = []
+            for execution_mode, account_candidates in grouped.items():
+                try:
+                    account_result = await _check_account(
+                        execution_mode, account_candidates
+                    )
+                    materialized.extend(account_result["materialized"])
+                    errors.extend(account_result["errors"])
+                except Exception as exc:
+                    errors.append({
+                        "execution_mode": execution_mode,
+                        "position_id": None,
+                        "plan_order_id": None,
+                        "error_type": type(exc).__name__,
+                    })
+                    logger.warning(
+                        "TPSL account reconciliation failed for %s (%s)",
+                        execution_mode,
+                        type(exc).__name__,
+                    )
+            return {
+                "materialized": materialized,
+                "failed_count": len(errors),
+                "errors": errors,
+            }
 
-        closed = asyncio.run(_check_all())
-        if closed:
-            from aletheia.files.jsonl import write_audit
-            write_audit({
-                "actor": "system",
-                "source": "tpsl_fill_check",
-                "event_type": "tpsl_proactive_close",
-                "entity_type": "portfolio",
-                "message": f"Proactively closed {len(closed)} positions via TPSL fill detection",
-                "after": {"closed": [c["position_id"] for c in closed]},
-            })
+        return asyncio.run(_check_all())
     except Exception as e:
         logger.warning("tpsl_fill_check job failed: %s", e)
-        _record_job_failure("tpsl_fill_check", str(e))
+        raise
 
 
 def _run_equity_observer():
@@ -1550,8 +1742,6 @@ def _run_prediction_observer():
 
 def _run_cleanup():
     cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.storage import repositories as repo
         from aletheia.files.jsonl import write_audit
@@ -1582,7 +1772,6 @@ def _run_cleanup():
             "filter_decisions": repo.prune_filter_decisions(90),
             "filter_candidate_outcomes": repo.prune_filter_candidate_outcomes(90),
             "pi_decisions_transient": repo.prune_pi_decisions(7),
-            "signal_pending_stale": repo.prune_signal_pending_stale(30),
             "system_actions": repo.prune_system_actions(7),
             # Operator-shell telemetry (DB-SIZE-1): heartbeats are the dominant
             # bloat — pure liveness, read latest-row-only, so a short window.
@@ -1627,7 +1816,7 @@ def _prune_session_logs(cfg) -> int:
 
 def _run_news_fetch():
     cfg = load_config()
-    if cfg.runtime.paused or not cfg.news.enabled:
+    if not cfg.news.enabled:
         return
     try:
         _run_async_with_timeout("news_fetch", _async_news_fetch())
@@ -1686,7 +1875,7 @@ def _run_health_check():
     _cleanup_stale_scanner_runs()
 
     cfg = load_config()
-    if cfg.runtime.paused or not cfg.health.enabled:
+    if not cfg.health.enabled:
         return
     try:
         from aletheia.agent_runtime.health import run_health_check
@@ -1919,11 +2108,8 @@ def _run_outcome_settler():
     Previously settle_due() was only called inside universe_refresh, which means
     it was silently skipped when universe.enabled=False or runtime.paused=True,
     causing the learning pipeline to starve for settled outcomes. This job
-    runs unconditionally (modulo runtime.paused) every 15 minutes.
+    runs unconditionally every 10 minutes, including during layered pause.
     """
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         _run_async_with_timeout("outcome_settler", _async_settle_outcomes())
         _record_job_success("outcome_settler")
@@ -1959,9 +2145,6 @@ def _run_guard_promotion():
 
 def _run_ohlcv_nightly_backfill():
     """Nightly bulk download of OHLCV history for universe + observed symbols."""
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         _run_sync_with_timeout("ohlcv_nightly_backfill", _ohlcv_backfill_body)
     except TimeoutError:
@@ -2062,11 +2245,16 @@ async def _async_universe_refresh():
     svc = UniverseService()
     try:
         snap_id = await svc.refresh()
+        if not snap_id:
+            # UniverseService returns None only after recording a failed scanner
+            # run. Treat that sentinel as a failed scheduled attempt instead of
+            # fabricating a completed_no_snapshot run.
+            raise RuntimeError("universe_refresh_no_snapshot")
         write_agent_run_log({
             "agent_name": "universe_refresh", "trigger_type": "scheduled",
             "started_at": started, "ended_at": _utcnow(),
-            "status": "completed" if snap_id else "completed_no_snapshot",
-            "outputs_created": [snap_id] if snap_id else [],
+            "status": "completed",
+            "outputs_created": [snap_id],
             "errors": [],
         })
     except Exception as e:
@@ -2080,7 +2268,16 @@ async def _async_universe_refresh():
 
 async def _async_run(agent_name: str):
     from aletheia.agent_runtime.orchestrator import run_agent
-    await run_agent(agent_name, trigger_type="scheduled")
+    result = await run_agent(agent_name, trigger_type="scheduled")
+    if isinstance(result, dict) and (
+        result.get("status") == "completed_with_errors"
+        or bool(result.get("errors"))
+    ):
+        # The agent already persisted its detailed errors. Raise only a stable,
+        # non-provider-specific code so the scheduler failure counter cannot
+        # reset on an internally degraded run.
+        raise RuntimeError(f"scheduled_agent_reported_errors:{agent_name}")
+    return result
 
 
 # Phase counter for the data_collectors job (module-level, not reset between calls).
@@ -2089,6 +2286,11 @@ _DC_TICK: int = 0
 # Carries the current collector tick into _bounded() without changing its public
 # four-argument contract (several offline specs replace that helper directly).
 _DC_HEALTH_TICK: ContextVar[int | None] = ContextVar("dc_health_tick", default=None)
+
+# These collectors return in-memory rows that are useful only after the
+# scheduler persists them. Their successful call status is therefore recorded
+# by the caller after storage, rather than eagerly inside _bounded().
+_PERSISTENCE_GATED_COLLECTOR_HEALTH = frozenset({"derivatives"})
 
 
 def _record_collector_health(
@@ -2130,8 +2332,19 @@ def _run_data_collectors():
     # decisions and execution; it must not stop public-data accumulation.
     _DC_TICK += 1
     try:
-        _run_async_with_timeout("data_collectors", _async_data_collectors(cfg, _DC_TICK))
-        _record_job_success("data_collectors")
+        result = _run_async_with_timeout(
+            "data_collectors", _async_data_collectors(cfg, _DC_TICK)
+        )
+        error_codes = (
+            list(result.get("error_codes") or [])
+            if isinstance(result, dict)
+            else []
+        )
+        if error_codes:
+            _record_job_failure("data_collectors", ",".join(error_codes))
+        else:
+            _record_job_success("data_collectors")
+        return result
     except TimeoutError:
         logger.warning(
             "data_collectors job timed out after %.0fs",
@@ -2168,11 +2381,12 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         result = await asyncio.wait_for(coro, timeout=min(cap, remaining))
         from aletheia.data.collector_health import classify_collector_result
 
-        _record_collector_health(
-            label,
-            classify_collector_result(result),
-            duration_ms=int((_time.monotonic() - started) * 1000),
-        )
+        if label not in _PERSISTENCE_GATED_COLLECTOR_HEALTH:
+            _record_collector_health(
+                label,
+                classify_collector_result(result),
+                duration_ms=int((_time.monotonic() - started) * 1000),
+            )
         return result
     except asyncio.TimeoutError:
         logger.warning("data_collectors: %s timed out (%.0fs cap) — skipped this tick",
@@ -2195,7 +2409,7 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         return None
 
 
-async def _async_data_collectors(cfg, tick: int) -> None:
+async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     import time as _time
     from aletheia.data.collectors.microstructure import MicrostructureCollector
     from aletheia.data.collectors.derivatives import DerivativesCollector
@@ -2204,11 +2418,13 @@ async def _async_data_collectors(cfg, tick: int) -> None:
 
     _DC_HEALTH_TICK.set(tick)
     _deadline = _time.monotonic() + _DC_DEADLINE_S
+    job_error_codes: list[str] = []
 
     # Keep venue + market identity for primary-exchange collectors. Cross-venue
     # collectors still receive the deduplicated canonical symbol list below.
     instruments = _get_observed_instruments(cfg)
     symbols = list(dict.fromkeys(item.symbol for item in instruments))
+    derivative_symbols = _get_derivative_symbols(instruments)
 
     # --- Phase A: microstructure + derivatives (every tick) ---
     micro_result: dict = {}
@@ -2221,19 +2437,32 @@ async def _async_data_collectors(cfg, tick: int) -> None:
                 repo.insert_orderbook_snapshot(snap.model_dump())
             except Exception as e:
                 logger.debug("orderbook persist failed: %s", e)
+    else:
+        _record_collector_health("microstructure", "not_configured")
 
+    if derivative_symbols:
         deriv = DerivativesCollector()
-        deriv_result = await _bounded(deriv.collect(symbols), "derivatives", 18.0, _deadline) or {}
+        deriv_started = _time.monotonic()
+        raw_deriv_result = await _bounded(
+            deriv.collect(derivative_symbols), "derivatives", 18.0, _deadline
+        )
+        deriv_duration_ms = int((_time.monotonic() - deriv_started) * 1000)
+        deriv_result = raw_deriv_result or {}
+        deriv_persist_errors: list[str] = []
         for snap in deriv_result.get("funding", []):
             try:
                 repo.insert_funding_rate_snapshot(snap.model_dump())
             except Exception as e:
                 logger.debug("funding persist failed: %s", e)
+                deriv_persist_errors.append("derivatives_funding_persist_failed")
         for snap in deriv_result.get("open_interest", []):
             try:
                 repo.insert_open_interest_snapshot(snap.model_dump())
             except Exception as e:
                 logger.debug("OI persist failed: %s", e)
+                deriv_persist_errors.append(
+                    "derivatives_open_interest_persist_failed"
+                )
         liq_count = 0
         for event in deriv_result.get("liquidations", []):
             try:
@@ -2241,12 +2470,36 @@ async def _async_data_collectors(cfg, tick: int) -> None:
                 liq_count += 1
             except Exception as e:
                 logger.debug("liquidation persist failed: %s", e)
+                deriv_persist_errors.append(
+                    "derivatives_liquidation_persist_failed"
+                )
         if liq_count:
             logger.info("liquidations persisted: %d", liq_count)
+        if raw_deriv_result is not None:
+            if deriv_persist_errors:
+                unique_errors = list(dict.fromkeys(deriv_persist_errors))
+                job_error_codes.extend(unique_errors)
+                _record_collector_health(
+                    "derivatives",
+                    "failed",
+                    duration_ms=deriv_duration_ms,
+                    error_code=unique_errors[0],
+                )
+            else:
+                from aletheia.data.collector_health import classify_collector_result
+
+                _record_collector_health(
+                    "derivatives",
+                    classify_collector_result(deriv_result),
+                    duration_ms=deriv_duration_ms,
+                )
     else:
-        logger.debug("data_collectors: no observed instruments; running symbol-independent domains only")
-        _record_collector_health("microstructure", "not_configured")
         _record_collector_health("derivatives", "not_configured")
+    if not instruments and not derivative_symbols:
+        logger.debug(
+            "data_collectors: no observed instruments; "
+            "running symbol-independent domains only"
+        )
 
     # --- Phase B: macro + volume scanner + CoinGecko top (every 5th tick = ~10 min) ---
     if tick % 5 == 1:
@@ -2385,6 +2638,11 @@ async def _async_data_collectors(cfg, tick: int) -> None:
         "data_collectors tick=%d: orderbook=%d funding=%d",
         tick, micro_count, funding_count,
     )
+    unique_job_errors = list(dict.fromkeys(job_error_codes))
+    return {
+        "status": "partial" if unique_job_errors else "success",
+        "error_codes": unique_job_errors,
+    }
 
 
 def _get_observed_instruments(cfg):
@@ -2423,6 +2681,38 @@ def _get_observed_instruments(cfg):
         return observed_instruments_from_config(cfg)[:20]
     except Exception:
         return []
+
+
+def _get_derivative_symbols(instruments) -> list[str]:
+    """Add every open local futures liability to primary funding collection.
+
+    This is intentionally narrower than ``_get_observed_instruments``: an open
+    Position that has rotated out of the active universe needs continued funding
+    schedules, but it must not re-enter microstructure scans, volume ranking, or
+    any other candidate-producing surface.
+    """
+    from aletheia.data.symbols import to_canonical
+
+    result = [item.symbol for item in instruments]
+    try:
+        from aletheia.storage import repositories as repo
+
+        for position in repo.list_all_open_positions():
+            if (
+                position.get("execution_mode") != "paper_internal"
+                or position.get("market_type") != "usdt_futures"
+                or position.get("status") not in {None, "open"}
+                or not position.get("symbol")
+            ):
+                continue
+            try:
+                result.append(to_canonical(position["symbol"]))
+            except ValueError:
+                continue
+    except Exception:
+        pass
+
+    return list(dict.fromkeys(result))
 
 
 def _get_observed_symbols(cfg) -> list[str]:

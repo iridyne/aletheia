@@ -93,7 +93,7 @@ async def test_live_order_blocked_when_disabled(tmp_path, monkeypatch):
 
     from aletheia.execution.gateway import submit_proposal
     result = submit_proposal(
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         quantity=0.001, price=60000, execution_mode="bitget_live_limited",
     )
     assert result["status"] == "rejected"

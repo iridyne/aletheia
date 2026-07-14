@@ -38,6 +38,95 @@ async def client(tmp_path, monkeypatch):
     reset_db()
 
 
+def _insert_eligible_closed_position(*, position_id: str, strategy_id: str) -> None:
+    """Seed the real causal/economic chain consumed by Outcome read models."""
+    from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import (
+        Fill, Opportunity, Order, Position, RiskDecision, TradeProposal,
+    )
+
+    opened_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    closed_at = datetime.now(timezone.utc).isoformat()
+    opportunity = Opportunity(
+        id=f"opp-{position_id}", symbol="BTC/USDT", market="spot",
+        direction_bias="long", scanner_family="operator-fixture", status="closed",
+        created_at=opened_at,
+    )
+    repo.insert_opportunity(opportunity)
+    proposal = TradeProposal(
+        id=f"proposal-{position_id}", opportunity_id=opportunity.id,
+        strategy_id=strategy_id, symbol="BTC/USDT", market_type="spot",
+        direction="long", order_type="market", quantity=0.1, price=60000.0,
+        execution_mode="paper_internal", status="executed", created_at=opened_at,
+    )
+    repo.insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        id=f"risk-{position_id}", proposal_id=proposal.id, approved=True,
+        allowed_execution_mode="paper_internal",
+        proposal_execution_mode="paper_internal", decision_role="authoritative",
+        evaluated_quantity=proposal.quantity,
+        proposal_commit_hash=proposal.commit_hash, created_at=opened_at,
+    )
+    repo.insert_risk_decision(decision)
+    order = Order(
+        id=f"order-{position_id}", proposal_id=proposal.id,
+        risk_decision_id=decision.id, symbol=proposal.symbol,
+        market_type=proposal.market_type, direction=proposal.direction,
+        order_type=proposal.order_type, quantity=0.1, price=60000.0,
+        execution_mode="paper_internal", position_id=position_id,
+        status="filled", created_at=opened_at, filled_at=opened_at,
+    )
+    repo.insert_order(order)
+    repo.insert_fill(Fill(
+        id=f"fill-{position_id}", order_id=order.id, fill_price=60000.0,
+        fill_quantity=0.1, fee=0.0, filled_at=opened_at,
+    ))
+    repo.insert_position(Position(
+        id=position_id, symbol="BTC/USDT", market_type="spot",
+        direction="long", quantity=0.1, entry_price=60000.0,
+        current_price=60000.0,
+        execution_mode="paper_internal", strategy_id=strategy_id,
+        proposal_id=proposal.id, order_id=order.id,
+        opportunity_id=opportunity.id, status="open",
+        entry_price_source="local_fill", entry_fill_verified=True,
+        entry_fee=0.0, funding_cost=0.0,
+        funding_source="not_applicable",
+        opened_at=opened_at,
+    ))
+    close_order = Order(
+        id=f"close-order-{position_id}", proposal_id=proposal.id,
+        symbol=proposal.symbol, market_type=proposal.market_type,
+        direction=proposal.direction, order_type="market", quantity=0.1,
+        price=60010.0, execution_mode="paper_internal",
+        client_order_id=f"close-{position_id}", position_id=position_id,
+        close_reason="take_profit", status="filled",
+        created_at=closed_at, filled_at=closed_at,
+    )
+    repo.insert_order(close_order)
+    repo.insert_fill(Fill(
+        id=f"close-fill-{position_id}", order_id=close_order.id,
+        fill_price=60010.0, fill_quantity=0.1, fee=0.0,
+        filled_at=closed_at,
+    ))
+    repo.update_position(
+        position_id,
+        current_price=60010.0,
+        unrealized_pnl=0.0,
+        realized_pnl=1.0,
+        status="closed",
+        close_reason="take_profit",
+        close_category="strategy",
+        exit_price_source="local_fill",
+        exit_fill_verified=True,
+        exit_fee=0.0,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+        outcome_semantics_version=OUTCOME_SEMANTICS_VERSION,
+        closed_at=closed_at,
+    )
+
+
 @pytest.mark.anyio
 async def test_operator_internal_event_roundtrip_and_stream(client):
     create = await client.post(
@@ -361,11 +450,8 @@ async def test_operator_recommendations_escalate_queue_review_to_urgent_for_deep
 
 @pytest.mark.anyio
 async def test_operator_recommendations_include_shell_specialist_work_from_backend_truth(client):
-    from datetime import datetime, timezone
-
     from aletheia.agent_shell.operator_store import create_artifact
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
     from aletheia.storage.models import StrategyRecord
     from aletheia.storage.repositories import insert_strategy, update_strategy
 
@@ -388,27 +474,9 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
         update_strategy(promotion_strategy.id, state=target)
 
-    repo.insert_position(
-        Position(
-            symbol="BTC/USDT",
-            market_type="spot",
-            direction="long",
-            quantity=0.1,
-            entry_price=60000,
-            execution_mode="paper_internal",
-            strategy_id="review-strat-1",
-            status="closed",
-            opened_at=datetime.now(timezone.utc).isoformat(),
-            closed_at=datetime.now(timezone.utc).isoformat(),
-            realized_pnl=1.0,
-            close_reason="verified_exit",
-            close_category="strategy",
-            exit_price_source="local_fill",
-            exit_fill_verified=True,
-            outcome_eligible=True,
-            outcome_exclusion_reason="eligible",
-            outcome_semantics_version="oi-v1",
-        )
+    _insert_eligible_closed_position(
+        position_id="review-position-1",
+        strategy_id="review-strat-1",
     )
 
     create_artifact(
@@ -741,32 +809,9 @@ async def test_operator_recommendations_include_data_source_health_review_due_wh
 
 @pytest.mark.anyio
 async def test_operator_recommendations_include_trade_review_report_refresh_due_when_closed_positions_exist(client):
-    from datetime import datetime, timezone
-
-    from aletheia.storage.models import Position
-    from aletheia.storage.repositories import insert_position
-
-    insert_position(
-        Position(
-            symbol="BTC/USDT",
-            market_type="spot",
-            direction="long",
-            quantity=0.1,
-            entry_price=60000,
-            execution_mode="paper_internal",
-            strategy_id="review-strategy-1",
-            status="closed",
-            opened_at=datetime.now(timezone.utc).isoformat(),
-            closed_at=datetime.now(timezone.utc).isoformat(),
-            realized_pnl=1.0,
-            close_reason="verified_exit",
-            close_category="strategy",
-            exit_price_source="local_fill",
-            exit_fill_verified=True,
-            outcome_eligible=True,
-            outcome_exclusion_reason="eligible",
-            outcome_semantics_version="oi-v1",
-        )
+    _insert_eligible_closed_position(
+        position_id="trade-review-position-1",
+        strategy_id="review-strategy-1",
     )
 
     recommendations = await client.get("/api/operator/recommendations")

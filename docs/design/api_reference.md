@@ -2,7 +2,7 @@
 
 > Complete endpoint index for Aletheia Trading OS backend (FastAPI on :8788, proxied via :8787).
 > All endpoints prefixed with `/api/` unless noted. Auth: none (local-only by design).
-> Last updated: 2026-07-12 (paper-Learning settings alignment)
+> Last updated: 2026-07-14 (trade-chain economic completeness)
 
 ---
 
@@ -38,7 +38,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | `POST /risk/kill-switch` | body `{"active": true\|false, "confirm_release"?: bool}`; human-only. **Engage** (`active=true`): no extra confirm. **Release** (`active=false`): requires `confirm_release=true` — else the route returns 422. | [risk_engine_contract §4](risk_engine_contract.md) |
 | `POST /settings/exchange-credentials` (+ binance/okx) | write-only; GET never returns raw secret | trust §6.3 secrets |
 | `POST /settings/permission-mode` · `/risk` | writes audit; cannot grant `FORBIDDEN_INTENTS` | [live_unlock_contract §6](live_unlock_contract.md) |
-| `POST /proposals/{id}/approve-paper` · `/reject` | must preserve original proposal ID (no duplicate row) | [execution_contract §1](execution_contract.md) |
+| `POST /proposals/{id}/approve-paper` · `/reject` | must preserve original proposal ID (no duplicate row); paper approval accepts only a `pending` proposal whose stored mode is already `paper_internal` and never rewrites exchange intent | [execution_contract §1](execution_contract.md) |
 
 ---
 
@@ -68,14 +68,14 @@ operators do not infer the real order target from the retained exchange preferen
 | GET | `/opportunities` | List recent opportunities (scanner output) |
 | GET | `/proposals` | List trade proposals |
 | GET | `/proposals/{id}` | Get one proposal by id (404 when absent) |
-| POST | `/proposals/{id}/approve-paper` | Approve proposal for paper execution |
+| POST | `/proposals/{id}/approve-paper` | Approve a pending, already-`paper_internal` proposal; non-paper or unresolved proposals return 409 without mutation |
 | POST | `/proposals/{id}/reject` | Reject proposal with reason |
 | GET | `/proposals/{id}/risk-decision` | View risk engine decision for proposal |
-| GET | `/positions` | List positions (open/closed, filterable) |
+| GET | `/positions` | List positions; closed rows expose only reproducible net PnL plus explicit completeness/reason fields |
 | GET | `/positions/reconciliation` | Local vs exchange position comparison |
 | POST | `/positions/reconcile` | Trigger position reconciliation |
 | GET | `/trades` | List completed trades (closed positions) |
-| GET | `/trades/export` | CSV export of trade history |
+| GET | `/trades/export` | CSV export of trade history; incomplete legacy PnL is blank and labelled, never exported as a valid tax/PnL number |
 
 ---
 
@@ -83,10 +83,29 @@ operators do not infer the real order target from the retained exchange preferen
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/portfolio` | Aggregate portfolio summary (mark-to-market) |
+| GET | `/portfolio` | Aggregate portfolio summary (mark-to-market), with explicit realized-economics completeness |
 | GET | `/exchange/account` | Raw exchange account state (cached) |
 | GET | `/uta/state` | Unified Trading Account state (multi-broker) |
 | GET | `/market/portfolio-history` | Portfolio snapshot time series |
+
+`GET /portfolio` never adds an economically incomplete close as zero. Completeness fields are scoped to the
+same rows as their paired value:
+
+| Field | Meaning |
+|---|---|
+| `realized_pnl_complete` / `realized_pnl_unavailable_count` | Whether every closed Position included in the returned aggregate has a usable `realized_pnl`, and how many do not |
+| `all_realized_pnl_complete` / `all_realized_pnl_unavailable_count` | Same check across all execution modes |
+| `today_realized_pnl_complete` / `today_realized_pnl_unavailable_count` | Same check for UTC-today closes in the requested mode |
+
+When a paired `*_complete` field is false, the matching realized value is `null`; `today_pnl` is also `null` if
+today's realized component is incomplete. `today_pnl_by_symbol` uses `null` for each affected symbol. Open-position
+unrealized PnL remains separate and must not be used as a replacement for the missing realized result.
+
+Closed rows returned by `GET /positions` add `realized_pnl_complete` and
+`realized_pnl_unavailable_reason`. The database's original numeric field remains an audit/remediation fact, but the
+operator read model re-computes the close from entry/exit price, quantity, fees, direction, and trusted funding.
+If it cannot reproduce the stored number, `realized_pnl=null`. `/trades/export` applies the same rule and includes
+the same two completeness columns; it writes an empty realized-PnL cell rather than exporting a legacy false value.
 
 ---
 
@@ -209,18 +228,18 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/settings` | Full config as JSON |
+| GET | `/settings` | Full config as JSON plus `learning_path_options`, the registry-backed supported/unsupported paper-influence inventory used by the existing Settings page |
 | POST | `/settings/autonomous-learning` | Learning loop toggles |
-| POST | `/settings/learning` | Paper-only Learning experiment controls: contribution measurement, lifecycle automation, paper influence path allowlist, auto-refreeze, evaluation interval, and final-stage allocation. Lifecycle automation and paper influence default off; this endpoint cannot enable live trading. |
+| POST | `/settings/learning` | Paper-only Learning experiment controls: contribution measurement, lifecycle automation, registry-validated paper influence path allowlist, auto-refreeze, evaluation interval, and final-stage allocation. Unknown or consumer-unwired paths are rejected (including when an old unsupported saved path is re-enabled through the master toggle). Lifecycle automation and paper influence default off; this endpoint cannot enable live trading. |
 | POST | `/settings/bypass-distress-gate` | Explicit operator bypass for distress gate checks |
 | POST | `/settings/exchange-markets` | Observed symbols list |
 | POST | `/settings/primary-exchange` | Primary exchange selection |
-| GET | `/settings/paper-account` | Local simulated cash, reserved margin, available balance, equity, and recent ledger events. Available only when `paper_internal` is active. |
+| GET | `/settings/paper-account` | Local simulated cash, reserved margin, available balance, equity, economic-completeness state, and recent ledger events. Available only when `paper_internal` is active. |
 | POST | `/settings/paper-account/credit` | Add local simulated USDT: `{"amount_usdt": number, "note"?: string}`. Human/audit logged; never touches an exchange. |
 | POST | `/settings/paper-account/debit` | Remove local simulated USDT; cannot make cash negative. Human/audit logged. |
 | POST | `/settings/paper-account/set-balance` | Set local simulated cash: `{"cash_balance_usdt": number, "note"?: string}`. An explicit zero remains zero; it is not automatically re-funded. |
-| POST | `/settings/paper-account/close-spot` | Close all open local spot positions at their latest stored market prices. Preserves trade history and logs the human action. |
-| POST | `/settings/paper-account/close-all` | Close all open local paper positions at their latest stored market prices. Preserves trade history and logs the human action. |
+| POST | `/settings/paper-account/close-spot` | Close every open local spot Position only after all candidates have a fresh exact configured-venue + symbol + spot mark. Never uses `Position.current_price`; preserves trade history and the human/dashboard actor. |
+| POST | `/settings/paper-account/close-all` | Close every open local paper Position only after all candidates have a fresh exact configured-venue + symbol + physical-market mark. Never uses `Position.current_price`; preserves trade history and the human/dashboard actor. |
 | POST | `/settings/runtime` | Scheduler intervals, timeouts |
 | POST | `/settings/app` | App-level settings (timezone, locale) |
 | POST | `/settings/pi_daemon` | PI daemon config (debounce, cooldown) |
@@ -252,6 +271,29 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/settings/tunnel` | Tunnel config |
 | POST | `/settings/tunnel/start` | Start tunnel |
 | POST | `/settings/tunnel/stop` | Stop tunnel |
+
+`GET /settings/paper-account` adds:
+
+| Field | Meaning |
+|---|---|
+| `economics_complete` | False when any closed local-paper Position still has unavailable net economics |
+| `unsettled_closed_positions_count` | Number of those closed Positions |
+
+Both bulk-close endpoints preflight the complete candidate set before the first
+close. If any exact mark is missing, they return HTTP `409` with
+`detail.code="bulk_close_mark_preflight_failed"`, an empty
+`closed_position_ids`, and per-Position `failed` facts; the batch writes no close
+Order, Fill, Outcome, or feedback job. If mark preflight succeeds but a later
+materialization fails, the endpoint returns HTTP `500` with
+`detail.code="bulk_close_partial_failure"` and both the durable
+`closed_position_ids` and per-Position `failed` list, so a partial close is never
+reported as all-success.
+
+The completeness check covers the complete local close history and is not capped by a dashboard display limit.
+When `economics_complete=false`, `cash_balance_usdt` remains the visible append-only ledger balance but is not
+presented as spendable: `available_balance_usdt=0` and `equity_usdt=null`. No `position_closed` cash event is
+invented for the missing result. Capacity remains frozen until the close economics and cash settlement are
+reconciled.
 
 ---
 

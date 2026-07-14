@@ -21,7 +21,8 @@ from tests.async_test_utils import closing_coro_runner
 @spec_claim(
     SpecClaim(
         "EX-S01", "execution_contract", "§1 entry points", "L2a",
-        "submit_proposal() and execute_existing_proposal() exist at gateway.py",
+        "submit_proposal() exists and delegates execution through "
+        "execute_existing_proposal() instead of bypassing its durable claim",
     ),
 )
 def test_execution_gateway_entry_points():
@@ -29,6 +30,18 @@ def test_execution_gateway_entry_points():
 
     assert callable(gateway.submit_proposal)
     assert callable(gateway.execute_existing_proposal)
+
+    source = ast.parse(open(gateway.__file__, encoding="utf-8").read())
+    submit = next(
+        node for node in source.body
+        if isinstance(node, ast.FunctionDef) and node.name == "submit_proposal"
+    )
+    calls = {
+        node.func.id for node in ast.walk(submit)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "execute_existing_proposal" in calls
+    assert "_execute_proposal" not in calls
 
 
 @spec_claim(
@@ -230,16 +243,29 @@ def _setup_db(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "EX-B03", "execution_contract", "§5 atomicity", "L2b",
-        "Order(pending) row exists in DB before exchange call; on exchange failure row remains with status=error",
+        "Order(pending) exists before submission; a transport failure leaves a "
+        "retry-suppressing submission_unknown row rather than claiming rejection",
     ),
 )
 def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
-    """bitget_broker inserts Order(pending) before place_order; if place_order raises
-    the row must still exist with status='error' (contract §5, bitget_broker.py:87-99)."""
+    """The pending row survives an ambiguous transport failure without resubmission."""
     _setup_db(tmp_path, monkeypatch)
 
     from aletheia.execution import bitget_broker
     from aletheia.storage import repositories as repo
+    from tests.execution_authority import seed_order_authority
+
+    seed_order_authority(
+        proposal_id="prop-ex-b03",
+        risk_decision_id="rd-ex-b03",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60000.0,
+        execution_mode="bitget_demo",
+    )
 
     captured_order_id = {}
 
@@ -260,7 +286,9 @@ def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
         closing_coro_runner(ConnectionError("exchange unavailable")),
     )
 
-    with pytest.raises(ConnectionError):
+    from aletheia.execution.errors import SubmissionUnknownError
+
+    with pytest.raises(SubmissionUnknownError):
         bitget_broker.execute_live_order(
             proposal_id="prop-ex-b03",
             risk_decision_id="rd-ex-b03",
@@ -277,7 +305,8 @@ def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
     orders = repo.list_orders(limit=50)
     row = next((o for o in orders if o["id"] == captured_order_id["id"]), None)
     assert row is not None, "Order row must persist after exchange failure"
-    assert row["status"] == "error", f"Expected status='error', got {row['status']!r}"
+    assert row["status"] == "submission_unknown"
+    assert "exchange unavailable" not in (row["error_reason"] or "")
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +350,182 @@ def test_re_execute_already_executed_proposal_rejected(tmp_path, monkeypatch):
     assert order_count_after == order_count_before, (
         "Re-executing an already-executed proposal must not create additional order rows"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-B13", "execution_contract", "§5 durable execution lease", "L2b",
+        "A fresh durable Proposal execution lease rejects a concurrent wake before "
+        "the execution pipeline or any broker side effect runs.",
+        status="implemented",
+    ),
+)
+def test_fresh_execution_lease_blocks_duplicate_pipeline(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import gateway
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        id="proposal-fresh-execution-lease",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=100.0,
+        execution_mode="paper_internal",
+        status="executing",
+    )
+    repo.insert_trade_proposal(proposal)
+    now = datetime.now(timezone.utc)
+    assert repo.insert_proposal_execution_claim(
+        proposal.id,
+        "active-owner",
+        now.isoformat(),
+        (now + timedelta(minutes=5)).isoformat(),
+    )
+    pipeline_calls = 0
+
+    def should_not_run(*_args, **_kwargs):
+        nonlocal pipeline_calls
+        pipeline_calls += 1
+        raise AssertionError("fresh lease reached execution pipeline")
+
+    monkeypatch.setattr(gateway, "_execute_proposal", should_not_run)
+    result = gateway.execute_existing_proposal(proposal.id, "paper_internal")
+
+    assert result["status"] == "already_claimed"
+    assert pipeline_calls == 0
+    assert repo.list_orders(limit=10) == []
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-B14", "execution_contract", "§5 local paper crash recovery", "L2b",
+        "An expired paper_internal execution lease with zero Orders can be CAS-reclaimed "
+        "and materializes exactly one Order, Fill, and Position.",
+        status="implemented",
+    ),
+)
+def test_expired_paper_execution_lease_recovers_exactly_once(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import gateway
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity, TradeProposal
+
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue: 100.0,
+    )
+    opportunity = Opportunity(
+        id="opportunity-expired-paper-lease",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+    )
+    repo.insert_opportunity(opportunity)
+
+    proposal = TradeProposal(
+        id="proposal-expired-paper-lease",
+        opportunity_id=opportunity.id,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=100.0,
+        stop_price=99.0,
+        take_profit=102.0,
+        risk_reward=2.0,
+        execution_mode="paper_internal",
+        status="executing",
+    )
+    repo.insert_trade_proposal(proposal)
+    expired = datetime.now(timezone.utc) - timedelta(minutes=20)
+    assert repo.insert_proposal_execution_claim(
+        proposal.id,
+        "dead-paper-owner",
+        (expired - timedelta(minutes=10)).isoformat(),
+        expired.isoformat(),
+    )
+
+    result = gateway.execute_existing_proposal(proposal.id, "paper_internal")
+
+    assert result["status"] == "executed"
+    assert len([
+        row for row in repo.list_orders(limit=20)
+        if row.get("proposal_id") == proposal.id
+    ]) == 1
+    assert len(repo.list_fills(limit=20)) == 1
+    assert len([
+        row for row in repo.list_positions(limit=20)
+        if row.get("proposal_id") == proposal.id
+    ]) == 1
+    assert repo.get_trade_proposal(proposal.id)["status"] == "executed"
+    assert repo.get_proposal_execution_claim(proposal.id) is None
+
+    replay = gateway.execute_existing_proposal(proposal.id, "paper_internal")
+    assert replay["status"] == "already_executed"
+    assert len([
+        row for row in repo.list_orders(limit=20)
+        if row.get("proposal_id") == proposal.id
+    ]) == 1
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-B15", "execution_contract", "§5 exchange crash recovery", "L2b",
+        "An expired exchange execution lease is marked reconciliation-required and "
+        "never re-enters the execution pipeline or broker.",
+        status="implemented",
+    ),
+)
+def test_expired_exchange_execution_lease_never_resubmits(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import gateway
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        id="proposal-expired-exchange-lease",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="bitget_demo",
+        status="executing",
+    )
+    repo.insert_trade_proposal(proposal)
+    expired = datetime.now(timezone.utc) - timedelta(minutes=20)
+    assert repo.insert_proposal_execution_claim(
+        proposal.id,
+        "dead-exchange-owner",
+        (expired - timedelta(minutes=10)).isoformat(),
+        expired.isoformat(),
+    )
+    pipeline_calls = 0
+
+    def should_not_run(*_args, **_kwargs):
+        nonlocal pipeline_calls
+        pipeline_calls += 1
+        raise AssertionError("expired exchange lease reached broker pipeline")
+
+    monkeypatch.setattr(gateway, "_execute_proposal", should_not_run)
+    result = gateway.execute_existing_proposal(proposal.id, "bitget_demo")
+
+    assert result["status"] == "reconciliation_required"
+    assert result["proposal_status"] == "submission_unknown"
+    assert pipeline_calls == 0
+    assert repo.list_orders(limit=10) == []
+    assert repo.get_trade_proposal(proposal.id)["status"] == "submission_unknown"
+    assert repo.get_proposal_execution_claim(proposal.id) is None
 
 
 # ---------------------------------------------------------------------------
@@ -583,6 +788,19 @@ def test_paper_open_records_opportunity_id(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.paper_broker import execute_paper_order
     from aletheia.storage import repositories as repo
+    from tests.execution_authority import seed_order_authority
+
+    seed_order_authority(
+        proposal_id="po1",
+        risk_decision_id="ro1",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60000.0,
+        execution_mode="paper_internal",
+    )
 
     r = execute_paper_order(
         proposal_id="po1", risk_decision_id="ro1",
@@ -726,6 +944,45 @@ def test_symbol_check_registry_modes(monkeypatch):
     monkeypatch.setattr(repo, "list_universe_assets", lambda *a, **kw: [])
     reason_empty = gw._check_symbol_availability("WLDUSDT", "binance_testnet")
     assert reason_empty is None, "Empty registry must fail-open, not block orders"
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-B16",
+        "execution_contract",
+        "§3.2 complete symbol registry",
+        "L2c",
+        "Exchange availability consumes the complete active venue registry; a valid "
+        "3,001st symbol cannot be silently converted into an unavailable rejection.",
+        status="implemented",
+    )
+)
+def test_symbol_check_does_not_truncate_large_registry(monkeypatch):
+    import aletheia.execution.gateway as gw
+    import aletheia.storage.repositories as repo
+
+    assets = [
+        {"symbol": f"TOKEN{index}/USDT", "market_type": "usdt_futures"}
+        for index in range(3_000)
+    ] + [{"symbol": "TARGET/USDT", "market_type": "usdt_futures"}]
+    observed_limits: list[int | None] = []
+
+    def _list_assets(*, venue, active_only, limit):
+        assert venue == "bitget"
+        assert active_only is True
+        observed_limits.append(limit)
+        return assets if limit is None else assets[:limit]
+
+    gw._registry_symbol_cache.clear()
+    monkeypatch.setattr(repo, "list_universe_assets", _list_assets)
+
+    assert gw._check_symbol_availability(
+        "TARGET/USDT",
+        "bitget_demo",
+        "usdt_futures",
+    ) is None
+    assert observed_limits == [None]
+    gw._registry_symbol_cache.clear()
 
 
 # ---------------------------------------------------------------------------

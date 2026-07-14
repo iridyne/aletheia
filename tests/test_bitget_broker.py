@@ -1,8 +1,8 @@
 """Tests for the live execution path (execution/bitget_broker.py + gateway wiring).
 
-The actual Bitget HTTP call is mocked — we verify the order/fill/position records
-and exchange_order_id, and that the gateway routes a fully-approved live proposal
-to the live broker while still blocking when live is disabled.
+The actual Bitget HTTP call is mocked — we verify the durable acknowledgement,
+private-fill reconciliation, and exchange_order_id, plus gateway routing for a
+fully-approved live proposal while live-disabled remains blocked.
 """
 
 import sqlite3
@@ -13,7 +13,7 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.exchanges.bitget.client import OrderResponse
-from aletheia.storage.models import Position
+from aletheia.storage.models import Position, RiskDecision, TradeProposal
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -38,20 +38,67 @@ def _patch_place_order(monkeypatch, captured):
         captured.append(order)
         # Exchange confirms the fill; broker only records a fill/position when
         # the order is reported filled/partially_filled (no fabricated fills).
-        return OrderResponse(order_id="EX-123", client_oid="cli-1", status="filled")
+        return OrderResponse(
+            order_id="EX-123",
+            client_oid="cli-1",
+            status="filled",
+            fill_price=order.price or 60000.0,
+            filled_quantity=order.quantity,
+        )
 
     monkeypatch.setattr(bg.BitgetClient, "place_order", fake_place_order)
 
 
-def test_bitget_broker_records_order_fill_position(tmp_path, monkeypatch):
+def _seed_authority(
+    proposal_id: str,
+    *,
+    quantity: float,
+    strategy_id: str | None = None,
+) -> tuple[str, str]:
+    proposal = TradeProposal(
+        id=proposal_id,
+        strategy_id=strategy_id,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=quantity,
+        price=60000.0,
+        execution_mode="bitget_live_limited",
+    )
+    repo.insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode=proposal.execution_mode,
+        proposal_execution_mode=proposal.execution_mode,
+        decision_role="authoritative",
+        evaluated_quantity=quantity,
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    repo.insert_risk_decision(decision)
+    return proposal.id, decision.id
+
+
+def test_bitget_broker_waits_for_private_fill_before_position(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     captured = []
     _patch_place_order(monkeypatch, captured)
+    from tests.specs.spec_pipeline_stop_propagation import (
+        _patch_private_fill_history,
+    )
+    _patch_private_fill_history(
+        monkeypatch,
+        "aletheia.execution.bitget_broker",
+        "aletheia.exchanges.bitget.client",
+        fill_price=60000.0,
+    )
+    proposal_id, decision_id = _seed_authority("p1", quantity=0.001)
 
     from aletheia.execution.bitget_broker import execute_live_order
     result = execute_live_order(
-        proposal_id="p1", risk_decision_id=None,
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        proposal_id=proposal_id, risk_decision_id=decision_id,
+        symbol="BTC/USDT", market_type="spot", direction="long",
         order_type="market", quantity=0.001, price=60000.0,
     )
     assert result["exchange_order_id"] == "EX-123"
@@ -60,6 +107,13 @@ def test_bitget_broker_records_order_fill_position(tmp_path, monkeypatch):
     assert len(orders) == 1
     assert orders[0]["exchange_order_id"] == "EX-123"
     assert orders[0]["execution_mode"] == "bitget_live_limited"
+    assert orders[0]["status"] == "materialization_missing"
+    assert repo.list_fills() == []
+    assert repo.list_positions(status="open") == []
+
+    from aletheia.execution.reconciliation import reconcile
+    reconciled = reconcile()
+    assert reconciled["filled"] == 1
 
     positions = repo.list_positions(status="open")
     assert len(positions) == 1
@@ -75,11 +129,12 @@ def test_place_order_carries_client_oid_from_proposal(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     captured = []
     _patch_place_order(monkeypatch, captured)
+    proposal_id, decision_id = _seed_authority("prop-xyz", quantity=0.001)
 
     from aletheia.execution.bitget_broker import execute_live_order
     execute_live_order(
-        proposal_id="prop-xyz", risk_decision_id=None,
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        proposal_id=proposal_id, risk_decision_id=decision_id,
+        symbol="BTC/USDT", market_type="spot", direction="long",
         order_type="market", quantity=0.001, price=60000.0,
     )
     assert len(captured) == 1
@@ -96,19 +151,20 @@ def test_live_order_db_trace_when_exchange_call_fails(tmp_path, monkeypatch):
         raise RuntimeError("exchange timeout")
 
     monkeypatch.setattr(bg.BitgetClient, "place_order", boom_place_order)
+    proposal_id, decision_id = _seed_authority("p-fail", quantity=0.001)
 
     from aletheia.execution.bitget_broker import execute_live_order
     with pytest.raises(RuntimeError):
         execute_live_order(
-            proposal_id="p-fail", risk_decision_id=None,
-            symbol="BTCUSDT", market_type="spot", direction="long",
+            proposal_id=proposal_id, risk_decision_id=decision_id,
+            symbol="BTC/USDT", market_type="spot", direction="long",
             order_type="market", quantity=0.001, price=60000.0,
         )
 
     orders = repo.list_orders()
     assert len(orders) == 1  # pending row was written before the exchange call
     assert orders[0]["status"] == "error"
-    assert orders[0]["proposal_id"] == "p-fail"
+    assert orders[0]["proposal_id"] == proposal_id
     assert len(repo.list_fills()) == 0
     assert len(repo.list_positions(status="open")) == 0
 
@@ -152,15 +208,15 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
         ))
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long", scanner_family="momentum")
     repo.insert_opportunity(opp)
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000))
+    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
 
     from aletheia.execution.gateway import submit_proposal
     result = submit_proposal(
-        symbol="BTCUSDT", market_type="spot", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         quantity=0.00001, price=60000.0, execution_mode="bitget_live_limited", stop_price=59000.0,
         opportunity_id=opp.id,
     )
-    assert result["status"] == "executed"
+    assert result["status"] == "materialization_missing"
     assert result["exchange_order_id"] == "EX-123"
     assert len(captured) == 1
 
@@ -185,16 +241,25 @@ def test_gateway_still_blocks_live_when_disabled(tmp_path, monkeypatch):
     assert len(captured) == 0
 
 
-def test_live_broker_keeps_strategy_positions_separate(tmp_path, monkeypatch):
+def test_private_fill_materialization_keeps_strategy_positions_separate(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     captured = []
     _patch_place_order(monkeypatch, captured)
+    from tests.specs.spec_pipeline_stop_propagation import (
+        _patch_private_fill_history,
+    )
+    _patch_private_fill_history(
+        monkeypatch,
+        "aletheia.execution.bitget_broker",
+        "aletheia.exchanges.bitget.client",
+        fill_price=60000.0,
+    )
 
     from aletheia.execution.bitget_broker import execute_live_order
 
     repo.insert_position(Position(
         strategy_id="strategy-alpha",
-        symbol="BTCUSDT",
+        symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         quantity=0.001,
@@ -203,11 +268,14 @@ def test_live_broker_keeps_strategy_positions_separate(tmp_path, monkeypatch):
         execution_mode="bitget_live_limited",
         status="open",
     ))
+    proposal_id, decision_id = _seed_authority(
+        "live-two", quantity=0.002, strategy_id="strategy-beta"
+    )
 
     result = execute_live_order(
-        proposal_id="live-two",
-        risk_decision_id=None,
-        symbol="BTCUSDT",
+        proposal_id=proposal_id,
+        risk_decision_id=decision_id,
+        symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         order_type="market",
@@ -217,7 +285,14 @@ def test_live_broker_keeps_strategy_positions_separate(tmp_path, monkeypatch):
     )
 
     assert len(captured) == 1
-    assert result["fill_quantity"] == 0.002
+    assert result["fill_quantity"] == 0
+    assert result["order_status"] == "materialization_missing"
+    assert len(repo.list_positions(status="open")) == 1
+
+    from aletheia.execution.reconciliation import reconcile
+    reconciled = reconcile()
+    assert reconciled["filled"] == 1
+
     positions = repo.list_positions(status="open")
     assert len(positions) == 2
     alpha_pos = next(p for p in positions if p["strategy_id"] == "strategy-alpha")

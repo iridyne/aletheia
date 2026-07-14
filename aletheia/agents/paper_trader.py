@@ -22,13 +22,18 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import log_tool
-from aletheia.agents.paper_trader_ranker import build_paper_candidates
+from aletheia.agents.paper_trader_ranker import build_paper_candidate_workset
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
-from aletheia.storage.repositories import update_opportunity, list_positions
+from aletheia.storage.repositories import (
+    expire_stale_queued_opportunities,
+    list_all_open_positions,
+    transition_open_opportunity_to_queued,
+)
 
 logger = logging.getLogger("aletheia.agents.paper_trader")
 
@@ -109,17 +114,23 @@ def _atr_adjusted_notional(
 
 
 def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
-    """Closed paper/demo positions count for a strategy — used for sample-aware Kelly."""
+    """Genuine closed paper/demo outcomes used for sample-aware Kelly.
+
+    A lifecycle close is not automatically trading evidence. Administrative,
+    incomplete-funding, and unattributed rows must not move a strategy from the
+    conservative small-sample sizing band into full Kelly sizing.
+    """
     if not strategy_id:
         return 0
     try:
-        from aletheia.storage.sqlite import get_db
-        row = get_db().execute(
-            "SELECT count(*) FROM positions "
-            "WHERE strategy_id = ? AND status = 'closed' AND execution_mode NOT LIKE '%live%'",
-            (strategy_id,),
-        ).fetchone()
-        return int(row[0]) if row else 0
+        from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+
+        return sum(
+            1
+            for row in eligible_strategy_outcomes()
+            if str(row.get("strategy_id") or "") == strategy_id
+            and "live" not in str(row.get("execution_mode") or "")
+        )
     except Exception:
         return 0
 
@@ -136,6 +147,24 @@ def _recent_signal_pairs(window_minutes: int = _RECENT_SIGNAL_COOLDOWN_MINUTES) 
             (cutoff,),
         ).fetchall()
         return {(r["symbol"], r["direction"]) for r in rows}
+    except Exception:
+        return set()
+
+
+def _operator_evaluated_opportunity_ids(
+    signal_source: str = "market_observer",
+) -> set[str]:
+    """Opportunity ids finalized by the same producer namespace."""
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        rows = get_db().execute(
+            "SELECT DISTINCT opportunity_id FROM pi_decisions "
+            "WHERE action != 'signal_pending' AND opportunity_id IS NOT NULL "
+            "AND COALESCE(signal_source, 'market_observer')=?",
+            (signal_source or "market_observer",),
+        ).fetchall()
+        return {str(row[0]) for row in rows if row[0]}
     except Exception:
         return set()
 
@@ -174,17 +203,22 @@ def _plan_signal_batch(
     *,
     open_symbols: set[str],
     recent_signal_pairs: set[tuple[str, str]],
+    operator_evaluated_opportunity_ids: set[str] | None = None,
     limit: int = 3,
 ) -> SignalBatchPlan:
     """Apply occupancy/cooldown before the batch cap so lower ranks can backfill."""
     selected: list[dict] = []
     decisions: dict[str, tuple[str, str]] = {}
     seen_symbols: set[str] = set()
+    evaluated_ids = operator_evaluated_opportunity_ids or set()
     for candidate in candidates:
         opp_id = str(candidate.get("opportunity_id") or "")
         symbol = candidate.get("symbol")
         direction = candidate.get("direction")
         if not opp_id or not symbol or not direction:
+            continue
+        if opp_id in evaluated_ids:
+            decisions[opp_id] = ("operator_already_evaluated", "rejected")
             continue
         if symbol in seen_symbols:
             decisions[opp_id] = ("duplicate_symbol", "rejected")
@@ -216,10 +250,22 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         errors.append(f"create_paper_proposal not permitted in mode {permission_mode}")
         return {"outputs": outputs, "errors": errors}
 
+    # Filter evidence must identify this exact evaluation. Scheduler-triggered
+    # runs already supply an AgentRun id; direct/manual callers get an internal
+    # id rather than an empty batch identity.
+    evaluation_run_id = run_id or f"paper-trader-{uuid4().hex}"
+
     execution_mode = _resolve_execution_mode(cfg.exchange.paper_execution_mode)
 
+    try:
+        expired_pending = expire_stale_queued_opportunities()
+        if expired_pending:
+            outputs.append(f"expired_pending:{expired_pending}")
+    except Exception as exc:
+        logger.warning("pending opportunity expiry unavailable: %s", exc)
+
     # Snapshot of currently open symbols — used to skip redundant signal writes.
-    open_symbols: set[str] = {p["symbol"] for p in list_positions(status="open")}
+    open_symbols: set[str] = {p["symbol"] for p in list_all_open_positions()}
     recent_signal_pairs = _recent_signal_pairs()
     # Position C (2026-07-02): Path A (RuleSet-driven signals) was removed with the
     # strategy rules engine. The paper trader is now purely opportunity-driven: it
@@ -228,26 +274,82 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # deterministic-rule entry/exit path.
 
     # ── Opportunity-driven (ranked) ───────────────────────────────────────────
-    candidates = build_paper_candidates(limit=50)
+    workset = build_paper_candidate_workset(limit=50)
+    # Selection may need to backfill below the display shortlist when higher
+    # ranks are temporarily occupied/cooling down. Keep the complete working set.
+    candidates = list(workset.scanned_candidates)
 
     _PERMANENT_SKIP_PREFIXES = (
         "neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:",
         "equity_shadow_track", "execution_eligible=False", "universe_not_eligible",
         "ttl_expired", "factor_hard_blocked", "okx_demo_symbol_not_supported",
+        "symbol_not_allowed:",
     )
-    skipped = [c for c in candidates if c.get("skip_reason")]
-    for c in skipped:
-        reason = c.get("skip_reason", "")
-        if any(reason.startswith(p) for p in _PERMANENT_SKIP_PREFIXES):
-            update_opportunity(c["opportunity_id"], status="reviewed")
-    for c in skipped[:10]:
+    def _is_permanent_skip(candidate: dict) -> bool:
+        return bool(
+            candidate.get("skip_reason")
+            and any(
+                str(candidate.get("skip_reason") or "").startswith(prefix)
+                for prefix in _PERMANENT_SKIP_PREFIXES
+            )
+        )
+
+    def _settle_permanent_skips(batch: list[dict]) -> set[str]:
+        """Return stale/failed ids whose rejection facts must not leak onward."""
+        blocked_ids: set[str] = set()
+        for candidate in batch:
+            if not _is_permanent_skip(candidate):
+                continue
+            opportunity_id = str(candidate.get("opportunity_id") or "")
+            reason = str(candidate.get("skip_reason") or "")
+            terminal_status = "expired" if reason.startswith("ttl_expired") else "reviewed"
+            try:
+                finalized = _finalize_permanent_skip(
+                    candidate,
+                    terminal_status=terminal_status,
+                    run_id=evaluation_run_id,
+                )
+                if not finalized:
+                    blocked_ids.add(opportunity_id)
+                    outputs.append(f"skip_stale_plan:{candidate.get('symbol')}")
+            except Exception as exc:
+                blocked_ids.add(opportunity_id)
+                errors.append(
+                    f"permanent_skip_evidence_failed:{opportunity_id or 'unknown'}"
+                )
+                logger.warning(
+                    "permanent skip remains retryable opportunity=%s: %s",
+                    opportunity_id,
+                    type(exc).__name__,
+                )
+        return blocked_ids
+
+    blocked_evidence_ids = _settle_permanent_skips(candidates)
+    evidence_candidates = [
+        candidate
+        for candidate in candidates
+        if str(candidate.get("opportunity_id") or "") not in blocked_evidence_ids
+    ]
+    displayed_skips = [
+        candidate
+        for candidate in candidates
+        if candidate.get("skip_reason")
+        and str(candidate.get("opportunity_id") or "") not in blocked_evidence_ids
+    ]
+    for c in displayed_skips[:10]:
         outputs.append(f"skip:{c.get('symbol','?')}:{c['skip_reason']}")
 
     # Phase 4a: Path B is now a pure signal collector — write top candidates as
     # signal_pending for System Operator to evaluate (System Operator is the sole decision maker).
     eligible = [c for c in candidates if not c.get("skip_reason")]
     if not eligible:
-        _persist_filter_evidence(candidates, None, run_id=run_id)
+        evidence_persisted = _persist_filter_evidence(
+            evidence_candidates, None, run_id=evaluation_run_id
+        )
+        if not evidence_persisted:
+            errors.append("workset_filter_evidence_failed")
+            outputs.append("no_signals_written")
+            return {"outputs": outputs, "errors": errors}
         if not outputs:
             outputs.append("no_ranked_candidate")
         return {"outputs": outputs, "errors": errors}
@@ -256,9 +358,27 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         eligible,
         open_symbols=open_symbols,
         recent_signal_pairs=recent_signal_pairs,
+        operator_evaluated_opportunity_ids=_operator_evaluated_opportunity_ids(),
         limit=3,
     )
-    _persist_filter_evidence(candidates, plan, run_id=run_id)
+
+    evidence_persisted = _persist_filter_evidence(
+        evidence_candidates, plan, run_id=evaluation_run_id
+    )
+    if not evidence_persisted:
+        failed_selected = [
+            str(candidate.get("opportunity_id") or "unknown")
+            for candidate in plan.selected
+        ]
+        if failed_selected:
+            errors.extend(
+                f"accepted_filter_evidence_failed:{opportunity_id}"
+                for opportunity_id in failed_selected
+            )
+        else:
+            errors.append("selection_filter_evidence_failed:no_selected_candidate")
+        outputs.append("no_signals_written")
+        return {"outputs": outputs, "errors": errors}
     for candidate in eligible:
         opp_id = str(candidate.get("opportunity_id") or "")
         filter_name, verdict = plan.decisions.get(opp_id, ("", ""))
@@ -270,6 +390,20 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             outputs.append(
                 f"skip_recent_signal:{candidate.get('symbol')}:{candidate.get('direction')}"
             )
+        elif filter_name == "operator_already_evaluated":
+            from aletheia.storage.sqlite import get_db
+
+            terminalized = get_db().execute(
+                "UPDATE opportunities SET status='reviewed' "
+                "WHERE id=? AND status='open'",
+                (opp_id,),
+            )
+            if terminalized.rowcount == 1:
+                outputs.append(
+                    f"skip_already_evaluated:{candidate.get('symbol')}"
+                )
+            else:
+                outputs.append(f"skip_stale_plan:{candidate.get('symbol')}")
 
     # Write up to 3 candidates after occupancy/cooldown rejects have been removed.
     signals_written = 0
@@ -279,11 +413,12 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             sym = candidate["symbol"]
             direction = candidate.get("direction")
             from aletheia.storage.models import PiDecision
-            from aletheia.storage.repositories import insert_pi_decision
+            from aletheia.storage.repositories import insert_pi_decision, transaction
             _sig_conviction = min(int(candidate.get("trade_score", 0)), 95)
             pi_dec = PiDecision(
                 symbol=candidate["symbol"],
                 direction=direction,
+                market_type=candidate.get("market_type") or candidate.get("market"),
                 action="signal_pending",
                 conviction=_sig_conviction,
                 reasoning=(
@@ -295,19 +430,32 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 opportunity_id=candidate.get("opportunity_id"),
                 debate_ran=False,
             )
-            insert_pi_decision(pi_dec)
-            # Mark the source opportunity reviewed so the next paper_trader cycle
-            # doesn't re-rank and re-emit it as a duplicate signal_pending. Without
-            # this, the same open opportunity was re-written every 5min — ETH short
-            # appeared 4x in pending signals, and the System Operator read the duplicates
-            # as "pipeline data integrity compromised" and skipped every decision
-            # (PT-1, freeze exception 2026-06-24). Mirrors the reviewed-marking
-            # already done for permanently-skipped candidates at line ~113.
-            if candidate.get("opportunity_id"):
-                try:
-                    update_opportunity(candidate["opportunity_id"], status="reviewed")
-                except Exception as _e:
-                    logger.debug("opportunity reviewed-mark failed: %s", _e)
+            claimed = True
+            with transaction():
+                # Claim the source before writing its carrier. A plan may be stale by
+                # the time this loop executes; only open→queued is legal, so a final
+                # reviewed/expired row can never be moved backwards to queued.
+                if candidate.get("opportunity_id"):
+                    claimed = transition_open_opportunity_to_queued(
+                        candidate["opportunity_id"]
+                    )
+                if claimed:
+                    insert_pi_decision(pi_dec)
+            if not claimed:
+                _persist_signal_enqueue_evidence(
+                    candidate,
+                    run_id=evaluation_run_id,
+                    decision="rejected",
+                    reason_code="opportunity_not_open",
+                )
+                outputs.append(f"skip_stale_plan:{candidate.get('symbol')}")
+                continue
+            _persist_signal_enqueue_evidence(
+                candidate,
+                run_id=evaluation_run_id,
+                decision="passed",
+                reason_code="signal_enqueued",
+            )
             if direction:
                 recent_signal_pairs.add((sym, direction))
             signals_written += 1
@@ -318,7 +466,16 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             except Exception:
                 pass
         except Exception as e:
-            logger.debug("signal_pending write failed for %s: %s", candidate.get("symbol"), e)
+            opportunity_id = str(candidate.get("opportunity_id") or "unknown")
+            errors.append(f"signal_enqueue_failed:{opportunity_id}")
+            _persist_signal_enqueue_evidence(
+                candidate,
+                run_id=evaluation_run_id,
+                decision="error",
+                reason_code="signal_enqueue_error",
+                reason_detail=type(e).__name__,
+            )
+            logger.warning("signal_pending write failed for %s: %s", candidate.get("symbol"), e)
 
     # Counterfactual selection must reflect candidates actually emitted after all
     # occupancy/cooldown checks, not the theoretical rank-1 before those checks.
@@ -337,48 +494,234 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     return {"outputs": outputs, "errors": errors}
 
 
+def _finalize_permanent_skip(
+    candidate: dict,
+    *,
+    terminal_status: str,
+    run_id: str | None,
+) -> bool:
+    """CAS one open Opportunity to terminal together with its rejection facts."""
+    from aletheia.analytics.filter_evidence import record_candidate_filter_trace
+    from aletheia.storage.repositories import transaction
+    from aletheia.storage.sqlite import get_db
+
+    if terminal_status not in {"reviewed", "expired"}:
+        raise ValueError(f"unsupported permanent Opportunity status: {terminal_status}")
+
+    expected_rejections = {
+        (
+            str(step.get("filter_name") or ""),
+            str(step.get("stage") or "paper_ranker"),
+            str(step.get("reason_code") or step.get("decision") or ""),
+        )
+        for step in candidate.get("filter_trace") or []
+        if step.get("decision") == "rejected"
+    }
+    if not expected_rejections:
+        raise RuntimeError("permanent_skip_rejection_fact_missing")
+
+    opportunity_id = str(candidate.get("opportunity_id") or "")
+    if not opportunity_id:
+        raise RuntimeError("permanent_skip_opportunity_missing")
+
+    db = get_db()
+    with transaction(immediate=True):
+        # transaction() deliberately joins an existing caller transaction. A
+        # local savepoint is therefore required so a caught evidence exception
+        # cannot leave the status UPDATE pending for a later unrelated commit.
+        db.execute("SAVEPOINT paper_permanent_skip")
+        try:
+            claimed = db.execute(
+                "UPDATE opportunities SET status=? WHERE id=? AND status='open'",
+                (terminal_status, opportunity_id),
+            )
+            if claimed.rowcount != 1:
+                db.execute("RELEASE SAVEPOINT paper_permanent_skip")
+                return False
+            record_candidate_filter_trace(
+                candidate,
+                run_id=run_id,
+                raise_on_error=True,
+            )
+            actual_rejections = {
+                (str(row[0]), str(row[1]), str(row[2]))
+                for row in db.execute(
+                    "SELECT filter_name, stage, reason_code FROM filter_decisions "
+                    "WHERE opportunity_id=? AND decision='rejected'",
+                    (opportunity_id,),
+                ).fetchall()
+            }
+            if not expected_rejections.issubset(actual_rejections):
+                raise RuntimeError("permanent_skip_rejection_fact_not_persisted")
+        except Exception:
+            db.execute("ROLLBACK TO SAVEPOINT paper_permanent_skip")
+            db.execute("RELEASE SAVEPOINT paper_permanent_skip")
+            raise
+        else:
+            db.execute("RELEASE SAVEPOINT paper_permanent_skip")
+    return True
+
+
 def _persist_filter_evidence(
     candidates: list[dict],
     plan: SignalBatchPlan | None,
     *,
     run_id: str | None,
-) -> None:
-    """Best-effort append of ranker and selection facts; never changes decisions."""
+) -> bool:
+    """Atomically prove this exact bounded workset and advance its rotation."""
     try:
-        from aletheia.analytics.filter_evidence import record_candidate_filter_trace
-        from aletheia.storage.repositories import transaction
+        from aletheia.analytics.filter_evidence import (
+            record_candidate_filter_trace,
+            record_filter_decision_batch,
+        )
+        from aletheia.storage.repositories import (
+            mark_opportunities_ranked,
+            transaction,
+        )
+        from aletheia.storage.sqlite import get_db
 
+        if not run_id:
+            raise ValueError("paper_trader_evaluation_run_id_required")
+
+        evaluated_at = datetime.now(timezone.utc).isoformat()
+        batch_facts: list[dict] = []
+        for candidate in candidates:
+            opportunity_id = str(candidate.get("opportunity_id") or "")
+            skip_reason = str(candidate.get("skip_reason") or "")
+            selection_filter = None
+            selection_decision = None
+            if plan is not None and opportunity_id in plan.decisions:
+                selection_filter, selection_decision = plan.decisions[opportunity_id]
+            if skip_reason:
+                decision = "rejected"
+                reason_code = skip_reason
+            elif selection_decision in {"passed", "rejected"}:
+                decision = selection_decision
+                reason_code = selection_filter or "paper_trader_selection"
+            else:
+                decision = "error"
+                reason_code = "selection_fact_missing"
+            batch_facts.append({
+                "opportunity_id": opportunity_id,
+                "symbol": candidate.get("symbol"),
+                "direction": candidate.get("direction"),
+                "market_type": (
+                    candidate.get("market_type") or candidate.get("market")
+                ),
+                "trade_score": candidate.get("trade_score"),
+                "decision": decision,
+                "reason_code": reason_code,
+            })
+
+        db = get_db()
         with transaction():
-            for candidate in candidates:
-                record_candidate_filter_trace(candidate, run_id=run_id)
-            if plan is None:
-                return
-            for candidate in candidates:
-                opp_id = str(candidate.get("opportunity_id") or "")
-                if not opp_id or opp_id not in plan.decisions:
-                    continue
-                filter_name, decision = plan.decisions[opp_id]
-                parameters = {"limit": 3} if filter_name == "signal_batch_limit" else {}
-                if filter_name == "signal_cooldown":
-                    parameters["cooldown_minutes"] = _RECENT_SIGNAL_COOLDOWN_MINUTES
-                record_candidate_filter_trace(
-                    candidate,
+            # transaction() joins an existing caller transaction. Keep this
+            # handoff atomic even in that case: one failed individual fact must
+            # remove earlier facts and prevent a successful batch/rotation mark.
+            db.execute("SAVEPOINT paper_filter_evidence")
+            try:
+                for candidate in candidates:
+                    record_candidate_filter_trace(
+                        candidate,
+                        run_id=run_id,
+                        raise_on_error=True,
+                    )
+                if plan is not None:
+                    for candidate in candidates:
+                        opp_id = str(candidate.get("opportunity_id") or "")
+                        if not opp_id or opp_id not in plan.decisions:
+                            continue
+                        filter_name, decision = plan.decisions[opp_id]
+                        parameters = (
+                            {"limit": 3}
+                            if filter_name == "signal_batch_limit"
+                            else {}
+                        )
+                        if filter_name == "signal_cooldown":
+                            parameters["cooldown_minutes"] = (
+                                _RECENT_SIGNAL_COOLDOWN_MINUTES
+                            )
+                        record_candidate_filter_trace(
+                            candidate,
+                            run_id=run_id,
+                            raise_on_error=True,
+                            trace=[{
+                                "filter_name": filter_name,
+                                "stage": "paper_trader_selection",
+                                "decision": decision,
+                                "reason_code": filter_name,
+                                "inputs": {
+                                    "trade_score": candidate.get("trade_score"),
+                                    "symbol": candidate.get("symbol"),
+                                    "direction": candidate.get("direction"),
+                                },
+                                "parameters": parameters,
+                            }],
+                        )
+                record_filter_decision_batch(
                     run_id=run_id,
-                    trace=[{
-                        "filter_name": filter_name,
-                        "stage": "paper_trader_selection",
-                        "decision": decision,
-                        "reason_code": filter_name,
-                        "inputs": {
-                            "trade_score": candidate.get("trade_score"),
-                            "symbol": candidate.get("symbol"),
-                            "direction": candidate.get("direction"),
-                        },
-                        "parameters": parameters,
-                    }],
+                    candidate_kind="opportunity",
+                    filter_name="paper_trader_workset",
+                    stage="paper_trader_evaluation",
+                    candidate_facts=batch_facts,
+                    parameters={
+                        "scan_limit": 250,
+                        "selection_limit": 3,
+                        "rotation": "balanced_never_seen_and_oldest_retry",
+                    },
+                    evaluated_at=evaluated_at,
+                    raise_on_error=True,
                 )
+                mark_opportunities_ranked(
+                    [
+                        str(candidate.get("opportunity_id") or "")
+                        for candidate in candidates
+                    ],
+                    evaluated_at,
+                )
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT paper_filter_evidence")
+                db.execute("RELEASE SAVEPOINT paper_filter_evidence")
+                raise
+            else:
+                db.execute("RELEASE SAVEPOINT paper_filter_evidence")
+        return True
     except Exception as exc:
         logger.warning("paper trader filter evidence unavailable: %s", exc)
+        return False
+
+
+def _persist_signal_enqueue_evidence(
+    candidate: dict,
+    *,
+    run_id: str | None,
+    decision: str,
+    reason_code: str,
+    reason_detail: str | None = None,
+) -> None:
+    """Record actual queue insertion outcome separately from batch selection."""
+    try:
+        from aletheia.analytics.filter_evidence import record_candidate_filter_trace
+
+        record_candidate_filter_trace(
+            candidate,
+            run_id=run_id,
+            trace=[{
+                "filter_name": "signal_enqueue",
+                "stage": "paper_trader_enqueue",
+                "decision": decision,
+                "reason_code": reason_code,
+                "reason_detail": reason_detail,
+                "inputs": {"target_opportunity_status": "queued"},
+                "parameters": {},
+            }],
+        )
+    except Exception as exc:
+        logger.warning(
+            "signal enqueue evidence unavailable opportunity=%s: %s",
+            candidate.get("opportunity_id"),
+            exc,
+        )
 
 
 # Position C (2026-07-02): _handle_ruleset_entry removed with the rules engine.

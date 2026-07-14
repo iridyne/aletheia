@@ -19,7 +19,7 @@ class TestStopLossCloses:
         """Long position closed when price drops below stop_price."""
         pos = Position(
             symbol="SOL/USDT",
-            market_type="usdt_futures",
+            market_type="spot",
             direction="long",
             quantity=1.0,
             entry_price=100.0,
@@ -79,7 +79,7 @@ class TestTakeProfitCloses:
     def test_long_take_profit(self, e2e_db, monkeypatch):
         pos = Position(
             symbol="BTC/USDT",
-            market_type="usdt_futures",
+            market_type="spot",
             direction="long",
             quantity=0.001,
             entry_price=60000.0,

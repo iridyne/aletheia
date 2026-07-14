@@ -33,11 +33,11 @@ class ControlLoopHarness:
     ) -> None:
         import aletheia.config.loader as loader
         from aletheia.config.schema import AletheiaConfig
+        from aletheia.storage import sqlite as sqlite_store
         from aletheia.storage.migrations import run_migrations
-        from aletheia.storage.sqlite import get_db, reset_db
+        from aletheia.storage.sqlite import get_db
 
         self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
         default_artifact_root = Path(
             os.getenv("DCLS_ARTIFACT_ROOT", "test-results/control-loop")
         )
@@ -61,10 +61,37 @@ class ControlLoopHarness:
         self._loader = loader
         self._original_data_dir = loader.DATA_DIR
         self._original_config_path = loader.CONFIG_PATH
+        protected_data_dirs = {(Path(loader._PROJECT_ROOT) / "data").resolve()}
+        active_connection = sqlite_store._db_conn
+        self._original_db_connection = active_connection
+        active_db_is_memory = False
+        if active_connection is not None:
+            active_db_file = active_connection.execute(
+                "PRAGMA database_list"
+            ).fetchone()[2]
+            active_db_is_memory = active_db_file in {"", ":memory:"}
+        # Pytest's autouse sandbox points DATA_DIR at tmp_path while SQLite is
+        # explicitly in-memory; no active filesystem state exists there. Every
+        # file-backed or not-yet-opened runtime directory remains protected.
+        if not active_db_is_memory:
+            protected_data_dirs.add(Path(self._original_data_dir).resolve())
+        resolved_root = self.root.resolve()
+        if any(
+            resolved_root == protected_dir
+            or protected_dir in resolved_root.parents
+            for protected_dir in protected_data_dirs
+        ):
+            raise ValueError(
+                "ControlLoopHarness requires an isolated data directory"
+            )
+        self.root.mkdir(parents=True, exist_ok=True)
         loader.DATA_DIR = self.root
         loader.CONFIG_PATH = self.root / "config.yaml"
         loader._invalidate_config_cache()
-        reset_db()
+        # Detach, rather than close, a caller-owned connection. Pytest supplies
+        # an in-memory sandbox that must be restored when this harness closes;
+        # the harness still opens and owns a separate file-backed connection.
+        sqlite_store._db_conn = None
         run_migrations()
 
         cfg = AletheiaConfig()
@@ -74,6 +101,10 @@ class ControlLoopHarness:
         cfg.agent.permission_mode = "Paper"
         cfg.exchange.paper_execution_mode = "paper_internal"
         cfg.trading.min_confidence_to_trade = initial_confidence
+        # DCLS outcomes use explicit zero-cost local fills so the requested
+        # +/-1 USDT result is the complete net result, not a hidden fee estimate.
+        cfg.trading.slippage_bps = 0.0
+        cfg.trading.execution_fee_pct = 0.0
         cfg.risk.max_demo_position_notional_usdt = initial_sizing
         loader.save_config(cfg)
         self.db = get_db()
@@ -100,11 +131,13 @@ class ControlLoopHarness:
             self.close()
 
     def close(self) -> None:
-        from aletheia.storage.sqlite import reset_db
-        reset_db()
+        from aletheia.storage import sqlite as sqlite_store
+
+        sqlite_store.reset_db()
         self._loader.DATA_DIR = self._original_data_dir
         self._loader.CONFIG_PATH = self._original_config_path
         self._loader._invalidate_config_cache()
+        sqlite_store._db_conn = self._original_db_connection
 
     def load_config(self):
         self._loader._invalidate_config_cache()
@@ -154,87 +187,340 @@ class ControlLoopHarness:
         self._sequence += 1
         return f"dcls-{prefix}-{self._sequence:04d}"
 
+    def _insert_verified_outcome(
+        self,
+        *,
+        won: bool,
+        opened_at: datetime,
+        closed_at: datetime,
+    ) -> None:
+        """Insert one complete native paper chain for deterministic simulation."""
+        from aletheia.files import jsonl
+        from aletheia import notifications
+        from aletheia.portfolio import pnl
+        from aletheia.portfolio.paper_account import record_position_opened
+        from aletheia.storage import repositories as repo
+        from aletheia.storage.models import (
+            Fill, Opportunity, Order, Position, RiskDecision, TradeProposal,
+        )
+
+        opportunity = Opportunity(
+            id=self._next_id("outcome-opportunity"),
+            symbol="BTC/USDT",
+            market="spot",
+            direction_bias="long",
+            source_agent="dcls",
+            scanner_family="dcls",
+            status="closed",
+            created_at=opened_at.isoformat(),
+        )
+        repo.insert_opportunity(opportunity)
+        proposal = TradeProposal(
+            id=self._next_id("proposal"),
+            opportunity_id=opportunity.id,
+            strategy_id="dcls",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=0.001,
+            price=60_000.0,
+            execution_mode="paper_internal",
+            status="executed",
+            created_at=opened_at.isoformat(),
+        )
+        repo.insert_trade_proposal(proposal)
+        decision = RiskDecision(
+            id=self._next_id("risk"),
+            proposal_id=proposal.id,
+            approved=True,
+            allowed_execution_mode="paper_internal",
+            proposal_execution_mode="paper_internal",
+            decision_role="authoritative",
+            evaluated_quantity=proposal.quantity,
+            proposal_commit_hash=proposal.commit_hash,
+            created_at=opened_at.isoformat(),
+        )
+        repo.insert_risk_decision(decision)
+        position_id = self._next_id("position")
+        order = Order(
+            id=self._next_id("order"),
+            proposal_id=proposal.id,
+            risk_decision_id=decision.id,
+            symbol=proposal.symbol,
+            market_type=proposal.market_type,
+            direction=proposal.direction,
+            order_type=proposal.order_type,
+            quantity=0.001,
+            price=60_000.0,
+            execution_mode="paper_internal",
+            position_id=position_id,
+            status="filled",
+            created_at=opened_at.isoformat(),
+            filled_at=opened_at.isoformat(),
+        )
+        repo.insert_order(order)
+        repo.insert_fill(Fill(
+            id=self._next_id("fill"),
+            order_id=order.id,
+            fill_price=60_000.0,
+            fill_quantity=0.001,
+            fee=0.0,
+            filled_at=opened_at.isoformat(),
+        ))
+        realized_pnl = 1.0 if won else -1.0
+        exit_price = 60_000.0 + realized_pnl / 0.001
+        repo.insert_position(Position(
+            id=position_id,
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.001,
+            entry_price=60_000.0,
+            current_price=60_000.0,
+            execution_mode="paper_internal",
+            strategy_id="dcls",
+            proposal_id=proposal.id,
+            order_id=order.id,
+            opportunity_id=opportunity.id,
+            status="open",
+            entry_price_source="local_fill",
+            entry_fill_verified=True,
+            entry_fee=0.0,
+            funding_cost=0.0,
+            funding_source="not_applicable",
+            opened_at=opened_at.isoformat(),
+        ))
+        record_position_opened(position_id)
+        opened_iso = opened_at.isoformat()
+        self.db.execute(
+            "UPDATE paper_account_events SET created_at = ? "
+            "WHERE action = 'position_opened' AND position_id = ?",
+            (opened_iso, position_id),
+        )
+        self.db.execute(
+            "UPDATE paper_account_events SET created_at = ? "
+            "WHERE action = 'initial_funding' "
+            "AND datetime(created_at) > datetime(?)",
+            (opened_iso, opened_iso),
+        )
+        close_order = Order(
+            id=self._next_id("close-order"),
+            proposal_id=proposal.id,
+            symbol=proposal.symbol,
+            market_type=proposal.market_type,
+            direction=proposal.direction,
+            order_type="market",
+            quantity=0.001,
+            price=exit_price,
+            execution_mode="paper_internal",
+            client_order_id=f"close-{position_id}",
+            position_id=position_id,
+            close_reason="simulation_verified_exit",
+            status="filled",
+            created_at=closed_at.isoformat(),
+            filled_at=closed_at.isoformat(),
+        )
+        close_fill = Fill(
+            id=self._next_id("close-fill"),
+            order_id=close_order.id,
+            fill_price=exit_price,
+            fill_quantity=0.001,
+            fee=0.0,
+            filled_at=closed_at.isoformat(),
+        )
+
+        def _materialize_close() -> None:
+            repo.insert_order(close_order)
+            repo.insert_fill(close_fill)
+
+        # The database audit is the durable authority. Suppress only secondary
+        # JSONL/notification sinks so a deterministic harness never emits local
+        # desktop/network side effects while exercising the real close path.
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(pnl, "_btc_price_at_close", return_value=60_000.0))
+            stack.enter_context(patch.object(jsonl, "write_audit", return_value=None))
+            stack.enter_context(patch.object(notifications, "notify_operator", return_value=None))
+            result = pnl.close_position(
+                position_id,
+                exit_price=exit_price,
+                reason="simulation_verified_exit",
+                actual_exit_fee=0.0,
+                closed_at=closed_at.isoformat(),
+                materialize_close=_materialize_close,
+                actor="dcls",
+                source="control_loop_harness",
+            )
+        if not result.get("outcome_eligible"):
+            raise RuntimeError(
+                "DCLS close did not satisfy Outcome eligibility: "
+                f"{result.get('outcome_exclusion_reason')}"
+            )
+
+        # Paper-account/audit/outbox factories use wall time. Align their
+        # timestamps with the virtual fill so replayed age/window semantics are
+        # internally ordered without weakening the production close path.
+        closed_iso = closed_at.isoformat()
+        with repo.transaction(immediate=True):
+            self.db.execute(
+                "UPDATE paper_account_events SET created_at = ? "
+                "WHERE action = 'position_closed' AND position_id = ?",
+                (closed_iso, position_id),
+            )
+            self.db.execute(
+                "UPDATE audit_events SET timestamp = ? "
+                "WHERE actor = 'dcls' AND source = 'control_loop_harness' "
+                "AND entity_type = 'position' AND entity_id = ?",
+                (closed_iso, position_id),
+            )
+            self.db.execute(
+                "UPDATE outcome_hook_jobs SET created_at = ?, updated_at = ?, "
+                "next_attempt_at = ?, "
+                "completed_at = CASE WHEN completed_at IS NULL THEN NULL ELSE ? END "
+                "WHERE position_id = ?",
+                (closed_iso, closed_iso, closed_iso, closed_iso, position_id),
+            )
+
+    def _clear_dcls_trade_performance(self) -> None:
+        """Delete only the trade facts owned by this deterministic harness."""
+        from aletheia.storage import repositories as repo
+
+        position_like = "dcls-position-%"
+        order_likes = ("dcls-order-%", "dcls-close-order-%")
+        with repo.transaction(immediate=True):
+            self.db.execute(
+                "DELETE FROM outcome_hook_jobs WHERE position_id LIKE ?",
+                (position_like,),
+            )
+            self.db.execute(
+                "DELETE FROM paper_account_events WHERE position_id LIKE ?",
+                (position_like,),
+            )
+            self.db.execute(
+                "DELETE FROM audit_events "
+                "WHERE actor = 'dcls' AND source = 'control_loop_harness' "
+                "AND entity_type = 'position' AND entity_id LIKE ?",
+                (position_like,),
+            )
+            self.db.execute(
+                "DELETE FROM position_disappearance_observations "
+                "WHERE candidate_id IN ("
+                "SELECT id FROM position_disappearance_candidates "
+                "WHERE position_id LIKE ?)",
+                (position_like,),
+            )
+            self.db.execute(
+                "DELETE FROM position_disappearance_candidates "
+                "WHERE position_id LIKE ?",
+                (position_like,),
+            )
+            self.db.execute(
+                "DELETE FROM serenity_post_mortems WHERE position_id LIKE ?",
+                (position_like,),
+            )
+            self.db.execute(
+                "DELETE FROM fills WHERE order_id IN ("
+                "SELECT id FROM orders WHERE id LIKE ? OR id LIKE ?)",
+                order_likes,
+            )
+            self.db.execute(
+                "DELETE FROM positions WHERE id LIKE ?",
+                (position_like,),
+            )
+            self.db.execute(
+                "DELETE FROM orders WHERE id LIKE ? OR id LIKE ?",
+                order_likes,
+            )
+            self.db.execute(
+                "DELETE FROM risk_decisions WHERE id LIKE 'dcls-risk-%'"
+            )
+            self.db.execute(
+                "DELETE FROM trade_proposals WHERE id LIKE 'dcls-proposal-%'"
+            )
+            self.db.execute(
+                "DELETE FROM opportunities "
+                "WHERE id LIKE 'dcls-outcome-opportunity-%'"
+            )
+
+    def _rebase_paper_ledger_by_event_time(self) -> None:
+        """Restore cash-snapshot continuity in virtual event-time order.
+
+        Replacement outcomes are appended after retained external events even
+        when their virtual timestamps are earlier. Recompute every derived cash
+        snapshot only after all replacement events exist, ordered exactly as the
+        timestamp-based ledger readers expose them. Event identities, amounts,
+        and timestamps remain unchanged. The caller owns the outer transaction
+        so an invalid retained history rolls the whole replacement back.
+        """
+        balance = 0.0
+        events = self.db.execute(
+            "SELECT id, amount_usdt FROM paper_account_events "
+            "ORDER BY datetime(created_at) ASC, rowid ASC"
+        ).fetchall()
+        for event in events:
+            before = round(balance, 8)
+            after = round(before + float(event["amount_usdt"]), 8)
+            if after < -1e-8:
+                raise RuntimeError(
+                    "cannot replace DCLS outcomes: retained paper ledger "
+                    "would have a negative cash balance"
+                )
+            self.db.execute(
+                "UPDATE paper_account_events "
+                "SET cash_balance_before_usdt = ?, cash_balance_after_usdt = ? "
+                "WHERE id = ?",
+                (before, max(0.0, after), event["id"]),
+            )
+            balance = after
+
     def change_trade_performance(
         self, *, win_rate: float, total: int, hours_since_last_fill: float
     ) -> None:
-        from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
         from aletheia.storage import repositories as repo
-        from aletheia.storage.models import (
-            Fill, Order, Position, RiskDecision, TradeProposal,
-        )
 
-        for table in ("fills", "orders", "risk_decisions", "trade_proposals", "positions"):
-            self.db.execute(f"DELETE FROM {table}")
-        self.db.commit()
-        filled_at = self.clock.now() - timedelta(hours=hours_since_last_fill)
-        proposal = TradeProposal(
-            id=self._next_id("proposal"), symbol="BTC/USDT", market_type="spot",
-            direction="long", quantity=0.001, execution_mode="paper_internal",
-            status="executed", created_at=filled_at.isoformat(),
-        )
-        decision = RiskDecision(
-            id=self._next_id("risk"), proposal_id=proposal.id, approved=True,
-            allowed_execution_mode="paper_internal",
-            proposal_execution_mode="paper_internal", created_at=filled_at.isoformat(),
-        )
-        order = Order(
-            id=self._next_id("order"), proposal_id=proposal.id,
-            risk_decision_id=decision.id, symbol="BTC/USDT", market_type="spot",
-            direction="long", order_type="market", quantity=0.001,
-            execution_mode="paper_internal", status="filled",
-            created_at=filled_at.isoformat(), filled_at=filled_at.isoformat(),
-        )
-        repo.insert_trade_proposal(proposal)
-        repo.insert_risk_decision(decision)
-        repo.insert_order(order)
-        repo.insert_fill(Fill(
-            id=self._next_id("fill"), order_id=order.id, fill_price=60_000.0,
-            fill_quantity=0.001, filled_at=filled_at.isoformat(),
-        ))
+        # Replace only DCLS-owned trade facts; candidates and any independently
+        # seeded rows remain visible to later state-machine steps.
+        latest_close = self.clock.now() - timedelta(hours=hours_since_last_fill)
         wins = max(0, min(total, round(total * win_rate / 100)))
-        for index in range(total):
-            closed_at = self.clock.now() - timedelta(minutes=index + 1)
-            repo.insert_position(Position(
-                id=self._next_id("position"), symbol="BTC/USDT", market_type="spot",
-                direction="long", quantity=0.01, entry_price=60_000.0,
-                realized_pnl=1.0 if index < wins else -1.0,
-                execution_mode="paper_internal", strategy_id="dcls",
-                status="closed", close_reason="simulation_verified_exit",
-                close_category="strategy", exit_price_source="local_fill",
-                exit_fill_verified=True, outcome_eligible=True,
-                outcome_exclusion_reason="eligible",
-                outcome_semantics_version=OUTCOME_SEMANTICS_VERSION,
-                opened_at=(closed_at - timedelta(hours=1)).isoformat(),
-                closed_at=closed_at.isoformat(),
-            ))
+        with repo.transaction(immediate=True):
+            self._clear_dcls_trade_performance()
+            # Insert oldest-to-newest so DCLS-owned events are internally ordered.
+            for index in reversed(range(total)):
+                closed_at = latest_close - timedelta(minutes=index)
+                self._insert_verified_outcome(
+                    won=index < wins,
+                    opened_at=closed_at - timedelta(seconds=30),
+                    closed_at=closed_at,
+                )
+            self._rebase_paper_ledger_by_event_time()
         self._record(
             "change_trade_performance", win_rate=win_rate, total=total,
             hours_since_last_fill=hours_since_last_fill,
         )
 
     def record_outcome(self, *, won: bool) -> None:
-        from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
         from aletheia.storage import repositories as repo
-        from aletheia.storage.models import Position
+
         closed_at = self.clock.now()
-        repo.insert_position(Position(
-            id=self._next_id("position"), symbol="BTC/USDT", market_type="spot",
-            direction="long", quantity=0.01, entry_price=60_000.0,
-            realized_pnl=1.0 if won else -1.0, execution_mode="paper_internal",
-            strategy_id="dcls", status="closed", close_reason="simulation_verified_exit",
-            close_category="strategy", exit_price_source="local_fill",
-            exit_fill_verified=True, outcome_eligible=True,
-            outcome_exclusion_reason="eligible",
-            outcome_semantics_version=OUTCOME_SEMANTICS_VERSION,
-            opened_at=(closed_at - timedelta(hours=1)).isoformat(),
-            closed_at=closed_at.isoformat(),
-        ))
+        with repo.transaction(immediate=True):
+            self._insert_verified_outcome(
+                won=won,
+                opened_at=closed_at - timedelta(hours=1),
+                closed_at=closed_at,
+            )
+            self._rebase_paper_ledger_by_event_time()
         self._record("record_outcome", won=won)
 
     def seed_candidates(self, *, high: int, medium: int) -> None:
         from aletheia.storage import repositories as repo
         from aletheia.storage.models import Opportunity
-        self.db.execute("DELETE FROM opportunities")
+        # Candidate refresh must not delete the closed Opportunity rows that
+        # prove the simulated trade Outcomes' attribution chain.
+        self.db.execute(
+            "DELETE FROM opportunities "
+            "WHERE id LIKE 'dcls-high-candidate-%' "
+            "OR id LIKE 'dcls-medium-candidate-%'"
+        )
         self.db.commit()
         for confidence, count in (("high", high), ("medium", medium)):
             for index in range(count):

@@ -57,19 +57,37 @@ def _seed_positions(days_ago_list: list[int], pnl: float = 1.0) -> None:
     from datetime import datetime, timedelta, timezone
     from aletheia.storage.models import Position
     from aletheia.storage.repositories import insert_position
+    from tests.test_outcome_closure import _insert_entry_chain
 
     now = datetime.fromisoformat("2026-07-12T08:00:00+00:00")
     for i, days_ago in enumerate(days_ago_list):
         closed_at = (now + timedelta(minutes=i)).isoformat()
         opened_at = (now + timedelta(minutes=i - 1)).isoformat()
+        position_id = f"window-position-{i}"
+        symbol = f"SEED{i}/USDT"
+        opportunity_id, proposal_id, order_id = _insert_entry_chain(
+            position_id=position_id,
+            symbol=symbol,
+            market_type="usdt_futures",
+            direction="long",
+            quantity=1.0,
+            price=100.0,
+            execution_mode="paper_internal",
+        )
         pos = Position(
-            symbol=f"SEED{i}/USDT", market_type="usdt_futures", direction="long",
+            id=position_id, symbol=symbol,
+            market_type="usdt_futures", direction="long",
             quantity=1.0, entry_price=100.0, current_price=100.0 + pnl,
             realized_pnl=pnl, execution_mode="paper_internal",
             status="closed", opened_at=opened_at, closed_at=closed_at,
+            entry_fee=0.0, exit_fee=0.0,
+            funding_cost=0.0, funding_source="local_simulation",
+            entry_price_source="local_fill", entry_fill_verified=True,
             close_category="strategy", exit_price_source="local_fill",
             exit_fill_verified=True, outcome_eligible=True,
             outcome_exclusion_reason="eligible", outcome_semantics_version="oi-v1",
+            opportunity_id=opportunity_id, proposal_id=proposal_id,
+            order_id=order_id,
         )
         insert_position(pos)
 

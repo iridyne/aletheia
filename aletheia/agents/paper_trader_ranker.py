@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from aletheia.analytics.factor_feedback import lookup_factor_signal
@@ -23,7 +24,7 @@ from aletheia.data.symbols import to_canonical
 from aletheia.storage.repositories import (
     get_ohlcv_candles,
     get_universe_member,
-    list_opportunities,
+    list_open_trade_opportunities,
 )
 from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation
 from aletheia.regime.detector import get_current_regime, MarketRegime
@@ -38,7 +39,7 @@ logger = logging.getLogger("aletheia.agents.paper_trader_ranker")
 _CONFIDENCE_RANK = {"speculative": 0, "medium": 1, "high": 2}
 _CONFIDENCE_SCORE_DEFAULT = {"speculative": 20, "medium": 50, "high": 75}
 _DEFAULT_CANDIDATE_LIMIT = 50
-_MAX_OPPORTUNITY_SCAN_LIMIT = 500
+_MAX_OPPORTUNITY_SCAN_LIMIT = 250
 
 # Evidence-based strategy gates (not_executable is NOT a block — strategies
 # without a RuleSet can still trade from LLM signals; the entry validation
@@ -48,12 +49,31 @@ _EVIDENCE_PENALTY_STATUSES = {"paper_failing": -30, "review_needed": -10, "needs
 _EVIDENCE_BONUS_STATUSES = {"paper_promising": 15}
 
 
+@dataclass(frozen=True)
+class PaperCandidateWorkset:
+    """Complete current working-set facts plus the ranked execution shortlist."""
+
+    ranked_candidates: list[dict]
+    scanned_candidates: list[dict]
+
+
 def build_paper_candidates(limit: int = 50) -> list[dict]:
     """Build and score all eligible paper trade candidates.
 
     Reproduces existing paper_trader gates but evaluates ALL opportunities,
     not just the first valid one. Each candidate gets a trade_score and
     optional skip_reason.
+    """
+    return build_paper_candidate_workset(limit).ranked_candidates
+
+
+def build_paper_candidate_workset(limit: int = 50) -> PaperCandidateWorkset:
+    """Return the top-N execution view plus every current open trade candidate.
+
+    Permanent rejects in the working set retain their durable reason even when
+    they rank below the execution shortlist.  Keeping the two views separate
+    preserves the caller's top-N execution capacity without losing terminal
+    state work.
     """
     cfg = load_config()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -73,19 +93,34 @@ def build_paper_candidates(limit: int = 50) -> list[dict]:
     min_conf = cfg.trading.min_confidence_to_trade
 
     requested_limit = max(1, int(limit or _DEFAULT_CANDIDATE_LIMIT))
-    scan_limit = min(_MAX_OPPORTUNITY_SCAN_LIMIT, max(requested_limit, requested_limit * 5))
 
     candidates: list[dict] = []
-    opportunities = list_opportunities(limit=scan_limit)
+    # A run is deliberately bounded. The repository rotates by last_ranked_at,
+    # so retryable rows cannot permanently hide the tail without forcing an
+    # unbounded SQLite read into one scheduler invocation.
+    opportunities = list_open_trade_opportunities(
+        limit=_MAX_OPPORTUNITY_SCAN_LIMIT
+    )
 
     for opp in opportunities:
-        candidate = _evaluate_candidate(opp, cfg, now_iso, _symbol_allowed, min_conf, global_venue)
+        candidate = _evaluate_candidate(
+            opp,
+            cfg,
+            now_iso,
+            _symbol_allowed,
+            min_conf,
+            global_venue,
+            symbol_filter_mode=filter_mode,
+        )
         if candidate is not None:
             candidates.append(candidate)
 
     # Sort by trade_score descending
     candidates.sort(key=lambda c: c.get("trade_score", -999), reverse=True)
-    return candidates[:requested_limit]
+    return PaperCandidateWorkset(
+        ranked_candidates=candidates[:requested_limit],
+        scanned_candidates=candidates,
+    )
 
 
 def select_best_candidate(candidates: list[dict]) -> dict | None:
@@ -103,6 +138,8 @@ def _evaluate_candidate(
     symbol_allowed,
     min_conf: str,
     global_venue: str = "bitget_demo",
+    *,
+    symbol_filter_mode: str = "whitelist",
 ) -> dict | None:
     """Evaluate a single opportunity as a paper trade candidate.
 
@@ -162,7 +199,20 @@ def _evaluate_candidate(
 
     # Hard filter: symbol allowed
     if not symbol_allowed(symbol):
-        return None
+        _filter_step(
+            filter_trace,
+            "symbol_filter",
+            "rejected",
+            "symbol_not_allowed",
+            inputs={"symbol": to_canonical(symbol)},
+            parameters={"mode": symbol_filter_mode},
+        )
+        return _make_candidate(
+            opp,
+            skip_reason=f"symbol_not_allowed:{symbol_filter_mode}",
+            direction=direction,
+            filter_trace=filter_trace,
+        )
 
     # Direction gate
     if direction is None:
@@ -195,6 +245,21 @@ def _evaluate_candidate(
         filter_trace, "ranker_confidence_gate", "passed", "confidence_at_or_above",
         inputs={"confidence": confidence}, parameters={"minimum": min_conf},
     )
+
+    # The Opportunity carrier keeps its own expiry even when its Universe member
+    # cannot be loaded. Do not let a missing parent row turn an expired signal fresh.
+    if opp.get("valid_until") and opp["valid_until"] < now_iso:
+        _filter_step(
+            filter_trace, "family_ttl", "rejected", "opportunity_valid_until_expired",
+            inputs={"valid_until": opp.get("valid_until"), "now": now_iso},
+            parameters={"source": "opportunity.valid_until"},
+        )
+        return _make_candidate(
+            opp,
+            skip_reason="ttl_expired",
+            direction=direction,
+            filter_trace=filter_trace,
+        )
 
     # Universe TTL gate
     universe_member = None
@@ -316,10 +381,16 @@ def _evaluate_candidate(
     )
 
     # Guard evaluation (deterministic, no LLM)
-    guard_eval = _evaluate_guards_safe(
-        opp, universe_member, factor_signal, direction, confidence,
-        strategy_has_ruleset, ruleset_entry_result, strategy_evidence,
-    )
+    guard_state, guard_reason = _guard_evaluation_applicability()
+    guard_eval = None
+    if guard_state == "enabled":
+        guard_eval = _evaluate_guards_safe(
+            opp, universe_member, factor_signal, direction, confidence,
+            strategy_has_ruleset, ruleset_entry_result, strategy_evidence,
+        )
+        if guard_eval is None:
+            guard_state = "error"
+            guard_reason = "guard_evaluation_failed"
     if guard_eval and guard_eval.blocked:
         blocked_ids = ",".join(h.guard_id for h in guard_eval.hits if h.block_candidate)
         _filter_step(
@@ -335,11 +406,21 @@ def _evaluate_candidate(
             strategy_evidence=strategy_evidence, guard_eval=guard_eval,
             filter_trace=filter_trace,
         )
-    _filter_step(
-        filter_trace, "guard_candidate_block", "passed", "guard_not_blocking",
-        inputs={"guard_ids": [h.guard_id for h in guard_eval.hits] if guard_eval else []},
-        parameters={"scope": "paper_entry"},
-    )
+    if guard_eval is None:
+        _filter_step(
+            filter_trace,
+            "guard_candidate_block",
+            guard_state,
+            guard_reason,
+            inputs={"guard_ids": []},
+            parameters={"scope": "paper_entry"},
+        )
+    else:
+        _filter_step(
+            filter_trace, "guard_candidate_block", "passed", "guard_not_blocking",
+            inputs={"guard_ids": [h.guard_id for h in guard_eval.hits]},
+            parameters={"scope": "paper_entry"},
+        )
 
     # Compute trade score
     learning_trace: list[dict] = []
@@ -721,6 +802,20 @@ def _memo_scoring(symbol: str | None, direction: str | None, regime: MarketRegim
 # RuleSet to evaluate. Deleting these also drops the last aletheia.strategy imports.
 
 
+def _guard_evaluation_applicability() -> tuple[str, str]:
+    """Classify why the Guard can or cannot evaluate this ranking cycle."""
+    try:
+        guard_cfg = getattr(load_config(), "guard", None)
+        if guard_cfg is not None and not guard_cfg.enabled:
+            return "not_applicable", "guard_disabled"
+        if guard_cfg is not None and not guard_cfg.enforce_in_paper_ranker:
+            return "not_applicable", "guard_ranker_enforcement_disabled"
+        return "enabled", "guard_evaluation_enabled"
+    except Exception as exc:
+        logger.warning("Guard applicability check failed: %s", type(exc).__name__)
+        return "error", "guard_applicability_error"
+
+
 def _evaluate_guards_safe(
     opp: dict,
     universe_member: dict | None,
@@ -733,9 +828,6 @@ def _evaluate_guards_safe(
 ) -> GuardEvaluation | None:
     """Build guard context and evaluate. Returns None on failure (never crashes ranker)."""
     try:
-        from aletheia.learning.control import learning_influence_enabled
-        if not learning_influence_enabled():
-            return None
         cfg = load_config()
         guard_cfg = getattr(cfg, "guard", None)
         if guard_cfg and (not guard_cfg.enabled or not guard_cfg.enforce_in_paper_ranker):
@@ -776,6 +868,21 @@ def _evaluate_guards_safe(
             "paper_expectancy": strategy_evidence.get("paper_expectancy") if strategy_evidence else None,
             "backtest_expectancy": strategy_evidence.get("backtest_expectancy") if strategy_evidence else None,
         }
+        try:
+            opportunity_meta = _json.loads(opp.get("metadata") or "{}")
+        except (TypeError, ValueError):
+            opportunity_meta = {}
+        learning_candidate_key = opportunity_meta.get("learning_candidate_key")
+        opportunity_id = opp.get("id")
+        ctx.update({
+            "_candidate_key": (
+                f"opportunity:{opportunity_id}" if opportunity_id else None
+            ),
+            "_outcome_candidate_key": (
+                f"{learning_candidate_key}:4h" if learning_candidate_key else None
+            ),
+            "_opportunity_id": opportunity_id,
+        })
 
         max_penalty = guard_cfg.max_score_penalty if guard_cfg else 40.0
         result = evaluate_guards(ctx, scope="paper_entry")

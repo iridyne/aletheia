@@ -119,15 +119,17 @@ def test_layer3_surfaces_serenity_id():
 @spec_claim(
     SpecClaim(
         "SA-S05", _CONTRACT, "§3.2 pending_signals carry opportunity_id for direct attribution", "L2a",
-        "trading_context pending_signals query selects opportunity_id + signal_source "
+        "trading_context unresolved pending queue selects opportunity_id + signal_source "
         "columns — the direct attribution path that bypasses layer3 limit=5 truncation",
     ),
 )
 def test_pending_signals_carry_opportunity_id():
     src = _TRADING_CONTEXT.read_text(encoding="utf-8")
-    # Find the Phase 4b block and verify the SQL query includes opportunity_id
-    phase4b_idx = src.index("Phase 4b")
-    region = src[phase4b_idx:phase4b_idx + 600]
+    # The query lives in a dedicated queue helper so prompt construction and queue
+    # accounting cannot drift into separate implementations.
+    helper_idx = src.index("def _build_pending_signal_queue")
+    helper_end = src.index("\ndef ", helper_idx + 1)
+    region = src[helper_idx:helper_end]
     assert "opportunity_id" in region, (
         "pending_signals query does not SELECT opportunity_id — serenity attribution "
         "relies on layer3 limit=5 which silently truncates promoted opps"
@@ -151,6 +153,32 @@ def test_pending_signal_direct_match_bypasses_layer3():
         TradingDecision,
         _attach_opportunity_context,
     )
+    from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
+    from aletheia.storage.repositories import (
+        insert_pi_decision,
+        insert_serenity_opportunity,
+        insert_serenity_theme,
+    )
+
+    theme = SerenityTheme(id="ser-direct-theme", name="direct attribution source")
+    insert_serenity_theme(theme)
+    source = SerenityOpportunity(
+        id="ser-direct-111",
+        theme_id=theme.id,
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+    )
+    insert_serenity_opportunity(source)
+    insert_pi_decision(PiDecision(
+        id="pending-ser-direct-111",
+        action="signal_pending",
+        opportunity_id=source.id,
+        signal_source="serenity",
+        symbol=source.symbol,
+        direction=source.direction,
+        market_type=source.market_type,
+    ))
 
     decision = TradingDecision(
         action="trade", symbol="BTC/USDT", direction="long", conviction=70, reasoning="x"
@@ -158,9 +186,10 @@ def test_pending_signal_direct_match_bypasses_layer3():
     ctx = {
         "layer1": {"opportunities": []},
         "layer2": {
-            "pending_signals": [
-                {"symbol": "BTC/USDT", "direction": "long",
-                 "opportunity_id": "ser-direct-111", "signal_source": "serenity",
+                "pending_signals": [
+                    {"symbol": "BTC/USDT", "direction": "long",
+                     "market_type": "spot",
+                     "opportunity_id": "ser-direct-111", "signal_source": "serenity",
                  "reasoning": "auto-promote", "at": "2026-07-01T12:00:00"}
             ]
         },
@@ -191,7 +220,7 @@ def test_serenity_pick_backfills_id_and_source():
     )
 
     decision = TradingDecision(
-        action="trade", symbol="NVDA", direction="long", conviction=70, reasoning="x"
+        action="skip", symbol="NVDA", direction="long", conviction=70, reasoning="x"
     )
     ctx = {
         "layer1": {"opportunities": []},  # no market_observer match
@@ -224,7 +253,7 @@ def test_market_observer_precedence_over_serenity():
     )
 
     decision = TradingDecision(
-        action="trade", symbol="NVDA", direction="long", conviction=70, reasoning="x"
+        action="skip", symbol="NVDA", direction="long", conviction=70, reasoning="x"
     )
     ctx = {
         "layer1": {
@@ -263,13 +292,40 @@ def test_market_observer_precedence_over_serenity():
 )
 def test_signal_source_round_trips_through_record_decision():
     from aletheia.agent_shell.reflection import record_decision
-    from aletheia.storage.repositories import list_pi_decisions
+    from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
+    from aletheia.storage.repositories import (
+        insert_pi_decision,
+        insert_serenity_opportunity,
+        insert_serenity_theme,
+        list_pi_decisions,
+    )
+
+    theme = SerenityTheme(id="ser-roundtrip-theme", name="roundtrip source")
+    insert_serenity_theme(theme)
+    source = SerenityOpportunity(
+        id="ser-aaa111",
+        theme_id=theme.id,
+        symbol="NVDA",
+        direction="long",
+        market_type="spot",
+    )
+    insert_serenity_opportunity(source)
+    insert_pi_decision(PiDecision(
+        id="pending-ser-aaa111",
+        action="signal_pending",
+        opportunity_id=source.id,
+        signal_source="serenity",
+        symbol=source.symbol,
+        direction=source.direction,
+        market_type=source.market_type,
+    ))
 
     record_decision(
         {
             "action": "trade",
             "symbol": "NVDA",
             "direction": "long",
+            "market_type": "spot",
             "conviction": 70,
             "reasoning": "serenity thesis",
             "proposal_id": None,

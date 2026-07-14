@@ -131,8 +131,12 @@ export default function RiskControls() {
   const notionalCap = Number(isLive ? b.max_live_position_notional_usdt : b.max_demo_position_notional_usdt) || null
   const dailyLossPct = Number(b.max_daily_loss_pct) || null
   const dailyLossCapUsdt = (dailyLossPct != null && equity > 0) ? equity * dailyLossPct / 100 : null
-  const todayPnl = Number((portfolio as any)?.today_pnl) || 0
-  const todayLoss = todayPnl < 0 ? Math.abs(todayPnl) : 0
+  const todayPnlRaw = (portfolio as any)?.today_pnl
+  const todayPnlParsed = todayPnlRaw == null ? null : Number(todayPnlRaw)
+  const todayPnl = todayPnlParsed != null && Number.isFinite(todayPnlParsed)
+    ? todayPnlParsed
+    : null
+  const todayLoss = todayPnl == null ? null : todayPnl < 0 ? Math.abs(todayPnl) : 0
   // positions API has no notional field — derive from quantity × current_price, open only.
   const largestPos = (positions as any[]).reduce((m, p) => {
     if (p?.status && p.status !== 'open') return m
@@ -145,7 +149,7 @@ export default function RiskControls() {
     posCap != null && { label: 'Open positions', used: positionsCount, cap: posCap, fmtUsed: (v: number) => String(Math.round(v)), fmtCap: (v: number) => String(Math.round(v)) },
     notionalCap != null && { label: 'Largest position', used: largestPos, cap: notionalCap, fmtUsed: (v: number) => `$${v.toFixed(1)}`, fmtCap: (v: number) => `$${v.toFixed(0)}` },
     dailyLossCapUsdt != null && { label: 'Daily loss', used: todayLoss, cap: dailyLossCapUsdt, fmtUsed: (v: number) => `$${v.toFixed(1)}`, fmtCap: (v: number) => `$${v.toFixed(0)}` },
-  ].filter(Boolean) as { label: string; used: number; cap: number; fmtUsed: (v: number) => string; fmtCap: (v: number) => string }[]
+  ].filter(Boolean) as { label: string; used: number | null; cap: number; fmtUsed: (v: number) => string; fmtCap: (v: number) => string }[]
 
   const fnl = funnel?.risk_decisions
   const topRejection = fnl?.top_rejection_reasons?.[0]
@@ -309,16 +313,16 @@ export default function RiskControls() {
               <div className="risk-section-label">Headroom · {humanize(exchangeMode)}</div>
               <div className="headroom-list">
                 {headroomRows.map(row => {
-                  const pct = row.cap > 0 ? (row.used / row.cap) * 100 : 0
-                  const tone = pct >= 100 ? 'crit' : pct >= 70 ? 'warn' : 'ok'
-                  const w = Math.min(100, Math.max(2, pct))
+                  const pct = row.used != null && row.cap > 0 ? (row.used / row.cap) * 100 : null
+                  const tone = pct == null ? 'warn' : pct >= 100 ? 'crit' : pct >= 70 ? 'warn' : 'ok'
+                  const w = pct == null ? 0 : Math.min(100, Math.max(2, pct))
                   return (
                     <div key={row.label} className="headroom-row">
                       <span className="headroom-label">{row.label}</span>
                       <span className="headroom-bar-track">
                         <Meter pct={w} className={`headroom-bar-fill ${tone}`} />
                       </span>
-                      <span className="headroom-val mono">{row.fmtUsed(row.used)} <span className="risk-faint">/ {row.fmtCap(row.cap)}</span></span>
+                      <span className="headroom-val mono">{row.used == null ? 'Unavailable' : row.fmtUsed(row.used)} <span className="risk-faint">/ {row.fmtCap(row.cap)}</span></span>
                     </div>
                   )
                 })}

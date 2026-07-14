@@ -6,7 +6,7 @@ under provider contention each call can run to the 60s provider timeout, so a la
 universe blows the 240s job timeout → _run_async_with_timeout cancels the coroutine
 mid-flight → the daemon thread is abandoned and LEAKS, starving the frontdoor.
 Two fixes, locked here:
-  GS-S01  market_observer caps the per-instrument loop wall-clock BELOW the job timeout.
+  GS-S01  market_observer uses one run deadline, including prefetch, below job timeout.
   GS-B01  llm_structured retries ONCE on a parse failure (recovers prose-prefixed JSON).
   GS-B02  llm_structured does NOT retry on empty content (reasoning-budget exhaustion).
 
@@ -21,6 +21,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
@@ -30,15 +32,15 @@ _CONTRACT = "gateway_stability_contract"
 
 
 # ---------------------------------------------------------------------------
-# GS-S01 — market_observer loop wall-clock budget < job timeout
+# GS-S01 — one market_observer run budget (including prefetch) < job timeout
 # ---------------------------------------------------------------------------
 
 @spec_claim(
     SpecClaim(
         "GS-S01", _CONTRACT, "§wall-clock budget", "L2a",
-        "market_observer caps its per-instrument loop wall-clock strictly below the "
-        "scheduler job timeout, and breaks out when the budget is hit — so the "
-        "coroutine returns before cancellation and the daemon thread is not abandoned.",
+        "market_observer uses one wall-clock deadline across prefetch and the serial "
+        "instrument loop, strictly below the scheduler timeout; prefetch may consume "
+        "only the remaining budget so teardown keeps an explicit safety margin.",
     ),
 )
 def test_market_observer_loop_has_wallclock_budget():
@@ -48,9 +50,17 @@ def test_market_observer_loop_has_wallclock_budget():
     assert mo._MARKET_OBSERVER_LOOP_BUDGET_SEC < mo._MARKET_OBSERVER_JOB_TIMEOUT_S, (
         "loop budget must be strictly below the job timeout to avoid mid-flight cancel"
     )
+    assert (
+        mo._MARKET_OBSERVER_JOB_TIMEOUT_S
+        - mo._MARKET_OBSERVER_LOOP_BUDGET_SEC
+        == mo._MARKET_OBSERVER_TEARDOWN_MARGIN_SEC
+    ), "observer budget must reserve its declared teardown margin"
     src = _MARKET_OBS.read_text(encoding="utf-8")
-    assert "_loop_deadline" in src and "loop_budget_exceeded" in src, (
-        "per-instrument loop must check a wall-clock deadline and break with a logged reason"
+    assert "_run_deadline" in src and "loop_budget_exceeded" in src, (
+        "the observer must check one run deadline and break with a logged reason"
+    )
+    assert "_gather_prefetch_with_deadline" in src and "asyncio.wait_for" in src, (
+        "parallel prefetch must be bounded by the remaining run deadline"
     )
     # The job-timeout hint must match the scheduler's actual configured value.
     from aletheia.agent_runtime.scheduler import _ASYNC_JOB_TIMEOUT_SEC
@@ -82,9 +92,9 @@ def test_market_observer_has_module_logger():
 @spec_claim(
     SpecClaim(
         "GS-S03", _CONTRACT, "§bounded-loop fairness", "L2b",
-        "When the market-observer budget skips instruments, the next cycle begins "
-        "from the durable successor of the last completed instrument; cancellation "
-        "does not advance the cursor.",
+        "Signal priority keeps the durable next instrument as a mandatory prefix. "
+        "After a bounded run, the cursor advances only through the completed canonical "
+        "prefix, so a skipped low-score instrument is boundedly reachable.",
     ),
 )
 def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
@@ -93,6 +103,8 @@ def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
     assert rotate_from_next(["a", "b", "c"], next_key="b", key=str) == ["b", "c", "a"]
     source = _MARKET_OBS.read_text(encoding="utf-8")
     assert "DurableRoundRobin" in source
+    assert "_fair_signal_order" in source
+    assert "_advance_completed_round_robin_prefix" in source
     assert "completed_attempt" in source
     assert "if completed_attempt:" in source
 
@@ -422,3 +434,239 @@ def test_bounded_caps_hanging_collector():
     assert r_hang is None, "hanging collector must be capped to None"
     assert elapsed < 3.0, f"hang must be cut at ~1s cap, took {elapsed:.1f}s"
     assert r_skip is None, "past-deadline collector must be skipped"
+
+
+@spec_claim(
+    SpecClaim(
+        "GS-B09",
+        _CONTRACT,
+        "§collector persistence truthfulness",
+        "L2b",
+        "When the derivatives collector returns funding or open-interest data but its "
+        "repository write fails, derivatives health is failed with a stable code and "
+        "the enclosing data_collectors job reports a partial failure, never success.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize(
+    ("payload_key", "repo_method", "snapshot", "error_code"),
+    [
+        (
+            "funding",
+            "insert_funding_rate_snapshot",
+            "funding",
+            "derivatives_funding_persist_failed",
+        ),
+        (
+            "open_interest",
+            "insert_open_interest_snapshot",
+            "open_interest",
+            "derivatives_open_interest_persist_failed",
+        ),
+    ],
+)
+def test_derivatives_persistence_failure_degrades_domain_and_job(
+    monkeypatch, payload_key, repo_method, snapshot, error_code
+):
+    from aletheia.agent_runtime import scheduler as sch
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data.collectors.derivatives import DerivativesCollector
+    from aletheia.data.collectors.microstructure import MicrostructureCollector
+    from aletheia.data.models import FundingRateSnapshot, OpenInterestSnapshot
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.storage import repositories as repo
+
+    observed_at = "2026-01-01T00:00:00+00:00"
+    snapshots = {
+        "funding": FundingRateSnapshot(
+            symbol="BTC/USDT",
+            exchange="binance",
+            funding_rate=0.0001,
+            funding_rate_annualized=0.1095,
+            observed_at=observed_at,
+        ),
+        "open_interest": OpenInterestSnapshot(
+            symbol="BTC/USDT",
+            exchange="binance",
+            open_interest_usd=1_000_000.0,
+            observed_at=observed_at,
+        ),
+    }
+    instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
+    health: list[tuple[str, str, str | None]] = []
+
+    async def collect_microstructure(_self, _instruments):
+        return {"snapshots": [], "errors": []}
+
+    async def collect_derivatives(_self, _symbols):
+        return {
+            "funding": [snapshots[snapshot]] if payload_key == "funding" else [],
+            "open_interest": (
+                [snapshots[snapshot]] if payload_key == "open_interest" else []
+            ),
+            "liquidations": [],
+            "errors": [],
+        }
+
+    def fail_persist(_row):
+        raise RuntimeError("forced repository outage")
+
+    monkeypatch.setattr(sch, "_get_observed_instruments", lambda _cfg: [instrument])
+    monkeypatch.setattr(
+        sch, "_get_derivative_symbols", lambda _instruments: ["BTC/USDT"]
+    )
+    monkeypatch.setattr(MicrostructureCollector, "collect", collect_microstructure)
+    monkeypatch.setattr(DerivativesCollector, "collect", collect_derivatives)
+    monkeypatch.setattr(repo, "insert_orderbook_snapshot", lambda _row: None)
+    monkeypatch.setattr(repo, "insert_funding_rate_snapshot", lambda _row: None)
+    monkeypatch.setattr(repo, "insert_open_interest_snapshot", lambda _row: None)
+    monkeypatch.setattr(repo, "insert_liquidation_event", lambda _row: None)
+    monkeypatch.setattr(repo, repo_method, fail_persist)
+    monkeypatch.setattr(
+        sch,
+        "_record_collector_health",
+        lambda label, status, **kwargs: health.append(
+            (label, status, kwargs.get("error_code"))
+        ),
+    )
+
+    result = asyncio.run(sch._async_data_collectors(AletheiaConfig(), tick=2))
+
+    assert result == {"status": "partial", "error_codes": [error_code]}
+    derivative_health = [row for row in health if row[0] == "derivatives"]
+    assert derivative_health == [("derivatives", "failed", error_code)]
+
+    job_events: list[tuple[str, str]] = []
+
+    def return_partial(_job_id, awaitable):
+        awaitable.close()
+        return result
+
+    monkeypatch.setattr(sch, "load_config", lambda: AletheiaConfig())
+    monkeypatch.setattr(sch, "_run_async_with_timeout", return_partial)
+    monkeypatch.setattr(sch, "_DC_TICK", 0)
+    monkeypatch.setattr(
+        sch,
+        "_record_job_success",
+        lambda job_id: job_events.append(("success", job_id)),
+    )
+    monkeypatch.setattr(
+        sch,
+        "_record_job_failure",
+        lambda job_id, code: job_events.append(("failure", f"{job_id}:{code}")),
+    )
+
+    sch._run_data_collectors()
+
+    assert job_events == [("failure", f"data_collectors:{error_code}")]
+
+
+@spec_claim(
+    SpecClaim(
+        "GS-B10",
+        _CONTRACT,
+        "§universe refresh truthfulness",
+        "L2b",
+        "An enabled Universe refresh that returns no snapshot is logged and counted as "
+        "universe_refresh_no_snapshot failure, not completed_no_snapshot success.",
+        status="implemented",
+    ),
+)
+def test_universe_refresh_none_is_agent_and_scheduler_failure(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import scheduler as sch
+    from aletheia.files import jsonl
+    from aletheia.universe.service import UniverseService
+
+    logs: list[dict] = []
+    job_events: list[tuple[str, str]] = []
+
+    async def no_snapshot(_self):
+        return None
+
+    def run_inline(_job_id, awaitable):
+        return asyncio.run(awaitable)
+
+    monkeypatch.setattr(UniverseService, "refresh", no_snapshot)
+    monkeypatch.setattr(jsonl, "write_agent_run_log", logs.append)
+    monkeypatch.setattr(
+        sch,
+        "load_config",
+        lambda: SimpleNamespace(
+            runtime=SimpleNamespace(paused=False),
+            universe=SimpleNamespace(enabled=True),
+        ),
+    )
+    monkeypatch.setattr(sch, "_run_async_with_timeout", run_inline)
+    monkeypatch.setattr(sch, "_cleanup_stale_scanner_runs", lambda: None)
+    monkeypatch.setattr(
+        sch,
+        "_record_job_success",
+        lambda job_id: job_events.append(("success", job_id)),
+    )
+    monkeypatch.setattr(
+        sch,
+        "_record_job_failure",
+        lambda job_id, code: job_events.append(("failure", f"{job_id}:{code}")),
+    )
+
+    sch._run_universe_refresh()
+
+    assert len(logs) == 1
+    assert logs[0]["status"] == "failed"
+    assert logs[0]["outputs_created"] == []
+    assert logs[0]["errors"] == ["universe_refresh_no_snapshot"]
+    assert job_events == [
+        ("failure", "universe_refresh:universe_refresh_no_snapshot")
+    ]
+
+
+@spec_claim(
+    SpecClaim(
+        "GS-B11",
+        _CONTRACT,
+        "§scheduled agent result truthfulness",
+        "L2b",
+        "The shared scheduled-agent adapter raises a stable failure when run_agent "
+        "returns completed_with_errors or a non-empty errors list; a clean completed "
+        "result remains successful.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize(
+    "agent_result",
+    [
+        {"status": "completed_with_errors", "errors": ["provider unavailable"]},
+        {"status": "completed", "errors": ["downstream write failed"]},
+    ],
+)
+def test_async_run_rejects_agent_reported_errors(monkeypatch, agent_result):
+    from aletheia.agent_runtime import orchestrator
+    from aletheia.agent_runtime import scheduler as sch
+
+    async def report_errors(_agent_name, *, trigger_type):
+        assert trigger_type == "scheduled"
+        return agent_result
+
+    monkeypatch.setattr(orchestrator, "run_agent", report_errors)
+
+    with pytest.raises(
+        RuntimeError, match=r"^scheduled_agent_reported_errors:paper_trader$"
+    ):
+        asyncio.run(sch._async_run("paper_trader"))
+
+
+def test_async_run_preserves_clean_completed_result(monkeypatch):
+    from aletheia.agent_runtime import orchestrator
+    from aletheia.agent_runtime import scheduler as sch
+
+    clean = {"status": "completed", "errors": [], "outputs": ["queued:1"]}
+
+    async def report_success(_agent_name, *, trigger_type):
+        assert trigger_type == "scheduled"
+        return clean
+
+    monkeypatch.setattr(orchestrator, "run_agent", report_success)
+
+    assert asyncio.run(sch._async_run("paper_trader")) == clean

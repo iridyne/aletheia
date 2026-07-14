@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import math
+import sqlite3
 from typing import Any, Literal
 
 
@@ -30,6 +31,7 @@ OUTCOME_EXCLUSION_REASONS = frozenset({
     "administrative_close",
     "maintenance_close",
     "not_marked_eligible",
+    "unverified_entry_fill",
     "unverified_exit_fill",
     "unverified_exit_price_source",
     "unknown_close_category",
@@ -39,20 +41,33 @@ OUTCOME_EXCLUSION_REASONS = frozenset({
     "missing_close_time",
     "missing_outcome_identity",
     "incomplete_realized_economics",
+    "incomplete_funding_economics",
     "pre_clean_window",
     "incident_window",
     "missing_attribution",
+    "attribution_read_failed",
 })
 
 _VERIFIED_EXIT_PRICE_SOURCES = frozenset({"broker_fill", "local_fill"})
+_BROKER_LEDGER_EXECUTION_MODES = frozenset({
+    "bitget_demo",
+    "bitget_live_limited",
+    "okx_demo",
+    "okx_live_limited",
+    "binance_testnet",
+    "binance_live_limited",
+})
 _STRUCTURED_KEYS = frozenset({
     "close_category",
+    "entry_price_source",
+    "entry_fill_verified",
     "exit_price_source",
     "exit_fill_verified",
     "outcome_eligible",
     "outcome_exclusion_reason",
     "outcome_semantics_version",
 })
+_FILTER_UNSET = object()
 
 
 @dataclass(frozen=True)
@@ -79,6 +94,151 @@ class OutcomeAssessment:
     horizon: str | None = None
     net_return_pct: float | None = None
     source: str | None = None
+
+
+class AttributionReadError(RuntimeError):
+    """The attribution chain could not be read, so absence is not proven."""
+
+
+def validated_funding_economics(
+    *,
+    market_type: Any,
+    execution_mode: Any,
+    funding_cost: Any,
+    funding_source: Any,
+) -> tuple[float | None, str]:
+    """Return funding only when its provenance matches the account boundary.
+
+    A numeric value alone is not evidence. Local paper futures can only use the
+    local simulation ledger; exchange-backed demo/live futures can only use the
+    broker ledger. Unknown execution modes fail closed rather than inheriting a
+    plausible-looking source label.
+    """
+    market = _normalize(market_type)
+    mode = _normalize(execution_mode)
+    source = _normalize(funding_source)
+    parsed_cost = _to_float(funding_cost)
+
+    if market == "spot":
+        if (
+            parsed_cost is not None
+            and abs(parsed_cost) <= 1e-12
+            and source == "not_applicable"
+        ):
+            return 0.0, "not_applicable"
+        return None, "unavailable"
+
+    if market != "usdt_futures" or parsed_cost is None:
+        return None, "unavailable"
+    if mode == "paper_internal" and source == "local_simulation":
+        return parsed_cost, source
+    if mode in _BROKER_LEDGER_EXECUTION_MODES and source == "broker_ledger":
+        return parsed_cost, source
+    return None, "unavailable"
+
+
+def outcome_write_eligibility(
+    row: dict[str, Any], *, exit_fill_verified: bool
+) -> tuple[bool, str]:
+    """Evaluate the exact prospective row that a close producer will persist.
+
+    Producers pass the complete closed Position, including realized economics,
+    close time, evidence sources, and semantics version.  The temporary positive
+    marker lets the shared read-side evaluator test every other requirement; its
+    final answer is then persisted and is the only authority for outcome hooks.
+    """
+    try:
+        attribution_complete = attribution_chain_complete(row)
+    except AttributionReadError:
+        return False, "attribution_read_failed"
+    prospective = {
+        **row,
+        "exit_fill_verified": exit_fill_verified,
+        "outcome_eligible": True,
+        "outcome_exclusion_reason": "eligible",
+        "_attribution_complete": attribution_complete,
+    }
+    assessment = assess_reportable_outcome(prospective)
+    return assessment.eligible, assessment.reason
+
+
+def attribution_chain_complete(row: dict[str, Any]) -> bool:
+    """Prove that every entry leg names the Position's relational chain.
+
+    Producer-side hooks run immediately after commit, before the read cohort has
+    a chance to reject a mismatched backlink.  Therefore a Position cannot be
+    marked feedback-eligible merely because three UUID-shaped strings exist or
+    because only its first Order matches.  Any additional non-close Order linked
+    to the Position must use the same Proposal and Opportunity.
+    """
+    position_id = str(row.get("position_id") or row.get("id") or "").strip()
+    proposal_id = str(row.get("proposal_id") or "").strip()
+    order_id = str(row.get("order_id") or "").strip()
+    opportunity_id = str(row.get("opportunity_id") or "").strip()
+    if not position_id or not proposal_id or not order_id or not opportunity_id:
+        return False
+    from aletheia.storage.sqlite import get_db
+
+    try:
+        matched = get_db().execute(
+            """
+            SELECT CASE WHEN
+                EXISTS (
+                    SELECT 1
+                    FROM orders o
+                    JOIN trade_proposals tp ON tp.id = ?
+                    WHERE o.id = ?
+                      AND o.position_id = ?
+                      AND o.proposal_id = tp.id
+                      AND (
+                          o.close_reason IS NULL
+                          OR trim(o.close_reason) = ''
+                      )
+                      AND tp.opportunity_id = ?
+                      AND (
+                          EXISTS (
+                              SELECT 1 FROM opportunities op WHERE op.id = ?
+                          )
+                          OR EXISTS (
+                              SELECT 1 FROM serenity_opportunities sop
+                              WHERE sop.id = ?
+                          )
+                      )
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM orders leg
+                    LEFT JOIN trade_proposals leg_tp ON leg_tp.id = leg.proposal_id
+                    WHERE leg.position_id = ?
+                      AND (
+                          leg.close_reason IS NULL
+                          OR trim(leg.close_reason) = ''
+                      )
+                      AND (
+                          leg.proposal_id IS NULL
+                          OR leg.proposal_id <> ?
+                          OR leg_tp.id IS NULL
+                          OR leg_tp.opportunity_id IS NULL
+                          OR leg_tp.opportunity_id <> ?
+                      )
+                )
+            THEN 1 ELSE 0 END
+            """,
+            (
+                proposal_id,
+                order_id,
+                position_id,
+                opportunity_id,
+                opportunity_id,
+                opportunity_id,
+                position_id,
+                proposal_id,
+                opportunity_id,
+            ),
+        ).fetchone()
+    except sqlite3.DatabaseError as exc:
+        raise AttributionReadError(str(exc)) from exc
+    return matched is not None and bool(matched[0])
 
 
 def classify_closure(row: dict[str, Any]) -> ClosureSemantics:
@@ -138,6 +298,11 @@ def assess_position_closure(row: dict[str, Any]) -> OutcomeAssessment:
     if not closure.eligible:
         return _assessment_from_closure(closure)
 
+    if not _to_bool(row.get("entry_fill_verified")) or _normalize(
+        row.get("entry_price_source")
+    ) not in _VERIFIED_EXIT_PRICE_SOURCES:
+        return _assessment_from_closure(closure, reason="unverified_entry_fill")
+
     if not row.get("closed_at"):
         return _assessment_from_closure(closure, reason="missing_close_time")
     key = row.get("position_id") or row.get("id")
@@ -145,11 +310,82 @@ def assess_position_closure(row: dict[str, Any]) -> OutcomeAssessment:
         return _assessment_from_closure(closure, reason="missing_outcome_identity")
     pnl = _to_float(row.get("realized_pnl"))
     entry = _to_float(row.get("entry_price"))
+    exit_price = _to_float(
+        row.get("current_price")
+        if row.get("current_price") is not None
+        else row.get("exit_price")
+    )
     quantity = _to_float(row.get("quantity"))
-    if pnl is None or entry is None or quantity is None or entry <= 0 or quantity <= 0:
+    entry_fee = _to_float(row.get("entry_fee"))
+    exit_fee = _to_float(row.get("exit_fee"))
+    if (
+        pnl is None
+        or entry is None
+        or exit_price is None
+        or quantity is None
+        or entry_fee is None
+        or exit_fee is None
+        or entry <= 0
+        or exit_price <= 0
+        or quantity <= 0
+        or entry_fee < 0
+        or exit_fee < 0
+    ):
         return _assessment_from_closure(
             closure, reason="incomplete_realized_economics"
         )
+
+    market_type = _normalize(row.get("market_type"))
+    if market_type not in {"spot", "usdt_futures"}:
+        return _assessment_from_closure(
+            closure, reason="incomplete_realized_economics"
+        )
+    funding_cost, _funding_source = validated_funding_economics(
+        market_type=market_type,
+        execution_mode=row.get("execution_mode"),
+        funding_cost=row.get("funding_cost"),
+        funding_source=row.get("funding_source"),
+    )
+    if funding_cost is None:
+        return _assessment_from_closure(
+            closure, reason="incomplete_funding_economics"
+        )
+
+    direction = _normalize(row.get("direction"))
+    if direction in {"long", "buy"}:
+        gross = (exit_price - entry) * quantity
+    elif direction in {"short", "sell"}:
+        gross = (entry - exit_price) * quantity
+    else:
+        return _assessment_from_closure(
+            closure, reason="incomplete_realized_economics"
+        )
+    expected_pnl = gross - entry_fee - exit_fee - funding_cost
+    tolerance = max(1e-8, abs(expected_pnl) * 1e-8, entry * quantity * 1e-10)
+    if abs(pnl - expected_pnl) > tolerance:
+        return _assessment_from_closure(
+            closure, reason="incomplete_realized_economics"
+        )
+
+    has_attribution_ids = all(
+        str(row.get(field) or "").strip()
+        for field in ("proposal_id", "order_id", "opportunity_id")
+    )
+    marker_was_injected = (
+        "_attribution_complete" in row
+        and row.get("_attribution_complete") is not None
+    )
+    if marker_was_injected:
+        attribution_complete = _to_bool(row.get("_attribution_complete"))
+    else:
+        try:
+            attribution_complete = attribution_chain_complete(row)
+        except AttributionReadError:
+            return _assessment_from_closure(
+                closure, reason="attribution_read_failed"
+            )
+    if not has_attribution_ids or not attribution_complete:
+        return _assessment_from_closure(closure, reason="missing_attribution")
     return _assessment_from_closure(
         closure,
         outcome_key=f"position:{key}",
@@ -174,6 +410,7 @@ def assess_reportable_outcome(row: dict[str, Any]) -> OutcomeAssessment:
 def raw_account_events(
     *,
     execution_mode: str | None = None,
+    strategy_id: Any = _FILTER_UNSET,
     closed_after: str | None = None,
     closed_before: str | None = None,
     limit: int = 10_000,
@@ -183,21 +420,74 @@ def raw_account_events(
         raise ValueError("limit must be between 1 and 10000")
     from aletheia.storage.sqlite import get_db
 
-    conditions = ["status = 'closed'"]
+    conditions = ["p.status = 'closed'"]
     params: list[object] = []
     if execution_mode is not None:
-        conditions.append("execution_mode = ?")
+        conditions.append("p.execution_mode = ?")
         params.append(execution_mode)
+    if strategy_id is not _FILTER_UNSET:
+        if strategy_id is None:
+            conditions.append("p.strategy_id IS NULL")
+        else:
+            conditions.append("p.strategy_id = ?")
+            params.append(str(strategy_id))
     if closed_after is not None:
-        conditions.append("datetime(closed_at) >= datetime(?)")
+        conditions.append("datetime(p.closed_at) >= datetime(?)")
         params.append(closed_after)
     if closed_before is not None:
-        conditions.append("datetime(closed_at) < datetime(?)")
+        conditions.append("datetime(p.closed_at) < datetime(?)")
         params.append(closed_before)
     params.append(limit)
     rows = get_db().execute(
-        "SELECT * FROM positions WHERE " + " AND ".join(conditions)
-        + " ORDER BY datetime(closed_at) ASC, id ASC LIMIT ?",
+        """
+        SELECT recent.* FROM (
+        SELECT p.*,
+               CASE WHEN EXISTS (
+                   SELECT 1
+                   FROM orders o
+                   JOIN trade_proposals tp ON tp.id = p.proposal_id
+                   WHERE o.id = p.order_id
+                     AND o.position_id = p.id
+                     AND o.proposal_id = p.proposal_id
+                     AND (
+                         o.close_reason IS NULL
+                         OR trim(o.close_reason) = ''
+                     )
+                     AND p.opportunity_id IS NOT NULL
+                     AND tp.opportunity_id = p.opportunity_id
+                     AND (
+                         EXISTS (
+                             SELECT 1 FROM opportunities op
+                             WHERE op.id = p.opportunity_id
+                         )
+                         OR EXISTS (
+                             SELECT 1 FROM serenity_opportunities sop
+                             WHERE sop.id = p.opportunity_id
+                         )
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1
+                         FROM orders leg
+                         LEFT JOIN trade_proposals leg_tp
+                           ON leg_tp.id = leg.proposal_id
+                         WHERE leg.position_id = p.id
+                           AND (
+                               leg.close_reason IS NULL
+                               OR trim(leg.close_reason) = ''
+                           )
+                           AND (
+                               leg.proposal_id IS NULL
+                               OR leg.proposal_id <> p.proposal_id
+                               OR leg_tp.id IS NULL
+                               OR leg_tp.opportunity_id IS NULL
+                               OR leg_tp.opportunity_id <> p.opportunity_id
+                           )
+                     )
+               ) THEN 1 ELSE 0 END AS _attribution_complete
+        FROM positions p
+        WHERE """ + " AND ".join(conditions)
+        + " ORDER BY datetime(p.closed_at) DESC, p.id DESC LIMIT ?"
+        + ") AS recent ORDER BY datetime(recent.closed_at) ASC, recent.id ASC",
         params,
     ).fetchall()
     return [dict(row) for row in rows]

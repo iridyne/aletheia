@@ -18,8 +18,8 @@ from tests.test_entry_logic import setup_env
 
 def test_r0_opportunity_id_flows_opportunity_to_decision(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.storage.models import Opportunity
-    from aletheia.storage.repositories import insert_opportunity
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
 
     opp = Opportunity(
         symbol="BTC/USDT", market="spot", direction_bias="long",
@@ -27,6 +27,14 @@ def test_r0_opportunity_id_flows_opportunity_to_decision(tmp_path, monkeypatch):
         status="open", asset_class="crypto",
     )
     insert_opportunity(opp)
+    insert_pi_decision(PiDecision(
+        symbol=opp.symbol,
+        direction=opp.direction_bias,
+        market_type=opp.market,
+        action="signal_pending",
+        opportunity_id=opp.id,
+        signal_source="market_observer",
+    ))
 
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
     ctx = build_enriched_trading_context()
@@ -113,7 +121,7 @@ def test_ranker_candidate_context_backfills_opportunity_id():
         "layer3": {},
     }
     decision = TradingDecision(
-        action="trade", symbol="UNI/USDT", direction="long",
+        action="skip", symbol="UNI/USDT", direction="long",
         conviction=60, reasoning="ranker candidate looks best",
     )
 
@@ -125,9 +133,88 @@ def test_ranker_candidate_context_backfills_opportunity_id():
     assert decision.market_type == "usdt_futures"
 
 
-def test_close_decision_backfills_from_open_position_when_symbol_omitted():
-    """Close/reduce decisions judge an existing position and can inherit its chain."""
+def test_reviewed_opportunity_roundtrips_through_market_pending_signal(tmp_path, monkeypatch):
+    """A consumed opportunity remains attributable through its signal_pending carrier.
+
+    paper_trader intentionally marks the source row reviewed after enqueueing it, so
+    Layer 1 and the ranker no longer expose that row.  The queued PiDecision must be
+    sufficient for the System Operator to recover the original attribution fields.
+    """
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+
+    opp = Opportunity(
+        symbol="AVAX/USDT",
+        market="usdt_futures",
+        direction_bias="short",
+        scanner_family="short_bias",
+        linked_strategy_id="strategy-short-bias",
+        metadata='{"learning_candidate_key":"candidate-avax-short"}',
+        confidence="high",
+        confidence_score=82,
+        status="reviewed",
+        asset_class="crypto",
+    )
+    insert_opportunity(opp)
+    insert_pi_decision(PiDecision(
+        symbol=opp.symbol,
+        direction=opp.direction_bias,
+        market_type=opp.market,
+        action="signal_pending",
+        conviction=opp.confidence_score or 0,
+        reasoning="queued by paper trader",
+        opportunity_id=opp.id,
+        signal_source="market_observer",
+    ))
+    competing = Opportunity(
+        symbol=opp.symbol,
+        market=opp.market,
+        direction_bias=opp.direction_bias,
+        scanner_family="momentum",
+        confidence="high",
+        confidence_score=90,
+        status="open",
+        asset_class="crypto",
+    )
+    insert_opportunity(competing)
+
+    from aletheia.agent_shell.trading_context import build_enriched_trading_context
     from aletheia.agent_shell.trading_decision import TradingDecision, _attach_opportunity_context
+
+    ctx = build_enriched_trading_context()
+    assert all(row.get("id") != opp.id for row in ctx["layer1"]["opportunities"])
+    assert any(row.get("id") == competing.id for row in ctx["layer1"]["opportunities"])
+    pending = next(
+        row for row in ctx["layer2"]["pending_signals"]
+        if row.get("opportunity_id") == opp.id
+    )
+    assert pending["signal_source"] == "market_observer"
+
+    decision = TradingDecision(
+        action="trade",
+        symbol=opp.symbol,
+        direction=opp.direction_bias,
+        conviction=75,
+        reasoning="act on the queued short signal",
+    )
+    _attach_opportunity_context(decision, ctx)
+
+    assert decision.opportunity_id == opp.id
+    assert decision.signal_source == "market_observer"
+    assert decision.scanner_family == "short_bias"
+    assert decision.strategy_id == "strategy-short-bias"
+    assert decision.learning_candidate_key == "candidate-avax-short"
+    assert decision.market_type == "usdt_futures"
+
+
+def test_unsupported_close_is_skip_and_does_not_bind_an_open_position():
+    """The entry Operator cannot disguise an unimplemented close as a real action."""
+    from aletheia.agent_shell.trading_decision import (
+        _attach_opportunity_context,
+        _parse_decision,
+    )
 
     ctx = {
         "layer1": {
@@ -145,20 +232,25 @@ def test_close_decision_backfills_from_open_position_when_symbol_omitted():
         "layer2": {},
         "layer3": {},
     }
-    decision = TradingDecision(
-        action="close", symbol=None, direction=None, conviction=72,
-        reasoning="NEAR/USDT short is underwater and thesis failed",
-    )
+    decision = _parse_decision({
+        "action": "close",
+        "symbol": None,
+        "direction": None,
+        "conviction": 72,
+        "reasoning": "NEAR/USDT short is underwater and thesis failed",
+    })
 
     _attach_opportunity_context(decision, ctx)
 
-    assert decision.symbol == "NEAR/USDT"
-    assert decision.direction == "short"
-    assert decision.opportunity_id == "opp-near-short"
-    assert decision.strategy_id == "strat-near"
+    assert decision.action == "skip"
+    assert "unsupported_action:close" in decision.reasoning
+    assert decision.symbol is None
+    assert decision.direction is None
+    assert decision.opportunity_id is None
+    assert decision.strategy_id is None
 
 
-def test_close_decision_does_not_guess_ambiguous_open_position():
+def test_entry_decision_does_not_guess_identity_from_open_positions():
     from aletheia.agent_shell.trading_decision import TradingDecision, _attach_opportunity_context
 
     ctx = {
@@ -173,8 +265,8 @@ def test_close_decision_does_not_guess_ambiguous_open_position():
         "layer3": {},
     }
     decision = TradingDecision(
-        action="close", symbol=None, direction=None, conviction=70,
-        reasoning="Portfolio risk is high; close one position",
+        action="trade", symbol=None, direction=None, conviction=70,
+        reasoning="No durable pending entry identity was selected",
     )
 
     _attach_opportunity_context(decision, ctx)
@@ -264,8 +356,8 @@ def test_a10_layer2_signals_injected_into_prompt():
     assert "RF: momentum scanner" in prompt
 
 
-def test_layer2_splits_executable_and_excluded_ranker_candidates(monkeypatch):
-    """Skipped ranker rows must not consume the System Operator's main candidate slots."""
+def test_layer2_keeps_unqueued_ranker_candidates_analysis_only(monkeypatch):
+    """A locally eligible ranker row is not executable until it has a pending carrier."""
     from aletheia.agent_shell.trading_context import _build_layer2_short_term
 
     def fake_candidates(limit=30):
@@ -274,6 +366,7 @@ def test_layer2_splits_executable_and_excluded_ranker_candidates(monkeypatch):
                 "opportunity_id": "opp-good",
                 "symbol": "GOOD/USDT",
                 "direction": "short",
+                "market_type": "spot",
                 "trade_score": 50,
                 "skip_reason": None,
                 "scanner_family": "short_bias",
@@ -308,7 +401,8 @@ def test_layer2_splits_executable_and_excluded_ranker_candidates(monkeypatch):
 
     layer2 = _build_layer2_short_term()
 
-    assert [c["symbol"] for c in layer2["executable_candidates"]] == ["GOOD/USDT"]
+    assert layer2["executable_candidates"] == []
+    assert [c["symbol"] for c in layer2["analysis_only_candidates"]] == ["GOOD/USDT"]
     assert [c["symbol"] for c in layer2["ranker_candidates"]] == ["GOOD/USDT"]
     summary = {row["reason"]: row["count"] for row in layer2["excluded_candidates_summary"]}
     assert summary["unsupported_demo_symbol"] == 1

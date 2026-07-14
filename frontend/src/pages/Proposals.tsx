@@ -53,6 +53,10 @@ function parseDecisionMeta(rationale: string | null): { text: string; meta: Deci
 
 const col = createColumnHelper<TradeProposal>()
 
+function canApprovePaperProposal(p: TradeProposal): boolean {
+  return p.status === 'pending' && p.execution_mode === 'paper_internal'
+}
+
 const historyColumns = [
   col.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</span> }),
   col.accessor('market_type', { header: 'Market', cell: info => humanize(info.getValue()) }),
@@ -107,19 +111,12 @@ export default function Proposals() {
   const decided = rows.filter(p => p.status !== 'pending')
 
   function doApprove(p: TradeProposal) {
-    // #114 fix: the confirm dialog used to echo p.execution_mode — which may
-    // say `bitget_live_limited` / `okx_demo` etc. — but the /approve-paper
-    // route ALWAYS overrides to `paper_internal` on the backend
-    // (data.py:642). The dialog lied to the operator about what would
-    // actually happen. Show the real, forced mode instead, along with a
-    // heads-up if the proposal's stored mode differs (rare but honest).
-    const forcedMode = 'paper_internal'
-    const modeLine = `Mode: ${forcedMode} (paper simulation — no real order will be placed)`
-    const proposalMode = String(p.execution_mode || '')
-    const modeMismatch = proposalMode && proposalMode !== forcedMode
-      ? `\nNote: the proposal was tagged '${proposalMode}', but the /approve-paper route routes every approval through ${forcedMode}. Use the live-unlock flow to place a real order.`
-      : ''
-    if (!confirm(`Approve ${p.direction.toUpperCase()} ${fmtSymbol(p.symbol, p.market_type)}\n${modeLine}${modeMismatch}\n\nConfirm?`)) return
+    if (!canApprovePaperProposal(p)) {
+      setErr(p.id, 'Only a pending proposal stored as local paper can be approved here.')
+      return
+    }
+    const modeLine = 'Stored mode: Paper (internal) — local simulation; no exchange order will be placed'
+    if (!confirm(`Approve Local Paper: ${p.direction.toUpperCase()} ${fmtSymbol(p.symbol, p.market_type)}\n${modeLine}\n\nConfirm?`)) return
     setPendingId(p.id)
     approve.mutate(p.id, { onSettled: () => setPendingId(null) })
   }
@@ -133,7 +130,7 @@ export default function Proposals() {
     <div>
       <PageHeader
         title="Approval Desk"
-        role="Decide · the single human-in-loop control point. Each pending proposal shows its parameters, the agent's rationale, and the risk engine's verdict — approve or reject without leaving the queue."
+        role="Decide · the single human-in-loop control point. Each pending proposal shows its stored execution mode, parameters, rationale, and risk verdict. Local-paper approval is available only when that was the proposal's original mode."
       />
 
       {/* PENDING QUEUE — the focal point */}
@@ -209,7 +206,9 @@ export default function Proposals() {
             <div className="flex gap-2 mt-3">
               {selected.status === 'pending' && (
                 <>
-                  <Button onClick={() => { doApprove(selected); setSelected(null) }} disabled={approve.isPending}>Approve</Button>
+                  {canApprovePaperProposal(selected) && (
+                    <Button onClick={() => { doApprove(selected); setSelected(null) }} disabled={approve.isPending}>Approve Local Paper</Button>
+                  )}
                   <Button variant="secondary" onClick={() => { doReject(selected); setSelected(null) }} disabled={reject.isPending}>Reject</Button>
                 </>
               )}
@@ -263,7 +262,11 @@ function ProposalCard({
       <RiskVerdictInline proposalId={p.id} />
 
       <div className="proposal-card-actions">
-        <Button onClick={onApprove} disabled={busy}>Approve</Button>
+        {canApprovePaperProposal(p) ? (
+          <Button onClick={onApprove} disabled={busy}>Approve Local Paper</Button>
+        ) : (
+          <StatusText tone="yellow">Paper approval unavailable for this stored mode</StatusText>
+        )}
         <Button variant="secondary" onClick={onReject} disabled={busy}>Reject</Button>
         <Button variant="secondary" onClick={onOpenDetail}>Details</Button>
         {p.opportunity_id && (

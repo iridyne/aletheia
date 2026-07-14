@@ -52,6 +52,7 @@ def _insert_open_position(
     take_profit_price: float | None = None,
     opened_at: str | None = None,
     execution_mode: str = "paper_internal",
+    market_type: str = "spot",
 ) -> str:
     pos_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -61,7 +62,7 @@ def _insert_open_position(
         "current_price, unrealized_pnl, realized_pnl, execution_mode, status, stop_price, "
         "take_profit_price, opened_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
-            pos_id, symbol, "spot", direction, quantity, entry_price,
+            pos_id, symbol, market_type, direction, quantity, entry_price,
             entry_price, 0.0, 0.0, execution_mode, "open",
             stop_price, take_profit_price, opened,
         ),
@@ -70,16 +71,275 @@ def _insert_open_position(
     return pos_id
 
 
-def _insert_snapshot(conn, symbol: str, price: float):
+def _insert_snapshot(
+    conn,
+    symbol: str,
+    price: float,
+    *,
+    market_type: str = "spot",
+    exchange: str = "binance",
+    snapshot_at: str | None = None,
+):
     snap_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = snapshot_at or datetime.now(timezone.utc).isoformat()
     conn.execute(
-        "INSERT INTO market_snapshots (id, symbol, market_type, price, volume_24h, "
-        "change_pct_24h, snapshot_at, provider) VALUES (?,?,?,?,?,?,?,?)",
-        (snap_id, symbol, "spot", price, 1_000_000.0, 0.0, now, "ccxt"),
+        "INSERT INTO market_snapshots (id, symbol, market_type, exchange, price, "
+        "volume_24h, change_pct_24h, snapshot_at, provider) VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            snap_id, symbol, market_type, exchange, price,
+            1_000_000.0, 0.0, now, "ccxt",
+        ),
     )
     conn.commit()
     return snap_id
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PM-10", "pipeline_position_manager", "§2 fresh typed protective mark", "L2b",
+        "Protective closes require a fresh mark for the Position's exact market. "
+        "A stale snapshot cannot create a close Order/Fill, and same-symbol spot "
+        "and futures marks never cross-trigger each other.",
+        status="implemented",
+    ),
+)
+def test_stale_or_wrong_market_mark_never_creates_a_protective_close(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    stale_at = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    stale_id = _insert_open_position(
+        conn,
+        symbol="STALE/USDT",
+        entry_price=100.0,
+        stop_price=98.0,
+    )
+    _insert_snapshot(
+        conn, "STALE/USDT", 90.0, snapshot_at=stale_at,
+    )
+
+    # Same canonical symbol, two active instruments.  Only the futures mark
+    # breaches the stop; the spot mark stays safely above it.
+    spot_id = _insert_open_position(
+        conn,
+        symbol="BTC/USDT",
+        entry_price=100.0,
+        stop_price=90.0,
+        market_type="spot",
+    )
+    futures_id = _insert_open_position(
+        conn,
+        symbol="BTC/USDT",
+        entry_price=100.0,
+        stop_price=90.0,
+        market_type="usdt_futures",
+    )
+    _insert_snapshot(conn, "BTC/USDT", 100.0, market_type="spot")
+    _insert_snapshot(conn, "BTC/USDT", 80.0, market_type="perp")
+
+    from aletheia.portfolio.position_manager import evaluate_open_positions
+    result = evaluate_open_positions()
+
+    positions = {
+        row["id"]: dict(row)
+        for row in conn.execute(
+            "SELECT id,status,close_reason FROM positions WHERE id IN (?,?,?)",
+            (stale_id, spot_id, futures_id),
+        ).fetchall()
+    }
+    assert positions[stale_id]["status"] == "open"
+    assert positions[spot_id]["status"] == "open"
+    assert positions[futures_id]["status"] == "closed"
+    assert result["closed"] == 1
+    assert any(
+        item["position_id"] == stale_id
+        and item["code"] == "protective_mark_unavailable"
+        for item in result["errors"]
+    )
+    assert conn.execute(
+        "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason IS NOT NULL",
+        (stale_id,),
+    ).fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM fills f JOIN orders o ON o.id=f.order_id "
+        "WHERE o.position_id=? AND o.close_reason IS NOT NULL",
+        (stale_id,),
+    ).fetchone()[0] == 0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PM-11", "pipeline_position_manager", "§2 per-position close failure", "L2b",
+        "A close exception is returned as a stable per-position error and counted; "
+        "it never aborts evaluation of the remaining open Positions.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize("fail_all", [False, True])
+def test_close_failures_are_reported_and_do_not_abort_other_positions(
+    tmp_path, monkeypatch, fail_all
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    first_id = _insert_open_position(
+        conn, symbol="ETH/USDT", entry_price=100.0, stop_price=98.0,
+    )
+    second_id = _insert_open_position(
+        conn, symbol="SOL/USDT", entry_price=100.0, stop_price=98.0,
+    )
+    _insert_snapshot(conn, "ETH/USDT", 90.0)
+    _insert_snapshot(conn, "SOL/USDT", 90.0)
+
+    from aletheia.portfolio import position_manager
+
+    calls: list[str] = []
+
+    def fake_close(position_id, *_args, **_kwargs):
+        calls.append(position_id)
+        if fail_all or position_id == first_id:
+            raise RuntimeError("broker close failed")
+        return {"closed": True}
+
+    monkeypatch.setattr(position_manager, "close_position_routed", fake_close)
+    result = position_manager.evaluate_open_positions()
+
+    assert len(calls) == 2
+    assert set(calls) == {first_id, second_id}
+    expected_failures = 2 if fail_all else 1
+    assert result["failed_close_count"] == expected_failures
+    assert result["closed"] == (0 if fail_all else 1)
+    assert len([
+        item for item in result["errors"] if item["code"] == "close_failed"
+    ]) == expected_failures
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PM-12", "pipeline_position_manager", "§2 market-aware evaluation error", "L2b",
+        "A real market-aware exit evaluation exception is exposed for its Position "
+        "instead of being logged and reported as a healthy no-trigger cycle.",
+        status="implemented",
+    ),
+)
+def test_market_aware_evaluation_exception_is_returned_per_position(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    position_id = _insert_open_position(
+        conn,
+        symbol="ADA/USDT",
+        entry_price=100.0,
+        stop_price=50.0,
+        take_profit_price=150.0,
+    )
+    _insert_snapshot(conn, "ADA/USDT", 100.0)
+
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio import position_manager
+
+    cfg = AletheiaConfig()
+    cfg.trading.market_aware_exits.enabled = True
+    monkeypatch.setattr(position_manager, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "aletheia.portfolio.market_signal_reader.get_market_signals_for_positions",
+        lambda *_args, **_kwargs: {"ADA/USDT": {"signal": "risk_off"}},
+    )
+
+    def fail_evaluation(*_args, **_kwargs):
+        raise RuntimeError("market evaluator failed")
+
+    monkeypatch.setattr(
+        "aletheia.portfolio.exit_rules.evaluate_market_exit_rules",
+        fail_evaluation,
+    )
+
+    result = position_manager.evaluate_open_positions()
+
+    assert result["closed"] == 0
+    assert result["failed_close_count"] == 0
+    assert result["errors"] == [{
+        "position_id": position_id,
+        "symbol": "ADA/USDT",
+        "market_type": "spot",
+        "code": "market_aware_evaluation_failed",
+        "error_type": "RuntimeError",
+        "message": "market evaluator failed",
+    }]
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PM-13", "pipeline_position_manager", "§2 exact execution venue mark", "L2b",
+        "Protective close evaluation resolves a Position's venue from execution_mode. "
+        "OKX/Binance demo marks never cross-trigger, while paper_internal uses the "
+        "configured market-data venue.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize(
+    "okx_price,binance_price,expected_demo_id",
+    (
+        (100.0, 80.0, "binance"),
+        (80.0, 100.0, "okx"),
+    ),
+)
+def test_execution_venue_marks_never_cross_trigger_demo_or_local_positions(
+    tmp_path, monkeypatch, okx_price, binance_price, expected_demo_id
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    okx_id = _insert_open_position(
+        conn,
+        symbol="BTC/USDT",
+        entry_price=100.0,
+        stop_price=90.0,
+        market_type="usdt_futures",
+        execution_mode="okx_demo",
+    )
+    binance_id = _insert_open_position(
+        conn,
+        symbol="BTC/USDT",
+        entry_price=100.0,
+        stop_price=90.0,
+        market_type="usdt_futures",
+        execution_mode="binance_testnet",
+    )
+    local_id = _insert_open_position(
+        conn,
+        symbol="ETH/USDT",
+        entry_price=100.0,
+        stop_price=90.0,
+        market_type="spot",
+        execution_mode="paper_internal",
+    )
+    _insert_snapshot(
+        conn, "BTC/USDT", okx_price, market_type="perp", exchange="okx",
+    )
+    _insert_snapshot(
+        conn, "BTC/USDT", binance_price, market_type="perp", exchange="binance",
+    )
+    # Local paper is configured to OKX below. Binance breaches the stop, while
+    # OKX stays safe; the Binance row must never close this local Position.
+    _insert_snapshot(conn, "ETH/USDT", 100.0, exchange="okx")
+    _insert_snapshot(conn, "ETH/USDT", 80.0, exchange="binance")
+
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio import position_manager
+
+    cfg = AletheiaConfig()
+    cfg.market_data.ccxt_exchange = "okx"
+    monkeypatch.setattr(position_manager, "load_config", lambda: cfg)
+    close_calls: list[str] = []
+
+    def fake_close(position_id, *_args, **_kwargs):
+        close_calls.append(position_id)
+        return {"closed": True}
+
+    monkeypatch.setattr(position_manager, "close_position_routed", fake_close)
+    result = position_manager.evaluate_open_positions()
+
+    expected_id = okx_id if expected_demo_id == "okx" else binance_id
+    assert close_calls == [expected_id]
+    assert local_id not in close_calls
+    assert result["closed"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +500,65 @@ def test_position_manager_take_profit_triggered(tmp_path, monkeypatch):
     )
 
 
+@spec_claim(
+    SpecClaim(
+        "PL-PM-09",
+        "pipeline_position_manager",
+        "§2 immutable native protection authority",
+        "L2b",
+        "A native Proposal with no approved stop-loss or take-profit must not gain "
+        "either exit later from mutable config defaults.",
+        status="implemented",
+    )
+)
+def test_native_proposal_without_protection_does_not_inherit_mutable_config(
+    tmp_path, monkeypatch
+):
+    _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio.position_manager import _decide_exit
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1.0,
+        price=100.0,
+        execution_mode="paper_internal",
+        stop_price=None,
+        take_profit=None,
+        status="executed",
+    )
+    repo.insert_trade_proposal(proposal)
+    position = {
+        "id": "native-no-protection",
+        "proposal_id": proposal.id,
+        "source": "generated",
+        "symbol": proposal.symbol,
+        "direction": proposal.direction,
+        "entry_price": proposal.price,
+        "stop_price": None,
+        "take_profit_price": None,
+        "trade_school": "short_term",
+    }
+    cfg = AletheiaConfig()
+    cfg.trading.default_stop_loss_pct = 2.0
+    cfg.trading.default_take_profit_pct = 4.0
+    cfg.trading.max_position_hold_hours = 0
+
+    assert _decide_exit(position, price=97.0, cfg=cfg) is None
+    assert _decide_exit(position, price=105.0, cfg=cfg) is None
+
+    cfg.trading.default_stop_loss_pct = 20.0
+    cfg.trading.default_take_profit_pct = 40.0
+    assert _decide_exit(position, price=97.0, cfg=cfg) is None
+    assert _decide_exit(position, price=105.0, cfg=cfg) is None
+
+
 # ---------------------------------------------------------------------------
 # PL-PM-04  L2b  max_hold_exit: position age > max_hold → closed with max_hold reason
 # ---------------------------------------------------------------------------
@@ -370,8 +689,8 @@ def test_atr_pct_returned_from_feature_snapshots(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "PL-PM-06", "pipeline_position_manager", "§5 audit_events_table", "L2b",
-        "close_position writes an audit_events row with event_type='position_closed' "
-        "in addition to the JSONL audit file",
+        "close_position writes exactly one audit_events row with "
+        "event_type='position_closed' in addition to the JSONL audit file",
         status="implemented",  # write_audit calls _write_audit_row → insert_audit_event
     ),
 )
@@ -414,10 +733,10 @@ def test_close_position_writes_audit_event_row(tmp_path, monkeypatch):
         (pos_id,),
     ).fetchall()
 
-    assert len(audit_rows) >= 1, (
-        f"Expected audit_events row with event_type='position_closed' for position {pos_id!r}, "
-        "found none. PM-2 drift: close_position writes JSONL but audit_events SQLite row missing. "
-        "Check that _write_audit_row() in jsonl.py is called and DB connection is available."
+    assert len(audit_rows) == 1, (
+        "Expected exactly one audit_events row with event_type='position_closed' "
+        f"for position {pos_id!r}, found {len(audit_rows)}. PM-2 drift means "
+        "the SQLite audit is missing or the post-commit JSONL write mirrored a duplicate."
     )
 
 

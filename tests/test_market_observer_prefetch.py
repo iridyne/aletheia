@@ -119,34 +119,35 @@ def test_signal_ordering_higher_score_first():
 # Round-robin advance preserves original instrument order
 # ---------------------------------------------------------------------------
 
-def test_round_robin_advance_uses_original_order_not_sorted_order(tmp_path, monkeypatch):
-    """When processing in signal-sorted order, advance_after must still receive the
-    original RR-ordered list so canonical successor computation stays stable.
+def test_completed_prefix_cursor_consumes_each_attempt_once(tmp_path, monkeypatch):
+    """A full out-of-order run must not re-advance over completed identities.
 
-    Scenario:
-      RR order:        [A, B, C]
-      Signal scores:   C=2.5, A=1.2, B=0.0
-      Processing:      [C, A, B]  (sorted by score desc)
-
-    After processing C with advance_after([A,B,C], "C"):
-      canonical=[A,B,C], C is index 2, successor = A → next_key = "A"
-    After processing A with advance_after([A,B,C], "A"):
-      canonical=[A,B,C], A is index 0, successor = B → next_key = "B"
-    After processing B with advance_after([A,B,C], "B"):
-      canonical=[A,B,C], B is index 1, successor = C → next_key = "C"
-    Final next_key = "C"
+    The mandatory prefix A runs first, then signal priority chooses C before B.
+    Once B closes the canonical gap, the cursor may advance through B and the
+    already-completed C, but it must stop at A rather than wrap over A again.
     """
     _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agents.market_observer import _advance_completed_round_robin_prefix
     from aletheia.agents.round_robin import DurableRoundRobin
 
     rr = DurableRoundRobin("test.signal-sort.rr")
     original_order = ["A", "B", "C"]
-    processing_order = ["C", "A", "B"]  # signal-sorted
+    processing_order = ["A", "C", "B"]
+    completed: set[str] = set()
+    next_index = 0
 
     for item in processing_order:
-        rr.advance_after(original_order, completed_key=item, key=str)
+        completed.add(item)
+        next_index = _advance_completed_round_robin_prefix(
+            rr,
+            original_order,
+            completed_keys=completed,
+            next_unprocessed_index=next_index,
+            key=str,
+        )
 
-    assert rr.next_key() == "C"
+    assert rr.next_key() == "A"
+    assert completed == set()
 
 
 def test_round_robin_advance_partial_run(tmp_path, monkeypatch):
@@ -167,6 +168,184 @@ def test_round_robin_advance_partial_run(tmp_path, monkeypatch):
     rr.advance_after(original_order, completed_key="A", key=str)
 
     assert rr.next_key() == "B"
+
+
+def test_signal_priority_keeps_durable_round_robin_item_boundedly_reachable(
+    tmp_path, monkeypatch
+):
+    """A permanently low-score item must not starve behind the same high-score pair.
+
+    The per-cycle capacity of two models the observer hitting its wall-clock budget
+    after two LLM attempts.  C and A stay highest-scoring on every cycle; durable
+    round-robin identity must still force B to the front on the next cycle.
+    """
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agents.market_observer import (
+        _advance_completed_round_robin_prefix,
+        _fair_signal_order,
+    )
+    from aletheia.agents.round_robin import DurableRoundRobin, rotate_from_next
+
+    canonical = ["A", "B", "C"]
+    scores = {"A": 2.0, "B": 0.0, "C": 3.0}
+    rr = DurableRoundRobin("test.signal-sort.bounded-fairness")
+    processed_by_cycle: list[list[str]] = []
+
+    for _cycle in range(len(canonical)):
+        rotated = rotate_from_next(
+            canonical, next_key=rr.next_key(), key=str,
+        )
+        ordered = _fair_signal_order(
+            rotated, score=lambda item: scores[item], key=str,
+        )
+        processed = ordered[:2]
+        processed_by_cycle.append(processed)
+
+        # Use the same cancellation-safe cursor primitive as run_market_observer.
+        _advance_completed_round_robin_prefix(
+            rr,
+            rotated,
+            completed_keys=set(processed),
+            next_unprocessed_index=0,
+            key=str,
+        )
+
+    assert processed_by_cycle[0] == ["A", "C"]
+    assert processed_by_cycle[1][0] == "B"
+    assert set().union(*map(set, processed_by_cycle)) == set(canonical)
+
+
+@pytest.mark.asyncio
+async def test_prefetch_wait_uses_only_remaining_run_budget(monkeypatch):
+    """Parallel prefetch cannot start a fresh full observer budget."""
+    from aletheia.agents import market_observer as mo
+
+    captured: dict[str, float] = {}
+
+    async def _value():
+        return "ready"
+
+    async def fake_wait_for(awaitable, timeout):
+        captured["timeout"] = timeout
+        return await awaitable
+
+    monkeypatch.setattr(mo, "_monotonic", lambda: 140.0)
+    monkeypatch.setattr(mo.asyncio, "wait_for", fake_wait_for)
+
+    result = await mo._gather_prefetch_with_deadline([_value()], deadline=500.0)
+
+    assert result == ["ready"]
+    assert captured["timeout"] == pytest.approx(360.0)
+
+
+@pytest.mark.asyncio
+async def test_prefetch_time_is_charged_to_same_serial_loop_deadline(
+    tmp_path, monkeypatch
+):
+    """A slow prefetch leaves only its true remainder for serial LLM work.
+
+    With 450 of 460 seconds consumed before the loop, only one 15-second attempt
+    may start.  Resetting the deadline after prefetch would incorrectly process all
+    three instruments and could overrun the scheduler's 500-second timeout.
+    """
+    from types import SimpleNamespace
+
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agents import market_observer as mo
+
+    class _Instrument:
+        def __init__(self, symbol):
+            self.symbol = symbol
+            self.market_type = "spot"
+
+        def __str__(self):
+            return f"{self.symbol}:spot"
+
+    instruments = [_Instrument(symbol) for symbol in ("A", "B", "C")]
+    empty_cache = mo._DbCache(
+        perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+    )
+    empty_pf = {
+        "passed": True,
+        "rsi": 20.0,
+        "atr_pct": None,
+        "keyword_hits": [],
+        "matched_rules": ["rsi_deviation"],
+    }
+    clock = {"now": 100.0}
+    captured: dict[str, float] = {}
+    analyzed: list[str] = []
+
+    monkeypatch.setattr(mo, "_monotonic", lambda: clock["now"])
+    monkeypatch.setattr(mo, "is_tool_permitted", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        mo,
+        "load_config",
+        lambda: SimpleNamespace(
+            universe=SimpleNamespace(enabled=False, max_candidates=3),
+            market_data=SimpleNamespace(
+                prediction_enabled=False, ccxt_exchange="fixture",
+            ),
+            observer=SimpleNamespace(force_full_scan=False),
+        ),
+    )
+    monkeypatch.setattr(mo, "observed_instruments_from_config", lambda _cfg: instruments)
+    monkeypatch.setattr(mo, "list_strategies", lambda limit=50: [])
+    monkeypatch.setattr(mo, "log_tool", lambda *_args, **_kwargs: None)
+
+    def fake_batch(_symbols):
+        clock["now"] += 20.0
+        return empty_cache
+
+    async def fake_prefetch(instrument, **_kwargs):
+        return mo._SymbolPrefetch(
+            context_str=instrument.symbol,
+            debug={},
+            pre_filter=empty_pf,
+            signal_score={"A": 2.0, "B": 0.0, "C": 3.0}[instrument.symbol],
+            funding_rate_val=None,
+            open_interest_val=None,
+            oi_delta_val=None,
+        )
+
+    async def fake_gather(coros, *, deadline):
+        captured["deadline"] = deadline
+        captured["remaining_before_prefetch"] = deadline - clock["now"]
+        results = [await coro for coro in coros]
+        clock["now"] += 430.0
+        return results
+
+    async def fake_analyze(*, symbol, **_kwargs):
+        analyzed.append(symbol)
+        clock["now"] += 15.0
+        return None, f"pre_filter_skip:{symbol}"
+
+    monkeypatch.setattr(mo, "_batch_prefetch_db", fake_batch)
+    monkeypatch.setattr(mo, "_prefetch_symbol", fake_prefetch)
+    monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
+    monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
+    monkeypatch.setattr(
+        "aletheia.knowledge.router.build_advisory_context",
+        lambda **_kwargs: "",
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.insight_synthesizer.get_latest_memo",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "aletheia.learning.control.learning_influence_enabled",
+        lambda: False,
+    )
+
+    result = await mo.run_market_observer(permission_mode="Observe", run_id="budget-test")
+
+    assert captured["deadline"] == pytest.approx(560.0)
+    assert captured["remaining_before_prefetch"] == pytest.approx(440.0)
+    assert analyzed == ["A"]
+    assert result["errors"] == [
+        "loop_budget_exceeded: processed 1/3, skipped 2 "
+        "(wall-clock cap 460s < 500s job timeout — avoids thread leak)"
+    ]
 
 
 # ---------------------------------------------------------------------------

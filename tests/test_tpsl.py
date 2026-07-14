@@ -3,7 +3,7 @@
 Covers:
 - BitgetClient.place_tpsl_order / cancel_plan_order / get_pending_plan_orders
 - bitget_broker._try_place_tpsl / _try_cancel_tpsl / replace_exchange_stop
-- position_manager._sync_exchange_closed
+- position_manager has no bulk-position-absence close shortcut
 - execute_live_order with exchange_tpsl_enabled=True
 - TPSL failure is non-fatal (position still opens)
 - close_demo_position cancels TPSL before placing close order
@@ -11,6 +11,8 @@ Covers:
 from __future__ import annotations
 
 import json
+import inspect
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -110,6 +112,172 @@ async def test_get_pending_plan_orders_returns_list():
     assert result[0]["orderId"] == "p1"
 
 
+@pytest.mark.asyncio
+async def test_get_plan_order_history_requests_profit_loss_and_exact_plan_id():
+    """The history reader must query the TPSL family and exact plan identity."""
+    client = _make_client()
+    captured = {}
+
+    async def mock_get(url, headers):
+        captured["url"] = url
+        resp = MagicMock()
+        resp.json.return_value = {
+            "code": "00000",
+            "data": {
+                "entrustedList": [
+                    {
+                        "orderId": "plan-123",
+                        "planStatus": "executed",
+                        "executeOrderId": "exec-456",
+                    }
+                ]
+            },
+        }
+        return resp
+
+    mock_httpx = MagicMock()
+    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
+    mock_httpx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+        result = await client.get_plan_order_history(order_id="plan-123")
+
+    query = parse_qs(urlparse(captured["url"]).query)
+    assert query == {
+        "productType": ["USDT-FUTURES"],
+        "planType": ["profit_loss"],
+        "orderId": ["plan-123"],
+    }
+    assert result[0]["planStatus"] == "executed"
+    assert result[0]["executeOrderId"] == "exec-456"
+
+
+@pytest.mark.asyncio
+async def test_get_order_fills_queries_exact_order_and_paginates_completely():
+    """Exact private fill history must preserve every page and its cursor."""
+    client = _make_client()
+    captured_urls = []
+    first_page = [
+        {
+            "orderId": "exec-456",
+            "tradeId": f"trade-{index}",
+            "fillPrice": "101",
+            "fillQuantity": "0.01",
+        }
+        for index in range(100)
+    ]
+    payloads = [
+        {
+            "code": "00000",
+            "data": {"fillList": first_page, "endId": "cursor-100"},
+        },
+        {
+            "code": "00000",
+            "data": {
+                "fillList": [
+                    {
+                        "orderId": "exec-456",
+                        "tradeId": "trade-100",
+                        "fillPrice": "102",
+                        "fillQuantity": "0.01",
+                    }
+                ],
+                "endId": "cursor-101",
+            },
+        },
+    ]
+
+    async def mock_get(url, headers):
+        captured_urls.append(url)
+        resp = MagicMock()
+        resp.json.return_value = payloads.pop(0)
+        return resp
+
+    mock_httpx = MagicMock()
+    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
+    mock_httpx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+        result = await client.get_order_fills(
+            order_id="exec-456",
+            symbol="BTCUSDT",
+            market_type="usdt_futures",
+        )
+
+    first_query = parse_qs(urlparse(captured_urls[0]).query)
+    second_query = parse_qs(urlparse(captured_urls[1]).query)
+    assert first_query == {
+        "productType": ["USDT-FUTURES"],
+        "symbol": ["BTCUSDT"],
+        "orderId": ["exec-456"],
+        "limit": ["100"],
+    }
+    assert second_query["idLessThan"] == ["cursor-100"]
+    assert len(result) == 101
+    assert result[-1]["tradeId"] == "trade-100"
+
+
+@pytest.mark.asyncio
+async def test_get_order_fills_rejects_full_page_without_next_cursor():
+    """A truncated private history page is not complete fill evidence."""
+    client = _make_client()
+
+    async def mock_get(url, headers):
+        resp = MagicMock()
+        resp.json.return_value = {
+            "code": "00000",
+            "data": {
+                "fillList": [
+                    {"orderId": "exec-456", "tradeId": f"trade-{index}"}
+                    for index in range(100)
+                ]
+            },
+        }
+        return resp
+
+    mock_httpx = MagicMock()
+    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
+    mock_httpx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+        with pytest.raises(RuntimeError, match="pagination incomplete"):
+            await client.get_order_fills(
+                order_id="exec-456",
+                symbol="BTCUSDT",
+                market_type="usdt_futures",
+            )
+
+
+@pytest.mark.asyncio
+async def test_get_order_fills_rejects_rows_for_another_order():
+    """An exact-order endpoint response cannot silently mix another Order."""
+    client = _make_client()
+
+    async def mock_get(url, headers):
+        resp = MagicMock()
+        resp.json.return_value = {
+            "code": "00000",
+            "data": {
+                "fillList": [
+                    {"orderId": "another-order", "tradeId": "wrong-trade"}
+                ]
+            },
+        }
+        return resp
+
+    mock_httpx = MagicMock()
+    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
+    mock_httpx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+        with pytest.raises(ValueError, match="mismatched"):
+            await client.get_order_fills(
+                order_id="exec-456",
+                symbol="BTCUSDT",
+                market_type="usdt_futures",
+            )
+
+
 # ─── _try_place_tpsl ─────────────────────────────────────────────────────────
 
 
@@ -195,7 +363,16 @@ def test_try_cancel_tpsl_noop_on_empty():
 # ─── replace_exchange_stop ───────────────────────────────────────────────────
 
 
-def test_replace_exchange_stop_cancel_and_replace():
+@pytest.mark.parametrize(
+    "execution_mode,expected_client_mode",
+    (
+        ("bitget_demo", "demo"),
+        ("bitget_live_limited", "live"),
+    ),
+)
+def test_replace_exchange_stop_cancel_and_replace(
+    execution_mode, expected_client_mode
+):
     from aletheia.execution.bitget_broker import replace_exchange_stop
 
     mock_row = {
@@ -203,6 +380,7 @@ def test_replace_exchange_stop_cancel_and_replace():
         "symbol": "BTC/USDT",
         "direction": "long",
         "quantity": "0.01",
+        "execution_mode": execution_mode,
     }
 
     calls = []
@@ -213,16 +391,15 @@ def test_replace_exchange_stop_cancel_and_replace():
         return "new-sl-id"
 
     with patch("aletheia.execution.bitget_broker._run_coro", side_effect=fake_run), \
-         patch("aletheia.execution.bitget_broker.load_config") as mock_cfg, \
          patch("aletheia.execution.bitget_broker.BitgetClient") as mock_cls, \
          patch("aletheia.execution.bitget_broker.to_bitget", return_value="BTCUSDT"), \
          patch("aletheia.storage.repositories._select_one", return_value=mock_row), \
          patch("aletheia.execution.bitget_broker.update_position") as mock_update:
-        mock_cfg.return_value.exchange.mode = "demo"
         mock_cls.return_value = MagicMock()
 
         replace_exchange_stop("pos-3", 94000.0)
 
+        mock_cls.assert_called_once_with(mode=expected_client_mode)
         assert mock_update.called
         stored = json.loads(mock_update.call_args[1]["exchange_tpsl_order_id"])
         assert stored["sl"] == "new-sl-id"
@@ -240,47 +417,11 @@ def test_replace_exchange_stop_noop_when_no_tpsl():
         mock_run.assert_not_called()
 
 
-# ─── _sync_exchange_closed ───────────────────────────────────────────────────
+def test_position_manager_has_no_bulk_absence_close_shortcut():
+    """A missing row in a bulk account view is never terminal fill evidence."""
+    from aletheia.portfolio import position_manager
 
-
-def test_sync_exchange_closed_marks_position_closed():
-    """When exchange no longer holds a demo position, close it locally."""
-    from aletheia.portfolio.position_manager import _sync_exchange_closed
-
-    mock_cfg = MagicMock()
-    mock_cfg.trading.exchange_tpsl_enabled = True
-    mock_cfg.exchange.mode = "demo"
-
-    open_pos = {"id": "pos-4", "symbol": "ETH/USDT", "direction": "long", "execution_mode": "bitget_demo",
-                "current_price": 3000.0, "entry_price": 3000.0}
-
-    # Exchange only holds SOL, not ETH — ETH bracket must have triggered
-    ExchangePos = type("P", (), {"symbol": "SOLUSDT", "side": "long", "quantity": 0.5})
-    mock_client_inst = MagicMock()
-    mock_client_inst.get_positions = AsyncMock(return_value=[ExchangePos()])
-
-    # close_position is a top-level import in position_manager; patch the bound name
-    # BitgetClient / to_canonical / asyncio.run are lazy-imported inside the function
-    # → patch at their source module so the local `from X import Y` picks up the mock
-    with patch("aletheia.portfolio.position_manager.list_positions", return_value=[open_pos]), \
-         patch("aletheia.portfolio.position_manager._latest_price", return_value=2950.0), \
-         patch("aletheia.portfolio.position_manager.close_position") as mock_close, \
-         patch("aletheia.exchanges.bitget.client.BitgetClient", return_value=mock_client_inst), \
-         patch("aletheia.data.symbols.to_canonical", side_effect=lambda s: "SOL/USDT"), \
-         patch("asyncio.get_running_loop", side_effect=RuntimeError("no loop")), \
-         patch("asyncio.run", side_effect=closing_coro_runner([ExchangePos()])):
-        synced = _sync_exchange_closed(mock_cfg)
-
-    assert synced == 1
-    mock_close.assert_called_once()
-    _, kwargs = mock_close.call_args
-    assert kwargs["reason"] == "exchange_bracket_triggered"
-
-
-def test_sync_exchange_closed_skips_when_disabled():
-    from aletheia.portfolio.position_manager import _sync_exchange_closed
-
-    mock_cfg = MagicMock()
-    mock_cfg.trading.exchange_tpsl_enabled = False
-    result = _sync_exchange_closed(mock_cfg)
-    assert result == 0
+    assert not hasattr(position_manager, "_sync_exchange_closed")
+    assert "_sync_exchange_closed" not in inspect.getsource(
+        position_manager.evaluate_open_positions
+    )

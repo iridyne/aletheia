@@ -87,6 +87,62 @@ def _is_allowed_serenity_symbol(symbol: str) -> bool:
     return True
 
 
+def _auto_promote_serenity_opportunities(
+    opportunity_ids: list[str],
+    cfg,
+    *,
+    run_id: str | None = None,
+) -> int:
+    """Atomically hand score-qualified Serenity opportunities to PI by theme."""
+    from aletheia.trading.serenity_scoring import score_serenity_opportunity
+
+    eligible_by_theme: dict[str, list[str]] = {}
+    for opportunity_id in opportunity_ids:
+        opp = repo.get_serenity_opportunity(opportunity_id)
+        if not opp or opp.get("status") != "active":
+            continue
+        evidence = repo.list_serenity_evidence(theme_id=opp["theme_id"], limit=200)
+        gates = repo.list_serenity_risk_gates(
+            opportunity_id=opportunity_id,
+            limit=200,
+        )
+        score_result = score_serenity_opportunity(
+            opp,
+            evidence=evidence,
+            risk_gates=gates,
+        )
+        if score_result["score"] < cfg.serenity.min_score_for_pi:
+            continue
+        eligible_by_theme.setdefault(str(opp["theme_id"]), []).append(opportunity_id)
+
+    promoted_count = 0
+    for theme_id, selected_ids in eligible_by_theme.items():
+        try:
+            queued_ids = repo.enqueue_serenity_theme_for_pi(theme_id, selected_ids)
+        except Exception as exc:
+            # A theme is one atomic unit. Keep it retryable while allowing an
+            # unrelated theme in the same research run to advance.
+            logger.warning(
+                "auto_promote theme %s rolled back (%s)",
+                theme_id,
+                type(exc).__name__,
+            )
+            continue
+        promoted_count += len(queued_ids)
+
+    if promoted_count:
+        from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+
+        notify_pi_daemon(source="serenity_auto_promote")
+        if run_id is not None:
+            _emit_event(
+                run_id,
+                "auto_promote",
+                message=f"Auto-promoted {promoted_count} opportunities",
+            )
+    return promoted_count
+
+
 # Legacy alias kept so any call sites we missed still compile.
 _is_tradeable_crypto_symbol = _is_allowed_serenity_symbol
 
@@ -837,40 +893,11 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         from aletheia.config.loader import load_config as _load_cfg
         _cfg = _load_cfg()
         if _cfg.serenity.auto_promote and persisted_opps:
-            from aletheia.trading.serenity_scoring import score_serenity_opportunity
-            from aletheia.storage.models import PiDecision
-            promoted_theme_ids: set[str] = set()
-            promoted_count = 0
-            for opp_id in persisted_opps:
-                opp = repo.get_serenity_opportunity(opp_id)
-                if not opp or opp.get("status") != "active":
-                    continue
-                evidence = repo.list_serenity_evidence(theme_id=opp["theme_id"], limit=200)
-                gates = repo.list_serenity_risk_gates(opportunity_id=opp_id, limit=200)
-                score_result = score_serenity_opportunity(opp, evidence=evidence, risk_gates=gates)
-                if score_result["score"] < _cfg.serenity.min_score_for_pi:
-                    continue
-                repo.update_serenity_opportunity(opp_id, action_intent="pi_evaluate")
-                pi_dec = PiDecision(
-                    symbol=opp.get("symbol"),
-                    direction=opp.get("direction"),
-                    action="signal_pending",
-                    conviction=0,
-                    reasoning=f"Auto-promote: score={score_result['score']} opp={opp_id[:8]}",
-                    opportunity_id=opp_id,
-                    signal_source="serenity",
-                    debate_ran=False,
-                )
-                repo.insert_pi_decision(pi_dec)
-                promoted_count += 1
-                promoted_theme_ids.add(opp["theme_id"])
-            now_iso = datetime.now(timezone.utc).isoformat()
-            for tid in promoted_theme_ids:
-                repo.update_serenity_theme(tid, status="promoted", promoted_at=now_iso, updated_at=now_iso)
-            if promoted_count:
-                from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
-                notify_pi_daemon(source="serenity_auto_promote")
-                _emit_event(run_id, "auto_promote", message=f"Auto-promoted {promoted_count} opportunities")
+            _auto_promote_serenity_opportunities(
+                persisted_opps,
+                _cfg,
+                run_id=run_id,
+            )
     except Exception as e:
         logger.warning("auto_promote failed (non-fatal): %s", e)
 

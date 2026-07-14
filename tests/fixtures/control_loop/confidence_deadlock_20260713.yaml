@@ -5,7 +5,9 @@ domain: paper-candidate-liveness
 known_bad_ref: 82051a8eaf67d6393fc5596171a791966c357054
 candidate_ref: 4b366b5bea65e8fc6c99f55a02563c07457097cc
 initial_state:
-  now: "2026-07-13T04:00:00+00:00"
+  # Keep the 34.5h no-fill incident entirely after the verified Outcome clean
+  # window (2026-07-12T07:10Z), so the scenario does not need fabricated closes.
+  now: "2026-07-14T20:00:00+00:00"
   min_confidence_to_trade: high
   signal_win_rate_24h: 37.2
   win_rate_7d: 9.5

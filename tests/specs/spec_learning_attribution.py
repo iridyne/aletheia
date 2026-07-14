@@ -16,35 +16,55 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 ))
 def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
     from aletheia.agent_shell import reflection
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+    from tests.test_outcome_closure import _insert_entry_chain
 
-    db = get_db()
-    was_in_tx = db.in_transaction
-    db.execute(
-        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
-        "execution_mode,status,source,opened_at,realized_pnl,closed_at,close_reason,"
-        "close_category,exit_price_source,exit_fill_verified,outcome_eligible,"
-        "outcome_exclusion_reason,outcome_semantics_version) "
-        "VALUES ('unrelated','BTC/USDT','perp','long',1,100,'paper_internal','closed',"
-        "'native','2026-07-12T08:00:00+00:00',10,'2026-07-12T09:00:00+00:00',"
-        "'take_profit','strategy','local_fill',1,1,'eligible','oi-v1')"
+    opportunity_id, proposal_id, order_id = _insert_entry_chain(
+        position_id="unrelated",
+        proposal_id="proposal-linked",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        price=100.0,
+        execution_mode="paper_internal",
     )
-    if not was_in_tx:
-        db.commit()
+    insert_position(Position(
+        id="unrelated",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=110.0,
+        execution_mode="paper_internal",
+        status="closed",
+        source="native",
+        opened_at="2026-07-12T08:00:00+00:00",
+        realized_pnl=10.0,
+        closed_at="2026-07-12T09:00:00+00:00",
+        close_reason="take_profit",
+        entry_fee=0.0,
+        exit_fee=0.0,
+        funding_cost=0.0,
+        funding_source="local_simulation",
+        entry_price_source="local_fill",
+        entry_fill_verified=True,
+        close_category="strategy",
+        exit_price_source="local_fill",
+        exit_fill_verified=True,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+        outcome_semantics_version="oi-v1",
+        opportunity_id=opportunity_id,
+        proposal_id=proposal_id,
+        order_id=order_id,
+    ))
 
     assert "unavailable" in reflection._compute_outcome(
         "BTC/USDT", None, "2026-07-12T08:00:00+00:00"
     ).lower()
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage.repositories import insert_trade_proposal
-    insert_trade_proposal(TradeProposal(
-        id="proposal-linked", symbol="BTC/USDT", market_type="perp",
-        direction="long", quantity=1, price=100,
-    ))
-    was_in_tx = db.in_transaction
-    db.execute("UPDATE positions SET proposal_id='proposal-linked' WHERE id='unrelated'")
-    if not was_in_tx:
-        db.commit()
     exact = reflection._compute_outcome(
         "IGNORED/USDT", "proposal-linked", "2026-07-12T08:00:00+00:00"
     )
@@ -73,6 +93,8 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
         build_operator_learning_manifest,
     )
     from aletheia.agent_shell import reflection
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
     from aletheia.storage.sqlite import get_db
 
     ctx = {
@@ -99,9 +121,27 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
         parent=SimpleNamespace(mkdir=lambda **kwargs: None),
         write_text=lambda *args, **kwargs: None,
     ))
+    opportunity_id = "learning-manifest-opp-1"
+    insert_opportunity(Opportunity(
+        id=opportunity_id,
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+    ))
+    insert_pi_decision(PiDecision(
+        id="pending-learning-manifest-opp-1",
+        action="signal_pending",
+        opportunity_id=opportunity_id,
+        signal_source="market_observer",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+    ))
     reflection.record_decision({
         "action": "skip", "symbol": "BTC/USDT", "direction": "long",
-        "opportunity_id": "opp-1", "signal_source": "market_observer",
+        "market_type": "spot",
+        "opportunity_id": opportunity_id, "signal_source": "market_observer",
         "proposal_id": "proposal-1",
         "learning_manifest": manifest,
     })
@@ -110,7 +150,7 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
         "FROM pi_decisions ORDER BY created_at DESC LIMIT 1"
     ).fetchone()
     stored = json.loads(row["learning_manifest_json"])
-    assert row["opportunity_id"] == "opp-1"
+    assert row["opportunity_id"] == opportunity_id
     assert row["proposal_id"] == "proposal-1"
     assert stored["bundle_id"] == manifest["bundle_id"]
     assert len(stored["components"]) == 6
@@ -147,6 +187,8 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     assert captured["shadow_only"] is True
     assert captured["block_candidate"] is False
     assert captured["score_penalty"] == 0
+    assert captured["proposed_block_candidate"] is True
+    assert captured["proposed_score_penalty"] == 0
     assert "shadow-only" in captured["tags"]
     from pathlib import Path
     dreaming_source = Path("aletheia/agents/dreaming_agent.py").read_text(encoding="utf-8")

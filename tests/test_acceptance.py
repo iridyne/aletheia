@@ -30,8 +30,15 @@ async def client(tmp_path, monkeypatch):
     reset_db()
     sq._db_conn = None
     import sqlite3
-    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    conn = sqlite3.connect(
+        str(tmp_path / "app.db"),
+        check_same_thread=False,
+        isolation_level=None,
+    )
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
     sq._db_conn = conn
     run_migrations()
     transport = ASGITransport(app=app)
@@ -55,7 +62,7 @@ def test_ac03_gateway_status_cli(tmp_path, monkeypatch):
 async def test_ac04_storage_initialized(client):
     c, tmp_path = client
     await c.get("/api/status")
-    assert (tmp_path / "test.db").exists()  # sqlite
+    assert (tmp_path / "app.db").exists()  # sqlite
     # audit jsonl after an action
     await c.post("/api/settings/permission-mode", json={"mode": "Observe"})
     assert (tmp_path / "logs" / "audit.jsonl").exists()
@@ -207,7 +214,7 @@ async def test_ac11_paper_trade_flow(client):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
     from aletheia.storage.models import TradeProposal
-    p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+    p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                       quantity=0.001, price=60000, execution_mode="paper_internal")
     repo.insert_trade_proposal(p)
     resp = await c.post(f"/api/proposals/{p.id}/approve-paper")

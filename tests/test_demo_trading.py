@@ -12,13 +12,16 @@ autouse guard in conftest.py also blocks unmocked calls). These verify:
   trust-boundary check) — would otherwise place a REAL live order;
 - the paper_internal fallback never calls the exchange;
 - a failed demo order leaves a DB trace marked error and fabricates NO fill;
-- the broker records the exchange's CONFIRMED fill price/qty, not the request;
+- aggregate responses create no Fill/Position; private history supplies exact
+  price/quantity/fee/time before local accounting changes;
 - place_order builds the mix body with marginCoin + tradeSide (hedge mode);
-- a hedge-mode close places a real close order (tradeSide:close + holdSide) and
-  realizes PnL locally.
+- a hedge-mode close places a real close order (tradeSide:close + holdSide), then
+  realizes PnL only after exact private fill reconciliation.
 """
 
+import json
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 
@@ -45,11 +48,56 @@ def setup_env(tmp_path, monkeypatch):
 
 def _demo_config(monkeypatch, permission="Paper"):
     from aletheia.config.loader import load_config, save_config
+    from aletheia.execution import order_constraints
+    from aletheia.execution.order_constraints import OrderConstraints
+    from aletheia.storage.sqlite import get_db
+    from decimal import Decimal
+
     cfg = load_config()
     cfg.agent.permission_mode = permission
     cfg.exchange.mode = "demo"
     cfg.exchange.paper_execution_mode = "bitget_demo"
     save_config(cfg)
+    # These tests exercise the broker/materialization path, not missing-account
+    # handling.  Seed the same fresh local cache that Risk #17 requires in
+    # production so the fixture does not depend on configured starting capital.
+    state = {
+        "mode": "demo",
+        "equity_usdt": 10_000.0,
+        "available_usdt": 10_000.0,
+        "frozen_usdt": 0.0,
+        "futures_unrealized_pnl": 0.0,
+        "open_positions_count": 0,
+        "open_orders_count": 0,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "status": "healthy",
+        "asset_breakdown": [],
+        "positions": [],
+    }
+    db = get_db()
+    db.execute(
+        "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+        "updated_at=excluded.updated_at",
+        ("exchange_account_state.demo", json.dumps(state)),
+    )
+    db.commit()
+    # The same broker-path tests must not reach CCXT for executable rules.  Supply
+    # a realistic Bitget BTC futures rule set while retaining the real quantity
+    # normalization and Gateway re-check behavior.
+    monkeypatch.setattr(
+        order_constraints,
+        "get_order_constraints",
+        lambda _mode, symbol, market_type: OrderConstraints(
+            venue="bitget",
+            symbol=symbol,
+            market_type=market_type,
+            min_quantity=Decimal("0.0001"),
+            max_quantity=None,
+            amount_step=Decimal("0.0001"),
+            min_notional=Decimal("5"),
+        ),
+    )
     return cfg
 
 
@@ -59,9 +107,13 @@ def _patch_place_order(monkeypatch, captured, *, status="filled", fill_price=Non
 
     async def fake_place_order(self, order):
         captured.append(order)
+        confirmed = status in ("filled", "partially_filled")
         return OrderResponse(
             order_id="EX-DEMO-1", client_oid=order.client_oid, status=status,
-            fill_price=fill_price, filled_quantity=filled_quantity,
+            fill_price=(fill_price if fill_price is not None else 60000.0) if confirmed else None,
+            filled_quantity=(
+                filled_quantity if filled_quantity is not None else order.quantity
+            ) if confirmed else None,
         )
 
     monkeypatch.setattr(bg.BitgetClient, "place_order", fake_place_order)
@@ -81,13 +133,22 @@ def test_gateway_routes_demo_order_to_broker(tmp_path, monkeypatch):
     _fresh_snapshot()
     captured = []
     _patch_place_order(monkeypatch, captured)
+    from tests.specs.spec_pipeline_stop_propagation import (
+        _patch_private_fill_history,
+    )
+    _patch_private_fill_history(
+        monkeypatch,
+        "aletheia.execution.bitget_broker",
+        "aletheia.exchanges.bitget.client",
+        fill_price=60000.0,
+    )
 
     from aletheia.execution.gateway import submit_proposal
     result = submit_proposal(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.0004, price=60000.0, execution_mode="bitget_demo",
     )
-    assert result["status"] == "executed"
+    assert result["status"] == "materialization_missing"
     assert result["exchange_order_id"] == "EX-DEMO-1"
     assert len(captured) == 1
     # The exchange call uses Bitget execution symbol format...
@@ -97,6 +158,11 @@ def test_gateway_routes_demo_order_to_broker(tmp_path, monkeypatch):
     assert len(orders) == 1
     assert orders[0]["execution_mode"] == "bitget_demo"
     assert orders[0]["symbol"] == "BTC/USDT"
+    assert repo.list_fills() == []
+    assert repo.list_positions(status="open") == []
+
+    from aletheia.execution.reconciliation import reconcile
+    assert reconcile()["filled"] == 1
     positions = repo.list_positions(status="open")
     assert len(positions) == 1
     assert positions[0]["execution_mode"] == "bitget_demo"
@@ -116,7 +182,7 @@ def test_demo_order_not_blocked_by_live_disabled(tmp_path, monkeypatch):
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.0004, price=60000.0, execution_mode="bitget_demo",
     )
-    assert result["status"] == "executed"
+    assert result["status"] == "materialization_missing"
     assert len(captured) == 1
 
 
@@ -156,7 +222,7 @@ def test_paper_internal_fallback_never_calls_exchange(tmp_path, monkeypatch):
 
     from aletheia.execution.gateway import submit_proposal
     result = submit_proposal(
-        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         quantity=0.0004, price=60000.0, execution_mode="paper_internal",
     )
     assert result["status"] == "executed"
@@ -188,20 +254,33 @@ def test_demo_order_db_trace_when_exchange_fails(tmp_path, monkeypatch):
     assert len(repo.list_positions(status="open")) == 0
 
 
-def test_demo_records_confirmed_fill_price_not_request(tmp_path, monkeypatch):
-    """The broker must record the exchange's CONFIRMED fill price/qty, not the
-    requested values (the market order may fill at a different price)."""
+def test_demo_records_private_fill_price_not_aggregate_or_request(tmp_path, monkeypatch):
+    """Only private history may provide the durable fill price."""
     setup_env(tmp_path, monkeypatch)
     _demo_config(monkeypatch)
     _fresh_snapshot()
     captured = []
-    _patch_place_order(monkeypatch, captured, fill_price=60123.5, filled_quantity=0.0004)
+    _patch_place_order(monkeypatch, captured, fill_price=59999.0, filled_quantity=0.0004)
+    from tests.specs.spec_pipeline_stop_propagation import (
+        _patch_private_fill_history,
+    )
+    _patch_private_fill_history(
+        monkeypatch,
+        "aletheia.execution.bitget_broker",
+        "aletheia.exchanges.bitget.client",
+        fill_price=60123.5,
+    )
 
     from aletheia.execution.gateway import submit_proposal
-    submit_proposal(
+    result = submit_proposal(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.0004, price=60000.0, execution_mode="bitget_demo",
     )
+    assert result["status"] == "materialization_missing"
+    assert repo.list_fills() == []
+
+    from aletheia.execution.reconciliation import reconcile
+    assert reconcile()["filled"] == 1
     fills = repo.list_fills()
     assert len(fills) == 1
     assert fills[0]["fill_price"] == 60123.5  # confirmed, not the 60000 request
@@ -308,6 +387,15 @@ def test_close_demo_position_places_real_close_and_realizes_pnl(tmp_path, monkey
     _fresh_snapshot(price=61000.0)
     captured = []
     _patch_place_order(monkeypatch, captured, fill_price=61000.0, filled_quantity=0.001)
+    from tests.specs.spec_pipeline_stop_propagation import (
+        _patch_private_fill_history,
+    )
+    _patch_private_fill_history(
+        monkeypatch,
+        "aletheia.execution.bitget_broker",
+        "aletheia.exchanges.bitget.client",
+        fill_price=61000.0,
+    )
 
     # Open demo position (long @ 60000).
     pos = Position(
@@ -325,10 +413,23 @@ def test_close_demo_position_places_real_close_and_realizes_pnl(tmp_path, monkey
     assert captured[0].hold_side == "long"
     assert captured[0].side == "buy"
     assert captured[0].symbol == "BTCUSDT"
-    # Position is closed locally with realized PnL from the confirmed exit price.
+    # Aggregate acknowledgement does not change local economics.
+    pending = repo._select_one("positions", pos.id)
+    assert pending["status"] == "open"
+    assert pending["pending_close_status"] == "materialization_missing"
+    assert result["closed"] is False
+    assert repo.list_fills() == []
+
+    from aletheia.execution.reconciliation import reconcile
+    assert reconcile()["filled"] == 1
     closed = repo._select_one("positions", pos.id)
     assert closed["status"] == "closed"
-    assert result["realized_pnl"] > 0  # closed higher than entry
+    # The private fill proves the close, but this fixture supplies no trusted
+    # funding ledger. Do not treat unknown futures funding as zero net PnL.
+    assert closed["realized_pnl"] is None
+    assert closed["funding_source"] == "unavailable"
+    assert closed["outcome_eligible"] == 0
+    assert closed["outcome_exclusion_reason"] == "incomplete_funding_economics"
     assert result["exchange_order_id"] == "EX-DEMO-1"
 
 

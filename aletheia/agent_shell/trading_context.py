@@ -23,6 +23,9 @@ from aletheia.data.position_x import build_position_x_agent_context
 
 logger = logging.getLogger("aletheia.agent_shell.trading_context")
 
+_PENDING_SIGNAL_VISIBLE_LIMIT = 5
+_PENDING_SIGNAL_MAX_AGE_MINUTES = 30
+
 
 def _dedupe_symbol_direction(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     """Keep the first item for each symbol/direction pair."""
@@ -37,6 +40,132 @@ def _dedupe_symbol_direction(items: list[dict[str, Any]], limit: int) -> list[di
         if len(out) >= limit:
             break
     return out
+
+
+def _pending_identity_key(
+    item: dict[str, Any],
+    *,
+    require_complete: bool = True,
+) -> tuple[str, str, str, str, str] | None:
+    """Return the complete execution-authority identity or None if it is partial."""
+    key = (
+        str(item.get("opportunity_id") or ""),
+        str(item.get("signal_source") or "market_observer"),
+        str(item.get("symbol") or ""),
+        str(item.get("direction") or ""),
+        str(item.get("market_type") or ""),
+    )
+    return key if (not require_complete or all(key)) else None
+
+
+def _dedupe_pending_identity(
+    items: list[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    """Keep one carrier per exact source/instrument identity.
+
+    Spot and futures carriers may legitimately share a canonical symbol and
+    direction.  Collapsing those rows together makes the older market claim the
+    newer one's execution authority, so pending de-duplication must retain the
+    market and source dimensions.
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for item in items:
+        key = _pending_identity_key(item, require_complete=False)
+        assert key is not None
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _build_pending_signal_queue(
+    *,
+    limit: int = _PENDING_SIGNAL_VISIBLE_LIMIT,
+    max_age_minutes: int = _PENDING_SIGNAL_MAX_AGE_MINUTES,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Return the oldest unresolved queue slice plus honest backlog metadata."""
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
+    # A submitting final is an execution claim, not a terminal decision. Keep
+    # its exact carrier visible so a wake after process death can recover the
+    # already-stored Proposal. Once any non-submitting final exists, the carrier
+    # is terminally consumed and disappears from the queue.
+    submitting_final = (
+        "SELECT 1 FROM pi_decisions f "
+        "WHERE f.action != 'signal_pending' "
+        "  AND f.opportunity_id = p.opportunity_id "
+        "  AND COALESCE(f.signal_source, 'market_observer') = "
+        "      COALESCE(p.signal_source, 'market_observer') "
+        "  AND f.proposal_status = 'submitting'"
+    )
+    terminal_final = (
+        "SELECT 1 FROM pi_decisions f "
+        "WHERE f.action != 'signal_pending' "
+        "  AND f.opportunity_id = p.opportunity_id "
+        "  AND COALESCE(f.signal_source, 'market_observer') = "
+        "      COALESCE(p.signal_source, 'market_observer') "
+        "  AND COALESCE(f.proposal_status, '') != 'submitting'"
+    )
+    unresolved = (
+        "p.action = 'signal_pending' "
+        "AND (COALESCE(p.signal_source, 'market_observer') = 'serenity' "
+        "     OR p.created_at >= ? "
+        f"     OR EXISTS ({submitting_final})) "
+        "AND (p.opportunity_id IS NULL OR NOT EXISTS ("
+        f"  {terminal_final}"
+        "))"
+    )
+    rows = db.execute(
+        "SELECT p.symbol, p.direction, p.market_type, p.reasoning, p.created_at, "
+        "p.opportunity_id, p.signal_source FROM pi_decisions p WHERE "
+        + unresolved
+        + " ORDER BY datetime(p.created_at) ASC, p.rowid ASC",
+        (cutoff,),
+    ).fetchall()
+    pending = [
+        {
+            "symbol": row["symbol"],
+            "direction": row["direction"],
+            "market_type": row["market_type"],
+            "reasoning": (row["reasoning"] or "")[:100],
+            "at": row["created_at"],
+            "opportunity_id": row["opportunity_id"],
+            "signal_source": row["signal_source"] or "market_observer",
+        }
+        for row in rows
+    ]
+    unique = _dedupe_pending_identity(pending, limit=len(pending)) if pending else []
+    visible_limit = max(int(limit), 0)
+    visible = unique[:visible_limit]
+    expired = db.execute(
+        "SELECT COUNT(*) AS n, MIN(p.created_at) AS oldest_at "
+        "FROM pi_decisions p WHERE p.action = 'signal_pending' AND p.created_at < ? "
+        "AND COALESCE(p.signal_source, 'market_observer') = 'market_observer' "
+        "AND NOT EXISTS ("
+        + submitting_final
+        + ") "
+        "AND (p.opportunity_id IS NULL OR NOT EXISTS ("
+        + terminal_final
+        + "))",
+        (cutoff,),
+    ).fetchone()
+    queue = {
+        "read_status": "complete",
+        "unresolved_total": len(unique),
+        "visible_count": len(visible),
+        "overflow_count": max(len(unique) - len(visible), 0),
+        "oldest_at": unique[0]["at"] if unique else None,
+        "max_age_minutes": max_age_minutes,
+        "expired_unconsumed_rows": int(expired["n"] or 0),
+        "oldest_expired_at": expired["oldest_at"],
+    }
+    return visible, queue
 
 
 def _excluded_candidates_summary(items: list[dict[str, Any]], *, examples_per_reason: int = 3) -> list[dict[str, Any]]:
@@ -119,18 +248,8 @@ def build_enriched_trading_context() -> dict[str, Any]:
         "layer2": _build_layer2_short_term(),
         "layer3": _build_layer3_wisdom(),
     }
-    from aletheia.learning.prompt_bundles import (
-        build_operator_learning_manifest,
-        gate_operator_learning_context,
-    )
-    try:
-        from aletheia.learning.control import learning_influence_enabled
-        enabled = learning_influence_enabled()
-    except Exception:
-        enabled = False
-    ctx = gate_operator_learning_context(ctx, enabled=enabled)
-    ctx["learning_manifest"] = build_operator_learning_manifest(ctx)
-    return ctx
+    from aletheia.learning.prompt_bundles import authorize_operator_learning_context
+    return authorize_operator_learning_context(ctx)
 
 
 # ── Layer 1: Environment Snapshot ────────────────────────────────────────────
@@ -162,12 +281,42 @@ def _build_layer1_snapshot() -> dict[str, Any]:
 
     # Portfolio: open positions
     try:
-        from aletheia.storage.repositories import list_positions, latest_perp_structure
-        open_pos = list_positions(status="open", limit=10)
+        from aletheia.storage.repositories import (
+            latest_perp_structure,
+            list_all_open_positions,
+        )
+
+        all_open_pos = list_all_open_positions()
+        display_open_pos = all_open_pos[:10]
+        # Complete, compact identity/economics set for close/reduce matching and
+        # portfolio calculations. The bounded ``positions`` list below remains
+        # the presentation slice and alone receives expensive structure context.
+        layer["position_authority"] = [
+            {
+                "id": p.get("id"),
+                "symbol": p.get("symbol"),
+                "market_type": p.get("market_type"),
+                "direction": p.get("direction"),
+                "quantity": p.get("quantity"),
+                "entry_price": p.get("entry_price"),
+                "current_price": p.get("current_price"),
+                "unrealized_pnl": p.get("unrealized_pnl"),
+                "hold_hours": _hours_since(p.get("opened_at")),
+                "proposal_id": p.get("proposal_id"),
+                "opportunity_id": p.get("opportunity_id"),
+                "strategy_id": p.get("strategy_id"),
+                "trade_school": p.get("trade_school"),
+                "execution_mode": p.get("execution_mode"),
+                "leverage": p.get("leverage"),
+                "liquidation_price": p.get("liquidation_price"),
+            }
+            for p in all_open_pos
+        ]
         layer["positions"] = [
             {
                 "id": p.get("id"),
                 "symbol": p.get("symbol"),
+                "market_type": p.get("market_type"),
                 "direction": p.get("direction"),
                 "quantity": p.get("quantity"),
                 "entry_price": p.get("entry_price"),
@@ -183,10 +332,23 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "liquidation_price": p.get("liquidation_price"),
                 "structure_context": build_position_x_agent_context(latest_perp_structure(p.get("symbol"))),
             }
-            for p in open_pos
+            for p in display_open_pos
         ]
+        layer["positions_meta"] = {
+            "total": len(all_open_pos),
+            "display_count": len(display_open_pos),
+            "prompt_visible_count": min(len(display_open_pos), 5),
+            "prompt_overflow_count": max(len(all_open_pos) - 5, 0),
+        }
     except Exception:
         layer["positions"] = []
+        layer["position_authority"] = []
+        layer["positions_meta"] = {
+            "total": 0,
+            "display_count": 0,
+            "prompt_visible_count": 0,
+            "prompt_overflow_count": 0,
+        }
 
     # Account balance. Local paper is a separate cash ledger: showing an old
     # exchange cache here would make the agent misread a human balance adjustment.
@@ -434,6 +596,9 @@ def _build_futures_context(layer: dict[str, Any], cfg) -> dict[str, Any]:
     of equity NOT tied up as futures margin (used_margin = Σ notional/leverage).
     """
     fut: dict[str, Any] = {}
+    authority_positions = (
+        layer.get("position_authority") or layer.get("positions") or []
+    )
     try:
         from aletheia.trading.instruments import get_asset_tier, get_max_leverage
         symbols: list[str] = []
@@ -441,7 +606,7 @@ def _build_futures_context(layer: dict[str, Any], cfg) -> dict[str, Any]:
             s = f.get("symbol")
             if s and s not in symbols:
                 symbols.append(s)
-        for p in (layer.get("positions") or []):
+        for p in authority_positions:
             s = p.get("symbol")
             if s and s not in symbols:
                 symbols.append(s)
@@ -471,7 +636,7 @@ def _build_futures_context(layer: dict[str, Any], cfg) -> dict[str, Any]:
         balance = layer.get("balance") or {}
         equity = balance.get("equity_usdt")
         used_margin = 0.0
-        for p in (layer.get("positions") or []):
+        for p in authority_positions:
             qty = float(p.get("quantity") or 0)
             price = float(p.get("current_price") or p.get("entry_price") or 0)
             lev = float(p.get("leverage") or 1) or 1.0
@@ -486,7 +651,7 @@ def _build_futures_context(layer: dict[str, Any], cfg) -> dict[str, Any]:
     # Positions within 15% of their estimated liquidation price.
     near: list[dict] = []
     try:
-        for p in (layer.get("positions") or []):
+        for p in authority_positions:
             liq = p.get("liquidation_price")
             cur = p.get("current_price") or p.get("entry_price")
             if not liq or not cur:
@@ -649,7 +814,10 @@ def _build_layer2_short_term() -> dict[str, Any]:
     except Exception:
         layer["calibration_feedback"] = None
 
-    # Ranker candidates — what paper_trader would pick right now
+    # Ranker preview — useful analysis, but not execution authority. A candidate
+    # becomes executable only after the durable pending queue below contains the
+    # exact same opportunity/source/symbol/direction/market identity.
+    eligible_ranker_candidates: list[dict[str, Any]] = []
     try:
         from aletheia.agents.paper_trader_ranker import build_paper_candidates
         candidates = build_paper_candidates(limit=30)
@@ -667,41 +835,60 @@ def _build_layer2_short_term() -> dict[str, Any]:
             }
             for c in candidates
         ]
-        executable_candidates = [c for c in ranker_candidates if not c.get("skip_reason")]
-        excluded_candidates = [c for c in ranker_candidates if c.get("skip_reason")]
-        layer["executable_candidates"] = _dedupe_symbol_direction(executable_candidates, limit=8)
-        layer["excluded_candidates_summary"] = _excluded_candidates_summary(excluded_candidates)
-        # Compatibility alias for older consumers; new prompt rendering should use
-        # executable_candidates so skipped rows cannot consume the main candidate slots.
-        layer["ranker_candidates"] = layer["executable_candidates"]
-    except Exception:
-        layer["executable_candidates"] = []
-        layer["excluded_candidates_summary"] = []
-        layer["ranker_candidates"] = []
-    _record_candidate_supply_snapshot(layer)
-
-    # Phase 4b: Pending signals awaiting System Operator evaluation
-    try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
-        rows = db.execute(
-            "SELECT symbol, direction, reasoning, created_at, opportunity_id, signal_source "
-            "FROM pi_decisions "
-            "WHERE action = 'signal_pending' AND created_at >= ? "
-            "ORDER BY created_at DESC LIMIT 5",
-            (cutoff,),
-        ).fetchall()
-        pending_signals = [
-            {
-                "symbol": r[0], "direction": r[1], "reasoning": r[2][:100],
-                "at": r[3], "opportunity_id": r[4], "signal_source": r[5],
-            }
-            for r in rows
+        eligible_ranker_candidates = [
+            c for c in ranker_candidates if not c.get("skip_reason")
         ]
-        layer["pending_signals"] = _dedupe_symbol_direction(pending_signals, limit=5)
+        excluded_candidates = [c for c in ranker_candidates if c.get("skip_reason")]
+        layer["excluded_candidates_summary"] = _excluded_candidates_summary(excluded_candidates)
     except Exception:
+        layer["excluded_candidates_summary"] = []
+
+    # Phase 4b: Pending signals awaiting System Operator evaluation. This is an actual
+    # unresolved queue view: final decisions are excluded, duplicates are removed
+    # before the visible limit, and oldest work is served first.
+    try:
+        pending_signals, pending_queue = _build_pending_signal_queue()
+        layer["pending_signals"] = pending_signals
+        layer["pending_queue"] = pending_queue
+    except Exception as exc:
+        logger.warning("pending signal queue unavailable: %s", exc)
         layer["pending_signals"] = []
+        layer["pending_queue"] = {
+            "read_status": "error",
+            "unresolved_total": None,
+            "visible_count": 0,
+            "overflow_count": None,
+            "oldest_at": None,
+            "max_age_minutes": _PENDING_SIGNAL_MAX_AGE_MINUTES,
+            "expired_unconsumed_rows": None,
+            "oldest_expired_at": None,
+        }
+
+    pending_identities = {
+        identity
+        for row in layer["pending_signals"]
+        if (identity := _pending_identity_key(row)) is not None
+    }
+    executable_candidates = [
+        row
+        for row in eligible_ranker_candidates
+        if _pending_identity_key(row) in pending_identities
+    ]
+    analysis_only_candidates = [
+        row
+        for row in eligible_ranker_candidates
+        if _pending_identity_key(row) not in pending_identities
+    ]
+    layer["executable_candidates"] = _dedupe_pending_identity(
+        executable_candidates, limit=8
+    )
+    layer["analysis_only_candidates"] = _dedupe_pending_identity(
+        analysis_only_candidates, limit=8
+    )
+    # Compatibility alias: ranker candidates remain available for non-entry
+    # attribution only, and are explicitly the non-authoritative preview.
+    layer["ranker_candidates"] = layer["analysis_only_candidates"]
+    _record_candidate_supply_snapshot(layer)
 
     return layer
 

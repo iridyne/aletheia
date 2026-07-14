@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.execution_authority import seed_order_authority
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -83,7 +84,7 @@ def test_gateway_threads_proposal_snapshot_to_paper_broker(tmp_path, monkeypatch
     monkeypatch.setattr(
         gateway,
         "evaluate_proposal",
-        lambda _proposal: SimpleNamespace(
+        lambda _proposal, *, decision_role: SimpleNamespace(
             approved=True,
             allowed_execution_mode="paper_internal",
             decision_id="rd-pa-s02",
@@ -142,10 +143,21 @@ def test_paper_broker_uses_snapshot_for_position_attribution(tmp_path, monkeypat
         },
     }
 
+    seed_order_authority(
+        proposal_id="prop-pa-s03",
+        risk_decision_id="rd-pa-s03",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1.0,
+        price=100.0,
+        execution_mode="paper_internal",
+    )
     result = paper_broker.execute_paper_order(
         proposal_id="prop-pa-s03",
         risk_decision_id="rd-pa-s03",
-        symbol="BTCUSDT",
+        symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         order_type="market",

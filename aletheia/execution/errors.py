@@ -17,3 +17,23 @@ class PostSubmitDBError(RuntimeError):
     def __init__(self, message: str, exchange_order_id: str | None = None) -> None:
         super().__init__(message)
         self.exchange_order_id = exchange_order_id
+
+
+class SubmissionUnknownError(RuntimeError):
+    """The transport failed while submitting, so acceptance is unknowable.
+
+    This is deliberately distinct from an exchange/API rejection.  Callers must
+    preserve it as retry-suppressing unresolved state and reconcile by the stable
+    client id instead of submitting the same economic intent again.
+    """
+
+    def __init__(
+        self,
+        message: str = "exchange submission acknowledgement unknown",
+        *,
+        exchange_order_id: str | None = None,
+        client_oid: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.exchange_order_id = exchange_order_id
+        self.client_oid = client_oid
