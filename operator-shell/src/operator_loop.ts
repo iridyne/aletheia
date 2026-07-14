@@ -2495,13 +2495,17 @@ export class OperatorLoop {
       return
     }
 
-    const [operatorStatus, sessionDetail, sessionSummaries, recentTasks, failedTasks, recentEvents] = await Promise.all([
+    const [operatorStatus, sessionDetail, sessionSummaries, recentTasks, queuedTasks, failedTasks, recentEvents] = await Promise.all([
       this.backendClient.getOperatorStatus(),
       this.backendClient.getOperatorSession(this.config.mainSessionId).catch(() => null),
       this.backendClient.getOperatorSessions(50).catch(() => []),
       // Include terminal tasks: their persisted recommendation fingerprints stop a
       // restart from scheduling the identical diagnostic again.
-      this.backendClient.getOperatorTasks().catch(() => []),
+      this.backendClient.getOperatorTasks(undefined, 500).catch(() => []),
+      // Terminal history is bounded, but queued work must be complete: a legacy
+      // task older than the recent window still needs the fingerprint rollout's
+      // supersession rule before it can replay after restart.
+      this.backendClient.getOperatorTasks('queued', 500).catch(() => []),
       this.backendClient.getOperatorTasks('failed').catch(() => []),
       this.backendClient.getOperatorEvents(20).catch(() => []),
     ])
@@ -2544,7 +2548,10 @@ export class OperatorLoop {
           }
         : null,
     )
-    this.taskRuntime.restore(recentTasks)
+    const recoveredTasks = Array.from(
+      new Map([...recentTasks, ...queuedTasks].map(task => [task.id, task])).values(),
+    )
+    this.taskRuntime.restore(recoveredTasks)
     const recoveryLastError = this.recoveryLastError(operatorStatus.last_error)
     const recoveryHeartbeatIntent = this.recoveryHeartbeatIntent(operatorStatus.current_intent)
     this.lastError = recoveryLastError

@@ -97,6 +97,7 @@ function makeFakeBackend(snapshot: { health: GatewayHealthSnapshot; status: Gate
     sessionDetailReads: 0,
     commandReads: 0,
     taskReads: 0,
+    taskReadRequests: [] as Array<{ status?: string; limit?: number }>,
   }
 
   const backend: BackendGatewayClient = {
@@ -165,8 +166,9 @@ function makeFakeBackend(snapshot: { health: GatewayHealthSnapshot; status: Gate
       calls.commandReads += 1
       return [] satisfies PersistedOperatorCommand[]
     },
-    async getOperatorTasks() {
+    async getOperatorTasks(status, limit) {
       calls.taskReads += 1
+      calls.taskReadRequests.push({ status, limit })
       return [] satisfies PersistedOperatorTask[]
     },
     async createSession(payload) {
@@ -445,6 +447,33 @@ test('backend client can request bounded terminal task history for recovery dedu
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+test('operator recovery requests the complete queued backlog in addition to recent terminal history', async () => {
+  const { backend, calls } = makeFakeBackend(makeSnapshot())
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'ReadOnly',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  await loop.recoverState()
+
+  assert.ok(calls.taskReadRequests.some(request => request.status === 'queued' && request.limit === 500))
+  assert.ok(calls.taskReadRequests.some(request => request.status === undefined && request.limit === 500))
 })
 
 test('recommendation engine converts degraded health into actionable diagnostics', () => {
