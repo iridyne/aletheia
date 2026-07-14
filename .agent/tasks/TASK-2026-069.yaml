@@ -12,12 +12,12 @@ intent: Prevent pre-fingerprint opportunity-quality PI diagnostic tasks from rep
   with at most one current fingerprinted diagnostic. Do not change Risk, Execution,
   exchanges, credentials, live enablement, or Learning authority defaults.
 acceptance:
-- Recovery marks every queued or running legacy unversioned opportunity-quality
-  diagnostic as superseded instead of executing it.
-- After that cleanup, current evidence can create at most one v1 fingerprinted
-  opportunity-quality diagnostic.
-- The change does not alter Risk, Execution, exchanges, credentials, live state,
-  or Learning authority defaults, and the Operator Shell regression suite passes.
+- Recovery marks every queued or running legacy unversioned opportunity-quality diagnostic
+  as superseded instead of executing it.
+- After that cleanup, current evidence can create at most one v1 fingerprinted opportunity-quality
+  diagnostic.
+- The change does not alter Risk, Execution, exchanges, credentials, live state, or
+  Learning authority defaults, and the Operator Shell regression suite passes.
 ownership:
   branch: iridite/learning-legacy-dedup
   lease_holder: codex-learning-legacy-dedup
@@ -28,6 +28,14 @@ next_action:
   command_key: workflow_tests
   reason: Commit the focused recovery repair, record verification, and deploy it.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: b07efb8ae066c512fd70b8dd00ece431c96fc139
+  run_at: '2026-07-14T15:26:57.768162Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-069.md
-updated_at: '2026-07-14T15:25:15.149272Z'
+updated_at: '2026-07-14T15:26:57.768334Z'
