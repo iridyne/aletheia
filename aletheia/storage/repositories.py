@@ -1695,13 +1695,24 @@ def find_compatible_open_position(
     direction: str,
     execution_mode: str,
     strategy_id: str | None,
+    *,
+    proposal_id: str | None = None,
 ) -> dict | None:
-    """Find one exact aggregation target without a bounded list scan."""
+    """Find one exact aggregation target without a bounded list scan.
+
+    Local paper passes ``proposal_id`` so a second independent Proposal can
+    never be hidden as an averaging leg in the first Position. Exchange adapters
+    retain their existing strategy-level lookup until their own scale-in intent
+    has a durable contract.
+    """
     sql = (
         "SELECT * FROM positions WHERE status='open' "
         "AND symbol=? AND market_type=? AND direction=? AND execution_mode=?"
     )
     params: list = [symbol, market_type, direction, execution_mode]
+    if proposal_id is not None:
+        sql += " AND proposal_id=?"
+        params.append(proposal_id)
     if strategy_id is not None:
         sql += " AND COALESCE(strategy_id, '') IN ('', ?)"
         params.append(strategy_id)

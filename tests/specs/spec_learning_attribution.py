@@ -187,6 +187,8 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     assert captured["shadow_only"] is True
     assert captured["block_candidate"] is False
     assert captured["score_penalty"] == 0
+    assert captured["proposed_block_candidate"] is True
+    assert captured["proposed_score_penalty"] == 0
     assert "shadow-only" in captured["tags"]
     from pathlib import Path
     dreaming_source = Path("aletheia/agents/dreaming_agent.py").read_text(encoding="utf-8")

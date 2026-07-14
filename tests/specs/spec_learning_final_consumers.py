@@ -9,6 +9,188 @@ from unittest.mock import AsyncMock
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
+def _operator_prompt_context() -> dict:
+    return {
+        "layer1": {"positions": [{"id": "position-1"}]},
+        "layer2": {
+            "reflection": "learned reflection",
+            "trading_memo": {"summary": "learned memo"},
+            "reasoning_feedback": "learned reasoning",
+            "calibration_feedback": "learned calibration",
+            "pending_signals": [{
+                "opportunity_id": "opp-authority",
+                "signal_source": "market_observer",
+                "symbol": "BTC/USDT",
+                "direction": "long",
+                "market_type": "spot",
+                "at": "2026-07-14T00:00:00+00:00",
+            }],
+            "pending_queue": {"read_status": "complete", "unresolved_total": 1},
+        },
+        "layer3": {
+            "lessons": [{"content": "learned case"}],
+            "ps_lessons": [{"summary": "learned structured lesson"}],
+            "guard_candidates": [{"content": "learned guard"}],
+        },
+    }
+
+
+@spec_claim(
+    SpecClaim(
+        "LE-C16", "learning_evolution", "§10 prompt authority", "L2c",
+        "Observer and Operator Learning bundles stay empty unless the exact paper path has "
+        "prospective treatment authority; control retains the static prompt baseline and the "
+        "manifest records the stable assignment and exposure identity.",
+        status="implemented",
+    )
+)
+def test_prompt_bundles_use_exact_paper_authority(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.learning.experiments import InfluenceDecision
+    from aletheia.learning import prompt_bundles
+
+    cfg = AletheiaConfig()
+    cfg.agent.autonomous_learning = True
+    cfg.runtime.paused = False
+    # Defaults are deliberately fail-closed: paper influence off + empty allowlist.
+    monkeypatch.setattr("aletheia.learning.control.load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "aletheia.learning.control.global_learning_refreeze_reason", lambda: None,
+    )
+    monkeypatch.setattr("aletheia.learning.authority.load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "aletheia.learning.authority.global_learning_refreeze_reason", lambda: None,
+    )
+    monkeypatch.setattr("aletheia.learning.experiments.load_config", lambda: cfg)
+    import aletheia.agent_shell.trading_context as trading_context
+    monkeypatch.setattr(trading_context, "_build_layer1_snapshot", lambda: _operator_prompt_context()["layer1"])
+    monkeypatch.setattr(trading_context, "_build_layer2_short_term", lambda: _operator_prompt_context()["layer2"])
+    monkeypatch.setattr(trading_context, "_build_layer3_wisdom", lambda: _operator_prompt_context()["layer3"])
+
+    default_off = trading_context.build_enriched_trading_context()
+    assert default_off["layer2"]["reflection"] is None
+    assert default_off["layer3"]["lessons"] == []
+    assert default_off["learning_manifest"]["authority"]["applied"] is False
+    assert default_off["learning_manifest"]["authority"]["exposure_id"]
+    from aletheia.analytics.filter_evidence import record_candidate_filter_trace
+    from aletheia.learning.ledger import get_record, linked_settled_exposure_counts
+    from aletheia.storage.sqlite import get_db
+    assert record_candidate_filter_trace({
+        "opportunity_id": "opp-authority",
+        "symbol": "BTC/USDT",
+        "market_type": "spot",
+        "direction": "long",
+        "entry_price_usd": 60_000.0,
+        "filter_trace": [{
+            "filter_name": "execution_eligibility",
+            "stage": "paper_ranker",
+            "decision": "passed",
+            "reason_code": "eligible",
+        }],
+    }, raise_on_error=True) == 1
+    operator_exposure = get_record(
+        "learning_exposures",
+        default_off["learning_manifest"]["authority"]["exposure_id"],
+    )
+    assert operator_exposure["outcome_candidate_key"] == "opportunity:opp-authority:4h"
+    operator_outcome = get_db().execute(
+        "SELECT id FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key='opportunity:opp-authority' AND horizon='4h'",
+    ).fetchone()
+    assert operator_outcome is not None
+    get_db().execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.2, "
+        "cost_model_version='test-v1', settled_at=datetime('now') WHERE id=?",
+        (operator_outcome["id"],),
+    )
+    get_db().commit()
+    operator_counts = linked_settled_exposure_counts(
+        operator_exposure["experiment_id"],
+        policy_epoch=operator_exposure["concurrent_policy_epoch"],
+    )
+    assert operator_counts[operator_exposure["assignment"]] == 1
+
+    observer_default = prompt_bundles.authorize_observer_learning_bundle(
+        "learned observer memo", "learned symbol guard",
+        candidate_key="observer_member:snapshot-1:member-1:spot",
+    )
+    assert observer_default[0] == ""
+    assert observer_default[1]["components"] == {}
+    assert observer_default[1]["authority"]["applied"] is False
+    assert observer_default[1]["authority"]["exposure_id"]
+
+    calls = []
+
+    def control(**kwargs):
+        calls.append(kwargs)
+        return InfluenceDecision(
+            value=0.0, applied=False, assignment="control", reason="baseline:authorized",
+            hypothesis_id="hyp-operator", experiment_id="exp-operator",
+            exposure_id="exposure-control",
+        )
+
+    monkeypatch.setattr("aletheia.learning.experiments.apply_boolean_treatment", control)
+    controlled = prompt_bundles.authorize_operator_learning_context(_operator_prompt_context())
+    assert controlled["layer2"]["reflection"] is None
+    assert controlled["learning_manifest"]["authority"] == {
+        "path_id": "operator_learning_bundle",
+        "candidate_key": calls[0]["candidate_key"],
+        "assignment": "control",
+        "applied": False,
+        "reason": "baseline:authorized",
+        "hypothesis_id": "hyp-operator",
+        "experiment_id": "exp-operator",
+        "exposure_id": "exposure-control",
+    }
+    assert calls[0]["candidate_key"].startswith("operator_queue:")
+    assert calls[0]["outcome_candidate_key"] == "opportunity:opp-authority:4h"
+    observer_control = prompt_bundles.authorize_observer_learning_bundle(
+        "learned observer memo", "learned symbol guard",
+        candidate_key="observer_member:snapshot-1:member-1:spot",
+    )
+    assert observer_control[0] == ""
+    assert observer_control[1]["components"] == {}
+    assert observer_control[1]["authority"]["assignment"] == "control"
+
+    def treatment(**kwargs):
+        return InfluenceDecision(
+            value=1.0, applied=True, assignment="treatment", reason="authorized",
+            hypothesis_id="hyp-operator", experiment_id="exp-operator",
+            exposure_id="exposure-treatment",
+        )
+
+    monkeypatch.setattr("aletheia.learning.experiments.apply_boolean_treatment", treatment)
+    treated = prompt_bundles.authorize_operator_learning_context(_operator_prompt_context())
+    assert treated["layer2"]["reflection"] == "learned reflection"
+    assert treated["learning_manifest"]["authority"]["assignment"] == "treatment"
+    assert treated["learning_manifest"]["authority"]["exposure_id"] == "exposure-treatment"
+    from aletheia.agent_shell.reflection import _build_pi_decision
+    final = _build_pi_decision({
+        "action": "skip", "symbol": "BTC/USDT", "direction": "long",
+        "market_type": "spot", "opportunity_id": "opp-authority",
+        "learning_manifest": treated["learning_manifest"],
+    })
+    assert json.loads(final.learning_manifest_json)["authority"]["exposure_id"] == "exposure-treatment"
+
+    observer_treatment = prompt_bundles.authorize_observer_learning_bundle(
+        "learned observer memo", "learned symbol guard",
+        candidate_key="observer_member:snapshot-1:member-1:spot",
+    )
+    assert observer_treatment[0] == "learned observer memo\nlearned symbol guard"
+    assert observer_treatment[1]["authority"]["path_id"] == "observer_advisory_bundle"
+
+    from aletheia.agents.market_observer import _observer_learning_candidate_key
+    member_first = _observer_learning_candidate_key(
+        run_id="run-1", venue="bitget", market_type="spot", symbol="BTC/USDT",
+        universe_snapshot_id="snapshot-1", universe_member_id="member-1",
+    )
+    member_retry = _observer_learning_candidate_key(
+        run_id="run-2", venue="bitget", market_type="spot", symbol="BTC/USDT",
+        universe_snapshot_id="snapshot-1", universe_member_id="member-1",
+    )
+    assert member_retry == member_first
+
+
 @spec_claim(
     SpecClaim(
         "LE-C09", "learning_evolution", "§9.5 separated consumer influence", "L2c",

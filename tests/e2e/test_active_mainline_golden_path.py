@@ -45,7 +45,7 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
         id="golden-snapshot",
         symbol="BTC/USDT",
         market_type="spot",
-        exchange="fixture",
+        exchange=cfg.market_data.ccxt_exchange,
         price=60_000.0,
         volume_24h=1_000_000_000.0,
         snapshot_at=datetime.now(timezone.utc).isoformat(),

@@ -415,15 +415,32 @@ def test_expired_paper_execution_lease_recovers_exactly_once(tmp_path, monkeypat
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import gateway
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import TradeProposal
+    from aletheia.storage.models import Opportunity, TradeProposal
+
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue: 100.0,
+    )
+    opportunity = Opportunity(
+        id="opportunity-expired-paper-lease",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+    )
+    repo.insert_opportunity(opportunity)
 
     proposal = TradeProposal(
         id="proposal-expired-paper-lease",
+        opportunity_id=opportunity.id,
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         quantity=0.001,
         price=100.0,
+        stop_price=99.0,
+        take_profit=102.0,
+        risk_reward=2.0,
         execution_mode="paper_internal",
         status="executing",
     )

@@ -1,7 +1,7 @@
 # Scheduler Contract
 
 **Contract path**: `docs/design/scheduler_contract.md`
-**Spec**: `tests/specs/spec_agent_contracts.py` (AC-S01, AC-S08)
+**Spec**: `tests/specs/spec_agent_contracts.py` (AC-S01, AC-S08), `tests/specs/spec_pi_decision_chain.py` (PI-S06, PI-S07), `tests/specs/spec_pipeline_tpsl_private_materialization.py` (PL-TPSL-05)
 **Impl**: `aletheia/agent_runtime/scheduler.py`
 **Related**: `docs/design/agent_contracts.md` (§8 区别)
 
@@ -22,7 +22,9 @@
 
 **APScheduler 版本**：`3.11.2`（`pyproject.toml:15`，`uv.lock:259`），使用 `BackgroundScheduler`（`apscheduler.schedulers.background`）。
 
-**启动时暂停**：`init_scheduler()` 在 `_scheduler.start()`（`scheduler.py:484`）后立即检查 `cfg.runtime.paused`；为真则调用 `_scheduler.pause()`（`scheduler.py:487`）。各 job 函数体内也独立检查 `cfg.runtime.paused` 并提前返回，双重防护。
+**启动时暂停**：`init_scheduler()` 在 `_scheduler.start()` 后检查 `cfg.runtime.paused`。当 `layered_pause_enabled=true` 时，只暂停开仓、观察者和 LLM/决策任务；下列 `_ESSENTIAL_JOBS` 仍派发，以维持市场价格、账户视图、保护性退出、对账、健康检查和数据维护。只有 `layered_pause_enabled=false` 的 blanket pause 才暂停整个 APScheduler。集合内任务不得再在函数体中因 `runtime.paused` 提前返回，这一一致性由 `tests/test_layered_pause.py` 锁定。
+
+当前 essential 集合：`market_data`、`data_collectors`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`。
 
 ---
 
@@ -64,7 +66,7 @@ _EXECUTOR_WORKERS = {
 | # | job_id | 行 | trigger | 参数 | executor | timeout(s) | misfire_grace |
 |---|---|---|---|---|---|---|---|
 | 1 | `market_data` | 324 | interval | minutes=5 | io | 90 | 60 |
-| 2 | `market_observer` | 328 | interval | minutes=15 | observer | 240 | 60 |
+| 2 | `market_observer` | 328 | interval | minutes=10 | observer | 500 | 60 |
 | 3 | `dreaming_daily` | 333 | cron | hour=2, minute=0, tz=Asia/Shanghai | agents | 300 | 300 |
 | 4 | `insight_synthesizer` | 337 | cron | hour=2, minute=30, tz=Asia/Shanghai | agents | 120 | 600 |
 | 5 | `confidence_calibration` | 341 | interval | hours=6 | io | 30 | 300 |
@@ -72,11 +74,11 @@ _EXECUTOR_WORKERS = {
 | 10 | `portfolio_snapshot` | 361 | interval | minutes=10 | default | 45 | 120 |
 | 11 | `exchange_sync` | 366 | interval | minutes=5 | io | 60 | 60 |
 | 12 | `paper_trader` | 371 | interval | minutes=5 | agents | 300 | 60 |
-| 13 | `pi_trading_decision` | 376 | interval | minutes=cfg.pi_daemon.heartbeat_sec/60 (min 1, default 15) | agents | 300 | 120 |
+| 13 | `pi_trading_decision` | 376 | interval | minutes=15（固定安全网周期） | agents | 300 | 120 |
 | 14 | `price_feed` | 381 | interval | seconds=30 | fast_io | 45 | 15 |
 | 15 | `position_manager` | 385 | interval | minutes=5 | io | — | 60 |
 | 16 | `position_reconcile` | 389 | interval | minutes=5 | io | — | 60 |
-| 17 | `tpsl_fill_check` | 394 | interval | seconds=90 | io | — | 30 |
+| 17 | `tpsl_fill_check` | 394 | interval | seconds=90 | io | 45 | 30 |
 | 18 | `cleanup` | 399 | cron | hour=3, minute=17, tz=Asia/Shanghai | io | — | 600 |
 | 19 | `health_check` | 403 | interval | minutes=10 | io | — | 120 |
 | 20 | `equity_observer` | 411 | cron | day_of_week=mon-fri, hour=14-21, minute=*/30, tz=UTC | agents | 240 | 300 |
@@ -101,7 +103,7 @@ _EXECUTOR_WORKERS = {
 
 ### 4.1 每 job 的 try/except 包装
 
-每个 `_run_xxx()` 函数体都有独立的 `try/except Exception` 块。异常被捕获后以 `logger.warning` 或 `logger.error` 记录，不会向上抛给 APScheduler 调度线程。APScheduler 本身也会捕获 job 函数抛出的异常（`BackgroundScheduler` 底层）并记录，但不会终止调度器。
+每个注册任务都通过 `_guarded(job_id, fn)` 进入 `_run_job_guarded()`。该最外层包装会捕获未处理异常、登记失败，并在前后清理线程局部 SQLite 状态；多数 `_run_xxx()` 还会就地捕获超时或生产函数已经报告的局部失败，以便保留同轮已完成工作。任何单个任务失败都不会终止 APScheduler 调度线程。
 
 ### 4.2 连续失败计数器 → infra_event（`scheduler.py:57–79`）
 
@@ -111,6 +113,7 @@ _consecutive_failures: dict[str, int] = {}
 _FAILURE_ALERT_THRESHOLD = 3            # scheduler.py:60
 
 def _record_job_failure(job_id, error):  # scheduler.py:67
+    _JOB_RUN_STATE.failure_recorded = True
     _consecutive_failures[job_id] = _consecutive_failures.get(job_id, 0) + 1
     count = _consecutive_failures[job_id]
     if count >= _FAILURE_ALERT_THRESHOLD:
@@ -118,7 +121,12 @@ def _record_job_failure(job_id, error):  # scheduler.py:67
                          code=f"job_consecutive_failure:{job_id}", ...)
 ```
 
-当某 job 连续失败 ≥3 次，调用 `emit_infra_event`（`aletheia/infra/events.py`），事件去重窗口 300s。`_record_job_success()` 将计数器归零。目前显式调用 `_record_job_success/failure` 的 job：`exchange_sync`（`scheduler.py:738/744/747`）和 `portfolio_snapshot`（`scheduler.py:759/765/768`）。其余 job 的失败只记日志，不计入失败计数（非信号路径，不触发 infra_event）。
+当某 job 连续失败 ≥3 次，调用 `emit_infra_event`（`aletheia/infra/events.py`），事件去重窗口 300s。`_record_job_success()` 将计数器归零。每次 `_run_job_guarded()` 开始时会把本轮 `failure_recorded` 置为假；生产函数若捕获异常或看到错误返回值，必须调用 `_record_job_failure()` 将它置真。包装层只有在本轮没有失败记录时才清零计数，因此“异常已吞掉”“部分工作已完成”都不能再被外层伪装成成功。
+
+System Operator 使用两个互不覆盖的健康身份：
+
+- `pi_trading_decision` 表示真正的交易机会评估。daemon 的 300 秒超时或异常分别登记 `daemon_evaluation_timeout` / `daemon_evaluation_failed`，返回内部重试标记，并在 cooldown 后重新置位事件；只有一次真实评估完成才清零该计数。
+- `pi_trading_heartbeat` 只表示 15 分钟 APScheduler 安全网是否成功把唤醒请求投递给 daemon。成功投递不能清零 `pi_trading_decision`；投递失败登记 `daemon_notify_failed`，并立即落到原有 inline 评估路径，避免 pending 队列因事件环不可达而继续断路。
 
 ### 4.3 超时隔离（`_run_async_with_timeout` / `_run_sync_with_timeout`）
 
@@ -141,6 +149,19 @@ def _record_job_failure(job_id, error):  # scheduler.py:67
 - `data_collectors` 中由 scheduler 负责落库的 derivatives 输出，必须等 funding/OI 写库完成后才记域成功；
   任一写入失败以稳定 `derivatives_*_persist_failed` 码把域标为 failed，并把整个 fan-out 记为 partial failure，
   但不阻断同轮其它数据域。
+- `market_data` 与 `price_feed` 即使保留了同轮成功抓取，只要返回 `errors` 非空，就分别以
+  `market_data_reported_errors` / `price_feed_reported_errors` 登记任务失败；空观察列表且 `errors=[]` 仍是合法成功。
+- `exchange_sync.sync_all_exchanges()` 的公开契约规定 `None` 是所有账户视图均失败，scheduler 以
+  `exchange_sync_total_failure` 登记失败；非空统一视图若带有账户级 `errors`，则保留已成功账户并以
+  `exchange_sync_reported_errors` 登记部分失败。只有没有错误的统一视图（包括合法空结构）才可清零健康计数。
+- execution `reconcile()` 与 position `run_reconcile()` 返回的 `errors` 非空时，分别登记
+  `reconciliation_reported_errors` / `position_reconcile_reported_errors`。Position 任务同时把 agent run 写成
+  `completed_with_errors`，已完成的 adoption/settlement 事实不回滚，但调度健康不得显示绿色。
+- protective `position_manager.evaluate_open_positions()` 会逐仓继续处理并返回汇总；只要 `errors` 非空，scheduler
+  以 `position_manager_reported_errors` 登记失败，同时保留同轮已完成的其它平仓。无持仓或 `errors=[]` 才是健康成功。
+- `tpsl_fill_check` 对每个计划和账户隔离错误并继续核验其它计划，返回 `materialized`、`failed_count`、`errors`
+  汇总。调用线程看到任一失败后以 `tpsl_private_reconciliation_failed` 登记红灯；下轮全部成功才可清零，已完成的
+  私有成交材料化不会因另一计划失败而回滚。
 
 ---
 
@@ -189,7 +210,8 @@ def stop_scheduler() -> None:
 
 `wait=False`：立即返回，不阻塞 FastAPI lifespan 关停路径。已派发但未完成的 job 在各自的 executor thread 中继续运行直到完成或 Python 进程退出。对于异步 job，`_run_async_with_timeout` 内部的 `concurrent.futures.ThreadPoolExecutor` 以 `wait=False` shutdown，守护线程随进程退出。
 
-`pause_scheduler()` / `resume_scheduler()` 不影响已注册的 job 表，仅暂停/恢复 APScheduler 的派发循环。
+`pause_scheduler(layered=True)` 只暂停非 essential job；`resume_scheduler()` 恢复这些选择性暂停项。`layered=False`
+才暂停/恢复 APScheduler 整体派发循环。两种模式都不修改已注册的 job 表。
 
 ---
 
@@ -201,8 +223,8 @@ def stop_scheduler() -> None:
 | INV-SCH-2 | `init_scheduler()` 注册 ≥ 28 个 job | `scheduler.py:324–481`，当前 30 个（条件分支最少 29） | AC-S08 |
 | INV-SCH-3 | 任何 job 函数抛出的异常不得终止调度器线程 | 各 `_run_xxx()` 顶层 `try/except Exception`；APScheduler 内部也兜底捕获 | — |
 | INV-SCH-4 | job 执行前后，本线程泄漏的 SQLite 事务必须被回滚 | `_run_job_guarded()`（`scheduler.py:110`）；async/sync timeout wrapper `finally` 块 | — |
-| INV-SCH-5 | 连续失败 ≥ 3 次的 job 必须触发 infra_event（仅显式调用路径） | `_record_job_failure()`（`scheduler.py:67`） | — |
-| INV-SCH-6 | 调度器启动时若 `cfg.runtime.paused=True` 则立即暂停 | `scheduler.py:486–488` | — |
+| INV-SCH-5 | 任务抛异常或显式报告失败时，连续失败 ≥ 3 次必须触发 infra_event；外层不得在同轮清零 | `_run_job_guarded()` + `_record_job_failure()` | — |
+| INV-SCH-6 | layered pause 只停非 essential job；20 个 essential 入口及其委托 body 不得用 `runtime.paused` 自我禁用 | `_ESSENTIAL_JOBS` + `pause_scheduler()` | `test_layered_pause.py` |
 
 ---
 

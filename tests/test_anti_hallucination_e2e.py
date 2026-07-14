@@ -209,9 +209,12 @@ def test_reviewed_opportunity_roundtrips_through_market_pending_signal(tmp_path,
     assert decision.market_type == "usdt_futures"
 
 
-def test_close_decision_backfills_from_open_position_when_symbol_omitted():
-    """Close/reduce decisions judge an existing position and can inherit its chain."""
-    from aletheia.agent_shell.trading_decision import TradingDecision, _attach_opportunity_context
+def test_unsupported_close_is_skip_and_does_not_bind_an_open_position():
+    """The entry Operator cannot disguise an unimplemented close as a real action."""
+    from aletheia.agent_shell.trading_decision import (
+        _attach_opportunity_context,
+        _parse_decision,
+    )
 
     ctx = {
         "layer1": {
@@ -229,20 +232,25 @@ def test_close_decision_backfills_from_open_position_when_symbol_omitted():
         "layer2": {},
         "layer3": {},
     }
-    decision = TradingDecision(
-        action="close", symbol=None, direction=None, conviction=72,
-        reasoning="NEAR/USDT short is underwater and thesis failed",
-    )
+    decision = _parse_decision({
+        "action": "close",
+        "symbol": None,
+        "direction": None,
+        "conviction": 72,
+        "reasoning": "NEAR/USDT short is underwater and thesis failed",
+    })
 
     _attach_opportunity_context(decision, ctx)
 
-    assert decision.symbol == "NEAR/USDT"
-    assert decision.direction == "short"
-    assert decision.opportunity_id == "opp-near-short"
-    assert decision.strategy_id == "strat-near"
+    assert decision.action == "skip"
+    assert "unsupported_action:close" in decision.reasoning
+    assert decision.symbol is None
+    assert decision.direction is None
+    assert decision.opportunity_id is None
+    assert decision.strategy_id is None
 
 
-def test_close_decision_does_not_guess_ambiguous_open_position():
+def test_entry_decision_does_not_guess_identity_from_open_positions():
     from aletheia.agent_shell.trading_decision import TradingDecision, _attach_opportunity_context
 
     ctx = {
@@ -257,8 +265,8 @@ def test_close_decision_does_not_guess_ambiguous_open_position():
         "layer3": {},
     }
     decision = TradingDecision(
-        action="close", symbol=None, direction=None, conviction=70,
-        reasoning="Portfolio risk is high; close one position",
+        action="trade", symbol=None, direction=None, conviction=70,
+        reasoning="No durable pending entry identity was selected",
     )
 
     _attach_opportunity_context(decision, ctx)

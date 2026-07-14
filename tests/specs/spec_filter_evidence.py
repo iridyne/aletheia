@@ -472,8 +472,9 @@ def test_persisted_ranker_and_selection_gates_are_registered():
         _CONTRACT,
         "§3 Guard evidence truthfulness",
         "L2a",
-        "guard_candidate_block records not_applicable when disabled and error when "
-        "evaluation fails; only a completed non-blocking evaluation may be passed.",
+        "guard_candidate_block follows Guard configuration independently of Learning, records "
+        "not_applicable when Guard enforcement is disabled and error when evaluation fails; "
+        "only a completed non-blocking evaluation may be passed.",
         status="implemented",
     )
 )
@@ -484,7 +485,9 @@ def test_guard_filter_has_explicit_not_evaluated_states():
 
     applicability = inspect.getsource(ranker._guard_evaluation_applicability)
     candidate = inspect.getsource(ranker._evaluate_candidate)
-    assert '"not_applicable", "learning_influence_disabled"' in applicability
+    assert "learning_influence_disabled" not in applicability
+    assert '"not_applicable", "guard_disabled"' in applicability
+    assert '"not_applicable", "guard_ranker_enforcement_disabled"' in applicability
     assert '"error", "guard_applicability_error"' in applicability
     assert 'guard_reason = "guard_evaluation_failed"' in candidate
     assert "if guard_eval is None" in candidate

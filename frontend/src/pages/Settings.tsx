@@ -394,6 +394,16 @@ function AgentModelsTab({ status, settings, qc }: any) {
   const lifecycleAutomationEnabled = !!learningCfg.lifecycle_automation_enabled
   const paperInfluenceEnabled = !!learningCfg.paper_influence_enabled
   const paperInfluencePaths = Array.isArray(learningCfg.paper_influence_paths) ? learningCfg.paper_influence_paths : []
+  const learningPathOptions = Array.isArray(settings?.learning_path_options) ? settings.learning_path_options as Array<{
+    path_id: string
+    label: string
+    supported: boolean
+    status: 'supported' | 'consumer_unwired' | 'authority_unwired'
+  }> : []
+  const knownLearningPathIds = new Set(learningPathOptions.map(option => option.path_id))
+  const unknownPaperInfluencePaths = paperInfluencePaths.filter(
+    (path: string) => !knownLearningPathIds.has(path),
+  )
   const autoRefreeze = learningCfg.auto_refreeze !== false
   const evaluationInterval = Number(learningCfg.evaluation_interval_minutes ?? 60)
   const paperActiveAllocation = Number(learningCfg.paper_active_allocation_pct ?? 0.80)
@@ -469,11 +479,39 @@ function AgentModelsTab({ status, settings, qc }: any) {
             learningMut.mutate({ paper_influence_enabled: v })
           }} disabled={learningMut.isPending} />
         </Row>
-        <Row label="Allowed paper paths" hint="Comma-separated internal path names. Empty means no path can receive paper influence.">
-          <input type="text" defaultValue={paperInfluencePaths.join(', ')} onBlur={e => {
-            const paths = e.currentTarget.value.split(',').map(v => v.trim()).filter(Boolean)
-            if (paths.join(',') !== paperInfluencePaths.join(',')) learningMut.mutate({ paper_influence_paths: paths })
-          }} disabled={learningMut.isPending} className="w-64" />
+        <Row label="Allowed paper paths" hint="Only paths with a wired consumer and prospective authority adapter can be selected. Unsupported design entries remain visible but disabled.">
+          <div style={{ display: 'grid', gap: 6, minWidth: 320 }}>
+            {learningPathOptions.map(option => (
+              <label key={option.path_id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={paperInfluencePaths.includes(option.path_id)}
+                  disabled={learningMut.isPending || !option.supported}
+                  onChange={e => {
+                    const configuredSupported = paperInfluencePaths.filter(
+                      (path: string) => learningPathOptions.some(
+                        candidate => candidate.path_id === path && candidate.supported,
+                      ),
+                    )
+                    const next = e.currentTarget.checked
+                      ? [...new Set([...configuredSupported, option.path_id])]
+                      : configuredSupported.filter((path: string) => path !== option.path_id)
+                    learningMut.mutate({ paper_influence_paths: next })
+                  }}
+                />
+                <span>{option.label}</span>
+                <code>{option.path_id}</code>
+                <span style={{ color: option.supported ? 'var(--green)' : 'var(--muted)' }}>
+                  {option.supported ? 'Supported' : 'Not connected'}
+                </span>
+              </label>
+            ))}
+            {unknownPaperInfluencePaths.map((path: string) => (
+              <div key={path} style={{ color: 'var(--yellow)' }}>
+                Unsupported saved path: <code>{path}</code>. Change any supported selection to remove it.
+              </div>
+            ))}
+          </div>
         </Row>
         <Row label="Auto-refreeze" hint="Immediately closes a paper experiment after a negative or invalid measurement verdict. Default ON.">
           <Toggle checked={autoRefreeze} onChange={v => learningMut.mutate({ auto_refreeze: v })} disabled={learningMut.isPending} />

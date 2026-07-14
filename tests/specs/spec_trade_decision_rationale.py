@@ -5,6 +5,9 @@ from __future__ import annotations
 import dataclasses
 import json
 import sqlite3
+from datetime import datetime, timezone
+
+import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -16,6 +19,7 @@ def _setup_db(tmp_path, monkeypatch):
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    loader._config_cache = None
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     sq._db_conn = None
     conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
@@ -50,24 +54,27 @@ def test_trade_decision_rationale_carriers_exist():
         status="implemented",
     ),
 )
-def test_proposal_rationale_carries_final_parameter_snapshot(monkeypatch):
+def test_proposal_rationale_carries_final_parameter_snapshot(tmp_path, monkeypatch):
     import asyncio
 
+    _setup_db(tmp_path, monkeypatch)
     import aletheia.agent_shell.trading_decision as td
     from aletheia.agent_shell.trading_decision import TradingDecision
     from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage.models import MarketSnapshot
+    from aletheia.storage.repositories import insert_market_snapshot
 
     captured: dict[str, object] = {}
     monkeypatch.setattr(td, "_proposal_direction_overheated", lambda *_a, **_kw: None)
-    monkeypatch.setattr(
-        "aletheia.trading.market_data.latest_snapshot",
-        lambda *_a, **_kw: {
-            "id": "snapshot-entry-exact",
-            "price": 100.0,
-            "market_type": "usdt_futures",
-            "snapshot_at": "2026-07-13T08:00:00+00:00",
-        },
-    )
+    snapshot_at = datetime.now(timezone.utc).isoformat()
+    insert_market_snapshot(MarketSnapshot(
+        id="snapshot-entry-exact",
+        symbol="BTC/USDT",
+        market_type="perp",
+        exchange="binance",
+        price=100.0,
+        snapshot_at=snapshot_at,
+    ))
     monkeypatch.setattr(
         "aletheia.config.loader.load_config", lambda: AletheiaConfig(),
     )
@@ -116,8 +123,9 @@ def test_proposal_rationale_carries_final_parameter_snapshot(monkeypatch):
     }
     assert snapshot["entry_price"]["final_value"] == 100.0
     assert snapshot["entry_price"]["market_snapshot_id"] == "snapshot-entry-exact"
-    assert snapshot["entry_price"]["market_type"] == "usdt_futures"
-    assert snapshot["entry_price"]["snapshot_at"] == "2026-07-13T08:00:00+00:00"
+    assert snapshot["entry_price"]["market_type"] == "perp"
+    assert snapshot["entry_price"]["snapshot_at"] == snapshot_at
+    assert snapshot["entry_price"]["value_source"] == "fresh_exact_market_mark"
     assert snapshot["stop_loss"]["reason"] == decision.parameter_rationale["stop_loss"]
     assert snapshot["take_profit"]["value_source"] == "default_config"
     assert snapshot["notional_usdt"]["actual_value"] == 25.0
@@ -172,7 +180,7 @@ def test_protective_close_persists_honest_exit_reasoning(tmp_path, monkeypatch):
 def test_operator_close_persists_original_ai_reason_after_success(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     from aletheia.portfolio.position_manager import close_position_routed
-    from aletheia.storage.models import Position
+    from aletheia.storage.models import MarketSnapshot, Position
     from aletheia.storage import repositories as repo
 
     position = Position(
@@ -180,16 +188,23 @@ def test_operator_close_persists_original_ai_reason_after_success(tmp_path, monk
         entry_price=100.0, current_price=100.0, execution_mode="paper_internal",
     )
     repo.insert_position(position)
-    close_position_routed(
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol=position.symbol,
+        market_type="spot",
+        exchange="binance",
+        price=101.0,
+        snapshot_at=datetime.now(timezone.utc).isoformat(),
+    ))
+    closed = close_position_routed(
         position.id,
         reason="pi_agent_portfolio_review",
-        fallback_exit_price=101.0,
         decision_reasoning="Momentum reversed while the market breadth weakened.",
         decision_actor="system_operator",
         decision_source="portfolio_review",
     )
 
     row = conn.execute("SELECT exit_reasoning FROM positions WHERE id = ?", (position.id,)).fetchone()
+    assert closed["fill_price"] == 100.9495
     explanation = json.loads(row["exit_reasoning"])
     assert explanation["actor"] == "system_operator"
     assert explanation["source"] == "portfolio_review"
@@ -241,8 +256,8 @@ def test_administrative_close_persists_non_ai_exit_reasoning(tmp_path, monkeypat
 @spec_claim(
     SpecClaim(
         "TDR-C01", "trade_decision_rationale", "§3.1 required AI explanation", "L2c",
-        "An LLM-originated trade intent without all five parameter reasons is retained as a "
-        "structured skipped decision and cannot create an unexplained proposal.",
+        "An LLM-originated trade intent without all five parameter reasons is retryably "
+        "unavailable and cannot consume its queue identity or create an unexplained Proposal.",
         status="implemented",
     ),
 )
@@ -259,13 +274,6 @@ def test_llm_trade_without_five_parameter_reasons_does_not_open(monkeypatch):
         "reasoning": "A trade with incomplete explanations.",
         "bear_case": "The breakout can fail.",
     })
-    result = asyncio.run(td.submit_decision_as_proposal(decision, "paper_internal"))
-
-    assert result == {
-        "status": "skipped",
-        "reason": "missing_parameter_rationale",
-        "missing": [
-            "entry_price", "stop_loss", "take_profit", "notional_usdt", "leverage",
-        ],
-    }
+    with pytest.raises(td.DecisionUnavailable, match="missing_parameter_rationale"):
+        asyncio.run(td.submit_decision_as_proposal(decision, "paper_internal"))
     assert decision.filter_trace[-1]["filter_name"] == "parameter_rationale_gate"

@@ -57,6 +57,19 @@ _BIAS_BRAKE_MAX_DIRECTION_PCT = 0.90
 _BIAS_BRAKE_BYPASS_CONVICTION = 85
 
 
+class DecisionUnavailable(RuntimeError):
+    """A transient Operator input/preflight dependency is not authoritative yet.
+
+    Callers must not turn this into a durable skip or trade claim.  The pending
+    queue identity remains available so the daemon can retry after its cooldown.
+    """
+
+    def __init__(self, reason: str, *, stage: str = "operator_evaluation") -> None:
+        self.reason = reason
+        self.stage = stage
+        super().__init__(reason)
+
+
 # ── bias-brake deadlock breaker ────────────────────────────────────────
 _BREAKER_STREAK_THRESHOLD = 15   # consecutive same-dir brake skips before auto-bypass
 _STREAK_LOOKBACK_HOURS = 6       # how far back to count the streak
@@ -93,7 +106,7 @@ def _brake_streak(direction):
 
 @dataclass
 class TradingDecision:
-    action: str              # "trade" | "skip" | "close" | "reduce"
+    action: str              # active model surface: "trade" | "skip"
     symbol: str | None
     direction: str | None    # "long" | "short"
     conviction: int          # 0-100
@@ -164,7 +177,7 @@ class DebateResult:
 _DECISION_SCHEMA = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": ["trade", "skip", "close", "reduce", "scale_in", "flip"]},
+        "action": {"type": "string", "enum": ["trade", "skip"]},
         "symbol": {"type": "string"},
         "direction": {"type": "string", "enum": ["long", "short"]},
         "conviction": {"type": "integer", "minimum": 0, "maximum": 100},
@@ -184,9 +197,8 @@ _DECISION_SCHEMA = {
         # (entry/stop/tp/reward:risk) is always complete before the limit order.
         "stop_price": {"type": "number"},
         "take_profit": {"type": "number"},
-        # Required for trade-like actions by the prompt below.  It remains
-        # optional in the top-level schema because skip/close/reduce decisions
-        # do not have five new-entry parameters to explain.
+        # Required for trade by the prompt below. It remains optional in the
+        # top-level schema because skip has no entry parameters to explain.
         "parameter_rationale": {
             "type": "object",
             "properties": {
@@ -236,31 +248,18 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     1. Assess opportunities using structured LLM with full context
     2. If conviction in uncertain range (40-80), run Bull/Bear debate
     3. Compute conviction-based position size
-    4. Return TradingDecision (caller submits proposal if action="trade"|"scale_in"|"flip")
+    4. Return TradingDecision (caller submits a proposal only for action="trade")
     """
     decision_raw = await _assess_opportunity(trading_context)
     if decision_raw is None:
-        decision = TradingDecision(
-            action="skip", symbol=None, direction=None,
-            conviction=0, reasoning="LLM assessment unavailable",
-        )
-        # An unavailable assessment is still the terminal result of the oldest
-        # queued signal presented in this call. Preserve that exact identity so
-        # the queue advances instead of writing an anonymous skip forever.
-        _attach_opportunity_context(decision, trading_context)
-        return decision
+        raise DecisionUnavailable("llm_assessment_unavailable")
 
     decision = _parse_decision(decision_raw)
     # R0: match the pick back to its source opportunity (id + scanner_family)
-    # before any return path, so even watch/skip records carry attribution.
+    # before any return path, so skip records carry attribution.
     _attach_opportunity_context(decision, trading_context)
 
-    # "watch" → record interest, no trade (treated as informational skip)
-    if decision.action == "watch":
-        return decision
-
-    # "scale_in" and "flip" are trade-like actions that go through debate+sizing
-    trade_actions = ("trade", "scale_in", "flip")
+    trade_actions = ("trade",)
     trade_intent = decision.action in trade_actions
 
     bias_brake_reason = _proposal_bias_brake_reason(decision)
@@ -315,58 +314,52 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
             and _DEBATE_RANGE[0] <= decision.conviction <= _DEBATE_RANGE[1]):
         initial_conviction = decision.conviction
         debate = await _run_debate(decision.symbol, decision.direction, trading_context)
-        if debate:
-            decision.debate_ran = True
-            decision.debate_initial_conviction = initial_conviction
-            decision.debate_bull_confidence = debate.bull_confidence
-            decision.debate_bear_confidence = debate.bear_confidence
-            # Debate ADJUSTS the initial conviction, it does not REPLACE it. The
-            # old code set conviction = 50 + (bull-bear), discarding the initial
-            # assessment and pulling every result toward 50 — below the 55 trade
-            # threshold, so an initial 65 could exit debate at 45 and skip. The
-            # initial decision already weighed the full context; the bull/bear
-            # advantage is a correction term, not a fresh verdict (2026-06-23
-            # profit-loop freeze exception). 0.3 weight keeps debate meaningful
-            # without letting it override a confident initial read.
-            # bull_confidence = P(this trade succeeds), bear_confidence = P(this
-            # trade fails) — the prompts are direction-aware ("make the case FOR
-            # {symbol} {direction}" vs "why {direction} is a BAD idea"). So
-            # bull - bear is correctly signed for both long and short: a short
-            # with high bear_confidence (trade will fail) should reduce conviction.
-            advantage = debate.bull_confidence - debate.bear_confidence
-            adjusted = int(round(initial_conviction + advantage * 0.3))
-            decision.conviction = max(0, min(100, adjusted))
-            decision.debate_adjustment = decision.conviction - initial_conviction
-            if decision.conviction < _MIN_CONVICTION_TO_TRADE:
-                decision.action = "skip"
-                decision.reasoning += (
-                    f" [debate adjusted conviction {initial_conviction}→{decision.conviction} "
-                    f"(bull {debate.bull_confidence} vs bear {debate.bear_confidence}, "
-                    f"dir={decision.direction}) → skip]"
-                )
-            decision.filter_trace.append({
-                "filter_name": "debate_downgrade",
-                "stage": "system_operator_debate",
-                "decision": "rejected" if decision.action == "skip" else "passed",
-                "reason_code": (
-                    "debate_below_min_conviction"
-                    if decision.action == "skip"
-                    else "debate_at_or_above_min_conviction"
-                ),
-                "inputs": {
-                    "initial_conviction": initial_conviction,
-                    "final_conviction": decision.conviction,
-                    "bull_confidence": debate.bull_confidence,
-                    "bear_confidence": debate.bear_confidence,
-                },
-                "parameters": {
-                    "debate_range": list(_DEBATE_RANGE),
-                    "minimum_conviction": _MIN_CONVICTION_TO_TRADE,
-                    "adjustment_weight": 0.3,
-                },
-            })
+        if debate is None:
+            raise DecisionUnavailable(
+                "required_debate_unavailable", stage="operator_debate"
+            )
+        decision.debate_ran = True
+        decision.debate_initial_conviction = initial_conviction
+        decision.debate_bull_confidence = debate.bull_confidence
+        decision.debate_bear_confidence = debate.bear_confidence
+        # Debate adjusts the initial conviction; it does not replace it. Bull
+        # confidence is success probability for the proposed direction and bear
+        # confidence is its failure probability, so the difference is correctly
+        # signed for either long or short.
+        advantage = debate.bull_confidence - debate.bear_confidence
+        adjusted = int(round(initial_conviction + advantage * 0.3))
+        decision.conviction = max(0, min(100, adjusted))
+        decision.debate_adjustment = decision.conviction - initial_conviction
+        if decision.conviction < _MIN_CONVICTION_TO_TRADE:
+            decision.action = "skip"
+            decision.reasoning += (
+                f" [debate adjusted conviction {initial_conviction}→{decision.conviction} "
+                f"(bull {debate.bull_confidence} vs bear {debate.bear_confidence}, "
+                f"dir={decision.direction}) → skip]"
+            )
+        decision.filter_trace.append({
+            "filter_name": "debate_downgrade",
+            "stage": "system_operator_debate",
+            "decision": "rejected" if decision.action == "skip" else "passed",
+            "reason_code": (
+                "debate_below_min_conviction"
+                if decision.action == "skip"
+                else "debate_at_or_above_min_conviction"
+            ),
+            "inputs": {
+                "initial_conviction": initial_conviction,
+                "final_conviction": decision.conviction,
+                "bull_confidence": debate.bull_confidence,
+                "bear_confidence": debate.bear_confidence,
+            },
+            "parameters": {
+                "debate_range": list(_DEBATE_RANGE),
+                "minimum_conviction": _MIN_CONVICTION_TO_TRADE,
+                "adjustment_weight": 0.3,
+            },
+        })
 
-    # Compute sizing for trade-like actions (P1-5: pass strategy trade count for sample-aware Kelly)
+    # Compute sizing for the single executable entry action.
     if decision.action in trade_actions and decision.conviction >= _MIN_CONVICTION_TO_TRADE:
         decision.filter_trace.append({
             "filter_name": "operator_conviction_gate",
@@ -400,6 +393,46 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     return decision
 
 
+def _latest_exact_entry_snapshot(
+    symbol: str,
+    market_type: str,
+    venue: str,
+) -> dict | None:
+    """Return metadata for the exact venue/instrument used by local entry pricing.
+
+    Freshness authority remains in ``get_fresh_price_for_protective_close``. This
+    helper only preserves the exact snapshot id/timestamp in Proposal rationale and
+    distinguishes an old exact observation from no exact observation at all.
+    """
+    if not venue:
+        return None
+    from aletheia.data.symbols import to_bitget, to_canonical
+    from aletheia.storage.repositories import list_market_snapshots
+
+    canonical = to_canonical(symbol)
+    symbols = [canonical]
+    legacy = to_bitget(canonical)
+    if legacy != canonical:
+        symbols.append(legacy)
+    physical_market = "perp" if market_type == "usdt_futures" else market_type
+    markets = [physical_market]
+    if market_type == "usdt_futures":
+        markets.append("usdt_futures")
+    rows: list[dict] = []
+    for stored_symbol in symbols:
+        for stored_market in markets:
+            rows.extend(list_market_snapshots(
+                symbol=stored_symbol,
+                exchange=venue,
+                market_type=stored_market,
+                limit=1,
+            ))
+    return (
+        max(rows, key=lambda row: str(row.get("snapshot_at") or ""))
+        if rows else None
+    )
+
+
 async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode: str) -> dict:
     """Resolve one trade intent into an immutable Proposal without persisting it.
 
@@ -407,7 +440,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     authoritative PiDecision claim.  No Risk or broker side effect happens here.
     """
     identity_failure = None
-    if decision.action not in ("trade", "scale_in", "flip"):
+    if decision.action != "trade":
         identity_failure = "invalid_action"
     elif not decision.symbol:
         identity_failure = "missing_symbol"
@@ -422,10 +455,10 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
             "inputs": {"action": decision.action},
             "parameters": {
                 "required_fields": ["symbol", "direction"],
-                "trade_actions": ["trade", "scale_in", "flip"],
+                "trade_actions": ["trade"],
             },
         })
-        return {"status": "failed", "reason": identity_failure}
+        raise DecisionUnavailable(identity_failure, stage="proposal_preflight")
 
     missing_parameter_reasons = [
         key for key in _ENTRY_PARAMETER_KEYS
@@ -446,11 +479,9 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
             "proposal skipped: LLM decision omitted parameter reasons (%s)",
             ", ".join(missing_parameter_reasons),
         )
-        return {
-            "status": "skipped",
-            "reason": "missing_parameter_rationale",
-            "missing": missing_parameter_reasons,
-        }
+        raise DecisionUnavailable(
+            "missing_parameter_rationale", stage="proposal_preflight"
+        )
 
     overheated = _proposal_direction_overheated(decision.direction, decision.conviction)
     if overheated:
@@ -489,26 +520,77 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         # backstop, while this keeps the proposal on the intended perp instrument.
         market_type = "usdt_futures"
 
-    snap = latest_snapshot(decision.symbol, market_type=market_type)
-    price = float((snap or {}).get("price") or 0)
+    snap: dict | None
+    if execution_mode == "paper_internal":
+        from aletheia.data.price_feed import (
+            get_fresh_price_for_protective_close,
+            protective_price_venue,
+        )
+
+        venue = protective_price_venue(
+            execution_mode,
+            configured_data_venue=cfg.market_data.ccxt_exchange,
+        )
+        price = float(
+            get_fresh_price_for_protective_close(
+                decision.symbol,
+                market_type,
+                venue=venue or "",
+            )
+            or 0
+        )
+        snap = _latest_exact_entry_snapshot(
+            decision.symbol, market_type, venue or ""
+        )
+        if snap is None:
+            snap = {
+                "symbol": decision.symbol,
+                "market_type": (
+                    "perp" if market_type == "usdt_futures" else market_type
+                ),
+                "exchange": venue,
+            }
+        snap = dict(snap)
+        snap["price"] = price or snap.get("price")
+        snap["price_authority"] = "fresh_exact_market_mark"
+    else:
+        snap = latest_snapshot(decision.symbol, market_type=market_type)
+        price = float((snap or {}).get("price") or 0)
     if not price:
+        reason = (
+            "market_price_stale"
+            if execution_mode == "paper_internal" and snap.get("id")
+            else "market_price_unavailable"
+        )
         decision.filter_trace.append({
             "filter_name": "proposal_price_availability",
             "stage": "proposal_submission",
             "decision": "rejected",
-            "reason_code": "market_price_unavailable",
-            "inputs": {"symbol": decision.symbol, "market_type": market_type},
-            "parameters": {"minimum_price": 0},
+            "reason_code": reason,
+            "inputs": {
+                "symbol": decision.symbol,
+                "market_type": market_type,
+                "execution_mode": execution_mode,
+                "venue": (snap or {}).get("exchange"),
+            },
+            "parameters": {
+                "minimum_price": 0,
+                "memory_max_age_seconds": 90,
+                "database_max_age_seconds": 120,
+            },
         })
-        logger.warning("no_price_for_decision_proposal: %s", decision.symbol)
-        return {"status": "failed", "reason": "market_price_unavailable"}
+        logger.warning("%s: %s", reason, decision.symbol)
+        raise DecisionUnavailable(reason, stage="proposal_preflight")
     decision.filter_trace.append({
         "filter_name": "proposal_price_availability",
         "stage": "proposal_submission",
         "decision": "passed",
         "reason_code": "market_price_available",
         "inputs": {"symbol": decision.symbol, "market_type": market_type},
-        "parameters": {"minimum_price": 0},
+        "parameters": {
+            "minimum_price": 0,
+            "exact_instrument_required": execution_mode == "paper_internal",
+        },
     })
 
     # Guard chain is a PRE-RISK OBSERVABILITY layer (see trust/guard_chain docstring):
@@ -552,12 +634,11 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         else:
             stop_price = round(price * (1 + stop_pct / 100.0), 8)
 
-    # Entry discipline (owner discussion #6): commit take-profit + reward:risk
-    # BEFORE the (limit) order, so the entry is a planned bet, not a gambler's
-    # market-buy. take_profit: the operator's explicit price, else config default
+    # Commit take-profit + reward:risk before execution. take_profit is the
+    # operator's explicit price, else the configured default
     # anchored to the entry (price). risk_reward = reward-per-unit / risk-per-unit
-    # from the committed entry/stop/tp. The risk engine rejects a native limit
-    # entry that is missing any of the four (see engine.py check).
+    # from the committed entry/stop/tp. The risk engine rejects every native local
+    # paper entry (and native exchange limit entry) missing any of the four.
     take_profit = decision.take_profit
     if take_profit is None:
         tp_pct = cfg.trading.default_take_profit_pct
@@ -634,7 +715,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         symbol=decision.symbol,
         market_type=market_type,
         direction=decision.direction,
-        order_type="limit",
+        order_type="market" if execution_mode == "paper_internal" else "limit",
         quantity=quantity,
         price=price,
         leverage=leverage,
@@ -733,7 +814,7 @@ def _build_entry_parameter_snapshot(
     return {
         "entry_price": {
             "final_value": entry_price,
-            "value_source": "market_snapshot",
+            "value_source": snapshot.get("price_authority") or "market_snapshot",
             "market_snapshot_id": snapshot.get("id"),
             "market_type": snapshot.get("market_type"),
             "snapshot_at": snapshot.get("snapshot_at"),
@@ -833,9 +914,9 @@ async def _assess_opportunity(ctx: dict) -> dict | None:
     full_user = f"{user}\n\nReturn JSON: {schema_text}"
     result, err = await llm_structured(system, full_user, schema=_DummySchema(_DECISION_SCHEMA),
                                        provider=get_provider_for_tier("deep"))
-    if err:
+    if err or result is None:
         logger.warning("LLM assessment failed: %s", err)
-        return None
+        raise DecisionUnavailable("llm_assessment_unavailable")
     return result
 
 
@@ -862,7 +943,9 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
     )
     if bull_err or bear_err or not bull_result or not bear_result:
         logger.debug("debate failed bull_err=%s bear_err=%s", bull_err, bear_err)
-        return None
+        raise DecisionUnavailable(
+            "required_debate_unavailable", stage="operator_debate"
+        )
 
     bull_conf = int(bull_result.get("confidence", 50))
     bear_conf = int(bear_result.get("confidence", 50))
@@ -937,10 +1020,10 @@ def _proposal_bias_brake_reason(decision: TradingDecision) -> str | None:
     """Stop ordinary-conviction proposals from amplifying a one-sided 24h run.
 
     This is a proposal-layer guardrail, not a trading signal. It never forces the
-    opposite direction; it only turns another same-direction trade into watch when
+    opposite direction; it only turns another same-direction trade into skip when
     the recent proposal stream is already dominated by that direction.
     """
-    if decision.action not in ("trade", "scale_in", "flip"):
+    if decision.action != "trade":
         return None
     if decision.direction not in ("long", "short"):
         return None
@@ -1430,7 +1513,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
         parts += [
             "## ⚡ Pending Signals (awaiting your decision)",
             "These signals were collected by the scanner pipeline. You are the sole decision maker —",
-            "make exactly one trade, skip, or watch decision for the oldest suitable visible signal.",
+            "make exactly one trade or skip decision for the oldest suitable visible signal.",
             queue_line,
             pending_lines, "",
         ]
@@ -1480,7 +1563,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "# Your Reasoning Space",
         "",
         "Reason freely about whether to act, but execution authority is not free-form:",
-        "- For trade/scale-in/flip, choose only an exact symbol, direction, and market_type "
+        "- For trade, choose only an exact symbol, direction, and market_type "
         "shown in Pending Signals / Executable Candidates.",
         "- Analysis-only Ranker Preview rows are not queued and must never be selected "
         "for execution. If no durable pending signal is suitable, skip.",
@@ -1506,10 +1589,6 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "Actions available:",
         "- trade: open a new position",
         "- skip: no action now",
-        "- close: close an existing position",
-        "- reduce: reduce an existing position size",
-        "- scale_in: add to an existing winning position",
-        "- flip: reverse direction (close existing + open opposite)",
         "",
         "Return: action, symbol (BTC/USDT format), direction (long/short), "
         "conviction (0-100), market_type (spot/usdt_futures), leverage (integer ≥1), "
@@ -1517,7 +1596,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "risk_factors, supporting_signals, opposing_signals, "
         "key_assumptions (array of ≤3 short strings: critical premises this decision rests on).",
         "",
-        "For every trade, scale_in, or flip action, also return parameter_rationale with five "
+        "For every trade action, also return parameter_rationale with five "
         "short, setup-specific reasons: entry_price, stop_loss, take_profit, notional_usdt, "
         "and leverage. Explain why each exact choice fits this trade now. These are shown to "
         "the operator next to the final values. Do not claim that you calculated a value that "
@@ -1672,8 +1751,10 @@ def _parse_decision(raw: dict) -> TradingDecision:
             if isinstance(value, str) and value.strip():
                 parameter_rationale[key] = value.strip()[:600]
 
-    return TradingDecision(
-        action=raw.get("action", "skip") if raw.get("action") != "watch" else "skip",  # watch removed from enum; treat as skip
+    raw_action = str(raw.get("action") or "skip").strip().lower()
+    supported_action = raw_action in {"trade", "skip"}
+    decision = TradingDecision(
+        action=raw_action if supported_action else "skip",
         symbol=raw.get("symbol"),
         direction=raw.get("direction"),
         conviction=_int(raw.get("conviction", 0)),
@@ -1690,6 +1771,19 @@ def _parse_decision(raw: dict) -> TradingDecision:
         parameter_rationale=parameter_rationale,
         parameter_rationale_required=True,
     )
+    if not supported_action:
+        decision.reasoning = (
+            f"{decision.reasoning} [unsupported_action:{raw_action}; normalized to skip]"
+        ).strip()
+        decision.filter_trace.append({
+            "filter_name": "operator_action_support",
+            "stage": "system_operator",
+            "decision": "rejected",
+            "reason_code": "unsupported_action",
+            "inputs": {"raw_action": raw_action},
+            "parameters": {"supported_actions": ["trade", "skip"]},
+        })
+    return decision
 
 
 def _resolve_pending_carrier_identity(
@@ -1754,9 +1848,8 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
       2. serenity `pending_signals` for Opportunity decisions. Layer 1/ranker rows
          are analysis-only and cannot authorize either entry or terminal identity.
       3. Legacy analysis-only helper contexts that omit the pending seam may still
-         use Layer 1/ranker/Serenity attribution for non-Position decisions. A
-         close/reduce that cannot match one exact Position is rejected before these
-         views. Serenity sets signal_source='serenity' so opportunity_id is later
+         use Layer 1/ranker/Serenity attribution. Serenity sets
+         signal_source='serenity' so opportunity_id is later
          resolved against serenity_opportunities (NOT opportunities) — the two id
          spaces are indistinguishable bare uuid4().hex[:12] strings.
 
@@ -1764,37 +1857,6 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
     features/signals), the fields stay None rather than being fabricated. See
     LEARNING_LOOP_AUDIT_2026-06-26 §R0 + docs/plans/serenity_execution_path.md §3.2.
     """
-    if decision.action in {"close", "reduce"}:
-        requested_action = decision.action
-        if _attach_position_context(decision, ctx):
-            return
-        # A Position-management action has no authority path through a pending or
-        # analysis-only Opportunity. Reject it here, before any of those fallback
-        # views are inspected, so a same-symbol entry candidate cannot be mistaken
-        # for an existing trade that does not exist (or is ambiguous).
-        decision.filter_trace.append({
-            "filter_name": "position_identity",
-            "stage": "operator_context_binding",
-            "decision": "rejected",
-            "reason_code": "position_identity_unresolved",
-            "inputs": {
-                "action": requested_action,
-                "symbol": decision.symbol,
-                "direction": decision.direction,
-                "market_type": decision.market_type,
-            },
-            "parameters": {"required_match_count": 1},
-        })
-        decision.action = "skip"
-        decision.opportunity_id = None
-        decision.learning_candidate_key = None
-        decision.strategy_id = None
-        decision.scanner_family = None
-        decision.reasoning = (
-            f"{decision.reasoning} [position_identity_unresolved; action rejected]"
-        )
-        return
-
     # The exact queued carrier is more specific than a later same-symbol/direction
     # open row, so consume it before heuristic Layer-1 matches.
     layer2 = ctx.get("layer2") or {}
@@ -1804,7 +1866,7 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         for carrier in raw_pending
         if (resolved := _resolve_pending_carrier_identity(carrier)) is not None
     ]
-    if decision.action in {"trade", "scale_in", "flip"}:
+    if decision.action == "trade":
         compatible_by_identity: dict[tuple, dict] = {}
         for carrier in pending:
             if decision.opportunity_id and carrier.get("opportunity_id") != decision.opportunity_id:
@@ -1927,10 +1989,9 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
 
     # Every decision about a fresh Opportunity may inherit identity only from the
     # durable pending queue. Layer-1/ranker rows remain analysis context: without
-    # this return, a heartbeat skip/watch could silently retire an open Opportunity
-    # that paper_trader/Serenity never queued. close/reduce remain Position actions
-    # and keep their independent identity path above.
-    if decision.action not in {"close", "reduce"}:
+    # this return, a heartbeat skip could silently retire an open Opportunity
+    # that paper_trader/Serenity never queued.
+    if decision.action in {"trade", "skip"}:
         for p in pending:
             if p.get("signal_source") != "serenity":
                 continue
@@ -2086,55 +2147,3 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         if not decision.market_type and o.get("market_type"):
             decision.market_type = o.get("market_type")
         return
-
-
-def _attach_position_context(decision: TradingDecision, ctx: dict) -> bool:
-    """Link close/reduce decisions to the open position they are judging.
-
-    Close/reduce decisions judge an existing trade, not a fresh opportunity. If
-    the model omits symbol but its reasoning uniquely names one current position,
-    the causal parent is still deterministic and should be preserved.
-    """
-    layer1 = ctx.get("layer1") or {}
-    positions = layer1.get("position_authority") or layer1.get("positions") or []
-    match = _match_position_for_decision(decision, positions)
-    if not match:
-        return False
-    if not decision.symbol:
-        decision.symbol = match.get("symbol")
-    if not decision.direction:
-        decision.direction = match.get("direction")
-    if not decision.market_type:
-        decision.market_type = match.get("market_type")
-    decision.opportunity_id = match.get("opportunity_id") or decision.opportunity_id
-    decision.strategy_id = match.get("strategy_id") or decision.strategy_id
-    trade_school = match.get("trade_school")
-    decision.signal_source = "serenity" if trade_school == "serenity" else "market_observer"
-    return bool(decision.opportunity_id or decision.symbol)
-
-
-def _match_position_for_decision(decision: TradingDecision, positions: list[dict]) -> dict | None:
-    if not positions:
-        return None
-    eligible = [
-        p for p in positions
-        if (not decision.direction or not p.get("direction") or p.get("direction") == decision.direction)
-        and (not decision.market_type or not p.get("market_type") or p.get("market_type") == decision.market_type)
-    ]
-    if decision.symbol:
-        matches = [
-            p for p in eligible
-            if p.get("symbol") == decision.symbol
-        ]
-        return matches[0] if len(matches) == 1 else None
-
-    reasoning = decision.reasoning or ""
-    mentioned = [
-        p for p in eligible
-        if p.get("symbol") and str(p["symbol"]) in reasoning
-    ]
-    if len(mentioned) == 1:
-        return mentioned[0]
-    if len(eligible) == 1:
-        return eligible[0]
-    return None

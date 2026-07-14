@@ -228,9 +228,9 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/settings` | Full config as JSON |
+| GET | `/settings` | Full config as JSON plus `learning_path_options`, the registry-backed supported/unsupported paper-influence inventory used by the existing Settings page |
 | POST | `/settings/autonomous-learning` | Learning loop toggles |
-| POST | `/settings/learning` | Paper-only Learning experiment controls: contribution measurement, lifecycle automation, paper influence path allowlist, auto-refreeze, evaluation interval, and final-stage allocation. Lifecycle automation and paper influence default off; this endpoint cannot enable live trading. |
+| POST | `/settings/learning` | Paper-only Learning experiment controls: contribution measurement, lifecycle automation, registry-validated paper influence path allowlist, auto-refreeze, evaluation interval, and final-stage allocation. Unknown or consumer-unwired paths are rejected (including when an old unsupported saved path is re-enabled through the master toggle). Lifecycle automation and paper influence default off; this endpoint cannot enable live trading. |
 | POST | `/settings/bypass-distress-gate` | Explicit operator bypass for distress gate checks |
 | POST | `/settings/exchange-markets` | Observed symbols list |
 | POST | `/settings/primary-exchange` | Primary exchange selection |
@@ -238,8 +238,8 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/settings/paper-account/credit` | Add local simulated USDT: `{"amount_usdt": number, "note"?: string}`. Human/audit logged; never touches an exchange. |
 | POST | `/settings/paper-account/debit` | Remove local simulated USDT; cannot make cash negative. Human/audit logged. |
 | POST | `/settings/paper-account/set-balance` | Set local simulated cash: `{"cash_balance_usdt": number, "note"?: string}`. An explicit zero remains zero; it is not automatically re-funded. |
-| POST | `/settings/paper-account/close-spot` | Close all open local spot positions at their latest stored market prices. Preserves trade history and logs the human action. |
-| POST | `/settings/paper-account/close-all` | Close all open local paper positions at their latest stored market prices. Preserves trade history and logs the human action. |
+| POST | `/settings/paper-account/close-spot` | Close every open local spot Position only after all candidates have a fresh exact configured-venue + symbol + spot mark. Never uses `Position.current_price`; preserves trade history and the human/dashboard actor. |
+| POST | `/settings/paper-account/close-all` | Close every open local paper Position only after all candidates have a fresh exact configured-venue + symbol + physical-market mark. Never uses `Position.current_price`; preserves trade history and the human/dashboard actor. |
 | POST | `/settings/runtime` | Scheduler intervals, timeouts |
 | POST | `/settings/app` | App-level settings (timezone, locale) |
 | POST | `/settings/pi_daemon` | PI daemon config (debounce, cooldown) |
@@ -278,6 +278,16 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 |---|---|
 | `economics_complete` | False when any closed local-paper Position still has unavailable net economics |
 | `unsettled_closed_positions_count` | Number of those closed Positions |
+
+Both bulk-close endpoints preflight the complete candidate set before the first
+close. If any exact mark is missing, they return HTTP `409` with
+`detail.code="bulk_close_mark_preflight_failed"`, an empty
+`closed_position_ids`, and per-Position `failed` facts; the batch writes no close
+Order, Fill, Outcome, or feedback job. If mark preflight succeeds but a later
+materialization fails, the endpoint returns HTTP `500` with
+`detail.code="bulk_close_partial_failure"` and both the durable
+`closed_position_ids` and per-Position `failed` list, so a partial close is never
+reported as all-success.
 
 The completeness check covers the complete local close history and is not capped by a dashboard display limit.
 When `economics_complete=false`, `cash_balance_usdt` remains the visible append-only ledger balance but is not

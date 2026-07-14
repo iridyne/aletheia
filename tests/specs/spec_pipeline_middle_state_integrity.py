@@ -74,6 +74,10 @@ def _risk_config(monkeypatch, *, demo_slots: int = 1):
         lambda *_args, **_kwargs: [],
     )
     monkeypatch.setattr(engine, "_portfolio_drawdown_scale", lambda _mode: 1.0)
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue: 100.0,
+    )
     return cfg
 
 
@@ -94,11 +98,12 @@ def test_distinct_proposals_cannot_oversubscribe_one_risk_slot(tmp_path, monkeyp
 
     from aletheia.execution import gateway
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import TradeProposal
+    from aletheia.storage.models import Opportunity, TradeProposal
 
     proposals = [
         TradeProposal(
             id=f"reservation-race-{index}",
+            opportunity_id=f"reservation-race-opportunity-{index}",
             strategy_id=f"reservation-strategy-{index}",
             symbol="BTC/USDT",
             market_type="spot",
@@ -106,11 +111,21 @@ def test_distinct_proposals_cannot_oversubscribe_one_risk_slot(tmp_path, monkeyp
             order_type="market",
             quantity=0.01,
             price=100.0,
+            stop_price=99.0,
+            take_profit=102.0,
+            risk_reward=2.0,
             execution_mode="paper_internal",
         )
         for index in range(2)
     ]
     for proposal in proposals:
+        repo.insert_opportunity(Opportunity(
+            id=proposal.opportunity_id,
+            symbol=proposal.symbol,
+            market=proposal.market_type,
+            direction_bias=proposal.direction,
+            status="queued",
+        ))
         repo.insert_trade_proposal(proposal)
 
     simultaneous_start = threading.Barrier(2)
@@ -163,15 +178,24 @@ def test_authoritative_reservation_blocks_capacity_before_order(tmp_path, monkey
 
     import aletheia.risk.engine as engine
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import TradeProposal
+    from aletheia.storage.models import Opportunity, TradeProposal
 
+    approved_opportunity = Opportunity(
+        id="crash-reserved-opportunity",
+        symbol="BTC/USDT", market="spot", direction_bias="long", status="queued",
+    )
+    repo.insert_opportunity(approved_opportunity)
     approved = TradeProposal(
         id="crash-reserved-proposal",
+        opportunity_id=approved_opportunity.id,
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         quantity=0.01,
         price=100.0,
+        stop_price=99.0,
+        take_profit=102.0,
+        risk_reward=2.0,
         execution_mode="paper_internal",
         status="executing",
     )
@@ -181,13 +205,22 @@ def test_authoritative_reservation_blocks_capacity_before_order(tmp_path, monkey
     assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
     assert repo.get_entry_risk_reservation(approved.id) is not None
 
+    candidate_opportunity = Opportunity(
+        id="after-crash-opportunity",
+        symbol="ETH/USDT", market="spot", direction_bias="long", status="queued",
+    )
+    repo.insert_opportunity(candidate_opportunity)
     candidate = TradeProposal(
         id="after-crash-proposal",
+        opportunity_id=candidate_opportunity.id,
         symbol="ETH/USDT",
         market_type="spot",
         direction="long",
         quantity=0.01,
         price=100.0,
+        stop_price=99.0,
+        take_profit=102.0,
+        risk_reward=2.0,
         execution_mode="paper_internal",
     )
     repo.insert_trade_proposal(candidate)
@@ -314,15 +347,24 @@ def test_paper_replay_rechecks_kill_switch_before_dispatch(tmp_path, monkeypatch
     from aletheia.execution import gateway
     import aletheia.risk.engine as engine
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import TradeProposal
+    from aletheia.storage.models import Opportunity, TradeProposal
 
+    opportunity = Opportunity(
+        id="paper-stale-authority-opportunity",
+        symbol="BTC/USDT", market="spot", direction_bias="long", status="queued",
+    )
+    repo.insert_opportunity(opportunity)
     proposal = TradeProposal(
         id="paper-stale-authority",
+        opportunity_id=opportunity.id,
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         quantity=0.01,
         price=100.0,
+        stop_price=99.0,
+        take_profit=102.0,
+        risk_reward=2.0,
         execution_mode="paper_internal",
         status="executing",
     )
@@ -357,15 +399,24 @@ def test_known_pre_order_terminal_rejection_releases_reservation(tmp_path, monke
 
     from aletheia.execution import gateway
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import TradeProposal
+    from aletheia.storage.models import Opportunity, TradeProposal
 
+    opportunity = Opportunity(
+        id="terminal-reservation-release-opportunity",
+        symbol="BTC/USDT", market="spot", direction_bias="long", status="queued",
+    )
+    repo.insert_opportunity(opportunity)
     proposal = TradeProposal(
         id="terminal-reservation-release",
+        opportunity_id=opportunity.id,
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         quantity=0.01,
         price=100.0,
+        stop_price=99.0,
+        take_profit=102.0,
+        risk_reward=2.0,
         execution_mode="paper_internal",
     )
     repo.insert_trade_proposal(proposal)
@@ -402,15 +453,24 @@ def test_terminal_no_order_reservation_is_inactive_after_cleanup_failure(
     from aletheia.execution import gateway
     import aletheia.risk.engine as engine
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import TradeProposal
+    from aletheia.storage.models import Opportunity, TradeProposal
 
+    terminal_opportunity = Opportunity(
+        id="terminal-cleanup-failed-opportunity",
+        symbol="BTC/USDT", market="spot", direction_bias="long", status="queued",
+    )
+    repo.insert_opportunity(terminal_opportunity)
     terminal = TradeProposal(
         id="terminal-reservation-cleanup-failed",
+        opportunity_id=terminal_opportunity.id,
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         quantity=0.01,
         price=100.0,
+        stop_price=99.0,
+        take_profit=102.0,
+        risk_reward=2.0,
         execution_mode="paper_internal",
     )
     repo.insert_trade_proposal(terminal)
@@ -435,13 +495,22 @@ def test_terminal_no_order_reservation_is_inactive_after_cleanup_failure(
         "SELECT COUNT(*) FROM orders WHERE proposal_id=?", (terminal.id,)
     ).fetchone()[0] == 0
 
+    candidate_opportunity = Opportunity(
+        id="after-terminal-cleanup-opportunity",
+        symbol="ETH/USDT", market="spot", direction_bias="long", status="queued",
+    )
+    repo.insert_opportunity(candidate_opportunity)
     candidate = TradeProposal(
         id="after-terminal-cleanup-failure",
+        opportunity_id=candidate_opportunity.id,
         symbol="ETH/USDT",
         market_type="spot",
         direction="long",
         quantity=0.01,
         price=100.0,
+        stop_price=99.0,
+        take_profit=102.0,
+        risk_reward=2.0,
         execution_mode="paper_internal",
     )
     repo.insert_trade_proposal(candidate)
@@ -459,7 +528,8 @@ def test_terminal_no_order_reservation_is_inactive_after_cleanup_failure(
         "§2 complete open-position working set",
         "L2b",
         "Safety and lifecycle loops see every open Position beyond the legacy 50-row "
-        "display default, and paper aggregation can find an older compatible Position.",
+        "display default, and paper aggregation can find an older Position only for "
+        "the same immutable Proposal lineage.",
         status="implemented",
     )
 )
@@ -469,7 +539,19 @@ def test_open_position_working_set_and_paper_merge_are_unbounded(tmp_path, monke
     from aletheia.execution import paper_broker
     from aletheia.portfolio import position_manager
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
+    from aletheia.storage.models import Position, TradeProposal
+
+    proposal = TradeProposal(
+        id="target-proposal",
+        symbol="MERGE/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        price=10.0,
+        execution_mode="paper_internal",
+        status="executed",
+    )
+    repo.insert_trade_proposal(proposal)
 
     target = Position(
         id="old-compatible-position",
@@ -480,6 +562,7 @@ def test_open_position_working_set_and_paper_merge_are_unbounded(tmp_path, monke
         entry_price=10.0,
         execution_mode="paper_internal",
         strategy_id="target-strategy",
+        proposal_id=proposal.id,
     )
     repo.insert_position(target)
     for index in range(500):
@@ -503,6 +586,7 @@ def test_open_position_working_set_and_paper_merge_are_unbounded(tmp_path, monke
         target.direction,
         target.execution_mode,
         target.strategy_id,
+        target.proposal_id,
     )
     assert matched is not None
     assert matched["id"] == target.id
@@ -621,7 +705,11 @@ def test_trailing_does_not_invent_native_null_stop(tmp_path, monkeypatch):
     cfg.trading.max_position_hold_hours = 0
     cfg.trading.market_aware_exits.enabled = False
     monkeypatch.setattr(manager, "load_config", lambda: cfg)
-    monkeypatch.setattr(manager, "_latest_price", lambda _symbol: 100.0)
+    monkeypatch.setattr(
+        manager,
+        "get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue: 100.0,
+    )
 
     proposal = TradeProposal(
         id="native-null-stop-proposal",

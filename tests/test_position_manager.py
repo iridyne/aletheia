@@ -31,9 +31,14 @@ def setup_env(tmp_path, monkeypatch):
     run_migrations()
 
 
-def _snap(symbol, price, market_type="spot"):
+def _snap(symbol, price, market_type="spot", exchange="binance"):
     repo.insert_market_snapshot(
-        MarketSnapshot(symbol=symbol, market_type=market_type, price=price)
+        MarketSnapshot(
+            symbol=symbol,
+            market_type=market_type,
+            exchange=exchange,
+            price=price,
+        )
     )
 
 
@@ -150,6 +155,18 @@ def test_stop_loss_closes_long(tmp_path, monkeypatch):
 
 def test_take_profit_closes_short(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    # A futures close can expose net PnL only when the public funding schedule
+    # covers the complete entry-to-exit window.  The next settlement is in the
+    # future, so this is a verified zero-event funding window.
+    observed = datetime.now(timezone.utc) - timedelta(minutes=1)
+    repo.insert_funding_rate_snapshot({
+        "symbol": "ETH/USDT",
+        "exchange": "okx",
+        "funding_rate": 0.0001,
+        "funding_rate_annualized": 0.1095,
+        "next_funding_time": (observed + timedelta(hours=4)).isoformat(),
+        "observed_at": observed.isoformat(),
+    })
     p = _position_with_entry_chain(
         symbol="ETH/USDT", market_type="usdt_futures", direction="short",
         quantity=2.0, entry_price=200.0, entry_fee=0.24,

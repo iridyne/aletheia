@@ -287,15 +287,31 @@ def test_learning_control_consumes_reconcile_integrity_incident():
     assert "MIN_CLEAN_OBSERVATIONS" in integrity
     assert "learning_influence_gate_reason" in experiments
     gated_consumers = {
-        "aletheia/agent_shell/trading_context.py": "learning_influence_enabled",
-        "aletheia/agents/market_observer.py": "learning_influence_enabled",
-        "aletheia/agents/paper_trader_ranker.py": "learning_influence_enabled",
-        "aletheia/trading/sizing_policy.py": "learning_influence_enabled",
-        "aletheia/trading/persona.py": "learning_influence_enabled",
-        "aletheia/trading/persona_rollout.py": "global_learning_refreeze_reason",
+        "aletheia/agent_shell/trading_context.py": (
+            "authorize_operator_learning_context",
+        ),
+        "aletheia/agents/market_observer.py": (
+            "authorize_observer_learning_bundle",
+        ),
+        # Ranker score changes and learned Guard blocks are separate authority
+        # paths. Do not accept the former global on/off switch as proof for either.
+        "aletheia/agents/paper_trader_ranker.py": (
+            "_authorized_ranker_delta",
+            "apply_numeric_treatment",
+            "evaluate_guards",
+        ),
+        "aletheia/knowledge/guards.py": (
+            "learned_guard_block_authorized",
+            "apply_numeric_treatment",
+        ),
+        "aletheia/trading/sizing_policy.py": ("learning_influence_enabled",),
+        "aletheia/trading/persona.py": ("learning_influence_enabled",),
+        "aletheia/trading/persona_rollout.py": ("global_learning_refreeze_reason",),
     }
-    for path, gate in gated_consumers.items():
-        assert gate in _source(path), path
+    for path, gates in gated_consumers.items():
+        source = _source(path)
+        for gate in gates:
+            assert gate in source, f"{path}: missing {gate}"
 
 
 @spec_claim(

@@ -499,3 +499,122 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
         ("EXEC-TP-X", "BTCUSDT", "usdt_futures"),
         ("EXEC-TP-X", "BTCUSDT", "usdt_futures"),
     ]
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-TPSL-05",
+        "pipeline_tpsl_private_materialization",
+        "§5 scheduler partial-failure health",
+        "L2c",
+        "During layered pause, one TPSL private-history failure remains visible in "
+        "scheduler health without blocking another plan from materializing; a later "
+        "fully successful pass clears the consecutive failure count.",
+        status="implemented",
+    )
+)
+def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
+    monkeypatch,
+):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.execution import exchange_materialization
+    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.learning import control
+    from aletheia.storage import repositories, sqlite
+
+    positions = [
+        {
+            "id": "pos-fail",
+            "symbol": "BTC/USDT",
+            "market_type": "usdt_futures",
+            "execution_mode": "bitget_demo",
+            "exchange_tpsl_order_id": {"sl": "PLAN-FAIL"},
+        },
+        {
+            "id": "pos-ok",
+            "symbol": "ETH/USDT",
+            "market_type": "usdt_futures",
+            "execution_mode": "bitget_demo",
+            "exchange_tpsl_order_id": {"tp": "PLAN-OK"},
+        },
+    ]
+    fail_private_query = True
+    plan_calls: list[str] = []
+    materialized: list[str] = []
+    failures: list[tuple[str, str]] = []
+
+    class _Client:
+        def __init__(self, mode):
+            assert mode == "demo"
+
+        async def get_plan_order_history(self, *, order_id, **_kwargs):
+            plan_calls.append(order_id)
+            if order_id == "PLAN-FAIL" and fail_private_query:
+                raise RuntimeError("private plan history unavailable")
+            return [{
+                "orderId": order_id,
+                "planStatus": "executed",
+                "executeOrderId": f"EXEC-{order_id}",
+            }]
+
+        async def get_order_fills(self, **_kwargs):
+            return [{"tradeId": "private-fill"}]
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        scheduler,
+        "load_config",
+        lambda: SimpleNamespace(runtime=SimpleNamespace(paused=True)),
+    )
+    monkeypatch.setattr(repositories, "list_all_open_positions", lambda: positions)
+    monkeypatch.setattr(bitget_client, "BitgetClient", _Client)
+    monkeypatch.setattr(
+        scheduler,
+        "_claim_observed_tpsl_close",
+        lambda position_id, **_kwargs: ({"id": f"close-{position_id}"}, True),
+    )
+
+    def materialize(close_order_id, _fills):
+        materialized.append(close_order_id)
+        return SimpleNamespace(state="filled")
+
+    monkeypatch.setattr(
+        exchange_materialization, "materialize_bitget_close", materialize
+    )
+    monkeypatch.setattr(
+        scheduler, "_run_sync_with_timeout", lambda _job, fn: fn()
+    )
+    monkeypatch.setattr(control, "is_autonomous_learning_job", lambda _job: False)
+    monkeypatch.setattr(control, "record_learning_job_success", lambda _job: None)
+    monkeypatch.setattr(
+        control,
+        "record_learning_job_failure",
+        lambda job_id, error: failures.append((job_id, error)),
+    )
+    monkeypatch.setattr(sqlite, "rollback_if_in_transaction", lambda: False)
+    monkeypatch.setattr(sqlite, "close_db", lambda: None)
+
+    scheduler._consecutive_failures.clear()
+    first = scheduler._run_job_guarded(
+        "tpsl_fill_check", scheduler._run_tpsl_fill_check
+    )
+
+    assert plan_calls == ["PLAN-FAIL", "PLAN-OK"]
+    assert materialized == ["close-pos-ok"]
+    assert first["failed_count"] == 1
+    assert len(first["materialized"]) == 1
+    assert scheduler._consecutive_failures["tpsl_fill_check"] == 1
+    assert failures == [
+        ("tpsl_fill_check", "tpsl_private_reconciliation_failed")
+    ]
+
+    fail_private_query = False
+    positions[:] = [positions[1]]
+    second = scheduler._run_job_guarded(
+        "tpsl_fill_check", scheduler._run_tpsl_fill_check
+    )
+
+    assert second["failed_count"] == 0
+    assert scheduler._consecutive_failures["tpsl_fill_check"] == 0

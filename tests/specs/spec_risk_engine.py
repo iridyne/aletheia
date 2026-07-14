@@ -379,6 +379,10 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
     monkeypatch.setattr(eng, "_check_lesson_constraints", lambda _proposal: [])
     monkeypatch.setattr(eng, "_lookup_beta", lambda _symbol: 4.0)
     monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue: 100.0,
+    )
+    monkeypatch.setattr(
         eng,
         "authoritative_account_realized_loss",
         lambda _mode: AccountLossSnapshot(
@@ -413,6 +417,9 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
             order_type="market",
             quantity=1.0,
             price=100.0,
+            stop_price=99.0,
+            take_profit=102.0,
+            risk_reward=2.0,
             execution_mode="paper_internal",
         )
         repo.insert_trade_proposal(proposal)

@@ -49,23 +49,30 @@ def test_parse_decision_guards_non_integer_conviction():
     assert _parse_decision({**base, "conviction": None}).conviction == 0       # null → 0
 
 
-def test_submit_decision_reads_snapshot_for_final_market_type(monkeypatch):
-    """A perp proposal must not build quantity/entry geometry from a spot row."""
+def test_submit_decision_reads_snapshot_for_final_market_type(tmp_path, monkeypatch):
+    """A local-paper perp proposal uses only a fresh exact-venue perp mark."""
     import asyncio
     import aletheia.agent_shell.trading_decision as td
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot
+    from tests.test_entry_logic import setup_env
 
-    snapshot_calls: list[tuple[str, str | None]] = []
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config
+
+    venue = load_config().market_data.ccxt_exchange or "binance"
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT",
+        market_type="perp",
+        exchange=venue,
+        price=200.0,
+    ))
     captured: dict = {}
-
-    def latest(symbol, market_type=None):
-        snapshot_calls.append((symbol, market_type))
-        return {"price": 200.0 if market_type == "usdt_futures" else 100.0}
 
     def create(**kwargs):
         captured.update(kwargs)
         return {"status": "pending"}
 
-    monkeypatch.setattr("aletheia.trading.market_data.latest_snapshot", latest)
     monkeypatch.setattr("aletheia.execution.paper_tools.create_paper_proposal", create)
     monkeypatch.setattr(
         "aletheia.trading.entry_snapshot.capture_attribution_snapshot_json",
@@ -89,9 +96,9 @@ def test_submit_decision_reads_snapshot_for_final_market_type(monkeypatch):
     )
     asyncio.run(td.submit_decision_as_proposal(decision, "paper_internal"))
 
-    assert snapshot_calls == [("BTC/USDT", "usdt_futures")]
     assert captured["price"] == 200.0
     assert captured["quantity"] == 0.1
+    assert captured["order_type"] == "market"
 
 
 def test_attribution_survives_conflicting_layer1_via_ranker():

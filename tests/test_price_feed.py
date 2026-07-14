@@ -16,6 +16,7 @@ from aletheia.data.price_feed import (
     refresh_watched_prices,
     cache_stats,
     _price_cache,
+    _instrument_price_cache,
     _cache_lock,
     _STALE_THRESHOLD_SEC,
 )
@@ -26,9 +27,11 @@ def clear_cache():
     """Reset module-level cache before each test."""
     with _cache_lock:
         _price_cache.clear()
+        _instrument_price_cache.clear()
     yield
     with _cache_lock:
         _price_cache.clear()
+        _instrument_price_cache.clear()
 
 
 class TestGetCachedPrice:
@@ -73,6 +76,48 @@ class TestGetCachedPrice:
         assert all(r == 150.0 for r in results)
 
 
+class TestProtectiveClosePrice:
+    def test_exact_cache_keeps_spot_and_perp_marks_separate(self):
+        from aletheia.data import price_feed
+
+        now = datetime.now(timezone.utc)
+        with _cache_lock:
+            price_feed._instrument_price_cache[("binance", "BTC/USDT", "spot")] = {
+                "price": 65_000.0, "ts": now, "market_type": "spot",
+            }
+            price_feed._instrument_price_cache[("binance", "BTC/USDT", "perp")] = {
+                "price": 64_500.0, "ts": now, "market_type": "perp",
+            }
+
+        assert price_feed.get_fresh_price_for_protective_close(
+            "BTC/USDT", "spot", venue="binance",
+        ) == 65_000.0
+        assert price_feed.get_fresh_price_for_protective_close(
+            "BTC/USDT", "usdt_futures", venue="binance",
+        ) == 64_500.0
+
+    def test_exact_cache_keeps_execution_venues_separate(self):
+        from aletheia.data import price_feed
+
+        now = datetime.now(timezone.utc)
+        with _cache_lock:
+            price_feed._instrument_price_cache[("okx", "BTC/USDT", "perp")] = {
+                "price": 65_000.0, "ts": now, "market_type": "perp",
+                "exchange": "okx",
+            }
+            price_feed._instrument_price_cache[("binance", "BTC/USDT", "perp")] = {
+                "price": 64_000.0, "ts": now, "market_type": "perp",
+                "exchange": "binance",
+            }
+
+        assert price_feed.get_fresh_price_for_protective_close(
+            "BTC/USDT", "usdt_futures", venue="okx",
+        ) == 65_000.0
+        assert price_feed.get_fresh_price_for_protective_close(
+            "BTC/USDT", "usdt_futures", venue="binance",
+        ) == 64_000.0
+
+
 class TestGetWatchedSymbols:
     @patch("aletheia.config.loader.load_config")
     @patch("aletheia.storage.repositories.list_all_open_positions")
@@ -80,9 +125,11 @@ class TestGetWatchedSymbols:
         mock_cfg.return_value.event_triggers.enabled = False
         mock_cfg.return_value.market_data.ccxt_exchange = "binance"
         mock_list.return_value = [
-            {"symbol": "BTC/USDT"},
-            {"symbol": "ETH/USDT"},
-            {"symbol": "BTC/USDT"},  # duplicate
+            {"symbol": "BTC/USDT", "execution_mode": "paper_internal"},
+            {"symbol": "ETH/USDT", "execution_mode": "paper_internal"},
+            {
+                "symbol": "BTC/USDT", "execution_mode": "paper_internal",
+            },  # duplicate
         ]
         result = get_watched_symbols()
         assert result == ["BTC/USDT", "ETH/USDT"]
@@ -113,7 +160,11 @@ class TestGetWatchedSymbols:
         self, mock_positions, mock_members, mock_asset, mock_cfg
     ):
         mock_positions.return_value = [
-            {"symbol": "BTC/USDT", "market_type": "usdt_futures"}
+            {
+                "symbol": "BTC/USDT",
+                "market_type": "usdt_futures",
+                "execution_mode": "paper_internal",
+            }
         ]
         mock_members.return_value = [
             {
@@ -136,6 +187,59 @@ class TestGetWatchedSymbols:
         assert [str(item) for item in result] == [
             "okx:BTC/USDT:perp",
             "okx:ETH/USDT:perp",
+        ]
+
+    @patch("aletheia.config.loader.load_config")
+    @patch("aletheia.storage.repositories.list_all_open_positions")
+    def test_same_symbol_spot_and_perp_are_both_watched(self, mock_positions, mock_cfg):
+        mock_positions.return_value = [
+            {
+                "symbol": "BTC/USDT", "market_type": "spot",
+                "execution_mode": "paper_internal",
+            },
+            {
+                "symbol": "BTC/USDT", "market_type": "usdt_futures",
+                "execution_mode": "paper_internal",
+            },
+        ]
+        cfg = MagicMock()
+        cfg.market_data.ccxt_exchange = "binance"
+        cfg.event_triggers.enabled = False
+        mock_cfg.return_value = cfg
+
+        assert [str(item) for item in get_watched_instruments()] == [
+            "binance:BTC/USDT:spot",
+            "binance:BTC/USDT:perp",
+        ]
+
+    @patch("aletheia.config.loader.load_config")
+    @patch("aletheia.storage.repositories.list_all_open_positions")
+    def test_position_execution_mode_selects_watched_venue(
+        self, mock_positions, mock_cfg
+    ):
+        mock_positions.return_value = [
+            {
+                "symbol": "BTC/USDT", "market_type": "usdt_futures",
+                "execution_mode": "okx_demo",
+            },
+            {
+                "symbol": "BTC/USDT", "market_type": "usdt_futures",
+                "execution_mode": "binance_testnet",
+            },
+            {
+                "symbol": "ETH/USDT", "market_type": "spot",
+                "execution_mode": "paper_internal",
+            },
+        ]
+        cfg = MagicMock()
+        cfg.market_data.ccxt_exchange = "bitget"
+        cfg.event_triggers.enabled = False
+        mock_cfg.return_value = cfg
+
+        assert [str(item) for item in get_watched_instruments()] == [
+            "okx:BTC/USDT:perp",
+            "binance:BTC/USDT:perp",
+            "bitget:ETH/USDT:spot",
         ]
 
 
@@ -175,6 +279,10 @@ class TestRefreshWatchedPrices:
         assert "ETH/USDT" in result["symbols"]
         assert get_cached_price("BTC/USDT") == 65000.0
         assert get_cached_price("ETH/USDT") == 3500.0
+        from aletheia.data.price_feed import get_fresh_price_for_protective_close
+        assert get_fresh_price_for_protective_close(
+            "BTC/USDT", "spot", venue="binance",
+        ) == 65000.0
 
     @patch(
         "aletheia.data.price_feed.get_watched_instruments",

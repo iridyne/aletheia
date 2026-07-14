@@ -45,10 +45,13 @@ def execute_paper_order(
 ) -> dict:
     """Execute a paper order: create order, fill, and position.
 
-    The protective stop_price (from the proposal) and a take-profit derived from
-    config TP% are recorded on a newly-opened position so the position_manager can
-    act on them. Averaging into an existing position preserves its original stop/TP.
+    The protective stop_price and take_profit from the approved Proposal are
+    recorded on a newly-opened position. Averaging into the same Proposal preserves
+    its original stop/TP; a different Proposal always gets a separate lineage.
     """
+    if execution_mode == "paper_internal" and order_type != "market":
+        raise ValueError("paper_internal_market_only")
+
     from aletheia.config.loader import load_config
     cfg = load_config()
     slippage_bps = cfg.trading.slippage_bps
@@ -150,7 +153,12 @@ def _materialize_paper_entry(
         insert_order(order)
         insert_fill(fill)
         existing = _find_open_position(
-            symbol, market_type, direction, execution_mode, strategy_id
+            symbol,
+            market_type,
+            direction,
+            execution_mode,
+            strategy_id,
+            proposal_id,
         )
         if existing:
             new_qty = existing["quantity"] + quantity
@@ -579,6 +587,7 @@ def _find_open_position(
     direction: str,
     execution_mode: str,
     strategy_id: str | None,
+    proposal_id: str,
 ) -> dict | None:
     return find_compatible_open_position(
         symbol,
@@ -586,4 +595,5 @@ def _find_open_position(
         direction,
         execution_mode,
         strategy_id,
+        proposal_id=proposal_id,
     )

@@ -32,6 +32,7 @@ def _setup_db(tmp_path, monkeypatch):
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    loader._config_cache = None
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
 
     sq._db_conn = None
@@ -861,8 +862,24 @@ def test_paper_position_take_profit_exactly_matches_approved_proposal(
         yaml.safe_dump({"trading": {"default_take_profit_pct": 4.0}}),
         encoding="utf-8",
     )
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO market_snapshots "
+        "(id,symbol,market_type,exchange,price,snapshot_at,provider) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (str(uuid.uuid4()), "BTC/USDT", "spot", "binance", 60_000.0, now, "ccxt"),
+    )
+    conn.commit()
 
     from aletheia.execution.gateway import submit_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity
+
+    opportunity = Opportunity(
+        id="paper-tp-identity", symbol="BTC/USDT", market="spot",
+        direction_bias="long", status="queued",
+    )
+    repo.insert_opportunity(opportunity)
 
     result = submit_proposal(
         symbol="BTC/USDT",
@@ -872,9 +889,11 @@ def test_paper_position_take_profit_exactly_matches_approved_proposal(
         quantity=0.001,
         price=60_000.0,
         stop_price=58_000.0,
-        take_profit=None,
+        take_profit=63_000.0,
+        risk_reward=1.5,
         execution_mode="paper_internal",
-        agent_rationale="approved without a take-profit",
+        opportunity_id=opportunity.id,
+        agent_rationale="approved with an immutable take-profit",
     )
 
     proposal = conn.execute(
@@ -893,7 +912,7 @@ def test_paper_position_take_profit_exactly_matches_approved_proposal(
 
     assert result["status"] == "executed"
     assert authority is not None and authority["approved"] == 1
-    assert proposal["take_profit"] is None
+    assert proposal["take_profit"] == 63_000.0
     assert position["take_profit_price"] == proposal["take_profit"]
 
 
@@ -1002,6 +1021,185 @@ def test_permanent_reject_workset_is_separate_from_execution_limit(monkeypatch):
         candidate["skip_reason"].startswith("symbol_not_allowed:")
         for candidate in workset.scanned_candidates
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-16",
+        "pipeline_paper_trade",
+        "§4 local market-only materialization",
+        "L2b",
+        "paper_internal rejects a non-market entry before writing Order, Fill, or Position.",
+        status="implemented",
+    )
+)
+def test_paper_broker_rejects_local_limit_before_materialization(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.paper_broker import execute_paper_order
+    from tests.execution_authority import seed_order_authority
+
+    seed_order_authority(
+        proposal_id="local-limit-proposal",
+        risk_decision_id="local-limit-risk",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="limit",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="paper_internal",
+    )
+
+    with pytest.raises(ValueError, match="paper_internal_market_only"):
+        execute_paper_order(
+            proposal_id="local-limit-proposal",
+            risk_decision_id="local-limit-risk",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            order_type="limit",
+            quantity=0.001,
+            price=60_000.0,
+            execution_mode="paper_internal",
+        )
+
+    assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0] == 0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-17",
+        "pipeline_paper_trade",
+        "§4 single-Proposal position lineage",
+        "L2b",
+        "A direct paper broker call for a different Proposal never averages into the first "
+        "Position; every Position and entry Order retain one Proposal lineage.",
+        status="implemented",
+    )
+)
+def test_paper_broker_never_aggregates_different_proposals(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.paper_broker import execute_paper_order
+    from tests.execution_authority import seed_order_authority
+
+    for suffix, price in (("first", 100.0), ("second", 110.0)):
+        seed_order_authority(
+            proposal_id=f"cross-proposal-{suffix}",
+            risk_decision_id=f"cross-risk-{suffix}",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=1.0,
+            price=price,
+            execution_mode="paper_internal",
+            strategy_id="same-strategy",
+        )
+        execute_paper_order(
+            proposal_id=f"cross-proposal-{suffix}",
+            risk_decision_id=f"cross-risk-{suffix}",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=1.0,
+            price=price,
+            execution_mode="paper_internal",
+            strategy_id="same-strategy",
+        )
+
+    positions = conn.execute(
+        "SELECT id,proposal_id,quantity FROM positions ORDER BY rowid"
+    ).fetchall()
+    orders = conn.execute(
+        "SELECT proposal_id,position_id FROM orders ORDER BY rowid"
+    ).fetchall()
+    assert [dict(row) for row in positions] == [
+        {"id": positions[0]["id"], "proposal_id": "cross-proposal-first", "quantity": 1.0},
+        {"id": positions[1]["id"], "proposal_id": "cross-proposal-second", "quantity": 1.0},
+    ]
+    assert [row["proposal_id"] for row in orders] == [
+        "cross-proposal-first", "cross-proposal-second",
+    ]
+    assert [row["position_id"] for row in orders] == [
+        positions[0]["id"], positions[1]["id"],
+    ]
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-18",
+        "pipeline_paper_trade",
+        "§4 duplicate-symbol gateway gate",
+        "L2c",
+        "A second normal local Proposal for the same open instrument is rejected by Risk and "
+        "does not become a hidden averaging leg in the first Position.",
+        status="implemented",
+    )
+)
+def test_gateway_rejects_second_normal_proposal_without_aggregation(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO market_snapshots "
+        "(id,symbol,market_type,exchange,price,snapshot_at,provider) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (str(uuid.uuid4()), "BTC/USDT", "spot", "binance", 100.0, now, "ccxt"),
+    )
+    conn.commit()
+
+    from aletheia.execution.gateway import submit_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity
+
+    first_opportunity = Opportunity(
+        id="gateway-first-opportunity", symbol="BTC/USDT", market="spot",
+        direction_bias="long", status="queued",
+    )
+    second_opportunity = Opportunity(
+        id="gateway-second-opportunity", symbol="BTC/USDT", market="spot",
+        direction_bias="long", status="queued",
+    )
+    repo.insert_opportunity(first_opportunity)
+    repo.insert_opportunity(second_opportunity)
+
+    first = submit_proposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1.0,
+        price=100.0,
+        stop_price=99.0,
+        take_profit=102.0,
+        risk_reward=2.0,
+        execution_mode="paper_internal",
+        opportunity_id=first_opportunity.id,
+    )
+    second = submit_proposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1.0,
+        price=100.0,
+        stop_price=99.0,
+        take_profit=102.0,
+        risk_reward=2.0,
+        execution_mode="paper_internal",
+        opportunity_id=second_opportunity.id,
+    )
+
+    assert first["status"] == "executed", first
+    assert second["status"] == "rejected", second
+    position = conn.execute(
+        "SELECT proposal_id,quantity FROM positions"
+    ).fetchone()
+    assert dict(position) == {"proposal_id": first["proposal_id"], "quantity": 1.0}
+    assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 1
 
 
 @spec_claim(

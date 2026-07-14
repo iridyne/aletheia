@@ -67,6 +67,18 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 
 `_is_live()` 判定:`execution_mode in (bitget/okx/binance)_live_limited`(`engine.py:35`)。
 
+### 3.0 `paper_internal` 入场真实性
+
+- 本地纸面入场只允许 `order_type='market'`。Proposal builder、paper tool 和 broker 三层都拒绝
+  `limit`，不得把“按报价立即模拟成交”伪装成有挂单/等待成交语义的限价单；交易所 demo/testnet
+  仍可按各自 adapter 能力使用 limit。
+- 入场价只来自配置行情 venue 的同 canonical symbol、同物理 `spot/perp` 新鲜精确 mark；内存
+  mark 必须小于 90 秒，SQLite 精确回退不得超过 120 秒。跨 venue、跨 spot/perp、symbol-only
+  或 stale row 都不能建立 Proposal，pending 留待后续重试。
+- 每个本地 Position 只属于一个 immutable Proposal。相同 symbol/direction/strategy 的另一 Proposal
+  不得在 broker 内并入已有 Position；正常 Gateway/Risk 路径会先拒绝重复暴露，broker 的独立
+  lineage 是最后一道防御，避免费用、保护价和归因跨 Proposal 混合。
+
 ### 3.1 Adapter market_type 能力(交易所无关核心 + 边界适配)
 
 核心逻辑(universe/opportunity/decision/risk)只认 canonical 类型 `spot` / `usdt_futures`,**不关心交易所**;能不能下某类型单是**各 adapter 的能力**,在 adapter 边界声明并路由(owner 原则 2)。
@@ -249,15 +261,22 @@ exchange 调用必须留在 helper 外并保持原失败语义。close 的审计
 > (#105) 原优先级-4 的 `ruleset_exit` 触发器已随规则引擎(Position C)删除——`_decide_exit`
 > 不再消费 `ruleset_exit_position_ids`,该触发器不再是活跃退出路径,请勿再加回。
 
-**System Operator 退出路径独立**:`review_portfolio_state()`(`commands.py:1922`,LLM 决策)经**同一** `close_position_routed()` 入口平仓,**不进入** `evaluate_open_positions` 自动循环——两条路径汇合于路由中枢,不在触发器优先级链内。
+**System Operator 退出路径独立**:`review_portfolio_state()`(`commands.py:1922`,LLM 决策)只暴露
+`hold / close_one`，其中 `close_one` 按明确 Position 经**同一** `close_position_routed()` 入口平仓，
+且不传调用方 fallback price；manager 必须重新取得精确新鲜 mark。遗留 `reduce_exposure` 只能归一为
+`hold`，不得静默执行整仓关闭。该路径**不进入** `evaluate_open_positions` 自动循环——两条路径汇合于
+路由中枢，不在触发器优先级链内。
 
 ### 10.2 close_position_routed 路由契约(唯一平仓中枢)
 
-`close_position_routed(pos_id, reason, fallback_exit_price)`(`position_manager.py:28-79`)是**唯一**平仓出口,自动循环与 PI 路径都经此:
+`close_position_routed(pos_id, reason, fallback_exit_price)` 是单仓**唯一**平仓出口，自动循环与 Operator 路径都经此；`fallback_exit_price` 仅保留调用兼容，不能授权 `paper_internal` 成交：
 
 - 按 `execution_mode` 分派:`bitget_demo→close_demo_position` / `okx_demo→close_okx_position` / `binance_testnet→close_testnet_position` / `paper_internal→本地 close`。
 - **live 守卫(不变式)**:`live_limited` 模式且 `allow_live=False` → `RaiseError`,阻止自动循环误平**真实资金**持仓(`position_manager.py:59`)。守卫在中枢层,不分散到各调用方。
 - 交易所腿不可跳过:demo 模式仍走真实交易所 close;`paper_internal` 本地撮合。
+- **保护性平仓价格不可伪造**：触发判断和 `paper_internal` close Fill 只使用 Position 精确 `exchange + symbol + market_type` 的新鲜 mark。单仓路由即使收到 `fallback_exit_price`，本地分支也必须忽略它并在 manager 内重新取价。交易所仓由 `execution_mode` 固定 venue（OKX / Bitget / Binance），只有 `paper_internal` 使用配置的 market-data venue。内存 exact-instrument cache 必须小于 90 秒；SQLite 只能回退到同 venue、同 `spot` / `perp`（兼容旧 `usdt_futures` 拼写）且不超过 120 秒的 snapshot。不得用 `Position.current_price`、symbol-only、跨 venue、跨 spot/perp 或过期价格触发/生成退出成交。
+- **逐仓失败必须可见**：一个仓位的 mark 查询、market-aware 评估或 close 异常不得中止其余仓位；`evaluate_open_positions()` 返回稳定的 per-position `errors`，close 异常另计入 `failed_close_count`。`closed=0` 且 close 全失败不能被调度层当作健康空跑。
+- **dashboard 批量平仓先完整预检**：`close_local_positions_batch()` 先无上限枚举目标 `paper_internal` 仓位，并在 manager 内为每个仓位取得上述 exact mark；任一 mark 缺失或读取失败，在第一笔 close 前整体拒绝。预检全部通过后才逐仓物化；若之后出现非行情执行错误，响应必须同时列出 `closed_position_ids` 与逐仓 `failed`，不得把部分成功显示成 close-all 成功。
 
 ### 10.3 paused / kill_switch 对平仓的语义(核心不变量)
 
@@ -286,7 +305,7 @@ Proposal 的这一权限边界。
 - ⚠️ **live 人工平仓路径未实现**:`allow_live=True` 全库无调用点(`position_manager.py:53` 仅文档注释);前端无 force-close 按钮,无 `/api/positions/{id}/close` 端点。**当前 `live_limited` 仓位须在交易所界面手动平仓。** 未来加 close 端点**触信任边界**,须走 [trust §6](../governance/trust_and_change_control.md) change-control + 人工确认(`allow_live=True`)。
 - ⚠️ **live 对账仍受 paused**:`_run_reconciliation`(live-only,`scheduler.py:822`)仍有 paused 门,本次未改(live 默认禁用,且仅做收敛检测,优先级低)。若未来 live 常开,应一并对齐本节语义。
 
-**Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓)。`spec_pipeline_position_manager.py`。
+**Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓) + `PL-PM-10~13`(fresh exact venue/market mark / 逐仓 close 与 market-aware 失败可见) + `PL-PCM-05/11~15`(dashboard 全量枚举、mark 预检、单仓 fallback 隔离与部分失败诚实返回)。
 
 ## 11. Position 关闭与结果完整性（OI-S01/S02/B01 implemented；其余行为待实现）
 

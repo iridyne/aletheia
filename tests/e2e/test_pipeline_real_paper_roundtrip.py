@@ -5,10 +5,12 @@ RiskDecision, entry/close Orders and Fills, Position, and Outcome state must all
 be produced by their production entry points against the isolated e2e SQLite DB.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import Opportunity, StrategyRecord
+from aletheia.storage.models import MarketSnapshot, Opportunity, StrategyRecord
 
 
 @pytest.fixture
@@ -70,6 +72,14 @@ def test_real_gateway_paper_roundtrip_preserves_one_causal_chain(
     )
     repo.insert_opportunity(opportunity)
     repo.insert_strategy(strategy)
+    repo.insert_market_snapshot(MarketSnapshot(
+        id="real-paper-entry-mark",
+        symbol=opportunity.symbol,
+        market_type="spot",
+        exchange=paper_internal_config.market_data.ccxt_exchange,
+        price=2_000.0,
+        snapshot_at=datetime.now(timezone.utc).isoformat(),
+    ))
 
     opened = submit_proposal(
         symbol=opportunity.symbol,
@@ -80,6 +90,7 @@ def test_real_gateway_paper_roundtrip_preserves_one_causal_chain(
         price=2_000.0,
         stop_price=1_900.0,
         take_profit=2_200.0,
+        risk_reward=2.0,
         execution_mode="paper_internal",
         strategy_id=strategy.id,
         opportunity_id=opportunity.id,
@@ -117,10 +128,17 @@ def test_real_gateway_paper_roundtrip_preserves_one_causal_chain(
     assert position["strategy_id"] == strategy.id
     assert proposal["opportunity_id"] == opportunity.id
 
+    repo.insert_market_snapshot(MarketSnapshot(
+        id="real-paper-close-mark",
+        symbol=opportunity.symbol,
+        market_type="spot",
+        exchange=paper_internal_config.market_data.ccxt_exchange,
+        price=2_100.0,
+        snapshot_at=datetime.now(timezone.utc).isoformat(),
+    ))
     closed = close_position_routed(
         position["id"],
         "take_profit",
-        fallback_exit_price=2_100.0,
         decision_source="e2e_real_paper_roundtrip",
     )
 

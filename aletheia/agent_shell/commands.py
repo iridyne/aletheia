@@ -1651,6 +1651,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     """System Operator evaluates market state and submits a paper proposal if conviction >= 55."""
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
     from aletheia.agent_shell.trading_decision import (
+        DecisionUnavailable,
         evaluate_trading_opportunity as _evaluate,
         prepare_decision_as_proposal,
     )
@@ -1662,7 +1663,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     # Run System Operator decision loop
     decision = await _evaluate(ctx)
 
-    trade_like = decision.action in ("trade", "scale_in", "flip")
+    trade_like = decision.action == "trade"
     rejected_missing_pending_carrier = False
     pending_authority_failure = (
         None
@@ -1703,7 +1704,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     result: dict = {
         "action": decision.action,
         # Identity belongs to every evaluated terminal decision, not only trades.
-        # A watch/skip with a source opportunity must remain explainable later.
+        # A skip with a source opportunity must remain explainable later.
         "symbol": decision.symbol,
         "direction": decision.direction,
         "conviction": decision.conviction,
@@ -1779,19 +1780,22 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     if trade_like:
         try:
             prepared_result = await prepare_decision_as_proposal(decision, execution_mode)
-        except Exception:
+        except DecisionUnavailable:
+            # Assessment/preflight unavailability is not a business decision.
+            # Leave the exact queue carrier untouched so the daemon can retry.
+            raise
+        except Exception as exc:
             decision.filter_trace.append({
                 "filter_name": "proposal_submission",
                 "stage": "proposal_submission",
                 "decision": "error",
-                "reason_code": "submission_exception",
+                "reason_code": "proposal_preparation_failed",
                 "inputs": {"action": decision.action},
                 "parameters": {},
             })
-            prepared_result = {
-                "status": "failed",
-                "reason": "submission_exception",
-            }
+            raise DecisionUnavailable(
+                "proposal_preparation_failed", stage="proposal_preflight"
+            ) from exc
         prepared_proposal = prepared_result.get("proposal") if prepared_result else None
         if prepared_proposal is not None:
             # Preparation resolves the executable instrument (including legacy
@@ -1802,15 +1806,28 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             result["proposal_id"] = prepared_proposal.id
             result["proposal_status"] = "submitting"
             result["proposal_reason"] = None
-        elif prepared_result:
-            result["proposal_id"] = prepared_result.get("proposal_id")
-            result["proposal_status"] = prepared_result.get("status")
+        elif prepared_result and prepared_result.get("status") == "skipped":
+            # A deterministic direction-quality rejection is a real terminal
+            # business decision. Persist it honestly as skip, not as a trade
+            # claim with proposal_id=NULL.
+            decision.action = "skip"
+            trade_like = False
+            result["action"] = "skip"
+            result["proposal_id"] = None
+            result["proposal_status"] = "not_applicable"
             result["proposal_reason"] = prepared_result.get("reason")
             result["filter_trace"] = decision.filter_trace
         else:
-            result["proposal_status"] = "failed"
-            result["proposal_reason"] = "no_submission_result"
-        if result.get("proposal_reason"):
+            reason = (
+                prepared_result.get("reason")
+                if isinstance(prepared_result, dict)
+                else "proposal_preparation_unavailable"
+            )
+            raise DecisionUnavailable(
+                reason or "proposal_preparation_unavailable",
+                stage="proposal_preflight",
+            )
+        if trade_like and result.get("proposal_reason"):
             result["proposal_error"] = result["proposal_reason"]
 
     # The prepared Proposal and final PiDecision become visible together in one
@@ -1903,7 +1920,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             # assessment is advisory after that commit and cannot replace the
             # original trade with skip/watch. Resume the stored identity and
             # execution mode instead of finalizing it as not_applicable.
-            if claimed_final.get("action") not in {"trade", "scale_in", "flip"}:
+            if claimed_final.get("action") != "trade":
                 return _return_existing_claim()
             _apply_claim_to_result(claimed_final, replay=True)
             trade_like = True
@@ -1972,11 +1989,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
 
 
 async def review_portfolio_state(params: dict) -> dict:
-    """System Operator reviews open positions for overexposure and optionally closes / reduces."""
+    """System Operator reviews open positions and may close one exact Position."""
     import json as _json
     from aletheia.agent_shell.context import build_app_context
     from aletheia.agents.helpers import llm_structured
-    from aletheia.portfolio.pnl import close_position, _latest_price
 
     ctx = build_app_context(sections=["market", "trading", "risk"])
     open_positions = ctx.get("trading", {}).get("open_positions", [])
@@ -1995,7 +2011,7 @@ async def review_portfolio_state(params: dict) -> dict:
     schema = {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["hold", "close_one", "reduce_exposure"]},
+            "action": {"type": "string", "enum": ["hold", "close_one"]},
             "target_symbol": {"type": "string"},
             "target_market_type": {"type": "string", "description": "spot | perp | usdt_futures — required when both spot and perp of the same symbol are open"},
             "target_direction": {"type": "string", "enum": ["long", "short"]},
@@ -2022,7 +2038,6 @@ Risk limits:
 Review the portfolio and decide:
 - "hold": all positions look fine
 - "close_one": one specific position should be closed (specify target_symbol)
-- "reduce_exposure": overall exposure is too high (specify target_symbol to close)
 
 Be conservative — only recommend closing if there is a clear risk reason.
 
@@ -2038,14 +2053,21 @@ Return JSON: {_json.dumps(schema)}"""
     if err or review is None:
         return {"action": "none", "reason": err or "llm_unavailable"}
 
-    action = review.get("action", "hold")
+    raw_action = str(review.get("action") or "hold")
+    supported_action = raw_action in {"hold", "close_one"}
+    action = raw_action if supported_action else "hold"
+    reasoning = str(review.get("reasoning") or "")[:300]
+    if not supported_action:
+        reasoning = (
+            f"{reasoning} [unsupported_action:{raw_action}; normalized to hold]"
+        ).strip()
     result = {
         "action": action,
-        "reasoning": review.get("reasoning", "")[:300],
+        "reasoning": reasoning,
         "target_symbol": review.get("target_symbol"),
     }
 
-    if action in ("close_one", "reduce_exposure") and (
+    if action == "close_one" and (
         review.get("target_position_id") or review.get("target_symbol")
     ):
         sym = review.get("target_symbol") or ""
@@ -2068,23 +2090,21 @@ Return JSON: {_json.dumps(schema)}"""
                 matching = [p for p in matching if p["direction"] == direction]
         closed_count = 0
         for pos in matching[:1]:
-            price = _latest_price(sym)
-            if price:
-                try:
-                    # Route by execution_mode: demo/live positions MUST close via their
-                    # exchange broker (real reduce + real exit price), not a local-only
-                    # close that fabricates the exit and desyncs the exchange book.
-                    from aletheia.portfolio.position_manager import close_position_routed
-                    close_position_routed(
-                        pos["id"], reason="pi_agent_portfolio_review",
-                        fallback_exit_price=float(price),
-                        decision_reasoning=str(review.get("reasoning") or ""),
-                        decision_actor="system_operator",
-                        decision_source="portfolio_review",
-                    )
-                    closed_count += 1
-                except Exception as e:
-                    result["close_error"] = str(e)[:100]
+            try:
+                # The router resolves a fresh exact venue+symbol+market mark for
+                # local paper. Position.current_price and symbol-only snapshots are
+                # display facts, never authority for a close Fill.
+                from aletheia.portfolio.position_manager import close_position_routed
+                close_position_routed(
+                    pos["id"], reason="pi_agent_portfolio_review",
+                    fallback_exit_price=None,
+                    decision_reasoning=str(review.get("reasoning") or ""),
+                    decision_actor="system_operator",
+                    decision_source="portfolio_review",
+                )
+                closed_count += 1
+            except Exception as e:
+                result["close_error"] = str(e)[:100]
         result["positions_closed"] = closed_count
 
     return result

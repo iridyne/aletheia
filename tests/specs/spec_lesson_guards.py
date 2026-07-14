@@ -154,7 +154,7 @@ def test_older_applied_risk_lesson_is_not_truncated(tmp_path, monkeypatch):
     rows = [
         (
             "lesson-old-block",
-            "test",
+            "manual",
             "old",
             "risk",
             "high",
@@ -172,7 +172,7 @@ def test_older_applied_risk_lesson_is_not_truncated(tmp_path, monkeypatch):
     rows.extend(
         (
             f"lesson-new-{index:02d}",
-            "test",
+            "manual",
             f"new-{index}",
             "risk",
             "info",
@@ -200,3 +200,124 @@ def test_older_applied_risk_lesson_is_not_truncated(tmp_path, monkeypatch):
     violations = eng._check_lesson_constraints(proposal)
 
     assert "lesson_block_symbol:lesson-old-block:BTC/USDT" in violations
+
+
+@spec_claim(SpecClaim(
+    "LG-S06", "risk_engine_contract", "§lesson_guards paper authority", "L2c",
+    "An automatically produced applied Risk lesson is advisory at the default baseline and only "
+    "blocks a proposal when the exact risk_lesson_constraint paper treatment is assigned and "
+    "authorized; explicit owner/manual lessons remain static safety rules.",
+    status="implemented",
+))
+def test_automatic_risk_lesson_requires_paper_treatment_authority(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import MagicMock
+
+    from aletheia.learning.lessons import LessonStore
+    from aletheia.risk import engine as eng
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import get_db
+
+    run_migrations()
+    store = LessonStore()
+    auto = store.create(
+        "automatic BTC block", source_type="dreaming_agent", source_id="dream-1",
+        category="risk", severity="high",
+        recommendation={"action": "block_symbol", "symbol": "BTC/USDT"},
+    )
+    store.accept(auto.lesson_id)
+    store.mark_applied(auto.lesson_id, "policy-auto")
+    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    get_db().execute(
+        "UPDATE ps_lessons SET dry_run_until=? WHERE lesson_id=?", (past, auto.lesson_id),
+    )
+    get_db().commit()
+    proposal = MagicMock(
+        id="proposal-risk-authority", opportunity_id="opp-risk-authority",
+        symbol="BTC/USDT", direction="long", scanner_family="momentum",
+    )
+
+    # Default config has paper influence disabled and an empty exact-path allowlist.
+    assert not any("lesson_block_symbol" in row for row in eng._check_lesson_constraints(proposal))
+    exposure = get_db().execute(
+        "SELECT * FROM learning_exposures WHERE path_id='risk_lesson_constraint'"
+    ).fetchone()
+    assert exposure is not None
+    assert exposure["candidate_key"] == f"risk_lesson:{proposal.id}:{auto.lesson_id}"
+    assert exposure["outcome_candidate_key"] == f"proposal:{proposal.id}:4h"
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+    from aletheia.learning.ledger import linked_settled_exposure_counts
+    real_proposal = TradeProposal(
+        id=proposal.id, opportunity_id=proposal.opportunity_id,
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        order_type="market", execution_mode="paper_internal",
+        quantity=0.001, price=60_000.0, stop_price=58_000.0,
+    )
+    repo.insert_trade_proposal(real_proposal)
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue: 60_000.0,
+    )
+    eng.evaluate_proposal(real_proposal, decision_role="authoritative")
+    outcome = get_db().execute(
+        "SELECT id FROM filter_candidate_outcomes WHERE outcome_candidate_key=? AND horizon='4h'",
+        (f"proposal:{proposal.id}",),
+    ).fetchone()
+    assert outcome is not None
+    get_db().execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.2, "
+        "cost_model_version='test-v1', settled_at=datetime('now') WHERE id=?",
+        (outcome["id"],),
+    )
+    get_db().commit()
+    counts = linked_settled_exposure_counts(
+        exposure["experiment_id"], policy_epoch=exposure["concurrent_policy_epoch"],
+    )
+    assert counts[exposure["assignment"]] == 1
+
+    from aletheia.learning.experiments import InfluenceDecision
+    captured = []
+
+    def control(**kwargs):
+        captured.append(kwargs)
+        return InfluenceDecision(
+            value=0.0, applied=False, assignment="control", reason="baseline:authorized",
+            hypothesis_id="hyp-risk", experiment_id="exp-risk", exposure_id="x-control",
+        )
+
+    monkeypatch.setattr("aletheia.learning.experiments.apply_boolean_treatment", control)
+    assert not any("lesson_block_symbol" in row for row in eng._check_lesson_constraints(proposal))
+    assert captured[-1]["path_id"] == "risk_lesson_constraint"
+    assert captured[-1]["outcome_candidate_key"] == f"proposal:{proposal.id}:4h"
+
+    def treatment(**kwargs):
+        return InfluenceDecision(
+            value=1.0, applied=True, assignment="treatment", reason="authorized",
+            hypothesis_id="hyp-risk", experiment_id="exp-risk", exposure_id="x-treatment",
+        )
+
+    monkeypatch.setattr("aletheia.learning.experiments.apply_boolean_treatment", treatment)
+    assert f"lesson_block_symbol:{auto.lesson_id}:BTC/USDT" in eng._check_lesson_constraints(proposal)
+
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_boolean_treatment",
+        lambda **_: (_ for _ in ()).throw(RuntimeError("authority unavailable")),
+    )
+    assert "lesson_check_error:internal_failure" in eng._check_lesson_constraints(proposal)
+    monkeypatch.setattr("aletheia.learning.experiments.apply_boolean_treatment", control)
+
+    manual = store.create(
+        "owner BTC block", source_type="owner", source_id="owner-1",
+        category="risk", severity="high",
+        recommendation={"action": "block_symbol", "symbol": "BTC/USDT"},
+    )
+    store.accept(manual.lesson_id)
+    store.mark_applied(manual.lesson_id, "policy-owner")
+    get_db().execute(
+        "UPDATE ps_lessons SET dry_run_until=? WHERE lesson_id=?", (past, manual.lesson_id),
+    )
+    get_db().commit()
+    # Manual rules do not depend on the Learning authority adapter.
+    assert f"lesson_block_symbol:{manual.lesson_id}:BTC/USDT" in eng._check_lesson_constraints(proposal)

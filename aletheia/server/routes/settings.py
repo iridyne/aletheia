@@ -90,6 +90,7 @@ class ExchangeModeRequest(SettingsRequest):
 @router.get("")
 async def get_settings():
     cfg = load_config()
+    from aletheia.learning.registry import paper_influence_path_options
     providers_safe = {}
     for name, p in cfg.models.providers.items():
         providers_safe[name] = {
@@ -143,6 +144,7 @@ async def get_settings():
         "serenity": cfg.serenity.model_dump(mode="json"),
         "controller": cfg.controller.model_dump(mode="json"),
         "learning": cfg.learning.model_dump(mode="json"),
+        "learning_path_options": list(paper_influence_path_options()),
     }
 
 
@@ -233,36 +235,50 @@ async def set_paper_account_balance(req: PaperAccountSetBalanceRequest):
 
 def _close_local_positions(market_type: str | None) -> dict:
     _require_local_paper_mode()
-    from aletheia.storage.repositories import list_all_open_positions
-    from aletheia.execution.paper_broker import close_paper_position
+    from aletheia.portfolio.position_manager import (
+        LocalPaperClosePreflightError,
+        close_local_positions_batch,
+    )
 
-    candidates = [
-        row for row in list_all_open_positions()
-        if row.get("execution_mode") == "paper_internal"
-        and (market_type is None or row.get("market_type") == market_type)
-    ]
-    missing_price = [row["id"] for row in candidates if row.get("current_price") is None]
-    if missing_price:
-        raise HTTPException(409, f"Cannot close local positions without a stored market price: {missing_price}")
-    results = [
-        close_paper_position(
-            row["id"],
-            mark_price=float(row["current_price"]),
+    try:
+        result = close_local_positions_batch(
+            market_type,
             reason="manual_bulk_close",
-            actor="human",
-            source="dashboard",
+            decision_actor="human",
+            decision_source="dashboard",
         )
-        for row in candidates
-    ]
+    except LocalPaperClosePreflightError as exc:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "bulk_close_mark_preflight_failed",
+                "closed_position_ids": [],
+                "failed": exc.failures,
+            },
+        ) from exc
+
     from aletheia.portfolio.paper_account import get_paper_account as _get
     after = _get()
+    action = "close_spot_positions" if market_type == "spot" else "close_all_positions"
+    if result["failed"]:
+        action += "_partial"
     _audit_paper_account_change(
-        "close_spot_positions" if market_type == "spot" else "close_all_positions",
-        {"open_positions_count": len(candidates)},
-        {"closed_position_ids": [result["position_id"] for result in results], **after},
+        action,
+        {"open_positions_count": result["requested_count"]},
+        {
+            "closed_position_ids": result["closed_position_ids"],
+            "failed": result["failed"],
+            **after,
+        },
         "Manual local paper position close",
     )
-    return {"closed_position_ids": [result["position_id"] for result in results], "account": after}
+    response = {**result, "account": after}
+    if result["failed"]:
+        raise HTTPException(
+            500,
+            detail={"code": "bulk_close_partial_failure", **response},
+        )
+    return response
 
 
 @router.post("/paper-account/close-all")
@@ -642,6 +658,36 @@ class LearningConfigUpdate(SettingsRequest):
     paper_active_allocation_pct: Optional[float] = None
 
 
+def _validated_paper_influence_paths(values: list[str]) -> list[str]:
+    requested_paths = sorted({
+        str(path).strip() for path in values if str(path).strip()
+    })
+    from aletheia.learning.registry import (
+        get_learning_path,
+        supported_paper_influence_path_ids,
+    )
+    unknown_paths = []
+    for path_id in requested_paths:
+        try:
+            get_learning_path(path_id)
+        except KeyError:
+            unknown_paths.append(path_id)
+    if unknown_paths:
+        raise HTTPException(
+            400, f"unknown paper influence paths: {', '.join(unknown_paths)}",
+        )
+    unsupported_paths = sorted(
+        set(requested_paths) - set(supported_paper_influence_path_ids())
+    )
+    if unsupported_paths:
+        raise HTTPException(
+            400,
+            "paper influence consumer is not wired for: "
+            + ", ".join(unsupported_paths),
+        )
+    return requested_paths
+
+
 @router.post("/learning")
 async def update_learning_config(req: LearningConfigUpdate):
     cfg = load_config()
@@ -652,9 +698,13 @@ async def update_learning_config(req: LearningConfigUpdate):
     if "paper_active_allocation_pct" in updates and not (0 < float(updates["paper_active_allocation_pct"]) <= 0.90):
         raise HTTPException(400, "paper_active_allocation_pct must be > 0 and <= 0.90")
     if "paper_influence_paths" in updates:
-        updates["paper_influence_paths"] = sorted({
-            str(path).strip() for path in updates["paper_influence_paths"] if str(path).strip()
-        })
+        updates["paper_influence_paths"] = _validated_paper_influence_paths(
+            updates["paper_influence_paths"],
+        )
+    elif updates.get("paper_influence_enabled") is True:
+        # Old versions accepted arbitrary free text.  Merely toggling the master
+        # switch must not reactivate one of those unsupported saved values.
+        _validated_paper_influence_paths(list(cfg.learning.paper_influence_paths or []))
     for field, value in updates.items():
         setattr(cfg.learning, field, value)
     save_config(cfg)

@@ -29,6 +29,7 @@ def route_automatic_block_recommendation(
         "type": "Trading Guard", "guard_id": guard_id, "status": "candidate",
         "scope": "paper_entry", "enforcement": "advisory", "severity": "warning",
         "score_penalty": 0, "block_candidate": False, "auto_generated": True,
+        "proposed_score_penalty": 0, "proposed_block_candidate": True,
         "shadow_only": True,
         "source_type": "automatic_lesson_recommendation", "source_id": source_id,
         "predicates": [{"field": field, "op": "eq", "value": value}],

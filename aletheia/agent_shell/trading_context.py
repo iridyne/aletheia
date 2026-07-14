@@ -248,18 +248,8 @@ def build_enriched_trading_context() -> dict[str, Any]:
         "layer2": _build_layer2_short_term(),
         "layer3": _build_layer3_wisdom(),
     }
-    from aletheia.learning.prompt_bundles import (
-        build_operator_learning_manifest,
-        gate_operator_learning_context,
-    )
-    try:
-        from aletheia.learning.control import learning_influence_enabled
-        enabled = learning_influence_enabled()
-    except Exception:
-        enabled = False
-    ctx = gate_operator_learning_context(ctx, enabled=enabled)
-    ctx["learning_manifest"] = build_operator_learning_manifest(ctx)
-    return ctx
+    from aletheia.learning.prompt_bundles import authorize_operator_learning_context
+    return authorize_operator_learning_context(ctx)
 
 
 # ── Layer 1: Environment Snapshot ────────────────────────────────────────────

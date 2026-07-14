@@ -22,6 +22,8 @@ from aletheia.storage.repositories import (
     acquire_entry_risk_reservation,
     get_authoritative_risk_decision,
     get_entry_risk_reservation,
+    get_opportunity,
+    get_serenity_opportunity,
     get_trade_proposal,
     has_order_for_proposal,
     insert_authoritative_risk_decision,
@@ -65,6 +67,66 @@ _NATIVE_EXECUTION_MODES = frozenset({
     "okx_demo",
     "okx_live_limited",
 })
+
+
+def _physical_market_type(value: str | None) -> str | None:
+    raw = str(value or "").strip().lower()
+    if raw == "spot":
+        return "spot"
+    if raw in {"usdt_futures", "perp", "swap"}:
+        return "perp"
+    if raw == "futures":
+        return "futures"
+    return None
+
+
+def _paper_opportunity_identity_violations(proposal: TradeProposal) -> list[str]:
+    """Resolve one unambiguous durable source and compare its exact trade identity."""
+    opportunity_id = str(proposal.opportunity_id or "").strip()
+    if not opportunity_id:
+        return ["proposal_opportunity_required"]
+    try:
+        normal = get_opportunity(opportunity_id)
+        serenity = get_serenity_opportunity(opportunity_id)
+    except Exception as exc:
+        logger.warning(
+            "proposal opportunity identity unavailable id=%s (%s)",
+            opportunity_id,
+            type(exc).__name__,
+        )
+        return ["proposal_opportunity_check_error"]
+    sources = [
+        ("market_observer", normal) if normal is not None else None,
+        ("serenity", serenity) if serenity is not None else None,
+    ]
+    resolved = [item for item in sources if item is not None]
+    if not resolved:
+        return ["proposal_opportunity_not_found"]
+    if len(resolved) != 1:
+        return ["proposal_opportunity_ambiguous"]
+    source_kind, source = resolved[0]
+    violations: list[str] = []
+    try:
+        source_symbol = to_canonical(str(source.get("symbol") or ""))
+    except Exception:
+        source_symbol = ""
+    if source_symbol != to_canonical(proposal.symbol):
+        violations.append("proposal_opportunity_symbol_mismatch")
+    source_market = (
+        source.get("market")
+        if source_kind == "market_observer"
+        else source.get("market_type")
+    )
+    if _physical_market_type(source_market) != _physical_market_type(proposal.market_type):
+        violations.append("proposal_opportunity_market_mismatch")
+    source_direction = (
+        source.get("direction_bias")
+        if source_kind == "market_observer"
+        else source.get("direction")
+    )
+    if str(source_direction or "").strip().lower() != str(proposal.direction).strip().lower():
+        violations.append("proposal_opportunity_direction_mismatch")
+    return violations
 
 
 def _prefixed_snapshot(row: dict, prefix: str, model_type) -> dict:
@@ -611,6 +673,66 @@ def _evaluate_proposal_locked(
         if filter_set and sym_canonical not in filter_set:
             violations.append(f"symbol_not_allowed:{proposal.symbol}")
 
+    # 1b. Local paper has no exchange submission that can discover or reject an
+    # unusable price later.  The one authoritative Risk pass therefore requires
+    # the same exact-instrument, fail-closed mark used by protective closes:
+    # memory <=90s, or typed SQLite fallback <=120s.  Rechecking here prevents a
+    # Proposal prepared against a once-fresh mark from executing after it expires.
+    if (
+        decision_role == "authoritative"
+        and proposal.source == "native"
+        and proposal.execution_mode == "paper_internal"
+    ):
+        from aletheia.data.price_feed import (
+            get_fresh_price_for_protective_close,
+            protective_price_venue,
+        )
+
+        venue = protective_price_venue(
+            proposal.execution_mode,
+            configured_data_venue=cfg.market_data.ccxt_exchange,
+        )
+        physical_market = (
+            "perp" if proposal.market_type == "usdt_futures" else proposal.market_type
+        )
+        fresh_mark = None
+        if venue is not None:
+            try:
+                raw_fresh_mark = get_fresh_price_for_protective_close(
+                    sym_canonical,
+                    proposal.market_type,
+                    venue=venue,
+                )
+                if raw_fresh_mark is not None:
+                    candidate_mark = float(raw_fresh_mark)
+                    if math.isfinite(candidate_mark) and candidate_mark > 0:
+                        fresh_mark = candidate_mark
+            except Exception as exc:
+                logger.warning(
+                    "paper market authority unavailable for %s/%s/%s (%s)",
+                    venue,
+                    physical_market,
+                    sym_canonical,
+                    type(exc).__name__,
+                )
+        if fresh_mark is None:
+            violations.append(
+                f"paper_market_data_unavailable:{venue or 'unknown'}:{physical_market}"
+            )
+        elif not math.isclose(
+            float(proposal.price),
+            fresh_mark,
+            rel_tol=1e-9,
+            abs_tol=1e-8,
+        ):
+            # The paper broker treats Proposal.price as its requested execution
+            # mark and applies slippage afterwards. A merely fresh but different
+            # market row must never authorize a stale/invented requested price.
+            violations.append("proposal_price_not_current_mark")
+        if proposal.order_type == "limit":
+            violations.append("paper_internal_limit_not_supported")
+        violations.extend(_paper_opportunity_identity_violations(proposal))
+
     # 2. Market allowed
     if proposal.market_type == "spot" and not cfg.exchange.enabled_markets.get("spot"):
         violations.append("spot_market_disabled")
@@ -643,21 +765,43 @@ def _evaluate_proposal_locked(
         if not funding_available:
             violations.append("local_paper_futures_funding_unavailable")
 
-    # 2b. Entry-plan completeness (owner discussion #6, 2026-07-03): a native LIMIT
-    #     entry must commit all four numbers BEFORE the order — entry (price), stop
-    #     (stop_price), take-profit, and reward:risk (risk_reward) — so a trade is a
-    #     planned bet, not a gambler's market-buy. Missing any → reject. Scoped to
-    #     order_type=="limit" AND source=="native": market closes/reduces and
-    #     reconciler-adopted chains legitimately carry no TP/RR and are exempt.
-    if proposal.order_type == "limit" and proposal.source == "native":
+    # 2b. Entry-plan completeness (owner discussion #6, 2026-07-03): every native
+    #     local-paper entry, plus every native exchange limit entry, must commit all
+    #     four numbers BEFORE the order — entry (price), stop (stop_price),
+    #     take-profit, and reward:risk (risk_reward). Exchange market closes/reduces
+    #     and reconciler-adopted chains legitimately carry no TP/RR and stay exempt.
+    requires_complete_entry_plan = proposal.source == "native" and (
+        proposal.order_type == "limit"
+        or (
+            proposal.execution_mode == "paper_internal"
+            and proposal.order_type == "market"
+        )
+    )
+    if requires_complete_entry_plan:
         _missing = []
-        if not proposal.price:
+        if (
+            proposal.price is None
+            or not math.isfinite(proposal.price)
+            or proposal.price <= 0
+        ):
             _missing.append("entry_price")
-        if not proposal.stop_price:
+        if (
+            proposal.stop_price is None
+            or not math.isfinite(proposal.stop_price)
+            or proposal.stop_price <= 0
+        ):
             _missing.append("stop_loss")
-        if not proposal.take_profit:
+        if (
+            proposal.take_profit is None
+            or not math.isfinite(proposal.take_profit)
+            or proposal.take_profit <= 0
+        ):
             _missing.append("take_profit")
-        if not proposal.risk_reward or proposal.risk_reward <= 0:
+        if (
+            proposal.risk_reward is None
+            or not math.isfinite(proposal.risk_reward)
+            or proposal.risk_reward <= 0
+        ):
             _missing.append("risk_reward")
         if _missing:
             violations.append(f"incomplete_entry_plan:{'+'.join(_missing)}")
@@ -670,6 +814,19 @@ def _evaluate_proposal_locked(
                 violations.append("entry_plan_geometry:expected_stop<entry<tp_for_long")
             elif proposal.direction == "short" and not (proposal.take_profit < entry < proposal.stop_price):
                 violations.append("entry_plan_geometry:expected_tp<entry<stop_for_short")
+            risk_per_unit = abs(entry - proposal.stop_price)
+            if risk_per_unit > 0:
+                expected_risk_reward = round(
+                    abs(proposal.take_profit - entry) / risk_per_unit,
+                    2,
+                )
+                if not math.isclose(
+                    proposal.risk_reward,
+                    expected_risk_reward,
+                    rel_tol=1e-9,
+                    abs_tol=1e-9,
+                ):
+                    violations.append("entry_plan_risk_reward_mismatch")
 
     # 3. Live state — fail CLOSED. A *_live_limited order is permitted ONLY when the
     #    live state is the explicit unlocked value ("live_limited", set by human
@@ -1186,6 +1343,48 @@ def _persist_risk_result(
     return result
 
 
+_STATIC_RISK_LESSON_SOURCE_TYPES = frozenset({"manual", "owner", "human"})
+
+
+def _learned_lesson_constraint_authorized(lesson, proposal, recommendation: dict) -> bool:
+    """Return true only for a static owner rule or an authorized paper treatment."""
+    source_type = str(getattr(lesson, "source_type", "") or "").strip().lower()
+    if source_type in _STATIC_RISK_LESSON_SOURCE_TYPES:
+        return True
+    proposal_id = str(getattr(proposal, "id", "") or "").strip()
+    if not proposal_id:
+        raise ValueError("risk_lesson_constraint_missing_proposal_id")
+    from aletheia.learning.experiments import apply_boolean_treatment
+    decision = apply_boolean_treatment(
+        path_id="risk_lesson_constraint",
+        scope={
+            "lesson_id": lesson.lesson_id,
+            "source_type": source_type,
+            "category": getattr(lesson, "category", None),
+        },
+        action={
+            "type": "proposal_filter",
+            "recommendation": recommendation,
+        },
+        source_cohort=f"ps_lessons:{source_type or 'unknown'}",
+        target_horizon="4h",
+        candidate_key=f"risk_lesson:{proposal_id}:{lesson.lesson_id}",
+        consumer="risk_engine",
+        consumer_stage="proposal_filter",
+        # record_risk_filter_decision() creates this exact fixed-horizon candidate
+        # for every authoritative Proposal.  The horizon suffix is required by
+        # the Learning cohort join; bare ``proposal:<id>`` would never settle.
+        outcome_candidate_key=f"proposal:{proposal_id}:4h",
+        opportunity_id=getattr(proposal, "opportunity_id", None),
+        manifest={
+            "proposal_id": proposal_id,
+            "lesson_id": lesson.lesson_id,
+            "static_owner_rule": False,
+        },
+    )
+    return bool(decision.applied and decision.value >= 1.0)
+
+
 def _check_lesson_constraints(proposal) -> list[str]:
     """Check accepted lessons for actionable constraints.
 
@@ -1249,8 +1448,10 @@ def _check_lesson_constraints(proposal) -> list[str]:
                     token = f"lesson_block_symbol:{lesson.lesson_id}:{blocked_sym}"
                     if in_dry_run:
                         logger.info("dry-run advisory (would block): %s", token)
-                    else:
+                    elif _learned_lesson_constraint_authorized(lesson, proposal, rec):
                         violations.append(token)
+                    else:
+                        logger.info("learned lesson advisory (no treatment authority): %s", token)
 
             elif action == "block_direction":
                 blocked_dir = rec.get("direction", "")
@@ -1258,8 +1459,10 @@ def _check_lesson_constraints(proposal) -> list[str]:
                     token = f"lesson_block_direction:{lesson.lesson_id}:{blocked_dir}"
                     if in_dry_run:
                         logger.info("dry-run advisory (would block): %s", token)
-                    else:
+                    elif _learned_lesson_constraint_authorized(lesson, proposal, rec):
                         violations.append(token)
+                    else:
+                        logger.info("learned lesson advisory (no treatment authority): %s", token)
 
             elif action == "block_scanner":
                 blocked_scanner = rec.get("scanner", "")
@@ -1267,8 +1470,10 @@ def _check_lesson_constraints(proposal) -> list[str]:
                     token = f"lesson_block_scanner:{lesson.lesson_id}:{blocked_scanner}"
                     if in_dry_run:
                         logger.info("dry-run advisory (would block): %s", token)
-                    else:
+                    elif _learned_lesson_constraint_authorized(lesson, proposal, rec):
                         violations.append(token)
+                    else:
+                        logger.info("learned lesson advisory (no treatment authority): %s", token)
 
             elif action == "reduce_size":
                 # Advisory only — log but do not block (docstring intent preserved)

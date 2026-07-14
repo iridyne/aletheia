@@ -56,8 +56,8 @@ def test_paper_position_carries_proposal_and_order_fk(tmp_path, monkeypatch):
     assert pos[0]["order_id"] == r["order_id"]
 
 
-def test_averaging_in_preserves_original_opener(tmp_path, monkeypatch):
-    """Averaging into an existing position must keep the proposal/order that OPENED it."""
+def test_same_symbol_proposals_keep_separate_position_lineage(tmp_path, monkeypatch):
+    """Each local-paper Position retains exactly one Proposal and opening Order."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.execution.paper_broker import execute_paper_order
     from tests.execution_authority import seed_order_authority
@@ -75,7 +75,7 @@ def test_averaging_in_preserves_original_opener(tmp_path, monkeypatch):
         quantity=0.001, price=60000.0, execution_mode="paper_internal",
         strategy_id="strat-1", stop_price=58800.0,
     )
-    # Second fill, same symbol/direction/strategy → averages into the same position.
+    # A second Proposal on the same symbol/direction/strategy remains separate.
     seed_order_authority(
         proposal_id="prop-add", risk_decision_id="rd-2",
         symbol="BTC/USDT", market_type="spot", direction="long",
@@ -83,16 +83,18 @@ def test_averaging_in_preserves_original_opener(tmp_path, monkeypatch):
         execution_mode="paper_internal", strategy_id="strat-1",
         stop_price=59000.0,
     )
-    execute_paper_order(
+    r2 = execute_paper_order(
         proposal_id="prop-add", risk_decision_id="rd-2", symbol="BTC/USDT",
         market_type="spot", direction="long", order_type="market",
         quantity=0.001, price=61000.0, execution_mode="paper_internal",
         strategy_id="strat-1", stop_price=59000.0,
     )
-    pos = repo.list_positions(status="open")
-    assert len(pos) == 1  # averaged, not a second position
-    assert pos[0]["proposal_id"] == "prop-open"  # original opener preserved
-    assert pos[0]["order_id"] == r1["order_id"]
+    pos = sorted(repo.list_positions(status="open"), key=lambda row: row["proposal_id"])
+    assert len(pos) == 2
+    assert pos[0]["proposal_id"] == "prop-add"
+    assert pos[0]["order_id"] == r2["order_id"]
+    assert pos[1]["proposal_id"] == "prop-open"
+    assert pos[1]["order_id"] == r1["order_id"]
 
 
 def test_positions_migration_has_fk_columns(tmp_path, monkeypatch):

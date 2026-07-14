@@ -5,7 +5,7 @@
 
 ## 1. 不变量
 
-1. System Operator 产生的 `trade` / `scale_in` / `flip` 意图，必须带有入场价、止损、止盈、名义价值和杠杆五项理由；少任何一项都不得创建 proposal，且要留下结构化跳过原因。
+1. System Operator 唯一可执行的入场意图 `trade` 必须带有入场价、止损、止盈、名义价值和杠杆五项理由；少任何一项都不得创建 proposal，也不得把 pending 终结成 skip，而是返回稳定的可重试不可用原因。`scale_in` / `flip` 不属于当前活跃能力。
 2. 最终数字由后端在取价、默认值和上限处理后写入；每项都要标出其实际来源。AI 不得因系统默认、市场快照或杠杆上限而获得虚假的“决定者”身份。
 3. 开仓理由保存在 `trade_proposals.agent_rationale` 的 `entry_parameters` 元数据中，属于 proposal 的不可变内容并受既有 hash chain 保护。
 4. 平仓理由只在关闭事实成功写入后保存到 `positions.exit_reasoning`。自动保护、人工、对账和 AI 复核必须使用真实 actor/source；没有 AI 原话时 `is_ai_judgment=false`。

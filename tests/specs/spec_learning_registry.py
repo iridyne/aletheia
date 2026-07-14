@@ -22,7 +22,10 @@ _CONTRACT = "learning_evolution"
     )
 )
 def test_learning_behavior_paths_are_declared_with_safe_fallbacks():
-    from aletheia.learning.registry import LEARNING_PATHS
+    from aletheia.learning.registry import (
+        LEARNING_PATHS,
+        supported_paper_influence_path_ids,
+    )
 
     by_id = {path.path_id: path for path in LEARNING_PATHS}
     assert len(by_id) == len(LEARNING_PATHS)
@@ -54,6 +57,40 @@ def test_learning_behavior_paths_are_declared_with_safe_fallbacks():
     assert by_id["exit_policy_advice"].allowed_effects == ("read_only",)
     assert by_id["operator_safety_control"].is_learning_treatment is False
     assert by_id["trust_guard_observability"].allowed_effects == ("observe",)
+    assert by_id["ranker_learned_guard"].consumer_wired is True
+    assert by_id["ranker_learned_guard"].settings_supported is True
+    assert by_id["advisory_skill"].consumer_wired is False
+    assert by_id["advisory_skill"].settings_supported is False
+    assert supported_paper_influence_path_ids() == {
+        "universe_family_calibration",
+        "observer_advisory_bundle",
+        "ranker_case_score",
+        "ranker_memo_score",
+        "ranker_factor_filter",
+        "ranker_learned_guard",
+        "operator_learning_bundle",
+        "risk_lesson_constraint",
+        "persona_sizing",
+    }
+
+
+@spec_claim(SpecClaim(
+    "LE-S05", _CONTRACT, "§2.2 Settings path inventory", "L2a",
+    "Settings renders registry-backed supported/unsupported checkboxes and has no free-text paper-influence path editor.",
+    status="implemented",
+))
+def test_learning_settings_uses_registry_backed_path_checkboxes():
+    root = Path(__file__).resolve().parents[2]
+    settings = (root / "frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
+    client = (root / "frontend/src/api/client.ts").read_text(encoding="utf-8")
+    start = settings.index('label="Allowed paper paths"')
+    end = settings.index('label="Auto-refreeze"', start)
+    section = settings[start:end]
+    assert 'type="checkbox"' in section
+    assert "learning_path_options" in settings
+    assert "Not connected" in section
+    assert ".split(',')" not in section
+    assert "consumer_unwired" in client
 
 
 @spec_claim(

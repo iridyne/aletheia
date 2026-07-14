@@ -830,7 +830,11 @@ def test_native_paper_chain_consumes_one_authoritative_decision(
 
     from aletheia.execution.gateway import submit_proposal
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Opportunity, TradeProposal
+    from aletheia.storage.models import MarketSnapshot, Opportunity, TradeProposal
+
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT", market_type="spot", exchange="binance", price=60_000.0,
+    ))
 
     opportunity = Opportunity(
         symbol="BTC/USDT",
@@ -852,6 +856,8 @@ def test_native_paper_chain_consumes_one_authoritative_decision(
         quantity=0.001,
         price=60_000.0,
         stop_price=58_000.0,
+        take_profit=64_000.0,
+        risk_reward=2.0,
         execution_mode="paper_internal",
         strategy_id="strategy-rx-11",
         opportunity_id=opportunity.id,

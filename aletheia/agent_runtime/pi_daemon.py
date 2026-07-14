@@ -13,7 +13,7 @@ Architecture:
       ├─ evaluate_trading_opportunity()
       └─ cooldown  — prevent LLM hammering
 
-The APScheduler heartbeat job is kept at 5-min interval as a safety net;
+The APScheduler heartbeat job is kept at 15-min interval as a safety net;
 when the daemon is running it simply calls notify_pi_daemon("heartbeat").
 """
 
@@ -34,25 +34,34 @@ _signal_event: asyncio.Event | None = None    # created inside the daemon loop
 _eval_lock: asyncio.Lock | None = None        # prevents self-overlap
 _uvicorn_loop: asyncio.AbstractEventLoop | None = None  # captured at startup
 
+# A negative value cannot collide with the non-negative queue depth returned by
+# evaluate_trading_opportunity(). The loop treats it as work still pending so a
+# transient evaluation failure is retried after cooldown without requiring a
+# fresh producer notification.
+_EVALUATION_RETRY_PENDING = -1
+
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def notify_pi_daemon(source: str = "unknown") -> None:
+def notify_pi_daemon(source: str = "unknown") -> bool:
     """Signal the daemon to wake up and evaluate.
 
     Safe to call from any thread (including APScheduler executor threads).
-    Fire-and-forget: never blocks, never raises.
+    Fire-and-forget: never blocks, never raises. Returns whether delivery to the
+    event loop was successfully scheduled.
     """
     global _uvicorn_loop, _signal_event
     if _uvicorn_loop is None or _signal_event is None:
-        return
+        return False
     try:
         _uvicorn_loop.call_soon_threadsafe(_signal_event.set)
         logger.debug("pi_daemon: notified (source=%s)", source)
+        return True
     except Exception as exc:
         logger.debug("pi_daemon: notify failed (source=%s): %s", source, exc)
+        return False
 
 
 def is_daemon_running() -> bool:
@@ -154,13 +163,14 @@ async def _pi_daemon_loop(
         # instead of silently discarding work.
         if cooldown_sec > 0:
             await asyncio.sleep(cooldown_sec)
-        if pending_queue_remaining > 0:
+        if pending_queue_remaining != 0:
             _signal_event.set()
 
 
 async def _run_evaluation(triggered_by: str) -> int:
     try:
         from aletheia.agent_shell.commands import evaluate_trading_opportunity
+        from aletheia.agent_runtime.scheduler import _record_job_success
         logger.info("pi_daemon: evaluating (trigger=%s)", triggered_by)
         result = await asyncio.wait_for(
             evaluate_trading_opportunity({}),
@@ -172,15 +182,20 @@ async def _run_evaluation(triggered_by: str) -> int:
             if isinstance(result, dict) else 0
         )
         logger.info("pi_daemon: evaluation done (trigger=%s, action=%s)", triggered_by, action)
+        _record_job_success("pi_trading_decision")
         return max(int(remaining or 0), 0)
     except asyncio.TimeoutError:
+        from aletheia.agent_runtime.scheduler import _record_job_failure
         logger.warning("pi_daemon: evaluate_trading_opportunity timed out after 300s")
-        return 0
+        _record_job_failure("pi_trading_decision", "daemon_evaluation_timeout")
+        return _EVALUATION_RETRY_PENDING
     except asyncio.CancelledError:
         raise  # propagate shutdown
     except Exception as exc:
+        from aletheia.agent_runtime.scheduler import _record_job_failure
         logger.warning("pi_daemon: evaluation failed: %s", exc)
-        return 0
+        _record_job_failure("pi_trading_decision", "daemon_evaluation_failed")
+        return _EVALUATION_RETRY_PENDING
     finally:
         # Release thread-local SQLite connection to prevent WAL lock across cooldown
         try:

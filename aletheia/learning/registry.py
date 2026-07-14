@@ -21,6 +21,8 @@ class LearningPath:
     outcome_source: str
     fallback: str
     is_learning_treatment: bool = True
+    consumer_wired: bool = True
+    settings_supported: bool = True
 
 
 LEARNING_PATHS: tuple[LearningPath, ...] = (
@@ -51,7 +53,7 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
     ),
     LearningPath(
         "ranker_learned_guard", "learned trading guards", "paper ranker",
-        "paper-entry candidate block", ("candidate_filter",), "ranker",
+        "paper-entry candidate block/penalty", ("candidate_filter", "score_adjustment"), "ranker",
         "blocked-candidate net outcome", "shadow-only guard evaluation",
     ),
     LearningPath(
@@ -74,29 +76,31 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         "advisory_skill", "proven hypothesis skill", "prompt or ranker advisory adapter",
         "advisory only", ("prompt_advisory", "score_adjustment"), "skill",
         "inherited source-path outcome", "skill inactive",
+        consumer_wired=False, settings_supported=False,
     ),
     LearningPath(
         "exit_policy_advice", "exit policy advisor", "analytics API",
         "read-only diagnostic", ("read_only",), "diagnostic",
         "trade-path diagnostic", "no mutation",
-        is_learning_treatment=False,
+        is_learning_treatment=False, settings_supported=False,
     ),
     LearningPath(
         "filter_ttl_shadow", "filter replay/controller", "shadow experiment report",
         "observe-only recommendation", ("read_only",), "filter_shadow",
         "fixed-horizon filter outcome", "production filter unchanged",
+        is_learning_treatment=False, settings_supported=False,
     ),
     LearningPath(
         "operator_safety_control", "operator system assessment", "operator config control",
         "existing safety tightening and human-gated loosening", ("safety_control",),
         "concurrent_policy", "operator health and audit outcomes", "existing operator contract",
-        is_learning_treatment=False,
+        is_learning_treatment=False, settings_supported=False,
     ),
     LearningPath(
         "trust_guard_observability", "trust guard chain", "pre-risk audit context",
         "observability only", ("observe",), "trust_observability",
         "audit facts", "no blocking effect",
-        is_learning_treatment=False,
+        is_learning_treatment=False, settings_supported=False,
     ),
 )
 
@@ -106,3 +110,32 @@ def get_learning_path(path_id: str) -> LearningPath:
         if path.path_id == path_id:
             return path
     raise KeyError(f"undeclared Learning path: {path_id}")
+
+
+def paper_influence_path_options() -> tuple[dict[str, object], ...]:
+    """Return the honest Settings inventory for behavior-changing paths."""
+    options = []
+    for path in LEARNING_PATHS:
+        if not path.is_learning_treatment:
+            continue
+        supported = bool(path.consumer_wired and path.settings_supported)
+        status = (
+            "supported"
+            if supported
+            else "consumer_unwired" if not path.consumer_wired else "authority_unwired"
+        )
+        options.append({
+            "path_id": path.path_id,
+            "label": path.producer,
+            "supported": supported,
+            "status": status,
+        })
+    return tuple(options)
+
+
+def supported_paper_influence_path_ids() -> frozenset[str]:
+    return frozenset(
+        path.path_id
+        for path in LEARNING_PATHS
+        if path.is_learning_treatment and path.consumer_wired and path.settings_supported
+    )

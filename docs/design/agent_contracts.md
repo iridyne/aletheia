@@ -86,7 +86,13 @@ backlog health are persisted in `learning_job_health`.
 - **Error behavior**: Degrades to basic technical-only signals when LLM unavailable
 - **Prompt contract** (2026-07-01, spec UP-08): the per-symbol LLM prompt names the `scanner_family` that surfaced the symbol so the read VALIDATES that family rather than doing a generic scan (MO-4).
 - **Guard advisory contract** (spec UP-07, 断口F): guard advisory is built PER-SYMBOL inside `_analyze_symbol` with `{symbol, scanner_family, asset_class}` via `router.build_guard_advisory()` — NOT run-level with a symbol list (which never matched any guard). The run-level memory_block carries only symbol-agnostic lessons.
-- **Learning attribution**: advisory retrieval + memo + per-symbol learned guard context is one `observer_advisory_bundle` manifest stored in the causal Opportunity metadata. `autonomous_learning=false` removes this bundle but retains market and prediction context.
+- **Learning attribution**: advisory retrieval + memo + per-symbol learned guard context is one
+  `observer_advisory_bundle` manifest stored in the causal Opportunity metadata. The bundle is
+  rendered only for an exact `observer_advisory_bundle` treatment assignment whose path is
+  allowlisted and currently authoritative; control, disabled/default, stale authority, missing
+  candidate identity, or adapter error renders no learned bundle. Universe members use a stable
+  member candidate and fixed-horizon outcome identity; standalone reads stay unlinked when no true
+  outcome producer exists. Market and prediction context is non-Learning input and remains present.
 - **Downstream contract** (spec UP-06): `key_observations` (the LLM's numeric citations) IS surfaced to the System Operator's layer1 snapshot; previously only a truncated thesis reached the decision.
 - **Bounded-loop fairness contract** (spec GS-S03): the 200-second safety budget remains below the scheduler timeout, but the next cycle begins at the durable successor of the last completed exact instrument. A cancellation or budget break never skips an in-flight or unprocessed instrument.
 - **Pre-filter status contract** (spec OBS-PRE-FILTER-STATUS): `no_sufficient_signal` is a normal rejection recorded in filter evidence, not an agent execution error. It skips the LLM without changing the run to `completed_with_errors`; provider failures, unexpected exceptions, and loop-budget exhaustion remain errors.
@@ -173,9 +179,17 @@ backlog health are persisted in `learning_job_health`.
 - **Attribution**: `_attach_opportunity_context` backfills `opportunity_id` + `signal_source`
   (`market_observer` Layer 1 wins on tie; `serenity` Layer 3 is the fallback). `signal_source`
   disambiguates the two bare-uuid id spaces. Phase 2 of Serenity Option A.
-- **Learning attribution**: reflection, memo, reasoning, calibration, trade cases, and structured lessons are one `operator_learning_bundle` manifest persisted on `pi_decisions.learning_manifest_json`; opportunity/proposal columns remain the causal outcome anchors. The observer bundle remains a separate upstream unit.
-- **Actions**: enter/exit/hold/watch/scale_in/flip
-- **Safety**: Never executes orders; outputs decisions that paper_trader/position_manager consume
+- **Learning attribution**: reflection, memo, reasoning, calibration, trade cases, and structured
+  lessons are one `operator_learning_bundle`. It is injected only for an exact allowlisted,
+  authoritative treatment assignment; control/default/error leaves every learned component absent.
+  The stable pending-queue candidate, assignment, hypothesis/experiment and exposure id are
+  persisted on `pi_decisions.learning_manifest_json`. A single normal pending Opportunity links to
+  its real fixed-horizon outcome; mixed/Serenity queues remain honestly unlinked. Opportunity and
+  Proposal columns remain the causal anchors, and the observer bundle stays a separate upstream unit.
+- **Actions**: active entry decision only `trade` / `skip`. The separate portfolio review exposes only `hold` / `close_one` for an explicit Position.
+- **Unsupported legacy outputs**: `close` / `reduce` / `watch` / `scale_in` / `flip` on the entry surface are normalized to an evidenced `skip` and never execute. `reduce_exposure` on portfolio review is treated as `hold`, never as a silent full close.
+- **Availability semantics**: missing assessment, a required debate side, a fresh exact local-paper mark, or complete entry reasons is retryable unavailability; no final PiDecision is written and no pending signal is consumed.
+- **Safety**: Never executes orders directly. A complete `trade` prepares one immutable Proposal for the Gateway; `close_one` uses the central close router with an exact fresh mark.
 
 #### position_manager
 

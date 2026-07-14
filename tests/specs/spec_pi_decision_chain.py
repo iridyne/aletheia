@@ -21,6 +21,8 @@ from __future__ import annotations
 import ast
 import pathlib
 
+import pytest
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -354,34 +356,42 @@ def test_low_risk_write_commands_reject_docs_prefix_path():
 
 
 @spec_claim(
-    SpecClaim("PI-S05", "execution_contract", "§entry discipline (limit + 4 fields)", "L2b",
-              "owner discussion #6: a System Operator entry is a planned bet, not a "
-              "gambler's market-buy. create_paper_proposal defaults order_type='limit' "
-              "(maker), and a NATIVE limit entry missing any of entry/stop/take_profit/"
-              "risk_reward is rejected by the risk engine (incomplete_entry_plan)."),
+    SpecClaim("PI-S05", "execution_contract", "§entry discipline by execution mode", "L2b",
+              "Local paper entry uses an immediate market fill from a fresh exact mark; "
+              "the autonomous wrapper and paper broker reject local limit entries. "
+              "Exchange demo callers may still request a planned native limit entry, whose "
+              "four entry fields remain protected by Risk."),
 )
-def test_entry_discipline_limit_default_and_four_field_gate():
+def test_entry_discipline_market_default_local_limit_rejection_and_native_gate(monkeypatch):
     """行为断言(非源码 grep):
 
-    1. create_paper_proposal 默认下单类型 = 'limit'(maker,省手续费)。
-    2. 风控对 native limit 入场缺任一要素(入场价/止损/止盈/盈亏比)→ 拒单
+    1. create_paper_proposal 默认下单类型 = market。
+    2. paper_internal 显式 limit 在 wrapper 和 broker 两层都拒绝且无副作用。
+    3. 风控对 exchange native limit 入场缺任一要素(入场价/止损/止盈/盈亏比)→ 拒单
        (incomplete_entry_plan)。
-    3. 四要素齐全的 native limit 入场 → 不再触发 incomplete_entry_plan。
-    4. 平仓/adopt 等 market 单不受此门槛约束(scoped to limit+native)。
+    4. 四要素齐全的 exchange native limit 入场 → 不再触发 incomplete_entry_plan。
     """
     import inspect
     from aletheia.execution import paper_tools
     from aletheia.storage.models import TradeProposal
     from aletheia.risk.engine import evaluate_proposal
 
-    # 1. limit 默认
+    # 1. local paper is an immediate simulated fill, not a fake maker promise.
     sig = inspect.signature(paper_tools.create_paper_proposal)
-    assert sig.parameters["order_type"].default == "limit", (
-        "create_paper_proposal 默认下单类型应为 'limit'(maker 挂单)"
+    assert sig.parameters["order_type"].default == "market"
+
+    monkeypatch.setattr(
+        paper_tools, "submit_proposal", lambda **kwargs: kwargs,
     )
+    with pytest.raises(ValueError, match="paper_internal_market_only"):
+        paper_tools.create_paper_proposal(
+            symbol="BTC/USDT", market_type="spot", direction="long",
+            quantity=0.001, price=50000.0, execution_mode="paper_internal",
+            order_type="limit",
+        )
 
     common = dict(symbol="BTC/USDT", market_type="spot", direction="long",
-                  quantity=0.001, price=50000.0, execution_mode="paper_internal")
+                  quantity=0.001, price=50000.0, execution_mode="bitget_demo")
 
     # 2. native limit 缺 take_profit + risk_reward → incomplete_entry_plan
     incomplete = TradeProposal(order_type="limit", source="native",
@@ -400,10 +410,151 @@ def test_entry_discipline_limit_default_and_four_field_gate():
         f"四要素齐全不应触发 incomplete_entry_plan,violations={res2.violations}"
     )
 
-    # 4. market 平仓单(source=native 但 order_type=market)不受门槛约束
+    # market entries/closes are outside the exchange-native limit-plan gate.
     market_close = TradeProposal(order_type="market", source="native",
                                  stop_price=None, **common)
     res3 = evaluate_proposal(market_close)
     assert not any("incomplete_entry_plan" in v for v in res3.violations), (
         f"market 单不应触发入场计划门槛,violations={res3.violations}"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "PI-S06",
+        "agent_contracts",
+        "§System Operator daemon evaluation health",
+        "L2b",
+        "Each daemon evaluation timeout or exception increments the existing "
+        "pi_trading_decision failure health and returns a retry sentinel; only a real "
+        "subsequent evaluation success clears the consecutive failure count.",
+        status="implemented",
+    ),
+)
+def test_daemon_evaluation_failures_count_and_real_success_recovers(monkeypatch):
+    import asyncio
+
+    from aletheia.agent_runtime import pi_daemon, scheduler
+    from aletheia.agent_shell import commands
+    from aletheia.infra import errors as infra_errors
+    from aletheia.infra import events as infra_events
+    from aletheia.learning import control
+
+    learning_failures: list[tuple[str, str]] = []
+    emitted: list[dict] = []
+    monkeypatch.setattr(
+        control,
+        "record_learning_job_failure",
+        lambda job_id, error: learning_failures.append((job_id, error)),
+    )
+    monkeypatch.setattr(
+        infra_events, "emit_infra_event", lambda **kwargs: emitted.append(kwargs)
+    )
+    monkeypatch.setattr(infra_errors, "record_error", lambda **_kwargs: None)
+
+    failure_cases = (
+        (asyncio.TimeoutError, "daemon_evaluation_timeout"),
+        (RuntimeError, "daemon_evaluation_failed"),
+    )
+    for error_type, expected_code in failure_cases:
+        scheduler._consecutive_failures.clear()
+        learning_failures.clear()
+        emitted.clear()
+
+        async def fail_evaluation(_params, _error_type=error_type):
+            raise _error_type("forced daemon failure")
+
+        monkeypatch.setattr(
+            commands, "evaluate_trading_opportunity", fail_evaluation
+        )
+        retry_results = [
+            asyncio.run(pi_daemon._run_evaluation("signal")) for _ in range(3)
+        ]
+
+        assert retry_results == [pi_daemon._EVALUATION_RETRY_PENDING] * 3
+        assert scheduler._consecutive_failures["pi_trading_decision"] == 3
+        assert learning_failures == [
+            ("pi_trading_decision", expected_code),
+        ] * 3
+        assert any(
+            row.get("code") == "job_consecutive_failure:pi_trading_decision"
+            for row in emitted
+        )
+
+        async def complete_evaluation(_params):
+            return {"action": "skip", "pending_queue_remaining": 0}
+
+        monkeypatch.setattr(
+            commands, "evaluate_trading_opportunity", complete_evaluation
+        )
+        assert asyncio.run(pi_daemon._run_evaluation("signal")) == 0
+        assert scheduler._consecutive_failures["pi_trading_decision"] == 0
+
+    if hasattr(scheduler._JOB_RUN_STATE, "failure_recorded"):
+        del scheduler._JOB_RUN_STATE.failure_recorded
+
+
+@spec_claim(
+    SpecClaim(
+        "PI-S07",
+        "agent_contracts",
+        "§System Operator heartbeat health",
+        "L2b",
+        "The scheduled daemon heartbeat uses a delivery-only health id, so a successful "
+        "notify cannot clear pi_trading_decision evaluation failures; failed delivery is "
+        "recorded independently as daemon_notify_failed and immediately falls back to an "
+        "inline evaluation.",
+        status="implemented",
+    ),
+)
+def test_daemon_heartbeat_health_is_separate_from_evaluation(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import pi_daemon, scheduler
+    from aletheia.learning import control
+
+    src = _src("aletheia/agent_runtime/scheduler.py")
+    assert '_guarded("pi_trading_heartbeat", _run_pi_trading_decision)' in src
+
+    monkeypatch.setattr(control, "is_autonomous_learning_job", lambda _job: False)
+    monkeypatch.setattr(control, "record_learning_job_success", lambda _job: None)
+    monkeypatch.setattr(
+        scheduler,
+        "load_config",
+        lambda: SimpleNamespace(
+            runtime=SimpleNamespace(paused=False),
+            agent=SimpleNamespace(permission_mode="Paper"),
+            pi_daemon=SimpleNamespace(enabled=True),
+        ),
+    )
+    monkeypatch.setattr(pi_daemon, "is_daemon_running", lambda: True)
+    monkeypatch.setattr(pi_daemon, "notify_pi_daemon", lambda **_kwargs: True)
+
+    scheduler._consecutive_failures.clear()
+    scheduler._consecutive_failures["pi_trading_decision"] = 2
+    scheduler._run_job_guarded(
+        "pi_trading_heartbeat", scheduler._run_pi_trading_decision
+    )
+
+    assert scheduler._consecutive_failures["pi_trading_decision"] == 2
+    assert scheduler._consecutive_failures["pi_trading_heartbeat"] == 0
+
+    monkeypatch.setattr(pi_daemon, "notify_pi_daemon", lambda **_kwargs: False)
+    inline_calls: list[str] = []
+
+    def complete_inline(job_id, awaitable):
+        inline_calls.append(job_id)
+        awaitable.close()
+        return {"action": "skip", "pending_queue_remaining": 0}
+
+    monkeypatch.setattr(scheduler, "_run_async_with_timeout", complete_inline)
+    monkeypatch.setattr(
+        control, "record_learning_job_failure", lambda _job, _error: None
+    )
+    scheduler._run_pi_trading_decision()
+    assert inline_calls == ["pi_trading_decision"]
+    assert scheduler._consecutive_failures["pi_trading_decision"] == 0
+    assert scheduler._consecutive_failures["pi_trading_heartbeat"] == 1
+
+    if hasattr(scheduler._JOB_RUN_STATE, "failure_recorded"):
+        del scheduler._JOB_RUN_STATE.failure_recorded

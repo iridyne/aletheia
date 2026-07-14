@@ -6,7 +6,7 @@ under provider contention each call can run to the 60s provider timeout, so a la
 universe blows the 240s job timeout → _run_async_with_timeout cancels the coroutine
 mid-flight → the daemon thread is abandoned and LEAKS, starving the frontdoor.
 Two fixes, locked here:
-  GS-S01  market_observer caps the per-instrument loop wall-clock BELOW the job timeout.
+  GS-S01  market_observer uses one run deadline, including prefetch, below job timeout.
   GS-B01  llm_structured retries ONCE on a parse failure (recovers prose-prefixed JSON).
   GS-B02  llm_structured does NOT retry on empty content (reasoning-budget exhaustion).
 
@@ -32,15 +32,15 @@ _CONTRACT = "gateway_stability_contract"
 
 
 # ---------------------------------------------------------------------------
-# GS-S01 — market_observer loop wall-clock budget < job timeout
+# GS-S01 — one market_observer run budget (including prefetch) < job timeout
 # ---------------------------------------------------------------------------
 
 @spec_claim(
     SpecClaim(
         "GS-S01", _CONTRACT, "§wall-clock budget", "L2a",
-        "market_observer caps its per-instrument loop wall-clock strictly below the "
-        "scheduler job timeout, and breaks out when the budget is hit — so the "
-        "coroutine returns before cancellation and the daemon thread is not abandoned.",
+        "market_observer uses one wall-clock deadline across prefetch and the serial "
+        "instrument loop, strictly below the scheduler timeout; prefetch may consume "
+        "only the remaining budget so teardown keeps an explicit safety margin.",
     ),
 )
 def test_market_observer_loop_has_wallclock_budget():
@@ -50,9 +50,17 @@ def test_market_observer_loop_has_wallclock_budget():
     assert mo._MARKET_OBSERVER_LOOP_BUDGET_SEC < mo._MARKET_OBSERVER_JOB_TIMEOUT_S, (
         "loop budget must be strictly below the job timeout to avoid mid-flight cancel"
     )
+    assert (
+        mo._MARKET_OBSERVER_JOB_TIMEOUT_S
+        - mo._MARKET_OBSERVER_LOOP_BUDGET_SEC
+        == mo._MARKET_OBSERVER_TEARDOWN_MARGIN_SEC
+    ), "observer budget must reserve its declared teardown margin"
     src = _MARKET_OBS.read_text(encoding="utf-8")
-    assert "_loop_deadline" in src and "loop_budget_exceeded" in src, (
-        "per-instrument loop must check a wall-clock deadline and break with a logged reason"
+    assert "_run_deadline" in src and "loop_budget_exceeded" in src, (
+        "the observer must check one run deadline and break with a logged reason"
+    )
+    assert "_gather_prefetch_with_deadline" in src and "asyncio.wait_for" in src, (
+        "parallel prefetch must be bounded by the remaining run deadline"
     )
     # The job-timeout hint must match the scheduler's actual configured value.
     from aletheia.agent_runtime.scheduler import _ASYNC_JOB_TIMEOUT_SEC
@@ -84,9 +92,9 @@ def test_market_observer_has_module_logger():
 @spec_claim(
     SpecClaim(
         "GS-S03", _CONTRACT, "§bounded-loop fairness", "L2b",
-        "When the market-observer budget skips instruments, the next cycle begins "
-        "from the durable successor of the last completed instrument; cancellation "
-        "does not advance the cursor.",
+        "Signal priority keeps the durable next instrument as a mandatory prefix. "
+        "After a bounded run, the cursor advances only through the completed canonical "
+        "prefix, so a skipped low-score instrument is boundedly reachable.",
     ),
 )
 def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
@@ -95,6 +103,8 @@ def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
     assert rotate_from_next(["a", "b", "c"], next_key="b", key=str) == ["b", "c", "a"]
     source = _MARKET_OBS.read_text(encoding="utf-8")
     assert "DurableRoundRobin" in source
+    assert "_fair_signal_order" in source
+    assert "_advance_completed_round_robin_prefix" in source
     assert "completed_attempt" in source
     assert "if completed_attempt:" in source
 

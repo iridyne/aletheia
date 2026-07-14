@@ -805,10 +805,6 @@ def _memo_scoring(symbol: str | None, direction: str | None, regime: MarketRegim
 def _guard_evaluation_applicability() -> tuple[str, str]:
     """Classify why the Guard can or cannot evaluate this ranking cycle."""
     try:
-        from aletheia.learning.control import learning_influence_enabled
-
-        if not learning_influence_enabled():
-            return "not_applicable", "learning_influence_disabled"
         guard_cfg = getattr(load_config(), "guard", None)
         if guard_cfg is not None and not guard_cfg.enabled:
             return "not_applicable", "guard_disabled"
@@ -832,9 +828,6 @@ def _evaluate_guards_safe(
 ) -> GuardEvaluation | None:
     """Build guard context and evaluate. Returns None on failure (never crashes ranker)."""
     try:
-        from aletheia.learning.control import learning_influence_enabled
-        if not learning_influence_enabled():
-            return None
         cfg = load_config()
         guard_cfg = getattr(cfg, "guard", None)
         if guard_cfg and (not guard_cfg.enabled or not guard_cfg.enforce_in_paper_ranker):
@@ -875,6 +868,21 @@ def _evaluate_guards_safe(
             "paper_expectancy": strategy_evidence.get("paper_expectancy") if strategy_evidence else None,
             "backtest_expectancy": strategy_evidence.get("backtest_expectancy") if strategy_evidence else None,
         }
+        try:
+            opportunity_meta = _json.loads(opp.get("metadata") or "{}")
+        except (TypeError, ValueError):
+            opportunity_meta = {}
+        learning_candidate_key = opportunity_meta.get("learning_candidate_key")
+        opportunity_id = opp.get("id")
+        ctx.update({
+            "_candidate_key": (
+                f"opportunity:{opportunity_id}" if opportunity_id else None
+            ),
+            "_outcome_candidate_key": (
+                f"{learning_candidate_key}:4h" if learning_candidate_key else None
+            ),
+            "_opportunity_id": opportunity_id,
+        })
 
         max_penalty = guard_cfg.max_score_penalty if guard_cfg else 40.0
         result = evaluate_guards(ctx, scope="paper_entry")

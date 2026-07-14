@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from aletheia.storage.models import Opportunity, StrategyRecord
+from aletheia.storage.models import MarketSnapshot, Opportunity, StrategyRecord
 from aletheia.storage import repositories as repo
 
 
@@ -82,9 +82,18 @@ class TestFuturesLeverageAcceptance:
 
         # 3x BTC futures, notional 60 → weighted notional 180.
         entry = 60000.0
+        repo.insert_market_snapshot(MarketSnapshot(
+            id="futures-entry-mark",
+            symbol=opp.symbol,
+            market_type="perp",
+            exchange=local_paper_futures_config.market_data.ccxt_exchange,
+            price=entry,
+            snapshot_at=datetime.now(timezone.utc).isoformat(),
+        ))
         res = submit_proposal(
             symbol="BTC/USDT", market_type="usdt_futures", direction="long",
             quantity=round(60.0 / entry, 6), price=entry, leverage=3,
+            stop_price=58_000.0, take_profit=64_000.0, risk_reward=2.0,
             execution_mode="paper_internal",
             strategy_id=strat.id, opportunity_id=opp.id,
         )
@@ -103,10 +112,17 @@ class TestFuturesLeverageAcceptance:
         assert entry_order["position_id"] == opened["id"]
         assert entry_order["filled_at"] == entry_fill["filled_at"] == opened["opened_at"]
 
+        repo.insert_market_snapshot(MarketSnapshot(
+            id="futures-close-mark",
+            symbol=opp.symbol,
+            market_type="perp",
+            exchange=local_paper_futures_config.market_data.ccxt_exchange,
+            price=entry * 1.01,
+            snapshot_at=datetime.now(timezone.utc).isoformat(),
+        ))
         closed_result = close_position_routed(
             opened["id"],
             "take_profit",
-            fallback_exit_price=entry * 1.01,
             decision_source="e2e_local_futures_funding",
         )
         closed = repo._select_one("positions", opened["id"])
@@ -154,29 +170,28 @@ class TestFuturesLeverageAcceptance:
     ):
         """The PI path preserves futures identity and clamped leverage on execution."""
         from aletheia.agent_shell.trading_decision import TradingDecision, submit_decision_as_proposal
-        from aletheia.trading import market_data
-
         opp = Opportunity(symbol="SOL/USDT", market="usdt_futures", direction_bias="long",
                           confidence="high", confidence_score=75, source_agent="market_observer",
                           scanner_family="momentum")
         repo.insert_opportunity(opp)
         _seed_fresh_schedule(opp.symbol)
-
-        # Stub the snapshot lookup the submit path uses for price (market data is the
-        # network boundary; everything downstream is real).
-        import aletheia.agent_shell.trading_decision as td
-        orig = market_data.latest_snapshot
-        market_data.latest_snapshot = lambda s, market_type=None: {"price": 150.0}
-        try:
-            decision = TradingDecision(
-                action="trade", symbol="SOL/USDT", direction="long",
-                conviction=80, reasoning="strong perp setup",
-                position_size_usdt=60.0, market_type="usdt_futures", leverage=10,
-                opportunity_id=opp.id,
-            )
-            result = await submit_decision_as_proposal(decision, execution_mode="paper_internal")
-        finally:
-            market_data.latest_snapshot = orig
+        repo.insert_market_snapshot(MarketSnapshot(
+            id="pi-futures-entry-mark",
+            symbol=opp.symbol,
+            market_type="perp",
+            exchange=local_paper_futures_config.market_data.ccxt_exchange,
+            price=150.0,
+            snapshot_at=datetime.now(timezone.utc).isoformat(),
+        ))
+        decision = TradingDecision(
+            action="trade", symbol="SOL/USDT", direction="long",
+            conviction=80, reasoning="strong perp setup",
+            position_size_usdt=60.0, market_type="usdt_futures", leverage=10,
+            opportunity_id=opp.id,
+        )
+        result = await submit_decision_as_proposal(
+            decision, execution_mode="paper_internal",
+        )
 
         assert result and result.get("status") == "executed", result
         proposal = repo.get_trade_proposal(result["proposal_id"])

@@ -122,7 +122,7 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 | LLM neutral/无效输出 | 可能否 | schema 结果、方向、置信度，不写 prompt | 仅有事前方向的行 |
 | Ranker symbol policy/execution/direction/confidence/TTL/factor/guard | 是 | 白/黑名单拒绝也必须写 `symbol_filter/symbol_not_allowed` 并终结 Opportunity；永久拒绝扫描批次与 top-N 执行短名单分离，状态与拒绝事实同事务提交 | 是（guard 只观测；symbol policy 不自动放宽） |
 | open-position/cooldown/batch limit | 是 | 当时占用、冷却截止、rank/limit | 是 |
-| System Operator watch/conviction/debate/direction brakes | 是 | 原始/辩论后 conviction、实际暴露快照 | 是，但不在有对照前改门槛 |
+| System Operator action/conviction/debate/direction brakes | 是 | 仅活跃 `trade/skip`、原始/辩论后 conviction、实际暴露快照；遗留假动作记 `unsupported_action` | 是，但不在有对照前改门槛 |
 | Proposal submission 方向/取价 | 是 | 方向集中度，最终 market_type，目标市场价格是否可用 | 是；用于解释 trade 意图为何没有 proposal，不自动放宽 |
 | Risk | 是 | `RiskDecision` 为权威，filter 记录只做统一索引 | 报告用，永不自动放宽 |
 | Execution adapter | 是 | order/error/venue reason | 用于成交率/实现率，不是方向 alpha |

@@ -284,8 +284,17 @@ def _force_shadow_only_if_auto(metadata: dict | None) -> dict | None:
     if not auto:
         return metadata
     meta = dict(metadata)
+    if meta.get("proposed_block_candidate") is None:
+        meta["proposed_block_candidate"] = bool(
+            meta.get("block_candidate") or meta.get("pre_shadow_block_candidate")
+        )
+    if meta.get("proposed_score_penalty") is None:
+        meta["proposed_score_penalty"] = float(
+            meta.get("score_penalty") or meta.get("pre_shadow_score_penalty") or 0.0
+        )
     meta["shadow_only"] = True
     meta["block_candidate"] = False
+    meta["score_penalty"] = 0
     tags = list(meta.get("tags") or [])
     if "shadow-only" not in tags:
         tags.append("shadow-only")

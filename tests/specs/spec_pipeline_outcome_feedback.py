@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -52,7 +53,12 @@ def test_native_paper_close_reaches_attribution_and_feedback(tmp_path, monkeypat
     from aletheia.learning.outcomes import assess_realized_position
     from aletheia.portfolio.position_manager import close_position_routed
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Opportunity, RiskDecision, TradeProposal
+    from aletheia.storage.models import (
+        MarketSnapshot,
+        Opportunity,
+        RiskDecision,
+        TradeProposal,
+    )
 
     opportunity = Opportunity(
         symbol="BTC/USDT",
@@ -97,14 +103,23 @@ def test_native_paper_close_reaches_attribution_and_feedback(tmp_path, monkeypat
         execution_mode=proposal.execution_mode,
         opportunity_id=opportunity.id,
     )
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol=proposal.symbol,
+        market_type="spot",
+        exchange="binance",
+        price=110.0,
+        snapshot_at=datetime.now(timezone.utc).isoformat(),
+    ))
 
-    close_position_routed(
+    closed = close_position_routed(
         opened["position_id"],
         "take_profit",
-        fallback_exit_price=110.0,
     )
 
     position = repo._select_one("positions", opened["position_id"])
+    assert closed["fill_price"] == 109.945
+    assert repo._select_one("fills", closed["fill_id"])["fill_price"] == 109.945
+    assert position["current_price"] == 109.945
     assert assess_realized_position(position).eligible is True
     assert position["close_category"] == "strategy"
     assert position["exit_price_source"] == "local_fill"

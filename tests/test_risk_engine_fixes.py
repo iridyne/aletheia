@@ -119,7 +119,7 @@ def test_lesson_hard_block_requires_risk_category(tmp_path, monkeypatch):
     store = LessonStore()
 
     def _applied_block_lesson(category):
-        les = store.create("block BTC", source_type="test", source_id="t",
+        les = store.create("block BTC", source_type="manual", source_id="t",
                            category=category, severity="high",
                            recommendation={"action": "block_symbol", "symbol": "BTC/USDT"})
         store.accept(les.lesson_id)

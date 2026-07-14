@@ -36,13 +36,16 @@ logger = logging.getLogger("aletheia.agents.market_observer")
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 
-# Wall-clock budget for the per-instrument loop. Must stay BELOW the scheduler's
+# Wall-clock budget for the complete observer run. Must stay BELOW the scheduler's
 # market_observer job timeout (_ASYNC_JOB_TIMEOUT_SEC["market_observer"] = 500s in
 # agent_runtime/scheduler.py) with margin, so the coroutine returns normally before
 # asyncio.wait_for cancels it — preventing the abandoned-thread leak. Keep in sync if
 # the job timeout changes.
 _MARKET_OBSERVER_JOB_TIMEOUT_S = 500.0
-_MARKET_OBSERVER_LOOP_BUDGET_SEC = 460.0
+_MARKET_OBSERVER_TEARDOWN_MARGIN_SEC = 40.0
+_MARKET_OBSERVER_LOOP_BUDGET_SEC = (
+    _MARKET_OBSERVER_JOB_TIMEOUT_S - _MARKET_OBSERVER_TEARDOWN_MARGIN_SEC
+)
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
 _ROUND_ROBIN_STATE_KEY = "agent.market_observer.round_robin.v1"
 _RETRYABLE_EVIDENCE_ERROR_PREFIX = "observer_pre_filter_evidence_failed:"
@@ -70,6 +73,87 @@ class _SymbolPrefetch:
     open_interest_val: float | None
     oi_delta_val: float | None
     failed: bool = False   # True if exchange context fetch raised
+
+
+def _observer_learning_candidate_key(
+    *, run_id: str | None, venue: str | None, market_type: str, symbol: str,
+    universe_snapshot_id: str | None, universe_member_id: str | None,
+) -> str:
+    """Keep one Universe member in one arm across Observer retries."""
+    if universe_member_id:
+        return (
+            f"observer_member:{universe_snapshot_id or 'unknown'}:"
+            f"{universe_member_id}:{market_type}"
+        )
+    return (
+        f"observer_run:{run_id or 'scheduled'}:{venue or 'unknown'}:"
+        f"{market_type}:{symbol}"
+    )
+
+
+def _monotonic() -> float:
+    """Single injectable monotonic clock for the observer run budget."""
+    import time
+
+    return time.monotonic()
+
+
+def _fair_signal_order(items, *, score, key) -> list:
+    """Keep the durable next item first, then prioritize the remaining signals.
+
+    ``items`` is already rotated to the durable round-robin cursor.  Sorting the
+    whole list would let the same high-score subset permanently displace that
+    cursor whenever the wall-clock budget truncates a run.
+    """
+    if not items:
+        return []
+    first = items[0]
+    first_key = key(first)
+    remaining = [item for item in items[1:] if key(item) != first_key]
+    return [first, *sorted(remaining, key=score, reverse=True)]
+
+
+def _advance_completed_round_robin_prefix(
+    round_robin,
+    ordered_items,
+    *,
+    completed_keys: set[str],
+    next_unprocessed_index: int,
+    key,
+) -> int:
+    """Advance through completed canonical items, stopping at the first gap."""
+    ordered_keys = [key(item) for item in ordered_items]
+    if not ordered_keys:
+        return 0
+    for _ in ordered_keys:
+        expected_key = ordered_keys[next_unprocessed_index]
+        if expected_key not in completed_keys:
+            break
+        round_robin.advance_after(
+            ordered_items, completed_key=expected_key, key=key,
+        )
+        # Consume this attempt.  Keeping it in the set would let a later call
+        # wrap around the cycle and advance over the same item a second time.
+        completed_keys.discard(expected_key)
+        next_unprocessed_index = (next_unprocessed_index + 1) % len(ordered_keys)
+    return next_unprocessed_index
+
+
+async def _gather_prefetch_with_deadline(awaitables, *, deadline: float) -> list:
+    """Gather context prefetches inside the remaining observer run budget."""
+    remaining = deadline - _monotonic()
+    if remaining <= 0:
+        # Coroutines were constructed by the caller but never scheduled.  Close
+        # them explicitly so a budget-expired run does not emit unawaited warnings.
+        for awaitable in awaitables:
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+        raise TimeoutError("market_observer prefetch has no remaining run budget")
+    return await asyncio.wait_for(
+        asyncio.gather(*awaitables, return_exceptions=True),
+        timeout=remaining,
+    )
 
 
 class MarketRead(BaseModel):
@@ -488,6 +572,8 @@ async def _analyze_symbol(
     prediction_context_enabled: bool = False,
     prediction_context_cutoff: str | None = None,
     learning_memory_block: str | None = None,
+    learning_outcome_candidate_key: str | None = None,
+    non_learning_context_block: str = "",
     _prefetched: "_SymbolPrefetch | None" = None,
 ) -> tuple[str | None, str | None]:
     """Run market context build + LLM read for a single symbol.
@@ -731,7 +817,11 @@ async def _analyze_symbol(
     # scanner_family, which only exist per-symbol — the run-level memory_block was
     # built from a symbol LIST with no family, so no guard ever matched. Build it
     # here where scanner_family is known.
-    sym_memory = memory_block
+    # ``memory_block`` is retained only for call compatibility.  Historical
+    # callers used it for learned memo/case text, so rendering it directly would
+    # bypass the paper authority adapter.  Explicit non-Learning observations use
+    # the separately named field below.
+    sym_memory = non_learning_context_block
     guard_block = ""
     if scanner_family and learning_memory_block is not None:
         try:
@@ -741,14 +831,33 @@ async def _analyze_symbol(
                 "asset_class": asset_class,
                 "scanner_family": scanner_family,
             })
-            if guard_block:
-                sym_memory = f"{memory_block}{guard_block}"
         except Exception:
             pass
-    from aletheia.learning.prompt_bundles import build_observer_learning_manifest
-    learning_manifest = build_observer_learning_manifest(
-        learning_memory_block or "", guard_block,
+    from aletheia.learning.prompt_bundles import authorize_observer_learning_bundle
+    learning_candidate_key = _observer_learning_candidate_key(
+        run_id=run_id,
+        venue=venue,
+        market_type=market_type,
+        symbol=symbol,
+        universe_snapshot_id=universe_snapshot_id,
+        universe_member_id=universe_member_id,
     )
+    authorized_learning, learning_manifest = authorize_observer_learning_bundle(
+        learning_memory_block or "",
+        guard_block,
+        candidate_key=learning_candidate_key,
+        scope={
+            "symbol": symbol,
+            "market_type": market_type,
+            "venue": venue,
+            "scanner_family": scanner_family,
+        },
+        outcome_candidate_key=(
+            f"{learning_outcome_candidate_key}:4h"
+            if learning_outcome_candidate_key else None
+        ),
+    )
+    sym_memory = f"{non_learning_context_block}{authorized_learning}"
 
     # MO-4: tell the LLM which scanner family surfaced this symbol so it VALIDATES
     # that signal family rather than doing a generic technical read.
@@ -990,8 +1099,11 @@ async def _analyze_symbol(
 @register_agent("market_observer")
 async def run_market_observer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Observe market state and create one Opportunity per symbol."""
-    import time as _time
-    _run_start = _time.monotonic()
+    _run_start = _monotonic()
+    # One run-level deadline covers setup, batch reads, parallel prefetch, and the
+    # serial LLM loop.  The 40-second difference to the scheduler timeout is kept
+    # for cancellation/DB cleanup and event-loop teardown.
+    _run_deadline = _run_start + _MARKET_OBSERVER_LOOP_BUDGET_SEC
     outputs: list[str] = []
     errors: list[str] = []
     _success_count = 0
@@ -1085,13 +1197,12 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     except Exception:
         pass
 
-    try:
-        from aletheia.learning.control import learning_influence_enabled
-        learning_memory_block = memory_block if learning_influence_enabled() else None
-    except Exception:
-        learning_memory_block = None
-    if learning_memory_block is None:
-        memory_block = ""
+    # This is only a proposed Learning bundle. Per-instrument paper authority,
+    # treatment/control assignment, and exposure recording happen immediately
+    # before the LLM prompt is rendered in _analyze_symbol().
+    learning_memory_block = memory_block
+    memory_block = ""
+    non_learning_context_block = ""
 
     prediction_context_enabled = bool(cfg.market_data.prediction_enabled)
     prediction_context_cutoff = _prediction_cutoff_iso()
@@ -1108,7 +1219,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 for pc in pred_claims[:5]:
                     direction = pc.get("direction", "")
                     pred_lines.append(f"- {pc['claim_text']} [{direction}]")
-                memory_block += "\n".join(pred_lines)
+                non_learning_context_block += "\n".join(pred_lines)
         except Exception:
             pass
 
@@ -1129,12 +1240,12 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     #
     # WALL-CLOCK BUDGET (gateway-stability fix): each instrument is one structured LLM call
     # capped below this loop budget even when its provider permits a longer research timeout. With a large
-    # universe this can blow the 240s job timeout → _run_async_with_timeout cancels the
+    # universe this can blow the 500s job timeout → _run_async_with_timeout cancels the
     # coroutine mid-flight → SelectorEventLoop teardown stalls → the daemon thread is
     # abandoned and LEAKS (the "abandoned threads 3→5" cascade that starves the frontdoor).
     # Capping the loop wall-clock < the job timeout makes the coroutine ALWAYS return
     # normally before cancellation → clean teardown, no leak. Skipped instruments are
-    # picked up next 15-min cycle (logged, not silent).
+    # picked up next 10-minute cycle (logged, not silent).
     import time as _time
     # MO-14: compute force_full ONCE per run (load_config has no cache; per-symbol
     # calls were a file read + YAML parse each iteration).
@@ -1172,7 +1283,22 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
         )
         for instr in instruments
     ]
-    _prefetch_raw = await asyncio.gather(*_prefetch_coros, return_exceptions=True)
+    try:
+        _prefetch_raw = await _gather_prefetch_with_deadline(
+            _prefetch_coros, deadline=_run_deadline,
+        )
+    except TimeoutError:
+        errors.append(
+            "prefetch_budget_exceeded: parallel context build consumed the "
+            f"{_MARKET_OBSERVER_LOOP_BUDGET_SEC:.0f}s run budget"
+        )
+        logger.warning(
+            "market_observer prefetch exhausted the %.0fs run budget; "
+            "returning before the %.0fs scheduler timeout",
+            _MARKET_OBSERVER_LOOP_BUDGET_SEC,
+            _MARKET_OBSERVER_JOB_TIMEOUT_S,
+        )
+        return {"outputs": outputs, "errors": errors}
     _prefetch_wall = _time.monotonic() - _t_prefetch_start
     logger.warning("[MO DIAG] parallel prefetch done: %.1fs for %d symbols",
                    _prefetch_wall, len(instruments))
@@ -1193,29 +1319,31 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             _prefetch_map[_ikey] = _result
 
     # ── Phase 3: signal-strength sort ────────────────────────────────────────────────
-    # Sort instruments so highest pre-filter signal score processes first.
-    # When loop budget is exceeded, the skipped tail contains lowest-signal symbols
-    # rather than a random end-of-queue set.
+    # Keep the durable next instrument as a mandatory prefix, then sort the rest by
+    # signal score.  This preserves signal priority without permanently starving a
+    # low-score instrument when every run is truncated by the wall-clock budget.
     # force_full bypasses the pre-filter gate → keep original RR order for consistency.
     if _force_full:
         processing_order = list(instruments)
     else:
-        processing_order = sorted(
+        processing_order = _fair_signal_order(
             instruments,
-            key=lambda _i: _prefetch_map[instrument_key(_i)].signal_score,
-            reverse=True,
+            score=lambda _i: _prefetch_map[instrument_key(_i)].signal_score,
+            key=instrument_key,
         )
     logger.warning("[MO DIAG] run start: %d instruments, force_full=%s, budget=%.0fs",
                    len(instruments), _force_full, _MARKET_OBSERVER_LOOP_BUDGET_SEC)
 
     # ── Phase 4: serial LLM loop ──────────────────────────────────────────────────────
-    # WALL-CLOCK BUDGET: same as before — loop deadline prevents thread leak.
-    # ROUND-ROBIN: advance_after always receives original `instruments` (RR order),
-    # not processing_order. Signal sorting changes per-run processing order only;
-    # canonical succession for next-run start must stay consistent across runs.
-    _loop_deadline = _time.monotonic() + _MARKET_OBSERVER_LOOP_BUDGET_SEC
+    # WALL-CLOCK BUDGET: reuse the deadline created before prefetch; never grant
+    # the serial loop a second 460-second window.
+    # ROUND-ROBIN: persist only the first canonical item that remains unprocessed.
+    # Out-of-order high-signal completions cannot overwrite that cursor and starve
+    # the mandatory prefix on the next run.
+    _completed_attempt_keys: set[str] = set()
+    _next_unprocessed_index = 0
     for _idx, instrument in enumerate(processing_order):
-        if _time.monotonic() > _loop_deadline:
+        if _monotonic() >= _run_deadline:
             _skipped = len(processing_order) - _idx
             errors.append(
                 f"loop_budget_exceeded: processed {_idx}/{len(processing_order)}, skipped "
@@ -1253,6 +1381,10 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 prediction_context_enabled=prediction_context_enabled,
                 prediction_context_cutoff=prediction_context_cutoff,
                 learning_memory_block=learning_memory_block,
+                learning_outcome_candidate_key=(
+                    u_member.get("learning_candidate_key") if u_member else None
+                ),
+                non_learning_context_block=non_learning_context_block,
                 _prefetched=_prefetched,
             )
             if opp_id:
@@ -1274,12 +1406,17 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             errors.append(f"{instrument}:unexpected:{e}")
             completed_attempt = True
         finally:
-            # Cancellation must not skip an in-flight item. A budget interruption
-            # breaks before entering this block, preserving the first skipped item.
-            # Always use original `instruments` for canonical RR ordering.
+            # Cancellation or retryable evidence failure must not advance past an
+            # in-flight item.  Successful out-of-order attempts are remembered, but
+            # the durable cursor moves only through the completed canonical prefix.
             if completed_attempt:
-                round_robin.advance_after(
-                    instruments, completed_key=instrument_key(instrument), key=instrument_key,
+                _completed_attempt_keys.add(instrument_key(instrument))
+                _next_unprocessed_index = _advance_completed_round_robin_prefix(
+                    round_robin,
+                    instruments,
+                    completed_keys=_completed_attempt_keys,
+                    next_unprocessed_index=_next_unprocessed_index,
+                    key=instrument_key,
                 )
 
     return {"outputs": outputs, "errors": errors}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 import sqlite3
 
@@ -59,6 +60,7 @@ def _config():
         ),
         serenity=SimpleNamespace(max_hold_days=0),
         exchange=SimpleNamespace(paper_execution_mode="paper_internal"),
+        market_data=SimpleNamespace(ccxt_exchange="binance"),
     )
 
 
@@ -77,6 +79,8 @@ def _seed_open_position(
     direction: str,
     stop_price: float,
     take_profit_price: float,
+    symbol: str = "BTC/USDT",
+    market_type: str = "spot",
 ):
     from aletheia.portfolio.paper_account import record_position_opened
     from aletheia.storage import repositories as repo
@@ -84,8 +88,8 @@ def _seed_open_position(
 
     entry_order = Order(
         source="adopted",
-        symbol="BTC/USDT",
-        market_type="spot",
+        symbol=symbol,
+        market_type=market_type,
         direction=direction,
         order_type="market",
         quantity=1.0,
@@ -118,6 +122,26 @@ def _seed_open_position(
     repo.insert_position(position)
     record_position_opened(position.id)
     return entry_order, position
+
+
+def _seed_market_snapshot(
+    *,
+    symbol: str,
+    price: float,
+    market_type: str = "spot",
+    exchange: str = "binance",
+    snapshot_at: str | None = None,
+):
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot
+
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol=symbol,
+        market_type=market_type,
+        exchange=exchange,
+        price=price,
+        snapshot_at=snapshot_at or datetime.now(timezone.utc).isoformat(),
+    ))
 
 
 def _close_chain(conn, position_id: str):
@@ -294,8 +318,9 @@ def test_committed_paper_close_survives_jsonl_audit_sink_failure(
         "pipeline_paper_close_materialization",
         "§0 manual dashboard close routing",
         "L2c",
-        "A human bulk-close request uses the paper broker's adverse simulated Fill "
-        "and persists the human/dashboard actor instead of bypassing execution.",
+        "A human bulk-close request ignores the stale Position projection, uses the "
+        "fresh exact-instrument mark for its adverse simulated Fill, and persists the "
+        "human/dashboard actor instead of bypassing execution.",
         status="implemented",
     )
 )
@@ -311,7 +336,9 @@ def test_manual_bulk_close_routes_through_paper_execution_chain(
     _, position = _seed_open_position(
         direction="long", stop_price=95.0, take_profit_price=120.0
     )
+    # Position.current_price is a display/projection value, not close authority.
     repo.update_position(position.id, current_price=110.0)
+    _seed_market_snapshot(symbol="BTC/USDT", price=105.0)
     monkeypatch.setattr(settings, "_require_local_paper_mode", lambda: None)
     monkeypatch.setattr(
         settings, "_audit_paper_account_change", lambda *args, **kwargs: None
@@ -322,9 +349,10 @@ def test_manual_bulk_close_routes_through_paper_execution_chain(
     stored = repo._select_one("positions", position.id)
     close_order, close_fill = _close_chain(conn, position.id)
     assert result["closed_position_ids"] == [position.id]
+    assert result["failed"] == []
     assert stored["status"] == "closed"
     assert close_order["close_reason"] == "manual_bulk_close"
-    assert close_fill["fill_price"] == pytest.approx(109.89)
+    assert close_fill["fill_price"] == pytest.approx(104.895)
     close_event = next(
         event
         for event in repo.list_audit_events(limit=20)
@@ -333,6 +361,265 @@ def test_manual_bulk_close_routes_through_paper_execution_chain(
     )
     assert close_event["actor"] == "human"
     assert close_event["source"] == "dashboard"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-12",
+        "pipeline_paper_close_materialization",
+        "§0 single local close mark authority",
+        "L2c",
+        "The central single-Position router never lets fallback_exit_price authorize "
+        "a paper Fill; it resolves the fresh exact venue/symbol/market mark itself.",
+        status="implemented",
+    )
+)
+def test_single_local_close_ignores_fallback_price_and_resolves_fresh_mark(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from aletheia.portfolio.position_manager import close_position_routed
+
+    _, position = _seed_open_position(
+        direction="long",
+        stop_price=95.0,
+        take_profit_price=120.0,
+        symbol="SOL/USDT",
+    )
+    _seed_market_snapshot(symbol="SOL/USDT", price=105.0)
+
+    result = close_position_routed(
+        position.id,
+        "manual",
+        fallback_exit_price=999.0,
+        decision_actor="human",
+        decision_source="dashboard",
+    )
+
+    close_order, close_fill = _close_chain(conn, position.id)
+    assert result["closed"] is True
+    assert close_order["close_reason"] == "manual"
+    assert close_fill["fill_price"] == pytest.approx(104.895)
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-13",
+        "pipeline_paper_close_materialization",
+        "§0 all-or-none bulk close mark preflight",
+        "L2c",
+        "A dashboard bulk close preflights a fresh exact mark for every candidate. "
+        "If any instrument is missing, the API returns 409 and materializes no close "
+        "Order, Fill, Position outcome, or feedback job for the whole batch.",
+        status="implemented",
+    )
+)
+def test_manual_bulk_close_missing_exact_mark_rejects_whole_batch_without_facts(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from fastapi import HTTPException
+
+    from aletheia.server.routes import settings
+
+    _, btc = _seed_open_position(
+        direction="long",
+        stop_price=95.0,
+        take_profit_price=120.0,
+        symbol="BTC/USDT",
+    )
+    _, eth = _seed_open_position(
+        direction="long",
+        stop_price=195.0,
+        take_profit_price=240.0,
+        symbol="ETH/USDT",
+    )
+    _seed_market_snapshot(symbol="BTC/USDT", price=105.0, market_type="spot")
+    # A fresh same-symbol perp row must not authorize the ETH spot close.
+    _seed_market_snapshot(symbol="ETH/USDT", price=205.0, market_type="perp")
+    monkeypatch.setattr(settings, "_require_local_paper_mode", lambda: None)
+
+    with pytest.raises(HTTPException) as raised:
+        settings._close_local_positions(None)
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail["code"] == "bulk_close_mark_preflight_failed"
+    assert raised.value.detail["closed_position_ids"] == []
+    assert {item["position_id"] for item in raised.value.detail["failed"]} == {
+        eth.id,
+    }
+    stored = conn.execute(
+        "SELECT id,status,closed_at,outcome_eligible,outcome_exclusion_reason "
+        "FROM positions WHERE id IN (?,?) ORDER BY id",
+        (btc.id, eth.id),
+    ).fetchall()
+    assert all(row["status"] == "open" for row in stored)
+    assert all(row["closed_at"] is None for row in stored)
+    assert all(row["outcome_eligible"] == 0 for row in stored)
+    assert all(row["outcome_exclusion_reason"] == "unclassified" for row in stored)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM orders WHERE position_id IN (?,?) "
+        "AND close_reason IS NOT NULL",
+        (btc.id, eth.id),
+    ).fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM fills f JOIN orders o ON o.id=f.order_id "
+        "WHERE o.position_id IN (?,?) AND o.close_reason IS NOT NULL",
+        (btc.id, eth.id),
+    ).fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM outcome_hook_jobs WHERE position_id IN (?,?)",
+        (btc.id, eth.id),
+    ).fetchone()[0] == 0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-14",
+        "pipeline_paper_close_materialization",
+        "§0 successful bulk close mark preflight",
+        "L2c",
+        "Once every candidate has a fresh exact mark, a dashboard bulk close routes "
+        "each Position through real paper materialization and preserves the human/"
+        "dashboard actor on every close fact.",
+        status="implemented",
+    )
+)
+def test_manual_bulk_close_all_fresh_marks_materializes_every_close_with_actor(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from aletheia.server.routes import settings
+    from aletheia.storage import repositories as repo
+
+    _, btc = _seed_open_position(
+        direction="long",
+        stop_price=95.0,
+        take_profit_price=120.0,
+        symbol="BTC/USDT",
+    )
+    _, eth = _seed_open_position(
+        direction="long",
+        stop_price=195.0,
+        take_profit_price=240.0,
+        symbol="ETH/USDT",
+    )
+    _seed_market_snapshot(symbol="BTC/USDT", price=105.0)
+    _seed_market_snapshot(symbol="ETH/USDT", price=205.0)
+    monkeypatch.setattr(settings, "_require_local_paper_mode", lambda: None)
+    monkeypatch.setattr(
+        settings, "_audit_paper_account_change", lambda *args, **kwargs: None
+    )
+
+    result = settings._close_local_positions(None)
+
+    assert set(result["closed_position_ids"]) == {btc.id, eth.id}
+    assert result["failed"] == []
+    close_fills = {
+        row["position_id"]: row["fill_price"]
+        for row in conn.execute(
+            "SELECT o.position_id,f.fill_price FROM orders o "
+            "JOIN fills f ON f.order_id=o.id "
+            "WHERE o.position_id IN (?,?) AND o.close_reason='manual_bulk_close'",
+            (btc.id, eth.id),
+        ).fetchall()
+    }
+    assert close_fills == pytest.approx({
+        btc.id: 104.895,
+        eth.id: 204.795,
+    })
+    close_events = [
+        event for event in repo.list_audit_events(limit=50)
+        if event["event_type"] == "position_closed"
+        and event["entity_id"] in {btc.id, eth.id}
+    ]
+    assert len(close_events) == 2
+    assert all(event["actor"] == "human" for event in close_events)
+    assert all(event["source"] == "dashboard" for event in close_events)
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-15",
+        "pipeline_paper_close_materialization",
+        "§0 honest partial bulk close",
+        "L2c",
+        "A non-price failure after successful bulk preflight is returned as an error "
+        "that names both the durably closed and failed Positions; a partial batch is "
+        "never reported as a successful close-all.",
+        status="implemented",
+    )
+)
+def test_manual_bulk_close_execution_failure_reports_closed_and_failed_ids(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from fastapi import HTTPException
+
+    from aletheia.portfolio import position_manager
+    from aletheia.server.routes import settings
+
+    _, btc = _seed_open_position(
+        direction="long",
+        stop_price=95.0,
+        take_profit_price=120.0,
+        symbol="BTC/USDT",
+    )
+    _, eth = _seed_open_position(
+        direction="long",
+        stop_price=195.0,
+        take_profit_price=240.0,
+        symbol="ETH/USDT",
+    )
+    _seed_market_snapshot(symbol="BTC/USDT", price=105.0)
+    _seed_market_snapshot(symbol="ETH/USDT", price=205.0)
+    real_close = position_manager._close_local_paper_with_authorized_mark
+
+    def fail_one(position_id, mark_price, **kwargs):
+        if position_id == eth.id:
+            raise RuntimeError("materialization failed")
+        return real_close(position_id, mark_price, **kwargs)
+
+    monkeypatch.setattr(
+        position_manager,
+        "_close_local_paper_with_authorized_mark",
+        fail_one,
+    )
+    monkeypatch.setattr(settings, "_require_local_paper_mode", lambda: None)
+    monkeypatch.setattr(
+        settings, "_audit_paper_account_change", lambda *args, **kwargs: None
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        settings._close_local_positions(None)
+
+    assert raised.value.status_code == 500
+    assert raised.value.detail["code"] == "bulk_close_partial_failure"
+    assert raised.value.detail["closed_position_ids"] == [btc.id]
+    assert raised.value.detail["failed"] == [{
+        "position_id": eth.id,
+        "symbol": "ETH/USDT",
+        "market_type": "spot",
+        "code": "close_failed",
+        "error_type": "RuntimeError",
+        "message": "materialization failed",
+    }]
+    states = {
+        row["id"]: row["status"]
+        for row in conn.execute(
+            "SELECT id,status FROM positions WHERE id IN (?,?)",
+            (btc.id, eth.id),
+        ).fetchall()
+    }
+    assert states == {btc.id: "closed", eth.id: "open"}
 
 
 @spec_claim(
@@ -378,7 +665,11 @@ def test_stop_or_tp_materializes_one_close_from_observed_mark(
         take_profit_price=take_profit_price,
     )
     cash_before = repo.get_paper_account_cash_balance()
-    monkeypatch.setattr(position_manager, "_latest_price", lambda _symbol: observed_mark)
+    monkeypatch.setattr(
+        position_manager,
+        "get_fresh_price_for_protective_close",
+        lambda _symbol, _market_type, *, venue: observed_mark,
+    )
     audit_observations: list[dict] = []
 
     def _capture_audit(event, *, mirror_db=True):
@@ -874,7 +1165,7 @@ def test_manual_bulk_close_enumerates_every_open_local_position(
     conn = _setup_db(tmp_path, monkeypatch)
     _patch_config(monkeypatch)
 
-    from aletheia.execution import paper_broker
+    from aletheia.portfolio import position_manager
     from aletheia.server.routes import settings
 
     opened_at = "2026-07-14T00:00:00+00:00"
@@ -899,20 +1190,31 @@ def test_manual_bulk_close_enumerates_every_open_local_position(
     )
     routed_ids: list[str] = []
 
-    def fake_close(position_id, **_kwargs):
+    def fake_close(position_id, _mark_price, **_kwargs):
         routed_ids.append(position_id)
-        return {"position_id": position_id}
+        return {"position_id": position_id, "closed": True}
 
     monkeypatch.setattr(settings, "_require_local_paper_mode", lambda: None)
     monkeypatch.setattr(
         settings, "_audit_paper_account_change", lambda *args, **kwargs: None
     )
-    monkeypatch.setattr(paper_broker, "close_paper_position", fake_close)
+    monkeypatch.setattr(
+        position_manager,
+        "get_fresh_price_for_protective_close",
+        lambda _symbol, _market_type, *, venue: 1.0,
+    )
+    monkeypatch.setattr(
+        position_manager,
+        "_close_local_paper_with_authorized_mark",
+        fake_close,
+    )
 
     result = settings._close_local_positions(None)
 
     assert set(routed_ids) == expected_ids
     assert set(result["closed_position_ids"]) == expected_ids
+    assert result["requested_count"] == 10_001
+    assert result["failed"] == []
     assert "external-open-position" not in routed_ids
 
 

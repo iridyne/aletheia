@@ -61,8 +61,10 @@ async def test_portfolio_review_can_close_old_target_beyond_default_position_pag
     """Execution authority must search every open position, not the UI-sized page."""
     conn = _init_agent_shell_db(tmp_path, monkeypatch)
     from aletheia.agent_shell.commands import review_portfolio_state
-    from aletheia.storage.models import Position
+    from aletheia.config.loader import load_config
+    from aletheia.storage.models import MarketSnapshot, Position
     from aletheia.storage.repositories import (
+        insert_market_snapshot,
         insert_position,
         list_positions,
         _select_one,
@@ -114,8 +116,14 @@ async def test_portfolio_review_can_close_old_target_beyond_default_position_pag
     monkeypatch.setattr(
         "aletheia.agents.helpers.llm_structured", choose_old_target
     )
-    monkeypatch.setattr(
-        "aletheia.portfolio.pnl._latest_price", lambda _symbol: 110.0
+    cfg = load_config()
+    insert_market_snapshot(
+        MarketSnapshot(
+            symbol=target.symbol,
+            market_type="spot",
+            exchange=cfg.market_data.ccxt_exchange or "binance",
+            price=110.0,
+        )
     )
 
     result = await review_portfolio_state({})
@@ -131,6 +139,120 @@ async def test_portfolio_review_can_close_old_target_beyond_default_position_pag
     assert [dict(row) for row in close_rows] == [
         {"position_id": target.id, "fill_price": pytest.approx(109.945)}
     ]
+
+
+@pytest.mark.asyncio
+async def test_portfolio_review_stale_mark_leaves_position_and_close_facts_untouched(
+    tmp_path, monkeypatch
+):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.config.loader import load_config
+    from aletheia.storage.models import MarketSnapshot, Position
+    from aletheia.storage.repositories import (
+        _select_one,
+        insert_market_snapshot,
+        insert_position,
+    )
+
+    target = Position(
+        id="portfolio-stale-mark-target",
+        symbol="STALE/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=999.0,
+        execution_mode="paper_internal",
+    )
+    insert_position(target)
+    cfg = load_config()
+    insert_market_snapshot(MarketSnapshot(
+        symbol=target.symbol,
+        market_type="spot",
+        exchange=cfg.market_data.ccxt_exchange or "binance",
+        price=120.0,
+        snapshot_at=(datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat(),
+    ))
+    monkeypatch.setattr(
+        "aletheia.agent_shell.context.build_app_context",
+        lambda sections=None: {
+            "trading": {"open_positions": [_select_one("positions", target.id)]},
+            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
+        },
+    )
+
+    async def choose_close(_system, _user, *, schema):
+        return ({
+            "action": "close_one",
+            "target_position_id": target.id,
+            "target_symbol": target.symbol,
+            "reasoning": "close only with a fresh observed mark",
+        }, None)
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_close)
+    result = await review_portfolio_state({})
+
+    assert result["positions_closed"] == 0
+    assert "protective_mark_unavailable" in result["close_error"]
+    assert _select_one("positions", target.id)["status"] == "open"
+    assert conn.execute(
+        "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason IS NOT NULL",
+        (target.id,),
+    ).fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM fills f JOIN orders o ON o.id=f.order_id "
+        "WHERE o.position_id=? AND o.close_reason IS NOT NULL",
+        (target.id,),
+    ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_portfolio_review_legacy_reduce_exposure_cannot_full_close(
+    tmp_path, monkeypatch
+):
+    _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+
+    position = {
+        "id": "legacy-reduce-target",
+        "symbol": "BTC/USDT",
+        "market_type": "spot",
+        "direction": "long",
+        "quantity": 1.0,
+    }
+    monkeypatch.setattr(
+        "aletheia.agent_shell.context.build_app_context",
+        lambda sections=None: {
+            "trading": {"open_positions": [position]},
+            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
+        },
+    )
+
+    seen_schema: dict = {}
+
+    async def legacy_reduce(_system, _user, *, schema):
+        seen_schema.update(schema.model_json_schema())
+        return ({
+            "action": "reduce_exposure",
+            "target_position_id": position["id"],
+            "target_symbol": position["symbol"],
+            "reasoning": "legacy output must not mean full close",
+        }, None)
+
+    close_calls: list[str] = []
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", legacy_reduce)
+    monkeypatch.setattr(
+        "aletheia.portfolio.position_manager.close_position_routed",
+        lambda position_id, **_kwargs: close_calls.append(position_id),
+    )
+
+    result = await review_portfolio_state({})
+
+    assert seen_schema["properties"]["action"]["enum"] == ["hold", "close_one"]
+    assert result["action"] == "hold"
+    assert "unsupported_action" in result["reasoning"]
+    assert close_calls == []
 
 
 def test_operator_assessment_counts_all_open_positions_above_one_hundred(

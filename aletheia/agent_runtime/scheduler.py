@@ -668,7 +668,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     # this job fire every 1min, far more often than the contract's ~15min (A5 fix).
     _pi_fallback_min = 15
     _scheduler.add_job(
-        _guarded("pi_trading_decision", _run_pi_trading_decision), "interval", minutes=_pi_fallback_min,
+        _guarded("pi_trading_heartbeat", _run_pi_trading_decision), "interval", minutes=_pi_fallback_min,
         id="pi_trading_decision", misfire_grace_time=120,
         next_run_time=datetime.now() + timedelta(minutes=7), executor="agents",
     )
@@ -1033,12 +1033,15 @@ def status_snapshot() -> dict:
 
 
 def _run_price_feed():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.data.price_feed import refresh_watched_prices
-        _run_async_with_timeout("price_feed", refresh_watched_prices())
+        result = _run_async_with_timeout("price_feed", refresh_watched_prices())
+        if isinstance(result, dict) and result.get("errors"):
+            logger.warning(
+                "price_feed completed with %d reported errors",
+                len(result["errors"]),
+            )
+            _record_job_failure("price_feed", "price_feed_reported_errors")
     except TimeoutError:
         logger.debug("price_feed job timed out")
         _record_job_failure("price_feed", "timeout")
@@ -1048,9 +1051,6 @@ def _run_price_feed():
 
 
 def _run_connectivity_monitor():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.agent_runtime.connectivity import run_connectivity_check
         _run_async_with_timeout("connectivity_monitor", run_connectivity_check())
@@ -1072,12 +1072,15 @@ def _run_daily_summary():
 
 
 def _run_market_data():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.trading.market_data import collect_market_snapshots
-        _run_async_with_timeout("market_data", collect_market_snapshots())
+        result = _run_async_with_timeout("market_data", collect_market_snapshots())
+        if isinstance(result, dict) and result.get("errors"):
+            logger.warning(
+                "market_data completed with %d reported errors",
+                len(result["errors"]),
+            )
+            _record_job_failure("market_data", "market_data_reported_errors")
     except TimeoutError:
         logger.warning(
             "market_data job timed out after %.0fs",
@@ -1216,12 +1219,17 @@ def _run_outcome_hook_replay():
 
 
 def _run_reconciliation():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.execution.reconciliation import reconcile
-        reconcile()
+        summary = reconcile()
+        if isinstance(summary, dict) and summary.get("errors"):
+            logger.warning(
+                "reconciliation completed with %d reported errors",
+                len(summary["errors"]),
+            )
+            _record_job_failure(
+                "reconciliation", "reconciliation_reported_errors"
+            )
     except Exception as e:
         logger.warning("reconciliation job failed: %s", e)
         _record_job_failure("reconciliation", str(e))
@@ -1229,12 +1237,20 @@ def _run_reconciliation():
 
 def _run_exchange_sync():
     """Periodic refresh of the cached real-account view (read-only)."""
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.portfolio.exchange_sync import sync_all_exchanges
-        _run_sync_with_timeout("exchange_sync", sync_all_exchanges)
+        result = _run_sync_with_timeout("exchange_sync", sync_all_exchanges)
+        if result is None:
+            logger.warning("exchange_sync returned no unified state")
+            _record_job_failure("exchange_sync", "exchange_sync_total_failure")
+            return
+        if isinstance(result, dict) and result.get("errors"):
+            logger.warning(
+                "exchange_sync completed with %d reported account errors",
+                len(result["errors"]),
+            )
+            _record_job_failure("exchange_sync", "exchange_sync_reported_errors")
+            return
         _record_job_success("exchange_sync")
     except TimeoutError:
         logger.warning(
@@ -1249,8 +1265,6 @@ def _run_exchange_sync():
 
 def _run_portfolio_snapshot():
     cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.portfolio.pnl import compute_and_store_snapshot
         _live_mode_map = {"bitget": "bitget_live_limited", "okx": "okx_live_limited", "binance": "binance_live_limited"}
@@ -1296,7 +1310,7 @@ def _run_pi_trading_decision():
 
     When pi_daemon is enabled and running, this job simply wakes the daemon
     (which handles debounce, cooldown, and the actual LLM evaluation). The daemon
-    provides sub-second response to signal events; this job is the 5-min safety net.
+    provides sub-second response to signal events; this job is the 15-min safety net.
 
     When pi_daemon is disabled or not running, runs the evaluation inline (legacy path).
     """
@@ -1310,8 +1324,9 @@ def _run_pi_trading_decision():
     try:
         from aletheia.agent_runtime.pi_daemon import is_daemon_running, notify_pi_daemon
         if cfg.pi_daemon.enabled and is_daemon_running():
-            notify_pi_daemon(source="heartbeat")
-            return
+            if notify_pi_daemon(source="heartbeat"):
+                return
+            _record_job_failure("pi_trading_heartbeat", "daemon_notify_failed")
     except Exception:
         pass
 
@@ -1330,6 +1345,7 @@ def _run_pi_trading_decision():
             logger.info("pi_trading_decision: watch %s — %s", result.get("symbol"), result.get("reasoning", "")[:60])
         else:
             logger.debug("pi_trading_decision: %s — %s", action, result.get("reasoning", "")[:80])
+        _record_job_success("pi_trading_decision")
     except TimeoutError:
         logger.warning("pi_trading_decision job timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC.get("pi_trading_decision", 300))
         _record_job_failure("pi_trading_decision", "timeout")
@@ -1383,7 +1399,15 @@ def _run_position_manager():
     # Invariant: execution_contract §10 + spec PL-PM-07.
     try:
         from aletheia.portfolio.position_manager import evaluate_open_positions
-        evaluate_open_positions()
+        summary = evaluate_open_positions()
+        if isinstance(summary, dict) and summary.get("errors"):
+            logger.warning(
+                "position_manager completed with %d reported errors",
+                len(summary["errors"]),
+            )
+            _record_job_failure(
+                "position_manager", "position_manager_reported_errors"
+            )
     except Exception as e:
         logger.warning("position_manager job failed: %s", e)
         _record_job_failure("position_manager", str(e))
@@ -1414,6 +1438,10 @@ def _run_position_reconcile():
             # sees a systematically-failing reconciler (matches the orchestrator convention).
             _recon_status = "completed_with_errors" if summary.get("errors") else "completed"
             end_run(run, status=_recon_status, outputs=outputs, errors=summary.get("errors") or None)
+            if summary.get("errors"):
+                _record_job_failure(
+                    "position_reconcile", "position_reconcile_reported_errors"
+                )
         except Exception as e:
             end_run(run, status="failed", errors=[str(e)])
             raise
@@ -1433,7 +1461,14 @@ def _run_tpsl_fill_check():
     test_scheduler_job_wrappers_have_try_except).
     """
     try:
-        return _run_sync_with_timeout("tpsl_fill_check", _tpsl_fill_check_body)
+        summary = _run_sync_with_timeout(
+            "tpsl_fill_check", _tpsl_fill_check_body
+        )
+        if isinstance(summary, dict) and summary.get("failed_count"):
+            _record_job_failure(
+                "tpsl_fill_check", "tpsl_private_reconciliation_failed"
+            )
+        return summary
     except Exception as e:
         logger.warning("tpsl_fill_check outer wrapper failed: %s", e)
         _record_job_failure("tpsl_fill_check", str(e))
@@ -1503,11 +1538,8 @@ def _claim_observed_tpsl_close(
 def _tpsl_fill_check_body():
     """Inner body of tpsl_fill_check — kept separate so _run_sync_with_timeout
     can wrap it. The outer entry point (`_run_tpsl_fill_check`) is what the
-    scheduler dispatches; keep the paused-check + timeout wiring there so the
-    body stays a plain sync function."""
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
+    scheduler dispatches; the body stays a plain sync function and returns an
+    honest partial-work summary for caller-thread health accounting."""
     try:
         import asyncio
         import json as _json
@@ -1536,7 +1568,7 @@ def _tpsl_fill_check_body():
                 candidates.append((p, tpsl_ids))
 
         if not candidates:
-            return
+            return {"materialized": [], "failed_count": 0, "errors": []}
 
         grouped = {
             "bitget_demo": [item for item in candidates if item[0]["execution_mode"] == "bitget_demo"],
@@ -1548,10 +1580,11 @@ def _tpsl_fill_check_body():
 
         async def _check_account(execution_mode, account_candidates):
             if not account_candidates:
-                return []
+                return {"materialized": [], "errors": []}
             account_mode = "demo" if execution_mode == "bitget_demo" else "live"
             client = BitgetClient(mode=account_mode)
             materialized = []
+            errors = []
             try:
                 for pos, tpsl_ids in account_candidates:
                     for plan_type, plan_order_id in (
@@ -1598,12 +1631,18 @@ def _tpsl_fill_check_body():
                             if result.state == "filled":
                                 materialized.append(result)
                         except Exception as exc:
+                            errors.append({
+                                "execution_mode": execution_mode,
+                                "position_id": pos.get("id"),
+                                "plan_order_id": str(plan_order_id),
+                                "error_type": type(exc).__name__,
+                            })
                             logger.warning(
                                 "TPSL private reconciliation failed for plan %s (%s)",
                                 plan_order_id,
                                 type(exc).__name__,
                             )
-                return materialized
+                return {"materialized": materialized, "errors": errors}
             finally:
                 try:
                     await client.close()
@@ -1613,17 +1652,37 @@ def _tpsl_fill_check_body():
                     )
 
         async def _check_all():
-            results = []
+            materialized = []
+            errors = []
             for execution_mode, account_candidates in grouped.items():
-                results.extend(
-                    await _check_account(execution_mode, account_candidates)
-                )
-            return results
+                try:
+                    account_result = await _check_account(
+                        execution_mode, account_candidates
+                    )
+                    materialized.extend(account_result["materialized"])
+                    errors.extend(account_result["errors"])
+                except Exception as exc:
+                    errors.append({
+                        "execution_mode": execution_mode,
+                        "position_id": None,
+                        "plan_order_id": None,
+                        "error_type": type(exc).__name__,
+                    })
+                    logger.warning(
+                        "TPSL account reconciliation failed for %s (%s)",
+                        execution_mode,
+                        type(exc).__name__,
+                    )
+            return {
+                "materialized": materialized,
+                "failed_count": len(errors),
+                "errors": errors,
+            }
 
         return asyncio.run(_check_all())
     except Exception as e:
         logger.warning("tpsl_fill_check job failed: %s", e)
-        _record_job_failure("tpsl_fill_check", str(e))
+        raise
 
 
 def _run_equity_observer():
@@ -1683,8 +1742,6 @@ def _run_prediction_observer():
 
 def _run_cleanup():
     cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         from aletheia.storage import repositories as repo
         from aletheia.files.jsonl import write_audit
@@ -1759,7 +1816,7 @@ def _prune_session_logs(cfg) -> int:
 
 def _run_news_fetch():
     cfg = load_config()
-    if cfg.runtime.paused or not cfg.news.enabled:
+    if not cfg.news.enabled:
         return
     try:
         _run_async_with_timeout("news_fetch", _async_news_fetch())
@@ -1818,7 +1875,7 @@ def _run_health_check():
     _cleanup_stale_scanner_runs()
 
     cfg = load_config()
-    if cfg.runtime.paused or not cfg.health.enabled:
+    if not cfg.health.enabled:
         return
     try:
         from aletheia.agent_runtime.health import run_health_check
@@ -2051,11 +2108,8 @@ def _run_outcome_settler():
     Previously settle_due() was only called inside universe_refresh, which means
     it was silently skipped when universe.enabled=False or runtime.paused=True,
     causing the learning pipeline to starve for settled outcomes. This job
-    runs unconditionally (modulo runtime.paused) every 15 minutes.
+    runs unconditionally every 10 minutes, including during layered pause.
     """
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         _run_async_with_timeout("outcome_settler", _async_settle_outcomes())
         _record_job_success("outcome_settler")
@@ -2091,9 +2145,6 @@ def _run_guard_promotion():
 
 def _run_ohlcv_nightly_backfill():
     """Nightly bulk download of OHLCV history for universe + observed symbols."""
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
     try:
         _run_sync_with_timeout("ohlcv_nightly_backfill", _ohlcv_backfill_body)
     except TimeoutError:
