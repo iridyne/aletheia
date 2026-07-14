@@ -201,6 +201,17 @@ Spec as Code：L2 契约文档的关键断言已编码为 `tests/specs/spec_*.py
 
 不等全量完成再继续工作——后台跑，有失败再回头修。
 
+**测试分层说明（2026-07-14 决策，勿重复投入）**：
+
+| 层 | 位置 | 覆盖范围 | 投入方向 |
+|---|---|---|---|
+| 单元/集成 | `tests/test_*.py` | 单模块行为 | 日常按需补 |
+| E2E 失败路径 | `tests/e2e/test_pipeline_failure_paths.py` | 信号断点、风险拒绝、kill switch | **优先扩展** |
+| E2E Golden Path | `tests/e2e/test_active_mainline_golden_path.py` | BTC spot long 完整因果链 | **冻结，不继续扩展** |
+| Simulation | `tests/simulation/control_loop/` | Operator 控制环路不变量 | 稳定，按需维护 |
+
+> **Golden Path 扩展已无性价比**：BTC/ETH/short/futures 变体报酬递减；真正的盲区是**失败路径**（信号不足、风险拒绝、kill switch）和**运行态健康**（进程存活、调度是否运行）。失败路径靠 `test_pipeline_failure_paths.py`；运行态健康是 `aletheia doctor` 的职责，测试无法替代。
+
 Additional: `.\scripts\dev.ps1` runs gateway on `:8787` + `vite build --watch` during UI iteration.
 Iterate against `http://127.0.0.1:8787/`; do not use `:5173` as the daily entrypoint.
 

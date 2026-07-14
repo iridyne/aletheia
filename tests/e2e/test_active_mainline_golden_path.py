@@ -1,4 +1,21 @@
-"""The one merge-blocking Golden Path for the admitted active runtime scope."""
+"""The one merge-blocking Golden Path for the admitted active runtime scope.
+
+MAINTENANCE NOTE — 继续优化 Golden Path 本身的回报已经极低，不推荐继续投入。
+---------------------------------------------------------------------------
+这个测试已经覆盖了 BTC/USDT spot long 的完整因果链：opportunity → decision →
+proposal → risk → order → fill → position → close → attribution → review。
+最后的 SQL JOIN 是真正的链路完整性证明，任何字段改名或接口不匹配都会在此炸掉。
+
+**不值得继续做的方向**：
+- 再加 ETH/short/futures/medium-confidence 的 Golden Path 变体 — 报酬递减
+- 把更多 LLM mock 替换成真实调用 — 会引入不确定性，测试变得不可靠
+
+**真正的盲区在别处**（见 test_pipeline_failure_paths.py）：
+- 失败路径：信号不足时系统如何处理、风险拒绝后状态是否正确持久化
+- 运行态健康：进程存活、调度是否在运行 — 这是 doctor 的职责，测试无法替代
+
+Owner 决策（2026-07-14）：Golden Path 冻结在当前形态，不继续扩展。
+"""
 
 from __future__ import annotations
 
