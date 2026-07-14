@@ -870,7 +870,9 @@ def _seed_verified_open_position(execution_mode: str):
         direction=proposal.direction,
         order_type=proposal.order_type,
         quantity=proposal.quantity,
-        price=59_000.0,
+        # Exchange Order keeps the submitted Proposal price; the private Fill
+        # below records the venue's different execution price.
+        price=proposal.price,
         execution_mode=execution_mode,
         exchange_order_id=f"EX-MBR-ENTRY-{execution_mode}",
         status="filled",

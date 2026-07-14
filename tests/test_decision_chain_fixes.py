@@ -17,6 +17,30 @@ from aletheia.agent_shell.trading_decision import (
 )
 
 
+def _seed_promoted_serenity_opportunity(
+    *, opportunity_id: str, symbol: str, direction: str, market_type: str
+) -> None:
+    """Persist the source row required by a real Serenity pending carrier."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import SerenityOpportunity, SerenityTheme
+
+    theme = SerenityTheme(
+        name=f"Pending carrier for {opportunity_id}",
+        status="promoted",
+    )
+    repo.insert_serenity_theme(theme)
+    repo.insert_serenity_opportunity(SerenityOpportunity(
+        id=opportunity_id,
+        theme_id=theme.id,
+        symbol=symbol,
+        direction=direction,
+        market_type=market_type,
+        asset_class="crypto",
+        status="active",
+        action_intent="pi_evaluate",
+    ))
+
+
 def test_parse_decision_guards_non_integer_conviction():
     base = {"action": "trade", "symbol": "BTC/USDT", "direction": "long", "reasoning": ""}
     assert _parse_decision({**base, "conviction": "high"}).conviction == 0     # non-numeric → 0 (safe skip)
@@ -97,6 +121,12 @@ def test_attribution_survives_conflicting_layer1_via_ranker():
 
 def test_serenity_opportunity_market_type_key():
     """#21/#102: serenity fallback must read market_type (not the non-existent 'market')."""
+    _seed_promoted_serenity_opportunity(
+        opportunity_id="ser-1",
+        symbol="TAO/USDT",
+        direction="long",
+        market_type="usdt_futures",
+    )
     dec = TradingDecision(action="trade", symbol="TAO/USDT", direction="long",
                           conviction=60, reasoning="")
     ctx = {
@@ -135,6 +165,12 @@ def test_make_candidate_emits_market_type():
 
 def test_serenity_pending_signal_carries_exact_market_type(monkeypatch):
     """A promoted Serenity carrier includes its executable instrument identity."""
+    _seed_promoted_serenity_opportunity(
+        opportunity_id="ser-pending",
+        symbol="TAO/USDT",
+        direction="long",
+        market_type="usdt_futures",
+    )
     dec = TradingDecision(action="trade", symbol="TAO/USDT", direction="long",
                           conviction=60, reasoning="")
     ctx = {

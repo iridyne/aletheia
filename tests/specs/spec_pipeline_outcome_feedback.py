@@ -854,6 +854,267 @@ def test_replay_rereads_closed_position_and_fails_closed(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
+        "PL-OF-13B",
+        "pipeline_outcome_feedback",
+        "§13 close-time attribution read failure",
+        "L2c",
+        "A temporary attribution database read failure cannot erase the verified "
+        "Position close; the close persists with a durable retry, then becomes eligible "
+        "and publishes feedback after attribution reads recover.",
+        status="implemented",
+    )
+)
+def test_transient_attribution_read_failure_does_not_block_verified_close(
+    tmp_path, monkeypatch,
+):
+    import sqlite3
+
+    _setup_db(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sqlite_storage
+    from aletheia.analytics import shadow_trades
+    from aletheia.analytics.outcome_integrity import assess_position_closure
+    from aletheia.portfolio import outcome_closure, outcome_hooks
+    from aletheia.storage import repositories as repo
+    from tests.test_outcome_closure import _position, _verified_result
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    real_get_db = sqlite_storage.get_db
+    monkeypatch.setattr(
+        sqlite_storage,
+        "get_db",
+        lambda: (_ for _ in ()).throw(
+            sqlite3.OperationalError("temporary close-time attribution read failure")
+        ),
+    )
+
+    result = outcome_closure.close_position_verified(
+        position.id, _verified_result(position)
+    )
+
+    stored = repo._select_one("positions", position.id)
+    assert result["closed"] is True
+    assert result["outcome_eligible"] is False
+    assert result["outcome_exclusion_reason"] == "attribution_read_failed"
+    assert stored["status"] == "closed"
+    assert stored["outcome_eligible"] == 0
+    assert stored["outcome_exclusion_reason"] == "attribution_read_failed"
+    [failed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    assert failed_job["status"] == "failed"
+
+    direct_assessment = assess_position_closure({
+        **stored,
+        "outcome_eligible": True,
+        "outcome_exclusion_reason": "eligible",
+    })
+    assert direct_assessment.eligible is False
+    assert direct_assessment.reason == "attribution_read_failed"
+
+    delivered = []
+    monkeypatch.setattr(sqlite_storage, "get_db", real_get_db)
+    monkeypatch.setattr(
+        shadow_trades,
+        "resolve_shadow_trades_for_position",
+        lambda row: delivered.append(row["id"]),
+    )
+    replayed = outcome_hooks.process_outcome_hook_jobs(
+        position_id=position.id,
+        now="2100-01-01T00:00:00+00:00",
+    )
+
+    recovered = repo._select_one("positions", position.id)
+    [completed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    assert replayed["completed"] == 1
+    assert completed_job["status"] == "completed"
+    assert recovered["outcome_eligible"] == 1
+    assert recovered["outcome_exclusion_reason"] == "eligible"
+    assert delivered == [position.id]
+    assert any(
+        event["event_type"] == "outcome_eligibility_rechecked"
+        and event["entity_id"] == position.id
+        and event["actor"] == "outcome_hook_replay"
+        for event in repo.list_audit_events(limit=100)
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-OF-13C",
+        "pipeline_outcome_feedback",
+        "§13 local-paper close-time attribution recovery",
+        "L2c",
+        "A local-paper close that temporarily cannot read attribution keeps its cash and "
+        "Position close atomic while the existing outbox later restores Outcome feedback.",
+        status="implemented",
+    )
+)
+def test_local_paper_close_recovers_transient_attribution_read_failure(
+    tmp_path, monkeypatch,
+):
+    import sqlite3
+
+    _setup_db(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sqlite_storage
+    from aletheia.analytics import shadow_trades
+    from aletheia.portfolio import outcome_hooks, paper_account, pnl
+    from aletheia.storage import repositories as repo
+    from tests.test_outcome_closure import _position
+
+    position = _position(execution_mode="paper_internal")
+    repo.insert_position(position)
+    paper_account.record_position_opened(position.id)
+    real_get_db = sqlite_storage.get_db
+    monkeypatch.setattr(
+        sqlite_storage,
+        "get_db",
+        lambda: (_ for _ in ()).throw(
+            sqlite3.OperationalError("temporary local attribution read failure")
+        ),
+    )
+
+    result = pnl.close_position(
+        position.id,
+        exit_price=110.0,
+        reason="take_profit",
+    )
+
+    closed = repo._select_one("positions", position.id)
+    [failed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    assert result["outcome_eligible"] is False
+    assert closed["status"] == "closed"
+    assert closed["outcome_exclusion_reason"] == "attribution_read_failed"
+    assert failed_job["status"] == "failed"
+    assert any(
+        event["action"] == "position_closed"
+        for event in repo.list_paper_account_events(limit=20)
+    )
+
+    delivered = []
+    monkeypatch.setattr(sqlite_storage, "get_db", real_get_db)
+    monkeypatch.setattr(
+        shadow_trades,
+        "resolve_shadow_trades_for_position",
+        lambda row: delivered.append(row["id"]),
+    )
+    replayed = outcome_hooks.process_outcome_hook_jobs(
+        position_id=position.id,
+        now="2100-01-01T00:00:00+00:00",
+    )
+
+    recovered = repo._select_one("positions", position.id)
+    [completed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    assert replayed["completed"] == 1
+    assert completed_job["status"] == "completed"
+    assert recovered["outcome_eligible"] == 1
+    assert recovered["outcome_exclusion_reason"] == "eligible"
+    assert delivered == [position.id]
+    assert any(
+        event["event_type"] == "outcome_eligibility_rechecked"
+        and event["entity_id"] == position.id
+        and event["actor"] == "outcome_hook_replay"
+        for event in repo.list_audit_events(limit=100)
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-OF-13A",
+        "pipeline_outcome_feedback",
+        "§13 transient replay read recovery",
+        "L2c",
+        "A temporary database failure while revalidating attribution leaves the "
+        "Outcome hook retryable; only proven missing attribution is skipped.",
+        status="implemented",
+    )
+)
+def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypatch):
+    import sqlite3
+
+    _setup_db(tmp_path, monkeypatch)
+    import aletheia.storage.sqlite as sqlite_storage
+    from aletheia.analytics import shadow_trades
+    from aletheia.portfolio import outcome_closure, outcome_hooks
+    from aletheia.storage import repositories as repo
+    from tests.test_outcome_closure import _position, _verified_result
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
+    outcome_closure.close_position_verified(position.id, _verified_result(position))
+
+    hook_calls = []
+    monkeypatch.setattr(
+        shadow_trades,
+        "resolve_shadow_trades_for_position",
+        lambda row: hook_calls.append(row["id"]),
+    )
+    real_get_db = sqlite_storage.get_db
+    monkeypatch.setattr(
+        sqlite_storage,
+        "get_db",
+        lambda: (_ for _ in ()).throw(
+            sqlite3.OperationalError("temporary attribution read failure")
+        ),
+    )
+
+    first = outcome_hooks.process_outcome_hook_jobs(position_id=position.id)
+
+    [failed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    assert first["failed"] == 1
+    assert first["skipped"] == 0
+    assert failed_job["status"] == "failed"
+    assert "temporary attribution read failure" in failed_job["last_error"]
+    assert hook_calls == []
+
+    monkeypatch.setattr(sqlite_storage, "get_db", real_get_db)
+    replayed = outcome_hooks.process_outcome_hook_jobs(
+        position_id=position.id,
+        now="2100-01-01T00:00:00+00:00",
+    )
+
+    [completed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    assert replayed["completed"] == 1
+    assert completed_job["status"] == "completed"
+    assert hook_calls == [position.id]
+
+
+def test_proven_missing_attribution_is_permanently_skipped(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.analytics import shadow_trades
+    from aletheia.portfolio import outcome_closure, outcome_hooks
+    from aletheia.storage import repositories as repo
+    from tests.test_outcome_closure import _position, _verified_result
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
+    outcome_closure.close_position_verified(position.id, _verified_result(position))
+    repo.update_order(str(position.order_id), position_id=None)
+
+    hook_calls = []
+    monkeypatch.setattr(
+        shadow_trades,
+        "resolve_shadow_trades_for_position",
+        lambda row: hook_calls.append(row["id"]),
+    )
+
+    first = outcome_hooks.process_outcome_hook_jobs(position_id=position.id)
+    second = outcome_hooks.process_outcome_hook_jobs(
+        position_id=position.id,
+        now="2100-01-01T00:00:00+00:00",
+    )
+
+    [job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    assert first["skipped"] == 1
+    assert first["failed"] == 0
+    assert second["claimed"] == 0
+    assert job["status"] == "skipped"
+    assert job["last_error"] == "missing_attribution"
+    assert hook_calls == []
+
+
+@spec_claim(
+    SpecClaim(
         "PL-OF-14",
         "pipeline_outcome_feedback",
         "§14 concurrent hook replay claim",

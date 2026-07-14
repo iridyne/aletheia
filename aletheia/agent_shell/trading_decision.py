@@ -1713,11 +1713,13 @@ def _resolve_pending_carrier_identity(
     signal_source = resolved.get("signal_source") or "market_observer"
     if not opportunity_id or not symbol or not direction:
         return None
-    if market_type:
+    if signal_source not in {"market_observer", "serenity"}:
+        return None
+    if signal_source == "market_observer":
+        if not market_type:
+            return None
         resolved["signal_source"] = signal_source
         return resolved
-    if signal_source != "serenity":
-        return None
 
     try:
         from aletheia.storage.repositories import get_serenity_opportunity
@@ -1731,9 +1733,10 @@ def _resolve_pending_carrier_identity(
         or source.get("symbol") != symbol
         or source.get("direction") != direction
         or not source.get("market_type")
+        or (market_type and source.get("market_type") != market_type)
     ):
         return None
-    resolved["market_type"] = source["market_type"]
+    resolved["market_type"] = market_type or source["market_type"]
     resolved["signal_source"] = "serenity"
     return resolved
 
@@ -1770,18 +1773,53 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         for carrier in raw_pending
         if (resolved := _resolve_pending_carrier_identity(carrier)) is not None
     ]
+    if decision.action in {"trade", "scale_in", "flip"}:
+        compatible_by_identity: dict[tuple, dict] = {}
+        for carrier in pending:
+            if decision.opportunity_id and carrier.get("opportunity_id") != decision.opportunity_id:
+                continue
+            if decision.symbol and carrier.get("symbol") != decision.symbol:
+                continue
+            if decision.direction and carrier.get("direction") != decision.direction:
+                continue
+            if decision.market_type and carrier.get("market_type") != decision.market_type:
+                continue
+            identity = (
+                carrier.get("signal_source") or "market_observer",
+                carrier.get("opportunity_id"),
+                carrier.get("symbol"),
+                carrier.get("direction"),
+                carrier.get("market_type"),
+            )
+            compatible_by_identity[identity] = carrier
+        compatible = list(compatible_by_identity.values())
+        if len(compatible) > 1:
+            decision.filter_trace.append({
+                "filter_name": "pending_signal_identity",
+                "stage": "operator_context_binding",
+                "decision": "rejected",
+                "reason_code": "pending_identity_ambiguous",
+                "inputs": {
+                    "symbol": decision.symbol,
+                    "direction": decision.direction,
+                    "market_type": decision.market_type,
+                    "compatible_carriers": len(compatible),
+                },
+                "parameters": {
+                    "required_identity": [
+                        "opportunity_id", "signal_source", "symbol",
+                        "direction", "market_type",
+                    ],
+                },
+            })
+            return
+        if not compatible:
+            return
+        # Every later branch now sees the same unique authority row. Missing
+        # model fields may be inferred only from this one durable identity.
+        pending = compatible
     if not decision.symbol:
-        carrier = next(
-            (
-                p
-                for p in pending
-                if p.get("opportunity_id")
-                and p.get("symbol")
-                and p.get("direction")
-                and p.get("market_type")
-            ),
-            None,
-        )
+        carrier = pending[0] if pending else None
         if carrier is None:
             return
         decision.symbol = carrier.get("symbol")

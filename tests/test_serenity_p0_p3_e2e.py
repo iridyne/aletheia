@@ -14,6 +14,30 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock
 
 
+def _seed_promoted_serenity_opportunity(
+    *, opportunity_id: str, symbol: str, direction: str, market_type: str
+) -> None:
+    """Persist the exact Serenity source behind an executable pending carrier."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import SerenityOpportunity, SerenityTheme
+
+    theme = SerenityTheme(
+        name=f"Pending carrier for {opportunity_id}",
+        status="promoted",
+    )
+    repo.insert_serenity_theme(theme)
+    repo.insert_serenity_opportunity(SerenityOpportunity(
+        id=opportunity_id,
+        theme_id=theme.id,
+        symbol=symbol,
+        direction=direction,
+        market_type=market_type,
+        asset_class="crypto",
+        status="active",
+        action_intent="pi_evaluate",
+    ))
+
+
 # ---------------------------------------------------------------------------
 # P0 — auto_promote end-to-end
 # ---------------------------------------------------------------------------
@@ -267,6 +291,12 @@ class TestPendingSignalDirectMatch:
             action="trade", symbol="SOL/USDT", direction="long",
             conviction=75, reasoning="test",
         )
+        _seed_promoted_serenity_opportunity(
+            opportunity_id="ser-sol-123",
+            symbol="SOL/USDT",
+            direction="long",
+            market_type="spot",
+        )
         ctx = {
             "layer1": {"opportunities": []},
             "layer2": {
@@ -292,6 +322,12 @@ class TestPendingSignalDirectMatch:
         decision = TradingDecision(
             action="trade", symbol="BTC/USDT", direction="long",
             conviction=80, reasoning="test",
+        )
+        _seed_promoted_serenity_opportunity(
+            opportunity_id="ser-btc-888",
+            symbol="BTC/USDT",
+            direction="long",
+            market_type="spot",
         )
         ctx = {
             "layer1": {

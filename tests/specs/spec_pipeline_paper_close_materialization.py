@@ -820,6 +820,104 @@ def test_old_incomplete_close_beyond_ten_thousand_rows_still_freezes_account(
 
 @spec_claim(
     SpecClaim(
+        "PL-PCM-10",
+        "pipeline_paper_close_materialization",
+        "§3 unbounded open collateral",
+        "L2c",
+        "Paper-account spendable cash reserves collateral for every open local Position; "
+        "the 10,001st Position cannot disappear behind a display limit.",
+        status="implemented",
+    )
+)
+def test_paper_account_reserves_every_open_local_position(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from aletheia.portfolio.paper_account import get_paper_account, set_cash_balance
+
+    opened_at = "2026-07-14T00:00:00+00:00"
+    set_cash_balance(10_001.0, note="open-collateral-window-regression")
+    conn.executemany(
+        "INSERT INTO positions "
+        "(id,symbol,market_type,direction,quantity,entry_price,current_price,"
+        "execution_mode,status,opened_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                f"open-local-{index}", "BTC/USDT", "spot", "long",
+                1.0, 1.0, 1.0, "paper_internal", "open", opened_at,
+            )
+            for index in range(10_001)
+        ],
+    )
+
+    account = get_paper_account(event_limit=0)
+
+    assert account["open_positions_count"] == 10_001
+    assert account["reserved_margin_usdt"] == pytest.approx(10_001.0)
+    assert account["available_balance_usdt"] == pytest.approx(0.0)
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-11",
+        "pipeline_paper_close_materialization",
+        "§0 complete manual bulk close",
+        "L2c",
+        "A human close-all request enumerates every open local Position before routing "
+        "each one through the paper broker; no 10,001st Position is silently left open.",
+        status="implemented",
+    )
+)
+def test_manual_bulk_close_enumerates_every_open_local_position(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from aletheia.execution import paper_broker
+    from aletheia.server.routes import settings
+
+    opened_at = "2026-07-14T00:00:00+00:00"
+    expected_ids = {f"bulk-local-{index}" for index in range(10_001)}
+    conn.executemany(
+        "INSERT INTO positions "
+        "(id,symbol,market_type,direction,quantity,entry_price,current_price,"
+        "execution_mode,status,opened_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                position_id, "BTC/USDT", "spot", "long", 1.0, 1.0, 1.0,
+                "paper_internal", "open", opened_at,
+            )
+            for position_id in expected_ids
+        ]
+        + [
+            (
+                "external-open-position", "ETH/USDT", "spot", "long", 1.0,
+                1.0, 1.0, "okx_demo", "open", opened_at,
+            )
+        ],
+    )
+    routed_ids: list[str] = []
+
+    def fake_close(position_id, **_kwargs):
+        routed_ids.append(position_id)
+        return {"position_id": position_id}
+
+    monkeypatch.setattr(settings, "_require_local_paper_mode", lambda: None)
+    monkeypatch.setattr(
+        settings, "_audit_paper_account_change", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(paper_broker, "close_paper_position", fake_close)
+
+    result = settings._close_local_positions(None)
+
+    assert set(routed_ids) == expected_ids
+    assert set(result["closed_position_ids"]) == expected_ids
+    assert "external-open-position" not in routed_ids
+
+
+@spec_claim(
+    SpecClaim(
         "PL-PCM-09",
         "pipeline_paper_close_materialization",
         "§3 honest position read models",

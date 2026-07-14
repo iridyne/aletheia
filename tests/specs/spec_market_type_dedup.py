@@ -204,8 +204,8 @@ def test_market_observer_passes_market_filter():
     )
     terminal_guard = 'existing.get("status") != "open"'
     assert terminal_guard in src
-    assert src.index(terminal_guard) < src.index("update_opportunity"), (
-        "a reviewed opportunity must return before observer annotation can rewrite it"
+    assert src.index(terminal_guard) < src.index("update_open_opportunity"), (
+        "a reviewed opportunity must return before the open-only annotation CAS"
     )
 
 

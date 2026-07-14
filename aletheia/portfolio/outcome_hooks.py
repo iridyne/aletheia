@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from aletheia.analytics.outcome_integrity import (
@@ -9,6 +10,7 @@ from aletheia.analytics.outcome_integrity import (
     attribution_chain_complete,
 )
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import AuditEvent
 
 
 logger = logging.getLogger("aletheia.portfolio.outcome_hooks")
@@ -113,6 +115,69 @@ def _load_eligible_position(position_id: str) -> tuple[dict | None, str]:
     position = repo._select_one("positions", position_id)
     if position is None:
         return None, "position_not_found"
+    pending_attribution_recheck = (
+        not bool(position.get("outcome_eligible"))
+        and position.get("outcome_exclusion_reason") == "attribution_read_failed"
+    )
+    if pending_attribution_recheck:
+        # This marker means the close-time reader failed; it is not evidence that
+        # attribution is absent. Re-read and reclassify under one writer lock so
+        # the stored eligibility and the causal backlinks are one audited fact.
+        with repo.transaction(immediate=True):
+            current = repo._select_one("positions", position_id)
+            if current is None:
+                return None, "position_not_found"
+            if (
+                not bool(current.get("outcome_eligible"))
+                and current.get("outcome_exclusion_reason")
+                == "attribution_read_failed"
+            ):
+                assessment_input = {
+                    **current,
+                    "outcome_eligible": True,
+                    "outcome_exclusion_reason": "eligible",
+                }
+                prospective = {
+                    **assessment_input,
+                    "_attribution_complete": attribution_chain_complete(
+                        assessment_input
+                    ),
+                }
+                assessment = assess_reportable_outcome(prospective)
+                repo.update_position(
+                    position_id,
+                    outcome_eligible=assessment.eligible,
+                    outcome_exclusion_reason=assessment.reason,
+                )
+                repo.insert_audit_event(AuditEvent(
+                    actor="outcome_hook_replay",
+                    source="outcome_attribution_recheck",
+                    event_type="outcome_eligibility_rechecked",
+                    entity_type="position",
+                    entity_id=position_id,
+                    before_state=json.dumps({
+                        "outcome_eligible": False,
+                        "outcome_exclusion_reason": "attribution_read_failed",
+                    }, sort_keys=True),
+                    after_state=json.dumps({
+                        "outcome_eligible": assessment.eligible,
+                        "outcome_exclusion_reason": assessment.reason,
+                    }, sort_keys=True),
+                    message=(
+                        "Retried close-time attribution and persisted the durable "
+                        f"Outcome eligibility result: {assessment.reason}"
+                    ),
+                ))
+                current = {
+                    **current,
+                    "outcome_eligible": assessment.eligible,
+                    "outcome_exclusion_reason": assessment.reason,
+                }
+                if not assessment.eligible:
+                    return None, assessment.reason
+                return prospective, "eligible"
+            position = current
+
     prospective = {
         **position,
         "_attribution_complete": attribution_chain_complete(position),

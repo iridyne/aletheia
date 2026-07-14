@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 
 from aletheia.net import httpx_client
 from aletheia.exchanges.bitget.auth import build_headers
+from aletheia.exchanges.submission_errors import SubmissionResponseUnknownError
 from aletheia.config.secrets import get_secret, redact
 
 
@@ -397,18 +398,53 @@ class BitgetClient:
 
         async with httpx_client(timeout=15) as client:
             resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
-            data = resp.json()
+            status_code = int(getattr(resp, "status_code", 200) or 0)
+            if status_code >= 500:
+                raise SubmissionResponseUnknownError(
+                    "Bitget create-order acknowledgement returned a server error"
+                )
+            try:
+                data = resp.json()
+            except (ValueError, UnicodeError) as exc:
+                raise SubmissionResponseUnknownError(
+                    "Bitget create-order acknowledgement was unreadable"
+                ) from exc
 
-        if data.get("code") != "00000":
-            raise RuntimeError(f"Bitget order error: {data.get('msg')}")
+        if not isinstance(data, dict):
+            raise SubmissionResponseUnknownError(
+                "Bitget create-order acknowledgement was not an object"
+            )
+        response_code = data.get("code")
+        if not isinstance(response_code, str) or not response_code.strip():
+            raise SubmissionResponseUnknownError(
+                "Bitget create-order acknowledgement had no response code"
+            )
+        if response_code != "00000":
+            response_message = data.get("msg")
+            if (
+                not isinstance(response_message, str)
+                or not response_message.strip()
+            ):
+                raise SubmissionResponseUnknownError(
+                    "Bitget create-order acknowledgement was not a recognizable rejection"
+                )
+            raise RuntimeError(f"Bitget order error: {response_message}")
 
-        order_id = data.get("data", {}).get("orderId", "")
-        if not order_id:
-            raise RuntimeError("Bitget returned success but no orderId in response")
+        response_data = data.get("data")
+        if not isinstance(response_data, dict):
+            raise SubmissionResponseUnknownError(
+                "Bitget create-order success acknowledgement had invalid data"
+            )
+        raw_order_id = response_data.get("orderId")
+        if not isinstance(raw_order_id, str) or not raw_order_id.strip():
+            raise SubmissionResponseUnknownError(
+                "Bitget create-order success acknowledgement had no order id"
+            )
+        order_id = raw_order_id.strip()
 
         resp_obj = OrderResponse(
             order_id=order_id,
-            client_oid=data.get("data", {}).get("clientOid"),
+            client_oid=response_data.get("clientOid"),
         )
 
         # Resolve the real fill status. Mix market orders fill synchronously, so a

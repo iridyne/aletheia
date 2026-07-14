@@ -2,6 +2,8 @@
 
 import sqlite3
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -116,6 +118,74 @@ def test_agent_context_explains_human_local_cash_adjustments(tmp_path, monkeypat
         "action": "manual_credit", "amount_usdt": 15.0,
         "note": "operator top-up", "at": layer["recent_account_changes"][0]["at"],
     }]
+
+
+def test_account_write_does_not_invert_lock_order_with_risk_transaction(
+    tmp_path, monkeypatch
+):
+    """A DB-owning Risk read and a manual adjustment must both finish promptly."""
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio import paper_account
+    from aletheia.storage.sqlite import close_db, get_db
+
+    paper_account.get_paper_account()
+    get_db().commit()
+    close_db()
+
+    # Reproduce the historical order exactly: the manual path owns the account
+    # lock before it needs SQLite, while Risk already owns SQLite before reading
+    # the local account. RLock allows the same manual thread to enter the public
+    # function; the production fix must not wait on this process lock at all.
+    account_lock = threading.RLock()
+    monkeypatch.setattr(
+        paper_account, "_account_lock", account_lock, raising=False
+    )
+    manual_db_ready = threading.Event()
+    risk_db_ready = threading.Event()
+    account_lock_held = threading.Event()
+    risk_db_held = threading.Event()
+
+    def manual_adjustment() -> float:
+        close_db()
+        db = get_db()
+        db.execute("PRAGMA busy_timeout=250")
+        manual_db_ready.set()
+        assert risk_db_ready.wait(timeout=2)
+        try:
+            with account_lock:
+                account_lock_held.set()
+                assert risk_db_held.wait(timeout=2)
+                return paper_account.adjust_cash(
+                    1.0, note="concurrent lock-order regression"
+                )["cash_balance_usdt"]
+        finally:
+            close_db()
+
+    def risk_account_read() -> float:
+        assert manual_db_ready.wait(timeout=2)
+        close_db()
+        db = get_db()
+        db.execute("PRAGMA busy_timeout=250")
+        risk_db_ready.set()
+        try:
+            assert account_lock_held.wait(timeout=2)
+            with repo.transaction(immediate=True):
+                risk_db_held.set()
+                return paper_account.get_paper_account(event_limit=0)[
+                    "cash_balance_usdt"
+                ]
+        finally:
+            close_db()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        manual_future = pool.submit(manual_adjustment)
+        risk_future = pool.submit(risk_account_read)
+        assert risk_future.result(timeout=3) == pytest.approx(200.0)
+        assert manual_future.result(timeout=3) == pytest.approx(201.0)
+
+    assert paper_account.get_paper_account(event_limit=0)[
+        "cash_balance_usdt"
+    ] == pytest.approx(201.0)
 
 
 @pytest.mark.anyio

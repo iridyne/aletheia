@@ -142,10 +142,11 @@ class TestEmitDeterministicOpportunities:
 
         def _fake_insert(opp):
             inserted.append(opp)
+            return opp.model_dump(), True
 
         with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
                    side_effect=_fake_find), \
-             patch("aletheia.universe.signal_emitter.insert_opportunity",
+             patch("aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
                    side_effect=_fake_insert), \
              patch("aletheia.universe.signal_emitter._record_emission_decision"):
             count = emit_deterministic_opportunities(members, "snap-1", feats)
@@ -246,7 +247,10 @@ class TestEmitDeterministicOpportunities:
             return []
 
         with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot", return_value=None), \
-             patch("aletheia.universe.signal_emitter.insert_opportunity", side_effect=inserted.append), \
+             patch(
+                 "aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
+                 side_effect=lambda opp: (inserted.append(opp) or opp.model_dump(), True),
+             ), \
              patch("aletheia.universe.signal_emitter._record_emission_decision"), \
              patch("aletheia.universe.snapshot_freshness.list_market_snapshots", side_effect=_snapshots):
             count = emit_deterministic_opportunities(members, "snap-1", feats)
@@ -293,10 +297,11 @@ class TestEmitDeterministicOpportunities:
             if call_count == 1:
                 raise RuntimeError("db error")
             inserted.append(opp)
+            return opp.model_dump(), True
 
         with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
                    return_value=None), \
-             patch("aletheia.universe.signal_emitter.insert_opportunity",
+             patch("aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
                    side_effect=_failing_insert), \
              patch("aletheia.universe.signal_emitter._record_emission_decision"):
             count = emit_deterministic_opportunities(members, "snap-1", feats)
@@ -322,8 +327,8 @@ class TestEmitDeterministicOpportunities:
             "aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
             return_value=None,
         ), patch(
-            "aletheia.universe.signal_emitter.insert_opportunity",
-            return_value=None,
+            "aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
+            side_effect=lambda opp: (opp.model_dump(), True),
         ), patch(
             "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
             return_value=True,

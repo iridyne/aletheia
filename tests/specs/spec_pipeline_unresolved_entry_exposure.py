@@ -71,7 +71,11 @@ def _risk_config(monkeypatch, *, demo_slots=6, live_slots=3):
             event_count=0,
         ),
     )
-    monkeypatch.setattr(eng, "_check_correlation_exposure", lambda *_args: [])
+    monkeypatch.setattr(
+        eng,
+        "_check_correlation_exposure",
+        lambda *_args, **_kwargs: [],
+    )
     return cfg
 
 
@@ -85,6 +89,7 @@ def _seed_entry_order(
     status: str = "materialization_missing",
     fill_quantity: float | None = None,
     position_quantity: float | None = None,
+    leverage: int | None = None,
 ):
     from tests.execution_authority import seed_order_authority
     from aletheia.storage import repositories as repo
@@ -100,6 +105,7 @@ def _seed_entry_order(
         quantity=quantity,
         price=price,
         execution_mode=execution_mode,
+        leverage=leverage,
     )
     order = Order(
         id=f"order-uee-{suffix}",
@@ -144,6 +150,51 @@ def _seed_entry_order(
         repo.insert_position(position)
         repo.update_order(order.id, position_id=position.id)
     return proposal, order, position
+
+
+def _seed_pre_order_reservation(
+    *,
+    suffix: str,
+    execution_mode: str = "paper_internal",
+):
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import RiskDecision, TradeProposal
+
+    proposal = TradeProposal(
+        id=f"proposal-reservation-{suffix}",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        order_type="market",
+        quantity=10.0,
+        price=100.0,
+        leverage=5,
+        execution_mode=execution_mode,
+        status="executing",
+    )
+    repo.insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        id=f"risk-reservation-{suffix}",
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode=proposal.execution_mode,
+        proposal_execution_mode=proposal.execution_mode,
+        decision_role="authoritative",
+        evaluated_quantity=proposal.quantity,
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    repo.insert_risk_decision(decision)
+    repo.acquire_entry_risk_reservation(
+        proposal_id=proposal.id,
+        proposal_commit_hash=proposal.commit_hash,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        execution_mode=proposal.execution_mode,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        leverage=proposal.leverage,
+    )
+    return proposal, decision
 
 
 def _evaluate_new_proposal(
@@ -478,6 +529,412 @@ def test_malformed_unresolved_entry_fails_closed(
     )
 
     assert expected_violation in result.violations
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "proposal_leverage_without_hash",
+        "order_quantity",
+        "order_price",
+        "cross_proposal_risk_decision",
+        "execution_mode_pool_escape",
+    ),
+)
+@spec_claim(
+    SpecClaim(
+        "PL-UEE-10",
+        "pipeline_unresolved_entry_exposure",
+        "§7 unresolved entry immutable authority",
+        "L2c",
+        "An unresolved native entry is usable exposure authority only while its stored "
+        "Proposal hash, approved authoritative RiskDecision, and exact Order snapshot "
+        "still agree; tampering fails closed instead of lowering exposure.",
+        status="implemented",
+    )
+)
+def test_tampered_unresolved_entry_authority_fails_closed(
+    tmp_path,
+    monkeypatch,
+    tamper,
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    _risk_config(monkeypatch, demo_slots=10)
+    original_mode = (
+        "okx_live_limited"
+        if tamper == "execution_mode_pool_escape"
+        else "okx_demo"
+    )
+    proposal, order, _ = _seed_entry_order(
+        suffix=f"authority-{tamper}",
+        execution_mode=original_mode,
+        quantity=10.0,
+        price=100.0,
+        leverage=5,
+    )
+
+    if tamper == "proposal_leverage_without_hash":
+        db.execute(
+            "UPDATE trade_proposals SET leverage=1 WHERE id=?",
+            (proposal.id,),
+        )
+    elif tamper == "order_quantity":
+        db.execute("UPDATE orders SET quantity=1 WHERE id=?", (order.id,))
+    elif tamper == "order_price":
+        db.execute("UPDATE orders SET price=1 WHERE id=?", (order.id,))
+    elif tamper == "cross_proposal_risk_decision":
+        from tests.execution_authority import seed_order_authority
+
+        _, unrelated = seed_order_authority(
+            proposal_id=f"proposal-unrelated-{tamper}",
+            risk_decision_id=f"risk-unrelated-{tamper}",
+            symbol=proposal.symbol,
+            market_type=proposal.market_type,
+            direction=proposal.direction,
+            order_type=proposal.order_type,
+            quantity=proposal.quantity,
+            price=proposal.price,
+            leverage=proposal.leverage,
+            execution_mode=proposal.execution_mode,
+        )
+        db.execute(
+            "UPDATE orders SET risk_decision_id=? WHERE id=?",
+            (unrelated.id, order.id),
+        )
+    else:
+        db.execute(
+            "UPDATE orders SET execution_mode='paper_internal' WHERE id=?",
+            (order.id,),
+        )
+
+    result = _evaluate_new_proposal(
+        suffix=f"after-authority-{tamper}",
+        symbol="SOL/USDT",
+        execution_mode=(
+            "bitget_live_limited"
+            if tamper == "execution_mode_pool_escape"
+            else "paper_internal"
+        ),
+    )
+
+    assert "unresolved_entry_authority_invalid" in result.violations
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "quantity",
+        "leverage",
+        "proposal_commit_hash",
+        "execution_mode",
+        "risk_decision_approval",
+    ),
+)
+@spec_claim(
+    SpecClaim(
+        "PL-UEE-11",
+        "pipeline_unresolved_entry_exposure",
+        "§8 pre-Order immutable authority",
+        "L2c",
+        "A pre-Order reservation must exactly match its hashed native Proposal and one "
+        "approved authoritative RiskDecision, including evaluated quantity, price, "
+        "leverage, market, and execution mode.",
+        status="implemented",
+    )
+)
+def test_tampered_pre_order_reservation_authority_fails_closed(
+    tmp_path,
+    monkeypatch,
+    tamper,
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    _risk_config(monkeypatch, demo_slots=10)
+    proposal, decision = _seed_pre_order_reservation(
+        suffix=tamper,
+        execution_mode=(
+            "bitget_live_limited"
+            if tamper == "execution_mode"
+            else "paper_internal"
+        ),
+    )
+
+    if tamper == "quantity":
+        db.execute(
+            "UPDATE entry_risk_reservations SET quantity=1 WHERE proposal_id=?",
+            (proposal.id,),
+        )
+    elif tamper == "leverage":
+        db.execute(
+            "UPDATE entry_risk_reservations SET leverage=1 WHERE proposal_id=?",
+            (proposal.id,),
+        )
+    elif tamper == "proposal_commit_hash":
+        db.execute(
+            "UPDATE entry_risk_reservations SET proposal_commit_hash='tampered' "
+            "WHERE proposal_id=?",
+            (proposal.id,),
+        )
+    elif tamper == "execution_mode":
+        db.execute(
+            "UPDATE entry_risk_reservations SET execution_mode='paper_internal' "
+            "WHERE proposal_id=?",
+            (proposal.id,),
+        )
+    else:
+        db.execute(
+            "UPDATE risk_decisions SET approved=0 WHERE id=?",
+            (decision.id,),
+        )
+
+    result = _evaluate_new_proposal(
+        suffix=f"after-reservation-{tamper}",
+        symbol="SOL/USDT",
+        execution_mode=(
+            "okx_live_limited"
+            if tamper == "execution_mode"
+            else "paper_internal"
+        ),
+    )
+
+    assert "entry_risk_reservation_authority_invalid" in result.violations
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-UEE-12",
+        "pipeline_unresolved_entry_exposure",
+        "§9 exact Position representation",
+        "L2c",
+        "An unresolved Order may reserve only its unfilled remainder when one exact "
+        "open Position matches both backlinks and its quantity represents all durable "
+        "Fills; a mismatched or undersized Position keeps the full Order reserved.",
+        status="implemented",
+    )
+)
+def test_undersized_linked_position_keeps_full_order_reserved(
+    tmp_path,
+    monkeypatch,
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    _risk_config(monkeypatch, demo_slots=10)
+    _, order, position = _seed_entry_order(
+        suffix="undersized-position-authority",
+        execution_mode="okx_demo",
+        quantity=10.0,
+        price=100.0,
+        fill_quantity=4.0,
+        position_quantity=4.0,
+    )
+    assert position is not None
+    db.execute("UPDATE positions SET quantity=1 WHERE id=?", (position.id,))
+
+    import aletheia.risk.engine as engine
+
+    reservations = engine._unresolved_entry_reservations()
+    assert len(reservations) == 1
+    assert reservations[0].order_id == order.id
+    assert reservations[0].has_open_position is False
+    assert reservations[0].reserved_quantity == pytest.approx(10.0)
+    assert (
+        "unresolved_entry_position_authority_invalid"
+        in reservations[0].invalid_reasons
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-UEE-14",
+        "pipeline_unresolved_entry_exposure",
+        "§9 averaging-leg Position representation",
+        "L2c",
+        "A partially filled averaging leg may point to a Position whose original "
+        "Proposal and Order remain the first leg; the Position is valid when its "
+        "quantity represents the durable Fills from every linked entry leg.",
+        status="implemented",
+    )
+)
+def test_partial_averaging_leg_uses_all_position_entry_fills(
+    tmp_path,
+    monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    _risk_config(monkeypatch, demo_slots=10)
+    _, _, position = _seed_entry_order(
+        suffix="averaging-primary",
+        execution_mode="okx_demo",
+        quantity=4.0,
+        price=100.0,
+        status="filled",
+        fill_quantity=4.0,
+        position_quantity=4.0,
+    )
+    assert position is not None
+
+    from tests.execution_authority import seed_order_authority
+    from aletheia.risk import engine
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Fill, Order
+
+    proposal, decision = seed_order_authority(
+        proposal_id="proposal-averaging-later",
+        risk_decision_id="risk-averaging-later",
+        symbol=position.symbol,
+        market_type=position.market_type,
+        direction=position.direction,
+        order_type="market",
+        quantity=4.0,
+        price=100.0,
+        execution_mode=position.execution_mode,
+    )
+    later_order = Order(
+        id="order-averaging-later",
+        proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        client_order_id=proposal.id,
+        position_id=position.id,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        order_type=proposal.order_type,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        execution_mode=proposal.execution_mode,
+        status="partially_filled",
+    )
+    repo.insert_order(later_order)
+    repo.insert_fill(Fill(
+        id="fill-averaging-later",
+        order_id=later_order.id,
+        fill_price=proposal.price,
+        fill_quantity=2.0,
+        fee=0.0,
+        fee_source="reconciled",
+    ))
+    repo.update_position(position.id, quantity=6.0)
+
+    reservations = engine._unresolved_entry_reservations()
+    assert len(reservations) == 1
+    assert reservations[0].order_id == later_order.id
+    assert reservations[0].has_open_position is True
+    assert reservations[0].persisted_fill_quantity == pytest.approx(2.0)
+    assert reservations[0].reserved_quantity == pytest.approx(2.0)
+    assert reservations[0].invalid_reasons == ()
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-UEE-15",
+        "pipeline_unresolved_entry_exposure",
+        "§7 local paper price authority floor",
+        "L2c",
+        "A local paper Order may honestly store a slipped fill price, but unresolved "
+        "exposure uses at least the hashed Proposal price so changing the Order price "
+        "cannot lower its Risk reservation.",
+        status="implemented",
+    )
+)
+def test_paper_order_price_cannot_lower_unresolved_exposure(tmp_path, monkeypatch):
+    db = _setup_db(tmp_path, monkeypatch)
+    _risk_config(monkeypatch, demo_slots=10)
+    _, order, _ = _seed_entry_order(
+        suffix="paper-price-floor",
+        execution_mode="paper_internal",
+        quantity=10.0,
+        price=100.0,
+    )
+    db.execute("UPDATE orders SET price=1 WHERE id=?", (order.id,))
+
+    import aletheia.risk.engine as engine
+
+    reservations = engine._unresolved_entry_reservations()
+    assert len(reservations) == 1
+    assert reservations[0].price == pytest.approx(100.0)
+    assert reservations[0].reserved_quantity == pytest.approx(10.0)
+    assert reservations[0].invalid_reasons == ()
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-UEE-13",
+        "pipeline_unresolved_entry_exposure",
+        "§10 normalized quantity authority",
+        "L2c",
+        "A valid authoritative decision may normalize quantity away from the stored "
+        "Proposal, and both its pre-Order and unresolved-Order stages count that exact "
+        "evaluated quantity without inventing or dropping exposure.",
+        status="implemented",
+    )
+)
+def test_normalized_quantity_authority_counts_exact_exposure(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    _risk_config(monkeypatch, demo_slots=10)
+
+    from aletheia.risk import engine
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order, RiskDecision, TradeProposal
+
+    proposal = TradeProposal(
+        id="normalized-authority-proposal",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        order_type="market",
+        quantity=10.0,
+        price=100.0,
+        leverage=5,
+        execution_mode="bitget_live_limited",
+        status="executing",
+    )
+    repo.insert_trade_proposal(proposal)
+    decision = RiskDecision(
+        id="normalized-authority-decision",
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode=proposal.execution_mode,
+        proposal_execution_mode=proposal.execution_mode,
+        decision_role="authoritative",
+        evaluated_quantity=4.0,
+        proposal_commit_hash=proposal.commit_hash,
+    )
+    repo.insert_risk_decision(decision)
+    repo.acquire_entry_risk_reservation(
+        proposal_id=proposal.id,
+        proposal_commit_hash=proposal.commit_hash,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        execution_mode=proposal.execution_mode,
+        quantity=4.0,
+        price=proposal.price,
+        leverage=proposal.leverage,
+    )
+
+    pre_order = engine._pre_order_entry_reservations()
+    assert len(pre_order) == 1
+    assert pre_order[0].reserved_quantity == pytest.approx(4.0)
+    assert pre_order[0].invalid_reasons == ()
+    assert engine._current_live_exposure() == pytest.approx(400.0)
+
+    repo.insert_order(Order(
+        id="normalized-authority-order",
+        proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        client_order_id=proposal.id,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        order_type=proposal.order_type,
+        quantity=4.0,
+        price=proposal.price,
+        execution_mode=proposal.execution_mode,
+        status="pending",
+    ))
+
+    unresolved = engine._unresolved_entry_reservations()
+    assert len(unresolved) == 1
+    assert unresolved[0].reserved_quantity == pytest.approx(4.0)
+    assert unresolved[0].leverage == pytest.approx(5.0)
+    assert unresolved[0].invalid_reasons == ()
+    assert engine._current_live_exposure() == pytest.approx(400.0)
 
 
 @spec_claim(

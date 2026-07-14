@@ -1520,12 +1520,20 @@ def _emit_self_heal_action(
         pass
 
 
-def _has_durable_pending_carrier(decision) -> bool:
-    """Return whether a new-entry decision owns one exact durable queue carrier."""
+def _pending_carrier_authority_failure(decision) -> str | None:
+    """Return the fail-closed reason, or None for one executable queue identity."""
+    if any(
+        step.get("reason_code") == "pending_identity_ambiguous"
+        for step in (getattr(decision, "filter_trace", None) or [])
+    ):
+        return "pending_identity_ambiguous"
+
     opportunity_id = getattr(decision, "opportunity_id", None)
     signal_source = getattr(decision, "signal_source", None) or "market_observer"
+    if signal_source not in {"market_observer", "serenity"}:
+        return "pending_source_invalid"
     if not opportunity_id:
-        return False
+        return "pending_signal_required"
 
     from aletheia.storage.repositories import (
         find_final_pi_decision_for_opportunity,
@@ -1539,7 +1547,7 @@ def _has_durable_pending_carrier(decision) -> bool:
         find_pending_pi_decision_for_opportunity(opportunity_id, signal_source)
     )
     if pending is None:
-        return False
+        return "pending_signal_required"
     # A carrier is execution authority, so partial legacy identity cannot be
     # treated as a wildcard. Missing direction/market would otherwise let one
     # queued row authorize the opposite side or a different instrument class.
@@ -1547,10 +1555,52 @@ def _has_durable_pending_carrier(decision) -> bool:
         expected = getattr(decision, field, None)
         actual = pending.get(field)
         if not expected or not actual or expected != actual:
-            return False
+            return "pending_signal_required"
 
     if signal_source != "market_observer":
-        return True
+        return None
+
+    # Queue freshness is not enough: the source Opportunity may have expired
+    # after ranking. Validate its own lifecycle under the writer lock before a
+    # new Proposal claim. An already-durable final claim is recovery authority
+    # and is therefore resumed instead of being cancelled by later TTL/config.
+    from aletheia.storage.repositories import get_opportunity, transaction
+    from aletheia.storage.sqlite import get_db
+
+    existing = None
+    with transaction(immediate=True):
+        existing = find_final_pi_decision_for_opportunity(
+            opportunity_id, signal_source
+        )
+        if existing is None:
+            source = get_opportunity(opportunity_id)
+            source_status = str((source or {}).get("status") or "")
+            if source_status != "queued":
+                return (
+                    "pending_source_expired"
+                    if source_status == "expired"
+                    else "pending_source_not_queued"
+                )
+            valid_until = source.get("valid_until")
+            if valid_until:
+                try:
+                    expires_at = datetime.fromisoformat(
+                        str(valid_until).replace("Z", "+00:00")
+                    )
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    return "pending_source_expiry_invalid"
+                if expires_at <= datetime.now(timezone.utc):
+                    get_db().execute(
+                        "UPDATE opportunities SET status='expired' "
+                        "WHERE id=? AND status='queued'",
+                        (opportunity_id,),
+                    )
+                    return "pending_source_expired"
+
+    if existing is not None:
+        return None
     try:
         from aletheia.agent_shell.trading_context import _PENDING_SIGNAL_MAX_AGE_MINUTES
 
@@ -1563,16 +1613,17 @@ def _has_durable_pending_carrier(decision) -> bool:
     except (TypeError, ValueError):
         fresh = False
     if fresh:
-        return True
+        return None
 
     # Once a durable claim exists, queue age no longer decides whether its
     # already-owned submission may recover. This covers both historical orphan
     # claims and the atomic claim+Proposal commit followed by process death.
-    existing = find_final_pi_decision_for_opportunity(opportunity_id, signal_source)
-    return bool(
-        existing
-        and existing.get("proposal_status") == "submitting"
-    )
+    return "pending_signal_required"
+
+
+def _has_durable_pending_carrier(decision) -> bool:
+    """Return whether a new-entry decision owns one exact durable queue carrier."""
+    return _pending_carrier_authority_failure(decision) is None
 
 
 def _configured_paper_execution_mode() -> str:
@@ -1601,13 +1652,18 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
 
     trade_like = decision.action in ("trade", "scale_in", "flip")
     rejected_missing_pending_carrier = False
-    if trade_like and not _has_durable_pending_carrier(decision):
+    pending_authority_failure = (
+        None
+        if trade_like and _has_durable_pending_carrier(decision)
+        else (_pending_carrier_authority_failure(decision) if trade_like else None)
+    )
+    if trade_like and pending_authority_failure:
         original_action = decision.action
         decision.filter_trace.append({
             "filter_name": "pending_signal_authority",
             "stage": "proposal_submission",
             "decision": "rejected",
-            "reason_code": "pending_signal_required",
+            "reason_code": pending_authority_failure,
             "inputs": {
                 "action": original_action,
                 "opportunity_id": decision.opportunity_id,
@@ -1617,7 +1673,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         })
         decision.action = "skip"
         decision.reasoning = (
-            f"{decision.reasoning} [pending signal required; no proposal created]"
+            f"{decision.reasoning} [{pending_authority_failure}; no proposal created]"
         )
         trade_like = False
         rejected_missing_pending_carrier = True
@@ -1674,7 +1730,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     # claim_decision would create an anonymous final (or consume an unqueued
     # Opportunity) and make the real pending queue look abandoned.
     if rejected_missing_pending_carrier:
-        result["proposal_reason"] = "pending_signal_required"
+        result["proposal_reason"] = pending_authority_failure
         result["operator_decision_persisted"] = False
         existing_final = None
         if decision.opportunity_id:
@@ -1748,12 +1804,39 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     # The prepared Proposal and final PiDecision become visible together in one
     # BEGIN IMMEDIATE transaction.  Risk/broker work starts only after commit.
     from aletheia.agent_shell.reflection import (
+        PendingSourceClaimError,
         claim_decision,
         finalize_decision,
         recover_interrupted_decision,
     )
 
-    claimed_final, claim_created = claim_decision(result, proposal=prepared_proposal)
+    try:
+        claimed_final, claim_created = claim_decision(
+            result, proposal=prepared_proposal
+        )
+    except PendingSourceClaimError as exc:
+        decision.filter_trace.append({
+            "filter_name": "pending_source_claim",
+            "stage": "proposal_submission",
+            "decision": "rejected",
+            "reason_code": exc.reason,
+            "inputs": {
+                "opportunity_id": decision.opportunity_id,
+                "signal_source": decision.signal_source,
+            },
+            "parameters": {"required_status": "queued"},
+        })
+        result.update({
+            "action": "skip",
+            "proposal_id": None,
+            "proposal_status": "rejected",
+            "proposal_reason": exc.reason,
+            "proposal_error": exc.reason,
+            "operator_decision_persisted": False,
+            "filter_trace": decision.filter_trace,
+        })
+        _attach_pending_queue_state(result)
+        return result
     submission_owner = claim_created
 
     def _apply_claim_to_result(claim: dict, *, replay: bool) -> None:
@@ -1789,27 +1872,45 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             )
             submission_owner = recovered or bool(claimed_final.get("proposal_id"))
         elif interrupted:
-            # Preparation now produced a stable failure. Settle the legacy claim
-            # instead of leaving it permanently stuck in submitting.
-            claimed_final = finalize_decision(
-                claimed_final["id"],
-                result,
-                publish_filter_evidence=claim_created,
-            )
-            return _return_existing_claim()
+            # The current assessment did not reproduce the executable intent.
+            # It has no authority to settle the older durable trade claim as a
+            # skip/failure; preserve that claim for a later strict matching retry.
+            _apply_claim_to_result(claimed_final, replay=True)
+            result["proposal_status"] = "submitting"
+            result["proposal_reason"] = "recovery_deferred"
+            result["proposal_error"] = "recovery_deferred"
+            result["recovery_deferred"] = True
+            result["operator_decision_persisted"] = True
+            _attach_pending_queue_state(result)
+            return result
         elif (
             claimed_final.get("proposal_status") == "submitting"
             and claimed_final.get("proposal_id")
         ):
+            # The atomic claim already owns a durable Proposal. A fresh model
+            # assessment is advisory after that commit and cannot replace the
+            # original trade with skip/watch. Resume the stored identity and
+            # execution mode instead of finalizing it as not_applicable.
+            if claimed_final.get("action") not in {"trade", "scale_in", "flip"}:
+                return _return_existing_claim()
+            _apply_claim_to_result(claimed_final, replay=True)
+            trade_like = True
             submission_owner = True
         else:
             return _return_existing_claim()
 
     if trade_like and claimed_final.get("proposal_id") and submission_owner:
         from aletheia.execution.gateway import execute_existing_proposal
+        from aletheia.storage.repositories import get_trade_proposal
 
+        stored_proposal = get_trade_proposal(claimed_final["proposal_id"])
+        proposal_execution_mode = (
+            str(stored_proposal.get("execution_mode"))
+            if stored_proposal and stored_proposal.get("execution_mode")
+            else execution_mode
+        )
         proposal_result = execute_existing_proposal(
-            claimed_final["proposal_id"], execution_mode
+            claimed_final["proposal_id"], proposal_execution_mode
         )
         if proposal_result.get("status") == "already_claimed":
             return _return_existing_claim()

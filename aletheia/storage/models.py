@@ -87,6 +87,10 @@ class Opportunity(_Provenanced):
     source_agent: str | None = None
     created_at: str = Field(default_factory=_utcnow)
     status: str = "open"
+    # Rotation cursor for the bounded paper-trader workset. NULL means this
+    # Opportunity has never been evaluated; each normal run reserves capacity
+    # for both NULL rows and the oldest non-NULL retry rows.
+    last_ranked_at: str | None = None
     linked_strategy_id: str | None = None
     # Asset class: "crypto" | "equity" | "prediction". Default "crypto" keeps
     # older rows valid. paper_trader only acts on "crypto" opportunities.

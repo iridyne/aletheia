@@ -39,7 +39,7 @@ logger = logging.getLogger("aletheia.agents.paper_trader_ranker")
 _CONFIDENCE_RANK = {"speculative": 0, "medium": 1, "high": 2}
 _CONFIDENCE_SCORE_DEFAULT = {"speculative": 20, "medium": 50, "high": 75}
 _DEFAULT_CANDIDATE_LIMIT = 50
-_MAX_OPPORTUNITY_SCAN_LIMIT = 500
+_MAX_OPPORTUNITY_SCAN_LIMIT = 250
 
 # Evidence-based strategy gates (not_executable is NOT a block — strategies
 # without a RuleSet can still trade from LLM signals; the entry validation
@@ -51,7 +51,7 @@ _EVIDENCE_BONUS_STATUSES = {"paper_promising": 15}
 
 @dataclass(frozen=True)
 class PaperCandidateWorkset:
-    """Bounded scan facts separated from the ranked execution shortlist."""
+    """Complete current working-set facts plus the ranked execution shortlist."""
 
     ranked_candidates: list[dict]
     scanned_candidates: list[dict]
@@ -68,9 +68,9 @@ def build_paper_candidates(limit: int = 50) -> list[dict]:
 
 
 def build_paper_candidate_workset(limit: int = 50) -> PaperCandidateWorkset:
-    """Return the top-N execution view plus every candidate in its bounded scan.
+    """Return the top-N execution view plus every current open trade candidate.
 
-    Permanent rejects in the scan must retain their durable reason even when
+    Permanent rejects in the working set retain their durable reason even when
     they rank below the execution shortlist.  Keeping the two views separate
     preserves the caller's top-N execution capacity without losing terminal
     state work.
@@ -93,12 +93,14 @@ def build_paper_candidate_workset(limit: int = 50) -> PaperCandidateWorkset:
     min_conf = cfg.trading.min_confidence_to_trade
 
     requested_limit = max(1, int(limit or _DEFAULT_CANDIDATE_LIMIT))
-    scan_limit = min(_MAX_OPPORTUNITY_SCAN_LIMIT, max(requested_limit, requested_limit * 5))
 
     candidates: list[dict] = []
-    # Apply the cap to the actual working set. Querying all statuses first let a
-    # busy stream of reviewed rows bury still-open opportunities beyond the cap.
-    opportunities = list_open_trade_opportunities(limit=scan_limit)
+    # A run is deliberately bounded. The repository rotates by last_ranked_at,
+    # so retryable rows cannot permanently hide the tail without forcing an
+    # unbounded SQLite read into one scheduler invocation.
+    opportunities = list_open_trade_opportunities(
+        limit=_MAX_OPPORTUNITY_SCAN_LIMIT
+    )
 
     for opp in opportunities:
         candidate = _evaluate_candidate(

@@ -126,3 +126,77 @@ def test_expired_lesson_does_not_block(tmp_path, monkeypatch):
     assert not any("lesson_block_direction" in v for v in violations), (
         f"expired lesson must not block trades, got violations: {violations}"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "LG-S05",
+        "risk_engine_contract",
+        "§lesson_guards complete applied set",
+        "L2c",
+        "Every active applied Risk lesson is authoritative; an older 51st lesson "
+        "cannot disappear behind a display-sized query limit.",
+        status="implemented",
+    )
+)
+def test_older_applied_risk_lesson_is_not_truncated(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import MagicMock
+
+    from aletheia.risk import engine as eng
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import get_db
+
+    run_migrations()
+    now = datetime.now(timezone.utc)
+    past = (now - timedelta(days=1)).isoformat()
+    future = (now + timedelta(days=30)).isoformat()
+    rows = [
+        (
+            "lesson-old-block",
+            "test",
+            "old",
+            "risk",
+            "high",
+            "old authoritative block",
+            "{}",
+            '{"action":"block_symbol","symbol":"BTC/USDT"}',
+            "applied",
+            "2026-01-01T00:00:00+00:00",
+            "pv-old",
+            past,
+            past,
+            future,
+        )
+    ]
+    rows.extend(
+        (
+            f"lesson-new-{index:02d}",
+            "test",
+            f"new-{index}",
+            "risk",
+            "info",
+            "new advisory",
+            "{}",
+            '{"action":"reduce_size","factor":0.9}',
+            "applied",
+            f"2026-02-{index // 28 + 1:02d}T00:{index % 60:02d}:00+00:00",
+            "pv-new",
+            past,
+            past,
+            future,
+        )
+        for index in range(50)
+    )
+    get_db().executemany(
+        "INSERT INTO ps_lessons "
+        "(lesson_id,source_type,source_id,category,severity,summary,evidence_json,"
+        "recommendation_json,status,created_at,applied_policy_version,activated_at,"
+        "dry_run_until,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+
+    proposal = MagicMock(symbol="BTC/USDT", direction="long")
+    violations = eng._check_lesson_constraints(proposal)
+
+    assert "lesson_block_symbol:lesson-old-block:BTC/USDT" in violations

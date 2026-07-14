@@ -36,8 +36,27 @@ def authoritative_account_realized_loss(execution_mode: str) -> AccountLossSnaps
             execution_mode=execution_mode,
             closed_after=today_start,
         )
+        from aletheia.storage.sqlite import get_db
+
+        exact_event_count = int(get_db().execute(
+            "SELECT COUNT(*) FROM positions "
+            "WHERE status='closed' AND execution_mode=? "
+            "AND datetime(closed_at) >= datetime(?)",
+            (execution_mode, today_start),
+        ).fetchone()[0])
     except Exception:
         return _unavailable("account_event_read_failed")
+
+    # ``raw_account_events`` is intentionally bounded for general analytics.
+    # Risk must never mistake that display/read-model window for the complete
+    # UTC-day account ledger: an older loss hidden behind 10,000 newer closes
+    # would otherwise loosen the daily-loss brake.  A concurrent close between
+    # these reads also yields a mismatch and therefore fails closed.
+    if exact_event_count != len(rows):
+        return _unavailable(
+            "account_event_window_truncated",
+            event_count=exact_event_count,
+        )
 
     for row in rows:
         assessment = assess_position_closure(row)

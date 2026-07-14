@@ -11,13 +11,21 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("aletheia.agent_shell.reflection")
 
 _REFLECTION_FILE = Path("data/pi_reflection.json")
+
+
+class PendingSourceClaimError(RuntimeError):
+    """A prepared Proposal lost its source authority before the atomic claim."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
 
 
 def _validate_proposal_identity(proposal, decision: Any, *, prefix: str) -> None:
@@ -29,6 +37,130 @@ def _validate_proposal_identity(proposal, decision: Any, *, prefix: str) -> None
         raise ValueError(f"{prefix}_identity_mismatch")
     if proposal.market_type != getter("market_type"):
         raise ValueError(f"{prefix}_market_type_mismatch")
+
+
+_ALLOWED_PENDING_SOURCES = {"market_observer", "serenity"}
+_NEW_ENTRY_ACTIONS = {"trade", "scale_in", "flip"}
+
+
+def _normalized_direction(value: Any) -> str:
+    direction = str(value or "").lower()
+    return {"bullish": "long", "bearish": "short"}.get(direction, direction)
+
+
+def _pending_claim_authority_failure(pi_dec) -> str | None:
+    """Recheck queue and source identity inside the caller's writer lock."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    signal_source = pi_dec.signal_source or "market_observer"
+    if signal_source not in _ALLOWED_PENDING_SOURCES:
+        return "pending_source_invalid"
+    if not pi_dec.opportunity_id:
+        return "pending_signal_required"
+
+    pending_rows = repo.list_pending_pi_decisions_for_opportunity(
+        pi_dec.opportunity_id, signal_source
+    )
+    if not pending_rows:
+        return "pending_signal_required"
+    if len(pending_rows) != 1:
+        return "pending_identity_ambiguous"
+    pending = pending_rows[0]
+
+    pending_market = pending.get("market_type")
+    if signal_source == "market_observer":
+        source = repo.get_opportunity(pi_dec.opportunity_id)
+        if source is None:
+            return "pending_source_missing"
+        if (
+            source.get("id") != pi_dec.opportunity_id
+            or source.get("symbol") != pi_dec.symbol
+            or _normalized_direction(source.get("direction_bias"))
+            != _normalized_direction(pi_dec.direction)
+            or source.get("market") != pi_dec.market_type
+        ):
+            return "pending_source_identity_mismatch"
+        source_status = str(source.get("status") or "")
+        if source_status != "queued":
+            return (
+                "pending_source_expired"
+                if source_status == "expired"
+                else "pending_source_not_queued"
+            )
+        valid_until = source.get("valid_until")
+        if valid_until:
+            try:
+                expires_at = datetime.fromisoformat(
+                    str(valid_until).replace("Z", "+00:00")
+                )
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                return "pending_source_expiry_invalid"
+            if expires_at <= datetime.now(timezone.utc):
+                get_db().execute(
+                    "UPDATE opportunities SET status='expired' "
+                    "WHERE id=? AND status='queued'",
+                    (pi_dec.opportunity_id,),
+                )
+                return "pending_source_expired"
+    else:
+        source = repo.get_serenity_opportunity(pi_dec.opportunity_id)
+        if source is None:
+            return "pending_source_missing"
+        source_market = source.get("market_type")
+        if (
+            source.get("id") != pi_dec.opportunity_id
+            or source.get("symbol") != pi_dec.symbol
+            or _normalized_direction(source.get("direction"))
+            != _normalized_direction(pi_dec.direction)
+            or not source_market
+            or source_market != pi_dec.market_type
+        ):
+            return "pending_source_identity_mismatch"
+        if str(source.get("status") or "") != "active":
+            return "pending_source_not_active"
+        if str(source.get("action_intent") or "") != "pi_evaluate":
+            return "pending_source_intent_invalid"
+        theme = repo.get_serenity_theme(str(source.get("theme_id") or ""))
+        if theme is None:
+            return "pending_theme_missing"
+        if str(theme.get("status") or "") != "promoted":
+            return "pending_theme_not_promoted"
+        # Only historical Serenity carriers may recover their missing market
+        # from the exact linked source row. A complete pending value is never
+        # trusted without independently checking that source above.
+        pending_market = pending_market or source_market
+
+    if (
+        pending.get("opportunity_id") != pi_dec.opportunity_id
+        or (pending.get("signal_source") or "market_observer") != signal_source
+        or pending.get("symbol") != pi_dec.symbol
+        or _normalized_direction(pending.get("direction"))
+        != _normalized_direction(pi_dec.direction)
+        or pending_market != pi_dec.market_type
+    ):
+        return "pending_identity_mismatch"
+
+    if signal_source == "market_observer":
+        try:
+            created_at = datetime.fromisoformat(
+                str(pending.get("created_at") or "").replace("Z", "+00:00")
+            )
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            created_at = datetime.min.replace(tzinfo=timezone.utc)
+        if created_at < datetime.now(timezone.utc) - timedelta(minutes=30):
+            get_db().execute(
+                "UPDATE opportunities SET status='expired' "
+                "WHERE id=? AND status='queued'",
+                (pi_dec.opportunity_id,),
+            )
+            return "pending_signal_expired"
+
+    return None
 
 
 def _reflection_record(decision_result: dict) -> dict:
@@ -117,10 +249,17 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
     )
 
     pi_dec = _build_pi_decision(decision_result)
+    claim_failure: str | None = None
     with transaction(immediate=True):
         existing = (
             find_final_pi_decision_for_opportunity(
-                pi_dec.opportunity_id, pi_dec.signal_source
+                pi_dec.opportunity_id,
+                pi_dec.signal_source,
+                action=(
+                    pi_dec.action
+                    if pi_dec.action in {"close", "reduce"}
+                    else None
+                ),
             )
             if pi_dec.opportunity_id else None
         )
@@ -134,20 +273,31 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
                 _validate_proposal_identity(
                     proposal, existing, prefix="existing_claim_prepared_proposal"
                 )
-            if pi_dec.signal_source == "market_observer":
-                transition_opportunity_to_reviewed(pi_dec.opportunity_id)
+            # The winning claim already owns its Proposal/lifecycle. Never move
+            # an independently expired source back to reviewed during replay.
             return existing, False
         if proposal is not None:
             _validate_proposal_identity(
                 proposal, pi_dec, prefix="prepared_proposal"
             )
-            insert_trade_proposal(proposal)
-            pi_dec.proposal_id = proposal.id
-            pi_dec.proposal_status = "submitting"
-            pi_dec.proposal_reason = None
-        insert_pi_decision(pi_dec)
-        if pi_dec.opportunity_id and pi_dec.signal_source == "market_observer":
-            transition_opportunity_to_reviewed(pi_dec.opportunity_id)
+        # A pending carrier authorizes a new entry, not management of an
+        # already-open Position. close/reduce inherit their causal identity from
+        # that Position and must remain available even when its old entry signal
+        # has long since been consumed.
+        if pi_dec.action in _NEW_ENTRY_ACTIONS:
+            claim_failure = _pending_claim_authority_failure(pi_dec)
+        if proposal is not None:
+            if claim_failure is None:
+                insert_trade_proposal(proposal)
+                pi_dec.proposal_id = proposal.id
+                pi_dec.proposal_status = "submitting"
+                pi_dec.proposal_reason = None
+        if claim_failure is None:
+            insert_pi_decision(pi_dec)
+            if pi_dec.opportunity_id and pi_dec.signal_source == "market_observer":
+                transition_opportunity_to_reviewed(pi_dec.opportunity_id)
+    if claim_failure is not None:
+        raise PendingSourceClaimError(claim_failure)
     return pi_dec.model_dump(), True
 
 

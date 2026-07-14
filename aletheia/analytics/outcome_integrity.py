@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import math
+import sqlite3
 from typing import Any, Literal
 
 
@@ -44,6 +45,7 @@ OUTCOME_EXCLUSION_REASONS = frozenset({
     "pre_clean_window",
     "incident_window",
     "missing_attribution",
+    "attribution_read_failed",
 })
 
 _VERIFIED_EXIT_PRICE_SOURCES = frozenset({"broker_fill", "local_fill"})
@@ -65,6 +67,7 @@ _STRUCTURED_KEYS = frozenset({
     "outcome_exclusion_reason",
     "outcome_semantics_version",
 })
+_FILTER_UNSET = object()
 
 
 @dataclass(frozen=True)
@@ -91,6 +94,10 @@ class OutcomeAssessment:
     horizon: str | None = None
     net_return_pct: float | None = None
     source: str | None = None
+
+
+class AttributionReadError(RuntimeError):
+    """The attribution chain could not be read, so absence is not proven."""
 
 
 def validated_funding_economics(
@@ -140,12 +147,16 @@ def outcome_write_eligibility(
     marker lets the shared read-side evaluator test every other requirement; its
     final answer is then persisted and is the only authority for outcome hooks.
     """
+    try:
+        attribution_complete = attribution_chain_complete(row)
+    except AttributionReadError:
+        return False, "attribution_read_failed"
     prospective = {
         **row,
         "exit_fill_verified": exit_fill_verified,
         "outcome_eligible": True,
         "outcome_exclusion_reason": "eligible",
-        "_attribution_complete": attribution_chain_complete(row),
+        "_attribution_complete": attribution_complete,
     }
     assessment = assess_reportable_outcome(prospective)
     return assessment.eligible, assessment.reason
@@ -166,9 +177,9 @@ def attribution_chain_complete(row: dict[str, Any]) -> bool:
     opportunity_id = str(row.get("opportunity_id") or "").strip()
     if not position_id or not proposal_id or not order_id or not opportunity_id:
         return False
-    try:
-        from aletheia.storage.sqlite import get_db
+    from aletheia.storage.sqlite import get_db
 
+    try:
         matched = get_db().execute(
             """
             SELECT CASE WHEN
@@ -177,6 +188,7 @@ def attribution_chain_complete(row: dict[str, Any]) -> bool:
                     FROM orders o
                     JOIN trade_proposals tp ON tp.id = ?
                     WHERE o.id = ?
+                      AND o.position_id = ?
                       AND o.proposal_id = tp.id
                       AND (
                           o.close_reason IS NULL
@@ -215,6 +227,7 @@ def attribution_chain_complete(row: dict[str, Any]) -> bool:
             (
                 proposal_id,
                 order_id,
+                position_id,
                 opportunity_id,
                 opportunity_id,
                 opportunity_id,
@@ -223,8 +236,8 @@ def attribution_chain_complete(row: dict[str, Any]) -> bool:
                 opportunity_id,
             ),
         ).fetchone()
-    except Exception:
-        return False
+    except sqlite3.DatabaseError as exc:
+        raise AttributionReadError(str(exc)) from exc
     return matched is not None and bool(matched[0])
 
 
@@ -362,11 +375,15 @@ def assess_position_closure(row: dict[str, Any]) -> OutcomeAssessment:
         "_attribution_complete" in row
         and row.get("_attribution_complete") is not None
     )
-    attribution_complete = (
-        _to_bool(row.get("_attribution_complete"))
-        if marker_was_injected
-        else attribution_chain_complete(row)
-    )
+    if marker_was_injected:
+        attribution_complete = _to_bool(row.get("_attribution_complete"))
+    else:
+        try:
+            attribution_complete = attribution_chain_complete(row)
+        except AttributionReadError:
+            return _assessment_from_closure(
+                closure, reason="attribution_read_failed"
+            )
     if not has_attribution_ids or not attribution_complete:
         return _assessment_from_closure(closure, reason="missing_attribution")
     return _assessment_from_closure(
@@ -393,6 +410,7 @@ def assess_reportable_outcome(row: dict[str, Any]) -> OutcomeAssessment:
 def raw_account_events(
     *,
     execution_mode: str | None = None,
+    strategy_id: Any = _FILTER_UNSET,
     closed_after: str | None = None,
     closed_before: str | None = None,
     limit: int = 10_000,
@@ -407,6 +425,12 @@ def raw_account_events(
     if execution_mode is not None:
         conditions.append("p.execution_mode = ?")
         params.append(execution_mode)
+    if strategy_id is not _FILTER_UNSET:
+        if strategy_id is None:
+            conditions.append("p.strategy_id IS NULL")
+        else:
+            conditions.append("p.strategy_id = ?")
+            params.append(str(strategy_id))
     if closed_after is not None:
         conditions.append("datetime(p.closed_at) >= datetime(?)")
         params.append(closed_after)
@@ -423,6 +447,7 @@ def raw_account_events(
                    FROM orders o
                    JOIN trade_proposals tp ON tp.id = p.proposal_id
                    WHERE o.id = p.order_id
+                     AND o.position_id = p.id
                      AND o.proposal_id = p.proposal_id
                      AND (
                          o.close_reason IS NULL

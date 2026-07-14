@@ -19,6 +19,7 @@ from aletheia.trading.entry_snapshot import (
 )
 from aletheia.storage.models import TradeProposal
 from aletheia.storage.repositories import (
+    get_authoritative_risk_decision,
     get_proposal_execution_claim,
     get_order,
     get_trade_proposal,
@@ -404,7 +405,10 @@ def _load_registry_symbols(venue: str) -> dict | None:
 
     try:
         from aletheia.storage.repositories import list_universe_assets
-        assets = list_universe_assets(venue=venue, active_only=True, limit=3000)
+        # This cache is execution authority, not a paginated UI feed. A bounded
+        # page would turn every valid symbol after the cutoff into a false
+        # "unavailable" rejection.
+        assets = list_universe_assets(venue=venue, active_only=True, limit=None)
         if not assets:
             return None  # registry not yet synced — fail-open
         by_type: dict[str, set] = {}
@@ -1122,9 +1126,25 @@ def _execute_proposal(
         cfg = load_config()
 
         if proposal.execution_mode == "paper_internal":
-            # Local paper has no executable-venue normalization. Its one Risk
-            # result is therefore already the authoritative decision consumed
-            # by the paper broker.
+            # A durable authoritative row proves the immutable Proposal snapshot,
+            # but it cannot freeze dynamic gates such as kill switch, capacity,
+            # account loss, or active lessons across a worker crash. Paper has no
+            # venue normalization. The first authoritative evaluation is already
+            # fresh; only a replay of an existing authority needs an additional
+            # dispatch preflight. This preserves one RiskDecision on the normal
+            # paper path while still preventing stale approval after a crash.
+            existing_authority = get_authoritative_risk_decision(
+                proposal.id,
+                proposal.commit_hash,
+                proposal.quantity,
+            )
+            if existing_authority is not None:
+                preflight_result = evaluate_proposal(
+                    proposal,
+                    decision_role="preflight",
+                )
+                if not preflight_result.approved:
+                    return _reject_for_risk(proposal, preflight_result)
             risk_result = evaluate_proposal(
                 proposal, decision_role="authoritative"
             )

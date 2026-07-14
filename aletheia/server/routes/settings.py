@@ -233,11 +233,11 @@ async def set_paper_account_balance(req: PaperAccountSetBalanceRequest):
 
 def _close_local_positions(market_type: str | None) -> dict:
     _require_local_paper_mode()
-    from aletheia.storage.repositories import list_positions
+    from aletheia.storage.repositories import list_all_open_positions
     from aletheia.execution.paper_broker import close_paper_position
 
     candidates = [
-        row for row in list_positions(status="open", limit=10_000)
+        row for row in list_all_open_positions()
         if row.get("execution_mode") == "paper_internal"
         and (market_type is None or row.get("market_type") == market_type)
     ]

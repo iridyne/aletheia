@@ -20,7 +20,7 @@ from aletheia.data.symbols import MARKET_SPOT
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     find_divergence_opportunity_by_source_version,
-    insert_opportunity,
+    insert_divergence_opportunity_once,
     list_strategies,
 )
 from aletheia.trading.instruments import instrument_market_to_db_market
@@ -266,7 +266,12 @@ async def run_divergence_scanner(
                 "crypto_last_price": ticker.last_price,
             }),
         )
-        insert_opportunity(opp)
+        owner, owner_created = insert_divergence_opportunity_once(
+            opp, source_version=source_version
+        )
+        if not owner_created:
+            outputs.append(f"skip_duplicate_source_version:{source_version}")
+            continue
         log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
         outputs.append(f"opportunity:{opp.id}")
         opps_created += 1

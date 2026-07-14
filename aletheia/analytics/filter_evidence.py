@@ -85,11 +85,13 @@ def record_filter_decision(
     entry_price_usd: float | None = None,
     entry_spread_bps: float | None = None,
     funding_rate_at_entry: float | None = None,
+    raise_on_error: bool = False,
 ) -> str:
     """Persist one gate fact and, when economically identifiable, its outcomes.
 
-    Evidence failures are fail-open with respect to the trading pipeline: callers
-    receive a stable ID and the original decision semantics remain unchanged.
+    Evidence failures are observational by default: callers receive a stable ID
+    and the original decision semantics remain unchanged. Trading handoff callers
+    can request propagation so their surrounding transaction fails closed.
     """
     if decision not in _VALID_DECISIONS:
         raise ValueError(f"unsupported filter decision: {decision}")
@@ -164,6 +166,8 @@ def record_filter_decision(
                 entry_ts=timestamp,
             )
     except Exception as exc:  # observation must not mutate the trading decision
+        if raise_on_error:
+            raise
         logger.warning(
             "filter evidence write failed candidate=%s filter=%s: %s",
             candidate_key,
@@ -182,6 +186,7 @@ def record_filter_decision_batch(
     candidate_facts: list[dict[str, Any]],
     parameters: dict[str, Any] | None = None,
     evaluated_at: str | None = None,
+    raise_on_error: bool = False,
 ) -> str:
     """Persist every high-volume directionless fact in one immutable run batch."""
     if not run_id or not filter_name:
@@ -216,8 +221,12 @@ def record_filter_decision_batch(
         evaluated_at=evaluated_at or _utcnow(),
     )
     try:
-        repo.insert_filter_decision_batch(batch)
+        inserted = repo.insert_filter_decision_batch(batch)
+        if raise_on_error and not inserted:
+            raise RuntimeError("filter_evidence_batch_not_inserted")
     except Exception as exc:
+        if raise_on_error:
+            raise
         logger.warning(
             "filter evidence batch write failed run=%s filter=%s: %s",
             run_id,
@@ -378,6 +387,7 @@ def record_candidate_filter_trace(
     *,
     run_id: str | None = None,
     trace: list[dict[str, Any]] | None = None,
+    raise_on_error: bool = False,
 ) -> int:
     """Persist a candidate's sequential gate trace using one shared outcome seed."""
     opportunity_id = candidate.get("opportunity_id")
@@ -429,9 +439,12 @@ def record_candidate_filter_trace(
                 entry_price_usd=entry_price,
                 entry_spread_bps=_optional_float(candidate.get("entry_spread_bps")),
                 funding_rate_at_entry=_optional_float(candidate.get("funding_rate_at_entry")),
+                raise_on_error=raise_on_error,
             )
             count += 1
         except Exception as exc:
+            if raise_on_error:
+                raise
             logger.warning(
                 "candidate filter trace failed opportunity=%s filter=%s: %s",
                 opportunity_id,

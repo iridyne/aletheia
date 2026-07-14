@@ -929,6 +929,45 @@ def test_symbol_check_registry_modes(monkeypatch):
     assert reason_empty is None, "Empty registry must fail-open, not block orders"
 
 
+@spec_claim(
+    SpecClaim(
+        "EX-B16",
+        "execution_contract",
+        "§3.2 complete symbol registry",
+        "L2c",
+        "Exchange availability consumes the complete active venue registry; a valid "
+        "3,001st symbol cannot be silently converted into an unavailable rejection.",
+        status="implemented",
+    )
+)
+def test_symbol_check_does_not_truncate_large_registry(monkeypatch):
+    import aletheia.execution.gateway as gw
+    import aletheia.storage.repositories as repo
+
+    assets = [
+        {"symbol": f"TOKEN{index}/USDT", "market_type": "usdt_futures"}
+        for index in range(3_000)
+    ] + [{"symbol": "TARGET/USDT", "market_type": "usdt_futures"}]
+    observed_limits: list[int | None] = []
+
+    def _list_assets(*, venue, active_only, limit):
+        assert venue == "bitget"
+        assert active_only is True
+        observed_limits.append(limit)
+        return assets if limit is None else assets[:limit]
+
+    gw._registry_symbol_cache.clear()
+    monkeypatch.setattr(repo, "list_universe_assets", _list_assets)
+
+    assert gw._check_symbol_availability(
+        "TARGET/USDT",
+        "bitget_demo",
+        "usdt_futures",
+    ) is None
+    assert observed_limits == [None]
+    gw._registry_symbol_cache.clear()
+
+
 # ---------------------------------------------------------------------------
 # EX-C03 — gateway is the sole hard gate: trust/guard_chain is NOT wired in
 # ---------------------------------------------------------------------------

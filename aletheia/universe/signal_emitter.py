@@ -14,7 +14,10 @@ import json
 import logging
 
 from aletheia.storage.models import Opportunity
-from aletheia.storage.repositories import insert_opportunity, find_opportunity_by_symbol_snapshot
+from aletheia.storage.repositories import (
+    find_opportunity_by_symbol_snapshot,
+    insert_opportunity_once_by_snapshot,
+)
 from aletheia.trading.instruments import instrument_market_to_db_market
 from aletheia.analytics.factor_feedback import lookup_factor_signal
 from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
@@ -358,7 +361,24 @@ def emit_deterministic_opportunities(
             oi_delta_1h=feat.get("oi_delta_1h"),
         )
         try:
-            insert_opportunity(opp)
+            owner, owner_created = insert_opportunity_once_by_snapshot(opp)
+            if not owner_created:
+                _record_emission_decision(
+                    member=m,
+                    snapshot_id=snapshot_id,
+                    member_index=member_index,
+                    symbol=symbol,
+                    market_type=market_type,
+                    total_score=total_score,
+                    short_enabled=short_enabled,
+                    decision="passed",
+                    reason_code="existing_opportunity_reused",
+                    direction=direction,
+                    opportunity_id=owner.get("id"),
+                    regime_tag=regime.state if regime else None,
+                    inputs={"existing_status": owner.get("status")},
+                )
+                continue
             created += 1
             _record_emission_decision(
                 member=m,

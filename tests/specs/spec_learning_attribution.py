@@ -93,6 +93,8 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
         build_operator_learning_manifest,
     )
     from aletheia.agent_shell import reflection
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
     from aletheia.storage.sqlite import get_db
 
     ctx = {
@@ -119,9 +121,27 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
         parent=SimpleNamespace(mkdir=lambda **kwargs: None),
         write_text=lambda *args, **kwargs: None,
     ))
+    opportunity_id = "learning-manifest-opp-1"
+    insert_opportunity(Opportunity(
+        id=opportunity_id,
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+    ))
+    insert_pi_decision(PiDecision(
+        id="pending-learning-manifest-opp-1",
+        action="signal_pending",
+        opportunity_id=opportunity_id,
+        signal_source="market_observer",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+    ))
     reflection.record_decision({
         "action": "skip", "symbol": "BTC/USDT", "direction": "long",
-        "opportunity_id": "opp-1", "signal_source": "market_observer",
+        "market_type": "spot",
+        "opportunity_id": opportunity_id, "signal_source": "market_observer",
         "proposal_id": "proposal-1",
         "learning_manifest": manifest,
     })
@@ -130,7 +150,7 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
         "FROM pi_decisions ORDER BY created_at DESC LIMIT 1"
     ).fetchone()
     stored = json.loads(row["learning_manifest_json"])
-    assert row["opportunity_id"] == "opp-1"
+    assert row["opportunity_id"] == opportunity_id
     assert row["proposal_id"] == "proposal-1"
     assert stored["bundle_id"] == manifest["bundle_id"]
     assert len(stored["components"]) == 6

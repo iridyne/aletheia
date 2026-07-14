@@ -225,3 +225,48 @@ def test_same_proposal_entry_legs_remain_eligible_without_injected_marker():
     assessment = assess_position_closure(row)
     assert assessment.eligible is True
     assert assessment.reason == "eligible"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-OF-ML-03",
+        "pipeline_outcome_feedback",
+        "primary Order Position backlink",
+        "L2c",
+        "The primary entry Order must backlink to the exact Position consuming it; "
+        "one Order cannot authorize outcomes for multiple Positions.",
+        status="implemented",
+    )
+)
+def test_primary_order_owned_by_another_position_fails_all_attribution_paths():
+    from aletheia.analytics.outcome_integrity import (
+        attribution_chain_complete,
+        outcome_write_eligibility,
+        raw_account_events,
+    )
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    owner = _insert_multileg_position(
+        position_id="position-order-owner",
+        mixed_proposals=False,
+    )
+    reused = Position.model_validate({
+        **owner,
+        "id": "position-order-reuser",
+    })
+    repo.insert_position(reused)
+    reused_row = repo._select_one("positions", reused.id)
+    assert reused_row is not None
+
+    assert repo.get_order(str(owner["order_id"]))["position_id"] == owner["id"]
+    assert attribution_chain_complete(reused_row) is False
+    assert outcome_write_eligibility(
+        reused_row, exit_fill_verified=True
+    ) == (False, "missing_attribution")
+
+    events = {
+        row["id"]: row
+        for row in raw_account_events(execution_mode=reused.execution_mode)
+    }
+    assert events[reused.id]["_attribution_complete"] == 0

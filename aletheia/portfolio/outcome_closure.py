@@ -446,7 +446,7 @@ def close_position_verified(
         updates.update(_close_provenance())
         closed_row = {**current, **updates}
         repo.update_position(position_id, **updates)
-        if outcome_eligible:
+        if outcome_eligible or outcome_reason == "attribution_read_failed":
             from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
 
             enqueue_outcome_hook_jobs(closed_row)
@@ -483,7 +483,7 @@ def close_position_verified(
                 f"outcome={outcome_reason}"
             ),
         ))
-    if outcome_eligible:
+    if outcome_eligible or outcome_reason == "attribution_read_failed":
         _run_outcome_hooks(closed_row, realized, reason)
     return {
         "position_id": position_id,

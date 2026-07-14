@@ -42,10 +42,10 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
-| `opportunities` | Scanner output -- trading signals | symbol, direction, confidence, key_observations (JSON) | market_observer |
+| `opportunities` | Scanner output -- trading signals; open rows rotate through a bounded paper-trader workset | symbol, direction, confidence, key_observations (JSON), last_ranked_at | market_observer |
 | `trade_proposals` | Actionable trade candidates | symbol, direction, entry_price, stop_price, target_price, **`agent_rationale.entry_parameters`** (final entry/stop/target/notional/leverage reasons + value sources), **commit_hash**, **parent_hash** (TaG, P0-1) | paper_trader / System Operator |
 | `proposal_execution_claims` | One durable, expiring execution owner per Proposal; kept outside the hash-covered Proposal intent and removed only by owner-token compare-and-set | proposal_id, owner_token, claimed_at, lease_expires_at | execution gateway |
-| `entry_risk_reservations` | Durable pre-Order allowance acquired atomically with authoritative Risk; retained after a worker crash and superseded by the first durable Order | proposal_id, proposal_commit_hash, symbol, execution_mode, quantity, price | risk engine / execution gateway |
+| `entry_risk_reservations` | Durable pre-Order allowance acquired atomically with authoritative Risk; retained after a worker crash and superseded by the first durable Order | proposal_id, proposal_commit_hash, symbol, market_type, execution_mode, quantity, price, leverage | risk engine / execution gateway |
 | `risk_decisions` | Risk engine approval/rejection | proposal_id, approved, reasons (JSON), decision_role, evaluated_quantity, proposal_commit_hash | risk engine |
 | `approvals` | Human approval records | proposal_id, decision, decided_by | frontend |
 | `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |
@@ -59,6 +59,13 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `portfolio_snapshots` | Periodic equity snapshots; realized_pnl may be NULL when included close economics are incomplete | total_value_usdt, unrealized_pnl, nullable realized_pnl, execution_mode | scheduler job |
 | `paper_account_events` | **Local `paper_internal` cash ledger only**; immutable starting funds, human adjustments, and economically complete realized-PnL settlements. Unknown futures funding creates no close-settlement event. | action, amount_usdt, cash_balance_before_usdt, cash_balance_after_usdt, actor, source, position_id, note | paper account service |
 | `market_regimes` | Detected market regimes | regime_type, confidence, indicators (JSON) | market_observer |
+
+Open `opportunities` are read through a bounded mixed workset: half of the normal
+page is reserved for `last_ranked_at IS NULL` rows and half for the oldest non-NULL
+retry rows, with unused capacity borrowed by the other half. The partial expression
+indexes `idx_opportunities_trade_unranked_rotation` and
+`idx_opportunities_trade_retry_rotation` provide the two ordered streams without a
+full table scan or temporary sort.
 
 ### B. Strategy Management (4 tables)
 

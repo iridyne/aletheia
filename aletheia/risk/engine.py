@@ -16,8 +16,12 @@ from aletheia.portfolio.account_loss import authoritative_account_realized_loss
 from aletheia.storage.models import RiskDecision, TradeProposal
 from aletheia.storage.repositories import (
     _compute_proposal_hash,
+    _RISK_DECISION_PREFIX,
+    _RISK_PROPOSAL_PREFIX,
+    _validate_native_entry_order_snapshot,
     acquire_entry_risk_reservation,
     get_authoritative_risk_decision,
+    get_entry_risk_reservation,
     get_trade_proposal,
     has_order_for_proposal,
     insert_authoritative_risk_decision,
@@ -63,14 +67,51 @@ _NATIVE_EXECUTION_MODES = frozenset({
 })
 
 
+def _prefixed_snapshot(row: dict, prefix: str, model_type) -> dict:
+    """Rebuild one joined authority row without additional SQLite reads."""
+    return {
+        field: row.get(f"{prefix}{field}")
+        for field in model_type.model_fields
+    }
+
+
+def _pre_order_reservation_has_exact_authority(row: dict) -> bool:
+    """Return whether one reservation matches its hashed Proposal and decision."""
+    try:
+        stored = TradeProposal.model_validate(
+            _prefixed_snapshot(row, _RISK_PROPOSAL_PREFIX, TradeProposal)
+        )
+        if (
+            stored.source != "native"
+            or stored.id != row.get("proposal_id")
+            or not stored.commit_hash
+            or _compute_proposal_hash(stored) != stored.commit_hash
+            or row.get("proposal_commit_hash") != stored.commit_hash
+            or row.get("symbol") != stored.symbol
+            or row.get("market_type") != stored.market_type
+            or row.get("execution_mode") != stored.execution_mode
+            or float(row.get("price")) != float(stored.price)
+            or float(row.get("leverage")) != float(stored.leverage or 1.0)
+            or int(row.get("exact_authoritative_decision_count") or 0) != 1
+        ):
+            return False
+        quantity = float(row.get("quantity"))
+        return math.isfinite(quantity) and quantity > 0
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass(frozen=True)
 class _UnresolvedEntryReservation:
     """Conservative allowance consumed by one unresolved native entry Order."""
 
     order_id: str
     symbol: str
+    market_type: str
     execution_mode: str
+    opportunity_id: str | None
     price: float | None
+    leverage: float | None
     order_quantity: float | None
     persisted_fill_quantity: float | None
     remaining_quantity: float | None
@@ -85,8 +126,11 @@ class _PreOrderEntryReservation:
 
     proposal_id: str
     symbol: str
+    market_type: str
     execution_mode: str
+    opportunity_id: str | None
     price: float | None
+    leverage: float | None
     reserved_quantity: float | None
     invalid_reasons: tuple[str, ...] = ()
 
@@ -106,6 +150,47 @@ def _unresolved_entry_reservations() -> list[_UnresolvedEntryReservation]:
     reservations: list[_UnresolvedEntryReservation] = []
     for row in list_unresolved_native_entry_orders_for_risk():
         invalid: list[str] = []
+        authority_valid = False
+        proposal_snapshot: dict = {}
+
+        try:
+            proposal_snapshot = _prefixed_snapshot(
+                row,
+                _RISK_PROPOSAL_PREFIX,
+                TradeProposal,
+            )
+            decision_snapshot = _prefixed_snapshot(
+                row,
+                _RISK_DECISION_PREFIX,
+                RiskDecision,
+            )
+            _validate_native_entry_order_snapshot(
+                row,
+                proposal_snapshot,
+                decision_snapshot,
+            )
+            authority_valid = True
+        except Exception:
+            # Existing rows can be altered outside the model insert boundary.
+            # Their numeric values remain useful only for conservative accounting;
+            # they cannot authorize another Proposal while the chain is broken.
+            invalid.append("unresolved_entry_authority_invalid")
+
+        market_type = str(row.get("market_type") or "")
+        proposal_market_type = str(row.get("proposal_market_type") or "")
+        if (
+            market_type not in _NATIVE_MARKET_TYPES
+            or proposal_market_type != market_type
+            or not str(row.get("proposal_commit_hash") or "").strip()
+        ):
+            invalid.append("unresolved_entry_invalid_proposal_identity")
+        try:
+            leverage = float(row.get("proposal_leverage") or 1.0)
+        except (TypeError, ValueError):
+            leverage = None
+        if leverage is None or not math.isfinite(leverage) or leverage <= 0:
+            leverage = None
+            invalid.append("unresolved_entry_invalid_leverage")
 
         try:
             order_quantity = float(row.get("quantity"))
@@ -126,6 +211,13 @@ def _unresolved_entry_reservations() -> list[_UnresolvedEntryReservation]:
         if price is None or not math.isfinite(price) or price <= 0:
             price = None
             invalid.append("unresolved_entry_invalid_price")
+        elif authority_valid and row.get("execution_mode") == "paper_internal":
+            # Local paper stores the slipped fill price on Order while the hashed
+            # Proposal retains the approved plan price. Either can be higher; use
+            # the conservative floor so altering the mutable Order cannot lower
+            # the Risk allowance.
+            approved_price = float(proposal_snapshot["price"])
+            price = max(price, approved_price)
 
         try:
             persisted_fill_quantity = float(
@@ -147,7 +239,56 @@ def _unresolved_entry_reservations() -> list[_UnresolvedEntryReservation]:
         if not fill_quantity_valid:
             invalid.append("unresolved_entry_invalid_fill_quantity")
 
-        has_open_position = bool(row.get("has_open_position"))
+        try:
+            linked_position_count = int(
+                row.get("linked_open_position_count") or 0
+            )
+            matching_position_count = int(
+                row.get("matching_open_position_count") or 0
+            )
+            represented_position_quantity = float(
+                row.get("represented_position_quantity")
+            )
+            represented_entry_fill_quantity = float(
+                row.get("represented_entry_fill_quantity") or 0.0
+            )
+            invalid_represented_fill_count = int(
+                row.get("invalid_represented_entry_fill_count") or 0
+            )
+        except (TypeError, ValueError):
+            represented_position_quantity = None
+            represented_entry_fill_quantity = None
+            invalid_represented_fill_count = 1
+            linked_position_count = int(
+                row.get("linked_open_position_count") or 0
+            )
+            matching_position_count = int(
+                row.get("matching_open_position_count") or 0
+            )
+        representation_valid = False
+        if (
+            fill_quantity_valid
+            and represented_position_quantity is not None
+            and math.isfinite(represented_position_quantity)
+            and represented_position_quantity > 0
+            and represented_entry_fill_quantity is not None
+            and math.isfinite(represented_entry_fill_quantity)
+            and represented_entry_fill_quantity >= 0
+            and invalid_represented_fill_count == 0
+            and linked_position_count == 1
+            and matching_position_count == 1
+        ):
+            fill_tolerance = max(
+                1e-12,
+                abs(represented_entry_fill_quantity) * 1e-9,
+            )
+            representation_valid = (
+                represented_position_quantity + fill_tolerance
+                >= represented_entry_fill_quantity
+            )
+        has_open_position = representation_valid
+        if linked_position_count > 0 and not representation_valid:
+            invalid.append("unresolved_entry_position_authority_invalid")
         remaining_quantity: float | None = None
         reserved_quantity: float | None = None
         if order_quantity is not None:
@@ -166,8 +307,15 @@ def _unresolved_entry_reservations() -> list[_UnresolvedEntryReservation]:
         reservations.append(_UnresolvedEntryReservation(
             order_id=str(row.get("id") or ""),
             symbol=str(row.get("symbol") or ""),
+            market_type=market_type,
             execution_mode=str(row.get("execution_mode") or ""),
+            opportunity_id=(
+                str(row.get(f"{_RISK_PROPOSAL_PREFIX}opportunity_id"))
+                if row.get(f"{_RISK_PROPOSAL_PREFIX}opportunity_id")
+                else None
+            ),
             price=price,
+            leverage=leverage,
             order_quantity=order_quantity,
             persisted_fill_quantity=(
                 persisted_fill_quantity if fill_quantity_valid else None
@@ -190,6 +338,8 @@ def _pre_order_entry_reservations(
         exclude_proposal_id=exclude_proposal_id,
     ):
         invalid: list[str] = []
+        if not _pre_order_reservation_has_exact_authority(row):
+            invalid.append("entry_risk_reservation_authority_invalid")
         try:
             quantity = float(row.get("quantity"))
         except (TypeError, ValueError):
@@ -205,16 +355,33 @@ def _pre_order_entry_reservations(
             price = None
             invalid.append("entry_risk_reservation_invalid_price")
         symbol = str(row.get("symbol") or "")
+        market_type = str(row.get("market_type") or "")
         execution_mode = str(row.get("execution_mode") or "")
+        try:
+            leverage = float(row.get("leverage"))
+        except (TypeError, ValueError):
+            leverage = None
         if not symbol:
             invalid.append("entry_risk_reservation_invalid_symbol")
+        if market_type not in _NATIVE_MARKET_TYPES:
+            invalid.append("entry_risk_reservation_invalid_market_type")
         if execution_mode not in _NATIVE_EXECUTION_MODES:
             invalid.append("entry_risk_reservation_invalid_execution_mode")
+        if leverage is None or not math.isfinite(leverage) or leverage <= 0:
+            leverage = None
+            invalid.append("entry_risk_reservation_invalid_leverage")
         reservations.append(_PreOrderEntryReservation(
             proposal_id=str(row.get("proposal_id") or ""),
             symbol=symbol,
+            market_type=market_type,
             execution_mode=execution_mode,
+            opportunity_id=(
+                str(row.get(f"{_RISK_PROPOSAL_PREFIX}opportunity_id"))
+                if row.get(f"{_RISK_PROPOSAL_PREFIX}opportunity_id")
+                else None
+            ),
             price=price,
+            leverage=leverage,
             reserved_quantity=quantity,
             invalid_reasons=tuple(invalid),
         ))
@@ -349,6 +516,22 @@ def evaluate_proposal(
                 )
                 if existing is not None:
                     result = _risk_result_from_row(existing)
+                    # A pre-reservation authority from an older schema cannot
+                    # silently regain capacity after upgrade. If migration could
+                    # not prove and carry its allowance forward, re-run the
+                    # current dynamic gates before recreating the reservation.
+                    if (
+                        result.approved
+                        and proposal.source == "native"
+                        and not has_order_for_proposal(proposal.id)
+                        and get_entry_risk_reservation(proposal.id) is None
+                    ):
+                        refreshed = _evaluate_proposal_locked(
+                            proposal,
+                            decision_role="preflight",
+                        )
+                        if not refreshed.approved:
+                            return refreshed
                 else:
                     # Preserve the historical one-argument private call for the
                     # default role; lock-focused tests instrument this boundary.
@@ -374,9 +557,11 @@ def evaluate_proposal(
                             proposal_id=proposal.id,
                             proposal_commit_hash=proposal_commit_hash,
                             symbol=proposal.symbol,
+                            market_type=proposal.market_type,
                             execution_mode=proposal.execution_mode,
                             quantity=proposal.quantity,
                             price=proposal.price,
+                            leverage=float(proposal.leverage or 1.0),
                         )
                 return result
         return _evaluate_proposal_locked(proposal, decision_role=decision_role)
@@ -518,15 +703,18 @@ def _evaluate_proposal_locked(
         entry for entry in pre_order_entries
         if _is_live(entry.execution_mode) == prop_is_live
     ]
+    # A broken authority chain cannot use its own mutable mode/symbol to choose
+    # which pool sees the failure. Reject every new Proposal until the durable
+    # identity is repaired, while still using valid rows for normal pool counts.
     for reason in sorted({
         reason
-        for entry in pool_unresolved_entries
+        for entry in unresolved_entries
         for reason in entry.invalid_reasons
     }):
         violations.append(reason)
     for reason in sorted({
         reason
-        for entry in pool_pre_order_entries
+        for entry in pre_order_entries
         for reason in entry.invalid_reasons
     }):
         violations.append(reason)
@@ -721,12 +909,22 @@ def _evaluate_proposal_locked(
     violations.extend(lesson_violations)
 
     # 16. Portfolio correlation guard — sector concentration + portfolio BTC beta.
-    correlation_violations = _check_correlation_exposure(proposal, cfg)
+    correlation_violations = _check_correlation_exposure(
+        proposal,
+        cfg,
+        unresolved_entries,
+        pre_order_entries,
+    )
     violations.extend(correlation_violations)
 
     # 17. Account-level leverage ratio (futures only, additive).
     if proposal.market_type == "usdt_futures":
-        acct_lev_violations = _check_account_leverage_ratio(proposal, cfg)
+        acct_lev_violations = _check_account_leverage_ratio(
+            proposal,
+            cfg,
+            unresolved_entries=unresolved_entries,
+            pre_order_entries=pre_order_entries,
+        )
         violations.extend(acct_lev_violations)
 
     # 18. Liquidation buffer (futures only, additive).
@@ -958,7 +1156,10 @@ def _check_lesson_constraints(proposal) -> list[str]:
         store = LessonStore()
         # L-Bug-E fix: 'accepted' is a transient state (lesson_reviewer calls
         # accept then mark_applied in the same run), so query 'applied' instead.
-        active_lessons = store.list_all(status="applied", limit=50)
+        # SQLite LIMIT -1 means no limit. Applied Risk lessons are active
+        # authority, not a display feed; truncating them silently disables older
+        # blocks once the table grows.
+        active_lessons = store.list_all(status="applied", limit=-1)
         sym_canonical = to_canonical(proposal.symbol)
 
         from datetime import datetime, timezone
@@ -1148,11 +1349,18 @@ def _current_live_exposure(
     return total
 
 
-def _check_correlation_exposure(proposal: TradeProposal, cfg) -> list[str]:
+def _check_correlation_exposure(
+    proposal: TradeProposal,
+    cfg,
+    unresolved_entries: list[_UnresolvedEntryReservation] | None = None,
+    pre_order_entries: list[_PreOrderEntryReservation] | None = None,
+) -> list[str]:
     """Check #16: sector concentration + portfolio BTC beta.
 
-    Returns an empty list when correlation_guard_enabled=False or data is insufficient.
-    Never raises — any DB error silently returns [] (non-blocking guard).
+    Durable unresolved Orders and pre-Order Risk reservations are exposure even
+    before a Position exists. Returns an empty list when the guard is disabled,
+    there is no existing exposure, or market correlation data is insufficient.
+    Never raises; an internal read failure produces a fail-closed violation.
     """
     risk = cfg.risk
     if not getattr(risk, "correlation_guard_enabled", True):
@@ -1165,60 +1373,102 @@ def _check_correlation_exposure(proposal: TradeProposal, cfg) -> list[str]:
         )
         from aletheia.storage.sqlite import get_db
 
-        open_positions = list_all_open_positions()
-        if not open_positions:
+        proposal_is_live = _is_live(proposal.execution_mode)
+        open_positions = [
+            position
+            for position in list_all_open_positions()
+            if _is_live(str(position.get("execution_mode") or ""))
+            == proposal_is_live
+        ]
+        if unresolved_entries is None:
+            unresolved_entries = _unresolved_entry_reservations()
+        if pre_order_entries is None:
+            pre_order_entries = _pre_order_entry_reservations(
+                exclude_proposal_id=proposal.id,
+            )
+        unresolved_entries = [
+            entry
+            for entry in unresolved_entries
+            if _is_live(entry.execution_mode) == proposal_is_live
+        ]
+        pre_order_entries = [
+            entry
+            for entry in pre_order_entries
+            if _is_live(entry.execution_mode) == proposal_is_live
+        ]
+
+        # (symbol, notional, opportunity_id). Keep each position/reservation as
+        # an independent row instead of collapsing repeated symbols.
+        existing_exposures: list[tuple[str, float, str | None]] = []
+        for pos in open_positions:
+            try:
+                quantity = float(pos.get("quantity") or 0.0)
+                price = float(pos.get("current_price") or pos.get("entry_price") or 0.0)
+                notional = abs(quantity * price)
+            except (TypeError, ValueError):
+                notional = 0.0
+            if math.isfinite(notional) and notional > 0:
+                existing_exposures.append((
+                    str(pos.get("symbol") or ""),
+                    notional,
+                    str(pos.get("opportunity_id")) if pos.get("opportunity_id") else None,
+                ))
+
+        for entry in (*unresolved_entries, *pre_order_entries):
+            if entry.price is None or entry.reserved_quantity is None:
+                continue
+            notional = abs(entry.price * entry.reserved_quantity)
+            if math.isfinite(notional) and notional > 0:
+                existing_exposures.append((
+                    entry.symbol,
+                    notional,
+                    entry.opportunity_id,
+                ))
+
+        # Preserve the original behavior: the first exposure is not rejected
+        # merely because it is, by definition, 100% of an empty portfolio.
+        if not existing_exposures:
             return []
 
-        # ── Sector concentration ──────────────────────────────────────────────
-        # Gather scanner_family for each open position via its opportunity_id
-        families: list[str] = []
         prop_notional = 0.0
         if proposal.price and proposal.quantity:
             prop_notional = abs(proposal.price * proposal.quantity)
 
-        pos_notionals: dict[str, float] = {}
-        for pos in open_positions:
-            sym = pos.get("symbol", "")
-            try:
-                qty = float(pos.get("quantity") or 0.0)
-                price = float(pos.get("current_price") or pos.get("entry_price") or 0.0)
-                pos_notionals[sym] = abs(qty * price)
-            except (TypeError, ValueError):
-                pos_notionals[sym] = 0.0
+        all_exposures = [
+            *existing_exposures,
+            (proposal.symbol, prop_notional, proposal.opportunity_id),
+        ]
 
-            opp_id = pos.get("opportunity_id")
-            if opp_id:
-                try:
-                    db = get_db()
-                    row = db.execute(
-                        "SELECT scanner_family FROM opportunities WHERE id = ?", (opp_id,)
-                    ).fetchone()
-                    if row and row[0]:
-                        families.append(row[0])
-                except Exception:
-                    pass
+        # ── Sector concentration ──────────────────────────────────────────────
+        # Resolve all families in one read so a reservation cannot disappear
+        # between per-row lookups and a database failure cannot look like "none".
+        opportunity_ids = sorted({
+            opportunity_id
+            for _, _, opportunity_id in all_exposures
+            if opportunity_id
+        })
+        families: dict[str, str] = {}
+        if opportunity_ids:
+            placeholders = ",".join("?" for _ in opportunity_ids)
+            rows = get_db().execute(
+                f"SELECT id, scanner_family FROM opportunities WHERE id IN ({placeholders})",
+                opportunity_ids,
+            ).fetchall()
+            families = {
+                str(row[0]): str(row[1])
+                for row in rows
+                if row[0] and row[1]
+            }
 
-        # Determine proposal's own family from its opportunity
-        prop_family: str | None = None
-        if proposal.opportunity_id:
-            try:
-                db = get_db()
-                row = db.execute(
-                    "SELECT scanner_family FROM opportunities WHERE id = ?",
-                    (proposal.opportunity_id,)
-                ).fetchone()
-                if row and row[0]:
-                    prop_family = row[0]
-            except Exception:
-                pass
-
-        if prop_family and families:
-            total_notional = sum(pos_notionals.values()) + prop_notional
+        prop_family = families.get(str(proposal.opportunity_id))
+        if prop_family:
+            total_notional = sum(notional for _, notional, _ in all_exposures)
             if total_notional > 0:
                 family_notional = sum(
-                    n for sym, n in pos_notionals.items()
-                    if _symbol_family(sym, open_positions) == prop_family
-                ) + prop_notional
+                    notional
+                    for _, notional, opportunity_id in all_exposures
+                    if families.get(str(opportunity_id)) == prop_family
+                )
                 sector_pct = (family_notional / total_notional) * 100
                 max_pct = getattr(risk, "max_sector_concentration_pct", 60.0)
                 if sector_pct > max_pct:
@@ -1230,15 +1480,13 @@ def _check_correlation_exposure(proposal: TradeProposal, cfg) -> list[str]:
         max_beta = getattr(risk, "max_portfolio_beta", 3.0)
         prop_beta = _lookup_beta(proposal.symbol)
         if prop_beta is not None and prop_notional > 0:
-            total_notional = sum(pos_notionals.values()) + prop_notional
+            total_notional = sum(notional for _, notional, _ in all_exposures)
             if total_notional > 0:
                 weighted_beta = prop_beta * prop_notional
-                for pos in open_positions:
-                    sym = pos.get("symbol", "")
+                for sym, notional, _ in existing_exposures:
                     b = _lookup_beta(sym)
-                    n = pos_notionals.get(sym, 0.0)
-                    if b is not None and n > 0:
-                        weighted_beta += abs(b) * n
+                    if b is not None:
+                        weighted_beta += abs(b) * notional
                 portfolio_beta = weighted_beta / total_notional
                 if portfolio_beta > max_beta:
                     violations.append(
@@ -1344,7 +1592,13 @@ def _symbol_family(symbol: str, positions: list[dict]) -> str | None:
 # Check #17: Account-level leverage ratio
 # ---------------------------------------------------------------------------
 
-def _check_account_leverage_ratio(proposal: TradeProposal, cfg) -> list[str]:
+def _check_account_leverage_ratio(
+    proposal: TradeProposal,
+    cfg,
+    *,
+    unresolved_entries: list[_UnresolvedEntryReservation] | None = None,
+    pre_order_entries: list[_PreOrderEntryReservation] | None = None,
+) -> list[str]:
     """Reject if adding this trade would push account leverage ratio above cap.
 
     account_leverage = sum(|pos_notional| * pos_leverage) / equity
@@ -1375,6 +1629,38 @@ def _check_account_leverage_ratio(proposal: TradeProposal, cfg) -> list[str]:
                 weighted_notional += abs(qty * price) * lev
             except (TypeError, ValueError):
                 continue
+
+        if unresolved_entries is None:
+            unresolved_entries = _unresolved_entry_reservations()
+        for entry in unresolved_entries:
+            if _is_live(entry.execution_mode) != is_live:
+                continue
+            if (
+                entry.reserved_quantity is None
+                or entry.price is None
+                or entry.leverage is None
+            ):
+                continue
+            weighted_notional += (
+                abs(entry.reserved_quantity * entry.price) * entry.leverage
+            )
+
+        if pre_order_entries is None:
+            pre_order_entries = _pre_order_entry_reservations(
+                exclude_proposal_id=proposal.id,
+            )
+        for entry in pre_order_entries:
+            if _is_live(entry.execution_mode) != is_live:
+                continue
+            if (
+                entry.reserved_quantity is None
+                or entry.price is None
+                or entry.leverage is None
+            ):
+                continue
+            weighted_notional += (
+                abs(entry.reserved_quantity * entry.price) * entry.leverage
+            )
 
         if proposal.price and proposal.quantity:
             prop_lev = float(proposal.leverage or 1)

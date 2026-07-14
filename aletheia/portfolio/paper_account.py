@@ -1,17 +1,14 @@
 """Cash ledger and affordability view for the local ``paper_internal`` account."""
 
-import threading
-
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import PaperAccountEvent
 
 INITIAL_PAPER_CASH_USDT = 200.0
-_account_lock = threading.Lock()
 
 
 def _open_local_positions() -> list[dict]:
     return [
-        position for position in repo.list_positions(status="open", limit=10_000)
+        position for position in repo.list_all_open_positions()
         if position.get("execution_mode") == "paper_internal"
     ]
 
@@ -43,23 +40,31 @@ def _reserved_margin_usdt(positions: list[dict]) -> float:
 
 def _write_event(*, action: str, amount_usdt: float, actor: str, source: str,
                  position_id: str | None = None, note: str = "") -> PaperAccountEvent:
-    before = repo.get_paper_account_cash_balance()
-    after = round(before + amount_usdt, 8)
-    if after < -1e-8:
-        raise ValueError("paper account cash balance cannot be negative")
-    event = PaperAccountEvent(
-        action=action, amount_usdt=round(amount_usdt, 8),
-        cash_balance_before_usdt=round(before, 8),
-        cash_balance_after_usdt=max(0.0, after), actor=actor, source=source,
-        position_id=position_id, note=note,
-    )
-    repo.insert_paper_account_event(event)
+    # SQLite is the single serialization authority for the ledger.  This helper
+    # may be called from an existing Risk/entry/close transaction; transaction()
+    # joins that writer instead of taking a process lock in the opposite order.
+    with repo.transaction(immediate=True):
+        before = repo.get_paper_account_cash_balance()
+        after = round(before + amount_usdt, 8)
+        if after < -1e-8:
+            raise ValueError("paper account cash balance cannot be negative")
+        event = PaperAccountEvent(
+            action=action, amount_usdt=round(amount_usdt, 8),
+            cash_balance_before_usdt=round(before, 8),
+            cash_balance_after_usdt=max(0.0, after), actor=actor, source=source,
+            position_id=position_id, note=note,
+        )
+        repo.insert_paper_account_event(event)
     return event
 
 
 def ensure_paper_account() -> None:
     """Create exactly one starting-funds event, without reviving deliberate zero cash."""
-    with _account_lock:
+    if repo.has_paper_account_event():
+        return
+    with repo.transaction(immediate=True):
+        # Recheck after owning SQLite's writer slot so concurrent cold readers
+        # cannot both seed the account.
         if not repo.has_paper_account_event():
             _write_event(
                 action="initial_funding", amount_usdt=INITIAL_PAPER_CASH_USDT,
@@ -103,8 +108,10 @@ def adjust_cash(amount_usdt: float, *, note: str = "", actor: str = "human",
         raise ValueError("paper account adjustment must be non-zero")
     ensure_paper_account()
     action = "manual_credit" if amount_usdt > 0 else "manual_debit"
-    with _account_lock:
-        _write_event(action=action, amount_usdt=amount_usdt, actor=actor, source=source, note=note)
+    _write_event(
+        action=action, amount_usdt=amount_usdt, actor=actor,
+        source=source, note=note,
+    )
     return get_paper_account()
 
 
@@ -113,7 +120,7 @@ def set_cash_balance(amount_usdt: float, *, note: str = "", actor: str = "human"
     if amount_usdt < 0:
         raise ValueError("paper account cash balance must be non-negative")
     ensure_paper_account()
-    with _account_lock:
+    with repo.transaction(immediate=True):
         delta = round(amount_usdt - repo.get_paper_account_cash_balance(), 8)
         _write_event(action="manual_set_balance", amount_usdt=delta, actor=actor,
                      source=source, note=note)
@@ -122,7 +129,7 @@ def set_cash_balance(amount_usdt: float, *, note: str = "", actor: str = "human"
 
 def record_position_opened(position_id: str) -> None:
     ensure_paper_account()
-    with _account_lock:
+    with repo.transaction(immediate=True):
         if not repo.has_paper_account_position_event("position_opened", position_id):
             _write_event(action="position_opened", amount_usdt=0.0, actor="system",
                          source="paper_broker", position_id=position_id,
@@ -132,7 +139,7 @@ def record_position_opened(position_id: str) -> None:
 def settle_position_closed(position_id: str, realized_pnl: float) -> None:
     """Record local realized PnL once after the normal close path succeeds."""
     ensure_paper_account()
-    with _account_lock:
+    with repo.transaction(immediate=True):
         if not repo.has_paper_account_position_event("position_closed", position_id):
             _write_event(action="position_closed", amount_usdt=realized_pnl, actor="system",
                          source="portfolio_pnl", position_id=position_id,

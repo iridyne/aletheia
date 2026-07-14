@@ -68,7 +68,11 @@ def _risk_config(monkeypatch, *, demo_slots: int = 1):
             event_count=0,
         ),
     )
-    monkeypatch.setattr(engine, "_check_correlation_exposure", lambda *_args: [])
+    monkeypatch.setattr(
+        engine,
+        "_check_correlation_exposure",
+        lambda *_args, **_kwargs: [],
+    )
     monkeypatch.setattr(engine, "_portfolio_drawdown_scale", lambda _mode: 1.0)
     return cfg
 
@@ -109,22 +113,14 @@ def test_distinct_proposals_cannot_oversubscribe_one_risk_slot(tmp_path, monkeyp
     for proposal in proposals:
         repo.insert_trade_proposal(proposal)
 
-    real_evaluate = gateway.evaluate_proposal
-    both_evaluated = threading.Barrier(2)
-
-    def hold_after_authoritative(candidate, **kwargs):
-        result = real_evaluate(candidate, **kwargs)
-        if kwargs.get("decision_role") == "authoritative":
-            both_evaluated.wait(timeout=5)
-        return result
-
-    monkeypatch.setattr(gateway, "evaluate_proposal", hold_after_authoritative)
+    simultaneous_start = threading.Barrier(2)
     results: list[dict] = []
     errors: list[BaseException] = []
     result_lock = threading.Lock()
 
     def execute(proposal_id: str) -> None:
         try:
+            simultaneous_start.wait(timeout=5)
             result = gateway.execute_existing_proposal(proposal_id)
             with result_lock:
                 results.append(result)
@@ -201,6 +197,145 @@ def test_authoritative_reservation_blocks_capacity_before_order(tmp_path, monkey
 
 @spec_claim(
     SpecClaim(
+        "PL-MSI-14",
+        "pipeline_middle_state_integrity",
+        "§1 complete leverage reservation",
+        "L2c",
+        "Account leverage includes every pre-Order reservation and unresolved Order, "
+        "using the leverage and market identity committed by the Proposal.",
+        status="implemented",
+    )
+)
+def test_account_leverage_counts_pre_order_and_unresolved_entries(
+    tmp_path,
+    monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    cfg = _risk_config(monkeypatch, demo_slots=10)
+    cfg.risk.max_account_leverage_demo = 3.0
+
+    import aletheia.risk.engine as engine
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order, TradeProposal
+
+    monkeypatch.setattr(engine, "_account_equity", lambda *_args: 1_000.0)
+    monkeypatch.setattr(
+        engine,
+        "_cached_available_balance_usdt",
+        lambda *_args: None,
+    )
+
+    first = TradeProposal(
+        id="leverage-pre-order",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=20.0,
+        price=100.0,
+        leverage=1,
+        execution_mode="paper_internal",
+        status="executing",
+    )
+    repo.insert_trade_proposal(first)
+    first_result = engine.evaluate_proposal(first, decision_role="authoritative")
+    assert first_result.approved is True
+    reservation = repo.get_entry_risk_reservation(first.id)
+    assert reservation is not None
+    assert reservation["market_type"] == "usdt_futures"
+    assert reservation["leverage"] == pytest.approx(1.0)
+
+    second = TradeProposal(
+        id="leverage-after-pre-order",
+        symbol="ETH/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=20.0,
+        price=100.0,
+        leverage=1,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(second)
+    blocked_by_reservation = engine.evaluate_proposal(
+        second,
+        decision_role="preflight",
+    )
+    assert "account_leverage_ratio:4.00x>3.0x" in blocked_by_reservation.violations
+
+    decision = repo.get_authoritative_risk_decision(
+        first.id,
+        first.commit_hash,
+        first.quantity,
+    )
+    assert decision is not None
+    repo.insert_order(Order(
+        id="leverage-unresolved-order",
+        proposal_id=first.id,
+        risk_decision_id=decision["id"],
+        client_order_id=first.id,
+        symbol=first.symbol,
+        market_type=first.market_type,
+        direction=first.direction,
+        order_type=first.order_type,
+        quantity=first.quantity,
+        price=first.price,
+        execution_mode=first.execution_mode,
+        status="pending",
+    ))
+    assert conn.execute(
+        "SELECT COUNT(*) FROM entry_risk_reservations r "
+        "WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.proposal_id=r.proposal_id)"
+    ).fetchone()[0] == 0
+
+    blocked_by_order = engine.evaluate_proposal(second, decision_role="preflight")
+    assert "account_leverage_ratio:4.00x>3.0x" in blocked_by_order.violations
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MSI-15",
+        "pipeline_middle_state_integrity",
+        "§1 paper dispatch current Risk",
+        "L2c",
+        "A paper Proposal approved before a crash must pass a fresh preflight before "
+        "dispatch, so a newly-active kill switch cannot be bypassed by replay.",
+        status="implemented",
+    )
+)
+def test_paper_replay_rechecks_kill_switch_before_dispatch(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    cfg = _risk_config(monkeypatch, demo_slots=2)
+
+    from aletheia.execution import gateway
+    import aletheia.risk.engine as engine
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        id="paper-stale-authority",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        price=100.0,
+        execution_mode="paper_internal",
+        status="executing",
+    )
+    repo.insert_trade_proposal(proposal)
+    approved = engine.evaluate_proposal(proposal, decision_role="authoritative")
+    assert approved.approved is True
+    assert repo.get_entry_risk_reservation(proposal.id) is not None
+
+    cfg.runtime.kill_switch_active = True
+    replay = gateway.execute_existing_proposal(proposal.id)
+
+    assert replay["status"] == "rejected"
+    assert "kill_switch_active" in replay["risk_violations"]
+    assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0] == 0
+
+
+@spec_claim(
+    SpecClaim(
         "PL-MSI-10",
         "pipeline_middle_state_integrity",
         "§1 terminal reservation cleanup",
@@ -238,6 +373,77 @@ def test_known_pre_order_terminal_rejection_releases_reservation(tmp_path, monke
     assert result["status"] == "rejected"
     assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
     assert repo.get_entry_risk_reservation(proposal.id) is None
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MSI-20",
+        "pipeline_middle_state_integrity",
+        "§1 restart-safe terminal reservation cleanup",
+        "L2c",
+        "A known rejected/error/executed Proposal with no Order cannot keep consuming a "
+        "Risk slot after best-effort reservation cleanup fails; ambiguous or unprovable "
+        "rows remain fail-closed.",
+        status="implemented",
+    )
+)
+def test_terminal_no_order_reservation_is_inactive_after_cleanup_failure(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _risk_config(monkeypatch, demo_slots=1)
+
+    from aletheia.execution import gateway
+    import aletheia.risk.engine as engine
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    terminal = TradeProposal(
+        id="terminal-reservation-cleanup-failed",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        price=100.0,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(terminal)
+    monkeypatch.setattr(
+        gateway,
+        "_check_symbol_availability",
+        lambda *_args, **_kwargs: "deterministic_symbol_unavailable",
+    )
+    monkeypatch.setattr(
+        gateway,
+        "release_entry_risk_reservation",
+        lambda _proposal_id: (_ for _ in ()).throw(
+            sqlite3.OperationalError("one-time reservation cleanup failure")
+        ),
+    )
+
+    rejected = gateway.execute_existing_proposal(terminal.id)
+    assert rejected["status"] == "rejected"
+    assert repo.get_trade_proposal(terminal.id)["status"] == "rejected"
+    assert repo.get_entry_risk_reservation(terminal.id) is not None
+    assert conn.execute(
+        "SELECT COUNT(*) FROM orders WHERE proposal_id=?", (terminal.id,)
+    ).fetchone()[0] == 0
+
+    candidate = TradeProposal(
+        id="after-terminal-cleanup-failure",
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        price=100.0,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(candidate)
+    preflight = engine.evaluate_proposal(candidate, decision_role="preflight")
+
+    assert repo.list_active_entry_risk_reservations_for_risk() == []
+    assert "max_demo_positions_reached:1" not in preflight.violations
+    assert preflight.approved is True
 
 
 @spec_claim(
@@ -562,6 +768,154 @@ def test_trade_opportunity_and_divergence_identity_helpers(tmp_path, monkeypatch
 
 @spec_claim(
     SpecClaim(
+        "PL-MSI-18",
+        "pipeline_middle_state_integrity",
+        "§5 atomic Opportunity producer identity",
+        "L2c",
+        "Concurrent observer and universe producers for one symbol, snapshot, and market "
+        "resolve one durable Opportunity owner instead of inserting duplicate lifecycles.",
+        status="implemented",
+    )
+)
+def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.sqlite import get_db
+
+    barrier = threading.Barrier(2)
+    results: list[tuple[str, bool]] = []
+    errors: list[BaseException] = []
+    result_lock = threading.Lock()
+
+    def produce(index: int) -> None:
+        try:
+            candidate = Opportunity(
+                id=f"snapshot-race-{index}",
+                symbol="BTC/USDT",
+                market="spot",
+                direction_bias="long",
+                universe_snapshot_id="snapshot-race-owner",
+                source_agent=(
+                    "market_observer" if index == 0 else "universe_scanner"
+                ),
+            )
+            barrier.wait(timeout=5)
+            owner, created = repo.insert_opportunity_once_by_snapshot(candidate)
+            with result_lock:
+                results.append((str(owner["id"]), created))
+        except BaseException as exc:  # pragma: no cover - asserted below
+            with result_lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=produce, args=(index,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    rows = get_db().execute(
+        "SELECT id FROM opportunities WHERE symbol='BTC/USDT' "
+        "AND universe_snapshot_id='snapshot-race-owner' AND market='spot'"
+    ).fetchall()
+    assert not errors
+    assert len(results) == 2
+    assert sum(created for _owner, created in results) == 1
+    assert len({owner for owner, _created in results}) == 1
+    assert [row["id"] for row in rows] == [results[0][0]]
+    owner_id = results[0][0]
+    assert repo.transition_open_opportunity_to_queued(owner_id) is True
+    assert repo.update_open_opportunity(
+        owner_id,
+        thesis="late observer output must not rewrite a queued owner",
+        direction_bias="short",
+    ) is False
+    queued = repo.get_opportunity(owner_id)
+    assert queued["status"] == "queued"
+    assert queued["thesis"] != "late observer output must not rewrite a queued owner"
+    assert queued["direction_bias"] == "long"
+    import inspect
+    from aletheia.agents import market_observer
+    from aletheia.universe import signal_emitter
+
+    assert "insert_opportunity_once_by_snapshot(" in inspect.getsource(
+        market_observer
+    )
+    assert "update_open_opportunity(" in inspect.getsource(market_observer)
+    assert "insert_opportunity_once_by_snapshot(" in inspect.getsource(
+        signal_emitter
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MSI-19",
+        "pipeline_middle_state_integrity",
+        "§5 atomic divergence source identity",
+        "L2c",
+        "Concurrent divergence retries for one immutable prediction source version resolve "
+        "one durable Opportunity owner across every lifecycle state.",
+        status="implemented",
+    )
+)
+def test_divergence_source_version_identity_claim_is_atomic(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.sqlite import get_db
+
+    barrier = threading.Barrier(2)
+    results: list[tuple[str, bool]] = []
+    errors: list[BaseException] = []
+    result_lock = threading.Lock()
+
+    def produce(index: int) -> None:
+        try:
+            candidate = Opportunity(
+                id=f"divergence-race-{index}",
+                symbol="SOL/USDT",
+                market="spot",
+                direction_bias="long",
+                source_agent="divergence_scanner",
+                metadata=json.dumps({"source_version": "divergence-race-v1"}),
+            )
+            barrier.wait(timeout=5)
+            owner, created = repo.insert_divergence_opportunity_once(
+                candidate, source_version="divergence-race-v1"
+            )
+            with result_lock:
+                results.append((str(owner["id"]), created))
+        except BaseException as exc:  # pragma: no cover - asserted below
+            with result_lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=produce, args=(index,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    rows = get_db().execute(
+        "SELECT id FROM opportunities WHERE source_agent='divergence_scanner' "
+        "AND json_extract(metadata, '$.source_version')='divergence-race-v1'"
+    ).fetchall()
+    assert not errors
+    assert len(results) == 2
+    assert sum(created for _owner, created in results) == 1
+    assert len({owner for owner, _created in results}) == 1
+    assert [row["id"] for row in rows] == [results[0][0]]
+    import inspect
+    from aletheia.agents import divergence_scanner
+
+    assert "insert_divergence_opportunity_once(" in inspect.getsource(
+        divergence_scanner
+    )
+
+
+@spec_claim(
+    SpecClaim(
         "PL-MSI-07",
         "pipeline_middle_state_integrity",
         "§6 atomic Serenity queue handoff",
@@ -747,15 +1101,174 @@ def test_entry_risk_reservation_schema_is_registered(tmp_path, monkeypatch):
         "proposal_id",
         "proposal_commit_hash",
         "symbol",
+        "market_type",
         "execution_mode",
         "quantity",
         "price",
+        "leverage",
         "created_at",
     }
     root = Path(__file__).resolve().parents[2]
     assert "`entry_risk_reservations`" in (
         root / "docs/design/data_model.md"
     ).read_text(encoding="utf-8")
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MSI-16",
+        "pipeline_middle_state_integrity",
+        "§1 reservation upgrade continuity",
+        "L2c",
+        "Schema upgrade backfills only provable approved, non-terminal, no-Order "
+        "authorities; incomplete legacy identity remains unreserved and fail-closed.",
+        status="implemented",
+    )
+)
+def test_reservation_migration_backfills_only_provable_authority(
+    tmp_path,
+    monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.models import RiskDecision, TradeProposal
+
+    proposal = TradeProposal(
+        id="migration-provable-authority",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=2.0,
+        price=100.0,
+        leverage=4,
+        execution_mode="paper_internal",
+        status="executing",
+    )
+    repo.insert_trade_proposal(proposal)
+    repo.insert_risk_decision(RiskDecision(
+        id="migration-provable-decision",
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode=proposal.execution_mode,
+        proposal_execution_mode=proposal.execution_mode,
+        decision_role="authoritative",
+        evaluated_quantity=proposal.quantity,
+        proposal_commit_hash=proposal.commit_hash,
+    ))
+
+    # An old row with no commit identity cannot be promoted into authority by migration.
+    conn.execute(
+        "INSERT INTO trade_proposals "
+        "(id,symbol,market_type,direction,order_type,quantity,price,execution_mode,"
+        "status,source,commit_hash) VALUES "
+        "('migration-unknown','ETH/USDT','usdt_futures','long','market',1,100,"
+        "'paper_internal','executing','native',NULL)"
+    )
+    conn.execute(
+        "INSERT INTO risk_decisions "
+        "(id,proposal_id,approved,allowed_execution_mode,proposal_execution_mode,"
+        "decision_role,evaluated_quantity,proposal_commit_hash) VALUES "
+        "('migration-unknown-decision','migration-unknown',1,'paper_internal',"
+        "'paper_internal','authoritative',1,NULL)"
+    )
+    conn.execute("DROP TABLE entry_risk_reservations")
+    run_migrations()
+
+    rows = [
+        dict(row)
+        for row in conn.execute(
+            "SELECT * FROM entry_risk_reservations ORDER BY proposal_id"
+        ).fetchall()
+    ]
+    assert len(rows) == 1
+    assert rows[0]["proposal_id"] == proposal.id
+    assert rows[0]["proposal_commit_hash"] == proposal.commit_hash
+    assert rows[0]["market_type"] == proposal.market_type
+    assert rows[0]["leverage"] == pytest.approx(4.0)
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-MSI-17",
+        "pipeline_middle_state_integrity",
+        "§1 normalized reservation upgrade continuity",
+        "L2c",
+        "An older reservation whose quantity was venue-normalized remains provable "
+        "when it equals the authoritative RiskDecision evaluated quantity, even when "
+        "the original hashed Proposal committed a different requested quantity.",
+        status="implemented",
+    )
+)
+def test_reservation_migration_preserves_normalized_evaluated_quantity(
+    tmp_path,
+    monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.models import RiskDecision, TradeProposal
+
+    proposal = TradeProposal(
+        id="migration-normalized-authority",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=10.0,
+        price=100.0,
+        leverage=4,
+        execution_mode="paper_internal",
+        status="executing",
+    )
+    repo.insert_trade_proposal(proposal)
+    repo.insert_risk_decision(RiskDecision(
+        id="migration-normalized-decision",
+        proposal_id=proposal.id,
+        approved=True,
+        allowed_execution_mode=proposal.execution_mode,
+        proposal_execution_mode=proposal.execution_mode,
+        decision_role="authoritative",
+        evaluated_quantity=9.0,
+        proposal_commit_hash=proposal.commit_hash,
+    ))
+
+    conn.execute("DROP TABLE entry_risk_reservations")
+    conn.execute(
+        """
+        CREATE TABLE entry_risk_reservations (
+            proposal_id TEXT PRIMARY KEY,
+            proposal_commit_hash TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            execution_mode TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            price REAL NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO entry_risk_reservations "
+        "(proposal_id,proposal_commit_hash,symbol,execution_mode,quantity,price) "
+        "VALUES (?,?,?,?,?,?)",
+        (
+            proposal.id,
+            proposal.commit_hash,
+            proposal.symbol,
+            proposal.execution_mode,
+            9.0,
+            proposal.price,
+        ),
+    )
+
+    run_migrations()
+
+    reservation = repo.get_entry_risk_reservation(proposal.id)
+    assert reservation is not None
+    assert reservation["quantity"] == pytest.approx(9.0)
+    assert reservation["market_type"] == proposal.market_type
+    assert reservation["leverage"] == pytest.approx(4.0)
 
 
 def test_safety_loops_do_not_use_the_truncated_open_position_reader():

@@ -116,6 +116,43 @@ def test_daily_loss_uses_authoritative_account_snapshot(monkeypatch):
 
 
 @spec_claim(
+    SpecClaim(
+        "RE-B21", "risk_engine_contract", "§2 check 8 complete account loss window", "L2c",
+        "Daily-loss authority fails closed when the exact same-day close count exceeds "
+        "the bounded raw event window; an older loss cannot disappear behind 10,000 rows.",
+        status="implemented",
+    )
+)
+def test_daily_loss_fails_closed_when_account_event_window_is_truncated():
+    from datetime import datetime, timezone
+
+    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+    from aletheia.storage.sqlite import get_db
+
+    closed_at = datetime.now(timezone.utc).isoformat()
+    get_db().executemany(
+        "INSERT INTO positions "
+        "(id,symbol,market_type,direction,quantity,entry_price,current_price,"
+        "realized_pnl,execution_mode,status,closed_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                f"daily-loss-window-{index}", "BTC/USDT", "spot", "long",
+                1.0, 100.0, 100.0, 0.0, "okx_demo", "closed", closed_at,
+            )
+            for index in range(10_001)
+        ],
+    )
+
+    snapshot = authoritative_account_realized_loss("okx_demo")
+
+    assert snapshot.available is False
+    assert snapshot.reason == "account_event_window_truncated"
+    assert snapshot.realized_pnl_usdt is None
+    assert snapshot.event_count == 10_001
+
+
+@spec_claim(
     SpecClaim("RE-B01", "risk_engine_contract", "§3 persistence", "L2b",
               "Every evaluate_proposal persists exactly one RiskDecision row"),
 )
@@ -263,6 +300,246 @@ def test_correlation_exposure_error_produces_violation(monkeypatch):
         assert any("correlation_check_error" in v for v in violations), (
             "Internal failure must produce safe-reject violation, not empty list"
         )
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-B04a",
+        "risk_engine_contract",
+        "§2 check #16",
+        "L2c",
+        "Sector concentration and portfolio beta include authoritative pre-Order "
+        "reservations and unresolved entry Orders, not only open Positions.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize("first_state", ("pre_order", "unresolved_order"))
+def test_correlation_guards_include_unmaterialized_entry_exposure(
+    tmp_path, monkeypatch, first_state
+):
+    """Two same-family approvals must not bypass the guard before Positions exist."""
+    import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio.account_loss import AccountLossSnapshot
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity, Order, TradeProposal
+
+    _setup_db(tmp_path, monkeypatch)
+
+    cfg = AletheiaConfig()
+    cfg.agent.permission_mode = "Paper"
+    cfg.risk.correlation_guard_enabled = True
+    cfg.risk.max_sector_concentration_pct = 60.0
+    cfg.risk.max_portfolio_beta = 3.0
+    cfg.risk.max_open_positions_demo = 10
+    cfg.risk.max_demo_position_notional_usdt = 100_000.0
+    cfg.risk.max_per_symbol_notional_usdt = 100_000.0
+    monkeypatch.setattr(eng, "load_config", lambda: cfg)
+    monkeypatch.setattr(eng, "_portfolio_drawdown_scale", lambda _mode: 1.0)
+    monkeypatch.setattr(eng, "_check_lesson_constraints", lambda _proposal: [])
+    monkeypatch.setattr(eng, "_lookup_beta", lambda _symbol: 4.0)
+    monkeypatch.setattr(
+        eng,
+        "authoritative_account_realized_loss",
+        lambda _mode: AccountLossSnapshot(
+            available=True,
+            realized_pnl_usdt=0.0,
+            loss_usdt=0.0,
+            source="isolated_test",
+            reason="available",
+            event_count=0,
+        ),
+    )
+
+    proposals = []
+    for index, symbol in enumerate(("BTC/USDT", "ETH/USDT"), start=1):
+        opportunity = Opportunity(
+            id=f"sector-reservation-opportunity-{index}",
+            symbol=symbol,
+            market="spot",
+            direction_bias="long",
+            confidence="high",
+            confidence_score=90,
+            source_agent="market_observer",
+            scanner_family="momentum",
+        )
+        repo.insert_opportunity(opportunity)
+        proposal = TradeProposal(
+            id=f"sector-reservation-proposal-{index}",
+            opportunity_id=opportunity.id,
+            symbol=symbol,
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=1.0,
+            price=100.0,
+            execution_mode="paper_internal",
+        )
+        repo.insert_trade_proposal(proposal)
+        proposals.append(proposal)
+
+    first = eng.evaluate_proposal(proposals[0], decision_role="authoritative")
+    assert first.approved, first.violations
+    assert repo.get_entry_risk_reservation(proposals[0].id) is not None
+    assert repo.list_all_open_positions() == []
+    if first_state == "unresolved_order":
+        repo.insert_order(Order(
+            id="sector-reservation-unresolved-order",
+            proposal_id=proposals[0].id,
+            risk_decision_id=first.decision_id,
+            symbol=proposals[0].symbol,
+            market_type=proposals[0].market_type,
+            direction=proposals[0].direction,
+            order_type=proposals[0].order_type,
+            quantity=proposals[0].quantity,
+            price=proposals[0].price,
+            execution_mode=proposals[0].execution_mode,
+            status="submission_unknown",
+        ))
+        repo.release_entry_risk_reservation(proposals[0].id)
+        assert repo.get_entry_risk_reservation(proposals[0].id) is None
+        assert len(repo.list_unresolved_native_entry_orders_for_risk()) == 1
+
+    second = eng.evaluate_proposal(proposals[1], decision_role="authoritative")
+
+    assert not second.approved, second.violations
+    assert any(
+        violation.startswith("sector_concentration:momentum:")
+        for violation in second.violations
+    ), second.violations
+    assert any(
+        violation.startswith("portfolio_beta:")
+        for violation in second.violations
+    ), second.violations
+    assert repo.get_entry_risk_reservation(proposals[1].id) is None
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-B04b",
+        "risk_engine_contract",
+        "§2 check #16 live/demo pool isolation",
+        "L2c",
+        "Sector concentration is calculated within the Proposal's live or demo pool; "
+        "large unrelated exposure in the other pool cannot dilute it.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize(
+    ("proposal_mode", "other_pool_mode"),
+    [
+        pytest.param(
+            "okx_live_limited",
+            "paper_internal",
+            id="live-not-diluted-by-demo",
+        ),
+        pytest.param(
+            "paper_internal",
+            "okx_live_limited",
+            id="demo-not-diluted-by-live",
+        ),
+    ],
+)
+def test_sector_concentration_isolated_by_live_demo_pool(
+    tmp_path, monkeypatch, proposal_mode, other_pool_mode
+):
+    """An unrelated Position in the other authority pool cannot dilute a breach."""
+    import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity, Position, TradeProposal
+
+    _setup_db(tmp_path, monkeypatch)
+
+    cfg = AletheiaConfig()
+    cfg.risk.correlation_guard_enabled = True
+    cfg.risk.max_sector_concentration_pct = 60.0
+    monkeypatch.setattr(eng, "_lookup_beta", lambda _symbol: None)
+
+    existing_opportunity = Opportunity(
+        id=f"pool-existing-opportunity-{proposal_mode}",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        source_agent="market_observer",
+        scanner_family="momentum",
+    )
+    proposal_opportunity = Opportunity(
+        id=f"pool-proposal-opportunity-{proposal_mode}",
+        symbol="ETH/USDT",
+        market="spot",
+        direction_bias="long",
+        source_agent="market_observer",
+        scanner_family="momentum",
+    )
+    other_opportunity = Opportunity(
+        id=f"pool-other-opportunity-{proposal_mode}",
+        symbol="SOL/USDT",
+        market="spot",
+        direction_bias="long",
+        source_agent="market_observer",
+        scanner_family="mean_reversion",
+    )
+    for opportunity in (
+        existing_opportunity,
+        proposal_opportunity,
+        other_opportunity,
+    ):
+        repo.insert_opportunity(opportunity)
+
+    repo.insert_position(Position(
+        id=f"pool-existing-position-{proposal_mode}",
+        symbol=existing_opportunity.symbol,
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=100.0,
+        execution_mode=proposal_mode,
+        opportunity_id=existing_opportunity.id,
+        status="open",
+    ))
+    proposal = TradeProposal(
+        id=f"pool-proposal-{proposal_mode}",
+        opportunity_id=proposal_opportunity.id,
+        symbol=proposal_opportunity.symbol,
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1.0,
+        price=100.0,
+        execution_mode=proposal_mode,
+    )
+    repo.insert_trade_proposal(proposal)
+
+    baseline = eng._check_correlation_exposure(proposal, cfg)
+    assert any(
+        violation.startswith("sector_concentration:momentum:")
+        for violation in baseline
+    ), baseline
+
+    repo.insert_position(Position(
+        id=f"pool-other-position-{proposal_mode}",
+        symbol=other_opportunity.symbol,
+        market_type="spot",
+        direction="long",
+        quantity=100.0,
+        entry_price=100.0,
+        current_price=100.0,
+        execution_mode=other_pool_mode,
+        opportunity_id=other_opportunity.id,
+        status="open",
+    ))
+
+    after_other_pool_exposure = eng._check_correlation_exposure(proposal, cfg)
+
+    assert any(
+        violation.startswith("sector_concentration:momentum:")
+        for violation in after_other_pool_exposure
+    ), (
+        f"{proposal_mode} concentration was diluted by {other_pool_mode}: "
+        f"{after_other_pool_exposure!r}"
+    )
 
 
 @spec_claim(

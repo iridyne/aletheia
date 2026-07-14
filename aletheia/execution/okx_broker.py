@@ -19,6 +19,9 @@ from datetime import datetime, timezone
 
 from aletheia.data.symbols import to_canonical
 from aletheia.exchanges.okx.client import OKXClient, OrderRequest, okx_ccxt_symbol
+from aletheia.exchanges.submission_errors import (
+    is_ambiguous_submission_error as _is_ambiguous_submission_error,
+)
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.post_commit_audit import write_post_commit_audit
 from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
@@ -69,23 +72,6 @@ def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:
     raise SubmissionUnknownError(
         exchange_order_id=row["exchange_order_id"], client_oid=proposal_id,
     )
-
-
-def _is_ambiguous_submission_error(error: BaseException) -> bool:
-    """Recognize transport failures where exchange acceptance is unknowable."""
-    current: BaseException | None = error
-    while current is not None:
-        name = type(current).__name__.lower()
-        if isinstance(current, (TimeoutError, ConnectionError, BrokenPipeError)) or any(
-            marker in name
-            for marker in (
-                "timeout", "connection", "transport", "network", "readerror",
-                "writeerror", "protocolerror", "brokenpipe", "eoferror",
-            )
-        ):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
 
 
 def _validated_fill_economics(

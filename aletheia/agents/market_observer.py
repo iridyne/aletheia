@@ -20,8 +20,8 @@ from aletheia.data.freshness import fresh_row
 from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
-    insert_opportunity, list_strategies,
-    find_opportunity_by_symbol_snapshot, update_opportunity,
+    insert_opportunity, insert_opportunity_once_by_snapshot, list_strategies,
+    find_opportunity_by_symbol_snapshot, update_open_opportunity,
 )
 from aletheia.trading.instruments import (
     observed_instruments_from_config, instrument_market_to_db_market,
@@ -617,6 +617,63 @@ async def _analyze_symbol(
         thesis_parts.append(f"score={confidence_score}/100")
     thesis = " ".join(thesis_parts) if thesis_parts else f"No structured rationale — {symbol} market read (direction={direction})"
 
+    def _reuse_existing_opportunity(existing: dict) -> tuple[str, str | None]:
+        """Return the durable owner, enriching it only while it remains open."""
+        if existing.get("status") != "open":
+            record_step(
+                run_id,
+                f"opportunity_already_terminal:{symbol}",
+                input_data=None,
+                output_data=(
+                    f"opportunity_id={existing['id']} "
+                    f"status={existing.get('status')}"
+                ),
+            )
+            log_tool(
+                run_id,
+                "reuse_terminal_opportunity",
+                "observe",
+                True,
+                output=existing["id"],
+            )
+            return existing["id"], llm_error
+        updates: dict = {"thesis": thesis}
+        if learning_manifest:
+            try:
+                existing_meta = json.loads(existing.get("metadata") or "{}")
+            except (TypeError, ValueError):
+                existing_meta = {}
+            existing_meta["learning_manifest"] = learning_manifest
+            updates["metadata"] = json.dumps(existing_meta, sort_keys=True)
+        if funding_rate_val is not None:
+            updates["funding_rate"] = funding_rate_val
+        if open_interest_val is not None:
+            updates["open_interest"] = open_interest_val
+        if oi_delta_val is not None:
+            updates["oi_delta_1h"] = oi_delta_val
+        if observations:
+            updates["key_observations"] = json.dumps(observations)
+        if confidence_score is not None:
+            old_score = existing.get("confidence_score") or 0
+            updates["confidence_score"] = max(old_score, confidence_score)
+            updates["confidence"] = confidence
+        if direction != "neutral":
+            updates["direction_bias"] = direction
+        enriched = update_open_opportunity(existing["id"], **updates)
+        if not enriched:
+            log_tool(
+                run_id,
+                "reuse_non_open_opportunity",
+                "observe",
+                True,
+                output=existing["id"],
+            )
+            return existing["id"], llm_error
+        log_tool(
+            run_id, "annotate_opportunity", "observe", True, output=existing["id"]
+        )
+        return existing["id"], llm_error
+
     # If a deterministic opportunity already exists for this symbol+snapshot+market,
     # never create a second lifecycle row.  An open opportunity may be annotated
     # with the LLM read; a terminal opportunity is immutable decision history and
@@ -629,46 +686,7 @@ async def _analyze_symbol(
             market=instrument_market_to_db_market(market_type),
         )
         if existing:
-            if existing.get("status") != "open":
-                record_step(
-                    run_id,
-                    f"opportunity_already_terminal:{symbol}",
-                    input_data=None,
-                    output_data=f"opportunity_id={existing['id']} status={existing.get('status')}",
-                )
-                log_tool(
-                    run_id,
-                    "reuse_terminal_opportunity",
-                    "observe",
-                    True,
-                    output=existing["id"],
-                )
-                return existing["id"], llm_error
-            updates: dict = {"thesis": thesis}
-            if learning_manifest:
-                try:
-                    existing_meta = json.loads(existing.get("metadata") or "{}")
-                except (TypeError, ValueError):
-                    existing_meta = {}
-                existing_meta["learning_manifest"] = learning_manifest
-                updates["metadata"] = json.dumps(existing_meta, sort_keys=True)
-            if funding_rate_val is not None:
-                updates["funding_rate"] = funding_rate_val
-            if open_interest_val is not None:
-                updates["open_interest"] = open_interest_val
-            if oi_delta_val is not None:
-                updates["oi_delta_1h"] = oi_delta_val
-            if observations:
-                updates["key_observations"] = json.dumps(observations)
-            if confidence_score is not None:
-                old_score = existing.get("confidence_score") or 0
-                updates["confidence_score"] = max(old_score, confidence_score)
-                updates["confidence"] = confidence
-            if direction != "neutral":
-                updates["direction_bias"] = direction
-            update_opportunity(existing["id"], **updates)
-            log_tool(run_id, "annotate_opportunity", "observe", True, output=existing["id"])
-            return existing["id"], llm_error
+            return _reuse_existing_opportunity(existing)
 
     # IB-24-12: standalone neutral opportunities add no signal value and get
     # filtered immediately by the ranker's neutral_bias gate. Skip creation.
@@ -701,7 +719,12 @@ async def _analyze_symbol(
         open_interest=open_interest_val,
         oi_delta_1h=oi_delta_val,
     )
-    insert_opportunity(opp)
+    if universe_snapshot_id:
+        persisted, created = insert_opportunity_once_by_snapshot(opp)
+        if not created:
+            return _reuse_existing_opportunity(persisted)
+    else:
+        insert_opportunity(opp)
     log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
     _total_duration = _time.monotonic() - _t_start
     _step_times["total"] = _total_duration

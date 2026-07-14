@@ -153,6 +153,32 @@ def test_pending_signal_direct_match_bypasses_layer3():
         TradingDecision,
         _attach_opportunity_context,
     )
+    from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
+    from aletheia.storage.repositories import (
+        insert_pi_decision,
+        insert_serenity_opportunity,
+        insert_serenity_theme,
+    )
+
+    theme = SerenityTheme(id="ser-direct-theme", name="direct attribution source")
+    insert_serenity_theme(theme)
+    source = SerenityOpportunity(
+        id="ser-direct-111",
+        theme_id=theme.id,
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+    )
+    insert_serenity_opportunity(source)
+    insert_pi_decision(PiDecision(
+        id="pending-ser-direct-111",
+        action="signal_pending",
+        opportunity_id=source.id,
+        signal_source="serenity",
+        symbol=source.symbol,
+        direction=source.direction,
+        market_type=source.market_type,
+    ))
 
     decision = TradingDecision(
         action="trade", symbol="BTC/USDT", direction="long", conviction=70, reasoning="x"
@@ -266,13 +292,40 @@ def test_market_observer_precedence_over_serenity():
 )
 def test_signal_source_round_trips_through_record_decision():
     from aletheia.agent_shell.reflection import record_decision
-    from aletheia.storage.repositories import list_pi_decisions
+    from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
+    from aletheia.storage.repositories import (
+        insert_pi_decision,
+        insert_serenity_opportunity,
+        insert_serenity_theme,
+        list_pi_decisions,
+    )
+
+    theme = SerenityTheme(id="ser-roundtrip-theme", name="roundtrip source")
+    insert_serenity_theme(theme)
+    source = SerenityOpportunity(
+        id="ser-aaa111",
+        theme_id=theme.id,
+        symbol="NVDA",
+        direction="long",
+        market_type="spot",
+    )
+    insert_serenity_opportunity(source)
+    insert_pi_decision(PiDecision(
+        id="pending-ser-aaa111",
+        action="signal_pending",
+        opportunity_id=source.id,
+        signal_source="serenity",
+        symbol=source.symbol,
+        direction=source.direction,
+        market_type=source.market_type,
+    ))
 
     record_decision(
         {
             "action": "trade",
             "symbol": "NVDA",
             "direction": "long",
+            "market_type": "spot",
             "conviction": 70,
             "reasoning": "serenity thesis",
             "proposal_id": None,

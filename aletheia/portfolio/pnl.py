@@ -519,7 +519,10 @@ def close_position(
         if materialize_close is not None:
             materialize_close()
         repo.update_position(position_id, **update_fields)
-        if outcome_eligible:
+        if (
+            outcome_eligible
+            or outcome_exclusion_reason == "attribution_read_failed"
+        ):
             from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
 
             enqueue_outcome_hook_jobs({**row, **update_fields})
@@ -601,7 +604,7 @@ def close_position(
         )
     except Exception:
         pass
-    if outcome_eligible:
+    if outcome_eligible or outcome_exclusion_reason == "attribution_read_failed":
         try:
             from aletheia.portfolio.outcome_hooks import process_outcome_hook_jobs
 

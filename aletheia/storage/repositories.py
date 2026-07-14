@@ -168,22 +168,113 @@ def list_open_opportunities(limit: int = 50) -> list[dict]:
     )
 
 
+_OPEN_TRADE_ASSET_PREDICATE = (
+    "COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity')"
+)
+_OPEN_TRADE_UNRANKED_SQL = f"""
+    SELECT * FROM opportunities
+    INDEXED BY idx_opportunities_trade_unranked_rotation
+    WHERE status='open'
+      AND last_ranked_at IS NULL
+      AND {_OPEN_TRADE_ASSET_PREDICATE}
+    ORDER BY datetime(created_at) ASC, id ASC
+    LIMIT ? OFFSET ?
+"""
+_OPEN_TRADE_RETRY_SQL = f"""
+    SELECT * FROM opportunities
+    INDEXED BY idx_opportunities_trade_retry_rotation
+    WHERE status='open'
+      AND last_ranked_at IS NOT NULL
+      AND {_OPEN_TRADE_ASSET_PREDICATE}
+    ORDER BY datetime(last_ranked_at) ASC, datetime(created_at) ASC, id ASC
+    LIMIT ? OFFSET ?
+"""
+
+
 def list_open_trade_opportunities(limit: int = 50) -> list[dict]:
-    """Return FIFO open opportunities for crypto/equity trading only.
+    """Return one bounded, starvation-free open trade workset.
 
     Legacy rows with a NULL/blank asset class predate the discriminator and are
     crypto opportunities by construction. Prediction observations remain
-    research context and never enter this trade workset.
+    research context and never enter this trade workset. Half of each normal
+    page is reserved for never-evaluated rows and half for the oldest retryable
+    rows; either side may consume unused capacity from the other. This prevents
+    sustained new arrivals from permanently hiding already-ranked open work.
     """
-    return _select_all(
-        "opportunities",
-        where=(
-            "status = 'open' AND "
-            "COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity')"
-        ),
-        order="created_at ASC, rowid ASC",
-        limit=limit,
+    page_size = max(0, int(limit))
+    if page_size == 0:
+        return []
+    db = get_db()
+    unranked_quota = (page_size + 1) // 2
+    retry_quota = page_size // 2
+
+    def fetch(sql: str, count: int, *, offset: int = 0) -> list[dict]:
+        if count <= 0:
+            return []
+        return [
+            dict(row)
+            for row in db.execute(sql, (int(count), int(offset))).fetchall()
+        ]
+
+    unranked = fetch(_OPEN_TRADE_UNRANKED_SQL, unranked_quota)
+    retryable = fetch(_OPEN_TRADE_RETRY_SQL, retry_quota)
+    remaining = page_size - len(unranked) - len(retryable)
+    if remaining > 0 and len(unranked) < unranked_quota:
+        retryable.extend(fetch(
+            _OPEN_TRADE_RETRY_SQL,
+            remaining,
+            offset=len(retryable),
+        ))
+        remaining = page_size - len(unranked) - len(retryable)
+    if remaining > 0 and len(retryable) < retry_quota:
+        unranked.extend(fetch(
+            _OPEN_TRADE_UNRANKED_SQL,
+            remaining,
+            offset=len(unranked),
+        ))
+        remaining = page_size - len(unranked) - len(retryable)
+    # When both initial quotas were short, consume any final capacity without
+    # duplicating the rows already returned from either indexed stream.
+    if remaining > 0:
+        retryable.extend(fetch(
+            _OPEN_TRADE_RETRY_SQL,
+            remaining,
+            offset=len(retryable),
+        ))
+        remaining = page_size - len(unranked) - len(retryable)
+    if remaining > 0:
+        unranked.extend(fetch(
+            _OPEN_TRADE_UNRANKED_SQL,
+            remaining,
+            offset=len(unranked),
+        ))
+    return unranked + retryable
+
+
+def mark_opportunities_ranked(opportunity_ids: list[str], ranked_at: str) -> int:
+    """Advance the rotation cursor for one proven workset, exactly once.
+
+    Callers place this update in the same explicit transaction as the immutable
+    current-run evidence batch. A missing row is an integrity failure: the batch
+    must roll back instead of claiming a workset that was not actually marked.
+    """
+    ids = list(dict.fromkeys(str(item) for item in opportunity_ids if item))
+    if not ids:
+        return 0
+    db = get_db()
+    was_in_tx = db.in_transaction
+    placeholders = ",".join("?" for _ in ids)
+    cur = db.execute(
+        f"UPDATE opportunities SET last_ranked_at=? WHERE id IN ({placeholders})",
+        (ranked_at, *ids),
     )
+    if cur.rowcount != len(ids):
+        raise RuntimeError(
+            f"ranked_opportunity_set_changed:{cur.rowcount}/{len(ids)}"
+        )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount
 
 
 def find_divergence_opportunity_by_source_version(
@@ -213,6 +304,20 @@ def get_opportunity(oid: str) -> dict | None:
 
 def update_opportunity(oid: str, **kwargs) -> None:
     _update("opportunities", oid, kwargs)
+
+
+def update_open_opportunity(oid: str, **kwargs) -> bool:
+    """CAS non-lifecycle enrichment onto a still-open Opportunity only."""
+    if not kwargs:
+        return False
+    if "status" in kwargs:
+        raise ValueError("Opportunity lifecycle status requires a transition helper")
+    sets = ", ".join(f"{key} = ?" for key in kwargs)
+    cursor = get_db().execute(
+        f"UPDATE opportunities SET {sets} WHERE id = ? AND status = 'open'",
+        [*kwargs.values(), oid],
+    )
+    return cursor.rowcount == 1
 
 
 def transition_open_opportunity_to_queued(oid: str) -> bool:
@@ -285,6 +390,62 @@ def find_opportunity_by_symbol_snapshot(
     return dict(row) if row else None
 
 
+def insert_opportunity_once_by_snapshot(
+    opportunity: Opportunity,
+) -> tuple[dict, bool]:
+    """Atomically resolve one lifecycle owner for a snapshot instrument.
+
+    The producer-side pre-check remains a useful fast path, but only an IMMEDIATE
+    writer transaction can make the final check+insert indivisible across observer
+    and universe worker threads. Historical duplicates remain readable; their
+    earliest row keeps ownership without destructive cleanup.
+    """
+    snapshot_id = str(opportunity.universe_snapshot_id or "").strip()
+    symbol = str(opportunity.symbol or "").strip()
+    market = str(opportunity.market or "").strip()
+    if not snapshot_id or not symbol or not market:
+        raise ValueError("snapshot Opportunity identity requires symbol, market, snapshot")
+
+    with transaction(immediate=True):
+        existing = find_opportunity_by_symbol_snapshot(
+            symbol, snapshot_id, market=market
+        )
+        if existing is not None:
+            return existing, False
+        insert_opportunity(opportunity)
+        persisted = _select_one("opportunities", opportunity.id)
+        if persisted is None:
+            raise RuntimeError("snapshot Opportunity insert did not persist")
+        return persisted, True
+
+
+def insert_divergence_opportunity_once(
+    opportunity: Opportunity,
+    *,
+    source_version: str,
+) -> tuple[dict, bool]:
+    """Atomically resolve one lifecycle owner for a divergence source version."""
+    identity = str(source_version or "").strip()
+    if not identity or opportunity.source_agent != "divergence_scanner":
+        raise ValueError("divergence Opportunity identity is invalid")
+    try:
+        metadata = json.loads(opportunity.metadata or "{}")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("divergence Opportunity metadata is invalid") from exc
+    if metadata.get("source_version") != identity:
+        raise ValueError("divergence Opportunity source version mismatch")
+
+    with transaction(immediate=True):
+        existing = find_divergence_opportunity_by_source_version(identity)
+        if existing is not None:
+            return existing, False
+        insert_opportunity(opportunity)
+        persisted = _select_one("opportunities", opportunity.id)
+        if persisted is None:
+            raise RuntimeError("divergence Opportunity insert did not persist")
+        return persisted, True
+
+
 # --- PI Decisions ---
 
 def insert_pi_decision(decision) -> None:
@@ -317,16 +478,29 @@ def list_pi_decisions(limit: int = 20) -> list[dict]:
 def find_final_pi_decision_for_opportunity(
     opportunity_id: str,
     signal_source: str = "market_observer",
+    *,
+    action: str | None = None,
 ) -> dict | None:
-    """Return the first authoritative non-pending result for one source identity."""
+    """Return the first authoritative result for one source identity.
+
+    ``action`` narrows idempotency to a position-management intent.  An entry
+    decision and a later close/reduce legitimately share one Opportunity, so
+    the historical entry must not swallow the management claim.
+    """
     if not opportunity_id:
         return None
+    action_clause = "AND action=?" if action else "AND action != 'signal_pending'"
+    params: tuple[str, ...] = (
+        (opportunity_id, signal_source or "market_observer", action)
+        if action
+        else (opportunity_id, signal_source or "market_observer")
+    )
     row = get_db().execute(
         "SELECT * FROM pi_decisions WHERE opportunity_id=? "
-        "AND action != 'signal_pending' "
         "AND COALESCE(signal_source, 'market_observer')=? "
+        f"{action_clause} "
         "ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 1",
-        (opportunity_id, signal_source or "market_observer"),
+        params,
     ).fetchone()
     return dict(row) if row else None
 
@@ -341,16 +515,27 @@ def find_pending_pi_decision_for_opportunity(
     crash recovery must still prove that the original pending carrier existed.
     Callers remain responsible for applying the market-observer TTL.
     """
+    rows = list_pending_pi_decisions_for_opportunity(
+        opportunity_id, signal_source
+    )
+    return rows[0] if rows else None
+
+
+def list_pending_pi_decisions_for_opportunity(
+    opportunity_id: str,
+    signal_source: str = "market_observer",
+) -> list[dict]:
+    """Return every pending carrier for one exact source identity, oldest first."""
     if not opportunity_id:
-        return None
-    row = get_db().execute(
+        return []
+    rows = get_db().execute(
         "SELECT * FROM pi_decisions WHERE opportunity_id=? "
         "AND action='signal_pending' "
         "AND COALESCE(signal_source, 'market_observer')=? "
-        "ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 1",
+        "ORDER BY datetime(created_at) ASC, rowid ASC",
         (opportunity_id, signal_source or "market_observer"),
-    ).fetchone()
-    return dict(row) if row else None
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def expire_stale_queued_opportunities(max_age_minutes: int = 30) -> int:
@@ -613,6 +798,20 @@ def list_prediction_claims(
 # would invalidate the chain (caught by the L2c spec re-compute check).
 _PROPOSAL_HASH_EXCLUDES = {"status", "commit_hash"}
 
+# Risk working-set reads need complete immutable snapshots without one query per
+# Order/reservation. Generate the projections from the storage models so a new
+# hash-covered field cannot be silently omitted from authority validation.
+_RISK_PROPOSAL_PREFIX = "risk_proposal__"
+_RISK_DECISION_PREFIX = "risk_decision__"
+_RISK_PROPOSAL_PROJECTION = ", ".join(
+    f"tp.{field} AS {_RISK_PROPOSAL_PREFIX}{field}"
+    for field in TradeProposal.model_fields
+)
+_RISK_DECISION_PROJECTION = ", ".join(
+    f"rd.{field} AS {_RISK_DECISION_PREFIX}{field}"
+    for field in RiskDecision.model_fields
+)
+
 
 def _compute_proposal_hash(p: TradeProposal) -> str:
     """Return 16-char SHA-256 prefix of the proposal's immutable content + parent_hash.
@@ -709,6 +908,8 @@ def acquire_entry_risk_reservation(
     execution_mode: str,
     quantity: float,
     price: float,
+    market_type: str | None = None,
+    leverage: float | None = None,
 ) -> bool:
     """Acquire or verify one exact durable pre-Order Risk allowance.
 
@@ -716,20 +917,41 @@ def acquire_entry_risk_reservation(
     covered its working-set read. Identical replays are idempotent; a conflicting
     immutable snapshot fails closed.
     """
-    if not proposal_id or not proposal_commit_hash or not symbol or not execution_mode:
+    if market_type is None or leverage is None:
+        proposal = get_trade_proposal(proposal_id)
+        if proposal is None:
+            raise ValueError(
+                "entry Risk reservation requires a stored Proposal identity"
+            )
+        if market_type is None:
+            market_type = str(proposal.get("market_type") or "")
+        if leverage is None:
+            leverage = float(proposal.get("leverage") or 1.0)
+    if (
+        not proposal_id
+        or not proposal_commit_hash
+        or not symbol
+        or not market_type
+        or not execution_mode
+    ):
         raise ValueError("entry Risk reservation requires complete Proposal identity")
     quantity = float(quantity)
     price = float(price)
-    if quantity <= 0 or price <= 0:
-        raise ValueError("entry Risk reservation requires positive quantity and price")
+    leverage = float(leverage)
+    if quantity <= 0 or price <= 0 or leverage <= 0:
+        raise ValueError(
+            "entry Risk reservation requires positive quantity, price, and leverage"
+        )
 
     existing = get_entry_risk_reservation(proposal_id)
     expected = {
         "proposal_commit_hash": proposal_commit_hash,
         "symbol": symbol,
+        "market_type": market_type,
         "execution_mode": execution_mode,
         "quantity": quantity,
         "price": price,
+        "leverage": leverage,
     }
     if existing is not None:
         conflicts = [
@@ -747,15 +969,17 @@ def acquire_entry_risk_reservation(
     was_in_tx = db.in_transaction
     db.execute(
         "INSERT INTO entry_risk_reservations "
-        "(proposal_id,proposal_commit_hash,symbol,execution_mode,quantity,price) "
-        "VALUES (?,?,?,?,?,?)",
+        "(proposal_id,proposal_commit_hash,symbol,market_type,execution_mode,"
+        "quantity,price,leverage) VALUES (?,?,?,?,?,?,?,?)",
         (
             proposal_id,
             proposal_commit_hash,
             symbol,
+            market_type,
             execution_mode,
             quantity,
             price,
+            leverage,
         ),
     )
     if not was_in_tx:
@@ -780,16 +1004,33 @@ def list_active_entry_risk_reservations_for_risk(
     *,
     exclude_proposal_id: str | None = None,
 ) -> list[dict]:
-    """Return every allowance not yet represented by a durable Order.
+    """Return every unresolved allowance not represented by a durable Order.
 
     No row limit is permitted. Excluding rows that already have any Order avoids
     double counting while Gateway performs its best-effort reservation cleanup.
+    A reservation whose Proposal is provably terminal is also inactive even if
+    physical cleanup failed.  Missing Proposals and unknown statuses remain in
+    the working set so Risk continues to fail closed on ambiguous state.
     """
     sql = (
-        "SELECT r.* FROM entry_risk_reservations r "
+        "SELECT r.*, "
+        f"{_RISK_PROPOSAL_PROJECTION}, "
+        "(SELECT COUNT(*) FROM risk_decisions authority "
+        " WHERE authority.proposal_id=r.proposal_id "
+        "   AND authority.decision_role='authoritative' "
+        "   AND authority.approved=1 "
+        "   AND authority.proposal_commit_hash=r.proposal_commit_hash "
+        "   AND authority.evaluated_quantity=r.quantity "
+        "   AND authority.allowed_execution_mode=r.execution_mode "
+        "   AND authority.proposal_execution_mode=r.execution_mode "
+        "   AND COALESCE(authority.violations, '[]')='[]'"
+        ") AS exact_authoritative_decision_count "
+        "FROM entry_risk_reservations r "
+        "LEFT JOIN trade_proposals tp ON tp.id=r.proposal_id "
         "WHERE NOT EXISTS ("
         "  SELECT 1 FROM orders o WHERE o.proposal_id=r.proposal_id"
-        ")"
+        ") "
+        "AND COALESCE(tp.status, '') NOT IN ('rejected','error','executed')"
     )
     params: list = []
     if exclude_proposal_id is not None:
@@ -958,6 +1199,84 @@ def get_order(oid: str) -> dict | None:
     return _select_one("orders", oid)
 
 
+def _validate_native_entry_order_snapshot(
+    data: dict,
+    proposal: dict | None,
+    decision: dict | None,
+) -> None:
+    """Validate one native entry against already-read immutable authority."""
+    proposal_id = data.get("proposal_id")
+    risk_decision_id = data.get("risk_decision_id")
+    if not proposal_id or not risk_decision_id:
+        raise ValueError(
+            "native entry Order requires Proposal and authoritative RiskDecision"
+        )
+    if proposal is None or proposal.get("source") != "native":
+        raise ValueError("native entry Order requires a native Proposal")
+    if proposal.get("id") != proposal_id:
+        raise ValueError("native entry Order Proposal identity does not match")
+    if (
+        decision is None
+        or decision.get("id") != risk_decision_id
+        or decision.get("proposal_id") != proposal_id
+    ):
+        raise ValueError("native entry Order RiskDecision does not match Proposal")
+    if not bool(decision.get("approved")):
+        raise ValueError("native entry Order requires an approved RiskDecision")
+    if decision.get("decision_role") != "authoritative":
+        raise ValueError("native entry Order requires an authoritative RiskDecision")
+    try:
+        decision_violations = json.loads(decision.get("violations") or "[]")
+    except (TypeError, ValueError):
+        decision_violations = None
+    if decision_violations != []:
+        raise ValueError("native entry Order approved RiskDecision is contradictory")
+
+    stored = TradeProposal.model_validate(proposal)
+    stored_hash = stored.commit_hash
+    if not stored_hash or _compute_proposal_hash(stored) != stored_hash:
+        raise ValueError("native entry Order Proposal integrity check failed")
+    if decision.get("proposal_commit_hash") != stored_hash:
+        raise ValueError("native entry Order RiskDecision snapshot is stale")
+
+    try:
+        evaluated_quantity = float(decision.get("evaluated_quantity"))
+        order_quantity = float(data.get("quantity"))
+    except (TypeError, ValueError):
+        raise ValueError("native entry Order lacks evaluated quantity authority") from None
+    if (
+        evaluated_quantity <= 0
+        or order_quantity <= 0
+        or order_quantity != evaluated_quantity
+    ):
+        raise ValueError("native entry Order quantity does not match RiskDecision")
+
+    execution_mode = data.get("execution_mode")
+    if (
+        decision.get("allowed_execution_mode") != execution_mode
+        or decision.get("proposal_execution_mode") != stored.execution_mode
+        or execution_mode != stored.execution_mode
+    ):
+        raise ValueError("native entry Order execution mode lacks matching authority")
+    for field in ("symbol", "market_type", "direction", "order_type"):
+        if data.get(field) != getattr(stored, field):
+            raise ValueError(f"native entry Order {field} does not match Proposal")
+    try:
+        order_price = float(data.get("price"))
+        proposal_price = float(stored.price)
+    except (TypeError, ValueError):
+        raise ValueError("native entry Order price lacks Proposal authority") from None
+    # Exchange Orders persist the exact submitted plan price. Local paper keeps
+    # the deterministic slipped fill price on its Order and the original price
+    # on the Proposal, so positivity (not equality) is the honest invariant there.
+    if proposal_price <= 0 or order_price <= 0 or (
+        execution_mode != "paper_internal" and order_price != proposal_price
+    ):
+        raise ValueError("native entry Order price does not match Proposal")
+    if execution_mode != "paper_internal" and data.get("client_order_id") != proposal_id:
+        raise ValueError("exchange entry Order client identity is not durable")
+
+
 def validate_native_order_authority(order: Order | dict) -> None:
     """Fail closed when a new native Order lacks its immutable authority.
 
@@ -997,53 +1316,9 @@ def validate_native_order_authority(order: Order | dict) -> None:
 
     proposal_id = data.get("proposal_id")
     risk_decision_id = data.get("risk_decision_id")
-    if not proposal_id or not risk_decision_id:
-        raise ValueError(
-            "native entry Order requires Proposal and authoritative RiskDecision"
-        )
-    proposal = get_trade_proposal(proposal_id)
-    decision = _select_one("risk_decisions", risk_decision_id)
-    if proposal is None or proposal.get("source") != "native":
-        raise ValueError("native entry Order requires a native Proposal")
-    if decision is None or decision.get("proposal_id") != proposal_id:
-        raise ValueError("native entry Order RiskDecision does not match Proposal")
-    if not bool(decision.get("approved")):
-        raise ValueError("native entry Order requires an approved RiskDecision")
-    if decision.get("decision_role") != "authoritative":
-        raise ValueError("native entry Order requires an authoritative RiskDecision")
-
-    from aletheia.storage.models import TradeProposal
-
-    stored_hash = proposal.get("commit_hash")
-    if not stored_hash or _compute_proposal_hash(
-        TradeProposal.model_validate(proposal)
-    ) != stored_hash:
-        raise ValueError("native entry Order Proposal integrity check failed")
-    if decision.get("proposal_commit_hash") != stored_hash:
-        raise ValueError("native entry Order RiskDecision snapshot is stale")
-
-    evaluated_quantity = decision.get("evaluated_quantity")
-    try:
-        evaluated_quantity = float(evaluated_quantity)
-        order_quantity = float(data.get("quantity"))
-    except (TypeError, ValueError):
-        raise ValueError("native entry Order lacks evaluated quantity authority") from None
-    tolerance = max(1e-12, abs(evaluated_quantity) * 1e-9)
-    if evaluated_quantity <= 0 or abs(order_quantity - evaluated_quantity) > tolerance:
-        raise ValueError("native entry Order quantity exceeds its RiskDecision snapshot")
-
-    execution_mode = data.get("execution_mode")
-    if (
-        decision.get("allowed_execution_mode") != execution_mode
-        or decision.get("proposal_execution_mode") != proposal.get("execution_mode")
-        or execution_mode != proposal.get("execution_mode")
-    ):
-        raise ValueError("native entry Order execution mode lacks matching authority")
-    for field in ("symbol", "market_type", "direction", "order_type"):
-        if data.get(field) != proposal.get(field):
-            raise ValueError(f"native entry Order {field} does not match Proposal")
-    if execution_mode != "paper_internal" and data.get("client_order_id") != proposal_id:
-        raise ValueError("exchange entry Order client identity is not durable")
+    proposal = get_trade_proposal(proposal_id) if proposal_id else None
+    decision = _select_one("risk_decisions", risk_decision_id) if risk_decision_id else None
+    _validate_native_entry_order_snapshot(data, proposal, decision)
 
 
 def insert_order(o: Order) -> None:
@@ -1080,6 +1355,11 @@ def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
         f"""
         SELECT
             o.*,
+            {_RISK_PROPOSAL_PROJECTION},
+            {_RISK_DECISION_PROJECTION},
+            tp.leverage AS proposal_leverage,
+            tp.market_type AS proposal_market_type,
+            tp.commit_hash AS proposal_commit_hash,
             COUNT(f.id) AS persisted_fill_count,
             COALESCE(SUM(f.fill_quantity), 0.0) AS persisted_fill_quantity,
             COALESCE(SUM(
@@ -1089,14 +1369,89 @@ def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
                     THEN 1 ELSE 0
                 END
             ), 0) AS invalid_fill_quantity_count,
-            CASE WHEN EXISTS (
-                SELECT 1
-                FROM positions p
-                WHERE p.status = 'open'
-                  AND (p.id = o.position_id OR p.order_id = o.id)
-            ) THEN 1 ELSE 0 END AS has_open_position
+            (
+                SELECT COUNT(*)
+                FROM positions linked_position
+                WHERE linked_position.status = 'open'
+                  AND (
+                      linked_position.id = o.position_id
+                      OR linked_position.order_id = o.id
+                  )
+            ) AS linked_open_position_count,
+            (
+                SELECT COUNT(*)
+                FROM positions matching_position
+                WHERE matching_position.status = 'open'
+                  AND matching_position.id = o.position_id
+                  AND matching_position.symbol = o.symbol
+                  AND matching_position.market_type = o.market_type
+                  AND matching_position.direction = o.direction
+                  AND matching_position.execution_mode = o.execution_mode
+            ) AS matching_open_position_count,
+            (
+                SELECT MAX(matching_position.quantity)
+                FROM positions matching_position
+                WHERE matching_position.status = 'open'
+                  AND matching_position.id = o.position_id
+                  AND matching_position.symbol = o.symbol
+                  AND matching_position.market_type = o.market_type
+                  AND matching_position.direction = o.direction
+                  AND matching_position.execution_mode = o.execution_mode
+            ) AS represented_position_quantity,
+            (
+                SELECT COALESCE(SUM(represented_fill.fill_quantity), 0.0)
+                FROM positions representing_position
+                JOIN orders represented_order
+                  ON (
+                      represented_order.id = representing_position.order_id
+                      OR represented_order.position_id = representing_position.id
+                  )
+                JOIN fills represented_fill
+                  ON represented_fill.order_id = represented_order.id
+                WHERE representing_position.status = 'open'
+                  AND representing_position.id = o.position_id
+                  AND representing_position.symbol = o.symbol
+                  AND representing_position.market_type = o.market_type
+                  AND representing_position.direction = o.direction
+                  AND representing_position.execution_mode = o.execution_mode
+                  AND represented_order.source = 'native'
+                  AND TRIM(COALESCE(represented_order.close_reason, '')) = ''
+                  AND represented_order.id != COALESCE(
+                      representing_position.pending_close_order_id,
+                      ''
+                  )
+            ) AS represented_entry_fill_quantity,
+            (
+                SELECT COUNT(*)
+                FROM positions representing_position
+                JOIN orders represented_order
+                  ON (
+                      represented_order.id = representing_position.order_id
+                      OR represented_order.position_id = representing_position.id
+                  )
+                JOIN fills represented_fill
+                  ON represented_fill.order_id = represented_order.id
+                WHERE representing_position.status = 'open'
+                  AND representing_position.id = o.position_id
+                  AND representing_position.symbol = o.symbol
+                  AND representing_position.market_type = o.market_type
+                  AND representing_position.direction = o.direction
+                  AND representing_position.execution_mode = o.execution_mode
+                  AND represented_order.source = 'native'
+                  AND TRIM(COALESCE(represented_order.close_reason, '')) = ''
+                  AND represented_order.id != COALESCE(
+                      representing_position.pending_close_order_id,
+                      ''
+                  )
+                  AND (
+                      represented_fill.fill_quantity IS NULL
+                      OR represented_fill.fill_quantity <= 0
+                  )
+            ) AS invalid_represented_entry_fill_count
         FROM orders o
         LEFT JOIN fills f ON f.order_id = o.id
+        LEFT JOIN trade_proposals tp ON tp.id = o.proposal_id
+        LEFT JOIN risk_decisions rd ON rd.id = o.risk_decision_id
         WHERE o.source = 'native'
           AND o.status IN ({placeholders})
           AND TRIM(COALESCE(o.close_reason, '')) = ''
@@ -2736,7 +3091,11 @@ def deactivate_stale_universe_assets(venue: str, cutoff_iso: str) -> int:
     return result.rowcount
 
 
-def list_universe_assets(venue: str | None = None, active_only: bool = True, limit: int = 500) -> list[dict]:
+def list_universe_assets(
+    venue: str | None = None,
+    active_only: bool = True,
+    limit: int | None = 500,
+) -> list[dict]:
     db = get_db()
     sql = "SELECT * FROM universe_registry"
     params: list = []
@@ -2749,7 +3108,10 @@ def list_universe_assets(venue: str | None = None, active_only: bool = True, lim
         conditions.append("is_blacklisted = 0")
     if conditions:
         sql += " WHERE " + " AND ".join(conditions)
-    sql += f" ORDER BY last_seen_at DESC LIMIT {limit}"
+    sql += " ORDER BY last_seen_at DESC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(int(limit))
     return [dict(r) for r in db.execute(sql, params).fetchall()]
 
 

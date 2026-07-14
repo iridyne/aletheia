@@ -77,7 +77,13 @@ def test_opportunity_crud(tmp_path):
 
 def test_trade_proposal_to_order_flow(tmp_path):
     setup_test_db(tmp_path)
-    proposal = TradeProposal(symbol="ETH/USDT", market_type="spot", direction="long")
+    proposal = TradeProposal(
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        price=3000.0,
+    )
     repo.insert_trade_proposal(proposal)
 
     decision = RiskDecision(
@@ -95,7 +101,8 @@ def test_trade_proposal_to_order_flow(tmp_path):
     order = Order(
         proposal_id=proposal.id, risk_decision_id=decision.id,
         symbol="ETH/USDT", market_type="spot", direction="long",
-        order_type="market", quantity=0.01, execution_mode="paper_internal"
+        order_type="market", quantity=0.01, price=proposal.price,
+        execution_mode="paper_internal"
     )
     repo.insert_order(order)
 
