@@ -117,6 +117,16 @@ class TradingDecision:
     position_size_usdt: float | None = None
     stop_price: float | None = None
     take_profit: float | None = None
+    # Exit-intent plan M2: the Operator's intended holding horizon (hours). Drives the
+    # per-position time-stop — hitting it wakes the Operator for a must-answer decision
+    # rather than auto-closing; auto-close only at the far backstop (see position_manager
+    # + risk.horizon_hard_backstop_mult). None → legacy school max_hold applies.
+    expected_horizon_hours: float | None = None
+    # Exit-intent plan M3.5 (D10): for a proactive `close`, the Operator chooses the
+    # order type — "market" (exit now) or "limit" (rest an exit at limit_price for a
+    # better fill). None → market. Only meaningful on close actions.
+    order_type: str | None = None
+    limit_price: float | None = None
     # Futures: which venue + leverage the PI chose. market_type defaults to
     # usdt_futures (the demo/perp venue) when the LLM omits it; leverage is the
     # PI's requested level, clamped to the per-tier cap at submit time.
@@ -177,8 +187,7 @@ class DebateResult:
 _DECISION_SCHEMA = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": ["trade", "skip"]},
-        "symbol": {"type": "string"},
+        "action": {"type": "string", "enum": ["trade", "skip", "close", "reduce", "scale_in", "flip", "adjust_position"]},        "symbol": {"type": "string"},
         "direction": {"type": "string", "enum": ["long", "short"]},
         "conviction": {"type": "integer", "minimum": 0, "maximum": 100},
         "reasoning": {"type": "string"},
@@ -197,9 +206,17 @@ _DECISION_SCHEMA = {
         # (entry/stop/tp/reward:risk) is always complete before the limit order.
         "stop_price": {"type": "number"},
         "take_profit": {"type": "number"},
+        # M2: Operator's intended holding horizon in hours (drives the time-stop /
+        # must-answer horizon wake). Optional — omitted → legacy school max_hold.
+        "expected_horizon_hours": {"type": "number"},
+        # M3.5 (D10): proactive-close order type + optional resting limit price.
+        "order_type": {"type": "string", "enum": ["market", "limit"]},
+        "limit_price": {"type": "number"},
+        # Required for trade-like actions by the prompt below.  It remains
+        # optional in the top-level schema because skip/close/reduce decisions
+        # do not have five new-entry parameters to explain.
         # Required for trade by the prompt below. It remains optional in the
-        # top-level schema because skip has no entry parameters to explain.
-        "parameter_rationale": {
+        # top-level schema because skip has no entry parameters to explain.        "parameter_rationale": {
             "type": "object",
             "properties": {
                 "entry_price": {"type": "string"},
@@ -728,6 +745,11 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         agent_rationale=rationale,
         attribution_snapshot=capture_attribution_snapshot_json(decision.symbol),
         trade_school=trade_school,
+        # Exit-intent plan M2: carry the Operator's holding horizon and stop
+        # provenance to the position at open. stop_source='operator' iff the AI
+        # authored the stop (else config default filled it in above).
+        expected_horizon_hours=decision.expected_horizon_hours,
+        stop_source="operator" if decision.stop_price is not None else "default",
     )
     return {"status": "prepared", "proposal_id": proposal.id, "proposal": proposal}
 
@@ -1774,6 +1796,9 @@ def _parse_decision(raw: dict) -> TradingDecision:
         leverage=leverage,
         stop_price=_num(raw.get("stop_price")),
         take_profit=_num(raw.get("take_profit")),
+        expected_horizon_hours=_num(raw.get("expected_horizon_hours")),
+        order_type=raw.get("order_type"),
+        limit_price=_num(raw.get("limit_price")),
         risk_factors=raw.get("risk_factors", []),
         supporting_signals=raw.get("supporting_signals", []),
         opposing_signals=raw.get("opposing_signals", []),
@@ -1867,6 +1892,10 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
     features/signals), the fields stay None rather than being fabricated. See
     LEARNING_LOOP_AUDIT_2026-06-26 §R0 + docs/plans/serenity_execution_path.md §3.2.
     """
+    # M1: non-entry actions short-circuit — no opportunity context to attach
+    if decision.action in {"close", "reduce", "adjust_position"}:
+        return
+
     # The exact queued carrier is more specific than a later same-symbol/direction
     # open row, so consume it before heuristic Layer-1 matches.
     layer2 = ctx.get("layer2") or {}
@@ -1953,8 +1982,7 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
                         meta = {}
                     decision.learning_candidate_key = meta.get("learning_candidate_key")
         except Exception:
-            pass
-        return
+            pass        return
 
     for p in pending:
         if (p.get("signal_source") or "market_observer") != "market_observer":

@@ -262,6 +262,27 @@ class OKXClient:
             filled_quantity=filled_qty,
         )
 
+    async def get_open_orders(self) -> list[dict]:
+        """Currently-open orders for CR-EX-01 reconciliation. Each dict carries the
+        exchange order id under 'id'. CCXT fetch_open_orders() with no symbol returns
+        all open orders; demo vs live is chosen by this client's mode.
+
+        NOTE (needs-demo confirmation): implemented from CCXT's unified method + OKX
+        docs and covered by mock tests. The exact response shape (fields under 'info',
+        whether a symbol arg is required) should be confirmed once against an OKX demo
+        account, ideally captured as a fixture — see PARTIAL_REDUCE_RESEARCH.md.
+        """
+        try:
+            orders = await self._ensure_exchange().fetch_open_orders()
+            return [
+                {"id": str(o.get("id")), "symbol": o.get("symbol"), "status": o.get("status")}
+                for o in (orders or [])
+                if o.get("id")
+            ]
+        except ccxt.BaseError as e:
+            logger.error("OKX %s get_open_orders failed: %s", self._mode, e)
+            raise RuntimeError(f"OKX {self._mode} open_orders: {e}") from e
+
     async def place_algo_order(
         self,
         symbol: str,

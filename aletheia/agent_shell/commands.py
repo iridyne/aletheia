@@ -1660,6 +1660,13 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     # Build three-layer enriched context
     ctx = build_enriched_trading_context()
 
+    # Wake context (exit-intent plan M1.5): when the daemon woke us for specific
+    # positions (coalesced + rate-limited WakeEvents), carry the batches into the
+    # decision context so the decision layer (M5) can surface "why you were woken"
+    # to the Operator. No-op for the legacy generic wake (params without batches).
+    if isinstance(ctx, dict) and isinstance(params, dict) and params.get("wake_batches"):
+        ctx["wake_context"] = params
+
     # Run System Operator decision loop
     decision = await _evaluate(ctx)
 
@@ -1839,6 +1846,45 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         recover_interrupted_decision,
     )
 
+    # adjust_position: the Operator revises an open position's ExitPlan (stop / target /
+    # horizon) WITHOUT closing it — the M3 pivot. _attach_position_context already
+    # linked the decision's symbol/direction to the judged position.
+    if decision.action == "adjust_position":
+        from aletheia.agent_shell.trading_decision import _match_position_for_decision
+        from aletheia.portfolio.position_manager import apply_operator_adjustment
+
+        positions = (ctx.get("layer1") or {}).get("positions") or []
+        match = _match_position_for_decision(decision, positions)
+        if match and match.get("id"):
+            result["adjust"] = apply_operator_adjustment(
+                match["id"],
+                new_stop=decision.stop_price,
+                new_target=decision.take_profit,
+                new_horizon=decision.expected_horizon_hours,
+                reason=decision.reasoning,
+            )
+        else:
+            result["adjust_error"] = "no_target_position"
+
+    # close: the Operator proactively exits a position ahead of its passive stop/
+    # target — market now, or a resting limit at a better price (M3.5, D10).
+    if decision.action == "close":
+        from aletheia.agent_shell.trading_decision import _match_position_for_decision
+        from aletheia.portfolio.position_manager import proactive_exit
+
+        positions = (ctx.get("layer1") or {}).get("positions") or []
+        match = _match_position_for_decision(decision, positions)
+        if match and match.get("id"):
+            result["exit"] = proactive_exit(
+                match["id"],
+                order_type=decision.order_type or "market",
+                limit_price=decision.limit_price,
+                reason=decision.reasoning,
+            )
+        else:
+            result["exit_error"] = "no_target_position"
+
+    # Record decision for next-cycle reflection loop
     try:
         claimed_final, claim_created = claim_decision(
             result, proposal=prepared_proposal

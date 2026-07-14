@@ -192,6 +192,26 @@ class BinanceClient:
             logger.error("Binance %s get_positions failed: %s", self._mode, e)
             raise RuntimeError(f"Binance {self._mode} positions: {e}") from e
 
+    async def get_open_orders(self) -> list[dict]:
+        """Currently-open orders for CR-EX-01 reconciliation. Each dict carries the
+        exchange order id under 'id'. CCXT fetch_open_orders() with no symbol returns
+        all open orders on Binance USDM futures; demo vs live is chosen by mode.
+
+        NOTE (needs-demo confirmation): implemented from CCXT + Binance docs and covered
+        by mock tests; confirm the response shape once against a Binance testnet account
+        (capture as a fixture) — see PARTIAL_REDUCE_RESEARCH.md.
+        """
+        try:
+            orders = await self._ensure_exchange().fetch_open_orders()
+            return [
+                {"id": str(o.get("id")), "symbol": o.get("symbol"), "status": o.get("status")}
+                for o in (orders or [])
+                if o.get("id")
+            ]
+        except ccxt.BaseError as e:
+            logger.error("Binance %s get_open_orders failed: %s", self._mode, e)
+            raise RuntimeError(f"Binance {self._mode} open_orders: {e}") from e
+
     async def get_verified_position_exit(self, request):
         """Verify one disappeared position from direct state and private trades."""
         from aletheia.data.symbols import to_canonical

@@ -77,6 +77,12 @@ def authoritative_account_realized_loss(execution_mode: str) -> AccountLossSnaps
         return _paper_ledger_snapshot(rows, today_start)
 
     realized = round(sum(float(row["realized_pnl"]) for row in rows), 8)
+    # Add realized PnL from PARTIAL reductions today (exit-intent R1 Stage 2). Full
+    # closes are already summed above from the verified closed-position read; partial
+    # reductions leave the position OPEN so they never appear there — they live only in
+    # the per-close ledger. Zero until reduce-in-place (Stage 3) writes any, so this is
+    # equivalence-preserving for the current full-close-only world.
+    realized = round(realized + _partial_close_realized_today(execution_mode, today_start), 8)
     return AccountLossSnapshot(
         available=True,
         realized_pnl_usdt=realized,
@@ -115,6 +121,8 @@ def _paper_ledger_snapshot(rows: list[dict], today_start: str) -> AccountLossSna
             return _unavailable("paper_ledger_mismatch", event_count=len(rows))
 
     realized = round(sum(expected.values()), 8)
+    # Partial reductions today (see non-paper branch). Zero until Stage 3.
+    realized = round(realized + _partial_close_realized_today("paper_internal", today_start), 8)
     return AccountLossSnapshot(
         available=True,
         realized_pnl_usdt=realized,
@@ -122,6 +130,25 @@ def _paper_ledger_snapshot(rows: list[dict], today_start: str) -> AccountLossSna
         source="paper_account_ledger",
         reason="available",
         event_count=len(rows),
+    )
+
+
+def _partial_close_realized_today(execution_mode: str, today_start: str) -> float:
+    """Realized PnL from PARTIAL close events today (exit-intent R1 Stage 2).
+
+    Full closes are summed from the verified closed-position read; partial reductions
+    (is_partial=1) live only in the per-close ledger because the position stays open, so
+    they are added here — closing the gap the research flagged (a losing partial reduce
+    would otherwise be invisible to the daily-loss breaker). Returns 0.0 when there are
+    no partial events (the current world), keeping the breaker's output unchanged.
+    """
+    try:
+        from aletheia.storage.repositories import list_position_close_events
+        events = list_position_close_events(since_iso=today_start, execution_mode=execution_mode)
+    except Exception:
+        return 0.0
+    return round(
+        sum(float(e.get("realized_pnl") or 0.0) for e in events if e.get("is_partial")), 8
     )
 
 

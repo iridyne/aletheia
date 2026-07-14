@@ -1739,6 +1739,67 @@ def list_strategy_positions(strategy_id: str, status: str | None = None, limit: 
     )
 
 
+def list_closed_positions(
+    since_iso: str | None = None,
+    execution_mode: str | None = None,
+    limit: int = 10000,
+) -> list[dict]:
+    """Closed positions, newest first, optionally filtered by close time / mode.
+
+    Used by exit-attribution analytics (M0, exit-intent plan). ``since_iso`` is
+    compared against ``closed_at`` (UTC ISO-8601 strings sort chronologically),
+    so pass an ISO timestamp to bound the window.
+    """
+    clauses = ["status = 'closed'"]
+    params: list = []
+    if since_iso is not None:
+        clauses.append("closed_at >= ?")
+        params.append(since_iso)
+    if execution_mode is not None:
+        clauses.append("execution_mode = ?")
+        params.append(execution_mode)
+    return _select_all(
+        "positions",
+        where=" AND ".join(clauses),
+        params=tuple(params),
+        order="COALESCE(closed_at, opened_at) DESC",
+        limit=limit,
+    )
+
+
+def insert_position_close_event(event: dict) -> None:
+    """Append one row to the per-close ledger (exit-intent R1). One row per close EVENT
+    (full close = one row; a partial reduce = one row per reduction)."""
+    _insert("position_close_events", event)
+
+
+def list_position_close_events(
+    since_iso: str | None = None,
+    execution_mode: str | None = None,
+    position_id: str | None = None,
+    limit: int = 10000,
+) -> list[dict]:
+    """Close-event ledger rows, newest first, optionally filtered."""
+    clauses: list[str] = []
+    params: list = []
+    if since_iso is not None:
+        clauses.append("closed_at >= ?")
+        params.append(since_iso)
+    if execution_mode is not None:
+        clauses.append("execution_mode = ?")
+        params.append(execution_mode)
+    if position_id is not None:
+        clauses.append("position_id = ?")
+        params.append(position_id)
+    return _select_all(
+        "position_close_events",
+        where=(" AND ".join(clauses) if clauses else None),
+        params=tuple(params),
+        order="closed_at DESC",
+        limit=limit,
+    )
+
+
 def insert_position_disappearance_candidate(
     candidate: PositionDisappearanceCandidate,
 ) -> None:

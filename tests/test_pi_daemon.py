@@ -13,6 +13,12 @@ from aletheia.agent_runtime.pi_daemon import (
     start_pi_daemon,
     stop_pi_daemon,
 )
+from aletheia.agent_runtime.wake_events import (
+    CATASTROPHIC,
+    STOP_LOSS_NEAR,
+    TAKE_PROFIT_NEAR,
+    WakeEvent,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -22,6 +28,9 @@ def reset_daemon_state():
     pd._signal_event = None
     pd._eval_lock = None
     pd._uvicorn_loop = None
+    pd._coalescer = None
+    pd._pending_events.clear()
+    pd._generic_wake_pending = False
     yield
     task = pd._daemon_task
     if task is not None and not task.done():
@@ -30,6 +39,9 @@ def reset_daemon_state():
     pd._signal_event = None
     pd._eval_lock = None
     pd._uvicorn_loop = None
+    pd._coalescer = None
+    pd._pending_events.clear()
+    pd._generic_wake_pending = False
 
 
 def test_notify_noop_when_not_started():
@@ -250,3 +262,64 @@ async def test_start_stop_lifecycle():
         await asyncio.sleep(0.05)
 
         assert not is_daemon_running()
+
+
+# ── M1.5: wake-event path (coalescing + rate limit) ──────────────────────────
+
+async def _run_daemon_with_event(event, *, wake_capacity=15):
+    """Start the daemon, deliver one WakeEvent, return the list of params the fake
+    evaluate received."""
+    captured: list = []
+
+    async def fake_evaluate(params):
+        captured.append(params)
+        return {"action": "skip"}
+
+    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
+         patch("aletheia.config.loader.load_config") as mock_cfg:
+        mock_cfg.return_value.runtime.paused = False
+        mock_cfg.return_value.agent.permission_mode = "Paper"
+
+        loop = asyncio.get_running_loop()
+        task = start_pi_daemon(
+            loop=loop, debounce_sec=0.02, cooldown_sec=0.02, heartbeat_sec=999.0,
+            coalesce_window_sec=0.0, wake_capacity=wake_capacity,
+        )
+        await asyncio.sleep(0.02)
+        notify_pi_daemon(source=event.kind, event=event)
+        await asyncio.sleep(0.3)
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+    return captured
+
+
+async def test_event_wake_passes_context_to_eval():
+    """A stop-loss-proximity WakeEvent reaches the evaluation as coalesced context."""
+    ev = WakeEvent(position_id="p1", kind=STOP_LOSS_NEAR, ts=0.0, payload={"dist_pct": 0.3})
+    captured = await _run_daemon_with_event(ev)
+
+    with_batches = [p for p in captured if p.get("wake_batches")]
+    assert with_batches, f"no wake_batches in {captured}"
+    batch = with_batches[0]["wake_batches"][0]
+    assert batch["position_id"] == "p1"
+    assert batch["events"][0]["kind"] == STOP_LOSS_NEAR
+    assert batch["events"][0]["payload"] == {"dist_pct": 0.3}
+
+
+async def test_ratelimited_event_does_not_wake():
+    """With zero token budget, a low-priority (P3) event is dropped → no evaluation."""
+    ev = WakeEvent(position_id="p1", kind=TAKE_PROFIT_NEAR, ts=0.0)
+    captured = await _run_daemon_with_event(ev, wake_capacity=0)
+    assert captured == [], f"expected no eval, got {captured}"
+
+
+async def test_catastrophic_event_bypasses_ratelimit():
+    """A P0 catastrophic event evaluates even with zero token budget."""
+    ev = WakeEvent(position_id="p1", kind=CATASTROPHIC, ts=0.0)
+    captured = await _run_daemon_with_event(ev, wake_capacity=0)
+    with_batches = [p for p in captured if p.get("wake_batches")]
+    assert with_batches, f"catastrophic must bypass rate limit; got {captured}"
+    assert with_batches[0]["wake_batches"][0]["max_priority"] == 0

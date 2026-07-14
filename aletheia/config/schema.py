@@ -301,6 +301,26 @@ class RiskConfig(BaseModel):
     futures_margin_force_close_ratio: float = 0.85
     # Liquidation buffer: reject if est. liq price within X% of entry
     min_liquidation_buffer_pct: float = 5.0
+    # ── Layer-0 catastrophic stop (exit-intent plan M6) ────────────────────────
+    # Force-close a position when its ADVERSE move from entry exceeds this %,
+    # regardless of the position's own stop. This is the hard backstop that makes
+    # handing stop discretion to the System Operator safe: it fires before any
+    # strategy exit and is NOT relaxable by an ExitPlan. School-aware — serenity
+    # (long-horizon research) tolerates a wider drawdown. Disable → no force-close.
+    catastrophic_stop_enabled: bool = True
+    catastrophic_stop_pct: float = 10.0            # short_term / default school
+    catastrophic_stop_pct_serenity: float = 15.0   # serenity holdings
+    # Runtime liquidation-proximity monitor (M6): emergency force-close a LEVERAGED
+    # position when current price is within this % of its estimated liquidation
+    # price. Tighter than the pre-trade min_liquidation_buffer_pct because by now the
+    # position is live and near wipeout. Only applies when leverage > 1.
+    runtime_liquidation_monitor_enabled: bool = True
+    runtime_liquidation_buffer_pct: float = 3.0
+    # Horizon hard backstop (exit-intent plan M2/D3, N=3): when the Operator sets an
+    # expected_horizon on a position, hitting it wakes the Operator for a must-answer
+    # decision (close / extend). The position is auto-closed only at the far backstop
+    # min(expected_horizon * this multiplier, the school's absolute max_hold).
+    horizon_hard_backstop_mult: float = 3.0
     max_open_positions_live: int = 3
     max_open_positions_demo: int = 6
     # "whitelist" = only symbol_list may trade; "blacklist" = all except symbol_list.
@@ -569,6 +589,15 @@ class TradingConfig(BaseModel):
     trail_atr_mult: float = 1.5
     trail_pct: float = 1.0
     breakeven_trigger_pct: float = 1.5
+    # Exit-intent plan M4/D2: trailing is authored on the ExitPlan (per position) —
+    # an operator spec overrides these globals, "off" disables it. D2=A (default):
+    # when a position has NO trailing spec, the globals above still apply (behavior
+    # preserved). Set True for D2=B — trailing runs ONLY when the operator authored it.
+    trailing_requires_authoring: bool = False
+    # Exit-intent plan M5/D5: on thesis invalidation (serenity opportunity dismissed),
+    # default is to auto-close (D5 option 2, current behavior). Set False to instead
+    # WAKE the Operator to review/veto (the AI review path) rather than auto-closing.
+    thesis_auto_close: bool = True
     # Exchange-native TPSL bracket orders (Bitget demo/live only). Default off —
     # enable after verifying Bitget TPSL API behavior in demo mode.
     exchange_tpsl_enabled: bool = False

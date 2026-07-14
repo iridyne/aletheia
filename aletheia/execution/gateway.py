@@ -31,6 +31,7 @@ from aletheia.storage.repositories import (
     release_proposal_execution_claim,
     replace_proposal_execution_claim,
     transaction,
+    update_position,
     update_trade_proposal,
 )
 from aletheia.files.jsonl import write_audit
@@ -130,6 +131,8 @@ def submit_proposal(
     opportunity_id: str | None = None,
     agent_rationale: str | None = None,
     trade_school: str = "short_term",
+    expected_horizon_hours: float | None = None,
+    stop_source: str | None = None,
 ) -> dict:
     """Submit a trade proposal through the full execution pipeline.
 
@@ -158,6 +161,8 @@ def submit_proposal(
         agent_rationale=agent_rationale,
         attribution_snapshot=attribution_snapshot,
         trade_school=trade_school,
+        expected_horizon_hours=expected_horizon_hours,
+        stop_source=stop_source,
     )
     insert_trade_proposal(proposal)
     return execute_existing_proposal(proposal.id, execution_mode)
@@ -482,6 +487,22 @@ def _reject_for_risk(proposal: TradeProposal, risk_result) -> dict:
         "message": risk_result.message,
     }
 
+def _stamp_exit_intent(result: dict, proposal: TradeProposal) -> None:
+    """Stamp the Operator's exit intent (expected_horizon_hours + stop provenance) from
+    the proposal onto the just-opened position (exit-intent plan M2). No-op when the
+    order rested unfilled (no position_id yet) or the proposal carries no intent —
+    mirrors the existing take_profit post-open stamp pattern in this function.
+    """
+    pid = result.get("position_id") if isinstance(result, dict) else None
+    if not pid:
+        return
+    updates: dict = {}
+    if getattr(proposal, "expected_horizon_hours", None) is not None:
+        updates["expected_horizon_hours"] = proposal.expected_horizon_hours
+    if getattr(proposal, "stop_source", None):
+        updates["stop_source"] = proposal.stop_source
+    if updates:
+        update_position(pid, **updates)
 
 def _exchange_order_matches_proposal(
     proposal: TradeProposal,
@@ -1266,6 +1287,7 @@ def _execute_proposal(
                     trade_school=execution_proposal.trade_school,
                     attribution_snapshot=attribution_snapshot,
                 )
+                _stamp_exit_intent(result, proposal)
                 update_trade_proposal(proposal.id, status="executed")
             _notify_committed_paper_fill(result)
             _write_post_commit_audit(
@@ -1319,8 +1341,7 @@ def _execute_proposal(
                     take_profit_price=(
                         execution_proposal.take_profit
                         if allowed_mode == "bitget_demo"
-                        else None
-                    ),
+                        else None                    ),
                     leverage=execution_proposal.leverage,
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
@@ -1406,8 +1427,7 @@ def _execute_proposal(
                     take_profit_price=(
                         execution_proposal.take_profit
                         if allowed_mode == "bitget_live_limited"
-                        else None
-                    ),
+                        else None                    ),
                     leverage=execution_proposal.leverage,
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,

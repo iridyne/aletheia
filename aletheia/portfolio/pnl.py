@@ -322,6 +322,23 @@ def persist_exit_reasoning(
     return True
 
 
+# Exit fee rate per execution mode. Must match the open-leg constants in each broker
+# file so realized PnL is internally consistent regardless of which path opened it.
+_EXIT_FEE_BY_MODE: dict[str, float] = {
+    "paper_internal": 0.0006,      # matches paper_broker default (Bitget taker)
+    "bitget_demo": 0.0006,         # bitget_broker._DEMO_FEE_RATE
+    "bitget_live_limited": 0.0006, # bitget_broker._LIVE_FEE_RATE
+    "okx_demo": 0.0005,            # okx_broker._OKX_FEE_RATE
+    "okx_live_limited": 0.0005,
+    "binance_testnet": 0.0004,     # binance_broker._TESTNET_FEE_RATE
+    "binance_live_limited": 0.0004,
+}
+
+
+def _exit_fee_rate(execution_mode: str) -> float:
+    return _EXIT_FEE_BY_MODE.get(execution_mode or "", 0.0006)
+
+
 def close_position(
     position_id: str,
     exit_price: float,
@@ -336,8 +353,7 @@ def close_position(
     funding_cost: float | None = None,
     funding_source: str | None = None,
     funding_evidence: dict | None = None,
-) -> dict:
-    """Close an open position at exit_price, realizing PnL. Returns the result.
+) -> dict:    """Close an open position at exit_price, realizing PnL. Returns the result.
 
     Writes a position_closed audit event (trust §1.4). `reason` is recorded as
     close_reason (e.g. stop_loss / take_profit / max_hold / manual). Exchange
@@ -380,18 +396,7 @@ def close_position(
 
     gross_pnl = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
     # Deduct round-trip fees; prefer stored entry_fee (precise) over re-derivation.
-    # Fee rates must match the open-leg constants in each broker file so realized PnL
-    # is internally consistent regardless of which execution path opened the position.
-    _EXIT_FEE_BY_MODE: dict[str, float] = {
-        "paper_internal": 0.0006,      # matches paper_broker default (Bitget taker)
-        "bitget_demo": 0.0006,         # bitget_broker._DEMO_FEE_RATE
-        "bitget_live_limited": 0.0006, # bitget_broker._LIVE_FEE_RATE
-        "okx_demo": 0.0005,            # okx_broker._OKX_FEE_RATE
-        "okx_live_limited": 0.0005,
-        "binance_testnet": 0.0004,     # binance_broker._TESTNET_FEE_RATE
-        "binance_live_limited": 0.0004,
-    }
-    fee_rate = _EXIT_FEE_BY_MODE.get(row.get("execution_mode", ""), 0.0006)
+    fee_rate = _exit_fee_rate(row.get("execution_mode", ""))
     # Sprint B (QR-2026-07-01-02): entry_fee=0.0 is a legitimate stored value (zero-cost
     # paper fills). Only fall back to re-deriving from the fee schedule when the field is
     # genuinely missing (NULL from pre-Sprint-B positions). Truthiness "or 0" had been
@@ -657,10 +662,30 @@ def close_position(
             message=audit_message,
         ))
     row["closed_at"] = closed_at  # so the Serenity hook computes real hold_h
+# Per-close ledger (exit-intent R1, Stage 1): one row per close EVENT so realized
+    # PnL can later be summed from close events — unifying full closes with partial
+    # reductions. Additive: nothing reads this yet (the daily-loss breaker + outcome
+    # analytics are rewired onto it in Stage 2). is_partial=0 for a full close.
+    from aletheia.storage.models import new_id
+    repo.insert_position_close_event({
+        "id": new_id(),
+        "position_id": position_id,
+        "symbol": row.get("symbol"),
+        "direction": row.get("direction"),
+        "execution_mode": row.get("execution_mode"),
+        "close_reason": reason,
+        "exit_price": exit_price,
+        "closed_qty": row["quantity"],
+        "realized_pnl": realized,
+        "entry_fee": round(entry_fee, 8),
+        "exit_fee": round(exit_fee, 8),
+        "is_partial": 0,
+        "closed_at": closed_at,
+    })
+
     audit_payload = {
         "actor": actor,
-        "source": source,
-        "event_type": "position_closed",
+        "source": source,        "event_type": "position_closed",
         "entity_type": "position",
         "entity_id": position_id,
         "before": audit_before,
@@ -757,6 +782,115 @@ def _all_closed_positions(execution_mode: str | None = None) -> list[dict]:
 
 
 def _closed_today(execution_mode: str | None = None) -> list[dict]:
+
+
+def reduce_position(
+    position_id: str,
+    reduce_qty: float,
+    exit_price: float,
+    reason: str = "operator_reduce",
+) -> dict:
+    """Partially close a position (reduce-in-place, exit-intent R1 Stage 3).
+
+    Realizes PnL on ``reduce_qty`` at ``exit_price``, writes ONE partial close event
+    (is_partial=1) to the per-close ledger, shrinks the position's quantity, prorates its
+    stored entry_fee onto the reduced portion, and keeps the position OPEN with its
+    average entry frozen. The realized PnL reaches the daily-loss breaker via the Stage-2
+    partial-close term; the open position's own realized_pnl is left untouched (the ledger
+    is the source of truth for partials, so a later full close never double-counts).
+
+    Use close_position for a full exit — reduce_qty must be a strict fraction of the open
+    quantity. Returns a result dict; {"error": ...} on invalid input.
+
+    NOTE (needs follow-on, see PARTIAL_REDUCE_RESEARCH.md): paper_internal cash-ledger
+    settlement of a partial (paper_account_events UNIQUE(action, position_id)) and the
+    real-exchange reduce-only order are not wired here. The risk-critical realized-PnL
+    accounting IS complete via the per-close ledger + the Stage-2 breaker term.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import new_id
+    from aletheia.files.jsonl import write_audit
+
+    row = repo._select_one("positions", position_id)
+    if row is None:
+        return {"error": "position_not_found", "position_id": position_id}
+    if row.get("status") != "open":
+        return {"error": "position_not_open", "position_id": position_id}
+    # Product boundary (2026-07): paper_internal is deliberately function-limited to
+    # full closes only. Partial reduce needs real reduce-only + partial-fill + cash
+    # semantics, which the local simulator only approximates — so it is routed to the
+    # demo EXCHANGE modes (bitget_demo / okx_demo / binance_testnet, which are the
+    # default paper_execution_mode) where behavior matches live. Reject honestly rather
+    # than settle a partial the local cash ledger can't represent. See
+    # docs/research/PARTIAL_REDUCE_RESEARCH.md (§Product decision).
+    if row.get("execution_mode") == "paper_internal":
+        return {
+            "error": "partial_reduce_unsupported_on_paper_internal",
+            "position_id": position_id,
+            "hint": "paper_internal supports full closes only; use a demo exchange mode "
+                    "(bitget_demo / okx_demo / binance_testnet) for partial reduce",
+        }
+    qty = float(row["quantity"])
+    reduce_qty = float(reduce_qty)
+    if reduce_qty <= 0:
+        return {"error": "reduce_qty_must_be_positive", "position_id": position_id}
+    if reduce_qty >= qty:
+        return {
+            "error": "reduce_qty_not_less_than_position",
+            "position_id": position_id,
+            "hint": "use close_position for a full exit",
+        }
+
+    fee_rate = _exit_fee_rate(row.get("execution_mode", ""))
+    gross = _realized_pnl(row["direction"], row["entry_price"], exit_price, reduce_qty)
+    entry_fee_total = row.get("entry_fee")
+    if entry_fee_total is None:
+        entry_fee_total = row["entry_price"] * qty * fee_rate
+    entry_fee_portion = float(entry_fee_total) * reduce_qty / qty
+    exit_fee = exit_price * reduce_qty * fee_rate
+    realized = round(gross - entry_fee_portion - exit_fee, 8)
+
+    new_qty = round(qty - reduce_qty, 10)
+    remaining_entry_fee = round(float(entry_fee_total) - entry_fee_portion, 8)
+    closed_at = datetime.now(timezone.utc).isoformat()
+
+    # Shrink quantity + prorate the entry fee to the remainder; entry_price (avg) frozen;
+    # position stays OPEN.
+    update_position(position_id, quantity=new_qty, entry_fee=remaining_entry_fee)
+    repo.insert_position_close_event({
+        "id": new_id(),
+        "position_id": position_id,
+        "symbol": row.get("symbol"),
+        "direction": row.get("direction"),
+        "execution_mode": row.get("execution_mode"),
+        "close_reason": reason,
+        "exit_price": exit_price,
+        "closed_qty": reduce_qty,
+        "realized_pnl": realized,
+        "entry_fee": round(entry_fee_portion, 8),
+        "exit_fee": round(exit_fee, 8),
+        "is_partial": 1,
+        "closed_at": closed_at,
+    })
+    write_audit({
+        "actor": "system",
+        "source": "position_lifecycle",
+        "event_type": "position_reduced",
+        "entity_type": "position",
+        "entity_id": position_id,
+        "before": {"quantity": qty},
+        "after": {"quantity": new_qty, "reduced_qty": reduce_qty, "realized_pnl": realized, "reason": reason},
+        "message": f"Position {row.get('symbol')} reduced {reduce_qty}@{exit_price} ({reason}); realized={realized}",
+    })
+    return {
+        "reduced": True,
+        "position_id": position_id,
+        "reduced_qty": reduce_qty,
+        "remaining_qty": new_qty,
+        "realized_pnl": realized,
+        "exit_price": exit_price,
+    }
+
     today = datetime.now(timezone.utc).date().isoformat()
     matched: list[dict] = []
     for r in _all_closed_positions(execution_mode):
