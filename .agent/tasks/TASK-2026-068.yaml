@@ -13,17 +13,17 @@ intent: Repair the live Learning feedback path so approved, relevant Learning ev
   from re-running without new evidence. Do not alter Risk, Execution, exchanges, credentials,
   live enablement, or paper-influence defaults.
 acceptance:
-- A completed or failed Operator diagnostic is not recreated for the same stable
-  recommendation fingerprint; this remains true after process recovery, while
-  genuinely new rejection evidence creates a new diagnostic.
-- The active PI diagnostic route receives only applied, current Learning lessons
-  as advisory context and returns the exact displayed-lesson manifest for the
-  task/event audit record.
-- Risk, Execution, exchange/authentication, credentials, live enablement, and
-  paper-influence defaults remain unchanged; Market Observer's existing fail-closed
-  authority gate remains in force.
-- Focused Python and TypeScript regressions, Learning final-consumer specs, and
-  architecture/workflow checks pass at the implementation commit.
+- A completed or failed Operator diagnostic is not recreated for the same stable recommendation
+  fingerprint; this remains true after process recovery, while genuinely new rejection
+  evidence creates a new diagnostic.
+- The active PI diagnostic route receives only applied, current Learning lessons as
+  advisory context and returns the exact displayed-lesson manifest for the task/event
+  audit record.
+- Risk, Execution, exchange/authentication, credentials, live enablement, and paper-influence
+  defaults remain unchanged; Market Observer's existing fail-closed authority gate
+  remains in force.
+- Focused Python and TypeScript regressions, Learning final-consumer specs, and architecture/workflow
+  checks pass at the implementation commit.
 ownership:
   branch: iridite/learning-live-feedback-stability
   lease_holder: codex-learning-live-feedback
@@ -34,6 +34,22 @@ next_action:
   command_key: architecture
   reason: Record current-HEAD focused verification and strict workflow proof.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: c5cd778274785d05e033a038e39f1e2fef3bb509
+  run_at: '2026-07-14T15:14:07.175874Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: c5cd778274785d05e033a038e39f1e2fef3bb509
+  run_at: '2026-07-14T15:14:19.106613Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-068.md
-updated_at: '2026-07-14T15:02:40.264705Z'
+updated_at: '2026-07-14T15:14:19.106795Z'
