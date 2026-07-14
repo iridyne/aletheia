@@ -511,14 +511,25 @@ def _persist_memo(memo: TradingMemo) -> None:
         logger.warning("Failed to persist trading memo: %s", e)
 
 
-def render_memo_for_observer(memo: TradingMemo, symbol: str | None = None) -> str:
-    """Render a concise text block for injection into market_observer/System Operator prompts."""
+def render_memo_for_observer(
+    memo: TradingMemo,
+    symbol: str | None = None,
+    compact: bool = False,
+) -> str:
+    """Render a concise text block for injection into market_observer/System Operator prompts.
+
+    compact=True trims to direction bias + top-2 regime edges + top-2 anti-patterns,
+    dropping timing windows, prior corrections, metadata, and key insight. Use when the
+    memo is sent per-symbol in a multi-symbol loop to reduce repeated token cost.
+    """
     from aletheia.analytics.memo_effectiveness import memo_half_life_weight
 
     memo_weight = memo_half_life_weight(memo.get("generated_at"))
     lines = ["\n## Historical Performance Context (Trading Memo)"]
-    lines.append(f"Data: {memo['sample_size']} trades over {memo['data_window_days']} days")
-    lines.append(f"Memo time weight: {memo_weight:.2f} (half-life 7d)")
+
+    if not compact:
+        lines.append(f"Data: {memo['sample_size']} trades over {memo['data_window_days']} days")
+        lines.append(f"Memo time weight: {memo_weight:.2f} (half-life 7d)")
 
     # Direction summary
     ds = memo.get("direction_summary", {})
@@ -528,22 +539,24 @@ def render_memo_for_observer(memo: TradingMemo, symbol: str | None = None) -> st
         lines.append(f"Direction: Long {l['win_rate']}% win ({l['count']} trades, avg {l['avg_pnl_pct']}%) | "
                      f"Short {s['win_rate']}% win ({s['count']} trades, avg {s['avg_pnl_pct']}%) → {ds.get('bias', 'balanced')}")
 
-    # Regime playbook (top 3 most relevant)
+    # Regime playbook — top 4 in full mode, top 2 in compact
     if memo.get("regime_playbook"):
         lines.append("Regime edges:")
-        for rule in memo["regime_playbook"][:4]:
+        limit = 2 if compact else 4
+        for rule in memo["regime_playbook"][:limit]:
             weighted_win = round(float(rule["win_rate"]) * memo_weight, 1)
             lines.append(f"  - {rule['direction']} in {rule['regime']}: "
                          f"{rule['win_rate']}% win, time-weighted {weighted_win}%, avg {rule['avg_pnl_pct']}% "
                          f"({rule['sample_size']} trades) → {rule['edge'].upper()}")
 
-    # Timing
-    best_times = [t for t in memo.get("timing_windows", []) if t["quality"] == "best"]
-    avoid_times = [t for t in memo.get("timing_windows", []) if t["quality"] == "avoid"]
-    if best_times:
-        lines.append(f"Best timing: {', '.join(t['value'] for t in best_times[:2])}")
-    if avoid_times:
-        lines.append(f"Avoid timing: {', '.join(t['value'] for t in avoid_times[:2])}")
+    # Timing — omitted in compact mode
+    if not compact:
+        best_times = [t for t in memo.get("timing_windows", []) if t["quality"] == "best"]
+        avoid_times = [t for t in memo.get("timing_windows", []) if t["quality"] == "avoid"]
+        if best_times:
+            lines.append(f"Best timing: {', '.join(t['value'] for t in best_times[:2])}")
+        if avoid_times:
+            lines.append(f"Avoid timing: {', '.join(t['value'] for t in avoid_times[:2])}")
 
     # Symbol-specific (if provided)
     if symbol and memo.get("symbol_affinity"):
@@ -553,16 +566,15 @@ def render_memo_for_observer(memo: TradingMemo, symbol: str | None = None) -> st
                              f"{sr['win_rate']}% win, PnL={sr['pnl']:.4f} ({sr['sample_size']} trades)")
                 break
 
-    # Anti-patterns
+    # Anti-patterns — top 3 in full mode, top 2 in compact
     if memo.get("anti_patterns"):
         lines.append("Anti-patterns (avoid):")
-        for ap in memo["anti_patterns"][:3]:
+        limit = 2 if compact else 3
+        for ap in memo["anti_patterns"][:limit]:
             lines.append(f"  - {ap['pattern']}: {ap['loss_rate']}% loss rate ({ap['sample_size']} trades)")
 
-    # Prior corrections (Module J): judgments the previous memo made that
-    # subsequent results overturned. Surfaces the revision so the agent sees the
-    # learning is self-correcting, not static.
-    if memo.get("prior_corrections"):
+    # Prior corrections — omitted in compact mode
+    if not compact and memo.get("prior_corrections"):
         lines.append("Corrections (prior guidance overturned by later results — judgment revised):")
         for c in memo["prior_corrections"][:3]:
             lines.append(
@@ -571,8 +583,8 @@ def render_memo_for_observer(memo: TradingMemo, symbol: str | None = None) -> st
                 f"{c.get('sample')} trades; {c.get('reason')}"
             )
 
-    # Key insight (LLM summary)
-    if memo.get("key_insight"):
+    # Key insight (LLM summary) — omitted in compact mode
+    if not compact and memo.get("key_insight"):
         lines.append(f"Insight: {memo['key_insight']}")
 
     return "\n".join(lines)

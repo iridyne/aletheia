@@ -168,6 +168,7 @@ async def build_market_context(
     exchange: str | None = None,
     client=None,   # legacy param — ignored, kept for call-site compatibility
     provider=None, # MarketDataProvider; created from config if None
+    include_glossary: bool = True,
 ) -> tuple[str, dict]:
     """Build the verified market snapshot block for the LLM.
 
@@ -315,7 +316,7 @@ async def build_market_context(
         + "\n".join(sections)
         + ("\n" + rs_block if rs_block else "")
         + ("\n" + macro_block if macro_block else "")
-        + "\n" + _INDICATOR_GLOSSARY
+        + ("\n" + _INDICATOR_GLOSSARY if include_glossary else "")
     )
     debug["fallback"] = False
     return body, debug
