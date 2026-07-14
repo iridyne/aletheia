@@ -4,9 +4,34 @@ import type {
   OperatorTaskState,
   PersistedOperatorTask,
 } from './schemas.js'
+import { createHash } from 'node:crypto'
 import { isTaskNotFoundError, errorMessage } from './gateway_errors.js'
 
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(',')}]`
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function recommendationFingerprint(recommendation: OperatorRecommendation): string {
+  // A completed diagnostic is reusable only while the underlying evidence is identical.
+  // Summary wording is deliberately excluded: text changes must not restart expensive work.
+  const material = {
+    id: recommendation.id,
+    kind: recommendation.kind,
+    task_type: recommendation.taskType || 'diagnose_system_health',
+    metadata: recommendation.metadata || {},
+  }
+  return createHash('sha256').update(stableJson(material)).digest('hex')
+}
+
 export class TaskRuntime {
+  private readonly terminalRecommendationFingerprints = new Set<string>()
   private queuedTasks: Array<{
     recommendationId: string | null
     taskId: string
@@ -112,15 +137,45 @@ export class TaskRuntime {
         : 'operator'
   }
 
-  private async createQueuedTask(recommendation: OperatorRecommendation): Promise<void> {
-    const taskType = recommendation.taskType || 'diagnose_system_health'
-    const assignedTo = this.assignedToFor(taskType)
-    const inputData = {
+  private terminalKey(recommendationId: string, fingerprint: string): string {
+    return `${recommendationId}:${fingerprint}`
+  }
+
+  private fingerprintFromTask(task: { inputData: Record<string, unknown> }): string | null {
+    const fingerprint = task.inputData.recommendation_fingerprint
+    return typeof fingerprint === 'string' && fingerprint.length > 0 ? fingerprint : null
+  }
+
+  private rememberTerminalTask(task: { recommendationId: string | null; inputData: Record<string, unknown> }): void {
+    if (!task.recommendationId) {
+      return
+    }
+    const fingerprint = this.fingerprintFromTask(task)
+    if (fingerprint) {
+      this.terminalRecommendationFingerprints.add(this.terminalKey(task.recommendationId, fingerprint))
+    }
+  }
+
+  private isTerminalRecommendation(recommendation: OperatorRecommendation): boolean {
+    return this.terminalRecommendationFingerprints.has(
+      this.terminalKey(recommendation.id, recommendationFingerprint(recommendation)),
+    )
+  }
+
+  private inputDataFor(recommendation: OperatorRecommendation): Record<string, unknown> {
+    return {
       recommendation_id: recommendation.id,
+      recommendation_fingerprint: recommendationFingerprint(recommendation),
       kind: recommendation.kind,
       summary: recommendation.summary,
       ...(recommendation.metadata || {}),
     }
+  }
+
+  private async createQueuedTask(recommendation: OperatorRecommendation): Promise<void> {
+    const taskType = recommendation.taskType || 'diagnose_system_health'
+    const assignedTo = this.assignedToFor(taskType)
+    const inputData = this.inputDataFor(recommendation)
     const created = await this.backendClient.createTask({
       task_type: taskType,
       status: 'queued',
@@ -212,6 +267,12 @@ export class TaskRuntime {
   }
 
   restore(tasks: PersistedOperatorTask[]): void {
+    this.terminalRecommendationFingerprints.clear()
+    for (const task of tasks) {
+      if (task.status === 'completed' || task.status === 'failed') {
+        this.rememberTerminalTask(this.toRuntimeTask(task, true))
+      }
+    }
     const active = tasks.find(task => task.status === 'running')
     const queued = tasks.filter(task => task.status === 'queued')
     if (!active) {
@@ -235,7 +296,10 @@ export class TaskRuntime {
       return
     }
     const taskId = this.activeTask.taskId
-    await this.safeUpdateTask(taskId, { status: 'completed', output_data })
+    const completed = await this.safeUpdateTask(taskId, { status: 'completed', output_data })
+    if (completed !== null) {
+      this.rememberTerminalTask(this.activeTask)
+    }
     this.activeTask = null
     this.syncState()
   }
@@ -255,7 +319,10 @@ export class TaskRuntime {
     }
 
     const [task] = this.queuedTasks.splice(queuedIndex, 1)
-    await this.safeUpdateTask(task.taskId, { status: 'completed', output_data })
+    const completed = await this.safeUpdateTask(task.taskId, { status: 'completed', output_data })
+    if (completed !== null) {
+      this.rememberTerminalTask(task)
+    }
     this.syncState()
     return true
   }
@@ -265,7 +332,10 @@ export class TaskRuntime {
       return
     }
     const taskId = this.activeTask.taskId
-    await this.safeUpdateTask(taskId, { status: 'failed', error, output_data })
+    const failed = await this.safeUpdateTask(taskId, { status: 'failed', error, output_data })
+    if (failed !== null) {
+      this.rememberTerminalTask(this.activeTask)
+    }
     this.activeTask = null
     this.syncState()
   }
@@ -286,13 +356,17 @@ export class TaskRuntime {
     }
 
     const [task] = this.queuedTasks.splice(queuedIndex, 1)
-    await this.safeUpdateTask(task.taskId, { status: 'failed', error, output_data })
+    const failed = await this.safeUpdateTask(task.taskId, { status: 'failed', error, output_data })
+    if (failed !== null) {
+      this.rememberTerminalTask(task)
+    }
     this.syncState()
     return true
   }
 
   async sync(recommendations: OperatorRecommendation[]): Promise<void> {
     const actionable = recommendations.filter(item => item.taskType)
+    const unseenActionable = actionable.filter(item => !this.isTerminalRecommendation(item))
     const representedRecommendationIds = new Set(
       [this.activeTask?.recommendationId || null, ...this.queuedTasks.map(task => task.recommendationId)].filter(
         (value): value is string => typeof value === 'string' && value.length > 0,
@@ -304,7 +378,7 @@ export class TaskRuntime {
         ...this.activeTask,
         restoredFromRecovery: false,
       }
-      for (const recommendation of actionable) {
+      for (const recommendation of unseenActionable) {
         if (!representedRecommendationIds.has(recommendation.id)) {
           await this.createQueuedTask(recommendation)
           representedRecommendationIds.add(recommendation.id)
@@ -338,21 +412,16 @@ export class TaskRuntime {
       await this.promoteQueuedTask()
     }
 
-    if (!this.activeTask && actionable.length === 0) {
+    if (!this.activeTask && unseenActionable.length === 0) {
       this.syncState()
       return
     }
 
-    if (!this.activeTask && actionable.length > 0) {
-      const first = actionable[0]
+    if (!this.activeTask && unseenActionable.length > 0) {
+      const first = unseenActionable[0]
       const taskType = first.taskType || 'diagnose_system_health'
       const assignedTo = this.assignedToFor(taskType)
-      const inputData = {
-        recommendation_id: first.id,
-        kind: first.kind,
-        summary: first.summary,
-        ...(first.metadata || {}),
-      }
+      const inputData = this.inputDataFor(first)
       const created = await this.backendClient.createTask({
         task_type: taskType,
         status: 'running',
@@ -374,7 +443,7 @@ export class TaskRuntime {
       representedRecommendationIds.add(first.id)
     }
 
-    for (const recommendation of actionable) {
+    for (const recommendation of unseenActionable) {
       if (recommendation.id === this.activeTask?.recommendationId) {
         continue
       }

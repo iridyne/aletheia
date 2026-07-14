@@ -85,8 +85,15 @@ export class BackendClient implements BackendGatewayClient {
     )
   }
 
-  async getOperatorTasks(status?: string): Promise<PersistedOperatorTask[]> {
-    const suffix = status ? `?status=${encodeURIComponent(status)}` : ''
+  async getOperatorTasks(status?: string, limit?: number): Promise<PersistedOperatorTask[]> {
+    const query = new URLSearchParams()
+    if (status) {
+      query.set('status', status)
+    }
+    if (limit) {
+      query.set('limit', String(limit))
+    }
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
     return fetchJson<PersistedOperatorTask[]>(`${this.baseUrl}/api/operator/tasks${suffix}`)
   }
 

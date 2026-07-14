@@ -20,6 +20,7 @@ export interface PiSessionResult {
   }>
   finalAnswer: string | null
   error?: string
+  learningManifest?: Record<string, unknown> | null
 }
 
 export class PiRuntimeAdapter {
@@ -70,6 +71,9 @@ export class PiRuntimeAdapter {
         commandsExecuted: (data.commands_executed as PiSessionResult['commandsExecuted']) || [],
         finalAnswer: (data.final_answer as string) || null,
         error: (data.error as string) || undefined,
+        learningManifest: data.learning_manifest && typeof data.learning_manifest === 'object'
+          ? data.learning_manifest as Record<string, unknown>
+          : null,
       }
     } catch (err) {
       return {

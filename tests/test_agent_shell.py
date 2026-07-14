@@ -679,6 +679,54 @@ def test_context_summary_text():
     assert "5 recent runs" in text
 
 
+@patch("aletheia.agent_shell.context.load_config")
+@patch("aletheia.agent_shell.context.LessonStore")
+def test_learning_context_exposes_only_applied_unexpired_lessons(mock_lessons, mock_cfg):
+    """The live Operator receives reviewed Learning facts, never raw proposals."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    cfg = MagicMock()
+    cfg.agent.permission_mode = "Paper"
+    cfg.live.state = "live_disabled"
+    cfg.runtime.paused = False
+    cfg.runtime.kill_switch_active = False
+    cfg.exchange.mode = "demo"
+    mock_cfg.return_value = cfg
+    mock_lessons.return_value.list_all.return_value = [
+        SimpleNamespace(
+            lesson_id="applied-current",
+            category="quality",
+            severity="warning",
+            summary="Recent opportunities need stricter evidence.",
+            created_at="2026-07-14T00:00:00+00:00",
+            expires_at="2026-08-01T00:00:00+00:00",
+        ),
+        SimpleNamespace(
+            lesson_id="applied-expired",
+            category="quality",
+            severity="warning",
+            summary="Expired lesson must not be shown.",
+            created_at="2026-06-01T00:00:00+00:00",
+            expires_at="2026-06-02T00:00:00+00:00",
+        ),
+    ]
+
+    ctx = build_app_context(["learning"])
+
+    assert ctx["learning"]["advisory_only"] is True
+    assert ctx["learning"]["lessons"] == [
+        {
+            "lesson_id": "applied-current",
+            "category": "quality",
+            "severity": "warning",
+            "summary": "Recent opportunities need stricter evidence.",
+            "created_at": "2026-07-14T00:00:00+00:00",
+        }
+    ]
+    assert ctx["learning"]["manifest"]["lesson_ids"] == ["applied-current"]
+
+
 def test_repair_context_includes_doctor_section():
     assert "doctor" in sections_for_profile("repair_context")
 

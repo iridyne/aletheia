@@ -37,6 +37,55 @@ def _operator_prompt_context() -> dict:
 
 @spec_claim(
     SpecClaim(
+        "LE-C17", "learning_evolution", "§10 live diagnostic context", "L2c",
+        "The active Operator PI session receives only reviewed, current Learning lessons as "
+        "an advisory context, carries a manifest for audit, and does not enable a paper "
+        "Learning treatment or trading authority.",
+        status="implemented",
+    )
+)
+def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.agent_shell import context
+
+    monkeypatch.setattr(
+        context,
+        "LessonStore",
+        lambda: SimpleNamespace(list_all=lambda **_: [
+            SimpleNamespace(
+                lesson_id="current-reviewed-lesson",
+                category="quality",
+                severity="warning",
+                summary="Require stronger evidence before a parameter proposal.",
+                created_at="2026-07-14T00:00:00+00:00",
+                expires_at="2026-08-01T00:00:00+00:00",
+            ),
+            SimpleNamespace(
+                lesson_id="expired-reviewed-lesson",
+                category="quality",
+                severity="warning",
+                summary="This stale lesson must stay out of the prompt.",
+                created_at="2026-06-01T00:00:00+00:00",
+                expires_at="2026-06-02T00:00:00+00:00",
+            ),
+        ]),
+    )
+
+    diagnostic = context.build_app_context(["learning"])["learning"]
+    assert diagnostic["advisory_only"] is True
+    assert diagnostic["manifest"]["source"] == "applied_ps_lessons"
+    assert diagnostic["manifest"]["lesson_ids"] == ["current-reviewed-lesson"]
+    assert [row["lesson_id"] for row in diagnostic["lessons"]] == ["current-reviewed-lesson"]
+
+    from aletheia.server.routes.operator import operator_llm_session
+    import inspect
+    source = inspect.getsource(operator_llm_session)
+    assert '["system", "market", "agents", "trading", "learning"]' in source
+    assert '"learning_manifest": learning_manifest' in source
+
+
+@spec_claim(
+    SpecClaim(
         "LE-C16", "learning_evolution", "§10 prompt authority", "L2c",
         "Observer and Operator Learning bundles stay empty unless the exact paper path has "
         "prospective treatment authority; control retains the static prompt baseline and the "

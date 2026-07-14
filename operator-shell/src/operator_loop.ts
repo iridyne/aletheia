@@ -904,7 +904,7 @@ export class OperatorLoop {
       this.backendClient.getOperatorSession(this.config.mainSessionId).catch(() => null),
       this.backendClient.getOperatorSessions(100).catch(() => []),
       this.backendClient.getOperatorCommands(100),
-      this.backendClient.getOperatorTasks().catch(() => []),
+      this.backendClient.getOperatorTasks(undefined, 500).catch(() => []),
     ])
 
     this.cachedSupervision = {
@@ -2018,6 +2018,7 @@ export class OperatorLoop {
         status: result.status,
         turns_used: result.turnsUsed,
         commands_executed: result.commandsExecuted,
+        learning_manifest: result.learningManifest || null,
       },
     })
 
@@ -2034,12 +2035,14 @@ export class OperatorLoop {
           goal,
           turns_used: result.turnsUsed,
           commands_executed: result.commandsExecuted.length,
+          learning_manifest: result.learningManifest || null,
         },
       })
       await this.taskRuntime.completeActiveTask({
         summary: result.finalAnswer,
         pi_session_id: sessionId,
         turns_used: result.turnsUsed,
+        learning_manifest: result.learningManifest || null,
       })
     } else {
       const errorMsg = result.error || `PI session ended with status: ${result.status}`
@@ -2058,7 +2061,10 @@ export class OperatorLoop {
           turns_used: result.turnsUsed,
         },
       })
-      await this.taskRuntime.failActiveTask(errorMsg, { pi_session_id: sessionId })
+      await this.taskRuntime.failActiveTask(errorMsg, {
+        pi_session_id: sessionId,
+        learning_manifest: result.learningManifest || null,
+      })
     }
 
     this.sessionRuntime.rememberBranch({
@@ -2489,11 +2495,13 @@ export class OperatorLoop {
       return
     }
 
-    const [operatorStatus, sessionDetail, sessionSummaries, runningTasks, failedTasks, recentEvents] = await Promise.all([
+    const [operatorStatus, sessionDetail, sessionSummaries, recentTasks, failedTasks, recentEvents] = await Promise.all([
       this.backendClient.getOperatorStatus(),
       this.backendClient.getOperatorSession(this.config.mainSessionId).catch(() => null),
       this.backendClient.getOperatorSessions(50).catch(() => []),
-      this.backendClient.getOperatorTasks('running').catch(() => []),
+      // Include terminal tasks: their persisted recommendation fingerprints stop a
+      // restart from scheduling the identical diagnostic again.
+      this.backendClient.getOperatorTasks().catch(() => []),
       this.backendClient.getOperatorTasks('failed').catch(() => []),
       this.backendClient.getOperatorEvents(20).catch(() => []),
     ])
@@ -2536,7 +2544,7 @@ export class OperatorLoop {
           }
         : null,
     )
-    this.taskRuntime.restore(runningTasks)
+    this.taskRuntime.restore(recentTasks)
     const recoveryLastError = this.recoveryLastError(operatorStatus.last_error)
     const recoveryHeartbeatIntent = this.recoveryHeartbeatIntent(operatorStatus.current_intent)
     this.lastError = recoveryLastError
