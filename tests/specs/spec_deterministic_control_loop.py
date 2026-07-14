@@ -32,6 +32,18 @@ def test_dcls_failure_artifact_contract():
 
 
 @spec_claim(SpecClaim(
+    "DCLS-S03", "operator_layer", "seed-controlled stateful search", "L2a",
+    "DCLS_SEED controls Hypothesis generation; equal seeds replay equal operation sequences and final digests, while different seeds explore different sequences.",
+    status="implemented",
+))
+def test_dcls_seed_is_wired_into_hypothesis_generation():
+    source = (ROOT / "tests/simulation/control_loop/test_stateful_control_loop.py").read_text()
+    assert "@hypothesis_seed(SEED)" in source
+    assert "derandomize=True" not in source
+    assert "DCLS_STATEFUL_STEPS={steps}" in source
+
+
+@spec_claim(SpecClaim(
     "DCLS-B01", "operator_layer", "CI control-loop gate", "L2b",
     "PR CI runs fixed incidents, stateful properties, mutation canaries, and the active Golden Path; nightly CI raises stateful bounds.",
     status="implemented",
