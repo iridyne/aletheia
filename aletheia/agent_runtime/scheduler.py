@@ -1582,6 +1582,7 @@ def _run_cleanup():
             "filter_decisions": repo.prune_filter_decisions(90),
             "filter_candidate_outcomes": repo.prune_filter_candidate_outcomes(90),
             "pi_decisions_transient": repo.prune_pi_decisions(7),
+            "signal_pending_stale": repo.prune_signal_pending_stale(30),
             "system_actions": repo.prune_system_actions(7),
             # Operator-shell telemetry (DB-SIZE-1): heartbeats are the dominant
             # bloat — pure liveness, read latest-row-only, so a short window.

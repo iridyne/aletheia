@@ -861,3 +861,29 @@ global block 作为 system prompt 的一部分或 run-level prefix 注入一次�
 
 **文件**：`aletheia/data/context_builder.py:render_enriched_context_md()`，`aletheia/agents/market_observer.py:392-399`
 
+---
+
+## §25 2026-07-13 Stability Baseline Qualification 期间发现(记录,未修)
+
+> 候选 commit `c95b2be3`(首个稳定基线资格验证)期间在真实运行节点观测。
+
+### 🟠 SBQ-25-01 — resume 端点不查 Startup Behavior Gate 的 durable blocker
+
+- **观测**:资格验证中注入了一个 active `reconciliation_integrity_incident`(`c2eded75d057`),
+  Gateway 于 07:10:46 UTC 正确进入 Startup Behavior Gate 阻断(layered pause,21 暂停/19 essential,
+  durable blocker `paused_by_gate=true`)。但 07:12:17 UTC 一个外部调用
+  (audit `actor=human, source=dashboard, event_type=gateway_resumed`,极可能是本机开着的 dashboard 标签页)
+  命中 `POST /api/gateway/resume`,**在该 incident 仍 active、门 blocker 仍有效时**清除了暂停,
+  随后门的 recheck 循环见 `runtime.paused=False` 便退出并清掉 durable blocker。
+- **根因**:`aletheia/server/routes/health.py::resume`(`/gateway/resume`)与
+  `aletheia/server/routes/operator.py::_set_paused(False)`(`/operator/resume`、telegram、agent_shell resume)
+  只经 `resume_gate.resume_if_llm_available`(仅校验 LLM),**不调用
+  `startup_behavior_gate.evaluate_startup_gate()` / 不检查 durable blocker**。因此人工/dashboard/telegram
+  的一次 resume 可越过 Startup Gate,把门刻意保持暂停的系统重新放行(即使 DB 完整性/对账事故等 blocker 仍在)。
+- **影响**:不违反门自身契约(门的 recheck 只恢复自暂停、不覆盖人工 kill/pause,已由
+  `tests/test_startup_behavior_gate.py::test_recheck_does_not_resume_user_pause` 等 22 项单测证实);
+  但削弱「Gate 阻断期保持暂停直到检查通过」的运行保证——一个残留的浏览器标签页即可静默解除门。
+- **建议修复(未授权施工)**:让 resume 授权链在 Startup Gate 有 active blocker 时也复跑
+  `evaluate_startup_gate()`(通过则清 blocker 并恢复,不通过则 409 拒绝),即把 Startup Gate 纳入
+  `resume_if_*` 的判定,与 LLM gate 并列。属信任/行为边界,修复需 focused 回归测试。
+- **状态**:🕒 记录待办(owner 指示暂不修)。资格验证其余 9 条标准全绿;#67 热循环实机增量已归零。
