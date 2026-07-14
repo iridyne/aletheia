@@ -29,7 +29,7 @@ ownership:
   lease_holder: codex-learning-live-feedback
   claimed_at: '2026-07-14T15:02:40.264535Z'
   expires_at: '2026-07-14T23:02:40.264697Z'
-base_commit: 9c71e1f37cf7bc8f9addb02121f2cc6e58cca6a1
+base_commit: feb5011011146f771d4cbf7ccc741ad4f5639480
 next_action:
   command_key: workflow_bootstrap
   reason: Task complete; run bootstrap and create or claim a new task before changing
@@ -40,7 +40,7 @@ verification:
   command: uv run pytest tests/test_agent_workflow.py -q
   command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
   exit_code: 0
-  commit: c5cd778274785d05e033a038e39f1e2fef3bb509
+  commit: 9226f747a8fbf06fd2bda645dced1cc2c76bd481
   run_at: '2026-07-14T15:14:07.175874Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
@@ -48,7 +48,7 @@ verification:
   command: uv run pytest tests/test_architecture_fitness.py -q
   command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
   exit_code: 0
-  commit: c5cd778274785d05e033a038e39f1e2fef3bb509
+  commit: 9226f747a8fbf06fd2bda645dced1cc2c76bd481
   run_at: '2026-07-14T15:14:19.106613Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
@@ -56,7 +56,7 @@ verification:
   command: uv run pytest tests/test_agent_workflow.py -q
   command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
   exit_code: 0
-  commit: 1ae3990cd8a915941d13b5984d9d5aed14d04825
+  commit: 9226f747a8fbf06fd2bda645dced1cc2c76bd481
   run_at: '2026-07-14T15:14:39.271170Z'
   result: passed
   recorded_by: agent_workflow.verify/v1

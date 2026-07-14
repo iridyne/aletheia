@@ -23,7 +23,7 @@ ownership:
   lease_holder: codex-learning-legacy-queue
   claimed_at: '2026-07-14T15:29:28.372436Z'
   expires_at: '2026-07-14T23:29:28.372590Z'
-base_commit: 0ce274113d2e5cf7b5b9e55588d4ccb239a96064
+base_commit: feb5011011146f771d4cbf7ccc741ad4f5639480
 next_action:
   command_key: workflow_bootstrap
   reason: Task complete; run bootstrap and create or claim a new task before changing
@@ -34,7 +34,7 @@ verification:
   command: uv run pytest tests/test_agent_workflow.py -q
   command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
   exit_code: 0
-  commit: e4260111123aa2db418a85eb57960c331b0a0c88
+  commit: 9226f747a8fbf06fd2bda645dced1cc2c76bd481
   run_at: '2026-07-14T15:31:08.558293Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
@@ -42,7 +42,7 @@ verification:
   command: uv run pytest tests/test_agent_workflow.py -q
   command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
   exit_code: 0
-  commit: f1f5e0219af4f1c40722c7997a9295435bf40db4
+  commit: 9226f747a8fbf06fd2bda645dced1cc2c76bd481
   run_at: '2026-07-14T15:31:14.137505Z'
   result: passed
   recorded_by: agent_workflow.verify/v1

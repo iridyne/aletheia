@@ -23,7 +23,7 @@ ownership:
   lease_holder: codex-learning-legacy-dedup
   claimed_at: '2026-07-14T15:25:15.149128Z'
   expires_at: '2026-07-14T23:25:15.149265Z'
-base_commit: e96037f61dae61662880a63236856f0dc0dc85cc
+base_commit: feb5011011146f771d4cbf7ccc741ad4f5639480
 next_action:
   command_key: workflow_bootstrap
   reason: Task complete; run bootstrap and create or claim a new task before changing
@@ -34,7 +34,7 @@ verification:
   command: uv run pytest tests/test_agent_workflow.py -q
   command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
   exit_code: 0
-  commit: b07efb8ae066c512fd70b8dd00ece431c96fc139
+  commit: 9226f747a8fbf06fd2bda645dced1cc2c76bd481
   run_at: '2026-07-14T15:26:57.768162Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
@@ -42,7 +42,7 @@ verification:
   command: uv run pytest tests/test_agent_workflow.py -q
   command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
   exit_code: 0
-  commit: 7600b899ad6d4c3f3620387f9f484e3b208fea70
+  commit: 9226f747a8fbf06fd2bda645dced1cc2c76bd481
   run_at: '2026-07-14T15:27:02.823637Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
