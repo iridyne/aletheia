@@ -1754,6 +1754,54 @@ test('task runtime does not repeat a completed recommendation until its evidence
   assert.equal(calls.createdTasks.length, 2)
 })
 
+test('task runtime supersedes legacy unversioned opportunity-audit backlog after recovery', async () => {
+  const { backend, calls } = makeFakeBackend(makeSnapshot())
+  const recommendation = makeRecommendation({
+    id: 'opportunity-quality-audit-due',
+    kind: 'opportunity_quality_audit_due',
+    taskType: 'pi_reasoning_session',
+    metadata: {
+      reason: 'high_rejection_rate',
+      rejection_count: 6,
+      rejected_decision_ids: ['risk-1', 'risk-2', 'risk-3', 'risk-4', 'risk-5', 'risk-6'],
+      goal: 'Audit the current risk rejections once.',
+    },
+  })
+  const legacyInput = {
+    recommendation_id: 'opportunity-quality-audit-due',
+    kind: 'opportunity_quality_audit_due',
+    reason: 'high_rejection_rate',
+    rejection_count: 6,
+    goal: 'Audit the current risk rejections once.',
+  }
+  const runtime = new TaskRuntime(backend)
+  runtime.restore([
+    {
+      id: 'legacy-running', task_type: 'pi_reasoning_session', status: 'running',
+      priority: 'normal', created_by: 'operator_loop', assigned_to: 'operator',
+      input_data: legacyInput, output_data: null, error: null,
+      started_at: '2026-07-14T00:00:00Z', completed_at: null, created_at: '2026-07-14T00:00:00Z',
+    },
+    {
+      id: 'legacy-queued', task_type: 'pi_reasoning_session', status: 'queued',
+      priority: 'normal', created_by: 'operator_loop', assigned_to: 'operator',
+      input_data: legacyInput, output_data: null, error: null,
+      started_at: null, completed_at: null, created_at: '2026-07-14T00:01:00Z',
+    },
+  ])
+
+  await runtime.sync([recommendation])
+
+  assert.deepEqual(
+    calls.updatedTasks.map(item => [item.taskId, item.payload.status]),
+    [['legacy-running', 'completed'], ['legacy-queued', 'completed']],
+  )
+  assert.equal(calls.createdTasks.length, 1)
+  assert.equal(calls.createdTasks[0].status, 'running')
+  assert.equal(typeof calls.createdTasks[0].input_data.recommendation_fingerprint, 'string')
+  assert.deepEqual(runtime.snapshot(), { currentTaskId: 'task-1', queueSize: 1 })
+})
+
 test('task runtime creates a queued backlog and promotes the next queued task after the active one clears', async () => {
   const { backend, calls } = makeFakeBackend(makeSnapshot())
   const runtime = new TaskRuntime(backend)

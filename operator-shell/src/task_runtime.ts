@@ -162,6 +162,44 @@ export class TaskRuntime {
     )
   }
 
+  private isLegacyOpportunityQualityAudit(task: {
+    recommendationId: string | null
+    taskType: string
+    inputData: Record<string, unknown>
+  }): boolean {
+    return task.recommendationId === 'opportunity-quality-audit-due'
+      && task.taskType === 'pi_reasoning_session'
+      && this.fingerprintFromTask(task) === null
+  }
+
+  private async supersedeLegacyOpportunityQualityBacklog(): Promise<void> {
+    const output_data = {
+      summary: 'Superseded legacy unversioned opportunity-quality diagnostic after fingerprint rollout.',
+      superseded_by: 'recommendation_fingerprint:v1',
+    }
+
+    if (this.activeTask && this.isLegacyOpportunityQualityAudit(this.activeTask)) {
+      const superseded = await this.safeUpdateTask(this.activeTask.taskId, {
+        status: 'completed',
+        output_data,
+      })
+      if (superseded !== null) {
+        this.activeTask = null
+      }
+    }
+
+    const retained = []
+    for (const task of this.queuedTasks) {
+      if (!this.isLegacyOpportunityQualityAudit(task)) {
+        retained.push(task)
+        continue
+      }
+      await this.safeUpdateTask(task.taskId, { status: 'completed', output_data })
+    }
+    this.queuedTasks = retained
+    this.syncState()
+  }
+
   private inputDataFor(recommendation: OperatorRecommendation): Record<string, unknown> {
     return {
       recommendation_id: recommendation.id,
@@ -365,6 +403,10 @@ export class TaskRuntime {
   }
 
   async sync(recommendations: OperatorRecommendation[]): Promise<void> {
+    // Versions before recommendation_fingerprint created an endless queued/running
+    // opportunity-quality backlog. They cannot be attributed to a specific current
+    // evidence set, so retire them once and let at most one v1 task represent now.
+    await this.supersedeLegacyOpportunityQualityBacklog()
     const actionable = recommendations.filter(item => item.taskType)
     const unseenActionable = actionable.filter(item => !this.isTerminalRecommendation(item))
     const representedRecommendationIds = new Set(
