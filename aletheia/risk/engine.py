@@ -606,6 +606,18 @@ def _evaluate_proposal_locked(
     if proposal.market_type == "usdt_futures" and not cfg.exchange.enabled_markets.get("usdt_futures"):
         violations.append("futures_market_disabled")
 
+    # 2a. Local paper futures cannot produce trustworthy funding economics yet.
+    # Letting a new position open would make its eventual net PnL unknowable and
+    # freeze the paper-account authority on close.  Fail closed at the durable Risk
+    # boundary until a real per-position local funding ledger exists.  Existing
+    # positions still use the separate close path and remain fully exit-capable.
+    if (
+        proposal.source == "native"
+        and proposal.execution_mode == "paper_internal"
+        and proposal.market_type == "usdt_futures"
+    ):
+        violations.append("local_paper_futures_funding_unavailable")
+
     # 2b. Entry-plan completeness (owner discussion #6, 2026-07-03): a native LIMIT
     #     entry must commit all four numbers BEFORE the order — entry (price), stop
     #     (stop_price), take-profit, and reward:risk (risk_reward) — so a trade is a

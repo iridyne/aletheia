@@ -53,18 +53,13 @@ ownership:
 base_commit: c95b2be34d93368182da21fc81f87e71cf5f64e1
 next_action:
   command_key: trade_chain_completion
-  reason: Implementation commit 1fdb90a7 has same-commit focused-chain, Risk,
-    Execution, causal-chain, executable-rule, architecture, and full-suite evidence.
-    Keep the branch unmerged until the owner chooses the local futures-paper policy and
-    creates the required new policy epoch/window; rerun this command after any code change.
+  reason: Re-run the focused production-chain command at the new implementation
+    commit after adding fail-closed local-paper futures entry handling and durable
+    PiDecision retention. Keep the branch unmerged until a new policy epoch/window exists.
 blockers:
 - B-class Operator timing and Bitget original-order protection changes require the
   owner to create a new policy epoch and observation window before merge; prior and
   new observation data must not be mixed.
-- Local paper futures have no trustworthy per-Position funding producer. The owner
-  must choose between temporarily rejecting new paper_internal futures entries or
-  authorizing a separate immutable funding-event ledger; this branch does not invent
-  funding or claim local futures paper is fully usable.
 - Exchange-backed futures also have no account funding-ledger producer in the current
   code. Their close lifecycle remains fail-closed for Outcome and Learning until real
   venue funding facts are collected; local simulation is deliberately rejected there.

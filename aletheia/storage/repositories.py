@@ -2712,25 +2712,44 @@ def prune_filter_candidate_outcomes(days: int = 90) -> int:
     return _delete_old_rows("filter_candidate_outcomes", days)
 
 
-# Transient PI-decision actions: pre-decision signals + non-trade outcomes that
-# carry no causal-chain reference (proposal_id is NULL). Decision-bearing actions
-# (trade / close / recommend_promote) are KEPT forever — they are the System Operator's
-# audit trail. signal_pending in particular accumulated to 1600+ rows (PT-1 bug)
-# and, when duplicated, made the PI read its own pending queue as "data corrupted"
-# and skip every decision. Pruning the transient rows keeps that queue clean.
-_PRUNABLE_PI_ACTIONS = ("signal_pending", "skip", "watch")
+# A pending carrier is removable only after one exact source/opportunity identity
+# has one unambiguous terminal entry decision. skip/watch are terminal Operator
+# decisions themselves and therefore remain part of the permanent audit trail.
+# Position-management decisions are intentionally excluded: a later close/reduce
+# must not make an otherwise unresolved entry carrier look consumed.
+_PENDING_FINAL_ACTIONS = ("trade", "scale_in", "flip", "skip", "watch")
 
 
 def prune_pi_decisions(days: int = 7) -> int:
-    """Delete old TRANSIENT pi_decisions (signal_pending/skip/watch), keeping
-    decision-bearing rows (trade/close/recommend_promote) forever. Returns count.
+    """Delete only old pending carriers with one explicit settled final row.
+
+    Missing/legacy identity, no final, multiple finals, and a final still in
+    ``submitting`` all remain durable for fail-closed recovery and audit. Every
+    non-pending Operator decision is retained permanently.
     """
-    placeholders = ",".join("?" for _ in _PRUNABLE_PI_ACTIONS)
+    placeholders = ",".join("?" for _ in _PENDING_FINAL_ACTIONS)
+    exact_final = (
+        "f.action IN (" + placeholders + ") "
+        "AND f.opportunity_id=pi_decisions.opportunity_id "
+        "AND f.signal_source=pi_decisions.signal_source "
+        "AND datetime(f.created_at)>=datetime(pi_decisions.created_at)"
+    )
     return _delete_old_rows(
         "pi_decisions",
         days,
-        extra_where=f"action IN ({placeholders})",
-        extra_params=_PRUNABLE_PI_ACTIONS,
+        extra_where=(
+            "action='signal_pending' "
+            "AND opportunity_id IS NOT NULL "
+            "AND signal_source IS NOT NULL "
+            f"AND (SELECT COUNT(*) FROM pi_decisions AS f WHERE {exact_final})=1 "
+            "AND EXISTS ("
+            "SELECT 1 FROM pi_decisions AS f "
+            f"WHERE {exact_final} "
+            "AND f.proposal_status IS NOT NULL "
+            "AND f.proposal_status!='submitting'"
+            ")"
+        ),
+        extra_params=(*_PENDING_FINAL_ACTIONS, *_PENDING_FINAL_ACTIONS),
     )
 
 

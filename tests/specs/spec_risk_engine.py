@@ -153,6 +153,46 @@ def test_daily_loss_fails_closed_when_account_event_window_is_truncated():
 
 
 @spec_claim(
+    SpecClaim(
+        "RE-B22", "risk_engine_contract", "§2 local paper funding authority", "L2b",
+        "Risk durably rejects a new native paper_internal futures entry while "
+        "per-position local funding economics have no trustworthy producer.",
+        status="implemented",
+    )
+)
+def test_risk_rejects_local_paper_futures_without_funding_producer(
+    tmp_path, monkeypatch
+):
+    _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.001,
+        price=60_000.0,
+        leverage=1,
+    )
+    repo.insert_trade_proposal(proposal)
+
+    result = evaluate_proposal(proposal)
+
+    assert result.approved is False
+    assert "local_paper_futures_funding_unavailable" in result.violations
+    stored = [
+        row for row in repo.list_risk_decisions(limit=10)
+        if row["proposal_id"] == proposal.id
+    ]
+    assert len(stored) == 1
+    assert stored[0]["approved"] == 0
+
+
+@spec_claim(
     SpecClaim("RE-B01", "risk_engine_contract", "§3 persistence", "L2b",
               "Every evaluate_proposal persists exactly one RiskDecision row"),
 )

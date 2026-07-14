@@ -352,6 +352,54 @@ def test_risk_gate_stale_market_data_for_live(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# PL-RG-06  L2c  local-paper futures require complete funding economics
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-RG-06", "pipeline_risk_gate", "§4 local paper funding boundary", "L2c",
+        "A new paper_internal futures entry is durably rejected before Order or "
+        "Position materialization while no trustworthy local funding producer exists.",
+        status="implemented",
+    ),
+)
+def test_local_paper_futures_entry_fails_closed_before_order(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.execution.gateway import submit_proposal
+    from aletheia.storage.sqlite import get_db
+
+    result = submit_proposal(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.001,
+        price=60_000.0,
+        stop_price=58_000.0,
+        leverage=1,
+        execution_mode="paper_internal",
+    )
+
+    assert result["status"] == "rejected"
+    proposal_id = result["proposal_id"]
+    db = get_db()
+    decision = db.execute(
+        "SELECT approved, violations FROM risk_decisions WHERE proposal_id=?",
+        (proposal_id,),
+    ).fetchone()
+    assert decision is not None
+    assert decision["approved"] == 0
+    assert "local_paper_futures_funding_unavailable" in decision["violations"]
+    assert db.execute(
+        "SELECT COUNT(*) FROM orders WHERE proposal_id=?", (proposal_id,)
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM positions WHERE proposal_id=?", (proposal_id,)
+    ).fetchone()[0] == 0
+
+
+# ---------------------------------------------------------------------------
 # Round 2: Sample-Aware Kelly Sizing (SZ-*) — Coriva impl plan 2026-06-30
 # ---------------------------------------------------------------------------
 

@@ -173,36 +173,55 @@ def test_cleanup_writes_audit(tmp_path, monkeypatch):
     assert any(e.get("event_type") == "data_pruned" for e in read_jsonl("audit.jsonl"))
 
 
-def test_prune_pi_decisions_keeps_decisions_deletes_transient(tmp_path, monkeypatch):
-    """prune_pi_decisions removes old transient rows (signal_pending/skip/watch)
-    but NEVER touches decision-bearing rows (trade/close/recommend_promote) —
-    they are the System Operator's audit trail. Regression guard for the PT-1 cleanup."""
+def test_prune_pi_decisions_keeps_audit_and_only_deletes_settled_pending(
+    tmp_path, monkeypatch
+):
+    """Only an unambiguous, durably settled pending carrier may be pruned.
+
+    skip/watch are final Operator decisions, not telemetry. Unresolved carriers,
+    submitting recovery state, legacy NULL source identity, and duplicate finals
+    must all remain available for audit or fail-closed recovery.
+    """
     conn = setup_env(tmp_path, monkeypatch)
     rows = [
-        ("sp_old", "signal_pending", _old(30)),   # transient, old → delete
-        ("skip_old", "skip", _old(30)),            # transient, old → delete
-        ("watch_old", "watch", _old(30)),          # transient, old → delete
-        ("sp_new", "signal_pending", _recent()),   # transient, recent → keep
-        ("trade_old", "trade", _old(30)),          # decision, old → KEEP
-        ("close_old", "close", _old(30)),          # decision, old → KEEP
-        ("promote_old", "recommend_promote", _old(30)),  # decision, old → KEEP
+        # id, action, opportunity_id, signal_source, proposal_status, created_at
+        ("sp_settled", "signal_pending", "opp-settled", "market_observer", None, _old(30)),
+        ("settled_final", "trade", "opp-settled", "market_observer", "executed", _old(30)),
+        ("sp_unresolved", "signal_pending", "opp-unresolved", "market_observer", None, _old(30)),
+        ("sp_submitting", "signal_pending", "opp-submitting", "market_observer", None, _old(30)),
+        ("submitting_final", "trade", "opp-submitting", "market_observer", "submitting", _old(30)),
+        ("sp_ambiguous", "signal_pending", "opp-ambiguous", "market_observer", None, _old(30)),
+        ("ambiguous_final_a", "trade", "opp-ambiguous", "market_observer", "executed", _old(30)),
+        ("ambiguous_final_b", "skip", "opp-ambiguous", "market_observer", "not_applicable", _old(30)),
+        ("sp_legacy_source", "signal_pending", "opp-legacy", None, None, _old(30)),
+        ("legacy_final", "trade", "opp-legacy", None, "executed", _old(30)),
+        ("sp_new", "signal_pending", "opp-recent", "market_observer", None, _recent()),
+        ("skip_old", "skip", "opp-skip", "market_observer", "not_applicable", _old(30)),
+        ("watch_old", "watch", "opp-watch", "market_observer", "not_applicable", _old(30)),
+        ("close_old", "close", "opp-close", "market_observer", "executed", _old(30)),
+        ("promote_old", "recommend_promote", "opp-promote", "market_observer", "not_applicable", _old(30)),
     ]
-    for rid, action, ts in rows:
+    for rid, action, opportunity_id, signal_source, proposal_status, ts in rows:
         conn.execute(
-            "INSERT INTO pi_decisions (id, action, created_at, conviction, debate_ran) "
-            "VALUES (?,?,?,0,0)", (rid, action, ts),
+            "INSERT INTO pi_decisions "
+            "(id, action, opportunity_id, signal_source, proposal_status, "
+            "created_at, conviction, debate_ran) VALUES (?,?,?,?,?,?,0,0)",
+            (rid, action, opportunity_id, signal_source, proposal_status, ts),
         )
     conn.commit()
 
     deleted = repo.prune_pi_decisions(7)
-    assert deleted == 3, f"expected 3 transient rows deleted, got {deleted}"
+    assert deleted == 1, f"expected only the settled pending row deleted, got {deleted}"
 
     remaining = {r["id"] for r in conn.execute("SELECT id FROM pi_decisions").fetchall()}
-    assert {"trade_old", "close_old", "promote_old"} <= remaining, (
-        "prune_pi_decisions deleted a decision-bearing row — must keep trade/close/recommend_promote"
+    assert {"skip_old", "watch_old", "close_old", "promote_old"} <= remaining, (
+        "prune_pi_decisions deleted a final Operator decision"
     )
     assert "sp_new" in remaining, "recent signal_pending wrongly deleted"
-    assert not ({"sp_old", "skip_old", "watch_old"} & remaining), "old transient rows not deleted"
+    assert {
+        "sp_unresolved", "sp_submitting", "sp_ambiguous", "sp_legacy_source"
+    } <= remaining, "prune removed an unresolved or ambiguous recovery carrier"
+    assert "sp_settled" not in remaining
 
 
 def test_delete_old_rows_requires_condition_for_pi_decisions(tmp_path, monkeypatch):

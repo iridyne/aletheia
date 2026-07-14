@@ -1467,7 +1467,11 @@ def test_submitting_claim_keeps_stale_carrier_visible_for_recovery(
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_shell.trading_context import _build_pending_signal_queue
     from aletheia.storage.models import PiDecision
-    from aletheia.storage.repositories import insert_pi_decision, update_pi_decision
+    from aletheia.storage.repositories import (
+        insert_pi_decision,
+        prune_pi_decisions,
+        update_pi_decision,
+    )
 
     opportunity_id = "opp-stale-submitting-recovery"
     insert_pi_decision(PiDecision(
@@ -1478,7 +1482,7 @@ def test_submitting_claim_keeps_stale_carrier_visible_for_recovery(
         action="signal_pending",
         opportunity_id=opportunity_id,
         signal_source="market_observer",
-        created_at=(datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat(),
+        created_at=(datetime.now(timezone.utc) - timedelta(days=8)).isoformat(),
     ))
     insert_pi_decision(PiDecision(
         id="unfinished-final-claim",
@@ -1491,11 +1495,13 @@ def test_submitting_claim_keeps_stale_carrier_visible_for_recovery(
         signal_source="market_observer",
     ))
 
+    assert prune_pi_decisions(days=7) == 0
     visible, queue = _build_pending_signal_queue(max_age_minutes=30)
     assert [row["opportunity_id"] for row in visible] == [opportunity_id]
     assert queue["expired_unconsumed_rows"] == 0
 
     update_pi_decision("unfinished-final-claim", proposal_status="executed")
+    assert prune_pi_decisions(days=7) == 1
     visible, queue = _build_pending_signal_queue(max_age_minutes=30)
     assert visible == []
     assert queue["unresolved_total"] == 0

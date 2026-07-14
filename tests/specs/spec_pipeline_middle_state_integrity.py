@@ -213,6 +213,7 @@ def test_account_leverage_counts_pre_order_and_unresolved_entries(
     conn = _setup_db(tmp_path, monkeypatch)
     cfg = _risk_config(monkeypatch, demo_slots=10)
     cfg.risk.max_account_leverage_demo = 3.0
+    cfg.agent.permission_mode = "Full"
 
     import aletheia.risk.engine as engine
     from aletheia.storage import repositories as repo
@@ -224,6 +225,11 @@ def test_account_leverage_counts_pre_order_and_unresolved_entries(
         "_cached_available_balance_usdt",
         lambda *_args: None,
     )
+    monkeypatch.setattr(
+        engine,
+        "_market_data_age_seconds",
+        lambda *_args, **_kwargs: 0.0,
+    )
 
     first = TradeProposal(
         id="leverage-pre-order",
@@ -233,7 +239,7 @@ def test_account_leverage_counts_pre_order_and_unresolved_entries(
         quantity=20.0,
         price=100.0,
         leverage=1,
-        execution_mode="paper_internal",
+        execution_mode="okx_demo",
         status="executing",
     )
     repo.insert_trade_proposal(first)
@@ -252,7 +258,7 @@ def test_account_leverage_counts_pre_order_and_unresolved_entries(
         quantity=20.0,
         price=100.0,
         leverage=1,
-        execution_mode="paper_internal",
+        execution_mode="okx_demo",
     )
     repo.insert_trade_proposal(second)
     blocked_by_reservation = engine.evaluate_proposal(
