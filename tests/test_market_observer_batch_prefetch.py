@@ -1,0 +1,233 @@
+"""Tests for batch DB query functions used by market_observer parallel prefetch.
+
+Each test verifies that batch_* returns results semantically equivalent to
+calling the individual repository function N times.
+"""
+
+import pytest
+
+
+def _prepare_db(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sqlite
+    from aletheia.storage.migrations import run_migrations
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    sqlite.reset_db()
+    run_migrations()
+
+
+# ---------------------------------------------------------------------------
+# batch_perp_structures
+# ---------------------------------------------------------------------------
+
+def test_batch_perp_structures_returns_latest_per_symbol(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import batch_perp_structures, latest_perp_structure
+
+    db = get_db()
+    # Insert two rows for BTC — different as_of_time; batch should return the newer one.
+    db.execute(
+        "INSERT INTO perp_structure_snapshots (id, symbol, source, as_of_time, observed_at, raw_json) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("ps-btc-old", "BTC", "hyperliquid", "2026-07-13T10:00:00", "2026-07-13T10:01:00", "{}"),
+    )
+    db.execute(
+        "INSERT INTO perp_structure_snapshots (id, symbol, source, as_of_time, observed_at, raw_json) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("ps-btc-new", "BTC", "hyperliquid", "2026-07-14T10:00:00", "2026-07-14T10:01:00", "{}"),
+    )
+    db.execute(
+        "INSERT INTO perp_structure_snapshots (id, symbol, source, as_of_time, observed_at, raw_json) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("ps-eth", "ETH", "hyperliquid", "2026-07-14T08:00:00", "2026-07-14T08:01:00", "{}"),
+    )
+
+    result = batch_perp_structures(["BTC", "ETH", "SOL"])
+
+    # BTC → newest row
+    assert "BTC" in result
+    assert result["BTC"]["id"] == "ps-btc-new"
+    # ETH → its row
+    assert "ETH" in result
+    assert result["ETH"]["id"] == "ps-eth"
+    # SOL → absent (no data), not a KeyError
+    assert "SOL" not in result
+
+    # Consistency: matches individual calls
+    assert latest_perp_structure("BTC")["id"] == result["BTC"]["id"]
+    assert latest_perp_structure("ETH")["id"] == result["ETH"]["id"]
+
+
+def test_batch_perp_structures_empty_input(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.storage.repositories import batch_perp_structures
+
+    assert batch_perp_structures([]) == {}
+
+
+def test_batch_perp_structures_single_symbol(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import batch_perp_structures, latest_perp_structure
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO perp_structure_snapshots (id, symbol, source, as_of_time, observed_at, raw_json) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("ps-sol", "SOL", "hyperliquid", "2026-07-14T09:00:00", "2026-07-14T09:01:00", "{}"),
+    )
+
+    result = batch_perp_structures(["SOL"])
+    assert result["SOL"]["id"] == "ps-sol"
+    assert result["SOL"]["id"] == latest_perp_structure("SOL")["id"]
+
+
+# ---------------------------------------------------------------------------
+# batch_funding_rates
+# ---------------------------------------------------------------------------
+
+def test_batch_funding_rates_returns_latest_per_symbol(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import batch_funding_rates, latest_funding_rate
+
+    db = get_db()
+    # Three rows for BTC@hyperliquid — batch returns the newest.
+    for ts, rid in [
+        ("2026-07-12T10:00:00", "fr-btc-1"),
+        ("2026-07-13T10:00:00", "fr-btc-2"),
+        ("2026-07-14T10:00:00", "fr-btc-3"),
+    ]:
+        db.execute(
+            "INSERT INTO funding_rate_snapshots (id, symbol, exchange, funding_rate, funding_rate_annualized, observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (rid, "BTC", "hyperliquid", 0.0001, 0.365, ts),
+        )
+    # One row for ETH@hyperliquid
+    db.execute(
+        "INSERT INTO funding_rate_snapshots (id, symbol, exchange, funding_rate, funding_rate_annualized, observed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("fr-eth", "ETH", "hyperliquid", 0.0002, 0.73, "2026-07-14T08:00:00"),
+    )
+    # BTC@bybit — should NOT appear in hyperliquid results
+    db.execute(
+        "INSERT INTO funding_rate_snapshots (id, symbol, exchange, funding_rate, funding_rate_annualized, observed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("fr-btc-bybit", "BTC", "bybit", 0.0003, 1.095, "2026-07-15T00:00:00"),
+    )
+
+    result = batch_funding_rates(["BTC", "ETH", "SOL"], "hyperliquid")
+
+    assert result["BTC"]["id"] == "fr-btc-3"
+    assert result["ETH"]["id"] == "fr-eth"
+    assert "SOL" not in result
+
+    # Consistency: matches individual calls
+    assert latest_funding_rate("BTC", exchange="hyperliquid")["id"] == result["BTC"]["id"]
+    assert latest_funding_rate("ETH", exchange="hyperliquid")["id"] == result["ETH"]["id"]
+
+
+def test_batch_funding_rates_empty_input(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.storage.repositories import batch_funding_rates
+
+    assert batch_funding_rates([], "hyperliquid") == {}
+
+
+def test_batch_funding_rates_excludes_other_exchanges(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import batch_funding_rates
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO funding_rate_snapshots (id, symbol, exchange, funding_rate, funding_rate_annualized, observed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("fr-btc-bybit", "BTC", "bybit", 0.001, 3.65, "2026-07-14T10:00:00"),
+    )
+    # Request for hyperliquid — should not include bybit row
+    result = batch_funding_rates(["BTC"], "hyperliquid")
+    assert "BTC" not in result
+
+
+# ---------------------------------------------------------------------------
+# batch_news
+# ---------------------------------------------------------------------------
+
+def test_batch_news_returns_per_symbol_with_limit(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import batch_news
+
+    db = get_db()
+    since = "2026-07-13T00:00:00"
+    # Insert 4 BTC articles (limit_per_symbol=3 → only 3 returned)
+    for i in range(4):
+        db.execute(
+            "INSERT INTO news_items (id, title, source, published_at, symbols_mentioned) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (f"n-btc-{i}", f"BTC news {i}", "coindesk",
+             f"2026-07-14T{10+i:02d}:00:00", "BTC,ETH"),
+        )
+    # One ETH article
+    db.execute(
+        "INSERT INTO news_items (id, title, source, published_at, symbols_mentioned) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("n-eth", "ETH update", "decrypt", "2026-07-14T15:00:00", "ETH"),
+    )
+    # One old article outside the window (should be excluded)
+    db.execute(
+        "INSERT INTO news_items (id, title, source, published_at, symbols_mentioned) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("n-old", "Old BTC news", "coindesk", "2026-07-10T00:00:00", "BTC"),
+    )
+
+    result = batch_news(["BTC", "ETH", "SOL"], since)
+
+    assert len(result["BTC"]) == 3        # capped at limit_per_symbol=3
+    assert len(result["ETH"]) == 3        # 4 BTC+ETH articles match ETH too; capped at 3
+    assert len(result["SOL"]) == 0
+    # Old article is excluded
+    old_titles = [r["title"] for r in result["BTC"]]
+    assert "Old BTC news" not in old_titles
+
+
+def test_batch_news_empty_input(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.storage.repositories import batch_news
+
+    assert batch_news([], "2026-07-13T00:00:00") == {}
+
+
+def test_batch_news_consistent_with_individual_query(tmp_path, monkeypatch):
+    """batch_news([sym], since)[sym] must match the inline SQL query from _analyze_symbol."""
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import batch_news
+
+    db = get_db()
+    since = "2026-07-13T00:00:00"
+    for i in range(5):
+        db.execute(
+            "INSERT INTO news_items (id, title, source, published_at, symbols_mentioned) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (f"n-sol-{i}", f"SOL title {i}", "theblock",
+             f"2026-07-14T{10+i:02d}:00:00", "SOL"),
+        )
+
+    batch_result = batch_news(["SOL"], since)
+
+    # Replicate the original inline query used in _analyze_symbol
+    individual_rows = db.execute(
+        "SELECT title, source, published_at FROM news_items "
+        "WHERE symbols_mentioned LIKE ? AND published_at > ? "
+        "ORDER BY published_at DESC LIMIT 3",
+        ("%SOL%", since),
+    ).fetchall()
+
+    individual_titles = [r[0] for r in individual_rows]
+    batch_titles = [r["title"] for r in batch_result["SOL"]]
+    assert batch_titles == individual_titles

@@ -6,8 +6,10 @@ was sent to the LLM together but only symbols[0] was used for the resulting
 opportunity.
 """
 
+import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
@@ -43,6 +45,29 @@ _MARKET_OBSERVER_JOB_TIMEOUT_S = 500.0
 _MARKET_OBSERVER_LOOP_BUDGET_SEC = 460.0
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
 _ROUND_ROBIN_STATE_KEY = "agent.market_observer.round_robin.v1"
+
+
+@dataclass
+class _DbCache:
+    """Batch-prefetched DB rows for all instruments in a run."""
+    perp_structures: dict[str, dict]   # symbol → latest perp_structure_snapshots row
+    funding_hl: dict[str, dict]        # symbol → latest HL funding row
+    funding_hl_pred: dict[str, dict]   # symbol → latest HL-predicted funding row
+    news: dict[str, list[dict]]        # symbol → up-to-3 recent news_items rows
+    onchain_rows: list[dict]           # global on-chain metrics (all symbols share)
+
+
+@dataclass
+class _SymbolPrefetch:
+    """Per-symbol context built in the parallel prefetch phase."""
+    context_str: str
+    debug: dict
+    pre_filter: dict       # from _evaluate_pre_filter()
+    signal_score: float    # 0.0 = no signal; ≥1.0 = pre-filter passed
+    funding_rate_val: float | None
+    open_interest_val: float | None
+    oi_delta_val: float | None
+    failed: bool = False   # True if exchange context fetch raised
 
 
 class MarketRead(BaseModel):
@@ -221,6 +246,18 @@ def _has_sufficient_signal(context_str: str) -> bool:
     return bool(_evaluate_pre_filter(context_str)["passed"])
 
 
+def _signal_score(pf: dict) -> float:
+    """Normalize pre-filter result to a sortable float. ≥1.0 means pre-filter passed."""
+    scores: list[float] = []
+    if pf.get("rsi") is not None:
+        scores.append(abs(pf["rsi"] - 50) / _PREFILTER_RSI_DEVIATION)
+    if pf.get("atr_pct") is not None:
+        scores.append(pf["atr_pct"] / _PREFILTER_ATR_PCT)
+    if pf.get("keyword_hits"):
+        scores.append(1.0)
+    return max(scores, default=0.0)
+
+
 def _prediction_cutoff_iso(max_age_hours: int = _PREDICTION_CONTEXT_MAX_AGE_HOURS) -> str:
     return (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
 
@@ -281,6 +318,154 @@ def _prediction_market_signal_lines(
     return lines
 
 
+def _batch_prefetch_db(symbols: list[str]) -> _DbCache:
+    """Batch-fetch all per-symbol DB data at run start. Sync, single transaction window."""
+    from aletheia.storage import repositories as repo
+    from aletheia.data.freshness import fresh_rows
+
+    news_since = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+    return _DbCache(
+        perp_structures=repo.batch_perp_structures(symbols),
+        funding_hl=repo.batch_funding_rates(symbols, "hyperliquid"),
+        funding_hl_pred=repo.batch_funding_rates(symbols, "hyperliquid_predicted"),
+        news=repo.batch_news(symbols, news_since),
+        onchain_rows=fresh_rows(repo.latest_onchain_snapshots(limit=3), "onchain"),
+    )
+
+
+async def _prefetch_symbol(
+    instrument,  # InstrumentId
+    *,
+    venue: str,
+    provider,
+    prediction_context_enabled: bool,
+    prediction_context_cutoff: str | None,
+    db_cache: _DbCache,
+) -> _SymbolPrefetch:
+    """Build market context for one symbol — the parallelizable phase.
+
+    Called via asyncio.gather() for all instruments before the serial LLM loop.
+    Exchange OHLCV calls (the wall-clock bottleneck) run concurrently across symbols.
+    """
+    import time as _time
+    from aletheia.trading.market_context import build_market_context
+
+    symbol = instrument.symbol
+    market_type = instrument.market_type
+    _t_start = _time.monotonic()
+    _empty_pf: dict = {
+        "passed": False, "rsi": None, "atr_pct": None,
+        "keyword_hits": [], "matched_rules": [],
+    }
+
+    # Phase A: async exchange OHLCV (the expensive wall-clock part)
+    try:
+        context, ctx_debug = await build_market_context(
+            [symbol], market_type=market_type, exchange=venue, provider=provider,
+            include_glossary=False,
+        )
+    except Exception as e:
+        logger.warning("[MO prefetch] %s: build_market_context failed: %s", symbol, e)
+        return _SymbolPrefetch(
+            context_str="", debug={}, pre_filter=_empty_pf, signal_score=0.0,
+            funding_rate_val=None, open_interest_val=None, oi_delta_val=None,
+            failed=True,
+        )
+
+    # Phase B: DB enrichment — uses batch-prefetched data where possible
+    funding_rate_val: float | None = None
+    open_interest_val: float | None = None
+    oi_delta_val: float | None = None
+    try:
+        from aletheia.data.context_builder import (
+            build_market_context_from_db, render_enriched_context_md,
+        )
+        from aletheia.data.freshness import fresh_row as _fresh_row
+        from aletheia.data.models import TradabilityScore, LeverageState, MacroSnapshot
+
+        enriched_snapshot = build_market_context_from_db(
+            [symbol], exchange=venue or "", market_type=market_type,
+        )
+        tradability = {
+            sym: TradabilityScore(**row)
+            for sym, row in enriched_snapshot.tradability.items()
+        }
+        leverage = {
+            sym: LeverageState(**row)
+            for sym, row in enriched_snapshot.leverage.items()
+        }
+        macro = (
+            MacroSnapshot(**enriched_snapshot.macro)
+            if enriched_snapshot.macro else None
+        )
+        lv = leverage.get(symbol)
+        if lv:
+            funding_rate_val = lv.funding_rate
+            open_interest_val = lv.open_interest_usd
+            oi_delta_val = lv.oi_delta_1h_pct
+
+        # Cross-venue funding from batch cache (avoids 2 per-symbol DB round-trips)
+        hl_fr = _fresh_row(db_cache.funding_hl.get(symbol), "cross_venue_funding")
+        hl_pred = _fresh_row(db_cache.funding_hl_pred.get(symbol), "cross_venue_funding")
+        xvenue_funding: dict = {}
+        if hl_fr or hl_pred:
+            xvenue_funding[symbol] = {
+                "hl_ann": hl_fr.get("funding_rate_annualized") if hl_fr else None,
+                "hl_predicted_ann": hl_pred.get("funding_rate_annualized") if hl_pred else None,
+                "primary_ann": lv.funding_annualized if lv else None,
+            }
+
+        # Perp structure from batch cache
+        ps = db_cache.perp_structures.get(symbol)
+        perp_structure = {symbol: ps} if _is_perp_structure_fresh(ps) else {}
+
+        enriched = render_enriched_context_md(
+            [symbol], tradability, leverage, macro,
+            onchain=db_cache.onchain_rows,
+            xvenue_funding=xvenue_funding,
+            perp_structure=perp_structure,
+        )
+        if enriched:
+            context = context + "\n\n" + enriched
+    except Exception as _e:
+        logger.debug("[MO prefetch] %s: enriched context skipped: %s", symbol, _e)
+
+    # Phase C: prediction market signals (per-symbol query, fast)
+    if prediction_context_enabled and prediction_context_cutoff:
+        try:
+            pred_lines = _prediction_market_signal_lines(symbol, prediction_context_cutoff)
+            if pred_lines:
+                context += "\n\n## Prediction Market Signals\n" + "\n".join(pred_lines)
+        except Exception:
+            pass
+
+    # Phase D: news headlines from batch cache
+    news_rows = db_cache.news.get(symbol, [])
+    if news_rows:
+        news_lines = [
+            f"- [{r.get('published_at', '')[:10]}] {r.get('title', '')} ({r.get('source', '')})"
+            for r in news_rows
+        ]
+        context += "\n\n## Recent News\n" + "\n".join(news_lines)
+
+    # Phase E: pre-filter scoring
+    pf = _evaluate_pre_filter(context)
+    score = _signal_score(pf)
+    logger.debug("[MO prefetch] %s: done in %.1fs, signal_score=%.2f, passed=%s",
+                 symbol, _time.monotonic() - _t_start, score, pf["passed"])
+
+    return _SymbolPrefetch(
+        context_str=context,
+        debug=ctx_debug,
+        pre_filter=pf,
+        signal_score=score,
+        funding_rate_val=funding_rate_val,
+        open_interest_val=open_interest_val,
+        oi_delta_val=oi_delta_val,
+        failed=False,
+    )
+
+
 async def _analyze_symbol(
     symbol: str,
     market_type: str,
@@ -301,14 +486,17 @@ async def _analyze_symbol(
     prediction_context_enabled: bool = False,
     prediction_context_cutoff: str | None = None,
     learning_memory_block: str | None = None,
+    _prefetched: "_SymbolPrefetch | None" = None,
 ) -> tuple[str | None, str | None]:
     """Run market context build + LLM read for a single symbol.
 
     Returns (opportunity_id, error_str). Both may be None if the symbol is
     simply skipped (no permission, neutral signal, etc.).
+
+    When _prefetched is provided (parallel-prefetch path), context building is
+    skipped and the pre-built context is used directly.
     """
     import time as _time
-    from aletheia.trading.market_context import build_market_context
 
     _t_start = _time.monotonic()
     _step_times: dict[str, float] = {}
@@ -318,19 +506,43 @@ async def _analyze_symbol(
     open_interest_val: float | None = None
     oi_delta_val: float | None = None
 
-    try:
-        _t0 = _time.monotonic()
-        context, ctx_debug = await build_market_context(
-            [symbol], market_type=market_type, exchange=venue, provider=provider,
-            include_glossary=False,
-        )
-        _step_times["build_market_context"] = _time.monotonic() - _t0
+    if _prefetched is not None:
+        # Fast path: context already built by _prefetch_symbol.
+        if _prefetched.failed:
+            return None, f"market_context_fallback:{symbol}:prefetch_failed"
+        context = _prefetched.context_str
+        funding_rate_val = _prefetched.funding_rate_val
+        open_interest_val = _prefetched.open_interest_val
+        oi_delta_val = _prefetched.oi_delta_val
         log_tool(run_id, "build_market_context", "observe", True,
-                 output=f"{symbol} fallback={ctx_debug.get('fallback')} "
-                        f"errs={len(ctx_debug.get('errors', []))}")
-        logger.debug("[MO] %s (%s): build_market_context done in %.1fs, fallback=%s",
-                     symbol, market_type, _step_times["build_market_context"],
-                     ctx_debug.get("fallback"))
+                 output=f"{symbol} prefetched=True fallback={_prefetched.debug.get('fallback')}")
+    else:
+        from aletheia.trading.market_context import build_market_context
+        try:
+            _t0 = _time.monotonic()
+            context, ctx_debug = await build_market_context(
+                [symbol], market_type=market_type, exchange=venue, provider=provider,
+                include_glossary=False,
+            )
+            _step_times["build_market_context"] = _time.monotonic() - _t0
+            log_tool(run_id, "build_market_context", "observe", True,
+                     output=f"{symbol} fallback={ctx_debug.get('fallback')} "
+                            f"errs={len(ctx_debug.get('errors', []))}")
+            logger.debug("[MO] %s (%s): build_market_context done in %.1fs, fallback=%s",
+                         symbol, market_type, _step_times["build_market_context"],
+                         ctx_debug.get("fallback"))
+        except Exception as e:
+            from aletheia.trading.market_data import latest_snapshot
+            _total_duration = _time.monotonic() - _t_start
+            logger.warning("[MO] %s (%s): market_context build FAILED after %.1fs — %s",
+                           symbol, market_type, _total_duration, e)
+            snap = latest_snapshot(symbol)
+            log_tool(run_id, "get_market_snapshot", "observe", True, output=symbol)
+            if snap:
+                context = f"{symbol}: price={snap['price']} 24h_change={snap.get('change_pct_24h')}%"
+            else:
+                context = f"{symbol}: no snapshot yet"
+            return None, f"market_context_fallback:{symbol}:{e}"
 
         # Append enriched microstructure/derivatives/macro context if available.
         _t0 = _time.monotonic()
@@ -433,9 +645,9 @@ async def _analyze_symbol(
             # surfaced as the "latest 3" and the LLM treated it as current context.
             news_cutoff = (_dt.now(_tz.utc) - _td(hours=48)).isoformat()
             news_rows = news_db.execute(
-                "SELECT title, source, created_at FROM news_items "
-                "WHERE symbols_mentioned LIKE ? AND created_at > ? "
-                "ORDER BY created_at DESC LIMIT 3",
+                "SELECT title, source, published_at FROM news_items "
+                "WHERE symbols_mentioned LIKE ? AND published_at > ? "
+                "ORDER BY published_at DESC LIMIT 3",
                 (f"%{symbol.split('/')[0]}%", news_cutoff),
             ).fetchall()
             if news_rows:
@@ -443,19 +655,6 @@ async def _analyze_symbol(
                 context += "\n\n## Recent News\n" + "\n".join(news_lines)
         except Exception:
             pass
-
-    except Exception as e:
-        from aletheia.trading.market_data import latest_snapshot
-        _total_duration = _time.monotonic() - _t_start
-        logger.warning("[MO] %s (%s): market_context build FAILED after %.1fs — %s",
-                       symbol, market_type, _total_duration, e)
-        snap = latest_snapshot(symbol)
-        log_tool(run_id, "get_market_snapshot", "observe", True, output=symbol)
-        if snap:
-            context = f"{symbol}: price={snap['price']} 24h_change={snap.get('change_pct_24h')}%"
-        else:
-            context = f"{symbol}: no snapshot yet"
-        return None, f"market_context_fallback:{symbol}:{e}"
 
     # P1-7: deterministic pre-filter — skip LLM for symbols with no actionable signal.
     # MO-14: force_full is passed in (computed once per run). load_config() has no
@@ -861,24 +1060,97 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     # MO-14: compute force_full ONCE per run (load_config has no cache; per-symbol
     # calls were a file read + YAML parse each iteration).
     _force_full = getattr(getattr(cfg, "observer", None), "force_full_scan", False)
-    _loop_deadline = _time.monotonic() + _MARKET_OBSERVER_LOOP_BUDGET_SEC
+    _venue = cfg.market_data.ccxt_exchange
+
+    # ── Phase 1: batch DB prefetch (sync, all symbols at once) ──────────────────────
+    # Replaces 16× individual DB round-trips for perp_structure, HL funding rates,
+    # and news queries with 4 batched queries at run start.
+    _all_symbols = [i.symbol for i in instruments]
+    try:
+        _db_cache = _batch_prefetch_db(_all_symbols)
+        logger.info("[MO] batch DB prefetch done: %d perp, %d hl_fr, %d hl_pred",
+                    len(_db_cache.perp_structures), len(_db_cache.funding_hl),
+                    len(_db_cache.funding_hl_pred))
+    except Exception as _e:
+        logger.warning("[MO] batch DB prefetch failed, using empty cache: %s", _e)
+        _db_cache = _DbCache(
+            perp_structures={}, funding_hl={}, funding_hl_pred={}, news={}, onchain_rows=[],
+        )
+
+    # ── Phase 2: parallel async context build + pre-filter ───────────────────────────
+    # asyncio.gather fires all build_market_context() exchange HTTP calls concurrently.
+    # 16 serial calls (~3-5s each) → parallel: wall-clock limited by the slowest single
+    # symbol (~5s) rather than 16 × 5s = 80s.
+    _t_prefetch_start = _time.monotonic()
+    _prefetch_coros = [
+        _prefetch_symbol(
+            instr,
+            venue=_venue,
+            provider=None,
+            prediction_context_enabled=prediction_context_enabled,
+            prediction_context_cutoff=prediction_context_cutoff,
+            db_cache=_db_cache,
+        )
+        for instr in instruments
+    ]
+    _prefetch_raw = await asyncio.gather(*_prefetch_coros, return_exceptions=True)
+    _prefetch_wall = _time.monotonic() - _t_prefetch_start
+    logger.warning("[MO DIAG] parallel prefetch done: %.1fs for %d symbols",
+                   _prefetch_wall, len(instruments))
+
+    _prefetch_map: dict[str, _SymbolPrefetch] = {}
+    _empty_pf: dict = {
+        "passed": False, "rsi": None, "atr_pct": None, "keyword_hits": [], "matched_rules": [],
+    }
+    for _instr, _result in zip(instruments, _prefetch_raw):
+        _ikey = instrument_key(_instr)
+        if isinstance(_result, Exception):
+            logger.warning("[MO] prefetch error for %s: %s", _ikey, _result)
+            _prefetch_map[_ikey] = _SymbolPrefetch(
+                context_str="", debug={}, pre_filter=_empty_pf, signal_score=0.0,
+                funding_rate_val=None, open_interest_val=None, oi_delta_val=None, failed=True,
+            )
+        else:
+            _prefetch_map[_ikey] = _result
+
+    # ── Phase 3: signal-strength sort ────────────────────────────────────────────────
+    # Sort instruments so highest pre-filter signal score processes first.
+    # When loop budget is exceeded, the skipped tail contains lowest-signal symbols
+    # rather than a random end-of-queue set.
+    # force_full bypasses the pre-filter gate → keep original RR order for consistency.
+    if _force_full:
+        processing_order = list(instruments)
+    else:
+        processing_order = sorted(
+            instruments,
+            key=lambda _i: _prefetch_map[instrument_key(_i)].signal_score,
+            reverse=True,
+        )
     logger.warning("[MO DIAG] run start: %d instruments, force_full=%s, budget=%.0fs",
                    len(instruments), _force_full, _MARKET_OBSERVER_LOOP_BUDGET_SEC)
-    for _idx, instrument in enumerate(instruments):
+
+    # ── Phase 4: serial LLM loop ──────────────────────────────────────────────────────
+    # WALL-CLOCK BUDGET: same as before — loop deadline prevents thread leak.
+    # ROUND-ROBIN: advance_after always receives original `instruments` (RR order),
+    # not processing_order. Signal sorting changes per-run processing order only;
+    # canonical succession for next-run start must stay consistent across runs.
+    _loop_deadline = _time.monotonic() + _MARKET_OBSERVER_LOOP_BUDGET_SEC
+    for _idx, instrument in enumerate(processing_order):
         if _time.monotonic() > _loop_deadline:
-            _skipped = len(instruments) - _idx
+            _skipped = len(processing_order) - _idx
             errors.append(
-                f"loop_budget_exceeded: processed {_idx}/{len(instruments)}, skipped "
+                f"loop_budget_exceeded: processed {_idx}/{len(processing_order)}, skipped "
                 f"{_skipped} (wall-clock cap {_MARKET_OBSERVER_LOOP_BUDGET_SEC:.0f}s "
                 f"< {_MARKET_OBSERVER_JOB_TIMEOUT_S:.0f}s job timeout — avoids thread leak)"
             )
             logger.warning(
                 "market_observer loop budget hit after %d/%d instruments (%.0fs cap); "
                 "skipping %d this cycle to finish within the job budget",
-                _idx, len(instruments), _MARKET_OBSERVER_LOOP_BUDGET_SEC, _skipped,
+                _idx, len(processing_order), _MARKET_OBSERVER_LOOP_BUDGET_SEC, _skipped,
             )
             break
         completed_attempt = False
+        _prefetched = _prefetch_map.get(instrument_key(instrument))
         try:
             u_member = _universe_lookup.get(instrument.symbol)
             _sym_canonical = to_canonical(instrument.symbol)
@@ -897,11 +1169,12 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 scanner_direction=u_member.get("scanner_direction") if u_member else None,
                 member_entry_price_usd=u_member.get("entry_price_usd") if u_member else None,
                 member_spread_bps=u_member.get("spread_bps") if u_member else None,
-                venue=cfg.market_data.ccxt_exchange,
+                venue=_venue,
                 force_full=_force_full,
                 prediction_context_enabled=prediction_context_enabled,
                 prediction_context_cutoff=prediction_context_cutoff,
                 learning_memory_block=learning_memory_block,
+                _prefetched=_prefetched,
             )
             if opp_id:
                 outputs.append(f"opportunity:{opp_id}")
@@ -919,6 +1192,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
         finally:
             # Cancellation must not skip an in-flight item. A budget interruption
             # breaks before entering this block, preserving the first skipped item.
+            # Always use original `instruments` for canonical RR ordering.
             if completed_attempt:
                 round_robin.advance_after(
                     instruments, completed_key=instrument_key(instrument), key=instrument_key,
