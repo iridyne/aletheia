@@ -60,11 +60,18 @@ def authoritative_account_realized_loss(execution_mode: str) -> AccountLossSnaps
 
     for row in rows:
         assessment = assess_position_closure(row)
-        if not assessment.eligible and assessment.reason == "legacy_unverified_close":
-            # Only block on truly unclassifiable closes (no structured evidence at all).
-            # Structured-but-ineligible closes (e.g. unverified_exit_fill from demo mode)
-            # have computable realized_pnl — let them through to the sum / ledger check.
-            return _unavailable(assessment.reason, event_count=len(rows))
+        if not assessment.eligible:
+            # Block on: truly unclassifiable closes (legacy_unverified_close),
+            # administrative/maintenance closes (not real trade economics),
+            # and any ineligible close without a recorded realized_pnl.
+            # Structured-but-ineligible closes with computable realized_pnl
+            # (e.g. unverified_exit_fill from demo mode) pass through to the sum.
+            if (
+                assessment.reason == "legacy_unverified_close"
+                or assessment.category in {"administrative", "maintenance"}
+                or row.get("realized_pnl") is None
+            ):
+                return _unavailable(assessment.reason, event_count=len(rows))
 
     if execution_mode == "paper_internal":
         return _paper_ledger_snapshot(rows, today_start)

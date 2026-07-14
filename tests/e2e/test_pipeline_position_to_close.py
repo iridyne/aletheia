@@ -32,8 +32,8 @@ class TestStopLossCloses:
 
         # Mock price feed to return price below stop
         monkeypatch.setattr(
-            "aletheia.portfolio.position_manager._latest_price",
-            lambda sym: 97.5,
+            "aletheia.portfolio.position_manager.get_fresh_price_for_protective_close",
+            lambda sym, market_type, *, venue: 97.5,
         )
 
         from aletheia.portfolio.position_manager import evaluate_open_positions
@@ -61,8 +61,8 @@ class TestStopLossCloses:
         repo.insert_position(pos)
 
         monkeypatch.setattr(
-            "aletheia.portfolio.position_manager._latest_price",
-            lambda sym: 2050.0,
+            "aletheia.portfolio.position_manager.get_fresh_price_for_protective_close",
+            lambda sym, market_type, *, venue: 2050.0,
         )
 
         from aletheia.portfolio.position_manager import evaluate_open_positions
@@ -91,8 +91,8 @@ class TestTakeProfitCloses:
         repo.insert_position(pos)
 
         monkeypatch.setattr(
-            "aletheia.portfolio.position_manager._latest_price",
-            lambda sym: 62500.0,
+            "aletheia.portfolio.position_manager.get_fresh_price_for_protective_close",
+            lambda sym, market_type, *, venue: 62500.0,
         )
 
         from aletheia.portfolio.position_manager import evaluate_open_positions
@@ -121,8 +121,8 @@ class TestMaxHoldCloses:
         repo.insert_position(pos)
 
         monkeypatch.setattr(
-            "aletheia.portfolio.position_manager._latest_price",
-            lambda sym: 71.0,
+            "aletheia.portfolio.position_manager.get_fresh_price_for_protective_close",
+            lambda sym, market_type, *, venue: 71.0,
         )
 
         from aletheia.portfolio.position_manager import evaluate_open_positions
@@ -179,8 +179,8 @@ class TestMarketAwareExitIntegration:
 
         # Price at 99.0: only -1% loss, within stop (default 2% = stop at 98.0)
         monkeypatch.setattr(
-            "aletheia.portfolio.position_manager._latest_price",
-            lambda sym: 99.0,
+            "aletheia.portfolio.position_manager.get_fresh_price_for_protective_close",
+            lambda sym, market_type, *, venue: 99.0,
         )
         monkeypatch.setattr(
             "aletheia.portfolio.position_manager.load_config",
