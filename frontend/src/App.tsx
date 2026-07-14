@@ -26,7 +26,7 @@ import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
 import FetchProgress from './components/FetchProgress'
 import type { InfraEvent } from './types'
-import { deriveMasterState } from './lib/systemState'
+import { deriveMasterState, getOperatorDisplayStatus } from './lib/systemState'
 
 export type NavItem = { to: string; label: string }
 export type NavGroup = { group: string; items: NavItem[] }
@@ -255,13 +255,12 @@ function StatusBar() {
       || (data as any)?.risk?.status
       || ''
   )
+  const opDisplay = getOperatorDisplayStatus(operator as any)
   const master = deriveMasterState({
     gatewayRunning: running, killed, paused, riskState, operatorStatus,
+    operatorMode,
   })
-  // Topbar shows the master word, BUT when everything is healthy + operator is actively
-  // working on something, prefer the operator's working mode (Working / Observing / …)
-  // since that's the more specific signal at a glance. Master word always wins on alarms.
-  const stateWord = master.tone === 'green' ? operatorMode : master.word
+  const stateWord = master.word
   const stateTone = master.tone
 
   return (
@@ -371,20 +370,25 @@ function StatusBar() {
             <div className="sp-row">
               <span className="sp-label">Status</span>
               <span className="sp-value">
-                {operatorStatus}
-                {operatorStatus === 'stale' && <span className="sp-stale-hint"> — heartbeat delayed; supervisor is keeping status fresh. Usually self-recovers within 1–2 min. If stuck, restart the gateway.</span>}
+                {opDisplay.state}
+                {operatorStatus === 'stale' && <span className="sp-stale-hint"> — heartbeat delayed; usually self-recovers in 1–2 min. If stuck, restart the gateway.</span>}
               </span>
             </div>
-            <div className="sp-row">
-              <span className="sp-label">Mode</span>
-              <span className="sp-value">{operatorMode}</span>
-            </div>
-            {operatorMode === 'Working' && (operator as any)?.current_intent && (
+            {opDisplay.blockedDetail && (
+              <div className="sp-blocked-detail">
+                {opDisplay.blockedDetail}
+              </div>
+            )}
+            {(operator as any)?.current_intent && (
               <div className="sp-row">
                 <span className="sp-label">Intent</span>
                 <span className="sp-value sp-value-wrap">{(operator as any).current_intent}</span>
               </div>
             )}
+            <div className="sp-row sp-row-debug">
+              <span className="sp-label sp-label-muted">Mode</span>
+              <span className="sp-value sp-value-muted">{opDisplay.debugMode}</span>
+            </div>
             {(operator as any)?.session_id && (
               <div className="sp-row">
                 <span className="sp-label">Session</span>

@@ -305,6 +305,31 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   min-width: 0;
 }
 .sp-value-wrap { white-space: normal; line-height: 1.4; }
+/* Debug rows: dimmed, smaller — internal state for developers only */
+.sp-row-debug { opacity: 0.45; }
+.sp-label-muted { color: var(--muted) !important; font-style: italic; }
+.sp-value-muted { color: var(--muted) !important; }
+.debug-row { opacity: 0.45; font-style: italic; }
+.debug-row td.muted { color: var(--muted); }
+/* Blocked detail banner in status popover */
+.sp-blocked-detail {
+  margin: 4px 0 4px 0;
+  padding: 6px 8px;
+  font-size: 0.7rem; line-height: 1.45;
+  color: var(--yellow);
+  background: rgba(245, 185, 66, 0.07);
+  border-left: 2px solid var(--yellow);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  white-space: normal;
+}
+/* Blocked detail row in CommandCenter table */
+.op-blocked-row th { color: var(--yellow); vertical-align: top; padding-top: 4px; }
+.op-blocked-row td.op-blocked-detail {
+  color: var(--yellow);
+  font-size: 0.8rem; line-height: 1.5;
+  padding: 4px 0 8px 0;
+  white-space: normal;
+}
 
 /* Code drift warning block */
 .sp-drift {

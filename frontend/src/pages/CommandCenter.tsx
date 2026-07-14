@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { humanize, fmtDelta, fmtPct, fmtSymbol } from '../lib/format'
+import { getOperatorDisplayStatus } from '../lib/systemState'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, ListRowButton, StatusText, TableWrap, useToast } from '../components/ui'
 import type {
@@ -491,6 +492,7 @@ function HeartbeatZone({
     .sort((a, b) => Math.abs(Number(b[1])) - Math.abs(Number(a[1])))
     .slice(0, 5)
 
+  const opDisplay = getOperatorDisplayStatus(operatorStatus)
   const isWorking = operatorStatus?.mode === 'Working'
   const intent = operatorStatus?.current_intent || null
   const lastSeen = operatorStatus?.last_seen_at || null
@@ -615,6 +617,8 @@ export default function CommandCenter() {
     queryFn: api.getOperatorStatus,
     refetchInterval: 10000,
   })
+  const opDisplay = getOperatorDisplayStatus(operatorStatus)
+  const intent = operatorStatus?.current_intent || null
   const { data: sessions = [] } = useQuery<OperatorSessionSummary[]>({
     queryKey: ['operator-sessions'],
     queryFn: api.getOperatorSessions,
@@ -1061,11 +1065,11 @@ export default function CommandCenter() {
         <div className="command-center-main">
         <Card className="command-center-shell">
           <div className="command-center-strip">
-            <Badge tone={operatorStatus?.status === 'online' ? 'green' : operatorStatus?.status === 'stale' ? 'yellow' : 'red'}>
-              {humanize(operatorStatus?.status || 'offline')}
+            <Badge tone={opDisplay.tone}>
+              {opDisplay.state}
             </Badge>
-            <span className="mono">mode: {operatorStatus?.mode || 'Observing'}{operatorStatus?.mode === 'Working' && operatorStatus?.current_intent ? ` — ${operatorStatus.current_intent}` : ''}</span>
-            <span className="mono">perm: {operatorStatus?.permission_mode || 'ReadOnly'}</span>
+            {intent && <span className="mono">{intent}</span>}
+            <span className="mono sp-debug">mode: {opDisplay.debugMode}</span>
             <span className="mono">session: {operatorStatus?.session_id || 'operator-main'}</span>
             <span className="mono">
               branch: {operatorStatus?.active_branch_title || operatorStatus?.active_branch_id || 'main'}
@@ -1475,9 +1479,15 @@ export default function CommandCenter() {
             <TableWrap>
               <table className="status-board">
                 <tbody>
-                  <tr><th>Status</th><td>{humanize(operatorStatus?.status || 'offline')}</td></tr>
-                  <tr><th>Mode</th><td>{operatorStatus?.mode || 'Observing'}</td></tr>
+                  <tr><th>Status</th><td>{opDisplay.state}</td></tr>
+                  {opDisplay.blockedDetail && (
+                    <tr className="op-blocked-row">
+                      <th>⚠ Reason</th>
+                      <td className="op-blocked-detail">{opDisplay.blockedDetail}</td>
+                    </tr>
+                  )}
                   <tr><th>Intent</th><td>{operatorStatus?.current_intent || '—'}</td></tr>
+                  <tr className="debug-row"><th>Mode</th><td className="muted">{opDisplay.debugMode}</td></tr>
                   <tr><th>Active Branch</th><td>{operatorStatus?.active_branch_title || operatorStatus?.active_branch_id || '—'}</td></tr>
                   <tr><th>Heartbeat</th><td>{formatTimestamp(operatorStatus?.last_seen_at)}</td></tr>
                   <tr><th>Error</th><td>{operatorStatus?.last_error || '—'}</td></tr>

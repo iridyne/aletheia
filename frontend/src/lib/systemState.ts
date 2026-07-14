@@ -19,6 +19,70 @@ export interface MasterStateInput {
   riskState?: string
   /** From /operator/status .status — 'online' | 'stale' | 'offline' | undefined */
   operatorStatus?: string
+  /** From /operator/status .mode — used to surface trade-blocking modes at master level */
+  operatorMode?: string
+}
+
+// ─── Operator display status ───────────────────────────────────────────────
+// Internal Operator modes are implementation details; user-facing UI shows only
+// these three states. Raw mode names are relegated to debug/log sections.
+
+export type OperatorDisplayState = 'Running' | 'Blocked' | 'Offline'
+
+export interface OperatorDisplayStatus {
+  state: OperatorDisplayState
+  tone: 'green' | 'yellow' | 'red'
+  /** Raw internal mode — for debug display only, not primary UI */
+  debugMode: string
+  /**
+   * Human-readable explanation of why the Operator is blocked.
+   * Only set when state === 'Blocked'. Must describe the concrete problem
+   * so the user understands what happened without knowing internal mode names.
+   */
+  blockedDetail?: string
+}
+
+// Modes that prevent the Operator from generating new trade proposals.
+const _TRADE_BLOCKING_MODES = new Set<string>(['Repairing', 'Degraded', 'Paused'])
+
+const _BLOCKED_MODE_DETAILS: Record<string, string> = {
+  Repairing:
+    'A maintenance task is queued but cannot run — the Operator lacks the required permission to execute it. ' +
+    'New trade proposals will not be generated until the task is resolved or cleared. ' +
+    'The task will eventually time out and self-clear, or you can restart the Operator to force a reset.',
+  Degraded:
+    'The Operator has detected high-severity issues and suspended normal trading. ' +
+    'Check the Recommendations panel for the specific violations that triggered this state.',
+  Paused:
+    'The Operator has been manually paused. Resume it from the Command Center or via the pause toggle to restore normal trading.',
+}
+
+/**
+ * Map an Operator heartbeat to a simple three-state user-facing status.
+ * Internal mode names (Repairing, Reviewing, Dreaming, …) go into debugMode
+ * and should only appear in developer/debug sections of the UI.
+ */
+export function getOperatorDisplayStatus(heartbeat: {
+  status?: string | null
+  mode?: string | null
+} | null | undefined): OperatorDisplayStatus {
+  const debugMode = heartbeat?.mode ?? '—'
+  if (!heartbeat || heartbeat.status === 'offline') {
+    return { state: 'Offline', tone: 'red', debugMode }
+  }
+  if (heartbeat.status === 'stale') {
+    return { state: 'Offline', tone: 'yellow', debugMode }
+  }
+  const mode = heartbeat.mode ?? ''
+  if (_TRADE_BLOCKING_MODES.has(mode)) {
+    return {
+      state: 'Blocked',
+      tone: 'yellow',
+      debugMode,
+      blockedDetail: _BLOCKED_MODE_DETAILS[mode] ?? 'The Operator is blocked and cannot generate new trade proposals.',
+    }
+  }
+  return { state: 'Running', tone: 'green', debugMode }
 }
 
 export interface MasterState {
@@ -29,15 +93,16 @@ export interface MasterState {
 
 /**
  * Derive the single master headline. Priority (top→bottom = most severe → least):
- *   1. Gateway down                → OFFLINE / red  (nothing can run)
- *   2. Kill switch engaged         → HALTED  / red
- *   3. Risk engine blocking orders → BLOCKED / red
- *   4. Operator process offline    → STALE   / red  (heartbeat dead)
- *   5. Operator heartbeat stale    → STALE   / yellow
- *   6. Scheduler paused            → PAUSED  / yellow
- *   7. Risk warning                → CAUTION / yellow
- *   8. Risk healthy                → OPERATIONAL / green
- *   9. Unknown/not evaluated       → STANDBY / blue
+ *   1. Gateway down                → OFFLINE  / red
+ *   2. Kill switch engaged         → HALTED   / red
+ *   3. Risk engine blocking orders → BLOCKED  / red
+ *   4. Operator process offline    → OFFLINE  / red  (heartbeat dead)
+ *   5. Operator heartbeat stale    → STALE    / yellow
+ *   6. Operator in blocking mode   → BLOCKED  / yellow (Repairing / Degraded)
+ *   7. Scheduler paused            → PAUSED   / yellow
+ *   8. Risk warning                → CAUTION  / yellow
+ *   9. Risk healthy                → OPERATIONAL / green
+ *  10. Unknown/not evaluated       → STANDBY  / blue
  */
 export function deriveMasterState(p: MasterStateInput): MasterState {
   if (!p.gatewayRunning) {
@@ -54,6 +119,9 @@ export function deriveMasterState(p: MasterStateInput): MasterState {
   }
   if (p.operatorStatus === 'stale') {
     return { word: 'STALE', tone: 'yellow', detail: 'Operator heartbeat is delayed — supervisor will refresh; usually clears in 1–2 min.' }
+  }
+  if (p.operatorMode && _TRADE_BLOCKING_MODES.has(p.operatorMode)) {
+    return { word: 'BLOCKED', tone: 'yellow', detail: 'Operator cannot generate new trade proposals. Check the Operator panel for details.' }
   }
   if (p.paused) {
     return { word: 'PAUSED', tone: 'yellow', detail: 'Scheduler is paused. Agents are idle until resumed.' }
