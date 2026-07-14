@@ -59,10 +59,10 @@ class TestFuturesLeverageAcceptance:
         assert pos["strategy_id"] == strat.id
 
         # (3) account leverage ratio reflects the leveraged exposure.
-        # demo equity falls back to starting_capital_usdt (100) with no cached state;
-        # weighted notional = 60 * 3 = 180 → ratio 1.8x, under the 3.0x demo cap.
+        # paper_internal equity = paper ledger cash (200 USDT initial funding);
+        # weighted notional = 60 * 3 = 180 → ratio 0.9x, under the 3.0x demo cap.
         cfg = load_config()
-        acct = check_account_leverage(cfg)
+        acct = check_account_leverage(cfg, execution_mode="paper_internal")
         assert acct["ratio"] is not None
         assert acct["ratio"] > 60.0 / acct["equity"], "ratio must be amplified by leverage"
 
