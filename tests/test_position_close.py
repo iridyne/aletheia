@@ -117,3 +117,62 @@ def test_today_realized_pnl_sums_closed_positions(tmp_path, monkeypatch):
     close_position(p3.id, exit_price=80.0)   # gross -40
     sum_123 = sum_12 + (-40.0 - _round_trip_fee(100.0, 80.0, 2.0))
     assert today_realized_pnl() == pytest.approx(sum_123)
+
+
+def test_close_paper_internal_sets_structured_outcome_fields(tmp_path, monkeypatch):
+    """close_position() on paper_internal must write structured fill/outcome fields.
+
+    A bare position (no attribution IDs) still gets exit_fill_verified and the
+    correct price source; outcome_eligible requires a full attribution chain so is
+    not asserted here — see test_account_loss_unblocked_after_paper_close for the
+    account-loss side effect.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.pnl import close_position
+    p = Position(symbol="BTC/USDT", market_type="spot", direction="long",
+                 quantity=1.0, entry_price=100.0, execution_mode="paper_internal")
+    repo.insert_position(p)
+    close_position(p.id, exit_price=110.0, reason="take_profit")
+
+    row = repo._select_one("positions", p.id)
+    assert row["close_category"] == "strategy"
+    assert row["exit_fill_verified"] == 1
+    assert row["exit_price_source"] == "local_fill"
+    assert row["outcome_semantics_version"] is not None
+
+
+def test_close_demo_mode_sets_strategy_category_not_eligible(tmp_path, monkeypatch):
+    """close_position() on demo/live modes: close_category='strategy' but
+    outcome_eligible=False because exchange fill verification is not available."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.pnl import close_position
+    p = Position(symbol="ETH/USDT", market_type="spot", direction="long",
+                 quantity=1.0, entry_price=200.0, execution_mode="okx_demo")
+    repo.insert_position(p)
+    close_position(p.id, exit_price=210.0, reason="stop_loss")
+
+    row = repo._select_one("positions", p.id)
+    assert row["close_category"] == "strategy"
+    assert row["outcome_eligible"] == 0
+    assert row["exit_fill_verified"] == 0
+    assert row["exit_price_source"] == "unavailable"
+    assert row["outcome_exclusion_reason"] in ("unverified_exit_fill", "missing_attribution")
+
+
+def test_account_loss_unblocked_after_paper_close(tmp_path, monkeypatch):
+    """Regression: close_position() on paper_internal must not block
+    authoritative_account_realized_loss with legacy_unverified_close."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.pnl import close_position
+    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+
+    p = Position(symbol="BTC/USDT", market_type="spot", direction="long",
+                 quantity=1.0, entry_price=100.0, execution_mode="paper_internal")
+    repo.insert_position(p)
+    close_position(p.id, exit_price=95.0, reason="stop_loss")
+
+    snapshot = authoritative_account_realized_loss("paper_internal")
+    assert snapshot.available is True, (
+        f"account_loss blocked after close_position(): reason={snapshot.reason}"
+    )
+    assert snapshot.realized_pnl_usdt is not None
