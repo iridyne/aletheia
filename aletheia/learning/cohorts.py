@@ -21,6 +21,7 @@ from aletheia.storage.sqlite import get_db
 
 
 SUPPORTED_PATH_ID = "universe_family_calibration"
+SUPPORTED_PATH_IDS = frozenset({"universe_family_calibration", "ranker_case_score"})
 
 
 @dataclass(frozen=True, order=True)
@@ -97,13 +98,13 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
     if hypothesis_row is None:
         return []
     hypothesis = LearningHypothesis(**hypothesis_row)
-    if hypothesis.path_id != SUPPORTED_PATH_ID:
+    if hypothesis.path_id not in SUPPORTED_PATH_IDS:
         return []
 
     rows = [dict(row) for row in get_db().execute(
         "SELECT * FROM learning_exposures WHERE experiment_id=? AND hypothesis_id=? "
         "AND path_id=? ORDER BY datetime(exposed_at), exposure_id",
-        (experiment.experiment_id, hypothesis.hypothesis_id, SUPPORTED_PATH_ID),
+        (experiment.experiment_id, hypothesis.hypothesis_id, hypothesis.path_id),
     ).fetchall()]
     cohorts: dict[CohortKey, ContributionCohort] = {}
     candidates: dict[CohortKey, dict[str, dict[str, list[tuple[dict[str, Any], dict[str, Any]]]]]] = defaultdict(
@@ -169,7 +170,15 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
         assert outcome is not None
         assessment = assess_candidate_outcome(outcome)
         if not assessment.eligible:
-            if assessment.reason == "unsettled":
+            # Observations before the data-quality floor or with unsettled status are
+            # ineligible but not corrupt — exclude them without invalidating the cohort.
+            # Structural issues (missing direction, missing cost model, etc.) indicate
+            # corrupt data and do invalidate.
+            if assessment.reason in {
+                "unsettled",
+                "dirty_or_missing_entry_time",
+                "dirty_or_missing_close_time",
+            }:
                 cohort.exclusion_reasons[assessment.reason] += 1
             else:
                 cohort.invalid_reasons[assessment.reason] += 1

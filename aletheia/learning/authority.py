@@ -13,7 +13,7 @@ import json
 from typing import Any
 
 from aletheia.config.loader import load_config
-from aletheia.learning.cohorts import SUPPORTED_PATH_ID
+from aletheia.learning.cohorts import SUPPORTED_PATH_ID, SUPPORTED_PATH_IDS
 from aletheia.learning.control import global_learning_refreeze_reason
 from aletheia.learning.ledger import (
     get_latest_measurement_verdict,
@@ -101,7 +101,7 @@ def resolve_learning_authority(
     current = get_latest_measurement_verdict(experiment.experiment_id)
     if current is not None and str(current.get("verdict") or "") in {"negative", "invalid"}:
         return blocked(f"current_measurement_{current['verdict']}", current)
-    if path_id != SUPPORTED_PATH_ID:
+    if path_id not in SUPPORTED_PATH_IDS:
         return _legacy_authority_adapter(experiment, current_policy_epoch, blocked)
     expected_horizon = str(hypothesis.get("target_horizon") or "")
     if not expected_horizon:

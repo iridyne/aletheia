@@ -13,7 +13,7 @@ from aletheia.learning.authority import (
     measurement_identity_reason,
     resolve_learning_authority,
 )
-from aletheia.learning.cohorts import SUPPORTED_PATH_ID
+from aletheia.learning.cohorts import SUPPORTED_PATH_ID, SUPPORTED_PATH_IDS
 from aletheia.learning.control import global_learning_refreeze_reason
 from aletheia.learning.ledger import (
     get_latest_measurement_verdict,
@@ -87,7 +87,7 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     if hypothesis_row is None:
         return LifecycleResult("hold", "hold", "hypothesis_not_found", experiment_id)
     hypothesis = LearningHypothesis(**hypothesis_row)
-    if hypothesis.path_id != SUPPORTED_PATH_ID:
+    if hypothesis.path_id not in SUPPORTED_PATH_IDS:
         return LifecycleResult("hold", "hold", "unsupported_learning_path", experiment_id)
     verdict = get_latest_measurement_verdict(experiment.experiment_id)
     if verdict is None:
@@ -102,6 +102,22 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     )
     if identity_reason and measurement not in {"negative", "invalid"}:
         return LifecycleResult("hold", recommended, identity_reason, experiment_id, verdict_id=verdict["verdict_id"])
+
+    # A shadow experiment with sufficient observations but no actual intervention is
+    # ready for paper_10 trial admission.  Auto-admit when lifecycle_automation_enabled;
+    # admit_shadow_trial() enforces all remaining gates (sample count, promotion gate).
+    if (
+        experiment.stage == "shadow"
+        and measurement == "insufficient_data"
+        and str(verdict.get("reason") or "") == "no_actual_intervention"
+    ):
+        return admit_shadow_trial(
+            experiment_id,
+            verdict_id=str(verdict["verdict_id"]),
+            current_policy_epoch=current_policy_epoch,
+            admitted_by="learning_lifecycle_controller",
+            reason="automatic_shadow_admission",
+        )
 
     if recommended == "hold":
         return LifecycleResult("hold", "hold", f"measurement_{measurement}", experiment_id, verdict_id=verdict["verdict_id"])
@@ -466,7 +482,13 @@ def run_contribution_evaluator() -> dict[str, int | str]:
             return {"status": "disabled", "experiments": 0, "verdicts": 0}
         record_measurement_job_started(job_id)
         from aletheia.learning.contribution_runner import evaluate_experiment
-        experiment_rows = list_open_experiments(path_id=SUPPORTED_PATH_ID)
+        seen: set[str] = set()
+        experiment_rows = []
+        for pid in SUPPORTED_PATH_IDS:
+            for row in list_open_experiments(path_id=pid):
+                if row["experiment_id"] not in seen:
+                    seen.add(row["experiment_id"])
+                    experiment_rows.append(row)
         verdicts = sum(len(evaluate_experiment(row["experiment_id"])) for row in experiment_rows)
         record_measurement_job_success(job_id)
         return {"status": "healthy", "experiments": len(experiment_rows), "verdicts": verdicts}
@@ -478,14 +500,20 @@ def run_contribution_evaluator() -> dict[str, int | str]:
 def run_lifecycle_controller() -> dict[str, int]:
     """Evaluate current-stage actions; scheduler gating supplies autonomy safety."""
     results = []
-    for row in list_open_experiments(path_id=SUPPORTED_PATH_ID):
-        experiment_id = str(row["experiment_id"])
-        epoch = _latest_exposure_policy_epoch(experiment_id)
-        results.append(process_lifecycle(experiment_id, current_policy_epoch=epoch))
+    seen: set[str] = set()
+    for pid in SUPPORTED_PATH_IDS:
+        for row in list_open_experiments(path_id=pid):
+            experiment_id = str(row["experiment_id"])
+            if experiment_id in seen:
+                continue
+            seen.add(experiment_id)
+            epoch = _latest_exposure_policy_epoch(experiment_id)
+            results.append(process_lifecycle(experiment_id, current_policy_epoch=epoch))
     return {
         "experiments": len(results),
         "promoted": sum(result.action == "promote_stage" for result in results),
         "refrozen": sum(result.action in {"refreeze", "invalidate"} for result in results),
+        "admitted": sum(result.action == "admit_trial" for result in results),
     }
 
 

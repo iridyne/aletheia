@@ -433,8 +433,16 @@ def test_real_shadow_flow_stays_shadow_after_at01_and_at02(monkeypatch):
         (experiment.experiment_id,),
     )
     db.commit()
+    # entry_ts must be >= exposed_at (cohorts rejects retrospective outcomes).
+    # exposed_at was stamped as real UTC now() inside apply_numeric_treatment, so
+    # derive entry_at from the actual stored value rather than the frozen _BASE.
+    max_exposed_at = max(row["exposed_at"] for row in exposures)
+    entry_at = (
+        datetime.fromisoformat(max_exposed_at.replace("Z", "+00:00"))
+        + timedelta(minutes=5)
+    ).isoformat()
     for candidate, net in ((first_candidate, 1.0), (second_candidate, 0.0)):
-        _outcome(candidate, net=net)
+        _outcome(candidate, net=net, entry_at=entry_at)
     verdict = evaluate_experiment(experiment.experiment_id)[0]
     epoch = exposures[0]["concurrent_policy_epoch"]
     result = lifecycle.process_lifecycle(
@@ -450,6 +458,31 @@ def test_real_shadow_flow_stays_shadow_after_at01_and_at02(monkeypatch):
     assert persisted["stage"] == "shadow"
     assert persisted["ended_at"] is None
     assert db.execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
+
+
+def test_pre_floor_outcomes_are_excluded_not_invalid():
+    """Outcomes before the data-quality floor must be excluded (not corrupt the cohort)."""
+    from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
+    from datetime import datetime, timezone, timedelta
+
+    hypothesis, experiment = _experiment()
+    _exposure(experiment, hypothesis, candidate="pre-floor-t", assignment="treatment")
+    _exposure(experiment, hypothesis, candidate="pre-floor-c", assignment="control")
+
+    floor_dt = datetime.fromisoformat(LEARNING_DATA_FLOOR_ISO.replace("Z", "+00:00"))
+    pre_floor = (floor_dt - timedelta(hours=1)).isoformat()
+    _outcome("pre-floor-t", net=1.0, entry_at=pre_floor)
+    _outcome("pre-floor-c", net=0.0, entry_at=pre_floor)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    # Pre-floor observations are excluded, not corrupt → verdict is insufficient_data
+    assert verdict.verdict == "insufficient_data", verdict.reason
+    assert "dirty_or_missing_entry_time" not in metrics.get("invalid_reasons", {})
+    assert metrics["exclusion_reasons"].get("dirty_or_missing_entry_time", 0) >= 1
+    # No valid samples → sample counts are zero
+    assert verdict.unique_treatment_n == verdict.unique_control_n == 0
 
 
 def test_unidentifiable_assignment_overlap_is_invalid_and_not_attributed():
@@ -553,8 +586,8 @@ def test_measurement_verdict_does_not_shadow_an_existing_authority_verdict(monke
     assert _verdict_authorizes(LearningExperiment(**experiment.model_dump()), "epoch-a") is True
 
 
-def test_undeclared_learning_path_is_not_processed_or_persisted():
-    hypothesis, experiment = _experiment(path_id="ranker_case_score")
+def test_unsupported_learning_path_is_not_processed_or_persisted():
+    hypothesis, experiment = _experiment(path_id="totally_fake_path_id")
     _exposure(experiment, hypothesis, candidate="other-treatment", assignment="treatment")
     _exposure(experiment, hypothesis, candidate="other-control", assignment="control")
     _outcome("other-treatment", net=1.0)

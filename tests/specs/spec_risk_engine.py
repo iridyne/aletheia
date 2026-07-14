@@ -241,6 +241,42 @@ def test_lesson_constraints_error_produces_violation(monkeypatch):
 
 
 @spec_claim(
+    SpecClaim(
+        "RE-B14", "risk_engine_contract", "§2 lesson constraint boundary", "L2b",
+        "block_* hard rejects in _check_lesson_constraints require category='risk'. "
+        "Automatic dreaming_agent block recommendations are routed to guard shadow "
+        "(see LE-B19) and stored as guard_shadow_candidate — they never appear as "
+        "block_* recommendations in ps_lessons, so this gate is reached only by "
+        "manually created category='risk' lessons.",
+    ),
+)
+def test_lesson_constraint_category_gate_is_risk_only():
+    """block_* enforcement requires category='risk'; other categories are silently skipped."""
+    import inspect
+    from aletheia.risk import engine as eng
+
+    src = inspect.getsource(eng._check_lesson_constraints)
+    assert "category" in src and "'risk'" in src, (
+        "_check_lesson_constraints must gate block_* on category='risk'"
+    )
+    # Verify guard routing ensures dreaming_agent block_* never reaches ps_lessons
+    # as a block_* recommendation (they become guard_shadow_candidate instead).
+    from aletheia.learning.guard_routing import route_automatic_block_recommendation
+    from unittest.mock import patch
+
+    with patch("aletheia.learning.guard_routing.create_guard_candidate") as mock_create:
+        mock_create.return_value = type("Item", (), {"id": "g-1"})()
+        result = route_automatic_block_recommendation(
+            {"action": "block_symbol", "symbol": "BTC/USDT"},
+            evidence={}, source_id="test-src",
+        )
+    assert result is not None and result.get("action") == "guard_shadow_candidate", (
+        "block_symbol routed by dreaming_agent must become guard_shadow_candidate, not block_symbol"
+    )
+    assert result.get("original_action") == "block_symbol"
+
+
+@spec_claim(
     SpecClaim("RE-B04", "risk_engine_contract", "§2 check #16", "L2b",
               "_check_correlation_exposure returns violation on internal error (safe-reject)"),
 )
