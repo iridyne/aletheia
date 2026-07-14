@@ -52,7 +52,7 @@ ownership:
   expires_at: '2026-07-16T07:48:08.118358Z'
 base_commit: c95b2be34d93368182da21fc81f87e71cf5f64e1
 next_action:
-  command_key: trade_chain_completion
+  command_key: trade_chain_active_paper
   reason: The active-paper repair batch is committed at b116714d, but local master
     has since advanced to baf1ee1e and is not integrated. Keep this branch unmerged.
     The next owner/agent must merge the latest master here, rerun the registered specifications,
@@ -507,7 +507,7 @@ verification:
   run_at: '2026-07-14T13:20:09.748555Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
-- command_key: trade_chain_completion
+- command_key: trade_chain_active_paper
   command: uv run pytest tests/e2e/test_active_mainline_golden_path.py tests/e2e/test_active_mainline_reachability.py
     tests/e2e/test_pipeline_observer_to_operator.py tests/e2e/test_pipeline_universe_to_operator.py
     tests/e2e/test_pipeline_real_paper_roundtrip.py tests/e2e/test_pipeline_futures_leverage.py
