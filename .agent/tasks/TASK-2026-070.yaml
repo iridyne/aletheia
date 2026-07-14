@@ -12,12 +12,12 @@ intent: Ensure Operator recovery retrieves the complete queued task backlog, so 
   rollout rather than only the most recent 500. Do not change Risk, Execution, exchanges,
   credentials, live enablement, or Learning authority defaults.
 acceptance:
-- Operator recovery requests up to 500 recent task records for terminal
-  fingerprint history and independently requests up to 500 queued records.
+- Operator recovery requests up to 500 recent task records for terminal fingerprint
+  history and independently requests up to 500 queued records.
 - Recovery merges those records by task id before handing them to the task runtime,
   so a legacy queued task outside the recent window is still superseded.
-- The change leaves Risk, Execution, exchanges, credentials, live state, and
-  Learning authority defaults unchanged; the complete Operator Shell suite passes.
+- The change leaves Risk, Execution, exchanges, credentials, live state, and Learning
+  authority defaults unchanged; the complete Operator Shell suite passes.
 ownership:
   branch: iridite/learning-legacy-queue-recovery-2
   lease_holder: codex-learning-legacy-queue
@@ -26,8 +26,17 @@ ownership:
 base_commit: 0ce274113d2e5cf7b5b9e55588d4ccb239a96064
 next_action:
   command_key: workflow_tests
-  reason: Commit the recovery-window repair, record verification, deploy, and audit the real queue.
+  reason: Commit the recovery-window repair, record verification, deploy, and audit
+    the real queue.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: e4260111123aa2db418a85eb57960c331b0a0c88
+  run_at: '2026-07-14T15:31:08.558293Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-070.md
-updated_at: '2026-07-14T15:29:28.372598Z'
+updated_at: '2026-07-14T15:31:08.558471Z'
