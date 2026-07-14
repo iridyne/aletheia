@@ -978,7 +978,8 @@ def reconcile() -> dict:
                 order,
                 recovered=False,
                 reason="filled_gap_authority_missing",
-            )            continue
+            )
+            continue
         if _has_compatible_open_position(order):
             filled_gap_inconclusive += 1
             inconclusive += 1

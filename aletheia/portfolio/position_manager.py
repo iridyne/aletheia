@@ -939,20 +939,22 @@ def evaluate_open_positions() -> dict:
             # Route through the shared helper so the exchange leg is never skipped
             # (live positions are already filtered out above; demo modes still need
             # their real exchange close, paper closes locally).
-            close_result = close_position_routed(p["id"], reason)
+            close_result = close_position_routed(p["id"], reason, fallback_exit_price=exit_price)
             if close_result.get("closed", True):
                 closed += 1
         except Exception as e:
             logger.warning("close failed for %s: %s", p["id"], e)
             failed_close_count += 1
-            record_error(p, "close_failed", e)    return {
+            record_error(p, "close_failed", e)
+    return {
         "checked": checked,
         "closed": closed,
         "market_exits": market_exits,
         "failed_close_count": failed_close_count,
         "errors": errors,
         "market_signal_wakes": market_signal_wakes,
-        "catastrophic_exits": catastrophic_exits,    }
+        "catastrophic_exits": catastrophic_exits,
+    }
 
 
 def adjust_stop(position_id: str, new_stop_price: float) -> dict:

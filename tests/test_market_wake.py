@@ -90,7 +90,7 @@ def test_market_aware_wakes_not_closes(monkeypatch):
     cfg = load_config()
     cfg.trading.market_aware_exits.enabled = True
     monkeypatch.setattr(pm, "load_config", lambda: cfg)
-    monkeypatch.setattr(pm, "_latest_price", lambda s: 100.0)
+    monkeypatch.setattr(pm, "get_fresh_price_for_protective_close", lambda s, market_type, *, venue="": 100.0)
 
     signal = SimpleNamespace(confidence_score=85, direction_bias="short")
     monkeypatch.setattr(msr, "get_market_signals_for_positions", lambda syms, **kw: {"BTC/USDT": signal})

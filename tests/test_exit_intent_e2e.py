@@ -88,7 +88,7 @@ def test_adjust_then_proactive_exit_lifecycle():
     import types
     monkeypatch = pytest.MonkeyPatch()
     try:
-        monkeypatch.setattr(pm, "_latest_price", lambda s: 111.0)
+        monkeypatch.setattr(pm, "get_fresh_price_for_protective_close", lambda s, market_type, *, venue="": 111.0)
         closes = []
         monkeypatch.setattr(
             pm, "close_position_routed",

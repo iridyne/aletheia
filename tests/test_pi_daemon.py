@@ -147,7 +147,7 @@ async def test_failed_evaluation_rearms_daemon_signal():
     results = [-1, 0]
     eval_count = 0
 
-    async def fake_run_evaluation(_triggered_by):
+    async def fake_run_evaluation(_triggered_by, _wake_context=None):
         nonlocal eval_count
         result = results[min(eval_count, len(results) - 1)]
         eval_count += 1

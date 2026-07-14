@@ -69,7 +69,7 @@ def test_proactive_market_closes(monkeypatch):
 
     _insert_open(get_db(), "m1")
     calls = []
-    monkeypatch.setattr(pm, "_latest_price", lambda s: 100.0)
+    monkeypatch.setattr(pm, "get_fresh_price_for_protective_close", lambda s, market_type, *, venue="": 100.0)
     monkeypatch.setattr(
         pm, "close_position_routed",
         lambda pid, **kw: calls.append((pid, kw)) or {"closed": True},
@@ -115,7 +115,7 @@ def test_limit_exit_executes_via_loop(monkeypatch):
     from aletheia.storage.sqlite import get_db
 
     _insert_open(get_db(), "e1", exit_limit_price=110.0)
-    monkeypatch.setattr(pm, "_latest_price", lambda s: 111.0)  # crossed the limit
+    monkeypatch.setattr(pm, "get_fresh_price_for_protective_close", lambda s, market_type, *, venue="": 111.0)  # crossed the limit
     calls = []
     monkeypatch.setattr(
         pm, "close_position_routed",

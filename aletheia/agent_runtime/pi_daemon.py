@@ -223,6 +223,7 @@ async def _pi_daemon_loop(
         if cooldown_sec > 0:
             await asyncio.sleep(cooldown_sec)
         if pending_queue_remaining != 0:
+            _generic_wake_pending = True
             _signal_event.set()
 
 

@@ -47,10 +47,14 @@ def test_ledger_sum_equals_positions_sum_for_full_closes():
     db = get_db()
     _insert_open(db, "a", entry=100.0, qty=1.0)
     _insert_open(db, "b", entry=200.0, qty=0.5)
-    close_position("a", exit_price=90.0, reason="stop_loss")     # a loss
-    close_position("b", exit_price=220.0, reason="take_profit")  # a win
+    # bitget_demo usdt_futures requires explicit funding to compute realized_pnl
+    close_position("a", exit_price=90.0, reason="stop_loss",
+                   funding_cost=0.0, funding_source="broker_ledger")
+    close_position("b", exit_price=220.0, reason="take_profit",
+                   funding_cost=0.0, funding_source="broker_ledger")
 
-    ledger_sum = round(sum(e["realized_pnl"] for e in list_position_close_events()), 6)
+    ledger_sum = round(sum(e["realized_pnl"] for e in list_position_close_events()
+                           if e["realized_pnl"] is not None), 6)
     positions_sum = round(
         sum(p["realized_pnl"] for p in list_closed_positions() if p["realized_pnl"] is not None), 6
     )
@@ -172,7 +176,8 @@ def test_reduce_then_full_close_economics_consistent():
     _insert_open_qty(db, "m1", entry=100.0, qty=2.0, entry_fee=0.12)
 
     reduce_position("m1", 0.5, 110.0, reason="operator_reduce")   # realized 4.937
-    close_position("m1", exit_price=120.0, reason="take_profit")  # remaining 1.5
+    close_position("m1", exit_price=120.0, reason="take_profit",  # remaining 1.5
+                   funding_cost=0.0, funding_source="broker_ledger")
 
     today = f"{datetime.now(timezone.utc).date().isoformat()}T00:00:00+00:00"
     partial_term = _partial_close_realized_today("bitget_demo", today)

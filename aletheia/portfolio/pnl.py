@@ -353,7 +353,8 @@ def close_position(
     funding_cost: float | None = None,
     funding_source: str | None = None,
     funding_evidence: dict | None = None,
-) -> dict:    """Close an open position at exit_price, realizing PnL. Returns the result.
+) -> dict:
+    """Close an open position at exit_price, realizing PnL. Returns the result.
 
     Writes a position_closed audit event (trust §1.4). `reason` is recorded as
     close_reason (e.g. stop_loss / take_profit / max_hold / manual). Exchange
@@ -782,6 +783,18 @@ def _all_closed_positions(execution_mode: str | None = None) -> list[dict]:
 
 
 def _closed_today(execution_mode: str | None = None) -> list[dict]:
+    today = datetime.now(timezone.utc).date().isoformat()
+    matched: list[dict] = []
+    for r in _all_closed_positions(execution_mode):
+        closed_at = r.get("closed_at") or ""
+        try:
+            closed_date = datetime.fromisoformat(closed_at).date().isoformat()
+        except (ValueError, TypeError):
+            continue
+        if closed_date != today:
+            continue
+        matched.append(r)
+    return matched
 
 
 def reduce_position(

@@ -829,6 +829,7 @@ def reduce_okx_position(position_id: str, reduce_qty: float, reason: str = "oper
         direction=row["direction"], order_type="market", quantity=reduce_qty,
         price=row.get("current_price") or row["entry_price"], execution_mode=row["execution_mode"],
         status="pending",
+        position_id=position_id, close_reason=reason,
     )
     insert_order(reduce_order)
 

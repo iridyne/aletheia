@@ -187,7 +187,8 @@ class DebateResult:
 _DECISION_SCHEMA = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": ["trade", "skip", "close", "reduce", "scale_in", "flip", "adjust_position"]},        "symbol": {"type": "string"},
+        "action": {"type": "string", "enum": ["trade", "skip", "close", "reduce", "scale_in", "flip", "adjust_position"]},
+        "symbol": {"type": "string"},
         "direction": {"type": "string", "enum": ["long", "short"]},
         "conviction": {"type": "integer", "minimum": 0, "maximum": 100},
         "reasoning": {"type": "string"},
@@ -216,7 +217,8 @@ _DECISION_SCHEMA = {
         # optional in the top-level schema because skip/close/reduce decisions
         # do not have five new-entry parameters to explain.
         # Required for trade by the prompt below. It remains optional in the
-        # top-level schema because skip has no entry parameters to explain.        "parameter_rationale": {
+        # top-level schema because skip has no entry parameters to explain.
+        "parameter_rationale": {
             "type": "object",
             "properties": {
                 "entry_price": {"type": "string"},
@@ -1982,7 +1984,8 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
                         meta = {}
                     decision.learning_candidate_key = meta.get("learning_candidate_key")
         except Exception:
-            pass        return
+            pass
+        return
 
     for p in pending:
         if (p.get("signal_source") or "market_observer") != "market_observer":

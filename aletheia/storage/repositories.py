@@ -1436,7 +1436,14 @@ def validate_native_order_authority(order: Order | dict) -> None:
         requested = float(data.get("quantity") or 0.0)
         position_quantity = float(position.get("quantity") or 0.0)
         tolerance = max(1e-12, position_quantity * 1e-9)
-        if requested <= 0 or abs(requested - position_quantity) > tolerance:
+        if requested <= 0:
+            raise ValueError("native close Order quantity must be positive")
+        is_partial_reduce = requested < position_quantity - tolerance
+        if is_partial_reduce:
+            # Partial reduce: quantity must be strictly less than position quantity
+            return
+        # Full close: quantity must equal position quantity and client_order_id must be durable
+        if abs(requested - position_quantity) > tolerance:
             raise ValueError("native close Order quantity does not match Position")
         expected_client_id = f"close-{position_id}"
         if data.get("client_order_id") != expected_client_id:

@@ -111,7 +111,7 @@ def test_catastrophic_preempts_and_routes_close(monkeypatch):
         "('c1','BTC/USDT','usdt_futures','long',1.0,100.0,'paper_internal','open')"
     )
 
-    monkeypatch.setattr(pm, "_latest_price", lambda sym: 85.0)  # -15% crash
+    monkeypatch.setattr(pm, "get_fresh_price_for_protective_close", lambda sym, market_type, *, venue="": 85.0)  # -15% crash
 
     calls = []
 
