@@ -1678,7 +1678,7 @@ def _check_account_leverage_ratio(
             prop_lev = float(proposal.leverage or 1)
             weighted_notional += abs(proposal.price * proposal.quantity) * prop_lev
 
-        equity = _account_equity(is_live, cfg)
+        equity = _account_equity(proposal.execution_mode, cfg)
         if not equity or equity <= 0:
             return []
 
@@ -1724,8 +1724,28 @@ def _check_liquidation_buffer(proposal: TradeProposal, cfg) -> list[str]:
 # Shared helpers for leverage checks
 # ---------------------------------------------------------------------------
 
-def _account_equity(is_live: bool, cfg) -> float | None:
-    """Best estimate of account equity in USDT."""
+def _account_equity(execution_mode: str, cfg) -> float | None:
+    """Best estimate of account equity in USDT for the given execution mode.
+
+    Route by account type so each mode reads the right balance source:
+    - ``paper_internal``: local paper ledger (cash + unrealized PnL). exchange_sync
+      knows nothing about this account — its balance never appears there.
+    - live exchange modes: cached exchange state, fallback to max_live_limited_cap_usdt.
+    - exchange demo modes (okx_demo, bitget_demo, …): cached exchange state,
+      fallback to starting_capital_usdt.
+    """
+    if execution_mode == "paper_internal":
+        try:
+            from aletheia.portfolio.paper_account import get_paper_account
+            equity = get_paper_account(event_limit=0).get("equity_usdt")
+            if equity and equity > 0:
+                return float(equity)
+        except Exception:
+            pass
+        # Local ledger unreadable — fall back to configured starting capital.
+        return float(cfg.risk.starting_capital_usdt or 0) or None
+
+    is_live = _is_live(execution_mode)
     try:
         from aletheia.portfolio import exchange_sync
         cached = exchange_sync.get_cached_state()
@@ -1740,11 +1760,46 @@ def _account_equity(is_live: bool, cfg) -> float | None:
     return float(cfg.risk.starting_capital_usdt or 0) or None
 
 
-def check_account_leverage(cfg=None) -> dict:
-    """Public API: compute current account leverage ratio (for dashboard/monitoring)."""
+def _config_active_execution_mode(cfg) -> str:
+    """Active execution mode string derived from the system configuration.
+
+    Used by monitoring / dashboard paths that evaluate the full system rather
+    than a specific proposal.  Maps ``exchange.mode == 'live'`` to the
+    conventional ``{broker}_live_limited`` string so ``_is_live()`` / leverage
+    fallbacks all work correctly.
+    """
+    if cfg.exchange.mode == "live":
+        broker = (getattr(cfg.exchange, "ccxt_exchange", None) or "okx").lower()
+        return f"{broker}_live_limited"
+    return getattr(cfg.exchange, "paper_execution_mode", None) or "paper_internal"
+
+
+def _relevant_positions(open_positions: list, execution_mode: str) -> list:
+    """Return the subset of open positions that belong to the same account pool.
+
+    - paper_internal: isolated local ledger — only paper_internal positions count.
+    - live modes: all live positions aggregate (real-money account, any broker).
+    - exchange demo modes: each broker is a separate account — exact mode match.
+    """
+    if execution_mode == "paper_internal":
+        return [p for p in open_positions if p.get("execution_mode") == "paper_internal"]
+    if _is_live(execution_mode):
+        return [p for p in open_positions if _is_live(p.get("execution_mode", ""))]
+    return [p for p in open_positions if p.get("execution_mode") == execution_mode]
+
+
+def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
+    """Public API: compute current account leverage ratio (for dashboard/monitoring).
+
+    ``execution_mode`` selects which account pool to evaluate.  When omitted,
+    the active mode is derived from ``cfg.exchange.paper_execution_mode`` (or the
+    live mode string when ``cfg.exchange.mode == "live"``).  Pass it explicitly
+    when the caller knows which pool it cares about (e.g. tests, per-account dashboards).
+    """
     if cfg is None:
         cfg = load_config()
-    is_live = cfg.exchange.mode == "live"
+    active_mode = execution_mode if execution_mode is not None else _config_active_execution_mode(cfg)
+    is_live = _is_live(active_mode)
     max_ratio = (
         getattr(cfg.risk, "max_account_leverage_live", 1.5)
         if is_live else getattr(cfg.risk, "max_account_leverage_demo", 3.0)
@@ -1771,7 +1826,7 @@ def check_account_leverage(cfg=None) -> dict:
         except (TypeError, ValueError):
             continue
 
-    equity = _account_equity(is_live, cfg)
+    equity = _account_equity(active_mode, cfg)
     ratio = weighted_notional / equity if equity and equity > 0 else None
     return {
         "ratio": ratio,
