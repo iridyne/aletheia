@@ -175,7 +175,7 @@ def test_paper_internal_fallback_never_calls_exchange(tmp_path, monkeypatch):
 
     from aletheia.execution.gateway import submit_proposal
     result = submit_proposal(
-        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        symbol="BTC/USDT", market_type="spot", direction="long",
         quantity=0.0004, price=60000.0, execution_mode="paper_internal",
     )
     assert result["status"] == "executed"

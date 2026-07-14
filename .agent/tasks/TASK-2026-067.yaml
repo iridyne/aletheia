@@ -53,9 +53,9 @@ ownership:
 base_commit: c95b2be34d93368182da21fc81f87e71cf5f64e1
 next_action:
   command_key: trade_chain_completion
-  reason: Re-run the focused production-chain command at the new implementation
-    commit after adding fail-closed local-paper futures entry handling and durable
-    PiDecision retention. Keep the branch unmerged until a new policy epoch/window exists.
+  reason: Commit the final test-semantics alignment, then re-run every registered verification
+    command at that exact commit. Keep the branch unmerged until a new policy epoch/window
+    exists.
 blockers:
 - B-class Operator timing and Bitget original-order protection changes require the
   owner to create a new policy epoch and observation window before merge; prior and
@@ -337,5 +337,62 @@ verification:
   run_at: '2026-07-14T05:41:14.875263Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: trade_chain_completion
+  command: uv run pytest tests/e2e/test_active_mainline_golden_path.py tests/e2e/test_pipeline_real_paper_roundtrip.py
+    tests/specs/spec_decision_lifecycle.py tests/specs/spec_execution.py tests/specs/spec_lesson_guards.py
+    tests/specs/spec_pipeline_middle_state_integrity.py tests/specs/spec_pipeline_multibroker_reconciliation.py
+    tests/specs/spec_pipeline_multileg_outcome_attribution.py tests/specs/spec_pipeline_outcome_feedback.py
+    tests/specs/spec_pipeline_paper_close_materialization.py tests/specs/spec_pipeline_unresolved_entry_exposure.py
+    tests/specs/spec_serenity_promote.py tests/test_authoritative_account_loss.py
+    tests/test_decision_chain_fixes.py tests/test_exchange_submission_integrity.py
+    tests/test_paper_account.py tests/test_paper_trader_ranker.py tests/test_serenity_p0_p3_e2e.py
+    tests/test_workflow_routes.py tests/test_post_trade_reviewer_outcomes.py tests/test_paper_trade_count_eligibility.py
+    -q --tb=short
+  command_sha256: 12ca13f07369edcb4409889f4cb48157a6612ef87387413f9f7eab28157fbe86
+  exit_code: 0
+  commit: 353b3601aceea4537dea1d4a05730a5a0d446618
+  run_at: '2026-07-14T06:24:16.436044Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: spec_risk_engine
+  command: uv run pytest tests/specs/spec_risk_engine.py -q
+  command_sha256: 85595110321878d3016585adac757ed968ccb5833aa6a7f78b420108cb88f1b6
+  exit_code: 0
+  commit: 353b3601aceea4537dea1d4a05730a5a0d446618
+  run_at: '2026-07-14T06:24:17.967908Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: spec_execution
+  command: uv run pytest tests/specs/spec_execution.py -q
+  command_sha256: 720c18646fdff18ca745c955c9570fbd12535011a9f360bd59e50bccf435a3c6
+  exit_code: 0
+  commit: 353b3601aceea4537dea1d4a05730a5a0d446618
+  run_at: '2026-07-14T06:24:19.229034Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: spec_pipeline_execution_chain
+  command: uv run pytest tests/specs/spec_pipeline_execution_chain.py -q
+  command_sha256: f06ee972e4516060bd13766427550e64b56131f492277be553dbd72f7e297494
+  exit_code: 0
+  commit: 353b3601aceea4537dea1d4a05730a5a0d446618
+  run_at: '2026-07-14T06:24:20.367024Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 353b3601aceea4537dea1d4a05730a5a0d446618
+  run_at: '2026-07-14T06:24:38.791735Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 353b3601aceea4537dea1d4a05730a5a0d446618
+  run_at: '2026-07-14T06:24:39.921195Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-067.md
-updated_at: '2026-07-14T05:41:14.875532Z'
+updated_at: '2026-07-14T06:24:39.921400Z'

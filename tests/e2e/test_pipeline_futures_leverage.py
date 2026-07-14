@@ -1,19 +1,13 @@
-"""E2E: futures leverage acceptance criteria via the paper pipeline.
+"""E2E: futures leverage identity and the local-paper funding boundary.
 
-Validates the Round 2 futures enablement WITHOUT a live exchange — the paper path
-exercises every Aletheia-side node the demo path does (leverage persistence,
-liquidation estimate, account-leverage ratio, full causal chain). The only thing
-paper does NOT exercise is the exchange-side set_leverage round-trip (demo/live
-only), which is unit-tested separately.
+Leverage remains hash-covered Proposal intent, including on the PI submission path.
+Local paper futures entry is intentionally unavailable until a trustworthy
+per-Position funding producer exists: Risk must preserve the Proposal and leverage
+facts while rejecting before Order/Position materialization. Exchange-side leverage
+round-trips remain covered by the demo/live adapter tests.
 
-Acceptance criteria (futures_round2_deferred §Validation):
-  1. open a futures position with leverage > 1
-  2. liquidation price displayed/recorded correctly
-  3. account leverage ratio updates
-  4. CausalChain shows all nodes (opportunity → proposal → position)
-
-No module-to-module mocking — proposal goes through the real Execution Gateway,
-risk engine, and paper broker.
+No module-to-module mocking — each Proposal goes through the real Execution Gateway
+and Risk Engine, then proves that no paper broker side effect occurred.
 """
 
 from aletheia.storage.models import Opportunity, StrategyRecord
@@ -21,10 +15,8 @@ from aletheia.storage import repositories as repo
 
 
 class TestFuturesLeverageAcceptance:
-    def test_paper_futures_open_with_leverage(self, e2e_db):
+    def test_paper_futures_entry_rejected_without_funding_producer(self, e2e_db):
         from aletheia.execution.gateway import submit_proposal
-        from aletheia.risk.engine import check_account_leverage
-        from aletheia.config.loader import load_config
 
         # A perp opportunity carrying its funding/OI state (F4) + a linked strategy.
         opp = Opportunity(
@@ -45,30 +37,17 @@ class TestFuturesLeverageAcceptance:
             execution_mode="paper_internal",
             strategy_id=strat.id, opportunity_id=opp.id,
         )
-        assert res["status"] == "executed", res
-        pos = repo._select_one("positions", res["position_id"])
-
-        # (1) leverage > 1 persisted
-        assert pos["leverage"] == 3
-        # (2) liquidation price recorded, below entry for a long, sane magnitude
-        assert pos["liquidation_price"] is not None
-        assert 0 < pos["liquidation_price"] < entry
-        # (4) full causal chain on the position row
-        assert pos["opportunity_id"] == opp.id
-        assert pos["proposal_id"]
-        assert pos["strategy_id"] == strat.id
-
-        # (3) account leverage ratio reflects the leveraged exposure.
-        # demo equity falls back to starting_capital_usdt (100) with no cached state;
-        # weighted notional = 60 * 3 = 180 → ratio 1.8x, under the 3.0x demo cap.
-        cfg = load_config()
-        acct = check_account_leverage(cfg)
-        assert acct["ratio"] is not None
-        assert acct["ratio"] > 60.0 / acct["equity"], "ratio must be amplified by leverage"
+        assert res["status"] == "rejected", res
+        assert "local_paper_futures_funding_unavailable" in res["risk_violations"]
+        proposal = repo.get_trade_proposal(res["proposal_id"])
+        assert proposal["leverage"] == 3
+        assert proposal["opportunity_id"] == opp.id
+        assert proposal["strategy_id"] == strat.id
+        assert repo.list_orders() == []
+        assert repo.list_positions() == []
 
     async def test_pi_decision_futures_proposal_persists_leverage(self, e2e_db):
-        """The PI-decision submit path (F2) carries market_type + clamped leverage all
-        the way to a persisted Position (F1)."""
+        """The PI path preserves futures identity and clamped leverage on rejection."""
         from aletheia.agent_shell.trading_decision import TradingDecision, submit_decision_as_proposal
         from aletheia.trading import market_data
 
@@ -93,9 +72,12 @@ class TestFuturesLeverageAcceptance:
         finally:
             market_data.latest_snapshot = orig
 
-        assert result and result.get("status") == "executed", result
-        pos = repo._select_one("positions", result["position_id"])
-        assert pos["market_type"] == "usdt_futures"
+        assert result and result.get("status") == "rejected", result
+        assert "local_paper_futures_funding_unavailable" in result["risk_violations"]
+        proposal = repo.get_trade_proposal(result["proposal_id"])
+        assert proposal["market_type"] == "usdt_futures"
         # SOL is mid-tier → demo cap 3; the PI's request of 10 must be clamped to 3.
-        assert pos["leverage"] == 3
-        assert pos["liquidation_price"] is not None
+        assert proposal["leverage"] == 3
+        assert proposal["opportunity_id"] == opp.id
+        assert repo.list_orders() == []
+        assert repo.list_positions() == []
