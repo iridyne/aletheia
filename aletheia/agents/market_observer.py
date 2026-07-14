@@ -35,12 +35,12 @@ _VALID_DIRECTIONS = {"long", "short", "neutral"}
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 
 # Wall-clock budget for the per-instrument loop. Must stay BELOW the scheduler's
-# market_observer job timeout (_ASYNC_JOB_TIMEOUT_SEC["market_observer"] = 240s in
+# market_observer job timeout (_ASYNC_JOB_TIMEOUT_SEC["market_observer"] = 500s in
 # agent_runtime/scheduler.py) with margin, so the coroutine returns normally before
 # asyncio.wait_for cancels it — preventing the abandoned-thread leak. Keep in sync if
 # the job timeout changes.
-_MARKET_OBSERVER_JOB_TIMEOUT_S = 240.0
-_MARKET_OBSERVER_LOOP_BUDGET_SEC = 200.0
+_MARKET_OBSERVER_JOB_TIMEOUT_S = 500.0
+_MARKET_OBSERVER_LOOP_BUDGET_SEC = 460.0
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
 _ROUND_ROBIN_STATE_KEY = "agent.market_observer.round_robin.v1"
 
@@ -119,6 +119,14 @@ Output a structured market read. Calibration:
 CRITICAL: Output ONLY the raw JSON object. No markdown fences, no explanation
 before or after, no "Here is..." preamble. Just the JSON starting with { and
 ending with }.
+
+Indicator meanings (single source of truth — do not invent rules):
+- SMA20/SMA50: simple moving averages. Price > SMA50 = uptrend; < SMA50 = downtrend.
+- RSI14: momentum 0-100. >70 overbought, <30 oversold, 50 = neutral. Can stay extreme in strong trends.
+- ATR14: average true range (price units). Bigger = wider swings; use for stops, not direction.
+- BB%: position in Bollinger band (0=lower, 1=upper). >1 or <0 = outside band.
+- Mom10: % change over last 10 bars. Positive = trending up.
+- Vol z: volume z-score vs 20 bars. >+1 = unusually high, <-1 = unusually low.
 
 Not financial advice."""
 
@@ -313,7 +321,8 @@ async def _analyze_symbol(
     try:
         _t0 = _time.monotonic()
         context, ctx_debug = await build_market_context(
-            [symbol], market_type=market_type, exchange=venue, provider=provider
+            [symbol], market_type=market_type, exchange=venue, provider=provider,
+            include_glossary=False,
         )
         _step_times["build_market_context"] = _time.monotonic() - _t0
         log_tool(run_id, "build_market_context", "observe", True,
@@ -829,7 +838,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
         from aletheia.analytics.insight_synthesizer import get_latest_memo, render_memo_for_observer
         memo = get_latest_memo()
         if memo:
-            memory_block += render_memo_for_observer(memo)
+            memory_block += render_memo_for_observer(memo, compact=True)
     except Exception:
         pass
 

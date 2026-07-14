@@ -56,7 +56,7 @@ _selectively_paused_jobs: set[str] = set()
 # holding SQLite thread-local state indefinitely.
 _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "market_data": 90.0,
-    "market_observer": 240.0,
+    "market_observer": 500.0,
     "dreaming_agent": 300.0,
     "paper_trader": 300.0,
     "pi_trading_decision": 300.0,

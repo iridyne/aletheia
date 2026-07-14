@@ -781,3 +781,109 @@ Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
 | IB-24-08 | settle_due() 改为批次循环（max_rows=2000, budget=100s），消除 12k 行积压 | `6729aa13` |
 | IB-24-09 | volume_scanner 调整为 Phase B 最优先（Phase B 独立 40s 预算首位保证） | `6729aa13` |
 
+---
+
+## §MO Token Economics — market_observer 上下文 token 优化（2026-07-14）
+
+> 背景：MON-030 观测发现 universe 扩至 16 个标的后每次 LLM 调用约 18s（Databricks gateway），
+> 主要时间消耗在 input token 处理。P0 修复已提交（glossary 移至 system prompt、memo compact 化），
+> P1/P2 以下待后续实现。
+
+---
+
+### ✅ [FIXED] MO-TOK-01（P0）：Indicator glossary 每个 symbol 重复注入
+
+**现象**：`build_market_context()` 在输出末尾追加静态 `_INDICATOR_GLOSSARY`（760 chars / ~190 tokens）。
+market_observer 对每个 symbol 各调用一次，16 symbols = **~3,040 tok/run 浪费**。
+
+**修复**：
+- `aletheia/trading/market_context.py`：增加 `include_glossary: bool = True` 参数，默认保持向后兼容
+- `aletheia/agents/market_observer.py`：调用时传 `include_glossary=False`
+- `aletheia/agents/market_observer.py`：将 glossary 内容（精简版）并入 `_SYSTEM_PROMPT`
+
+**commit**：worktree-token-opt-p0
+
+---
+
+### ✅ [FIXED] MO-TOK-02（P0）：Trading memo 完整内容随每个 symbol 发送
+
+**现象**：`render_memo_for_observer()` 生成约 244 tokens 的 memo 块，在 run 级别构建后随
+每个 symbol 的 LLM 调用完整发送。16 symbols = **~3,900 tok/run 浪费**。完整版包含
+`prior_corrections`（verbose meta-learning）、`timing_windows`、`memo_weight` 等与
+即时 market read 相关性低的内容。
+
+**修复**：
+- `aletheia/analytics/insight_synthesizer.py`：`render_memo_for_observer()` 增加 `compact: bool = False`
+  参数。compact 模式保留：direction bias、top-2 regime edges、top-2 anti-patterns；
+  跳过：prior_corrections、timing_windows、memo_weight、key_insight。节省 ~136 tok/call。
+- `aletheia/agents/market_observer.py`：调用时传 `compact=True`
+
+**commit**：worktree-token-opt-p0
+
+---
+
+### 🗓 [PENDING] MO-TOK-03（P1）：期货专属字段注入 spot symbol
+
+**现象**：`render_enriched_context_md()` 对所有 symbol 渲染 derivatives 表（funding rate、OI、LSR）、
+cross-venue funding（Hyperliquid）、perp_structure，共约 130 tokens。spot-only 标的（如 BTC/USDT spot）
+完全用不到这些内容。
+
+**影响**：约 130 tok × N_spot_symbols/run 浪费；内容对 spot 的 market read 无实际帮助，
+可能引入 LLM 混淆（空字段被解读为"无期货结构"而非"不适用"）。
+
+**建议修复**：
+- `aletheia/agents/market_observer.py` 的 `_analyze_symbol()` 中，`render_enriched_context_md()` 调用
+  已有 `perp_structure=...` 参数；对 `market_type not in ("perp", "usdt_futures")` 的 instrument，
+  同时将 `leverage`、`xvenue_funding`、`perp_structure` 参数传入空 dict，或在
+  `render_enriched_context_md()` 内部按 market_type gate。
+
+**文件**：`aletheia/agents/market_observer.py:340-398`，`aletheia/data/context_builder.py`（`render_enriched_context_md`）
+
+---
+
+### 🗓 [PENDING] MO-TOK-04（P2）：Macro + on-chain 全量随每 symbol 重复
+
+**现象（macro）**：全局宏观信号（Fear & Greed、BTC.D、Nasdaq、DXY 等，~150 tokens）作为 enriched context
+的一部分随每个 symbol 发送，内容完全相同。16 symbols = ~2,400 tok/run。
+
+**现象（on-chain）**：DefiLlama stablecoin cap / TVL / DEX volume（~50 tokens）同样全量随每 symbol 发送。
+16 symbols = ~800 tok/run。
+
+**影响**：两者均为 global 信号，不含 symbol 维度，per-symbol 重复注入无信号增量，
+仅增加 input 长度和 TTFT。
+
+**建议修复**：在 `run_market_observer()` 中单独构建一次 `global_context_block`（macro + on-chain），
+在 `_analyze_symbol()` 的 user prompt 中只注入当前 symbol 的微观数据，
+global block 作为 system prompt 的一部分或 run-level prefix 注入一次（需评估是否影响 cache）。
+
+**注意**：`render_enriched_context_md()` 目前把 macro/on-chain 与 per-symbol 衍生品数据混合渲染，
+需要拆分函数签名或增加 `include_global=True/False` 参数。
+
+**文件**：`aletheia/data/context_builder.py:render_enriched_context_md()`，`aletheia/agents/market_observer.py:392-399`
+
+---
+
+## §25 2026-07-13 Stability Baseline Qualification 期间发现(记录,未修)
+
+> 候选 commit `c95b2be3`(首个稳定基线资格验证)期间在真实运行节点观测。
+
+### 🟠 SBQ-25-01 — resume 端点不查 Startup Behavior Gate 的 durable blocker
+
+- **观测**:资格验证中注入了一个 active `reconciliation_integrity_incident`(`c2eded75d057`),
+  Gateway 于 07:10:46 UTC 正确进入 Startup Behavior Gate 阻断(layered pause,21 暂停/19 essential,
+  durable blocker `paused_by_gate=true`)。但 07:12:17 UTC 一个外部调用
+  (audit `actor=human, source=dashboard, event_type=gateway_resumed`,极可能是本机开着的 dashboard 标签页)
+  命中 `POST /api/gateway/resume`,**在该 incident 仍 active、门 blocker 仍有效时**清除了暂停,
+  随后门的 recheck 循环见 `runtime.paused=False` 便退出并清掉 durable blocker。
+- **根因**:`aletheia/server/routes/health.py::resume`(`/gateway/resume`)与
+  `aletheia/server/routes/operator.py::_set_paused(False)`(`/operator/resume`、telegram、agent_shell resume)
+  只经 `resume_gate.resume_if_llm_available`(仅校验 LLM),**不调用
+  `startup_behavior_gate.evaluate_startup_gate()` / 不检查 durable blocker**。因此人工/dashboard/telegram
+  的一次 resume 可越过 Startup Gate,把门刻意保持暂停的系统重新放行(即使 DB 完整性/对账事故等 blocker 仍在)。
+- **影响**:不违反门自身契约(门的 recheck 只恢复自暂停、不覆盖人工 kill/pause,已由
+  `tests/test_startup_behavior_gate.py::test_recheck_does_not_resume_user_pause` 等 22 项单测证实);
+  但削弱「Gate 阻断期保持暂停直到检查通过」的运行保证——一个残留的浏览器标签页即可静默解除门。
+- **建议修复(未授权施工)**:让 resume 授权链在 Startup Gate 有 active blocker 时也复跑
+  `evaluate_startup_gate()`(通过则清 blocker 并恢复,不通过则 409 拒绝),即把 Startup Gate 纳入
+  `resume_if_*` 的判定,与 LLM gate 并列。属信任/行为边界,修复需 focused 回归测试。
+- **状态**:🕒 记录待办(owner 指示暂不修)。资格验证其余 9 条标准全绿;#67 热循环实机增量已归零。
