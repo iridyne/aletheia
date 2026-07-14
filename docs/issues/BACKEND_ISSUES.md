@@ -13,9 +13,22 @@
 > - 🟠 让数据失真或学习失效（promotion gate 错算 / KB 类型混淆 / PnL 不可信）
 > - 🟡 dead code / cosmetic / future-violation tripwire
 >
-> **最后更新**：2026-07-11 · 维护者：Aletheia Dev
+> **最后更新**：2026-07-14 · 维护者：Aletheia Dev
 > **来源**：6 个并行 subagent 审计（agents+runtime / risk+execution / storage+knowledge /
 > server+config / lifecycle+gateway / model+telegram+update+cli）+ 早期对照表
+
+---
+
+## 0c. Trade chain 收口后的独立开放项（TASK-2026-067，2026-07-14）
+
+| ID | 状态 | 问题 | 当前安全边界 / 下一步 |
+|---|---|---|---|
+| TC-X01 | 🔴 待独立修复 | Exchange-backed futures 没有按 Position 归集真实账户 funding/bill 的生产写入器；`outcome_integrity.py` 只接受 `broker_ledger`，当前仓库只有校验和消费，没有对应正向采集链 | 当前会明确留下 `incomplete_funding_economics`，不会把不完整净 PnL 送进 Attribution/Learning。另开 exchange 任务接入私有账单、账户/合约/时间窗匹配和幂等归集，再补真实正向 E2E；不得用 local simulation 代替交易所账单 |
+| TC-X02 | 🟡 待裁决 | Bitget futures 入场的批准 SL/TP 已通过真实 create-order 的 preset 字段提交；但旧的 post-fill `_try_place_tpsl()` 只被测试调用，生产代码不调用，也没有对应动态 TPSL ID 生命周期 | 不把这个 dead helper 当作“preset 未提交”的 blocker。另开 exchange 任务决定删除死代码，或实现可核对的动态 TPSL 创建/更新/取消与持久身份；不要在本次 active-paper 修复中扩大范围 |
+
+TASK-2026-067 的 active `paper_internal` 断路修复已提交在独立分支，但尚未在最新
+`master` 后代上跑全量、创建新 policy epoch/window 或完成主线 runtime soak，因此仍不
+具备合并/上线结论。准确接手步骤见 `.agent/handoffs/TASK-2026-067.md`。
 
 ---
 

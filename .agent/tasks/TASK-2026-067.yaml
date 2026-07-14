@@ -53,17 +53,24 @@ ownership:
 base_commit: c95b2be34d93368182da21fc81f87e71cf5f64e1
 next_action:
   command_key: trade_chain_completion
-  reason: Code-level verification is complete at 03cf7f877d7c4312dfedb57a8c48f29b94d5bb3d.
-    Do not merge until the owner creates a new policy epoch and from-zero observation
-    window; after merge, migrate, restart, and run an incremental paper soak on the
-    exact mainline HEAD.
+  reason: The active-paper repair batch is committed at b116714d, but local master
+    has since advanced to baf1ee1e and is not integrated. Keep this branch unmerged.
+    The next owner/agent must merge the latest master here, rerun the registered
+    specifications, production-shaped paper paths, full suite, and strict workflow
+    checks on that final descendant; deployment still requires a new policy epoch
+    and a from-zero observation window, followed by migration, restart, and soak.
 blockers:
+- Local master baf1ee1e is three commits ahead of this branch. The final merged
+  descendant and its full-repository verification do not yet exist, so this branch
+  is deliberately not merge-approved.
 - B-class System Operator queue-consumption behavior and the integrated Market Observer
   prompt/context changes require the owner to create a new policy epoch and observation
   window before merge; prior and new observation data must not be mixed.
-- Exchange-backed futures also have no account funding-ledger producer in the current
-  code. Their close lifecycle remains fail-closed for Outcome and Learning until real
-  venue funding facts are collected; local simulation is deliberately rejected there.
+- Exchange-backed futures still have no account funding-ledger producer. Their close
+  lifecycle remains fail-closed for Outcome and Learning until real venue funding facts
+  are collected; local-paper futures use a separate, explicit local simulation.
+- No migration, singleton-gateway restart, current-mainline paper soak, or production
+  database acceptance was performed from this isolated worktree.
 verification:
 - command_key: spec_risk_engine
   command: uv run pytest tests/specs/spec_risk_engine.py -q

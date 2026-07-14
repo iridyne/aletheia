@@ -1,5 +1,25 @@
 # Development Log
 
+## 2026-07-14 — Active paper trade-chain runtime repair
+
+- Repaired the production-shaped paper path from durable Opportunity/pending authority
+  through Operator, Proposal, Risk, paper entry, Position management, routed close,
+  Outcome, Attribution, and Feedback. Dependency outages and unsupported actions now
+  fail closed without consuming retryable work or inventing business state.
+- Local paper Risk and execution now require an exact fresh venue/symbol/market mark,
+  a complete and mathematically consistent entry plan, Proposal snapshot integrity, and
+  proposal-isolated Position lineage. Batch closes no longer partially execute when a
+  required mark is missing.
+- Local futures use explicit schedule-backed funding simulation; exchange-account
+  futures remain ineligible for Learning when real account funding facts are absent.
+  Guard/Learning influence is default-off, path-specific, and treatment-only.
+- Design contracts and Settings API/UI were updated. Isolated proof reached 1193
+  executable specifications and 12 production-shaped adjacent paper paths, but this
+  branch remains unmerged pending latest-master integration, a fresh full-suite run,
+  owner-created policy epoch/window, and exact-mainline runtime soak.
+
+---
+
 ## 2026-07-13 — Shadow intervention handoff honesty
 
 - AT-01 now reads whether a treatment was actually applied from each exposure
