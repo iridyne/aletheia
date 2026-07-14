@@ -1745,6 +1745,7 @@ def _run_cleanup():
     try:
         from aletheia.storage import repositories as repo
         from aletheia.files.jsonl import write_audit
+        from aletheia.execution.stale_order_cleanup import cleanup_stale_orphan_orders
         r = cfg.retention
         counts = {
             "run_steps": repo.prune_run_steps(r.run_steps_days),
@@ -1786,6 +1787,11 @@ def _run_cleanup():
             "agent_shell_session_logs": _prune_session_logs(cfg),
             "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
             "news_items": _prune_news(cfg),
+            # Cancel abandoned unresolved Orders reconciliation can never resolve
+            # (no credentials / venue dropped them) so they stop failing every
+            # reconciliation cycle. Bookkeeping-only: never touches an Order with a
+            # Fill or open Position. Returns a summary dict, not a bare count.
+            "stale_orders": cleanup_stale_orphan_orders(),
         }
         write_audit({
             "actor": "system", "source": "scheduler",

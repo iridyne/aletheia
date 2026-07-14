@@ -14,6 +14,7 @@ from aletheia.agent_shell.trading_decision import (
     TradingDecision,
     _parse_decision,
     _attach_opportunity_context,
+    _build_assessment_prompt,
 )
 
 
@@ -47,6 +48,41 @@ def test_parse_decision_guards_non_integer_conviction():
     assert _parse_decision({**base, "conviction": "8.5"}).conviction == 8      # float-string → int
     assert _parse_decision({**base, "conviction": 7}).conviction == 7          # plain int preserved
     assert _parse_decision({**base, "conviction": None}).conviction == 0       # null → 0
+
+
+def test_assessment_prompt_handles_none_equity():
+    """A None equity/available (paper account with an unsettled close) must render
+    honestly, not crash the whole evaluation.
+
+    Regression: get_paper_account() deliberately returns equity_usdt=None when a
+    closed paper position still lacks settled economics (e.g. reconciled_gone
+    administrative closes). The prompt builder formatted it with ``:.0f`` and
+    raised ``unsupported format string passed to NoneType.__format__``, killing
+    every pi_trading_decision daemon cycle (job_consecutive_failure alert)."""
+    ctx = {
+        "layer1": {
+            "balance": {
+                "equity_usdt": None,          # unsettled close → economics unknown
+                "available_usdt": 0.0,
+                "reserved_margin_usdt": 227.49,
+                "source": "local_paper_ledger",
+            },
+        },
+        "layer2": {},
+        "layer3": {},
+    }
+    prompt = _build_assessment_prompt(ctx)          # must not raise
+    assert "Equity: unknown" in prompt
+    assert "Available: $0" in prompt
+
+    # A fully-unavailable balance still degrades cleanly.
+    ctx["layer1"]["balance"] = None
+    assert "(unavailable)" in _build_assessment_prompt(ctx)
+
+    # The healthy path (both numeric) is unchanged — byte-identical rendering.
+    ctx["layer1"]["balance"] = {"equity_usdt": 1000.0, "available_usdt": 750.0}
+    healthy = _build_assessment_prompt(ctx)
+    assert "Equity: $1000 | Available: $750" in healthy
 
 
 def test_submit_decision_reads_snapshot_for_final_market_type(tmp_path, monkeypatch):
