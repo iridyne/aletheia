@@ -1,0 +1,50 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-069
+title: Supersede Legacy Learning Diagnostic Backlog
+status: done
+packet_type: tiny
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Prevent pre-fingerprint opportunity-quality PI diagnostic tasks from replaying
+  after the Learning stability deployment; replace the obsolete queued/running backlog
+  with at most one current fingerprinted diagnostic. Do not change Risk, Execution,
+  exchanges, credentials, live enablement, or Learning authority defaults.
+acceptance:
+- Recovery marks every queued or running legacy unversioned opportunity-quality diagnostic
+  as superseded instead of executing it.
+- After that cleanup, current evidence can create at most one v1 fingerprinted opportunity-quality
+  diagnostic.
+- The change does not alter Risk, Execution, exchanges, credentials, live state, or
+  Learning authority defaults, and the Operator Shell regression suite passes.
+ownership:
+  branch: iridite/learning-legacy-dedup
+  lease_holder: codex-learning-legacy-dedup
+  claimed_at: '2026-07-14T15:25:15.149128Z'
+  expires_at: '2026-07-14T23:25:15.149265Z'
+base_commit: feb5011011146f771d4cbf7ccc741ad4f5639480
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 9226f747a8fbf06fd2bda645dced1cc2c76bd481
+  run_at: '2026-07-14T15:26:57.768162Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 9226f747a8fbf06fd2bda645dced1cc2c76bd481
+  run_at: '2026-07-14T15:27:02.823637Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-069.md
+updated_at: '2026-07-14T15:27:02.840745Z'

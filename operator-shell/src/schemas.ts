@@ -405,7 +405,7 @@ export interface BackendGatewayClient {
   getOperatorSessions(limit?: number): Promise<OperatorSessionSummary[]>
   getOperatorSession(sessionId: string): Promise<OperatorSessionDetail>
   getOperatorCommands(limit?: number): Promise<PersistedOperatorCommand[]>
-  getOperatorTasks(status?: string): Promise<PersistedOperatorTask[]>
+  getOperatorTasks(status?: string, limit?: number): Promise<PersistedOperatorTask[]>
   getOperatorContext(payload: OperatorContextQuery): Promise<OperatorContextSnapshot>
   createSession(payload: OperatorSessionCreate): Promise<OperatorSessionSummary>
   createArtifact(payload: OperatorArtifactCreate): Promise<PersistedOperatorArtifact>

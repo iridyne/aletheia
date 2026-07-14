@@ -97,6 +97,7 @@ function makeFakeBackend(snapshot: { health: GatewayHealthSnapshot; status: Gate
     sessionDetailReads: 0,
     commandReads: 0,
     taskReads: 0,
+    taskReadRequests: [] as Array<{ status?: string; limit?: number }>,
   }
 
   const backend: BackendGatewayClient = {
@@ -165,8 +166,9 @@ function makeFakeBackend(snapshot: { health: GatewayHealthSnapshot; status: Gate
       calls.commandReads += 1
       return [] satisfies PersistedOperatorCommand[]
     },
-    async getOperatorTasks() {
+    async getOperatorTasks(status, limit) {
       calls.taskReads += 1
+      calls.taskReadRequests.push({ status, limit })
       return [] satisfies PersistedOperatorTask[]
     },
     async createSession(payload) {
@@ -425,6 +427,53 @@ test('backend client includes method and route in gateway request failures', asy
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+test('backend client can request bounded terminal task history for recovery deduplication', async () => {
+  const originalFetch = globalThis.fetch
+  let requestedUrl = ''
+  try {
+    globalThis.fetch = (async (url: RequestInfo | URL) => {
+      requestedUrl = String(url)
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }) as typeof fetch
+
+    const client = new BackendClient('http://127.0.0.1:8787')
+    await client.getOperatorTasks(undefined, 500)
+    assert.equal(requestedUrl, 'http://127.0.0.1:8787/api/operator/tasks?limit=500')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('operator recovery requests the complete queued backlog in addition to recent terminal history', async () => {
+  const { backend, calls } = makeFakeBackend(makeSnapshot())
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'ReadOnly',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  await loop.recoverState()
+
+  assert.ok(calls.taskReadRequests.some(request => request.status === 'queued' && request.limit === 500))
+  assert.ok(calls.taskReadRequests.some(request => request.status === undefined && request.limit === 500))
 })
 
 test('recommendation engine converts degraded health into actionable diagnostics', () => {
@@ -1679,6 +1728,107 @@ test('task runtime opens one diagnostic task and closes it when the issue clears
   assert.equal(calls.updatedTasks.length, 1)
   assert.equal(calls.updatedTasks[0].taskId, 'task-1')
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+})
+
+test('task runtime does not repeat a completed recommendation until its evidence changes, including after recovery', async () => {
+  const { backend, calls } = makeFakeBackend(makeSnapshot())
+  const recommendation = makeRecommendation({
+    id: 'opportunity-quality-audit-due',
+    kind: 'opportunity_quality_audit_due',
+    taskType: 'pi_reasoning_session',
+    metadata: {
+      reason: 'high_rejection_rate',
+      rejection_count: 5,
+      goal: 'Audit the five current rejections.',
+    },
+  })
+  const runtime = new TaskRuntime(backend)
+
+  await runtime.sync([recommendation])
+  await runtime.completeActiveTask({ summary: 'The diagnosis is complete.' })
+  await runtime.sync([recommendation])
+
+  assert.equal(calls.createdTasks.length, 1)
+  assert.equal(typeof calls.createdTasks[0].input_data.recommendation_fingerprint, 'string')
+
+  const recovered = new TaskRuntime(backend)
+  recovered.restore([
+    {
+      id: 'completed-opportunity-audit',
+      task_type: 'pi_reasoning_session',
+      status: 'completed',
+      priority: 'normal',
+      created_by: 'operator_loop',
+      assigned_to: 'operator',
+      input_data: calls.createdTasks[0].input_data,
+      output_data: { summary: 'The diagnosis is complete.' },
+      error: null,
+      started_at: '2026-07-14T00:00:00Z',
+      completed_at: '2026-07-14T00:01:00Z',
+      created_at: '2026-07-14T00:00:00Z',
+    },
+  ])
+  await recovered.sync([recommendation])
+  assert.equal(calls.createdTasks.length, 1)
+
+  await recovered.sync([
+    makeRecommendation({
+      ...recommendation,
+      metadata: {
+        ...recommendation.metadata,
+        rejection_count: 6,
+      },
+    }),
+  ])
+  assert.equal(calls.createdTasks.length, 2)
+})
+
+test('task runtime supersedes legacy unversioned opportunity-audit backlog after recovery', async () => {
+  const { backend, calls } = makeFakeBackend(makeSnapshot())
+  const recommendation = makeRecommendation({
+    id: 'opportunity-quality-audit-due',
+    kind: 'opportunity_quality_audit_due',
+    taskType: 'pi_reasoning_session',
+    metadata: {
+      reason: 'high_rejection_rate',
+      rejection_count: 6,
+      rejected_decision_ids: ['risk-1', 'risk-2', 'risk-3', 'risk-4', 'risk-5', 'risk-6'],
+      goal: 'Audit the current risk rejections once.',
+    },
+  })
+  const legacyInput = {
+    recommendation_id: 'opportunity-quality-audit-due',
+    kind: 'opportunity_quality_audit_due',
+    reason: 'high_rejection_rate',
+    rejection_count: 6,
+    goal: 'Audit the current risk rejections once.',
+  }
+  const runtime = new TaskRuntime(backend)
+  runtime.restore([
+    {
+      id: 'legacy-running', task_type: 'pi_reasoning_session', status: 'running',
+      priority: 'normal', created_by: 'operator_loop', assigned_to: 'operator',
+      input_data: legacyInput, output_data: null, error: null,
+      started_at: '2026-07-14T00:00:00Z', completed_at: null, created_at: '2026-07-14T00:00:00Z',
+    },
+    {
+      id: 'legacy-queued', task_type: 'pi_reasoning_session', status: 'queued',
+      priority: 'normal', created_by: 'operator_loop', assigned_to: 'operator',
+      input_data: legacyInput, output_data: null, error: null,
+      started_at: null, completed_at: null, created_at: '2026-07-14T00:01:00Z',
+    },
+  ])
+
+  await runtime.sync([recommendation])
+
+  assert.deepEqual(
+    calls.updatedTasks.map(item => [item.taskId, item.payload.status]),
+    [['legacy-running', 'completed'], ['legacy-queued', 'completed']],
+  )
+  assert.equal(calls.createdTasks.length, 1)
+  assert.equal(calls.createdTasks[0].status, 'running')
+  assert.equal(typeof calls.createdTasks[0].input_data.recommendation_fingerprint, 'string')
+  assert.deepEqual(runtime.snapshot(), { currentTaskId: 'task-1', queueSize: 1 })
 })
 
 test('task runtime creates a queued backlog and promotes the next queued task after the active one clears', async () => {
@@ -4914,7 +5064,7 @@ test('operator loop re-enters a recovered in-flight repair proposal task from ta
     stale_after_sec: 45,
   })
   backend.getOperatorTasks = async status => {
-    if (status === 'running') {
+    if (status === undefined || status === 'running') {
       return [
         {
           id: 'task-recovered-proposal',
@@ -5946,6 +6096,7 @@ test('pi runtime adapter returns structured result from llm-session endpoint', a
       turns_used: 2,
       commands_executed: [{ command: 'get_system_status', permitted: true, response: 'all ok' }],
       final_answer: 'System is healthy. No issues detected.',
+      learning_manifest: { manifest_version: 'operator_diagnostic_learning:v1', lesson_ids: ['lesson-1'] },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   }
 
@@ -5962,6 +6113,10 @@ test('pi runtime adapter returns structured result from llm-session endpoint', a
     assert.equal(result.commandsExecuted.length, 1)
     assert.equal(result.commandsExecuted[0].command, 'get_system_status')
     assert.equal(result.finalAnswer, 'System is healthy. No issues detected.')
+    assert.deepEqual(result.learningManifest, {
+      manifest_version: 'operator_diagnostic_learning:v1',
+      lesson_ids: ['lesson-1'],
+    })
 
     const body = capturedBody as Record<string, unknown>
     assert.equal(body.goal, 'Diagnose system health status')

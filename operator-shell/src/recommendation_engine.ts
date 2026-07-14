@@ -1043,6 +1043,10 @@ export class RecommendationEngine {
         metadata: {
           reason: 'high_rejection_rate',
           rejection_count: recentRejections.length,
+          rejected_decision_ids: recentRejections
+            .map(row => typeof row.id === 'string' ? row.id : null)
+            .filter((id): id is string => id !== null)
+            .sort(),
           goal: 'Analyze recent risk rejections to identify patterns in low-quality opportunities. Determine if market_observer parameters need adjustment.',
         },
       })

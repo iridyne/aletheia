@@ -816,7 +816,7 @@ async def operator_session_messages(session_id: str, limit: int = 200):
 
 @router.get("/tasks")
 async def operator_tasks(limit: int = 50, status: str | None = None):
-    return list_tasks(limit=limit, status=status)
+    return list_tasks(limit=max(1, min(limit, 500)), status=status)
 
 
 @router.get("/tasks/{task_id}")
@@ -1405,9 +1405,10 @@ async def operator_llm_session(payload: LlmSessionRequest):
             tool_descriptions.append(f"- {name}: {cmd.description}")
     tools_block = "\n".join(tool_descriptions)
 
-    sections = payload.context_sections or ["system", "market", "agents", "trading"]
+    sections = payload.context_sections or ["system", "market", "agents", "trading", "learning"]
     ctx = build_app_context(sections)
     context_text = context_summary_text(ctx)
+    learning_manifest = (ctx.get("learning") or {}).get("manifest") if isinstance(ctx.get("learning"), dict) else None
 
     system_prompt = (
         "You are the Aletheia operator reasoning engine. You accomplish goals by "
@@ -1440,6 +1441,7 @@ async def operator_llm_session(payload: LlmSessionRequest):
                 "turns_used": turns_used,
                 "commands_executed": commands_executed,
                 "final_answer": None,
+                "learning_manifest": learning_manifest,
             }
 
         if content and "FINAL_ANSWER:" in content:
@@ -1449,6 +1451,7 @@ async def operator_llm_session(payload: LlmSessionRequest):
                 "turns_used": turns_used,
                 "commands_executed": commands_executed,
                 "final_answer": answer,
+                "learning_manifest": learning_manifest,
             }
 
         if content and "TOOL_CALL:" in content:
@@ -1495,6 +1498,7 @@ async def operator_llm_session(payload: LlmSessionRequest):
             "turns_used": turns_used,
             "commands_executed": commands_executed,
             "final_answer": content,
+            "learning_manifest": learning_manifest,
         }
 
     return {
@@ -1502,6 +1506,7 @@ async def operator_llm_session(payload: LlmSessionRequest):
         "turns_used": turns_used,
         "commands_executed": commands_executed,
         "final_answer": None,
+        "learning_manifest": learning_manifest,
     }
 
 

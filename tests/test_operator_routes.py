@@ -58,6 +58,41 @@ async def test_operator_status_defaults_when_no_heartbeat(client):
 
 
 @pytest.mark.anyio
+async def test_live_pi_session_uses_advisory_learning_context_and_returns_its_manifest(client):
+    """The active TypeScript PI path must receive traceable reviewed Learning input."""
+    learning_context = {
+        "learning": {
+            "advisory_only": True,
+            "lessons": [{"lesson_id": "lesson-1", "summary": "Use stronger evidence."}],
+            "manifest": {
+                "manifest_version": "operator_diagnostic_learning:v1",
+                "lesson_ids": ["lesson-1"],
+            },
+        }
+    }
+    with patch(
+        "aletheia.server.routes.operator.build_app_context",
+        return_value=learning_context,
+    ) as build_context, patch(
+        "aletheia.server.routes.operator.context_summary_text",
+        return_value="Learning (advisory only): Use stronger evidence.",
+    ), patch(
+        "aletheia.agents.helpers.llm_complete",
+        new=AsyncMock(return_value=("FINAL_ANSWER: Review the evidence before changing anything.", None)),
+    ):
+        response = await client.post(
+            "/api/operator/internal/llm-session",
+            json={"goal": "Diagnose opportunity quality."},
+        )
+
+    assert response.status_code == 200
+    assert build_context.call_args.args[0] == ["system", "market", "agents", "trading", "learning"]
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["learning_manifest"] == learning_context["learning"]["manifest"]
+
+
+@pytest.mark.anyio
 async def test_operator_internal_heartbeat_roundtrip(client):
     resp = await client.post(
         "/api/operator/internal/heartbeat",

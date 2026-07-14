@@ -1,6 +1,9 @@
 """AppContextProvider — assembles compact system context for LLM prompts."""
 
+from datetime import datetime, timezone
+
 from aletheia.config.loader import load_config
+from aletheia.learning.lessons import LessonStore
 from aletheia.agent_shell.operator_store import (
     get_latest_heartbeat,
     get_session,
@@ -30,6 +33,7 @@ ALL_SECTIONS = (
     "errors",
     "doctor",
     "operator_state",
+    "learning",
 )
 
 DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND: dict[str, str] = {
@@ -45,7 +49,7 @@ CONTEXT_PROFILES: dict[str, tuple[str, ...]] = {
     "operational_context": ("system", "agents", "proposals", "errors", "operator_state"),
     "trading_context": ("system", "market", "trading", "proposals", "strategies", "risk", "errors", "operator_state"),
     "knowledge_context": ("system", "agents", "knowledge", "strategies", "operator_state"),
-    "repair_context": ("system", "agents", "trading", "proposals", "strategies", "risk", "errors", "doctor", "operator_state"),
+    "repair_context": ("system", "agents", "trading", "proposals", "strategies", "risk", "errors", "doctor", "operator_state", "learning"),
 }
 
 
@@ -81,6 +85,52 @@ def _short_text(value, limit: int = 180) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip() + "..."
+
+
+def _lesson_is_current(expires_at: str | None, now: datetime) -> bool:
+    """Keep the Operator context fail-closed when a lesson expiry is malformed."""
+    if not expires_at:
+        return True
+    try:
+        parsed = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed >= now
+    except (TypeError, ValueError):
+        return False
+
+
+def _curated_learning_context() -> dict:
+    """Return reviewed, non-expired Learning facts for diagnostic use only.
+
+    This deliberately does not invoke a Learning treatment, write an exposure, or
+    grant any trading authority.  It is a compact audit-visible aid to the live
+    Operator's read-only diagnosis path.
+    """
+    now = datetime.now(timezone.utc)
+    lessons = []
+    for lesson in LessonStore().list_all(status="applied", limit=30):
+        if not _lesson_is_current(getattr(lesson, "expires_at", None), now):
+            continue
+        lessons.append({
+            "lesson_id": lesson.lesson_id,
+            "category": lesson.category,
+            "severity": lesson.severity,
+            "summary": _short_text(lesson.summary, 240),
+            "created_at": lesson.created_at,
+        })
+        if len(lessons) == 5:
+            break
+    return {
+        "advisory_only": True,
+        "lessons": lessons,
+        "manifest": {
+            "manifest_version": "operator_diagnostic_learning:v1",
+            "source": "applied_ps_lessons",
+            "lesson_ids": [lesson["lesson_id"] for lesson in lessons],
+            "generated_at": now.isoformat(),
+        },
+    }
 
 
 def session_trace_summary(
@@ -262,6 +312,9 @@ def build_app_context(sections: list[str] | None = None) -> dict:
             "total_shown": len(items),
         }
 
+    if "learning" in wanted:
+        ctx["learning"] = _curated_learning_context()
+
     if "strategies" in wanted:
         strats = list_strategies(limit=20)
         ctx["strategies"] = [
@@ -437,4 +490,15 @@ def context_summary_text(ctx: dict) -> str:
                 f"mode={heartbeat.get('mode')}, "
                 f"intent={heartbeat.get('current_intent') or 'monitoring system state'}"
             )
+    if "learning" in ctx:
+        learning = ctx["learning"]
+        lessons = learning.get("lessons") if isinstance(learning, dict) else []
+        if lessons:
+            rendered = "; ".join(
+                f"[{lesson.get('severity')}] {lesson.get('summary')}"
+                for lesson in lessons[:3]
+            )
+            parts.append(f"Learning (advisory only): {rendered}")
+        else:
+            parts.append("Learning (advisory only): no current applied lessons")
     return ". ".join(parts) + "."
