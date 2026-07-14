@@ -35,12 +35,12 @@ _VALID_DIRECTIONS = {"long", "short", "neutral"}
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 
 # Wall-clock budget for the per-instrument loop. Must stay BELOW the scheduler's
-# market_observer job timeout (_ASYNC_JOB_TIMEOUT_SEC["market_observer"] = 240s in
+# market_observer job timeout (_ASYNC_JOB_TIMEOUT_SEC["market_observer"] = 500s in
 # agent_runtime/scheduler.py) with margin, so the coroutine returns normally before
 # asyncio.wait_for cancels it — preventing the abandoned-thread leak. Keep in sync if
 # the job timeout changes.
-_MARKET_OBSERVER_JOB_TIMEOUT_S = 240.0
-_MARKET_OBSERVER_LOOP_BUDGET_SEC = 200.0
+_MARKET_OBSERVER_JOB_TIMEOUT_S = 500.0
+_MARKET_OBSERVER_LOOP_BUDGET_SEC = 460.0
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
 _ROUND_ROBIN_STATE_KEY = "agent.market_observer.round_robin.v1"
 
