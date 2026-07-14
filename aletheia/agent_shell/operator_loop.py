@@ -1415,6 +1415,34 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
     stale_results = _check_stale_recommendations()
     results.extend(stale_results)
 
+    # Phase 3c: Record a durable liveness-block token when the loop decided to
+    # loosen confidence but was blocked (cooldown, rate-limit, etc.). Required by
+    # assert_confidence_liveness invariant: a decision to loosen that is prevented
+    # by a transient guard must leave DB evidence so the invariant can distinguish
+    # "legitimately blocked" from "loop silently failed to act".
+    if (assessment.hours_since_last_trade is not None
+            and assessment.hours_since_last_trade >= 4
+            and assessment.param_drift.get("min_confidence_to_trade") == "tightened"
+            and not assessment.kill_switch_active):
+        loosen_decided = any(a.action_type == "loosen_confidence" for a in actions)
+        loosen_executed = any(
+            r.get("action") == "loosen_confidence" and r.get("status") == "executed"
+            for r in results
+        )
+        if loosen_decided and not loosen_executed:
+            blocker_reason = next(
+                (r.get("reason", "unknown") for r in results
+                 if r.get("action") == "loosen_confidence"),
+                "blocked",
+            )
+            _persist_action(
+                "operator_control_loop_blocked",
+                param="min_confidence_to_trade",
+                before="high",
+                after="high",
+                reason=f"confidence drought {assessment.hours_since_last_trade:.1f}h: {blocker_reason}",
+            )
+
     # Phase 4: Persist assessment as knowledge_item
     summary = {
         "trigger": trigger,
