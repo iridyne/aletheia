@@ -2882,6 +2882,21 @@ def prune_pi_decisions(days: int = 7) -> int:
     )
 
 
+def prune_signal_pending_stale(minutes: int = 30) -> int:
+    """Delete signal_pending rows older than `minutes`.
+
+    trading_context.py only reads the last 30 min of signal_pending rows, so
+    anything older is dead weight and pollutes monitoring counts.
+    """
+    db = get_db()
+    cur = db.execute(
+        "DELETE FROM pi_decisions WHERE action = 'signal_pending'"
+        " AND datetime(created_at) < datetime('now', ? || ' minutes')",
+        (f"-{minutes}",),
+    )
+    return cur.rowcount
+
+
 def prune_system_actions(days: int = 7) -> int:
     """Delete old system_action rows from knowledge_items.
 
@@ -3957,6 +3972,72 @@ def latest_perp_structure(symbol: str, source: str | None = None) -> dict | None
             limit=1,
         )
     return rows[0] if rows else None
+
+
+def batch_perp_structures(symbols: list[str]) -> dict[str, dict]:
+    """Return {symbol: latest_row} for all given symbols (latest by as_of_time DESC)."""
+    if not symbols:
+        return {}
+    placeholders = ",".join("?" * len(symbols))
+    db = get_db()
+    rows = db.execute(
+        f"""
+        SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY symbol ORDER BY as_of_time DESC, observed_at DESC
+            ) AS _rn
+            FROM perp_structure_snapshots
+            WHERE symbol IN ({placeholders})
+        ) WHERE _rn = 1
+        """,
+        tuple(symbols),
+    ).fetchall()
+    return {dict(r)["symbol"]: dict(r) for r in rows}
+
+
+def batch_funding_rates(symbols: list[str], exchange: str) -> dict[str, dict]:
+    """Return {symbol: latest_row} for exact exchange (latest by observed_at DESC)."""
+    if not symbols:
+        return {}
+    placeholders = ",".join("?" * len(symbols))
+    db = get_db()
+    rows = db.execute(
+        f"""
+        SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY symbol ORDER BY observed_at DESC
+            ) AS _rn
+            FROM funding_rate_snapshots
+            WHERE symbol IN ({placeholders}) AND exchange = ?
+        ) WHERE _rn = 1
+        """,
+        (*symbols, exchange),
+    ).fetchall()
+    return {dict(r)["symbol"]: dict(r) for r in rows}
+
+
+def batch_news(
+    symbols: list[str],
+    since_iso: str,
+    limit_per_symbol: int = 3,
+) -> dict[str, list[dict]]:
+    """Return {symbol: [rows]} for news_items. Fetches recent rows once, groups in Python."""
+    if not symbols:
+        return {}
+    db = get_db()
+    rows = db.execute(
+        "SELECT title, source, published_at, symbols_mentioned FROM news_items "
+        "WHERE published_at > ? ORDER BY published_at DESC LIMIT 500",
+        (since_iso,),
+    ).fetchall()
+    syms_lower = [s.split("/")[0].lower() for s in symbols]
+    result: dict[str, list] = {s: [] for s in symbols}
+    for row in rows:
+        mentioned = (dict(row).get("symbols_mentioned") or "").lower()
+        for sym, sl in zip(symbols, syms_lower):
+            if sl in mentioned and len(result[sym]) < limit_per_symbol:
+                result[sym].append(dict(row))
+    return result
 
 
 def insert_macro_snapshot(data: dict) -> None:
