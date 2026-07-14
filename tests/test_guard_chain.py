@@ -27,7 +27,7 @@ def test_run_guards_all_pass():
 
     proposal = {"symbol": "BTC/USDT", "direction": "long", "conviction": 70}
     with patch("aletheia.trust.guard_chain.repo") as mock_repo:
-        mock_repo.list_positions.return_value = []
+        mock_repo.list_all_open_positions.return_value = []
         mock_repo.list_portfolio_snapshots.return_value = []
         results = run_guards(proposal)
 
@@ -52,13 +52,10 @@ def test_run_guards_chain_blocks_and_warns_on_real_data():
         {"symbol": "BTC/USDT", "direction": "long"},
     ]
 
-    def fake_list_positions(status=None, **kwargs):
-        return open_positions if status == "open" else []
-
     with patch("aletheia.trust.guard_chain.repo") as mock_repo, \
          patch("aletheia.trust.guard_chain.load_config") as mock_cfg:
         mock_cfg.return_value.risk.max_daily_loss_pct = 5.0
-        mock_repo.list_positions.side_effect = fake_list_positions
+        mock_repo.list_all_open_positions.return_value = open_positions
         # 12% drawdown vs 5% limit → drawdown_brake blocks.
         mock_repo.list_portfolio_snapshots.return_value = [
             {"total_value": 880},   # latest
@@ -83,7 +80,7 @@ def test_exposure_concentration_warns():
     from aletheia.trust.guard_chain import _guard_exposure_concentration
 
     with patch("aletheia.trust.guard_chain.repo") as mock_repo:
-        mock_repo.list_positions.return_value = [
+        mock_repo.list_all_open_positions.return_value = [
             {"symbol": "BTC/USDT", "direction": "long"},
             {"symbol": "BTC/USDT", "direction": "long"},
         ]
@@ -111,7 +108,7 @@ def test_correlation_cluster_warns():
     from aletheia.trust.guard_chain import _guard_correlation_cluster
 
     with patch("aletheia.trust.guard_chain.repo") as mock_repo:
-        mock_repo.list_positions.return_value = [
+        mock_repo.list_all_open_positions.return_value = [
             {"symbol": "JUP/USDT", "direction": "long"},
         ]
         result = _guard_correlation_cluster({"symbol": "SOL/USDT", "direction": "long"})

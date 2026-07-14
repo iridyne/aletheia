@@ -30,7 +30,7 @@ from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
 from aletheia.storage.repositories import (
     expire_stale_queued_opportunities,
-    list_positions,
+    list_all_open_positions,
     transition_open_opportunity_to_queued,
     update_opportunity,
 )
@@ -114,17 +114,23 @@ def _atr_adjusted_notional(
 
 
 def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
-    """Closed paper/demo positions count for a strategy — used for sample-aware Kelly."""
+    """Genuine closed paper/demo outcomes used for sample-aware Kelly.
+
+    A lifecycle close is not automatically trading evidence. Administrative,
+    incomplete-funding, and unattributed rows must not move a strategy from the
+    conservative small-sample sizing band into full Kelly sizing.
+    """
     if not strategy_id:
         return 0
     try:
-        from aletheia.storage.sqlite import get_db
-        row = get_db().execute(
-            "SELECT count(*) FROM positions "
-            "WHERE strategy_id = ? AND status = 'closed' AND execution_mode NOT LIKE '%live%'",
-            (strategy_id,),
-        ).fetchone()
-        return int(row[0]) if row else 0
+        from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+
+        return sum(
+            1
+            for row in eligible_strategy_outcomes()
+            if str(row.get("strategy_id") or "") == strategy_id
+            and "live" not in str(row.get("execution_mode") or "")
+        )
     except Exception:
         return 0
 
@@ -250,7 +256,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         logger.warning("pending opportunity expiry unavailable: %s", exc)
 
     # Snapshot of currently open symbols — used to skip redundant signal writes.
-    open_symbols: set[str] = {p["symbol"] for p in list_positions(status="open")}
+    open_symbols: set[str] = {p["symbol"] for p in list_all_open_positions()}
     recent_signal_pairs = _recent_signal_pairs()
     # Position C (2026-07-02): Path A (RuleSet-driven signals) was removed with the
     # strategy rules engine. The paper trader is now purely opportunity-driven: it

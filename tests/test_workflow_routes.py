@@ -6,7 +6,7 @@ from httpx import AsyncClient, ASGITransport
 from aletheia.server.app import app
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import TradeProposal, Position, MarketSnapshot
+from aletheia.storage.models import TradeProposal, Position, MarketSnapshot, Order
 from aletheia.storage import repositories as repo
 
 
@@ -89,12 +89,72 @@ async def test_approve_proposal_idempotent_after_execute(client, monkeypatch):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("initial_status", ["pending", "approved", "executing"])
+async def test_approve_recovers_persisted_approved_gap_and_ignores_audit_sink_failure(
+    client,
+    monkeypatch,
+    initial_status,
+):
+    """A crash/audit failure after approval cannot strand a no-Order Proposal."""
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    save_config(cfg)
+
+    proposal = TradeProposal(
+        id=f"approval-recovery-{initial_status}",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="paper_internal",
+        status=initial_status,
+    )
+    repo.insert_trade_proposal(proposal)
+    monkeypatch.setattr(
+        "aletheia.files.jsonl.write_audit",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("audit down")),
+    )
+
+    recovered = await client.post(f"/api/proposals/{proposal.id}/approve-paper")
+
+    assert recovered.status_code == 200
+    assert recovered.json()["execution"]["status"] == "executed"
+    assert repo.get_trade_proposal(proposal.id)["status"] == "executed"
+    assert len([
+        row for row in repo.list_orders(limit=20)
+        if row["proposal_id"] == proposal.id
+    ]) == 1
+
+
+@pytest.mark.anyio
 async def test_reject_proposal(client):
-    p = TradeProposal(symbol="ETHUSDT", market_type="spot", direction="long")
+    p = TradeProposal(
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        price=3_000.0,
+        execution_mode="paper_internal",
+    )
     repo.insert_trade_proposal(p)
+    repo.acquire_entry_risk_reservation(
+        proposal_id=p.id,
+        proposal_commit_hash=p.commit_hash,
+        symbol=p.symbol,
+        execution_mode=p.execution_mode,
+        quantity=p.quantity,
+        price=p.price,
+    )
+    assert repo.get_entry_risk_reservation(p.id) is not None
+
     resp = await client.post(f"/api/proposals/{p.id}/reject")
+
     assert resp.status_code == 200
     assert resp.json()["status"] == "rejected"
+    assert repo.get_entry_risk_reservation(p.id) is None
 
 
 @pytest.mark.anyio
@@ -105,6 +165,49 @@ async def test_reject_executed_proposal_returns_409(client):
     repo.update_trade_proposal(p.id, status="executed")
     resp = await client.post(f"/api/proposals/{p.id}/reject")
     assert resp.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_reject_submitted_exchange_proposal_preserves_live_order_state(client):
+    """A dashboard reject must not lie about an already-submitted venue order."""
+    from tests.execution_authority import seed_order_authority
+
+    proposal, decision = seed_order_authority(
+        proposal_id="submitted-proposal",
+        risk_decision_id="submitted-risk",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="bitget_demo",
+    )
+    order = Order(
+        id="submitted-order",
+        proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        order_type=proposal.order_type,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        execution_mode=proposal.execution_mode,
+        client_order_id=proposal.id,
+        exchange_order_id="venue-order-123",
+        status="submitted",
+    )
+    repo.insert_order(order)
+    repo.update_trade_proposal(proposal.id, status="submitted")
+
+    resp = await client.post(f"/api/proposals/{proposal.id}/reject")
+
+    assert resp.status_code == 409
+    assert repo.get_trade_proposal(proposal.id)["status"] == "submitted"
+    persisted_order = repo.get_order(order.id)
+    assert persisted_order["status"] == "submitted"
+    assert persisted_order["exchange_order_id"] == "venue-order-123"
 
 
 @pytest.mark.anyio
@@ -150,8 +253,6 @@ async def test_approve_paper_rejects_non_paper_proposal_without_mutation(
 @pytest.mark.parametrize(
     "unresolved_status",
     [
-        "approved",
-        "executing",
         "submitted",
         "partially_filled",
         "submission_unknown",
@@ -161,7 +262,7 @@ async def test_approve_paper_rejects_non_paper_proposal_without_mutation(
 async def test_approve_paper_does_not_reapprove_unresolved_execution(
     client, monkeypatch, unresolved_status
 ):
-    """A stale approval request must not resend an order with an unknown outcome."""
+    """A venue/materialization outcome state must not re-enter execution."""
     import aletheia.execution.gateway as gateway
 
     calls = []

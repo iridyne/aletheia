@@ -1,4 +1,4 @@
-"""Post-trade Reviewer agent — reviews recent fills and writes a post-trade review.
+"""Post-trade Reviewer agent — reviews eligible closes and writes a review.
 
 Also triggers structured case study generation and guard candidate detection
 from the trade_case_builder module (deterministic, no LLM).
@@ -10,19 +10,18 @@ import logging
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
+from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.knowledge.manager import create_post_trade_review
-from aletheia.storage.repositories import get_trade_proposal, get_order, list_fills, list_orders
 
 logger = logging.getLogger("aletheia.agents.post_trade_reviewer")
 
 
 def _fills_window_key(strategy_id: str | None, fills: list) -> str:
-    """Stable fingerprint of the fills seen for a strategy.
+    """Stable fingerprint of evidence identities seen for a strategy.
 
-    Built from (strategy_id, sorted fill ids) so the same set of fills always
-    hashes to the same key regardless of ordering. A new fill for this strategy
-    produces a different key → triggers a fresh LLM review. No new fills →
-    same key → skip.
+    The legacy name is retained for compatibility. The reviewer now passes
+    centrally eligible Position identities; callers that still pass Fill-like
+    dictionaries keep the same order-independent hash contract.
     """
     sid = strategy_id or "global"
     fill_ids = sorted(f.get("id", "") for f in fills)
@@ -47,7 +46,7 @@ def _review_already_written(strategy_id: str | None, window_key: str) -> bool:
 
 @register_agent("post_trade_reviewer")
 async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
-    """Review recent fills grouped by strategy and record per-strategy reviews."""
+    """Review centrally eligible closed outcomes grouped by strategy."""
     outputs: list[str] = []
     errors: list[str] = []
 
@@ -55,35 +54,30 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
         errors.append("create_post_trade_review not permitted in current mode")
         return {"outputs": outputs, "errors": errors}
 
-    fills = list_fills(limit=200)
-    orders = list_orders(limit=200)
+    outcomes = eligible_strategy_outcomes(limit=200)
     log_tool(run_id, "get_positions", "observe", True)
+    if not outcomes:
+        # A completed run with no admissible evidence is a real, useful state.
+        # Surface it explicitly so the scheduler/operator does not confuse an
+        # honest no-op with a broken or silently skipped agent.
+        outputs.append("post_trade_review_skipped:no_eligible_outcomes")
 
-    # Group fills by strategy_id
-    strategy_fills: dict[str | None, list] = {}
-    for fill in fills:
-        order_id = fill.get("order_id")
-        if not order_id:
-            continue
-        linked_order = next((o for o in orders if o["id"] == order_id), None)
-        if not linked_order:
-            continue
-        proposal_id = linked_order.get("proposal_id")
-        if not proposal_id:
-            strategy_fills.setdefault(None, []).append(fill)
-            continue
-        proposal = get_trade_proposal(proposal_id)
-        sid = proposal.get("strategy_id") if proposal else None
-        strategy_fills.setdefault(sid, []).append(fill)
+    # Central Outcome Integrity is the sole admission gate. A Fill or a numeric
+    # Position PnL alone cannot authorize an LLM review.
+    strategy_outcomes: dict[str | None, list[dict]] = {}
+    for outcome in outcomes:
+        strategy_outcomes.setdefault(outcome.get("strategy_id"), []).append(outcome)
 
-    if not strategy_fills:
-        strategy_fills[None] = []
-
-    for strategy_id, strat_fills in strategy_fills.items():
-        # Idempotency: skip if we already reviewed this exact set of fills.
+    for strategy_id, strat_outcomes in strategy_outcomes.items():
+        # Keep the historical helper/tag contract, but fingerprint eligible
+        # Position identities rather than arbitrary fills.
         # Prevents redundant LLM calls when the agent runs every 4h with the
-        # same static fill pool (the historical "post_trade_review flood" bug).
-        window_key = _fills_window_key(strategy_id, strat_fills)
+        # same static outcome pool (the historical review flood bug).
+        window_items = [
+            {"id": f"position:{outcome['id']}"}
+            for outcome in strat_outcomes
+        ]
+        window_key = _fills_window_key(strategy_id, window_items)
         if _review_already_written(strategy_id, window_key):
             logger.debug(
                 "post_trade_reviewer: skip strategy=%s window=%s (already reviewed)",
@@ -92,22 +86,25 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
             outputs.append(f"post_trade_review_skipped:already_reviewed:{strategy_id}")
             continue
 
-        # Enrich context with position entry/exit data and market context
         position_details = []
-        for f in strat_fills[:10]:
-            order = get_order(f.get("order_id")) if f.get("order_id") else None
-            pos_id = order.get("position_id") if order else None
-            if pos_id:
-                from aletheia.storage.repositories import _select_one
-                pos = _select_one("positions", pos_id)
-                if pos:
-                    detail = f"{pos.get('symbol', '?')} {pos.get('direction', '?')} entry={pos.get('entry_price')} exit={pos.get('current_price')} pnl={pos.get('realized_pnl', 'open')} regime={pos.get('regime_tag', '?')}"
-                    entry_ctx = pos.get("entry_market_summary") or ""
-                    if entry_ctx:
-                        detail += f" entry_context={entry_ctx[:200]}"
-                    position_details.append(detail)
+        for position in strat_outcomes[:10]:
+            detail = (
+                f"{position.get('symbol', '?')} {position.get('direction', '?')} "
+                f"entry={position.get('entry_price')} "
+                f"exit={position.get('current_price')} "
+                f"net_pnl={position.get('realized_pnl')} "
+                f"regime={position.get('regime_tag', '?')}"
+            )
+            entry_ctx = position.get("entry_market_summary") or ""
+            if entry_ctx:
+                detail += f" entry_context={entry_ctx[:200]}"
+            position_details.append(detail)
         positions_block = "\n".join(position_details) if position_details else "No position details available."
-        ctx = f"Strategy: {strategy_id or 'global'}. Fills: {len(strat_fills)}; orders: {len(orders)}.\n\nPosition Details:\n{positions_block}"
+        ctx = (
+            f"Strategy: {strategy_id or 'global'}. "
+            f"Eligible closed outcomes: {len(strat_outcomes)}."
+            f"\n\nPosition Details:\n{positions_block}"
+        )
 
         content, err = await llm_complete(
             system=(
@@ -143,7 +140,13 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
             metadata={"source": "post_trade_reviewer"},
             strategy_id=strategy_id,
             confidence=confidence,
-            tags=[f"window:{window_key}"],
+            tags=[
+                f"window:{window_key}",
+                *[
+                    f"position:{outcome['id']}"
+                    for outcome in strat_outcomes
+                ],
+            ],
         )
         if item:
             log_tool(run_id, "create_post_trade_review", "observe", True, output=item.id)

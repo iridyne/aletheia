@@ -26,6 +26,7 @@ from aletheia.storage.repositories import (
     insert_trade_proposal,
     insert_proposal_execution_claim,
     proposal_execution_claim_owned,
+    release_entry_risk_reservation,
     release_proposal_execution_claim,
     replace_proposal_execution_claim,
     transaction,
@@ -344,6 +345,18 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
     finally:
         try:
             with transaction(immediate=True):
+                stored = get_trade_proposal(proposal.id)
+                stored_status = stored.get("status") if stored else None
+                # Once an Order exists, that durable row replaces the pre-Order
+                # Risk allowance in every working set. Known no-Order terminal
+                # states release it too. Ambiguous states deliberately retain the
+                # reservation so a crash cannot reopen capacity.
+                if has_order_for_proposal(proposal.id) or stored_status in {
+                    "rejected",
+                    "error",
+                    "executed",
+                }:
+                    release_entry_risk_reservation(proposal.id)
                 release_proposal_execution_claim(proposal.id, owner_token)
         except Exception as release_error:
             logger.warning(

@@ -94,6 +94,19 @@ CREATE TABLE IF NOT EXISTS proposal_execution_claims (
     lease_expires_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS entry_risk_reservations (
+    proposal_id TEXT PRIMARY KEY REFERENCES trade_proposals(id) ON DELETE CASCADE,
+    proposal_commit_hash TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    execution_mode TEXT NOT NULL,
+    quantity REAL NOT NULL CHECK(quantity > 0),
+    price REAL NOT NULL CHECK(price > 0),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_entry_risk_reservations_pool
+    ON entry_risk_reservations(execution_mode, symbol, created_at);
+
 CREATE TABLE IF NOT EXISTS risk_decisions (
     id TEXT PRIMARY KEY,
     proposal_id TEXT NOT NULL REFERENCES trade_proposals(id),

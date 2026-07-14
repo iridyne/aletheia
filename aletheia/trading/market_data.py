@@ -65,54 +65,66 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
     """Build deduplicated instrument list from config + universe + open positions.
 
     Sources (first occurrence wins for dedup):
-      1. Config core symbols (always included, even if universe is empty)
-      2. Active universe members (dynamic — the main altcoin source)
-      3. Open position symbols (so uPnL stays fresh after symbol leaves universe)
+      1. Open position symbols (never capped; lifecycle pricing comes first)
+      2. Config core symbols (always included when capacity remains)
+      3. Active universe members (dynamic — the main altcoin source)
 
-    Total capped at _MAX_DYNAMIC_INSTRUMENTS to keep collection within 90s timeout.
+    Discovery sources are capped at _MAX_DYNAMIC_INSTRUMENTS to keep collection
+    within the scheduler budget; the total expands when open Positions exceed it.
     """
     exchange = cfg.market_data.ccxt_exchange or "binance"
 
-    seen: dict[str, InstrumentId] = {}
+    seen: dict[tuple[str, str], InstrumentId] = {}
+    try:
+        from aletheia.storage import repositories as repo
+        for pos in repo.list_all_open_positions():
+            sym = pos.get("symbol")
+            if not sym:
+                continue
+            try:
+                mt = _instrument_market_from_row(pos.get("market_type"))
+                iid = InstrumentId.from_parts(exchange, sym, mt)
+                seen.setdefault((iid.symbol, iid.market_type), iid)
+            except (ValueError, Exception):
+                pass
+    except Exception:
+        pass
+    n_open = len(seen)
+
     for iid in observed_instruments_from_config(cfg):
-        seen[iid.symbol] = iid
-    n_config = len(seen)
+        seen.setdefault((iid.symbol, iid.market_type), iid)
+    n_config = len(seen) - n_open
 
     try:
         from aletheia.storage import repositories as repo
         members = repo.get_active_universe_members(limit=cfg.universe.max_candidates)
         for m in members:
             sym = m.get("symbol")
-            if not sym or sym in seen:
+            if not sym:
                 continue
             try:
                 # #14: honour the member's own market_type instead of forcing spot,
                 # so a perp universe member gets its perp ticker collected.
                 mt = _instrument_market_from_row(m.get("market_type"))
-                seen[sym] = InstrumentId.from_parts(exchange, sym, mt)
+                iid = InstrumentId.from_parts(exchange, sym, mt)
+                seen.setdefault((iid.symbol, iid.market_type), iid)
             except (ValueError, Exception):
                 pass
     except Exception:
         pass
 
-    try:
-        from aletheia.storage import repositories as repo
-        for pos in repo.list_positions(status="open"):
-            sym = pos.get("symbol")
-            if not sym or sym in seen:
-                continue
-            try:
-                # #14: a futures position must refresh its futures ticker, not spot.
-                mt = _instrument_market_from_row(pos.get("market_type"))
-                seen[sym] = InstrumentId.from_parts(exchange, sym, mt)
-            except (ValueError, Exception):
-                pass
-    except Exception:
-        pass
-
-    instruments = list(seen.values())[:_MAX_DYNAMIC_INSTRUMENTS]
-    logger.debug("market_snapshots: collecting %d instruments (config=%d dynamic=%d)",
-                 len(instruments), n_config, len(instruments) - n_config)
+    # The cap protects discovery work, never an existing Position. When open
+    # positions alone exceed it, expand the cycle rather than silently starving
+    # a stop/PnL lifecycle of fresh prices.
+    effective_cap = max(_MAX_DYNAMIC_INSTRUMENTS, n_open)
+    instruments = list(seen.values())[:effective_cap]
+    logger.debug(
+        "market_snapshots: collecting %d instruments (open=%d config=%d dynamic=%d)",
+        len(instruments),
+        n_open,
+        n_config,
+        max(0, len(instruments) - n_open - n_config),
+    )
     return instruments
 
 

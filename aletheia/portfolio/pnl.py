@@ -6,11 +6,15 @@ import math
 from collections.abc import Callable
 from datetime import datetime, timezone
 
+from aletheia.analytics.outcome_integrity import validated_funding_economics
 from aletheia.storage.models import PortfolioSnapshot
 
 logger = logging.getLogger("aletheia.pnl")
 from aletheia.storage.repositories import (
-    list_positions, insert_portfolio_snapshot, update_position, list_market_snapshots,
+    list_all_open_positions,
+    insert_portfolio_snapshot,
+    update_position,
+    list_market_snapshots,
 )
 
 
@@ -121,7 +125,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     When persist=True (used by scheduler's portfolio_snapshot job), also writes
     the updated price/PnL back to the positions table.
     """
-    positions = list_positions(status="open")
+    positions = list_all_open_positions()
     exc_upnl_index = _build_exchange_upnl_index()
     updated = []
     for p in positions:
@@ -313,28 +317,18 @@ def close_position(
     # malformed funding value must not be guessed from current configuration:
     # the lifecycle may still close, while Outcome/Feedback stays fail-closed.
     market_type = str(row.get("market_type") or "")
-    if market_type == "spot":
-        funding_cost: float | None = 0.0
-        funding_source = "not_applicable"
-    elif market_type == "usdt_futures":
-        raw_funding_cost = row.get("funding_cost")
-        raw_funding_source = str(row.get("funding_source") or "")
-        try:
-            parsed_funding_cost = float(raw_funding_cost)
-        except (TypeError, ValueError):
-            parsed_funding_cost = math.nan
-        if (
-            math.isfinite(parsed_funding_cost)
-            and raw_funding_source in {"broker_ledger", "local_simulation"}
-        ):
-            funding_cost = parsed_funding_cost
-            funding_source = raw_funding_source
-        else:
-            funding_cost = None
-            funding_source = "unavailable"
-    else:
-        funding_cost = None
-        funding_source = "unavailable"
+    funding_cost, funding_source = validated_funding_economics(
+        market_type=market_type,
+        execution_mode=row.get("execution_mode"),
+        funding_cost=(
+            0.0 if market_type == "spot" else row.get("funding_cost")
+        ),
+        funding_source=(
+            "not_applicable"
+            if market_type == "spot"
+            else row.get("funding_source")
+        ),
+    )
 
     # A futures close is operationally complete once its Fill is durable, but
     # its *economic* result is not complete until funding is known.  Persisting
@@ -705,20 +699,13 @@ def _realized_economics_value(row: dict) -> float | None:
         return None
 
     market_type = str(row.get("market_type") or "").lower()
-    if market_type == "spot":
-        stored_funding = _finite_number(row.get("funding_cost"))
-        if stored_funding is not None and abs(stored_funding) > 1e-12:
-            return None
-        funding_cost = 0.0
-    elif market_type == "usdt_futures":
-        funding_cost = _finite_number(row.get("funding_cost"))
-        if (
-            funding_cost is None
-            or str(row.get("funding_source") or "")
-            not in {"broker_ledger", "local_simulation"}
-        ):
-            return None
-    else:
+    funding_cost, _funding_source = validated_funding_economics(
+        market_type=market_type,
+        execution_mode=row.get("execution_mode"),
+        funding_cost=row.get("funding_cost"),
+        funding_source=row.get("funding_source"),
+    )
+    if funding_cost is None:
         return None
 
     direction = str(row.get("direction") or "").lower()
@@ -767,11 +754,13 @@ def position_realized_pnl_view(row: dict) -> dict:
         return view
 
     market_type = str(row.get("market_type") or "").lower()
-    funding_source = str(row.get("funding_source") or "")
-    if market_type == "usdt_futures" and (
-        _finite_number(row.get("funding_cost")) is None
-        or funding_source not in {"broker_ledger", "local_simulation"}
-    ):
+    funding_cost, _funding_source = validated_funding_economics(
+        market_type=market_type,
+        execution_mode=row.get("execution_mode"),
+        funding_cost=row.get("funding_cost"),
+        funding_source=row.get("funding_source"),
+    )
+    if market_type in {"spot", "usdt_futures"} and funding_cost is None:
         reason = "incomplete_funding_economics"
     else:
         reason = str(

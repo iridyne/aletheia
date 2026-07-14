@@ -659,18 +659,28 @@ def approve_proposal(proposal_id: str):
         return {"proposal_id": proposal_id, "execution": {"status": "already_executed", "proposal_id": proposal_id}}
     if status in {"error", "rejected"}:
         return {"proposal_id": proposal_id, "execution": {"status": status, "proposal_id": proposal_id}}
-    if status != "pending":
+    if status not in {"pending", "approved", "executing"}:
         raise HTTPException(
             409,
             "This proposal is no longer awaiting paper approval; no order was sent.",
         )
 
-    old_status = status
-    repo.update_trade_proposal(proposal_id, status="approved")
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "proposal_approved",
-                 "entity_type": "trade_proposal", "entity_id": proposal_id,
-                 "before": {"status": old_status}, "after": {"status": "approved"},
-                 "message": "Proposal approved for paper execution"})
+    if status == "pending":
+        repo.update_trade_proposal(proposal_id, status="approved")
+        try:
+            write_audit({"actor": "human", "source": "dashboard", "event_type": "proposal_approved",
+                         "entity_type": "trade_proposal", "entity_id": proposal_id,
+                         "before": {"status": status}, "after": {"status": "approved"},
+                         "message": "Proposal approved for paper execution"})
+        except Exception as exc:
+            # The SQLite approval is authoritative. A process can also die in
+            # this gap, so approved/executing states above deliberately re-enter
+            # Gateway on the next idempotent request.
+            logger.warning(
+                "Proposal %s approval audit unavailable; execution continues (%s)",
+                proposal_id,
+                type(exc).__name__,
+            )
     from aletheia.execution.gateway import execute_existing_proposal
     try:
         result = execute_existing_proposal(proposal_id, execution_mode="paper_internal")
@@ -684,10 +694,17 @@ def approve_proposal(proposal_id: str):
             type(exc).__name__,
         )
         repo.update_trade_proposal(proposal_id, status="error")
-        write_audit({"actor": "system", "source": "dashboard", "event_type": "execution_error",
-                     "entity_type": "trade_proposal", "entity_id": proposal_id,
-                     "before": {"status": "approved"}, "after": {"status": "error"},
-                     "message": "paper_execution_failed: Paper execution could not be completed."})
+        try:
+            write_audit({"actor": "system", "source": "dashboard", "event_type": "execution_error",
+                         "entity_type": "trade_proposal", "entity_id": proposal_id,
+                         "before": {"status": "approved"}, "after": {"status": "error"},
+                         "message": "paper_execution_failed: Paper execution could not be completed."})
+        except Exception as audit_exc:
+            logger.warning(
+                "Proposal %s execution error kept after audit failure (%s)",
+                proposal_id,
+                type(audit_exc).__name__,
+            )
         return {
             "proposal_id": proposal_id,
             "execution": {
@@ -700,26 +717,48 @@ def approve_proposal(proposal_id: str):
 
 
 @router.post("/proposals/{proposal_id}/reject")
-async def reject_proposal(proposal_id: str):
+def reject_proposal(proposal_id: str):
     _ensure_db()
     from aletheia.files.jsonl import write_audit
-    p = repo.get_trade_proposal(proposal_id)
-    if p is None:
-        raise HTTPException(404, "Proposal not found")
-    # #112 fix: only pending/submitted proposals may be rejected; once executed,
-    # the downstream order+position records exist and the proposal status must
-    # reflect that reality. Rejecting an executed proposal would create a
-    # contradictory state (proposal says rejected, order/position say it ran).
-    _REJECTABLE = {"pending", "submitted", "approved"}
-    current = p.get("status") if isinstance(p, dict) else getattr(p, "status", None)
-    if current not in _REJECTABLE:
-        raise HTTPException(
-            409, f"Proposal is '{current}' and cannot be rejected (only {sorted(_REJECTABLE)} are rejectable)"
+    # Re-read under the writer claim so an execution worker cannot acquire its
+    # lease or insert an Order between this check and the status transition. This
+    # route declines only intent that has not crossed the execution boundary; it
+    # never pretends to cancel an accepted venue Order.
+    with repo.transaction(immediate=True):
+        p = repo.get_trade_proposal(proposal_id)
+        if p is None:
+            raise HTTPException(404, "Proposal not found")
+        current = p.get("status") if isinstance(p, dict) else getattr(p, "status", None)
+        rejectable = {"pending", "approved"}
+        has_order = repo.has_order_for_proposal(proposal_id)
+        has_execution_claim = repo.get_proposal_execution_claim(proposal_id) is not None
+        if current not in rejectable or has_order or has_execution_claim:
+            raise HTTPException(
+                409,
+                (
+                    f"Proposal is '{current}' or execution has already begun; "
+                    "it cannot be rejected here. Reconcile or close the real order instead."
+                ),
+            )
+        repo.update_trade_proposal(proposal_id, status="rejected")
+        # An authoritative Risk approval may already have reserved portfolio
+        # capacity before Gateway acquires its execution lease.  A human reject
+        # is a terminal no-Order state, so release that allowance in the same
+        # transaction; otherwise one declined Proposal can consume a slot
+        # forever even though no Order exists.
+        repo.release_entry_risk_reservation(proposal_id)
+    try:
+        write_audit({"actor": "human", "source": "dashboard", "event_type": "proposal_rejected",
+                     "entity_type": "trade_proposal", "entity_id": proposal_id,
+                     "message": "Proposal rejected by human before execution began"})
+    except Exception as exc:
+        # SQLite is authoritative after commit. A secondary JSONL failure must not
+        # turn a completed rejection into a retryable-looking API error.
+        logger.warning(
+            "Proposal %s kept rejected after audit sink failure (%s)",
+            proposal_id,
+            type(exc).__name__,
         )
-    repo.update_trade_proposal(proposal_id, status="rejected")
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "proposal_rejected",
-                 "entity_type": "trade_proposal", "entity_id": proposal_id,
-                 "message": "Proposal rejected by human"})
     return {"proposal_id": proposal_id, "status": "rejected"}
 
 
@@ -1711,7 +1750,7 @@ async def post_serenity_theme_deep_dive(theme_id: str, body: dict):
 
 
 @router.post("/serenity/themes/{theme_id}/promote")
-async def promote_serenity_theme(theme_id: str):
+def promote_serenity_theme(theme_id: str):
     """Promote a Serenity theme's opportunities into the PI evaluation queue.
 
     Phase 3 (Option A, D5): Replaces the old StrategyRecord(state='draft') dead-record
@@ -1730,38 +1769,26 @@ async def promote_serenity_theme(theme_id: str):
     if theme["status"] == "promoted":
         raise HTTPException(400, "Theme already promoted")
 
-    from aletheia.storage.models import PiDecision
-    now = datetime.now(timezone.utc).isoformat()
+    # Research generation currently caps this far below 10k; use a deliberately
+    # complete business working set rather than the old display-sized 200-row page.
+    opps = repo.list_serenity_opportunities(
+        theme_id=theme_id,
+        status="active",
+        limit=10_000,
+    )
+    if not opps:
+        raise HTTPException(
+            409,
+            "Theme has no active opportunities to submit; it remains active and retryable.",
+        )
 
-    opps = repo.list_serenity_opportunities(theme_id=theme_id, status="active", limit=200)
-    queued = 0
-    queued_ids: list[str] = []
-    for opp in opps:
-        try:
-            repo.update_serenity_opportunity(
-                opp["id"],
-                action_intent="pi_evaluate",
-                updated_at=now,
-            )
-            pi_dec = PiDecision(
-                symbol=opp.get("symbol"),
-                direction=opp.get("direction"),
-                market_type=opp.get("market_type"),
-                action="signal_pending",
-                conviction=0,
-                reasoning=f"Serenity promote: theme={theme_id[:8]} opp={opp['id'][:8]}",
-                opportunity_id=opp["id"],
-                signal_source="serenity",
-                debate_ran=False,
-            )
-            repo.insert_pi_decision(pi_dec)
-            queued += 1
-            queued_ids.append(opp["id"])
-        except Exception:
-            # one-row failure must not block the rest of the theme; log via audit
-            continue
-
-    repo.update_serenity_theme(theme_id, status="promoted", promoted_at=now, updated_at=now)
+    # The repository owns the all-or-nothing handoff. Theme state, opportunity
+    # intent, and every durable pending carrier become visible together; a failed
+    # insert propagates as an error and leaves the theme retryable.
+    queued_ids = repo.enqueue_serenity_theme_for_pi(
+        theme_id,
+        [str(opp["id"]) for opp in opps],
+    )
 
     try:
         from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
@@ -1771,10 +1798,13 @@ async def promote_serenity_theme(theme_id: str):
 
     return {
         "theme_id": theme_id,
-        "queued": queued,
+        "queued": len(queued_ids),
         "opportunity_ids": queued_ids,
         "status": "submitted_to_pi",
-        "message": f"Theme promoted: {queued} opportunit{'y' if queued == 1 else 'ies'} enqueued for PI evaluation.",
+        "message": (
+            f"Theme promoted: {len(queued_ids)} "
+            f"opportunit{'y' if len(queued_ids) == 1 else 'ies'} enqueued for PI evaluation."
+        ),
     }
 
 

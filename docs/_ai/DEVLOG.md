@@ -3353,3 +3353,19 @@ AI workspace initialization. Existing AGENTS.md preserved as-is (already compreh
 - Added a real production-code local-paper entry-to-feedback round trip. All executable rules,
   architecture/trust checks, frontend build, and the full repository suite passed. Local paper
   futures funding policy and the required new policy epoch remain owner gates before merge.
+
+## 2026-07-14 — Trade-chain completeness hardening
+
+- Separated analytical ranker previews from durable entry authority. Heartbeat evaluation cannot
+  submit an unqueued Opportunity, and exact opportunity/source/symbol/direction/market identity is
+  required before the Operator can create a Proposal.
+- Removed display pagination from trading authority. Risk, close/reduce targeting, price collection,
+  reconciliation, stops, mark-to-market, duplicate suppression, and Operator counts now inspect the
+  complete open Position set while presentation remains explicitly bounded.
+- Added a durable pre-Order Risk reservation in the same database writer transaction as approval,
+  preventing concurrent Proposals from consuming one final slot or exposure allowance twice.
+- Made manual Proposal rejection atomic with reservation release, approval crash residue safely
+  resumable through the idempotent Gateway, and Serenity theme promotion all-or-nothing.
+- Scoped funding provenance to its real account boundary and admitted only centrally eligible
+  Outcomes to review, Kelly samples, Attribution, Feedback, and thesis verdicts. No funding value or
+  PnL is invented where a local or venue funding producer is absent.

@@ -78,49 +78,14 @@ class TestP0AutoPromote:
         with patch("aletheia.config.loader.load_config", return_value=mock_cfg), \
              patch("aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
                    side_effect=lambda source="unknown": notify_calls.append(source)):
-            # Simulate the auto-promote block from research_worker
-            from aletheia.trading.serenity_scoring import score_serenity_opportunity
-            from aletheia.storage.models import PiDecision
+            from aletheia.agents.research_worker import (
+                _auto_promote_serenity_opportunities,
+            )
 
-            persisted_opps = [opp_id]
-            promoted_theme_ids: set[str] = set()
-            promoted_count = 0
-
-            for oid in persisted_opps:
-                opp = repo.get_serenity_opportunity(oid)
-                assert opp is not None
-                assert opp["status"] == "active"
-
-                evidence = repo.list_serenity_evidence(theme_id=opp["theme_id"], limit=200)
-                gates = repo.list_serenity_risk_gates(opportunity_id=oid, limit=200)
-                score_result = score_serenity_opportunity(opp, evidence=evidence, risk_gates=gates)
-
-                assert score_result["score"] >= mock_cfg.serenity.min_score_for_pi, (
-                    f"Score {score_result['score']} should be >= {mock_cfg.serenity.min_score_for_pi}"
-                )
-
-                repo.update_serenity_opportunity(oid, action_intent="pi_evaluate")
-                pi_dec = PiDecision(
-                    symbol=opp["symbol"],
-                    direction=opp["direction"],
-                    market_type=opp.get("market_type"),
-                    action="signal_pending",
-                    conviction=0,
-                    reasoning=f"Auto-promote: score={score_result['score']} opp={oid[:8]}",
-                    opportunity_id=oid,
-                    signal_source="serenity",
-                    debate_ran=False,
-                )
-                repo.insert_pi_decision(pi_dec)
-                promoted_count += 1
-                promoted_theme_ids.add(opp["theme_id"])
-
-            now_iso = datetime.now(timezone.utc).isoformat()
-            for tid in promoted_theme_ids:
-                repo.update_serenity_theme(tid, status="promoted", promoted_at=now_iso, updated_at=now_iso)
-
-            from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
-            notify_pi_daemon(source="serenity_auto_promote")
+            promoted_count = _auto_promote_serenity_opportunities(
+                [opp_id],
+                mock_cfg,
+            )
 
         # Verify outcomes
         assert promoted_count == 1

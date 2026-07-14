@@ -1511,14 +1511,14 @@ def _tpsl_fill_check_body():
     try:
         import asyncio
         import json as _json
-        from aletheia.storage.repositories import list_positions
+        from aletheia.storage.repositories import list_all_open_positions
         from aletheia.data.symbols import to_bitget
         from aletheia.execution.exchange_materialization import (
             materialize_bitget_close,
         )
         from aletheia.exchanges.bitget.client import BitgetClient
 
-        positions = list_positions(status="open")
+        positions = list_all_open_positions()
         candidates = []
         for p in positions:
             tpsl_raw = p.get("exchange_tpsl_order_id")

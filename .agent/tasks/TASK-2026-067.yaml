@@ -52,10 +52,12 @@ ownership:
   expires_at: '2026-07-16T07:48:08.118358Z'
 base_commit: c95b2be34d93368182da21fc81f87e71cf5f64e1
 next_action:
-  command_key: trade_chain_full_suite
-  reason: Implementation commit 995074e4 has same-commit verification for the real
-    round-trip, full suite, frontend build, Risk, Execution, specs, and architecture.
-    Keep the branch unmerged until the owner resolves the funding and policy-epoch gates.
+  command_key: trade_chain_completion
+  reason: Commit the business-chain completion repairs, integrate the latest master
+    commit in this isolated branch, then register focused chain, Risk, Execution,
+    executable-rule, architecture, and full-suite evidence on that exact combined
+    HEAD. Keep the branch unmerged until the owner resolves the funding and policy-epoch
+    gates.
 blockers:
 - B-class Operator timing and Bitget original-order protection changes require the
   owner to create a new policy epoch and observation window before merge; prior and
@@ -64,6 +66,9 @@ blockers:
   must choose between temporarily rejecting new paper_internal futures entries or
   authorizing a separate immutable funding-event ledger; this branch does not invent
   funding or claim local futures paper is fully usable.
+- Exchange-backed futures also have no account funding-ledger producer in the current
+  code. Their close lifecycle remains fail-closed for Outcome and Learning until real
+  venue funding facts are collected; local simulation is deliberately rejected there.
 verification:
 - command_key: spec_risk_engine
   command: uv run pytest tests/specs/spec_risk_engine.py -q

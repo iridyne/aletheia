@@ -499,8 +499,9 @@ def build_system_assessment() -> SystemAssessment:
     # Risk state
     assessment.kill_switch_active = cfg.runtime.kill_switch_active
     try:
-        positions = repo.list_positions(status="open", limit=100)
-        assessment.open_positions = len(positions)
+        # This count drives the deterministic Operator assessment; it is state
+        # authority, not a display page, so a query cap must not become truth.
+        assessment.open_positions = len(repo.list_all_open_positions())
     except Exception:
         pass
 

@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config
 from aletheia.portfolio.pnl import _latest_price
-from aletheia.storage.repositories import list_positions
+from aletheia.storage.repositories import list_all_open_positions
 
 logger = logging.getLogger("aletheia.position_manager")
 
@@ -234,6 +234,17 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
     current_stop = position.get("stop_price")
     if current_stop is not None:
         current_stop = float(current_stop)
+    else:
+        governed, proposal_stop = _native_proposal_protection(
+            position,
+            "stop_price",
+        )
+        if governed and proposal_stop is None:
+            # A mutable trailing configuration cannot invent protection that
+            # the immutable native Proposal never asked Risk to approve.
+            return
+        if governed:
+            current_stop = proposal_stop
 
     # 1. Breakeven move: when profit > breakeven_trigger_pct, floor stop at entry
     if current_stop is not None and entry > 0:
@@ -354,7 +365,7 @@ def evaluate_open_positions() -> dict:
     if cfg.trading.market_aware_exits.enabled:
         try:
             from aletheia.portfolio.market_signal_reader import get_market_signals_for_positions
-            all_open = list_positions(status="open")
+            all_open = list_all_open_positions()
             syms = list({p["symbol"] for p in all_open if p.get("execution_mode") in _PAPER_MODES})
             if syms:
                 market_signal_index = get_market_signals_for_positions(
@@ -363,7 +374,7 @@ def evaluate_open_positions() -> dict:
         except Exception as e:
             logger.warning("market_signal_index build failed: %s", e)
 
-    for p in list_positions(status="open"):
+    for p in list_all_open_positions():
         if p.get("execution_mode") not in _PAPER_MODES:
             continue
         checked += 1
@@ -438,11 +449,10 @@ def adjust_stop(position_id: str, new_stop_price: float) -> dict:
     DB via update_position and syncs the exchange TPSL bracket when applicable.
     Returns {"updated": True} on success, {"error": str} on failure.
     """
-    from aletheia.storage.repositories import update_position, list_positions
+    from aletheia.storage.repositories import get_position, update_position
 
-    rows = list_positions(status="open", limit=500)
-    pos = next((p for p in rows if p["id"] == position_id), None)
-    if pos is None:
+    pos = get_position(position_id)
+    if pos is None or pos.get("status") != "open":
         return {"error": f"position {position_id} not found or not open"}
 
     update_position(position_id, stop_price=round(float(new_stop_price), 8))

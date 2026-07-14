@@ -52,7 +52,7 @@ def _patch_deps(opps, strategies=None, universe_member=None, factor_status="watc
     # Position C (2026-07-02): the ranker no longer resolves StrategyRecords, so
     # list_strategies / get_strategy are no longer module attributes to patch.
     patches["aletheia.agents.paper_trader_ranker.load_config"] = MagicMock(return_value=_mock_config())
-    patches["aletheia.agents.paper_trader_ranker.list_open_opportunities"] = MagicMock(return_value=opps)
+    patches["aletheia.agents.paper_trader_ranker.list_open_trade_opportunities"] = MagicMock(return_value=opps)
     patches["aletheia.agents.paper_trader_ranker.get_universe_member"] = MagicMock(return_value=universe_member)
     patches["aletheia.agents.paper_trader_ranker.tradable_symbols_from_config"] = MagicMock(return_value=["BTC/USDT", "ETH/USDT"])
     patches["aletheia.agents.paper_trader_ranker.lookup_factor_signal"] = MagicMock(return_value={
@@ -419,6 +419,88 @@ def test_permanent_rejection_sweep_advances_past_rank_limit_under_new_arrivals(
     assert evidence == 1
 
 
+def test_prediction_observations_do_not_starve_trade_fifo_or_change_lifecycle(
+    tmp_path, monkeypatch
+):
+    """Observation-only prediction rows must stay outside the paper trade workset."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agents.paper_trader import run_paper_trader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import insert_opportunity
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.symbol_list = ["BTC/USDT"]
+    cfg.risk.symbol_filter_mode = "whitelist"
+    save_config(cfg)
+
+    oldest = datetime.now(timezone.utc) - timedelta(hours=1)
+    for index in range(250):
+        insert_opportunity(
+            Opportunity(
+                id=f"prediction-observation-{index:03d}",
+                symbol="PREDICTION",
+                market="prediction",
+                direction_bias=None,
+                confidence="medium",
+                confidence_score=60,
+                source_agent="prediction_observer",
+                asset_class="prediction",
+                execution_eligible=False,
+                status="open",
+                created_at=(oldest + timedelta(seconds=index)).isoformat(),
+            )
+        )
+
+    tradeable = Opportunity(
+        id="crypto-behind-prediction-backlog",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        confidence="high",
+        confidence_score=92,
+        source_agent="market_observer",
+        asset_class="crypto",
+        execution_eligible=True,
+        status="open",
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    insert_opportunity(tradeable)
+
+    result = asyncio.run(
+        run_paper_trader(permission_mode="Paper", run_id="prediction-fifo-boundary")
+    )
+
+    db = get_db()
+    queued = db.execute(
+        "SELECT opportunity_id, market_type FROM pi_decisions "
+        "WHERE action='signal_pending' AND opportunity_id=?",
+        (tradeable.id,),
+    ).fetchall()
+    prediction_states = db.execute(
+        "SELECT status, COUNT(*) AS n FROM opportunities "
+        "WHERE asset_class='prediction' GROUP BY status"
+    ).fetchall()
+    prediction_evidence = db.execute(
+        "SELECT COUNT(*) FROM filter_decisions fd JOIN opportunities o "
+        "ON o.id=fd.opportunity_id WHERE o.asset_class='prediction'"
+    ).fetchone()[0]
+
+    assert [dict(row) for row in queued] == [
+        {"opportunity_id": tradeable.id, "market_type": "spot"}
+    ], result
+    assert [dict(row) for row in prediction_states] == [{"status": "open", "n": 250}]
+    assert prediction_evidence == 0
+
+
 def test_candidate_builder_overfetches_past_skipped_front_page():
     from aletheia.agents.paper_trader_ranker import build_paper_candidates, select_best_candidate
 
@@ -440,7 +522,7 @@ def test_candidate_builder_overfetches_past_skipped_front_page():
     cfg.exchange.paper_execution_mode = "bitget_demo"
 
     with patch("aletheia.agents.paper_trader_ranker.load_config", return_value=cfg), \
-         patch("aletheia.agents.paper_trader_ranker.list_open_opportunities", side_effect=list_page) as list_mock, \
+         patch("aletheia.agents.paper_trader_ranker.list_open_trade_opportunities", side_effect=list_page) as list_mock, \
          patch("aletheia.agents.paper_trader_ranker.get_universe_member", return_value=None), \
          patch("aletheia.agents.paper_trader_ranker.tradable_symbols_from_config", return_value=["BTC/USDT", "ETH/USDT"]), \
          patch("aletheia.agents.paper_trader_ranker.lookup_factor_signal", return_value={

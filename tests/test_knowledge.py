@@ -1,5 +1,7 @@
 """Tests for Knowledge Base: no hard delete, archive/deprecate, confidence levels."""
 
+from datetime import datetime, timezone
+
 import pytest
 
 from aletheia.storage.sqlite import reset_db
@@ -11,7 +13,6 @@ from aletheia.knowledge.manager import (
     archive_item, deprecate_item, delete_item, detect_contradictions,
 )
 from aletheia.agents.post_trade_reviewer import run_post_trade_reviewer
-from aletheia.storage.models import Order, Fill, TradeProposal
 
 
 def setup_test_env(tmp_path, monkeypatch):
@@ -119,48 +120,70 @@ def test_post_trade_review_creation(tmp_path, monkeypatch):
 async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
 
-    from aletheia.storage.models import StrategyRecord
+    from aletheia.agents import post_trade_reviewer
+    from aletheia.storage.models import Position, StrategyRecord
     from aletheia.storage.repositories import insert_strategy
     from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from tests.test_outcome_closure import _insert_entry_chain
 
     init_tool_registry()
     strategy = StrategyRecord(name="Post Trade Review Strategy", state="draft")
     insert_strategy(strategy)
-    proposal = TradeProposal(
-        strategy_id=strategy.id,
-        symbol="BTCUSDT",
+    opportunity_id, proposal_id, order_id = _insert_entry_chain(
+        position_id="position-knowledge-review",
+        symbol="BTC/USDT",
         market_type="spot",
         direction="long",
-        quantity=0.01,
-        price=60000,
-    )
-    repo.insert_trade_proposal(proposal)
-    order = Order(
-        source="adopted",
-        proposal_id=proposal.id,
-        risk_decision_id="x",
-        symbol="BTCUSDT",
-        market_type="spot",
-        direction="long",
-        order_type="market",
         quantity=0.01,
         price=60000,
         execution_mode="paper_internal",
+        strategy_id=strategy.id,
     )
-    repo.insert_order(order)
-    repo.insert_fill(Fill(
-        order_id=order.id,
-        fill_price=60000,
-        fill_quantity=0.01,
+    repo.insert_position(Position(
+        id="position-knowledge-review",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        entry_price=60_000.0,
+        current_price=61_000.0,
+        realized_pnl=10.0,
+        execution_mode="paper_internal",
+        strategy_id=strategy.id,
+        proposal_id=proposal_id,
+        order_id=order_id,
+        opportunity_id=opportunity_id,
+        status="closed",
+        close_reason="take_profit",
+        closed_at=datetime.now(timezone.utc).isoformat(),
+        entry_fee=0.0,
+        exit_fee=0.0,
+        funding_cost=0.0,
+        funding_source="not_applicable",
+        close_category="strategy",
+        entry_price_source="local_fill",
+        entry_fill_verified=True,
+        exit_price_source="local_fill",
+        exit_fill_verified=True,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+        outcome_semantics_version="oi-v1",
     ))
+
+    async def deterministic_review(*args, **kwargs):
+        return (
+            "The verified close supports the original long thesis; repeat this setup "
+            "only when the same entry evidence and risk controls are present.",
+            None,
+        )
+
+    monkeypatch.setattr(post_trade_reviewer, "llm_complete", deterministic_review)
 
     result = await run_post_trade_reviewer(permission_mode="Observe")
     review_items = repo.list_knowledge_items(item_type="post_trade_review", strategy_id=strategy.id)
-    # LLM unavailable in test → agent skips write (by design: no garbage on LLM failure)
-    if result["errors"]:
-        assert len(review_items) == 0
-    else:
-        assert len(review_items) == 1
+    assert result["errors"] == []
+    assert len(review_items) == 1
+    assert f"position:position-knowledge-review" in review_items[0]["tags"]
     reset_db()
 
 

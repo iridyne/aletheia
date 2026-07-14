@@ -75,7 +75,7 @@ class TestGetCachedPrice:
 
 class TestGetWatchedSymbols:
     @patch("aletheia.config.loader.load_config")
-    @patch("aletheia.storage.repositories.list_positions")
+    @patch("aletheia.storage.repositories.list_all_open_positions")
     def test_returns_unique_symbols(self, mock_list, mock_cfg):
         mock_cfg.return_value.event_triggers.enabled = False
         mock_cfg.return_value.market_data.ccxt_exchange = "binance"
@@ -88,7 +88,7 @@ class TestGetWatchedSymbols:
         assert result == ["BTC/USDT", "ETH/USDT"]
 
     @patch("aletheia.config.loader.load_config")
-    @patch("aletheia.storage.repositories.list_positions")
+    @patch("aletheia.storage.repositories.list_all_open_positions")
     def test_returns_empty_on_no_positions(self, mock_list, mock_cfg):
         mock_cfg.return_value.event_triggers.enabled = False
         mock_cfg.return_value.market_data.ccxt_exchange = "binance"
@@ -96,7 +96,10 @@ class TestGetWatchedSymbols:
         assert get_watched_symbols() == []
 
     @patch("aletheia.config.loader.load_config")
-    @patch("aletheia.storage.repositories.list_positions", side_effect=Exception("db error"))
+    @patch(
+        "aletheia.storage.repositories.list_all_open_positions",
+        side_effect=Exception("db error"),
+    )
     def test_returns_empty_on_error(self, mock_list, mock_cfg):
         mock_cfg.return_value.event_triggers.enabled = False
         mock_cfg.return_value.market_data.ccxt_exchange = "binance"
@@ -105,7 +108,7 @@ class TestGetWatchedSymbols:
     @patch("aletheia.config.loader.load_config")
     @patch("aletheia.storage.repositories.get_universe_asset")
     @patch("aletheia.storage.repositories.get_active_universe_members")
-    @patch("aletheia.storage.repositories.list_positions")
+    @patch("aletheia.storage.repositories.list_all_open_positions")
     def test_instruments_preserve_position_and_member_market(
         self, mock_positions, mock_members, mock_asset, mock_cfg
     ):

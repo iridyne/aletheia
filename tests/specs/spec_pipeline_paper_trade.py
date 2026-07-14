@@ -424,8 +424,8 @@ def test_paper_trader_skips_recent_duplicate_signal_pair(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "PL-PT-06", "pipeline_paper_trade", "§2 open candidate working set", "L2b",
-        "The ranker queries open opportunities directly before applying its bounded scan limit, "
-        "so reviewed history cannot permanently hide a still-open candidate.",
+        "The ranker queries the open trade workset directly before applying its bounded scan "
+        "limit, so reviewed history and observation-only rows cannot hide a trade candidate.",
         status="implemented",
     ),
 )
@@ -435,9 +435,9 @@ def test_ranker_queries_open_working_set_directly():
     from aletheia.agents import paper_trader_ranker
     from aletheia.storage import repositories
 
-    assert hasattr(repositories, "list_open_opportunities")
+    assert hasattr(repositories, "list_open_trade_opportunities")
     source = inspect.getsource(paper_trader_ranker.build_paper_candidate_workset)
-    assert "list_open_opportunities" in source
+    assert "list_open_trade_opportunities" in source
 
 
 @spec_claim(
@@ -828,7 +828,7 @@ def test_permanent_reject_workset_is_separate_from_execution_limit(monkeypatch):
 
     monkeypatch.setattr(ranker, "load_config", lambda: cfg)
     monkeypatch.setattr(
-        ranker, "list_open_opportunities", lambda *, limit: opportunities[:limit]
+        ranker, "list_open_trade_opportunities", lambda *, limit: opportunities[:limit]
     )
     monkeypatch.setattr(
         ranker, "tradable_symbols_from_config", lambda _cfg: ["BTC/USDT"]
@@ -842,3 +842,83 @@ def test_permanent_reject_workset_is_separate_from_execution_limit(monkeypatch):
         candidate["skip_reason"].startswith("symbol_not_allowed:")
         for candidate in workset.scanned_candidates
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-15",
+        "pipeline_paper_trade",
+        "§1 divergence instrument handoff",
+        "L2b",
+        "A bullish divergence derived from a bare-symbol spot ticker persists market=spot "
+        "and reaches signal_pending with the same spot identity.",
+        status="implemented",
+    )
+)
+def test_divergence_long_spot_identity_reaches_pending(tmp_path, monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    conn = _setup_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agents.divergence_scanner import run_divergence_scanner
+    from aletheia.agents.paper_trader import run_paper_trader
+    from aletheia.data.providers import Ticker
+    from aletheia.storage.repositories import _insert
+
+    init_tool_registry()
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
+        lambda source=None: None,
+        raising=False,
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    _insert("prediction_markets", {
+        "id": "pipeline-divergence-source",
+        "event_id": "pipeline-divergence-event",
+        "source": "polymarket",
+        "external_market_id": "pipeline-divergence-external",
+        "question": "Will Bitcoin reach $150k by end of 2026?",
+        "yes_probability": 0.72,
+        "no_probability": 0.28,
+        "probability_change_24h": 0.20,
+        "volume_24h": 120000.0,
+        "liquidity": 120000.0,
+        "status": "active",
+        "updated_at": now,
+    })
+    provider = AsyncMock()
+    provider.get_ticker = AsyncMock(return_value=Ticker(
+        symbol="BTC/USDT",
+        last_price=95000.0,
+        volume_24h=5_000_000_000.0,
+        change_pct_24h=1.0,
+    ))
+    monkeypatch.setattr(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        lambda: provider,
+    )
+
+    scanner_result = asyncio.run(run_divergence_scanner(permission_mode="Paper"))
+    opp = conn.execute(
+        "SELECT id, market, status FROM opportunities "
+        "WHERE source_agent='divergence_scanner'"
+    ).fetchone()
+    assert opp is not None, scanner_result
+    assert opp["market"] == "spot"
+
+    paper_result = asyncio.run(
+        run_paper_trader(permission_mode="Paper", run_id="divergence-spot-handoff")
+    )
+    pending = conn.execute(
+        "SELECT opportunity_id, symbol, direction, market_type FROM pi_decisions "
+        "WHERE action='signal_pending' AND opportunity_id=?",
+        (opp["id"],),
+    ).fetchall()
+
+    assert [dict(row) for row in pending] == [{
+        "opportunity_id": opp["id"],
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "market_type": "spot",
+    }], paper_result

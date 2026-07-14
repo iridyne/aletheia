@@ -168,6 +168,45 @@ def list_open_opportunities(limit: int = 50) -> list[dict]:
     )
 
 
+def list_open_trade_opportunities(limit: int = 50) -> list[dict]:
+    """Return FIFO open opportunities for crypto/equity trading only.
+
+    Legacy rows with a NULL/blank asset class predate the discriminator and are
+    crypto opportunities by construction. Prediction observations remain
+    research context and never enter this trade workset.
+    """
+    return _select_all(
+        "opportunities",
+        where=(
+            "status = 'open' AND "
+            "COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity')"
+        ),
+        order="created_at ASC, rowid ASC",
+        limit=limit,
+    )
+
+
+def find_divergence_opportunity_by_source_version(
+    source_version: str,
+) -> dict | None:
+    """Return the earliest divergence row for one producer source version.
+
+    Lifecycle state is deliberately unrestricted so a delayed retry resolves
+    the original row after it has already been queued or reviewed.
+    """
+    if not source_version:
+        return None
+    row = get_db().execute(
+        "SELECT * FROM opportunities "
+        "WHERE source_agent='divergence_scanner' "
+        "AND json_valid(metadata) "
+        "AND json_extract(metadata, '$.source_version') = ? "
+        "ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 1",
+        (source_version,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def get_opportunity(oid: str) -> dict | None:
     return _select_one("opportunities", oid)
 
@@ -653,6 +692,114 @@ def get_proposal_execution_claim(proposal_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def get_entry_risk_reservation(proposal_id: str) -> dict | None:
+    """Return one durable pre-Order Risk allowance, if present."""
+    row = get_db().execute(
+        "SELECT * FROM entry_risk_reservations WHERE proposal_id=?",
+        (proposal_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def acquire_entry_risk_reservation(
+    *,
+    proposal_id: str,
+    proposal_commit_hash: str,
+    symbol: str,
+    execution_mode: str,
+    quantity: float,
+    price: float,
+) -> bool:
+    """Acquire or verify one exact durable pre-Order Risk allowance.
+
+    The authoritative Risk caller owns the surrounding ``BEGIN IMMEDIATE`` that
+    covered its working-set read. Identical replays are idempotent; a conflicting
+    immutable snapshot fails closed.
+    """
+    if not proposal_id or not proposal_commit_hash or not symbol or not execution_mode:
+        raise ValueError("entry Risk reservation requires complete Proposal identity")
+    quantity = float(quantity)
+    price = float(price)
+    if quantity <= 0 or price <= 0:
+        raise ValueError("entry Risk reservation requires positive quantity and price")
+
+    existing = get_entry_risk_reservation(proposal_id)
+    expected = {
+        "proposal_commit_hash": proposal_commit_hash,
+        "symbol": symbol,
+        "execution_mode": execution_mode,
+        "quantity": quantity,
+        "price": price,
+    }
+    if existing is not None:
+        conflicts = [
+            key for key, value in expected.items()
+            if existing.get(key) != value
+        ]
+        if conflicts:
+            raise ValueError(
+                "entry Risk reservation conflicts with immutable Proposal snapshot: "
+                + ",".join(conflicts)
+            )
+        return False
+
+    db = get_db()
+    was_in_tx = db.in_transaction
+    db.execute(
+        "INSERT INTO entry_risk_reservations "
+        "(proposal_id,proposal_commit_hash,symbol,execution_mode,quantity,price) "
+        "VALUES (?,?,?,?,?,?)",
+        (
+            proposal_id,
+            proposal_commit_hash,
+            symbol,
+            execution_mode,
+            quantity,
+            price,
+        ),
+    )
+    if not was_in_tx:
+        db.commit()
+    return True
+
+
+def release_entry_risk_reservation(proposal_id: str) -> bool:
+    """Release a pre-Order allowance after durable handoff or terminal failure."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "DELETE FROM entry_risk_reservations WHERE proposal_id=?",
+        (proposal_id,),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount == 1
+
+
+def list_active_entry_risk_reservations_for_risk(
+    *,
+    exclude_proposal_id: str | None = None,
+) -> list[dict]:
+    """Return every allowance not yet represented by a durable Order.
+
+    No row limit is permitted. Excluding rows that already have any Order avoids
+    double counting while Gateway performs its best-effort reservation cleanup.
+    """
+    sql = (
+        "SELECT r.* FROM entry_risk_reservations r "
+        "WHERE NOT EXISTS ("
+        "  SELECT 1 FROM orders o WHERE o.proposal_id=r.proposal_id"
+        ")"
+    )
+    params: list = []
+    if exclude_proposal_id is not None:
+        sql += " AND r.proposal_id != ?"
+        params.append(exclude_proposal_id)
+    sql += " ORDER BY r.created_at ASC, r.rowid ASC"
+    rows = get_db().execute(sql, params).fetchall()
+    return [dict(row) for row in rows]
+
+
 def insert_proposal_execution_claim(
     proposal_id: str,
     owner_token: str,
@@ -1039,10 +1186,44 @@ def update_position(pid: str, **kwargs) -> None:
     _update("positions", pid, kwargs)
 
 
+def get_position(position_id: str) -> dict | None:
+    """Return one Position by durable identity without list pagination."""
+    return _select_one("positions", position_id)
+
+
 def list_positions(status: str | None = None, limit: int = 50) -> list[dict]:
     if status:
         return _select_all("positions", where="status = ?", params=(status,), limit=limit)
     return _select_all("positions", limit=limit)
+
+
+def list_all_open_positions() -> list[dict]:
+    """Return the complete open-position working set for state/safety loops."""
+    rows = get_db().execute(
+        "SELECT * FROM positions WHERE status='open' ORDER BY rowid DESC"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def find_compatible_open_position(
+    symbol: str,
+    market_type: str,
+    direction: str,
+    execution_mode: str,
+    strategy_id: str | None,
+) -> dict | None:
+    """Find one exact aggregation target without a bounded list scan."""
+    sql = (
+        "SELECT * FROM positions WHERE status='open' "
+        "AND symbol=? AND market_type=? AND direction=? AND execution_mode=?"
+    )
+    params: list = [symbol, market_type, direction, execution_mode]
+    if strategy_id is not None:
+        sql += " AND COALESCE(strategy_id, '') IN ('', ?)"
+        params.append(strategy_id)
+    sql += " ORDER BY rowid ASC LIMIT 1"
+    row = get_db().execute(sql, params).fetchone()
+    return dict(row) if row else None
 
 
 def list_strategy_positions(strategy_id: str, status: str | None = None, limit: int = 1000) -> list[dict]:
@@ -1279,6 +1460,126 @@ def list_serenity_themes(status: str | None = "active", limit: int = 100) -> lis
 
 def update_serenity_theme(theme_id: str, **kwargs) -> None:
     _update("serenity_themes", theme_id, kwargs)
+
+
+def enqueue_serenity_theme_for_pi(
+    theme_id: str,
+    opportunity_ids: list[str],
+) -> list[str]:
+    """Atomically hand one exact Serenity opportunity set to the PI queue.
+
+    Existing exact pending carriers are successful idempotent facts. Theme
+    promotion commits only after every requested active opportunity owns a
+    durable pending carrier; any failure rolls back carriers and intent updates.
+    """
+    from aletheia.storage.models import PiDecision
+
+    ordered_ids = list(dict.fromkeys(str(item) for item in opportunity_ids if item))
+    if not ordered_ids:
+        raise ValueError("Serenity PI handoff requires at least one opportunity")
+
+    def exact_pending_carrier(
+        opportunity_id: str,
+        opportunity: dict,
+    ) -> dict | None:
+        pending = find_pending_pi_decision_for_opportunity(
+            opportunity_id,
+            signal_source="serenity",
+        )
+        if pending is None:
+            return None
+        mismatched = [
+            field
+            for field in ("symbol", "direction", "market_type")
+            if pending.get(field) != opportunity.get(field)
+        ]
+        if mismatched:
+            raise ValueError(
+                "Serenity pending carrier conflicts with opportunity identity: "
+                f"{opportunity_id}:" + ",".join(mismatched)
+            )
+        return pending
+
+    with transaction(immediate=True):
+        theme = get_serenity_theme(theme_id)
+        if theme is None:
+            raise ValueError(f"Serenity theme not found: {theme_id}")
+
+        placeholders = ",".join("?" for _ in ordered_ids)
+        rows = get_db().execute(
+            f"SELECT * FROM serenity_opportunities WHERE id IN ({placeholders}) "
+            "AND theme_id=? AND status='active'",
+            (*ordered_ids, theme_id),
+        ).fetchall()
+        by_id = {row["id"]: dict(row) for row in rows}
+        missing = [
+            opportunity_id
+            for opportunity_id in ordered_ids
+            if opportunity_id not in by_id
+        ]
+        if missing:
+            raise ValueError(
+                "Serenity PI handoff requires active opportunities from the same theme: "
+                + ",".join(missing)
+            )
+
+        existing_pending_ids = [
+            opportunity_id
+            for opportunity_id in ordered_ids
+            if exact_pending_carrier(opportunity_id, by_id[opportunity_id]) is not None
+        ]
+        theme_status = str(theme.get("status") or "")
+        if theme_status == "promoted":
+            if existing_pending_ids == ordered_ids:
+                return ordered_ids
+            raise ValueError(
+                "promoted Serenity theme cannot acquire additional PI carriers"
+            )
+        if theme_status != "active":
+            raise ValueError(
+                f"Serenity theme status does not allow PI handoff: {theme_status}"
+            )
+
+        now = datetime.now(timezone.utc).isoformat()
+        for opportunity_id in ordered_ids:
+            opportunity = by_id[opportunity_id]
+            pending = exact_pending_carrier(opportunity_id, opportunity)
+            if pending is None:
+                insert_pi_decision(PiDecision(
+                    symbol=opportunity.get("symbol"),
+                    direction=opportunity.get("direction"),
+                    market_type=opportunity.get("market_type"),
+                    action="signal_pending",
+                    conviction=0,
+                    reasoning=(
+                        f"Serenity promote: theme={theme_id[:8]} "
+                        f"opp={opportunity_id[:8]}"
+                    ),
+                    opportunity_id=opportunity_id,
+                    signal_source="serenity",
+                    debate_ran=False,
+                ))
+            update_serenity_opportunity(
+                opportunity_id,
+                action_intent="pi_evaluate",
+                updated_at=now,
+            )
+
+        durable_ids = [
+            opportunity_id
+            for opportunity_id in ordered_ids
+            if exact_pending_carrier(opportunity_id, by_id[opportunity_id]) is not None
+        ]
+        if durable_ids != ordered_ids:
+            raise RuntimeError("Serenity PI handoff is missing a durable pending carrier")
+
+        update_serenity_theme(
+            theme_id,
+            status="promoted",
+            promoted_at=now,
+            updated_at=now,
+        )
+        return durable_ids
 
 
 def insert_serenity_evidence(e: SerenityEvidence) -> None:

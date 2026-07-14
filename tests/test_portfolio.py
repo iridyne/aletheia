@@ -51,6 +51,34 @@ def test_short_position_pnl(tmp_path, monkeypatch):
     reset_db()
 
 
+def test_mark_to_market_updates_every_open_position_beyond_display_limit(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio import pnl
+
+    for index in range(55):
+        repo.insert_position(Position(
+            id=f"mark-all-{index:03d}",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            execution_mode="paper_internal",
+        ))
+    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
+
+    marked = pnl.mark_positions_to_market(persist=True)
+
+    assert len(marked) == 55
+    oldest = repo._select_one("positions", "mark-all-000")
+    assert oldest["current_price"] == 110.0
+    assert oldest["unrealized_pnl"] == 10.0
+    reset_db()
+
+
 def test_snapshot_persisted(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     repo.insert_position(Position(

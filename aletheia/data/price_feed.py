@@ -91,8 +91,8 @@ def get_watched_instruments():
 
     # Always watch open position symbols
     try:
-        from aletheia.storage.repositories import list_positions
-        for p in list_positions(status="open"):
+        from aletheia.storage.repositories import list_all_open_positions
+        for p in list_all_open_positions():
             append_instrument(
                 p.get("symbol", ""),
                 p.get("market_type"),

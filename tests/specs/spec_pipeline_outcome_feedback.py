@@ -1140,3 +1140,98 @@ def test_partial_shadow_resolution_fails_job_then_resumes_remaining_rows(
     assert completed_job["attempts"] == 2
     assert final_rows[selected.id]["resolved_at"] == first_rows[selected.id]["resolved_at"]
     assert final_rows[counterfactual.id]["resolved_at"] is not None
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-OF-19",
+        "pipeline_outcome_feedback",
+        "§18 account-scoped funding provenance",
+        "L2c",
+        "An exchange-backed futures close cannot accept local-simulation funding; "
+        "the lifecycle closes but no Outcome, Attribution, Feedback, or outbox job escapes.",
+        status="implemented",
+    )
+)
+def test_exchange_close_rejects_local_simulation_funding_provenance(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.analytics.factor_feedback import build_factor_feedback
+    from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+    from aletheia.analytics.trade_attribution import build_trade_attribution_rows
+    from aletheia.portfolio import outcome_closure
+    from aletheia.storage import repositories as repo
+    from tests.test_outcome_closure import _position, _verified_result
+
+    position = _position(execution_mode="bitget_demo").model_copy(
+        update={"funding_source": "local_simulation"}
+    )
+    repo.insert_position(position)
+
+    result = outcome_closure.close_position_verified(
+        position.id,
+        _verified_result(position),
+        reason="take_profit",
+    )
+
+    stored = repo._select_one("positions", position.id)
+    assert result["realized_pnl"] is None
+    assert result["outcome_eligible"] is False
+    assert stored["funding_cost"] is None
+    assert stored["funding_source"] == "unavailable"
+    assert stored["outcome_exclusion_reason"] == "incomplete_funding_economics"
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert eligible_strategy_outcomes() == []
+    assert build_trade_attribution_rows(limit=10) == []
+    assert build_factor_feedback(limit=10, min_trades=1) == []
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-OF-20",
+        "pipeline_outcome_feedback",
+        "§19 local funding provenance",
+        "L2c",
+        "A local-paper futures close cannot accept broker-ledger funding; no net cash "
+        "settlement, Outcome, Attribution, Feedback, or outbox job is produced.",
+        status="implemented",
+    )
+)
+def test_local_paper_close_rejects_broker_funding_provenance(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.analytics.factor_feedback import build_factor_feedback
+    from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+    from aletheia.analytics.trade_attribution import build_trade_attribution_rows
+    from aletheia.portfolio import paper_account, pnl
+    from aletheia.storage import repositories as repo
+    from tests.test_outcome_closure import _position
+
+    position = _position(execution_mode="paper_internal").model_copy(
+        update={"funding_source": "broker_ledger"}
+    )
+    repo.insert_position(position)
+    paper_account.record_position_opened(position.id)
+
+    result = pnl.close_position(
+        position.id,
+        exit_price=110.0,
+        reason="take_profit",
+    )
+
+    stored = repo._select_one("positions", position.id)
+    assert result["realized_pnl"] is None
+    assert result["outcome_eligible"] is False
+    assert stored["funding_cost"] is None
+    assert stored["funding_source"] == "unavailable"
+    assert stored["outcome_exclusion_reason"] == "incomplete_funding_economics"
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert eligible_strategy_outcomes() == []
+    assert build_trade_attribution_rows(limit=10) == []
+    assert build_factor_feedback(limit=10, min_trades=1) == []
+    assert not any(
+        event["action"] == "position_closed"
+        for event in repo.list_paper_account_events(limit=20)
+    )

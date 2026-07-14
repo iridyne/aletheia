@@ -48,6 +48,9 @@ commands:
   trade_chain_roundtrip:
     command: uv run pytest tests/e2e/test_pipeline_real_paper_roundtrip.py -q
     purpose: Verify the real local-paper entry, close, Outcome, Attribution, outbox, and feedback chain with one causal identity.
+  trade_chain_completion:
+    command: uv run pytest tests/e2e/test_active_mainline_golden_path.py tests/e2e/test_pipeline_real_paper_roundtrip.py tests/specs/spec_decision_lifecycle.py tests/specs/spec_pipeline_middle_state_integrity.py tests/specs/spec_pipeline_outcome_feedback.py tests/specs/spec_serenity_promote.py tests/test_workflow_routes.py tests/test_post_trade_reviewer_outcomes.py tests/test_paper_trade_count_eligibility.py -q --tb=short
+    purpose: Verify the repaired production handoffs from durable opportunity queue through Operator, Risk reservation, execution, close, review, Attribution, and Feedback.
   trade_chain_full_suite:
     command: uv run pytest tests/ -q --tb=line
     purpose: Verify the complete repository suite after the trade-chain repairs.

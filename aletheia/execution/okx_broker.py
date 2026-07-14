@@ -25,7 +25,8 @@ from aletheia.execution.position_enrichment import build_entry_enrichment, liqui
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
-    insert_order, insert_fill, insert_position, list_positions, update_position,
+    find_compatible_open_position,
+    insert_order, insert_fill, insert_position, update_position,
     update_order, transaction,
 )
 from aletheia.storage.sqlite import get_db
@@ -596,14 +597,9 @@ def _find_open_position(
     execution_mode: str,
     strategy_id: str | None,
 ) -> dict | None:
-    for p in list_positions(status="open"):
-        if (p["symbol"] == symbol and p["market_type"] == market_type
-                and p["direction"] == direction
-                and p["execution_mode"] == execution_mode):
-            if strategy_id is not None and p.get("strategy_id") not in (None, "", strategy_id):
-                continue
-            return p
-    return None
+    return find_compatible_open_position(
+        symbol, market_type, direction, execution_mode, strategy_id
+    )
 
 
 def _claim_close_order(

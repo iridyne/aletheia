@@ -136,6 +136,7 @@ async def test_divergence_scanner_creates_opportunity(tmp_path, monkeypatch):
         return_value=mock_provider,
     ):
         result = await run_divergence_scanner(permission_mode="Paper")
+        replay = await run_divergence_scanner(permission_mode="Paper")
 
     assert len(result["errors"]) == 0
     assert any("opportunity:" in o for o in result["outputs"])
@@ -149,11 +150,69 @@ async def test_divergence_scanner_creates_opportunity(tmp_path, monkeypatch):
     assert opp["asset_class"] == "crypto"
     assert opp["execution_eligible"] == 1
     assert opp["direction_bias"] == "long"
+    assert opp["market"] == "spot"
+    assert datetime.fromisoformat(opp["valid_until"]) == (
+        datetime.fromisoformat(now) + timedelta(hours=2)
+    )
     assert "divergence" in opp["thesis"].lower()
 
     meta = json.loads(opp["metadata"])
     assert meta["trigger"] == "prediction_divergence"
     assert meta["prob_change_24h"] == 0.15
+    assert meta["prediction_market_id"] == "pm_test_001"
+    assert meta["prediction_external_market_id"] == "ext_001"
+    assert meta["prediction_updated_at"] == now
+    assert meta["instrument_market"] == "spot"
+    assert meta["source_version"]
+    assert any(
+        output.startswith("skip_duplicate_source_version:")
+        for output in replay["outputs"]
+    )
+    mock_provider.get_ticker.assert_awaited_once_with("BTC/USDT")
+
+
+@pytest.mark.asyncio
+async def test_divergence_scanner_short_requires_explicit_perp_fact(tmp_path, monkeypatch):
+    """A bearish prediction cannot be relabeled as futures without a perp fact."""
+    _setup_db(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc).isoformat()
+    from aletheia.storage.repositories import _insert
+    _insert("prediction_markets", {
+        "id": "pm_test_short",
+        "event_id": "ev_test_short",
+        "source": "polymarket",
+        "external_market_id": "ext_short",
+        "question": "Will Bitcoin fall below $70k by end of 2026?",
+        "yes_probability": 0.35,
+        "no_probability": 0.65,
+        "probability_change_24h": -0.15,
+        "volume_24h": 120000.0,
+        "liquidity": 80000.0,
+        "status": "active",
+        "updated_at": now,
+    })
+
+    mock_provider = AsyncMock()
+    mock_provider.get_ticker = AsyncMock(return_value=Ticker(
+        symbol="BTC/USDT",
+        last_price=95000.0,
+        volume_24h=5_000_000_000.0,
+        change_pct_24h=-1.0,
+    ))
+
+    with patch(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        return_value=mock_provider,
+    ):
+        result = await run_divergence_scanner(permission_mode="Paper")
+
+    assert result["errors"] == []
+    assert "skip:BTC/USDT:short_requires_perp_instrument" in result["outputs"]
+    assert repo._select_all(
+        "opportunities", where="source_agent = ?", params=("divergence_scanner",)
+    ) == []
+    mock_provider.get_ticker.assert_not_awaited()
 
 
 @pytest.mark.asyncio

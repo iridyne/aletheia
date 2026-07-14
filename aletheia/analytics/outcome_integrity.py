@@ -47,6 +47,14 @@ OUTCOME_EXCLUSION_REASONS = frozenset({
 })
 
 _VERIFIED_EXIT_PRICE_SOURCES = frozenset({"broker_fill", "local_fill"})
+_BROKER_LEDGER_EXECUTION_MODES = frozenset({
+    "bitget_demo",
+    "bitget_live_limited",
+    "okx_demo",
+    "okx_live_limited",
+    "binance_testnet",
+    "binance_live_limited",
+})
 _STRUCTURED_KEYS = frozenset({
     "close_category",
     "entry_price_source",
@@ -83,6 +91,43 @@ class OutcomeAssessment:
     horizon: str | None = None
     net_return_pct: float | None = None
     source: str | None = None
+
+
+def validated_funding_economics(
+    *,
+    market_type: Any,
+    execution_mode: Any,
+    funding_cost: Any,
+    funding_source: Any,
+) -> tuple[float | None, str]:
+    """Return funding only when its provenance matches the account boundary.
+
+    A numeric value alone is not evidence. Local paper futures can only use the
+    local simulation ledger; exchange-backed demo/live futures can only use the
+    broker ledger. Unknown execution modes fail closed rather than inheriting a
+    plausible-looking source label.
+    """
+    market = _normalize(market_type)
+    mode = _normalize(execution_mode)
+    source = _normalize(funding_source)
+    parsed_cost = _to_float(funding_cost)
+
+    if market == "spot":
+        if (
+            parsed_cost is not None
+            and abs(parsed_cost) <= 1e-12
+            and source == "not_applicable"
+        ):
+            return 0.0, "not_applicable"
+        return None, "unavailable"
+
+    if market != "usdt_futures" or parsed_cost is None:
+        return None, "unavailable"
+    if mode == "paper_internal" and source == "local_simulation":
+        return parsed_cost, source
+    if mode in _BROKER_LEDGER_EXECUTION_MODES and source == "broker_ledger":
+        return parsed_cost, source
+    return None, "unavailable"
 
 
 def outcome_write_eligibility(
@@ -278,28 +323,19 @@ def assess_position_closure(row: dict[str, Any]) -> OutcomeAssessment:
         )
 
     market_type = _normalize(row.get("market_type"))
-    funding_cost = _to_float(row.get("funding_cost"))
-    funding_source = _normalize(row.get("funding_source"))
-    if market_type == "spot":
-        if (
-            funding_cost is None
-            or abs(funding_cost) > 1e-12
-            or funding_source != "not_applicable"
-        ):
-            return _assessment_from_closure(
-                closure, reason="incomplete_funding_economics"
-            )
-    elif market_type == "usdt_futures":
-        if funding_cost is None or funding_source not in {
-            "broker_ledger",
-            "local_simulation",
-        }:
-            return _assessment_from_closure(
-                closure, reason="incomplete_funding_economics"
-            )
-    else:
+    if market_type not in {"spot", "usdt_futures"}:
         return _assessment_from_closure(
             closure, reason="incomplete_realized_economics"
+        )
+    funding_cost, _funding_source = validated_funding_economics(
+        market_type=market_type,
+        execution_mode=row.get("execution_mode"),
+        funding_cost=row.get("funding_cost"),
+        funding_source=row.get("funding_source"),
+    )
+    if funding_cost is None:
+        return _assessment_from_closure(
+            closure, reason="incomplete_funding_economics"
         )
 
     direction = _normalize(row.get("direction"))
@@ -380,6 +416,7 @@ def raw_account_events(
     params.append(limit)
     rows = get_db().execute(
         """
+        SELECT recent.* FROM (
         SELECT p.*,
                CASE WHEN EXISTS (
                    SELECT 1
@@ -424,7 +461,8 @@ def raw_account_events(
                ) THEN 1 ELSE 0 END AS _attribution_complete
         FROM positions p
         WHERE """ + " AND ".join(conditions)
-        + " ORDER BY datetime(p.closed_at) ASC, p.id ASC LIMIT ?",
+        + " ORDER BY datetime(p.closed_at) DESC, p.id DESC LIMIT ?"
+        + ") AS recent ORDER BY datetime(recent.closed_at) ASC, recent.id ASC",
         params,
     ).fetchall()
     return [dict(row) for row in rows]

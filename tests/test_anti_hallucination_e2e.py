@@ -348,8 +348,8 @@ def test_a10_layer2_signals_injected_into_prompt():
     assert "RF: momentum scanner" in prompt
 
 
-def test_layer2_splits_executable_and_excluded_ranker_candidates(monkeypatch):
-    """Skipped ranker rows must not consume the System Operator's main candidate slots."""
+def test_layer2_keeps_unqueued_ranker_candidates_analysis_only(monkeypatch):
+    """A locally eligible ranker row is not executable until it has a pending carrier."""
     from aletheia.agent_shell.trading_context import _build_layer2_short_term
 
     def fake_candidates(limit=30):
@@ -358,6 +358,7 @@ def test_layer2_splits_executable_and_excluded_ranker_candidates(monkeypatch):
                 "opportunity_id": "opp-good",
                 "symbol": "GOOD/USDT",
                 "direction": "short",
+                "market_type": "spot",
                 "trade_score": 50,
                 "skip_reason": None,
                 "scanner_family": "short_bias",
@@ -392,7 +393,8 @@ def test_layer2_splits_executable_and_excluded_ranker_candidates(monkeypatch):
 
     layer2 = _build_layer2_short_term()
 
-    assert [c["symbol"] for c in layer2["executable_candidates"]] == ["GOOD/USDT"]
+    assert layer2["executable_candidates"] == []
+    assert [c["symbol"] for c in layer2["analysis_only_candidates"]] == ["GOOD/USDT"]
     assert [c["symbol"] for c in layer2["ranker_candidates"]] == ["GOOD/USDT"]
     summary = {row["reason"]: row["count"] for row in layer2["excluded_candidates_summary"]}
     assert summary["unsupported_demo_symbol"] == 1

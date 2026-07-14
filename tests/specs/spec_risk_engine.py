@@ -249,13 +249,11 @@ def test_correlation_exposure_error_produces_violation(monkeypatch):
     from aletheia.storage.models import TradeProposal
     from aletheia.config.loader import load_config
 
-    monkeypatch.setattr(
-        "aletheia.storage.repositories.list_positions",
-        lambda **kw: (_ for _ in ()).throw(RuntimeError("DB gone")),
-        raising=False,
-    )
     from unittest.mock import patch
-    with patch("aletheia.risk.engine.list_positions", side_effect=RuntimeError("DB gone")):
+    with patch(
+        "aletheia.storage.repositories.list_all_open_positions",
+        side_effect=RuntimeError("DB gone"),
+    ):
         cfg = load_config()
         p = TradeProposal(
             symbol="BTC/USDT", market_type="spot", direction="long",
@@ -821,8 +819,8 @@ def test_risk_checks_fail_closed_on_internal_error(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("simulated internal failure")
 
-    # Account-leverage check: list_positions blows up → must fail closed (behavioral).
-    monkeypatch.setattr(eng, "list_positions", _boom)
+    # Account-leverage check: the full authority reader blows up → fail closed.
+    monkeypatch.setattr(eng, "list_all_open_positions", _boom)
     v_lev = eng._check_account_leverage_ratio(proposal, cfg)
     assert v_lev, "account leverage check must fail closed (return a violation) on error"
     assert any("error" in x for x in v_lev)

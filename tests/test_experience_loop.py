@@ -8,6 +8,7 @@ Governance under test:
 """
 
 import sqlite3
+from datetime import datetime, timezone
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
@@ -155,13 +156,49 @@ async def test_observer_logs_retrieval_and_survives_offline_llm(tmp_path, monkey
 # reviews/critiques are promoted to high_confidence so they actually become retrievable.
 
 def _seed_filled_short(strategy_id: str = "s1") -> None:
-    from aletheia.storage.models import TradeProposal, Order, Fill
-    repo.insert_trade_proposal(TradeProposal(id="p1", strategy_id=strategy_id, symbol="SOL/USDT",
-                                             market_type="futures", direction="short"))
-    repo.insert_order(Order(id="o1", proposal_id="p1", symbol="SOL/USDT", market_type="futures",
-                            direction="short", order_type="market", quantity=0.3,
-                            execution_mode="bitget_demo", source="adopted"))
-    repo.insert_fill(Fill(id="f1", order_id="o1", fill_price=140.0, fill_quantity=0.3))
+    from aletheia.storage.models import Position
+    from tests.test_outcome_closure import _insert_entry_chain
+
+    opportunity_id, proposal_id, order_id = _insert_entry_chain(
+        position_id="position-experience-review",
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="short",
+        quantity=0.3,
+        price=140.0,
+        execution_mode="bitget_demo",
+        strategy_id=strategy_id,
+    )
+    repo.insert_position(Position(
+        id="position-experience-review",
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="short",
+        quantity=0.3,
+        entry_price=140.0,
+        current_price=130.0,
+        realized_pnl=3.0,
+        execution_mode="bitget_demo",
+        strategy_id=strategy_id,
+        proposal_id=proposal_id,
+        order_id=order_id,
+        opportunity_id=opportunity_id,
+        status="closed",
+        close_reason="take_profit",
+        closed_at=datetime.now(timezone.utc).isoformat(),
+        entry_fee=0.0,
+        exit_fee=0.0,
+        funding_cost=0.0,
+        funding_source="broker_ledger",
+        close_category="strategy",
+        entry_price_source="broker_fill",
+        entry_fill_verified=True,
+        exit_price_source="broker_fill",
+        exit_fill_verified=True,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+        outcome_semantics_version="oi-v1",
+    ))
 
 
 def test_post_trade_review_confidence_gates_retrieval(tmp_path, monkeypatch):

@@ -1082,8 +1082,24 @@ def _build_assessment_prompt(ctx: dict) -> str:
 
     # ── Layer 1: Environment Snapshot ──
     positions = layer1.get("positions", [])
+    positions_meta = layer1.get("positions_meta") or {}
+    total_positions = int(positions_meta.get("total", len(positions)))
+    visible_positions = int(
+        positions_meta.get("prompt_visible_count", min(len(positions), 5))
+    )
+    hidden_positions = int(
+        positions_meta.get(
+            "prompt_overflow_count", max(total_positions - visible_positions, 0)
+        )
+    )
+    position_count_line = (
+        f"Open positions: {total_positions} total; showing {visible_positions}; "
+        f"{hidden_positions} not shown"
+    )
     pos_lines = "\n".join(
-        f"  {p['symbol']} {p['direction']} qty={p['quantity']} entry={p['entry_price']} "
+        f"  id={p.get('id', '?')} {p.get('symbol', '?')} "
+        f"[{p.get('market_type', '?')}] {p.get('direction', '?')} "
+        f"qty={p.get('quantity', '?')} entry={p.get('entry_price', '?')} "
         f"uPnL={p.get('unrealized_pnl', '?')} hold={p.get('hold_hours', '?')}h"
         f"{_fmt_position_x_context(p.get('structure_context'))}"
         for p in positions[:5]
@@ -1230,6 +1246,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "# Layer 1: Environment Snapshot (current state)",
         "",
         "## Portfolio",
+        position_count_line,
         pos_lines,
         "",
         "## Account",
@@ -1353,7 +1370,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
             parts += ["## Reasoning Feedback (which signal patterns have actually worked)",
                       reasoning_fb, ""]
 
-    # Executable candidates (what paper_trader could actually submit)
+    # Executable candidates are the ranker/pending exact-identity intersection.
     ranker = (
         layer2.get("executable_candidates")
         if "executable_candidates" in layer2
@@ -1364,10 +1381,25 @@ def _build_assessment_prompt(ctx: dict) -> str:
             f"  {c['symbol']} {c.get('direction', '?')} score={c.get('trade_score', '?')}"
             for c in ranker[:6]
         )
-        parts += ["## Executable Candidates (ranked picks that passed local filters)", ranker_lines, ""]
+        parts += [
+            "## Executable Candidates (ranked picks backed by durable pending carriers)",
+            ranker_lines,
+            "",
+        ]
         skew_note = _direction_skew_note(ranker[:6], "executable candidates")
         if skew_note:
             parts += [skew_note, ""]
+    analysis_only = layer2.get("analysis_only_candidates") or []
+    if analysis_only:
+        preview_lines = "\n".join(
+            f"  {c['symbol']} {c.get('direction', '?')} score={c.get('trade_score', '?')}"
+            for c in analysis_only[:6]
+        )
+        parts += [
+            "## Analysis-only Ranker Preview (not queued; never select for execution)",
+            preview_lines,
+            "",
+        ]
     excluded_summary = layer2.get("excluded_candidates_summary") or []
     if excluded_summary:
         excluded_lines = []
@@ -1447,7 +1479,11 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "---",
         "# Your Reasoning Space",
         "",
-        "Consider freely — there are no fixed rules for what you must do:",
+        "Reason freely about whether to act, but execution authority is not free-form:",
+        "- For trade/scale-in/flip, choose only an exact symbol, direction, and market_type "
+        "shown in Pending Signals / Executable Candidates.",
+        "- Analysis-only Ranker Preview rows are not queued and must never be selected "
+        "for execution. If no durable pending signal is suitable, skip.",
         "- What is the dominant market narrative right now? Is it already priced in?",
         "- Am I seeing confluence (multiple signals aligning) or conflict?",
         "- Given my recent 7-day performance, should I be more or less aggressive?",
@@ -1459,12 +1495,9 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "SHOULD this trade happen, in WHAT direction, with WHAT conviction?",
         "",
         "## Market type & leverage",
-        "- market_type: choose per setup — neither is inherently better. Each open "
-        "opportunity is tagged [spot] or [usdt_futures] above; match the venue to the "
-        "thesis. Use 'usdt_futures' (perpetual) when you want leverage, want to short, "
-        "or funding pays you; use 'spot' when you want no funding cost / no liquidation "
-        "risk, or funding is against the perp direction (e.g. FR>+0.03% and you are long). "
-        "A short can only be expressed on 'usdt_futures' (spot cannot be sold short).",
+        "- market_type: for a new entry, copy the exact market_type from its durable "
+        "Pending Signal; never relabel spot as futures or futures as spot downstream. "
+        "A short requires an existing usdt_futures carrier (spot cannot be sold short).",
         "- leverage: integer ≥1, only for usdt_futures. Scale with conviction — 1 (none) when "
         "uncertain, 2-3 for solid setups, higher only for the strongest confluence. The risk "
         "engine clamps to a per-asset-tier cap (majors allow more than alts), so an over-eager "
@@ -1987,7 +2020,8 @@ def _attach_position_context(decision: TradingDecision, ctx: dict) -> bool:
     the model omits symbol but its reasoning uniquely names one current position,
     the causal parent is still deterministic and should be preserved.
     """
-    positions = (ctx.get("layer1") or {}).get("positions") or []
+    layer1 = ctx.get("layer1") or {}
+    positions = layer1.get("position_authority") or layer1.get("positions") or []
     match = _match_position_for_decision(decision, positions)
     if not match:
         return False
@@ -1995,6 +2029,8 @@ def _attach_position_context(decision: TradingDecision, ctx: dict) -> bool:
         decision.symbol = match.get("symbol")
     if not decision.direction:
         decision.direction = match.get("direction")
+    if not decision.market_type:
+        decision.market_type = match.get("market_type")
     decision.opportunity_id = match.get("opportunity_id") or decision.opportunity_id
     decision.strategy_id = match.get("strategy_id") or decision.strategy_id
     trade_school = match.get("trade_school")
@@ -2005,19 +2041,25 @@ def _attach_position_context(decision: TradingDecision, ctx: dict) -> bool:
 def _match_position_for_decision(decision: TradingDecision, positions: list[dict]) -> dict | None:
     if not positions:
         return None
+    eligible = [
+        p for p in positions
+        if (not decision.direction or not p.get("direction") or p.get("direction") == decision.direction)
+        and (not decision.market_type or not p.get("market_type") or p.get("market_type") == decision.market_type)
+    ]
     if decision.symbol:
         matches = [
-            p for p in positions
+            p for p in eligible
             if p.get("symbol") == decision.symbol
-            and (not decision.direction or not p.get("direction") or p.get("direction") == decision.direction)
         ]
         return matches[0] if len(matches) == 1 else None
 
     reasoning = decision.reasoning or ""
-    mentioned = [p for p in positions if p.get("symbol") and str(p["symbol"]) in reasoning]
-    symbols = {p.get("symbol") for p in mentioned}
-    if len(symbols) == 1:
+    mentioned = [
+        p for p in eligible
+        if p.get("symbol") and str(p["symbol"]) in reasoning
+    ]
+    if len(mentioned) == 1:
         return mentioned[0]
-    if len(positions) == 1:
-        return positions[0]
+    if len(eligible) == 1:
+        return eligible[0]
     return None

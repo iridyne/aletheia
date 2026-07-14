@@ -54,6 +54,114 @@ def _init_agent_shell_db(tmp_path, monkeypatch):
     return conn
 
 
+@pytest.mark.asyncio
+async def test_portfolio_review_can_close_old_target_beyond_default_position_page(
+    tmp_path, monkeypatch
+):
+    """Execution authority must search every open position, not the UI-sized page."""
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import (
+        insert_position,
+        list_positions,
+        _select_one,
+    )
+
+    target = Position(
+        id="oldest-target-beyond-fifty",
+        symbol="OLD/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+    )
+    insert_position(target)
+    for index in range(50):
+        insert_position(Position(
+            id=f"newer-open-{index:02d}",
+            symbol=f"NEW{index}/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            execution_mode="paper_internal",
+        ))
+
+    assert target.id not in {
+        row["id"] for row in list_positions(status="open")
+    }, "fixture no longer crosses the default 50-row boundary"
+
+    monkeypatch.setattr(
+        "aletheia.agent_shell.context.build_app_context",
+        lambda sections=None: {
+            "trading": {"open_positions": [_select_one("positions", target.id)]},
+            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
+        },
+    )
+
+    async def choose_old_target(_system, _user, *, schema):
+        return ({
+            "action": "close_one",
+            "target_symbol": target.symbol,
+            "target_market_type": target.market_type,
+            "target_direction": target.direction,
+            "target_position_id": target.id,
+            "reasoning": "close the explicitly selected old position",
+        }, None)
+
+    monkeypatch.setattr(
+        "aletheia.agents.helpers.llm_structured", choose_old_target
+    )
+    monkeypatch.setattr(
+        "aletheia.portfolio.pnl._latest_price", lambda _symbol: 110.0
+    )
+
+    result = await review_portfolio_state({})
+
+    stored = _select_one("positions", target.id)
+    close_rows = conn.execute(
+        "SELECT o.position_id, f.fill_price FROM orders o JOIN fills f "
+        "ON f.order_id=o.id WHERE o.position_id=? AND o.close_reason=?",
+        (target.id, "pi_agent_portfolio_review"),
+    ).fetchall()
+    assert result["positions_closed"] == 1
+    assert stored["status"] == "closed"
+    assert [dict(row) for row in close_rows] == [
+        {"position_id": target.id, "fill_price": pytest.approx(109.945)}
+    ]
+
+
+def test_operator_assessment_counts_all_open_positions_above_one_hundred(
+    tmp_path, monkeypatch
+):
+    """The deterministic Operator assessment must not report its query cap as truth."""
+    _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.operator_loop import build_system_assessment
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+
+    cfg = load_config()
+    cfg.risk.max_open_positions_demo = 200
+    save_config(cfg)
+    for index in range(101):
+        insert_position(Position(
+            id=f"operator-count-{index:03d}",
+            symbol=f"COUNT{index}/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            execution_mode="paper_internal",
+        ))
+
+    assessment = build_system_assessment()
+
+    assert assessment.open_positions == 101
+
+
 # --- Registry tests ---
 
 def test_registry_has_32_commands():

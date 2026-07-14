@@ -12,6 +12,7 @@ from typing import Any
 from aletheia.analytics.outcome_integrity import (
     OUTCOME_SEMANTICS_VERSION,
     outcome_write_eligibility,
+    validated_funding_economics,
 )
 from aletheia.data.symbols import to_canonical
 from aletheia.execution.verified_exit import VerifiedExitResult
@@ -347,30 +348,19 @@ def close_position_verified(
             exit_price,
             float(current["quantity"]),
         )
-        if current.get("market_type") == "spot":
-            funding_cost = 0.0
-            funding_source = "not_applicable"
-        elif current.get("market_type") == "usdt_futures":
-            try:
-                candidate_funding_cost = float(current["funding_cost"])
-            except (KeyError, TypeError, ValueError):
-                candidate_funding_cost = math.nan
-            candidate_funding_source = str(
-                current.get("funding_source") or "unavailable"
-            )
-            if (
-                math.isfinite(candidate_funding_cost)
-                and candidate_funding_source
-                in {"broker_ledger", "local_simulation"}
-            ):
-                funding_cost = candidate_funding_cost
-                funding_source = candidate_funding_source
-            else:
-                funding_cost = None
-                funding_source = "unavailable"
-        else:
-            funding_cost = None
-            funding_source = "unavailable"
+        market_type = str(current.get("market_type") or "")
+        funding_cost, funding_source = validated_funding_economics(
+            market_type=market_type,
+            execution_mode=current.get("execution_mode"),
+            funding_cost=(
+                0.0 if market_type == "spot" else current.get("funding_cost")
+            ),
+            funding_source=(
+                "not_applicable"
+                if market_type == "spot"
+                else current.get("funding_source")
+            ),
+        )
         # A verified exit Fill closes the execution lifecycle, but unknown
         # futures funding still makes net realized economics unavailable.  Do
         # not convert that missing ledger fact into a zero-cost assumption.

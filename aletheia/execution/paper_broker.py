@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
-    insert_order, update_order, insert_fill, insert_position, update_position, list_positions,
+    find_compatible_open_position,
+    insert_order,
+    update_order,
+    insert_fill,
+    insert_position,
+    update_position,
 )
 from aletheia.execution.position_enrichment import liquidation_price_for as _liq_price
 
@@ -535,11 +540,10 @@ def _find_open_position(
     execution_mode: str,
     strategy_id: str | None,
 ) -> dict | None:
-    positions = list_positions(status="open")
-    for p in positions:
-        if (p["symbol"] == symbol and p["market_type"] == market_type
-                and p["direction"] == direction and p["execution_mode"] == execution_mode):
-            if strategy_id is not None and p.get("strategy_id") not in (None, "", strategy_id):
-                continue
-            return p
-    return None
+    return find_compatible_open_position(
+        symbol,
+        market_type,
+        direction,
+        execution_mode,
+        strategy_id,
+    )

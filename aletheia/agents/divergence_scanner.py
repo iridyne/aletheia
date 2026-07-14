@@ -7,6 +7,7 @@ crypto-class Opportunity (execution_eligible=True).
 Called by the scheduler immediately after prediction_observer completes.
 """
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone, timedelta
@@ -15,10 +16,14 @@ from aletheia.agents import register_agent
 from aletheia.agents.helpers import log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.data.ccxt_provider import get_market_data_provider
+from aletheia.data.symbols import MARKET_SPOT
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
-    insert_opportunity, list_strategies,
+    find_divergence_opportunity_by_source_version,
+    insert_opportunity,
+    list_strategies,
 )
+from aletheia.trading.instruments import instrument_market_to_db_market
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 
 logger = logging.getLogger("aletheia.divergence_scanner")
@@ -56,6 +61,32 @@ _MIN_VOLUME_USD = 50_000.0    # market must have >$50k volume
 _MAX_PRICE_MOVE = 3.0         # if price already moved >3%, no divergence
 _MAX_CONFIDENCE_SCORE = 70    # cap — prediction markets are noisy
 _MIN_CONFIDENCE_SCORE = 40
+
+
+def _source_version(row: dict, symbol: str, market: str) -> str:
+    """Stable identity for one prediction observation and one proven instrument."""
+    payload = {
+        "prediction_market_id": row.get("id"),
+        "prediction_external_market_id": row.get("external_market_id"),
+        "prediction_updated_at": row.get("updated_at"),
+        "symbol": symbol,
+        "market": market,
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return f"prediction_divergence:{digest}"
+
+
+def _source_valid_until(updated_at: str) -> str | None:
+    """Expire with the source fact's two-hour freshness window, never from replay time."""
+    try:
+        parsed = datetime.fromisoformat(str(updated_at).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (parsed + timedelta(hours=2)).isoformat()
 
 
 def _map_question_to_symbol(question: str) -> str | None:
@@ -153,7 +184,35 @@ async def run_divergence_scanner(
         if not symbol:
             continue
 
-        # Fetch current ticker for the crypto asset
+        # Direction comes from the prediction fact. The current producer fetches
+        # a bare-symbol ticker, whose provider contract resolves to spot. A bearish
+        # view therefore has no proven shortable instrument and must not be guessed
+        # into a futures market downstream.
+        direction = "long" if prob_change > 0 else "short"
+        if direction == "short":
+            reason = "short_requires_perp_instrument"
+            outputs.append(f"skip:{symbol}:{reason}")
+            record_step(
+                run_id,
+                f"divergence_skip:{row.get('id') or symbol}",
+                input_data=f"symbol={symbol} direction={direction}",
+                output_data=reason,
+            )
+            continue
+
+        instrument_market = MARKET_SPOT
+        db_market = instrument_market_to_db_market(instrument_market)
+        source_version = _source_version(row, symbol, db_market)
+        if find_divergence_opportunity_by_source_version(source_version):
+            outputs.append(f"skip_duplicate_source_version:{source_version}")
+            continue
+
+        valid_until = _source_valid_until(row.get("updated_at"))
+        if valid_until is None:
+            outputs.append(f"skip:{symbol}:invalid_source_updated_at")
+            continue
+
+        # A bare canonical symbol is explicitly a spot ticker in CCXTProvider.
         try:
             ticker = await provider.get_ticker(symbol)
         except Exception as e:
@@ -165,9 +224,6 @@ async def run_divergence_scanner(
         # Divergence check: probability moved significantly but price didn't follow
         if price_change_pct > _MAX_PRICE_MOVE:
             continue  # Price already moved — no divergence
-
-        # Direction: probability rising = bullish for crypto, falling = bearish
-        direction = "long" if prob_change > 0 else "short"
 
         score = _compute_divergence_score(prob_change, ticker.change_pct_24h, volume, liquidity)
 
@@ -184,7 +240,7 @@ async def run_divergence_scanner(
 
         opp = Opportunity(
             symbol=symbol,
-            market="crypto",
+            market=db_market,
             direction_bias=direction,
             thesis=thesis,
             confidence=confidence,
@@ -193,8 +249,14 @@ async def run_divergence_scanner(
             linked_strategy_id=linked_strategy_id,
             asset_class="crypto",
             execution_eligible=True,
+            valid_until=valid_until,
             metadata=json.dumps({
                 "trigger": "prediction_divergence",
+                "source_version": source_version,
+                "prediction_market_id": row.get("id"),
+                "prediction_external_market_id": row.get("external_market_id"),
+                "prediction_updated_at": row.get("updated_at"),
+                "instrument_market": instrument_market,
                 "prediction_question": question[:120],
                 "yes_probability": yes_prob,
                 "prob_change_24h": prob_change,

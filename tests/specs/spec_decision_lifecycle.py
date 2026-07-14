@@ -281,8 +281,9 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeyp
 @spec_claim(
     SpecClaim(
         "DL-S11", "decision_lifecycle_contract", "§2.3 fair pending queue", "L2b",
-        "The pending carrier exposes oldest-first unresolved signals, de-duplicates before "
-        "the visible limit, and reports total/overflow instead of silently dropping backlog.",
+        "The pending carrier exposes oldest-first unresolved signals, de-duplicates repeated "
+        "rows only by complete execution identity before the visible limit, and reports "
+        "total/overflow instead of silently dropping backlog.",
         status="implemented",
     ),
 )
@@ -330,11 +331,11 @@ def test_pending_queue_is_oldest_first_unresolved_and_reports_overflow(tmp_path,
     signals, queue = _build_pending_signal_queue(limit=5, max_age_minutes=30)
 
     assert [row["opportunity_id"] for row in signals] == [
-        "opp-btc-oldest", "opp-sol", "opp-ada", "opp-dot", "opp-xrp",
+        "opp-btc-oldest", "opp-btc-duplicate", "opp-sol", "opp-ada", "opp-dot",
     ]
-    assert queue["unresolved_total"] == 6
+    assert queue["unresolved_total"] == 7
     assert queue["visible_count"] == 5
-    assert queue["overflow_count"] == 1
+    assert queue["overflow_count"] == 2
     assert queue["oldest_at"] == signals[0]["at"]
 
 
@@ -871,9 +872,13 @@ def test_heartbeat_cannot_submit_unqueued_open_or_ranker_opportunity(tmp_path, m
     context = build_enriched_trading_context()
     assert context["layer2"]["pending_queue"]["unresolved_total"] == 0
     assert any(row.get("id") == opportunity.id for row in context["layer1"]["opportunities"])
-    assert any(
+    assert not any(
         row.get("opportunity_id") == opportunity.id
         for row in context["layer2"]["executable_candidates"]
+    )
+    assert any(
+        row.get("opportunity_id") == opportunity.id
+        for row in context["layer2"]["analysis_only_candidates"]
     )
 
     async def choose_unqueued_candidate(_context):
@@ -917,11 +922,163 @@ def test_heartbeat_cannot_submit_unqueued_open_or_ranker_opportunity(tmp_path, m
         "SELECT id, opportunity_id FROM trade_proposals WHERE opportunity_id=?",
         (opportunity.id,),
     ).fetchall()
+    anonymous_finals = db.execute(
+        "SELECT id FROM pi_decisions WHERE action!='signal_pending' "
+        "AND opportunity_id IS NULL"
+    ).fetchall()
+    opportunity_status = db.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opportunity.id,)
+    ).fetchone()[0]
     assert pending_count == 0
     assert not proposals, (
         "heartbeat formed a TradeProposal from an open/ranker Opportunity with no "
         f"signal_pending carrier: {[dict(row) for row in proposals]!r}"
     )
+    assert not anonymous_finals, (
+        "a trade-like choice without a durable carrier persisted an anonymous final: "
+        f"{[dict(row) for row in anonymous_finals]!r}"
+    )
+    assert opportunity_status == "open"
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S21", "decision_lifecycle_contract", "§2.3 executable queue identity", "L2b",
+        "A ranker preview becomes executable only when a durable signal_pending row "
+        "matches opportunity, source, symbol, direction, and market exactly; same-instrument "
+        "work from another Opportunity is not execution authority.",
+        status="implemented",
+    ),
+)
+def test_executable_candidate_requires_exact_pending_identity(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.trading_context import build_enriched_trading_context
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+
+    candidate = {
+        "opportunity_id": "ranked-exact-opportunity",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "market_type": "spot",
+        "trade_score": 92,
+        "skip_reason": None,
+        "scanner_family": "momentum",
+    }
+    monkeypatch.setattr(
+        "aletheia.agents.paper_trader_ranker.build_paper_candidates",
+        lambda limit=30: [candidate],
+    )
+
+    without_pending = build_enriched_trading_context()["layer2"]
+    assert without_pending["executable_candidates"] == []
+    assert [
+        row["opportunity_id"] for row in without_pending["analysis_only_candidates"]
+    ] == [candidate["opportunity_id"]]
+
+    insert_pi_decision(PiDecision(
+        id="same-instrument-wrong-opportunity",
+        action="signal_pending",
+        opportunity_id="different-opportunity",
+        signal_source="market_observer",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+    ))
+    wrong_identity = build_enriched_trading_context()["layer2"]
+    assert wrong_identity["executable_candidates"] == []
+    assert [
+        row["opportunity_id"] for row in wrong_identity["analysis_only_candidates"]
+    ] == [candidate["opportunity_id"]]
+
+    insert_pi_decision(PiDecision(
+        id="exact-ranker-pending-carrier",
+        action="signal_pending",
+        opportunity_id=candidate["opportunity_id"],
+        signal_source="market_observer",
+        symbol=candidate["symbol"],
+        direction=candidate["direction"],
+        market_type=candidate["market_type"],
+    ))
+    exact_identity = build_enriched_trading_context()["layer2"]
+    assert [
+        row["opportunity_id"] for row in exact_identity["executable_candidates"]
+    ] == [candidate["opportunity_id"]]
+    assert exact_identity["analysis_only_candidates"] == []
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S22", "decision_lifecycle_contract", "§2.1 open-position authority", "L2b",
+        "Layer 1 keeps a complete open-position authority set for close/reduce identity "
+        "matching while the prompt honestly reports its bounded visible slice.",
+        status="implemented",
+    ),
+)
+def test_old_position_beyond_layer1_display_still_attaches_close_identity(
+    tmp_path, monkeypatch
+):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.trading_context import _build_layer1_snapshot
+    from aletheia.agent_shell.trading_decision import (
+        TradingDecision,
+        _attach_opportunity_context,
+        _build_assessment_prompt,
+    )
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+
+    target = Position(
+        id="old-layer1-close-target",
+        symbol="OLD/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+        opportunity_id="old-layer1-opportunity",
+    )
+    insert_position(target)
+    for index in range(10):
+        insert_position(Position(
+            id=f"new-layer1-position-{index:02d}",
+            symbol=f"NEW{index}/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            execution_mode="paper_internal",
+        ))
+
+    layer1 = _build_layer1_snapshot()
+    assert target.id not in {row["id"] for row in layer1["positions"]}
+    assert target.id in {row["id"] for row in layer1["position_authority"]}
+    assert layer1["positions_meta"] == {
+        "total": 11,
+        "display_count": 10,
+        "prompt_visible_count": 5,
+        "prompt_overflow_count": 6,
+    }
+
+    decision = TradingDecision(
+        action="close",
+        symbol=target.symbol,
+        direction=target.direction,
+        market_type=None,
+        conviction=90,
+        reasoning="close the old position",
+    )
+    ctx = {"layer1": layer1, "layer2": {}, "layer3": {}}
+    _attach_opportunity_context(decision, ctx)
+
+    assert decision.opportunity_id == target.opportunity_id
+    assert decision.market_type == target.market_type
+    prompt = _build_assessment_prompt(ctx)
+    assert "Open positions: 11 total; showing 5; 6 not shown" in prompt
 
 
 @spec_claim(
@@ -1398,8 +1555,10 @@ def test_executable_candidate_view_separates_skips_from_main_slots():
     decision_text = (root / "aletheia" / "agent_shell" / "trading_decision.py").read_text(encoding="utf-8")
 
     assert "executable_candidates" in context_text
+    assert "analysis_only_candidates" in context_text
     assert "excluded_candidates_summary" in context_text
     assert "## Executable Candidates" in decision_text
+    assert "## Analysis-only Ranker Preview" in decision_text
     assert "## Excluded Candidate Summary" in decision_text
 
 

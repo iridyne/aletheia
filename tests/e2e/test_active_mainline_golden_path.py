@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
@@ -177,44 +177,38 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     assert session_b["session_id"] != session_a["session_id"]
     assert session_b["runtime_id"] == session_a["runtime_id"]
 
-    from aletheia.execution.verified_exit import VerifiedExitFill, VerifiedExitResult
-    from aletheia.portfolio.outcome_closure import close_position_verified
+    # Close through the same production router used by automatic/manual local
+    # paper exits.  This must create the real close Order and Fill before the
+    # central Outcome/feedback hooks run; a hand-built VerifiedExitResult would
+    # prove only the second half of the business chain.
+    from aletheia.portfolio.position_manager import close_position_routed
 
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    evidence = VerifiedExitResult(
-        state="verified_fill",
-        reason="golden_path_local_fill",
-        broker_id="paper_internal",
-        account_environment="local_fixture",
-        account_scope="golden_path",
-        execution_mode="paper_internal",
-        position_id=position["id"],
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        position_absent=True,
-        history_complete=True,
-        history_start_ms=now_ms - int(timedelta(minutes=5).total_seconds() * 1000),
-        history_end_ms=now_ms + 1,
-        pages=1,
-        source_endpoint="deterministic_fixture",
-        fills=(VerifiedExitFill(
-            fill_id="golden-exit-fill",
-            order_id="golden-exit-order",
-            price=61_200.0,
-            quantity=float(position["quantity"]),
-            fee=61_200.0 * float(position["quantity"]) * 0.0006,
-            fee_currency="USDT",
-            realized_pnl=None,
-            filled_at_ms=now_ms,
-        ),),
-    )
-    close_result = close_position_verified(
-        position["id"], evidence, reason="take_profit", source="golden_path"
+    close_result = close_position_routed(
+        position["id"],
+        "take_profit",
+        fallback_exit_price=61_200.0,
+        decision_source="golden_path",
     )
     assert close_result["closed"] is True
 
     closed = repo._select_one("positions", position["id"])
+    close_order = repo.get_order(close_result["order_id"])
+    close_fill = next(
+        row
+        for row in repo.list_fills(limit=10)
+        if row["id"] == close_result["fill_id"]
+    )
+    assert close_order["proposal_id"] == proposal["id"]
+    assert close_order["position_id"] == position["id"]
+    assert close_order["client_order_id"] == f"close-{position['id']}"
+    assert close_order["close_reason"] == "take_profit"
+    assert close_fill["order_id"] == close_order["id"]
+    assert {row["id"] for row in repo.list_orders(limit=10)} == {
+        order["id"], close_order["id"],
+    }
+    assert {row["id"] for row in repo.list_fills(limit=10)} == {
+        fill["id"], close_fill["id"],
+    }
     from aletheia.learning.outcomes import assess_realized_position
 
     genuine = assess_realized_position(closed)
@@ -229,6 +223,41 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     assert closed["closed_runtime_session_id"] == session_b["session_id"]
     assert closed["runtime_session_id"] != closed["closed_runtime_session_id"]
     assert closed["closed_producer_commit"] == session_b["boot_commit"]
+
+    # The same Position must be visible to the real attribution/outbox/feedback
+    # consumers.  This closes the proof gap where earlier tests covered upstream
+    # and downstream in separate transactions.
+    from aletheia.analytics.factor_feedback import build_factor_feedback
+    from aletheia.analytics.trade_attribution import build_trade_attribution_rows
+
+    attribution = [
+        row
+        for row in build_trade_attribution_rows(limit=10)
+        if row["position_id"] == position["id"]
+    ]
+    assert len(attribution) == 1
+    assert attribution[0]["proposal_id"] == proposal["id"]
+    assert attribution[0]["order_id"] == order["id"]
+    assert attribution[0]["opportunity_id"] == opportunity.id
+    assert attribution[0]["risk_approved"] == 1
+    assert attribution[0]["realized_pnl"] == pytest.approx(closed["realized_pnl"])
+
+    jobs = repo.list_outcome_hook_jobs(position_id=position["id"])
+    assert len(jobs) == 1
+    assert jobs[0]["status"] == "completed"
+    assert jobs[0]["attempts"] == 1
+
+    feedback = build_factor_feedback(limit=10, min_trades=1)
+    scanner_feedback = next(
+        row
+        for row in feedback
+        if row["group_type"] == "scanner"
+        and row["factor_key"] == opportunity.scanner_family
+    )
+    assert scanner_feedback["trade_count"] == 1
+    assert scanner_feedback["total_pnl"] == pytest.approx(
+        round(float(closed["realized_pnl"]), 4)
+    )
     rs.reset_current_session()
 
     from aletheia.agents import post_trade_reviewer

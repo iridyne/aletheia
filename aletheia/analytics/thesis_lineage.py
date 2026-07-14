@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
 
+from aletheia.analytics.outcome_integrity import assess_reportable_outcome
 from aletheia.analytics.outcome_semantics import (
     MISSED_ALPHA,
     POSITIVE_GROSS_ONLY,
@@ -433,7 +434,13 @@ def _record_from_root(root: dict, *, root_type: str, ctx: dict) -> dict:
     parsed = _parse_agent_rationale(proposal.get("agent_rationale") if proposal else None)
 
     direction = root.get("direction_bias") or root.get("direction")
-    actual_pnl = _actual_pnl(position)
+    outcome_assessment = None
+    if position and str(position.get("status") or "").lower() == "closed":
+        outcome_assessment = assess_reportable_outcome(position)
+    outcome_unavailable = bool(
+        outcome_assessment is not None and not outcome_assessment.eligible
+    )
+    actual_pnl = None if outcome_unavailable else _actual_pnl(position)
     notional = _notional(position, proposal, order, fill)
     actual_pnl_pct = _pnl_pct(actual_pnl, notional)
     shadow_pnl = _round(_first_number(shadow.get("pnl_pct") if shadow else None))
@@ -441,14 +448,18 @@ def _record_from_root(root: dict, *, root_type: str, ctx: dict) -> dict:
     risk_reward = _first_number(proposal.get("risk_reward") if proposal else None)
     was_traded = bool(position or (order and _is_filled_order(order)) or (proposal and (proposal.get("status") or "").lower() in {"executed", "filled"}))
     forward_verdict = classify_outcome_row(forward, direction) if forward else "insufficient_data"
-    verdict = _verdict(
-        was_traded,
-        actual_pnl,
-        actual_pnl_pct,
-        risk_reward,
-        shadow_pnl,
-        batch_avg,
-        forward_verdict,
+    verdict = (
+        "outcome_unavailable"
+        if outcome_unavailable
+        else _verdict(
+            was_traded,
+            actual_pnl,
+            actual_pnl_pct,
+            risk_reward,
+            shadow_pnl,
+            batch_avg,
+            forward_verdict,
+        )
     )
     forward_values = outcome_values(forward or {}, direction)
 
@@ -489,6 +500,9 @@ def _record_from_root(root: dict, *, root_type: str, ctx: dict) -> dict:
         "notional_usdt": notional,
         "actual_pnl": actual_pnl,
         "actual_pnl_pct": actual_pnl_pct,
+        "outcome_eligibility_reason": (
+            outcome_assessment.reason if outcome_unavailable else None
+        ),
         "close_reason": position.get("close_reason") if position else None,
         "shadow_batch_id": shadow.get("batch_id") if shadow else None,
         "shadow_rank": shadow.get("rank") if shadow else None,

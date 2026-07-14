@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from hypothesis import given, strategies as st
@@ -71,6 +71,58 @@ def test_verified_structured_strategy_close_is_eligible():
     assert assessment.outcome_key == "position:position-1"
     assert assessment.net_return_pct == pytest.approx(0.5)
     assert assessment.evidence_source == "structured"
+
+
+@pytest.mark.parametrize(
+    (
+        "market_type",
+        "execution_mode",
+        "funding_cost",
+        "funding_source",
+        "eligible",
+    ),
+    [
+        ("spot", "paper_internal", 0.0, "not_applicable", True),
+        ("spot", "paper_internal", 0.0, "local_simulation", False),
+        ("usdt_futures", "paper_internal", 0.0, "local_simulation", True),
+        ("usdt_futures", "paper_internal", 0.0, "broker_ledger", False),
+        ("usdt_futures", "bitget_demo", 0.0, "broker_ledger", True),
+        ("usdt_futures", "bitget_demo", 0.0, "local_simulation", False),
+        ("usdt_futures", "bitget_live_limited", 0.0, "broker_ledger", True),
+        ("usdt_futures", "bitget_live_limited", 0.0, "local_simulation", False),
+        ("usdt_futures", "okx_demo", 0.0, "broker_ledger", True),
+        ("usdt_futures", "okx_demo", 0.0, "local_simulation", False),
+        ("usdt_futures", "okx_live_limited", 0.0, "broker_ledger", True),
+        ("usdt_futures", "okx_live_limited", 0.0, "local_simulation", False),
+        ("usdt_futures", "binance_testnet", 0.0, "broker_ledger", True),
+        ("usdt_futures", "binance_testnet", 0.0, "local_simulation", False),
+        ("usdt_futures", "binance_live_limited", 0.0, "broker_ledger", True),
+        ("usdt_futures", "binance_live_limited", 0.0, "local_simulation", False),
+        ("usdt_futures", "unknown_mode", 0.0, "broker_ledger", False),
+    ],
+)
+def test_funding_provenance_must_match_market_and_execution_mode(
+    market_type,
+    execution_mode,
+    funding_cost,
+    funding_source,
+    eligible,
+):
+    from aletheia.analytics.outcome_integrity import assess_position_closure
+
+    assessment = assess_position_closure(
+        _closed_row(
+            market_type=market_type,
+            execution_mode=execution_mode,
+            funding_cost=funding_cost,
+            funding_source=funding_source,
+        )
+    )
+
+    assert assessment.eligible is eligible
+    assert assessment.reason == (
+        "eligible" if eligible else "incomplete_funding_economics"
+    )
 
 
 @pytest.mark.parametrize(
@@ -217,6 +269,47 @@ def test_explicit_read_models_partition_closed_positions():
     assert {row["id"] for row in administrative_closures(**kwargs)} == {
         "admin", "maintenance",
     }
+
+
+def test_raw_account_events_caps_the_latest_rows_then_restores_chronological_order():
+    from aletheia.analytics.outcome_integrity import raw_account_events
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    rows = [
+        (
+            f"history-{index:05d}",
+            "BTC/USDT",
+            "spot",
+            "long",
+            1.0,
+            100.0,
+            "paper_internal",
+            "closed",
+            (start + timedelta(seconds=index)).isoformat(),
+        )
+        for index in range(10_001)
+    ]
+    db.executemany(
+        """
+        INSERT INTO positions (
+            id, symbol, market_type, direction, quantity, entry_price,
+            execution_mode, status, closed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    db.commit()
+
+    result = raw_account_events(limit=10_000)
+
+    assert len(result) == 10_000
+    assert result[0]["id"] == "history-00001"
+    assert result[-1]["id"] == "history-10000"
+    assert [row["closed_at"] for row in result] == sorted(
+        row["closed_at"] for row in result
+    )
 
 
 def test_learning_realized_assessment_composes_central_semantics():

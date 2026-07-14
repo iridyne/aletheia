@@ -10,6 +10,7 @@ import aletheia.config.loader as config_loader
 from aletheia.storage.repositories import (
     get_agent_run,
     get_trade_proposal,
+    list_all_open_positions,
     list_agent_runs,
     list_fills,
     list_knowledge_items,
@@ -1599,6 +1600,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     decision = await _evaluate(ctx)
 
     trade_like = decision.action in ("trade", "scale_in", "flip")
+    rejected_missing_pending_carrier = False
     if trade_like and not _has_durable_pending_carrier(decision):
         original_action = decision.action
         decision.filter_trace.append({
@@ -1618,6 +1620,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             f"{decision.reasoning} [pending signal required; no proposal created]"
         )
         trade_like = False
+        rejected_missing_pending_carrier = True
 
     def _attach_pending_queue_state(payload: dict) -> None:
         try:
@@ -1665,6 +1668,44 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     if trade_like:
         result["proposal_status"] = "submitting"
         result["proposal_reason"] = None
+
+    # A trade-like model choice without execution authority is an evaluation
+    # failure, not a terminal System Operator decision. Persisting it through
+    # claim_decision would create an anonymous final (or consume an unqueued
+    # Opportunity) and make the real pending queue look abandoned.
+    if rejected_missing_pending_carrier:
+        result["proposal_reason"] = "pending_signal_required"
+        result["operator_decision_persisted"] = False
+        existing_final = None
+        if decision.opportunity_id:
+            from aletheia.storage.repositories import (
+                find_final_pi_decision_for_opportunity,
+            )
+
+            existing_final = find_final_pi_decision_for_opportunity(
+                decision.opportunity_id,
+                decision.signal_source or "market_observer",
+            )
+        if existing_final:
+            result.update({
+                "action": existing_final.get("action"),
+                "symbol": existing_final.get("symbol"),
+                "direction": existing_final.get("direction"),
+                "market_type": existing_final.get("market_type"),
+                "conviction": existing_final.get("conviction"),
+                "reasoning": existing_final.get("reasoning") or "",
+                "proposal_id": existing_final.get("proposal_id"),
+                "proposal_status": existing_final.get("proposal_status"),
+                "proposal_reason": existing_final.get("proposal_reason"),
+                "opportunity_id": existing_final.get("opportunity_id"),
+                "signal_source": (
+                    existing_final.get("signal_source") or "market_observer"
+                ),
+                "idempotent_replay": True,
+                "operator_decision_persisted": True,
+            })
+        _attach_pending_queue_state(result)
+        return result
 
     prepared_proposal = None
     if trade_like:
@@ -1900,7 +1941,10 @@ Return JSON: {_json.dumps(schema)}"""
         target_id = review.get("target_position_id")
         # #106 fix: progressive tightening. position_id trumps everything;
         # otherwise combine symbol + whatever disambiguators the LLM gave.
-        candidates = list_positions(status="open")
+        # This is execution authority, not a display page. Resolve the requested
+        # target against the complete open set so an older position beyond the
+        # default 50-row list window cannot become impossible to close.
+        candidates = list_all_open_positions()
         if target_id:
             matching = [p for p in candidates if p["id"] == target_id]
         else:

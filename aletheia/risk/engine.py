@@ -16,12 +16,16 @@ from aletheia.portfolio.account_loss import authoritative_account_realized_loss
 from aletheia.storage.models import RiskDecision, TradeProposal
 from aletheia.storage.repositories import (
     _compute_proposal_hash,
+    acquire_entry_risk_reservation,
     get_authoritative_risk_decision,
     get_trade_proposal,
+    has_order_for_proposal,
     insert_authoritative_risk_decision,
     insert_risk_decision,
-    list_positions,
+    list_active_entry_risk_reservations_for_risk,
+    list_all_open_positions,
     list_unresolved_native_entry_orders_for_risk,
+    transaction,
 )
 
 logger = logging.getLogger("aletheia.risk.engine")
@@ -72,6 +76,18 @@ class _UnresolvedEntryReservation:
     remaining_quantity: float | None
     reserved_quantity: float | None
     has_open_position: bool
+    invalid_reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _PreOrderEntryReservation:
+    """Durable Risk allowance acquired before any Order can exist."""
+
+    proposal_id: str
+    symbol: str
+    execution_mode: str
+    price: float | None
+    reserved_quantity: float | None
     invalid_reasons: tuple[str, ...] = ()
 
 
@@ -160,6 +176,47 @@ def _unresolved_entry_reservations() -> list[_UnresolvedEntryReservation]:
             reserved_quantity=reserved_quantity,
             has_open_position=has_open_position,
             invalid_reasons=tuple(dict.fromkeys(invalid)),
+        ))
+    return reservations
+
+
+def _pre_order_entry_reservations(
+    *,
+    exclude_proposal_id: str | None = None,
+) -> list[_PreOrderEntryReservation]:
+    """Normalize every durable pre-Order allowance without inventing values."""
+    reservations: list[_PreOrderEntryReservation] = []
+    for row in list_active_entry_risk_reservations_for_risk(
+        exclude_proposal_id=exclude_proposal_id,
+    ):
+        invalid: list[str] = []
+        try:
+            quantity = float(row.get("quantity"))
+        except (TypeError, ValueError):
+            quantity = None
+        if quantity is None or not math.isfinite(quantity) or quantity <= 0:
+            quantity = None
+            invalid.append("entry_risk_reservation_invalid_quantity")
+        try:
+            price = float(row.get("price"))
+        except (TypeError, ValueError):
+            price = None
+        if price is None or not math.isfinite(price) or price <= 0:
+            price = None
+            invalid.append("entry_risk_reservation_invalid_price")
+        symbol = str(row.get("symbol") or "")
+        execution_mode = str(row.get("execution_mode") or "")
+        if not symbol:
+            invalid.append("entry_risk_reservation_invalid_symbol")
+        if execution_mode not in _NATIVE_EXECUTION_MODES:
+            invalid.append("entry_risk_reservation_invalid_execution_mode")
+        reservations.append(_PreOrderEntryReservation(
+            proposal_id=str(row.get("proposal_id") or ""),
+            symbol=symbol,
+            execution_mode=execution_mode,
+            price=price,
+            reserved_quantity=quantity,
+            invalid_reasons=tuple(invalid),
         ))
     return reservations
 
@@ -276,20 +333,52 @@ def evaluate_proposal(
 
     with _eval_lock:
         if decision_role == "authoritative":
-            proposal_commit_hash = _verified_original_proposal_commit_hash(
-                proposal,
-                require_evaluated_snapshot_match=True,
-            )
-            existing = get_authoritative_risk_decision(
-                proposal.id,
-                proposal_commit_hash,
-                proposal.quantity,
-            )
-            if existing is not None:
-                return _risk_result_from_row(existing)
-            # Preserve the historical one-argument private call for the default
-            # role; a few lock-focused tests instrument this boundary directly.
-            return _evaluate_proposal_locked(proposal)
+            # The working-set read, authoritative decision and pre-Order
+            # reservation are one writer transaction. SQLite therefore
+            # serializes distinct Proposals across threads and processes before
+            # either can observe the same last free slot.
+            with transaction(immediate=True):
+                proposal_commit_hash = _verified_original_proposal_commit_hash(
+                    proposal,
+                    require_evaluated_snapshot_match=True,
+                )
+                existing = get_authoritative_risk_decision(
+                    proposal.id,
+                    proposal_commit_hash,
+                    proposal.quantity,
+                )
+                if existing is not None:
+                    result = _risk_result_from_row(existing)
+                else:
+                    # Preserve the historical one-argument private call for the
+                    # default role; lock-focused tests instrument this boundary.
+                    result = _evaluate_proposal_locked(proposal)
+                if result.approved:
+                    stored = get_trade_proposal(proposal.id)
+                    if (
+                        stored is not None
+                        and proposal.source == "native"
+                        and str(stored.get("status") or "")
+                        not in {"rejected", "error", "executed"}
+                        and not has_order_for_proposal(proposal.id)
+                    ):
+                        if (
+                            proposal_commit_hash is None
+                            or proposal.quantity is None
+                            or proposal.price is None
+                        ):
+                            raise ProposalIntegrityError(
+                                "approved Proposal lacks durable reservation identity"
+                            )
+                        acquire_entry_risk_reservation(
+                            proposal_id=proposal.id,
+                            proposal_commit_hash=proposal_commit_hash,
+                            symbol=proposal.symbol,
+                            execution_mode=proposal.execution_mode,
+                            quantity=proposal.quantity,
+                            price=proposal.price,
+                        )
+                return result
         return _evaluate_proposal_locked(proposal, decision_role=decision_role)
 
 
@@ -398,7 +487,7 @@ def _evaluate_proposal_locked(
     # occupy the same max_open_positions quota. Isolated pools (serenity only counts
     # against serenity quota) are a Phase 2 decision deferred until serenity_executor
     # is implemented. Until then ALL open positions count regardless of trade_school.
-    open_positions = list_positions(status="open")
+    open_positions = list_all_open_positions()
     prop_is_live = _is_live(proposal.execution_mode)
     try:
         unresolved_entries = _unresolved_entry_reservations()
@@ -410,8 +499,23 @@ def _evaluate_proposal_locked(
         )
         unresolved_entries = []
         violations.append("unresolved_entry_exposure_unavailable")
+    try:
+        pre_order_entries = _pre_order_entry_reservations(
+            exclude_proposal_id=proposal.id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "pre-Order entry Risk reservations unavailable (%s)",
+            type(exc).__name__,
+        )
+        pre_order_entries = []
+        violations.append("entry_risk_reservation_unavailable")
     pool_unresolved_entries = [
         entry for entry in unresolved_entries
+        if _is_live(entry.execution_mode) == prop_is_live
+    ]
+    pool_pre_order_entries = [
+        entry for entry in pre_order_entries
         if _is_live(entry.execution_mode) == prop_is_live
     ]
     for reason in sorted({
@@ -420,18 +524,29 @@ def _evaluate_proposal_locked(
         for reason in entry.invalid_reasons
     }):
         violations.append(reason)
+    for reason in sorted({
+        reason
+        for entry in pool_pre_order_entries
+        for reason in entry.invalid_reasons
+    }):
+        violations.append(reason)
 
     unresolved_entry_slots = sum(
         1 for entry in pool_unresolved_entries if not entry.has_open_position
     )
+    pre_order_entry_slots = len(pool_pre_order_entries)
     if prop_is_live:
         live_positions = [p for p in open_positions if _is_live(p.get("execution_mode", ""))]
-        live_slot_count = len(live_positions) + unresolved_entry_slots
+        live_slot_count = (
+            len(live_positions) + unresolved_entry_slots + pre_order_entry_slots
+        )
         if live_slot_count >= risk.max_open_positions_live:
             violations.append(f"max_live_positions_reached:{live_slot_count}")
     else:
         demo_positions = [p for p in open_positions if not _is_live(p.get("execution_mode", ""))]
-        demo_slot_count = len(demo_positions) + unresolved_entry_slots
+        demo_slot_count = (
+            len(demo_positions) + unresolved_entry_slots + pre_order_entry_slots
+        )
         if demo_slot_count >= risk.max_open_positions_demo:
             violations.append(f"max_demo_positions_reached:{demo_slot_count}")
 
@@ -447,7 +562,10 @@ def _evaluate_proposal_locked(
     same_symbol_unresolved = any(
         entry.symbol == proposal.symbol for entry in pool_unresolved_entries
     )
-    if same_symbol_open or same_symbol_unresolved:
+    same_symbol_pre_order = any(
+        entry.symbol == proposal.symbol for entry in pool_pre_order_entries
+    )
+    if same_symbol_open or same_symbol_unresolved or same_symbol_pre_order:
         violations.append(f"symbol_already_open:{proposal.symbol}")
 
     # 7. Short allowed
@@ -527,7 +645,10 @@ def _evaluate_proposal_locked(
 
         # 12. Total live exposure limit (open positions + proposed notional).
         if proposal.price and proposal.quantity:
-            current_exposure = _current_live_exposure(unresolved_entries)
+            current_exposure = _current_live_exposure(
+                unresolved_entries,
+                pre_order_entries,
+            )
             projected = current_exposure + (proposal.price * proposal.quantity)
             live_exposure_cap = risk.max_total_live_exposure_pct / 100.0 * risk.max_live_limited_cap_usdt
             if live_exposure_cap > 0 and projected > live_exposure_cap:
@@ -585,7 +706,11 @@ def _evaluate_proposal_locked(
         # not trade against a frozen feed. paper_internal (local sim) is exempt: it has
         # no exchange-side price and runs even when collection is paused. Looser bound
         # than live (see _MAX_DEMO_DATA_AGE_SECONDS).
-        if proposal.execution_mode in ("bitget_demo", "okx_demo"):
+        if proposal.execution_mode in (
+            "bitget_demo",
+            "okx_demo",
+            "binance_testnet",
+        ):
             demo_age = _market_data_age_seconds(proposal.symbol, market_type=proposal.market_type)
             if demo_age is None or demo_age > _MAX_DEMO_DATA_AGE_SECONDS:
                 violations.append(f"stale_market_data_demo:age={demo_age}")
@@ -628,6 +753,12 @@ def _evaluate_proposal_locked(
                 existing_sym_notional += abs(q * px)
             except (TypeError, ValueError):
                 continue
+        for entry in (*pool_unresolved_entries, *pool_pre_order_entries):
+            if entry.symbol != proposal.symbol:
+                continue
+            if entry.price is None or entry.reserved_quantity is None:
+                continue
+            existing_sym_notional += abs(entry.reserved_quantity * entry.price)
         projected = existing_sym_notional + abs(proposal.price * proposal.quantity)
         if projected > per_symbol_cap:
             violations.append(
@@ -983,10 +1114,11 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
 
 def _current_live_exposure(
     unresolved_entries: list[_UnresolvedEntryReservation] | None = None,
+    pre_order_entries: list[_PreOrderEntryReservation] | None = None,
 ) -> float:
-    """Sum live Positions plus unresolved entry quantity not represented by them."""
+    """Sum live Positions plus every not-yet-represented entry allowance."""
     total = 0.0
-    for row in list_positions(status="open"):
+    for row in list_all_open_positions():
         if not _is_live(row.get("execution_mode", "")):
             continue
         try:
@@ -1005,6 +1137,14 @@ def _current_live_exposure(
             # manufacture a numeric exposure from missing authority here.
             continue
         total += abs(entry.reserved_quantity * entry.price)
+    if pre_order_entries is None:
+        pre_order_entries = _pre_order_entry_reservations()
+    for entry in pre_order_entries:
+        if not _is_live(entry.execution_mode):
+            continue
+        if entry.price is None or entry.reserved_quantity is None:
+            continue
+        total += abs(entry.reserved_quantity * entry.price)
     return total
 
 
@@ -1019,10 +1159,13 @@ def _check_correlation_exposure(proposal: TradeProposal, cfg) -> list[str]:
         return []
     violations: list[str] = []
     try:
-        from aletheia.storage.repositories import list_positions, list_opportunities
+        from aletheia.storage.repositories import (
+            list_all_open_positions,
+            list_opportunities,
+        )
         from aletheia.storage.sqlite import get_db
 
-        open_positions = list_positions(status="open")
+        open_positions = list_all_open_positions()
         if not open_positions:
             return []
 
@@ -1217,7 +1360,7 @@ def _check_account_leverage_ratio(proposal: TradeProposal, cfg) -> list[str]:
         if is_live else getattr(risk, "max_account_leverage_demo", 3.0)
     )
     try:
-        open_positions = list_positions(status="open")
+        open_positions = list_all_open_positions()
         relevant = [
             p for p in open_positions
             if _is_live(p.get("execution_mode", "")) == is_live
@@ -1308,7 +1451,7 @@ def check_account_leverage(cfg=None) -> dict:
         getattr(cfg.risk, "max_account_leverage_live", 1.5)
         if is_live else getattr(cfg.risk, "max_account_leverage_demo", 3.0)
     )
-    open_positions = list_positions(status="open")
+    open_positions = list_all_open_positions()
     relevant = [
         p for p in open_positions
         if _is_live(p.get("execution_mode", "")) == is_live

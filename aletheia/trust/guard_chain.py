@@ -85,7 +85,7 @@ def summarize(results: list[GuardResult]) -> dict:
 def _guard_exposure_concentration(proposal: dict) -> GuardResult:
     """Warn if adding to a symbol that already has open positions."""
     symbol = proposal.get("symbol", "")
-    positions = repo.list_positions(status="open")
+    positions = repo.list_all_open_positions()
     same_symbol = [p for p in positions if p.get("symbol") == symbol]
     if len(same_symbol) >= 2:
         return GuardResult(
@@ -147,7 +147,7 @@ def _guard_correlation_cluster(proposal: dict) -> GuardResult:
     if not my_group:
         return GuardResult(guard="correlation_cluster", verdict="pass", reason="ok")
 
-    positions = repo.list_positions(status="open")
+    positions = repo.list_all_open_positions()
     direction = proposal.get("direction", "long")
     conflicting = []
     for p in positions:

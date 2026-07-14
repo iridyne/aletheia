@@ -38,13 +38,14 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 ## 3. Table Groups
 
-### A. Trading Core (16 tables)
+### A. Trading Core (17 tables)
 
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
 | `opportunities` | Scanner output -- trading signals | symbol, direction, confidence, key_observations (JSON) | market_observer |
 | `trade_proposals` | Actionable trade candidates | symbol, direction, entry_price, stop_price, target_price, **`agent_rationale.entry_parameters`** (final entry/stop/target/notional/leverage reasons + value sources), **commit_hash**, **parent_hash** (TaG, P0-1) | paper_trader / System Operator |
 | `proposal_execution_claims` | One durable, expiring execution owner per Proposal; kept outside the hash-covered Proposal intent and removed only by owner-token compare-and-set | proposal_id, owner_token, claimed_at, lease_expires_at | execution gateway |
+| `entry_risk_reservations` | Durable pre-Order allowance acquired atomically with authoritative Risk; retained after a worker crash and superseded by the first durable Order | proposal_id, proposal_commit_hash, symbol, execution_mode, quantity, price | risk engine / execution gateway |
 | `risk_decisions` | Risk engine approval/rejection | proposal_id, approved, reasons (JSON), decision_role, evaluated_quantity, proposal_commit_hash | risk engine |
 | `approvals` | Human approval records | proposal_id, decision, decided_by | frontend |
 | `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |

@@ -25,8 +25,17 @@ async def client(tmp_path, monkeypatch):
     reset_db()
     sq._db_conn = None
     import sqlite3
-    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    # Sync API handlers run in FastAPI's worker pool and therefore open their
+    # own thread-local connection. Seed the same canonical file the worker uses.
+    conn = sqlite3.connect(
+        str(tmp_path / "app.db"),
+        check_same_thread=False,
+        isolation_level=None,
+    )
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
     sq._db_conn = conn
     run_migrations()
     transport = ASGITransport(app=app)
@@ -780,20 +789,12 @@ async def test_promote_theme(client):
     repo.insert_serenity_theme(theme)
 
     resp = await client.post(f"/api/serenity/themes/{theme.id}/promote")
-    assert resp.status_code == 200
-    data = resp.json()
-    # Phase 3 / Option A (owner decision): promote submits opportunities to the PI
-    # evaluation queue (status 'submitted_to_pi') instead of creating a dead
-    # StrategyRecord(state='draft'). With no active opportunities seeded here,
-    # queued is 0 but the theme is still marked promoted. The full queue
-    # round-trip (signal_pending PiDecision per opportunity) is covered by
-    # tests/specs/spec_serenity_promote.py SP-B01.
-    assert data["status"] == "submitted_to_pi"
-    assert data["queued"] == 0
+    assert resp.status_code == 409
 
-    # Theme should be marked promoted
+    # An empty handoff is not a promotion and must remain retryable after the
+    # research run produces active opportunities.
     updated = repo.get_serenity_theme(theme.id)
-    assert updated["status"] == "promoted"
+    assert updated["status"] == "active"
 
 
 @pytest.mark.anyio

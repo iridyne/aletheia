@@ -42,6 +42,22 @@ def _dedupe_symbol_direction(items: list[dict[str, Any]], limit: int) -> list[di
     return out
 
 
+def _pending_identity_key(
+    item: dict[str, Any],
+    *,
+    require_complete: bool = True,
+) -> tuple[str, str, str, str, str] | None:
+    """Return the complete execution-authority identity or None if it is partial."""
+    key = (
+        str(item.get("opportunity_id") or ""),
+        str(item.get("signal_source") or "market_observer"),
+        str(item.get("symbol") or ""),
+        str(item.get("direction") or ""),
+        str(item.get("market_type") or ""),
+    )
+    return key if (not require_complete or all(key)) else None
+
+
 def _dedupe_pending_identity(
     items: list[dict[str, Any]], limit: int
 ) -> list[dict[str, Any]]:
@@ -53,14 +69,10 @@ def _dedupe_pending_identity(
     market and source dimensions.
     """
     out: list[dict[str, Any]] = []
-    seen: set[tuple[str, str | None, str | None, str | None]] = set()
+    seen: set[tuple[str, str, str, str, str]] = set()
     for item in items:
-        key = (
-            item.get("signal_source") or "market_observer",
-            item.get("symbol"),
-            item.get("direction"),
-            item.get("market_type"),
-        )
+        key = _pending_identity_key(item, require_complete=False)
+        assert key is not None
         if key in seen:
             continue
         seen.add(key)
@@ -279,12 +291,42 @@ def _build_layer1_snapshot() -> dict[str, Any]:
 
     # Portfolio: open positions
     try:
-        from aletheia.storage.repositories import list_positions, latest_perp_structure
-        open_pos = list_positions(status="open", limit=10)
+        from aletheia.storage.repositories import (
+            latest_perp_structure,
+            list_all_open_positions,
+        )
+
+        all_open_pos = list_all_open_positions()
+        display_open_pos = all_open_pos[:10]
+        # Complete, compact identity/economics set for close/reduce matching and
+        # portfolio calculations. The bounded ``positions`` list below remains
+        # the presentation slice and alone receives expensive structure context.
+        layer["position_authority"] = [
+            {
+                "id": p.get("id"),
+                "symbol": p.get("symbol"),
+                "market_type": p.get("market_type"),
+                "direction": p.get("direction"),
+                "quantity": p.get("quantity"),
+                "entry_price": p.get("entry_price"),
+                "current_price": p.get("current_price"),
+                "unrealized_pnl": p.get("unrealized_pnl"),
+                "hold_hours": _hours_since(p.get("opened_at")),
+                "proposal_id": p.get("proposal_id"),
+                "opportunity_id": p.get("opportunity_id"),
+                "strategy_id": p.get("strategy_id"),
+                "trade_school": p.get("trade_school"),
+                "execution_mode": p.get("execution_mode"),
+                "leverage": p.get("leverage"),
+                "liquidation_price": p.get("liquidation_price"),
+            }
+            for p in all_open_pos
+        ]
         layer["positions"] = [
             {
                 "id": p.get("id"),
                 "symbol": p.get("symbol"),
+                "market_type": p.get("market_type"),
                 "direction": p.get("direction"),
                 "quantity": p.get("quantity"),
                 "entry_price": p.get("entry_price"),
@@ -300,10 +342,23 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "liquidation_price": p.get("liquidation_price"),
                 "structure_context": build_position_x_agent_context(latest_perp_structure(p.get("symbol"))),
             }
-            for p in open_pos
+            for p in display_open_pos
         ]
+        layer["positions_meta"] = {
+            "total": len(all_open_pos),
+            "display_count": len(display_open_pos),
+            "prompt_visible_count": min(len(display_open_pos), 5),
+            "prompt_overflow_count": max(len(all_open_pos) - 5, 0),
+        }
     except Exception:
         layer["positions"] = []
+        layer["position_authority"] = []
+        layer["positions_meta"] = {
+            "total": 0,
+            "display_count": 0,
+            "prompt_visible_count": 0,
+            "prompt_overflow_count": 0,
+        }
 
     # Account balance. Local paper is a separate cash ledger: showing an old
     # exchange cache here would make the agent misread a human balance adjustment.
@@ -551,6 +606,9 @@ def _build_futures_context(layer: dict[str, Any], cfg) -> dict[str, Any]:
     of equity NOT tied up as futures margin (used_margin = Σ notional/leverage).
     """
     fut: dict[str, Any] = {}
+    authority_positions = (
+        layer.get("position_authority") or layer.get("positions") or []
+    )
     try:
         from aletheia.trading.instruments import get_asset_tier, get_max_leverage
         symbols: list[str] = []
@@ -558,7 +616,7 @@ def _build_futures_context(layer: dict[str, Any], cfg) -> dict[str, Any]:
             s = f.get("symbol")
             if s and s not in symbols:
                 symbols.append(s)
-        for p in (layer.get("positions") or []):
+        for p in authority_positions:
             s = p.get("symbol")
             if s and s not in symbols:
                 symbols.append(s)
@@ -588,7 +646,7 @@ def _build_futures_context(layer: dict[str, Any], cfg) -> dict[str, Any]:
         balance = layer.get("balance") or {}
         equity = balance.get("equity_usdt")
         used_margin = 0.0
-        for p in (layer.get("positions") or []):
+        for p in authority_positions:
             qty = float(p.get("quantity") or 0)
             price = float(p.get("current_price") or p.get("entry_price") or 0)
             lev = float(p.get("leverage") or 1) or 1.0
@@ -603,7 +661,7 @@ def _build_futures_context(layer: dict[str, Any], cfg) -> dict[str, Any]:
     # Positions within 15% of their estimated liquidation price.
     near: list[dict] = []
     try:
-        for p in (layer.get("positions") or []):
+        for p in authority_positions:
             liq = p.get("liquidation_price")
             cur = p.get("current_price") or p.get("entry_price")
             if not liq or not cur:
@@ -766,7 +824,10 @@ def _build_layer2_short_term() -> dict[str, Any]:
     except Exception:
         layer["calibration_feedback"] = None
 
-    # Ranker candidates — what paper_trader would pick right now
+    # Ranker preview — useful analysis, but not execution authority. A candidate
+    # becomes executable only after the durable pending queue below contains the
+    # exact same opportunity/source/symbol/direction/market identity.
+    eligible_ranker_candidates: list[dict[str, Any]] = []
     try:
         from aletheia.agents.paper_trader_ranker import build_paper_candidates
         candidates = build_paper_candidates(limit=30)
@@ -784,18 +845,13 @@ def _build_layer2_short_term() -> dict[str, Any]:
             }
             for c in candidates
         ]
-        executable_candidates = [c for c in ranker_candidates if not c.get("skip_reason")]
+        eligible_ranker_candidates = [
+            c for c in ranker_candidates if not c.get("skip_reason")
+        ]
         excluded_candidates = [c for c in ranker_candidates if c.get("skip_reason")]
-        layer["executable_candidates"] = _dedupe_symbol_direction(executable_candidates, limit=8)
         layer["excluded_candidates_summary"] = _excluded_candidates_summary(excluded_candidates)
-        # Compatibility alias for older consumers; new prompt rendering should use
-        # executable_candidates so skipped rows cannot consume the main candidate slots.
-        layer["ranker_candidates"] = layer["executable_candidates"]
     except Exception:
-        layer["executable_candidates"] = []
         layer["excluded_candidates_summary"] = []
-        layer["ranker_candidates"] = []
-    _record_candidate_supply_snapshot(layer)
 
     # Phase 4b: Pending signals awaiting System Operator evaluation. This is an actual
     # unresolved queue view: final decisions are excluded, duplicates are removed
@@ -817,6 +873,32 @@ def _build_layer2_short_term() -> dict[str, Any]:
             "expired_unconsumed_rows": None,
             "oldest_expired_at": None,
         }
+
+    pending_identities = {
+        identity
+        for row in layer["pending_signals"]
+        if (identity := _pending_identity_key(row)) is not None
+    }
+    executable_candidates = [
+        row
+        for row in eligible_ranker_candidates
+        if _pending_identity_key(row) in pending_identities
+    ]
+    analysis_only_candidates = [
+        row
+        for row in eligible_ranker_candidates
+        if _pending_identity_key(row) not in pending_identities
+    ]
+    layer["executable_candidates"] = _dedupe_pending_identity(
+        executable_candidates, limit=8
+    )
+    layer["analysis_only_candidates"] = _dedupe_pending_identity(
+        analysis_only_candidates, limit=8
+    )
+    # Compatibility alias: ranker candidates remain available for non-entry
+    # attribution only, and are explicitly the non-authoritative preview.
+    layer["ranker_candidates"] = layer["analysis_only_candidates"]
+    _record_candidate_supply_snapshot(layer)
 
     return layer
 

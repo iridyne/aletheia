@@ -24,7 +24,7 @@ from aletheia.data.symbols import to_canonical
 from aletheia.storage.repositories import (
     get_ohlcv_candles,
     get_universe_member,
-    list_open_opportunities,
+    list_open_trade_opportunities,
 )
 from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation
 from aletheia.regime.detector import get_current_regime, MarketRegime
@@ -98,7 +98,7 @@ def build_paper_candidate_workset(limit: int = 50) -> PaperCandidateWorkset:
     candidates: list[dict] = []
     # Apply the cap to the actual working set. Querying all statuses first let a
     # busy stream of reviewed rows bury still-open opportunities beyond the cap.
-    opportunities = list_open_opportunities(limit=scan_limit)
+    opportunities = list_open_trade_opportunities(limit=scan_limit)
 
     for opp in opportunities:
         candidate = _evaluate_candidate(

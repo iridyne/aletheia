@@ -34,7 +34,7 @@ from typing import Optional
 
 from aletheia.data.symbols import to_canonical
 from aletheia.portfolio import exchange_sync
-from aletheia.storage.repositories import list_positions
+from aletheia.storage.repositories import list_all_open_positions, list_positions
 
 logger = logging.getLogger("aletheia.position_reconciler")
 
@@ -144,7 +144,7 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     cfg = load_config()
     account_mode = mode or cfg.exchange.mode
     target_execution_mode = _execution_mode_for(account_mode)
-    local_open = list_positions(status="open")
+    local_open = list_all_open_positions()
     in_scope = [
         position for position in local_open
         if position.get("execution_mode") == target_execution_mode
