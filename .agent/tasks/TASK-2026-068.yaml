@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-068
 title: Live Learning Feedback Stability Repair
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -31,8 +31,9 @@ ownership:
   expires_at: '2026-07-14T23:02:40.264697Z'
 base_commit: 9c71e1f37cf7bc8f9addb02121f2cc6e58cca6a1
 next_action:
-  command_key: architecture
-  reason: Record current-HEAD focused verification and strict workflow proof.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: workflow_tests
@@ -51,5 +52,13 @@ verification:
   run_at: '2026-07-14T15:14:19.106613Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 1ae3990cd8a915941d13b5984d9d5aed14d04825
+  run_at: '2026-07-14T15:14:39.271170Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-068.md
-updated_at: '2026-07-14T15:14:19.106795Z'
+updated_at: '2026-07-14T15:14:39.288788Z'
