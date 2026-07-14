@@ -55,20 +55,20 @@ next_action:
   command_key: trade_chain_completion
   reason: The active-paper repair batch is committed at b116714d, but local master
     has since advanced to baf1ee1e and is not integrated. Keep this branch unmerged.
-    The next owner/agent must merge the latest master here, rerun the registered
-    specifications, production-shaped paper paths, full suite, and strict workflow
-    checks on that final descendant; deployment still requires a new policy epoch
-    and a from-zero observation window, followed by migration, restart, and soak.
+    The next owner/agent must merge the latest master here, rerun the registered specifications,
+    production-shaped paper paths, full suite, and strict workflow checks on that
+    final descendant; deployment still requires a new policy epoch and a from-zero
+    observation window, followed by migration, restart, and soak.
 blockers:
-- Local master baf1ee1e is three commits ahead of this branch. The final merged
-  descendant and its full-repository verification do not yet exist, so this branch
-  is deliberately not merge-approved.
+- Local master baf1ee1e is three commits ahead of this branch. The final merged descendant
+  and its full-repository verification do not yet exist, so this branch is deliberately
+  not merge-approved.
 - B-class System Operator queue-consumption behavior and the integrated Market Observer
   prompt/context changes require the owner to create a new policy epoch and observation
   window before merge; prior and new observation data must not be mixed.
 - Exchange-backed futures still have no account funding-ledger producer. Their close
-  lifecycle remains fail-closed for Outcome and Learning until real venue funding facts
-  are collected; local-paper futures use a separate, explicit local simulation.
+  lifecycle remains fail-closed for Outcome and Learning until real venue funding
+  facts are collected; local-paper futures use a separate, explicit local simulation.
 - No migration, singleton-gateway restart, current-mainline paper soak, or production
   database acceptance was performed from this isolated worktree.
 verification:
@@ -475,5 +475,64 @@ verification:
   run_at: '2026-07-14T07:03:42.215352Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: spec_risk_engine
+  command: uv run pytest tests/specs/spec_risk_engine.py -q
+  command_sha256: 85595110321878d3016585adac757ed968ccb5833aa6a7f78b420108cb88f1b6
+  exit_code: 0
+  commit: 487f2a2b5bb57590aa338b241192e92611431da3
+  run_at: '2026-07-14T13:19:49.199215Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: spec_execution
+  command: uv run pytest tests/specs/spec_execution.py -q
+  command_sha256: 720c18646fdff18ca745c955c9570fbd12535011a9f360bd59e50bccf435a3c6
+  exit_code: 0
+  commit: 487f2a2b5bb57590aa338b241192e92611431da3
+  run_at: '2026-07-14T13:19:50.388322Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: spec_pipeline_execution_chain
+  command: uv run pytest tests/specs/spec_pipeline_execution_chain.py -q
+  command_sha256: f06ee972e4516060bd13766427550e64b56131f492277be553dbd72f7e297494
+  exit_code: 0
+  commit: 487f2a2b5bb57590aa338b241192e92611431da3
+  run_at: '2026-07-14T13:19:51.390618Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 487f2a2b5bb57590aa338b241192e92611431da3
+  run_at: '2026-07-14T13:20:09.748555Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: trade_chain_completion
+  command: uv run pytest tests/e2e/test_active_mainline_golden_path.py tests/e2e/test_active_mainline_reachability.py
+    tests/e2e/test_pipeline_observer_to_operator.py tests/e2e/test_pipeline_universe_to_operator.py
+    tests/e2e/test_pipeline_real_paper_roundtrip.py tests/e2e/test_pipeline_futures_leverage.py
+    tests/e2e/test_pipeline_feedback_loop.py -q --tb=short
+  command_sha256: 8a4d308053d55c0fc7ef5768c0fa1d13710938aa6e5a26a617c46201e86861db
+  exit_code: 0
+  commit: 487f2a2b5bb57590aa338b241192e92611431da3
+  run_at: '2026-07-14T13:20:11.228431Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 487f2a2b5bb57590aa338b241192e92611431da3
+  run_at: '2026-07-14T13:20:12.193962Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: frontend_build
+  command: cd frontend && npm run build
+  command_sha256: 008af75026d284dc318e955d965f0d551d81673560186d65b79a4c97e91b2c43
+  exit_code: 0
+  commit: 487f2a2b5bb57590aa338b241192e92611431da3
+  run_at: '2026-07-14T13:20:12.401353Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-067.md
-updated_at: '2026-07-14T07:03:42.215533Z'
+updated_at: '2026-07-14T13:20:12.401472Z'
