@@ -2638,7 +2638,7 @@ export class OperatorLoop {
       )
       const taskRecommendations = this.recommendationsAllowedForTaskSync(recommendations)
       const repairDecision = this.repairEngine.evaluate(recommendations, this.config.permissionMode)
-      const derivedMode = this.deriveMode(snapshot, recommendations)
+      const derivedMode = this.deriveMode(snapshot, taskRecommendations)
       const liveIntent = recommendations[0]?.summary || repairDecision?.rationale || null
       if (liveIntent) {
         this.mode = derivedMode
