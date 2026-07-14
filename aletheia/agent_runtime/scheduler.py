@@ -2194,11 +2194,16 @@ async def _async_universe_refresh():
     svc = UniverseService()
     try:
         snap_id = await svc.refresh()
+        if not snap_id:
+            # UniverseService returns None only after recording a failed scanner
+            # run. Treat that sentinel as a failed scheduled attempt instead of
+            # fabricating a completed_no_snapshot run.
+            raise RuntimeError("universe_refresh_no_snapshot")
         write_agent_run_log({
             "agent_name": "universe_refresh", "trigger_type": "scheduled",
             "started_at": started, "ended_at": _utcnow(),
-            "status": "completed" if snap_id else "completed_no_snapshot",
-            "outputs_created": [snap_id] if snap_id else [],
+            "status": "completed",
+            "outputs_created": [snap_id],
             "errors": [],
         })
     except Exception as e:
@@ -2212,7 +2217,16 @@ async def _async_universe_refresh():
 
 async def _async_run(agent_name: str):
     from aletheia.agent_runtime.orchestrator import run_agent
-    await run_agent(agent_name, trigger_type="scheduled")
+    result = await run_agent(agent_name, trigger_type="scheduled")
+    if isinstance(result, dict) and (
+        result.get("status") == "completed_with_errors"
+        or bool(result.get("errors"))
+    ):
+        # The agent already persisted its detailed errors. Raise only a stable,
+        # non-provider-specific code so the scheduler failure counter cannot
+        # reset on an internally degraded run.
+        raise RuntimeError(f"scheduled_agent_reported_errors:{agent_name}")
+    return result
 
 
 # Phase counter for the data_collectors job (module-level, not reset between calls).
@@ -2221,6 +2235,11 @@ _DC_TICK: int = 0
 # Carries the current collector tick into _bounded() without changing its public
 # four-argument contract (several offline specs replace that helper directly).
 _DC_HEALTH_TICK: ContextVar[int | None] = ContextVar("dc_health_tick", default=None)
+
+# These collectors return in-memory rows that are useful only after the
+# scheduler persists them. Their successful call status is therefore recorded
+# by the caller after storage, rather than eagerly inside _bounded().
+_PERSISTENCE_GATED_COLLECTOR_HEALTH = frozenset({"derivatives"})
 
 
 def _record_collector_health(
@@ -2262,8 +2281,19 @@ def _run_data_collectors():
     # decisions and execution; it must not stop public-data accumulation.
     _DC_TICK += 1
     try:
-        _run_async_with_timeout("data_collectors", _async_data_collectors(cfg, _DC_TICK))
-        _record_job_success("data_collectors")
+        result = _run_async_with_timeout(
+            "data_collectors", _async_data_collectors(cfg, _DC_TICK)
+        )
+        error_codes = (
+            list(result.get("error_codes") or [])
+            if isinstance(result, dict)
+            else []
+        )
+        if error_codes:
+            _record_job_failure("data_collectors", ",".join(error_codes))
+        else:
+            _record_job_success("data_collectors")
+        return result
     except TimeoutError:
         logger.warning(
             "data_collectors job timed out after %.0fs",
@@ -2300,11 +2330,12 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         result = await asyncio.wait_for(coro, timeout=min(cap, remaining))
         from aletheia.data.collector_health import classify_collector_result
 
-        _record_collector_health(
-            label,
-            classify_collector_result(result),
-            duration_ms=int((_time.monotonic() - started) * 1000),
-        )
+        if label not in _PERSISTENCE_GATED_COLLECTOR_HEALTH:
+            _record_collector_health(
+                label,
+                classify_collector_result(result),
+                duration_ms=int((_time.monotonic() - started) * 1000),
+            )
         return result
     except asyncio.TimeoutError:
         logger.warning("data_collectors: %s timed out (%.0fs cap) — skipped this tick",
@@ -2327,7 +2358,7 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         return None
 
 
-async def _async_data_collectors(cfg, tick: int) -> None:
+async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     import time as _time
     from aletheia.data.collectors.microstructure import MicrostructureCollector
     from aletheia.data.collectors.derivatives import DerivativesCollector
@@ -2336,11 +2367,13 @@ async def _async_data_collectors(cfg, tick: int) -> None:
 
     _DC_HEALTH_TICK.set(tick)
     _deadline = _time.monotonic() + _DC_DEADLINE_S
+    job_error_codes: list[str] = []
 
     # Keep venue + market identity for primary-exchange collectors. Cross-venue
     # collectors still receive the deduplicated canonical symbol list below.
     instruments = _get_observed_instruments(cfg)
     symbols = list(dict.fromkeys(item.symbol for item in instruments))
+    derivative_symbols = _get_derivative_symbols(instruments)
 
     # --- Phase A: microstructure + derivatives (every tick) ---
     micro_result: dict = {}
@@ -2353,19 +2386,32 @@ async def _async_data_collectors(cfg, tick: int) -> None:
                 repo.insert_orderbook_snapshot(snap.model_dump())
             except Exception as e:
                 logger.debug("orderbook persist failed: %s", e)
+    else:
+        _record_collector_health("microstructure", "not_configured")
 
+    if derivative_symbols:
         deriv = DerivativesCollector()
-        deriv_result = await _bounded(deriv.collect(symbols), "derivatives", 18.0, _deadline) or {}
+        deriv_started = _time.monotonic()
+        raw_deriv_result = await _bounded(
+            deriv.collect(derivative_symbols), "derivatives", 18.0, _deadline
+        )
+        deriv_duration_ms = int((_time.monotonic() - deriv_started) * 1000)
+        deriv_result = raw_deriv_result or {}
+        deriv_persist_errors: list[str] = []
         for snap in deriv_result.get("funding", []):
             try:
                 repo.insert_funding_rate_snapshot(snap.model_dump())
             except Exception as e:
                 logger.debug("funding persist failed: %s", e)
+                deriv_persist_errors.append("derivatives_funding_persist_failed")
         for snap in deriv_result.get("open_interest", []):
             try:
                 repo.insert_open_interest_snapshot(snap.model_dump())
             except Exception as e:
                 logger.debug("OI persist failed: %s", e)
+                deriv_persist_errors.append(
+                    "derivatives_open_interest_persist_failed"
+                )
         liq_count = 0
         for event in deriv_result.get("liquidations", []):
             try:
@@ -2373,12 +2419,36 @@ async def _async_data_collectors(cfg, tick: int) -> None:
                 liq_count += 1
             except Exception as e:
                 logger.debug("liquidation persist failed: %s", e)
+                deriv_persist_errors.append(
+                    "derivatives_liquidation_persist_failed"
+                )
         if liq_count:
             logger.info("liquidations persisted: %d", liq_count)
+        if raw_deriv_result is not None:
+            if deriv_persist_errors:
+                unique_errors = list(dict.fromkeys(deriv_persist_errors))
+                job_error_codes.extend(unique_errors)
+                _record_collector_health(
+                    "derivatives",
+                    "failed",
+                    duration_ms=deriv_duration_ms,
+                    error_code=unique_errors[0],
+                )
+            else:
+                from aletheia.data.collector_health import classify_collector_result
+
+                _record_collector_health(
+                    "derivatives",
+                    classify_collector_result(deriv_result),
+                    duration_ms=deriv_duration_ms,
+                )
     else:
-        logger.debug("data_collectors: no observed instruments; running symbol-independent domains only")
-        _record_collector_health("microstructure", "not_configured")
         _record_collector_health("derivatives", "not_configured")
+    if not instruments and not derivative_symbols:
+        logger.debug(
+            "data_collectors: no observed instruments; "
+            "running symbol-independent domains only"
+        )
 
     # --- Phase B: macro + volume scanner + CoinGecko top (every 5th tick = ~10 min) ---
     if tick % 5 == 1:
@@ -2517,6 +2587,11 @@ async def _async_data_collectors(cfg, tick: int) -> None:
         "data_collectors tick=%d: orderbook=%d funding=%d",
         tick, micro_count, funding_count,
     )
+    unique_job_errors = list(dict.fromkeys(job_error_codes))
+    return {
+        "status": "partial" if unique_job_errors else "success",
+        "error_codes": unique_job_errors,
+    }
 
 
 def _get_observed_instruments(cfg):
@@ -2555,6 +2630,38 @@ def _get_observed_instruments(cfg):
         return observed_instruments_from_config(cfg)[:20]
     except Exception:
         return []
+
+
+def _get_derivative_symbols(instruments) -> list[str]:
+    """Add every open local futures liability to primary funding collection.
+
+    This is intentionally narrower than ``_get_observed_instruments``: an open
+    Position that has rotated out of the active universe needs continued funding
+    schedules, but it must not re-enter microstructure scans, volume ranking, or
+    any other candidate-producing surface.
+    """
+    from aletheia.data.symbols import to_canonical
+
+    result = [item.symbol for item in instruments]
+    try:
+        from aletheia.storage import repositories as repo
+
+        for position in repo.list_all_open_positions():
+            if (
+                position.get("execution_mode") != "paper_internal"
+                or position.get("market_type") != "usdt_futures"
+                or position.get("status") not in {None, "open"}
+                or not position.get("symbol")
+            ):
+                continue
+            try:
+                result.append(to_canonical(position["symbol"]))
+            except ValueError:
+                continue
+    except Exception:
+        pass
+
+    return list(dict.fromkeys(result))
 
 
 def _get_observed_symbols(cfg) -> list[str]:

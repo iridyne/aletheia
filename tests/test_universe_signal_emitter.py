@@ -354,3 +354,91 @@ class TestEmitDeterministicOpportunities:
             "member-low": ("rejected", "score_below_minimum"),
             "member-missing": ("rejected", "feature_missing"),
         }
+
+    def test_rejection_evidence_failure_is_not_silent(self):
+        members = [
+            _make_member(
+                "LOW/USDT", "momentum", 30, member_id="member-low-retry"
+            ),
+        ]
+        feats = [_make_feat("LOW/USDT")]
+
+        with patch(
+            "aletheia.analytics.filter_evidence.record_filter_decision",
+            side_effect=RuntimeError("db unavailable"),
+        ), pytest.raises(
+            RuntimeError,
+            match=(
+                "opportunity_emission_evidence_failed:"
+                "snap-1:member-low-retry"
+            ),
+        ):
+            emit_deterministic_opportunities(members, "snap-1", feats)
+
+    @pytest.mark.parametrize("caller_owns_transaction", [False, True])
+    def test_new_opportunity_rolls_back_when_emitted_evidence_fails(
+        self, tmp_path, monkeypatch, caller_owns_transaction
+    ):
+        """The lifecycle row and its producer fact are one durable unit."""
+        from tests.test_entry_logic import setup_env
+
+        setup_env(tmp_path, monkeypatch)
+        from contextlib import nullcontext
+        from aletheia.analytics import filter_evidence
+        from aletheia.storage import repositories as repo
+        from aletheia.storage.sqlite import get_db
+        from aletheia.universe.signal_emitter import EmissionEvidenceError
+
+        members = [
+            _make_member(
+                "BTC/USDT", "momentum", 70, member_id="member-emission-atomic"
+            ),
+        ]
+        feats = [_make_feat("BTC/USDT")]
+        real_insert = filter_evidence.repo.insert_filter_decision
+
+        def fail_only_emitted_fact(fact):
+            if (
+                fact.filter_name == "opportunity_emission"
+                and fact.reason_code == "opportunity_emitted"
+            ):
+                raise RuntimeError("emitted evidence unavailable")
+            return real_insert(fact)
+
+        monkeypatch.setattr(
+            filter_evidence.repo,
+            "insert_filter_decision",
+            fail_only_emitted_fact,
+        )
+        monkeypatch.setattr(
+            "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
+            lambda *_args, **_kwargs: True,
+        )
+        monkeypatch.setattr(
+            "aletheia.universe.signal_emitter.lookup_factor_signal",
+            lambda *_args, **_kwargs: {"status": "watch"},
+        )
+
+        db = get_db()
+        caller_transaction = (
+            repo.transaction() if caller_owns_transaction else nullcontext()
+        )
+        with caller_transaction:
+            with pytest.raises(
+                EmissionEvidenceError,
+                match=(
+                    "opportunity_emission_evidence_failed:"
+                    "snap-1:member-emission-atomic"
+                ),
+            ):
+                emit_deterministic_opportunities(members, "snap-1", feats)
+
+            assert db.execute(
+                "SELECT COUNT(*) FROM opportunities WHERE universe_member_id=?",
+                ("member-emission-atomic",),
+            ).fetchone()[0] == 0
+            assert db.execute(
+                "SELECT COUNT(*) FROM filter_decisions WHERE universe_member_id=? "
+                "AND reason_code='opportunity_emitted'",
+                ("member-emission-atomic",),
+            ).fetchone()[0] == 0

@@ -155,12 +155,12 @@ def test_daily_loss_fails_closed_when_account_event_window_is_truncated():
 @spec_claim(
     SpecClaim(
         "RE-B22", "risk_engine_contract", "§2 local paper funding authority", "L2b",
-        "Risk durably rejects a new native paper_internal futures entry while "
-        "per-position local funding economics have no trustworthy producer.",
+        "Risk durably rejects a new native paper_internal futures entry when the "
+        "exact symbol has no fresh primary-venue funding schedule anchor.",
         status="implemented",
     )
 )
-def test_risk_rejects_local_paper_futures_without_funding_producer(
+def test_risk_rejects_local_paper_futures_without_fresh_schedule(
     tmp_path, monkeypatch
 ):
     _setup_db(tmp_path, monkeypatch)
@@ -889,6 +889,81 @@ def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
     assert any(v == "exceeds_demo_position_notional:100.0>80.0" for v in result.violations)
 
 
+@spec_claim(
+    SpecClaim(
+        "RE-B29",
+        "risk_engine_contract",
+        "§2 check #5 local paper balance authority",
+        "L2b",
+        "An authoritative paper_internal Proposal is rejected when the local paper "
+        "balance cannot be read; external account cache absence retains its existing "
+        "configured-cap fallback.",
+        status="implemented",
+    )
+)
+def test_local_paper_balance_reader_failure_rejects_authoritative_proposal(
+    tmp_path,
+    monkeypatch,
+):
+    import aletheia.portfolio.exchange_sync as sync
+    import aletheia.portfolio.paper_account as paper_account
+    import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    _setup_db(tmp_path, monkeypatch)
+    cfg = AletheiaConfig()
+    cfg.agent.permission_mode = "Paper"
+    cfg.risk.max_demo_position_notional_usdt = 200.0
+    cfg.risk.max_open_positions_demo = 10
+    cfg.risk.max_per_symbol_notional_usdt = 10_000.0
+    monkeypatch.setattr(eng, "load_config", lambda: cfg)
+    monkeypatch.setattr(eng, "_portfolio_drawdown_scale", lambda _mode: 1.0)
+    monkeypatch.setattr(eng, "_check_lesson_constraints", lambda _proposal: [])
+
+    def _balance_failure(*_args, **_kwargs):
+        raise RuntimeError("local paper balance reader failed")
+
+    monkeypatch.setattr(paper_account, "get_paper_account", _balance_failure)
+
+    # External accounts intentionally keep the existing advisory-cache fallback.
+    monkeypatch.setattr(sync, "get_cached_state", _balance_failure)
+    assert (
+        eng._effective_position_notional_cap(cfg.risk, "bitget_demo")
+        == cfg.risk.max_demo_position_notional_usdt
+    )
+
+    proposal = TradeProposal(
+        id="paper-balance-unavailable-proposal",
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        execution_mode="paper_internal",
+        quantity=1.0,
+        price=100.0,
+    )
+    repo.insert_trade_proposal(proposal)
+
+    result = eng.evaluate_proposal(proposal, decision_role="authoritative")
+
+    assert result.approved is False
+    assert "paper_account_balance_unavailable" in result.violations
+    decisions = [
+        row for row in repo.list_risk_decisions(limit=20)
+        if row["proposal_id"] == proposal.id
+    ]
+    assert len(decisions) == 1
+    assert decisions[0]["decision_role"] == "authoritative"
+    assert decisions[0]["approved"] == 0
+    assert not [
+        row for row in repo.list_orders(limit=20)
+        if row["proposal_id"] == proposal.id
+    ]
+    assert repo.get_entry_risk_reservation(proposal.id) is None
+
+
 # ---------------------------------------------------------------------------
 # RE-B10 — §2 check #6: max open demo positions
 # ---------------------------------------------------------------------------
@@ -1153,6 +1228,716 @@ def test_risk_checks_fail_closed_on_internal_error(monkeypatch):
         assert ("safe-reject" in src or "fail closed" in src.lower()), (
             f"{fn.__name__} except handler must fail closed (append a violation)"
         )
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-B23",
+        "risk_engine_contract",
+        "§2 check #17 account identity",
+        "L2b",
+        "Account leverage counts open Positions, unresolved entry Orders, and "
+        "pre-Order reservations only from the Proposal's account pool; one demo "
+        "exchange must not consume another demo exchange's leverage capacity.",
+        status="implemented",
+    )
+)
+def test_account_leverage_uses_one_account_pool_for_every_exposure(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+    from aletheia.storage.models import TradeProposal
+
+    cfg = load_config().model_copy(deep=True)
+    cfg.risk.max_account_leverage_demo = 1.0
+    proposal = TradeProposal(
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        execution_mode="okx_demo",
+        quantity=0.1,
+        price=100.0,
+        leverage=1,
+    )
+    monkeypatch.setattr(
+        eng,
+        "list_all_open_positions",
+        lambda: [
+            {
+                "symbol": "ETH/USDT",
+                "execution_mode": "okx_demo",
+                "quantity": 0.1,
+                "entry_price": 100.0,
+                "leverage": 1,
+            },
+            {
+                "symbol": "BTC/USDT",
+                "execution_mode": "bitget_demo",
+                "quantity": 10.0,
+                "entry_price": 100.0,
+                "leverage": 3,
+            },
+        ],
+    )
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 100.0)
+    other_order = eng._UnresolvedEntryReservation(
+        order_id="bitget-order",
+        symbol="AVAX/USDT",
+        market_type="usdt_futures",
+        execution_mode="bitget_demo",
+        opportunity_id=None,
+        price=100.0,
+        leverage=3.0,
+        order_quantity=10.0,
+        persisted_fill_quantity=0.0,
+        remaining_quantity=10.0,
+        reserved_quantity=10.0,
+        has_open_position=False,
+    )
+    other_reservation = eng._PreOrderEntryReservation(
+        proposal_id="bitget-reservation",
+        symbol="LINK/USDT",
+        market_type="usdt_futures",
+        execution_mode="bitget_demo",
+        opportunity_id=None,
+        price=100.0,
+        leverage=3.0,
+        reserved_quantity=10.0,
+    )
+
+    assert eng._check_account_leverage_ratio(
+        proposal,
+        cfg,
+        unresolved_entries=[other_order],
+        pre_order_entries=[other_reservation],
+    ) == []
+
+    same_account_reservation = eng._PreOrderEntryReservation(
+        proposal_id="okx-reservation",
+        symbol="LINK/USDT",
+        market_type="usdt_futures",
+        execution_mode="okx_demo",
+        opportunity_id=None,
+        price=100.0,
+        leverage=1.0,
+        reserved_quantity=2.0,
+    )
+    violations = eng._check_account_leverage_ratio(
+        proposal,
+        cfg,
+        unresolved_entries=[],
+        pre_order_entries=[same_account_reservation],
+    )
+    assert any(value.startswith("account_leverage_ratio:") for value in violations)
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-B26",
+        "risk_engine_contract",
+        "§2 check #17 position integrity",
+        "L2b",
+        "A relevant open Position with missing, non-positive, non-numeric, or "
+        "non-finite quantity, entry price, or leverage rejects account leverage "
+        "evaluation instead of disappearing from the numerator.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("quantity", None),
+        ("quantity", float("nan")),
+        ("entry_price", 0.0),
+        ("entry_price", float("inf")),
+        ("leverage", 0.0),
+        ("leverage", "not-a-number"),
+    ],
+)
+def test_account_leverage_rejects_invalid_relevant_position_exposure(
+    monkeypatch,
+    field,
+    invalid_value,
+):
+    """A corrupt open Position cannot disappear from the account numerator."""
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+    from aletheia.storage.models import TradeProposal
+
+    cfg = load_config().model_copy(deep=True)
+    proposal = TradeProposal(
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        execution_mode="okx_demo",
+        quantity=0.1,
+        price=100.0,
+        leverage=1,
+    )
+    position = {
+        "id": "position-corrupt",
+        "symbol": "ETH/USDT",
+        "execution_mode": "okx_demo",
+        "quantity": 1.0,
+        "entry_price": 100.0,
+        "leverage": 2.0,
+    }
+    position[field] = invalid_value
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [position])
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 1_000.0)
+
+    assert eng._check_account_leverage_ratio(
+        proposal,
+        cfg,
+        unresolved_entries=[],
+        pre_order_entries=[],
+    ) == ["account_leverage_check_error:invalid_position_exposure"]
+
+
+def test_account_leverage_counts_unlevered_spot_position_as_one_x(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+    from aletheia.storage.models import TradeProposal
+
+    cfg = load_config().model_copy(deep=True)
+    cfg.risk.max_account_leverage_demo = 1.0
+    proposal = TradeProposal(
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        execution_mode="okx_demo",
+        quantity=0.1,
+        price=100.0,
+        leverage=1,
+    )
+    monkeypatch.setattr(
+        eng,
+        "list_all_open_positions",
+        lambda: [
+            {
+                "id": "spot-position",
+                "symbol": "ETH/USDT",
+                "market_type": "spot",
+                "execution_mode": "okx_demo",
+                "quantity": 1.0,
+                "entry_price": 100.0,
+                "leverage": None,
+            }
+        ],
+    )
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 100.0)
+
+    violations = eng._check_account_leverage_ratio(
+        proposal,
+        cfg,
+        unresolved_entries=[],
+        pre_order_entries=[],
+    )
+
+    assert len(violations) == 1
+    assert violations[0].startswith("account_leverage_ratio:")
+
+
+@pytest.mark.parametrize(
+    ("market_type", "leverage"),
+    [
+        ("usdt_futures", None),
+        (None, None),
+        ("spot", 2),
+        ("spot", "not-a-number"),
+    ],
+)
+def test_account_leverage_rejects_missing_or_impossible_market_leverage(
+    monkeypatch,
+    market_type,
+    leverage,
+):
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+    from aletheia.storage.models import TradeProposal
+
+    cfg = load_config().model_copy(deep=True)
+    proposal = TradeProposal(
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        execution_mode="okx_demo",
+        quantity=0.1,
+        price=100.0,
+        leverage=1,
+    )
+    monkeypatch.setattr(
+        eng,
+        "list_all_open_positions",
+        lambda: [
+            {
+                "id": "position-invalid-market-leverage",
+                "symbol": "ETH/USDT",
+                "market_type": market_type,
+                "execution_mode": "okx_demo",
+                "quantity": 1.0,
+                "entry_price": 100.0,
+                "leverage": leverage,
+            }
+        ],
+    )
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 1_000.0)
+
+    assert eng._check_account_leverage_ratio(
+        proposal,
+        cfg,
+        unresolved_entries=[],
+        pre_order_entries=[],
+    ) == ["account_leverage_check_error:invalid_position_exposure"]
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-B24",
+        "risk_engine_contract",
+        "§2 check #17 equity authority",
+        "L2b",
+        "Account leverage reads equity from the same named account and rejects "
+        "when that account's local equity snapshot is unavailable.",
+        status="implemented",
+    )
+)
+def test_account_leverage_equity_is_named_and_unknown_rejects(monkeypatch):
+    import aletheia.portfolio.exchange_sync as sync
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+    from aletheia.storage.models import TradeProposal
+
+    cfg = load_config().model_copy(deep=True)
+    monkeypatch.setattr(
+        sync,
+        "get_unified_cached_state",
+        lambda: {
+            "age_seconds": 1.0,
+            "status": "healthy",
+            "total_equity_usdt": 999.0,
+            "accounts": [
+                {"broker_id": "okx_demo", "equity_usdt": 125.0},
+                {"broker_id": "binance_testnet", "equity_usdt": 874.0},
+            ],
+        },
+    )
+    bitget_calls = []
+
+    def _bitget_state(mode=None):
+        bitget_calls.append(mode)
+        return {
+            "age_seconds": 1.0,
+            "status": "healthy",
+            "equity_usdt": 75.0,
+        }
+
+    monkeypatch.setattr(sync, "get_cached_state", _bitget_state)
+
+    assert eng._account_equity("okx_demo", cfg) == 125.0
+    assert eng._account_equity("bitget_demo", cfg) == 75.0
+    assert bitget_calls == ["demo"]
+
+    monkeypatch.setattr(sync, "get_unified_cached_state", lambda: {"accounts": []})
+    proposal = TradeProposal(
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        execution_mode="okx_demo",
+        quantity=0.1,
+        price=100.0,
+        leverage=1,
+    )
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [])
+    assert eng._check_account_leverage_ratio(
+        proposal,
+        cfg,
+        unresolved_entries=[],
+        pre_order_entries=[],
+    ) == ["account_equity_unavailable:okx_demo"]
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-B27",
+        "risk_engine_contract",
+        "§2 check #17 equity freshness",
+        "L2b",
+        "External demo/live equity is usable only from a fresh, healthy cache "
+        "and a healthy exact named account row.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize(
+    "cache",
+    [
+        {"age_seconds": 601.0, "status": "healthy", "equity_usdt": 75.0},
+        {"age_seconds": 1.0, "status": "error", "equity_usdt": 75.0},
+        {"age_seconds": None, "status": "healthy", "equity_usdt": 75.0},
+        {"age_seconds": -1.0, "status": "healthy", "equity_usdt": 75.0},
+        {"age_seconds": float("nan"), "status": "healthy", "equity_usdt": 75.0},
+    ],
+)
+def test_external_account_equity_rejects_stale_or_unhealthy_cache(
+    monkeypatch,
+    cache,
+):
+    import aletheia.portfolio.exchange_sync as sync
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+
+    cfg = load_config().model_copy(deep=True)
+    monkeypatch.setattr(sync, "get_cached_state", lambda _mode=None: cache)
+    monkeypatch.setattr(sync, "get_unified_cached_state", lambda: cache)
+
+    assert eng._account_equity("bitget_demo", cfg) is None
+    assert eng._account_equity("bitget_live_limited", cfg) is None
+
+
+def test_named_external_account_requires_healthy_fresh_account_row(monkeypatch):
+    import aletheia.portfolio.exchange_sync as sync
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+
+    cfg = load_config().model_copy(deep=True)
+    cache = {
+        "age_seconds": 1.0,
+        "status": "healthy",
+        "accounts": [
+            {
+                "broker_id": "okx_demo",
+                "equity_usdt": 125.0,
+                "status": "error",
+            }
+        ],
+    }
+    monkeypatch.setattr(sync, "get_unified_cached_state", lambda: cache)
+
+    assert eng._account_equity("okx_demo", cfg) is None
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-B25",
+        "risk_engine_contract",
+        "§2 monitoring account identity",
+        "L2b",
+        "The default live monitoring account uses exchange.name, not the unrelated "
+        "market-data provider setting.",
+        status="implemented",
+    )
+)
+def test_active_live_execution_mode_uses_exchange_name():
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+
+    cfg = load_config().model_copy(deep=True)
+    cfg.exchange.mode = "live"
+    cfg.exchange.name = "bitget"
+    assert eng._config_active_execution_mode(cfg) == "bitget_live_limited"
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-B28",
+        "risk_engine_contract",
+        "§2 monitoring honesty",
+        "L2b",
+        "Public account-leverage monitoring reports unavailable, with no ratio or "
+        "boolean safety verdict, when a relevant Position, unresolved entry, pre-Order "
+        "reservation, or account equity cannot be trusted; all valid same-account "
+        "exposure is counted and spot NULL leverage remains the explicit 1x case.",
+        status="implemented",
+    )
+)
+def test_public_account_leverage_counts_null_spot_leverage_as_one_x(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+
+    cfg = load_config().model_copy(deep=True)
+    monkeypatch.setattr(
+        eng,
+        "list_all_open_positions",
+        lambda: [
+            {
+                "id": "spot-position",
+                "symbol": "ETH/USDT",
+                "market_type": "spot",
+                "execution_mode": "okx_demo",
+                "quantity": 2.0,
+                "entry_price": 100.0,
+                "current_price": None,
+                "leverage": None,
+            }
+        ],
+    )
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 200.0)
+
+    result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+
+    assert result["status"] == "available"
+    assert result["reason"] is None
+    assert result["ratio"] == 1.0
+    assert result["violation"] is False
+    assert result["positions"] == [
+        {"symbol": "ETH/USDT", "notional": 200.0, "leverage": 1.0}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("market_type", "field", "invalid_value"),
+    [
+        ("usdt_futures", "leverage", None),
+        (None, "leverage", None),
+        ("usdt_futures", "leverage", "not-a-number"),
+        ("usdt_futures", "leverage", float("nan")),
+        ("usdt_futures", "leverage", 1e308),
+        ("usdt_futures", "quantity", float("inf")),
+        ("usdt_futures", "current_price", -1.0),
+    ],
+)
+def test_public_account_leverage_marks_invalid_position_unavailable(
+    monkeypatch,
+    market_type,
+    field,
+    invalid_value,
+):
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+
+    cfg = load_config().model_copy(deep=True)
+    position = {
+        "id": "position-corrupt",
+        "symbol": "ETH/USDT",
+        "market_type": market_type,
+        "execution_mode": "okx_demo",
+        "quantity": 1.0,
+        "entry_price": 100.0,
+        "current_price": 101.0,
+        "leverage": 2.0,
+    }
+    position[field] = invalid_value
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [position])
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 1_000.0)
+
+    result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "invalid_position_exposure"
+    assert result["ratio"] is None
+    assert result["violation"] is None
+
+
+def test_public_account_leverage_marks_unknown_equity_unavailable(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+
+    cfg = load_config().model_copy(deep=True)
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [])
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: None)
+
+    result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "account_equity_unavailable:okx_demo"
+    assert result["ratio"] is None
+    assert result["violation"] is None
+
+
+def test_public_account_leverage_marks_equity_reader_failure_unavailable(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+
+    cfg = load_config().model_copy(deep=True)
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [])
+    monkeypatch.setattr(eng, "_unresolved_entry_reservations", lambda: [])
+    monkeypatch.setattr(eng, "_pre_order_entry_reservations", lambda: [])
+
+    def _equity_failure(*_args):
+        raise RuntimeError("local equity reader failed")
+
+    monkeypatch.setattr(eng, "_account_equity", _equity_failure)
+
+    result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "account_equity_unavailable:okx_demo"
+    assert result["ratio"] is None
+    assert result["violation"] is None
+
+
+def test_public_account_leverage_counts_unresolved_and_pre_order_exposure(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+
+    cfg = load_config().model_copy(deep=True)
+    cfg.risk.max_account_leverage_demo = 2.5
+    same_account_order = eng._UnresolvedEntryReservation(
+        order_id="okx-order",
+        symbol="ETH/USDT",
+        market_type="usdt_futures",
+        execution_mode="okx_demo",
+        opportunity_id=None,
+        price=100.0,
+        leverage=2.0,
+        order_quantity=1.0,
+        persisted_fill_quantity=0.0,
+        remaining_quantity=1.0,
+        reserved_quantity=1.0,
+        has_open_position=False,
+    )
+    other_account_order = eng._UnresolvedEntryReservation(
+        order_id="bitget-order",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        execution_mode="bitget_demo",
+        opportunity_id=None,
+        price=1_000.0,
+        leverage=3.0,
+        order_quantity=1.0,
+        persisted_fill_quantity=0.0,
+        remaining_quantity=1.0,
+        reserved_quantity=1.0,
+        has_open_position=False,
+    )
+    same_account_pre_order = eng._PreOrderEntryReservation(
+        proposal_id="okx-proposal",
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        execution_mode="okx_demo",
+        opportunity_id=None,
+        price=100.0,
+        leverage=1.0,
+        reserved_quantity=1.0,
+    )
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [])
+    monkeypatch.setattr(
+        eng,
+        "_unresolved_entry_reservations",
+        lambda: [same_account_order, other_account_order],
+    )
+    monkeypatch.setattr(
+        eng,
+        "_pre_order_entry_reservations",
+        lambda **_: [same_account_pre_order],
+    )
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 100.0)
+
+    result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+
+    assert result["status"] == "available"
+    assert result["ratio"] == 3.0
+    assert result["violation"] is True
+
+
+@pytest.mark.parametrize(
+    ("reservation_kind", "invalid_reasons", "missing_field"),
+    [
+        ("unresolved", ("unresolved_entry_authority_invalid",), None),
+        ("unresolved", (), "reserved_quantity"),
+        ("pre_order", ("entry_risk_reservation_authority_invalid",), None),
+        ("pre_order", (), "leverage"),
+    ],
+)
+def test_account_leverage_monitor_and_gate_reject_invalid_reservation(
+    monkeypatch,
+    reservation_kind,
+    invalid_reasons,
+    missing_field,
+):
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+    from aletheia.storage.models import TradeProposal
+
+    cfg = load_config().model_copy(deep=True)
+    proposal = TradeProposal(
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        execution_mode="okx_demo",
+        quantity=0.1,
+        price=100.0,
+        leverage=1,
+    )
+    if reservation_kind == "unresolved":
+        values = {
+            "order_id": "bad-order",
+            "symbol": "ETH/USDT",
+            "market_type": "usdt_futures",
+            "execution_mode": "okx_demo",
+            "opportunity_id": None,
+            "price": 100.0,
+            "leverage": 2.0,
+            "order_quantity": 1.0,
+            "persisted_fill_quantity": 0.0,
+            "remaining_quantity": 1.0,
+            "reserved_quantity": 1.0,
+            "has_open_position": False,
+            "invalid_reasons": invalid_reasons,
+        }
+        if missing_field is not None:
+            values[missing_field] = None
+        reservation = eng._UnresolvedEntryReservation(**values)
+        unresolved_entries = [reservation]
+        pre_order_entries = []
+    else:
+        values = {
+            "proposal_id": "bad-proposal",
+            "symbol": "ETH/USDT",
+            "market_type": "usdt_futures",
+            "execution_mode": "okx_demo",
+            "opportunity_id": None,
+            "price": 100.0,
+            "leverage": 2.0,
+            "reserved_quantity": 1.0,
+            "invalid_reasons": invalid_reasons,
+        }
+        if missing_field is not None:
+            values[missing_field] = None
+        reservation = eng._PreOrderEntryReservation(**values)
+        unresolved_entries = []
+        pre_order_entries = [reservation]
+
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [])
+    monkeypatch.setattr(
+        eng,
+        "_unresolved_entry_reservations",
+        lambda: unresolved_entries,
+    )
+    monkeypatch.setattr(
+        eng,
+        "_pre_order_entry_reservations",
+        lambda **_: pre_order_entries,
+    )
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 1_000.0)
+
+    monitor = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+    gate = eng._check_account_leverage_ratio(
+        proposal,
+        cfg,
+        unresolved_entries=unresolved_entries,
+        pre_order_entries=pre_order_entries,
+    )
+
+    assert monitor["status"] == "unavailable"
+    assert monitor["reason"] == "invalid_entry_reservation"
+    assert monitor["ratio"] is None
+    assert monitor["violation"] is None
+    assert gate == ["account_leverage_check_error:invalid_entry_reservation"]
+
+
+def test_futures_context_keeps_unavailable_account_leverage_empty(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.agent_shell.trading_context import _build_futures_context
+    from aletheia.config.loader import load_config
+
+    cfg = load_config().model_copy(deep=True)
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [])
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: None)
+
+    result = _build_futures_context({"features": [], "positions": []}, cfg)
+
+    assert result["account_leverage_ratio"] is None
 
 
 # ---------------------------------------------------------------------------

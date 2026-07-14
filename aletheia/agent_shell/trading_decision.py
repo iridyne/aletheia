@@ -1751,23 +1751,54 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
 
       1. market_observer `pending_signals` — the exact queue carrier emitted by
          paper_trader. It wins over a different same-symbol open opportunity.
-      2. serenity `pending_signals` for new-entry actions. Layer 1/ranker rows are
-         analysis-only and cannot outrank durable execution authority.
-      3. market_observer Layer 1/ranker and Serenity Layer 3 for non-entry actions.
-         Serenity sets signal_source='serenity' so opportunity_id is later resolved
-         against serenity_opportunities (NOT opportunities) — the two id spaces are
-         indistinguishable bare uuid4().hex[:12] strings.
+      2. serenity `pending_signals` for Opportunity decisions. Layer 1/ranker rows
+         are analysis-only and cannot authorize either entry or terminal identity.
+      3. Legacy analysis-only helper contexts that omit the pending seam may still
+         use Layer 1/ranker/Serenity attribution for non-Position decisions. A
+         close/reduce that cannot match one exact Position is rejected before these
+         views. Serenity sets signal_source='serenity' so opportunity_id is later
+         resolved against serenity_opportunities (NOT opportunities) — the two id
+         spaces are indistinguishable bare uuid4().hex[:12] strings.
 
     Best-effort and honest: if the pick maps to neither (e.g. it came from raw
     features/signals), the fields stay None rather than being fabricated. See
     LEARNING_LOOP_AUDIT_2026-06-26 §R0 + docs/plans/serenity_execution_path.md §3.2.
     """
-    if decision.action in {"close", "reduce"} and _attach_position_context(decision, ctx):
+    if decision.action in {"close", "reduce"}:
+        requested_action = decision.action
+        if _attach_position_context(decision, ctx):
+            return
+        # A Position-management action has no authority path through a pending or
+        # analysis-only Opportunity. Reject it here, before any of those fallback
+        # views are inspected, so a same-symbol entry candidate cannot be mistaken
+        # for an existing trade that does not exist (or is ambiguous).
+        decision.filter_trace.append({
+            "filter_name": "position_identity",
+            "stage": "operator_context_binding",
+            "decision": "rejected",
+            "reason_code": "position_identity_unresolved",
+            "inputs": {
+                "action": requested_action,
+                "symbol": decision.symbol,
+                "direction": decision.direction,
+                "market_type": decision.market_type,
+            },
+            "parameters": {"required_match_count": 1},
+        })
+        decision.action = "skip"
+        decision.opportunity_id = None
+        decision.learning_candidate_key = None
+        decision.strategy_id = None
+        decision.scanner_family = None
+        decision.reasoning = (
+            f"{decision.reasoning} [position_identity_unresolved; action rejected]"
+        )
         return
 
     # The exact queued carrier is more specific than a later same-symbol/direction
     # open row, so consume it before heuristic Layer-1 matches.
-    raw_pending = (ctx.get("layer2") or {}).get("pending_signals") or []
+    layer2 = ctx.get("layer2") or {}
+    raw_pending = layer2.get("pending_signals") or []
     pending = [
         resolved
         for carrier in raw_pending
@@ -1894,11 +1925,12 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
             pass
         return
 
-    # New-entry actions may only inherit execution authority from the durable
-    # pending queue.  Layer-1 opportunities and ranker candidates remain useful
-    # analysis context, but a heartbeat must not turn either view into a Proposal
-    # before paper_trader/Serenity has emitted the exact queue carrier.
-    if decision.action in {"trade", "scale_in", "flip"}:
+    # Every decision about a fresh Opportunity may inherit identity only from the
+    # durable pending queue. Layer-1/ranker rows remain analysis context: without
+    # this return, a heartbeat skip/watch could silently retire an open Opportunity
+    # that paper_trader/Serenity never queued. close/reduce remain Position actions
+    # and keep their independent identity path above.
+    if decision.action not in {"close", "reduce"}:
         for p in pending:
             if p.get("signal_source") != "serenity":
                 continue
@@ -1929,7 +1961,13 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
                 except Exception:
                     pass
             return
-        return
+        # Production Operator context always carries the pending queue seam, even
+        # when its value is zero. Stop there so Layer-1/ranker previews cannot own
+        # a heartbeat terminal. A legacy analysis-only helper context may omit the
+        # seam entirely; it can retain best-effort in-memory attribution, while
+        # claim_decision still refuses to persist it without a durable carrier.
+        if "pending_signals" in layer2 or "pending_queue" in layer2:
+            return
 
     opps = (ctx.get("layer1") or {}).get("opportunities") or []
     for o in opps:
@@ -1966,7 +2004,6 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
     # Ranker candidates are a second deterministic source of market_observer
     # opportunity ids. They may include candidates not currently visible in the
     # compact Layer-1 opportunity list, so use them before falling back to Serenity.
-    layer2 = ctx.get("layer2") or {}
     ranker = (layer2.get("executable_candidates") or []) + (layer2.get("ranker_candidates") or [])
     for c in ranker:
         if c.get("symbol") != decision.symbol:

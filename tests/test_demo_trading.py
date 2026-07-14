@@ -19,7 +19,9 @@ autouse guard in conftest.py also blocks unmocked calls). These verify:
   realizes PnL only after exact private fill reconciliation.
 """
 
+import json
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 
@@ -46,11 +48,56 @@ def setup_env(tmp_path, monkeypatch):
 
 def _demo_config(monkeypatch, permission="Paper"):
     from aletheia.config.loader import load_config, save_config
+    from aletheia.execution import order_constraints
+    from aletheia.execution.order_constraints import OrderConstraints
+    from aletheia.storage.sqlite import get_db
+    from decimal import Decimal
+
     cfg = load_config()
     cfg.agent.permission_mode = permission
     cfg.exchange.mode = "demo"
     cfg.exchange.paper_execution_mode = "bitget_demo"
     save_config(cfg)
+    # These tests exercise the broker/materialization path, not missing-account
+    # handling.  Seed the same fresh local cache that Risk #17 requires in
+    # production so the fixture does not depend on configured starting capital.
+    state = {
+        "mode": "demo",
+        "equity_usdt": 10_000.0,
+        "available_usdt": 10_000.0,
+        "frozen_usdt": 0.0,
+        "futures_unrealized_pnl": 0.0,
+        "open_positions_count": 0,
+        "open_orders_count": 0,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "status": "healthy",
+        "asset_breakdown": [],
+        "positions": [],
+    }
+    db = get_db()
+    db.execute(
+        "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+        "updated_at=excluded.updated_at",
+        ("exchange_account_state.demo", json.dumps(state)),
+    )
+    db.commit()
+    # The same broker-path tests must not reach CCXT for executable rules.  Supply
+    # a realistic Bitget BTC futures rule set while retaining the real quantity
+    # normalization and Gateway re-check behavior.
+    monkeypatch.setattr(
+        order_constraints,
+        "get_order_constraints",
+        lambda _mode, symbol, market_type: OrderConstraints(
+            venue="bitget",
+            symbol=symbol,
+            market_type=market_type,
+            min_quantity=Decimal("0.0001"),
+            max_quantity=None,
+            amount_step=Decimal("0.0001"),
+            min_notional=Decimal("5"),
+        ),
+    )
     return cfg
 
 

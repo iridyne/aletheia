@@ -41,6 +41,7 @@ def _validate_proposal_identity(proposal, decision: Any, *, prefix: str) -> None
 
 _ALLOWED_PENDING_SOURCES = {"market_observer", "serenity"}
 _NEW_ENTRY_ACTIONS = {"trade", "scale_in", "flip"}
+_POSITION_ACTIONS = {"close", "reduce"}
 
 
 def _normalized_direction(value: Any) -> str:
@@ -51,7 +52,6 @@ def _normalized_direction(value: Any) -> str:
 def _pending_claim_authority_failure(pi_dec) -> str | None:
     """Recheck queue and source identity inside the caller's writer lock."""
     from aletheia.storage import repositories as repo
-    from aletheia.storage.sqlite import get_db
 
     signal_source = pi_dec.signal_source or "market_observer"
     if signal_source not in _ALLOWED_PENDING_SOURCES:
@@ -98,11 +98,20 @@ def _pending_claim_authority_failure(pi_dec) -> str | None:
                     expires_at = expires_at.replace(tzinfo=timezone.utc)
             except (TypeError, ValueError):
                 return "pending_source_expiry_invalid"
-            if expires_at <= datetime.now(timezone.utc):
-                get_db().execute(
-                    "UPDATE opportunities SET status='expired' "
-                    "WHERE id=? AND status='queued'",
-                    (pi_dec.opportunity_id,),
+            checked_at = datetime.now(timezone.utc)
+            if expires_at <= checked_at:
+                repo.expire_queued_opportunity_with_ttl_evidence(
+                    pi_dec.opportunity_id,
+                    evaluated_at=checked_at.isoformat(),
+                    reason_detail=(
+                        "source Opportunity valid_until elapsed before atomic "
+                        "System Operator Proposal claim"
+                    ),
+                    parameters={
+                        "expiry_basis": "valid_until",
+                        "valid_until": str(valid_until),
+                        "authority_check": "operator_claim",
+                    },
                 )
                 return "pending_source_expired"
     else:
@@ -152,11 +161,21 @@ def _pending_claim_authority_failure(pi_dec) -> str | None:
                 created_at = created_at.replace(tzinfo=timezone.utc)
         except (TypeError, ValueError):
             created_at = datetime.min.replace(tzinfo=timezone.utc)
-        if created_at < datetime.now(timezone.utc) - timedelta(minutes=30):
-            get_db().execute(
-                "UPDATE opportunities SET status='expired' "
-                "WHERE id=? AND status='queued'",
-                (pi_dec.opportunity_id,),
+        checked_at = datetime.now(timezone.utc)
+        if created_at < checked_at - timedelta(minutes=30):
+            repo.expire_queued_opportunity_with_ttl_evidence(
+                pi_dec.opportunity_id,
+                evaluated_at=checked_at.isoformat(),
+                reason_detail=(
+                    "pending System Operator evaluation window elapsed before "
+                    "atomic Proposal claim"
+                ),
+                parameters={
+                    "expiry_basis": "pending_created_at",
+                    "pending_created_at": str(pending.get("created_at") or ""),
+                    "max_age_minutes": 30,
+                    "authority_check": "operator_claim",
+                },
             )
             return "pending_signal_expired"
 
@@ -280,11 +299,14 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
             _validate_proposal_identity(
                 proposal, pi_dec, prefix="prepared_proposal"
             )
-        # A pending carrier authorizes a new entry, not management of an
-        # already-open Position. close/reduce inherit their causal identity from
-        # that Position and must remain available even when its old entry signal
-        # has long since been consumed.
-        if pi_dec.action in _NEW_ENTRY_ACTIONS:
+        # Any final that claims an Opportunity identity must still own its exact
+        # pending carrier under this writer lock. This prevents a heartbeat
+        # skip/watch from retiring an unqueued source and closes the race where a
+        # carrier disappears after context binding. Anonymous skips remain valid;
+        # close/reduce inherit identity from an already-open Position instead.
+        if pi_dec.action not in _POSITION_ACTIONS and (
+            pi_dec.opportunity_id or pi_dec.action in _NEW_ENTRY_ACTIONS
+        ):
             claim_failure = _pending_claim_authority_failure(pi_dec)
         if proposal is not None:
             if claim_failure is None:

@@ -57,6 +57,23 @@ Opportunity 主链上的“过滤”实际包含四种不同问题：
 - `code_commit`：Gateway 启动时代码提交，不在热路径 shell out
 - `outcome_candidate_key`：可与同一事前时点的净结果相连
 
+`passed` 只表示该关真实执行且未阻断。以 `guard_candidate_block` 为例：Learning/Guard
+关闭时必须写 `not_applicable`，配置或运行异常必须写 `error`，不得把“未评估”冒充为
+`passed/guard_not_blocking`。
+
+生产者在拒绝输入时，该原因是唯一解释事实：Observer、Universe emitter、Divergence scanner
+若无法写入终态记录，必须返回可重试错误，不能以“零 Opportunity、零原因”的成功结束。
+生产者放行并新建 Opportunity 时也必须留下精确的 `opportunity_emitted` 事实；Universe emitter
+和 Market Observer 都把新 Opportunity 与该事实放在同一回滚边界内，证据失败不得留下孤儿
+Opportunity，也不得增加本轮成功创建数。Observer 的 pre-filter 事实只说明“曾评估/曾放行”，
+不能替代真正创建 Opportunity 的 producer 事实。Universe emitter 的该类失败不是可忽略分析错误：
+当前没有 snapshot/member 级独立重试队列，因此 `UniverseService.refresh` 必须把 scanner run 标为
+failed 并返回失败，禁止继续发布 completed。
+Opportunity 的 open/queued TTL 过期也必须与 `ttl_expired` 记录同事务提交；证据失败则保留原状态。
+这条规则同样覆盖 System Operator 的两次权限重查：若 Opportunity 在 LLM 评估期间或
+Proposal preflight 之后才越过 `valid_until`，preflight/claim 必须共用同一个仓储 CAS，写且只写一条
+`opportunity_ttl / ttl_expired` 事实；证据失败时不得单独提交 `expired`、最终 PiDecision 或 TradeProposal。
+
 业务写入只允许 INSERT，不回写历史判断。幂等键至少包含
 `candidate_key + filter_name + decision + filter_version`，重试不制造重复证据，
 但同一候选先被批次上限拒绝、后来真实放行时可分别保留两条事实。
@@ -101,6 +118,7 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 | quota/explore-exploit | 是 | selected/control、rank、quota、regime | 是，但必须同池比较 |
 | Universe 机会生成 | 可能否 | 每个已选成员最终是已生成、复用、拒绝或写入错误 | 否，只衡量覆盖和身份完整性 |
 | Observer 前置判断 | Universe 路径是；其他路径可能否 | RSI/ATR/keyword 实际值和命中原因 | 仅有事前方向的行 |
+| Observer 机会生成 | 是 | 新 Opportunity 的精确 id、方向、市场与 `opportunity_emitted`；和 Opportunity 原子提交 | 否，只衡量生产链完整性 |
 | LLM neutral/无效输出 | 可能否 | schema 结果、方向、置信度，不写 prompt | 仅有事前方向的行 |
 | Ranker symbol policy/execution/direction/confidence/TTL/factor/guard | 是 | 白/黑名单拒绝也必须写 `symbol_filter/symbol_not_allowed` 并终结 Opportunity；永久拒绝扫描批次与 top-N 执行短名单分离，状态与拒绝事实同事务提交 | 是（guard 只观测；symbol policy 不自动放宽） |
 | open-position/cooldown/batch limit | 是 | 当时占用、冷却截止、rank/limit | 是 |
@@ -181,6 +199,9 @@ Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候
 `signal_batch_limit=passed` 只代表被选中；真正写入队列另记
 `signal_enqueue=passed|rejected|error`。`signal_pending` 与 Opportunity 的 `queued` 状态必须同一
 事务提交，任一步失败都回滚，不得留下“已入队但来源仍 open”的孤儿状态。
+真实入队异常还必须在本轮返回的 `errors` 中写入稳定的
+`signal_enqueue_failed:<opportunity_id>`；即使整批一个都没写入，也不能只返回
+`no_signals_written`，把故障伪装成健康的空批次。
 入队时只允许条件迁移 `open→queued`;批次计划过期、来源已是 `reviewed/expired` 时记录
 `signal_enqueue=rejected / opportunity_not_open`,不得写 pending,更不得把终态倒退。
 
@@ -219,6 +240,7 @@ Ranker 的 `limit=50` 只限制进入打分/入队选择的执行短名单，不
 10. 已完成：Universe 已选成员在机会生成阶段逐个保存终态；同一 snapshot、symbol、market 的已评估机会仍占有原身份，迟到的 Observer 不再重复创建或事后改写。
 11. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
 12. 已完成：Ranker 白名单漏项与黑名单命中不再静默 `return None`；拒绝事实与终态原子提交，且独立有界拒绝工作集不会被 top-N 执行上限截掉。
+13. 已完成：Universe emitter 与 Market Observer 新建 Opportunity 时同步原子写入 `opportunity_emitted`；Observer pre-filter 不再被误当成生产成功证明。
 
 ## 10. 诊断时间窗口与 sizing 口径
 

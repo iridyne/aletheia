@@ -191,6 +191,50 @@ def test_missing_factor_history_does_not_block():
     assert best["skip_reason"] is None
 
 
+@pytest.mark.parametrize(
+    ("applicability", "evaluation", "expected_decision", "expected_reason"),
+    [
+        (
+            ("not_applicable", "learning_influence_disabled"),
+            None,
+            "not_applicable",
+            "learning_influence_disabled",
+        ),
+        (
+            ("enabled", "guard_evaluation_enabled"),
+            None,
+            "error",
+            "guard_evaluation_failed",
+        ),
+    ],
+)
+def test_guard_trace_never_calls_disabled_or_failed_evaluation_passed(
+    applicability,
+    evaluation,
+    expected_decision,
+    expected_reason,
+):
+    """No evaluation is not evidence that the candidate passed the Guard."""
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates
+
+    with _patch_deps([_make_opp()]), patch(
+        "aletheia.agents.paper_trader_ranker._guard_evaluation_applicability",
+        return_value=applicability,
+    ), patch(
+        "aletheia.agents.paper_trader_ranker._evaluate_guards_safe",
+        return_value=evaluation,
+    ):
+        candidate = build_paper_candidates(limit=1)[0]
+
+    guard_step = next(
+        step
+        for step in candidate["filter_trace"]
+        if step["filter_name"] == "guard_candidate_block"
+    )
+    assert guard_step["decision"] == expected_decision
+    assert guard_step["reason_code"] == expected_reason
+
+
 def test_select_best_candidate_none_when_all_skipped():
     from aletheia.agents.paper_trader_ranker import select_best_candidate
 

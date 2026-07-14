@@ -567,15 +567,173 @@ def test_stale_queued_opportunity_becomes_expired(tmp_path, monkeypatch):
     status = conn.execute(
         "SELECT status FROM opportunities WHERE id=?", (opp_id,),
     ).fetchone()[0]
+    evidence = conn.execute(
+        "SELECT decision, reason_code FROM filter_decisions "
+        "WHERE opportunity_id=? AND filter_name='opportunity_ttl'",
+        (opp_id,),
+    ).fetchone()
     assert status == "expired"
+    assert evidence is not None
+    assert tuple(evidence) == ("rejected", "ttl_expired")
     assert "expired_pending:1" in result["outputs"]
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-09b",
+        "pipeline_paper_trade",
+        "§2 opportunity expiry evidence",
+        "L2b",
+        "Open Opportunity TTL expiry and its durable ttl_expired rejection fact are "
+        "one transaction; an evidence write failure leaves the Opportunity open for retry.",
+        status="implemented",
+    ),
+)
+def test_open_opportunity_ttl_expiry_is_atomic_with_rejection_fact(
+    tmp_path, monkeypatch
+):
+    import sqlite3
+
+    conn = _setup_db(tmp_path, monkeypatch)
+    opp_id = _insert_opportunity(conn, symbol="ETH/USDT", confidence_score=85)
+    conn.execute(
+        "UPDATE opportunities SET created_at=?, valid_until=? WHERE id=?",
+        ("2020-01-01T00:00:00+00:00", "2020-01-01T00:30:00+00:00", opp_id),
+    )
+    conn.commit()
+
+    from aletheia.storage.repositories import expire_stale_opportunities
+
+    assert expire_stale_opportunities(ttl_hours=1) == 1
+    row = conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opp_id,)
+    ).fetchone()
+    evidence = conn.execute(
+        "SELECT decision, reason_code FROM filter_decisions "
+        "WHERE opportunity_id=? AND filter_name='opportunity_ttl'",
+        (opp_id,),
+    ).fetchone()
+    assert row["status"] == "expired"
+    assert tuple(evidence) == ("rejected", "ttl_expired")
+
+    retry_id = _insert_opportunity(conn, symbol="SOL/USDT", confidence_score=85)
+    conn.execute(
+        "UPDATE opportunities SET created_at=?, valid_until=? WHERE id=?",
+        ("2020-01-01T00:00:00+00:00", "2020-01-01T00:30:00+00:00", retry_id),
+    )
+    conn.execute(
+        "CREATE TRIGGER reject_ttl_evidence BEFORE INSERT ON filter_decisions "
+        "WHEN NEW.filter_name='opportunity_ttl' BEGIN "
+        "SELECT RAISE(ABORT, 'forced ttl evidence failure'); END"
+    )
+    conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError, match="forced ttl evidence failure"):
+        expire_stale_opportunities(ttl_hours=1)
+    retry = conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (retry_id,)
+    ).fetchone()
+    assert retry["status"] == "open"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-09c",
+        "pipeline_paper_trade",
+        "§2 nested opportunity expiry transaction",
+        "L2b",
+        "Open and queued Opportunity TTL expiry uses a nested savepoint so a caller "
+        "that catches evidence failure cannot commit a status-only lifecycle change.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize("source_status", ["open", "queued"])
+def test_ttl_expiry_savepoint_is_atomic_inside_caller_transaction(
+    tmp_path, monkeypatch, source_status
+):
+    """A caller that catches expiry failure cannot commit a status-only write."""
+    import sqlite3
+    from datetime import timedelta
+
+    conn = _setup_db(tmp_path, monkeypatch)
+    opp_id = _insert_opportunity(
+        conn,
+        symbol="DOGE/USDT",
+        confidence_score=85,
+        status=source_status,
+    )
+    if source_status == "open":
+        conn.execute(
+            "UPDATE opportunities SET created_at=?, valid_until=? WHERE id=?",
+            (
+                "2020-01-01T00:00:00+00:00",
+                "2020-01-01T00:30:00+00:00",
+                opp_id,
+            ),
+        )
+    else:
+        from aletheia.storage.models import PiDecision
+        from aletheia.storage.repositories import insert_pi_decision
+
+        insert_pi_decision(
+            PiDecision(
+                symbol="DOGE/USDT",
+                direction="long",
+                market_type="spot",
+                action="signal_pending",
+                reasoning="nested transaction expiry fixture",
+                opportunity_id=opp_id,
+                signal_source="market_observer",
+                created_at=(
+                    datetime.now(timezone.utc) - timedelta(minutes=31)
+                ).isoformat(),
+            )
+        )
+    conn.execute(
+        "CREATE TRIGGER reject_nested_ttl_evidence "
+        "BEFORE INSERT ON filter_decisions "
+        "WHEN NEW.filter_name='opportunity_ttl' BEGIN "
+        "SELECT RAISE(ABORT, 'forced nested ttl evidence failure'); END"
+    )
+    conn.commit()
+
+    from aletheia.storage.repositories import (
+        expire_stale_opportunities,
+        expire_stale_queued_opportunities,
+        transaction,
+    )
+
+    expire = (
+        expire_stale_opportunities
+        if source_status == "open"
+        else expire_stale_queued_opportunities
+    )
+    with transaction():
+        try:
+            expire()
+        except sqlite3.IntegrityError as exc:
+            assert "forced nested ttl evidence failure" in str(exc)
+        else:
+            pytest.fail("fixture must reject the ttl evidence insert")
+
+    status = conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opp_id,)
+    ).fetchone()["status"]
+    evidence_count = conn.execute(
+        "SELECT COUNT(*) FROM filter_decisions "
+        "WHERE opportunity_id=? AND filter_name='opportunity_ttl'",
+        (opp_id,),
+    ).fetchone()[0]
+    assert status == source_status
+    assert evidence_count == 0
 
 
 @spec_claim(
     SpecClaim(
         "PL-PT-10", "pipeline_paper_trade", "§2 atomic signal enqueue", "L2b",
         "signal_pending insertion and open→queued transition are atomic; a status-write "
-        "failure leaves no orphan pending row and records signal_enqueue=error.",
+        "failure leaves no orphan pending row, records signal_enqueue=error, and returns "
+        "a stable run error so an all-failed batch cannot look like a healthy empty run.",
         status="implemented",
     ),
 )
@@ -602,7 +760,7 @@ def test_signal_enqueue_rolls_back_when_queued_transition_fails(tmp_path, monkey
 
     import asyncio
 
-    asyncio.run(paper_trader.run_paper_trader(permission_mode="Paper"))
+    result = asyncio.run(paper_trader.run_paper_trader(permission_mode="Paper"))
 
     pending = conn.execute(
         "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' AND opportunity_id=?",
@@ -620,6 +778,8 @@ def test_signal_enqueue_rolls_back_when_queued_transition_fails(tmp_path, monkey
     assert status == "open"
     assert evidence is not None
     assert tuple(evidence) == ("error", "signal_enqueue_error")
+    assert result["errors"] == [f"signal_enqueue_failed:{opp_id}"]
+    assert "no_signals_written" in result["outputs"]
 
 
 @spec_claim(

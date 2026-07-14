@@ -128,6 +128,20 @@ def _record_job_failure(job_id, error):  # scheduler.py:67
 2. 内部 daemon 线程被放弃（`pool.shutdown(wait=False)`），`_abandoned_thread_count` 递增（`scheduler.py:267`）。
 3. 对于异步 job，在 caller 线程中立即将 `agent_runs.status` 更新为 `'timed_out'`（`scheduler.py:279–291`），防止 dashboard 出现幽灵 'running' 行。
 
+### 4.4 返回值也属于任务成败
+
+调度完成不只等于 coroutine 没抛异常，还必须诚实解释生产函数的返回值：
+
+- 通用 `_async_run()` 收到 `run_agent()` 的 `completed_with_errors` 或非空 `errors` 时，抛出稳定码
+  `scheduled_agent_reported_errors:<agent>`，让原 job wrapper 计入失败；只有 `completed + errors=[]`
+  才保持成功。
+- `universe.enabled=true` 时，`UniverseService.refresh()` 的 `None` 表示 scanner run 已失败，不是“正常空结果”；
+  scheduler 必须写 failed agent log 并以 `universe_refresh_no_snapshot` 计入 job failure。正常空 Universe
+  仍由 service 创建并返回 snapshot id。
+- `data_collectors` 中由 scheduler 负责落库的 derivatives 输出，必须等 funding/OI 写库完成后才记域成功；
+  任一写入失败以稳定 `derivatives_*_persist_failed` 码把域标为 failed，并把整个 fan-out 记为 partial failure，
+  但不阻断同轮其它数据域。
+
 ---
 
 ## §5 SQLite 并发协议

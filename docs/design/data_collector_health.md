@@ -21,7 +21,7 @@ Latest statuses:
 
 | Status | Meaning |
 |---|---|
-| `success` | The call completed and returned useful data. |
+| `success` | The call completed and every returned row owned by the scheduler was persisted. |
 | `partial` | Useful data arrived together with source-level errors. |
 | `empty` | The call completed honestly with no rows. |
 | `failed` | The collector raised or reported only errors. |
@@ -35,6 +35,12 @@ counter. A completed, partial, empty, disabled, or unconfigured result resets it
 At three consecutive problems the gateway emits a bounded in-process warning,
 deduplicated for 30 minutes. Stored error values are short codes, never endpoint
 responses, credentials, or exception messages.
+
+For the primary derivatives domain, collector-call success is deliberately
+deferred until funding/OI rows reach SQLite. If either repository write fails,
+the domain is `failed` with a stable `derivatives_*_persist_failed` code and the
+shared `data_collectors` job records a partial failure after the remaining
+domains finish. A fetched-but-unpersisted row is never reported as healthy data.
 
 ## Pause and no-exchange behavior
 

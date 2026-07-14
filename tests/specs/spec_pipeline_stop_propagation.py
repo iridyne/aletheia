@@ -51,6 +51,24 @@ def _setup_db(tmp_path, monkeypatch):
     conn.execute("PRAGMA busy_timeout=5000")
     sq._db_conn = conn
     run_migrations()
+    # Gateway cases in this module exercise an already-connected OKX demo
+    # account.  Account-leverage Risk now rejects when named equity is unknown,
+    # so make that external cache assumption explicit instead of falling back to
+    # configured starting capital.
+    import aletheia.portfolio.exchange_sync as exchange_sync
+
+    monkeypatch.setattr(
+        exchange_sync,
+        "get_unified_cached_state",
+        lambda: {
+            "age_seconds": 1.0,
+            "status": "healthy",
+            "accounts": [
+                {"broker_id": "okx_demo", "equity_usdt": 100_000.0},
+            ],
+            "total_equity_usdt": 100_000.0,
+        },
+    )
     return conn
 
 
@@ -489,6 +507,7 @@ def test_no_open_position_silently_loses_proposal_stop(tmp_path, monkeypatch):
             symbol=sym, market_type="usdt_futures", direction=direction,
             quantity=0.01,
             price=100.0,
+            leverage=1,
             stop_price=stop,
             take_profit=95.0 if direction == "short" else 105.0,
             execution_mode="okx_demo",

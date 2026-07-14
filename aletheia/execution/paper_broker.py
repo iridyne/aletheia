@@ -55,6 +55,7 @@ def execute_paper_order(
     fee_rate = cfg.trading.execution_fee_pct / 100.0
 
     fill_price = _apply_slippage(price, direction, slippage_bps)
+    filled_at = datetime.now(timezone.utc).isoformat()
 
     order = Order(
         proposal_id=proposal_id,
@@ -67,12 +68,14 @@ def execute_paper_order(
         price=fill_price,
         execution_mode=execution_mode,
         status="filled",
+        filled_at=filled_at,
     )
     fill = Fill(
         order_id=order.id,
         fill_price=fill_price,
         fill_quantity=quantity,
         fee=quantity * fill_price * fee_rate,
+        filled_at=filled_at,
     )
     position_id, filled_take_profit = _materialize_paper_entry(
         order=order,
@@ -231,6 +234,7 @@ def _materialize_paper_entry(
                 ),
                 entry_price_source="local_fill",
                 entry_fill_verified=True,
+                opened_at=fill.filled_at,
                 trade_school=trade_school,
             )
             insert_position(position)
@@ -359,6 +363,41 @@ def close_paper_position(
         filled_at=filled_at,
     )
 
+    funding_kwargs: dict[str, Any] = {}
+    if row.get("market_type") == "usdt_futures":
+        try:
+            from aletheia.portfolio.local_funding import compute_local_funding
+
+            funding = compute_local_funding(row, closed_at=filled_at)
+            # The just-computed result is authoritative even when unavailable.
+            # Passing only incomplete evidence let close_position fall back to a
+            # stale value already present on the Position and publish invented
+            # net economics.
+            funding_kwargs.update({
+                "funding_cost": funding.funding_cost,
+                "funding_source": funding.funding_source,
+                "funding_evidence": funding.evidence,
+            })
+        except Exception as exc:
+            # A protective exit must remain available during a data/read outage.
+            # Close the Position, but preserve an explicit incomplete simulator
+            # fact so PnL/Outcome stays unavailable instead of guessing zero.
+            funding_kwargs.update({
+                "funding_cost": None,
+                "funding_source": "unavailable",
+                "funding_evidence": {
+                    "status": "incomplete",
+                    "reason": "funding_read_failed",
+                    "source": "local_simulation",
+                    "error_type": type(exc).__name__,
+                    "position_id": position_id,
+                    "symbol": row.get("symbol"),
+                    "opened_at": row.get("opened_at"),
+                    "closed_at": filled_at,
+                    "events": [],
+                },
+            })
+
     def _materialize_close() -> None:
         insert_order(close_order)
         insert_fill(close_fill)
@@ -373,6 +412,7 @@ def close_paper_position(
             materialize_close=_materialize_close,
             actor=actor,
             source=source,
+            **funding_kwargs,
         )
     except ValueError:
         # A concurrent worker may have committed while this caller waited for

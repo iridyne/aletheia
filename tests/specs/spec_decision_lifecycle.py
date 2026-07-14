@@ -198,18 +198,21 @@ def test_opportunity_producers_do_not_bypass_ranker_when_waking_operator():
 @spec_claim(
     SpecClaim(
         "DL-S09", "decision_lifecycle_contract", "§2.4 terminal decision identity", "L2b",
-        "A watch/skip System Operator result persists the symbol and direction it evaluated, "
-        "alongside opportunity_id and signal_source, instead of creating an anonymous audit row.",
+        "A watch/skip System Operator result may persist an Opportunity identity only when an "
+        "exact signal_pending carrier authorized that evaluation; the final consumes the queue "
+        "without creating a TradeProposal.",
         status="implemented",
     ),
 )
-def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeypatch):
+@pytest.mark.parametrize("raw_action", ["skip", "watch"])
+def test_skip_decision_persists_evaluated_symbol_and_direction(
+    tmp_path, monkeypatch, raw_action
+):
     import asyncio
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_shell import commands, reflection
-    from aletheia.agent_shell.trading_decision import TradingDecision
+    from aletheia.agent_shell import commands, reflection, trading_decision
     from aletheia.storage.models import Opportunity, PiDecision
     from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
     from aletheia.storage.sqlite import get_db
@@ -233,36 +236,20 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeyp
         market_type=opportunity.market,
     ))
 
-    decision = TradingDecision(
-        action="skip",
-        symbol="BTC/USDT",
-        direction="long",
-        conviction=48,
-        reasoning="candidate evaluated but not selected",
-        market_type="usdt_futures",
-        opportunity_id="opp-skip-identity",
-        signal_source="market_observer",
-        scanner_family="momentum",
-    )
-
-    async def fake_evaluate(_context):
-        return decision
+    async def assess_pending_candidate(_context):
+        return {
+            "action": raw_action,
+            "symbol": opportunity.symbol,
+            "direction": "long",
+            "conviction": 48,
+            "reasoning": "candidate evaluated but not selected",
+            "market_type": opportunity.market,
+        }
 
     monkeypatch.setattr(
         commands, "_configured_paper_execution_mode", lambda: "paper_internal"
     )
-    monkeypatch.setattr(
-        "aletheia.agent_shell.trading_context.build_enriched_trading_context",
-        lambda: {
-            "layer1": {
-                "data_health": {"signal_status": "healthy", "ohlcv_ready": True}
-            }
-        },
-    )
-    monkeypatch.setattr(
-        "aletheia.agent_shell.trading_decision.evaluate_trading_opportunity",
-        fake_evaluate,
-    )
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", assess_pending_candidate)
     monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
 
     result = asyncio.run(commands.evaluate_trading_opportunity({}))
@@ -271,13 +258,19 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeyp
         "SELECT symbol, direction, market_type, opportunity_id, signal_source "
         "FROM pi_decisions "
         "WHERE action='skip' AND opportunity_id=?",
-        (decision.opportunity_id,),
+        (opportunity.id,),
     ).fetchone()
     opportunity_status = get_db().execute(
-        "SELECT status FROM opportunities WHERE id=?", (decision.opportunity_id,),
+        "SELECT status FROM opportunities WHERE id=?", (opportunity.id,),
     ).fetchone()[0]
+    proposal_count = get_db().execute(
+        "SELECT COUNT(*) FROM trade_proposals WHERE opportunity_id=?",
+        (opportunity.id,),
+    ).fetchone()[0]
+    assert result["action"] == "skip"  # raw watch is normalized to informational skip
     assert result["symbol"] == "BTC/USDT"
     assert result["direction"] == "long"
+    assert result["pending_queue_remaining"] == 0
     assert row is not None
     assert dict(row) == {
         "symbol": "BTC/USDT",
@@ -287,6 +280,7 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeyp
         "signal_source": "market_observer",
     }
     assert opportunity_status == "reviewed"
+    assert proposal_count == 0
 
 
 @spec_claim(
@@ -966,6 +960,112 @@ def test_heartbeat_cannot_submit_unqueued_open_or_ranker_opportunity(tmp_path, m
 
 @spec_claim(
     SpecClaim(
+        "DL-S35", "decision_lifecycle_contract", "§2.3 pending-only terminal identity", "L2b",
+        "A zero-pending heartbeat may record an unscoped skip, but skip/watch cannot bind or "
+        "retire a Layer-1 or ranker Opportunity without its exact durable pending carrier.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize("raw_action", ["skip", "watch"])
+def test_heartbeat_skip_or_watch_cannot_retire_unqueued_opportunity(
+    tmp_path, monkeypatch, raw_action
+):
+    import asyncio
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import close_db
+
+    close_db()
+    run_migrations()
+    from aletheia.agent_runtime import pi_daemon
+    from aletheia.agent_shell import reflection, trading_decision
+    from aletheia.agent_shell.trading_context import build_enriched_trading_context
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage.models import MarketSnapshot, Opportunity
+    from aletheia.storage.repositories import insert_market_snapshot, insert_opportunity
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.symbol_list = []
+    cfg.risk.symbol_filter_mode = "blacklist"
+    save_config(cfg)
+
+    opportunity = Opportunity(
+        id=f"opp-heartbeat-unscoped-{raw_action}",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        confidence="high",
+        confidence_score=90,
+        source_agent="market_observer",
+        asset_class="crypto",
+        execution_eligible=True,
+        status="open",
+        scanner_family="momentum",
+    )
+    insert_opportunity(opportunity)
+    insert_market_snapshot(
+        MarketSnapshot(symbol=opportunity.symbol, market_type="spot", price=100.0)
+    )
+
+    context = build_enriched_trading_context()
+    assert context["layer2"]["pending_queue"]["unresolved_total"] == 0
+    assert any(row.get("id") == opportunity.id for row in context["layer1"]["opportunities"])
+    assert any(
+        row.get("opportunity_id") == opportunity.id
+        for row in context["layer2"]["analysis_only_candidates"]
+    )
+
+    async def assess_visible_but_unqueued(_context):
+        return {
+            "action": raw_action,
+            "symbol": opportunity.symbol,
+            "direction": "long",
+            "market_type": "spot",
+            "conviction": 45,
+            "reasoning": "observe but do not enter the visible candidate",
+        }
+
+    monkeypatch.setattr(
+        trading_decision, "_assess_opportunity", assess_visible_but_unqueued
+    )
+    monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
+
+    asyncio.run(pi_daemon._run_evaluation("heartbeat"))
+
+    db = get_db()
+    linked_finals = db.execute(
+        "SELECT id FROM pi_decisions WHERE action!='signal_pending' AND opportunity_id=?",
+        (opportunity.id,),
+    ).fetchall()
+    unscoped_finals = db.execute(
+        "SELECT action, opportunity_id FROM pi_decisions "
+        "WHERE action!='signal_pending' AND opportunity_id IS NULL"
+    ).fetchall()
+    proposal_count = db.execute(
+        "SELECT COUNT(*) FROM trade_proposals WHERE opportunity_id=?",
+        (opportunity.id,),
+    ).fetchone()[0]
+    opportunity_status = db.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opportunity.id,)
+    ).fetchone()[0]
+
+    assert not linked_finals
+    assert [dict(row) for row in unscoped_finals] == [{
+        "action": "skip",
+        "opportunity_id": None,
+    }]
+    assert proposal_count == 0
+    assert opportunity_status == "open"
+
+
+@spec_claim(
+    SpecClaim(
         "DL-S21", "decision_lifecycle_contract", "§2.3 executable queue identity", "L2b",
         "A ranker preview becomes executable only when a durable signal_pending row "
         "matches opportunity, source, symbol, direction, and market exactly; same-instrument "
@@ -1102,6 +1202,94 @@ def test_old_position_beyond_layer1_display_still_attaches_close_identity(
     assert decision.market_type == target.market_type
     prompt = _build_assessment_prompt(ctx)
     assert "Open positions: 11 total; showing 5; 6 not shown" in prompt
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S36",
+        "decision_lifecycle_contract",
+        "§2.1 position-action identity rejection",
+        "L2b",
+        "A close/reduce result that cannot resolve exactly one open Position is rejected "
+        "immediately and cannot borrow an Opportunity identity from pending, Layer 1, or "
+        "ranker analysis rows.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize("action", ["close", "reduce"])
+def test_unmatched_position_action_never_falls_back_to_opportunity_identity(action):
+    from aletheia.agent_shell.trading_decision import (
+        TradingDecision,
+        _attach_opportunity_context,
+    )
+
+    decision = TradingDecision(
+        action=action,
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        conviction=90,
+        reasoning=f"{action} BTC despite no matching open Position",
+    )
+    ctx = {
+        "layer1": {
+            "position_authority": [
+                {
+                    "id": "different-open-position",
+                    "symbol": "ETH/USDT",
+                    "direction": "long",
+                    "market_type": "spot",
+                    "opportunity_id": "different-position-opportunity",
+                }
+            ],
+            "opportunities": [
+                {
+                    "id": "layer1-opportunity-must-not-bind",
+                    "symbol": "BTC/USDT",
+                    "direction_bias": "long",
+                    "market": "spot",
+                }
+            ],
+        },
+        "layer2": {
+            "pending_signals": [
+                {
+                    "opportunity_id": "pending-opportunity-must-not-bind",
+                    "signal_source": "market_observer",
+                    "symbol": "BTC/USDT",
+                    "direction": "long",
+                    "market_type": "spot",
+                }
+            ],
+            "ranker_candidates": [
+                {
+                    "opportunity_id": "ranker-opportunity-must-not-bind",
+                    "symbol": "BTC/USDT",
+                    "direction": "long",
+                    "market_type": "spot",
+                }
+            ],
+        },
+        "layer3": {},
+    }
+
+    _attach_opportunity_context(decision, ctx)
+
+    assert decision.action == "skip"
+    assert decision.opportunity_id is None
+    assert decision.filter_trace[-1] == {
+        "filter_name": "position_identity",
+        "stage": "operator_context_binding",
+        "decision": "rejected",
+        "reason_code": "position_identity_unresolved",
+        "inputs": {
+            "action": action,
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "market_type": "spot",
+        },
+        "parameters": {"required_match_count": 1},
+    }
 
 
 @spec_claim(
@@ -1325,6 +1513,59 @@ def test_new_entry_claim_still_requires_pending_carrier(
         "AND action!='signal_pending'",
         (opportunity.id,),
     ).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("action", ["skip", "watch"])
+def test_bound_terminal_claim_still_requires_pending_carrier(
+    tmp_path, monkeypatch, action
+):
+    """A final cannot retire an Opportunity after its queue authority disappears."""
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.reflection import (
+        PendingSourceClaimError,
+        claim_decision,
+    )
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import insert_opportunity
+    from aletheia.storage.sqlite import get_db
+
+    opportunity = Opportunity(
+        id=f"terminal-without-pending-{action}",
+        symbol="ETH/USDT",
+        market="spot",
+        direction_bias="long",
+        confidence="high",
+        source_agent="market_observer",
+        status="queued",
+    )
+    insert_opportunity(opportunity)
+    decision_result = {
+        "action": action,
+        "symbol": opportunity.symbol,
+        "direction": "long",
+        "market_type": "spot",
+        "conviction": 45,
+        "reasoning": "the queue carrier vanished before the final claim",
+        "opportunity_id": opportunity.id,
+        "signal_source": "market_observer",
+        "proposal_status": "not_applicable",
+        "proposal_reason": "action_not_trade",
+    }
+
+    with pytest.raises(PendingSourceClaimError, match="pending_signal_required"):
+        claim_decision(decision_result)
+
+    db = get_db()
+    assert db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE opportunity_id=? "
+        "AND action!='signal_pending'",
+        (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opportunity.id,)
+    ).fetchone()[0] == "queued"
 
 
 @spec_claim(
@@ -1556,10 +1797,22 @@ def test_partial_pending_identity_cannot_authorize_trade(tmp_path, monkeypatch):
         assert _has_durable_pending_carrier(decision) is False
 
 
+@spec_claim(
+    SpecClaim(
+        "DL-S37",
+        "decision_lifecycle_contract",
+        "§4 atomic pending TTL evidence",
+        "L2b",
+        "When a queued Opportunity expires after Operator context/LLM evaluation but "
+        "before Proposal preparation, preflight writes exactly one durable ttl_expired "
+        "rejection together with the terminal lifecycle transition.",
+        status="implemented",
+    ),
+)
 def test_queued_opportunity_expiry_is_rechecked_before_proposal(
     tmp_path, monkeypatch
 ):
-    """A fresh queue row cannot revive an Opportunity whose own TTL elapsed."""
+    """Expiry after context/LLM evaluation leaves evidence and zero Proposal."""
     import asyncio
 
     from tests.test_entry_logic import setup_env
@@ -1574,6 +1827,7 @@ def test_queued_opportunity_expiry_is_rechecked_before_proposal(
         insert_market_snapshot,
         insert_opportunity,
         insert_pi_decision,
+        update_opportunity,
     )
     from aletheia.storage.sqlite import get_db
 
@@ -1595,7 +1849,7 @@ def test_queued_opportunity_expiry_is_rechecked_before_proposal(
         asset_class="crypto",
         execution_eligible=True,
         status="queued",
-        valid_until="2020-01-01T00:00:00+00:00",
+        valid_until="2099-01-01T00:00:00+00:00",
     )
     insert_opportunity(opportunity)
     insert_pi_decision(PiDecision(
@@ -1612,6 +1866,11 @@ def test_queued_opportunity_expiry_is_rechecked_before_proposal(
     )
 
     async def choose_expired_source(_context):
+        # Context was built from a fresh row. Expiry happens while the model is
+        # evaluating, so the command preflight owns the terminal transition.
+        update_opportunity(
+            opportunity.id, valid_until="2020-01-01T00:00:00+00:00"
+        )
         return {
             "action": "trade",
             "symbol": opportunity.symbol,
@@ -1647,12 +1906,32 @@ def test_queued_opportunity_expiry_is_rechecked_before_proposal(
         "SELECT COUNT(*) FROM trade_proposals WHERE opportunity_id=?",
         (opportunity.id,),
     ).fetchone()[0]
+    ttl_evidence = get_db().execute(
+        "SELECT filter_name, decision, reason_code FROM filter_decisions "
+        "WHERE opportunity_id=? AND filter_name='opportunity_ttl'",
+        (opportunity.id,),
+    ).fetchall()
     assert proposal_count == 0, result
     assert get_opportunity(opportunity.id)["status"] == "expired"
+    assert [tuple(row) for row in ttl_evidence] == [
+        ("opportunity_ttl", "rejected", "ttl_expired")
+    ]
     assert result["proposal_reason"] == "pending_source_expired"
     assert result["operator_decision_persisted"] is False
 
 
+@spec_claim(
+    SpecClaim(
+        "DL-S38",
+        "decision_lifecycle_contract",
+        "§4 atomic claim TTL evidence",
+        "L2b",
+        "When a queued Opportunity expires after preflight but before the atomic Proposal "
+        "claim, claim revalidation writes exactly one durable ttl_expired rejection and "
+        "persists neither a final decision nor a Proposal.",
+        status="implemented",
+    ),
+)
 def test_claim_rechecks_source_after_early_authority_check(
     tmp_path, monkeypatch
 ):
@@ -1731,7 +2010,9 @@ def test_claim_rechecks_source_after_early_authority_check(
     original_claim = reflection.claim_decision
 
     def expire_immediately_before_claim(decision_result, *, proposal=None):
-        update_opportunity(opportunity.id, status="expired")
+        update_opportunity(
+            opportunity.id, valid_until="2020-01-01T00:00:00+00:00"
+        )
         return original_claim(decision_result, proposal=proposal)
 
     def store_without_executing(proposal, **_kwargs):
@@ -1759,11 +2040,125 @@ def test_claim_rechecks_source_after_early_authority_check(
         "AND action!='signal_pending'",
         (opportunity.id,),
     ).fetchone()[0]
+    ttl_evidence = get_db().execute(
+        "SELECT filter_name, decision, reason_code FROM filter_decisions "
+        "WHERE opportunity_id=? AND filter_name='opportunity_ttl'",
+        (opportunity.id,),
+    ).fetchall()
     assert proposal_count == 0, result
     assert final_count == 0, result
     assert get_opportunity(opportunity.id)["status"] == "expired"
+    assert [tuple(row) for row in ttl_evidence] == [
+        ("opportunity_ttl", "rejected", "ttl_expired")
+    ]
     assert result["proposal_reason"] == "pending_source_expired"
     assert result["operator_decision_persisted"] is False
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S39",
+        "decision_lifecycle_contract",
+        "§4 nested pending TTL transaction",
+        "L2b",
+        "Pending TTL expiry uses a savepoint inside the atomic Proposal claim so an "
+        "evidence write failure leaves the Opportunity queued and persists no final "
+        "decision or Proposal.",
+        status="implemented",
+    ),
+)
+def test_claim_ttl_evidence_failure_preserves_queued_source(
+    tmp_path, monkeypatch
+):
+    """A nested evidence failure cannot commit a status-only expiry."""
+    import sqlite3
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.reflection import claim_decision
+    from aletheia.storage.models import Opportunity, PiDecision, TradeProposal
+    from aletheia.storage.repositories import (
+        get_opportunity,
+        insert_opportunity,
+        insert_pi_decision,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    opportunity = Opportunity(
+        id="claim-expiry-evidence-failure",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        confidence="high",
+        confidence_score=90,
+        source_agent="market_observer",
+        asset_class="crypto",
+        execution_eligible=True,
+        status="queued",
+        valid_until="2020-01-01T00:00:00+00:00",
+    )
+    insert_opportunity(opportunity)
+    insert_pi_decision(
+        PiDecision(
+            id="carrier-for-expiry-evidence-failure",
+            action="signal_pending",
+            opportunity_id=opportunity.id,
+            signal_source="market_observer",
+            symbol=opportunity.symbol,
+            direction="long",
+            market_type="spot",
+        )
+    )
+    db = get_db()
+    db.execute(
+        "CREATE TRIGGER reject_claim_ttl_evidence "
+        "BEFORE INSERT ON filter_decisions "
+        "WHEN NEW.filter_name='opportunity_ttl' BEGIN "
+        "SELECT RAISE(ABORT, 'forced claim ttl evidence failure'); END"
+    )
+
+    decision_result = {
+        "action": "trade",
+        "opportunity_id": opportunity.id,
+        "signal_source": "market_observer",
+        "symbol": opportunity.symbol,
+        "direction": "long",
+        "market_type": "spot",
+        "conviction": 90,
+        "reasoning": "claim only while the source remains fresh",
+        "proposal_status": "submitting",
+    }
+    proposal = TradeProposal(
+        id="proposal-blocked-by-expiry-evidence",
+        opportunity_id=opportunity.id,
+        symbol=opportunity.symbol,
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        price=100.0,
+        execution_mode="paper_internal",
+    )
+
+    with pytest.raises(
+        sqlite3.IntegrityError, match="forced claim ttl evidence failure"
+    ):
+        claim_decision(decision_result, proposal=proposal)
+
+    assert get_opportunity(opportunity.id)["status"] == "queued"
+    assert db.execute(
+        "SELECT COUNT(*) FROM filter_decisions WHERE opportunity_id=?",
+        (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE opportunity_id=? "
+        "AND action!='signal_pending'",
+        (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM trade_proposals WHERE opportunity_id=?",
+        (opportunity.id,),
+    ).fetchone()[0] == 0
 
 
 @spec_claim(

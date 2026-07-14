@@ -43,6 +43,8 @@ _MARKET_OBSERVER_JOB_TIMEOUT_S = 500.0
 _MARKET_OBSERVER_LOOP_BUDGET_SEC = 460.0
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
 _ROUND_ROBIN_STATE_KEY = "agent.market_observer.round_robin.v1"
+_RETRYABLE_EVIDENCE_ERROR_PREFIX = "observer_pre_filter_evidence_failed:"
+_RETRYABLE_EMISSION_ERROR_PREFIX = "observer_opportunity_emission_evidence_failed:"
 
 
 class MarketRead(BaseModel):
@@ -477,7 +479,7 @@ async def _analyze_symbol(
             else "sufficient_signal" if pre_filter_passed
             else "no_sufficient_signal"
         )
-        record_observer_pre_filter_evidence(
+        evidence_id = record_observer_pre_filter_evidence(
             run_id=run_id,
             symbol=symbol,
             venue=venue,
@@ -504,8 +506,23 @@ async def _analyze_symbol(
             entry_spread_bps=member_spread_bps,
             funding_rate_at_entry=funding_rate_val,
         )
+        # record_filter_decision is observational by default and intentionally
+        # swallows storage exceptions. A pre-filter rejection is different: once
+        # the LLM is skipped, this row is the only durable explanation for why the
+        # real instrument disappeared. Verify the returned identity exists before
+        # treating the input as handled.
+        from aletheia.storage.sqlite import get_db
+
+        evidence_row = get_db().execute(
+            "SELECT 1 FROM filter_decisions WHERE id = ?",
+            (evidence_id,),
+        ).fetchone()
+        if evidence_row is None:
+            raise RuntimeError("observer_pre_filter_evidence_not_persisted")
     except Exception as exc:
-        logger.warning("observer pre-filter evidence unavailable for %s: %s", symbol, exc)
+        error_code = f"{_RETRYABLE_EVIDENCE_ERROR_PREFIX}{symbol}"
+        logger.error("%s (%s)", error_code, type(exc).__name__)
+        return None, error_code
 
     if not force_full and not pre_filter_passed:
         logger.debug("pre-filter: no sufficient signal for %s — skipping LLM call", symbol)
@@ -728,12 +745,39 @@ async def _analyze_symbol(
         open_interest=open_interest_val,
         oi_delta_1h=oi_delta_val,
     )
-    if universe_snapshot_id:
-        persisted, created = insert_opportunity_once_by_snapshot(opp)
+    try:
+        from aletheia.analytics.filter_evidence import (
+            atomic_opportunity_evidence,
+            record_observer_opportunity_emitted_evidence,
+        )
+
+        persisted = None
+        created = True
+        with atomic_opportunity_evidence():
+            if universe_snapshot_id:
+                persisted, created = insert_opportunity_once_by_snapshot(opp)
+            else:
+                insert_opportunity(opp)
+            if created:
+                record_observer_opportunity_emitted_evidence(
+                    run_id=run_id,
+                    opportunity_id=opp.id,
+                    symbol=symbol,
+                    venue=venue,
+                    market_type=market_type,
+                    direction=direction,
+                    scanner_family=effective_scanner_family,
+                    universe_snapshot_id=universe_snapshot_id,
+                    universe_member_id=universe_member_id,
+                    confidence=confidence,
+                    confidence_score=confidence_score,
+                )
         if not created:
             return _reuse_existing_opportunity(persisted)
-    else:
-        insert_opportunity(opp)
+    except Exception as exc:
+        error_code = f"{_RETRYABLE_EMISSION_ERROR_PREFIX}{symbol}"
+        logger.error("%s (%s)", error_code, type(exc).__name__)
+        return None, error_code
     log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
     _total_duration = _time.monotonic() - _t_start
     _step_times["total"] = _total_duration
@@ -946,7 +990,12 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             elif err:
                 _fail_count += 1
                 errors.append(f"{instrument}:{err}")
-            completed_attempt = True
+            completed_attempt = not bool(
+                err and err.startswith((
+                    _RETRYABLE_EVIDENCE_ERROR_PREFIX,
+                    _RETRYABLE_EMISSION_ERROR_PREFIX,
+                ))
+            )
         except Exception as e:
             _fail_count += 1
             errors.append(f"{instrument}:unexpected:{e}")

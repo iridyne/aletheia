@@ -468,6 +468,30 @@ def test_persisted_ranker_and_selection_gates_are_registered():
 
 @spec_claim(
     SpecClaim(
+        "FE-B11",
+        _CONTRACT,
+        "§3 Guard evidence truthfulness",
+        "L2a",
+        "guard_candidate_block records not_applicable when disabled and error when "
+        "evaluation fails; only a completed non-blocking evaluation may be passed.",
+        status="implemented",
+    )
+)
+def test_guard_filter_has_explicit_not_evaluated_states():
+    import inspect
+
+    from aletheia.agents import paper_trader_ranker as ranker
+
+    applicability = inspect.getsource(ranker._guard_evaluation_applicability)
+    candidate = inspect.getsource(ranker._evaluate_candidate)
+    assert '"not_applicable", "learning_influence_disabled"' in applicability
+    assert '"error", "guard_applicability_error"' in applicability
+    assert 'guard_reason = "guard_evaluation_failed"' in candidate
+    assert "if guard_eval is None" in candidate
+
+
+@spec_claim(
+    SpecClaim(
         "FE-C09", _CONTRACT, "§6 first-exposure cohorts and bounded replay", "L2c",
         "Filter feedback assigns each candidate to its first persisted filter exposure, "
         "and supported threshold replays are fixed-version, read-only and bounded.",

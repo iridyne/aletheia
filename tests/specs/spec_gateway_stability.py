@@ -21,6 +21,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
@@ -422,3 +424,239 @@ def test_bounded_caps_hanging_collector():
     assert r_hang is None, "hanging collector must be capped to None"
     assert elapsed < 3.0, f"hang must be cut at ~1s cap, took {elapsed:.1f}s"
     assert r_skip is None, "past-deadline collector must be skipped"
+
+
+@spec_claim(
+    SpecClaim(
+        "GS-B09",
+        _CONTRACT,
+        "§collector persistence truthfulness",
+        "L2b",
+        "When the derivatives collector returns funding or open-interest data but its "
+        "repository write fails, derivatives health is failed with a stable code and "
+        "the enclosing data_collectors job reports a partial failure, never success.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize(
+    ("payload_key", "repo_method", "snapshot", "error_code"),
+    [
+        (
+            "funding",
+            "insert_funding_rate_snapshot",
+            "funding",
+            "derivatives_funding_persist_failed",
+        ),
+        (
+            "open_interest",
+            "insert_open_interest_snapshot",
+            "open_interest",
+            "derivatives_open_interest_persist_failed",
+        ),
+    ],
+)
+def test_derivatives_persistence_failure_degrades_domain_and_job(
+    monkeypatch, payload_key, repo_method, snapshot, error_code
+):
+    from aletheia.agent_runtime import scheduler as sch
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data.collectors.derivatives import DerivativesCollector
+    from aletheia.data.collectors.microstructure import MicrostructureCollector
+    from aletheia.data.models import FundingRateSnapshot, OpenInterestSnapshot
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.storage import repositories as repo
+
+    observed_at = "2026-01-01T00:00:00+00:00"
+    snapshots = {
+        "funding": FundingRateSnapshot(
+            symbol="BTC/USDT",
+            exchange="binance",
+            funding_rate=0.0001,
+            funding_rate_annualized=0.1095,
+            observed_at=observed_at,
+        ),
+        "open_interest": OpenInterestSnapshot(
+            symbol="BTC/USDT",
+            exchange="binance",
+            open_interest_usd=1_000_000.0,
+            observed_at=observed_at,
+        ),
+    }
+    instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
+    health: list[tuple[str, str, str | None]] = []
+
+    async def collect_microstructure(_self, _instruments):
+        return {"snapshots": [], "errors": []}
+
+    async def collect_derivatives(_self, _symbols):
+        return {
+            "funding": [snapshots[snapshot]] if payload_key == "funding" else [],
+            "open_interest": (
+                [snapshots[snapshot]] if payload_key == "open_interest" else []
+            ),
+            "liquidations": [],
+            "errors": [],
+        }
+
+    def fail_persist(_row):
+        raise RuntimeError("forced repository outage")
+
+    monkeypatch.setattr(sch, "_get_observed_instruments", lambda _cfg: [instrument])
+    monkeypatch.setattr(
+        sch, "_get_derivative_symbols", lambda _instruments: ["BTC/USDT"]
+    )
+    monkeypatch.setattr(MicrostructureCollector, "collect", collect_microstructure)
+    monkeypatch.setattr(DerivativesCollector, "collect", collect_derivatives)
+    monkeypatch.setattr(repo, "insert_orderbook_snapshot", lambda _row: None)
+    monkeypatch.setattr(repo, "insert_funding_rate_snapshot", lambda _row: None)
+    monkeypatch.setattr(repo, "insert_open_interest_snapshot", lambda _row: None)
+    monkeypatch.setattr(repo, "insert_liquidation_event", lambda _row: None)
+    monkeypatch.setattr(repo, repo_method, fail_persist)
+    monkeypatch.setattr(
+        sch,
+        "_record_collector_health",
+        lambda label, status, **kwargs: health.append(
+            (label, status, kwargs.get("error_code"))
+        ),
+    )
+
+    result = asyncio.run(sch._async_data_collectors(AletheiaConfig(), tick=2))
+
+    assert result == {"status": "partial", "error_codes": [error_code]}
+    derivative_health = [row for row in health if row[0] == "derivatives"]
+    assert derivative_health == [("derivatives", "failed", error_code)]
+
+    job_events: list[tuple[str, str]] = []
+
+    def return_partial(_job_id, awaitable):
+        awaitable.close()
+        return result
+
+    monkeypatch.setattr(sch, "load_config", lambda: AletheiaConfig())
+    monkeypatch.setattr(sch, "_run_async_with_timeout", return_partial)
+    monkeypatch.setattr(sch, "_DC_TICK", 0)
+    monkeypatch.setattr(
+        sch,
+        "_record_job_success",
+        lambda job_id: job_events.append(("success", job_id)),
+    )
+    monkeypatch.setattr(
+        sch,
+        "_record_job_failure",
+        lambda job_id, code: job_events.append(("failure", f"{job_id}:{code}")),
+    )
+
+    sch._run_data_collectors()
+
+    assert job_events == [("failure", f"data_collectors:{error_code}")]
+
+
+@spec_claim(
+    SpecClaim(
+        "GS-B10",
+        _CONTRACT,
+        "§universe refresh truthfulness",
+        "L2b",
+        "An enabled Universe refresh that returns no snapshot is logged and counted as "
+        "universe_refresh_no_snapshot failure, not completed_no_snapshot success.",
+        status="implemented",
+    ),
+)
+def test_universe_refresh_none_is_agent_and_scheduler_failure(monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import scheduler as sch
+    from aletheia.files import jsonl
+    from aletheia.universe.service import UniverseService
+
+    logs: list[dict] = []
+    job_events: list[tuple[str, str]] = []
+
+    async def no_snapshot(_self):
+        return None
+
+    def run_inline(_job_id, awaitable):
+        return asyncio.run(awaitable)
+
+    monkeypatch.setattr(UniverseService, "refresh", no_snapshot)
+    monkeypatch.setattr(jsonl, "write_agent_run_log", logs.append)
+    monkeypatch.setattr(
+        sch,
+        "load_config",
+        lambda: SimpleNamespace(
+            runtime=SimpleNamespace(paused=False),
+            universe=SimpleNamespace(enabled=True),
+        ),
+    )
+    monkeypatch.setattr(sch, "_run_async_with_timeout", run_inline)
+    monkeypatch.setattr(sch, "_cleanup_stale_scanner_runs", lambda: None)
+    monkeypatch.setattr(
+        sch,
+        "_record_job_success",
+        lambda job_id: job_events.append(("success", job_id)),
+    )
+    monkeypatch.setattr(
+        sch,
+        "_record_job_failure",
+        lambda job_id, code: job_events.append(("failure", f"{job_id}:{code}")),
+    )
+
+    sch._run_universe_refresh()
+
+    assert len(logs) == 1
+    assert logs[0]["status"] == "failed"
+    assert logs[0]["outputs_created"] == []
+    assert logs[0]["errors"] == ["universe_refresh_no_snapshot"]
+    assert job_events == [
+        ("failure", "universe_refresh:universe_refresh_no_snapshot")
+    ]
+
+
+@spec_claim(
+    SpecClaim(
+        "GS-B11",
+        _CONTRACT,
+        "§scheduled agent result truthfulness",
+        "L2b",
+        "The shared scheduled-agent adapter raises a stable failure when run_agent "
+        "returns completed_with_errors or a non-empty errors list; a clean completed "
+        "result remains successful.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize(
+    "agent_result",
+    [
+        {"status": "completed_with_errors", "errors": ["provider unavailable"]},
+        {"status": "completed", "errors": ["downstream write failed"]},
+    ],
+)
+def test_async_run_rejects_agent_reported_errors(monkeypatch, agent_result):
+    from aletheia.agent_runtime import orchestrator
+    from aletheia.agent_runtime import scheduler as sch
+
+    async def report_errors(_agent_name, *, trigger_type):
+        assert trigger_type == "scheduled"
+        return agent_result
+
+    monkeypatch.setattr(orchestrator, "run_agent", report_errors)
+
+    with pytest.raises(
+        RuntimeError, match=r"^scheduled_agent_reported_errors:paper_trader$"
+    ):
+        asyncio.run(sch._async_run("paper_trader"))
+
+
+def test_async_run_preserves_clean_completed_result(monkeypatch):
+    from aletheia.agent_runtime import orchestrator
+    from aletheia.agent_runtime import scheduler as sch
+
+    clean = {"status": "completed", "errors": [], "outputs": ["queued:1"]}
+
+    async def report_success(_agent_name, *, trigger_type):
+        assert trigger_type == "scheduled"
+        return clean
+
+    monkeypatch.setattr(orchestrator, "run_agent", report_success)
+
+    assert asyncio.run(sch._async_run("paper_trader")) == clean

@@ -381,10 +381,16 @@ def _evaluate_candidate(
     )
 
     # Guard evaluation (deterministic, no LLM)
-    guard_eval = _evaluate_guards_safe(
-        opp, universe_member, factor_signal, direction, confidence,
-        strategy_has_ruleset, ruleset_entry_result, strategy_evidence,
-    )
+    guard_state, guard_reason = _guard_evaluation_applicability()
+    guard_eval = None
+    if guard_state == "enabled":
+        guard_eval = _evaluate_guards_safe(
+            opp, universe_member, factor_signal, direction, confidence,
+            strategy_has_ruleset, ruleset_entry_result, strategy_evidence,
+        )
+        if guard_eval is None:
+            guard_state = "error"
+            guard_reason = "guard_evaluation_failed"
     if guard_eval and guard_eval.blocked:
         blocked_ids = ",".join(h.guard_id for h in guard_eval.hits if h.block_candidate)
         _filter_step(
@@ -400,11 +406,21 @@ def _evaluate_candidate(
             strategy_evidence=strategy_evidence, guard_eval=guard_eval,
             filter_trace=filter_trace,
         )
-    _filter_step(
-        filter_trace, "guard_candidate_block", "passed", "guard_not_blocking",
-        inputs={"guard_ids": [h.guard_id for h in guard_eval.hits] if guard_eval else []},
-        parameters={"scope": "paper_entry"},
-    )
+    if guard_eval is None:
+        _filter_step(
+            filter_trace,
+            "guard_candidate_block",
+            guard_state,
+            guard_reason,
+            inputs={"guard_ids": []},
+            parameters={"scope": "paper_entry"},
+        )
+    else:
+        _filter_step(
+            filter_trace, "guard_candidate_block", "passed", "guard_not_blocking",
+            inputs={"guard_ids": [h.guard_id for h in guard_eval.hits]},
+            parameters={"scope": "paper_entry"},
+        )
 
     # Compute trade score
     learning_trace: list[dict] = []
@@ -784,6 +800,24 @@ def _memo_scoring(symbol: str | None, direction: str | None, regime: MarketRegim
 # removed with the strategy rules engine. Regime affinity is now a scanner-family
 # scoring signal (_scanner_regime_scoring / _compute_trade_score); there is no
 # RuleSet to evaluate. Deleting these also drops the last aletheia.strategy imports.
+
+
+def _guard_evaluation_applicability() -> tuple[str, str]:
+    """Classify why the Guard can or cannot evaluate this ranking cycle."""
+    try:
+        from aletheia.learning.control import learning_influence_enabled
+
+        if not learning_influence_enabled():
+            return "not_applicable", "learning_influence_disabled"
+        guard_cfg = getattr(load_config(), "guard", None)
+        if guard_cfg is not None and not guard_cfg.enabled:
+            return "not_applicable", "guard_disabled"
+        if guard_cfg is not None and not guard_cfg.enforce_in_paper_ranker:
+            return "not_applicable", "guard_ranker_enforcement_disabled"
+        return "enabled", "guard_evaluation_enabled"
+    except Exception as exc:
+        logger.warning("Guard applicability check failed: %s", type(exc).__name__)
+        return "error", "guard_applicability_error"
 
 
 def _evaluate_guards_safe(

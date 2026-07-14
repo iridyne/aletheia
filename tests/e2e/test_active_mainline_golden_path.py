@@ -25,6 +25,16 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     cfg.agent.permission_mode = "Paper"
     cfg.agent.autonomous_learning = False
     cfg.agent.bypass_distress_gate = True
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
+    cfg.exchange.preferred_market_type = "spot"
+    cfg.exchange.symbol_list = ["BTC/USDT"]
+    cfg.risk.symbol_filter_mode = "whitelist"
+    cfg.market_data.observed_symbols = ["BTC/USDT"]
+    cfg.market_data.observed_instruments = []
+    cfg.market_data.observed_xstocks = []
+    cfg.market_data.observed_stock_tokens = []
+    cfg.market_data.prediction_enabled = False
+    cfg.universe.enabled = False
     save_config(cfg)
 
     # Session A owns everything produced in this boot (opportunity → position).
@@ -40,21 +50,59 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
         volume_24h=1_000_000_000.0,
         snapshot_at=datetime.now(timezone.utc).isoformat(),
     )
-    opportunity = Opportunity(
-        id="golden-opportunity",
-        symbol="BTC/USDT",
-        market="spot",
-        direction_bias="long",
-        thesis="Deterministic Golden Path opportunity",
-        confidence="high",
-        confidence_score=90,
-        source_agent="market_observer",
-        asset_class="crypto",
-        execution_eligible=True,
-        scanner_family="momentum",
-    )
     repo.insert_market_snapshot(snapshot)
-    repo.insert_opportunity(opportunity)
+
+    # The public market/LLM boundaries are deterministic, but the production
+    # Observer must create the Opportunity.  This prevents the Golden Path from
+    # starting in the middle of the business chain with a hand-built row.
+    async def deterministic_market_context(
+        symbols, *, market_type="spot", exchange=None, **_kwargs
+    ):
+        assert symbols == ["BTC/USDT"]
+        assert market_type == "spot"
+        return (
+            "### BTC/USDT\n"
+            "| TF | Close | SMA20 | SMA50 | RSI14 | ATR14 | Mom10 |\n"
+            "| 1h | 60000 | 59000 | 58000 | 68 | 900 | +3.2% |\n"
+            "Breakout momentum is confirmed above both moving averages.",
+            {
+                "symbols": {
+                    "BTC/USDT": {"1h": {"close": 60_000.0, "rsi_14": 68.0}}
+                },
+                "errors": [],
+                "exchange": exchange,
+            },
+        )
+
+    async def deterministic_observer_read(*_args, **_kwargs):
+        return ({
+            "direction_bias": "long",
+            "confidence": "high",
+            "confidence_score": 90,
+            "rationale": "BTC holds above SMA20 and SMA50 with positive momentum.",
+            "key_observations": [
+                "BTC 1h RSI is 68.",
+                "BTC trades at 60000 above SMA20 59000 and SMA50 58000.",
+            ],
+        }, None)
+
+    monkeypatch.setattr(
+        "aletheia.trading.market_context.build_market_context",
+        deterministic_market_context,
+    )
+    monkeypatch.setattr(
+        "aletheia.agents.market_observer.llm_structured",
+        deterministic_observer_read,
+    )
+    from aletheia.agent_runtime.orchestrator import run_agent
+
+    observer_result = await run_agent("market_observer", trigger_type="manual")
+    assert observer_result["status"] == "completed"
+    assert observer_result["errors"] == []
+    produced = repo.list_opportunities(limit=10)
+    assert len(produced) == 1
+    opportunity = Opportunity.model_validate(produced[0])
+    assert observer_result["outputs"] == [f"opportunity:{opportunity.id}"]
 
     # The Operator may consume only the durable Filter/Ranker queue carrier.
     # Run the real paper-trader handoff instead of letting this golden path

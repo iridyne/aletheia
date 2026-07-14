@@ -1564,8 +1564,11 @@ def _pending_carrier_authority_failure(decision) -> str | None:
     # after ranking. Validate its own lifecycle under the writer lock before a
     # new Proposal claim. An already-durable final claim is recovery authority
     # and is therefore resumed instead of being cancelled by later TTL/config.
-    from aletheia.storage.repositories import get_opportunity, transaction
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import (
+        expire_queued_opportunity_with_ttl_evidence,
+        get_opportunity,
+        transaction,
+    )
 
     existing = None
     with transaction(immediate=True):
@@ -1591,11 +1594,20 @@ def _pending_carrier_authority_failure(decision) -> str | None:
                         expires_at = expires_at.replace(tzinfo=timezone.utc)
                 except (TypeError, ValueError):
                     return "pending_source_expiry_invalid"
-                if expires_at <= datetime.now(timezone.utc):
-                    get_db().execute(
-                        "UPDATE opportunities SET status='expired' "
-                        "WHERE id=? AND status='queued'",
-                        (opportunity_id,),
+                checked_at = datetime.now(timezone.utc)
+                if expires_at <= checked_at:
+                    expire_queued_opportunity_with_ttl_evidence(
+                        opportunity_id,
+                        evaluated_at=checked_at.isoformat(),
+                        reason_detail=(
+                            "source Opportunity valid_until elapsed before "
+                            "System Operator Proposal preflight"
+                        ),
+                        parameters={
+                            "expiry_basis": "valid_until",
+                            "valid_until": str(valid_until),
+                            "authority_check": "operator_preflight",
+                        },
                     )
                     return "pending_source_expired"
 

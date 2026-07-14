@@ -399,9 +399,15 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
     if execution_mode == "paper_internal":
         try:
             from aletheia.portfolio.paper_account import get_paper_account
-            return get_paper_account(event_limit=0)["available_balance_usdt"]
+            available = float(
+                get_paper_account(event_limit=0)["available_balance_usdt"]
+            )
+            if not math.isfinite(available):
+                return None
+            return max(0.0, available)
         except Exception:
-            # Preserve the configured cap if the local ledger cannot be read.
+            # Unlike an exchange cache, the local paper ledger is the account
+            # authority itself.  Its absence cannot be replaced by config capital.
             return None
 
     try:
@@ -433,7 +439,10 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
         return None
 
 
-def _effective_position_notional_cap(risk, execution_mode: str) -> float:
+def _effective_position_notional_cap(
+    risk,
+    execution_mode: str,
+) -> float | None:
     """Return the hard position cap tightened by the matching account balance."""
     configured_cap = (
         risk.max_live_position_notional_usdt
@@ -442,6 +451,8 @@ def _effective_position_notional_cap(risk, execution_mode: str) -> float:
     )
     available = _cached_available_balance_usdt(execution_mode)
     if available is None:
+        if execution_mode == "paper_internal":
+            return None
         return configured_cap
     return min(configured_cap, available)
 
@@ -606,17 +617,31 @@ def _evaluate_proposal_locked(
     if proposal.market_type == "usdt_futures" and not cfg.exchange.enabled_markets.get("usdt_futures"):
         violations.append("futures_market_disabled")
 
-    # 2a. Local paper futures cannot produce trustworthy funding economics yet.
-    # Letting a new position open would make its eventual net PnL unknowable and
-    # freeze the paper-account authority on close.  Fail closed at the durable Risk
-    # boundary until a real per-position local funding ledger exists.  Existing
-    # positions still use the separate close path and remain fully exit-capable.
+    # 2a. A local futures Position is admissible only when the durable derivatives
+    # collector has a fresh next-settlement anchor for this exact symbol.  The paper
+    # close path then retains that venue's schedule and computes signed funding as
+    # ``local_simulation``.  A missing/read-failed schedule remains fail-closed here;
+    # existing Positions always retain their separate protective exit path.
     if (
         proposal.source == "native"
         and proposal.execution_mode == "paper_internal"
         and proposal.market_type == "usdt_futures"
     ):
-        violations.append("local_paper_futures_funding_unavailable")
+        try:
+            from aletheia.portfolio.local_funding import (
+                has_fresh_local_funding_schedule,
+            )
+
+            funding_available = has_fresh_local_funding_schedule(proposal.symbol)
+        except Exception as exc:
+            logger.warning(
+                "local funding schedule unavailable for %s (%s)",
+                proposal.symbol,
+                type(exc).__name__,
+            )
+            funding_available = False
+        if not funding_available:
+            violations.append("local_paper_futures_funding_unavailable")
 
     # 2b. Entry-plan completeness (owner discussion #6, 2026-07-03): a native LIMIT
     #     entry must commit all four numbers BEFORE the order — entry (price), stop
@@ -670,14 +695,23 @@ def _evaluate_proposal_locked(
     drawdown_scale = _portfolio_drawdown_scale(proposal.execution_mode)
     if proposal.quantity and proposal.price:
         notional = proposal.quantity * proposal.price
-        if _is_live(proposal.execution_mode):
-            effective_cap = _effective_position_notional_cap(risk, proposal.execution_mode) * drawdown_scale
-            if notional > effective_cap:
-                violations.append(f"exceeds_max_position_notional:{notional}>{effective_cap}")
+        position_cap = _effective_position_notional_cap(
+            risk,
+            proposal.execution_mode,
+        )
+        if position_cap is None:
+            violations.append("paper_account_balance_unavailable")
         else:
-            effective_cap = _effective_position_notional_cap(risk, proposal.execution_mode) * drawdown_scale
-            if notional > effective_cap:
-                violations.append(f"exceeds_demo_position_notional:{notional}>{effective_cap}")
+            effective_cap = position_cap * drawdown_scale
+            if _is_live(proposal.execution_mode):
+                if notional > effective_cap:
+                    violations.append(
+                        f"exceeds_max_position_notional:{notional}>{effective_cap}"
+                    )
+            elif notional > effective_cap:
+                violations.append(
+                    f"exceeds_demo_position_notional:{notional}>{effective_cap}"
+                )
 
     # 6. Max open positions
     # trade_school policy (D2-C02): shared pool — serenity and main-track positions
@@ -1614,10 +1648,9 @@ def _check_account_leverage_ratio(
     """Reject if adding this trade would push account leverage ratio above cap.
 
     account_leverage = sum(|pos_notional| * pos_leverage) / equity
-    Deliberate skip (returns []) only when equity is genuinely unknown — that is
-    a documented can't-compute case, not an error. An actual exception fails CLOSED
-    (returns a violation) per §17.2/EH-1: never allow leveraged exposure on a broken
-    check.
+    Every exposure row and the equity denominator must belong to the same account
+    pool.  Missing account equity is not zero exposure and cannot be guessed from a
+    configured starting balance, so it rejects with a stable availability token.
     """
     risk = cfg.risk
     is_live = _is_live(proposal.execution_mode)
@@ -1627,52 +1660,83 @@ def _check_account_leverage_ratio(
     )
     try:
         open_positions = list_all_open_positions()
-        relevant = [
-            p for p in open_positions
-            if _is_live(p.get("execution_mode", "")) == is_live
-        ]
+        relevant = _relevant_positions(open_positions, proposal.execution_mode)
 
         weighted_notional = 0.0
         for p in relevant:
             try:
-                qty = float(p.get("quantity") or 0)
-                price = float(p.get("current_price") or p.get("entry_price") or 0)
-                lev = float(p.get("leverage") or 1)
-                weighted_notional += abs(qty * price) * lev
+                qty = float(p.get("quantity"))
+                entry_price = float(p.get("entry_price"))
+                market_type = str(p.get("market_type") or "").strip().lower()
+                raw_leverage = p.get("leverage")
+                # Spot is structurally unlevered in Aletheia.  Legacy/current spot
+                # rows therefore store NULL, which means exactly 1x rather than an
+                # unknown exposure.  A non-1 explicit value contradicts the market
+                # type and must not be trusted.  Futures/unknown rows retain the
+                # stricter rule: leverage must be explicitly numeric and positive.
+                lev = (
+                    1.0
+                    if market_type == "spot" and raw_leverage is None
+                    else float(raw_leverage)
+                )
+                current_price = p.get("current_price")
+                price = (
+                    entry_price
+                    if current_price is None
+                    else float(current_price)
+                )
             except (TypeError, ValueError):
-                continue
+                return ["account_leverage_check_error:invalid_position_exposure"]
+            if (
+                not math.isfinite(qty)
+                or qty <= 0
+                or not math.isfinite(entry_price)
+                or entry_price <= 0
+                or not math.isfinite(lev)
+                or lev <= 0
+                or (market_type == "spot" and lev != 1.0)
+                or not math.isfinite(price)
+                or price <= 0
+            ):
+                return ["account_leverage_check_error:invalid_position_exposure"]
+            position_exposure = abs(qty * price) * lev
+            if not math.isfinite(position_exposure):
+                return ["account_leverage_check_error:invalid_position_exposure"]
+            weighted_notional += position_exposure
+            if not math.isfinite(weighted_notional):
+                return ["account_leverage_check_error:invalid_position_exposure"]
 
         if unresolved_entries is None:
             unresolved_entries = _unresolved_entry_reservations()
         for entry in unresolved_entries:
-            if _is_live(entry.execution_mode) != is_live:
-                continue
-            if (
-                entry.reserved_quantity is None
-                or entry.price is None
-                or entry.leverage is None
+            if not _account_pool_matches(
+                entry.execution_mode,
+                proposal.execution_mode,
             ):
                 continue
-            weighted_notional += (
-                abs(entry.reserved_quantity * entry.price) * entry.leverage
-            )
+            try:
+                weighted_notional += _entry_reservation_weighted_notional(entry)
+            except (TypeError, ValueError):
+                return ["account_leverage_check_error:invalid_entry_reservation"]
+            if not math.isfinite(weighted_notional):
+                return ["account_leverage_check_error:invalid_entry_reservation"]
 
         if pre_order_entries is None:
             pre_order_entries = _pre_order_entry_reservations(
                 exclude_proposal_id=proposal.id,
             )
         for entry in pre_order_entries:
-            if _is_live(entry.execution_mode) != is_live:
-                continue
-            if (
-                entry.reserved_quantity is None
-                or entry.price is None
-                or entry.leverage is None
+            if not _account_pool_matches(
+                entry.execution_mode,
+                proposal.execution_mode,
             ):
                 continue
-            weighted_notional += (
-                abs(entry.reserved_quantity * entry.price) * entry.leverage
-            )
+            try:
+                weighted_notional += _entry_reservation_weighted_notional(entry)
+            except (TypeError, ValueError):
+                return ["account_leverage_check_error:invalid_entry_reservation"]
+            if not math.isfinite(weighted_notional):
+                return ["account_leverage_check_error:invalid_entry_reservation"]
 
         if proposal.price and proposal.quantity:
             prop_lev = float(proposal.leverage or 1)
@@ -1680,7 +1744,7 @@ def _check_account_leverage_ratio(
 
         equity = _account_equity(proposal.execution_mode, cfg)
         if not equity or equity <= 0:
-            return []
+            return [f"account_equity_unavailable:{proposal.execution_mode}"]
 
         ratio = weighted_notional / equity
         if ratio > max_ratio:
@@ -1724,40 +1788,127 @@ def _check_liquidation_buffer(proposal: TradeProposal, cfg) -> list[str]:
 # Shared helpers for leverage checks
 # ---------------------------------------------------------------------------
 
-def _account_equity(execution_mode: str, cfg) -> float | None:
-    """Best estimate of account equity in USDT for the given execution mode.
+def _external_account_cache_is_healthy(state: dict | None) -> bool:
+    """Whether an exchange equity snapshot is explicit, fresh, and usable.
 
-    Route by account type so each mode reads the right balance source:
+    ``exchange_sync`` derives freshness from ``age_seconds``.  Some callers also
+    attach a producer status; when present it must say healthy/ok.  Old cache
+    formats have no explicit status, so the derived ``status_for`` result remains
+    the authority instead of making every pre-status snapshot unusable.
+    """
+    if not isinstance(state, dict):
+        return False
+    try:
+        from aletheia.portfolio.exchange_sync import status_for
+
+        age = float(state.get("age_seconds"))
+        if not math.isfinite(age) or age < 0:
+            return False
+        if status_for(state) != "ok":
+            return False
+    except Exception:
+        return False
+    explicit_status = state.get("status")
+    if explicit_status is not None and str(explicit_status).strip().lower() not in {
+        "healthy",
+        "ok",
+    }:
+        return False
+    return True
+
+
+def _external_account_row_is_healthy(account: dict | None) -> bool:
+    """Validate an exact named row, inheriting freshness from its parent view."""
+    if not isinstance(account, dict):
+        return False
+    explicit_status = account.get("status")
+    return explicit_status is None or str(explicit_status).strip().lower() in {
+        "healthy",
+        "ok",
+    }
+
+
+def _account_equity(execution_mode: str, cfg) -> float | None:
+    """Return locally cached equity for the account pool used by ``execution_mode``.
+
+    This helper never calls an exchange and never substitutes configured capital for
+    an unavailable account snapshot:
     - ``paper_internal``: local paper ledger (cash + unrealized PnL). exchange_sync
       knows nothing about this account — its balance never appears there.
-    - live exchange modes: cached exchange state, fallback to max_live_limited_cap_usdt.
-    - exchange demo modes (okx_demo, bitget_demo, …): cached exchange state,
-      fallback to starting_capital_usdt.
+    - live modes: aggregate only cached live-account rows (with the explicit Bitget
+      live cache as the legacy single-account fallback).
+    - exchange demo modes: exact broker account only.  Bitget keeps its legacy
+      per-mode cache; OKX/Binance are named rows in the unified cache.
     """
     if execution_mode == "paper_internal":
         try:
             from aletheia.portfolio.paper_account import get_paper_account
             equity = get_paper_account(event_limit=0).get("equity_usdt")
-            if equity and equity > 0:
+            if equity is not None and math.isfinite(float(equity)) and float(equity) > 0:
                 return float(equity)
         except Exception:
             pass
-        # Local ledger unreadable — fall back to configured starting capital.
-        return float(cfg.risk.starting_capital_usdt or 0) or None
+        return None
 
-    is_live = _is_live(execution_mode)
     try:
-        from aletheia.portfolio import exchange_sync
-        cached = exchange_sync.get_cached_state()
-        if cached:
-            equity = cached.get("equity_usdt") or cached.get("total_equity_usdt")
-            if equity:
-                return float(equity)
+        from aletheia.portfolio.exchange_sync import (
+            get_cached_state,
+            get_unified_cached_state,
+        )
+
+        if _is_live(execution_mode):
+            unified = get_unified_cached_state() or {}
+            live_equities = []
+            if _external_account_cache_is_healthy(unified):
+                for account in unified.get("accounts") or []:
+                    if not _is_live(str(account.get("broker_id") or "")):
+                        continue
+                    if not _external_account_row_is_healthy(account):
+                        return None
+                    value = float(account.get("equity_usdt"))
+                    if math.isfinite(value) and value > 0:
+                        live_equities.append(value)
+            if live_equities:
+                return sum(live_equities)
+            if execution_mode.startswith("bitget_"):
+                cached = get_cached_state("live") or {}
+                if not _external_account_cache_is_healthy(cached):
+                    return None
+                value = cached.get("equity_usdt") or cached.get("total_equity_usdt")
+                equity = float(value)
+                if math.isfinite(equity) and equity > 0:
+                    return equity
+            return None
+
+        if execution_mode.startswith("bitget_"):
+            cached = get_cached_state("demo") or {}
+            if not _external_account_cache_is_healthy(cached):
+                return None
+            value = cached.get("equity_usdt") or cached.get("total_equity_usdt")
+            equity = float(value)
+            if math.isfinite(equity) and equity > 0:
+                return equity
+            return None
+
+        unified = get_unified_cached_state() or {}
+        if not _external_account_cache_is_healthy(unified):
+            return None
+        account = next(
+            (
+                item
+                for item in unified.get("accounts") or []
+                if item.get("broker_id") == execution_mode
+            ),
+            None,
+        )
+        if not _external_account_row_is_healthy(account):
+            return None
+        equity = float((account or {}).get("equity_usdt"))
+        if math.isfinite(equity) and equity > 0:
+            return equity
     except Exception:
         pass
-    if is_live:
-        return float(cfg.risk.max_live_limited_cap_usdt or 0) or None
-    return float(cfg.risk.starting_capital_usdt or 0) or None
+    return None
 
 
 def _config_active_execution_mode(cfg) -> str:
@@ -1769,9 +1920,18 @@ def _config_active_execution_mode(cfg) -> str:
     fallbacks all work correctly.
     """
     if cfg.exchange.mode == "live":
-        broker = (getattr(cfg.exchange, "ccxt_exchange", None) or "okx").lower()
+        broker = (getattr(cfg.exchange, "name", None) or "bitget").lower()
         return f"{broker}_live_limited"
     return getattr(cfg.exchange, "paper_execution_mode", None) or "paper_internal"
+
+
+def _account_pool_matches(existing_mode: str, target_mode: str) -> bool:
+    """Whether two exposure rows draw on the same leverage-equity denominator."""
+    if target_mode == "paper_internal":
+        return existing_mode == "paper_internal"
+    if _is_live(target_mode):
+        return _is_live(existing_mode)
+    return existing_mode == target_mode
 
 
 def _relevant_positions(open_positions: list, execution_mode: str) -> list:
@@ -1781,11 +1941,66 @@ def _relevant_positions(open_positions: list, execution_mode: str) -> list:
     - live modes: all live positions aggregate (real-money account, any broker).
     - exchange demo modes: each broker is a separate account — exact mode match.
     """
-    if execution_mode == "paper_internal":
-        return [p for p in open_positions if p.get("execution_mode") == "paper_internal"]
-    if _is_live(execution_mode):
-        return [p for p in open_positions if _is_live(p.get("execution_mode", ""))]
-    return [p for p in open_positions if p.get("execution_mode") == execution_mode]
+    return [
+        position
+        for position in open_positions
+        if _account_pool_matches(
+            str(position.get("execution_mode") or ""),
+            execution_mode,
+        )
+    ]
+
+
+def _entry_reservation_weighted_notional(
+    entry: _UnresolvedEntryReservation | _PreOrderEntryReservation,
+) -> float:
+    """Return one reservation's leverage-weighted exposure or reject bad authority.
+
+    An unresolved Order can legitimately have zero remaining quantity only after an
+    open Position represents its full persisted Fill.  A pre-Order reservation must
+    always retain a strictly positive quantity until it is released.
+    """
+    if entry.invalid_reasons:
+        raise ValueError("invalid entry reservation authority")
+    quantity = float(entry.reserved_quantity)
+    price = float(entry.price)
+    leverage = float(entry.leverage)
+    zero_is_represented = (
+        isinstance(entry, _UnresolvedEntryReservation)
+        and entry.has_open_position
+        and quantity == 0.0
+    )
+    if (
+        not math.isfinite(quantity)
+        or (quantity <= 0 and not zero_is_represented)
+        or not math.isfinite(price)
+        or price <= 0
+        or not math.isfinite(leverage)
+        or leverage <= 0
+    ):
+        raise ValueError("invalid entry reservation exposure")
+    weighted_notional = abs(quantity * price) * leverage
+    if not math.isfinite(weighted_notional):
+        raise ValueError("invalid entry reservation exposure")
+    return weighted_notional
+
+
+def _unavailable_account_leverage_result(
+    *,
+    cap: float,
+    reason: str,
+    positions: list[dict] | None = None,
+) -> dict:
+    """Stable public shape for a leverage metric that cannot be computed honestly."""
+    return {
+        "status": "unavailable",
+        "reason": reason,
+        "ratio": None,
+        "cap": cap,
+        "violation": None,
+        "equity": None,
+        "positions": list(positions or []),
+    }
 
 
 def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
@@ -1795,6 +2010,11 @@ def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
     the active mode is derived from ``cfg.exchange.paper_execution_mode`` (or the
     live mode string when ``cfg.exchange.mode == "live"``).  Pass it explicitly
     when the caller knows which pool it cares about (e.g. tests, per-account dashboards).
+
+    Monitoring uses the same exposure-integrity rule as the admission check.  A
+    corrupt relevant Position or unavailable equity makes the metric unavailable;
+    it must never be rendered as a safe ``violation=False`` result.  The sole NULL
+    leverage exception is a spot Position, whose structural leverage is exactly 1x.
     """
     if cfg is None:
         cfg = load_config()
@@ -1804,34 +2024,113 @@ def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
         getattr(cfg.risk, "max_account_leverage_live", 1.5)
         if is_live else getattr(cfg.risk, "max_account_leverage_demo", 3.0)
     )
-    open_positions = list_all_open_positions()
-    relevant = [
-        p for p in open_positions
-        if _is_live(p.get("execution_mode", "")) == is_live
-    ]
+    try:
+        open_positions = list_all_open_positions()
+    except Exception:
+        return _unavailable_account_leverage_result(
+            cap=max_ratio,
+            reason="position_data_unavailable",
+        )
+    relevant = _relevant_positions(open_positions, active_mode)
     weighted_notional = 0.0
     positions_detail = []
     for p in relevant:
         try:
-            qty = float(p.get("quantity") or 0)
-            price = float(p.get("current_price") or p.get("entry_price") or 0)
-            lev = float(p.get("leverage") or 1)
-            notional = abs(qty * price)
-            weighted_notional += notional * lev
-            positions_detail.append({
-                "symbol": p.get("symbol"),
-                "notional": notional,
-                "leverage": lev,
-            })
+            qty = float(p.get("quantity"))
+            entry_price = float(p.get("entry_price"))
+            current_price = p.get("current_price")
+            price = entry_price if current_price is None else float(current_price)
+            market_type = str(p.get("market_type") or "").strip().lower()
+            raw_leverage = p.get("leverage")
+            lev = (
+                1.0
+                if market_type == "spot" and raw_leverage is None
+                else float(raw_leverage)
+            )
         except (TypeError, ValueError):
-            continue
+            return _unavailable_account_leverage_result(
+                cap=max_ratio,
+                reason="invalid_position_exposure",
+            )
+        if (
+            not math.isfinite(qty)
+            or qty <= 0
+            or not math.isfinite(entry_price)
+            or entry_price <= 0
+            or not math.isfinite(price)
+            or price <= 0
+            or not math.isfinite(lev)
+            or lev <= 0
+            or (market_type == "spot" and lev != 1.0)
+        ):
+            return _unavailable_account_leverage_result(
+                cap=max_ratio,
+                reason="invalid_position_exposure",
+            )
+        notional = abs(qty * price)
+        position_exposure = notional * lev
+        if not math.isfinite(notional) or not math.isfinite(position_exposure):
+            return _unavailable_account_leverage_result(
+                cap=max_ratio,
+                reason="invalid_position_exposure",
+            )
+        weighted_notional += position_exposure
+        if not math.isfinite(weighted_notional):
+            return _unavailable_account_leverage_result(
+                cap=max_ratio,
+                reason="invalid_position_exposure",
+            )
+        positions_detail.append({
+            "symbol": p.get("symbol"),
+            "notional": notional,
+            "leverage": lev,
+        })
 
-    equity = _account_equity(active_mode, cfg)
-    ratio = weighted_notional / equity if equity and equity > 0 else None
+    try:
+        unresolved_entries = _unresolved_entry_reservations()
+        pre_order_entries = _pre_order_entry_reservations()
+    except Exception:
+        return _unavailable_account_leverage_result(
+            cap=max_ratio,
+            reason="entry_reservation_data_unavailable",
+            positions=positions_detail,
+        )
+    for entry in (*unresolved_entries, *pre_order_entries):
+        if not _account_pool_matches(entry.execution_mode, active_mode):
+            continue
+        try:
+            weighted_notional += _entry_reservation_weighted_notional(entry)
+        except (TypeError, ValueError):
+            return _unavailable_account_leverage_result(
+                cap=max_ratio,
+                reason="invalid_entry_reservation",
+                positions=positions_detail,
+            )
+        if not math.isfinite(weighted_notional):
+            return _unavailable_account_leverage_result(
+                cap=max_ratio,
+                reason="invalid_entry_reservation",
+                positions=positions_detail,
+            )
+
+    try:
+        equity = _account_equity(active_mode, cfg)
+        equity_value = float(equity)
+    except Exception:
+        equity_value = math.nan
+    if not math.isfinite(equity_value) or equity_value <= 0:
+        return _unavailable_account_leverage_result(
+            cap=max_ratio,
+            reason=f"account_equity_unavailable:{active_mode}",
+            positions=positions_detail,
+        )
+    ratio = weighted_notional / equity_value
     return {
+        "status": "available",
+        "reason": None,
         "ratio": ratio,
         "cap": max_ratio,
-        "violation": ratio > max_ratio if ratio is not None else False,
-        "equity": equity,
+        "violation": ratio > max_ratio,
+        "equity": equity_value,
         "positions": positions_detail,
     }

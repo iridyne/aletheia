@@ -381,10 +381,24 @@ demo auto-adopt/orphan-close 之前运行；active 事故写入 `reconciliation_
 必须相隔至少五分钟且累计两次，之后仍需明确 actor/reason 才能 resolve。live 继续只分类和告警，不
 获得任何新增自动收口权限。
 
-### 11.6 期货资金费用未知时的诚实关闭
+### 11.6 期货资金费用的可证来源与诚实关闭
+
+`paper_internal` 合约使用明确标为 `local_simulation` 的确定性模型：两分钟衍生品采集持续覆盖
+所有未平仓本地合约；按 `opened_at < next_funding_time <= closed_at` 的每个结算事件，采用同一
+主 venue 在结算前 15 分钟内的最后持久快照。每次结算的名义金额只来自该时刻之前已经成交、
+且反链到同一 Position 的 entry Order/Fill；多腿加仓按真实成交时间分段，不能用最终 Position
+名义金额回溯早期结算。Order、Proposal、Risk、Position 的币对、市场、方向、执行模式以及每单
+与整仓数量必须闭合；首笔/primary Fill 必须与 Position `opened_at` 在一秒持久化写序容差内对齐，
+更早且超出该容差的 Fill 视为损坏事实；Fill 恰好落在结算时刻也视为边界不明并 fail closed。完整事件按多头成本为
+正、空头返还为负聚合。开仓锚点、每次结算后的下一 schedule 和平仓后的未来 schedule 必须完整，
+事件快照随 close Order/Fill 在同一事务写入 `reconciliation_evidence.funding`。中央关闭入口再次
+核对证据的 source、Position、symbol、持有时间窗和逐事件合计；不完整/异常结果必须显式覆盖旧
+funding 为 `NULL/unavailable`。这只是可复现的本地模拟，不冒充交易所账户扣款。
+
+exchange-backed futures 仍只接受对应账户私有账单的 `broker_ledger`；公开费率不得替代真实扣款。
 
 真实 close Order/Fill 可以结束执行生命周期，但它不能证明持仓期间的 funding。期货没有可信账户
-ledger 时，关闭仍保留真实 Order/Fill 并把 Position 标为 `closed`，同时必须写：
+账单，或本地模拟的事件窗口不完整时，关闭仍保留真实 Order/Fill 并把 Position 标为 `closed`，同时必须写：
 
 - `funding_cost=NULL`、`funding_source='unavailable'`；
 - `realized_pnl=NULL`，不得把未知 funding 当成 0；

@@ -7,9 +7,11 @@ Falls back to static BTC/ETH/SOL when disabled or on any failure.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import logging
 from datetime import datetime, timezone, timedelta
+from uuid import uuid4
 
 from aletheia.config.loader import load_config
 from aletheia.storage import repositories as repo
@@ -18,6 +20,31 @@ from aletheia.storage.models import (
 )
 
 logger = logging.getLogger("aletheia.universe")
+
+
+@contextmanager
+def _atomic_universe_publication():
+    """Publish snapshot, members and emitted Opportunities as one unit.
+
+    A refresh may be called while its thread already owns a SQLite transaction.
+    Repository transactions intentionally join that caller, so use a nested
+    SAVEPOINT in that case; otherwise acquire the writer slot up front.
+    """
+    db = repo.get_db()
+    if not db.in_transaction:
+        with repo.transaction(immediate=True):
+            yield
+        return
+
+    savepoint = f"universe_publication_{uuid4().hex}"
+    db.execute(f"SAVEPOINT {savepoint}")
+    try:
+        yield
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+    except Exception:
+        db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+        raise
 
 
 def _volume_ranked_instruments(rows: list, default_venue: str):
@@ -194,7 +221,8 @@ class UniverseService:
         )
         from aletheia.universe.outcome_recorder import settle_due, register_pending
         from aletheia.universe.signal_emitter import (
-            emit_deterministic_opportunities, _infer_direction,
+            emit_deterministic_opportunities,
+            _infer_direction,
         )
 
         cfg = load_config()
@@ -247,6 +275,7 @@ class UniverseService:
 
         run = UniverseScannerRun()
         repo.insert_universe_scanner_run(run)
+        attempted_snapshot_id: str | None = None
 
         try:
             count = await sync_registry(cfg)
@@ -321,108 +350,114 @@ class UniverseService:
                     "selected": len(allocated),
                 }),
             )
-            repo.insert_universe_snapshot(snap)
-            repo.expire_universe_snapshots(market_type, except_id=snap.id)
+            attempted_snapshot_id = snap.id
+            # Do not expose the new active snapshot before every selected member
+            # and its Opportunity handoff are durable. Superseding the previous
+            # healthy snapshot is the final write in this publication unit.
+            with _atomic_universe_publication():
+                repo.insert_universe_snapshot(snap)
 
-            regime_tag = current_regime.state if current_regime else None
-            inserted_members: list[dict] = []
-            for rank, item in enumerate(allocated, 1):
-                ttl_sec = min(item.get("ttl_sec", 3600), snapshot_ttl_sec)
-                member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
-                entry_price = item.get("last_price")
-                scanner_direction = (
-                    item.get("scanner_direction")
-                    or _infer_direction(item.get("scanner_family"), item)
-                )
-                member = UniverseMember(
-                    snapshot_id=snap.id,
-                    asset_id=item["asset_id"],
-                    symbol=item["symbol"],
-                    market_type=item.get("market_type", "spot"),
-                    rank=rank,
-                    total_score=item["total_score"],
-                    opportunity_score=item.get("opportunity_score"),
-                    tradability_score=item.get("tradability_score"),
-                    liquidity_score=item.get("liquidity_score"),
-                    estimated_cost=item.get("estimated_cost"),
-                    crowding_risk=item.get("crowding_risk"),
-                    late_entry_penalty=item.get("late_entry_penalty"),
-                    scanner_family=item.get("scanner_family"),
-                    scanner_direction=scanner_direction,
-                    regime_tag=regime_tag,
-                    all_scores=json.dumps(item.get("all_scores", {})),
-                    quote_volume_24h=item.get("quote_volume_24h"),
-                    spread_bps=item.get("spread_bps"),
-                    ttl_sec=ttl_sec,
-                    expires_at=member_expires,
-                    inclusion_reason=json.dumps(item.get("reasons", [])),
-                    risk_flags=json.dumps(item.get("risk_flags", [])),
-                    execution_eligible=item.get("execution_eligible", True),
-                    entry_price_usd=entry_price,
-                )
-                repo.insert_universe_member(member)
-                inserted_members.append({
-                    "id": member.id,
-                    "snapshot_id": snap.id,
-                    "symbol": item["symbol"],
-                    "venue": item.get("venue") or cfg.market_data.ccxt_exchange,
-                    # Carry market_type so signal_emitter labels perp opportunities
-                    # correctly. Without this key every emitted opportunity fell back
-                    # to "spot" (signal_emitter:70), mislabeling perp/derivatives.
-                    "market_type": item.get("market_type", "spot"),
-                    "scanner_family": item.get("scanner_family"),
-                    "regime_tag": regime_tag,
-                    # Direction MUST come from the same source the opportunity
-                    # uses (signal_emitter: scanner_direction first). Re-inferring
-                    # here dropped the scanner's own direction — momentum/event
-                    # candidates whose _infer_direction returned None were logged
-                    # to forward outcomes as direction=None (54% of momentum rows),
-                    # and the recorded direction could disagree with the emitted
-                    # opportunity, double-corrupting win-rate stats.
-                    "direction": scanner_direction,
-                    "entry_price_usd": entry_price,
-                    "spread_bps": item.get("spread_bps"),
-                    "funding_rate": item.get("funding_rate"),
-                    "total_score": item["total_score"],
-                    "learning_candidate_key": item.get("learning_candidate_key"),
-                    "learning_exposure_id": item.get("learning_exposure_id"),
-                    "expires_at": member_expires,
-                })
+                regime_tag = current_regime.state if current_regime else None
+                inserted_members: list[dict] = []
+                for rank, item in enumerate(allocated, 1):
+                    ttl_sec = min(item.get("ttl_sec", 3600), snapshot_ttl_sec)
+                    member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
+                    entry_price = item.get("last_price")
+                    scanner_direction = (
+                        item.get("scanner_direction")
+                        or _infer_direction(item.get("scanner_family"), item)
+                    )
+                    member = UniverseMember(
+                        snapshot_id=snap.id,
+                        asset_id=item["asset_id"],
+                        symbol=item["symbol"],
+                        market_type=item.get("market_type", "spot"),
+                        rank=rank,
+                        total_score=item["total_score"],
+                        opportunity_score=item.get("opportunity_score"),
+                        tradability_score=item.get("tradability_score"),
+                        liquidity_score=item.get("liquidity_score"),
+                        estimated_cost=item.get("estimated_cost"),
+                        crowding_risk=item.get("crowding_risk"),
+                        late_entry_penalty=item.get("late_entry_penalty"),
+                        scanner_family=item.get("scanner_family"),
+                        scanner_direction=scanner_direction,
+                        regime_tag=regime_tag,
+                        all_scores=json.dumps(item.get("all_scores", {})),
+                        quote_volume_24h=item.get("quote_volume_24h"),
+                        spread_bps=item.get("spread_bps"),
+                        ttl_sec=ttl_sec,
+                        expires_at=member_expires,
+                        inclusion_reason=json.dumps(item.get("reasons", [])),
+                        risk_flags=json.dumps(item.get("risk_flags", [])),
+                        execution_eligible=item.get("execution_eligible", True),
+                        entry_price_usd=entry_price,
+                    )
+                    repo.insert_universe_member(member)
+                    inserted_members.append({
+                        "id": member.id,
+                        "snapshot_id": snap.id,
+                        "symbol": item["symbol"],
+                        "venue": item.get("venue") or cfg.market_data.ccxt_exchange,
+                        # Carry market_type so signal_emitter labels perp opportunities
+                        # correctly. Without this key every emitted opportunity fell back
+                        # to "spot" (signal_emitter:70), mislabeling perp/derivatives.
+                        "market_type": item.get("market_type", "spot"),
+                        "scanner_family": item.get("scanner_family"),
+                        "regime_tag": regime_tag,
+                        # Direction MUST come from the same source the opportunity
+                        # uses (signal_emitter: scanner_direction first). Re-inferring
+                        # here dropped the scanner's own direction — momentum/event
+                        # candidates whose _infer_direction returned None were logged
+                        # to forward outcomes as direction=None (54% of momentum rows),
+                        # and the recorded direction could disagree with the emitted
+                        # opportunity, double-corrupting win-rate stats.
+                        "direction": scanner_direction,
+                        "entry_price_usd": entry_price,
+                        "spread_bps": item.get("spread_bps"),
+                        "funding_rate": item.get("funding_rate"),
+                        "total_score": item["total_score"],
+                        "learning_candidate_key": item.get("learning_candidate_key"),
+                        "learning_exposure_id": item.get("learning_exposure_id"),
+                        "expires_at": member_expires,
+                    })
 
-            # Register forward outcome tracking for all members with valid prices
-            try:
-                register_pending(inserted_members, entry_ts=now.isoformat())
-            except Exception as e:
-                logger.warning("Forward outcome registration failed (non-fatal): %s", e)
+                # Register forward outcome tracking for all members with valid prices
+                try:
+                    register_pending(inserted_members, entry_ts=now.isoformat())
+                except Exception as e:
+                    logger.warning("Forward outcome registration failed (non-fatal): %s", e)
 
-            try:
-                from aletheia.analytics.causal_controls import record_universe_control_cohort
-                record_universe_control_cohort(
-                    snapshot_id=snap.id,
-                    selected_members=inserted_members,
-                    scored_candidates=scored,
-                    entry_ts=now.isoformat(),
-                )
-            except Exception as e:
-                logger.debug("Universe causal control cohort logging skipped: %s", e)
+                try:
+                    from aletheia.analytics.causal_controls import record_universe_control_cohort
+                    record_universe_control_cohort(
+                        snapshot_id=snap.id,
+                        selected_members=inserted_members,
+                        scored_candidates=scored,
+                        entry_ts=now.isoformat(),
+                    )
+                except Exception as e:
+                    logger.debug("Universe causal control cohort logging skipped: %s", e)
 
-            # P0-3: settle the full treatment/control arms (every exposed candidate),
-            # not only the allocator's survivors, so the contribution verdict is not
-            # corrupted by post-treatment selection bias.
-            try:
-                _register_experiment_candidate_outcomes(scored, cfg, entry_ts=now.isoformat())
-            except Exception as e:
-                logger.debug("experiment candidate outcome registration skipped: %s", e)
+                # P0-3: settle the full treatment/control arms (every exposed candidate),
+                # not only the allocator's survivors, so the contribution verdict is not
+                # corrupted by post-treatment selection bias.
+                try:
+                    _register_experiment_candidate_outcomes(
+                        scored, cfg, entry_ts=now.isoformat()
+                    )
+                except Exception as e:
+                    logger.debug("experiment candidate outcome registration skipped: %s", e)
 
-            # Emit deterministic opportunities for high-scoring members (LLM-free path)
-            try:
+                # The emitter already converts auditable per-member insert failures
+                # into terminal evidence. Any exception that escapes the function is
+                # therefore a publication failure and must roll back this snapshot.
                 emit_deterministic_opportunities(
                     inserted_members, snap.id, scored_features=scored,
                     regime=current_regime,
                     short_enabled=cfg.regime.short_enabled,
                 )
-            except Exception as e:
-                logger.warning("Deterministic opportunity emission failed (non-fatal): %s", e)
+                repo.expire_universe_snapshots(market_type, except_id=snap.id)
 
             repo.update_universe_scanner_run(
                 run.id,
@@ -442,6 +477,7 @@ class UniverseService:
                 run.id,
                 status="failed",
                 completed_at=datetime.now(timezone.utc).isoformat(),
+                snapshot_id=attempted_snapshot_id,
                 errors=json.dumps([str(e)]),
             )
             return None

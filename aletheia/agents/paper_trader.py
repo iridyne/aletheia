@@ -466,6 +466,8 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             except Exception:
                 pass
         except Exception as e:
+            opportunity_id = str(candidate.get("opportunity_id") or "unknown")
+            errors.append(f"signal_enqueue_failed:{opportunity_id}")
             _persist_signal_enqueue_evidence(
                 candidate,
                 run_id=evaluation_run_id,

@@ -45,6 +45,81 @@ def _same_snapshot_value(left: object, right: object) -> bool:
     )
 
 
+def _parse_utc_instant(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _validate_complete_funding_evidence(
+    *,
+    row: dict,
+    position_id: str,
+    closed_at: str,
+    funding_cost: object,
+    funding_source: object,
+    evidence: dict,
+) -> None:
+    """Reject a claimed-complete funding handoff that cannot be replayed."""
+    opened = _parse_utc_instant(row.get("opened_at"))
+    closed = _parse_utc_instant(closed_at)
+    evidence_opened = _parse_utc_instant(evidence.get("opened_at"))
+    evidence_closed = _parse_utc_instant(evidence.get("closed_at"))
+    if (
+        evidence.get("status") != "complete"
+        or evidence.get("source") != funding_source
+        or evidence.get("position_id") != position_id
+        or evidence.get("symbol") != row.get("symbol")
+        or opened is None
+        or closed is None
+        or evidence_opened != opened
+        or evidence_closed != closed
+    ):
+        raise ValueError("funding evidence identity or holding window does not match")
+
+    events = evidence.get("events")
+    if not isinstance(events, list):
+        raise ValueError("funding evidence events must be a list")
+    event_total = 0.0
+    scheduled_instants: list[datetime] = []
+    for event in events:
+        if not isinstance(event, dict):
+            raise ValueError("funding evidence event must be a mapping")
+        scheduled = _parse_utc_instant(event.get("scheduled_at"))
+        try:
+            event_cost = float(event.get("funding_cost"))
+        except (TypeError, ValueError):
+            raise ValueError("funding evidence event cost is invalid") from None
+        if (
+            scheduled is None
+            or not (opened < scheduled <= closed)
+            or not math.isfinite(event_cost)
+            or scheduled in scheduled_instants
+        ):
+            raise ValueError("funding evidence event lies outside the holding window")
+        scheduled_instants.append(scheduled)
+        event_total += event_cost
+    if scheduled_instants != sorted(scheduled_instants):
+        raise ValueError("funding evidence events are not chronological")
+    try:
+        supplied_total = float(funding_cost)
+    except (TypeError, ValueError):
+        raise ValueError("funding evidence has no finite total") from None
+    tolerance = max(1e-12, abs(supplied_total) * 1e-9)
+    if (
+        not math.isfinite(supplied_total)
+        or not math.isfinite(event_total)
+        or abs(event_total - supplied_total) > tolerance
+    ):
+        raise ValueError("funding evidence event sum does not match funding cost")
+
+
 def _latest_price(symbol: str) -> float | None:
     from aletheia.data.price_feed import get_price_for_pnl
     return get_price_for_pnl(symbol)
@@ -258,6 +333,9 @@ def close_position(
     materialize_close: Callable[[], None] | None = None,
     actor: str = "system",
     source: str = "scheduler",
+    funding_cost: float | None = None,
+    funding_source: str | None = None,
+    funding_evidence: dict | None = None,
 ) -> dict:
     """Close an open position at exit_price, realizing PnL. Returns the result.
 
@@ -270,7 +348,11 @@ def close_position(
     exchange closes without private evidence remain explicitly ineligible. A
     local broker may pass a database-only ``materialize_close`` callback; it runs
     inside the same transaction as Position and cash settlement, after the
-    second open-state check and before any post-commit side effect.
+    second open-state check and before any post-commit side effect.  A local
+    futures broker may also pass its completed simulated funding amount, source,
+    and event evidence.  Those facts are validated and committed with the same
+    Position/Fill transaction; callers that omit them retain the legacy behavior
+    of reading already-persisted Position funding fields.
     """
     from aletheia.analytics.close_reasons import is_synthetic_close
     if is_synthetic_close(reason):
@@ -284,6 +366,17 @@ def close_position(
         raise ValueError(f"position not found: {position_id}")
     if row.get("status") != "open":
         raise ValueError(f"position is not open: {position_id}")
+
+    # Normalize the close boundary before validating any economics that claim
+    # to cover this exact holding window.
+    supplied_closed_at = closed_at is not None
+    if closed_at is None:
+        closed_at = datetime.now(timezone.utc).isoformat()
+    else:
+        parsed_closed_at = datetime.fromisoformat(closed_at.replace("Z", "+00:00"))
+        if parsed_closed_at.tzinfo is None:
+            raise ValueError("closed_at must include an explicit timezone")
+        closed_at = parsed_closed_at.astimezone(timezone.utc).isoformat()
 
     gross_pnl = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
     # Deduct round-trip fees; prefer stored entry_fee (precise) over re-derivation.
@@ -317,16 +410,46 @@ def close_position(
     # malformed funding value must not be guessed from current configuration:
     # the lifecycle may still close, while Outcome/Feedback stays fail-closed.
     market_type = str(row.get("market_type") or "")
+    explicit_funding = funding_cost is not None or funding_source is not None
+    raw_funding_cost = funding_cost if explicit_funding else row.get("funding_cost")
+    raw_funding_source = (
+        funding_source if explicit_funding else row.get("funding_source")
+    )
+    if funding_evidence is not None and not isinstance(funding_evidence, dict):
+        raise ValueError("funding_evidence must be a mapping")
+    evidence_status = (
+        funding_evidence.get("status")
+        if isinstance(funding_evidence, dict)
+        else None
+    )
+    # An explicit incomplete computation always supersedes any stale Position
+    # value. A claimed-complete handoff is accepted only when its identity,
+    # window, and per-event sum reproduce the supplied total.
+    if funding_evidence is not None and evidence_status != "complete":
+        raw_funding_cost = None
+        raw_funding_source = "unavailable"
+    elif evidence_status == "complete":
+        _validate_complete_funding_evidence(
+            row=row,
+            position_id=position_id,
+            closed_at=closed_at,
+            funding_cost=raw_funding_cost,
+            funding_source=raw_funding_source,
+            evidence=funding_evidence,
+        )
+    elif explicit_funding and raw_funding_source == "local_simulation":
+        raw_funding_cost = None
+        raw_funding_source = "unavailable"
     funding_cost, funding_source = validated_funding_economics(
         market_type=market_type,
         execution_mode=row.get("execution_mode"),
         funding_cost=(
-            0.0 if market_type == "spot" else row.get("funding_cost")
+            0.0 if market_type == "spot" else raw_funding_cost
         ),
         funding_source=(
             "not_applicable"
             if market_type == "spot"
-            else row.get("funding_source")
+            else raw_funding_source
         ),
     )
 
@@ -341,20 +464,6 @@ def close_position(
 
     # BTC benchmark at exit for alpha/beta separation
     btc_exit = _btc_price_at_close()
-
-    # #103 fix: compute `closed_at` before update_position and reuse it below.
-    # _close_serenity_feedback receives `row` — that's the PRE-CLOSE snapshot
-    # fetched at line 111, so `row['closed_at']` is None and PostMortem's
-    # hold_h was always 0. Stamp the value into row too so the Serenity hook
-    # sees the honest close time.
-    supplied_closed_at = closed_at is not None
-    if closed_at is None:
-        closed_at = datetime.now(timezone.utc).isoformat()
-    else:
-        parsed_closed_at = datetime.fromisoformat(closed_at.replace("Z", "+00:00"))
-        if parsed_closed_at.tzinfo is None:
-            raise ValueError("closed_at must include an explicit timezone")
-        closed_at = parsed_closed_at.astimezone(timezone.utc).isoformat()
 
     execution_mode = str(row.get("execution_mode") or "")
     local_paper_fill = execution_mode == "paper_internal"
@@ -426,6 +535,8 @@ def close_position(
             "fee_estimated": actual_exit_fee is None,
             "closed_at": closed_at,
         }
+    if funding_evidence is not None:
+        outcome_evidence["funding"] = dict(funding_evidence)
     exit_reasoning = build_exit_reasoning(
         row,
         exit_price=exit_price,

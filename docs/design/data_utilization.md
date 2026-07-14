@@ -41,7 +41,7 @@
 | 现货价/OHLCV | CCXTProvider / market_data job | `market_snapshots` | market_observer / paper_trader / trading_decision / price_feed / shadow_trades | ✅ |
 | 微观结构/盘口 | MicrostructureCollector | `orderbook_snapshots` | market_observer→tradability→LLM；universe/features 选币；inspect/doctor 诊断 | ✅ CCXT 三列档位与 contractSize 深度已修复；按 venue+symbol+market_type 精确路由；超过 15 分钟整行退出决策 |
 | 历史 K 线 | CCXTProvider / history_downloader / ohlcv_active_backfill | `market_ohlcv` + `ohlcv_backfill_state` | 图表、回测、trade path、shadow/alpha 分析、覆盖诊断 | ✅ 按 venue+symbol+market_type+timeframe+ts 隔离；动态活动成员由独立有界任务补齐，持久化失败退避且不阻塞 Universe 刷新；旧不明 venue 诚实标记 |
-| 资金费率(主交易所) | DerivativesCollector | `funding_rate_snapshots` | market_observer→leverage→LLM；context_builder；universe/features | ✅ 精确 venue；超过 15 分钟整行退出决策 |
+| 资金费率(主交易所) | DerivativesCollector | `funding_rate_snapshots` | market_observer→leverage→LLM；context_builder；universe/features；`paper_internal` futures 开仓预检与逐结算 `local_simulation`（所有 open local futures 持续采集，并按结算前真实 entry Fill 名义额分段） | ✅ 精确 venue；超过 15 分钟、入场身份/数量不闭合或 Fill 卡在结算边界时保持 unavailable；不冒充 broker ledger |
 | 持仓量 OI(主交易所) | DerivativesCollector | `open_interest_snapshots` | 同上→crowding_score | ✅ 精确 venue；超过 15 分钟连同变化率/LSR 整行退出决策 |
 | 多空比 LSR | DerivativesCollector (Binance fapi) | `open_interest_snapshots.long_short_ratio` | normalizer→crowding_score→leverage→LLM | ✅ 真实 DB 构建路径已保留字段并纳入 crowding |
 | 宏观(BTC.D/总市值/VIX/DXY/Nasdaq) | MacroCollector (FRED/CoinGecko/yf fallback) | `macro_snapshots` | market_observer / context_builder / regime / shadow_trades / position_enrichment | ✅ |

@@ -20,6 +20,7 @@ from aletheia.storage.repositories import (
 )
 from aletheia.trading.instruments import instrument_market_to_db_market
 from aletheia.analytics.factor_feedback import lookup_factor_signal
+from aletheia.analytics.filter_evidence import atomic_opportunity_evidence
 from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
 
 logger = logging.getLogger("aletheia.universe.signal_emitter")
@@ -36,6 +37,10 @@ _HIGH_CONF_THRESHOLD = 60.0
 # Regime bias threshold: if the direction's bias < this value, skip signal
 # unless score compensates (higher score can override weak regime alignment).
 _REGIME_BIAS_THRESHOLD = 0.30
+
+
+class EmissionEvidenceError(RuntimeError):
+    """A selected member could not be durably accounted for this cycle."""
 
 
 def _record_emission_decision(
@@ -55,7 +60,7 @@ def _record_emission_decision(
     reason_detail: str | None = None,
     inputs: dict | None = None,
 ) -> None:
-    """Persist one terminal fact for a selected universe member, best effort.
+    """Persist one terminal fact for a selected universe member or fail retryably.
 
     This is coverage evidence only: no venue or entry price is supplied, so the
     fact cannot create a learnable outcome or influence trading behavior.
@@ -74,7 +79,7 @@ def _record_emission_decision(
             "market_type": market_type,
         }
         input_snapshot.update(inputs or {})
-        record_filter_decision(
+        evidence_id = record_filter_decision(
             candidate_key=candidate_key,
             candidate_kind="universe_member",
             parent_candidate_key=f"universe_snapshot:{snapshot_id}",
@@ -99,15 +104,24 @@ def _record_emission_decision(
                 "regime_bias_threshold": _REGIME_BIAS_THRESHOLD,
                 "short_enabled": short_enabled,
             },
+            raise_on_error=True,
         )
+        from aletheia.storage.sqlite import get_db
+
+        if get_db().execute(
+            "SELECT 1 FROM filter_decisions WHERE id = ?", (evidence_id,)
+        ).fetchone() is None:
+            raise RuntimeError("opportunity_emission_evidence_not_persisted")
     except Exception as exc:
-        # Evidence must remain fail-open with respect to opportunity generation.
-        logger.warning(
-            "opportunity emission evidence failed snapshot=%s member=%s: %s",
-            snapshot_id,
-            member.get("id"),
-            exc,
+        member_key = str(member.get("id") or f"missing-{member_index}")
+        error_code = (
+            f"opportunity_emission_evidence_failed:{snapshot_id}:{member_key}"
         )
+        logger.error("%s (%s)", error_code, type(exc).__name__)
+        # Universe members are already durable at this boundary. Propagating the
+        # stable failure leaves that source input intact for retry instead of
+        # returning a misleading zero-created success.
+        raise EmissionEvidenceError(error_code) from exc
 
 
 def emit_deterministic_opportunities(
@@ -361,41 +375,51 @@ def emit_deterministic_opportunities(
             oi_delta_1h=feat.get("oi_delta_1h"),
         )
         try:
-            owner, owner_created = insert_opportunity_once_by_snapshot(opp)
+            # A new lifecycle row without its emitted fact is an unaccounted input,
+            # not a partial success. Keep both writes inside one rollback boundary
+            # and increment the caller-visible count only after commit succeeds.
+            with atomic_opportunity_evidence():
+                owner, owner_created = insert_opportunity_once_by_snapshot(opp)
+                if not owner_created:
+                    _record_emission_decision(
+                        member=m,
+                        snapshot_id=snapshot_id,
+                        member_index=member_index,
+                        symbol=symbol,
+                        market_type=market_type,
+                        total_score=total_score,
+                        short_enabled=short_enabled,
+                        decision="passed",
+                        reason_code="existing_opportunity_reused",
+                        direction=direction,
+                        opportunity_id=owner.get("id"),
+                        regime_tag=regime.state if regime else None,
+                        inputs={"existing_status": owner.get("status")},
+                    )
+                else:
+                    _record_emission_decision(
+                        member=m,
+                        snapshot_id=snapshot_id,
+                        member_index=member_index,
+                        symbol=symbol,
+                        market_type=market_type,
+                        total_score=total_score,
+                        short_enabled=short_enabled,
+                        decision="passed",
+                        reason_code="opportunity_emitted",
+                        direction=direction,
+                        opportunity_id=opp.id,
+                        regime_tag=regime.state if regime else None,
+                        inputs={"execution_eligible": _exec_eligible},
+                    )
             if not owner_created:
-                _record_emission_decision(
-                    member=m,
-                    snapshot_id=snapshot_id,
-                    member_index=member_index,
-                    symbol=symbol,
-                    market_type=market_type,
-                    total_score=total_score,
-                    short_enabled=short_enabled,
-                    decision="passed",
-                    reason_code="existing_opportunity_reused",
-                    direction=direction,
-                    opportunity_id=owner.get("id"),
-                    regime_tag=regime.state if regime else None,
-                    inputs={"existing_status": owner.get("status")},
-                )
                 continue
             created += 1
-            _record_emission_decision(
-                member=m,
-                snapshot_id=snapshot_id,
-                member_index=member_index,
-                symbol=symbol,
-                market_type=market_type,
-                total_score=total_score,
-                short_enabled=short_enabled,
-                decision="passed",
-                reason_code="opportunity_emitted",
-                direction=direction,
-                opportunity_id=opp.id,
-                regime_tag=regime.state if regime else None,
-                inputs={"execution_eligible": _exec_eligible},
-            )
             logger.debug("emitted %s %s %s score=%.0f", family, direction, symbol, total_score)
+        except EmissionEvidenceError:
+            # The source Universe member remains durable and retryable. Do not
+            # relabel an evidence outage as an Opportunity insert failure.
+            raise
         except Exception as e:
             logger.warning("Failed to emit opportunity for %s: %s", symbol, e)
             _record_emission_decision(

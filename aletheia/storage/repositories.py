@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 import json
+import uuid
 from aletheia.storage.sqlite import get_db
 from aletheia.storage.models import (
     AuditEvent, AgentRun, Opportunity, TradeProposal,
@@ -538,30 +539,158 @@ def list_pending_pi_decisions_for_opportunity(
     return [dict(row) for row in rows]
 
 
-def expire_stale_queued_opportunities(max_age_minutes: int = 30) -> int:
-    """Mark market-pipeline opportunities whose pending evaluation window elapsed."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
+def _expire_opportunity_rows_with_ttl_evidence(
+    rows,
+    *,
+    source_status: str,
+    evaluated_at: str,
+    reason_detail: str,
+    parameters: dict,
+) -> int:
+    """Expire selected rows only after their append-only rejection fact exists.
+
+    The caller holds the surrounding SQLite write transaction.  If evidence
+    insertion fails, the preceding lifecycle update rolls back with it, leaving the
+    Opportunity retryable instead of silently terminal.
+    """
     db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute(
-        "UPDATE opportunities SET status='expired' WHERE status='queued' "
-        "AND EXISTS ("
-        "  SELECT 1 FROM pi_decisions p "
-        "  WHERE p.action='signal_pending' "
-        "    AND p.opportunity_id=opportunities.id "
-        "    AND COALESCE(p.signal_source, 'market_observer')='market_observer' "
-        "    AND datetime(p.created_at) < datetime(?)"
-        ") AND NOT EXISTS ("
-        "  SELECT 1 FROM pi_decisions f "
-        "  WHERE f.action!='signal_pending' "
-        "    AND f.opportunity_id=opportunities.id "
-        "    AND COALESCE(f.signal_source, 'market_observer')='market_observer'"
-        ")",
-        (cutoff,),
-    )
-    if not was_in_tx:
-        db.commit()
-    return int(cur.rowcount)
+    savepoint = f"ttl_expiry_{uuid.uuid4().hex}"
+    db.execute(f"SAVEPOINT {savepoint}")
+    try:
+        expired_count = 0
+        for raw in rows:
+            row = dict(raw)
+            opportunity_id = str(row["id"])
+            dedup_key = f"opportunity_ttl:{source_status}:{opportunity_id}"
+            updated = db.execute(
+                "UPDATE opportunities SET status='expired' "
+                "WHERE id=? AND status=?",
+                (opportunity_id, source_status),
+            )
+            if updated.rowcount != 1:
+                continue
+            db.execute(
+                "INSERT OR IGNORE INTO filter_decisions ("
+                "id, dedup_key, candidate_key, candidate_kind, parent_candidate_key, "
+                "run_id, opportunity_id, universe_snapshot_id, universe_member_id, "
+                "proposal_id, venue, symbol, market_type, direction, scanner_family, "
+                "regime_tag, filter_name, stage, sequence_no, decision, reason_code, "
+                "reason_detail, input_snapshot, parameter_snapshot, filter_version, "
+                "code_commit, outcome_candidate_key, evaluated_at"
+                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    dedup_key,
+                    dedup_key,
+                    f"opportunity:{opportunity_id}",
+                    "opportunity",
+                    None,
+                    None,
+                    opportunity_id,
+                    row.get("universe_snapshot_id"),
+                    row.get("universe_member_id"),
+                    None,
+                    None,
+                    str(row.get("symbol") or "unknown"),
+                    str(row.get("market") or "spot"),
+                    row.get("direction_bias"),
+                    row.get("scanner_family"),
+                    row.get("regime_tag"),
+                    "opportunity_ttl",
+                    "lifecycle_expiry",
+                    0,
+                    "rejected",
+                    "ttl_expired",
+                    reason_detail,
+                    json.dumps(
+                        {"source_status": source_status},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    json.dumps(parameters, sort_keys=True, separators=(",", ":")),
+                    "opportunity_ttl:v1",
+                    None,
+                    None,
+                    evaluated_at,
+                ),
+            )
+            evidence = db.execute(
+                "SELECT 1 FROM filter_decisions WHERE dedup_key=?",
+                (dedup_key,),
+            ).fetchone()
+            if evidence is None:
+                raise RuntimeError(
+                    f"ttl evidence unavailable for Opportunity {opportunity_id}"
+                )
+            expired_count += 1
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+        return expired_count
+    except Exception:
+        db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        db.execute(f"RELEASE SAVEPOINT {savepoint}")
+        raise
+
+
+def expire_queued_opportunity_with_ttl_evidence(
+    opportunity_id: str,
+    *,
+    evaluated_at: str | None = None,
+    reason_detail: str,
+    parameters: dict | None = None,
+) -> bool:
+    """CAS one queued Opportunity to expired with its durable TTL fact.
+
+    Operator preflight and the final Proposal claim both use this primitive so
+    terminal state cannot be written without the corresponding rejection fact.
+    The inner helper owns a SAVEPOINT; an evidence failure therefore restores
+    the queued row even when an outer transaction catches the exception.
+    """
+    now_iso = evaluated_at or datetime.now(timezone.utc).isoformat()
+    with transaction(immediate=True):
+        row = get_db().execute(
+            "SELECT * FROM opportunities WHERE id=? AND status='queued'",
+            (opportunity_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        return bool(
+            _expire_opportunity_rows_with_ttl_evidence(
+                [row],
+                source_status="queued",
+                evaluated_at=now_iso,
+                reason_detail=reason_detail,
+                parameters=parameters or {},
+            )
+        )
+
+
+def expire_stale_queued_opportunities(max_age_minutes: int = 30) -> int:
+    """Expire stale pending work together with one durable rejection fact."""
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(minutes=max_age_minutes)).isoformat()
+    with transaction(immediate=True):
+        rows = get_db().execute(
+            "SELECT * FROM opportunities WHERE status='queued' "
+            "AND EXISTS ("
+            "  SELECT 1 FROM pi_decisions p "
+            "  WHERE p.action='signal_pending' "
+            "    AND p.opportunity_id=opportunities.id "
+            "    AND COALESCE(p.signal_source, 'market_observer')='market_observer' "
+            "    AND datetime(p.created_at) < datetime(?)"
+            ") AND NOT EXISTS ("
+            "  SELECT 1 FROM pi_decisions f "
+            "  WHERE f.action!='signal_pending' "
+            "    AND f.opportunity_id=opportunities.id "
+            "    AND COALESCE(f.signal_source, 'market_observer')='market_observer'"
+            ")",
+            (cutoff,),
+        ).fetchall()
+        return _expire_opportunity_rows_with_ttl_evidence(
+            rows,
+            source_status="queued",
+            evaluated_at=now.isoformat(),
+            reason_detail="pending System Operator evaluation window elapsed",
+            parameters={"max_age_minutes": max_age_minutes},
+        )
 
 
 # --- Capital Events ---
@@ -4159,19 +4288,22 @@ def expire_stale_opportunities(ttl_hours: int = 48) -> int:
 
     Traded/reviewed opportunities are not affected.
     """
-    now_iso = datetime.now(timezone.utc).isoformat()
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=ttl_hours)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute(
-        "UPDATE opportunities SET status = 'expired'"
-        " WHERE status = 'open'"
-        " AND (created_at < ? OR (valid_until IS NOT NULL AND valid_until < ?))",
-        (cutoff, now_iso),
-    )
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    cutoff = (now - timedelta(hours=ttl_hours)).isoformat()
+    with transaction(immediate=True):
+        rows = get_db().execute(
+            "SELECT * FROM opportunities WHERE status='open' "
+            "AND (created_at < ? OR (valid_until IS NOT NULL AND valid_until < ?))",
+            (cutoff, now_iso),
+        ).fetchall()
+        return _expire_opportunity_rows_with_ttl_evidence(
+            rows,
+            source_status="open",
+            evaluated_at=now_iso,
+            reason_detail="Opportunity validity window elapsed before queueing",
+            parameters={"ttl_hours": ttl_hours},
+        )
 
 
 # ── Edge Lab: Shadow Trades ──────────────────────────────────────────────────
