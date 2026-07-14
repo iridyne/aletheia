@@ -53,11 +53,11 @@ ownership:
 base_commit: c95b2be34d93368182da21fc81f87e71cf5f64e1
 next_action:
   command_key: trade_chain_completion
-  reason: Commit the business-chain completion repairs, integrate the latest master
-    commit in this isolated branch, then register focused chain, Risk, Execution,
-    executable-rule, architecture, and full-suite evidence on that exact combined
-    HEAD. Keep the branch unmerged until the owner resolves the funding and policy-epoch
-    gates.
+  reason: Final combined implementation HEAD e85dbe3 has registered focused chain,
+    Risk, Execution, executable-rule, architecture, frontend-build, and full-suite
+    evidence. Do not merge or make a product-policy assumption until the owner chooses
+    the local futures-paper policy and creates the required new policy epoch/window;
+    rerun this command after any resulting code change.
 blockers:
 - B-class Operator timing and Bitget original-order protection changes require the
   owner to create a new policy epoch and observation window before merge; prior and
@@ -214,5 +214,81 @@ verification:
   run_at: '2026-07-13T18:42:52.020690Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: trade_chain_completion
+  command: uv run pytest tests/e2e/test_active_mainline_golden_path.py tests/e2e/test_pipeline_real_paper_roundtrip.py
+    tests/specs/spec_decision_lifecycle.py tests/specs/spec_pipeline_middle_state_integrity.py
+    tests/specs/spec_pipeline_outcome_feedback.py tests/specs/spec_serenity_promote.py
+    tests/test_workflow_routes.py tests/test_post_trade_reviewer_outcomes.py tests/test_paper_trade_count_eligibility.py
+    -q --tb=short
+  command_sha256: e5606c49249dce949f0d19bc29d4d0a5e74b734d26764a87e3bd1e993b35c44f
+  exit_code: 0
+  commit: e85dbe35717f64eb4e28e1881c5d431340e75140
+  run_at: '2026-07-14T02:14:11.950119Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: spec_risk_engine
+  command: uv run pytest tests/specs/spec_risk_engine.py -q
+  command_sha256: 85595110321878d3016585adac757ed968ccb5833aa6a7f78b420108cb88f1b6
+  exit_code: 0
+  commit: e85dbe35717f64eb4e28e1881c5d431340e75140
+  run_at: '2026-07-14T02:14:28.143084Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: spec_execution
+  command: uv run pytest tests/specs/spec_execution.py -q
+  command_sha256: 720c18646fdff18ca745c955c9570fbd12535011a9f360bd59e50bccf435a3c6
+  exit_code: 0
+  commit: e85dbe35717f64eb4e28e1881c5d431340e75140
+  run_at: '2026-07-14T02:14:29.427018Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: spec_pipeline_execution_chain
+  command: uv run pytest tests/specs/spec_pipeline_execution_chain.py -q
+  command_sha256: f06ee972e4516060bd13766427550e64b56131f492277be553dbd72f7e297494
+  exit_code: 0
+  commit: e85dbe35717f64eb4e28e1881c5d431340e75140
+  run_at: '2026-07-14T02:14:30.228490Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: trade_chain_roundtrip
+  command: uv run pytest tests/e2e/test_pipeline_real_paper_roundtrip.py -q
+  command_sha256: 1b6be838b40e75f8c3c919ef1292853d943b9111da46143bcbc816f8982a97eb
+  exit_code: 0
+  commit: e85dbe35717f64eb4e28e1881c5d431340e75140
+  run_at: '2026-07-14T02:14:30.992117Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: e85dbe35717f64eb4e28e1881c5d431340e75140
+  run_at: '2026-07-14T02:14:31.748262Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: e85dbe35717f64eb4e28e1881c5d431340e75140
+  run_at: '2026-07-14T02:14:56.593446Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: frontend_build
+  command: cd frontend && npm run build
+  command_sha256: 008af75026d284dc318e955d965f0d551d81673560186d65b79a4c97e91b2c43
+  exit_code: 0
+  commit: e85dbe35717f64eb4e28e1881c5d431340e75140
+  run_at: '2026-07-14T02:14:56.799279Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: trade_chain_full_suite
+  command: uv run pytest tests/ -q --tb=line
+  command_sha256: f2e0d56f1a05207182c57ec76eabc1264e114735e4b1b1960795002b606991ce
+  exit_code: 0
+  commit: e85dbe35717f64eb4e28e1881c5d431340e75140
+  run_at: '2026-07-14T02:18:48.644026Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-067.md
-updated_at: '2026-07-13T18:42:52.020867Z'
+updated_at: '2026-07-14T02:18:48.644202Z'
