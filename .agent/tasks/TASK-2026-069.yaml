@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-069
 title: Supersede Legacy Learning Diagnostic Backlog
-status: in_progress
+status: done
 packet_type: tiny
 scope:
   boundary: declare before implementation
@@ -25,8 +25,9 @@ ownership:
   expires_at: '2026-07-14T23:25:15.149265Z'
 base_commit: e96037f61dae61662880a63236856f0dc0dc85cc
 next_action:
-  command_key: workflow_tests
-  reason: Commit the focused recovery repair, record verification, and deploy it.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: workflow_tests
@@ -37,5 +38,13 @@ verification:
   run_at: '2026-07-14T15:26:57.768162Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 7600b899ad6d4c3f3620387f9f484e3b208fea70
+  run_at: '2026-07-14T15:27:02.823637Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-069.md
-updated_at: '2026-07-14T15:26:57.768334Z'
+updated_at: '2026-07-14T15:27:02.840745Z'
