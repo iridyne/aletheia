@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-074
 title: Use one authoritative equity curve on Overview
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: Portfolio account-equity read model, snapshot API, Overview chart, and
@@ -27,8 +27,9 @@ ownership:
   expires_at: '2026-07-15T10:40:46.745782Z'
 base_commit: 82e713ea57025a582762baf7be67a94538f4b302
 next_action:
-  command_key: workflow_tests
-  reason: Claim the task and define the first focused verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: workflow_tests
@@ -95,6 +96,14 @@ verification:
   run_at: '2026-07-15T02:52:53.362596Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 340766eb3df7da2d3ece8fd649bad1dc5f14a521
+  run_at: '2026-07-15T02:56:45.559653Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-074.md
-updated_at: '2026-07-15T02:52:53.362726Z'
+updated_at: '2026-07-15T02:56:45.699406Z'
 rebased_at: '2026-07-15T02:40:46.862392Z'
