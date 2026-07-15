@@ -18,11 +18,23 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger("aletheia.agent_shell.trading_decision")
+
+
+def _valid_protective_price(value: float | None) -> float | None:
+    """Accept only finite, positive protective prices from an LLM decision."""
+    if value is None:
+        return None
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    return price if math.isfinite(price) and price > 0 else None
 
 # Max chars of the human-readable thesis stored in agent_rationale. The rationale
 # is "<thesis>\n---\n<decision_meta JSON>"; ONLY the thesis is length-capped here.
@@ -641,7 +653,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     # agnostic — only position_manager branches on it.
     trade_school = "serenity" if getattr(decision, "signal_source", None) == "serenity" else "short_term"
 
-    stop_price = decision.stop_price
+    stop_price = _valid_protective_price(decision.stop_price)
     if stop_price is None:
         stop_pct = (
             cfg.serenity.stop_loss_pct
@@ -658,7 +670,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     # anchored to the entry (price). risk_reward = reward-per-unit / risk-per-unit
     # from the committed entry/stop/tp. The risk engine rejects every native local
     # paper entry (and native exchange limit entry) missing any of the four.
-    take_profit = decision.take_profit
+    take_profit = _valid_protective_price(decision.take_profit)
     if take_profit is None:
         tp_pct = cfg.trading.default_take_profit_pct
         if decision.direction == "long":
@@ -751,7 +763,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         # provenance to the position at open. stop_source='operator' iff the AI
         # authored the stop (else config default filled it in above).
         expected_horizon_hours=decision.expected_horizon_hours,
-        stop_source="operator" if decision.stop_price is not None else "default",
+        stop_source="operator" if _valid_protective_price(decision.stop_price) is not None else "default",
     )
     return {"status": "prepared", "proposal_id": proposal.id, "proposal": proposal}
 
@@ -846,13 +858,17 @@ def _build_entry_parameter_snapshot(
         },
         "stop_loss": {
             "final_value": stop_price,
-            "value_source": "ai_requested" if decision.stop_price is not None else "default_config",
+            "value_source": "ai_requested"
+            if _valid_protective_price(decision.stop_price) is not None
+            else "default_config",
             "distance_pct": round(abs(entry_price - stop_price) / entry_price * 100, 6) if entry_price else None,
             "reason": reason_for("stop_loss"),
         },
         "take_profit": {
             "final_value": take_profit,
-            "value_source": "ai_requested" if decision.take_profit is not None else "default_config",
+            "value_source": "ai_requested"
+            if _valid_protective_price(decision.take_profit) is not None
+            else "default_config",
             "distance_pct": round(abs(take_profit - entry_price) / entry_price * 100, 6) if entry_price else None,
             "reason": reason_for("take_profit"),
         },

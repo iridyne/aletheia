@@ -883,7 +883,9 @@ global block 作为 system prompt 的一部分或 run-level prefix 注入一次�
 - **影响**:不违反门自身契约(门的 recheck 只恢复自暂停、不覆盖人工 kill/pause,已由
   `tests/test_startup_behavior_gate.py::test_recheck_does_not_resume_user_pause` 等 22 项单测证实);
   但削弱「Gate 阻断期保持暂停直到检查通过」的运行保证——一个残留的浏览器标签页即可静默解除门。
-- **建议修复(未授权施工)**:让 resume 授权链在 Startup Gate 有 active blocker 时也复跑
-  `evaluate_startup_gate()`(通过则清 blocker 并恢复,不通过则 409 拒绝),即把 Startup Gate 纳入
-  `resume_if_*` 的判定,与 LLM gate 并列。属信任/行为边界,修复需 focused 回归测试。
-- **状态**:🕒 记录待办(owner 指示暂不修)。资格验证其余 9 条标准全绿;#67 热循环实机增量已归零。
+- **修复**: `resume_if_llm_available()` 在启用 Startup Behavior Gate 时先复跑
+  `evaluate_startup_gate()`；未通过或无法完成评估均 fail-closed，保留暂停并记录
+  `gateway_resume_blocked`，只有全部启动门通过后才进行 LLM probe 和恢复。
+- **验证**: `tests/test_startup_gate.py` 覆盖模拟 blocker 与真实 SQLite
+  `reconciliation_integrity_incident` 两条路径，均断言不会调用 LLM probe 或清除暂停。
+- **状态**:🟡 修复候选待合并（TASK-2026-081）。资格验证其余 9 条标准全绿;#67 热循环实机增量已归零。
