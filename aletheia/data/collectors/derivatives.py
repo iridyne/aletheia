@@ -74,9 +74,13 @@ class DerivativesCollector:
                 if not perp_sym:
                     continue
 
-                # Funding rate
+                # Funding rate. Capture mark price here so the OI parse can
+                # convert a coin/contract amount to USD when the venue omits
+                # openInterestValue (e.g. Binance live OI).
+                mark_price = None
                 try:
                     fr = await exchange.fetch_funding_rate(perp_sym)
+                    mark_price = fr.get("markPrice")
                     snap = _parse_funding(sym, primary_name, fr)
                     if snap:
                         funding.append(snap)
@@ -87,7 +91,10 @@ class DerivativesCollector:
                 # Open interest (LSR is folded into the same dataclass — no follow-up UPDATE)
                 try:
                     raw_oi = await exchange.fetch_open_interest(perp_sym)
-                    snap = _parse_oi(sym, primary_name, raw_oi, lsr=lsr_map.get(sym))
+                    snap = _parse_oi(
+                        sym, primary_name, raw_oi,
+                        lsr=lsr_map.get(sym), mark_price=mark_price,
+                    )
                     if snap:
                         oi.append(snap)
                 except Exception as e:
@@ -173,29 +180,73 @@ def _parse_funding(
     )
 
 
-def _parse_oi(
-    symbol: str, exchange: str, raw: dict, lsr: float | None = None
-) -> OpenInterestSnapshot | None:
-    oi_val = raw.get("openInterestAmount") or raw.get("openInterestValue")
-    if oi_val is None:
+# OI-delta sanity ceiling. A legitimate 1h open-interest move is at most a few
+# tens of percent; anything larger is a data artifact — a stored-units
+# transition, a venue mismatch that slipped the exchange filter, or a
+# thin/relisted market. Drop it to None rather than feed a fake surge to the
+# derivatives/event scanners.
+_OI_DELTA_SANITY_PCT = 300.0
+
+
+def extract_oi_usd(
+    raw: dict, mark_price: float | None = None
+) -> tuple[float, float | None] | None:
+    """Return ``(open_interest_usd, open_interest_coin)`` from a CCXT OI dict.
+
+    Prefer the exchange-reported USD notional (CCXT unified ``openInterestValue``,
+    e.g. OKX ``oiUsd``); fall back to coin/contract amount × mark price. Returns
+    None when neither is available, so callers store None rather than a
+    wrong-unit value. Single source of truth for the OI→USD rule shared by the
+    collector and the universe feature path.
+    """
+    oi_amount = raw.get("openInterestAmount")
+    oi_value_usd = raw.get("openInterestValue")
+    if oi_value_usd is not None:
+        oi_usd = float(oi_value_usd)
+    elif oi_amount is not None and mark_price:
+        oi_usd = float(oi_amount) * float(mark_price)
+    else:
         return None
 
-    oi_usd = float(oi_val)
-    # Some exchanges return in coin, some in USD. CCXT unified uses openInterestValue (USD).
+    oi_coin = float(oi_amount) if oi_amount is not None else None
     info = raw.get("info", {})
-    oi_coin = None
-    if "sumOpenInterest" in info:
+    if oi_coin is None and "sumOpenInterest" in info:
         oi_coin = float(info["sumOpenInterest"])
+    return oi_usd, oi_coin
 
-    # Compute 1h change pct against previous snapshot
+
+def _parse_oi(
+    symbol: str,
+    exchange: str,
+    raw: dict,
+    lsr: float | None = None,
+    mark_price: float | None = None,
+) -> OpenInterestSnapshot | None:
+    # Prefer the exchange-reported USD notional. Storing the raw amount as USD
+    # (the previous behaviour) was wrong by the asset price — ~660× on OKX BTC,
+    # where openInterestAmount is a contract count and openInterestValue (the
+    # true USD) was silently ignored.
+    extracted = extract_oi_usd(raw, mark_price)
+    if extracted is None:
+        return None  # cannot express in USD — honest None beats a wrong-unit value
+    oi_usd, oi_coin = extracted
+
+    # TRUE ~1h change vs a snapshot ~1h ago on THIS venue — not the ~2-min
+    # previous tick (data_collectors runs every 2 min, so the old delta almost
+    # never cleared the scanner's 1h-calibrated thresholds), and not a
+    # foreign-venue row with different units (which fabricated ±100%–2500%
+    # deltas). open_interest_near returns None outside its age band, so a
+    # collector gap yields "no delta" instead of a bogus multi-hour jump.
     oi_change_1h_pct = None
     try:
-        from aletheia.storage.repositories import latest_open_interest
-        prev = latest_open_interest(symbol)
+        from aletheia.storage.repositories import open_interest_near
+        prev = open_interest_near(symbol, exchange)
         if prev and prev.get("open_interest_usd"):
             prev_oi = float(prev["open_interest_usd"])
             if prev_oi > 0:
-                oi_change_1h_pct = round((oi_usd - prev_oi) / prev_oi * 100, 2)
+                delta = round((oi_usd - prev_oi) / prev_oi * 100, 2)
+                if abs(delta) <= _OI_DELTA_SANITY_PCT:
+                    oi_change_1h_pct = delta
     except Exception:
         pass
 
@@ -290,9 +341,15 @@ async def _maybe_backfill_oi_history(
         return 0
     n = 0
     for item in history:
-        oi_val = item.get("openInterestAmount") or item.get("openInterestValue")
         ts = item.get("timestamp")
-        if oi_val is None or ts is None:
+        oi_value_usd = item.get("openInterestValue")
+        oi_amount = item.get("openInterestAmount")
+        if ts is None:
+            continue
+        # Store USD, consistent with the live path. History rows on OKX/Binance
+        # carry openInterestValue (USD); if a venue omits it we skip rather than
+        # persist a coin/contract amount as USD and mix units within the table.
+        if oi_value_usd is None:
             continue
         observed = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
         prior = _select_all(
@@ -304,8 +361,8 @@ async def _maybe_backfill_oi_history(
         snap = OpenInterestSnapshot(
             symbol=sym,
             exchange=exchange_name,
-            open_interest_usd=float(oi_val),
-            open_interest_coin=None,
+            open_interest_usd=float(oi_value_usd),
+            open_interest_coin=float(oi_amount) if oi_amount is not None else None,
             oi_change_1h_pct=None,
             long_short_ratio=None,
             observed_at=observed,

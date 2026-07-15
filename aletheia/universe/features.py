@@ -406,14 +406,34 @@ async def _fetch_single_feature(
     # P2: Taker buy/sell ratio for perp symbols
     taker_buy_ratio = None
     if is_perp:
+        perp_sym = to_ccxt_perp(symbol)
+        mark_price = None
         try:
-            perp_sym = to_ccxt_perp(symbol)
             fr_data = await asyncio.wait_for(
                 exchange.fetch_funding_rate(perp_sym),
                 timeout=5.0,
             )
-            if fr_data and fr_data.get("fundingRate") is not None:
-                funding_rate = float(fr_data["fundingRate"])
+            if fr_data:
+                mark_price = fr_data.get("markPrice")
+                if fr_data.get("fundingRate") is not None:
+                    funding_rate = float(fr_data["fundingRate"])
+        except Exception:
+            pass  # Keep only a freshness-qualified DB value as fallback.
+
+        # Live open interest overrides a stale DB fallback for the absolute value.
+        # oi_delta_1h stays from the collector's true-1h computation (oi_row) —
+        # features has only the current instant, not a 1h-ago reference. Same
+        # USD-unit rule as the collector (prefer openInterestValue, else
+        # amount × mark) via the shared extractor.
+        try:
+            from aletheia.data.collectors.derivatives import extract_oi_usd
+            oi_data = await asyncio.wait_for(
+                exchange.fetch_open_interest(perp_sym),
+                timeout=5.0,
+            )
+            extracted = extract_oi_usd(oi_data or {}, mark_price)
+            if extracted is not None:
+                open_interest = extracted[0]
         except Exception:
             pass  # Keep only a freshness-qualified DB value as fallback.
 

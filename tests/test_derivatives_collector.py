@@ -240,3 +240,133 @@ def test_maybe_backfill_oi_swallows_not_supported(tmp_path, monkeypatch):
         f"errors must record the 'not supported' failure; got: {errors}"
     )
     sq.close_db()
+
+
+# ---------------------------------------------------------------------------
+# extract_oi_usd — USD-notional unit rule (single source of truth)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_oi_usd_prefers_open_interest_value():
+    """OKX exposes both openInterestAmount (contracts) and openInterestValue
+    (USD). The USD notional must win; the amount is retained as coin."""
+    from aletheia.data.collectors.derivatives import extract_oi_usd
+
+    result = extract_oi_usd(
+        {"openInterestAmount": 3_088_517.62, "openInterestValue": 2_016_542_570.38}
+    )
+    assert result == (2_016_542_570.38, 3_088_517.62)
+
+
+def test_extract_oi_usd_falls_back_to_amount_times_mark():
+    """When openInterestValue is absent (Binance live OI), convert the coin
+    amount to USD with the mark price rather than storing the coin count."""
+    from aletheia.data.collectors.derivatives import extract_oi_usd
+
+    oi_usd, oi_coin = extract_oi_usd(
+        {"openInterestAmount": 107_149.829, "openInterestValue": None},
+        mark_price=65_509.2,
+    )
+    assert oi_coin == 107_149.829
+    assert abs(oi_usd - 107_149.829 * 65_509.2) < 1e-3
+
+
+def test_extract_oi_usd_none_when_not_derivable():
+    """No USD notional and no mark price → None, so callers store None instead
+    of a wrong-unit value (was ~660× off on OKX BTC)."""
+    from aletheia.data.collectors.derivatives import extract_oi_usd
+
+    assert extract_oi_usd(
+        {"openInterestAmount": 107_149.829, "openInterestValue": None}, mark_price=None
+    ) is None
+
+
+def test_parse_oi_returns_none_without_usd():
+    """_parse_oi drops a row it cannot express in USD (honest gap over garbage)."""
+    from aletheia.data.collectors.derivatives import _parse_oi
+
+    assert _parse_oi("BTC/USDT", "binance", {"openInterestAmount": 1.0}) is None
+
+
+# ---------------------------------------------------------------------------
+# open_interest_near + _parse_oi delta — true 1h window, venue-scoped, capped
+# ---------------------------------------------------------------------------
+
+
+def _seed_oi(repo, *, symbol, exchange, usd, age_min, now):
+    repo.insert_open_interest_snapshot({
+        "symbol": symbol,
+        "exchange": exchange,
+        "open_interest_usd": usd,
+        "observed_at": (now - timedelta(minutes=age_min)).isoformat(),
+    })
+
+
+def test_open_interest_near_picks_band_and_scopes_exchange(tmp_path, monkeypatch):
+    from aletheia.config import loader as cfg_loader
+    monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
+    from aletheia.storage import sqlite as sq
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import migrations as mig
+    sq.close_db()
+    mig.run_migrations()
+
+    now = datetime.now(timezone.utc)
+    # okx: one row inside the [45,75]min band (~60m) plus out-of-band rows.
+    _seed_oi(repo, symbol="BTC/USDT", exchange="okx", usd=1000.0, age_min=60, now=now)
+    _seed_oi(repo, symbol="BTC/USDT", exchange="okx", usd=2000.0, age_min=30, now=now)   # too recent
+    _seed_oi(repo, symbol="BTC/USDT", exchange="okx", usd=3000.0, age_min=200, now=now)  # too old
+    # foreign venue inside the band — must be ignored by an exchange-scoped read.
+    _seed_oi(repo, symbol="BTC/USDT", exchange="binance", usd=999999.0, age_min=60, now=now)
+
+    near = repo.open_interest_near("BTC/USDT", "okx")
+    assert near is not None and near["open_interest_usd"] == 1000.0
+
+    # No okx row in band for a different symbol → None (never a foreign/stale row).
+    assert repo.open_interest_near("ETH/USDT", "okx") is None
+    sq.close_db()
+
+
+def test_parse_oi_delta_true_1h_ignores_foreign_venue(tmp_path, monkeypatch):
+    """Delta is computed against a ~1h-ago snapshot on the SAME venue, not the
+    freshest cross-venue row (that mixing fabricated ±100%–2500% deltas)."""
+    from aletheia.config import loader as cfg_loader
+    monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
+    from aletheia.storage import sqlite as sq
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import migrations as mig
+    from aletheia.data.collectors.derivatives import _parse_oi
+    sq.close_db()
+    mig.run_migrations()
+
+    now = datetime.now(timezone.utc)
+    _seed_oi(repo, symbol="BTC/USDT", exchange="okx", usd=1000.0, age_min=60, now=now)
+    # A fresh foreign-venue row with wildly different units — must not be used.
+    _seed_oi(repo, symbol="BTC/USDT", exchange="binance", usd=5.0, age_min=2, now=now)
+
+    snap = _parse_oi("BTC/USDT", "okx", {"openInterestValue": 1100.0})
+    assert snap is not None
+    assert snap.open_interest_usd == 1100.0
+    assert snap.oi_change_1h_pct == 10.0  # (1100-1000)/1000, not vs the binance 5.0
+    sq.close_db()
+
+
+def test_parse_oi_delta_sanity_cap_drops_artifact(tmp_path, monkeypatch):
+    """A >300% computed delta (unit transition / relisted market) → None."""
+    from aletheia.config import loader as cfg_loader
+    monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
+    from aletheia.storage import sqlite as sq
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import migrations as mig
+    from aletheia.data.collectors.derivatives import _parse_oi
+    sq.close_db()
+    mig.run_migrations()
+
+    now = datetime.now(timezone.utc)
+    _seed_oi(repo, symbol="BTC/USDT", exchange="okx", usd=1.0, age_min=60, now=now)
+
+    snap = _parse_oi("BTC/USDT", "okx", {"openInterestValue": 1000.0})
+    assert snap is not None
+    assert snap.open_interest_usd == 1000.0
+    assert snap.oi_change_1h_pct is None  # 99900% delta capped out
+    sq.close_db()
