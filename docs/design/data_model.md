@@ -160,7 +160,7 @@ and spec `AR-S08`.
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `universe_registry` | All known tradeable assets | symbol, exchange, asset_class, metadata (JSON) |
-| `universe_feature_snapshots` | Per-symbol feature vectors | symbol, rsi, bb_width, vol_ratio, taker_buy_ratio |
+| `universe_feature_snapshots` | Per-instrument feature vectors; identity is `asset_id → universe_registry` (not a denormalized symbol column) | asset_id, ts, rsi, bb_width, vol_ratio, taker_buy_ratio |
 | `universe_scanner_runs` | Scanner execution log | scanner_name, symbols_scanned, signals_emitted |
 | `universe_snapshots` | Universe composition snapshots | snapshot_id, created_at |
 | `universe_members` | Assets in a universe snapshot | snapshot_id, symbol, market_type, rank, score, scanner_direction |

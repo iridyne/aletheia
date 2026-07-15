@@ -4706,5 +4706,18 @@ def list_market_regimes(limit: int = 50) -> list[dict]:
 # ── Universe Feature Snapshots (batch read) ───────────────────────────────────
 
 def list_universe_feature_snapshots(limit: int = 50) -> list[dict]:
-    """Return recent feature snapshots across all assets (newest first)."""
-    return _select_all("universe_feature_snapshots", order="ts DESC", limit=limit)
+    """Return recent feature snapshots with their registry instrument identity.
+
+    ``universe_feature_snapshots`` stores only ``asset_id``; consumers that need
+    a symbol or market must resolve it through ``universe_registry`` instead of
+    treating an unjoined row as an incomplete feature vector.
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT ufs.*, ur.symbol, ur.market_type "
+        "FROM universe_feature_snapshots ufs "
+        "JOIN universe_registry ur ON ur.id = ufs.asset_id "
+        "ORDER BY datetime(ufs.ts) DESC, ufs.rowid DESC LIMIT ?",
+        (max(0, int(limit)),),
+    ).fetchall()
+    return [dict(row) for row in rows]

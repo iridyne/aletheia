@@ -1,0 +1,27 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-090
+title: Repair PI feature snapshot identity mapping
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: 'Repair the A-class System Operator context read bug: universe feature rows use asset_id but the read path assumes symbol and price, collapsing all rows into one blank-symbol feature. Restore correct existing registry identity mapping with focused regression and SDD evidence; do not alter ranking, conviction policy, aggregate-health behavior, Risk, Execution, Live, sizing, credentials, or runtime data.'
+acceptance:
+- Layer 1 renders each universe feature with its true registry symbol and market_type; it must not collapse asset_id rows into a blank symbol.
+- Prices remain absent unless the existing fresh cache supplies them; the repair must not invent a price.
+- The focused regression and affected decision-lifecycle SDD suite pass without changing ranking, conviction, PI health policy, Risk, Execution, Live, or runtime data.
+ownership:
+  branch: iridite/skip-problem
+  lease_holder: codex
+  claimed_at: '2026-07-15T07:30:23.869076Z'
+  expires_at: '2026-07-15T15:30:23.869237Z'
+base_commit: 7d90abdb7e69e74fa8b12f18caf06482a8d16358
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-090.md
+updated_at: '2026-07-15T07:30:23.869246Z'

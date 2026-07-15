@@ -85,6 +85,14 @@ Serenity pending 的 `market_type`，且只能从相同 `opportunity_id` 的耐�
 `SerenityOpportunity` 恢复，并要求两边 `symbol / direction` 精确一致、来源
 `market_type` 非空。任何缺行或不一致仍保持未知并拒绝授权。
 
+### 2.2b Layer 1 technical feature identity
+
+`universe_feature_snapshots` 的物理身份只有 `asset_id`；System Operator 的 Layer 1 技术特征读取
+必须经 `asset_id → universe_registry` 取得 `symbol + market_type`，再按完整 instrument identity 去重。
+不得把未 join 的 snapshot 当作含 `symbol` 或价格的行：那会把所有资产压缩为一个空标的，令模型把
+完整的特征供给误解为数据不足。价格仍只能来自新鲜的 market-data cache；cache 未命中必须诚实为
+`None`，不得用 snapshot 身份修复伪造报价。
+
 ### 2.3 signal_pending 载体 (跳2→4 接缝)
 
 `paper_trader` 写 `PiDecision(action='signal_pending')`(`paper_trader.py:143/235`);
