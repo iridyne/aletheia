@@ -1,0 +1,31 @@
+schema_version: 1
+id: TASK-2026-003
+title: Select latest completed task during cold recovery
+status: done
+packet_type: tiny
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: When no task is active, bootstrap must show the newest completed task on the
+  branch.
+acceptance: []
+ownership:
+  branch: iridite/agent-continuity
+  lease_holder: codex
+  claimed_at: '2026-07-11T05:18:15.087013Z'
+  expires_at: '2026-07-11T13:18:15.087149Z'
+base_commit: 2067e7ab486e4f37b7727e7e9584f06388966c8a
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  exit_code: 0
+  commit: d6244f72c6a8654927ac5e41ff2fdf62a50ac6c9
+  run_at: '2026-07-11T05:19:11.608679Z'
+  result: passed
+handoff: .agent/handoffs/archived/TASK-2026-003.md
+updated_at: '2026-07-11T05:19:11.608832Z'

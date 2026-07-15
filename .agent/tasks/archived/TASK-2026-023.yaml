@@ -1,0 +1,45 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-023
+title: Implement durable Learning causal ledger
+status: done
+packet_type: standard
+scope:
+  boundary: additive Learning ledger DDL, typed records, canonical fingerprint, idempotent
+    repositories, SDD and data-model docs
+  excluded: trading consumers, scheduler integration, risk/execution/live authority,
+    configuration and credentials
+intent: Add additive, idempotent storage and typed APIs for Learning hypotheses, experiments,
+  exposures, contribution verdicts, job health, and concurrent policy epochs without
+  connecting them to trading behavior.
+acceptance:
+- Six additive Learning ledger tables and typed records exist with stable ids and
+  indexes.
+- Hypothesis fingerprints are deterministic and exclude prose, timestamps and artifact
+  ids.
+- Duplicate fingerprints and exposure dedup keys are idempotent and immutable.
+- Repository writes preserve the pre-write transaction/commit invariant.
+- No ledger code imports exchange, execution, live, risk, credential or order APIs.
+- Focused data-model/Learning specs and full executable specs pass.
+ownership:
+  branch: feat/learning-ledger
+  lease_holder: codex
+  claimed_at: '2026-07-11T18:41:34.293142Z'
+  expires_at: '2026-07-12T02:41:34.293350Z'
+base_commit: e5a2790eccb2fa2a02bfc883f85ebb4e3241815a
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 266dc2835fe870449250572395fb1a677231a26c
+  run_at: '2026-07-11T18:45:42.638122Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/archived/TASK-2026-023.md
+updated_at: '2026-07-11T18:45:47.903400Z'

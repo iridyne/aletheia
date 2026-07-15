@@ -1,0 +1,44 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-062
+title: Complete automatic DCLS failure artifacts
+status: done
+packet_type: standard
+scope:
+  boundary: DCLS harness exception handling, fixed scenarios, artifact tests, docs,
+    and task evidence only
+  excluded: Operator policy, Risk, Execution, Exchange, Live, credentials, network,
+    frontend, and runtime deployment
+intent: Ensure every fixed-scenario and stateful DCLS failure automatically writes
+  the required sanitized replay pack without changing Operator policy or trading boundaries.
+acceptance:
+- An unhandled ordinary assertion inside a DCLS harness writes all ten required replay
+  artifacts before database cleanup.
+- Both fixed incident tests run inside the automatic artifact boundary.
+- Evidence config is restricted to an explicit safe allowlist and the copied SQLite
+  contains the failing state.
+- Existing DCLS behavior and executable contract remain green.
+ownership:
+  branch: iridite/dcls-artifact-completion
+  lease_holder: codex-dcls-artifacts
+  claimed_at: '2026-07-13T05:54:40.864700Z'
+  expires_at: '2026-07-13T13:54:40.864843Z'
+base_commit: bf13178b2c160d116a4eed334f4e6036dadfea94
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: dcls_artifacts
+  command: uv run pytest tests/simulation/control_loop/test_confidence_deadlock.py
+    tests/simulation/control_loop/test_sizing_ratchet.py tests/simulation/control_loop/test_failure_artifacts.py
+    tests/specs/spec_deterministic_control_loop.py -q --tb=short
+  command_sha256: 686e72edff4c6b41b6511a5692095e48028b2e753b5c1bda9d367c416bb392c3
+  exit_code: 0
+  commit: c84f727c1c00ceed52fb6576e7f5bd1791957aaf
+  run_at: '2026-07-13T05:58:36.600463Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/archived/TASK-2026-062.md
+updated_at: '2026-07-13T05:58:36.734479Z'

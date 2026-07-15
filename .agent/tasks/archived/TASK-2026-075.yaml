@@ -1,0 +1,50 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-075
+title: Make root agent guidance concise and task-loaded
+status: done
+packet_type: tiny
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Reduce AGENTS.md startup context while preserving non-negotiable safety, workflow,
+  and repository rules; move detailed guidance behind explicit task-triggered links
+  without changing runtime or trading behavior.
+acceptance:
+- AGENTS.md is materially shorter yet keeps every always-on safety, authority, and
+  workflow rule.
+- Detailed operational guidance is available through explicit task-triggered local
+  documentation links; no runtime or trading behavior changes.
+- The controlled-module and handoff-path conformance checks pass, and every linked
+  local document exists.
+ownership:
+  branch: master
+  lease_holder: codex-root
+  claimed_at: '2026-07-15T04:11:45.001960Z'
+  expires_at: '2026-07-15T12:11:45.002115Z'
+base_commit: 95db840be3bc34e7d59870ebb222c68073023243
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: workflow_trust_boundary_tests
+  command: uv run pytest tests/test_agent_workflow.py tests/specs/spec_trust_boundary.py
+    tests/specs/spec_agent_workflow.py -q
+  command_sha256: 4a622eb05a9447852b41b4ad43d6da33521efa274afb07d77807a6924c207628
+  exit_code: 0
+  commit: 9d20876035c02762397061757ed19c74f2e89bae
+  run_at: '2026-07-15T04:16:10.458067Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 9d20876035c02762397061757ed19c74f2e89bae
+  run_at: '2026-07-15T04:16:47.443876Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/archived/TASK-2026-075.md
+updated_at: '2026-07-15T04:16:47.626391Z'
