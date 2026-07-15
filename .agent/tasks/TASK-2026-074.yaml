@@ -63,6 +63,38 @@ verification:
   run_at: '2026-07-15T02:51:03.417434Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 3a417b2aa6805f54b1b85402a759b2484beceb43
+  run_at: '2026-07-15T02:52:26.959198Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 3a417b2aa6805f54b1b85402a759b2484beceb43
+  run_at: '2026-07-15T02:52:52.298101Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 3a417b2aa6805f54b1b85402a759b2484beceb43
+  run_at: '2026-07-15T02:52:53.219728Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: frontend_build
+  command: cd frontend && npm run build
+  command_sha256: 008af75026d284dc318e955d965f0d551d81673560186d65b79a4c97e91b2c43
+  exit_code: 0
+  commit: 3a417b2aa6805f54b1b85402a759b2484beceb43
+  run_at: '2026-07-15T02:52:53.362596Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-074.md
-updated_at: '2026-07-15T02:51:03.417561Z'
+updated_at: '2026-07-15T02:52:53.362726Z'
 rebased_at: '2026-07-15T02:40:46.862392Z'
