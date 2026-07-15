@@ -1,0 +1,24 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-082
+title: Harden manual resume and protective defaults
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Fix confirmed resume-gate bypass and zero-valued native entry protection defaults
+  without changing live execution or risk limits.
+acceptance:
+- Manual resume remains paused for an active Startup Behavior Gate blocker and does
+  not run the LLM probe.
+- Nonpositive or nonfinite LLM stop-loss/take-profit values use configured defaults
+  with truthful provenance.
+base_commit: 86eccc1fab515c38e9a4262549c0251c91ba42dc
+next_action:
+  command_key: workflow_tests
+  reason: Re-run P0 focused and lifecycle regressions on the rebased branch.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-082.md
+updated_at: '2026-07-15T15:41:12.838534Z'
