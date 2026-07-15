@@ -1,5 +1,9 @@
 # 01 — 方法依据：反事实归因不等于因果证明
 
+> 本文把同一方法应用到 PI `skip`，不是把研究范围限制为 `skip`。其他决策点的共同
+> 适用条件与限制见[全框架应用指引](../causal_counterfactual_research_guidance.md)；当前
+> 分支不实施 universe generation 或选币机制的任何行为变更。
+
 ## 1. 本项目第一阶段可以、也应该做什么
 
 对于一个在时点 `t0` 被 skip 的、已有 `long` 或 `short` 方向的候选，保存当时可见的
