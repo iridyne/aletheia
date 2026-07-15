@@ -1418,8 +1418,9 @@ def _probe_skip_halt(report: Report) -> None:
     ``loop.profit`` detects proposal drought.  This companion probe answers the
     necessary next question: are candidate-scoped skips actually auditable and
     waiting for fixed outcomes, or did the Operator consume work without trace
-    evidence?  Unscoped heartbeat skips are reported separately and never enter
-    the candidate cohort.  The probe is read-only by design.
+    evidence?  Legacy unscoped heartbeat skips are reported separately and never
+    enter the candidate cohort.  Current zero-pending heartbeats are counted from
+    their dedicated observation table.  The probe is read-only by design.
     """
     try:
         from aletheia.storage.sqlite import get_db
@@ -1450,6 +1451,11 @@ def _probe_skip_halt(report: Report) -> None:
                WHERE action = 'skip' AND opportunity_id IS NULL AND created_at >= ?""",
             (cutoff,),
         ).fetchone()[0]
+        no_candidate_events = db.execute(
+            """SELECT COUNT(*) FROM operator_evaluation_events
+               WHERE event_kind = 'no_evaluable_candidate' AND created_at >= ?""",
+            (cutoff,),
+        ).fetchone()[0]
         pending = db.execute(
             """SELECT COUNT(*) FROM pi_decisions
                WHERE action = 'signal_pending' AND created_at >= ?""",
@@ -1470,6 +1476,7 @@ def _probe_skip_halt(report: Report) -> None:
         f"24h candidate_skips={candidate_skips}, missing_trace={missing_trace}, "
         f"missing_outcome_seed={missing_outcome_seed}, "
         f"unscoped_heartbeat_skips={int(unscoped or 0)}, "
+        f"no_evaluable_candidate_events={int(no_candidate_events or 0)}, "
         f"pending_signals={int(pending or 0)}, proposals={int(proposals or 0)}"
     )
     fix_hint = (
@@ -1482,7 +1489,7 @@ def _probe_skip_halt(report: Report) -> None:
         report.add(
             "loop.skip_halt",
             "warn",
-            detail + " — unscoped heartbeat skips are excluded from effectiveness cohorts",
+            detail + " — legacy unscoped heartbeat skips are excluded from effectiveness cohorts",
             fix_hint,
         )
     elif candidate_skips:
@@ -1493,7 +1500,11 @@ def _probe_skip_halt(report: Report) -> None:
             fix_hint,
         )
     else:
-        report.add("loop.skip_halt", "info", detail + " — no candidate-scoped skips in window", fix_hint)
+        report.add(
+            "loop.skip_halt", "info",
+            detail + " — no candidate-scoped skips in window; no-target heartbeats are observations",
+            fix_hint,
+        )
 
 
 def _probe_round1(report: Report) -> None:
@@ -2678,8 +2689,8 @@ def _probe_signal_effectiveness(report: Report) -> None:
             report.add(
                 "data.signal", "warn",
                 f"24h net signal win_rate {win_rate:.1f}% ({total} settled, avg_net={avg_str}) — "
-                "universe selection may be degraded",
-                "review scanner weights; consider updating Optuna strategy params",
+                "aggregate observation requires cohort diagnosis",
+                "inspect outcome coverage, candidate-skip evidence, and cohort splits; do not auto-tune PI",
             )
         elif win_rate >= 55:
             report.add("data.signal", "ok",

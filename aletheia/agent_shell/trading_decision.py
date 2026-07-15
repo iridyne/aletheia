@@ -285,15 +285,18 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     # path with no machine-readable fact or fixed-outcome link.  Record the
     # model's action before any deterministic gate can amend it; the terminal
     # claim persists this trace atomically with the candidate decision.
+    assessment_inputs = {
+        "model_action": decision.action,
+        "initial_conviction": decision.conviction,
+    }
+    if trading_context.get("skip_policy_epoch_id"):
+        assessment_inputs["policy_epoch_id"] = trading_context["skip_policy_epoch_id"]
     decision.filter_trace.insert(0, {
         "filter_name": "operator_action_assessment",
         "stage": "system_operator",
         "decision": "passed" if trade_intent else "rejected",
         "reason_code": "operator_model_trade" if trade_intent else "operator_model_skip",
-        "inputs": {
-            "model_action": decision.action,
-            "initial_conviction": decision.conviction,
-        },
+        "inputs": assessment_inputs,
         "parameters": {"schema_actions": ["trade", "skip"]},
     })
 
@@ -1358,16 +1361,6 @@ def _build_assessment_prompt(ctx: dict) -> str:
             f"({_ready}/{_total} members ready, <50%). "
             "Backtest/Optuna coverage thin — weight live signals over backtested ones."
         )
-    if data_health.get("signal_status") == "degraded":
-        wr = data_health.get("signal_win_rate_24h", "?")
-        # Labelled signal_accuracy_24h (not win_rate) to avoid colliding with the
-        # 7d trade win_rate in the stats block — two same-named metrics let the
-        # LLM stack them into a double-crisis reading.
-        health_alerts.append(
-            f"⚠️ SIGNAL DEGRADATION: 24h universe signal_accuracy_24h={wr}% (below 40%). "
-            "Consider: reducing position sizing, tightening stops, skipping low-conviction trades."
-        )
-
     # ── Assemble prompt ──
     parts = []
     if health_alerts:

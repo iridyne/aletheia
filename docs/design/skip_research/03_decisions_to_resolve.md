@@ -36,3 +36,21 @@
 
 在决定行为改动前，须按 SDD 顺序将这里的选择提升为正式契约、澄清项、任务包和测试 claim；
 本文件仅保存讨论输入，不能作为执行授权。
+
+## 已关闭的 B1 治理决定 — 2026-07-15
+
+**决策人：owner。授权依据：按
+[完整 Skip 修复实施计划](04_comprehensive_skip_remediation_plan.md) 逐步实施。**
+
+| 决定 | 选择 | B1 的直接约束 |
+| --- | --- | --- |
+| G1 / D1 | 重载后遗留 outcome、lesson、review 仅作研究档案；遵循恢复 SOP，不新增重载 runtime feature | B1 不读取或新增 reload epoch；实时候选只使用已清理后的当前事实 |
+| G2 / D2 | 所有 risk/live/credential/exchange/data-capability/TTL 硬门不参加放宽研究 | B1 不修改这些路径，也不因 missed alpha 绕过它们 |
+| G3 / D3 | candidate skip 的必需证据失败即回滚 terminal claim | 已由 TASK-2026-077 实施；B1 不削弱它 |
+| G4 / D4 | 冷启动或不成熟 cohort 一律是 `insufficient_evidence` | B1 不把低样本聚合 WR 映射为负 edge 或调高门槛 |
+| G5 / D5 | skip-halt 只产生诊断/审计/shadow 草案，不自动调参或开仓 | B1 的 liveness 输出没有配置、Proposal、Risk 或 execution 副作用 |
+| G6 / D6-D7 | 首个 B treatment 仅移除 aggregate health 对单候选 PI action 的权限，并将 zero-pending heartbeat 移出交易评估 | 不同时改 family edge、ranker、universe、conviction、debate 或 sizing；它们须另开 epoch |
+
+旧观察窗口在 B1 启动前关闭；B1 以新的 `learning_policy_epoch`、commit、固定 treatment 描述和
+从零开始的观测指标记录。若 B1 的 candidate identity、trace/outcome coverage 或安全契约退化，
+立即停止该 epoch，恢复上一个已审计 context，而不删除已产生的事实。

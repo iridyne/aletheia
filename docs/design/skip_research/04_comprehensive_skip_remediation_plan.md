@@ -1,6 +1,6 @@
 # 04 — Skip 专项完整修复实施计划
 
-> 状态：**待 owner 审阅的 SDD 计划，不是行为变更授权。**
+> 状态：**B1 已获 owner 授权并正在实施；后续 B2+ 仍须独立治理决定。**
 > 建立日期：2026-07-15
 > 适用范围：System Operator（PI）候选级 `skip` 与其输入、证据、恢复诊断。
 > 非范围：universe generation / 选币行为、Risk、Execution、交易所、Live、额度、凭据。

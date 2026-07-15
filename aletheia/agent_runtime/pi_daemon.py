@@ -243,8 +243,10 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
             "pi_daemon: evaluating (trigger=%s, positions=%d)",
             triggered_by, len((wake_context or {}).get("wake_batches", [])),
         )
+        evaluation_params = dict(wake_context or {})
+        evaluation_params["_trigger"] = triggered_by
         result = await asyncio.wait_for(
-            evaluate_trading_opportunity(wake_context or {}),
+            evaluate_trading_opportunity(evaluation_params),
             timeout=300.0,
         )
         action = result.get("action", "unknown") if isinstance(result, dict) else "unknown"
