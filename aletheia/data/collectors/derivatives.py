@@ -69,30 +69,79 @@ class DerivativesCollector:
             exchange = provider._ensure_primary()
             await exchange.load_markets()
 
-            for sym in symbols:
+            # Batch when the venue supports it (OKX: 2 calls cover every perp in
+            # <1s) — this is what lets the feature/scanner path see OI for the
+            # WHOLE perp universe, not just the ~13 already-active members.
+            has = getattr(exchange, "has", {}) or {}
+            batched = bool(has.get("fetchOpenInterests")) and bool(
+                has.get("fetchFundingRates")
+            )
+            # Full-coverage target on batch venues = every active registry perp
+            # plus any passed symbol (open positions). On per-symbol venues
+            # (Bitget/bybit) we keep only the passed set so a 277-symbol
+            # sequential loop cannot blow the collector's time budget — the
+            # cross-venue read fallback in features supplements those.
+            if batched:
+                target = _perp_target_set(primary_name, symbols)
+            else:
+                target = list(dict.fromkeys(s for s in (symbols or []) if s))
+
+            funding_map: dict = {}
+            oi_map: dict = {}
+            if batched:
+                try:
+                    funding_map = await exchange.fetch_funding_rates(
+                        params={"instType": "SWAP"}
+                    )
+                except Exception as e:
+                    errors.append(f"funding_batch: {e}")
+                    logger.debug("batch funding fetch failed: %s", e)
+                try:
+                    oi_map = await exchange.fetch_open_interests(
+                        params={"instType": "SWAP"}
+                    )
+                except Exception as e:
+                    errors.append(f"oi_batch: {e}")
+                    logger.debug("batch OI fetch failed: %s", e)
+
+            for sym in target:
                 perp_sym = _to_perp_symbol(sym, exchange)
                 if not perp_sym:
                     continue
 
-                # Funding rate
-                try:
-                    fr = await exchange.fetch_funding_rate(perp_sym)
+                fr = None
+                raw_oi = None
+                if batched:
+                    fr = funding_map.get(perp_sym)
+                    raw_oi = oi_map.get(perp_sym)
+                else:
+                    try:
+                        fr = await exchange.fetch_funding_rate(perp_sym)
+                    except Exception as e:
+                        errors.append(f"funding {sym}: {e}")
+                        logger.debug("funding fetch failed for %s: %s", sym, e)
+                    try:
+                        raw_oi = await exchange.fetch_open_interest(perp_sym)
+                    except Exception as e:
+                        errors.append(f"oi {sym}: {e}")
+                        logger.debug("OI fetch failed for %s: %s", sym, e)
+
+                # Capture mark price from funding so the OI parse can convert a
+                # coin/contract amount to USD when the venue omits
+                # openInterestValue (e.g. Binance/Bitget live OI).
+                mark_price = fr.get("markPrice") if fr else None
+                if fr:
                     snap = _parse_funding(sym, primary_name, fr)
                     if snap:
                         funding.append(snap)
-                except Exception as e:
-                    errors.append(f"funding {sym}: {e}")
-                    logger.debug("funding fetch failed for %s: %s", sym, e)
-
-                # Open interest (LSR is folded into the same dataclass — no follow-up UPDATE)
-                try:
-                    raw_oi = await exchange.fetch_open_interest(perp_sym)
-                    snap = _parse_oi(sym, primary_name, raw_oi, lsr=lsr_map.get(sym))
+                # LSR is folded into the same OI dataclass — no follow-up UPDATE.
+                if raw_oi:
+                    snap = _parse_oi(
+                        sym, primary_name, raw_oi,
+                        lsr=lsr_map.get(sym), mark_price=mark_price,
+                    )
                     if snap:
                         oi.append(snap)
-                except Exception as e:
-                    errors.append(f"oi {sym}: {e}")
-                    logger.debug("OI fetch failed for %s: %s", sym, e)
 
         finally:
             await provider.close()
@@ -142,6 +191,29 @@ class DerivativesCollector:
         return {"errors": errors}
 
 
+def _perp_target_set(venue: str, extra_symbols: list[str] | None) -> list[str]:
+    """Canonical perp symbols to enrich on ``venue``: every active registry perp
+    plus any explicitly-passed symbol (open positions we must keep funding for
+    even if they rotated out of the universe), de-duplicated in insertion order.
+
+    Covering the whole perp universe — not just the active universe members — is
+    what gives the feature/scanner path OI + oi_delta for every candidate.
+    """
+    from aletheia.storage import repositories as repo
+
+    seen: dict[str, None] = {}
+    try:
+        for asset in repo.list_universe_assets(venue=venue, active_only=True, limit=None):
+            if (asset.get("market_type") or "") == "perp" and asset.get("symbol"):
+                seen.setdefault(str(asset["symbol"]), None)
+    except Exception as e:  # noqa: BLE001 — registry read is best-effort
+        logger.debug("registry perp lookup failed (%s); using passed symbols only", e)
+    for s in extra_symbols or []:
+        if s:
+            seen.setdefault(str(s), None)
+    return list(seen)
+
+
 def _to_perp_symbol(spot_symbol: str, exchange) -> str | None:
     """Convert canonical spot BTC/USDT to the perp symbol on this exchange."""
     # CCXT perp: BTC/USDT:USDT
@@ -173,29 +245,73 @@ def _parse_funding(
     )
 
 
-def _parse_oi(
-    symbol: str, exchange: str, raw: dict, lsr: float | None = None
-) -> OpenInterestSnapshot | None:
-    oi_val = raw.get("openInterestAmount") or raw.get("openInterestValue")
-    if oi_val is None:
+# OI-delta sanity ceiling. A legitimate 1h open-interest move is at most a few
+# tens of percent; anything larger is a data artifact — a stored-units
+# transition, a venue mismatch that slipped the exchange filter, or a
+# thin/relisted market. Drop it to None rather than feed a fake surge to the
+# derivatives/event scanners.
+_OI_DELTA_SANITY_PCT = 300.0
+
+
+def extract_oi_usd(
+    raw: dict, mark_price: float | None = None
+) -> tuple[float, float | None] | None:
+    """Return ``(open_interest_usd, open_interest_coin)`` from a CCXT OI dict.
+
+    Prefer the exchange-reported USD notional (CCXT unified ``openInterestValue``,
+    e.g. OKX ``oiUsd``); fall back to coin/contract amount × mark price. Returns
+    None when neither is available, so callers store None rather than a
+    wrong-unit value. Single source of truth for the OI→USD rule shared by the
+    collector and the universe feature path.
+    """
+    oi_amount = raw.get("openInterestAmount")
+    oi_value_usd = raw.get("openInterestValue")
+    if oi_value_usd is not None:
+        oi_usd = float(oi_value_usd)
+    elif oi_amount is not None and mark_price:
+        oi_usd = float(oi_amount) * float(mark_price)
+    else:
         return None
 
-    oi_usd = float(oi_val)
-    # Some exchanges return in coin, some in USD. CCXT unified uses openInterestValue (USD).
+    oi_coin = float(oi_amount) if oi_amount is not None else None
     info = raw.get("info", {})
-    oi_coin = None
-    if "sumOpenInterest" in info:
+    if oi_coin is None and "sumOpenInterest" in info:
         oi_coin = float(info["sumOpenInterest"])
+    return oi_usd, oi_coin
 
-    # Compute 1h change pct against previous snapshot
+
+def _parse_oi(
+    symbol: str,
+    exchange: str,
+    raw: dict,
+    lsr: float | None = None,
+    mark_price: float | None = None,
+) -> OpenInterestSnapshot | None:
+    # Prefer the exchange-reported USD notional. Storing the raw amount as USD
+    # (the previous behaviour) was wrong by the asset price — ~660× on OKX BTC,
+    # where openInterestAmount is a contract count and openInterestValue (the
+    # true USD) was silently ignored.
+    extracted = extract_oi_usd(raw, mark_price)
+    if extracted is None:
+        return None  # cannot express in USD — honest None beats a wrong-unit value
+    oi_usd, oi_coin = extracted
+
+    # TRUE ~1h change vs a snapshot ~1h ago on THIS venue — not the ~2-min
+    # previous tick (data_collectors runs every 2 min, so the old delta almost
+    # never cleared the scanner's 1h-calibrated thresholds), and not a
+    # foreign-venue row with different units (which fabricated ±100%–2500%
+    # deltas). open_interest_near returns None outside its age band, so a
+    # collector gap yields "no delta" instead of a bogus multi-hour jump.
     oi_change_1h_pct = None
     try:
-        from aletheia.storage.repositories import latest_open_interest
-        prev = latest_open_interest(symbol)
+        from aletheia.storage.repositories import open_interest_near
+        prev = open_interest_near(symbol, exchange)
         if prev and prev.get("open_interest_usd"):
             prev_oi = float(prev["open_interest_usd"])
             if prev_oi > 0:
-                oi_change_1h_pct = round((oi_usd - prev_oi) / prev_oi * 100, 2)
+                delta = round((oi_usd - prev_oi) / prev_oi * 100, 2)
+                if abs(delta) <= _OI_DELTA_SANITY_PCT:
+                    oi_change_1h_pct = delta
     except Exception:
         pass
 
@@ -290,9 +406,15 @@ async def _maybe_backfill_oi_history(
         return 0
     n = 0
     for item in history:
-        oi_val = item.get("openInterestAmount") or item.get("openInterestValue")
         ts = item.get("timestamp")
-        if oi_val is None or ts is None:
+        oi_value_usd = item.get("openInterestValue")
+        oi_amount = item.get("openInterestAmount")
+        if ts is None:
+            continue
+        # Store USD, consistent with the live path. History rows on OKX/Binance
+        # carry openInterestValue (USD); if a venue omits it we skip rather than
+        # persist a coin/contract amount as USD and mix units within the table.
+        if oi_value_usd is None:
             continue
         observed = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
         prior = _select_all(
@@ -304,8 +426,8 @@ async def _maybe_backfill_oi_history(
         snap = OpenInterestSnapshot(
             symbol=sym,
             exchange=exchange_name,
-            open_interest_usd=float(oi_val),
-            open_interest_coin=None,
+            open_interest_usd=float(oi_value_usd),
+            open_interest_coin=float(oi_amount) if oi_amount is not None else None,
             oi_change_1h_pct=None,
             long_short_ratio=None,
             observed_at=observed,

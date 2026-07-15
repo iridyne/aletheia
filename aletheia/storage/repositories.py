@@ -4038,6 +4038,54 @@ def latest_open_interest(symbol: str, exchange: str | None = None) -> dict | Non
     return rows[0] if rows else None
 
 
+def open_interest_near(
+    symbol: str,
+    exchange: str,
+    *,
+    target_age_min: float = 60.0,
+    band_min: tuple[float, float] = (45.0, 75.0),
+) -> dict | None:
+    """Return the OI snapshot for ``symbol`` on ``exchange`` observed closest to
+    ``target_age_min`` minutes ago, restricted to the ``band_min`` age window.
+
+    The derivatives collector uses this to compute a TRUE ~1h open-interest
+    delta instead of a delta against the immediately-preceding (~2 min)
+    snapshot — a 2-min delta almost never clears the scanner's 1h-calibrated
+    thresholds, so the derivatives family scored ~0 in steady state.
+
+    ``exchange`` is REQUIRED and matched exactly. The open_interest_snapshots
+    table is multi-venue with heterogeneous units (e.g. OKX stores contracts,
+    Hyperliquid stores USD), so a venue-blind neighbour lookup mixes units and
+    fabricates ±100%–2500% deltas. Returns None when no snapshot falls in the
+    band (e.g. after a collector gap) — the caller MUST treat a missing
+    neighbour as "no delta", never fall back to a stale or foreign-venue row.
+    """
+    now = datetime.now(timezone.utc)
+    lo, hi = band_min
+    oldest = (now - timedelta(minutes=hi)).isoformat()
+    newest = (now - timedelta(minutes=lo)).isoformat()
+    rows = _select_all(
+        "open_interest_snapshots",
+        where="symbol = ? AND exchange = ? AND observed_at BETWEEN ? AND ?",
+        params=(symbol, exchange, oldest, newest),
+        order="observed_at DESC",
+        limit=64,
+    )
+    if not rows:
+        return None
+    target = now - timedelta(minutes=target_age_min)
+
+    def _age_gap(row: dict) -> float:
+        observed = row.get("observed_at")
+        try:
+            ts = datetime.fromisoformat(str(observed).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return float("inf")
+        return abs((ts - target).total_seconds())
+
+    return min(rows, key=_age_gap)
+
+
 def insert_liquidation_event(data: dict) -> None:
     from aletheia.storage.models import new_id
     if "id" not in data:

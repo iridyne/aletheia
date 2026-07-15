@@ -206,6 +206,40 @@ def test_derivatives_no_data():
     assert direction is None
 
 
+def test_derivatives_oi_surge_sets_direction_without_funding():
+    """A rising-OI surge with a price move must produce a directed signal even
+    when funding is neutral — otherwise OI never contributes to this family
+    (the {0,10} 'half-dead' symptom)."""
+    feat = _base_feat(funding_rate=0.0001, oi_delta_1h=18.0, return_1h=2.0)
+    score, reasons, direction = score_derivatives(feat)
+    assert score >= 20
+    assert direction == "long"  # OI up + price up = new longs
+    assert any("OI" in r for r in reasons)
+
+    feat = _base_feat(funding_rate=None, oi_delta_1h=25.0, return_1h=-1.5)
+    score, _, direction = score_derivatives(feat)
+    assert score >= 30
+    assert direction == "short"  # OI up + price down = new shorts
+
+
+def test_derivatives_oi_surge_flat_price_no_fabricated_direction():
+    """OI up but price ~flat → no directional read; score stays 0 (no direction
+    to carry it). Guards against fabricating a direction from OI alone."""
+    feat = _base_feat(funding_rate=0.0001, oi_delta_1h=18.0, return_1h=0.1)
+    score, _, direction = score_derivatives(feat)
+    assert direction is None
+    assert score == 0
+
+
+def test_derivatives_oi_drop_stays_ambiguous():
+    """A falling-OI (deleveraging) move is direction-ambiguous: it must not set
+    a direction on its own."""
+    feat = _base_feat(funding_rate=0.0001, oi_delta_1h=-30.0, return_1h=-2.0)
+    score, _, direction = score_derivatives(feat)
+    assert direction is None
+    assert score == 0
+
+
 # --- Dedicated short bias ---
 
 def test_short_bias_rejects_crowded_shorts_with_deeply_negative_funding():
