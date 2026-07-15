@@ -582,6 +582,33 @@ def _auto_confidence_tightening_is_active() -> bool:
         return False
 
 
+def _legacy_aggregate_confidence_tightening_is_active() -> bool:
+    """Whether B1's retired aggregate-health writer left the current gate high.
+
+    This is a one-way compatibility repair, not a general relaxation: only the
+    exact legacy audit rationale is eligible.  A later owner setting, another
+    controller, or an unproven historical patch remains untouched.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT before_state, after_state, message FROM audit_events "
+            "WHERE actor='operator_loop' AND event_type='config_patch' "
+            "AND entity_id='min_confidence_to_trade' "
+            "ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+        return bool(
+            row is not None
+            and row["before_state"] == "medium"
+            and row["after_state"] == "high"
+            and "signal win_rate degraded" in str(row["message"] or "")
+        )
+    except Exception as e:
+        logger.debug("assessment: legacy confidence patch provenance unavailable: %s", e)
+        return False
+
+
 def _confidence_recovery_reason(assessment: SystemAssessment) -> str | None:
     """Return a bounded reason to restore automatic ``high`` to neutral.
 
@@ -594,6 +621,11 @@ def _confidence_recovery_reason(assessment: SystemAssessment) -> str | None:
     if (assessment.param_drift.get("min_confidence_to_trade") != "tightened"
             or assessment.kill_switch_active):
         return None
+    if _legacy_aggregate_confidence_tightening_is_active():
+        return (
+            "legacy aggregate signal-health patch: restoring retired automatic "
+            "min_confidence_to_trade tightening from high to neutral medium"
+        )
     if (assessment.hours_since_last_trade is not None
             and assessment.hours_since_last_trade >= 4):
         return (
@@ -1305,7 +1337,8 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
         # Only the B1.1 supply branch changes candidate admission behavior.
         # Keep the pre-existing fill-clock recovery byte-for-byte epoch-neutral
         # so its deterministic simulation/replay contract remains intact.
-        if confidence_recovery_reason.startswith("candidate supply drought:"):
+        if confidence_recovery_reason.startswith((
+                "candidate supply drought:", "legacy aggregate signal-health patch:")):
             from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
             policy_epoch_id = ensure_skip_remediation_policy_epoch()
             params["policy_epoch_id"] = policy_epoch_id

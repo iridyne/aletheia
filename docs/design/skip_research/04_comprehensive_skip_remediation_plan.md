@@ -129,6 +129,10 @@ learned guard、风险标记、评分、PI conviction/debate 和 Risk Engine。`
       → 不自动放宽；记录并继续诊断
 ```
 
+另有一次性的兼容恢复：若该参数的最后一条审计明确是已废止规则写入的
+`signal win_rate degraded ...`、且仍为 `medium → high`，B1.1 可直接恢复为 `medium`；不要求当前
+有候选。这只消解旧规则已经写入的遗留状态，不能匹配人工或任何其他控制器写入。
+
 这是 B 类行为改动，故 B1 的 epoch 必须关闭并以 `system_operator_skip_remediation` 的 B1.1
 effective values 新开窗口。观察指标分两层：
 

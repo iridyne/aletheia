@@ -46,7 +46,7 @@ def test_auto_tightened_confidence_recovers_when_ranker_starves_pi(tmp_path):
             before="medium",
             after="high",
             direction="tighten",
-            reason="legacy aggregate signal health tightening",
+            reason="legacy automatic tightening",
         )
         # The real legacy patch predates B1.1 by hours.  Keep the regular
         # per-parameter cooldown intact; this test is about recovery after that
@@ -80,6 +80,36 @@ def test_auto_tightened_confidence_recovers_when_ranker_starves_pi(tmp_path):
         ).fetchone()
         assert epoch is not None
         assert '"version": "b1.1"' in epoch[0]
+        assert_invariants(harness)
+
+
+def test_retired_aggregate_health_patch_recovers_without_waiting_for_supply(tmp_path):
+    """The known B1-invalid legacy state is repaired even during no-supply idle."""
+    with ControlLoopHarness(Path(tmp_path), initial_confidence="high") as harness:
+        from aletheia.agent_shell import operator_loop
+
+        operator_loop._persist_action(
+            "config_patch",
+            param="min_confidence_to_trade",
+            before="medium",
+            after="high",
+            direction="tighten",
+            reason="signal win_rate degraded to 36.7%",
+        )
+        harness.db.execute(
+            "UPDATE audit_events SET timestamp=? WHERE actor='operator_loop' "
+            "AND event_type='config_patch' AND entity_id='min_confidence_to_trade'",
+            ((harness.clock.now() - timedelta(hours=3)).isoformat(),),
+        )
+        harness.db.commit()
+
+        summary = harness.run_operator_cycle(trigger="b11-legacy-recovery")
+
+        assert summary["assessment"]["hours_since_last_trade"] is None
+        assert summary["assessment"]["candidate_supply_drought"] is None
+        assert harness.load_config().trading.min_confidence_to_trade == "medium"
+        result = next(r for r in summary["results"] if r.get("action") == "loosen_confidence")
+        assert result["status"] == "executed"
         assert_invariants(harness)
 
 
