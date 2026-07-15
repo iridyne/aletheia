@@ -1,43 +1,33 @@
 schema_version: 1
 handoff_version: 1
 id: TASK-2026-079
-title: Restore worktree HMR and add guarded dev API
-status: done
+title: Add read-only skip-halt diagnosis state machine
+status: in_progress
 packet_type: standard
 scope:
-  boundary: Worktree HMR, isolated preview API, and fail-closed order and credential
-    guards
-  excluded: production gateway lifecycle, risk semantics, live unlock, credential
-    values, and local state facts
-intent: Provide fast worktree frontend HMR plus an opt-in isolated backend dev API
-  that cannot read credentials, execute orders, or affect the master gateway; preserve
-  production gateway behavior and verify both paths.
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: 'Implement the remaining A-class WP-5 diagnosis/report foundation from the
+  Skip remediation plan: a reproducible, read-only skip-halt report with not_applicable,
+  awaiting_outcomes, recording_incident, protective_skip_observed, overrestriction_suspect,
+  operator_liveness_incident, and diagnosis_unavailable semantics; wire doctor read-only
+  output and DCLS coverage. Do not alter PI context/action, conviction, ranker, family
+  evidence, config, Risk, Execution, Live, sizing, credentials, or create executable
+  proposals.'
 acceptance:
-- Worktree frontend development uses Vite HMR without starting, stopping, or restarting
-  the master gateway.
-- The default Vite proxy permits read methods to the master API and rejects API writes
-  with a stable 403 reason code.
-- The explicit dev API uses a Worktree-local preview data directory and refuses the
-  reserved master ports.
-- Preview mode cannot read or write credential values, cannot submit, re-execute,
-  or approve a proposal before durable execution state changes, and cannot invoke
-  machine-level gateway or update controls.
-- Production frontend builds use content-hashed assets, and operator/developer documentation
-  distinguishes preview from release acceptance.
-base_commit: 85abad403a1142199a71ebe8ca0feb05e432bb90
+- Diagnosis is read-only and distinguishes all six WP-5 operational findings plus unavailable.
+- Doctor reports the versioned diagnosis without presenting low WR as trading authority.
+- DCLS proves degraded aggregate signal quality creates no confidence, Proposal, Risk, or execution side effect.
+ownership:
+  branch: iridite/skip-problem
+  lease_holder: codex
+  claimed_at: '2026-07-15T06:57:19.210311Z'
+  expires_at: '2026-07-15T14:57:19.210461Z'
+base_commit: ec124d9084c70248b31aa2481f1d215efbfa25d3
 next_action:
-  command_key: workflow_bootstrap
-  reason: Task complete; run bootstrap and create or claim a new task before changing
-    code.
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
 blockers: []
-verification:
-- command_key: spec_execution
-  command: uv run pytest tests/specs/spec_execution.py -q
-  command_sha256: 720c18646fdff18ca745c955c9570fbd12535011a9f360bd59e50bccf435a3c6
-  exit_code: 0
-  commit: f384390b33b9a381f972f816f23223402d332bc0
-  run_at: '2026-07-15T08:37:02.055610Z'
-  result: passed
-  recorded_by: agent_workflow.verify/v1
+verification: []
 handoff: .agent/handoffs/TASK-2026-079.md
-updated_at: '2026-07-15T08:37:25.913204Z'
+updated_at: '2026-07-15T06:57:19.210469Z'

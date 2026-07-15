@@ -1423,6 +1423,7 @@ def _probe_skip_halt(report: Report) -> None:
     their dedicated observation table.  The probe is read-only by design.
     """
     try:
+        from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
@@ -1472,18 +1473,20 @@ def _probe_skip_halt(report: Report) -> None:
     candidate_skips = int((row or [0])[0] or 0)
     missing_trace = int((row or [0, 0])[1] or 0)
     missing_outcome_seed = int((row or [0, 0, 0])[2] or 0)
+    diagnosis = diagnose_skip_halt()
     detail = (
         f"24h candidate_skips={candidate_skips}, missing_trace={missing_trace}, "
         f"missing_outcome_seed={missing_outcome_seed}, "
         f"unscoped_heartbeat_skips={int(unscoped or 0)}, "
         f"no_evaluable_candidate_events={int(no_candidate_events or 0)}, "
-        f"pending_signals={int(pending or 0)}, proposals={int(proposals or 0)}"
+        f"pending_signals={int(pending or 0)}, proposals={int(proposals or 0)}, "
+        f"finding={diagnosis.finding}, threshold={diagnosis.threshold_version}"
     )
     fix_hint = (
         "inspect candidate skip trace/outcome coverage and the read-only Skip diagnosis; "
         "does not change PI, config, Risk, or execution"
     )
-    if missing_trace or missing_outcome_seed:
+    if diagnosis.finding in {"recording_incident", "operator_liveness_incident", "diagnosis_unavailable"}:
         report.add("loop.skip_halt", "warn", detail, fix_hint)
     elif unscoped:
         report.add(
