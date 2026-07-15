@@ -877,6 +877,10 @@ export const api = {
     genuine_points: EquityPoint[];
     points: EquityPoint[];
     current_unrealized: number;
+    current_mark_point: (EquityPoint & {
+      closed_raw_pnl: number;
+      current_unrealized: number;
+    }) | null;
     total_realized: number | null;
     raw_total_recorded_realized: number | null;
   }>(`/analytics/equity-curve${days ? `?days=${days}` : ''}`),

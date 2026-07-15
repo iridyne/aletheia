@@ -133,6 +133,31 @@ class TestRealizedPnlIsolation:
         assert summary["all_realized_pnl"] == 35.0
 
 
+@pytest.mark.anyio
+async def test_equity_curve_exposes_live_mark_separately_from_closed_curves(client):
+    """Open-position movement must be timestamped but never called realized PnL."""
+    c, _ = client
+    now = datetime.now(timezone.utc)
+    _insert_verified_closed_position(
+        position_id="live-mark-closed", symbol="BTC/USDT",
+        entry_price=100.0, realized_pnl=5.0,
+        execution_mode="paper_internal", closed_at=(now - timedelta(minutes=2)).isoformat(),
+    )
+    repo.insert_position(Position(
+        id="live-mark-open", symbol="ETH/USDT", market_type="spot",
+        direction="long", quantity=1.0, entry_price=10.0, current_price=13.0,
+        unrealized_pnl=3.0, execution_mode="paper_internal", status="open",
+    ))
+
+    body = (await c.get("/api/analytics/equity-curve")).json()
+    mark = body["current_mark_point"]
+    assert mark["time"]
+    assert mark["closed_raw_pnl"] == 5.0
+    assert mark["current_unrealized"] == 3.0
+    assert mark["cumulative_pnl"] == 8.0
+    assert body["total_realized"] == 5.0
+
+
 # ---------- P1-3: compute_and_store_snapshot consistency ----------
 
 class TestSnapshotConsistency:

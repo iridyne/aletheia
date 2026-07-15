@@ -116,10 +116,11 @@ def get_equity_curve(
         upnl_params.append(execution_mode)
     upnl_where = " AND ".join(upnl_conditions)
     open_row = db.execute(
-        f"SELECT SUM(unrealized_pnl) as total_upnl FROM positions WHERE {upnl_where}",
+        f"SELECT SUM(unrealized_pnl) as total_upnl, COUNT(*) AS open_count FROM positions WHERE {upnl_where}",
         upnl_params,
     ).fetchone()
     total_upnl = round((open_row["total_upnl"] or 0.0), 4)
+    open_count = int(open_row["open_count"] or 0)
 
     # Prefer authoritative cross-broker exchange uPnL (real mark-price + funding)
     # when not filtering by a single mode — keeps the chart's end point consistent
@@ -136,6 +137,21 @@ def get_equity_curve(
         except Exception:
             pass
 
+    # The live point is a mark-to-market read, not a close event.  Keeping it
+    # out of both curves prevents open PnL from looking like either a recorded
+    # realization or a verified strategy outcome, while still making Overview
+    # visibly move between closes.
+    current_mark_point = None
+    if raw_total is not None or open_count:
+        from datetime import datetime, timezone
+        closed_raw_pnl = raw_total or 0.0
+        current_mark_point = {
+            "time": datetime.now(timezone.utc).isoformat(),
+            "closed_raw_pnl": round(closed_raw_pnl, 4),
+            "current_unrealized": total_upnl,
+            "cumulative_pnl": round(closed_raw_pnl + total_upnl, 4),
+        }
+
     return {
         **cohort,
         "default_curve": "genuine_verified",
@@ -146,6 +162,7 @@ def get_equity_curve(
         # Compatibility aliases now explicitly default to the genuine cohort.
         "points": genuine_points,
         "current_unrealized": total_upnl,
+        "current_mark_point": current_mark_point,
         "total_realized": genuine_total,
         "raw_total_recorded_realized": raw_total,
     }

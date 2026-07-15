@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { createChart, type IChartApi, type Time } from 'lightweight-charts'
+import { createChart, LineStyle, type IChartApi, type Time } from 'lightweight-charts'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { chartTheme } from './theme'
@@ -21,7 +21,9 @@ export default function PnLChart({ days }: Props) {
   const rawPoints = data?.raw_recorded_points ?? []
   const genuinePoints = data?.genuine_points ?? []
   const currentUnrealized = data?.current_unrealized ?? 0
+  const currentMarkPoint = data?.current_mark_point ?? null
   const excludedOutcomeCount = data?.excluded_outcome_count ?? 0
+  const eligibleOutcomeCount = data?.eligible_outcome_count ?? 0
 
   // Backend closed_at is tz-aware UTC (`...+00:00`). isoToEpochSeconds normalizes
   // it correctly — the old inline `endsWith('Z') ? : +'Z'` turned `+00:00` into an
@@ -32,7 +34,13 @@ export default function PnLChart({ days }: Props) {
     .map(r => ({ time: r.time as Time, value: r.value }))
   const rawRows = toRows(rawPoints)
   const genuineRows = toRows(genuinePoints)
-  const hasData = rawRows.length > 0 || genuineRows.length > 0
+  const liveMarkRow = currentMarkPoint == null
+    ? null
+    : (() => {
+      const time = isoToEpochSeconds(currentMarkPoint.time)
+      return time === null ? null : { time: time as Time, value: currentMarkPoint.cumulative_pnl }
+    })()
+  const hasData = rawRows.length > 0 || genuineRows.length > 0 || liveMarkRow !== null
 
   useEffect(() => {
     // No data → the container div isn't rendered (see below), so don't create a
@@ -55,6 +63,20 @@ export default function PnLChart({ days }: Props) {
     if (rawRows.length > 0) {
       const rawSeries = chart.addLineSeries({ color: '#7b8494', lineWidth: 1 })
       rawSeries.setData(unique(rawRows))
+    }
+
+    if (liveMarkRow !== null) {
+      // Draw only the final mark segment. It moves on the bounded query cadence,
+      // but never rewrites the gray closed-history curve or the green verified one.
+      const previous = rawRows[rawRows.length - 1]
+      const liveSeries = chart.addLineSeries({
+        color: '#38bdf8', lineWidth: 2, lineStyle: LineStyle.Dashed,
+      })
+      liveSeries.setData(unique(
+        previous !== undefined && previous.time !== liveMarkRow.time
+          ? [previous, liveMarkRow]
+          : [liveMarkRow],
+      ))
     }
 
     const series = chart.addBaselineSeries({
@@ -94,7 +116,10 @@ export default function PnLChart({ days }: Props) {
 
   const realizedTxt = data?.total_realized != null
     ? `${data.total_realized >= 0 ? '+' : ''}${data.total_realized.toFixed(2)} USDT`
-    : 'unavailable'
+    : eligibleOutcomeCount === 0 ? 'no verified closes yet' : 'unavailable'
+  const liveMarkTxt = currentMarkPoint == null
+    ? 'unavailable'
+    : `${currentMarkPoint.cumulative_pnl >= 0 ? '+' : ''}${currentMarkPoint.cumulative_pnl.toFixed(2)} USDT`
   const [hintOpen, setHintOpen] = useState(false)
   const showHint = rawRows.length > 0 && genuineRows.length === 0
   const hintText = `No verified strategy outcomes yet. ${excludedOutcomeCount} recorded closes do not meet the current verification requirements; the gray line remains raw account history only.`
@@ -103,6 +128,8 @@ export default function PnLChart({ days }: Props) {
     <div>
       <p className="metric-caveat" style={{ marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
         <span style={{ color: '#7b8494' }}>Raw recorded account events</span>
+        {' · '}
+        <span style={{ color: '#38bdf8' }}>Live mark (closed raw + open uPnL)</span>
         {' · '}
         <span style={{ color: '#2ee6a8' }}>Verified strategy curve</span>
         {showHint && (
@@ -135,7 +162,7 @@ export default function PnLChart({ days }: Props) {
         )}
       </p>
       <p className="metric-caveat" style={{ marginBottom: '4px' }}>
-        verified realized: {realizedTxt} · current unrealized (separate): {currentUnrealized >= 0 ? '+' : ''}{currentUnrealized.toFixed(2)} USDT
+        verified realized: {realizedTxt} · live mark: {liveMarkTxt} · current unrealized (separate): {currentUnrealized >= 0 ? '+' : ''}{currentUnrealized.toFixed(2)} USDT
       </p>
       {hasData
         ? <div ref={containerRef} style={{ width: '100%' }} />

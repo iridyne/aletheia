@@ -22,3 +22,13 @@ def test_overview_explains_unavailable_realized_pnl() -> None:
 
     assert "not yet verifiable" in pnl_zone
     assert "closes need verification" in pnl_zone
+
+
+def test_overview_curve_distinguishes_live_mark_from_verified_realized() -> None:
+    """The moving endpoint must not masquerade as either closed-history series."""
+    chart = (ROOT / "frontend/src/charts/PnLChart.tsx").read_text(encoding="utf-8")
+    client = (ROOT / "frontend/src/api/client.ts").read_text(encoding="utf-8")
+
+    assert "current_mark_point" in client
+    assert "Live mark (closed raw + open uPnL)" in chart
+    assert "No verified strategy closes yet" in chart
