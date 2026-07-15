@@ -166,17 +166,6 @@ reset 前的 family edge、memo、case、reasoning feedback 或 calibration 作�
 的 persistence backup 走受管 restore 流程恢复；不得以文件复制覆盖活跃 SQLite/WAL。恢复后先
 进行只读审计，再重新裁定是否执行本 SOP。
 
-## 当前事故的已知预览（仅供确认，不是执行授权）
-
-在 2026-07-15 只读检查中、以候选边界 `2026-07-14T03:12:00+00:00` 统计：
-
-- `universe_forward_outcomes`：145,344 条旧入场结果、4,496 条 reset 后入场结果；
-- `knowledge_items` 中待归档的旧 PI prompt 资料：13 calibration reports、19 reasoning
-  feedback、19 trading memos、709 trade case studies、266 guard candidates；
-- reset 后新生成的内容只有 2 条 reasoning feedback 和 31 条 guard candidates，保留 active。
-
-这些数字必须在真正执行前重新查询，不得把本文档中的快照当作当前运行事实。
-
 ## 后续重载的最小检查表
 
 每次低频重载只需重复以下人工步骤，不新增代码或常驻服务：
