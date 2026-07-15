@@ -5,15 +5,20 @@ title: Make Overview PnL curve show live marks honestly
 status: in_progress
 packet_type: standard
 scope:
-  boundary: Analytics read model and Overview PnL chart only; add an explicitly labelled live mark-to-market terminal point and truthful zero-verified-outcome state.
-  excluded: Orders, Positions, close economics, Risk, execution, exchanges, paper cash, runtime configuration, and credentials.
+  boundary: Analytics read model and Overview PnL chart only; add an explicitly labelled
+    live mark-to-market terminal point and truthful zero-verified-outcome state.
+  excluded: Orders, Positions, close economics, Risk, execution, exchanges, paper
+    cash, runtime configuration, and credentials.
 intent: Expose current mark-to-market movement without mislabeling it as realized
   or verified strategy performance, and make zero verified outcomes explicit.
 acceptance:
-  - Equity-curve API returns a timestamped live mark separately from both raw closed history and verified strategy outcomes.
-  - Overview refreshes that live mark on the existing bounded cadence and never calls it realized or verified PnL.
-  - A zero verified cohort states the count and exclusion reasons rather than presenting a misleading slash as missing UI data.
-  - Focused API and frontend-contract tests cover the new shape and labels.
+- Equity-curve API returns a timestamped live mark separately from both raw closed
+  history and verified strategy outcomes.
+- Overview refreshes that live mark on the existing bounded cadence and never calls
+  it realized or verified PnL.
+- A zero verified cohort states the count and exclusion reasons rather than presenting
+  a misleading slash as missing UI data.
+- Focused API and frontend-contract tests cover the new shape and labels.
 ownership:
   branch: fix/overview-live-pnl-curve
   lease_holder: codex-overview-live-curve
@@ -24,6 +29,14 @@ next_action:
   command_key: specs
   reason: Establish the analytics read-model contract before implementation.
 blockers: []
-verification: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 94f552c78bbeb039a8d951dee7b511aec3d235a9
+  run_at: '2026-07-15T01:58:53.514551Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-073.md
-updated_at: '2026-07-15T01:54:48.358943Z'
+updated_at: '2026-07-15T01:58:53.514728Z'
