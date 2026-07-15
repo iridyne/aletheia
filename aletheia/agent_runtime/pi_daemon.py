@@ -158,6 +158,13 @@ async def _pi_daemon_loop(
     _generic_wake_pending = False
 
     logger.info("pi_daemon: loop started")
+    # A process restart clears in-memory producer notifications.  Re-arm one
+    # ordinary wake only when durable queued work exists, so a restart cannot
+    # strand candidates until the next producer happens to emit a signal.
+    if _has_pending_signal_work():
+        _generic_wake_pending = True
+        _signal_event.set()
+        logger.info("pi_daemon: rearmed durable pending queue at startup")
 
     while True:
         # Wait for signal event OR heartbeat timeout
@@ -225,6 +232,32 @@ async def _pi_daemon_loop(
         if pending_queue_remaining != 0:
             _generic_wake_pending = True
             _signal_event.set()
+
+
+def _has_pending_signal_work() -> bool:
+    """Return whether one durable queued candidate still needs a final PI action.
+
+    This is intentionally a read-only liveness probe.  It does not rank, score,
+    or alter any candidate and it excludes expired or already-finalized sources.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT 1 FROM pi_decisions pending "
+            "JOIN opportunities source ON source.id = pending.opportunity_id "
+            "WHERE pending.action = 'signal_pending' "
+            "AND source.status = 'queued' "
+            "AND NOT EXISTS ("
+            " SELECT 1 FROM pi_decisions final "
+            " WHERE final.opportunity_id = pending.opportunity_id "
+            " AND final.action IN ('skip', 'watch', 'trade')"
+            ") LIMIT 1"
+        ).fetchone()
+        return row is not None
+    except Exception as exc:
+        logger.debug("pi_daemon: startup pending probe unavailable: %s", exc)
+        return False
 
 
 def _build_wake_context(triggered_by: str, batches: list) -> dict:
