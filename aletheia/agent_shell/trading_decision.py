@@ -280,6 +280,22 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
 
     trade_actions = ("trade",)
     trade_intent = decision.action in trade_actions
+    # A direct model skip is a real System Operator filter result.  It used to
+    # return before debate/conviction tracing, leaving the most common terminal
+    # path with no machine-readable fact or fixed-outcome link.  Record the
+    # model's action before any deterministic gate can amend it; the terminal
+    # claim persists this trace atomically with the candidate decision.
+    decision.filter_trace.insert(0, {
+        "filter_name": "operator_action_assessment",
+        "stage": "system_operator",
+        "decision": "passed" if trade_intent else "rejected",
+        "reason_code": "operator_model_trade" if trade_intent else "operator_model_skip",
+        "inputs": {
+            "model_action": decision.action,
+            "initial_conviction": decision.conviction,
+        },
+        "parameters": {"schema_actions": ["trade", "skip"]},
+    })
 
     bias_brake_reason = _proposal_bias_brake_reason(decision)
     if bias_brake_reason:

@@ -627,6 +627,38 @@ async def test_trading_decision_records_debate_trace(tmp_path, monkeypatch):
     assert decision.debate_adjustment == -12
 
 
+@pytest.mark.asyncio
+async def test_direct_model_skip_records_operator_action_trace(tmp_path, monkeypatch):
+    """A direct model skip remains an auditable operator gate, not a trace-less exit."""
+    _init_agent_shell_db(tmp_path, monkeypatch)
+
+    from aletheia.agent_shell import trading_decision as td
+
+    monkeypatch.setattr(td, "_assess_opportunity", AsyncMock(return_value={
+        "action": "skip",
+        "symbol": "BTC/USDT",
+        "direction": "short",
+        "market_type": "usdt_futures",
+        "conviction": 31,
+        "reasoning": "sideways market offers no directional edge",
+    }))
+
+    decision = await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
+
+    assert decision.action == "skip"
+    assert decision.filter_trace[0] == {
+        "filter_name": "operator_action_assessment",
+        "stage": "system_operator",
+        "decision": "rejected",
+        "reason_code": "operator_model_skip",
+        "inputs": {
+            "model_action": "skip",
+            "initial_conviction": 31,
+        },
+        "parameters": {"schema_actions": ["trade", "skip"]},
+    }
+
+
 # --- Synthesis fallback tests ---
 
 def test_fallback_error():
