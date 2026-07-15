@@ -5,15 +5,21 @@ title: Use one authoritative equity curve on Overview
 status: in_progress
 packet_type: standard
 scope:
-  boundary: Portfolio account-equity read model, snapshot API, Overview chart, and their documentation/tests.
-  excluded: Risk policy, order execution semantics, exchange integration, credentials, and runtime facts.
+  boundary: Portfolio account-equity read model, snapshot API, Overview chart, and
+    their documentation/tests.
+  excluded: Risk policy, order execution semantics, exchange integration, credentials,
+    and runtime facts.
 intent: Make the Overview account chart read one durable account-equity snapshot source
   in local paper mode, preserving raw-versus-verified analytics outside the main view.
 acceptance:
-  - Local-paper Overview account value uses ledger cash plus current marked PnL, never position notional.
-  - Account-equity snapshots carry explicit account-equity semantics; legacy notional snapshots cannot enter the Overview curve.
-  - Overview renders one account-equity series from the account snapshot endpoint; raw and verified PnL remain outside that view.
-  - API and data-model documentation plus focused regression tests describe and prove the boundary.
+- Local-paper Overview account value uses ledger cash plus current marked PnL, never
+  position notional.
+- Account-equity snapshots carry explicit account-equity semantics; legacy notional
+  snapshots cannot enter the Overview curve.
+- Overview renders one account-equity series from the account snapshot endpoint; raw
+  and verified PnL remain outside that view.
+- API and data-model documentation plus focused regression tests describe and prove
+  the boundary.
 ownership:
   branch: fix/overview-authoritative-equity
   lease_holder: codex
@@ -24,7 +30,39 @@ next_action:
   command_key: workflow_tests
   reason: Claim the task and define the first focused verification.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 746f56be741e3542ca8e3bcdc1042e4fe23ce345
+  run_at: '2026-07-15T02:49:44.064531Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 746f56be741e3542ca8e3bcdc1042e4fe23ce345
+  run_at: '2026-07-15T02:51:02.201551Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: architecture
+  command: uv run pytest tests/test_architecture_fitness.py -q
+  command_sha256: 3d791fc6240af61fb0699fce9685afec150c43ccfb0c091729bce49d354a7bd3
+  exit_code: 0
+  commit: 746f56be741e3542ca8e3bcdc1042e4fe23ce345
+  run_at: '2026-07-15T02:51:03.273742Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: frontend_build
+  command: cd frontend && npm run build
+  command_sha256: 008af75026d284dc318e955d965f0d551d81673560186d65b79a4c97e91b2c43
+  exit_code: 0
+  commit: 746f56be741e3542ca8e3bcdc1042e4fe23ce345
+  run_at: '2026-07-15T02:51:03.417434Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-074.md
-updated_at: '2026-07-15T02:40:46.862520Z'
+updated_at: '2026-07-15T02:51:03.417561Z'
 rebased_at: '2026-07-15T02:40:46.862392Z'
