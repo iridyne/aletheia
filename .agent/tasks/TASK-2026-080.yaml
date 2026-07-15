@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-080
 title: Repair PI feature snapshot identity mapping
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -13,9 +13,12 @@ intent: 'Repair the A-class System Operator context read bug: universe feature r
   focused regression and SDD evidence; do not alter ranking, conviction policy, aggregate-health
   behavior, Risk, Execution, Live, sizing, credentials, or runtime data.'
 acceptance:
-- Layer 1 renders each universe feature with its true registry symbol and market_type; it must not collapse asset_id rows into a blank symbol.
-- Prices remain absent unless the existing fresh cache supplies them; the repair must not invent a price.
-- The focused regression and affected decision-lifecycle SDD suite pass without changing ranking, conviction, PI health policy, Risk, Execution, Live, or runtime data.
+- Layer 1 renders each universe feature with its true registry symbol and market_type;
+  it must not collapse asset_id rows into a blank symbol.
+- Prices remain absent unless the existing fresh cache supplies them; the repair must
+  not invent a price.
+- The focused regression and affected decision-lifecycle SDD suite pass without changing
+  ranking, conviction, PI health policy, Risk, Execution, Live, or runtime data.
 ownership:
   branch: iridite/skip-problem
   lease_holder: codex
@@ -23,9 +26,18 @@ ownership:
   expires_at: '2026-07-15T15:30:23.869237Z'
 base_commit: 7d90abdb7e69e74fa8b12f18caf06482a8d16358
 next_action:
-  command_key: workflow_tests
-  reason: Claim the task and define the first focused verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: b00a58a79e1f1c54557d7a8c714570b8a85f8c40
+  run_at: '2026-07-15T07:35:06.959662Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-080.md
-updated_at: '2026-07-15T07:30:23.869246Z'
+updated_at: '2026-07-15T07:35:07.095077Z'
