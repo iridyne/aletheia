@@ -1381,6 +1381,8 @@ def test_authoritative_risk_rejects_every_non_quantity_hash_field_mismatch(
         "trade_school": "serenity",
         "created_at": "2099-01-01T00:00:00+00:00",
         "parent_hash": "altered-parent-hash",
+        "stop_source": "altered-stop-source",
+        "expected_horizon_hours": 48.0,
     }
     model_fields = set(
         TradeProposal(
