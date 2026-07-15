@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createChart, type IChartApi, type Time } from 'lightweight-charts'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -95,21 +95,48 @@ export default function PnLChart({ days }: Props) {
   const realizedTxt = data?.total_realized != null
     ? `${data.total_realized >= 0 ? '+' : ''}${data.total_realized.toFixed(2)} USDT`
     : 'unavailable'
+  const [hintOpen, setHintOpen] = useState(false)
+  const showHint = rawRows.length > 0 && genuineRows.length === 0
+  const hintText = `No verified strategy outcomes yet. ${excludedOutcomeCount} recorded closes do not meet the current verification requirements; the gray line remains raw account history only.`
+
   return (
     <div>
-      <p className="metric-caveat" style={{ marginBottom: '4px' }}>
+      <p className="metric-caveat" style={{ marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
         <span style={{ color: '#7b8494' }}>Raw recorded account events</span>
         {' · '}
         <span style={{ color: '#2ee6a8' }}>Verified strategy curve</span>
+        {showHint && (
+          <span
+            style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
+            onMouseEnter={() => setHintOpen(true)}
+            onMouseLeave={() => setHintOpen(false)}
+          >
+            <span style={{
+              cursor: 'default', color: 'var(--faint)', fontSize: '0.68rem',
+              lineHeight: 1, border: '1px solid var(--border)', borderRadius: '50%',
+              width: '14px', height: '14px', display: 'inline-flex', alignItems: 'center',
+              justifyContent: 'center', fontFamily: 'var(--mono)',
+            }}>i</span>
+            {hintOpen && (
+              <span style={{
+                position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%',
+                transform: 'translateX(-50%)',
+                background: 'var(--surface-2)', border: '1px solid var(--border-2)',
+                borderRadius: 'var(--r-sm)', padding: '6px 10px',
+                minWidth: '260px', maxWidth: '340px',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+                color: 'var(--muted)', fontSize: '0.72rem', lineHeight: '1.4',
+                whiteSpace: 'normal', zIndex: 50, pointerEvents: 'none',
+              }}>
+                {hintText}
+              </span>
+            )}
+          </span>
+        )}
       </p>
       <p className="metric-caveat" style={{ marginBottom: '4px' }}>
         verified realized: {realizedTxt} · current unrealized (separate): {currentUnrealized >= 0 ? '+' : ''}{currentUnrealized.toFixed(2)} USDT
       </p>
-      {rawRows.length > 0 && genuineRows.length === 0 && (
-        <p className="hint" style={{ marginBottom: '4px' }}>
-          No verified strategy outcomes yet. {excludedOutcomeCount} recorded closes do not meet the current verification requirements; the gray line remains raw account history only.
-        </p>
-      )}
       {hasData
         ? <div ref={containerRef} style={{ width: '100%' }} />
         : <p className="hint">No verified strategy outcomes yet. Raw account events may still be excluded or lack economic evidence.</p>}
