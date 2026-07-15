@@ -1,0 +1,32 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-075
+title: Make root agent guidance concise and task-loaded
+status: in_progress
+packet_type: tiny
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Reduce AGENTS.md startup context while preserving non-negotiable safety, workflow,
+  and repository rules; move detailed guidance behind explicit task-triggered links
+  without changing runtime or trading behavior.
+acceptance:
+- AGENTS.md is materially shorter yet keeps every always-on safety, authority, and
+  workflow rule.
+- Detailed operational guidance is available through explicit task-triggered local
+  documentation links; no runtime or trading behavior changes.
+- The controlled-module and handoff-path conformance checks pass, and every linked
+  local document exists.
+ownership:
+  branch: master
+  lease_holder: codex-root
+  claimed_at: '2026-07-15T04:11:45.001960Z'
+  expires_at: '2026-07-15T12:11:45.002115Z'
+base_commit: 95db840be3bc34e7d59870ebb222c68073023243
+next_action:
+  command_key: workflow_tests
+  reason: Rewrite AGENTS.md, then run focused conformance and link checks.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-075.md
+updated_at: '2026-07-15T04:12:08.527125Z'
