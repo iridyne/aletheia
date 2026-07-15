@@ -1929,6 +1929,9 @@ test('operator loop emits one event, tracks one task, and returns to observing a
   assert.equal(calls.createdTasks.length, 1)
   assert.equal(calls.heartbeats[0].mode, 'Working')
   assert.equal(calls.heartbeats[0].current_task_id, 'task-1')
+  // is_busy contract: a non-null current task means the operator is actively busy.
+  // The dashboard's "Thinking/Idle" badge keys on is_busy, so this mapping must hold.
+  assert.equal(calls.heartbeats[0].is_busy, true)
   assert.match(calls.heartbeats[0].current_intent || '', /Gateway health issue/)
 
   snapshot.health = {
@@ -1944,6 +1947,8 @@ test('operator loop emits one event, tracks one task, and returns to observing a
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
   assert.equal(calls.heartbeats[2].mode, 'Observing')
   assert.equal(calls.heartbeats[2].current_task_id, null)
+  // is_busy contract (idle side): task completed → no current task → not busy.
+  assert.equal(calls.heartbeats[2].is_busy, false)
 })
 
 test('operator loop does not persist raw gateway 404 as the current intent', async () => {
