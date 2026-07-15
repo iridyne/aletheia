@@ -904,19 +904,6 @@ def reduce_position(
         "exit_price": exit_price,
     }
 
-    today = datetime.now(timezone.utc).date().isoformat()
-    matched: list[dict] = []
-    for r in _all_closed_positions(execution_mode):
-        closed_at = r.get("closed_at") or ""
-        try:
-            closed_date = datetime.fromisoformat(closed_at).date().isoformat()
-        except (ValueError, TypeError):
-            continue
-        if closed_date != today:
-            continue
-        matched.append(r)
-    return matched
-
 
 def _finite_number(value) -> float | None:
     try:

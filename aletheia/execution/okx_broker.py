@@ -23,6 +23,7 @@ from aletheia.exchanges.submission_errors import (
     is_ambiguous_submission_error as _is_ambiguous_submission_error,
 )
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
+from aletheia.execution.broker_utils import clean_error_message
 from aletheia.execution.post_commit_audit import write_post_commit_audit
 from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
