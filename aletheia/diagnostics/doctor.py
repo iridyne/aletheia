@@ -1462,6 +1462,17 @@ def _probe_skip_halt(report: Report) -> None:
                WHERE action = 'signal_pending' AND created_at >= ?""",
             (cutoff,),
         ).fetchone()[0]
+        # A reload can leave pre-remediation decisions inside the rolling 24h
+        # window.  Keep those raw counts visible, but judge the current B1
+        # behavior only from the active, versioned remediation epoch.  This is
+        # a read-only reporting boundary; it never creates/rotates an epoch.
+        epoch_row = db.execute(
+            """SELECT epoch_id FROM learning_policy_epochs
+               WHERE epoch_kind='system_operator_skip_remediation'
+                 AND ended_at IS NULL
+               ORDER BY started_at DESC LIMIT 1"""
+        ).fetchone()
+        policy_epoch_id = str(epoch_row[0]) if epoch_row is not None else None
         proposals = db.execute(
             "SELECT COUNT(*) FROM trade_proposals WHERE created_at >= ?",
             (cutoff,),
@@ -1473,13 +1484,18 @@ def _probe_skip_halt(report: Report) -> None:
     candidate_skips = int((row or [0])[0] or 0)
     missing_trace = int((row or [0, 0])[1] or 0)
     missing_outcome_seed = int((row or [0, 0, 0])[2] or 0)
-    diagnosis = diagnose_skip_halt()
+    diagnosis = diagnose_skip_halt(policy_epoch_id=policy_epoch_id)
+    scoped_counts = diagnosis.counts
+    epoch_label = policy_epoch_id or "none"
     detail = (
-        f"24h candidate_skips={candidate_skips}, missing_trace={missing_trace}, "
-        f"missing_outcome_seed={missing_outcome_seed}, "
+        f"raw_24h_candidate_skips={candidate_skips}, raw_24h_missing_trace={missing_trace}, "
+        f"raw_24h_missing_outcome_seed={missing_outcome_seed}, "
         f"unscoped_heartbeat_skips={int(unscoped or 0)}, "
         f"no_evaluable_candidate_events={int(no_candidate_events or 0)}, "
-        f"pending_signals={int(pending or 0)}, proposals={int(proposals or 0)}, "
+        f"raw_24h_pending_signals={int(pending or 0)}, proposals={int(proposals or 0)}, "
+        f"diagnosis_epoch={epoch_label}, "
+        f"current_epoch_candidate_skips={int(scoped_counts.get('candidate_skips', 0))}, "
+        f"current_epoch_pending_signals={int(scoped_counts.get('pending_signals', 0))}, "
         f"finding={diagnosis.finding}, threshold={diagnosis.threshold_version}"
     )
     fix_hint = (
