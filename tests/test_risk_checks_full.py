@@ -170,8 +170,12 @@ def _verified_paper_close(position: Position, exit_price: float) -> None:
 def test_daily_loss_within_limit_approves(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     # No closed positions today → realized pnl 0 → paper proposal still approves.
+    from tests.paper_trade_fixture import approvable_paper_trade
+    trade = approvable_paper_trade(
+        monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000,
+    )
     p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
-                      execution_mode="paper_internal", quantity=0.001, price=60000)
+                      execution_mode="paper_internal", quantity=0.001, price=60000, **trade)
     repo.insert_trade_proposal(p)
     assert evaluate_proposal(p).approved is True
 
@@ -491,10 +495,15 @@ def test_demo_single_trade_risk_bounded(tmp_path, monkeypatch):
 def test_demo_bounds_within_limits_approve(tmp_path, monkeypatch):
     """A normal small paper trade with a sane stop is still approved."""
     setup_env(tmp_path, monkeypatch)
+    from tests.paper_trade_fixture import approvable_paper_trade
+    trade = approvable_paper_trade(
+        monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000,
+    )
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
         execution_mode="paper_internal", quantity=0.0004, price=60000,
-        stop_price=58800,  # 2% stop -> risk = 0.0004*60000*0.02 = $0.48 < $2
+        # 2% stop -> risk = 0.0004*60000*0.02 = $0.48 < $2
+        **trade,
     )
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)

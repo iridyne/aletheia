@@ -216,8 +216,8 @@ def test_compute_portfolio_unconfigured_keeps_local_view(tmp_path, monkeypatch):
     out = compute_portfolio()
     assert out["exchange_sync_status"] == "unconfigured"
     assert out["exchange_equity_usdt"] is None
-    # Local fields still present and honest.
-    assert out["total_value_usdt"] == 0
+    # A demo account without a fetched authoritative equity is unavailable, not $0.
+    assert out["total_value_usdt"] is None
     assert out["positions_count"] == 0
 
 
@@ -236,7 +236,8 @@ def test_compute_portfolio_ignores_exchange_cache_for_local_paper(tmp_path, monk
     out = compute_portfolio()
     assert out["exchange_sync_status"] == "not_applicable"
     assert out["exchange_equity_usdt"] is None
-    assert out["total_value_usdt"] == 0.0
+    # The external cache cannot supply local-paper equity; its own cash ledger can.
+    assert out["total_value_usdt"] == out["account_equity_usdt"] == 200.0
 
 
 # --- drift detection ---

@@ -186,6 +186,11 @@ def test_position_manager_counts_only_confirmed_exchange_closes(tmp_path, monkey
         return {"closed": False, "status": "submitted"}
 
     monkeypatch.setattr(pm, "close_position_routed", fake_close)
+    monkeypatch.setattr(
+        pm,
+        "get_fresh_price_for_protective_close",
+        lambda _symbol, _market_type, *, venue: 90.0,
+    )
 
     result = pm.evaluate_open_positions()
 

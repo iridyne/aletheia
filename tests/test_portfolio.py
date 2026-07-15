@@ -81,6 +81,10 @@ def test_mark_to_market_updates_every_open_position_beyond_display_limit(
 
 def test_snapshot_persisted(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    save_config(cfg)
     repo.insert_position(Position(
         symbol="SOLUSDT", market_type="spot", direction="long",
         quantity=10.0, entry_price=150.0, execution_mode="paper_internal",

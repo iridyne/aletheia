@@ -209,13 +209,17 @@ async def test_review_summary_reports_missing_post_trade_review_coverage(client)
 
 
 @pytest.mark.anyio
-async def test_ac11_paper_trade_flow(client):
+async def test_ac11_paper_trade_flow(client, monkeypatch):
     c, _ = client
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
     from aletheia.storage.models import TradeProposal
+    from tests.paper_trade_fixture import approvable_paper_trade
+    trade = approvable_paper_trade(
+        monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000,
+    )
     p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
-                      quantity=0.001, price=60000, execution_mode="paper_internal")
+                      quantity=0.001, price=60000, execution_mode="paper_internal", **trade)
     repo.insert_trade_proposal(p)
     resp = await c.post(f"/api/proposals/{p.id}/approve-paper")
     assert resp.json()["execution"]["status"] == "executed"

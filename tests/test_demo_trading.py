@@ -219,11 +219,19 @@ def test_paper_internal_fallback_never_calls_exchange(tmp_path, monkeypatch):
     save_config(cfg)
     captured = []
     _patch_place_order(monkeypatch, captured)
+    from tests.paper_trade_fixture import approvable_paper_trade
+    trade = approvable_paper_trade(
+        monkeypatch,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        price=60000.0,
+    )
 
     from aletheia.execution.gateway import submit_proposal
     result = submit_proposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        quantity=0.0004, price=60000.0, execution_mode="paper_internal",
+        quantity=0.0004, price=60000.0, execution_mode="paper_internal", **trade,
     )
     assert result["status"] == "executed"
     assert len(captured) == 0  # local sim, no exchange call

@@ -1,0 +1,20 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-087
+title: Repair CI fast and integration baseline fixtures
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Align deterministic test fixtures and assertions with fail-closed paper-trading
+  contracts without changing risk or execution semantics.
+acceptance: []
+base_commit: 832861e461c4a5996cd0c4579c8e7e93334338a4
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-087.md
+updated_at: '2026-07-15T15:43:46.473878Z'

@@ -166,6 +166,11 @@ async def test_ohlcv_route_falls_back_to_exact_database_history(client, monkeypa
         )],
     )
     monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _UnavailableCCXT())
+    monkeypatch.setattr(
+        ccxt_provider,
+        "get_market_data_provider",
+        lambda _exchange: _UnavailableCCXT(),
+    )
 
     resp = await client.get(
         "/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=99",

@@ -94,10 +94,14 @@ def test_disabled_no_action():
 
 def test_get_watched_symbols_includes_positions():
     """get_watched_symbols always includes open position symbols."""
-    positions = [{"symbol": "BTC/USDT"}, {"symbol": "ETH/USDT"}]
+    positions = [
+        {"symbol": "BTC/USDT", "market_type": "spot", "execution_mode": "paper_internal"},
+        {"symbol": "ETH/USDT", "market_type": "spot", "execution_mode": "paper_internal"},
+    ]
     cfg = MagicMock()
     cfg.event_triggers.enabled = False
     cfg.event_triggers.watch_universe_members = False
+    cfg.market_data.ccxt_exchange = "binance"
 
     with patch("aletheia.config.loader.load_config", return_value=cfg), \
          patch("aletheia.storage.repositories.list_all_open_positions", return_value=positions):
