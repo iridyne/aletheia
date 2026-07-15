@@ -118,8 +118,16 @@ def _diagnose(
     ).fetchall()
     candidate_ids = [str(row["id"]) for row in candidates]
     pending_count = int(db.execute(
-        """SELECT COUNT(*) FROM pi_decisions
-           WHERE action='signal_pending' AND created_at >= ? AND created_at <= ?""",
+        """SELECT COUNT(*) FROM pi_decisions pending
+           JOIN opportunities source ON source.id=pending.opportunity_id
+           WHERE pending.action='signal_pending'
+             AND pending.created_at >= ? AND pending.created_at <= ?
+             AND source.status='queued'
+             AND NOT EXISTS (
+                 SELECT 1 FROM pi_decisions final
+                 WHERE final.opportunity_id=pending.opportunity_id
+                   AND final.action IN ('skip', 'watch', 'trade')
+             )""",
         (start_iso, end_iso),
     ).fetchone()[0] or 0)
     if not candidate_ids:

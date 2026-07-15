@@ -91,6 +91,45 @@ def test_no_candidate_flow_is_not_applicable(tmp_path, monkeypatch):
     assert report.side_effects == ()
 
 
+def test_pending_count_only_includes_queued_unresolved_work(tmp_path, monkeypatch):
+    """Expired or already-finalized pending rows are history, not live supply."""
+    _setup(tmp_path, monkeypatch)
+    from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+
+    now = datetime.now(timezone.utc)
+    queued = Opportunity(
+        id="queued-pending", symbol="BTC/USDT", market="spot",
+        direction_bias="long", status="queued",
+    )
+    expired = Opportunity(
+        id="expired-pending", symbol="ETH/USDT", market="spot",
+        direction_bias="long", status="expired",
+    )
+    finalized = Opportunity(
+        id="finalized-pending", symbol="SOL/USDT", market="spot",
+        direction_bias="long", status="reviewed",
+    )
+    for opportunity in (queued, expired, finalized):
+        insert_opportunity(opportunity)
+        insert_pi_decision(PiDecision(
+            id=f"pending-{opportunity.id}", action="signal_pending",
+            symbol=opportunity.symbol, direction="long", market_type="spot",
+            opportunity_id=opportunity.id, created_at=now.isoformat(),
+        ))
+    insert_pi_decision(PiDecision(
+        id="final-finalized-pending", action="watch", symbol="SOL/USDT",
+        direction="long", market_type="spot", opportunity_id=finalized.id,
+        created_at=now.isoformat(),
+    ))
+
+    report = diagnose_skip_halt(now=now)
+
+    assert report.counts["pending_signals"] == 1
+    assert report.finding == "not_applicable"
+
+
 def test_missing_trace_or_four_horizon_seed_is_recording_incident(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
