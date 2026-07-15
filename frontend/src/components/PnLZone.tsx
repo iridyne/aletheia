@@ -8,6 +8,9 @@ import { fmtNum, fmtSigned, fmtDelta, fmtSymbol, useDecimals } from '../lib/form
 
 // Palette for pie slices — cycles if more than 6 coins (rare)
 const SLICE_COLORS = ['#00e5ff', '#7c3aed', '#f59e0b', '#10b981', '#f43f5e', '#3b82f6']
+// The backend refreshes local mark prices on this cadence. Keep the Overview
+// money panel aligned so an open page never freezes at its initial value.
+const OVERVIEW_PNL_REFRESH_MS = 10_000
 
 interface AssetItem { coin: string; usdt_value: number; pct: number }
 
@@ -192,8 +195,16 @@ function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }
 /** PnL / Account zone — hero account value (UTA unified > exchange > local notional) + context tiles + equity curve. */
 export default function PnLZone() {
   const navigate = useNavigate()
-  const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
-  const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
+  const { data: portfolio } = useQuery({
+    queryKey: ['portfolio'],
+    queryFn: api.getPortfolio,
+    refetchInterval: OVERVIEW_PNL_REFRESH_MS,
+  })
+  const { data: status } = useQuery({
+    queryKey: ['status'],
+    queryFn: api.getStatus,
+    refetchInterval: OVERVIEW_PNL_REFRESH_MS,
+  })
   const { data: utaState } = useQuery({ queryKey: ['utaState'], queryFn: api.getUtaState, refetchInterval: 30000 })
   const [hovered, setHovered] = useState(false)
   const [rangeDays, setRangeDays] = useState<number | undefined>(30)
@@ -235,6 +246,12 @@ export default function PnLZone() {
 
   const unrealNum = p?.unrealized_pnl == null ? null : Number(p.unrealized_pnl)
   const realNum = p?.all_realized_pnl == null ? null : Number(p.all_realized_pnl)
+  const realizedUnavailableCount = Number(p?.all_realized_pnl_unavailable_count ?? 0)
+  const realizedContext = realNum != null
+    ? 'all-time'
+    : realizedUnavailableCount > 0
+      ? `${realizedUnavailableCount} closes need verification`
+      : 'realized economics unavailable'
 
   const exposure = (p?.exposure_by_symbol || {}) as Record<string, number>
   const exposureTotal = Object.values(exposure).reduce((a, b) => a + Number(b || 0), 0)
@@ -306,9 +323,9 @@ export default function PnLZone() {
           />
           <MetricTile
             label="Realized"
-            value={fmtDelta(realNum)}
+            value={realNum == null ? 'not yet verifiable' : fmtDelta(realNum)}
             tone={toneOf(realNum)}
-            context={p?.all_realized_pnl_complete === false ? 'economics incomplete' : 'all-time'}
+            context={realizedContext}
             onClick={() => navigate('/trades?tab=analytics')}
           />
           <MetricTile

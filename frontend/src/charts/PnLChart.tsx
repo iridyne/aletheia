@@ -15,6 +15,7 @@ export default function PnLChart({ days }: Props) {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['equity-curve', days],
     queryFn: () => api.getEquityCurve(days),
+    refetchInterval: 10_000,
   })
 
   const rawPoints = data?.raw_recorded_points ?? []
