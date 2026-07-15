@@ -49,6 +49,12 @@ Thumbs.db
 # Vite dependency pre-bundling cache (build artifact)
 .vite/
 
+# TypeScript incremental build cache
+frontend/tsconfig.tsbuildinfo
+
+# Test runner output
+test-results/
+
 # Chat exports (large personal conversation dumps — keep out of repo history)
 docs/ChatExport_*/
 docs/ChatExport_*.zip

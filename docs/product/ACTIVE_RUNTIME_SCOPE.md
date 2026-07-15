@@ -26,8 +26,9 @@ causal_chain:
   - position
   - genuine_outcome
 ---
-
 # Active Runtime Scope
+
+生产交易策略不得由固定 RuleSet、SignalEngine 或自动生成规则驱动；System Operator 是唯一策略决策主体，确定性规则仅用于数据校验、成本预筛、风险和执行。
 
 This file is the single machine-readable declaration of the trading path that is
 allowed to count as the active MVP mainline. It narrows the broader product map;
@@ -49,18 +50,18 @@ credential, or live-unlock authority.
 ## Enforced boundaries
 
 - Scanner and observer code may create evidence, opportunities, and pending
-  signals; it cannot submit or execute an order.
+signals; it cannot submit or execute an order.
 - The System Operator is the only native entry decision maker. It submits a paper
-  proposal through the paper wrapper, which reaches the Execution Gateway.
+proposal through the paper wrapper, which reaches the Execution Gateway.
 - The Risk Engine is the only approval authority. Guard output is advisory or a
-  pre-risk candidate filter and cannot replace Risk Engine approval.
+pre-risk candidate filter and cannot replace Risk Engine approval.
 - Frontend and Operator surfaces cannot call an exchange order adapter directly.
 - A native active-scope position must retain its opportunity, proposal, order, and
-  risk-decision ancestry. A close counts as a genuine outcome only when Outcome
-  Integrity has verified its economic evidence.
+risk-decision ancestry. A close counts as a genuine outcome only when Outcome
+Integrity has verified its economic evidence.
 - Paper-candidate blockers must be declared in
-  `aletheia/trust/behavior_authority.py` and pass its consumer-side gate. A lesson,
-  historical auto-guard, or inline historical ranker condition has no block authority.
+`aletheia/trust/behavior_authority.py` and pass its consumer-side gate. A lesson,
+historical auto-guard, or inline historical ranker condition has no block authority.
 
 The executable proof lives in `tests/specs/spec_active_runtime_scope.py`, the
 Golden Path test, the production reachability tests, and the runtime replay pack.
