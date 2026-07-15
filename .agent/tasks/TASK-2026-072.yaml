@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-072
 title: Repair historical local-paper accounting evidence
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: Add an append-only, local-paper-only historical accounting reconstruction
@@ -30,8 +30,9 @@ ownership:
   expires_at: '2026-07-15T13:25:18.282177Z'
 base_commit: 911ec6f5d4b58965d28d4fde8c6f2c74444e1d53
 next_action:
-  command_key: specs
-  reason: Establish the historical-accounting contract before implementation.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: specs
@@ -50,5 +51,13 @@ verification:
   run_at: '2026-07-15T01:41:18.982992Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 24ee6e7b8b726823046a73a477e59d9093e48dd8
+  run_at: '2026-07-15T01:44:15.923752Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-072.md
-updated_at: '2026-07-15T01:41:18.983177Z'
+updated_at: '2026-07-15T01:44:16.102671Z'
