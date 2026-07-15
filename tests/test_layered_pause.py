@@ -52,6 +52,7 @@ class TestLayeredPause:
         mock_jobs = [
             MagicMock(id="market_data"),
             MagicMock(id="data_collectors"),
+            MagicMock(id="data_collector_context"),
             MagicMock(id="connectivity_monitor"),
             MagicMock(id="price_feed"),
             MagicMock(id="market_observer"),
@@ -68,6 +69,7 @@ class TestLayeredPause:
         paused_ids = {call[0][0] for call in mock_sched.pause_job.call_args_list}
         assert "market_data" not in paused_ids
         assert "data_collectors" not in paused_ids
+        assert "data_collector_context" not in paused_ids
         assert "connectivity_monitor" not in paused_ids
         assert "price_feed" not in paused_ids
 
@@ -191,7 +193,7 @@ class TestEssentialJobsCoverage:
         known_jobs = set(_ASYNC_JOB_TIMEOUT_SEC.keys())
         # Some essential jobs might not have explicit timeouts (they use defaults)
         # but core ones should be recognizable
-        for job in ["market_data", "data_collectors", "connectivity_monitor",
+        for job in ["market_data", "data_collectors", "data_collector_context", "connectivity_monitor",
                     "price_feed", "exchange_sync", "portfolio_snapshot"]:
             assert job in _ESSENTIAL_JOBS
 

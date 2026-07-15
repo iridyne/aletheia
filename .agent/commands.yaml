@@ -69,6 +69,9 @@ commands:
   async_collector:
     command: uv run pytest tests/test_data_provider_and_async_fixes.py -q --tb=short
     purpose: Verify fallback market-data routing and that MacroCollector keeps synchronous yfinance work off the event loop without real network calls.
+  collector_shadow:
+    command: uv run pytest tests/test_scheduler_timeouts.py tests/test_derivatives_collector.py tests/test_collector_health.py tests/test_data_collectors_integration.py tests/test_layered_pause.py tests/specs/spec_gateway_stability.py tests/specs/spec_data_utilization.py tests/specs/spec_pipeline_local_funding.py -q --tb=short
+    purpose: Verify the deterministic collector-starvation shadow, separated collector timeboxes, derivatives optional-work isolation, health reporting, and affected data contracts without external collector calls.
   dcls_ci_gate:
     command: uv run pytest tests/simulation/control_loop/test_failure_artifacts.py tests/specs/spec_deterministic_control_loop.py -q --tb=short
     purpose: Verify pull-request CI directly gates automatic DCLS failure-pack generation.

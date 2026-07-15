@@ -15,6 +15,7 @@ Async functions are driven via asyncio.run(); no pytest-asyncio dependency.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from datetime import datetime, timezone, timedelta
 
 import pytest
@@ -94,6 +95,69 @@ def test_fetch_lsr_binance_batch_returns_empty_on_http_error(monkeypatch):
 
     result = asyncio.run(mod._fetch_lsr_binance_batch(["BTC/USDT", "ETH/USDT"]))
     assert result == {}, f"expected empty dict on HTTP failure; got: {result!r}"
+
+
+def test_lsr_timeout_does_not_cancel_primary_funding_or_oi(monkeypatch):
+    """LSR is optional enrichment; its timeout must not consume the live path."""
+    import aletheia.data.collectors.derivatives as mod
+    from aletheia.config import loader as cfg_loader
+    from aletheia.data import ccxt_provider as provider_mod
+
+    class _Exchange:
+        markets = {"BTC/USDT:USDT": {}}
+
+        async def load_markets(self):
+            return self.markets
+
+        async def fetch_funding_rate(self, symbol):
+            assert symbol == "BTC/USDT:USDT"
+            return {"fundingRate": 0.0001}
+
+        async def fetch_open_interest(self, symbol):
+            assert symbol == "BTC/USDT:USDT"
+            return {"openInterestValue": 123.0}
+
+    class _Provider:
+        _primary_name = "okx"
+
+        def _ensure_primary(self):
+            return _Exchange()
+
+        async def close(self):
+            return None
+
+    async def _stalled_lsr(symbols):
+        await asyncio.Event().wait()
+
+    cfg = type(
+        "Cfg", (), {"market_data": type("MD", (), {
+            "enable_long_short_ratio": True,
+            "derivatives_history_hours": 0,
+        })()}
+    )()
+    monkeypatch.setattr(provider_mod, "get_market_data_provider", lambda: _Provider())
+    monkeypatch.setattr(cfg_loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(mod, "_fetch_lsr_binance_batch", _stalled_lsr)
+    monkeypatch.setattr(mod, "_LSR_BUDGET_SEC", 0.01)
+
+    result = asyncio.run(mod.DerivativesCollector().collect(["BTC/USDT"]))
+
+    assert len(result["funding"]) == 1
+    assert len(result["open_interest"]) == 1
+    assert "lsr_batch_timeout" in result["errors"]
+
+
+def test_live_derivatives_collect_does_not_run_history_backfill():
+    """Sparse history is maintenance work, not part of the two-minute live path."""
+    from aletheia.data.collectors.derivatives import DerivativesCollector
+
+    live_source = inspect.getsource(DerivativesCollector.collect)
+    history_source = inspect.getsource(DerivativesCollector.collect_history)
+
+    assert "_maybe_backfill_funding_history" not in live_source
+    assert "_maybe_backfill_oi_history" not in live_source
+    assert "_maybe_backfill_funding_history" in history_source
+    assert "_maybe_backfill_oi_history" in history_source
 
 
 # ---------------------------------------------------------------------------

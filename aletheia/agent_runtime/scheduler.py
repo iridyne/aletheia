@@ -26,6 +26,7 @@ _JOB_RUN_STATE = threading.local()
 _ESSENTIAL_JOBS: set[str] = {
     "market_data",
     "data_collectors",
+    "data_collector_context",
     "connectivity_monitor",
     "portfolio_snapshot",
     "price_feed",
@@ -68,6 +69,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "risk_critic": 300.0,
     "universe_refresh": 600.0,
     "data_collectors": 45.0,
+    "data_collector_context": 45.0,
     "exchange_sync": 60.0,
     "portfolio_snapshot": 45.0,
     "price_feed": 45.0,
@@ -135,7 +137,7 @@ def _record_job_failure(job_id: str, error: str) -> None:
             pass
 
 
-# Volume scanner results cache (populated by data_collectors Phase B, ~10 min cadence).
+# Volume scanner results cache (populated by data_collector_context, ~10 min cadence).
 _latest_volume_ranking: dict = {}
 
 
@@ -808,13 +810,18 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
         next_run_time=datetime.now() + timedelta(minutes=4),
     )
-    # Market data collectors (microstructure/derivatives/macro and optional feeds).
-    # Single job, runs every 2 min, uses internal phase counter to control
-    # per-domain frequency (orderbook+funding every 2min; macro every 10min).
+    # Core collector lane: primary-venue orderbook/funding/OI every two minutes.
+    # Cross-venue and macro context has a separate job below so it cannot inherit
+    # a consumed primary-venue deadline.
     _scheduler.add_job(
         _guarded("data_collectors", _run_data_collectors), "interval", minutes=2,
         id="data_collectors", misfire_grace_time=60,
         next_run_time=datetime.now() + timedelta(seconds=30), executor="io",
+    )
+    _scheduler.add_job(
+        _guarded("data_collector_context", _run_data_collector_context),
+        "interval", minutes=10, id="data_collector_context", misfire_grace_time=60,
+        next_run_time=datetime.now() + timedelta(seconds=75), executor="io",
     )
     # Guard promotion — deterministic learning task (candidate guards → active).
     # Re-homed from the deleted backtest_orchestrator cycle (which used to drive it
@@ -2286,8 +2293,10 @@ async def _async_run(agent_name: str):
     return result
 
 
-# Phase counter for the data_collectors job (module-level, not reset between calls).
+# Core and context ticks are process-local scheduling counters used only for
+# collector-health correlation; durable state stores the resulting timestamp.
 _DC_TICK: int = 0
+_DC_CONTEXT_TICK: int = 0
 
 # Carries the current collector tick into _bounded() without changing its public
 # four-argument contract (several offline specs replace that helper directly).
@@ -2325,13 +2334,7 @@ def _record_collector_health(
 
 
 def _run_data_collectors():
-    """Collect microstructure/derivatives/macro data on a 2-min tick.
-
-    Phase A (every tick, 2min): orderbook + funding + OI for observed symbols.
-    Phase B (every 5th tick, 10min): macro (CoinGecko + yFinance).
-
-    Single scheduled job keeps collector fan-out inside the small IO executor.
-    """
+    """Collect primary-venue orderbook, funding, and OI on a two-minute tick."""
     global _DC_TICK
     cfg = load_config()
     # This is an _ESSENTIAL_JOBS member under layered pause. Trading pause blocks
@@ -2362,13 +2365,45 @@ def _run_data_collectors():
         _record_job_failure("data_collectors", str(e))
 
 
-# Wall-clock budget for the whole data_collectors coroutine. Must stay BELOW the
-# job timeout (_ASYNC_JOB_TIMEOUT_SEC["data_collectors"] = 45s) so the coroutine
-# returns before asyncio.wait_for cancels it — same anti-thread-leak rule as
-# market_observer. On a Phase B tick this job fans out to ~7 collectors; if ONE
-# stalls on a dead socket the whole job used to blow the timeout → daemon thread
-# abandoned + leaked. _bounded() caps each collector AND the cumulative wall-clock.
+def _run_data_collector_context():
+    """Collect cross-venue and macro context on its own bounded ten-minute lane."""
+    global _DC_CONTEXT_TICK
+    cfg = load_config()
+    _DC_CONTEXT_TICK += 1
+    try:
+        result = _run_async_with_timeout(
+            "data_collector_context",
+            _async_data_collector_context(cfg, _DC_CONTEXT_TICK),
+        )
+        error_codes = (
+            list(result.get("error_codes") or [])
+            if isinstance(result, dict)
+            else []
+        )
+        if error_codes:
+            _record_job_failure("data_collector_context", ",".join(error_codes))
+        else:
+            _record_job_success("data_collector_context")
+        return result
+    except TimeoutError:
+        logger.warning(
+            "data_collector_context job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["data_collector_context"],
+        )
+        _record_job_failure("data_collector_context", "timed out")
+    except Exception as e:
+        logger.warning("data_collector_context job failed: %s", e)
+        _record_job_failure("data_collector_context", str(e))
+
+
+# Wall-clock budget for each collector lane.  Each must stay BELOW its 45-second
+# job timeout so the coroutine returns before asyncio.wait_for cancels it — the
+# same anti-thread-leak rule as market_observer.  _bounded() caps both each
+# collector and its lane's cumulative wall-clock.
 _DC_DEADLINE_S = 40.0
+# Context has the same anti-thread-leak bound but a new deadline.  It never
+# inherits elapsed work from the primary-venue collector lane.
+_DC_CONTEXT_DEADLINE_S = 40.0
 
 
 async def _bounded(coro, label: str, cap: float, deadline: float):
@@ -2378,8 +2413,8 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
     started = _time.monotonic()
     remaining = deadline - started
     if remaining <= 2.0:
-        logger.warning("data_collectors: skipped %s — job wall-clock budget (%.0fs) exhausted",
-                       label, _DC_DEADLINE_S)
+        logger.warning("data_collectors: skipped %s — lane wall-clock budget exhausted",
+                       label)
         coro.close()  # avoid 'coroutine was never awaited' warning
         _record_collector_health(label, "skipped_budget", duration_ms=0)
         return None
@@ -2419,17 +2454,14 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     import time as _time
     from aletheia.data.collectors.microstructure import MicrostructureCollector
     from aletheia.data.collectors.derivatives import DerivativesCollector
-    from aletheia.data.collectors.macro import MacroCollector
     from aletheia.storage import repositories as repo
 
     _DC_HEALTH_TICK.set(tick)
     _deadline = _time.monotonic() + _DC_DEADLINE_S
     job_error_codes: list[str] = []
 
-    # Keep venue + market identity for primary-exchange collectors. Cross-venue
-    # collectors still receive the deduplicated canonical symbol list below.
+    # Keep venue + market identity for primary-exchange collectors.
     instruments = _get_observed_instruments(cfg)
-    symbols = list(dict.fromkeys(item.symbol for item in instruments))
     derivative_symbols = _get_derivative_symbols(instruments)
 
     # --- Phase A: microstructure + derivatives (every tick) ---
@@ -2507,136 +2539,6 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
             "running symbol-independent domains only"
         )
 
-    # --- Phase B: macro + volume scanner + CoinGecko top (every 5th tick = ~10 min) ---
-    if tick % 5 == 1:
-        # Volume scanner runs FIRST in Phase B — it drives universe ordering and is
-        # the most critical output of this phase. Previously it ran after CoinGecko
-        # (15s cap) + macro (15s cap), which left ≤ 0s budget on slow ticks and caused
-        # the volume_ranking snapshot to silently stall (doctor: "volume ranking stale").
-        # Running it first guarantees it gets its 12s cap regardless of what follows.
-        try:
-            if instruments:
-                from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
-                vol_scanner = VolumeScannerCollector(top_n=30)
-                vol_result = await _bounded(vol_scanner.collect(instruments[:200]), "volume_scanner", 12.0, _deadline) or {}
-                if vol_result.get("top_symbols"):
-                    _latest_volume_ranking.update({
-                        "symbols": vol_result["top_symbols"],
-                        "observed_at": vol_result["observed_at"],
-                    })
-                    try:
-                        from aletheia.storage import repositories as _repo
-                        _repo.save_volume_ranking_snapshot(
-                            vol_result["top_symbols"], vol_result["observed_at"]
-                        )
-                    except Exception as _e:
-                        logger.debug("volume_ranking persist failed: %s", _e)
-            else:
-                _record_collector_health("volume_scanner", "not_configured")
-        except Exception as e:
-            logger.debug("volume_scanner collection failed: %s", e)
-            _record_collector_health("volume_scanner", "failed", error_code=type(e).__name__)
-
-        # CoinGecko top-N runs BEFORE macro persist so its movers_summary can be
-        # folded into the same MacroSnapshot row (single insert, no UPDATE chase).
-        cg_movers_summary: str | None = None
-        try:
-            from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
-            cg_top_n = getattr(cfg.market_data, "coingecko_top_n", 100)
-            if getattr(cfg.market_data, "enable_coingecko_top", True):
-                cg = CoinGeckoTopCollector()
-                cg_result = await _bounded(cg.collect(top_n=cg_top_n), "coingecko_top", 15.0, _deadline) or {}
-                cg_rows = cg_result.get("rows", [])
-                if cg_rows:
-                    try:
-                        repo.insert_coingecko_top_rows(cg_rows)
-                    except Exception as e:
-                        logger.debug("coingecko_top persist failed: %s", e)
-                cg_movers_summary = cg_result.get("movers_summary")
-            else:
-                _record_collector_health("coingecko_top", "disabled")
-        except Exception as e:
-            logger.debug("coingecko_top collection failed: %s", e)
-            _record_collector_health("coingecko_top", "failed", error_code=type(e).__name__)
-
-        macro_coll = MacroCollector()
-        macro_result = await _bounded(macro_coll.collect(symbols), "macro", 15.0, _deadline) or {}
-        snap = macro_result.get("snapshot")
-        if snap:
-            try:
-                # Fold CG top movers into the same MacroSnapshot row.
-                if cg_movers_summary:
-                    snap.top_movers_summary = cg_movers_summary
-                repo.insert_macro_snapshot(snap.model_dump())
-            except Exception as e:
-                logger.debug("macro persist failed: %s", e)
-
-        # Coinalyze cross-exchange aggregated OI + liquidations (requires API key).
-        # Replaces dead CoinGlass/CCXT/Bitget-OI paths. Skips gracefully when no key.
-        try:
-            if getattr(cfg.market_data, "enable_coinalyze", True) and symbols:
-                from aletheia.data.collectors.coinalyze import CoinalyzeCollector
-                cz_result = await _bounded(CoinalyzeCollector().collect(symbols), "coinalyze", 12.0, _deadline) or {}
-                cz_oi_count = 0
-                for snap in cz_result.get("open_interest", []):
-                    try:
-                        repo.insert_open_interest_snapshot(snap.model_dump())
-                        cz_oi_count += 1
-                    except Exception as e:
-                        logger.debug("coinalyze OI persist failed: %s", e)
-                cz_liq_count = 0
-                for event in cz_result.get("liquidations", []):
-                    try:
-                        repo.insert_liquidation_event(event.model_dump())
-                        cz_liq_count += 1
-                    except Exception as e:
-                        logger.debug("coinalyze liquidation persist failed: %s", e)
-                if cz_oi_count or cz_liq_count:
-                    logger.info(
-                        "coinalyze persisted: open_interest=%d liquidations=%d",
-                        cz_oi_count, cz_liq_count,
-                    )
-                if cz_result.get("errors"):
-                    logger.debug("coinalyze collection errors: %s", cz_result["errors"])
-            elif not getattr(cfg.market_data, "enable_coinalyze", True):
-                _record_collector_health("coinalyze", "disabled")
-            else:
-                _record_collector_health("coinalyze", "not_configured")
-        except Exception as e:
-            logger.debug("coinalyze collection failed: %s", e)
-            _record_collector_health("coinalyze", "failed", error_code=type(e).__name__)
-
-        # Hyperliquid cross-venue perp OI + funding (zero key). Self-persists to the
-        # funding/OI tables tagged exchange="hyperliquid" (excluded from the primary
-        # per-symbol read, so it never pollutes the venue the LLM sees).
-        try:
-            if getattr(cfg.market_data, "enable_hyperliquid", True) and symbols:
-                from aletheia.data.collectors.hyperliquid import HyperliquidCollector
-                hl_result = await _bounded(HyperliquidCollector().collect(symbols), "hyperliquid", 12.0, _deadline) or {}
-                if hl_result.get("errors"):
-                    logger.debug("hyperliquid collection errors: %s", hl_result["errors"])
-            elif not getattr(cfg.market_data, "enable_hyperliquid", True):
-                _record_collector_health("hyperliquid", "disabled")
-            else:
-                _record_collector_health("hyperliquid", "not_configured")
-        except Exception as e:
-            logger.debug("hyperliquid collection failed: %s", e)
-            _record_collector_health("hyperliquid", "failed", error_code=type(e).__name__)
-
-        # DefiLlama on-chain (stablecoin mcap / chain TVL / DEX volume, zero key).
-        # Self-persists to onchain_snapshots; folded into the macro context block.
-        try:
-            if getattr(cfg.market_data, "enable_defillama", True):
-                from aletheia.data.collectors.defillama import DefiLlamaCollector
-                dl_result = await _bounded(DefiLlamaCollector().collect(), "defillama", 12.0, _deadline) or {}
-                if dl_result.get("errors"):
-                    logger.debug("defillama collection errors: %s", dl_result["errors"])
-            else:
-                _record_collector_health("defillama", "disabled")
-        except Exception as e:
-            logger.debug("defillama collection failed: %s", e)
-            _record_collector_health("defillama", "failed", error_code=type(e).__name__)
-
     # Log summary
     micro_count = len(micro_result.get("snapshots", []))
     funding_count = len(deriv_result.get("funding", []))
@@ -2649,6 +2551,172 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
         "status": "partial" if unique_job_errors else "success",
         "error_codes": unique_job_errors,
     }
+
+
+async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
+    """Run independent context collectors under a deadline separate from core.
+
+    The scheduler's ``io`` lane remains single-threaded, so this never overlaps
+    primary-exchange CCXT work from ``_async_data_collectors``.  Inside this one
+    event loop, independent public HTTP sources can wait concurrently; SQLite
+    persistence remains synchronous and therefore serial on the same thread.
+    """
+    import time as _time
+    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
+    from aletheia.data.collectors.defillama import DefiLlamaCollector
+    from aletheia.data.collectors.hyperliquid import HyperliquidCollector
+    from aletheia.data.collectors.macro import MacroCollector
+    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from aletheia.storage import repositories as repo
+
+    _DC_HEALTH_TICK.set(tick)
+    deadline = _time.monotonic() + _DC_CONTEXT_DEADLINE_S
+    instruments = _get_observed_instruments(cfg)
+    symbols = list(dict.fromkeys(item.symbol for item in instruments))
+
+    # Wave one gives the previously starved context feeds an equal start.  The
+    # volume scan is the only primary-venue CCXT call in this lane; Hyperliquid
+    # and DefiLlama use separate public HTTP sources.
+    wave_one: dict[str, object] = {}
+    tasks: list[tuple[str, object]] = []
+    if instruments:
+        tasks.append((
+            "volume_scanner",
+            _bounded(
+                VolumeScannerCollector(top_n=30).collect(instruments[:200]),
+                "volume_scanner", 12.0, deadline,
+            ),
+        ))
+    else:
+        _record_collector_health("volume_scanner", "not_configured")
+    if getattr(cfg.market_data, "enable_hyperliquid", True) and symbols:
+        tasks.append((
+            "hyperliquid",
+            _bounded(
+                HyperliquidCollector().collect(symbols), "hyperliquid", 12.0, deadline,
+            ),
+        ))
+    elif not getattr(cfg.market_data, "enable_hyperliquid", True):
+        _record_collector_health("hyperliquid", "disabled")
+    else:
+        _record_collector_health("hyperliquid", "not_configured")
+    if getattr(cfg.market_data, "enable_defillama", True):
+        tasks.append((
+            "defillama",
+            _bounded(DefiLlamaCollector().collect(), "defillama", 12.0, deadline),
+        ))
+    else:
+        _record_collector_health("defillama", "disabled")
+    if tasks:
+        wave_one = dict(zip(
+            (label for label, _ in tasks),
+            await asyncio.gather(*(coro for _, coro in tasks)),
+        ))
+
+    volume_result = wave_one.get("volume_scanner") or {}
+    if volume_result.get("top_symbols"):
+        _latest_volume_ranking.update({
+            "symbols": volume_result["top_symbols"],
+            "observed_at": volume_result["observed_at"],
+        })
+        try:
+            repo.save_volume_ranking_snapshot(
+                volume_result["top_symbols"], volume_result["observed_at"]
+            )
+        except Exception as exc:
+            logger.debug("volume_ranking persist failed: %s", exc)
+    for domain in ("hyperliquid", "defillama"):
+        result = wave_one.get(domain) or {}
+        if result.get("errors"):
+            logger.debug("%s collection errors: %s", domain, result["errors"])
+
+    # CoinGecko top rows and macro fetches are independent.  Persist only after
+    # both return so the macro row can receive the same-tick movers summary.
+    wave_two: dict[str, object] = {}
+    tasks = []
+    if getattr(cfg.market_data, "enable_coingecko_top", True):
+        tasks.append((
+            "coingecko_top",
+            _bounded(
+                CoinGeckoTopCollector().collect(
+                    top_n=getattr(cfg.market_data, "coingecko_top_n", 100)
+                ),
+                "coingecko_top", 15.0, deadline,
+            ),
+        ))
+    else:
+        _record_collector_health("coingecko_top", "disabled")
+    tasks.append((
+        "macro",
+        _bounded(MacroCollector().collect(symbols), "macro", 15.0, deadline),
+    ))
+    if getattr(cfg.market_data, "enable_coinalyze", True) and symbols:
+        from aletheia.data.collectors.coinalyze import CoinalyzeCollector
+
+        tasks.append((
+            "coinalyze",
+            _bounded(CoinalyzeCollector().collect(symbols), "coinalyze", 12.0, deadline),
+        ))
+    elif not getattr(cfg.market_data, "enable_coinalyze", True):
+        _record_collector_health("coinalyze", "disabled")
+    else:
+        _record_collector_health("coinalyze", "not_configured")
+    wave_two = dict(zip(
+        (label for label, _ in tasks),
+        await asyncio.gather(*(coro for _, coro in tasks)),
+    ))
+
+    cg_result = wave_two.get("coingecko_top") or {}
+    if cg_result.get("rows"):
+        try:
+            repo.insert_coingecko_top_rows(cg_result["rows"])
+        except Exception as exc:
+            logger.debug("coingecko_top persist failed: %s", exc)
+    macro_result = wave_two.get("macro") or {}
+    macro_snapshot = macro_result.get("snapshot")
+    if macro_snapshot:
+        try:
+            movers_summary = cg_result.get("movers_summary")
+            if movers_summary:
+                macro_snapshot.top_movers_summary = movers_summary
+            repo.insert_macro_snapshot(macro_snapshot.model_dump())
+        except Exception as exc:
+            logger.debug("macro persist failed: %s", exc)
+    coinalyze_result = wave_two.get("coinalyze") or {}
+    for snapshot in coinalyze_result.get("open_interest", []):
+        try:
+            repo.insert_open_interest_snapshot(snapshot.model_dump())
+        except Exception as exc:
+            logger.debug("coinalyze OI persist failed: %s", exc)
+    for event in coinalyze_result.get("liquidations", []):
+        try:
+            repo.insert_liquidation_event(event.model_dump())
+        except Exception as exc:
+            logger.debug("coinalyze liquidation persist failed: %s", exc)
+    if coinalyze_result.get("errors"):
+        logger.debug("coinalyze collection errors: %s", coinalyze_result["errors"])
+
+    # Sparse derivatives history is useful but must never spend the two-minute
+    # live Funding/OI budget.  It runs last in the context lane and is dropped
+    # honestly when that lane has no safe time left.
+    if symbols and getattr(cfg.market_data, "derivatives_history_hours", 0) > 0:
+        remaining = deadline - _time.monotonic()
+        if remaining > 2.0:
+            from aletheia.data.collectors.derivatives import DerivativesCollector
+
+            try:
+                history_result = await asyncio.wait_for(
+                    DerivativesCollector().collect_history(symbols),
+                    timeout=min(12.0, remaining),
+                )
+                if history_result.get("errors"):
+                    logger.debug("derivatives history backfill errors: %s", history_result["errors"])
+            except asyncio.TimeoutError:
+                logger.debug("derivatives history backfill timed out in context lane")
+            except Exception as exc:
+                logger.debug("derivatives history backfill failed: %s", exc)
+
+    return {"status": "success", "error_codes": []}
 
 
 def _get_observed_instruments(cfg):
