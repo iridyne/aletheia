@@ -1,0 +1,53 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-081
+title: 'Fix derivatives/event data supply: USD OI, true-1h delta, full-coverage batch
+  + venue-matched taker'
+status: done
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: 'Repair the derivatives/event information supply so the derivatives family
+  stops scoring {0,10}: store open interest in USD (was contract count, ~660x off
+  on OKX), compute a true 1h OI delta scoped to one venue (was a 2-min delta with
+  cross-venue unit mixing), let a rising-OI surge set a derivatives direction, and
+  give OI/taker full venue-matched coverage via batch OKX fetches and OKX rubik taker-volume.'
+acceptance:
+- open_interest stored in USD (openInterestValue or amount x mark), not contract/coin
+  count
+- oi_change_1h_pct is a true ~1h delta scoped to one venue with a 300% sanity cap
+- score_derivatives sets a direction from a rising-OI surge when funding is neutral
+- DerivativesCollector batch-covers all active registry perps on batch-capable venues;
+  taker is venue-matched (OKX rubik / Binance fapi) for movers
+base_commit: eb8cad18b18532dccb2b8e4df06b384a654148e9
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: collector_shadow
+  command: uv run pytest tests/test_scheduler_timeouts.py tests/test_derivatives_collector.py
+    tests/test_collector_health.py tests/test_data_collectors_integration.py tests/test_layered_pause.py
+    tests/specs/spec_gateway_stability.py tests/specs/spec_data_utilization.py tests/specs/spec_pipeline_local_funding.py
+    -q --tb=short
+  command_sha256: c5b514599ceaf6074a73c75a10ae6a2a0855ce7e6d42eb520ef459263cc4a2d5
+  exit_code: 0
+  commit: eb8cad18b18532dccb2b8e4df06b384a654148e9
+  run_at: '2026-07-15T15:13:55.248297Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: collector_shadow
+  command: uv run pytest tests/test_scheduler_timeouts.py tests/test_derivatives_collector.py
+    tests/test_collector_health.py tests/test_data_collectors_integration.py tests/test_layered_pause.py
+    tests/specs/spec_gateway_stability.py tests/specs/spec_data_utilization.py tests/specs/spec_pipeline_local_funding.py
+    -q --tb=short
+  command_sha256: c5b514599ceaf6074a73c75a10ae6a2a0855ce7e6d42eb520ef459263cc4a2d5
+  exit_code: 0
+  commit: eb8cad18b18532dccb2b8e4df06b384a654148e9
+  run_at: '2026-07-15T15:15:29.684063Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-081.md
+updated_at: '2026-07-15T15:15:29.705775Z'
