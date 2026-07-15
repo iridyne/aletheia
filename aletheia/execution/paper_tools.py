@@ -28,6 +28,8 @@ def create_paper_proposal(
     order_type: str = "market",
     agent_rationale: str | None = None,
     trade_school: str = "short_term",
+    expected_horizon_hours: float | None = None,
+    stop_source: str | None = None,
 ) -> dict:
     """Submit a PAPER proposal through the gateway. Rejects any non-paper mode.
 
@@ -61,4 +63,6 @@ def create_paper_proposal(
         opportunity_id=opportunity_id,
         agent_rationale=agent_rationale,
         trade_school=trade_school,
+        expected_horizon_hours=expected_horizon_hours,
+        stop_source=stop_source,
     )

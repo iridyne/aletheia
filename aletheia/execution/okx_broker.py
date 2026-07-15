@@ -23,6 +23,7 @@ from aletheia.exchanges.submission_errors import (
     is_ambiguous_submission_error as _is_ambiguous_submission_error,
 )
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
+from aletheia.execution.broker_utils import clean_error_message
 from aletheia.execution.post_commit_audit import write_post_commit_audit
 from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
@@ -788,4 +789,83 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
         "closed": False,
         "fill_price": None,
         "fill_quantity": 0,
+    }
+
+
+def reduce_okx_position(position_id: str, reduce_qty: float, reason: str = "operator_reduce") -> dict:
+    """Partially reduce an OKX position with a reduce-only order (exit-intent M3.5).
+
+    Places a reduce-only MARKET order for ``reduce_qty`` (a strict fraction of the open
+    quantity); on the confirmed fill, records the reduce-in-place accounting via
+    ``pnl.reduce_position`` (realize PnL on the reduced portion, shrink quantity, write
+    the partial close event). Mirrors close_okx_position but partial + non-terminal.
+
+    NOTE (needs-demo confirmation): implemented from CCXT + OKX docs and mock-tested. The
+    real reduce-only PARTIAL semantics — does it reduce exactly reduce_qty, partial-fill
+    behavior, and whether the fixed-size TP/SL bracket needs a SIZE RESYNC afterwards
+    (else it becomes oversized/orphaned) — must be confirmed once against an OKX demo
+    account and captured as a fixture. See PARTIAL_REDUCE_RESEARCH.md.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.portfolio.pnl import reduce_position
+
+    row = repo._select_one("positions", position_id)
+    if row is None or row.get("status") != "open":
+        return {"error": "position_not_found_or_not_open", "position_id": position_id}
+    if row.get("execution_mode") not in ("okx_demo", "okx_live_limited"):
+        return {"error": "wrong_mode_for_okx_reduce", "position_id": position_id}
+    qty = float(row["quantity"])
+    reduce_qty = float(reduce_qty)
+    if reduce_qty <= 0 or reduce_qty >= qty:
+        return {"error": "reduce_qty_out_of_range", "position_id": position_id,
+                "hint": "0 < reduce_qty < quantity (a full exit must route through close)"}
+
+    mode = "demo" if row["execution_mode"] == "okx_demo" else "live"
+    client = OKXClient(mode=mode)
+    is_long = row["direction"] in ("long", "buy")
+    side = "sell" if is_long else "buy"
+
+    reduce_order = Order(
+        proposal_id=row.get("proposal_id"), symbol=row["symbol"], market_type=row["market_type"],
+        direction=row["direction"], order_type="market", quantity=reduce_qty,
+        price=row.get("current_price") or row["entry_price"], execution_mode=row["execution_mode"],
+        status="pending",
+        position_id=position_id, close_reason=reason,
+    )
+    insert_order(reduce_order)
+
+    try:
+        order_resp = _run_coro(client.place_order(OrderRequest(
+            symbol=row["symbol"], market_type=row["market_type"], side=side,
+            order_type="market", quantity=reduce_qty, reduce_only=True,
+            client_oid=f"reduce-{reduce_order.id}",
+        )))
+    except Exception as e:
+        update_order(reduce_order.id, status="error", error_reason=clean_error_message(str(e))[:500])
+        raise
+    finally:
+        try:
+            _run_coro(client.close())
+        except Exception:
+            pass
+
+    exchange_order_id = order_resp.order_id or ""
+    if order_resp.status not in ("filled", "partially_filled"):
+        update_order(reduce_order.id, exchange_order_id=exchange_order_id, status="submitted")
+        return {"order_id": reduce_order.id, "exchange_order_id": exchange_order_id,
+                "status": "submitted", "reduced": False}
+
+    fill_price = order_resp.fill_price if order_resp.fill_price else float(row.get("current_price") or row["entry_price"])
+    fill_qty = order_resp.filled_quantity if order_resp.filled_quantity else reduce_qty
+    insert_fill(Fill(order_id=reduce_order.id, fill_price=fill_price, fill_quantity=fill_qty,
+                     fee=fill_qty * fill_price * _OKX_FEE_RATE))
+    update_order(reduce_order.id, exchange_order_id=exchange_order_id, status="filled",
+                 filled_at=datetime.now(timezone.utc).isoformat())
+
+    # Record the reduce-in-place accounting (realize PnL + partial close event + shrink).
+    accounting = reduce_position(position_id, reduce_qty=fill_qty, exit_price=fill_price, reason=reason)
+    return {
+        "order_id": reduce_order.id, "exchange_order_id": exchange_order_id,
+        "status": "filled", "reduced": True, "fill_price": fill_price,
+        "fill_quantity": fill_qty, "accounting": accounting,
     }

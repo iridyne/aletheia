@@ -39,7 +39,6 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 ## 3. Table Groups
 
 ### A. Trading Core (17 tables)
-
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
 | `opportunities` | Scanner output -- trading signals; open rows rotate through a bounded paper-trader workset | symbol, direction, confidence, key_observations (JSON), last_ranked_at | market_observer |
@@ -51,6 +50,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
 | `positions` | Open/closed positions; a closed future may keep net economics unavailable | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence) | position_manager / outcome closure |
+| `position_close_events` | **Per-close economic ledger** (exit-intent R1) — one row per close EVENT (full close = 1 row; partial reduce = 1 row per reduction) so realized PnL sums from close events, unifying full + partial closes. The daily-loss breaker adds partial-close realized via this ledger (`is_partial=1`) on top of the verified full-close read | position_id, close_reason, exit_price, closed_qty, realized_pnl, entry_fee, exit_fee, is_partial, closed_at | `pnl.close_position` / `pnl.reduce_position` |
 | `outcome_hook_jobs` | Durable eligible-close feedback outbox; one row per Position and hook, with leased replay after failure | position_id, hook_type, status, attempts, next_attempt_at, claim_token, last_error | outcome close transaction / outcome_hook_replay |
 | `position_disappearance_candidates` | Durable account-scoped position-disappearance confirmation state; never authorizes close by itself | position_id, identity_key, broker_id, account_environment, non-secret account_fingerprint, instrument identity, confirmation_count, direct_query_state, semantics_version | position reconciler (OI-B01 target) |
 | `position_disappearance_observations` | Immutable idempotent evidence for a disappearance candidate | candidate_id, observation_hash, view_identity, completeness/absence flags, direct_query_state, evidence_json | position reconciler (OI-B01 target) |

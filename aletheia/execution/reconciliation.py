@@ -625,6 +625,32 @@ def _filled_quantity_by_order(rows) -> dict[str, float]:
         key = str(order_id)
         quantities[key] = quantities.get(key, 0.0) + max(quantity, 0.0)
     return quantities
+_LIVE_MODE = "bitget_live_limited"
+_CCXT_LIVE_MODES = ("okx_live_limited", "binance_live_limited")
+
+def resolve_orders_missing_from_exchange(
+    local_orders: list[dict],
+    exchange_open_ids: set[str],
+    modes: tuple[str, ...] = _CCXT_LIVE_MODES,
+) -> list[str]:
+    """Pure CR-EX-01 core: given locally-open orders (for the given execution modes) and
+    the set of order ids the exchange still reports OPEN, return the exchange_order_ids
+    that should converge to 'filled' — locally open but no longer open on the exchange.
+
+    Kept pure so the decision is unit-tested without an exchange; ``exchange_open_ids`` is
+    produced by OKXClient / BinanceClient.get_open_orders() (implemented from CCXT; the
+    real response shape is pending one demo sampling — see _reconcile_ccxt_broker).
+    """
+    resolved: list[str] = []
+    for o in local_orders:
+        if (
+            o.get("execution_mode") in modes
+            and o.get("status") in _OPEN_LOCAL_STATES
+            and o.get("exchange_order_id")
+            and o["exchange_order_id"] not in exchange_open_ids
+        ):
+            resolved.append(o["exchange_order_id"])
+    return resolved
 
 
 def _run_coro(coro):
@@ -748,6 +774,54 @@ def _fetch_multibroker_evidence(order: dict):
         return fetch_private_fill_evidence(order)
     raise ValueError("unsupported exchange reconciliation mode")
 
+def _ccxt_client_for_mode(mode: str):
+    """Build the live CCXT client for a reconcilable mode."""
+    if mode == "okx_live_limited":
+        from aletheia.exchanges.okx.client import OKXClient
+        return OKXClient(mode="live")
+    if mode == "binance_live_limited":
+        from aletheia.exchanges.binance.client import BinanceClient
+        return BinanceClient(mode="live")
+    raise ValueError(f"no CCXT reconcile client for mode {mode}")
+
+
+def _reconcile_ccxt_broker(mode: str, all_orders: list[dict]) -> dict:
+    """CR-EX-01: reconcile one CCXT broker's live orders via get_open_orders(), mirroring
+    the Bitget path. Fail-safe — on ANY fetch failure infer NOTHING and return the orders
+    as ``unreconciled`` (for alerting) rather than fabricating a fill from a failed read.
+
+    Returns {"checked", "filled", "errors", "unreconciled": [orders that couldn't be
+    reconciled]}.
+    """
+    live = [
+        o for o in all_orders
+        if o.get("execution_mode") == mode
+        and o.get("status") in _OPEN_LOCAL_STATES
+        and o.get("exchange_order_id")
+    ]
+    if not live:
+        return {"checked": 0, "filled": 0, "errors": [], "unreconciled": []}
+    try:
+        rows = _run_coro(_ccxt_client_for_mode(mode).get_open_orders())
+    except Exception as e:
+        logger.warning("reconcile: %s get_open_orders failed: %s", mode, e)
+        return {"checked": len(live), "filled": 0, "errors": [f"{mode}: {e}"], "unreconciled": live}
+
+    open_ids = {str(r.get("id")) for r in (rows or []) if r.get("id")}
+    resolved = set(resolve_orders_missing_from_exchange(live, open_ids, modes=(mode,)))
+    filled = 0
+    for o in live:
+        if o["exchange_order_id"] in resolved:
+            update_order(o["id"], status="filled", filled_at=datetime.now(timezone.utc).isoformat())
+            write_audit({
+                "actor": "system", "source": "reconciliation",
+                "event_type": "order_reconciled_filled", "entity_type": "order",
+                "entity_id": o["id"],
+                "before": {"status": o["status"]}, "after": {"status": "filled"},
+                "message": f"Order {o['exchange_order_id']} ({mode}) no longer open on exchange; marked filled",
+            })
+            filled += 1
+    return {"checked": len(live), "filled": filled, "errors": [], "unreconciled": []}
 
 def reconcile() -> dict:
     """Reconcile unresolved exchange Orders and materialize proven fills."""
@@ -887,7 +961,6 @@ def reconcile() -> dict:
                 state=str(order.get("status") or "unresolved"),
                 reason="complete_exchange_fill_not_proven",
             )
-
     from aletheia.exchanges.bitget.client import BitgetClient
 
     # Historical terminal Orders are never added to the ordinary open-order

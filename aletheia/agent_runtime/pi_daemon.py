@@ -21,10 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    pass
+from aletheia.agent_runtime.wake_events import WakeCoalescer, WakeEvent
 
 logger = logging.getLogger("aletheia.pi_daemon")
 
@@ -33,6 +31,13 @@ _daemon_task: asyncio.Task | None = None
 _signal_event: asyncio.Event | None = None    # created inside the daemon loop
 _eval_lock: asyncio.Lock | None = None        # prevents self-overlap
 _uvicorn_loop: asyncio.AbstractEventLoop | None = None  # captured at startup
+# Wake-event pipeline (exit-intent plan M1.5). Events carry a position_id/kind/
+# priority payload and flow through per-position coalescing + a token-bucket rate
+# limit; source-only notifies set the generic-wake flag (the legacy portfolio wake).
+# All three are mutated only on the loop thread (via call_soon_threadsafe).
+_coalescer: WakeCoalescer | None = None
+_pending_events: list[WakeEvent] = []
+_generic_wake_pending: bool = False
 
 # A negative value cannot collide with the non-negative queue depth returned by
 # evaluate_trading_opportunity(). The loop treats it as work still pending so a
@@ -45,19 +50,34 @@ _EVALUATION_RETRY_PENDING = -1
 # Public API
 # ---------------------------------------------------------------------------
 
-def notify_pi_daemon(source: str = "unknown") -> bool:
+def notify_pi_daemon(source: str = "unknown", event: WakeEvent | None = None) -> bool:
     """Signal the daemon to wake up and evaluate.
 
     Safe to call from any thread (including APScheduler executor threads).
     Fire-and-forget: never blocks, never raises. Returns whether delivery to the
     event loop was successfully scheduled.
+
+    ``event`` (optional, exit-intent plan M1.5) attaches a per-position WakeEvent that
+    is coalesced + rate-limited before it reaches the LLM. A source-only call (no
+    event) is the legacy generic portfolio wake and always evaluates this cycle.
     """
     global _uvicorn_loop, _signal_event
     if _uvicorn_loop is None or _signal_event is None:
         return False
+
+    def _apply() -> None:
+        # Runs on the loop thread → no lock needed for the shared wake state.
+        global _generic_wake_pending
+        if event is not None:
+            _pending_events.append(event)
+        else:
+            _generic_wake_pending = True
+        if _signal_event is not None:
+            _signal_event.set()
+
     try:
-        _uvicorn_loop.call_soon_threadsafe(_signal_event.set)
-        logger.debug("pi_daemon: notified (source=%s)", source)
+        _uvicorn_loop.call_soon_threadsafe(_apply)
+        logger.debug("pi_daemon: notified (source=%s, event=%s)", source, getattr(event, "kind", None))
         return True
     except Exception as exc:
         logger.debug("pi_daemon: notify failed (source=%s): %s", source, exc)
@@ -81,18 +101,26 @@ def start_pi_daemon(
     debounce_sec: float = 8.0,
     cooldown_sec: float = 60.0,
     heartbeat_sec: float = 300.0,
+    coalesce_window_sec: float = 3.0,
+    wake_capacity: float = 15,
+    wake_refill_per_hour: float = 15.0,
 ) -> "asyncio.Task | None":
     global _daemon_task, _uvicorn_loop
     if _daemon_task is not None and not _daemon_task.done():
         return _daemon_task
     _uvicorn_loop = loop
     _daemon_task = loop.create_task(
-        _pi_daemon_loop(debounce_sec, cooldown_sec, heartbeat_sec),
+        _pi_daemon_loop(
+            debounce_sec, cooldown_sec, heartbeat_sec,
+            coalesce_window_sec, wake_capacity, wake_refill_per_hour,
+        ),
         name="pi_daemon",
     )
     logger.info(
-        "pi_daemon: started (debounce=%.0fs, cooldown=%.0fs, heartbeat=%.0fs)",
+        "pi_daemon: started (debounce=%.0fs, cooldown=%.0fs, heartbeat=%.0fs, "
+        "coalesce=%.1fs, wake_bucket=%.0f/%.0fh)",
         debounce_sec, cooldown_sec, heartbeat_sec,
+        coalesce_window_sec, wake_capacity, wake_refill_per_hour,
     )
     return _daemon_task
 
@@ -114,10 +142,20 @@ async def _pi_daemon_loop(
     debounce_sec: float,
     cooldown_sec: float,
     heartbeat_sec: float,
+    coalesce_window_sec: float = 3.0,
+    wake_capacity: float = 15,
+    wake_refill_per_hour: float = 15.0,
 ) -> None:
-    global _signal_event, _eval_lock
+    global _signal_event, _eval_lock, _coalescer, _generic_wake_pending
     _signal_event = asyncio.Event()
     _eval_lock = asyncio.Lock()
+    _coalescer = WakeCoalescer(
+        capacity=wake_capacity,
+        refill_per_hour=wake_refill_per_hour,
+        coalesce_window_sec=coalesce_window_sec,
+    )
+    _pending_events.clear()
+    _generic_wake_pending = False
 
     logger.info("pi_daemon: loop started")
 
@@ -150,13 +188,34 @@ async def _pi_daemon_loop(
             logger.warning("pi_daemon: config load failed: %s", exc)
             continue
 
-        # Skip if a prior evaluation is still running
+        # Skip if a prior evaluation is still running. Do this BEFORE draining the
+        # coalescer so buffered wake events survive for the next cycle instead of
+        # being consumed and lost while an eval is mid-flight.
         if _eval_lock.locked():
             logger.debug("pi_daemon: evaluation already in progress, skipping")
             continue
 
+        # Drain pending wake events into the coalescer and pull rate-limited,
+        # coalesced batches. The generic-wake flag is the legacy portfolio wake.
+        now = asyncio.get_running_loop().time()
+        generic = _generic_wake_pending
+        _generic_wake_pending = False
+        if _pending_events:
+            drained = _pending_events[:]
+            _pending_events.clear()
+            for ev in drained:
+                _coalescer.add(ev, now)
+        batches = _coalescer.ready_batches(now) if _coalescer else []
+
+        # Evaluate on: a legacy generic wake, a heartbeat, or at least one position
+        # whose events passed the rate limit. Purely rate-limited/coalescing events
+        # (no ready batch) do NOT wake the LLM this cycle.
+        if not (generic or triggered_by == "heartbeat" or batches):
+            continue
+
+        wake_context = _build_wake_context(triggered_by, batches)
         async with _eval_lock:
-            pending_queue_remaining = await _run_evaluation(triggered_by)
+            pending_queue_remaining = await _run_evaluation(triggered_by, wake_context)
 
         # Cooldown bounds LLM cadence. Notifications that arrive during the rest
         # period remain set, and a reported queue backlog schedules the next item
@@ -164,16 +223,28 @@ async def _pi_daemon_loop(
         if cooldown_sec > 0:
             await asyncio.sleep(cooldown_sec)
         if pending_queue_remaining != 0:
+            _generic_wake_pending = True
             _signal_event.set()
 
 
-async def _run_evaluation(triggered_by: str) -> int:
+def _build_wake_context(triggered_by: str, batches: list) -> dict:
+    """Assemble the context handed to one evaluation from the coalesced batches."""
+    ctx: dict = {"trigger": triggered_by}
+    if batches:
+        ctx["wake_batches"] = [b.to_context() for b in batches]
+    return ctx
+
+
+async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -> int:
     try:
         from aletheia.agent_shell.commands import evaluate_trading_opportunity
         from aletheia.agent_runtime.scheduler import _record_job_success
-        logger.info("pi_daemon: evaluating (trigger=%s)", triggered_by)
+        logger.info(
+            "pi_daemon: evaluating (trigger=%s, positions=%d)",
+            triggered_by, len((wake_context or {}).get("wake_batches", [])),
+        )
         result = await asyncio.wait_for(
-            evaluate_trading_opportunity({}),
+            evaluate_trading_opportunity(wake_context or {}),
             timeout=300.0,
         )
         action = result.get("action", "unknown") if isinstance(result, dict) else "unknown"

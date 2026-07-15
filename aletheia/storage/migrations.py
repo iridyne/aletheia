@@ -2069,6 +2069,29 @@ _ADDITIVE_COLUMNS = [
     ("closed_runtime_session_id", "positions", "TEXT"),
     ("closed_producer_commit", "positions", "TEXT"),
     ("closed_behavior_fingerprint", "positions", "TEXT"),
+    # --- Declarative Exit Intent / ExitPlan (exit-intent plan M1, 2026-07) ------
+    # Per-position declarative exit intent authored by the System Operator. Hard
+    # price levels reuse stop_price / take_profit_price; these columns carry the
+    # rest. All nullable → legacy positions read back as provenance='default'
+    # (config fallback), so this data layer is a behavior no-op until M2 wires the
+    # executor to consume it. See aletheia/portfolio/exit_plan.py.
+    ("expected_horizon_hours", "positions", "REAL"),
+    ("trailing_json", "positions", "TEXT"),
+    ("thesis_invalidation_json", "positions", "TEXT"),
+    ("stop_source", "positions", "TEXT"),
+    ("exit_plan_version", "positions", "INTEGER"),
+    # M2: set when a horizon-due "must-answer" wake has been emitted for a position,
+    # so the executor wakes the Operator once per horizon breach instead of every
+    # cycle. Cleared when the Operator re-authors the horizon (M3 adjust_position).
+    ("horizon_wake_sent_at", "positions", "TEXT"),
+    # M3.5: operator's proactive limit-exit level. When set, the executor market-closes
+    # the position once price reaches it (a locally-watched limit exit, OCO with the
+    # stop — whichever price hits first closes the position). NULL = no limit exit.
+    ("exit_limit_price", "positions", "REAL"),
+    # M2: carry the Operator's exit intent on the proposal so it reaches the position
+    # at open (stamped by the execution gateway). NULL on legacy proposals.
+    ("expected_horizon_hours", "trade_proposals", "REAL"),
+    ("stop_source", "trade_proposals", "TEXT"),
 ]
 
 
@@ -2538,6 +2561,33 @@ CREATE INDEX IF NOT EXISTS idx_paper_account_events_created
     ON paper_account_events(created_at DESC);
 """
 
+# Per-close ledger (exit-intent plan R1 / M3.5 reduce). One row per close EVENT — a
+# full close writes one row; a partial reduce (future) writes one row per reduction —
+# so realized PnL is summed from close EVENTS rather than from positions.status='closed'
+# (which assumes one-close-per-position and misses partial reductions). Additive: the
+# daily-loss breaker + outcome analytics are rewired onto this in a later stage.
+_POSITION_CLOSE_EVENTS_DDL = """
+CREATE TABLE IF NOT EXISTS position_close_events (
+    id TEXT PRIMARY KEY,
+    position_id TEXT NOT NULL,
+    symbol TEXT,
+    direction TEXT,
+    execution_mode TEXT,
+    close_reason TEXT,
+    exit_price REAL,
+    closed_qty REAL,
+    realized_pnl REAL,
+    entry_fee REAL,
+    exit_fee REAL,
+    is_partial INTEGER NOT NULL DEFAULT 0,
+    closed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_position_close_events_position
+    ON position_close_events(position_id);
+CREATE INDEX IF NOT EXISTS idx_position_close_events_closed_at
+    ON position_close_events(closed_at DESC);
+"""
+
 _VOLUME_RANKING_DDL = """
 CREATE TABLE IF NOT EXISTS volume_ranking_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2972,6 +3022,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_PI_DECISIONS_DDL)
     db.executescript(_CAPITAL_EVENTS_DDL)
     db.executescript(_PAPER_ACCOUNT_EVENTS_DDL)
+    db.executescript(_POSITION_CLOSE_EVENTS_DDL)
     db.executescript(_VOLUME_RANKING_DDL)
     db.executescript(_OHLCV_BACKFILL_STATE_DDL)
     db.executescript(_COLLECTOR_HEALTH_STATE_DDL)

@@ -327,6 +327,14 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "opportunity_id": p.get("opportunity_id"),
                 "strategy_id": p.get("strategy_id"),
                 "trade_school": p.get("trade_school"),
+                # Exit intent (exit-intent plan M2/M5 reback): surface the stop/target,
+                # the Operator's holding horizon, and stop provenance so the Operator
+                # can proactively re-author positions still on config-default risk
+                # (stop_source='default') instead of letting defaults own them forever.
+                "stop_price": p.get("stop_price"),
+                "take_profit_price": p.get("take_profit_price"),
+                "expected_horizon_hours": p.get("expected_horizon_hours"),
+                "stop_source": p.get("stop_source") or "default",
                 # Futures telemetry for the leverage/margin context + near-liquidation alerts.
                 "leverage": p.get("leverage"),
                 "liquidation_price": p.get("liquidation_price"),

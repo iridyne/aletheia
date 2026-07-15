@@ -265,6 +265,12 @@ class TradeProposal(_Provenanced):
     # Both NULL on legacy market proposals (closes, reconciler-adopted chains).
     take_profit: float | None = None
     risk_reward: float | None = None
+    # Exit-intent plan M2: the Operator's intended holding horizon (hours) and stop
+    # provenance ("operator" if AI-authored the stop, "default" if config-filled).
+    # Threaded to the position at open (gateway) so the executor's horizon time-stop
+    # + must-answer wake and the default-provenance reback work. NULL on legacy rows.
+    expected_horizon_hours: float | None = None
+    stop_source: str | None = None
     execution_mode: str = "paper_internal"
     agent_rationale: str | None = None
     # JSON snapshot captured at proposal/decision time for replay-stable paper

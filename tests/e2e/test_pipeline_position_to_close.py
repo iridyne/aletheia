@@ -134,10 +134,12 @@ class TestMaxHoldCloses:
 
 
 class TestMarketAwareExitIntegration:
-    """Market-aware exit rules tighten stop when counter-signal detected."""
+    """Market-aware exit: a counter-signal WAKES the Operator (M5) — it no longer
+    auto-tightens the stop or auto-closes."""
 
-    def test_counter_signal_tightens_stop(self, e2e_db, monkeypatch):
-        """Opposing Market Observer signal tightens stop_price on next cycle."""
+    def test_counter_signal_wakes_operator(self, e2e_db, monkeypatch):
+        """An opposing Market Observer signal emits an ADVERSE_SIGNAL wake instead of
+        mutating the position's stop (M5 — the Operator decides, not the rule)."""
         from aletheia.config.loader import load_config
         cfg = load_config()
         cfg.trading.market_aware_exits.enabled = True
@@ -187,14 +189,21 @@ class TestMarketAwareExitIntegration:
             lambda: cfg,
         )
 
+        # M5: capture wakes — a counter-signal now wakes the Operator, not the stop.
+        import aletheia.agent_runtime.pi_daemon as _pd
+        wakes = []
+        monkeypatch.setattr(_pd, "notify_pi_daemon", lambda source="unknown", event=None: wakes.append(event))
+
         from aletheia.portfolio.position_manager import evaluate_open_positions
         result = evaluate_open_positions()
 
-        # Position should NOT be closed (price 99 > stop 98, score=65 < urgent=80)
+        # NOT closed (price 99 > stop 98, score 65 < urgent 80) and NOT auto-tightened —
+        # the counter-signal wakes the Operator to decide (M5).
         assert result["closed"] == 0
-        # But stop_price should be tightened
+        assert result["market_signal_wakes"] == 1
         updated = repo.list_positions(status="open")
         sol = [p for p in updated if p["symbol"] == "SOL/USDT"][0]
-        assert sol["stop_price"] is not None
-        # new_stop = 99 - (99 * 0.02 * 0.8) = 99 - 1.584 = 97.416
-        assert sol["stop_price"] > 97.0
+        assert sol["stop_price"] is None  # no longer auto-tightened
+
+        from aletheia.agent_runtime.wake_events import ADVERSE_SIGNAL
+        assert any(getattr(w, "kind", None) == ADVERSE_SIGNAL for w in wakes)
