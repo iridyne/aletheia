@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-073
 title: Make Overview PnL curve show live marks honestly
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: Analytics read model and Overview PnL chart only; add an explicitly labelled
@@ -26,8 +26,9 @@ ownership:
   expires_at: '2026-07-15T09:54:48.358935Z'
 base_commit: a2ded371594cd873f5b806cbfc9459ab4082ab8a
 next_action:
-  command_key: specs
-  reason: Establish the analytics read-model contract before implementation.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: specs
@@ -46,5 +47,13 @@ verification:
   run_at: '2026-07-15T02:02:55.113027Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 79b46b4480f51d17833192c2d9e4487cf1f0a7c7
+  run_at: '2026-07-15T02:04:51.965419Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-073.md
-updated_at: '2026-07-15T02:02:55.113207Z'
+updated_at: '2026-07-15T02:04:52.102986Z'
