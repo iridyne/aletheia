@@ -392,8 +392,14 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .sp-event-main {
   display: flex; flex-direction: column; gap: 1px; min-width: 0;
 }
+.sp-event-header {
+  display: flex; align-items: baseline; gap: 6px;
+}
 .sp-event-code {
   font-family: var(--mono); font-size: 0.66rem; color: var(--text);
+}
+.sp-event-ts {
+  font-family: var(--mono); font-size: 0.60rem; color: var(--faint); flex-shrink: 0;
 }
 .sp-event-message {
   font-size: 0.68rem; color: var(--muted); line-height: 1.35;
