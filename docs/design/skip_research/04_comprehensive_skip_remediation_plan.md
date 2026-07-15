@@ -1,6 +1,6 @@
 # 04 — Skip 专项完整修复实施计划
 
-> 状态：**B1 已获 owner 授权并正在实施；后续 B2+ 仍须独立治理决定。**
+> 状态：**B1 已部署；B1.1 已获 owner 授权，作为独立 policy epoch 实施。后续 B2+ 仍须独立治理决定。**
 > 建立日期：2026-07-15
 > 适用范围：System Operator（PI）候选级 `skip` 与其输入、证据、恢复诊断。
 > 非范围：universe generation / 选币行为、Risk、Execution、交易所、Live、额度、凭据。
@@ -108,6 +108,37 @@ P0 契约/RED specs
 
 不能把 B1、B2、ranker/universe 改动合并为“修 Skip”的一个大提交。每个阶段在当前 HEAD
 记录验证后才完成 workflow task；任一步失败只回滚该阶段，不回滚交易事实。
+
+### 2.3 B1.1 — 风险感知的候选供给恢复（本次授权）
+
+B1.1 不取消 Ranker，也不把 `speculative` 放进交易链。它把 `medium` 明确为**中性、受限的
+候选供给层**：仍需通过 execution eligibility、symbol、TTL、venue capability、factor hard block、
+learned guard、风险标记、评分、PI conviction/debate 和 Risk Engine。`high` 仍是强质量标签与排序
+输入，但不能因一个已废止的自动收紧动作永久变成全局硬封锁。
+
+```text
+两次连续 candidate_supply_snapshot
+  + executable_count < floor
+  + dominant reason = confidence_below
+  + current floor = high
+  + 最后一次该参数审计写入 = operator_loop medium -> high (tighten)
+  + kill switch = off
+      → 仅恢复 high -> medium，写入 config_patch 审计
+
+人为设置 high / 任何非 confidence_below 断供 / speculative / hard guard / 风险与执行门
+      → 不自动放宽；记录并继续诊断
+```
+
+这是 B 类行为改动，故 B1 的 epoch 必须关闭并以 `system_operator_skip_remediation` 的 B1.1
+effective values 新开窗口。观察指标分两层：
+
+1. **liveness（即时）**：Ranker 是否持续产生 `medium` pending；PI heartbeat 是否仍保持
+   `no_evaluable_candidate` 而不伪造 skip。
+2. **quality（结算后）**：按 B1.1 epoch、confidence 档位、方向、market、scanner family 比较
+   通过/拒绝的固定时点净结果、覆盖率与 tail；样本不足只能得出 `insufficient_evidence`。
+
+该恢复没有触碰仓位、止损、Risk、Execution、Live 或交易所语义。它的目的不是强制交易，而是让
+后续保护层重新获得可判断的候选；PI 的 candidate-level `skip` 仍完全有效并保留反事实证据。
 
 ## 3. WP-1 — 候选身份、状态机与无 target heartbeat
 
