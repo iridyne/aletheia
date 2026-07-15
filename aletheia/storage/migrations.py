@@ -1583,6 +1583,22 @@ _OUTCOME_INTEGRITY_POSITION_COLUMNS = (
 )
 
 _OUTCOME_INTEGRITY_DDL = (
+    """CREATE TABLE IF NOT EXISTS historical_accounting_reconciliations (
+        position_id TEXT PRIMARY KEY REFERENCES positions(id),
+        reconciliation_version TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('reconstructed', 'unavailable')),
+        reconstructed_realized_pnl REAL,
+        funding_cost REAL,
+        method TEXT NOT NULL,
+        reason TEXT,
+        evidence_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        CHECK((status = 'reconstructed' AND reconstructed_realized_pnl IS NOT NULL)
+              OR (status = 'unavailable' AND reconstructed_realized_pnl IS NULL))
+    )""",
+    """CREATE INDEX IF NOT EXISTS idx_historical_accounting_status
+       ON historical_accounting_reconciliations(status, updated_at DESC)""",
     """CREATE TABLE IF NOT EXISTS position_disappearance_candidates (
         id TEXT PRIMARY KEY,
         position_id TEXT NOT NULL REFERENCES positions(id),

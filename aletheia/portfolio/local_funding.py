@@ -400,55 +400,21 @@ def has_fresh_local_funding_schedule(
     return bool(candidates)
 
 
-def compute_local_funding(
+def _compute_local_funding_with_entry_fills(
     position: Mapping[str, Any],
     *,
-    closed_at: str | datetime,
+    opened: datetime,
+    closed: datetime,
+    entry_fills: list[_EntryFill],
 ) -> LocalFundingResult:
-    """Aggregate complete local-paper funding over one Position lifetime.
+    """Aggregate funding after an entry ledger has passed its own validation.
 
-    Each event satisfies ``opened_at < scheduled_at <= closed_at``.  The final
-    rate for that schedule is the latest durable observation no more than 15
-    minutes before settlement.  The first observation after each settlement
-    must point to the next schedule, and a fresh schedule strictly after close
-    anchors the end of the window.  Missing any of these facts returns no number.
+    This is deliberately private: callers must prove the entry ledger before it
+    reaches this schedule calculator.  The current producer uses the strict
+    authority validator; the historical-recovery reader has a separate,
+    explicitly labelled legacy validator and never upgrades an old row into a
+    current verified outcome.
     """
-
-    if (
-        str(position.get("execution_mode") or "") != "paper_internal"
-        or str(position.get("market_type") or "") != "usdt_futures"
-    ):
-        return _incomplete(
-            position=position,
-            opened_at=None,
-            closed_at=None,
-            reason="unsupported_position",
-        )
-
-    opened = _parse_utc(position.get("opened_at"))
-    if isinstance(closed_at, datetime):
-        closed = closed_at.astimezone(timezone.utc) if closed_at.tzinfo else None
-    else:
-        closed = _parse_utc(closed_at)
-    if opened is None or closed is None or closed < opened:
-        return _incomplete(
-            position=position,
-            opened_at=opened,
-            closed_at=closed,
-            reason="invalid_window",
-        )
-
-    entry_fills, lineage_error = _load_exact_entry_fills(
-        position,
-        closed_at=closed,
-    )
-    if entry_fills is None:
-        return _incomplete(
-            position=position,
-            opened_at=opened,
-            closed_at=closed,
-            reason=lineage_error or "incomplete_entry_lineage",
-        )
 
     direction = str(position.get("direction") or "").lower()
     if direction in {"long", "buy"}:
@@ -618,4 +584,69 @@ def compute_local_funding(
         funding_cost=total_cost,
         funding_source="local_simulation",
         evidence=evidence,
+    )
+
+
+def compute_local_funding_from_entry_fills(
+    position: Mapping[str, Any],
+    *,
+    closed_at: str | datetime,
+    entry_fills: list[_EntryFill],
+) -> LocalFundingResult:
+    """Calculate funding from an already validated immutable entry Fill ledger.
+
+    It is intentionally not an authority validator.  The only non-current
+    caller is the historical accounting repair, whose result is stored in a
+    separate reconciliation layer and is never eligible for strategy outcome
+    or paper-cash settlement.
+    """
+    if (
+        str(position.get("execution_mode") or "") != "paper_internal"
+        or str(position.get("market_type") or "") != "usdt_futures"
+    ):
+        return _incomplete(position=position, opened_at=None, closed_at=None,
+                           reason="unsupported_position")
+    opened = _parse_utc(position.get("opened_at"))
+    closed = (
+        closed_at.astimezone(timezone.utc) if isinstance(closed_at, datetime) and closed_at.tzinfo
+        else _parse_utc(closed_at) if not isinstance(closed_at, datetime) else None
+    )
+    if opened is None or closed is None or closed < opened:
+        return _incomplete(position=position, opened_at=opened, closed_at=closed,
+                           reason="invalid_window")
+    return _compute_local_funding_with_entry_fills(
+        position, opened=opened, closed=closed, entry_fills=entry_fills,
+    )
+
+
+def compute_local_funding(
+    position: Mapping[str, Any],
+    *,
+    closed_at: str | datetime,
+) -> LocalFundingResult:
+    """Aggregate complete local-paper funding over one Position lifetime.
+
+    Each event satisfies ``opened_at < scheduled_at <= closed_at``.  Current
+    producer rows must first pass the full Order/Proposal/Risk authority check.
+    """
+    if (
+        str(position.get("execution_mode") or "") != "paper_internal"
+        or str(position.get("market_type") or "") != "usdt_futures"
+    ):
+        return _incomplete(position=position, opened_at=None, closed_at=None,
+                           reason="unsupported_position")
+    opened = _parse_utc(position.get("opened_at"))
+    closed = (
+        closed_at.astimezone(timezone.utc) if isinstance(closed_at, datetime) and closed_at.tzinfo
+        else _parse_utc(closed_at) if not isinstance(closed_at, datetime) else None
+    )
+    if opened is None or closed is None or closed < opened:
+        return _incomplete(position=position, opened_at=opened, closed_at=closed,
+                           reason="invalid_window")
+    entry_fills, lineage_error = _load_exact_entry_fills(position, closed_at=closed)
+    if entry_fills is None:
+        return _incomplete(position=position, opened_at=opened, closed_at=closed,
+                           reason=lineage_error or "incomplete_entry_lineage")
+    return _compute_local_funding_with_entry_fills(
+        position, opened=opened, closed=closed, entry_fills=entry_fills,
     )

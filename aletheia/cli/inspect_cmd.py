@@ -499,6 +499,7 @@ def status(
     from aletheia.analytics.trade_stats import compute_rolling_trade_stats, compute_order_stats
     from aletheia.data.price_feed import cache_stats
     from aletheia.portfolio.pnl import mark_positions_to_market
+    from aletheia.maintenance.historical_accounting import historical_accounting_summary
     from aletheia.storage.repositories import (
         get_active_universe_snapshot, get_active_universe_members,
     )
@@ -544,6 +545,7 @@ def status(
         "cohort": build_outcome_cohort_summary(
             closed_after=(datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         ),
+        "historical_accounting": historical_accounting_summary(),
         **{k: rolling[k] for k in (
             "days", "total_trades", "wins", "losses", "win_rate",
             "total_pnl", "avg_pnl", "best_win", "worst_loss",
@@ -643,6 +645,7 @@ def pnl(
     )
     from aletheia.analytics.trade_stats import compute_rolling_trade_stats
     from aletheia.portfolio.pnl import mark_positions_to_market
+    from aletheia.maintenance.historical_accounting import historical_accounting_summary
 
     # Today detail
     today_str = datetime.now(timezone.utc).date().isoformat()
@@ -683,6 +686,7 @@ def pnl(
         "cohort": build_outcome_cohort_summary(
             closed_after=(datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         ),
+        "historical_accounting": historical_accounting_summary(),
         "open_positions": positions_out,
     }
 
@@ -718,6 +722,14 @@ def pnl(
     else:
         typer.echo(f"  trades: {rolling['total_trades']}  wins: {rolling['wins']}  losses: {rolling['losses']}  win_rate: {rolling['win_rate']}%")
         typer.echo(f"  total: {rolling['total_pnl']:+.2f}  avg: {rolling['avg_pnl']:+.2f}  best: {rolling['best_win']:+.2f}  worst: {rolling['worst_loss']:+.2f}")
+
+    historical = result["historical_accounting"]
+    typer.echo("")
+    typer.echo("=== Historical local-paper reconciliation (separate from verified PnL) ===")
+    if historical["historical_reconciled_pnl"] is None:
+        typer.echo(f"  reconstructed: none  unavailable: {historical['historical_reconciliation_unavailable_count']}")
+    else:
+        typer.echo(f"  reconstructed: {historical['historical_reconciled_pnl']:+.2f} ({historical['historical_reconciled_count']} closes)  unavailable: {historical['historical_reconciliation_unavailable_count']}")
 
     if rolling["per_symbol"]:
         typer.echo("")

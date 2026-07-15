@@ -1,11 +1,34 @@
-"""CLI: aletheia data — historical OHLCV management."""
+"""CLI: aletheia data — historical data and accounting management."""
 
 import asyncio
+import json
 from typing import Optional
 
 import typer
 
 data_app = typer.Typer(no_args_is_help=True)
+
+
+@data_app.command("reconcile-local-paper-accounting")
+def reconcile_local_paper_accounting(
+    apply: bool = typer.Option(
+        False, "--apply",
+        help="Apply only exact backlinks and additive reconciliation rows. Default is dry-run.",
+    ),
+):
+    """Recover provable historical local-paper accounting without changing raw PnL.
+
+    This command never writes an exchange, Risk decision, Position economics, or
+    paper cash event.  It reports unavailable evidence instead of estimating it.
+    """
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.maintenance.historical_accounting import reconcile_historical_local_paper_accounting
+
+    run_migrations()
+    typer.echo(json.dumps(
+        reconcile_historical_local_paper_accounting(dry_run=not apply),
+        indent=2, ensure_ascii=False, sort_keys=True,
+    ))
 
 
 @data_app.command("download")

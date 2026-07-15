@@ -1,0 +1,30 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-072
+title: Repair historical local-paper accounting evidence
+status: in_progress
+packet_type: standard
+scope:
+  boundary: Add an append-only, local-paper-only historical accounting reconstruction layer; repair only exact Position-to-entry-Order reverse links and expose reconstructed values separately from verified strategy PnL.
+  excluded: Live trading, exchange adapters, Risk limits or decisions, credentials, raw Position economics, paper cash settlement, and external/demo history.
+intent: Recover only deterministically provable local-paper accounting lineage and
+  economics, preserve raw history, and prevent future paper closes from becoming unreadable.
+acceptance:
+  - Dry-run is the default and reports every proposed link/accounting result with an explicit reason.
+  - Apply mode is transactional and idempotent; it changes only deterministic paper_internal Order.position_id backlinks and additive reconciliation rows.
+  - Reconstructed legacy accounting remains distinct from verified strategy PnL and unavailable evidence remains visibly unavailable.
+  - New local-paper entries retain the current strict funding/authority path; historical compatibility cannot weaken it.
+  - Data-model documentation and executable regression coverage describe the historical-recovery boundary.
+ownership:
+  branch: fix/historical-accounting-repair
+  lease_holder: codex-historical-accounting
+  claimed_at: '2026-07-15T01:25:18.282039Z'
+  expires_at: '2026-07-15T13:25:18.282177Z'
+base_commit: 911ec6f5d4b58965d28d4fde8c6f2c74444e1d53
+next_action:
+  command_key: specs
+  reason: Establish the historical-accounting contract before implementation.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-072.md
+updated_at: '2026-07-15T01:25:18.282185Z'

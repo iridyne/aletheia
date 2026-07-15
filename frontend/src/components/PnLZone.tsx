@@ -247,8 +247,13 @@ export default function PnLZone() {
   const unrealNum = p?.unrealized_pnl == null ? null : Number(p.unrealized_pnl)
   const realNum = p?.all_realized_pnl == null ? null : Number(p.all_realized_pnl)
   const realizedUnavailableCount = Number(p?.all_realized_pnl_unavailable_count ?? 0)
+  const historicalNum = p?.all_historical_reconciled_pnl == null ? null : Number(p.all_historical_reconciled_pnl)
+  const historicalCount = Number(p?.all_historical_reconciled_count ?? 0)
+  const historicalUnavailable = Number(p?.all_historical_reconciliation_unavailable_count ?? 0)
   const realizedContext = realNum != null
     ? 'all-time'
+    : historicalNum != null
+      ? `${historicalCount} legacy closes reconciled: ${fmtDelta(historicalNum)}${historicalUnavailable ? ` · ${historicalUnavailable} still unavailable` : ''}`
     : realizedUnavailableCount > 0
       ? `${realizedUnavailableCount} closes need verification`
       : 'realized economics unavailable'

@@ -451,6 +451,20 @@ entry/exit fee 和可信 funding 无法重算出相同净值时，`GET /position
    archive/supersede；
 6. paper cash remediation 默认只生成 compensation candidate，owner 明确批准后才能另行追加补偿事件。
 
+### Historical local-paper accounting recovery
+
+`historical_accounting_reconciliations` is an additive, one-row-per-Position
+reconstruction ledger for old native `paper_internal` records that predate the
+durable `orders.position_id` backlink.  It records either a deterministic
+`reconstructed` amount or `unavailable` with the exact missing evidence reason,
+method/version, and JSON evidence.  The command
+`aletheia data reconcile-local-paper-accounting` is dry-run by default; `--apply`
+may only restore an exact missing reverse backlink and write this table, inside a
+transaction.  It never changes raw `positions.realized_pnl`, eligibility, Risk,
+paper cash events, or exchange data.  Its amounts are exposed as historical
+reconciled accounting, never combined with verified strategy PnL, Learning,
+PortfolioSnapshot, or cash settlement.
+
 disappearance confirmation 使用 `position_disappearance_candidates` 保存作用域身份和确认状态，使用
 `position_disappearance_observations` 保存 observation hash 去重的不可变证据。两者属于 trust-bearing
 state，不得进入 telemetry prune allowlist。`OI-B01` 已接入 reconciler：只有新鲜、完整、当前逻辑

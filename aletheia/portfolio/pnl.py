@@ -859,6 +859,17 @@ def position_realized_pnl_view(row: dict) -> dict:
     if str(row.get("status") or "") != "closed":
         return view
 
+    # A historical local-paper reconstruction is an audit layer, never a
+    # substitute for current verified realized PnL.  Keep the fields distinct
+    # so a legacy Risk decision cannot silently appear as a verified outcome.
+    from aletheia.maintenance.historical_accounting import historical_accounting_for_position
+    historical = historical_accounting_for_position(str(row.get("id") or ""))
+    if historical is not None:
+        view["historical_accounting_status"] = historical["status"]
+        view["historical_accounting_pnl"] = historical["reconstructed_realized_pnl"]
+        view["historical_accounting_reason"] = historical["reason"]
+        view["historical_accounting_method"] = historical["method"]
+
     realized = _realized_economics_value(row)
     complete = realized is not None
     view["realized_pnl"] = realized
@@ -948,6 +959,9 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         mode_closed = all_closed
     total_realized, realized_unavailable_count = _complete_realized_total(mode_closed)
     all_realized, all_realized_unavailable_count = _complete_realized_total(all_closed)
+    from aletheia.maintenance.historical_accounting import historical_accounting_summary
+    historical_accounting = historical_accounting_summary(execution_mode=execution_mode)
+    all_historical_accounting = historical_accounting_summary(execution_mode=None)
 
     # Exposure by symbol
     exposure: dict[str, float] = {}
@@ -1085,6 +1099,13 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         ),
         "all_realized_pnl_complete": all_realized is not None,
         "all_realized_pnl_unavailable_count": all_realized_unavailable_count,
+        # Historical reconstruction is explicitly separate from strict verified
+        # realized PnL.  It cannot affect Risk, Learning, equity snapshots, or
+        # local paper cash until an independently authorized settlement process.
+        **historical_accounting,
+        "all_historical_reconciled_pnl": all_historical_accounting["historical_reconciled_pnl"],
+        "all_historical_reconciled_count": all_historical_accounting["historical_reconciled_count"],
+        "all_historical_reconciliation_unavailable_count": all_historical_accounting["historical_reconciliation_unavailable_count"],
         # #56 note (2026-07-08): `today_pnl` is a legacy misnomer — it's
         # `unrealized_pnl (lifetime for all currently-open positions) +
         # today_realized_pnl`. It is NOT PnL earned today alone. A card

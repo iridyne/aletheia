@@ -201,6 +201,21 @@ def test_local_paper_account_ledger_contract():
 
 @spec_claim(
     SpecClaim(
+        "DM-S27", "data_model", "§3 historical local-paper accounting", "L2a",
+        "Historical local-paper reconstruction has an additive one-row-per-Position table and never overwrites raw Position economics.",
+        status="implemented",
+    ),
+)
+def test_historical_accounting_reconciliation_table_contract():
+    from aletheia.storage.migrations import _OUTCOME_INTEGRITY_DDL
+
+    ddl = "\n".join(_OUTCOME_INTEGRITY_DDL)
+    assert "CREATE TABLE IF NOT EXISTS historical_accounting_reconciliations" in ddl
+    assert "position_id TEXT PRIMARY KEY REFERENCES positions(id)" in ddl
+
+
+@spec_claim(
+    SpecClaim(
         "DM-S24", "data_model", "§3 OHLCV catch-up state", "L2a",
         "ohlcv_backfill_state has one durable row per exchange + canonical symbol + "
         "market_type + timeframe, preserving retry state without mixing instruments.",
