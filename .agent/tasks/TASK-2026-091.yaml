@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-091
 title: Implement B2 candidate-conditioned PI evidence
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -15,9 +15,18 @@ acceptance:
 - Ranker, Risk, Execution and Live semantics are unchanged; focused tests and executable spec pass.
 base_commit: 15e26882ef8a009a46716d8dec59583b65e43f70
 next_action:
-  command_key: workflow_tests
-  reason: Run focused B2 evidence and System Operator lifecycle verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: e271a71c05f5ff6b815947696fff484f10a4a4a2
+  run_at: '2026-07-15T12:06:00.707621Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-091.md
-updated_at: '2026-07-15T11:54:10.292865Z'
+updated_at: '2026-07-15T12:06:00.772620Z'
