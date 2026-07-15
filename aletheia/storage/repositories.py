@@ -70,14 +70,15 @@ def _update(table: str, id_val: str, data: dict) -> None:
 
 
 @contextmanager
-def transaction(*, immediate: bool = False):
+def transaction(*, immediate: bool = False, nested_savepoint: bool = False):
     db = get_db()
+    if db.in_transaction and not nested_savepoint:
+        yield
+        return
     if db.in_transaction:
-        # A caller-owned transaction must not make a nested atomic operation a
-        # no-op.  In particular, a terminal PI skip claim writes its evidence
-        # inside this boundary; if that write fails, the final decision must
-        # disappear while the caller's already-persisted signal_pending carrier
-        # remains available.  SQLite savepoints provide exactly that scope.
+        # The PI claim path opts into this narrow savepoint scope so evidence
+        # failure rolls back only the terminal claim. Other caller-owned
+        # transactions retain their historical semantics.
         savepoint = f"repo_tx_{uuid.uuid4().hex}"
         db.execute(f"SAVEPOINT {savepoint}")
         try:

@@ -93,6 +93,7 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
         build_operator_learning_manifest,
     )
     from aletheia.agent_shell import reflection
+    from aletheia.analytics import filter_evidence
     from aletheia.storage.models import Opportunity, PiDecision
     from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
     from aletheia.storage.sqlite import get_db
@@ -121,6 +122,17 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
         parent=SimpleNamespace(mkdir=lambda **kwargs: None),
         write_text=lambda *args, **kwargs: None,
     ))
+    # Candidate skips now require an exact, machine-readable operator trace and
+    # a fixed entry seed before the terminal claim can be consumed.
+    monkeypatch.setattr(
+        filter_evidence,
+        "_exact_snapshot",
+        lambda symbol, market, max_age_seconds: {
+            "id": "snapshot-learning-manifest",
+            "snapshot_at": "2026-07-15T00:00:00+00:00",
+            "price": 100.0,
+        },
+    )
     opportunity_id = "learning-manifest-opp-1"
     insert_opportunity(Opportunity(
         id=opportunity_id,
@@ -144,6 +156,14 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
         "opportunity_id": opportunity_id, "signal_source": "market_observer",
         "proposal_id": "proposal-1",
         "learning_manifest": manifest,
+        "filter_trace": [{
+            "filter_name": "operator_action_assessment",
+            "stage": "system_operator",
+            "decision": "rejected",
+            "reason_code": "operator_model_skip",
+            "inputs": {"model_action": "skip"},
+            "parameters": {},
+        }],
     })
     row = get_db().execute(
         "SELECT opportunity_id, proposal_id, learning_manifest_json "

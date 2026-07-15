@@ -269,7 +269,7 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
 
     pi_dec = _build_pi_decision(decision_result)
     claim_failure: str | None = None
-    with transaction(immediate=True):
+    with transaction(immediate=True, nested_savepoint=True):
         existing = (
             find_final_pi_decision_for_opportunity(
                 pi_dec.opportunity_id,
