@@ -47,7 +47,7 @@ if [ -f .agent/policy.yaml ]; then
     STAGED=$(git diff --cached --name-only)
     if [ -n "$STAGED" ]; then
         TMP=$(mktemp -t aletheia-precommit-tb.XXXXXX)
-        if ! printf '%s\n' "$STAGED" | uv run --quiet aletheia agent workflow check-staged --paths-stdin >"$TMP" 2>&1; then
+        if ! printf '%s\n' "$STAGED" | uv run --quiet python scripts/agent_check_staged.py --paths-stdin >"$TMP" 2>&1; then
             echo "${RED}ERROR: trust-boundary policy violation:${NC}"
             cat "$TMP"
             rm -f "$TMP"

@@ -1,0 +1,21 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-076
+title: Decouple agent workflow CLI and add SQLite atomic task claims
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Remove aletheia agent workflow from the trading CLI; protect concurrent same-machine
+  agent claims with SQLite UPDATE...RETURNING; separate session ownership state from
+  durable git-tracked task intent.
+acceptance: []
+base_commit: 23d0567b2cb64c87f96c7d260f42b0f4d5d05507
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-076.md
+updated_at: '2026-07-15T05:22:03.041940Z'

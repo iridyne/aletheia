@@ -14,8 +14,6 @@ from aletheia.agent_shell.operator_store import (
     list_sessions,
 )
 from aletheia.config.loader import load_config, save_config
-from aletheia.cli.agent_workflow import workflow_app
-
 agent_app = typer.Typer(no_args_is_help=True)
 session_app = typer.Typer(no_args_is_help=True)
 
@@ -196,4 +194,3 @@ def compact(date: str | None = typer.Option(None, "--date", help="Target UTC dat
 
 
 agent_app.add_typer(session_app, name="session", help="Inspect a single operator session.")
-agent_app.add_typer(workflow_app, name="workflow", help="Recover and validate repository work without chat history.")

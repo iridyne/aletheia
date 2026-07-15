@@ -223,7 +223,9 @@ def _workflow_paths(task: dict[str, Any]) -> set[str]:
 
 
 def _assert_only_workflow_metadata_dirty(root: Path, task: dict[str, Any]) -> None:
-    unexpected = sorted(_dirty_paths(root) - _workflow_paths(task))
+    # Exclude machine-local SQLite claim store (gitignored, never a git concern).
+    _db_files = {"data/tasks.db", "data/tasks.db-shm", "data/tasks.db-wal"}
+    unexpected = sorted(_dirty_paths(root) - _workflow_paths(task) - _db_files)
     if unexpected:
         raise ValueError(
             "commit implementation before verification; non-workflow files are dirty: "
@@ -247,7 +249,13 @@ def _missing_handoff_headings(text: str, task: dict[str, Any] | None = None) -> 
 
 
 def claim_task(task_id: str, *, holder: str, hours: int = 8, root: Path | None = None) -> dict[str, Any]:
-    """Claim an existing ready/backlog task for the current branch."""
+    """Claim an existing ready/backlog task for the current branch.
+
+    Ownership is recorded in SQLite (data/tasks.db) via an atomic UPDATE...RETURNING
+    to prevent concurrent agents on the same machine from claiming the same task.
+    Branch info is intentionally kept out of git-tracked YAML to avoid ownership
+    noise in the audit trail.
+    """
     root = repo_root(root)
     path, task = _task(root, task_id)
     if task.get("status") not in {"backlog", "ready", "blocked"}:
@@ -255,10 +263,11 @@ def claim_task(task_id: str, *, holder: str, hours: int = 8, root: Path | None =
     _, branch = _git(root, "branch", "--show-current")
     if not branch:
         raise ValueError("cannot claim a task from detached HEAD")
-    if any(t.get("status") == "in_progress" and t.get("ownership", {}).get("branch") == branch for _, t in load_tasks(root)):
-        raise ValueError(f"branch {branch} already has an in-progress task")
+    from aletheia import agent_tasks_db as _db
+    _db.sync_tasks([t for _, t in load_tasks(root)], root)
+    if not _db.claim_task_atomic(task_id, holder, branch, hours, root):
+        raise ValueError(f"task {task_id} is already claimed by another worker (atomic claim failed)")
     task["status"] = "in_progress"
-    task["ownership"] = {"branch": branch, "lease_holder": holder, "claimed_at": _now(), "expires_at": (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat().replace("+00:00", "Z")}
     task["updated_at"] = _now()
     _write_yaml(path, task)
     return task
@@ -287,7 +296,7 @@ def create_task(
     if path.exists():
         raise ValueError(f"task already exists: {task_id}")
     _, head = _git(root, "rev-parse", "HEAD")
-    task = {"schema_version": 1, "handoff_version": 1, "id": task_id, "title": title, "status": "ready", "packet_type": packet_type, "scope": {"boundary": "declare before implementation", "excluded": "runtime facts and credentials"}, "intent": intent, "acceptance": [], "ownership": {}, "base_commit": head, "next_action": {"command_key": "workflow_tests", "reason": "Claim the task and define the first focused verification."}, "blockers": [], "verification": [], "handoff": f".agent/handoffs/{task_id}.md", "updated_at": _now()}
+    task = {"schema_version": 1, "handoff_version": 1, "id": task_id, "title": title, "status": "ready", "packet_type": packet_type, "scope": {"boundary": "declare before implementation", "excluded": "runtime facts and credentials"}, "intent": intent, "acceptance": [], "base_commit": head, "next_action": {"command_key": "workflow_tests", "reason": "Claim the task and define the first focused verification."}, "blockers": [], "verification": [], "handoff": f".agent/handoffs/{task_id}.md", "updated_at": _now()}
     _write_yaml(path, task)
     if packet_type == "tiny":
         _write_text(root / task["handoff"],
@@ -438,6 +447,11 @@ def complete_task(task_id: str, *, root: Path | None = None) -> dict[str, Any]:
     }
     task["updated_at"] = _now()
     _write_yaml(path, task)
+    try:
+        from aletheia import agent_tasks_db as _db
+        _db.release_claim(task_id, root)
+    except Exception:
+        pass
     return task
 
 
@@ -493,7 +507,7 @@ def validate(
             findings.append(Finding("error", f"task not found: {task_id}", task_id))
     for path, task in tasks:
         task_id = task.get("id") if isinstance(task.get("id"), str) else path.stem
-        required = {"id", "title", "status", "scope", "intent", "acceptance", "ownership", "base_commit", "next_action", "blockers", "verification", "handoff"}
+        required = {"id", "title", "status", "scope", "intent", "acceptance", "base_commit", "next_action", "blockers", "verification", "handoff"}
         missing = required - task.keys()
         if missing:
             findings.append(Finding("error", f"missing fields: {', '.join(sorted(missing))}", task_id))
@@ -708,8 +722,32 @@ def bootstrap(root: Path | None = None) -> dict[str, Any]:
     _, branch = _git(root, "branch", "--show-current")
     _, head = _git(root, "rev-parse", "HEAD")
     _, porcelain = _git(root, "status", "--porcelain")
-    branch_tasks = [task for _, task in load_tasks(root) if task.get("ownership", {}).get("branch") == branch]
-    matches = [task for task in branch_tasks if task.get("status") == "in_progress"]
+    all_tasks = load_tasks(root)
+    task_map = {task.get("id"): task for _, task in all_tasks}
+    # Sync YAML state into SQLite and release any expired claims.
+    from aletheia import agent_tasks_db as _db
+    _db.sync_tasks([task for _, task in all_tasks], root)
+    _db.release_expired_claims(root)
+    # Find tasks associated with this branch: prefer SQLite (authoritative for
+    # new claims), fall back to YAML ownership field (backward compat).
+    claimed_ids_on_branch: set[str] = set()
+    claimed_ids_active: set[str] = set()
+    if branch:
+        for claim in _db.get_claims_for_branch(branch, root):
+            tid = claim["task_id"]
+            claimed_ids_on_branch.add(tid)
+            if claim.get("status") == "in_progress":
+                claimed_ids_active.add(tid)
+    for _, task in all_tasks:
+        ownership = task.get("ownership") or {}
+        if isinstance(ownership, dict) and ownership.get("branch") == branch:
+            tid = task.get("id")
+            if tid:
+                claimed_ids_on_branch.add(tid)
+                if task.get("status") == "in_progress":
+                    claimed_ids_active.add(tid)
+    branch_tasks = [task_map[tid] for tid in claimed_ids_on_branch if tid in task_map]
+    matches = [task_map[tid] for tid in claimed_ids_active if tid in task_map]
     selected = matches[0] if len(matches) == 1 else None
     task_source = "active_branch" if selected else None
     if selected is None and not matches:
@@ -718,7 +756,7 @@ def bootstrap(root: Path | None = None) -> dict[str, Any]:
             selected = max(completed, key=lambda task: str(task.get("updated_at", "")))
             task_source = "branch_history"
         elif not branch_tasks:
-            completed = [task for _, task in load_tasks(root) if task.get("status") in {"done", "cancelled"}]
+            completed = [task for _, task in all_tasks if task.get("status") in {"done", "cancelled"}]
             if completed:
                 selected = max(completed, key=lambda task: str(task.get("updated_at", "")))
                 task_source = "global_history"
