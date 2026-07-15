@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-079
 title: Add read-only skip-halt diagnosis state machine
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -15,9 +15,11 @@ intent: 'Implement the remaining A-class WP-5 diagnosis/report foundation from t
   evidence, config, Risk, Execution, Live, sizing, credentials, or create executable
   proposals.'
 acceptance:
-- Diagnosis is read-only and distinguishes all six WP-5 operational findings plus unavailable.
+- Diagnosis is read-only and distinguishes all six WP-5 operational findings plus
+  unavailable.
 - Doctor reports the versioned diagnosis without presenting low WR as trading authority.
-- DCLS proves degraded aggregate signal quality creates no confidence, Proposal, Risk, or execution side effect.
+- DCLS proves degraded aggregate signal quality creates no confidence, Proposal, Risk,
+  or execution side effect.
 ownership:
   branch: iridite/skip-problem
   lease_holder: codex
@@ -25,9 +27,18 @@ ownership:
   expires_at: '2026-07-15T14:57:19.210461Z'
 base_commit: ec124d9084c70248b31aa2481f1d215efbfa25d3
 next_action:
-  command_key: workflow_tests
-  reason: Claim the task and define the first focused verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 5f0ec82ba04ac01f7d3f910fedcc58d6f4b62956
+  run_at: '2026-07-15T07:28:27.570174Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-079.md
-updated_at: '2026-07-15T06:57:19.210469Z'
+updated_at: '2026-07-15T07:28:27.708584Z'
