@@ -1,6 +1,6 @@
 schema_version: 1
 handoff_version: 1
-id: TASK-2026-076
+id: TASK-2026-078
 title: Decouple agent workflow CLI and add SQLite atomic task claims
 status: done
 packet_type: standard
@@ -34,5 +34,5 @@ verification:
   run_at: '2026-07-15T05:24:02.436339Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
-handoff: .agent/handoffs/TASK-2026-076.md
+handoff: .agent/handoffs/TASK-2026-078.md
 updated_at: '2026-07-15T05:24:10.366726Z'
