@@ -89,4 +89,18 @@ dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.8.0",
+    "ruff>=0.9",
 ]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# E/F: pycodestyle + pyflakes (core correctness rules).
+# Ignoring: E501 (line length — long lines are pervasive), E402 (module-level
+# import-not-at-top — legitimate lazy/conditional imports exist), E702/E731/E741
+# (style preferences), F401 (unused import — trust-boundary files use intentional
+# re-exports), F841 (unused variable — protective assignments), F402 (import
+# shadowed by loop var — one legitimate instance).
+select = ["E", "F"]
+ignore = ["E501", "E402", "E702", "E731", "E741", "F401", "F841", "F402"]

@@ -138,7 +138,6 @@ def test_recommend_promote_gates_paper_running(tmp_path, monkeypatch):
 # PCI-G02 — A路架构：observer tools in PI tool registry (L2a, missing)
 # ---------------------------------------------------------------------------
 
-import pytest  # noqa: E402 — placed after existing imports to avoid reshuffling
 
 
 @spec_claim(

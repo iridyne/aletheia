@@ -45,7 +45,6 @@ def _operator_prompt_context() -> dict:
     )
 )
 def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch):
-    from types import SimpleNamespace
     from aletheia.agent_shell import context
 
     monkeypatch.setattr(

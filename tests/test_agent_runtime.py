@@ -226,6 +226,6 @@ async def test_run_agent_tolerates_non_string_default_model_provider(tmp_path, m
     reset_db()
 
 
-def reset_db():
+def reset_db():  # noqa: F811
     from aletheia.storage.sqlite import reset_db as _reset
     _reset()

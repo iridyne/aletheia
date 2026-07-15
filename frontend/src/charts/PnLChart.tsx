@@ -12,6 +12,7 @@ interface Props {
 export default function PnLChart({ days }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
+  const [hintOpen, setHintOpen] = useState(false)
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['equity-curve', days],
     queryFn: () => api.getEquityCurve(days),
@@ -120,7 +121,6 @@ export default function PnLChart({ days }: Props) {
   const liveMarkTxt = currentMarkPoint == null
     ? 'unavailable'
     : `${currentMarkPoint.cumulative_pnl >= 0 ? '+' : ''}${currentMarkPoint.cumulative_pnl.toFixed(2)} USDT`
-  const [hintOpen, setHintOpen] = useState(false)
   const showHint = rawRows.length > 0 && genuineRows.length === 0
   const hintText = `No verified strategy outcomes yet. ${excludedOutcomeCount} recorded closes do not meet the current verification requirements; the gray line remains raw account history only.`
 

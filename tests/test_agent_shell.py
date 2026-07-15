@@ -1056,7 +1056,6 @@ async def test_runtime_reads_backend_recommendations(tmp_path, monkeypatch):
 async def test_runtime_uses_session_kind_context_profile_for_selected_branch(tmp_path, monkeypatch):
     _init_agent_shell_db(tmp_path, monkeypatch)
 
-    from aletheia.agent_shell.intent import CommandIntent
     from aletheia.agent_shell.operator_store import create_session_record
     from aletheia.agent_shell.runtime import AgentShellRuntime
 
@@ -1099,7 +1098,6 @@ async def test_runtime_uses_session_kind_context_profile_for_selected_branch(tmp
 async def test_runtime_includes_recent_session_context_and_trace_in_branch_summary(tmp_path, monkeypatch):
     _init_agent_shell_db(tmp_path, monkeypatch)
 
-    from aletheia.agent_shell.intent import CommandIntent
     from aletheia.agent_shell.operator_store import append_message, create_session_record
     from aletheia.agent_shell.runtime import AgentShellRuntime
 
@@ -1157,7 +1155,6 @@ async def test_runtime_includes_recent_session_context_and_trace_in_branch_summa
 async def test_runtime_includes_parent_branch_trace_for_nested_session_summary(tmp_path, monkeypatch):
     _init_agent_shell_db(tmp_path, monkeypatch)
 
-    from aletheia.agent_shell.intent import CommandIntent
     from aletheia.agent_shell.operator_store import append_message, create_session_record
     from aletheia.agent_shell.runtime import AgentShellRuntime
 

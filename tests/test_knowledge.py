@@ -183,7 +183,7 @@ async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monke
     review_items = repo.list_knowledge_items(item_type="post_trade_review", strategy_id=strategy.id)
     assert result["errors"] == []
     assert len(review_items) == 1
-    assert f"position:position-knowledge-review" in review_items[0]["tags"]
+    assert "position:position-knowledge-review" in review_items[0]["tags"]
     reset_db()
 
 

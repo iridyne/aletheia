@@ -243,7 +243,7 @@ def test_spawn_background_uses_create_no_window_on_windows(tmp_path, monkeypatch
     def fake_popen(args, **kwargs):
         captured["args"] = args
         captured["kwargs"] = kwargs
-        class P: pass
+        class P: pass  # noqa: E701
         return P()
 
     monkeypatch.setattr(lifecycle.subprocess, "Popen", fake_popen)
@@ -266,7 +266,7 @@ def test_spawn_background_posix_unchanged(tmp_path, monkeypatch):
 
     def fake_popen(args, **kwargs):
         captured["kwargs"] = kwargs
-        class P: pass
+        class P: pass  # noqa: E701
         return P()
 
     monkeypatch.setattr(lifecycle.subprocess, "Popen", fake_popen)

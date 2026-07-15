@@ -116,7 +116,7 @@ def reconcile_orders(
                     severity="info",
                     local_ref={"order_id": local["order_id"], "client_order_id": client_oid},
                     remote_ref={"venue_order_id": remote.venue_order_id, "status": "filled"},
-                    message=f"Local open order was filled on exchange",
+                    message="Local open order was filled on exchange",
                     recommended_action="backfill_fill",
                 ))
             elif remote.status == "cancelled":
@@ -126,7 +126,7 @@ def reconcile_orders(
                     severity="info",
                     local_ref={"order_id": local["order_id"]},
                     remote_ref={"venue_order_id": remote.venue_order_id},
-                    message=f"Local open order was cancelled on exchange",
+                    message="Local open order was cancelled on exchange",
                     recommended_action="auto_resolved",
                 ))
             # else: both open — consistent, no diff

@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from aletheia.data.collectors.hyperliquid import _HL_INFO_URL
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent

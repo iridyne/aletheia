@@ -1281,7 +1281,7 @@ async def get_dreaming_summary():
     Returns recent 24h activity across knowledge types + deprecated items.
     """
     _ensure_db()
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
     cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
 
@@ -1339,7 +1339,7 @@ async def get_reviews_summary():
     and the strategy IDs that still lack fresh review coverage.
     """
     _ensure_db()
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
 
     cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     cutoff_15m = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
@@ -1632,7 +1632,6 @@ async def cancel_serenity_run(run_id: str):
     if run["status"] not in ("queued", "running"):
         raise HTTPException(400, "Only queued or running runs can be cancelled")
 
-    from aletheia.storage.models import SerenityRunEvent
     now = datetime.now(timezone.utc).isoformat()
     repo.update_serenity_research_run(run_id, status="cancelled", finished_at=now, updated_at=now)
     repo.insert_serenity_run_event(SerenityRunEvent(

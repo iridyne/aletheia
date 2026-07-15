@@ -237,7 +237,7 @@ async def test_databricks_complete_omits_temperature():
         def json(self):
             return {"choices": [{"message": {"content": "OK"}}], "model": "m", "usage": {}}
 
-    async def fake_post(self, url, json=None, headers=None):
+    async def fake_post(self, url, json=None, headers=None):  # noqa: F811
         sent["payload"] = json
         return FakeResponse()
 
@@ -681,7 +681,7 @@ async def test_anthropic_native_stream():
         def __init__(self, *a, **k): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *a): pass
-        def stream(self, method, url, json=None, headers=None):
+        def stream(self, method, url, json=None, headers=None):  # noqa: F811
             return FakeStreamResp()
 
     with patch("httpx.AsyncClient", FakeClient):
@@ -720,7 +720,7 @@ async def test_openai_native_stream():
         def __init__(self, *a, **k): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *a): pass
-        def stream(self, method, url, json=None, headers=None):
+        def stream(self, method, url, json=None, headers=None):  # noqa: F811
             return FakeStreamResp()
 
     with patch("httpx.AsyncClient", FakeClient):

@@ -43,7 +43,8 @@ def test_pid_alive_for_current_process(tmp_path, monkeypatch):
     """The real _pid_alive must report THIS process (definitely alive) as alive.
     We monkeypatch the markers check to accept 'python' which will be present in
     the command line of any Python test runner."""
-    import os, platform
+    import os
+    import platform
     from aletheia.gateway import pidfile
     if platform.system() == "Windows":
         from aletheia.gateway import _win32_proc
@@ -170,7 +171,7 @@ def test_list_processes_posix_no_creationflags(monkeypatch):
     def fake_run(argv, **kwargs):
         calls["argv"] = argv
         calls["kwargs"] = kwargs
-        class R: stdout = ""
+        class R: stdout = ""  # noqa: E701
         return R()
     monkeypatch.setattr(pidfile.subprocess, "run", fake_run)
     pidfile._list_processes()

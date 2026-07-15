@@ -434,7 +434,6 @@ def test_causal_tables_not_prunable():
     """Invariant: the 7 causal-chain tables plus knowledge_items must never
     appear in _PRUNABLE — verified by attempting _delete_old_rows on each and
     asserting ValueError is raised every time."""
-    import pytest
     from aletheia.storage.repositories import _delete_old_rows
 
     causal = {

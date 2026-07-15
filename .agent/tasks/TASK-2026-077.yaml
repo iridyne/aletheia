@@ -1,0 +1,26 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-077
+title: 'CI coverage: fast/integration tests, ruff lint, ESLint, secrets scan'
+status: in_progress
+packet_type: tiny
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: 'Add five missing CI checks to ci.yml: fast regression tests (1868), integration
+  tests (689), Python ruff lint, frontend ESLint, and gitleaks secrets scan. Fix real
+  bugs found during lint setup (F541, F811, F821, rules-of-hooks, no-unused-expressions).'
+acceptance: []
+ownership:
+  branch: iridite/CI
+  lease_holder: claude
+  claimed_at: '2026-07-15T04:53:47.655354Z'
+  expires_at: '2026-07-15T12:53:47.655541Z'
+base_commit: 756cd40a61d6211c2ddaf1494ec524db4753a669
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-077.md
+updated_at: '2026-07-15T04:53:47.655551Z'
