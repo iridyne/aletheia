@@ -38,5 +38,13 @@ verification:
   run_at: '2026-07-15T01:58:53.514551Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 245a0c782783ec0f3eb58bb991d04aedd4ba85ad
+  run_at: '2026-07-15T02:02:55.113027Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-073.md
-updated_at: '2026-07-15T01:58:53.514728Z'
+updated_at: '2026-07-15T02:02:55.113207Z'
