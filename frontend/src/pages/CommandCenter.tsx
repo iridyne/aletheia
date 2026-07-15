@@ -493,7 +493,10 @@ function HeartbeatZone({
     .slice(0, 5)
 
   const opDisplay = getOperatorDisplayStatus(operatorStatus)
-  const isWorking = operatorStatus?.mode === 'Working'
+  // Busy = actively running ANY task (Working/Trading/Reviewing/Dreaming/Repairing),
+  // not just mode==='Working'. Internal mode names are implementation labels; is_busy
+  // is the honest "is the operator doing something right now" signal from the backend.
+  const isWorking = !!operatorStatus?.is_busy
   const intent = operatorStatus?.current_intent || null
   const lastSeen = operatorStatus?.last_seen_at || null
 
