@@ -1,4 +1,10 @@
-# 02 — 拟议实施蓝图（待审核）
+# 02 — 早期高层实施草案（已部分取代）
+
+> **2026-07-15 状态更新**：本文件保留为早期讨论记录。当前实施顺序、七项问题的完整
+> 覆盖与验收以 [04_comprehensive_skip_remediation_plan.md](04_comprehensive_skip_remediation_plan.md)
+> 为准。特别是 A1 的 `decision_evidence_epochs` 不实施：owner 已要求数据库重载以单一
+> [恢复 SOP](../../operations/DATABASE_RELOAD_RECOVERY_SOP.md) 处理，而非新增专门 runtime
+> feature。现有 `learning_policy_epochs` 仍负责任何 B 类行为版本的隔离。
 
 > 分类：证据完整性与只读诊断部分可作为数据链修复；任何 PI context、conviction、skip
 > 语义或候选放行的改变均为 **B 类新观察窗口**，必须创建新 policy epoch。

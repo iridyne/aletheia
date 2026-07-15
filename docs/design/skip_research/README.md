@@ -21,10 +21,12 @@ generation、选币、ranker 与其他 filters 的适用条件及不可越过的
 2. [00_current_state.md](00_current_state.md)：本次事故的已验证事实、推论和未知项。
 3. [01_research_basis.md](01_research_basis.md)：反事实、因果、回放与前瞻实验的
    方法边界；避免把观察数据误称为因果结论。
-4. [02_implementation_plan.md](02_implementation_plan.md)：拟议的 SDD 实施蓝图和
-   可验证验收条件。
+4. [04_comprehensive_skip_remediation_plan.md](04_comprehensive_skip_remediation_plan.md)：逐项覆盖
+   当前七个 Skip 问题的完整 SDD 工作包、B 类实验顺序、测试与验收；这是当前实现计划。
 5. [03_decisions_to_resolve.md](03_decisions_to_resolve.md)：必须由 owner 明确决定的
    治理问题。没有这些决定不得进入行为变更。
+6. [02_implementation_plan.md](02_implementation_plan.md)：早期高层草案；其中关于新增
+   `decision_evidence_epochs` 的建议已被当前计划否决，保留仅用于追溯讨论。
 
 ## 术语与不变边界
 
