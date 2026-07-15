@@ -1,6 +1,6 @@
 # B2 Debate 证据对齐 SDD
 
-> 状态：**讨论草案；尚未授权任何运行时行为变更。**
+> 状态：**已授权实施；B2 policy epoch 的观察尚未成熟。**
 > 日期：2026-07-15
 > 前置：B1.1（Ranker `medium` 供给地板与 PI durable pending queue rearm）已实施；B2
 > 只能作为新的 B 类 policy epoch 申请，不能与 B1.1 观察窗口混合。
@@ -34,26 +34,24 @@ candidate-specific 判断和 Risk/Execution 的硬边界仍保留。
 
 ### 2.1 运行时只能消费 candidate-conditioned evidence
 
-若 owner 启动 B2，每个待辩论候选必须先构造一个版本化的 `debate_evidence_summary`。其 cohort
+每个待辩论候选先构造一个版本化的 `b2_evidence` summary。其 cohort
 identity 至少包含：
 
 ```text
-evidence_epoch
-policy_epoch
+policy_epoch（同一 B2 epoch；不回用 B1 或重载前 aggregate）
 scanner_family
 direction
-venue + market_type
-rank eligibility tier / score bucket
+normalized market_type
+rank eligibility tier（已持久化 `signal_enqueue=passed`）/ score bucket（`<40`、`40–<50`、`>=50`）
 outcome horizon
 cost model version
-evaluation-time bucket
 ```
 
 `regime_tag` 只有在样本规模允许时才可加入；不得为了得到看似有利或不利的结果无限切片。候选的
 rank tier/score bucket 必须来自 Ranker 当次已持久化的事实，不能由 Debate 事后推测。
 
-summary 必须同时给出 `n_total`、`n_net`、outcome coverage、独立 candidate 数、相关批次说明、
-recency、成本后 `avg_net` 与收缩期望；字段、收缩先验与样本资格复用
+summary 必须同时给出 `n_total`、`n_net`、outcome coverage、独立 candidate 数、成本模型版本、
+成本后 `avg_net` 与零均值收缩期望；字段、收缩先验与样本资格复用
 [filter evidence contract](../filter_evidence_contract.md)，不得另造一套不兼容的“胜率”。
 
 ### 2.2 四种证据状态
@@ -127,6 +125,6 @@ evidence status 覆盖、每个状态的成熟 24h 净结果和 coverage，以�
 
 ## 7. 进入实现的门槛
 
-进入 B2 前需同时满足：B1.1 的队列消费与 terminal evidence 稳定；当前 epoch 的数据质量无未解决
-identity/结算故障；owner 对第 4 节选择作出明确批准；实现任务包含独立 spec、policy epoch、
-停止门和同 HEAD 的验证证据。未满足时，本文件仅作为后续 AI agent 的设计约束，不构成行为授权。
+B2 实施已经由 owner 授权。仍须满足：B1.1 的队列消费与 terminal evidence 稳定；实现任务包含
+独立 spec、policy epoch、停止门和同 HEAD 的验证证据。新 epoch 的第一批 24h outcome 未成熟前，
+只能输出 `insufficient_evidence`，不得借用重载前或全量 aggregate 补足样本。

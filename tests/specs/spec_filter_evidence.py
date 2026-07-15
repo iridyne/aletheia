@@ -259,6 +259,27 @@ def test_system_operator_carries_filter_trace_to_reflection():
 
 @spec_claim(
     SpecClaim(
+        "FE-B2", _CONTRACT, "§3.1 B2 System Operator candidate evidence", "L2b",
+        "B2 provides one same-epoch, Ranker-selected candidate evidence summary to assessment and both debate roles; insufficient evidence is neutral.",
+        status="implemented",
+    )
+)
+def test_b2_candidate_evidence_contract_is_explicit(tmp_path, monkeypatch):
+    from aletheia.analytics.pi_evidence import build_b2_evidence_summary, render_b2_evidence_summary
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    summary = build_b2_evidence_summary(
+        {"scanner_family": "momentum", "direction": "long", "market_type": "perp", "trade_score": 51},
+        policy_epoch_id="spec-b2",
+    )
+    assert summary["selection_tier"] == "ranker_enqueued"
+    assert summary["status"] == "insufficient_evidence"
+    assert "neutral, not a directional veto" in render_b2_evidence_summary(summary)
+
+
+@spec_claim(
+    SpecClaim(
         "FE-S14", _CONTRACT, "§3 terminal System Operator evidence", "L2b",
         "A candidate-scoped terminal PI skip atomically persists its operator trace and "
         "one shared fixed-horizon outcome cohort; evidence failure leaves the pending "

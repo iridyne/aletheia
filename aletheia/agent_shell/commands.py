@@ -1718,9 +1718,15 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     # Build three-layer enriched context
     ctx = build_enriched_trading_context()
     from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
+    from aletheia.agent_shell.b2_evidence_policy import (
+        attach_b2_candidate_evidence,
+        ensure_b2_candidate_evidence_policy_epoch,
+    )
 
     policy_epoch_id = ensure_skip_remediation_policy_epoch()
+    b2_policy_epoch_id = ensure_b2_candidate_evidence_policy_epoch()
     ctx["skip_policy_epoch_id"] = policy_epoch_id
+    attach_b2_candidate_evidence(ctx, policy_epoch_id=b2_policy_epoch_id)
 
     # A zero-pending heartbeat is an operator observation, not a trade decision.
     # Only short-circuit an explicit queue summary: lightweight unit callers that
@@ -1738,6 +1744,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             "observation_status": "observed",
             "operator_evaluation_event_id": event["id"],
             "policy_epoch_id": policy_epoch_id,
+            "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
             "pending_queue_remaining": 0,
             "pending_queue": queue,
         }
@@ -1819,6 +1826,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "proposal_status": "not_applicable",
         "proposal_reason": "action_not_trade",
         "filter_trace": decision.filter_trace,
+        "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
         # One bundle-level attribution unit for all overlapping Learning prompt channels.
         "learning_manifest": ctx.get("learning_manifest") or {},
     }

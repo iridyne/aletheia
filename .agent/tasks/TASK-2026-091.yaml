@@ -1,0 +1,23 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-091
+title: Implement B2 candidate-conditioned PI evidence
+status: in_progress
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: 'B2 policy epoch: replace System Operator raw family aggregate with one candidate-conditioned evidence summary shared by initial assessment, Bull and Bear; insufficient evidence is neutral; preserve Ranker, Risk, Execution and Live.'
+acceptance:
+- B2 creates a distinct policy epoch and never reuses full-pool family edge as PI prompt evidence.
+- The cohort is same B2 epoch, Ranker-enqueued, direction/market/score-bucket matched, 24h settled and cost-aware.
+- Insufficient or invalid evidence is neutral and one identical serialized summary reaches assessment, Bull and Bear.
+- Ranker, Risk, Execution and Live semantics are unchanged; focused tests and executable spec pass.
+base_commit: 15e26882ef8a009a46716d8dec59583b65e43f70
+next_action:
+  command_key: workflow_tests
+  reason: Run focused B2 evidence and System Operator lifecycle verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-091.md
+updated_at: '2026-07-15T11:54:10.292865Z'
