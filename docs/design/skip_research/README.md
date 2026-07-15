@@ -9,14 +9,21 @@
 PI prompt、conviction 门槛、Risk Engine、Execution Gateway、Live、额度或凭据；任何
 可能改变候选放行或交易行为的实现，仍须走新的 policy epoch、spec、测试和人工审核。
 
+`skip` 是全框架因果／反事实方法的一个具体落点，而不是该方法的全部边界。对 universe
+generation、选币、ranker 与其他 filters 的适用条件及不可越过的用语边界，见
+[全框架应用指引](../causal_counterfactual_research_guidance.md)。本分支仍严格只研究 PI
+`skip`；不在这里提出或实施 universe 行为变更。
+
 ## 阅读阶梯
 
-1. [00_current_state.md](00_current_state.md)：本次事故的已验证事实、推论和未知项。
-2. [01_research_basis.md](01_research_basis.md)：反事实、因果、回放与前瞻实验的
+1. [全框架应用指引](../causal_counterfactual_research_guidance.md)：可复用的方法、
+   universe 等后续模块的适用条件，以及本分支边界。
+2. [00_current_state.md](00_current_state.md)：本次事故的已验证事实、推论和未知项。
+3. [01_research_basis.md](01_research_basis.md)：反事实、因果、回放与前瞻实验的
    方法边界；避免把观察数据误称为因果结论。
-3. [02_implementation_plan.md](02_implementation_plan.md)：拟议的 SDD 实施蓝图和
+4. [02_implementation_plan.md](02_implementation_plan.md)：拟议的 SDD 实施蓝图和
    可验证验收条件。
-4. [03_decisions_to_resolve.md](03_decisions_to_resolve.md)：必须由 owner 明确决定的
+5. [03_decisions_to_resolve.md](03_decisions_to_resolve.md)：必须由 owner 明确决定的
    治理问题。没有这些决定不得进入行为变更。
 
 ## 术语与不变边界
