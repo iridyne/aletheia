@@ -508,13 +508,56 @@ def test_doctor_surfaces_skip_halt_evidence_gaps_read_only(tmp_path, monkeypatch
     assert len(checks) == 1
     check = checks[0]
     assert check.severity == "warn"
-    assert "candidate_skips=1" in check.detail
-    assert "missing_trace=1" in check.detail
-    assert "missing_outcome_seed=1" in check.detail
+    assert "raw_24h_candidate_skips=1" in check.detail
+    assert "raw_24h_missing_trace=1" in check.detail
+    assert "raw_24h_missing_outcome_seed=1" in check.detail
     assert "unscoped_heartbeat_skips=1" in check.detail
     assert "no_evaluable_candidate_events=0" in check.detail
     assert "finding=recording_incident" in check.detail
     assert "does not change PI, config, Risk, or execution" in check.fix_hint
+
+
+@spec_claim(
+    SpecClaim(
+        "FE-S16", _CONTRACT, "§3 terminal System Operator evidence", "L2b",
+        "Doctor keeps pre-remediation evidence gaps in raw counts but evaluates the "
+        "active Skip-remediation epoch independently, without changing a decision.",
+    )
+)
+def test_doctor_excludes_pre_remediation_skip_gaps_from_current_finding(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
+    from aletheia.diagnostics import doctor
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+
+    # This record represents the reload-era incomplete evidence.  It remains
+    # visible in the raw 24h count, but must not diagnose the newly started B1
+    # policy epoch as broken.
+    insert_pi_decision(PiDecision(
+        id="legacy-skip-without-evidence",
+        action="skip",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        opportunity_id="legacy-source",
+        signal_source="market_observer",
+        reasoning="legacy skip",
+    ))
+    epoch_id = ensure_skip_remediation_policy_epoch()
+
+    report = doctor.Report()
+    doctor._probe_skip_halt(report)
+
+    check = next(check for check in report.checks if check.name == "loop.skip_halt")
+    assert check.severity == "info"
+    assert "raw_24h_candidate_skips=1" in check.detail
+    assert "raw_24h_missing_trace=1" in check.detail
+    assert f"diagnosis_epoch={epoch_id}" in check.detail
+    assert "current_epoch_candidate_skips=0" in check.detail
+    assert "finding=not_applicable" in check.detail
 
 
 @spec_claim(
