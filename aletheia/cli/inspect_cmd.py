@@ -1123,20 +1123,346 @@ def reflection(
         typer.echo(f"  {ref}")
 
 
+# ---------------------------------------------------------------------------
+# Gateway HTTP helpers (alerts + infra-events share these)
+# ---------------------------------------------------------------------------
+
+def _gateway_base() -> str:
+    from aletheia.gateway.frontdoor_route import resolve_backend_base_url
+    return resolve_backend_base_url()
+
+
+def _gateway_fetch(path: str, *, base: str | None = None, timeout: int = 5) -> dict:
+    """Fetch a gateway JSON endpoint; raises typer.Exit(1) if unreachable."""
+    import urllib.request
+    import urllib.error
+    b = base or _gateway_base()
+    url = f"{b}{path}"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 — local-only URL
+            return json.loads(resp.read())
+    except urllib.error.URLError as exc:
+        typer.echo(f"Gateway unreachable ({b}): {exc.reason}", err=True)
+        raise typer.Exit(1)
+
+
+_SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
+
+_HEALTH_ISSUE_HINTS: dict[str, tuple[str, str]] = {
+    "kill_switch_active":              ("critical", "All trading blocked. Go to Risk & Controls → Kill Switch to release."),
+    "trading_paused":                  ("warning",  "Click Resume in the top bar to restart the trading loop."),
+    "llm_unavailable":                 ("critical", "Check Settings → Model Provider, then click Resume."),
+    "agent_failure_ratio":             ("critical", "Multiple agents failing. Check gateway logs for errors."),
+    "market_data_stale":               ("warning",  "Feed will refresh on next 5-min cycle. If stuck >30 min, restart the gateway."),
+    "code_drift":                      ("warning",  "Cold restart to load new code: aletheia restart."),
+    "health_check_error":              ("critical", "Internal health check threw an exception; check gateway logs."),
+}
+
+_RISK_VIOLATION_HINTS: dict[str, tuple[str, str]] = {
+    "kill_switch_active":                   ("critical", "Kill switch is engaged — all trading blocked."),
+    "live_disabled":                        ("warning",  "Live trading is disabled in config."),
+    "live_disabled_while_exchange_live":    ("warning",  "Exchange is in live mode but live_state is disabled."),
+    "permission_mode_not_live_eligible":    ("warning",  "Permission mode does not allow live trading."),
+    "max_daily_loss_exceeded":              ("critical", "Daily loss limit hit — trading blocked until reset."),
+    "account_mode_mismatch":               ("critical", "Account mode mismatch between config and exchange."),
+    "stale_market_data":                   ("warning",  "Market data is stale; risk checks may be unreliable."),
+    "symbol_blocked":                      ("warning",  "Symbol is on the blocked list."),
+    "symbol_not_allowed":                  ("warning",  "Symbol is not in the allowed whitelist."),
+    "permission_mode_insufficient":        ("warning",  "Permission mode is insufficient for this action."),
+    "exceeds_max_position_notional":       ("warning",  "Position size exceeds the notional cap."),
+    "max_live_positions_reached":          ("warning",  "Maximum number of open live positions reached."),
+    "exceeds_max_leverage":                ("warning",  "Leverage exceeds the configured cap."),
+    "max_total_live_exposure_exceeded":    ("warning",  "Total live exposure exceeds the cap."),
+    "exceeds_single_trade_risk":           ("warning",  "Single-trade risk exceeds the cap."),
+    "spot_market_disabled":                ("warning",  "Spot market trading is disabled."),
+    "futures_market_disabled":             ("warning",  "Futures market trading is disabled."),
+}
+
+
+def _normalize_health_issue(raw: str) -> dict:
+    """Convert a /api/health issues[] string to a normalized alert dict."""
+    if ":" in raw:
+        code, _, entity_id = raw.partition(":")
+        if code == "code_updated_pending_restart":
+            code = "code_drift"
+    else:
+        code, entity_id = raw, ""
+    severity, action = _HEALTH_ISSUE_HINTS.get(code, ("warning", ""))
+    return {
+        "category": "health_issue",
+        "severity": severity,
+        "code": code,
+        "entity_id": entity_id or None,
+        "message": raw,
+        "action": action or None,
+    }
+
+
+def _normalize_risk_violation(raw: str) -> dict:
+    """Convert a /api/risk/status violations[] string to a normalized alert dict."""
+    code = raw.split(":")[0] if ":" in raw else raw
+    entity_id = raw[len(code) + 1:] if ":" in raw else None
+    severity, action = _RISK_VIOLATION_HINTS.get(code, ("warning", "Check Risk & Controls for details."))
+    return {
+        "category": "risk_violation",
+        "severity": severity,
+        "code": code,
+        "entity_id": entity_id or None,
+        "message": raw,
+        "action": action,
+    }
+
+
+def _build_framework_status(status_data: dict, risk_data: dict, operator_data: dict) -> dict:
+    """Derive the concise framework state summary shown in the Web UI Status Bar."""
+    # Kill switch
+    kill_switch = "engaged" if (
+        risk_data.get("kill_switch_active") or status_data.get("kill_switch_active")
+    ) else "inactive"
+
+    # Gateway / scheduler
+    paused = bool(status_data.get("paused"))
+    scheduler_running = bool(status_data.get("scheduler_running"))
+    if paused:
+        gateway = "paused"
+        scheduler = "paused"
+    else:
+        gateway = "running"
+        scheduler = "running" if scheduler_running else "not_running"
+
+    # Operator
+    op_status = str(operator_data.get("status") or "offline").lower()
+    op_mode = str(operator_data.get("mode") or "")
+    if op_status in ("offline", ""):
+        operator_state = "offline"
+    elif op_status == "stale":
+        operator_state = "stale"
+    elif op_mode in ("Repairing", "Degraded", "Paused"):
+        operator_state = f"blocked:{op_mode.lower()}"
+    else:
+        operator_state = "running"
+
+    # Risk engine
+    risk_status = str(risk_data.get("status") or "not_evaluated")
+
+    return {
+        "kill_switch": kill_switch,
+        "gateway": gateway,
+        "scheduler": scheduler,
+        "operator": operator_state,
+        "risk_engine": risk_status,
+        "exchange_diverged": bool(status_data.get("exchange_diverged")),
+        "live_state": status_data.get("live_state"),
+        "permission_mode": status_data.get("permission_mode"),
+        "scheduler_state": status_data.get("scheduler_state"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# alerts — aggregated view of all Web UI warning sources + framework status
+# ---------------------------------------------------------------------------
+
+@inspect_app.command("alerts")
+def alerts(
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show all active alerts and framework status from the running gateway.
+
+    Equivalent to everything the Web UI Status Bar warns about. Aggregates:
+      1. /api/status        → gateway/scheduler paused, exchange diverged
+      2. /api/risk/status   → kill switch, risk violations (blocked/warning)
+      3. /api/health        → health issues (llm_unavailable, market_data_stale, …)
+      4. /api/health/infra/events → collector problems and runtime warnings
+      5. /api/operator/status → operator offline/stale/blocked, last_error
+
+    Also outputs a framework_status snapshot (kill switch, scheduler, operator,
+    risk engine) so agents can read basic system state without parsing alerts.
+    """
+    base = _gateway_base()
+    status_data   = _gateway_fetch("/api/status",                                        base=base)
+    risk_data     = _gateway_fetch("/api/risk/status",                                   base=base)
+    health_data   = _gateway_fetch("/api/health",                                        base=base)
+    infra_data    = _gateway_fetch("/api/health/infra/events?limit=20&min_severity=warning", base=base)
+    operator_data = _gateway_fetch("/api/operator/status",                               base=base)
+
+    rows: list[dict] = []
+
+    # 1. Gateway / scheduler paused
+    if status_data.get("paused"):
+        rows.append({
+            "category": "framework",
+            "severity": "warning",
+            "code":     "gateway_paused",
+            "entity_id": None,
+            "message":  "Gateway is paused — trading loop suspended.",
+            "action":   "Click Resume in the top bar or run: aletheia gateway resume",
+        })
+
+    if not status_data.get("paused") and not status_data.get("scheduler_running"):
+        rows.append({
+            "category": "framework",
+            "severity": "critical",
+            "code":     "scheduler_not_running",
+            "entity_id": None,
+            "message":  f"Scheduler is not running (state={status_data.get('scheduler_state')}).",
+            "action":   "Restart the gateway.",
+        })
+
+    # 2. Exchange config diverged
+    if status_data.get("exchange_diverged"):
+        rows.append({
+            "category": "framework",
+            "severity": "warning",
+            "code":     "exchange_diverged",
+            "entity_id": status_data.get("exchange"),
+            "message":  "Exchange config diverged — execution and market-data exchanges do not match.",
+            "action":   "Check Settings → Execution to align exchange config.",
+        })
+
+    # 3. Kill switch
+    if risk_data.get("kill_switch_active"):
+        rows.append({
+            "category": "risk",
+            "severity": "critical",
+            "code":     "kill_switch_active",
+            "entity_id": None,
+            "message":  "Kill switch is ENGAGED — all trading blocked.",
+            "action":   "Go to Risk & Controls → Kill Switch to release.",
+        })
+
+    # 4. Risk violations (deduplicate kill_switch already added above)
+    for raw in risk_data.get("violations") or []:
+        code = raw.split(":")[0] if ":" in raw else raw
+        if code == "kill_switch_active":
+            continue  # already added above
+        rows.append(_normalize_risk_violation(str(raw)))
+
+    # 5. health.issues (may overlap with kill_switch — deduplicate by code)
+    existing_codes = {r["code"] for r in rows}
+    for raw in health_data.get("issues") or []:
+        norm = _normalize_health_issue(str(raw))
+        if norm["code"] not in existing_codes:
+            rows.append(norm)
+            existing_codes.add(norm["code"])
+
+    # 6. Infra events (warning+)
+    for e in infra_data.get("events") or []:
+        rows.append({
+            "category":  "infra_event",
+            "severity":  e.get("severity") or "warning",
+            "code":      e.get("code"),
+            "entity_id": e.get("entity_id"),
+            "message":   e.get("message") or "",
+            "action":    e.get("action"),
+        })
+
+    # 7. Operator state
+    op_status = str(operator_data.get("status") or "offline").lower()
+    op_mode   = str(operator_data.get("mode") or "")
+    if op_status in ("offline", ""):
+        rows.append({
+            "category": "operator",
+            "severity": "critical",
+            "code":     "operator_offline",
+            "entity_id": None,
+            "message":  "Operator is offline — no heartbeat received.",
+            "action":   "Check gateway logs. If stuck, restart the gateway.",
+        })
+    elif op_status == "stale":
+        rows.append({
+            "category": "operator",
+            "severity": "warning",
+            "code":     "operator_stale",
+            "entity_id": None,
+            "message":  "Operator heartbeat is delayed — usually self-recovers in 1–2 min.",
+            "action":   "If stuck >5 min, restart the gateway.",
+        })
+    elif op_mode in ("Repairing", "Degraded", "Paused"):
+        _blocked_msgs = {
+            "Repairing": "Operator is repairing — trading loop suspended.",
+            "Degraded":  "Operator is degraded — trading loop may be suspended.",
+            "Paused":    "Operator is paused — click Resume to restart.",
+        }
+        rows.append({
+            "category": "operator",
+            "severity": "warning",
+            "code":     f"operator_blocked:{op_mode.lower()}",
+            "entity_id": None,
+            "message":  _blocked_msgs.get(op_mode, f"Operator mode: {op_mode}"),
+            "action":   "Click Resume in the top bar or check Command Center.",
+        })
+
+    last_error = operator_data.get("last_error")
+    if last_error:
+        rows.append({
+            "category":  "operator",
+            "severity":  "critical",
+            "code":      "operator_last_error",
+            "entity_id": None,
+            "message":   str(last_error),
+            "action":    "Check gateway logs or restart the operator loop.",
+        })
+
+    rows.sort(key=lambda r: _SEVERITY_ORDER.get(str(r.get("severity")), 99))
+
+    fw = _build_framework_status(status_data, risk_data, operator_data)
+
+    if json_output:
+        typer.echo(json.dumps(
+            {"framework_status": fw, "alerts": rows, "alert_count": len(rows)},
+            indent=2, ensure_ascii=False, default=str,
+        ))
+        return
+
+    # Text output — framework status first, then alerts
+    w = 14
+    typer.echo("=== Framework Status ===")
+    typer.echo(f"  {'Kill Switch':<{w}}: {fw['kill_switch']}")
+    typer.echo(f"  {'Gateway':<{w}}: {fw['gateway']}")
+    typer.echo(f"  {'Scheduler':<{w}}: {fw['scheduler']}  (state={fw['scheduler_state']})")
+    typer.echo(f"  {'Operator':<{w}}: {fw['operator']}")
+    typer.echo(f"  {'Risk Engine':<{w}}: {fw['risk_engine']}")
+    typer.echo(f"  {'Live State':<{w}}: {fw['live_state']}")
+    typer.echo(f"  {'Permission':<{w}}: {fw['permission_mode']}")
+    if fw["exchange_diverged"]:
+        typer.echo(f"  {'Exchange':<{w}}: DIVERGED")
+    typer.echo("")
+
+    if not rows:
+        typer.echo("=== Active Alerts: none ===")
+        return
+
+    typer.echo(f"=== Active Alerts ({len(rows)}) ===")
+    for r in rows:
+        sev = str(r.get("severity") or "warning").upper()
+        code = r.get("code") or ""
+        entity = f"  entity={r['entity_id']}" if r.get("entity_id") else ""
+        cat = r.get("category", "")
+        typer.echo(f"[{sev}] {code}{entity}  ({cat})")
+        typer.echo(f"  {r.get('message') or ''}")
+        if r.get("action"):
+            typer.echo(f"  → {r['action']}")
+
+
 @inspect_app.command("infra-events")
 def infra_events(
     severity: Optional[str] = typer.Option(None, "--severity", help="Filter: info | warning | critical"),
     limit: int = typer.Option(20, "--limit", "-n"),
     json_output: bool = typer.Option(False, "--json"),
 ):
-    """Show in-memory infra event buffer (diagnostic runtime events)."""
-    from aletheia.infra.events import list_infra_events
-    rows = list_infra_events(limit=limit, min_severity=severity)
+    """Show live infra events from the running gateway (same data as Web UI)."""
+    base = _gateway_base()
+    url = f"/api/health/infra/events?limit={limit}"
+    if severity:
+        url += f"&min_severity={severity}"
+    payload = _gateway_fetch(url, base=base)
+    rows = payload.get("events") or []
     display = [{
         "severity": r.get("severity"),
         "source": r.get("source"),
         "code": r.get("code"),
-        "message": (r.get("message") or "")[:100],
+        "entity_id": r.get("entity_id"),
+        "message": r.get("message") or "",
         "action": r.get("action"),
         "created_at": r.get("created_at") or r.get("ts"),
     } for r in rows]
