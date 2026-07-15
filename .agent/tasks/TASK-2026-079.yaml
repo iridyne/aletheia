@@ -1,0 +1,26 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-079
+title: Restore worktree HMR and add guarded dev API
+status: in_progress
+packet_type: standard
+scope:
+  boundary: Worktree HMR, isolated preview API, and fail-closed order and credential guards
+  excluded: production gateway lifecycle, risk semantics, live unlock, credential values, and local state facts
+intent: Provide fast worktree frontend HMR plus an opt-in isolated backend dev API
+  that cannot read credentials, execute orders, or affect the master gateway; preserve
+  production gateway behavior and verify both paths.
+acceptance:
+  - Worktree frontend development uses Vite HMR without starting, stopping, or restarting the master gateway.
+  - The default Vite proxy permits read methods to the master API and rejects API writes with a stable 403 reason code.
+  - The explicit dev API uses a Worktree-local preview data directory and refuses the reserved master ports.
+  - Preview mode cannot read or write credential values, cannot submit, re-execute, or approve a proposal before durable execution state changes, and cannot invoke machine-level gateway or update controls.
+  - Production frontend builds use content-hashed assets, and operator/developer documentation distinguishes preview from release acceptance.
+base_commit: 85abad403a1142199a71ebe8ca0feb05e432bb90
+next_action:
+  command_key: spec_execution
+  reason: Implement the preview safety guards and run the execution contract evidence.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-079.md
+updated_at: '2026-07-15T08:21:38.432061Z'

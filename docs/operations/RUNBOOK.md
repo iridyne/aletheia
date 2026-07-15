@@ -52,30 +52,23 @@ becomes unreachable during restart/self-heal, the page shows a fail-loud banner
 and, after a prolonged outage, an overlay with the recovery command. Browser
 notifications are opt-in from that banner because browsers require permission.
 
-## 2.5 Frontend reload (single-port development default)
+## 2.5 Worktree frontend and backend preview
 
-Use **http://127.0.0.1:8787/** for both daily operation and UI development.
-The old `:5173` Vite dev-server entrypoint is no longer the maintained path.
+`http://127.0.0.1:8787/` remains the daily-use gateway. Worktree UI changes use
+Vite HMR on `http://127.0.0.1:5173`; its default proxy can read `:8787` but
+rejects writes. It does not restart the gateway. For a backend change, explicitly
+start an isolated API on an unused `879x` port; it uses separate data and blocks
+secrets and execution. Follow [Development preview](DEVELOPMENT_PREVIEW.md) for
+the exact commands and safety contract.
 
-```powershell
-.\scripts\dev.ps1   # ensures gateway is running with dev reload on :8787
-```
-
-Architecture: the gateway serves the dashboard and `/api/*` from the same
-`8787` origin. `dev.ps1` starts `vite build --watch`, writes updated assets into
-`aletheia/dashboard_static/`, and restarts/enables the gateway's dev-reload SSE
-endpoint when needed. Edits in `frontend/src/*` rebuild the static bundle and the
-page reloads from `:8787`; Python changes are handled by the backend watcher.
-
-When you're done iterating, run the normal build once so the committed production
-assets are type-checked and up to date:
+When you're done iterating, run the normal production build once:
 
 ```powershell
 cd frontend; npm run build
 ```
 
-The `build` step writes into `aletheia/dashboard_static/`, which is what the
-gateway serves on `:8787`.
+The `build` step writes content-hashed assets into `aletheia/dashboard_static/`,
+which is what the gateway serves on `:8787`.
 
 ## 3. Configure a model provider (required for real analysis)
 

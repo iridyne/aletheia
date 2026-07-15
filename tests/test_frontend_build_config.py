@@ -13,33 +13,35 @@ def test_vite_build_empties_output_dir():
     assert "emptyOutDir: true" in cfg
 
 
-def test_dev_launcher_uses_single_gateway_port():
-    """Daily/dev UI should both use the gateway origin on :8787.
-
-    Regression guard for the old split-brain mode where the operator used
-    Vite :5173 during development but the shipped dashboard lived on :8787.
-    """
+def test_worktree_dev_launcher_uses_vite_hmr_without_gateway_lifecycle():
+    """Worktree UI development is isolated from the stable gateway on :8787."""
     script = Path("scripts/dev.ps1").read_text(encoding="utf-8")
-    assert "http://127.0.0.1:8787" in script
-    assert ":5173" not in script
-    assert "/api/dev/reload/status" in script
-    assert "gateway start --no-browser" in script
-    assert "gateway restart --no-browser" in script
+    assert "http://127.0.0.1:5173" in script
+    assert "npm run dev" in script
+    assert "gateway start" not in script
+    assert "gateway restart" not in script
 
     package = json.loads(Path("frontend/package.json").read_text(encoding="utf-8"))
-    assert package["scripts"]["dev"] == "npm run build:watch"
+    assert package["scripts"]["dev"] == "vite"
 
 
-def test_current_docs_point_development_to_8787_not_5173():
+def test_preview_docs_distinguish_stable_gateway_from_worktree_hmr():
     docs = [
         Path("AGENTS.md"),
         Path("README.md"),
         Path("docs/operations/RUNBOOK.md"),
         Path("docs/_ai/PROJECT_CONTEXT.md"),
+        Path("docs/operations/DEVELOPMENT_PREVIEW.md"),
     ]
     for path in docs:
         text = path.read_text(encoding="utf-8")
-        assert "127.0.0.1:8787" in text or ":8787" in text
-        assert "http://127.0.0.1:5173" not in text, f"{path} still points operators at :5173"
-        assert "Iterate against `:5173`" not in text
-        assert "Vite on `:5173`" not in text
+        assert "8787" in text, f"{path} must document the stable gateway"
+        assert "5173" in text, f"{path} must document worktree HMR"
+
+
+def test_vite_dev_proxy_blocks_writes_to_the_master_gateway():
+    cfg = Path("frontend/vite.config.ts").read_text(encoding="utf-8")
+    assert "preview_readonly_master_api" in cfg
+    assert "VITE_API_TARGET" in cfg
+    assert "isMasterGatewayTarget" in cfg
+    assert "entryFileNames" not in cfg

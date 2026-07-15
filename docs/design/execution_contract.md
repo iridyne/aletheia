@@ -110,6 +110,20 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 
 **Spec claims**：`EX-S07`（结构）/ `EX-B10`（paper_internal 免检）/ `EX-B11`（OKX demo）/ `EX-B12`（registry 模式 + fail-open）。`gateway.py:85-165`。
 
+### 3.4 Worktree preview runtime（fail-closed）
+
+`uv run aletheia dev api --port <879x>` 是显式、前台、隔离的开发 API，
+不是 gateway 的第二实例，也不得绑定主 gateway 的 `8787/8788` 端口。它只可
+使用当前 Worktree 的 `data/dev-preview/<port>`。在该模式下，Execution Gateway
+在写入 Proposal、claim、RiskDecision、Order 或调用 broker **之前**拒绝
+`submit_proposal` 与 `execute_existing_proposal`；dashboard 的 paper approval
+route 也在读取/更新 Proposal 前返回 `403 preview_execution_blocked`。
+
+该限制同时覆盖 `paper_internal` 与所有交易所模式，且不改变正常 gateway 的
+风险、执行、审计或 live 行为。凭据读取为空、凭据写入被拒绝；因此 preview
+只能用于界面/API 开发，不能用作交易模拟或订单验收环境。Executable claim:
+`EX-B13`。
+
 ### 3.3 交易所最小下单规则（开仓）
 
 对会发到交易所的开仓（demo/testnet/live），不得用行情源或本地猜测来决定最小下单量。首轮风控通过后，gateway 必须从**实际接收订单的交易所**读取该标的规则；`paper_internal` 不适用。

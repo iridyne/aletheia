@@ -1,81 +1,13 @@
-# Aletheia dev launcher — auto-reload stack on :8787 only.
-#
-# Architecture:
-#   browser  → http://127.0.0.1:8787  (gateway serves everything — API + static)
-#
-# Processes managed:
-#   1. Gateway (persistent, background — starts if not running)
-#   2. vite build --watch → dashboard_static/ (auto-rebuilds; gateway auto-restarts)
-#   3. watch_backend.py (auto-restarts gateway on .py changes)
-#
-# Usage:  pwsh -File scripts\dev.ps1   (or just  .\scripts\dev.ps1)
+# Worktree frontend HMR launcher. It never starts, stops, or restarts the main gateway.
+# Browser: http://127.0.0.1:5173; API defaults to read-only master http://127.0.0.1:8787.
+# To use an isolated API, first run `uv run aletheia dev api --port 8791`, then set
+# `$env:VITE_API_TARGET = 'http://127.0.0.1:8791'` before invoking this script.
 
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 
-# --- Safety check: refuse if live trading is enabled --------------------------
-$ConfigPath = Join-Path $ProjectRoot 'data\config.yaml'
-if (Test-Path $ConfigPath) {
-    $configContent = Get-Content $ConfigPath -Raw
-    if ($configContent -match 'state:\s*live_enabled') {
-        Write-Error "REFUSED: live trading is enabled in config.yaml. Dev reload cannot run in live mode."
-        exit 1
-    }
-}
-
-# --- Set dev reload env var ---------------------------------------------------
-$env:ALETHEIA_DEV_RELOAD = "1"
-
-# --- 1. Ensure the gateway is running on 8787 --------------------------------
-$Aletheia = Join-Path $ProjectRoot '.venv\Scripts\aletheia.exe'
-if (-not (Test-Path $Aletheia)) {
-    Write-Error "venv aletheia.exe not found at $Aletheia. Run 'uv sync' first."
-}
-
-function Test-DevReloadEnabled {
-    try {
-        $response = Invoke-RestMethod -Uri 'http://127.0.0.1:8787/api/dev/reload/status' -TimeoutSec 3
-        return ($response.enabled -eq $true)
-    } catch {
-        return $false
-    }
-}
-
-function Assert-GatewayRunning {
-    param([string]$Action)
-    Start-Sleep -Seconds 2
-    $currentStatus = & $Aletheia gateway status 2>&1 | Out-String
-    if ($currentStatus -match 'Gateway:\s+running') {
-        return $currentStatus
-    }
-    Write-Error "gateway failed after $Action. Last status:`n$currentStatus"
-}
-
-$status = & $Aletheia gateway status 2>&1 | Out-String
-if ($status -match 'Gateway:\s+running') {
-    if (Test-DevReloadEnabled) {
-        Write-Host "[ok] gateway already running on 127.0.0.1:8787 with dev reload" -ForegroundColor Green
-    } else {
-        Write-Host "[..] gateway is running without dev reload; restarting on single port 8787..." -ForegroundColor Yellow
-        & $Aletheia gateway restart --no-browser | Out-Null
-        $status = Assert-GatewayRunning 'dev-reload restart'
-        if (-not (Test-DevReloadEnabled)) {
-            Write-Error "gateway is running, but /api/dev/reload/status is not enabled. Check data/logs/errors.log."
-        }
-        Write-Host "[ok] gateway running on 127.0.0.1:8787 with dev reload" -ForegroundColor Green
-    }
-} else {
-    Write-Host "[..] starting gateway..." -ForegroundColor Yellow
-    & $Aletheia gateway start --no-browser | Out-Null
-    $status = Assert-GatewayRunning 'start'
-    if (-not (Test-DevReloadEnabled)) {
-        Write-Error "gateway is running, but /api/dev/reload/status is not enabled. Check data/logs/errors.log."
-    }
-    Write-Host "[ok] gateway running on 127.0.0.1:8787 with dev reload" -ForegroundColor Green
-}
-
-# --- 2. Ensure node_modules exists --------------------------------------------
+# --- Ensure node_modules exists ------------------------------------------------
 $Frontend = Join-Path $ProjectRoot 'frontend'
 $NodeModules = Join-Path $Frontend 'node_modules'
 $Vite = Join-Path $NodeModules 'vite\bin\vite.js'
@@ -90,35 +22,12 @@ if (-not (Test-Path $Vite)) {
     }
 }
 
-# --- 3. Start vite build --watch (background) ---------------------------------
-Write-Host "[..] starting vite build --watch (background)..." -ForegroundColor Yellow
-$buildWatch = Start-Job -ScriptBlock {
-    param($FrontendPath)
-    Set-Location $FrontendPath
-    & node node_modules\vite\bin\vite.js build --watch 2>&1
-} -ArgumentList $Frontend
-Write-Host "[ok] vite build --watch running (job $($buildWatch.Id))" -ForegroundColor Green
-
-# --- 4. Start backend watcher (foreground) ------------------------------------
-$Python = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
-$WatchScript = Join-Path $ProjectRoot 'scripts\watch_backend.py'
-
-Write-Host ""
-Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host "  Dev stack ready:" -ForegroundColor Cyan
-Write-Host "    Dashboard  → http://127.0.0.1:8787/" -ForegroundColor Cyan
-Write-Host "    Auto-reload: .py changes + vite rebuilds" -ForegroundColor Cyan
-Write-Host "    Ctrl+C     → stops watchers" -ForegroundColor Cyan
-Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host ""
-
+if (-not $env:VITE_API_TARGET) { $env:VITE_API_TARGET = 'http://127.0.0.1:8787' }
+Write-Host "[ok] Worktree HMR: http://127.0.0.1:5173" -ForegroundColor Green
+Write-Host "[ok] API target: $env:VITE_API_TARGET (writes to :8787 are blocked)" -ForegroundColor Green
+Push-Location $Frontend
 try {
-    $env:ALETHEIA_DEV_RELOAD = "1"
-    & $Python $WatchScript
+    npm run dev -- --host 127.0.0.1 --port 5173
 } finally {
-    # Cleanup background jobs on exit
-    Write-Host "`n[..] stopping background jobs..." -ForegroundColor Yellow
-    Stop-Job $buildWatch -ErrorAction SilentlyContinue
-    Remove-Job $buildWatch -Force -ErrorAction SilentlyContinue
-    Write-Host "[ok] dev stack stopped. Gateway continues running." -ForegroundColor Green
+    Pop-Location
 }

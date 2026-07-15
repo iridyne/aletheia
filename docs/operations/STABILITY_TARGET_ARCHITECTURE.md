@@ -58,7 +58,8 @@ Implemented/required controls:
   HTML root readiness, not just a successful `Popen`;
 - `vite build --watch` writes into `dashboard_static/` without emptying the
   served directory;
-- frontend uses `8787` as the maintained dev/daily entrypoint;
+- frontend uses `8787` as the maintained daily/release entrypoint; Worktree HMR
+  is isolated on `5173` and documented separately in `DEVELOPMENT_PREVIEW.md`;
 - dashboard connection guard fails loud and offers browser notifications;
 - lifecycle failures emit audit/error records and Windows/Telegram notifications
   where configured;
@@ -113,7 +114,8 @@ Implemented controls:
   JSON instead of connection-refused when the worker is down;
 - startup verification waits for `/api/ready` through the front door before
   declaring the gateway started;
-- dev build-watch remains single-port from the user's perspective.
+- production dashboard remains single-port from the user's perspective; preview
+  HMR does not control the front door.
 
 Exit checks:
 

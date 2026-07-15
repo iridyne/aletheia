@@ -13,7 +13,7 @@ window.addEventListener('vite:preloadError', (e) => {
   window.location.reload()
 })
 
-initDevReload()
+if (!import.meta.env.DEV) initDevReload()
 
 const queryClient = new QueryClient({
   defaultOptions: {

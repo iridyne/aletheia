@@ -125,6 +125,31 @@ def test_submit_calls_risk_first(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
+        "EX-B13", "execution_contract", "§3.4 preview runtime", "L2b",
+        "Preview runtime rejects proposal submission and re-execution before any durable execution state changes",
+    ),
+)
+def test_preview_runtime_blocks_execution_before_persistence(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+
+    import aletheia.execution.gateway as gateway
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(gateway, "is_preview_mode", lambda: True)
+
+    with pytest.raises(gateway.PreviewExecutionBlockedError, match="preview mode"):
+        gateway.submit_proposal(
+            symbol="BTC/USDT", direction="long", quantity=0.001,
+            price=60_000.0, execution_mode="paper_internal", market_type="spot",
+        )
+    with pytest.raises(gateway.PreviewExecutionBlockedError, match="preview mode"):
+        gateway.execute_existing_proposal("does-not-matter")
+
+    assert repo.list_trade_proposals(limit=10) == []
+
+
+@spec_claim(
+    SpecClaim(
         "EX-B02", "execution_contract", "§2 proposal status", "L2b",
         "TradeProposal default status is 'pending'",
     ),

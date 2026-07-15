@@ -12,6 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Body, Request
 from pydantic import BaseModel
 
+from aletheia.config.loader import is_preview_mode
 from aletheia.files.jsonl import write_audit
 from aletheia.gateway import autostart
 
@@ -27,6 +28,18 @@ class RestartRequest(BaseModel):
     changed_files: list[str] = []
 
 
+def _reject_preview_gateway_control() -> None:
+    if is_preview_mode():
+        from fastapi import HTTPException
+        raise HTTPException(
+            403,
+            detail={
+                "reason_code": "preview_gateway_control_blocked",
+                "message": "Gateway lifecycle and autostart control are unavailable in preview mode.",
+            },
+        )
+
+
 @router.get("/autostart")
 async def get_autostart():
     return autostart.status()
@@ -34,6 +47,7 @@ async def get_autostart():
 
 @router.post("/autostart")
 async def set_autostart(req: AutostartRequest):
+    _reject_preview_gateway_control()
     if req.enabled:
         result = autostart.enable(source="api")
     else:
@@ -78,6 +92,7 @@ async def restart_gateway(request: Request, body: Optional[RestartRequest] = Bod
     - Without --reload: os._exit(42) kills this process; the supervisor or
       autostart watchdog respawns fresh.
     """
+    _reject_preview_gateway_control()
     has_supervisor = not getattr(request.app.state, "_owns_pid", True)
     has_autostart = autostart.status().get("enabled", False)
     reload_mode = _is_reload_mode()

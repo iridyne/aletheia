@@ -2,9 +2,13 @@
 
 from pathlib import Path
 
-from aletheia.config.loader import get_data_dir
+from aletheia.config.loader import get_data_dir, is_preview_mode
 
 _SERVICE_NAME = "aletheia-trading-os"
+
+
+class PreviewSecretAccessError(RuntimeError):
+    """Raised when an isolated preview tries to persist a credential."""
 
 
 def _get_keyring():
@@ -22,6 +26,8 @@ def _fallback_path() -> Path:
 
 def set_secret(key: str, value: str) -> None:
     """Store a secret. Writes to encrypted file always; also tries keyring."""
+    if is_preview_mode():
+        raise PreviewSecretAccessError("secret writes are blocked in preview mode")
     value = value.strip()
     # Always write to the encrypted file so non-interactive sessions (services,
     # CLI running under a different Windows logon session) can read the secret
@@ -39,6 +45,8 @@ def set_secret(key: str, value: str) -> None:
 
 def get_secret(key: str) -> str | None:
     """Retrieve a secret. Returns None if not found."""
+    if is_preview_mode():
+        return None
     kr = _get_keyring()
     if kr:
         try:
@@ -93,6 +101,8 @@ def migrate_keyring_to_file() -> int:
     run under a different logon session (WinError 1312) and can only reach
     the file store.  Returns the number of secrets migrated.
     """
+    if is_preview_mode():
+        return 0
     import json
     kr = _get_keyring()
     if kr is None:

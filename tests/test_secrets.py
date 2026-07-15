@@ -1,6 +1,7 @@
 """Tests for secrets handling and redaction."""
 
 from unittest.mock import patch
+import pytest
 from aletheia.config.secrets import redact, set_secret, get_secret
 
 
@@ -40,3 +41,23 @@ def test_file_fallback_roundtrip(tmp_path):
         val = get_secret("test.key")
         assert val == "super_secret_value"
         assert get_secret("nonexistent") is None
+
+
+def test_preview_mode_never_reads_or_writes_secrets(monkeypatch):
+    import aletheia.config.secrets as secrets
+
+    monkeypatch.setattr(secrets, "is_preview_mode", lambda: True)
+    monkeypatch.setattr(
+        secrets,
+        "_get_keyring",
+        lambda: (_ for _ in ()).throw(AssertionError("preview must not read keyring")),
+    )
+    monkeypatch.setattr(
+        secrets,
+        "_file_get",
+        lambda _key: (_ for _ in ()).throw(AssertionError("preview must not read file secrets")),
+    )
+
+    assert secrets.get_secret("bitget.api_key") is None
+    with pytest.raises(secrets.PreviewSecretAccessError, match="preview mode"):
+        secrets.set_secret("bitget.api_key", "not-a-real-secret")

@@ -226,6 +226,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 
 .topbar-status { display: flex; align-items: center; gap: var(--space-3); flex-shrink: 0; }
+.dev-preview-banner { color: var(--yellow); border: 1px solid color-mix(in srgb, var(--yellow) 55%, transparent); border-radius: var(--r-sm); font: 500 var(--fs-2xs)/1 var(--mono); padding: 4px 6px; }
 
 /* ---------- Status cluster (Block 1 of topbar right) ----------
    3 dots + heartbeat + state word. Hover/focus reveals .status-popover. */
