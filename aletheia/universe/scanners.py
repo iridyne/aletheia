@@ -295,6 +295,9 @@ def score_derivatives(feat: dict) -> tuple[float, list[str], str | None]:
     funding = feat.get("funding_rate")
     oi_delta = feat.get("oi_delta_1h")
     ret_4h = feat.get("return_4h")
+    ret = feat.get("return_1h")
+    if ret is None:
+        ret = ret_4h
 
     # Extreme funding rate
     if funding is not None:
@@ -313,7 +316,14 @@ def score_derivatives(feat: dict) -> tuple[float, list[str], str | None]:
             else:
                 direction = "short"
 
-    # OI surge
+    # OI surge. A rising-OI move is itself a derivatives signal and may set the
+    # direction when funding hasn't. Previously OI only added score and never
+    # set direction, so a pure OI surge with neutral funding was zeroed below
+    # (direction stayed None) — that, plus the ~2-min delta that rarely cleared
+    # 10%, is why OI never contributed to this family in practice. Direction
+    # reads rising OI against price: OI up + price up = new longs; OI up + price
+    # down = new shorts. Funding-implied positioning still takes precedence; a
+    # falling-OI (deleveraging) move stays direction-ambiguous and only scores.
     if oi_delta is not None:
         if abs(oi_delta) > 20:
             score += 30.0
@@ -321,6 +331,13 @@ def score_derivatives(feat: dict) -> tuple[float, list[str], str | None]:
         elif abs(oi_delta) > 10:
             score += 20.0
             reasons.append(f"OI delta {oi_delta:+.0f}%")
+        if direction is None and oi_delta > 10 and ret is not None:
+            if ret > 0.5:
+                direction = "long"
+                reasons.append("OI build-up, price up")
+            elif ret < -0.5:
+                direction = "short"
+                reasons.append("OI build-up, price down")
 
     # Fallback when no derivatives data
     if funding is None and oi_delta is None:
