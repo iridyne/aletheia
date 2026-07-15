@@ -15,6 +15,18 @@ import type {
 } from './schemas.js'
 
 export class RecommendationEngine {
+  private isRecentFailedTask(task: PersistedOperatorTask, thresholdMinutes = 30): boolean {
+    if (task.status !== 'failed') {
+      return false
+    }
+    const terminalAt = task.completed_at || task.created_at
+    const parsed = Date.parse(terminalAt)
+    if (Number.isNaN(parsed)) {
+      return false
+    }
+    return Date.now() - parsed < thresholdMinutes * 60 * 1000
+  }
+
   private isTaskStuck(task: PersistedOperatorTask, thresholdMinutes = 30): boolean {
     if (task.status !== 'running') {
       return false
@@ -404,7 +416,7 @@ export class RecommendationEngine {
       })
     }
 
-    const failedTasks = (operatorTasks || []).filter(task => task.status === 'failed')
+    const failedTasks = (operatorTasks || []).filter(task => this.isRecentFailedTask(task))
     if (failedTasks.length > 0) {
       recommendations.push({
         id: 'failed-tasks',

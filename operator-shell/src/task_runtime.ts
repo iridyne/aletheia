@@ -31,6 +31,8 @@ function recommendationFingerprint(recommendation: OperatorRecommendation): stri
 }
 
 export class TaskRuntime {
+  private static readonly RUNNING_TASK_RECOVERY_TIMEOUT_MS = 30 * 60 * 1000
+
   private readonly terminalRecommendationFingerprints = new Set<string>()
   private queuedTasks: Array<{
     recommendationId: string | null
@@ -327,6 +329,40 @@ export class TaskRuntime {
       .map(task => this.toRuntimeTask(task, true))
     this.sortQueuedTasks()
     this.syncState()
+  }
+
+  async reconcileExpiredRunningTasks(
+    tasks: PersistedOperatorTask[],
+    now = Date.now(),
+  ): Promise<PersistedOperatorTask[]> {
+    const retained: PersistedOperatorTask[] = []
+    for (const task of tasks) {
+      if (task.status !== 'running') {
+        retained.push(task)
+        continue
+      }
+
+      const startedAt = task.started_at || task.created_at
+      const startedMs = Date.parse(startedAt || '')
+      const expired =
+        !Number.isNaN(startedMs) &&
+        now - startedMs >= TaskRuntime.RUNNING_TASK_RECOVERY_TIMEOUT_MS
+      if (!expired) {
+        retained.push(task)
+        continue
+      }
+
+      await this.safeUpdateTask(task.id, {
+        status: 'cancelled',
+        error: 'operator_runtime_recovery_timeout',
+        output_data: {
+          recovery_reason: 'running_task_expired',
+          started_at: startedAt,
+          timeout_minutes: TaskRuntime.RUNNING_TASK_RECOVERY_TIMEOUT_MS / (60 * 1000),
+        },
+      })
+    }
+    return retained
   }
 
   async completeActiveTask(output_data: Record<string, unknown>): Promise<void> {
