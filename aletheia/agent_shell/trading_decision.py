@@ -187,7 +187,7 @@ class DebateResult:
 _DECISION_SCHEMA = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": ["trade", "skip", "close", "reduce", "scale_in", "flip", "adjust_position"]},
+        "action": {"type": "string", "enum": ["trade", "skip"]},
         "symbol": {"type": "string"},
         "direction": {"type": "string", "enum": ["long", "short"]},
         "conviction": {"type": "integer", "minimum": 0, "maximum": 100},

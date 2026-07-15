@@ -555,8 +555,8 @@ def _catastrophic_stop_pct(position: dict, cfg) -> float:
     """Max adverse move (%) beyond which a position is force-closed regardless of its
     own stop — the Layer-0 backstop that makes handing stop discretion to the System
     Operator safe (exit-intent plan M6/D4). School-aware. 0.0 when disabled."""
-    risk = cfg.risk
-    if not getattr(risk, "catastrophic_stop_enabled", True):
+    risk = getattr(cfg, "risk", None)
+    if risk is None or not getattr(risk, "catastrophic_stop_enabled", True):
         return 0.0
     if position.get("trade_school") == "serenity":
         return float(getattr(risk, "catastrophic_stop_pct_serenity", 15.0) or 0.0)
@@ -582,7 +582,7 @@ def _layer0_safety_exit(position: dict, price: float, cfg) -> tuple[str, float] 
 
     # 2. Runtime liquidation proximity — leveraged positions only. Emergency de-risk
     #    when current price is within runtime_liquidation_buffer_pct of est. liq price.
-    risk = cfg.risk
+    risk = getattr(cfg, "risk", None)
     if getattr(risk, "runtime_liquidation_monitor_enabled", True):
         leverage = int(position.get("leverage") or 0)
         if leverage > 1:
@@ -634,7 +634,7 @@ def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
         school_max = cfg.trading.max_position_hold_hours
     horizon = plan.expected_horizon_hours
     if horizon and horizon > 0:
-        mult = getattr(cfg.risk, "horizon_hard_backstop_mult", 3.0) or 3.0
+        mult = getattr(getattr(cfg, "risk", None), "horizon_hard_backstop_mult", 3.0) or 3.0
         hard_hold = horizon * mult
         if school_max and school_max > 0:
             hard_hold = min(hard_hold, school_max)
@@ -752,57 +752,6 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
         position.get("symbol"), age_hours, horizon,
     )
     return True
-
-
-def _sync_exchange_closed(cfg) -> int:
-    """Detect positions the exchange bracket already closed and mark them locally.
-
-    For bitget_demo positions: fetches live exchange positions and closes any local
-    'open' position that the exchange no longer holds. Only runs when
-    exchange_tpsl_enabled=True to avoid spurious calls in pure-paper mode.
-    Returns count of positions synced.
-    """
-    if not cfg.trading.exchange_tpsl_enabled:
-        return 0
-    demo_positions = [p for p in list_positions(status="open") if p.get("execution_mode") == "bitget_demo"]
-    if not demo_positions:
-        return 0
-
-    try:
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.data.symbols import to_bitget
-        import asyncio
-        from concurrent.futures import ThreadPoolExecutor
-        client = BitgetClient(mode=cfg.exchange.mode)
-        try:
-            asyncio.get_running_loop()
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                exchange_pos = pool.submit(asyncio.run, client.get_positions()).result()
-        except RuntimeError:
-            exchange_pos = asyncio.run(client.get_positions())
-    except Exception as e:
-        logger.warning("_sync_exchange_closed: get_positions failed: %s", e)
-        return 0
-
-    # Build set of (canonical_symbol, hold_side) that exchange still holds
-    exchange_open: set = set()
-    for ep in exchange_pos:
-        qty = float(ep.quantity) if hasattr(ep, "quantity") else 0.0
-        if qty > 0:
-            from aletheia.data.symbols import to_canonical
-            exchange_open.add((to_canonical(ep.symbol), ep.side))
-
-    synced = 0
-    for p in demo_positions:
-        hold_side = "long" if p["direction"] in ("long", "buy") else "short"
-        if (p["symbol"], hold_side) not in exchange_open:
-            exit_price = _latest_price(p["symbol"]) or float(p.get("current_price") or p["entry_price"])
-            try:
-                close_position(p["id"], exit_price=float(exit_price), reason="exchange_bracket_triggered")
-                synced += 1
-            except Exception as e:
-                logger.warning("_sync_exchange_closed: close failed %s: %s", p["id"], e)
-    return synced
 
 def evaluate_open_positions() -> dict:
     """Evaluate all open paper positions and close any that hit an exit rule.

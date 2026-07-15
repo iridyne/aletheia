@@ -115,10 +115,16 @@ def save_exit_plan(position_id: str, plan: ExitPlan) -> None:
 
 
 def _resolve_stop(position: dict, cfg) -> tuple[float | None, bool]:
-    """Return (effective stop, operator_authored). Mirrors ``_effective_stop`` exactly."""
+    """Return (effective stop, operator_authored). Mirrors ``_effective_stop`` exactly,
+    including the native-proposal-protection check that prevents mutable config from
+    inventing a stop that Risk never approved for a proposal-originated position."""
     stop = position.get("stop_price")
     if stop:
         return float(stop), True
+    from aletheia.portfolio.position_manager import _native_proposal_protection
+    governed, proposal_stop = _native_proposal_protection(position, "stop_price")
+    if governed:
+        return proposal_stop, proposal_stop is not None
     pct = cfg.trading.default_stop_loss_pct
     entry = position.get("entry_price")
     if not pct or not entry or float(entry) <= 0:
@@ -130,10 +136,15 @@ def _resolve_stop(position: dict, cfg) -> tuple[float | None, bool]:
 
 
 def _resolve_target(position: dict, cfg) -> tuple[float | None, bool]:
-    """Return (effective target, operator_authored). Mirrors ``_effective_take_profit``."""
+    """Return (effective target, operator_authored). Mirrors ``_effective_take_profit``
+    exactly, including native-proposal-protection."""
     tp = position.get("take_profit_price")
     if tp:
         return float(tp), True
+    from aletheia.portfolio.position_manager import _native_proposal_protection
+    governed, proposal_tp = _native_proposal_protection(position, "take_profit")
+    if governed:
+        return proposal_tp, proposal_tp is not None
     pct = cfg.trading.default_take_profit_pct
     entry = position.get("entry_price")
     if not pct or not entry or float(entry) <= 0:

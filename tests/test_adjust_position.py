@@ -81,8 +81,3 @@ def test_horizon_change_rearms_wake():
 def test_adjust_missing_position():
     res = pm.apply_operator_adjustment("does-not-exist", new_stop=99.0)
     assert res.get("error") == "position_not_found_or_not_open"
-
-
-def test_schema_includes_adjust_position():
-    from aletheia.agent_shell.trading_decision import _DECISION_SCHEMA
-    assert "adjust_position" in _DECISION_SCHEMA["properties"]["action"]["enum"]
