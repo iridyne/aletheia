@@ -60,7 +60,7 @@ def test_data_collectors_keeps_collecting_during_layered_trading_pause(monkeypat
     assert calls == [1]
 
 
-def test_symbol_independent_phase_b_collectors_run_without_instruments(monkeypatch):
+def test_symbol_independent_context_collectors_run_without_instruments(monkeypatch):
     from aletheia.agent_runtime import scheduler
     from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
     from aletheia.data.collectors.defillama import DefiLlamaCollector
@@ -102,12 +102,118 @@ def test_symbol_independent_phase_b_collectors_run_without_instruments(monkeypat
     monkeypatch.setattr(CoinGeckoTopCollector, "collect", coingecko_collect)
     monkeypatch.setattr(DefiLlamaCollector, "collect", defillama_collect)
 
-    asyncio.run(scheduler._async_data_collectors(cfg, tick=1))
+    asyncio.run(scheduler._async_data_collector_context(cfg, tick=1))
 
-    assert bounded_labels == ["coingecko_top", "macro", "defillama"]
-    assert ("microstructure", "not_configured") in health
-    assert ("derivatives", "not_configured") in health
+    assert bounded_labels == ["defillama", "coingecko_top", "macro"]
     assert ("volume_scanner", "not_configured") in health
+    assert ("hyperliquid", "not_configured") in health
+    assert ("coinalyze", "not_configured") in health
+
+
+def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch):
+    """Shadow the reported incident without network or a real scheduler.
+
+    The core lane consumes 38 seconds of its own 40-second budget.  In the old
+    combined implementation, Hyperliquid and DefiLlama were reached only after
+    that work and were recorded ``skipped_budget``.  The context lane must start
+    with a new deadline, so both collectors still run in this deterministic
+    reproduction.
+    """
+    from aletheia.agent_runtime import scheduler
+    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
+    from aletheia.data.collectors.defillama import DefiLlamaCollector
+    from aletheia.data.collectors.derivatives import DerivativesCollector
+    from aletheia.data.collectors.hyperliquid import HyperliquidCollector
+    from aletheia.data.collectors.macro import MacroCollector
+    from aletheia.data.collectors.microstructure import MicrostructureCollector
+    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+
+    class _Clock:
+        now = 1_000.0
+
+        def monotonic(self):
+            return self.now
+
+        def advance(self, seconds):
+            self.now += seconds
+
+    clock = _Clock()
+    calls: list[str] = []
+    health: list[tuple[str, str]] = []
+
+    async def _core_micro(self, instruments):
+        calls.append("microstructure")
+        clock.advance(15)
+        return {"snapshots": [], "errors": []}
+
+    async def _core_derivatives(self, symbols):
+        calls.append("derivatives")
+        clock.advance(15)
+        return {"funding": [], "open_interest": [], "errors": []}
+
+    async def _volume(self, instruments):
+        calls.append("volume_scanner")
+        clock.advance(8)
+        return {"top_symbols": [], "observed_at": "shadow", "errors": []}
+
+    async def _coingecko(self, top_n):
+        calls.append("coingecko_top")
+        return {"rows": [], "movers_summary": None, "errors": []}
+
+    async def _macro(self, symbols):
+        calls.append("macro")
+        return {"snapshot": None, "errors": []}
+
+    async def _hyperliquid(self, symbols):
+        calls.append("hyperliquid")
+        return {"funding": [], "open_interest": [], "errors": []}
+
+    async def _defillama(self):
+        calls.append("defillama")
+        return {"snapshots": [], "errors": []}
+
+    monkeypatch.setattr("time.monotonic", clock.monotonic)
+    monkeypatch.setattr(
+        scheduler,
+        "_get_observed_instruments",
+        lambda _cfg: [SimpleNamespace(symbol="BTC/USDT")],
+    )
+    monkeypatch.setattr(
+        scheduler, "_get_derivative_symbols", lambda _instruments: ["BTC/USDT"]
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_record_collector_health",
+        lambda label, status, **_kwargs: health.append((label, status)),
+    )
+    monkeypatch.setattr(MicrostructureCollector, "collect", _core_micro)
+    monkeypatch.setattr(DerivativesCollector, "collect", _core_derivatives)
+    monkeypatch.setattr(VolumeScannerCollector, "collect", _volume)
+    monkeypatch.setattr(CoinGeckoTopCollector, "collect", _coingecko)
+    monkeypatch.setattr(MacroCollector, "collect", _macro)
+    monkeypatch.setattr(HyperliquidCollector, "collect", _hyperliquid)
+    monkeypatch.setattr(DefiLlamaCollector, "collect", _defillama)
+
+    cfg = SimpleNamespace(
+        market_data=SimpleNamespace(
+            enable_coingecko_top=True,
+            coingecko_top_n=10,
+            enable_coinalyze=False,
+            enable_hyperliquid=True,
+            enable_defillama=True,
+        )
+    )
+
+    asyncio.run(scheduler._async_data_collectors(cfg, tick=1))
+    asyncio.run(scheduler._async_data_collector_context(cfg, tick=1))
+
+    assert calls[:3] == ["microstructure", "derivatives", "volume_scanner"]
+    assert "hyperliquid" in calls
+    assert "defillama" in calls
+    assert ("hyperliquid", "empty") in health
+    assert ("defillama", "empty") in health
+    assert ("hyperliquid", "skipped_budget") not in health
+    assert ("defillama", "skipped_budget") not in health
 
 
 def test_sync_timeout_abandons_hung_function(monkeypatch):

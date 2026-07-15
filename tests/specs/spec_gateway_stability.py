@@ -19,6 +19,7 @@ Add this file to _import_all_specs() in tests/test_spec_conformance.py.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from pathlib import Path
 
 import pytest
@@ -394,6 +395,28 @@ def test_data_collectors_has_bounded_fanout():
     src = Path(sch.__file__).read_text(encoding="utf-8")
     assert "await micro.collect(symbols)" not in src, "microstructure collect must be _bounded"
     assert "await deriv.collect(symbols)" not in src, "derivatives collect must be _bounded"
+
+
+@spec_claim(
+    SpecClaim(
+        "GS-S12", _CONTRACT, "§data_collectors lane isolation", "L2a",
+        "Primary-venue collection and lower-priority market context have separate "
+        "scheduler jobs and independent wall-clock deadlines. Context sources may "
+        "not inherit an exhausted primary-venue budget, while the shared io executor "
+        "continues to serialize primary CCXT access.",
+        status="implemented",
+    ),
+)
+def test_data_collector_context_has_an_independent_bounded_lane():
+    from aletheia.agent_runtime import scheduler as sch
+
+    assert sch._DC_CONTEXT_DEADLINE_S < sch._ASYNC_JOB_TIMEOUT_SEC[
+        "data_collector_context"
+    ]
+    source = Path(sch.__file__).read_text(encoding="utf-8")
+    assert "data_collector_context" in sch._ESSENTIAL_JOBS
+    assert "_async_data_collector_context" in source
+    assert "asyncio.gather" in inspect.getsource(sch._async_data_collector_context)
 
 
 # ---------------------------------------------------------------------------

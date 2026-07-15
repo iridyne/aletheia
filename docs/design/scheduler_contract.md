@@ -24,7 +24,7 @@
 
 **启动时暂停**：`init_scheduler()` 在 `_scheduler.start()` 后检查 `cfg.runtime.paused`。当 `layered_pause_enabled=true` 时，只暂停开仓、观察者和 LLM/决策任务；下列 `_ESSENTIAL_JOBS` 仍派发，以维持市场价格、账户视图、保护性退出、对账、健康检查和数据维护。只有 `layered_pause_enabled=false` 的 blanket pause 才暂停整个 APScheduler。集合内任务不得再在函数体中因 `runtime.paused` 提前返回，这一一致性由 `tests/test_layered_pause.py` 锁定。
 
-当前 essential 集合：`market_data`、`data_collectors`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`。
+当前 essential 集合：`market_data`、`data_collectors`、`data_collector_context`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`。
 
 ---
 
@@ -87,6 +87,7 @@ _EXECUTOR_WORKERS = {
 | 23 | `risk_critic` | 430 | interval | hours=6 | agents | 300 | 300 |
 | 24 | `universe_refresh` | 436 | interval | minutes=10 | io | 600 | 120 |
 | 25 | `data_collectors` | 444 | interval | minutes=2 | io | 45 | 60 |
+| 25a | `data_collector_context` | 449 | interval | minutes=10 | io | 45 | 60 |
 | 26 | `guard_promotion` | — | cron | hour=4, minute=0, tz=Asia/Shanghai | io | — | 600 |
 | 27 | `ohlcv_nightly_backfill` | 457 | cron | hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30, tz=Asia/Shanghai | io | 3600 | 600 |
 | 28 | `okx_demo_symbols` | 464 | interval | hours=4 | io | — | 600 |
@@ -149,6 +150,9 @@ System Operator 使用两个互不覆盖的健康身份：
 - `data_collectors` 中由 scheduler 负责落库的 derivatives 输出，必须等 funding/OI 写库完成后才记域成功；
   任一写入失败以稳定 `derivatives_*_persist_failed` 码把域标为 failed，并把整个 fan-out 记为 partial failure，
   但不阻断同轮其它数据域。
+- `data_collectors` 只承担主交易所实时 orderbook/Funding/OI；`data_collector_context` 有独立的 40 秒时间盒，
+  负责较慢的跨源上下文。两个 job 共享单线程 `io` executor，因此主交易所 CCXT 仍串行；context job 内仅独立
+  公共 HTTP 请求可并发等待。LSR 和稀疏 derivatives history 都不得占用实时 Funding/OI 的时间盒。
 - `market_data` 与 `price_feed` 即使保留了同轮成功抓取，只要返回 `errors` 非空，就分别以
   `market_data_reported_errors` / `price_feed_reported_errors` 登记任务失败；空观察列表且 `errors=[]` 仍是合法成功。
 - `exchange_sync.sync_all_exchanges()` 的公开契约规定 `None` 是所有账户视图均失败，scheduler 以

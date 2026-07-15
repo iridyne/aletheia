@@ -11,6 +11,7 @@ See GAP-DU-C02 / data_utilization.md §4 for the full rationale.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -29,6 +30,9 @@ logger = logging.getLogger("aletheia.data.collectors.derivatives")
 # Fed into OpenInterestSnapshot.long_short_ratio at write time; normalizer's
 # compute_leverage_state already consumes long_short_ratio into crowding_score.
 _BINANCE_LSR_URL = "https://fapi.binance.com/futures/data/globalLongShortAccountRatio"
+# LSR enriches OI but is not allowed to consume the primary venue's live
+# Funding/OI budget.  A partial result is honest and remains useful.
+_LSR_BUDGET_SEC = 4.0
 
 
 class DerivativesCollector:
@@ -51,7 +55,12 @@ class DerivativesCollector:
         lsr_map: dict[str, float] = {}
         try:
             if cfg.market_data.enable_long_short_ratio:
-                lsr_map = await _fetch_lsr_binance_batch(symbols)
+                lsr_map = await asyncio.wait_for(
+                    _fetch_lsr_binance_batch(symbols), timeout=_LSR_BUDGET_SEC
+                )
+        except asyncio.TimeoutError:
+            errors.append("lsr_batch_timeout")
+            logger.debug("LSR batch fetch exceeded %.1fs local budget", _LSR_BUDGET_SEC)
         except Exception as e:
             errors.append(f"lsr_batch: {e}")
             logger.debug("LSR batch fetch failed (non-fatal): %s", e)
@@ -85,31 +94,6 @@ class DerivativesCollector:
                     errors.append(f"oi {sym}: {e}")
                     logger.debug("OI fetch failed for %s: %s", sym, e)
 
-            # Optional history backfill — runs only when local DB is sparse (per
-            # spec MS-C05 idempotency). funding_rate_history is well-supported on
-            # all four exchanges; open_interest_history is unsupported on Bitget
-            # (per spec MS-C06: must not raise on that path).
-            history_hours = getattr(cfg.market_data, "derivatives_history_hours", 0)
-            if history_hours > 0:
-                for sym in symbols:
-                    perp_sym = _to_perp_symbol(sym, exchange)
-                    if not perp_sym:
-                        continue
-                    try:
-                        await _maybe_backfill_funding_history(
-                            exchange, sym, perp_sym, primary_name, history_hours,
-                            errors=errors,
-                        )
-                    except Exception as e:
-                        errors.append(f"funding_history {sym}: {e}")
-                    try:
-                        await _maybe_backfill_oi_history(
-                            exchange, sym, perp_sym, primary_name, history_hours,
-                            errors=errors,
-                        )
-                    except Exception as e:
-                        errors.append(f"oi_history {sym}: {e}")
-
         finally:
             await provider.close()
 
@@ -118,6 +102,44 @@ class DerivativesCollector:
             "open_interest": oi,
             "errors": errors,
         }
+
+    async def collect_history(self, symbols: list[str]) -> dict[str, Any]:
+        """Best-effort sparse history backfill outside the live Funding/OI path."""
+        from aletheia.data.ccxt_provider import get_market_data_provider
+        from aletheia.config.loader import load_config
+
+        cfg = load_config()
+        history_hours = getattr(cfg.market_data, "derivatives_history_hours", 0)
+        if history_hours <= 0:
+            return {"errors": []}
+
+        provider = get_market_data_provider()
+        errors: list[str] = []
+        primary_name = provider._primary_name
+        try:
+            exchange = provider._ensure_primary()
+            await exchange.load_markets()
+            for sym in symbols:
+                perp_sym = _to_perp_symbol(sym, exchange)
+                if not perp_sym:
+                    continue
+                try:
+                    await _maybe_backfill_funding_history(
+                        exchange, sym, perp_sym, primary_name, history_hours,
+                        errors=errors,
+                    )
+                except Exception as exc:
+                    errors.append(f"funding_history {sym}: {exc}")
+                try:
+                    await _maybe_backfill_oi_history(
+                        exchange, sym, perp_sym, primary_name, history_hours,
+                        errors=errors,
+                    )
+                except Exception as exc:
+                    errors.append(f"oi_history {sym}: {exc}")
+        finally:
+            await provider.close()
+        return {"errors": errors}
 
 
 def _to_perp_symbol(spot_symbol: str, exchange) -> str | None:
@@ -318,5 +340,3 @@ async def _fetch_lsr_binance_batch(symbols: list[str]) -> dict[str, float]:
             except Exception as e:
                 logger.debug("LSR fetch failed for %s: %s", sym, e)
     return results
-
-

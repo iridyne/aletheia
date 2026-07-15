@@ -1,0 +1,38 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-075
+title: Isolate collector budgets with deterministic shadow proof
+status: in_progress
+packet_type: standard
+scope:
+  boundary: Scheduler-owned public-data collection lanes, collector time budgets,
+    deterministic shadow verification, and the required scheduler contract/docs.
+  excluded: Risk policy, order execution semantics, exchange integration and credentials,
+    live authority, universe scoring, sizing, and runtime-state changes.
+intent: Split collector scheduling lanes and protect the real-time derivatives path
+  so slow or stalled collectors cannot consume the budget of Hyperliquid or DefiLlama;
+  prove the behavior with an offline deterministic shadow scenario without changing
+  Risk, Execution, exchange credentials, or live authority.
+acceptance:
+- Core and context collectors have independent bounded schedules; a context collector
+  cannot inherit an exhausted core deadline.
+- Primary-exchange CCXT calls remain non-concurrent and providers remain per-call.
+- Optional derivatives LSR and history work cannot consume the live Funding/OI
+  collection budget.
+- A deterministic offline shadow test reproduces the former starvation and proves
+  fresh Hyperliquid and DefiLlama results under the corrected scheduler.
+- Focused tests, affected executable specs, architecture fitness, and strict workflow
+  validation pass.
+ownership:
+  branch: iridite/Collect-consecutive-problem
+  lease_holder: codex-collector-shadow
+  claimed_at: '2026-07-15T04:01:52.262148Z'
+  expires_at: '2026-07-16T04:01:52.262300Z'
+base_commit: 95db840be3bc34e7d59870ebb222c68073023243
+next_action:
+  command_key: collector_shadow
+  reason: Run the registered deterministic shadow and affected collector/data-contract checks at the finished branch head.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-075.md
+updated_at: '2026-07-15T04:01:52.262307Z'

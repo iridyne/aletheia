@@ -436,7 +436,7 @@ def test_regime_is_inline_not_separate_collector():
 @spec_claim(
     SpecClaim(
         "DU-S06", _CONTRACT, "§coinalyze scheduler + config", "L2a",
-        "CoinalyzeCollector 已被 scheduler.py 注册到 _async_data_collectors job "
+        "CoinalyzeCollector 已被 scheduler.py 注册到 _async_data_collector_context job "
         "（仿 HyperliquidCollector 模式），且 config/schema.py 定义了 "
         "enable_coinalyze（bool）和 coinalyze_api_key（str|None）字段。"
         "两个结构断言共同保证：采集器不仅存在，还被实际调度，且可通过配置启停。",
@@ -447,12 +447,12 @@ def test_coinalyze_registered_in_scheduler_and_config():
     import inspect
     from aletheia.config import schema as schema_mod
 
-    # 1) scheduler.py 含 CoinalyzeCollector 字符串（已注册到 _async_data_collectors）
+    # 1) scheduler.py 含 CoinalyzeCollector 字符串（已注册到 context lane）
     scheduler_py = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
     scheduler_src = scheduler_py.read_text(encoding="utf-8")
     assert "CoinalyzeCollector" in scheduler_src, (
         "scheduler.py must reference CoinalyzeCollector "
-        "(it should be registered in _async_data_collectors, see DU-S06)"
+        "(it should be registered in _async_data_collector_context, see DU-S06)"
     )
 
     # 2) config schema 定义 enable_coinalyze + coinalyze_api_key
@@ -707,7 +707,7 @@ def test_forward_outcome_edge_routed_to_pi():
 @spec_claim(
     SpecClaim(
         "DU-T01", _CONTRACT, "§coinalyze db write path", "L2b",
-        "data_collectors persists CoinalyzeCollector open_interest and liquidation "
+        "data_collector_context persists CoinalyzeCollector open_interest and liquidation "
         "outputs into open_interest_snapshots/liquidation_events. The test injects "
         "collector output offline, so it proves scheduler wiring without requiring "
         "a real Coinalyze API key.",
@@ -773,7 +773,8 @@ def test_scheduler_persists_coinalyze_outputs(monkeypatch):
 
     cfg = AletheiaConfig()
     cfg.market_data.enable_coinalyze = True
-    asyncio.run(sch._async_data_collectors(cfg, tick=1))
+    cfg.market_data.derivatives_history_hours = 0
+    asyncio.run(sch._async_data_collector_context(cfg, tick=1))
 
     assert len(oi_rows) == 1, "Coinalyze OI output was not persisted"
     assert oi_rows[0]["exchange"] == "coinalyze"
