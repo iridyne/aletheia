@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-082
 title: Harden manual resume and protective defaults
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: declare before implementation
@@ -16,9 +16,18 @@ acceptance:
   with truthful provenance.
 base_commit: 86eccc1fab515c38e9a4262549c0251c91ba42dc
 next_action:
-  command_key: workflow_tests
-  reason: Re-run P0 focused and lifecycle regressions on the rebased branch.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: cbe5349cfd11203bd034e79cdb1cc4d3e4969c84
+  run_at: '2026-07-15T15:42:10.784755Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-082.md
-updated_at: '2026-07-15T15:41:12.838534Z'
+updated_at: '2026-07-15T15:42:10.919655Z'
