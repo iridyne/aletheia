@@ -513,6 +513,7 @@ def test_doctor_surfaces_skip_halt_evidence_gaps_read_only(tmp_path, monkeypatch
     assert "missing_outcome_seed=1" in check.detail
     assert "unscoped_heartbeat_skips=1" in check.detail
     assert "no_evaluable_candidate_events=0" in check.detail
+    assert "finding=recording_incident" in check.detail
     assert "does not change PI, config, Risk, or execution" in check.fix_hint
 
 

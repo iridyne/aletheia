@@ -72,6 +72,10 @@ Opportunity 或无证据的 skip。若决策时没有完整方向、市场、ven
 skip、`operator_evaluation_events` 的 no-candidate heartbeat、pending 与 proposal 计数。无 target 记录
 不得混入 candidate effectiveness cohort；coverage 缺失是 `recording_incident` 的诊断输入，不授予自动
 放行、自动调参或执行权限。新 zero-pending heartbeat 只能写 observation event，不能再写无 target skip。
+`skip_halt` 报告必须同时给出版本化 finding：`not_applicable`、`awaiting_outcomes`、
+`recording_incident`、`protective_skip_observed`、`overrestriction_suspect`、
+`operator_liveness_incident` 或 `diagnosis_unavailable`。后两种 suspect/liveness 输出至多推荐
+不可执行 replay/shadow 草案；它们不是 Proposal、Risk 或配置 mutation 的权限。
 
 生产者在拒绝输入时，该原因是唯一解释事实：Observer、Universe emitter、Divergence scanner
 若无法写入终态记录，必须返回可重试错误，不能以“零 Opportunity、零原因”的成功结束。
