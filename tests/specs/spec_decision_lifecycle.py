@@ -1160,6 +1160,8 @@ def test_zero_pending_heartbeat_is_observed_without_trading_evaluation(tmp_path,
     ).fetchone()[0]
     assert '"aggregate_signal_health_candidate_veto": false' in epoch
     assert '"zero_pending_heartbeat_trading_evaluation": false' in epoch
+    assert '"ranker_neutral_confidence_floor": "medium"' in epoch
+    assert '"auto_tightened_confidence_supply_recovery": true' in epoch
     assert opportunity_status == "open"
 
 
