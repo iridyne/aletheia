@@ -175,8 +175,8 @@ def test_operator_loop_level1_tighten_stop_loss(tmp_path, monkeypatch):
         "AND actor='operator_loop' AND entity_id='default_stop_loss_pct'",
     ).fetchall()
     assert len(audit_rows) >= 1, (
-        f"Expected audit_events row for config_patch on default_stop_loss_pct, "
-        f"found none. _persist_action must write to audit_events."
+        "Expected audit_events row for config_patch on default_stop_loss_pct, "
+        "found none. _persist_action must write to audit_events."
     )
     row = audit_rows[0]
     assert row["before_state"] is not None, "before_state must be set"
@@ -406,7 +406,7 @@ def test_operator_loop_optuna_sweep_has_side_effect(tmp_path, monkeypatch):
     total_side_effects = len(optuna_artifacts) + len(pi_optuna) + len(optuna_job_rows)
 
     assert total_side_effects >= 1, (
-        f"trigger_optuna_sweep returned 'executed' but produced no tangible side effect. "
-        f"No optuna job row, no artifact, no pi_decision found. "
+        "trigger_optuna_sweep returned 'executed' but produced no tangible side effect. "
+        "No optuna job row, no artifact, no pi_decision found. "
         "OL-2: this function is a no-op — the 'executed' status is semantically false."
     )

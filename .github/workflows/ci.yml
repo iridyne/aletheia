@@ -21,6 +21,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  secrets-scan:
+    name: Secrets scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for leaked secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   backend:
     name: Python safety and contract gate
     runs-on: ubuntu-24.04
@@ -46,6 +62,9 @@ jobs:
 
       - name: Prepare test report directory
         run: mkdir -p test-results
+
+      - name: Lint Python
+        run: uv run ruff check aletheia/ tests/
 
       - name: Verify architecture and safety defaults
         run: uv run pytest tests/test_architecture_fitness.py -q --junitxml=test-results/architecture.xml
@@ -95,6 +114,74 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  fast-tests:
+    name: Fast regression suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Prepare test report directory
+        run: mkdir -p test-results
+
+      - name: Run fast regression tests
+        run: uv run pytest -m fast -q --tb=short --junitxml=test-results/fast.xml
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  integration-tests:
+    name: Integration test suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Prepare test report directory
+        run: mkdir -p test-results
+
+      - name: Run integration tests
+        run: uv run pytest -m integration -q --tb=short --junitxml=test-results/integration.xml
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   frontend:
     name: Dashboard build
     runs-on: ubuntu-24.04
@@ -114,6 +201,10 @@ jobs:
       - name: Install locked dashboard dependencies
         working-directory: frontend
         run: npm ci
+
+      - name: Lint dashboard
+        working-directory: frontend
+        run: npm run lint
 
       - name: Type-check and build dashboard
         working-directory: frontend

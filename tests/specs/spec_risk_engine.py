@@ -1034,7 +1034,7 @@ def test_max_open_demo_positions_blocks(tmp_path, monkeypatch):
     # Insert 2 open paper positions (reaching the limit)
     for i in range(2):
         pos = Position(
-            symbol=f"ETH/USDT", market_type="spot", direction="long",
+            symbol="ETH/USDT", market_type="spot", direction="long",
             quantity=0.01, entry_price=2000.0,
             execution_mode="paper_internal", status="open",
         )

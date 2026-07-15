@@ -453,7 +453,7 @@ function StatusBar() {
       {/* Block 3 — Pause/Resume action. */}
       <button
         className="topbar-btn secondary"
-        onClick={() => { setPauseErr(''); paused ? resumeMut.mutate() : pauseMut.mutate() }}
+        onClick={() => { setPauseErr(''); if (paused) { resumeMut.mutate() } else { pauseMut.mutate() } }}
         disabled={pauseMut.isPending || resumeMut.isPending}
         title={paused ? 'Resume agents' : 'Pause agents'}
       >

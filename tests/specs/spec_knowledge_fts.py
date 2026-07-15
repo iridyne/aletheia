@@ -58,7 +58,8 @@ _OPERATOR_LOOP = _ROOT / "aletheia" / "agent_shell" / "operator_loop.py"
     ),
 )
 def test_index_is_sole_fts_write_gate():
-    import ast, glob
+    import ast
+    import glob
     src = _MANAGER.read_text(encoding="utf-8")
     assert "def _index(" in src, "manager.py missing _index() function"
     assert "confidence != \"high_confidence\"" in src or "confidence == \"high_confidence\"" not in src.replace("!= ", "== "), \

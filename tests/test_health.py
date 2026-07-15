@@ -272,7 +272,7 @@ async def test_llm_complete_reports_failure_then_success(tmp_path, monkeypatch):
 
     class _Ok:
         async def complete(self, req):
-            class R: content = "hi"
+            class R: content = "hi"  # noqa: E701
             return R()
 
     monkeypatch.setattr(helpers, "get_provider", lambda name=None: _Ok())

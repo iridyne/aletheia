@@ -121,12 +121,12 @@ def test_demo_adopted_position_has_stop_and_tp(tmp_path, monkeypatch):
 
     assert row is not None, "adopted position row must exist in DB"
     assert row["stop_price"] is not None, (
-        f"demo adopted position stop_price must not be NULL (got None). "
-        f"Root cause: adopt_position() did not compute default SL at adoption time."
+        "demo adopted position stop_price must not be NULL (got None). "
+        "Root cause: adopt_position() did not compute default SL at adoption time."
     )
     assert row["take_profit_price"] is not None, (
-        f"demo adopted position take_profit_price must not be NULL (got None). "
-        f"Root cause: adopt_position() did not compute default TP at adoption time."
+        "demo adopted position take_profit_price must not be NULL (got None). "
+        "Root cause: adopt_position() did not compute default TP at adoption time."
     )
 
 
@@ -164,12 +164,12 @@ def test_live_adopted_position_has_stop_and_tp(tmp_path, monkeypatch):
 
     assert row is not None, "adopted position row must exist in DB"
     assert row["stop_price"] is not None, (
-        f"live adopted position stop_price must not be NULL — "
-        f"position_manager never auto-exits live positions, so the stored SL is "
-        f"the only protection for human review/manual close. Got None."
+        "live adopted position stop_price must not be NULL — "
+        "position_manager never auto-exits live positions, so the stored SL is "
+        "the only protection for human review/manual close. Got None."
     )
     assert row["take_profit_price"] is not None, (
-        f"live adopted position take_profit_price must not be NULL. Got None."
+        "live adopted position take_profit_price must not be NULL. Got None."
     )
 
 

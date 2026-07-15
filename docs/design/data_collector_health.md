@@ -2,14 +2,17 @@
 
 ## Purpose
 
-The `data_collectors` scheduler job intentionally has a 40-second wall-clock
-budget inside its 45-second job timeout. That bound prevents a stalled public
-endpoint from abandoning scheduler threads, but it also means a later domain can
-be skipped when earlier calls are slow. A running scheduler alone therefore does
-not prove that every data domain is being supplied.
+There are two bounded scheduler lanes, each with a 40-second wall-clock budget
+inside a 45-second job timeout. `data_collectors` runs primary-venue orderbook,
+Funding and OI every two minutes. `data_collector_context` runs volume ranking,
+Hyperliquid, DefiLlama, CoinGecko, macro, Coinalyze, and best-effort derivatives
+history every ten minutes. The second lane starts with a new deadline, so a slow
+primary source cannot consume the time reserved for Hyperliquid or DefiLlama.
 
-This design makes that distinction visible without increasing network budgets,
-collector concurrency, or trading authority.
+The shared `io` executor remains single-threaded: primary-exchange CCXT work is
+still serialized. Within the context lane, only independent public HTTP sources
+wait concurrently; SQLite writes remain serial. This avoids a global concurrency
+or budget increase while preventing the reported queue starvation.
 
 ## State model
 
@@ -39,18 +42,22 @@ responses, credentials, or exception messages.
 For the primary derivatives domain, collector-call success is deliberately
 deferred until funding/OI rows reach SQLite. If either repository write fails,
 the domain is `failed` with a stable `derivatives_*_persist_failed` code and the
-shared `data_collectors` job records a partial failure after the remaining
-domains finish. A fetched-but-unpersisted row is never reported as healthy data.
+`data_collectors` job records a partial failure. A fetched-but-unpersisted row
+is never reported as healthy data.
+
+Optional LSR enrichment has its own four-second local cap, and derivatives
+history runs only at the end of the context lane. Neither may consume the live
+Funding/OI collection budget.
 
 ## Pause and no-exchange behavior
 
-Trading pause must not stop public-data accumulation. `data_collectors` is an
-essential layered-pause job, so its task entry no longer exits merely because
+Trading pause must not stop public-data accumulation. Both collector lanes are
+essential layered-pause jobs, so their task entries do not exit merely because
 `runtime.paused=true`. A full scheduler pause still prevents job dispatch.
 
 When no observed instruments exist, symbol-dependent domains are marked
 `not_configured`; symbol-independent CoinGecko, macro, and DefiLlama collection
-continues on the normal Phase B cadence. This preserves research supply on a
+continues on the normal context-lane cadence. This preserves research supply on a
 local-paper installation with no configured execution exchange.
 
 ## Operator surfaces
@@ -72,7 +79,7 @@ and unconfigured domains are never declared overdue.
 
 ## Non-goals
 
-- No automatic budget increase, retry storm, or concurrency increase.
+- No automatic global budget increase, retry storm, or CCXT concurrency increase.
 - No change to market values, signal normalization, opportunity filters, risk, or
   execution.
 - No append-only collector event history. Detailed failures remain in bounded logs

@@ -78,9 +78,9 @@ def test_new_fields_not_in_trading_decision():
         if hits:
             leaks[field] = hits
     assert not leaks, (
-        f"Round 2 anti-hallucination boundary VIOLATED: new fields leaked into "
-        f"trading_decision.py — these fields must stay in enriched_context only.\n"
-        f"Leaks:\n" + "\n".join(f"  {fld}: {hits}" for fld, hits in leaks.items())
+        "Round 2 anti-hallucination boundary VIOLATED: new fields leaked into "
+        "trading_decision.py — these fields must stay in enriched_context only.\n"
+        "Leaks:\n" + "\n".join(f"  {fld}: {hits}" for fld, hits in leaks.items())
     )
 
 
@@ -96,9 +96,9 @@ def test_new_fields_not_in_pi_agent():
             if hits:
                 leaks.setdefault(field, []).extend(hits)
     assert not leaks, (
-        f"Round 2 boundary VIOLATED: new fields leaked into pi_agent_* — these "
-        f"fields must stay in enriched_context only.\n"
-        f"Leaks:\n" + "\n".join(f"  {fld}: {hits}" for fld, hits in leaks.items())
+        "Round 2 boundary VIOLATED: new fields leaked into pi_agent_* — these "
+        "fields must stay in enriched_context only.\n"
+        "Leaks:\n" + "\n".join(f"  {fld}: {hits}" for fld, hits in leaks.items())
     )
 
 
@@ -114,9 +114,9 @@ def test_new_fields_not_in_learning_dreaming_research():
             if hits:
                 leaks.setdefault(f"{subdir}::{field}", []).extend(hits)
     assert not leaks, (
-        f"Round 2 boundary VIOLATED: new fields leaked into "
-        f"learning/dreaming/research — Round 1 termination root cause replay risk.\n"
-        f"Leaks:\n" + "\n".join(f"  {key}: {hits}" for key, hits in leaks.items())
+        "Round 2 boundary VIOLATED: new fields leaked into "
+        "learning/dreaming/research — Round 1 termination root cause replay risk.\n"
+        "Leaks:\n" + "\n".join(f"  {key}: {hits}" for key, hits in leaks.items())
     )
 
 

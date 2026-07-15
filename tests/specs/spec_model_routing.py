@@ -65,7 +65,6 @@ def test_models_config_has_tier_fields():
 )
 def test_helpers_accept_provider_param():
     from aletheia.agents import helpers
-    import inspect
 
     for fn_name in ("llm_complete", "llm_structured", "llm_stream"):
         fn = getattr(helpers, fn_name)

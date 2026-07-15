@@ -228,7 +228,7 @@ def test_macro_snapshot_has_fng_fields():
     from aletheia.data.models import MacroSnapshot
     fields = MacroSnapshot.model_fields
     assert "fng_value" in fields, f"MacroSnapshot missing fng_value; have: {list(fields)}"
-    assert "fng_classification" in fields, f"MacroSnapshot missing fng_classification"
+    assert "fng_classification" in fields, "MacroSnapshot missing fng_classification"
 
 
 @spec_claim(

@@ -1505,11 +1505,11 @@ def _persist_assessment(summary: dict) -> None:
             f"skipped: {summary.get('actions_skipped',0)}",
         ]
         if health:
-            lines.append(f"\n### System Health")
+            lines.append("\n### System Health")
             for k, v in health.items():
                 lines.append(f"- {k}: {v}")
         if results:
-            lines.append(f"\n### Actions")
+            lines.append("\n### Actions")
             for r in results[:10]:
                 lines.append(f"- [{r.get('status','?')}] {r.get('action',r.get('kind','?'))}")
         content = "\n".join(lines)
