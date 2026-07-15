@@ -25,7 +25,7 @@ ownership:
   lease_holder: codex
   claimed_at: '2026-07-15T06:57:19.210311Z'
   expires_at: '2026-07-15T14:57:19.210461Z'
-base_commit: ec124d9084c70248b31aa2481f1d215efbfa25d3
+base_commit: b9079d58a121d6d547e56a9e08a6178d8bd038ea
 next_action:
   command_key: workflow_bootstrap
   reason: Task complete; run bootstrap and create or claim a new task before changing
@@ -36,7 +36,7 @@ verification:
   command: uv run pytest tests/test_agent_workflow.py -q
   command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
   exit_code: 0
-  commit: 5f0ec82ba04ac01f7d3f910fedcc58d6f4b62956
+  commit: 49a7073c5e3198325c8e95312419eae0ae59a391
   run_at: '2026-07-15T07:28:27.570174Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
