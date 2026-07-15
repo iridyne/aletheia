@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-071
 title: Refresh Overview portfolio metrics automatically
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: Overview frontend portfolio and PnL-curve refresh plus honest unavailable-value
@@ -25,9 +25,9 @@ ownership:
   expires_at: '2026-07-15T08:52:52.226658Z'
 base_commit: 461d825899e9b7c8a9e3be598eeb35edc922d5f0
 next_action:
-  command_key: workflow_tests
-  reason: Validate the task-workflow contract; the actual frontend build is recorded
-    separately because the catalogue shell chain is not executable by the verifier.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: workflow_tests
@@ -38,5 +38,13 @@ verification:
   run_at: '2026-07-15T00:56:36.702788Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 2cc56e9bb94bb1fa7a703c4c4eb1fada641b955d
+  run_at: '2026-07-15T00:56:54.124766Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-071.md
-updated_at: '2026-07-15T00:56:36.702945Z'
+updated_at: '2026-07-15T00:56:54.262873Z'
