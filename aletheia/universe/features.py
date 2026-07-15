@@ -83,6 +83,28 @@ def _positive_float(value) -> float | None:
     return parsed if parsed > 0 else None
 
 
+# Aggregate / DEX feeds to fall back to when the primary venue has no fresh
+# derivatives row for a symbol (Hyperliquid perps + Coinalyze cross-venue OI).
+_CROSS_VENUE_FALLBACK = ("hyperliquid", "coinalyze")
+
+
+def _fresh_deriv_with_fallback(getter, domain: str, symbol: str,
+                               primary_exchange: str | None, *, now: datetime) -> dict | None:
+    """Freshness-qualified derivatives read: primary venue first, then cross-venue
+    aggregate feeds. Lets a symbol the primary venue can't supply still get a
+    funding/OI value from a DEX/aggregate source rather than None."""
+    row = fresh_row(getter(symbol, exchange=primary_exchange), domain, now=now)
+    if row is not None:
+        return row
+    for venue in _CROSS_VENUE_FALLBACK:
+        if venue == primary_exchange:
+            continue
+        row = fresh_row(getter(symbol, exchange=venue), domain, now=now)
+        if row is not None:
+            return row
+    return None
+
+
 def _load_fresh_enrichment_rows(
     asset: dict, *, now: datetime,
 ) -> tuple[dict | None, dict | None, dict | None]:
@@ -103,15 +125,11 @@ def _load_fresh_enrichment_rows(
         now=now,
     )
     deriv_exchange = venue or None
-    fr_row = fresh_row(
-        repo.latest_funding_rate(symbol, exchange=deriv_exchange),
-        "funding",
-        now=now,
+    fr_row = _fresh_deriv_with_fallback(
+        repo.latest_funding_rate, "funding", symbol, deriv_exchange, now=now,
     )
-    oi_row = fresh_row(
-        repo.latest_open_interest(symbol, exchange=deriv_exchange),
-        "open_interest",
-        now=now,
+    oi_row = _fresh_deriv_with_fallback(
+        repo.latest_open_interest, "open_interest", symbol, deriv_exchange, now=now,
     )
     return ob_row, fr_row, oi_row
 
