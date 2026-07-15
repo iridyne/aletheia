@@ -453,6 +453,7 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     realized_pnl REAL DEFAULT 0,
     positions_count INTEGER DEFAULT 0,
     execution_mode TEXT NOT NULL,
+    account_equity_usdt REAL,
     snapshot_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -1768,6 +1769,10 @@ _ADDITIVE_COLUMNS = [
     ("last_ranked_at", "opportunities", "TEXT"),
     # Real exchange equity at snapshot time; NULL when exchange is unconfigured/stale.
     ("exchange_equity_usdt", "portfolio_snapshots", "REAL"),
+    # Explicit account equity at snapshot time.  Old local rows stored position
+    # notional in total_value_usdt, so their value remains NULL rather than being
+    # re-labelled as an account balance.
+    ("account_equity_usdt", "portfolio_snapshots", "REAL"),
     # Extended ticker fields added with CCXT migration (2026-06-08)
     ("high_24h", "market_snapshots", "REAL"),
     ("low_24h", "market_snapshots", "REAL"),

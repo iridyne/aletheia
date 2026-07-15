@@ -87,6 +87,7 @@ operators do not infer the real order target from the retained exchange preferen
 | GET | `/exchange/account` | Raw exchange account state (cached) |
 | GET | `/uta/state` | Unified Trading Account state (multi-broker) |
 | GET | `/market/portfolio-history` | Portfolio snapshot time series |
+| GET | `/market/account-equity-history` | One explicit account-equity snapshot series for the Overview; old local notional rows are excluded |
 
 `GET /portfolio` never adds an economically incomplete close as zero. Completeness fields are scoped to the
 same rows as their paired value:

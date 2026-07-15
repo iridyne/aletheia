@@ -663,6 +663,7 @@ export const api = {
     return fetchJson<any>(`/market/ohlcv?${params}`)
   },
   getPortfolioHistory: (days?: number) => fetchJson<any[]>(`/market/portfolio-history${days ? `?days=${days}` : ''}`),
+  getAccountEquityHistory: (days?: number) => fetchJson<AccountEquityHistory>(`/market/account-equity-history${days ? `?days=${days}` : ''}`),
 
   // Capital events (deposit/withdraw tracking)
   getNetDeposits: () => fetchJson<{ net_deposits_usdt: number; first_event_at: string | null }>('/capital/net-deposits'),
@@ -988,6 +989,13 @@ export interface EquityPoint {
   time: string
   pnl: number
   cumulative_pnl: number
+}
+
+export interface AccountEquityHistory {
+  source: 'local_paper_ledger' | 'exchange_account_snapshot'
+  state: 'available' | 'unavailable'
+  points: { time: string; equity_usdt: number }[]
+  as_of: string | null
 }
 
 export interface DrawdownPoint {

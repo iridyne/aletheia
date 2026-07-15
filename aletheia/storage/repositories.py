@@ -2667,6 +2667,40 @@ def list_portfolio_snapshots(limit: int = 100, days: int | None = None) -> list[
     return [dict(r) for r in rows]
 
 
+def list_account_equity_snapshots(
+    execution_mode: str,
+    limit: int = 100,
+    days: int | None = None,
+) -> list[dict]:
+    """Return one explicitly-account-valued snapshot series in ascending order.
+
+    `portfolio_snapshots.total_value_usdt` is intentionally not used as the
+    predicate: historical local-paper rows stored position notional there.  A
+    missing `account_equity_usdt` therefore means *not an account reading*, not
+    a zero balance.
+    """
+    db = get_db()
+    params: list[object] = [execution_mode]
+    where = "execution_mode = ? AND account_equity_usdt IS NOT NULL"
+    if days is not None and days > 0:
+        where += " AND snapshot_at >= datetime('now', ?)"
+        params.append(f"-{days} days")
+    params.append(limit)
+    rows = db.execute(
+        f"""
+        SELECT * FROM (
+            SELECT * FROM portfolio_snapshots
+            WHERE {where}
+            ORDER BY snapshot_at DESC, id DESC
+            LIMIT ?
+        )
+        ORDER BY snapshot_at ASC, id ASC
+        """,
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_latest_portfolio_snapshot() -> dict | None:
     rows = _select_all("portfolio_snapshots", order="snapshot_at DESC, id DESC", limit=1)
     return rows[0] if rows else None

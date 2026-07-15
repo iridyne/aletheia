@@ -227,6 +227,27 @@ class TestSnapshotConsistency:
         assert len(exc_rows) == 1
         assert exc_rows[0]["realized_pnl"] == 35.0
 
+    def test_local_paper_snapshot_uses_ledger_equity_not_position_notional(self, db, monkeypatch):
+        """A 400-USDT paper account with a 10-USDT mark has 410 equity, not 110 notional."""
+        import aletheia.config.loader as loader
+        from aletheia.portfolio.paper_account import set_cash_balance
+
+        config = loader.load_config()
+        config.exchange.paper_execution_mode = "paper_internal"
+        monkeypatch.setattr(loader, "load_config", lambda: config)
+        set_cash_balance(400.0, note="test account baseline")
+        repo.insert_position(Position(
+            id="account-equity-open", symbol="BTC/USDT", market_type="spot",
+            direction="long", quantity=1.0, entry_price=100.0, current_price=110.0,
+            unrealized_pnl=10.0, execution_mode="paper_internal", status="open",
+        ))
+        snap = compute_and_store_snapshot(execution_mode="paper_internal")
+
+        assert snap.total_value_usdt == 410.0
+        assert snap.account_equity_usdt == 410.0
+        row = repo.list_account_equity_snapshots("paper_internal")[0]
+        assert row["account_equity_usdt"] == 410.0
+
 
 # ---------- P1-1 + P1-4: /equity-curve endpoint filters ----------
 
@@ -374,6 +395,29 @@ class TestPortfolioHistoryCoverage:
         rows = resp.json()
         assert len(rows) == 1
         assert rows[0]["total_value_usdt"] == 10000
+
+    async def test_account_equity_history_excludes_legacy_position_notional_rows(self, client, monkeypatch):
+        """Only explicit account-equity snapshots can enter the Overview curve."""
+        import aletheia.config.loader as loader
+        c, _ = client
+        config = loader.load_config()
+        config.exchange.paper_execution_mode = "paper_internal"
+        monkeypatch.setattr(loader, "load_config", lambda: config)
+        now = datetime.now(timezone.utc)
+        repo.insert_portfolio_snapshot(PortfolioSnapshot(
+            total_value_usdt=9999.0, execution_mode="paper_internal",
+            snapshot_at=(now - timedelta(minutes=2)).isoformat(),
+        ))
+        repo.insert_portfolio_snapshot(PortfolioSnapshot(
+            total_value_usdt=400.0, account_equity_usdt=400.0,
+            execution_mode="paper_internal", snapshot_at=now.isoformat(),
+        ))
+
+        body = (await c.get("/api/market/account-equity-history?days=7")).json()
+
+        assert body["source"] == "local_paper_ledger"
+        assert body["state"] == "available"
+        assert body["points"] == [{"time": now.isoformat(), "equity_usdt": 400.0}]
 
 
 # ---------- P2-2: auto-deposit uses available_usdt ----------

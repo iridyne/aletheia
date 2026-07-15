@@ -19,15 +19,20 @@ Layout = OpenAlice card-cluster (top) + TradingView large equity curve (bottom):
 ```
 
 - **Hero card:** account value big mono number + honest tag `demo · managed`.
-  - Placeholder source now: `/api/portfolio.total_value_usdt` (gross managed notional).
-  - LATER: real exchange balance (portfolio-sync-gap) replaces the number + tag.
+  - In local paper mode, `/api/portfolio.total_value_usdt` is the local cash
+    ledger plus the current marked open PnL. It is unavailable, never replaced
+    by position notional, when close economics are incomplete.
+  - In exchange modes, the source is the named fresh exchange/UTA account
+    equity as before.
 - **4 tiles, each with one line of context (OpenAlice style):**
   - Today PnL — `today_pnl` + day % , green/red.
   - Unrealized — `unrealized_pnl` ("holding").
   - Realized — `realized_pnl` ("all-time").
   - Exposure — `exposure_by_symbol` (BTC/ETH/SOL share).
-- **Equity curve:** full-width, larger than a sparkline, from `/api/market/portfolio-history`;
-  optional time-window toggle. TradingView-flavored — the chart is a main element.
+- **Equity curve:** full-width, larger than a sparkline, from
+  `/api/market/account-equity-history`; optional time-window toggle. It draws
+  one explicit account-equity snapshot series. Raw and verified strategy-PnL
+  cohorts remain in Analytics and never become extra Overview lines.
 
 ## Decision 2 — Agent activity feed (DECIDED)
 

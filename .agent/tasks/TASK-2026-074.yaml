@@ -1,0 +1,30 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-074
+title: Use one authoritative equity curve on Overview
+status: in_progress
+packet_type: standard
+scope:
+  boundary: Portfolio account-equity read model, snapshot API, Overview chart, and their documentation/tests.
+  excluded: Risk policy, order execution semantics, exchange integration, credentials, and runtime facts.
+intent: Make the Overview account chart read one durable account-equity snapshot source
+  in local paper mode, preserving raw-versus-verified analytics outside the main view.
+acceptance:
+  - Local-paper Overview account value uses ledger cash plus current marked PnL, never position notional.
+  - Account-equity snapshots carry explicit account-equity semantics; legacy notional snapshots cannot enter the Overview curve.
+  - Overview renders one account-equity series from the account snapshot endpoint; raw and verified PnL remain outside that view.
+  - API and data-model documentation plus focused regression tests describe and prove the boundary.
+ownership:
+  branch: fix/overview-authoritative-equity
+  lease_holder: codex
+  claimed_at: '2026-07-15T02:40:46.745643Z'
+  expires_at: '2026-07-15T10:40:46.745782Z'
+base_commit: 82e713ea57025a582762baf7be67a94538f4b302
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-074.md
+updated_at: '2026-07-15T02:40:46.862520Z'
+rebased_at: '2026-07-15T02:40:46.862392Z'

@@ -216,6 +216,26 @@ def test_historical_accounting_reconciliation_table_contract():
 
 @spec_claim(
     SpecClaim(
+        "DM-S28", "data_model", "§3 account-equity snapshots", "L2a",
+        "Overview account equity reads the explicit account_equity_usdt snapshot field; "
+        "legacy total_value_usdt rows are not silently relabelled as account balance.",
+        status="implemented",
+    ),
+)
+def test_account_equity_snapshot_contract_is_explicit():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent.parent
+    migration = (root / "aletheia" / "storage" / "migrations.py").read_text(encoding="utf-8")
+    repository = (root / "aletheia" / "storage" / "repositories.py").read_text(encoding="utf-8")
+    overview = (root / "frontend" / "src" / "charts" / "AccountEquityChart.tsx").read_text(encoding="utf-8")
+    assert '"account_equity_usdt", "portfolio_snapshots", "REAL"' in migration
+    assert "account_equity_usdt IS NOT NULL" in repository
+    assert "getAccountEquityHistory" in overview
+
+
+@spec_claim(
+    SpecClaim(
         "DM-S24", "data_model", "§3 OHLCV catch-up state", "L2a",
         "ohlcv_backfill_state has one durable row per exchange + canonical symbol + "
         "market_type + timeframe, preserving retry state without mixing instruments.",

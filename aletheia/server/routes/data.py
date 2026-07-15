@@ -1120,6 +1120,36 @@ async def get_portfolio_history(limit: int = 500, days: int | None = None):
     return repo.list_portfolio_snapshots(limit=limit, days=days)
 
 
+@router.get("/market/account-equity-history")
+async def get_account_equity_history(limit: int = 500, days: int | None = None):
+    """One stable account-equity curve for the Overview.
+
+    The endpoint selects the current account's explicit equity snapshot field.
+    It deliberately excludes old local `total_value_usdt` rows because those
+    recorded position notional rather than cash-account equity.
+    """
+    _ensure_db()
+    from aletheia.config.loader import load_config
+
+    local_paper = load_config().exchange.paper_execution_mode == "paper_internal"
+    execution_mode = "paper_internal" if local_paper else "exchange_account"
+    rows = repo.list_account_equity_snapshots(
+        execution_mode=execution_mode,
+        limit=limit,
+        days=days,
+    )
+    points = [
+        {"time": row["snapshot_at"], "equity_usdt": row["account_equity_usdt"]}
+        for row in rows
+    ]
+    return {
+        "source": "local_paper_ledger" if local_paper else "exchange_account_snapshot",
+        "state": "available" if points else "unavailable",
+        "points": points,
+        "as_of": points[-1]["time"] if points else None,
+    }
+
+
 @router.get("/market/macro")
 async def get_macro_snapshot():
     """Latest macro snapshot: VIX, DXY, SPY, BTC dominance, risk regime."""

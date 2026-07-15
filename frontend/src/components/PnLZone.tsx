@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import MetricTile from './MetricTile'
-import PnLChart from '../charts/PnLChart'
+import AccountEquityChart from '../charts/AccountEquityChart'
 import { fmtNum, fmtSigned, fmtDelta, fmtSymbol, useDecimals } from '../lib/format'
 
 // Palette for pie slices — cycles if more than 6 coins (rare)
@@ -343,10 +343,10 @@ export default function PnLZone() {
         </div>
       </div>
 
-      {/* Cumulative PnL curve (realized; last point includes open unrealized) */}
+      {/* One account-equity curve.  Raw and verified PnL cohorts live in Analytics. */}
       <div className="card pnl-curve">
         <div className="pnl-curve-header">
-          <h3>Cumulative PnL</h3>
+          <h3>Account Equity</h3>
           <div className="time-range-selector">
             {([{ label: '7D', days: 7 }, { label: '30D', days: 30 }, { label: '90D', days: 90 }, { label: 'All', days: undefined }] as const).map(opt => (
               <button
@@ -359,7 +359,7 @@ export default function PnLZone() {
             ))}
           </div>
         </div>
-        <PnLChart days={rangeDays} />
+        <AccountEquityChart days={rangeDays} />
       </div>
     </div>
   )

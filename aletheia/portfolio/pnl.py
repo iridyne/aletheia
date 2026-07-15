@@ -986,18 +986,28 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         if total_today_realized is not None
         else None
     )
-    # The headline "total value". Defaults to locally-managed notional, but is
-    # overridden with real account equity when the exchange cache is live — so the
-    # hero number (and the stored snapshot series) is true account value, not a
-    # notional sum that jumps by one position's size on every fill. When no
-    # exchange view is available it degrades to notional; callers read
-    # `exchange_sync_status` to know which meaning applies.
-    final_total_value = total_notional
+    # The headline must be an account value, never the locally-managed notional.
+    # In local paper mode the append-only cash ledger plus freshly marked open
+    # PnL is the only trustworthy source.  If old unsettled closes make that
+    # ledger incomplete, return None rather than presenting position notional as
+    # account equity.
+    final_total_value: float | None = None
+    account_equity_usdt: float | None = None
     exchange_external_summary: list = []
     from aletheia.config.loader import load_config
     uses_external_exchange = load_config().exchange.paper_execution_mode != "paper_internal"
     sync_status = "not_applicable" if not uses_external_exchange else "unconfigured"
-    if uses_external_exchange:
+    if not uses_external_exchange:
+        from aletheia.portfolio.paper_account import get_paper_account
+
+        local_account = get_paper_account(event_limit=0)
+        if local_account["economics_complete"]:
+            account_equity_usdt = round(
+                float(local_account["cash_balance_usdt"]) + total_unrealized,
+                4,
+            )
+            final_total_value = account_equity_usdt
+    else:
         try:
             from aletheia.portfolio import exchange_sync
             cached = exchange_sync.get_cached_state()
@@ -1012,6 +1022,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
                 # Real account equity is the authoritative total value when present.
                 if exchange_equity_usdt is not None:
                     final_total_value = float(exchange_equity_usdt)
+                    account_equity_usdt = final_total_value
                 # Accurate external-position classification via a pair-based (symbol,
                 # direction) join — the crude `exchange_count - local_count` count is
                 # wrong under hedge mode (a symbol can be long AND short at once). The
@@ -1067,6 +1078,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
                     uta_equity = unified.get("total_equity_usdt")
                     if uta_equity and uta_equity > 0:
                         final_total_value = float(uta_equity)
+                        account_equity_usdt = final_total_value
                     # UTA uPnL is the authoritative cross-broker unrealized PnL. The
                     # legacy single-broker Bitget cache above sets final_unrealized to
                     # 0 when the active account is on another broker (e.g. OKX), which
@@ -1087,7 +1099,11 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
             pass
 
     return {
-        "total_value_usdt": round(final_total_value, 4),
+        "total_value_usdt": (
+            round(final_total_value, 4) if final_total_value is not None else None
+        ),
+        "account_equity_usdt": account_equity_usdt,
+        "position_notional_usdt": round(total_notional, 4),
         "unrealized_pnl": round(final_unrealized, 4),
         "realized_pnl": (
             round(total_realized, 4) if total_realized is not None else None
@@ -1158,7 +1174,9 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
     """
     summary = compute_portfolio(execution_mode=execution_mode, persist_marks=True)
 
-    # Row 1: mode-specific (mark-to-market for positions matching execution_mode)
+    # Row 1: mode-specific reading.  Local-paper snapshots are only persisted as
+    # account-equity readings when the cash ledger is complete; they must never
+    # silently fall back to position notional.
     mode_positions = [p for p in summary.get("positions", [])
                       if p.get("execution_mode") == execution_mode]
     local_unrealized = sum(p.get("unrealized_pnl", 0) for p in mode_positions)
@@ -1166,14 +1184,30 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
         p["quantity"] * (p.get("current_price") or p["entry_price"])
         for p in mode_positions
     )
+    local_account_equity = (
+        summary.get("account_equity_usdt")
+        if execution_mode == "paper_internal"
+        else None
+    )
     snap = PortfolioSnapshot(
-        total_value_usdt=round(local_notional, 4),
+        total_value_usdt=round(
+            local_account_equity
+            if local_account_equity is not None
+            else local_notional,
+            4,
+        ),
         unrealized_pnl=round(local_unrealized, 4),
         realized_pnl=summary["realized_pnl"],
         positions_count=len(mode_positions),
         execution_mode=execution_mode,
+        account_equity_usdt=local_account_equity,
     )
-    insert_portfolio_snapshot(snap)
+    if execution_mode != "paper_internal" or local_account_equity is not None:
+        insert_portfolio_snapshot(snap)
+    else:
+        logger.warning(
+            "Skipping local-paper account-equity snapshot: local ledger economics are incomplete."
+        )
 
     # Row 2: exchange account — prefer UTA unified equity (multi-broker sum),
     # fallback to legacy single-broker Bitget cache.
@@ -1208,6 +1242,7 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
             positions_count=summary["positions_count"],
             execution_mode="exchange_account",
             exchange_equity_usdt=float(exchange_equity),
+            account_equity_usdt=float(exchange_equity),
         )
         insert_portfolio_snapshot(exc_snap)
 

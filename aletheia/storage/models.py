@@ -595,6 +595,10 @@ class PortfolioSnapshot(BaseModel):
     positions_count: int = 0
     execution_mode: str = "paper_internal"
     exchange_equity_usdt: float | None = None
+    # A deliberately explicit account-balance reading.  `total_value_usdt` on
+    # legacy local rows was position notional, so it cannot safely power an
+    # account-equity curve.
+    account_equity_usdt: float | None = None
     snapshot_at: str = Field(default_factory=_utcnow)
 
 
