@@ -439,6 +439,10 @@ net outcome cohort、最大回撤/PF/ECE 等实验协议既有指标。不得以
 “raw family WR/avg 文字 → qualified evidence status/summary”；不得同时改变 universe、ranker、
 conviction 或 sizing。B2 有独立基线、epoch、停止门和验收报告。
 
+对初始 assessment 与 Debate 的 current evidence path、candidate-conditioned cohort、双方证据
+对称性及 B2 预登记项，见 [B2 Debate 证据对齐 SDD](05_b2_debate_evidence_alignment_sdd.md)。
+该文是讨论设计，不替代 B2 的 owner 行为授权。
+
 ### 8.3 后续 treatment 的路由
 
 - diagnosis 指向 universe/ranker：创建独立任务；本专项只交付证据，不改其行为。
