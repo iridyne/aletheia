@@ -112,6 +112,12 @@ function eventTone(e: InfraEvent): 'yellow' | 'red' {
   return e.severity === 'critical' ? 'red' : 'yellow'
 }
 
+function fmtEventTime(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+}
+
 function StatusBar() {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 10000 })
@@ -355,7 +361,10 @@ function StatusBar() {
                   <div key={`${e.created_at}-${e.code}-${idx}`} className="sp-event-row">
                     <span className={`sp-issue-icon sp-issue-${eventTone(e)}`}>⚠</span>
                     <div className="sp-event-main">
-                      <span className="sp-event-code">{e.code}</span>
+                      <div className="sp-event-header">
+                        <span className="sp-event-code">{e.code}</span>
+                        {e.created_at && <span className="sp-event-ts">{fmtEventTime(e.created_at)}</span>}
+                      </div>
                       <span className="sp-event-message">{e.message}</span>
                       {e.action && <span className="sp-event-action">{e.action}</span>}
                     </div>
