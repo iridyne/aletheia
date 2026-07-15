@@ -468,6 +468,33 @@ def insert_pi_decision(decision) -> None:
     _insert("pi_decisions", _stamp_provenance(data))
 
 
+def record_operator_evaluation_event(event) -> dict:
+    """Persist one deduplicated non-trading Operator observation.
+
+    This table deliberately sits outside ``pi_decisions``: a heartbeat with no
+    queue carrier is not an entry decision and must not consume an Opportunity.
+    ``dedup_key`` is supplied by the caller's bounded observation window.
+    """
+    data = event.model_dump() if hasattr(event, "model_dump") else dict(event)
+    db = get_db()
+    was_in_tx = db.in_transaction
+    columns = ", ".join(data)
+    placeholders = ", ".join("?" for _ in data)
+    db.execute(
+        f"INSERT OR IGNORE INTO operator_evaluation_events ({columns}) VALUES ({placeholders})",
+        tuple(data.values()),
+    )
+    row = db.execute(
+        "SELECT * FROM operator_evaluation_events WHERE dedup_key=?",
+        (data["dedup_key"],),
+    ).fetchone()
+    if not was_in_tx:
+        db.commit()
+    if row is None:
+        raise RuntimeError("operator evaluation observation did not persist")
+    return dict(row)
+
+
 def update_pi_decision(decision_id: str, **kwargs) -> None:
     """Update the durable pre-submission claim after its proposal attempt settles."""
     _update("pi_decisions", decision_id, kwargs)
@@ -2853,6 +2880,11 @@ _PRUNABLE = {
     "filter_decision_batches": "evaluated_at",
     "filter_decisions": "evaluated_at",
     "filter_candidate_outcomes": "entry_ts",
+    # No-candidate heartbeat observations are operational telemetry only. They
+    # never authorize an entry or represent a candidate outcome, so a 30-day
+    # window preserves diagnosis while preventing a five-minute heartbeat stream
+    # from growing the local SQLite database indefinitely.
+    "operator_evaluation_events": "created_at",
     "ohlcv_backfill_state": "updated_at",
 }
 
@@ -2965,6 +2997,10 @@ def prune_filter_decisions(days: int = 90) -> int:
 
 def prune_filter_candidate_outcomes(days: int = 90) -> int:
     return _delete_old_rows("filter_candidate_outcomes", days)
+
+
+def prune_operator_evaluation_events(days: int = 30) -> int:
+    return _delete_old_rows("operator_evaluation_events", days)
 
 
 # A pending carrier is removable only after one exact source/opportunity identity

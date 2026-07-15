@@ -1185,26 +1185,28 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     # (which TS does not do). assessment.underperforming_strategies is still surfaced in the
     # assessment for observability and for the TS shell's own evaluation.
 
-    # Stage 3: Parameter Tuning — TIGHTEN rules (Level 1, with escalation).
-    # Do not immediately undo drought recovery. Once fills have stopped for one
-    # Operator cadence, let confidence return to neutral while sizing remains the
-    # safety control for poor realized performance.
-    in_confidence_drought = (
-        assessment.hours_since_last_trade is not None
-        and assessment.hours_since_last_trade >= 4
-    )
+    # Stage 3: Aggregate signal quality is a diagnosis, never an automatic
+    # confidence mutation.  A low aggregate forward-outcome WR can be caused by
+    # sparse/legacy/mixed cohorts; using it to tighten the candidate threshold
+    # created the same all-skip feedback loop that B1 removes from the PI prompt.
     if (assessment.signal_status == "degraded"
             and assessment.signal_win_rate is not None
-            and assessment.signal_win_rate < 40
-            and not in_confidence_drought):
-        act = OperatorAction(
-            action_type="tighten_confidence",
+            and assessment.signal_win_rate < 40):
+        actions.append(OperatorAction(
+            action_type="notify_operator",
             level=1,
-            params={"delta": 5},
-            reason=f"signal win_rate degraded to {assessment.signal_win_rate:.1f}%",
-        )
-        act = _maybe_escalate(act, "min_confidence_to_trade", "tighten")
-        actions.append(act)
+            params={
+                "diagnosis_kind": "aggregate_signal_quality",
+                "message": (
+                    "Aggregate 24h signal quality is degraded; inspect candidate "
+                    "skip evidence and cohort coverage. No confidence/config change was made."
+                ),
+            },
+            reason=(
+                f"aggregate signal win_rate={assessment.signal_win_rate:.1f}% below 40%; "
+                "diagnosis only"
+            ),
+        ))
 
     if assessment.win_rate_7d is not None and assessment.win_rate_7d < 35:
         act = OperatorAction(

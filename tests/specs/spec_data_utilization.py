@@ -34,6 +34,23 @@ _POSITION_X = _ROOT / "aletheia" / "data" / "position_x.py"
 _CONTRACT = "data_utilization_contract"
 
 
+@spec_claim(
+    SpecClaim(
+        "DU-S20", _CONTRACT, "§3 System Operator no-candidate observation", "L2a",
+        "operator_evaluation_events is explicitly observation-only and is consumed by the "
+        "read-only skip-halt doctor probe rather than an entry-decision path.",
+        status="implemented",
+    ),
+)
+def test_operator_evaluation_observation_is_registered_and_consumed_read_only():
+    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(encoding="utf-8")
+    doctor = _DOCTOR.read_text(encoding="utf-8")
+    assert "operator_evaluation_events" in doc
+    assert "observation-only" in doc
+    assert "operator_evaluation_events" in doctor
+    assert "def _probe_skip_halt" in doctor
+
+
 # ---------------------------------------------------------------------------
 # DU-S01 — render hook for the cross-venue (Hyperliquid) funding signal exists
 # ---------------------------------------------------------------------------

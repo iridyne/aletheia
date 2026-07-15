@@ -1779,6 +1779,7 @@ def _run_cleanup():
             "filter_decision_batches": repo.prune_filter_decision_batches(30),
             "filter_decisions": repo.prune_filter_decisions(90),
             "filter_candidate_outcomes": repo.prune_filter_candidate_outcomes(90),
+            "operator_evaluation_events": repo.prune_operator_evaluation_events(30),
             "pi_decisions_transient": repo.prune_pi_decisions(7),
             "system_actions": repo.prune_system_actions(7),
             # Operator-shell telemetry (DB-SIZE-1): heartbeats are the dominant

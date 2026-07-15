@@ -175,8 +175,8 @@ backlog health are persisted in `learning_job_health`.
     + the independently `assessed_tier` (D2), annotated as long-horizon analyst input —
     NOT a same-day setup and NOT to be rubber-stamped (PI remains sole decision maker).
 - **LLM**: Yes (structured decision with Bull/Bear debate)
-- **Outputs**: PiDecision (action, symbol, conviction, reasoning JSON, opportunity_id, signal_source)
-- **Side effects**: Writes to pi_decisions table; triggers paper_trader signal consumption
+- **Outputs**: an exact-candidate PiDecision (action, symbol, conviction, reasoning JSON, opportunity_id, signal_source); a zero-pending wake instead writes one non-trading `operator_evaluation_event` and does not call the LLM
+- **Side effects**: Candidate path writes `pi_decisions`; zero-pending path appends only an observation event; neither path bypasses paper_trader queue authority
 - **Attribution**: `_attach_opportunity_context` backfills `opportunity_id` + `signal_source`
   (`market_observer` Layer 1 wins on tie; `serenity` Layer 3 is the fallback). `signal_source`
   disambiguates the two bare-uuid id spaces. Phase 2 of Serenity Option A.

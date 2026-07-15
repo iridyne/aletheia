@@ -109,7 +109,7 @@ class TestDecideActions:
         # Python loop must NOT emit retire/demote anymore (converged to TS operator-shell).
         assert [a for a in actions if a.action_type in ("retire_strategy", "demote_strategy")] == []
 
-    def test_tighten_confidence_on_degraded_signal(self, tmp_path, monkeypatch):
+    def test_degraded_signal_is_diagnosis_only(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
@@ -121,8 +121,11 @@ class TestDecideActions:
             signal_win_rate=35.0,
         )
         actions = decide_actions(assessment)
-        tighten = [a for a in actions if a.action_type == "tighten_confidence"]
-        assert len(tighten) == 1
+        assert [a for a in actions if a.action_type == "tighten_confidence"] == []
+        diagnoses = [a for a in actions if a.action_type == "notify_operator"]
+        assert len(diagnoses) == 1
+        assert diagnoses[0].params["diagnosis_kind"] == "aggregate_signal_quality"
+        assert "35.0%" in diagnoses[0].reason
 
     def test_reduce_sizing_on_low_win_rate(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)

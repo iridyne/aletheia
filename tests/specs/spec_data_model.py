@@ -61,7 +61,7 @@ def test_autocommit_isolation_level():
     SpecClaim(
         "DM-S04", "data_model", "§4 prunable whitelist", "L2a",
         "_PRUNABLE whitelist contains telemetry/analytics tables only — bounded, "
-        "no causal-chain tables (currently 11: 5 agent/snapshot + serenity/shadow + 4 agent_shell_*)",
+        "no causal-chain tables (currently at most 12 telemetry/analytics tables)",
     ),
 )
 def test_prunable_whitelist_bounded():
@@ -603,6 +603,29 @@ def test_pi_decision_debate_trace_fields_and_migrations_exist():
         "debate_adjustment",
     ):
         assert (name, "pi_decisions") in additive
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-S29", "data_model", "§K System Operator Decisions and Observations", "L2a",
+        "No-target System Operator wakeups use the dedicated append-only observation model/table, "
+        "rather than pretending to be unscoped PiDecisions.",
+        status="implemented",
+    ),
+)
+def test_operator_evaluation_event_carrier_and_schema_exist():
+    from aletheia.storage.models import OperatorEvaluationEvent
+    from aletheia.storage import migrations
+
+    fields = OperatorEvaluationEvent.model_fields
+    for name in (
+        "dedup_key", "event_kind", "trigger", "pending_unresolved_total",
+        "pending_visible_count", "queue_snapshot_json", "data_health_json",
+        "policy_epoch_id",
+    ):
+        assert name in fields
+    assert "operator_evaluation_events" in migrations._OPERATOR_EVALUATION_EVENTS_DDL
+    assert "dedup_key TEXT NOT NULL UNIQUE" in migrations._OPERATOR_EVALUATION_EVENTS_DDL
 
 
 # ---------------------------------------------------------------------------

@@ -68,9 +68,10 @@ direct model `skip` 不能因未进入 debate/conviction 分支而缺少 `operat
 Opportunity 或无证据的 skip。若决策时没有完整方向、市场、venue 或精确入场价，可保留非收益诊断，
 但禁止伪造 outcome 或事后补入场价。
 
-`doctor` 必须只读报告近期 candidate skip 的 action-trace 覆盖、四个 outcome seed 覆盖、无 target
-heartbeat skip、pending 与 proposal 计数。无 target 记录不得混入 candidate effectiveness cohort；
-coverage 缺失是 `recording_incident` 的诊断输入，不授予自动放行、自动调参或执行权限。
+`doctor` 必须只读报告近期 candidate skip 的 action-trace 覆盖、四个 outcome seed 覆盖、legacy 无 target
+skip、`operator_evaluation_events` 的 no-candidate heartbeat、pending 与 proposal 计数。无 target 记录
+不得混入 candidate effectiveness cohort；coverage 缺失是 `recording_incident` 的诊断输入，不授予自动
+放行、自动调参或执行权限。新 zero-pending heartbeat 只能写 observation event，不能再写无 target skip。
 
 生产者在拒绝输入时，该原因是唯一解释事实：Observer、Universe emitter、Divergence scanner
 若无法写入终态记录，必须返回可重试错误，不能以“零 Opportunity、零原因”的成功结束。

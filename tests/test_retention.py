@@ -146,6 +146,27 @@ def test_prune_filter_evidence_keeps_recent_rows(tmp_path, monkeypatch):
     ).fetchall()} == {"outcome-new"}
 
 
+def test_prune_operator_evaluation_events_keeps_recent_observations(tmp_path, monkeypatch):
+    conn = setup_env(tmp_path, monkeypatch)
+    for suffix, timestamp in (("old", _old(31)), ("new", _recent())):
+        conn.execute(
+            """INSERT INTO operator_evaluation_events
+               (id, dedup_key, event_kind, trigger, pending_unresolved_total,
+                pending_visible_count, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                f"operator-event-{suffix}", f"operator-dedup-{suffix}",
+                "no_evaluable_candidate", "heartbeat", 0, 0, timestamp,
+            ),
+        )
+    conn.commit()
+
+    assert repo.prune_operator_evaluation_events(days=30) == 1
+    assert {row["id"] for row in conn.execute(
+        "SELECT id FROM operator_evaluation_events"
+    ).fetchall()} == {"operator-event-new"}
+
+
 def test_cleanup_never_touches_causal_chain(tmp_path, monkeypatch):
     conn = setup_env(tmp_path, monkeypatch)
     # Insert old trust-bearing rows; they must survive any cleanup.
