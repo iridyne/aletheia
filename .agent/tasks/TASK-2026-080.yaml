@@ -1,0 +1,22 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-080
+title: Restore workflow CLI registration
+status: in_progress
+packet_type: standard
+scope:
+  boundary: Register the existing repository workflow CLI beneath the existing agent command.
+  excluded: Operator behavior, task semantics, trading logic, local state facts, and credential values.
+intent: Register the existing repository-agent workflow subcommand so the documented
+  CLI and CI integrity check execute the tracked workflow validator.
+acceptance:
+  - The documented `aletheia agent workflow check` command resolves to the existing workflow CLI.
+  - The command registration has a focused CLI regression test.
+base_commit: d93eede61e98e2b6970711c57266a8677f34f127
+next_action:
+  command_key: workflow_cli
+  reason: Implement and verify the workflow CLI registration.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-080.md
+updated_at: '2026-07-15T08:50:54.714424Z'
