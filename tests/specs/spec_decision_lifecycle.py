@@ -1399,6 +1399,57 @@ def test_old_position_beyond_layer1_display_is_counted_without_fake_entry_action
 
 @spec_claim(
     SpecClaim(
+        "DL-S43", "decision_lifecycle_contract", "§2.2b Layer 1 technical feature identity", "L2b",
+        "System Operator Layer 1 resolves feature snapshots through their registry asset identity, "
+        "so distinct instruments are not collapsed into one blank-symbol feature.",
+        status="implemented",
+    ),
+)
+def test_layer1_features_resolve_snapshot_asset_identity(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.data.price_feed as price_feed
+    from aletheia.agent_shell.trading_context import _build_layer1_snapshot
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    db.executemany(
+        "INSERT INTO universe_registry (id, venue, market_type, symbol) VALUES (?, ?, ?, ?)",
+        [
+            ("asset-btc-perp", "okx", "perp", "BTC/USDT"),
+            ("asset-eth-perp", "okx", "perp", "ETH/USDT"),
+        ],
+    )
+    db.executemany(
+        "INSERT INTO universe_feature_snapshots "
+        "(id, asset_id, ts, rsi_14) VALUES (?, ?, ?, ?)",
+        [
+            ("feature-btc", "asset-btc-perp", now, 61.0),
+            ("feature-eth", "asset-eth-perp", now, 39.0),
+        ],
+    )
+    db.commit()
+    monkeypatch.setattr(
+        price_feed,
+        "get_cached_price_with_meta",
+        lambda symbol: {"price": {"BTC/USDT": 100.0, "ETH/USDT": 200.0}[symbol]},
+    )
+
+    assert {
+        row["symbol"]: (row["market_type"], row["price"], row["rsi_14"])
+        for row in _build_layer1_snapshot()["features"]
+    } == {
+        "BTC/USDT": ("perp", 100.0, 61.0),
+        "ETH/USDT": ("perp", 200.0, 39.0),
+    }
+
+
+@spec_claim(
+    SpecClaim(
         "DL-S42", "decision_lifecycle_contract", "§2.4 aggregate-health isolation", "L2b",
         "Aggregate signal-health observations remain available to operations but do not enter "
         "the single-candidate PI prompt as a skip, sizing, or stop-adjustment instruction.",

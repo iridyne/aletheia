@@ -54,6 +54,47 @@ def _init_agent_shell_db(tmp_path, monkeypatch):
     return conn
 
 
+def test_operator_context_features_keep_registry_identity(tmp_path, monkeypatch):
+    """Feature snapshots must not collapse into one blank-symbol PI feature."""
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc).isoformat()
+    conn.executemany(
+        "INSERT INTO universe_registry (id, venue, market_type, symbol) VALUES (?, ?, ?, ?)",
+        [
+            ("asset-btc-perp", "okx", "perp", "BTC/USDT"),
+            ("asset-eth-perp", "okx", "perp", "ETH/USDT"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO universe_feature_snapshots "
+        "(id, asset_id, ts, rsi_14, return_24h) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("feature-btc", "asset-btc-perp", now, 61.0, 2.5),
+            ("feature-eth", "asset-eth-perp", now, 39.0, -1.5),
+        ],
+    )
+    conn.commit()
+
+    import aletheia.data.price_feed as price_feed
+    from aletheia.agent_shell.trading_context import _build_layer1_snapshot
+
+    monkeypatch.setattr(
+        price_feed,
+        "get_cached_price_with_meta",
+        lambda symbol: {"price": {"BTC/USDT": 100.0, "ETH/USDT": 200.0}[symbol], "provider": "test"},
+    )
+
+    features = _build_layer1_snapshot()["features"]
+
+    assert {
+        row["symbol"]: (row["price"], row["rsi_14"])
+        for row in features
+    } == {
+        "BTC/USDT": (100.0, 61.0),
+        "ETH/USDT": (200.0, 39.0),
+    }
+
+
 @pytest.mark.asyncio
 async def test_portfolio_review_can_close_old_target_beyond_default_position_page(
     tmp_path, monkeypatch

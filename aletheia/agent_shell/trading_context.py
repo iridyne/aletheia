@@ -449,7 +449,8 @@ def _build_layer1_snapshot() -> dict[str, Any]:
             )
             features.append({
                 "symbol": sym,
-                "price": s.get("price"),
+                "market_type": s.get("market_type"),
+                "price": price_meta.get("price") if price_meta else None,
                 "price_source": price_meta.get("provider") if price_meta else None,
                 "rsi_14": s.get("rsi_14"),
                 "atr_pct": s.get("atr_pct"),

@@ -1,34 +1,31 @@
 schema_version: 1
 handoff_version: 1
 id: TASK-2026-080
-title: Restore workflow CLI registration
-status: done
+title: Repair PI feature snapshot identity mapping
+status: in_progress
 packet_type: standard
 scope:
-  boundary: Register the existing repository workflow CLI beneath the existing agent
-    command.
-  excluded: Operator behavior, task semantics, trading logic, local state facts, and
-    credential values.
-intent: Register the existing repository-agent workflow subcommand so the documented
-  CLI and CI integrity check execute the tracked workflow validator.
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: 'Repair the A-class System Operator context read bug: universe feature rows
+  use asset_id but the read path assumes symbol and price, collapsing all rows into
+  one blank-symbol feature. Restore correct existing registry identity mapping with
+  focused regression and SDD evidence; do not alter ranking, conviction policy, aggregate-health
+  behavior, Risk, Execution, Live, sizing, credentials, or runtime data.'
 acceptance:
-- The documented `aletheia agent workflow check` command resolves to the existing
-  workflow CLI.
-- The command registration has a focused CLI regression test.
-base_commit: d93eede61e98e2b6970711c57266a8677f34f127
+- Layer 1 renders each universe feature with its true registry symbol and market_type; it must not collapse asset_id rows into a blank symbol.
+- Prices remain absent unless the existing fresh cache supplies them; the repair must not invent a price.
+- The focused regression and affected decision-lifecycle SDD suite pass without changing ranking, conviction, PI health policy, Risk, Execution, Live, or runtime data.
+ownership:
+  branch: iridite/skip-problem
+  lease_holder: codex
+  claimed_at: '2026-07-15T07:30:23.869076Z'
+  expires_at: '2026-07-15T15:30:23.869237Z'
+base_commit: 7d90abdb7e69e74fa8b12f18caf06482a8d16358
 next_action:
-  command_key: workflow_bootstrap
-  reason: Task complete; run bootstrap and create or claim a new task before changing
-    code.
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
 blockers: []
-verification:
-- command_key: workflow_cli
-  command: uv run pytest tests/test_cli.py tests/test_agent_workflow.py -q
-  command_sha256: 8f4b073a897de635c5b751c72ac7d98c7ee60a7702eda763c14c539851d5e463
-  exit_code: 0
-  commit: e5691ef52a609ff86394d05af683229edae545c0
-  run_at: '2026-07-15T08:52:05.688408Z'
-  result: passed
-  recorded_by: agent_workflow.verify/v1
+verification: []
 handoff: .agent/handoffs/TASK-2026-080.md
-updated_at: '2026-07-15T08:52:24.609726Z'
+updated_at: '2026-07-15T07:30:23.869246Z'
