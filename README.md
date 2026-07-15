@@ -45,14 +45,22 @@ uv run aletheia risk kill | resume   # → Risk panel
 
 ## Development UI entrypoint
 
-Use the same URL for daily use and UI iteration:
+Daily operation and release acceptance use the stable gateway:
 
-```powershell
-.\scripts\dev.ps1   # rebuild-watch frontend + dev-reload gateway on http://127.0.0.1:8787/
+```sh
+uv run aletheia gateway start
 ```
 
-Do not use `:5173` as the normal dashboard entrypoint; the gateway's `:8787`
-origin is the canonical API + UI surface.
+For fast Worktree UI iteration, use Vite HMR on `http://127.0.0.1:5173`:
+
+```sh
+cd frontend && npm run dev
+```
+
+It can read from the stable `:8787` API but blocks writes. For an isolated
+backend preview, start `uv run aletheia dev api --port 8791` and set
+`VITE_API_TARGET=http://127.0.0.1:8791`. The full safety contract and Windows
+commands are in [Development preview](docs/operations/DEVELOPMENT_PREVIEW.md).
 
 ## Contributing
 

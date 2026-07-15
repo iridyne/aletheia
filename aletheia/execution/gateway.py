@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from aletheia.config.loader import load_config
+from aletheia.config.loader import is_preview_mode, load_config
 from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.paper_broker import execute_paper_order
@@ -39,6 +39,15 @@ from aletheia.files.jsonl import write_audit
 logger = logging.getLogger("aletheia.execution_gateway")
 
 _EXECUTION_LEASE_SECONDS = 600
+
+
+class PreviewExecutionBlockedError(RuntimeError):
+    """Raised before an isolated preview can create or execute an order."""
+
+
+def _reject_preview_execution() -> None:
+    if is_preview_mode():
+        raise PreviewExecutionBlockedError("execution is blocked in preview mode")
 
 
 def _execution_claim_times() -> tuple[str, str, datetime]:
@@ -138,6 +147,7 @@ def submit_proposal(
 
     Flow: Proposal -> Risk Engine -> Permission -> Live State -> Execution -> Fill -> Audit
     """
+    _reject_preview_execution()
     # Private-fill materialization can happen after the broker call returns.
     # Capture the read-only decision-time attribution for every execution mode
     # so that delayed exchange reconciliation does not invent later context or
@@ -175,6 +185,7 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
     A caller may confirm that mode, but may not use this entry point to change it.
     The short ``BEGIN IMMEDIATE`` transaction ends before Risk or any broker I/O.
     """
+    _reject_preview_execution()
     owner_token: str | None = None
     reconciliation_result: dict | None = None
     reconciliation_transition: tuple[str, str, str] | None = None

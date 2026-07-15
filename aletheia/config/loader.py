@@ -11,7 +11,33 @@ import yaml
 from aletheia.config.schema import AletheiaConfig
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = _PROJECT_ROOT / "data"
+_PREVIEW_MODE_ENV = "ALETHEIA_PREVIEW_MODE"
+_PREVIEW_DATA_DIR_ENV = "ALETHEIA_PREVIEW_DATA_DIR"
+
+
+def is_preview_mode() -> bool:
+    """Whether this process is an explicitly isolated development API."""
+    return os.environ.get(_PREVIEW_MODE_ENV, "").strip() == "1"
+
+
+def preview_data_dir() -> Path:
+    """Return the only data root an isolated preview process may use.
+
+    The CLI supplies this value.  Constraining it to this checkout prevents an
+    accidental environment override from attaching a preview process to the
+    primary runtime's state directory.
+    """
+    raw = os.environ.get(_PREVIEW_DATA_DIR_ENV, "").strip()
+    if not raw:
+        raise RuntimeError("preview mode requires ALETHEIA_PREVIEW_DATA_DIR")
+    candidate = Path(raw).expanduser().resolve()
+    allowed_root = (_PROJECT_ROOT / "data" / "dev-preview").resolve()
+    if not candidate.is_relative_to(allowed_root):
+        raise RuntimeError("preview data directory must be under data/dev-preview")
+    return candidate
+
+
+DATA_DIR = preview_data_dir() if is_preview_mode() else _PROJECT_ROOT / "data"
 CONFIG_PATH = DATA_DIR / "config.yaml"
 
 _DOTENV_LOADED = False

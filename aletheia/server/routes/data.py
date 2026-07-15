@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
 
+from aletheia.config.loader import is_preview_mode
 from aletheia.storage.sqlite import get_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
@@ -640,6 +641,14 @@ async def get_proposal(proposal_id: str):
 @router.post("/proposals/{proposal_id}/approve-paper")
 def approve_proposal(proposal_id: str):
     """Approve a stored local-paper proposal through the execution gateway."""
+    if is_preview_mode():
+        raise HTTPException(
+            403,
+            detail={
+                "reason_code": "preview_execution_blocked",
+                "message": "Proposal approval is unavailable in the isolated preview API.",
+            },
+        )
     _ensure_db()
     from aletheia.files.jsonl import write_audit
     p = repo.get_trade_proposal(proposal_id)

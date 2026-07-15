@@ -61,6 +61,26 @@ async def test_approve_proposal_executes_paper(client, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_preview_mode_blocks_approval_before_proposal_mutation(client, monkeypatch):
+    """A dev API may render a proposal, but cannot approve or execute it."""
+    import aletheia.server.routes.data as data_routes
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=0.001, price=60_000, execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(proposal)
+    monkeypatch.setattr(data_routes, "is_preview_mode", lambda: True)
+
+    response = await client.post(f"/api/proposals/{proposal.id}/approve-paper")
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["reason_code"] == "preview_execution_blocked"
+    assert repo.get_trade_proposal(proposal.id)["status"] == "pending"
+    assert repo.list_orders() == []
+
+
+@pytest.mark.anyio
 async def test_approve_proposal_idempotent_after_execute(client, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()

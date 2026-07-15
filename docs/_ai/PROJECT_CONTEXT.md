@@ -20,4 +20,4 @@ Aletheia Trading OS is a personal AI-native trading system for solo automated tr
 - Market data providers are per-call, never cached (aiohttp event-loop binding)
 - `code_drift` self-heal restart after commits is EXPECTED behavior, not a failure
 - Facts (gateway state, credentials, loop activity) never go in git — use `aletheia doctor`
-- Dashboard runs on 127.0.0.1:8787 (single endpoint — frontdoor proxies to backend :8788)
+- Daily dashboard/release acceptance runs on 127.0.0.1:8787 (frontdoor proxies to backend :8788); Worktree HMR runs on :5173 and is read-only against :8787 by default. See `docs/operations/DEVELOPMENT_PREVIEW.md`.

@@ -27,6 +27,7 @@ import BackendConnectionGuard from './components/BackendConnectionGuard'
 import FetchProgress from './components/FetchProgress'
 import type { InfraEvent } from './types'
 import { deriveMasterState, getOperatorDisplayStatus } from './lib/systemState'
+import { devPreviewLabel } from './dev-preview'
 
 export type NavItem = { to: string; label: string }
 export type NavGroup = { group: string; items: NavItem[] }
@@ -469,6 +470,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const toggle = (g: string) => setCollapsed(c => ({ ...c, [g]: !c[g] }))
+  const previewLabel = devPreviewLabel()
 
   return (
     <div className="layout">
@@ -506,6 +508,7 @@ export default function App() {
               "you-are-here" cues). The active sidebar item + each page's PageHeader title
               cover navigation context; the topbar now adds market-state context instead. */}
           <MarketTicker />
+          {previewLabel && <span className="dev-preview-banner">{previewLabel}</span>}
           <StatusBar />
         </header>
         <main className="main">

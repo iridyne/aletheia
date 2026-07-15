@@ -1,0 +1,34 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-080
+title: Restore workflow CLI registration
+status: done
+packet_type: standard
+scope:
+  boundary: Register the existing repository workflow CLI beneath the existing agent
+    command.
+  excluded: Operator behavior, task semantics, trading logic, local state facts, and
+    credential values.
+intent: Register the existing repository-agent workflow subcommand so the documented
+  CLI and CI integrity check execute the tracked workflow validator.
+acceptance:
+- The documented `aletheia agent workflow check` command resolves to the existing
+  workflow CLI.
+- The command registration has a focused CLI regression test.
+base_commit: d93eede61e98e2b6970711c57266a8677f34f127
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: workflow_cli
+  command: uv run pytest tests/test_cli.py tests/test_agent_workflow.py -q
+  command_sha256: 8f4b073a897de635c5b751c72ac7d98c7ee60a7702eda763c14c539851d5e463
+  exit_code: 0
+  commit: e5691ef52a609ff86394d05af683229edae545c0
+  run_at: '2026-07-15T08:52:05.688408Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-080.md
+updated_at: '2026-07-15T08:52:24.609726Z'

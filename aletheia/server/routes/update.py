@@ -9,10 +9,23 @@ These call the same applier the CLI uses. They are NOT agent-callable tools.
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from aletheia.config.loader import is_preview_mode
 from aletheia.files.jsonl import write_audit
 from aletheia.update import applier
 
 router = APIRouter(prefix="/api/update", tags=["update"])
+
+
+def _reject_preview_update() -> None:
+    if is_preview_mode():
+        from fastapi import HTTPException
+        raise HTTPException(
+            403,
+            detail={
+                "reason_code": "preview_update_blocked",
+                "message": "Code update control is unavailable in preview mode.",
+            },
+        )
 
 
 @router.get("/status")
@@ -31,6 +44,7 @@ class ContinuityBody(BaseModel):
 
 @router.post("/apply")
 async def update_apply(body: ApplyBody = ApplyBody()):
+    _reject_preview_update()
     if not body.confirm:
         return {"applied": False, "reason": "confirmation_required",
                 "message": "Set confirm=true to apply the update."}
@@ -44,6 +58,7 @@ async def update_apply(body: ApplyBody = ApplyBody()):
 
 @router.post("/continuity")
 async def update_continuity(body: ContinuityBody = ContinuityBody()):
+    _reject_preview_update()
     if not body.confirm:
         return {
             "created": False,

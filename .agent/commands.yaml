@@ -6,6 +6,9 @@ commands:
   workflow_tests:
     command: uv run pytest tests/test_agent_workflow.py -q
     purpose: Validate session-independent workflow tooling.
+  workflow_cli:
+    command: uv run pytest tests/test_cli.py tests/test_agent_workflow.py -q
+    purpose: Verify the public agent workflow command is registered and its tracked-state tooling works.
   workflow_trust_boundary_tests:
     command: uv run pytest tests/test_agent_workflow.py tests/specs/spec_trust_boundary.py tests/specs/spec_agent_workflow.py -q
     purpose: Validate workflow tooling and trust-boundary policy contract together.
