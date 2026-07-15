@@ -104,6 +104,18 @@ Proposal preflight 之后才越过 `valid_until`，preflight/claim 必须共用�
 
 API 密钥、Authorization、原始 LLM prompt/context 和新闻全文禁止写入。
 
+### 3.1 B2 System Operator candidate evidence
+
+System Operator 的 B2 debate evidence 不是全量策略族胜率。它只可由同一
+`system_operator_b2_candidate_evidence` policy epoch 中、已写入
+`signal_enqueue=passed` 的候选终态 `operator_action_assessment`，按
+`scanner_family + direction + normalized market_type + score bucket + 24h` 聚合。
+summary 的最小 trace（epoch、tier、bucket、样本/coverage、成本模型和状态）写入该 assessment
+的 `input_snapshot`，不保存 prompt。样本少于 20、coverage 低于 70% 或身份不完整时必须为
+`insufficient_evidence`：中性未知，不得被叙述为负向 alpha 或自动降低 conviction；成本模型不一致
+则为 `data_quality_incident`。同一序列化 summary 必须输入 assessment、Bull 与 Bear。该行为不
+改变 Ranker、Risk 的独立 `family_direction_edge()`、Execution 或 Live 权限。
+
 对 registry/ticker/tradability 这类高频、无方向关卡，允许用
 `filter_decision_batches` 压缩表达：每个 scanner run + filter version 一行，
 `candidate_facts` JSON 内保留该关实际评估的每个候选键、标的身份、

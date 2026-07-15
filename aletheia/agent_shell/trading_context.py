@@ -123,7 +123,14 @@ def _build_pending_signal_queue(
     )
     rows = db.execute(
         "SELECT p.symbol, p.direction, p.market_type, p.reasoning, p.created_at, "
-        "p.opportunity_id, p.signal_source FROM pi_decisions p WHERE "
+        "p.opportunity_id, p.signal_source, "
+        "COALESCE(o.scanner_family, (SELECT st.scanner_family FROM shadow_trades st "
+        " WHERE st.opportunity_id=p.opportunity_id AND st.was_selected=1 "
+        " ORDER BY datetime(st.created_at) DESC, st.rowid DESC LIMIT 1)) AS scanner_family, "
+        "(SELECT st.trade_score FROM shadow_trades st "
+        " WHERE st.opportunity_id=p.opportunity_id AND st.was_selected=1 "
+        " ORDER BY datetime(st.created_at) DESC, st.rowid DESC LIMIT 1) AS trade_score "
+        "FROM pi_decisions p LEFT JOIN opportunities o ON o.id=p.opportunity_id WHERE "
         + unresolved
         + " ORDER BY datetime(p.created_at) ASC, p.rowid ASC",
         (cutoff,),
@@ -137,6 +144,8 @@ def _build_pending_signal_queue(
             "at": row["created_at"],
             "opportunity_id": row["opportunity_id"],
             "signal_source": row["signal_source"] or "market_observer",
+            "scanner_family": row["scanner_family"],
+            "trade_score": row["trade_score"],
         }
         for row in rows
     ]
