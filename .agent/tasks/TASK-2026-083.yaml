@@ -2,25 +2,42 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-083
 title: Retire stale operator tasks during recovery
-status: in_progress
+status: done
 packet_type: standard
 scope:
-  boundary: Operator-shell task recovery, operator task lifecycle persistence, and supervision recommendation freshness.
-  excluded: Risk, execution, exchange adapters, live-mode authority, credentials, trading strategy, sizing, and global runtime-state mutation.
+  boundary: Operator-shell task recovery, operator task lifecycle persistence, and
+    supervision recommendation freshness.
+  excluded: Risk, execution, exchange adapters, live-mode authority, credentials,
+    trading strategy, sizing, and global runtime-state mutation.
 intent: Reconcile expired operator-shell running task records at startup so abandoned
   work cannot permanently pollute supervision recommendations; preserve fresh recoverable
   work.
 acceptance:
-- Startup recovery cancels every persisted running operator task older than 30 minutes with an explicit recovery reason, without treating it as completed or failed work.
-- A fresh running task remains recoverable, and expired task records no longer remain in the recovered runtime state.
-- Operator-task cancellation is a terminal, idempotent backend lifecycle state with a completion timestamp and audit event.
-- Failed-task supervision alerts represent only the current 30-minute observation window; older failures remain queryable audit history.
-- Focused TypeScript runtime tests, backend Operator route/event tests, TypeScript compilation, strict workflow validation, and a non-writing simulation against current runtime task records pass.
+- Startup recovery cancels every persisted running operator task older than 30 minutes
+  with an explicit recovery reason, without treating it as completed or failed work.
+- A fresh running task remains recoverable, and expired task records no longer remain
+  in the recovered runtime state.
+- Operator-task cancellation is a terminal, idempotent backend lifecycle state with
+  a completion timestamp and audit event.
+- Failed-task supervision alerts represent only the current 30-minute observation
+  window; older failures remain queryable audit history.
+- Focused TypeScript runtime tests, backend Operator route/event tests, TypeScript
+  compilation, strict workflow validation, and a non-writing simulation against current
+  runtime task records pass.
 base_commit: 832861e461c4a5996cd0c4579c8e7e93334338a4
 next_action:
-  command_key: workflow_tests
-  reason: Record final focused verification, complete the task packet, and publish the isolated P1 branch.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 0a03c7601e6e86f27bdf3cb758fec37403ba4f24
+  run_at: '2026-07-15T16:00:06.051349Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-083.md
-updated_at: '2026-07-15T15:54:06.928461Z'
+updated_at: '2026-07-15T16:00:12.117866Z'
