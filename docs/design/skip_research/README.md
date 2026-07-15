@@ -23,9 +23,11 @@ generation、选币、ranker 与其他 filters 的适用条件及不可越过的
    方法边界；避免把观察数据误称为因果结论。
 4. [04_comprehensive_skip_remediation_plan.md](04_comprehensive_skip_remediation_plan.md)：逐项覆盖
    当前七个 Skip 问题的完整 SDD 工作包、B 类实验顺序、测试与验收；这是当前实现计划。
-5. [03_decisions_to_resolve.md](03_decisions_to_resolve.md)：必须由 owner 明确决定的
+5. [05_b2_debate_evidence_alignment_sdd.md](05_b2_debate_evidence_alignment_sdd.md)：B2 对
+   initial assessment 与 Debate 的证据来源、对称性、epoch 与观察的专项 SDD；尚未授权行为变更。
+6. [03_decisions_to_resolve.md](03_decisions_to_resolve.md)：必须由 owner 明确决定的
    治理问题。没有这些决定不得进入行为变更。
-6. [02_implementation_plan.md](02_implementation_plan.md)：早期高层草案；其中关于新增
+7. [02_implementation_plan.md](02_implementation_plan.md)：早期高层草案；其中关于新增
    `decision_evidence_epochs` 的建议已被当前计划否决，保留仅用于追溯讨论。
 
 ## 术语与不变边界
