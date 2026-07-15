@@ -1573,7 +1573,11 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         ),
         None,
     )
-    if not cfg.runtime.paused and repeated_manual_agent:
+    # Only propose schedule changes when the Operator can actually execute them.
+    # In ReadOnly mode a create_repair_proposal task can never complete, so
+    # generating this recommendation locks the Operator in Repairing indefinitely.
+    _hb_permission = (heartbeat or {}).get("permission_mode", "")
+    if not cfg.runtime.paused and repeated_manual_agent and _hb_permission != "ReadOnly":
         agent_name, runs = repeated_manual_agent
         recommendations.append(
             {

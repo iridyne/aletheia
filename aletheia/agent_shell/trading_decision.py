@@ -1189,10 +1189,20 @@ def _build_assessment_prompt(ctx: dict) -> str:
     ) or "  (none)"
 
     balance = layer1.get("balance")
-    balance_line = (
-        f"  Equity: ${balance['equity_usdt']:.0f} | Available: ${balance['available_usdt']:.0f}"
-        if balance else "  (unavailable)"
-    )
+    if balance:
+        # equity_usdt is deliberately None when the paper account has an
+        # unsettled close (get_paper_account: "a missing close result makes the
+        # spendable account value unknown"); available_usdt can be None on the
+        # cached-exchange branch. Render "unknown" honestly instead of crashing
+        # the entire evaluation on a NoneType format spec — a None here otherwise
+        # kills every pi_trading_decision cycle.
+        _equity = balance.get("equity_usdt")
+        _available = balance.get("available_usdt")
+        _equity_str = f"${_equity:.0f}" if _equity is not None else "unknown (unsettled closes)"
+        _available_str = f"${_available:.0f}" if _available is not None else "unknown"
+        balance_line = f"  Equity: {_equity_str} | Available: {_available_str}"
+    else:
+        balance_line = "  (unavailable)"
 
     today_pnl = layer1.get("today_pnl")
     pnl_line = f"  Today realized: ${today_pnl:+.2f}" if today_pnl is not None else "  (no trades today)"
