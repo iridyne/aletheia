@@ -35,7 +35,7 @@ verification:
   command: uv run pytest tests/test_agent_workflow.py -q
   command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
   exit_code: 0
-  commit: a0c69c1e1d3c7fd634cfb355cba0e18e52a4d865
+  commit: a0c69c1e77711914c91987bb51b3d07b5bcdf80b
   run_at: '2026-07-15T07:35:06.959662Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
