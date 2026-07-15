@@ -19,6 +19,10 @@ _OHLCV_CONCURRENCY = 10
 _OHLCV_TIMEOUT = 12.0
 _OHLCV_1H_LIMIT = 168  # 7 days of 1h candles
 _TICKER_CHUNK_SIZE = 100
+# taker_buy_ratio is only consumed by the event family, which gates on a sharp
+# 1h move; fetch it lazily for movers above this |return_1h| % to keep the scan
+# cheap (the taker endpoint is a per-symbol call with no batch form).
+_TAKER_FETCH_THRESHOLD = 3.0
 
 
 def _pct_return(closes: list[float], bars: int) -> float | None:
@@ -79,6 +83,28 @@ def _positive_float(value) -> float | None:
     return parsed if parsed > 0 else None
 
 
+# Aggregate / DEX feeds to fall back to when the primary venue has no fresh
+# derivatives row for a symbol (Hyperliquid perps + Coinalyze cross-venue OI).
+_CROSS_VENUE_FALLBACK = ("hyperliquid", "coinalyze")
+
+
+def _fresh_deriv_with_fallback(getter, domain: str, symbol: str,
+                               primary_exchange: str | None, *, now: datetime) -> dict | None:
+    """Freshness-qualified derivatives read: primary venue first, then cross-venue
+    aggregate feeds. Lets a symbol the primary venue can't supply still get a
+    funding/OI value from a DEX/aggregate source rather than None."""
+    row = fresh_row(getter(symbol, exchange=primary_exchange), domain, now=now)
+    if row is not None:
+        return row
+    for venue in _CROSS_VENUE_FALLBACK:
+        if venue == primary_exchange:
+            continue
+        row = fresh_row(getter(symbol, exchange=venue), domain, now=now)
+        if row is not None:
+            return row
+    return None
+
+
 def _load_fresh_enrichment_rows(
     asset: dict, *, now: datetime,
 ) -> tuple[dict | None, dict | None, dict | None]:
@@ -92,15 +118,11 @@ def _load_fresh_enrichment_rows(
         now=now,
     )
     deriv_exchange = venue or None
-    fr_row = fresh_row(
-        repo.latest_funding_rate(symbol, exchange=deriv_exchange),
-        "funding",
-        now=now,
+    fr_row = _fresh_deriv_with_fallback(
+        repo.latest_funding_rate, "funding", symbol, deriv_exchange, now=now,
     )
-    oi_row = fresh_row(
-        repo.latest_open_interest(symbol, exchange=deriv_exchange),
-        "open_interest",
-        now=now,
+    oi_row = _fresh_deriv_with_fallback(
+        repo.latest_open_interest, "open_interest", symbol, deriv_exchange, now=now,
     )
     return ob_row, fr_row, oi_row
 
@@ -437,20 +459,39 @@ async def _fetch_single_feature(
         except Exception:
             pass  # Keep only a freshness-qualified DB value as fallback.
 
-        # Taker buy/sell ratio — only available on Binance (fapi endpoint)
-        if getattr(exchange, "id", "") == "binance":
+        # Taker buy/sell ratio. Only the event family uses it, and event only
+        # fires on a sharp 1h move — so fetch it lazily for movers to keep the
+        # scan cheap. Venue-matched: Binance fapi or OKX rubik taker-volume.
+        if return_1h is not None and abs(return_1h) > _TAKER_FETCH_THRESHOLD:
+            ex_id = getattr(exchange, "id", "")
             try:
-                raw_sym = symbol.replace("/", "")  # BTC/USDT → BTCUSDT
-                taker_data = await asyncio.wait_for(
-                    exchange.fapipublic_get_takerlongshortratio({
-                        "symbol": raw_sym, "period": "1h", "limit": 1,
-                    }),
-                    timeout=5.0,
-                )
-                if taker_data and len(taker_data) > 0:
-                    ratio = float(taker_data[0].get("buySellRatio", 0))
-                    if ratio > 0:
-                        taker_buy_ratio = ratio
+                if ex_id == "binance":
+                    raw_sym = symbol.replace("/", "")  # BTC/USDT → BTCUSDT
+                    taker_data = await asyncio.wait_for(
+                        exchange.fapipublic_get_takerlongshortratio({
+                            "symbol": raw_sym, "period": "1h", "limit": 1,
+                        }),
+                        timeout=5.0,
+                    )
+                    if taker_data and len(taker_data) > 0:
+                        ratio = float(taker_data[0].get("buySellRatio", 0))
+                        if ratio > 0:
+                            taker_buy_ratio = ratio
+                elif ex_id == "okx":
+                    base = symbol.split("/")[0]
+                    resp = await asyncio.wait_for(
+                        exchange.public_get_rubik_stat_taker_volume({
+                            "ccy": base, "instType": "CONTRACTS", "period": "1H",
+                        }),
+                        timeout=5.0,
+                    )
+                    rows = (resp or {}).get("data") or []
+                    if rows:
+                        # OKX taker-volume row = [ts, sellVol, buyVol]
+                        sell_vol = float(rows[0][1])
+                        buy_vol = float(rows[0][2])
+                        if sell_vol > 0:
+                            taker_buy_ratio = buy_vol / sell_vol
             except Exception:
                 pass
 

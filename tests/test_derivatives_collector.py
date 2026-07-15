@@ -370,3 +370,100 @@ def test_parse_oi_delta_sanity_cap_drops_artifact(tmp_path, monkeypatch):
     assert snap.open_interest_usd == 1000.0
     assert snap.oi_change_1h_pct is None  # 99900% delta capped out
     sq.close_db()
+
+
+# ---------------------------------------------------------------------------
+# collect() — batch (OKX) vs per-symbol (Bitget) fetch strategy + full coverage
+# ---------------------------------------------------------------------------
+
+
+def _patch_collect_env(monkeypatch, tmp_path, exchange, *, lsr=False):
+    """Wire a fake provider + config + fresh DB for a DerivativesCollector.collect run."""
+    from aletheia.config import loader as cfg_loader
+    monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
+    from aletheia.storage import sqlite as sq
+    from aletheia.storage import migrations as mig
+    sq.close_db()
+    mig.run_migrations()
+
+    import aletheia.data.collectors.derivatives as mod
+    from aletheia.data import ccxt_provider as provider_mod
+
+    class _Provider:
+        _primary_name = exchange.id
+
+        def _ensure_primary(self):
+            return exchange
+
+        async def close(self):
+            return None
+
+    cfg = type("Cfg", (), {"market_data": type("MD", (), {
+        "enable_long_short_ratio": lsr, "derivatives_history_hours": 0,
+    })()})()
+    monkeypatch.setattr(provider_mod, "get_market_data_provider", lambda: _Provider())
+    monkeypatch.setattr(cfg_loader, "load_config", lambda: cfg)
+    return mod
+
+
+def test_collect_batch_path_covers_all_targets_in_usd(tmp_path, monkeypatch):
+    """OKX-style batch venue: 2 batch calls cover every passed perp, USD-normalized."""
+    class _BatchExchange:
+        id = "okx"
+        has = {"fetchOpenInterests": True, "fetchFundingRates": True}
+        markets = {"BTC/USDT:USDT": {}, "ETH/USDT:USDT": {}}
+
+        async def load_markets(self):
+            return self.markets
+
+        async def fetch_funding_rates(self, params=None):
+            return {
+                "BTC/USDT:USDT": {"fundingRate": 0.0001, "markPrice": 65000.0},
+                "ETH/USDT:USDT": {"fundingRate": 0.0002, "markPrice": 3000.0},
+            }
+
+        async def fetch_open_interests(self, params=None):
+            return {
+                "BTC/USDT:USDT": {"openInterestValue": 2.0e9, "openInterestAmount": 30000.0},
+                "ETH/USDT:USDT": {"openInterestValue": 1.5e9, "openInterestAmount": 500000.0},
+            }
+
+    mod = _patch_collect_env(monkeypatch, tmp_path, _BatchExchange())
+    result = asyncio.run(mod.DerivativesCollector().collect(["BTC/USDT", "ETH/USDT"]))
+
+    oi_by_sym = {s.symbol: s for s in result["open_interest"]}
+    assert set(oi_by_sym) == {"BTC/USDT", "ETH/USDT"}
+    assert oi_by_sym["BTC/USDT"].open_interest_usd == 2.0e9   # USD notional, not contracts
+    assert oi_by_sym["ETH/USDT"].open_interest_usd == 1.5e9
+    assert len(result["funding"]) == 2
+    from aletheia.storage import sqlite as sq
+    sq.close_db()
+
+
+def test_collect_per_symbol_path_converts_amount_to_usd(tmp_path, monkeypatch):
+    """Non-batch venue (Bitget): per-symbol loop, amount×mark → USD."""
+    calls = {"n": 0}
+
+    class _PerSymbolExchange:
+        id = "bitget"
+        has = {}  # no batch support → per-symbol path
+        markets = {"BTC/USDT:USDT": {}}
+
+        async def load_markets(self):
+            return self.markets
+
+        async def fetch_funding_rate(self, sym):
+            return {"fundingRate": 0.0001, "markPrice": 65000.0}
+
+        async def fetch_open_interest(self, sym):
+            calls["n"] += 1
+            return {"openInterestAmount": 100.0, "openInterestValue": None}
+
+    mod = _patch_collect_env(monkeypatch, tmp_path, _PerSymbolExchange())
+    result = asyncio.run(mod.DerivativesCollector().collect(["BTC/USDT"]))
+
+    assert calls["n"] == 1  # per-symbol fetch was used
+    assert len(result["open_interest"]) == 1
+    assert result["open_interest"][0].open_interest_usd == 100.0 * 65000.0
+    from aletheia.storage import sqlite as sq
+    sq.close_db()

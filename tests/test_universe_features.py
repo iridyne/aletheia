@@ -84,3 +84,31 @@ def test_ticker_prefilters_keep_complete_sequential_candidate_facts():
         "passed", "passed", "not_applicable", "rejected",
     ]
     assert volume_facts[2]["reason_code"] == "ticker_prerequisite_failed"
+
+
+def test_enrichment_falls_back_to_cross_venue_oi(tmp_path, monkeypatch):
+    """When the primary venue (okx) has no fresh OI/funding for a symbol, the
+    feature read falls back to a cross-venue feed (hyperliquid) instead of None."""
+    from datetime import datetime, timezone
+    from aletheia.config import loader as cfg_loader
+    monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
+    from aletheia.storage import sqlite as sq
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import migrations as mig
+    sq.close_db()
+    mig.run_migrations()
+
+    now = datetime.now(timezone.utc)
+    # Only a hyperliquid OI row exists — no okx row for this symbol.
+    repo.insert_open_interest_snapshot({
+        "symbol": "BTC/USDT", "exchange": "hyperliquid",
+        "open_interest_usd": 2.3e9, "observed_at": now.isoformat(),
+    })
+
+    from aletheia.universe.features import _load_fresh_enrichment_rows
+    _ob, _fr, oi_row = _load_fresh_enrichment_rows(
+        {"symbol": "BTC/USDT", "venue": "okx", "market_type": "perp"}, now=now,
+    )
+    assert oi_row is not None
+    assert oi_row["open_interest_usd"] == 2.3e9  # cross-venue fallback used
+    sq.close_db()
