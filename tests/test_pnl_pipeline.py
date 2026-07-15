@@ -134,7 +134,7 @@ class TestRealizedPnlIsolation:
 
 
 @pytest.mark.anyio
-async def test_equity_curve_exposes_live_mark_separately_from_closed_curves(client):
+async def test_equity_curve_exposes_live_mark_separately_from_closed_curves(client, monkeypatch):
     """Open-position movement must be timestamped but never called realized PnL."""
     c, _ = client
     now = datetime.now(timezone.utc)
@@ -148,6 +148,16 @@ async def test_equity_curve_exposes_live_mark_separately_from_closed_curves(clie
         direction="long", quantity=1.0, entry_price=10.0, current_price=13.0,
         unrealized_pnl=3.0, execution_mode="paper_internal", status="open",
     ))
+    # A stale/unrelated unified-exchange cache must never overwrite the local
+    # paper mark. That was the live-curve freeze observed in the running UI.
+    import aletheia.config.loader as loader
+    from aletheia.portfolio import exchange_sync
+    config = loader.load_config()
+    config.exchange.paper_execution_mode = "paper_internal"
+    monkeypatch.setattr(loader, "load_config", lambda: config)
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": 1, "total_unrealized_pnl": 999.0,
+    })
 
     body = (await c.get("/api/analytics/equity-curve")).json()
     mark = body["current_mark_point"]
