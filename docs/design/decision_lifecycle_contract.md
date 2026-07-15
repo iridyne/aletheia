@@ -126,7 +126,9 @@ Opportunity 最终动作只认 pending 权限，因此精确 Serenity pending �
   方向过热是确定性业务拒绝，转成可耐久的 `skip`；目标市场精确报价缺失/过期、五项参数理由
   不完整则返回可重试的稳定不可用原因，在形成最终决定前停止，不能消费 pending。
 - 只有首次创建最终 PiDecision 的 owner 可以把本轮 `filter_trace` 绑定到该 decision id；终态重放或
-  历史中断恢复不得把新一轮 LLM 的 trace 冒充成原决策事实。原 trace 未耐久时宁可不追加。
+  历史中断恢复不得把新一轮 LLM 的 trace 冒充成原决策事实。对精确 pending 候选的 terminal `skip`，
+  PiDecision、trace、可识别的固定 horizon outcome seed 与 `queued→reviewed` 必须同一提交；trace
+  写入失败则整轮回滚、pending 保持。原 trace 未耐久时宁可不追加。
 
 完整定义见 `docs/design/filter_evidence_contract.md`。
 

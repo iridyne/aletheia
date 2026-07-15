@@ -1,5 +1,7 @@
 """Executable claims for docs/design/filter_evidence_contract.md."""
 
+import pytest
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -253,6 +255,264 @@ def test_system_operator_carries_filter_trace_to_reflection():
     ).read_text(encoding="utf-8")
     assert '"filter_trace": decision.filter_trace' in command_source
     assert "record_operator_filter_trace" in reflection_source
+
+
+@spec_claim(
+    SpecClaim(
+        "FE-S14", _CONTRACT, "§3 terminal System Operator evidence", "L2b",
+        "A candidate-scoped terminal PI skip atomically persists its operator trace and "
+        "one shared fixed-horizon outcome cohort; evidence failure leaves the pending "
+        "carrier unconsumed.",
+    )
+)
+def test_candidate_skip_claim_is_atomic_with_operator_evidence(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.reflection import claim_decision
+    from aletheia.analytics import filter_evidence
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.sqlite import get_db
+
+    opportunity = Opportunity(
+        id="opp-atomic-skip-evidence",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+        scanner_family="momentum",
+    )
+    insert_opportunity(opportunity)
+    insert_pi_decision(PiDecision(
+        id="pending-atomic-skip-evidence",
+        action="signal_pending",
+        opportunity_id=opportunity.id,
+        signal_source="market_observer",
+        symbol=opportunity.symbol,
+        direction="long",
+        market_type="spot",
+    ))
+
+    def fail_evidence(*_args, **_kwargs):
+        raise RuntimeError("forced operator evidence failure")
+
+    monkeypatch.setattr(filter_evidence, "record_operator_filter_trace", fail_evidence)
+
+    with pytest.raises(RuntimeError, match="forced operator evidence failure"):
+        claim_decision({
+            "action": "skip",
+            "symbol": opportunity.symbol,
+            "direction": "long",
+            "market_type": "spot",
+            "conviction": 31,
+            "reasoning": "direct model skip",
+            "opportunity_id": opportunity.id,
+            "signal_source": "market_observer",
+            "filter_trace": [{
+                "filter_name": "operator_action_assessment",
+                "stage": "system_operator",
+                "decision": "rejected",
+                "reason_code": "operator_model_skip",
+                "inputs": {"model_action": "skip", "initial_conviction": 31},
+                "parameters": {"schema_actions": ["trade", "skip"]},
+            }],
+        })
+
+    db = get_db()
+    assert db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE opportunity_id=? AND action='skip'",
+        (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opportunity.id,)
+    ).fetchone()[0] == "queued"
+    assert db.execute(
+        "SELECT COUNT(*) FROM filter_decisions WHERE opportunity_id=?", (opportunity.id,)
+    ).fetchone()[0] == 0
+
+
+def test_candidate_skip_claim_creates_one_shared_fixed_outcome_cohort(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.reflection import claim_decision
+    from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
+    from aletheia.storage.repositories import (
+        insert_market_snapshot,
+        insert_opportunity,
+        insert_pi_decision,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    opportunity = Opportunity(
+        id="opp-skip-outcome-cohort",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+        scanner_family="momentum",
+    )
+    insert_opportunity(opportunity)
+    insert_pi_decision(PiDecision(
+        id="pending-skip-outcome-cohort",
+        action="signal_pending",
+        opportunity_id=opportunity.id,
+        signal_source="market_observer",
+        symbol=opportunity.symbol,
+        direction="long",
+        market_type="spot",
+    ))
+    insert_market_snapshot(MarketSnapshot(
+        symbol=opportunity.symbol,
+        market_type="spot",
+        exchange="test",
+        price=100.0,
+    ))
+
+    claimed, created = claim_decision({
+        "action": "skip",
+        "symbol": opportunity.symbol,
+        "direction": "long",
+        "market_type": "spot",
+        "conviction": 31,
+        "reasoning": "direct model skip",
+        "opportunity_id": opportunity.id,
+        "signal_source": "market_observer",
+        "filter_trace": [{
+            "filter_name": "operator_action_assessment",
+            "stage": "system_operator",
+            "decision": "rejected",
+            "reason_code": "operator_model_skip",
+            "inputs": {"model_action": "skip", "initial_conviction": 31},
+            "parameters": {"schema_actions": ["trade", "skip"]},
+        }],
+    })
+
+    assert created is True
+    db = get_db()
+    trace_rows = db.execute(
+        "SELECT candidate_key, outcome_candidate_key, reason_code FROM filter_decisions "
+        "WHERE candidate_key=?",
+        (f"pi_decision:{claimed['id']}",),
+    ).fetchall()
+    outcomes = db.execute(
+        "SELECT horizon, entry_price_usd, direction, market_type FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key=? ORDER BY horizon",
+        (f"pi_decision:{claimed['id']}",),
+    ).fetchall()
+
+    assert [dict(row) for row in trace_rows] == [{
+        "candidate_key": f"pi_decision:{claimed['id']}",
+        "outcome_candidate_key": f"pi_decision:{claimed['id']}",
+        "reason_code": "operator_model_skip",
+    }]
+    assert {row["horizon"] for row in outcomes} == {"15m", "1h", "4h", "24h"}
+    assert {row["entry_price_usd"] for row in outcomes} == {100.0}
+    assert {(row["direction"], row["market_type"]) for row in outcomes} == {("long", "spot")}
+
+
+def test_candidate_skip_without_exact_entry_snapshot_rolls_back(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.reflection import claim_decision
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.sqlite import get_db
+
+    opportunity = Opportunity(
+        id="opp-skip-without-entry-snapshot",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+        scanner_family="momentum",
+    )
+    insert_opportunity(opportunity)
+    insert_pi_decision(PiDecision(
+        id="pending-skip-without-entry-snapshot",
+        action="signal_pending",
+        opportunity_id=opportunity.id,
+        signal_source="market_observer",
+        symbol=opportunity.symbol,
+        direction="long",
+        market_type="spot",
+    ))
+
+    with pytest.raises(ValueError, match="terminal_operator_outcome_unavailable"):
+        claim_decision({
+            "action": "skip",
+            "symbol": opportunity.symbol,
+            "direction": "long",
+            "market_type": "spot",
+            "conviction": 31,
+            "reasoning": "direct model skip without exact price",
+            "opportunity_id": opportunity.id,
+            "signal_source": "market_observer",
+            "filter_trace": [{
+                "filter_name": "operator_action_assessment",
+                "stage": "system_operator",
+                "decision": "rejected",
+                "reason_code": "operator_model_skip",
+                "inputs": {"model_action": "skip", "initial_conviction": 31},
+                "parameters": {"schema_actions": ["trade", "skip"]},
+            }],
+        })
+
+    db = get_db()
+    assert db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE opportunity_id=? AND action='skip'",
+        (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert db.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opportunity.id,)
+    ).fetchone()[0] == "queued"
+
+
+@spec_claim(
+    SpecClaim(
+        "FE-S15", _CONTRACT, "§3 terminal System Operator evidence", "L2b",
+        "Doctor distinguishes unscoped heartbeat skips and candidate skips missing "
+        "trace/outcome evidence, without changing a decision or configuration.",
+    )
+)
+def test_doctor_surfaces_skip_halt_evidence_gaps_read_only(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.diagnostics import doctor
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+
+    insert_pi_decision(PiDecision(
+        id="candidate-skip-without-evidence",
+        action="skip",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        opportunity_id="candidate-skip-source",
+        signal_source="market_observer",
+        reasoning="legacy direct skip missing trace",
+    ))
+    insert_pi_decision(PiDecision(
+        id="unscoped-heartbeat-skip",
+        action="skip",
+        reasoning="heartbeat had no target",
+    ))
+
+    report = doctor.Report()
+    doctor._probe_skip_halt(report)
+
+    checks = [check for check in report.checks if check.name == "loop.skip_halt"]
+    assert len(checks) == 1
+    check = checks[0]
+    assert check.severity == "warn"
+    assert "candidate_skips=1" in check.detail
+    assert "missing_trace=1" in check.detail
+    assert "missing_outcome_seed=1" in check.detail
+    assert "unscoped_heartbeat_skips=1" in check.detail
+    assert "does not change PI, config, Risk, or execution" in check.fix_hint
 
 
 @spec_claim(

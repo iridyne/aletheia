@@ -61,6 +61,17 @@ Opportunity 主链上的“过滤”实际包含四种不同问题：
 关闭时必须写 `not_applicable`，配置或运行异常必须写 `error`，不得把“未评估”冒充为
 `passed/guard_not_blocking`。
 
+对有精确 `signal_pending` 身份的终局 System Operator `skip`，PiDecision、其本轮
+`filter_trace` 与可识别候选的固定 horizon outcome seed 必须在同一 SQLite 提交边界中写入。
+direct model `skip` 不能因未进入 debate/conviction 分支而缺少 `operator_action_assessment`。
+任一必需 evidence 写入失败时，整个 final claim 回滚，pending 保持可重试；不得留下 `reviewed`
+Opportunity 或无证据的 skip。若决策时没有完整方向、市场、venue 或精确入场价，可保留非收益诊断，
+但禁止伪造 outcome 或事后补入场价。
+
+`doctor` 必须只读报告近期 candidate skip 的 action-trace 覆盖、四个 outcome seed 覆盖、无 target
+heartbeat skip、pending 与 proposal 计数。无 target 记录不得混入 candidate effectiveness cohort；
+coverage 缺失是 `recording_incident` 的诊断输入，不授予自动放行、自动调参或执行权限。
+
 生产者在拒绝输入时，该原因是唯一解释事实：Observer、Universe emitter、Divergence scanner
 若无法写入终态记录，必须返回可重试错误，不能以“零 Opportunity、零原因”的成功结束。
 生产者放行并新建 Opportunity 时也必须留下精确的 `opportunity_emitted` 事实；Universe emitter
@@ -122,7 +133,7 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 | LLM neutral/无效输出 | 可能否 | schema 结果、方向、置信度，不写 prompt | 仅有事前方向的行 |
 | Ranker symbol policy/execution/direction/confidence/TTL/factor/guard | 是 | 白/黑名单拒绝也必须写 `symbol_filter/symbol_not_allowed` 并终结 Opportunity；永久拒绝扫描批次与 top-N 执行短名单分离，状态与拒绝事实同事务提交 | 是（guard 只观测；symbol policy 不自动放宽） |
 | open-position/cooldown/batch limit | 是 | 当时占用、冷却截止、rank/limit | 是 |
-| System Operator action/conviction/debate/direction brakes | 是 | 仅活跃 `trade/skip`、原始/辩论后 conviction、实际暴露快照；遗留假动作记 `unsupported_action` | 是，但不在有对照前改门槛 |
+| System Operator action/conviction/debate/direction brakes | 是 | 仅活跃 `trade/skip`、原始/辩论后 conviction、实际暴露快照；direct model `skip` 也有 `operator_action_assessment`；遗留假动作记 `unsupported_action` | 是，但不在有对照前改门槛 |
 | Proposal submission 方向/取价 | 是 | 方向集中度，最终 market_type，目标市场价格是否可用 | 是；用于解释 trade 意图为何没有 proposal，不自动放宽 |
 | Risk | 是 | `RiskDecision` 为权威，filter 记录只做统一索引 | 报告用，永不自动放宽 |
 | Execution adapter | 是 | order/error/venue reason | 用于成交率/实现率，不是方向 alpha |

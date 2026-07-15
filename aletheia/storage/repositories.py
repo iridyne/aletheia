@@ -73,7 +73,20 @@ def _update(table: str, id_val: str, data: dict) -> None:
 def transaction(*, immediate: bool = False):
     db = get_db()
     if db.in_transaction:
-        yield
+        # A caller-owned transaction must not make a nested atomic operation a
+        # no-op.  In particular, a terminal PI skip claim writes its evidence
+        # inside this boundary; if that write fails, the final decision must
+        # disappear while the caller's already-persisted signal_pending carrier
+        # remains available.  SQLite savepoints provide exactly that scope.
+        savepoint = f"repo_tx_{uuid.uuid4().hex}"
+        db.execute(f"SAVEPOINT {savepoint}")
+        try:
+            yield
+            db.execute(f"RELEASE SAVEPOINT {savepoint}")
+        except Exception:
+            db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            db.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
         return
     # BEGIN IMMEDIATE is reserved for short compare-and-write claims.  It acquires
     # SQLite's writer slot before the read so concurrent workers cannot both see

@@ -1412,6 +1412,90 @@ def _probe_profit_loop(report: Report) -> None:
                    f"opportunities {_fmt_age(opp_age)}, proposals {_fmt_age(prop_age) if prop_age else 'none'}")
 
 
+def _probe_skip_halt(report: Report) -> None:
+    """Expose candidate-skip evidence gaps without changing trading behavior.
+
+    ``loop.profit`` detects proposal drought.  This companion probe answers the
+    necessary next question: are candidate-scoped skips actually auditable and
+    waiting for fixed outcomes, or did the Operator consume work without trace
+    evidence?  Unscoped heartbeat skips are reported separately and never enter
+    the candidate cohort.  The probe is read-only by design.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        db = get_db()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        row = db.execute(
+            """SELECT
+                 COUNT(*) AS candidate_skips,
+                 SUM(CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM filter_decisions fd
+                     WHERE fd.candidate_key = 'pi_decision:' || p.id
+                       AND fd.filter_name = 'operator_action_assessment'
+                 ) THEN 1 ELSE 0 END) AS missing_trace,
+                 SUM(CASE WHEN (
+                     SELECT COUNT(DISTINCT fco.horizon)
+                     FROM filter_candidate_outcomes fco
+                     WHERE fco.outcome_candidate_key = 'pi_decision:' || p.id
+                 ) < 4 THEN 1 ELSE 0 END) AS missing_outcome_seed
+               FROM pi_decisions p
+               WHERE p.action = 'skip'
+                 AND p.opportunity_id IS NOT NULL
+                 AND p.created_at >= ?""",
+            (cutoff,),
+        ).fetchone()
+        unscoped = db.execute(
+            """SELECT COUNT(*) FROM pi_decisions
+               WHERE action = 'skip' AND opportunity_id IS NULL AND created_at >= ?""",
+            (cutoff,),
+        ).fetchone()[0]
+        pending = db.execute(
+            """SELECT COUNT(*) FROM pi_decisions
+               WHERE action = 'signal_pending' AND created_at >= ?""",
+            (cutoff,),
+        ).fetchone()[0]
+        proposals = db.execute(
+            "SELECT COUNT(*) FROM trade_proposals WHERE created_at >= ?",
+            (cutoff,),
+        ).fetchone()[0]
+    except Exception as exc:
+        report.add("loop.skip_halt", "info", f"probe error: {exc}")
+        return
+
+    candidate_skips = int((row or [0])[0] or 0)
+    missing_trace = int((row or [0, 0])[1] or 0)
+    missing_outcome_seed = int((row or [0, 0, 0])[2] or 0)
+    detail = (
+        f"24h candidate_skips={candidate_skips}, missing_trace={missing_trace}, "
+        f"missing_outcome_seed={missing_outcome_seed}, "
+        f"unscoped_heartbeat_skips={int(unscoped or 0)}, "
+        f"pending_signals={int(pending or 0)}, proposals={int(proposals or 0)}"
+    )
+    fix_hint = (
+        "inspect candidate skip trace/outcome coverage and the read-only Skip diagnosis; "
+        "does not change PI, config, Risk, or execution"
+    )
+    if missing_trace or missing_outcome_seed:
+        report.add("loop.skip_halt", "warn", detail, fix_hint)
+    elif unscoped:
+        report.add(
+            "loop.skip_halt",
+            "warn",
+            detail + " — unscoped heartbeat skips are excluded from effectiveness cohorts",
+            fix_hint,
+        )
+    elif candidate_skips:
+        report.add(
+            "loop.skip_halt",
+            "info",
+            detail + " — candidate evidence complete; await fixed-horizon settlement before judging protection",
+            fix_hint,
+        )
+    else:
+        report.add("loop.skip_halt", "info", detail + " — no candidate-scoped skips in window", fix_hint)
+
+
 def _probe_round1(report: Report) -> None:
     """Round 1 experiment progress vs Go/Kill thresholds.
 
@@ -2988,6 +3072,7 @@ def build_report() -> Report:
         _probe_signal_effectiveness,
         _probe_trading_loop,
         _probe_profit_loop,
+        _probe_skip_halt,
         _probe_round1,
         _probe_knowledge_flood,
         _probe_learning_retrieval,

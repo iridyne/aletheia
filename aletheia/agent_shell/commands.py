@@ -2004,7 +2004,12 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     settled_final = finalize_decision(
         claimed_final["id"],
         result,
-        publish_filter_evidence=claim_created,
+        # Candidate skip trace/outcome facts were written atomically with the
+        # claim.  Do not turn a later best-effort reflection retry into their
+        # only evidence path.
+        publish_filter_evidence=(
+            claim_created and claimed_final.get("action") != "skip"
+        ),
     )
     if claim_created:
         result["proposal_id"] = settled_final.get("proposal_id")

@@ -213,8 +213,12 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
-    from aletheia.storage.models import Opportunity, PiDecision
-    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
+    from aletheia.storage.repositories import (
+        insert_market_snapshot,
+        insert_opportunity,
+        insert_pi_decision,
+    )
     from aletheia.storage.sqlite import get_db
 
     opportunity = Opportunity(
@@ -234,6 +238,12 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(
         symbol=opportunity.symbol,
         direction="long",
         market_type=opportunity.market,
+    ))
+    insert_market_snapshot(MarketSnapshot(
+        symbol=opportunity.symbol,
+        market_type="perp",
+        exchange="test",
+        price=100.0,
     ))
 
     async def assess_pending_candidate(_context):
@@ -444,8 +454,12 @@ def test_submission_exception_keeps_pending_source_retryable(tmp_path, monkeypat
         DecisionUnavailable,
         TradingDecision,
     )
-    from aletheia.storage.models import Opportunity, PiDecision
-    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
+    from aletheia.storage.repositories import (
+        insert_market_snapshot,
+        insert_opportunity,
+        insert_pi_decision,
+    )
     from aletheia.storage.sqlite import get_db
 
     decision = TradingDecision(
@@ -741,8 +755,12 @@ def test_llm_unavailable_keeps_oldest_pending_signal_retryable(tmp_path, monkeyp
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
-    from aletheia.storage.models import Opportunity, PiDecision
-    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
+    from aletheia.storage.repositories import (
+        insert_market_snapshot,
+        insert_opportunity,
+        insert_pi_decision,
+    )
     from aletheia.storage.sqlite import get_db
 
     opportunity = Opportunity(
@@ -760,6 +778,12 @@ def test_llm_unavailable_keeps_oldest_pending_signal_retryable(tmp_path, monkeyp
         signal_source="market_observer",
     )
     insert_pi_decision(pending)
+    insert_market_snapshot(MarketSnapshot(
+        symbol=opportunity.symbol,
+        market_type="perp",
+        exchange="test",
+        price=100.0,
+    ))
 
     async def unavailable(_context):
         return None
