@@ -66,7 +66,11 @@ Opportunity 主链上的“过滤”实际包含四种不同问题：
 direct model `skip` 不能因未进入 debate/conviction 分支而缺少 `operator_action_assessment`。
 任一必需 evidence 写入失败时，整个 final claim 回滚，pending 保持可重试；不得留下 `reviewed`
 Opportunity 或无证据的 skip。若决策时没有完整方向、市场、venue 或精确入场价，可保留非收益诊断，
-但禁止伪造 outcome 或事后补入场价。
+但禁止伪造 outcome 或事后补入场价。对于有精确 queued Opportunity 身份的 skip，若
+决策时实时快照已过期，允许且只允许复用该 Opportunity 在入队时已完整登记的四个
+固定 horizon outcome cohort（相同 venue、symbol、market、direction、entry price 与
+entry timestamp）；trace 必须标注 `queued_candidate_fixed`。不完整或身份不一致的 cohort
+仍必须回滚，不能以旧快照、别的市场或新造价格代替。
 
 `doctor` 必须只读报告近期 candidate skip 的 action-trace 覆盖、四个 outcome seed 覆盖、legacy 无 target
 skip、`operator_evaluation_events` 的 no-candidate heartbeat、pending 与 proposal 计数。无 target 记录
