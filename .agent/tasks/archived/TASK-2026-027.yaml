@@ -1,0 +1,53 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-027
+title: Close remaining Learning consumer authority gaps
+status: done
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Put ranker case and memo scoring behind prospective authority with manifests,
+  enforce exact-scope reviewer evidence gates, and record learned versus static sizing
+  while preserving risk and execution behavior.
+acceptance:
+- Ranker case-study and trading-memo deltas remain zero until the shared prospective
+  authority adapter authorizes a treatment, and every decision exposes its path ids.
+- Lesson promotion and overturn use clean cost-aware outcomes from the lesson's exact
+  populated symbol/direction/scanner scope; broad global history cannot satisfy the
+  gate.
+- Persona sizing records static baseline, learned proposal, actual notional, assignment,
+  and exposure ids while missing authority restores the static baseline.
+- Observer, ranker, and Operator Learning effects keep separate attribution paths
+  and disabling autonomous Learning restores ranker and sizing baselines.
+- Risk Engine, execution gateway, live-state controls, and hard limits are unchanged.
+ownership:
+  branch: fix/learning-final-consumers
+  lease_holder: codex
+  claimed_at: '2026-07-11T19:47:24.064090Z'
+  expires_at: '2026-07-12T03:47:24.064239Z'
+base_commit: 946ab837f082dfc583c23093ac320bc3d02d38ab
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: b5d530718774fc3a636acbae840ffc17213467ee
+  run_at: '2026-07-11T20:06:07.057572Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 5dd2e9d798542036e80283933bcce09283f5ece6
+  run_at: '2026-07-11T20:06:49.013174Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/archived/TASK-2026-027.md
+updated_at: '2026-07-11T20:06:55.661665Z'

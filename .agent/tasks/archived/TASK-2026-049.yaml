@@ -1,0 +1,49 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-049
+title: Consolidate discussion into governed documentation
+status: done
+packet_type: standard
+scope:
+  boundary: documentation-only consolidation of the former repository-root owner discussion
+    into the product, design, issue, testing, and historical-process documentation
+    layers
+  excluded: production-code behavior, frontend behavior, risk/execution semantics,
+    runtime configuration or facts, credentials, database changes, and live/paper
+    trading actions
+intent: Classify the former repository-root owner note into durable product intent,
+  current subsystem contracts, issue backlog, and archived process history; remove
+  the standalone source only after every retained statement has a canonical destination.
+acceptance:
+- Every durable product choice from the former discussion has a canonical, linked
+  home in the existing documentation pyramid; dated process evidence remains explicitly
+  historical.
+- Product scope no longer claims that an executable RuleSet/DSL/backtest engine is
+  a current Aletheia capability or decision source.
+- Live documentation no longer directs readers to the removed repository-root discussion
+  file; the standalone source is deleted only after a source-to-home crosswalk is
+  committed.
+- Documentation navigation includes the new product-direction entry point, and a focused
+  documentation/reference check plus strict workflow validation pass.
+ownership:
+  branch: iridite/discussion-doc-consolidation
+  lease_holder: codex
+  claimed_at: '2026-07-12T10:23:59.224715Z'
+  expires_at: '2026-07-12T18:23:59.224978Z'
+base_commit: e7f8d4709e8eb7ed17fac3553c7d43b68beff12a
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 28d5e8b0fc2f62aae7c2f79a5926bdee7ef4d005
+  run_at: '2026-07-12T10:32:07.915908Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/archived/TASK-2026-049.md
+updated_at: '2026-07-12T10:32:32.147048Z'

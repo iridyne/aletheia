@@ -92,7 +92,7 @@ At session start, run:
 ```sh
 git pull --ff-only
 uv sync
-uv run aletheia agent workflow bootstrap
+uv run python scripts/agent_bootstrap.py
 uv run aletheia doctor
 ```
 
@@ -109,9 +109,10 @@ spec together. Register a new data source in the data-utilization table and add
 its DU claim before writing collection code.
 
 At task end, commit the implementation, record real verification with
-`uv run aletheia agent workflow task verify TASK-ID --command-key KEY`, update
-`.agent/handoffs/TASK-*.md`, complete the task when no work remains, and run
-`uv run aletheia agent workflow check --strict`. `docs/_ai/AI_HANDOFF.md` is a
+`uv run python scripts/agent_task.py verify TASK-ID --command-key KEY`, update
+`.agent/handoffs/TASK-*.md`, complete the task with
+`uv run python scripts/agent_task.py complete TASK-ID`, and run
+`uv run python scripts/agent_check.py --strict`. `docs/_ai/AI_HANDOFF.md` is a
 frozen archive; use the per-task handoff, `DEVLOG.md`, and
 `docs/_ai/DECISIONS.md` as directed by the workflow.
 

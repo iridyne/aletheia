@@ -1,0 +1,57 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-044
+title: Expose honest raw and verified outcome reporting
+status: done
+packet_type: standard
+scope:
+  boundary: outcome cohort reporting summary, inspect status/pnl, analytics trade-stats/strategy/equity/trade-insights/cost
+    responses, existing Overview and Trades analytics components, nullable/unavailable
+    formatting, dual raw/genuine curve labels, frontend API types, focused API/CLI/UI
+    tests, OI-C04 and API docs
+  excluded: Risk and risk controls, trading decisions or Learning consumers, close
+    accounting, execution or exchange behavior, live authority, credentials, config
+    schema, new pages/tabs, historical mutation/backfill, gateway restart, and runtime
+    database mutation
+intent: Make CLI, analytics API, and existing dashboard performance views explicitly
+  distinguish raw closed account events, verified eligible strategy outcomes, excluded
+  outcomes and unavailable metrics, without changing Risk, trading decisions, close
+  accounting, exchange behavior, live authority, credentials, or history.
+acceptance:
+- Every in-scope response exposes raw_event_count, eligible_outcome_count, excluded_outcome_count,
+  stable exclusion reasons, current semantics version and an available/insufficient/unavailable
+  cohort state; judgement metrics default to eligible.
+- Equity reporting returns separately labelled raw recorded-account and verified strategy
+  curves. Unknown raw economics remain counted/explained and never become a zero-PnL
+  point; current unrealized PnL is labelled separately from both curves.
+- CLI status/pnl and existing dashboard panels show verified strategy metrics by default
+  plus raw/excluded composition. Missing eligible data renders unavailable or insufficient
+  without numeric formatting errors, zero substitution, or positive tone.
+- API/CLI/UI counts agree on mixed verified, administrative and legacy fixtures; mobile
+  and ordinary viewport source labels remain visible. Existing symbol displays continue
+  through fmtSymbol where applicable.
+- OI-C04 and API response-shape tests are GREEN; API reference and frontend types
+  are synchronized, frontend builds successfully, and no Risk/trading/close/exchange/live/
+  credential/history behavior changes.
+ownership:
+  branch: fix/outcome-reporting
+  lease_holder: codex
+  claimed_at: '2026-07-12T06:53:36.859663Z'
+  expires_at: '2026-07-12T18:53:36.859803Z'
+base_commit: f1d47dd7647a4d60504a80775924fbdd92f8532a
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: 8cdd7a48e3aa82a59933b1ec6aa01954ce343bbb
+  run_at: '2026-07-12T07:09:30.574751Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/archived/TASK-2026-044.md
+updated_at: '2026-07-12T07:09:40.084458Z'

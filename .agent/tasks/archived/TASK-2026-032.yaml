@@ -1,0 +1,59 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-032
+title: Define outcome integrity executable contract
+status: done
+packet_type: standard
+scope:
+  boundary: SDD design documents, executable spec claims, conformance registration,
+    and the reconciled-gone implementation plan only
+  excluded: production code, database contents, runtime state, trading behavior, risk
+    limits, exchange clients, execution behavior, credentials, and gateway process
+intent: Define the SDD and executable claims for verified versus administrative position
+  closure, durable reconciliation confirmation, cross-broker exit evidence, behavior-consumer
+  eligibility, global Learning refreeze, honest reporting, and additive history remediation
+  without changing production behavior.
+acceptance:
+- A new outcome-integrity spec module declares the missing behavior and enumerates
+  all behavior-changing closed-position consumers without making the existing suite
+  fail merely because implementation is deferred.
+- Execution, Learning, data-model, and API design documents define verified versus
+  administrative closure, provenance, eligibility, durable confirmation, refreeze,
+  dual reporting, and additive history handling consistently.
+- Existing adopted/local-only reconciliation contracts remain intact and the new claims
+  link back to RG-01 through RG-22.
+- No production code, database, runtime state, trading behavior, risk limits, exchange
+  client, or gateway process changes in this task.
+- The OI spec, full tests/specs suite, architecture fitness, and strict workflow checks
+  pass; the full conformance run records but does not hide or worsen the pre-existing
+  duplicate execution claim id tracked outside this task.
+ownership:
+  branch: spec/outcome-integrity-contract
+  lease_holder: codex
+  claimed_at: '2026-07-12T04:17:02.137612Z'
+  expires_at: '2026-07-12T12:17:02.137766Z'
+base_commit: acb27d63bd018e5ee050fe9e4f3ebf2a89aae727
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: f9f59714b4ab79db83938d76997831c34fa3bba3
+  run_at: '2026-07-12T04:24:03.331555Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: specs
+  command: uv run pytest tests/specs/ -q
+  command_sha256: 559c89bed5934bafea8d8e952d8f2eabadc73a4c9fed367b92a7eb7f24b1e5bf
+  exit_code: 0
+  commit: bffee1c7162d85e8a6a8a382a6183f7bf4fc95ff
+  run_at: '2026-07-12T04:24:32.225175Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/archived/TASK-2026-032.md
+updated_at: '2026-07-12T04:24:45.541634Z'
