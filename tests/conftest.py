@@ -61,17 +61,17 @@ _PYTEST_MARKERS = [
     "tier_integration: tests that cross module, route, DB, scheduler, broker, or runtime boundaries.",
     "tier_e2e: end-to-end pipeline tests.",
     "tier_spec: executable specification tests under tests/specs.",
-    "domain_operator: System Operator / agent shell / operator loop tests.",
-    "domain_universe: universe scanner / allocator / signal tests.",
+    "domain_operator: System Operator / agent shell / operator loop / trading decision / proposal tests.",
+    "domain_universe: universe scanner / allocator / signal / filter evidence / filter replay tests.",
     "domain_serenity: Serenity Lens / research pipeline tests.",
     "domain_risk: Risk Engine / kill switch / risk route tests.",
-    "domain_execution: order, broker, position, trade, and execution-path tests.",
-    "domain_market_data: market data, exchange data, price feed, and collector tests.",
-    "domain_learning: knowledge, learning, dreaming, lesson, and feedback tests.",
-    "domain_frontend: frontend/static UI source checks.",
-    "domain_runtime: gateway, scheduler, runtime continuity, lifecycle, and supervisor tests.",
-    "domain_storage: storage, DB, migration, retention, and audit-log tests.",
-    "domain_security: secrets, auth, permission, and safety guard tests.",
+    "domain_execution: order, broker, position, trade, outcome, exchange sync, PnL, reconciliation, sizing, and execution-path tests.",
+    "domain_market_data: market data, exchange data, price feed, collector, OHLCV, orderbook, instrument, and data freshness tests.",
+    "domain_learning: knowledge, learning, dreaming, lesson, feedback, alpha attribution, analytics, and experience loop tests.",
+    "domain_frontend: frontend/static UI source checks and UI component tests.",
+    "domain_runtime: gateway, scheduler, runtime continuity, lifecycle, supervisor, workflow, connectivity, and notification tests.",
+    "domain_storage: storage, DB, migration, retention, backup, IO honesty, and audit-log tests.",
+    "domain_security: secrets, auth, permission, trust boundary, export redaction, and safety guard tests.",
     "domain_config: config/settings tests.",
     "domain_misc: fallback domain marker when no narrower domain applies.",
 ]
@@ -118,17 +118,50 @@ _SLOW_PATH_TOKENS = (
 )
 
 _DOMAIN_PATTERNS = [
-    ("domain_operator", ("operator", "agent_shell", "pi_daemon", "command")),
-    ("domain_universe", ("universe",)),
+    ("domain_operator", (
+        "operator", "agent_shell", "pi_daemon", "command",
+        "entry_logic", "decision", "proposal",
+    )),
+    ("domain_universe", (
+        "universe",
+        "candidate_supply", "filter_evidence", "filter_replay", "filter_shadow",
+    )),
     ("domain_serenity", ("serenity",)),
     ("domain_risk", ("risk", "kill_switch", "guard", "daily_loss")),
-    ("domain_execution", ("trade", "trading", "position", "broker", "bitget", "okx", "order", "fill", "tpsl", "leverage", "execution", "paper_")),
-    ("domain_market_data", ("market", "price", "collector", "ccxt", "coingecko", "macro", "regime", "xstocks", "prediction")),
-    ("domain_learning", ("knowledge", "learning", "dreaming", "lesson", "feedback", "hypothesis", "anti_hallucination")),
-    ("domain_frontend", ("frontend", "webui", "navigation_ia", "settings_ui", "build_config")),
-    ("domain_runtime", ("runtime", "scheduler", "lifecycle", "supervisor", "gateway", "frontdoor", "startup", "resume", "health", "doctor", "pidfile", "update", "autostart")),
-    ("domain_storage", ("storage", "db", "retention", "audit", "fts", "history")),
-    ("domain_security", ("security", "secret", "auth", "permission", "codex")),
+    ("domain_execution", (
+        "trade", "trading", "position", "broker", "bitget", "okx", "order", "fill",
+        "tpsl", "leverage", "execution", "paper_",
+        "outcome", "exchange", "pnl", "disappearance", "reconcil",
+        "sizing", "uta", "exit_policy", "account_loss",
+    )),
+    ("domain_market_data", (
+        "market", "price", "collector", "ccxt", "coingecko", "macro", "regime",
+        "xstocks", "prediction",
+        "divergence", "event_trigger", "ohlcv", "instrument_id", "enriched", "orderbook",
+    )),
+    ("domain_learning", (
+        "knowledge", "learning", "dreaming", "lesson", "feedback",
+        "hypothesis", "anti_hallucination",
+        "alpha", "analytics", "experience", "self_evolution",
+    )),
+    ("domain_frontend", (
+        "frontend", "webui", "navigation_ia", "settings_ui", "build_config",
+        "overview", "_ui",
+    )),
+    ("domain_runtime", (
+        "runtime", "scheduler", "lifecycle", "supervisor", "gateway", "frontdoor",
+        "startup", "resume", "health", "doctor", "pidfile", "update", "autostart",
+        "workflow", "connectivity", "event_loop", "self_heal", "layered_pause",
+        "lifespan", "git_hook", "openapi", "net_fallback", "notification", "telegram",
+    )),
+    ("domain_storage", (
+        "storage", "db", "retention", "audit", "fts", "history",
+        "io_honesty", "backup",
+    )),
+    ("domain_security", (
+        "security", "secret", "auth", "permission", "codex",
+        "trust_boundary", "export_redact",
+    )),
     ("domain_config", ("config", "settings")),
 ]
 
