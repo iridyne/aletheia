@@ -1,0 +1,299 @@
+name: Build Packaged Tray CLI Runtime
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "aletheia/**"
+      - "frontend/**"
+      - "native/aletheia-host/**"
+      - "packaging/pyinstaller/**"
+      - "scripts/release/build_packaged_runtime.py"
+      - "scripts/release/build_macos_app.py"
+      - "scripts/release/pyinstaller_entry.py"
+      - "scripts/release/sign_update_feed.py"
+      - "tests/test_packaged_*.py"
+      - "tests/test_macos_packaged_app.py"
+      - "docs/plans/packaged_tray_cli_runtime.md"
+      - "docs/operations/PACKAGED_RUNTIME.md"
+      - ".github/workflows/build-packaged-runtime.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packaged-runtime-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  contracts:
+    name: Packaged runtime contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked --all-groups
+      - name: Run focused package, bootstrap, update, and app-layout contracts
+        run: |
+          uv run pytest \
+            tests/test_packaged_runtime_contract.py \
+            tests/test_packaged_bootstrap.py \
+            tests/test_packaged_update.py \
+            tests/test_packaged_update_activation.py \
+            tests/test_packaged_update_recovery.py \
+            tests/test_packaged_update_routes.py \
+            tests/test_macos_packaged_app.py \
+            -q --tb=short
+
+  macos-package:
+    name: macOS arm64 self-contained CLI and tray app
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assert Apple Silicon runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked development dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Install pinned PyInstaller build tool
+        run: uv pip install --python .venv/bin/python "pyinstaller==6.16.0"
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build browser dashboard
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+
+      - name: Run focused packaging contracts
+        run: |
+          uv run pytest \
+            tests/test_packaged_runtime_contract.py \
+            tests/test_packaged_bootstrap.py \
+            tests/test_packaged_update.py \
+            tests/test_packaged_update_activation.py \
+            tests/test_packaged_update_recovery.py \
+            tests/test_packaged_update_routes.py \
+            tests/test_macos_packaged_app.py \
+            tests/test_release_data_dir.py \
+            -q --tb=short
+
+      - name: Build PyInstaller one-folder payload
+        run: uv run python scripts/release/build_packaged_runtime.py --output-dir dist/packaged-runtime --max-mib 350
+
+      - name: Resolve packaged runtime paths
+        id: payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$PWD/build/pyinstaller/dist/aletheia-core/aletheia-core"
+          test -x "$core"
+          archive="$(find "$PWD/dist/packaged-runtime" -maxdepth 1 -name 'aletheia-runtime-*.tar.gz' -print -quit)"
+          test -f "$archive"
+          echo "core=$core" >> "$GITHUB_OUTPUT"
+          echo "payload_dir=$PWD/build/pyinstaller/dist/aletheia-core" >> "$GITHUB_OUTPUT"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Prove core CLI works without uv or system Python in command path
+        shell: bash
+        env:
+          ALETHEIA_PACKAGED: "1"
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-packaged-home
+        run: |
+          set -euo pipefail
+          core="${{ steps.payload.outputs.core }}"
+          mkdir -p "$ALETHEIA_DATA_DIR"
+          env -i HOME="$HOME" PATH="/usr/bin:/bin" ALETHEIA_PACKAGED=1 ALETHEIA_DATA_DIR="$ALETHEIA_DATA_DIR" "$core" version
+          env -i HOME="$HOME" PATH="/usr/bin:/bin" ALETHEIA_PACKAGED=1 ALETHEIA_DATA_DIR="$ALETHEIA_DATA_DIR" "$core" --help >/dev/null
+          env -i HOME="$HOME" PATH="/usr/bin:/bin" ALETHEIA_PACKAGED=1 ALETHEIA_DATA_DIR="$ALETHEIA_DATA_DIR" "$core" doctor --help >/dev/null
+          env -i HOME="$HOME" PATH="/usr/bin:/bin" ALETHEIA_PACKAGED=1 ALETHEIA_DATA_DIR="$ALETHEIA_DATA_DIR" "$core" gateway --help >/dev/null
+          env -i HOME="$HOME" PATH="/usr/bin:/bin" ALETHEIA_PACKAGED=1 ALETHEIA_DATA_DIR="$ALETHEIA_DATA_DIR" "$core" update --help >/dev/null
+
+      - name: Prove packaged gateway readiness and health
+        id: gateway_smoke
+        continue-on-error: true
+        shell: bash
+        env:
+          ALETHEIA_PACKAGED: "1"
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-packaged-home
+        run: |
+          set -euo pipefail
+          core="${{ steps.payload.outputs.core }}"
+          cleanup() { "$core" gateway stop || true; }
+          trap cleanup EXIT
+          "$core" gateway start --no-browser
+          for _ in $(seq 1 180); do
+            if curl --noproxy '*' --fail --silent http://127.0.0.1:8787/_infra/readyz >/dev/null; then break; fi
+            sleep 0.25
+          done
+          curl --noproxy '*' --fail --silent http://127.0.0.1:8787/_infra/readyz
+          curl --noproxy '*' --fail --silent http://127.0.0.1:8787/api/health >/dev/null
+          "$core" gateway stop
+          trap - EXIT
+
+      - name: Capture packaged gateway diagnostics
+        if: always()
+        shell: bash
+        run: |
+          diagnostic="$RUNNER_TEMP/packaged-gateway-diagnostics"
+          mkdir -p "$diagnostic"
+          cp -R "$RUNNER_TEMP/aletheia-packaged-home/logs" "$diagnostic/logs" 2>/dev/null || true
+          cp "$RUNNER_TEMP/aletheia-packaged-home/gateway.pid" "$diagnostic/" 2>/dev/null || true
+          cp build/pyinstaller/work/aletheia-core/warn-aletheia-core.txt "$diagnostic/" 2>/dev/null || true
+          find "$diagnostic" -type f -maxdepth 3 -print || true
+
+      - name: Upload packaged gateway diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-gateway-diagnostics-${{ github.sha }}
+          path: ${{ runner.temp }}/packaged-gateway-diagnostics
+          if-no-files-found: ignore
+          retention-days: 3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test locked host release/update core
+        working-directory: native/aletheia-host
+        run: cargo test --locked --all-targets
+
+      - name: Build stable CLI and tray binaries
+        working-directory: native/aletheia-host
+        run: cargo build --locked --release --bins
+
+      - name: Exercise stable CLI selection and direct tray smoke
+        id: host_smoke
+        continue-on-error: true
+        shell: bash
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-host-data
+        run: |
+          set -euo pipefail
+          host_root="$RUNNER_TEMP/aletheia-host-root"
+          release_id="0.5.0-${GITHUB_SHA:0:12}"
+          release_root="$host_root/releases/$release_id"
+          mkdir -p "$release_root" "$ALETHEIA_DATA_DIR"
+          cp -R "${{ steps.payload.outputs.payload_dir }}/." "$release_root/"
+          cat > "$host_root/current.json" <<JSON
+          {
+            "schema_version": 1,
+            "current": "$release_id"
+          }
+          JSON
+          export ALETHEIA_HOST_ROOT="$host_root"
+          cli="$PWD/native/aletheia-host/target/release/aletheia"
+          tray="$PWD/native/aletheia-host/target/release/aletheia-tray"
+          "$cli" version
+          "$cli" doctor --help >/dev/null
+          "$cli" gateway --help >/dev/null
+          "$cli" __host status | tee "$RUNNER_TEMP/host-status.json"
+          "$tray" --smoke-test
+          "$cli" gateway stop || true
+
+      - name: Build installable browser-first macOS app
+        if: steps.host_smoke.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python scripts/release/build_macos_app.py \
+            --payload-dir "${{ steps.payload.outputs.payload_dir }}" \
+            --host-bin-dir "$PWD/native/aletheia-host/target/release" \
+            --output-dir "$PWD/dist/macos-app"
+          test -x "$PWD/dist/macos-app/Aletheia.app/Contents/MacOS/aletheia-tray"
+          test -x "$PWD/dist/macos-app/Aletheia.app/Contents/MacOS/aletheia"
+
+      - name: Prove first-launch bootstrap, stable CLI, and app tray smoke
+        id: app_smoke
+        if: steps.host_smoke.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-app-data
+          ALETHEIA_HOST_ROOT: ${{ runner.temp }}/aletheia-app-host
+        run: |
+          set -euo pipefail
+          app="$PWD/dist/macos-app/Aletheia.app"
+          rm -rf "$ALETHEIA_HOST_ROOT" "$ALETHEIA_DATA_DIR"
+          mkdir -p "$ALETHEIA_DATA_DIR"
+          "$app/Contents/MacOS/aletheia" __host status | tee "$RUNNER_TEMP/app-host-status.json"
+          test -f "$ALETHEIA_HOST_ROOT/current.json"
+          "$app/Contents/MacOS/aletheia" version
+          "$app/Contents/MacOS/ato" doctor --help >/dev/null
+          "$app/Contents/MacOS/aletheia-tray" --smoke-test
+          curl --noproxy '*' --fail --silent http://127.0.0.1:8787/_infra/readyz >/dev/null
+          curl --noproxy '*' --fail --silent http://127.0.0.1:8787/api/health >/dev/null
+          "$app/Contents/MacOS/aletheia" gateway stop
+
+      - name: Stage portable host artifact
+        if: steps.host_smoke.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$PWD/dist/host-macos"
+          mkdir -p "$stage/bin" "$stage/runtime"
+          cp native/aletheia-host/target/release/aletheia "$stage/bin/aletheia"
+          cp native/aletheia-host/target/release/aletheia "$stage/bin/ato"
+          cp native/aletheia-host/target/release/aletheia-tray "$stage/bin/aletheia-tray"
+          cp "${{ steps.payload.outputs.archive }}" "$stage/runtime/"
+          cp "${{ steps.payload.outputs.archive }}.sha256" "$stage/runtime/"
+          cp dist/packaged-runtime/packaged-runtime-size.json "$stage/runtime/"
+          cp native/aletheia-host/Cargo.lock "$stage/Cargo.lock"
+          tar -C "$PWD/dist" -czf "$PWD/dist/aletheia-packaged-host-macos.tar.gz" host-macos
+
+      - name: Upload packaged app, host, and runtime
+        if: steps.host_smoke.outcome == 'success' && steps.app_smoke.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aletheia-packaged-host-${{ github.sha }}
+          path: |
+            dist/macos-app/Aletheia-*-darwin-arm64.zip
+            dist/macos-app/Aletheia-*-darwin-arm64.zip.sha256
+            dist/macos-app/macos-app-report.json
+            dist/aletheia-packaged-host-macos.tar.gz
+            dist/packaged-runtime/*.tar.gz
+            dist/packaged-runtime/*.sha256
+            dist/packaged-runtime/packaged-runtime-size.json
+            native/aletheia-host/Cargo.lock
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Require packaged gateway, host, and app smoke
+        if: always()
+        shell: bash
+        run: |
+          test "${{ steps.gateway_smoke.outcome }}" = "success"
+          test "${{ steps.host_smoke.outcome }}" = "success"
+          test "${{ steps.app_smoke.outcome }}" = "success"

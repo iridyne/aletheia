@@ -10,6 +10,8 @@ stop`/`status` keep working. The inner server's stderr is sent to
 the runtime home's logs/errors.log instead of being discarded.
 """
 
+from __future__ import annotations
+
 import os
 import platform
 import subprocess

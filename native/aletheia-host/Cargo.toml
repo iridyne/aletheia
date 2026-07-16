@@ -1,0 +1,30 @@
+[package]
+name = "aletheia-host"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Stable tray and CLI host for packaged Aletheia runtimes"
+license = "MIT"
+
+[lib]
+name = "aletheia_host"
+path = "src/hostlib.rs"
+
+[[bin]]
+name = "aletheia"
+path = "src/bin/aletheia.rs"
+
+[[bin]]
+name = "aletheia-tray"
+path = "src/bin/aletheia-tray.rs"
+
+[dependencies]
+anyhow = "1.0.100"
+directories = "6.0.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+tray-icon = { version = "0.24.1", default-features = false }
+winit = "0.30.12"
+
+[dev-dependencies]
+tempfile = "3.23.0"
