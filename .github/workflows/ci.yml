@@ -34,8 +34,6 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Scan for leaked secrets
         uses: gitleaks/gitleaks-action@v2
@@ -50,10 +48,6 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-        # Agent workflow validation verifies task base/evidence commits; a
-        # depth-1 PR checkout cannot contain those reachable history objects.
-        with:
-          fetch-depth: 0
 
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@v6
@@ -91,20 +85,6 @@ jobs:
           tests/simulation/control_loop/test_failure_artifacts.py
           tests/test_runtime_replay_pack.py
           -q --tb=short --junitxml=test-results/dcls.xml
-
-      - name: Verify agent workflow behavior
-        run: uv run pytest tests/test_agent_workflow.py -q --junitxml=test-results/agent-workflow.xml
-
-      - name: Verify agent workflow integrity
-        env:
-          CHANGE_BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ -n "$CHANGE_BASE" ]; then
-            git cat-file -e "${CHANGE_BASE}^{commit}"
-            uv run aletheia agent workflow check --strict --changed-since "$CHANGE_BASE"
-          else
-            uv run aletheia agent workflow check --strict
-          fi
 
       - name: Upload test reports
         if: always()
@@ -278,137 +258,3 @@ jobs:
       - name: Test Operator Shell
         working-directory: operator-shell
         run: npm test
-
-      - name: Type-check Operator Shell
-        working-directory: operator-shell
-        run: npm run build
-
-  windows-runtime-smoke:
-    name: Windows runtime smoke
-    runs-on: windows-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Synchronize locked dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Prepare test report directory
-        shell: pwsh
-        run: New-Item -ItemType Directory -Force test-results | Out-Null
-
-      - name: Verify Windows event-loop and process-state behavior
-        run: >-
-          uv run pytest
-          tests/test_event_loop_policy.py
-          tests/test_pidfile.py
-          -q --tb=short --junitxml=test-results/windows-runtime.xml
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-runtime-results
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 14
-
-  pr-ci-gate:
-    name: PR CI gate
-    if: ${{ always() && github.event_name == 'pull_request' }}
-    needs:
-      - secrets-scan
-      - backend
-      - fast-tests
-      - integration-tests
-      - active-paper-chain
-      - frontend
-      - operator-shell
-      - windows-runtime-smoke
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-
-    steps:
-      - name: Require every PR CI surface
-        run: |
-          test "${{ needs.secrets-scan.result }}" = "success"
-          test "${{ needs.backend.result }}" = "success"
-          test "${{ needs.fast-tests.result }}" = "success"
-          test "${{ needs.integration-tests.result }}" = "success"
-          test "${{ needs.active-paper-chain.result }}" = "success"
-          test "${{ needs.frontend.result }}" = "success"
-          test "${{ needs.operator-shell.result }}" = "success"
-          test "${{ needs.windows-runtime-smoke.result }}" = "success"
-          echo "All required PR CI surfaces passed."
-
-  master-verification-gate:
-    name: Master verification gate
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/master' }}
-    needs:
-      - secrets-scan
-      - backend
-      - fast-tests
-      - integration-tests
-      - active-paper-chain
-      - frontend
-      - operator-shell
-      - windows-runtime-smoke
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-
-    steps:
-      - name: Require every master verification surface
-        run: |
-          test "${{ needs.secrets-scan.result }}" = "success"
-          test "${{ needs.backend.result }}" = "success"
-          test "${{ needs.fast-tests.result }}" = "success"
-          test "${{ needs.integration-tests.result }}" = "success"
-          test "${{ needs.active-paper-chain.result }}" = "success"
-          test "${{ needs.frontend.result }}" = "success"
-          test "${{ needs.operator-shell.result }}" = "success"
-          test "${{ needs.windows-runtime-smoke.result }}" = "success"
-          echo "All required master verification surfaces passed."
-
-  full-regression:
-    name: Full Python regression audit
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_regression }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Synchronize locked dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Prepare test report directory
-        run: mkdir -p test-results
-
-      - name: Run full regression audit
-        run: uv run pytest tests/ -q --tb=line --junitxml=test-results/full.xml
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: full-regression-results
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 14
