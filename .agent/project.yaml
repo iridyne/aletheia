@@ -5,7 +5,6 @@ source_of_truth:
   - source_and_executable_results
   - git_history_and_ci
   - decisions
-  - task_packet
-  - handoff
+  - local_task_state
   - chat_history
 commands_file: .agent/commands.yaml
