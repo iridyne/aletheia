@@ -36,6 +36,9 @@ requires-python = ">=3.12"
     _write(root / "aletheia" / "dashboard_static" / "assets" / "app.js.map", "ignored\n")
     _write(root / "aletheia" / "__pycache__" / "app.pyc", b"ignored")
     _write(root / "scripts" / "runtime" / "start-release.ps1", "Write-Output ok\n")
+    _write(root / "scripts" / "runtime" / "install-release.sh", "#!/usr/bin/env bash\necho ok\n")
+    _write(root / "scripts" / "runtime" / "start-release.sh", "#!/usr/bin/env bash\necho ok\n")
+    _write(root / "scripts" / "runtime" / "health-check.sh", "#!/usr/bin/env bash\necho ok\n")
     _write(root / "tests" / "ignored.py", "raise RuntimeError\n")
     _write(root / "frontend" / "src" / "ignored.tsx", "export default 1\n")
     _write(root / "data" / "app.db", b"runtime state must never ship")
@@ -57,11 +60,17 @@ def test_bundle_contains_only_runtime_whitelist_and_manifest(tmp_path: Path) -> 
     with zipfile.ZipFile(result.archive_path) as archive:
         names = set(archive.namelist())
         manifest = json.loads(archive.read("release-manifest.json"))
+        shell_mode = (archive.getinfo("scripts/runtime/start-release.sh").external_attr >> 16) & 0o777
+        python_mode = (archive.getinfo("aletheia/app.py").external_attr >> 16) & 0o777
 
+    assert result.archive_path.name == f"aletheia-dogfood-{'a' * 12}.zip"
     assert "aletheia/app.py" in names
     assert "aletheia/dashboard_static/index.html" in names
     assert "aletheia/dashboard_static/assets/app.js" in names
     assert "scripts/runtime/start-release.ps1" in names
+    assert "scripts/runtime/install-release.sh" in names
+    assert "scripts/runtime/start-release.sh" in names
+    assert "scripts/runtime/health-check.sh" in names
     assert "pyproject.toml" in names
     assert "uv.lock" in names
     assert "VERSION" in names
@@ -75,15 +84,25 @@ def test_bundle_contains_only_runtime_whitelist_and_manifest(tmp_path: Path) -> 
 
     assert manifest["git_sha"] == "a" * 40
     assert manifest["version"] == "9.9.9"
-    assert manifest["release_format"] == 2
+    assert manifest["release_format"] == 3
+    assert manifest["target"] == "portable-source"
+    assert manifest["supported_platforms"] == ["linux", "macos", "windows"]
+    assert manifest["runtime_entrypoints"] == {
+        "windows": "scripts/runtime/start-release.ps1",
+        "unix": "scripts/runtime/start-release.sh",
+    }
     assert manifest["data_directory_contract"] == {
         "default": "~/.aletheia",
         "override": "ALETHEIA_DATA_DIR",
         "override_must_be_absolute": True,
     }
+    assert shell_mode == 0o755
+    assert python_mode == 0o644
     assert result.compressed_size_bytes < 2 * 1024 * 1024
     assert result.sha256_path.is_file()
     assert result.summary_path.is_file()
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["target"] == "portable-source"
 
 
 def test_bundle_is_reproducible_for_same_inputs(tmp_path: Path) -> None:
