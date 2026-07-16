@@ -78,6 +78,9 @@ CONTENTS=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 RESOURCES="$CONTENTS/Resources"
 HOST_ROOT=${ALETHEIA_HOST_ROOT:-"$HOME/Library/Application Support/Aletheia"}
 CORE="$RESOURCES/runtime/aletheia-core/aletheia-core"
+ORIGINAL_ARGS_FILE=$(mktemp "${TMPDIR:-/tmp}/aletheia-tray-args.XXXXXX")
+trap 'rm -f "$ORIGINAL_ARGS_FILE"' EXIT HUP INT TERM
+printf '%s\0' "$@" > "$ORIGINAL_ARGS_FILE"
 if [ ! -f "$HOST_ROOT/current.json" ]; then
   set -- __packaged_bootstrap --host-root "$HOST_ROOT" --source-root "$RESOURCES/runtime/aletheia-core"
   if [ -f "$RESOURCES/update-public-key.pem" ]; then
@@ -88,7 +91,11 @@ if [ ! -f "$HOST_ROOT/current.json" ]; then
   fi
   "$CORE" "$@"
 fi
-exec "$CONTENTS/MacOS/aletheia-tray-bin"
+# shellcheck disable=SC2046
+set -- $(xargs -0 printf '%s\n' < "$ORIGINAL_ARGS_FILE")
+rm -f "$ORIGINAL_ARGS_FILE"
+trap - EXIT HUP INT TERM
+exec "$CONTENTS/MacOS/aletheia-tray-bin" "$@"
 """
 
 
