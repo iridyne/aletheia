@@ -2,7 +2,8 @@
 
 The builder is intentionally separate from the existing portable-source bundle. It
 produces a platform/architecture-specific PyInstaller one-folder payload for the stable
-tray/CLI host. It never includes runtime state from ``~/.aletheia``.
+tray/CLI host. It never includes runtime state from ``~/.aletheia`` and preserves the
+safe internal symbolic links used by PyInstaller 6 POSIX bundles.
 """
 
 from __future__ import annotations
@@ -21,6 +22,12 @@ import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+
+from aletheia.update.package_integrity import (
+    iter_payload_entries,
+    manifest_entry,
+    validate_filesystem_symlink,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MAX_MIB = 350
@@ -77,15 +84,13 @@ def platform_id() -> str:
 def _runtime_entrypoint(payload_dir: Path) -> str:
     candidate = "aletheia-core.exe" if os.name == "nt" else "aletheia-core"
     path = payload_dir / candidate
-    if not path.exists():
-        raise RuntimeError(f"PyInstaller output is missing runtime entrypoint: {path}")
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"PyInstaller output is missing regular runtime entrypoint: {path}")
     return candidate
 
 
 def iter_payload_files(payload_dir: Path, *, exclude_manifest: bool = True) -> Iterable[Path]:
-    for path in sorted(payload_dir.rglob("*"), key=lambda value: value.as_posix()):
-        if not path.is_file():
-            continue
+    for path in iter_payload_entries(payload_dir):
         if exclude_manifest and path.name == "release-manifest.json":
             continue
         yield path
@@ -93,14 +98,7 @@ def iter_payload_files(payload_dir: Path, *, exclude_manifest: bool = True) -> I
 
 def write_manifest(payload_dir: Path, *, git_sha: str, version: str, target: str) -> Path:
     entrypoint = _runtime_entrypoint(payload_dir)
-    files = []
-    for path in iter_payload_files(payload_dir):
-        relative = path.relative_to(payload_dir).as_posix()
-        files.append({
-            "path": relative,
-            "size": path.stat().st_size,
-            "sha256": _sha256(path),
-        })
+    files = [manifest_entry(payload_dir, path) for path in iter_payload_files(payload_dir)]
     manifest = {
         "schema_version": 1,
         "target": "packaged-runtime",
@@ -117,17 +115,23 @@ def write_manifest(payload_dir: Path, *, git_sha: str, version: str, target: str
     return destination
 
 
-def _normalized_tar_info(path: Path, relative: Path) -> tarfile.TarInfo:
+def _normalized_tar_info(payload_dir: Path, path: Path, relative: Path) -> tarfile.TarInfo:
     info = tarfile.TarInfo(relative.as_posix())
-    stat_result = path.stat()
-    info.size = stat_result.st_size
     info.mtime = 0
     info.uid = 0
     info.gid = 0
     info.uname = ""
     info.gname = ""
-    executable = bool(stat_result.st_mode & stat.S_IXUSR)
-    info.mode = 0o755 if executable else 0o644
+    if path.is_symlink():
+        target = validate_filesystem_symlink(payload_dir, path)
+        info.type = tarfile.SYMTYPE
+        info.linkname = target
+        info.size = 0
+        info.mode = 0o777
+        return info
+    stat_result = path.stat()
+    info.size = stat_result.st_size
+    info.mode = 0o755 if stat_result.st_mode & stat.S_IXUSR else 0o644
     return info
 
 
@@ -136,13 +140,20 @@ def create_deterministic_archive(payload_dir: Path, archive: Path) -> None:
     with archive.open("wb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz:
             with tarfile.open(fileobj=gz, mode="w") as tar:
-                for path in sorted(payload_dir.rglob("*"), key=lambda value: value.as_posix()):
-                    if not path.is_file():
-                        continue
+                for path in iter_payload_files(payload_dir, exclude_manifest=False):
                     relative = Path(payload_dir.name) / path.relative_to(payload_dir)
-                    info = _normalized_tar_info(path, relative)
-                    with path.open("rb") as source:
-                        tar.addfile(info, source)
+                    info = _normalized_tar_info(payload_dir, path, relative)
+                    if path.is_symlink():
+                        tar.addfile(info)
+                    else:
+                        with path.open("rb") as source:
+                            tar.addfile(info, source)
+
+
+def _entry_uncompressed_size(payload_dir: Path, path: Path) -> int:
+    if path.is_symlink():
+        return len(validate_filesystem_symlink(payload_dir, path).encode("utf-8"))
+    return path.stat().st_size
 
 
 def package_existing_payload(
@@ -154,6 +165,8 @@ def package_existing_payload(
     target: str,
     max_mib: int = DEFAULT_MAX_MIB,
 ) -> BuildResult:
+    if payload_dir.is_symlink():
+        raise RuntimeError("packaged runtime root cannot be a symbolic link")
     payload_dir = payload_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = write_manifest(payload_dir, git_sha=git_sha, version=version, target=target)
@@ -170,7 +183,8 @@ def package_existing_payload(
         )
     checksum = archive.with_suffix(archive.suffix + ".sha256")
     checksum.write_text(f"{_sha256(archive)}  {archive.name}\n", encoding="utf-8")
-    uncompressed_bytes = sum(path.stat().st_size for path in iter_payload_files(payload_dir, exclude_manifest=False))
+    entries = list(iter_payload_files(payload_dir, exclude_manifest=False))
+    uncompressed_bytes = sum(_entry_uncompressed_size(payload_dir, path) for path in entries)
     report = {
         "archive": archive.name,
         "target": target,
@@ -180,7 +194,8 @@ def package_existing_payload(
         "compressed_size_mib": round(compressed_bytes / 1024 / 1024, 3),
         "uncompressed_size_bytes": uncompressed_bytes,
         "uncompressed_size_mib": round(uncompressed_bytes / 1024 / 1024, 3),
-        "file_count": sum(1 for _ in iter_payload_files(payload_dir, exclude_manifest=False)),
+        "file_count": len(entries),
+        "symlink_count": sum(1 for path in entries if path.is_symlink()),
         "hard_limit_mib": max_mib,
     }
     size_report = output_dir / "packaged-runtime-size.json"
@@ -221,7 +236,7 @@ def main() -> int:
     parser.add_argument("--payload-dir", type=Path, help="Package an existing PyInstaller folder instead of building")
     args = parser.parse_args()
 
-    payload_dir = args.payload_dir.resolve() if args.payload_dir else run_pyinstaller(build_root=args.build_root)
+    payload_dir = args.payload_dir if args.payload_dir else run_pyinstaller(build_root=args.build_root)
     result = package_existing_payload(
         payload_dir,
         args.output_dir,
