@@ -117,7 +117,8 @@ def test_operator_viability_requires_same_close_shadow_cohort(monkeypatch):
         cost=0.2,
         metadata={
             "logical_agent": "pi_trading_decision",
-            "identity_source": "active_module_stack",
+            "identity_source": "explicit_economic_context",
+            "evaluation_id": "operator_eval_test",
         },
     )
     monkeypatch.setattr(
