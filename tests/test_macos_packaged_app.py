@@ -84,10 +84,15 @@ def test_macos_app_is_menu_bar_only_and_contains_bootstrap_runtime(tmp_path):
     assert info["LSUIElement"] is True
     assert info["CFBundlePackageType"] == "APPL"
 
-    for name in ("aletheia", "ato", "aletheia-tray"):
+    for name in ("aletheia", "ato", "aletheia-tray", "aletheia-tray-bin"):
         path = contents / "MacOS" / name
         assert path.is_file()
         assert path.stat().st_mode & stat.S_IXUSR
+    launcher = (contents / "MacOS" / "aletheia-tray").read_text(encoding="utf-8")
+    assert "__packaged_bootstrap" in launcher
+    assert "Application Support/Aletheia" in launcher
+    assert "exec \"$CONTENTS/MacOS/aletheia-tray-bin\"" in launcher
+
     runtime = contents / "Resources" / "runtime" / "aletheia-core"
     assert (runtime / "aletheia-core").is_file()
     assert (runtime / "aletheia" / "dashboard_static" / "index.html").is_file()
@@ -103,6 +108,7 @@ def test_macos_app_is_menu_bar_only_and_contains_bootstrap_runtime(tmp_path):
         names = set(archive.namelist())
     assert "Aletheia.app/Contents/Info.plist" in names
     assert "Aletheia.app/Contents/MacOS/aletheia-tray" in names
+    assert "Aletheia.app/Contents/MacOS/aletheia-tray-bin" in names
     assert any(name.endswith("/Resources/runtime/aletheia-core/release-manifest.json") for name in names)
 
 
