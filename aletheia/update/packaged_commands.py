@@ -22,6 +22,16 @@ from aletheia.update import packaged
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 _SAFE_STAGE_LOCK = threading.Lock()
 _MANUAL_ROLLBACK_WINDOW_SEC = 10 * 60
+_STAGE_START_GRACE_SEC = 10
+_STAGE_PHASES = {"checking", "downloading", "verifying", "installing", "preflight"}
+_SWITCH_PHASES = {
+    "ready_to_switch",
+    "quiescing",
+    "migrating",
+    "starting",
+    "soaking",
+    "rolling_back",
+}
 
 PackagedUpdateError = packaged.PackagedUpdateError
 is_packaged_mode = packaged.is_packaged_mode
@@ -77,6 +87,56 @@ def _pin_verified_feed(feed: dict[str, Any]) -> Iterator[None]:
             packaged._verified_feed = original  # type: ignore[assignment]  # noqa: SLF001
 
 
+def _state_timestamp(state: dict[str, Any]) -> float | None:
+    value = state.get("updated_at")
+    if not isinstance(value, str):
+        return None
+    if value.startswith("unix:"):
+        try:
+            return float(value.split(":", 1)[1])
+        except ValueError:
+            return None
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _staging_lock_alive() -> bool:
+    lock_path = packaged._paths()["lock"]  # noqa: SLF001
+    if not lock_path.is_file():
+        return False
+    try:
+        lock = packaged._read_json(lock_path)  # noqa: SLF001
+        pid = int(lock.get("pid", 0))
+        age = time.time() - lock_path.stat().st_mtime
+    except (OSError, TypeError, ValueError, PackagedUpdateError):
+        return False
+    return age <= packaged._STAGE_LOCK_TTL_SEC and packaged._process_alive(pid)  # noqa: SLF001
+
+
+def _operation_is_really_active(state: dict[str, Any]) -> bool:
+    """Match durable phase labels to a live owner or recoverable switch request.
+
+    A server crash can leave ``downloading`` or ``preflight`` in update-state.json after
+    its worker and lock are gone. Treating the label alone as authority would block every
+    future update forever. Conversely, switch phases are owned by the stable Tray and are
+    recoverable from the durable request, so they remain active while that request exists.
+    """
+
+    phase = str(state.get("phase") or "")
+    if phase in _SWITCH_PHASES:
+        return packaged._paths()["request"].is_file()  # noqa: SLF001
+    if phase not in _STAGE_PHASES:
+        return False
+    if _staging_lock_alive():
+        return True
+    timestamp = _state_timestamp(state)
+    return timestamp is not None and time.time() - timestamp <= _STAGE_START_GRACE_SEC
+
+
 def check_for_update() -> dict[str, Any]:
     result = packaged.check_for_update()
     if not result.get("ok"):
@@ -111,15 +171,19 @@ def _run_safe_stage(operation_id: str) -> dict[str, Any]:
     return packaged.read_update_state()
 
 
+def _in_progress_response(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "accepted": False,
+        "reason": "update_already_in_progress",
+        "operation_id": state.get("operation_id"),
+        "state": state,
+    }
+
+
 def stage_update_blocking() -> dict[str, Any]:
     state = packaged.read_update_state()
-    if state.get("phase") in packaged._ACTIVE_PHASES:  # noqa: SLF001
-        return {
-            "accepted": False,
-            "reason": "update_already_in_progress",
-            "operation_id": state.get("operation_id"),
-            "state": state,
-        }
+    if _operation_is_really_active(state):
+        return _in_progress_response(state)
     operation_id = f"update-{uuid4().hex}"
     final_state = _run_safe_stage(operation_id)
     return {
@@ -133,22 +197,20 @@ def stage_update_blocking() -> dict[str, Any]:
 def request_update() -> dict[str, Any]:
     global _BACKGROUND_THREAD
     state = packaged.read_update_state()
-    if state.get("phase") in packaged._ACTIVE_PHASES:  # noqa: SLF001
-        return {
-            "accepted": False,
-            "reason": "update_already_in_progress",
-            "operation_id": state.get("operation_id"),
-            "state": state,
-        }
+    if _operation_is_really_active(state):
+        return _in_progress_response(state)
     operation_id = f"update-{uuid4().hex}"
     with _BACKGROUND_LOCK:
         if _BACKGROUND_THREAD is not None and _BACKGROUND_THREAD.is_alive():
-            return {
-                "accepted": False,
-                "reason": "update_already_in_progress",
-                "operation_id": state.get("operation_id"),
-                "state": state,
-            }
+            return _in_progress_response(state)
+        # Persist ownership before starting the daemon thread. Other CLI/API callers see
+        # the grace window while the child creates the cross-process staging lock.
+        packaged._write_state(  # noqa: SLF001
+            operation_id=operation_id,
+            phase="checking",
+            status="running",
+            message="Checking signed update feed",
+        )
         _BACKGROUND_THREAD = threading.Thread(
             target=_run_safe_stage,
             args=(operation_id,),
@@ -191,20 +253,7 @@ def prepare_activation_data() -> dict[str, Any]:
 
 
 def _committed_timestamp(state: dict[str, Any]) -> float | None:
-    value = state.get("updated_at")
-    if not isinstance(value, str):
-        return None
-    if value.startswith("unix:"):
-        try:
-            return float(value.split(":", 1)[1])
-        except ValueError:
-            return None
-    try:
-        from datetime import datetime
-
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return None
+    return _state_timestamp(state)
 
 
 def request_rollback() -> dict[str, Any]:
