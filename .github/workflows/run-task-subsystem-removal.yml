@@ -1,0 +1,59 @@
+name: Run task subsystem removal
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - .github/workflows/run-task-subsystem-removal.yml
+      - .github/workflows/remove-repository-task-subsystem.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Execute the one-time removal script
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import textwrap
+
+          workflow = Path('.github/workflows/remove-repository-task-subsystem.yml')
+          text = workflow.read_text(encoding='utf-8')
+          match = re.search(r"python - <<'PY'\n(.*?)\n          PY", text, re.S)
+          if not match:
+              raise SystemExit('embedded removal script not found')
+          source = textwrap.dedent(match.group(1))
+          exec(compile(source, str(workflow), 'exec'), {'__name__': '__main__'})
+          Path('.github/workflows/run-task-subsystem-removal.yml').unlink(missing_ok=True)
+          PY
+
+          banned='aletheia\.agent_workflow|agent_tasks_db|aletheia agent workflow|Task Lite|\.agent/tasks|\.agent/handoffs|scripts/agent_bootstrap\.py|scripts/agent_task\.py|agent_workflow_contract|agent_session_independent_workflow|workflow_tasks_db|workflow_claims_db|test_agent_workflow'
+          if git grep -nE "$banned" -- ':!docs/_ai/DECISIONS.md'; then
+            echo "Obsolete repository task-system references remain." >&2
+            exit 1
+          fi
+          git diff --check
+
+      - name: Commit and push removal
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor: remove repository task subsystem"
+          git push origin HEAD:${{ github.head_ref }}
