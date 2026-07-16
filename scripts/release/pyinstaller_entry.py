@@ -1,12 +1,14 @@
 """PyInstaller entrypoint for the self-contained Aletheia runtime/CLI payload.
 
-Private child modes let the frozen executable supervise itself without pretending the
-binary is a generic Python interpreter. Normal user arguments continue into the existing
-Typer application unchanged.
+Private child modes let the frozen executable supervise and migrate itself without
+pretending the binary is a generic Python interpreter. Normal user arguments continue
+into the existing Typer application unchanged.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 import sys
 
 
@@ -34,6 +36,23 @@ def _run_packaged_uvicorn() -> None:
     uvicorn_main()
 
 
+def _run_update_validate() -> None:
+    from aletheia.update.packaged import validate_current_data
+
+    print(json.dumps(validate_current_data(), ensure_ascii=False))
+
+
+def _run_update_restore() -> None:
+    if len(sys.argv) != 3:
+        raise SystemExit("__packaged_update_restore requires one absolute backup path")
+    archive = Path(sys.argv[2]).expanduser()
+    if not archive.is_absolute():
+        raise SystemExit("backup path must be absolute")
+    from aletheia.update.packaged import restore_update_backup
+
+    print(json.dumps(restore_update_backup(archive), ensure_ascii=False))
+
+
 def main() -> None:
     _install_process_adapter()
     mode = sys.argv[1] if len(sys.argv) > 1 else None
@@ -42,6 +61,12 @@ def main() -> None:
         return
     if mode == "__packaged_uvicorn":
         _run_packaged_uvicorn()
+        return
+    if mode == "__packaged_update_validate":
+        _run_update_validate()
+        return
+    if mode == "__packaged_update_restore":
+        _run_update_restore()
         return
 
     from aletheia.main import app
