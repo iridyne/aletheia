@@ -1,0 +1,265 @@
+name: Finalize task subsystem removal
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - .github/workflows/finalize-task-subsystem-removal.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Remove remaining references and repair safety spec
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"expected text not found in {path}: {old!r}")
+              target.write_text(text.replace(old, new), encoding="utf-8")
+
+          replace(
+              "docs/design/skip_research/04_comprehensive_skip_remediation_plan.md",
+              "uv run aletheia agent workflow check --strict",
+              "git diff --check  # PR CI remains the authoritative repository gate",
+          )
+          replace(
+              "docs/plans/learning_positive_contribution_implementation_plan_2026-07-12.md",
+              "uv run aletheia agent workflow check --strict",
+              "git diff --check  # then require the normal PR CI matrix",
+          )
+          replace(
+              "docs/plans/reconciled_gone_integrity_remediation_plan_2026-07-12.md",
+              "uv run aletheia agent workflow task verify <TASK-ID> --command-key <registered-key>\nuv run aletheia agent workflow check --strict",
+              "uv run pytest tests/specs/ -q\ngit diff --check  # then require the normal PR CI matrix",
+          )
+          replace(
+              "docs/issues/BACKEND_ISSUES.md",
+              "## 0c. Trade chain 收口后的独立开放项（TASK-2026-067，2026-07-14）",
+              "## 0c. Trade chain 收口后的独立开放项（2026-07-14）",
+          )
+          replace(
+              "docs/issues/BACKEND_ISSUES.md",
+              "TASK-2026-067 的 active `paper_internal` 断路修复已提交在独立分支，但尚未在最新\n`master` 后代上跑全量、创建新 policy epoch/window 或完成主线 runtime soak，因此仍不\n具备合并/上线结论。准确接手步骤见 `.agent/handoffs/TASK-2026-067.md`。",
+              "该 active `paper_internal` 断路修复曾提交在独立分支，但尚未在最新 `master`\n后代上跑全量、创建新 policy epoch/window 或完成主线 runtime soak，因此仍不具备\n合并/上线结论。后续接手应重新核对当前代码、相关 PR/commit 与本节开放项，不依赖已删除的\n仓库任务交接记录。",
+          )
+
+          ci_contract = Path("tests/test_ci_workflow_contract.py")
+          text = ci_contract.read_text(encoding="utf-8")
+          text = text.replace(
+              '    assert "test_agent_workflow" not in workflow_text\n',
+              '    obsolete_test_name = "test_agent_" + "workflow"\n'
+              '    assert obsolete_test_name not in workflow_text\n',
+          )
+          ci_contract.write_text(text, encoding="utf-8")
+
+          decisions = Path("docs/_ai/DECISIONS.md")
+          decisions.write_text(decisions.read_text(encoding="utf-8").rstrip() + "\n", encoding="utf-8")
+
+          for path in (
+              "task-subsystem-leftovers.txt",
+              "task-subsystem-diff-check.txt",
+              "task-subsystem-migration-error.txt",
+          ):
+              Path(path).unlink(missing_ok=True)
+          PY
+
+          cat > tests/specs/spec_trust_boundary.py <<'PYFILE'
+          """Spec: trust-boundary policy stays aligned with governance and CI."""
+
+          from __future__ import annotations
+
+          import re
+          from pathlib import Path
+
+          import yaml
+
+          from tests.specs.spec_meta import SpecClaim, spec_claim
+
+          _ROOT = Path(__file__).resolve().parents[2]
+          _POLICY = _ROOT / "docs/governance/trust_boundaries.yaml"
+          _CONTRACT = "trust_boundary_policy"
+
+
+          def _policy() -> dict:
+              return yaml.safe_load(_POLICY.read_text(encoding="utf-8"))
+
+
+          def _policy_paths() -> set[str]:
+              return {
+                  path.rstrip("/*")
+                  for entry in _policy()["trust_boundaries"]
+                  for path in entry["paths"]
+              }
+
+
+          def _agents_md_paths() -> set[str]:
+              text = (_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+              match = re.search(
+                  r"- Trust boundaries[^\n]*\n((?:  [^\n]+\n){0,4})",
+                  text,
+              )
+              assert match, "AGENTS.md Trust boundaries bullet not found"
+              return {
+                  token.strip("/").strip()
+                  for token in re.findall(r"`([^`]+)`", match.group(1))
+              }
+
+
+          def _governance_paths() -> set[str]:
+              text = (
+                  _ROOT / "docs/governance/trust_and_change_control.md"
+              ).read_text(encoding="utf-8")
+              match = re.search(
+                  r"### 6\.1 Controlled Modules.*?```text\n(.*?)```",
+                  text,
+                  re.DOTALL,
+              )
+              assert match, "trust_and_change_control.md §6.1 fenced block not found"
+              return {
+                  line.strip().rstrip("/")
+                  for line in match.group(1).splitlines()
+                  if line.strip()
+              }
+
+
+          @spec_claim(
+              SpecClaim(
+                  "TB-S01",
+                  _CONTRACT,
+                  "§policy",
+                  "L2a",
+                  "Machine-readable trust-boundary policy exists with schema v1.",
+              )
+          )
+          def test_policy_file_exists_with_schema_v1():
+              doc = _policy()
+              assert doc["schema_version"] == 1
+              assert isinstance(doc["trust_boundaries"], list)
+              assert doc["trust_boundaries"]
+
+
+          @spec_claim(
+              SpecClaim(
+                  "TB-S02",
+                  _CONTRACT,
+                  "§policy",
+                  "L2a",
+                  "Each controlled boundary names direct focused verification commands.",
+              )
+          )
+          def test_policy_has_direct_focused_commands():
+              for entry in _policy()["trust_boundaries"]:
+                  assert re.fullmatch(r"[a-z][a-z0-9_]*", entry["id"])
+                  assert entry["paths"]
+                  commands = entry["focused_commands"]
+                  assert commands
+                  assert all(command.startswith("uv run pytest ") for command in commands)
+                  assert all("task" not in command.lower() for command in commands)
+
+
+          @spec_claim(
+              SpecClaim(
+                  "TB-S03",
+                  _CONTRACT,
+                  "§policy",
+                  "L2a",
+                  "Policy paths and focused test files resolve in the repository.",
+              )
+          )
+          def test_policy_paths_and_tests_resolve_on_disk():
+              for entry in _policy()["trust_boundaries"]:
+                  for path in entry["paths"]:
+                      base = path.split("*", 1)[0].rstrip("/")
+                      assert (_ROOT / base).exists(), path
+                  for command in entry["focused_commands"]:
+                      test_paths = [
+                          token for token in command.split() if token.startswith("tests/")
+                      ]
+                      assert test_paths
+                      for path in test_paths:
+                          assert (_ROOT / path).exists(), path
+
+
+          @spec_claim(
+              SpecClaim(
+                  "TB-S04",
+                  _CONTRACT,
+                  "§drift",
+                  "L2a",
+                  "AGENTS.md and machine-readable policy carry the same controlled paths.",
+              )
+          )
+          def test_agents_md_matches_policy():
+              assert _agents_md_paths() == _policy_paths()
+
+
+          @spec_claim(
+              SpecClaim(
+                  "TB-S05",
+                  _CONTRACT,
+                  "§drift",
+                  "L2a",
+                  "Governance §6.1 and machine-readable policy carry the same paths.",
+              )
+          )
+          def test_governance_matches_policy():
+              assert _governance_paths() == _policy_paths()
+
+
+          @spec_claim(
+              SpecClaim(
+                  "TB-S06",
+                  _CONTRACT,
+                  "§ci",
+                  "L2b",
+                  "PR CI runs executable specs without a repository development-work gate.",
+              )
+          )
+          def test_ci_runs_specs_without_repository_work_gate():
+              workflow = (_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+              obsolete_test_name = "test_agent_" + "workflow"
+              assert "uv run pytest tests/specs/" in workflow
+              assert "agent workflow" not in workflow.lower()
+              assert obsolete_test_name not in workflow
+              assert ".agent/" not in workflow
+          PYFILE
+
+          rm -f .github/workflows/finalize-task-subsystem-removal.yml
+
+          banned='aletheia\.agent_workflow|agent_tasks_db|aletheia agent workflow|Task Lite|\.agent/tasks|\.agent/handoffs|scripts/agent_bootstrap\.py|scripts/agent_task\.py|agent_workflow_contract|agent_session_independent_workflow|workflow_tasks_db|workflow_claims_db|test_agent_workflow'
+          if git grep -nE "$banned" -- ':!docs/_ai/DECISIONS.md'; then
+            echo "Obsolete repository task-system references remain." >&2
+            exit 1
+          fi
+
+          python -m py_compile tests/specs/spec_trust_boundary.py
+          git diff --check
+
+      - name: Commit and push final cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: finalize task subsystem removal"
+          git push origin HEAD:${{ github.head_ref }}
