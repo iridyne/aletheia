@@ -99,7 +99,9 @@ with open(path, "rb") as handle:
 print(digest.hexdigest())
 PY
 )"
-  [[ "${actual,,}" == "${expected,,}" ]] || fail "archive SHA-256 does not match sidecar"
+  actual_normalized="$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')"
+  expected_normalized="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
+  [[ "$actual_normalized" == "$expected_normalized" ]] || fail "archive SHA-256 does not match sidecar"
 fi
 
 mkdir -p "$releases_root"
