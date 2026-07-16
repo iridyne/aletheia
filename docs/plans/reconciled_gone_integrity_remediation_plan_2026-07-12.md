@@ -445,8 +445,8 @@ RG-T00 证据/计划
 uv run pytest <focused test files> -q
 uv run pytest tests/specs/spec_outcome_integrity.py -q
 uv run pytest tests/test_architecture_fitness.py -q
-uv run aletheia agent workflow task verify <TASK-ID> --command-key <registered-key>
-uv run aletheia agent workflow check --strict
+uv run pytest tests/specs/ -q
+git diff --check  # then require the normal PR CI matrix
 ```
 
 涉及 risk/execution/exchange/portfolio close 的任务还必须分别执行对应受控模块 specs；不能只用

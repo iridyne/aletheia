@@ -43,8 +43,3 @@ def checkout_id(project_root: Path) -> str:
 
 def preview_instance_dir(project_root: Path, port: int) -> Path:
     return preview_root() / checkout_id(project_root) / str(port)
-
-
-def workflow_claims_db(project_root: Path, runtime_root: Path) -> Path:
-    """Machine-local task claims, isolated per checkout below the runtime root."""
-    return runtime_root / "development" / "task-claims" / checkout_id(project_root) / "tasks.db"

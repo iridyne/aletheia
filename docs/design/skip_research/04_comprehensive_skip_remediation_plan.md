@@ -499,7 +499,7 @@ uv run pytest tests/specs/spec_filter_evidence.py -q
 uv run pytest tests/test_filter_evidence.py tests/test_operator_loop.py -q
 uv run pytest tests/simulation/control_loop/ -q
 uv run aletheia doctor
-uv run aletheia agent workflow check --strict
+git diff --check  # PR CI remains the authoritative repository gate
 ```
 
 如增加 API，再执行对应路由测试与直接 backend latency 测量；如 migration 改动，验证旧 DB 升级、

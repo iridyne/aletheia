@@ -1,15 +1,10 @@
 # AI Handoff
 
-> **FROZEN AS OF 2026-07-12 — new handoffs live under `.agent/handoffs/TASK-*.md`.**
-> This document is preserved as historical narrative only. Do not append here.
-> For per-task session hand-offs, use the file-based workflow:
-> `uv run aletheia agent workflow bootstrap` shows the active packet and its
-> handoff at `.agent/handoffs/TASK-YYYY-NNN.md`. See `AGENTS.md` "会话结束".
+> **HISTORICAL CHANGE LOG — no repository-local handoff system is active.**
+> New development coordination belongs to the external orchestrator and PR.
+> The entries below remain historical context only; current runtime facts come
+> from `aletheia doctor`.
 >
-> The pre-2026-07-12 entries below remain valuable as change-history context
-> for large decisions and lessons learned. Read for background, not for the
-> current state of any task.
-
 > **本文件是 append-only 变更史**(记录"做了什么改动 + 根因",机器无关)。
 > 其中任何"当时机器状态"(gateway 在跑 / 观察期第 N 小时 / 凭证已存 / demo 单已落)
 > 都是**写入时刻的快照,不代表当前**。要知道当前真实状态,运行 **`aletheia doctor`**。

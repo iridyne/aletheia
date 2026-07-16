@@ -50,10 +50,6 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-        # Agent workflow validation verifies task base/evidence commits; a
-        # depth-1 PR checkout cannot contain those reachable history objects.
-        with:
-          fetch-depth: 0
 
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@v6
@@ -91,20 +87,6 @@ jobs:
           tests/simulation/control_loop/test_failure_artifacts.py
           tests/test_runtime_replay_pack.py
           -q --tb=short --junitxml=test-results/dcls.xml
-
-      - name: Verify agent workflow behavior
-        run: uv run pytest tests/test_agent_workflow.py -q --junitxml=test-results/agent-workflow.xml
-
-      - name: Verify agent workflow integrity
-        env:
-          CHANGE_BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ -n "$CHANGE_BASE" ]; then
-            git cat-file -e "${CHANGE_BASE}^{commit}"
-            uv run aletheia agent workflow check --strict --changed-since "$CHANGE_BASE"
-          else
-            uv run aletheia agent workflow check --strict
-          fi
 
       - name: Upload test reports
         if: always()

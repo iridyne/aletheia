@@ -134,10 +134,11 @@ def test_full_regression_is_a_separate_manual_job_with_realistic_timeout() -> No
     assert "uv run pytest tests/" in _run_commands(full)
 
 
-def test_master_integrity_check_is_full_state_not_cancellable_increment_only() -> None:
-    backend_commands = _run_commands(_workflow()["jobs"]["backend"])
+def test_repository_task_subsystem_is_absent_from_ci() -> None:
+    workflow_text = _WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    assert "github.event_name" in backend_commands
-    assert "--changed-since" in backend_commands
-    assert "else" in backend_commands
-    assert "workflow check --strict" in backend_commands
+    assert "agent workflow" not in workflow_text.lower()
+    obsolete_test_name = "test_agent_" + "workflow"
+    assert obsolete_test_name not in workflow_text
+    assert ".agent/" not in workflow_text
+    assert "--changed-since" not in workflow_text

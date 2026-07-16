@@ -1,5 +1,4 @@
 """Tests for CLI basic functionality."""
-
 from typer.testing import CliRunner
 
 from aletheia.main import app
@@ -23,13 +22,6 @@ def test_version():
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
     assert f"v{__version__}" in result.output
-
-
-def test_agent_workflow_cli_is_registered():
-    result = runner.invoke(app, ["agent", "workflow", "check", "--help"])
-
-    assert result.exit_code == 0
-    assert "Validate tracked task state" in result.output
 
 
 def test_gateway_status(tmp_path, monkeypatch):

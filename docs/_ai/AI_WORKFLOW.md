@@ -1,47 +1,62 @@
-# AI Workflow
+# AI Development Workflow
 
-## Quick Reference
+## Responsibility split
 
-1. **Start session**: run `uv run aletheia agent workflow bootstrap`, then read AGENTS.md and the selected task handoff. `Evidence: historical` is context, not permission to continue the completed task.
-2. **End session**: run `task verify` for an approved command, update the selected `.agent/tasks/` packet and structured handoff, then run `task complete` and `workflow check --strict`
-3. **Cross-device**: Push branch, ensure AI_HANDOFF.md is current, pull on new device
-4. **Secrets**: Never in git. Use OS keyring or encrypted file (.secret.key, secrets.enc are gitignored).
-5. **New project**: Run ~/ai-project-template/scripts/ai-workspace-init.ps1
+- **External orchestrator (for example ORCA):** agent sessions, prompts, panes,
+  worktree creation, parallel assignment, monitoring, and ephemeral completion state.
+- **Aletheia repository:** project instructions, architecture contracts, code,
+  tests, decisions, pull requests, and CI.
+- **Local runtime:** probed with `uv run aletheia doctor`; runtime facts are never
+  inferred from an orchestrator session or committed document.
 
-## Context Recovery Protocol
+Aletheia deliberately has no development-task database, task packet format,
+worker lease, handoff ledger, or task-management CLI.
 
-1. Run `uv run aletheia agent workflow bootstrap`
-2. Read AGENTS.md and the selected `.agent/tasks/` + `.agent/handoffs/` pair
-3. Run `uv run aletheia doctor` for local runtime facts
-4. Read relevant decisions and detailed history only when the task requires them
-5. Inspect git status and summarize current state before making changes
+Old installations may still contain an inert
+`~/.aletheia/development/agent-tasks/` directory. Current code never reads,
+migrates, or recreates it; it may be removed manually after confirming no external
+tool uses that path.
 
-## End-of-Session Protocol
+## Start of work
 
-1. Commit the implementation so verification runs against a stable `HEAD`.
-2. Run `uv run aletheia agent workflow task verify TASK-ID --command-key KEY`.
-3. Update the task's structured `.agent/handoffs/TASK-ID.md`.
-4. Run `uv run aletheia agent workflow task complete TASK-ID` when no work remains.
-5. Run `uv run aletheia agent workflow check --strict` and commit the task/handoff evidence.
-6. Append detailed history to `AI_HANDOFF.md` / `DEVLOG.md`, and decisions to `DECISIONS.md`, only when useful.
+1. Read `AGENTS.md` and only the topic-specific documents it points to.
+2. Use the external orchestrator to create/select an isolated worktree when work
+   runs in parallel.
+3. Run `git status` and `uv run aletheia doctor` before changing behavior.
+4. State the boundary, invariant, exclusions, and focused verification command.
 
-## SDD Development Cycle（非 trivial 功能必须遵循）
+A good agent prompt contains:
 
-参考: [SDD_METHODOLOGY](../design/SDD_METHODOLOGY.md)
-
-### 快速流程
-
-```
-1. Constitution  确认 CLAUDE.md/AGENTS.md 约束仍适用
-2. Specify       找到或创建对应 L2 契约(docs/design/)
-3. Clarify       跑消歧检查清单(错误路径/空态/边界/并发/幂等/安全/可观测)
-4. Plan          写 docs/plans/ 或 CURRENT_TASK.md
-5. Tasks         拆成 1-4h 原子任务
-6. Implement     写 spec_claim(status="missing") → RED → 实现 → GREEN → commit
+```text
+Goal:
+Allowed paths:
+Excluded paths:
+Acceptance checks:
+Final report:
 ```
 
-### Spec-Code 同步规则
+## End of work
 
-- **改动先改 spec**: 发现需要改行为 → 先更新 `*_contract.md` → 再改代码+spec test
-- **Drift = Issue**: `uv run pytest tests/specs/ -q` 失败 → 记 BACKEND_ISSUES.md
-- **Checkpoint**: commit 前 `uv run pytest tests/specs/ tests/test_architecture_fitness.py -q` 必须全绿
+1. Run focused tests, then broader tests appropriate to the changed surface.
+2. Review the diff and commit only intended source/documentation changes.
+3. Push the branch and use the PR as the durable review and handoff surface.
+4. Record long-lived decisions in `docs/_ai/DECISIONS.md` or the relevant
+   design document. Do not commit external-orchestrator session state.
+
+## SDD development cycle
+
+See [SDD_METHODOLOGY](../design/SDD_METHODOLOGY.md).
+
+```text
+1. Constitution  Confirm AGENTS.md constraints
+2. Specify       Find or create the L2 contract
+3. Clarify       Cover error, empty, boundary, concurrency, idempotency,
+                 safety, and observability cases
+4. Plan          Write the smallest implementation plan when needed
+5. Implement     Add/update spec → RED → implementation → GREEN
+6. Review        Diff, focused proof, PR, CI
+```
+
+Contract and executable spec must change together. CI failure means the
+implementation or contract is incomplete; it is never repaired by changing a
+development-task record.

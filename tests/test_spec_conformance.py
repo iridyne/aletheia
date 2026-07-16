@@ -189,7 +189,6 @@ def _import_all_specs():
         # invariant; NO_PROXY/ALL_PROXY wiring. New "network_egress_contract"
         # (cross-cutting infra — not in REQUIRED_CONTRACTS). 2026-07-04.
         spec_network_egress,
-        spec_agent_workflow,
     )
 
 

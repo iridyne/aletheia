@@ -857,3 +857,24 @@ bootstrap. CI enforces task and handoff adoption over the full changed range.
 Repository continuity is no longer based solely on Agent prose. Historical
 evidence remains useful history but is visibly labelled and cannot complete new
 work. Trading and runtime behavior are unchanged.
+
+---
+
+## 2026-07-16 — Remove repository-local development task management
+
+**Decision:** Aletheia no longer implements a development-task database,
+task packets, worker leases, handoff ledgers, verification evidence records,
+or task-management CLI. Agent/session/worktree coordination belongs to the
+external orchestrator (currently ORCA or an equivalent tool). The repository
+owns only durable project rules, code, architecture contracts, tests, PRs,
+decisions, and CI.
+
+**Reason:** The internal mechanism duplicated the external orchestration layer
+and expanded until Git and CI had to maintain its metadata. This added a second
+source of truth, generated task-only commits, and made squash/rebase behavior a
+workflow concern without improving trading-system correctness.
+
+**Guardrail:** Do not reintroduce a repository-local development task store.
+A new coordination need must first be solved through the external orchestrator,
+a clear agent prompt, isolated worktrees, GitHub issues/PRs, or a static project
+instruction/decision document.
