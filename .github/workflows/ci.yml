@@ -18,10 +18,11 @@ permissions:
   pull-requests: read
 
 # Superseded commits on the same PR may cancel their older run. Every master push
-# uses its own SHA-scoped group so a later push cannot erase the only completed
-# integrity check for an earlier commit range.
+# uses its own event-and-SHA-scoped group so a later push cannot erase the only
+# completed integrity check for an earlier commit range, and a duplicate push of
+# the same SHA cannot replace a pending manual full-regression run.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('ci-{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('ci-{0}-{1}', github.workflow, github.sha) }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('ci-{0}-{1}-{2}', github.workflow, github.event_name, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -321,6 +322,62 @@ jobs:
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  pr-ci-gate:
+    name: PR CI gate
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs:
+      - secrets-scan
+      - backend
+      - fast-tests
+      - integration-tests
+      - active-paper-chain
+      - frontend
+      - operator-shell
+      - windows-runtime-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every PR CI surface
+        run: |
+          test "${{ needs.secrets-scan.result }}" = "success"
+          test "${{ needs.backend.result }}" = "success"
+          test "${{ needs.fast-tests.result }}" = "success"
+          test "${{ needs.integration-tests.result }}" = "success"
+          test "${{ needs.active-paper-chain.result }}" = "success"
+          test "${{ needs.frontend.result }}" = "success"
+          test "${{ needs.operator-shell.result }}" = "success"
+          test "${{ needs.windows-runtime-smoke.result }}" = "success"
+          echo "All required PR CI surfaces passed."
+
+  master-verification-gate:
+    name: Master verification gate
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    needs:
+      - secrets-scan
+      - backend
+      - fast-tests
+      - integration-tests
+      - active-paper-chain
+      - frontend
+      - operator-shell
+      - windows-runtime-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every master verification surface
+        run: |
+          test "${{ needs.secrets-scan.result }}" = "success"
+          test "${{ needs.backend.result }}" = "success"
+          test "${{ needs.fast-tests.result }}" = "success"
+          test "${{ needs.integration-tests.result }}" = "success"
+          test "${{ needs.active-paper-chain.result }}" = "success"
+          test "${{ needs.frontend.result }}" = "success"
+          test "${{ needs.operator-shell.result }}" = "success"
+          test "${{ needs.windows-runtime-smoke.result }}" = "success"
+          echo "All required master verification surfaces passed."
 
   full-regression:
     name: Full Python regression audit

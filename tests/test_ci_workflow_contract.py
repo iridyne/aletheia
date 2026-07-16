@@ -6,6 +6,16 @@ import yaml
 
 
 _WORKFLOW_PATH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+_REQUIRED_GATE_NEEDS = {
+    "secrets-scan",
+    "backend",
+    "fast-tests",
+    "integration-tests",
+    "active-paper-chain",
+    "frontend",
+    "operator-shell",
+    "windows-runtime-smoke",
+}
 
 
 def _workflow() -> dict:
@@ -41,6 +51,13 @@ def test_master_pushes_cannot_be_cancelled_by_a_later_push() -> None:
     assert "github.event_name == 'pull_request'" in cancel
 
 
+def test_manual_dispatch_does_not_share_a_pending_group_with_same_sha_push() -> None:
+    group = str(_workflow()["concurrency"]["group"])
+
+    assert "format('ci-{0}-{1}-{2}'" in group
+    assert "github.workflow, github.event_name, github.sha" in group
+
+
 def test_operator_shell_has_an_independent_test_and_build_gate() -> None:
     job = _workflow()["jobs"]["operator-shell"]
     commands = _run_commands(job)
@@ -72,6 +89,35 @@ def test_windows_runtime_smoke_runs_platform_specific_contracts() -> None:
     assert job["runs-on"] == "windows-latest"
     assert "test_event_loop_policy.py" in commands
     assert "test_pidfile.py" in commands
+    assert "continue-on-error" not in str(job)
+
+
+def test_pr_ci_gate_aggregates_the_exact_required_matrix() -> None:
+    job = _workflow()["jobs"]["pr-ci-gate"]
+    commands = _run_commands(job)
+    condition = str(job["if"])
+
+    assert job["name"] == "PR CI gate"
+    assert set(job["needs"]) == _REQUIRED_GATE_NEEDS
+    assert "always()" in condition
+    assert "github.event_name == 'pull_request'" in condition
+    for dependency in _REQUIRED_GATE_NEEDS:
+        assert f"needs.{dependency}.result" in commands
+    assert "continue-on-error" not in str(job)
+
+
+def test_master_verification_gate_aggregates_the_exact_required_matrix() -> None:
+    job = _workflow()["jobs"]["master-verification-gate"]
+    commands = _run_commands(job)
+    condition = str(job["if"])
+
+    assert job["name"] == "Master verification gate"
+    assert set(job["needs"]) == _REQUIRED_GATE_NEEDS
+    assert "always()" in condition
+    assert "github.event_name == 'push'" in condition
+    assert "refs/heads/master" in condition
+    for dependency in _REQUIRED_GATE_NEEDS:
+        assert f"needs.{dependency}.result" in commands
     assert "continue-on-error" not in str(job)
 
 
