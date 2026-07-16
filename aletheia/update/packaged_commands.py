@@ -1,7 +1,7 @@
 """Safe public command facade for packaged-runtime updates.
 
 The low-level staging module exposes primitives used by tests and the private frozen
-entrypoint.  Installed API/CLI/Tray callers use this facade so a signed feed is pinned
+entrypoint. Installed API/CLI/Tray callers use this facade so a signed feed is pinned
 for one operation, release identifiers cannot become filesystem paths, existing release
 directories cannot be symlink escapes, and manual rollback is allowed only while the
 pre-update backup still represents the current release transition.
@@ -10,7 +10,6 @@ pre-update backup still represents the current release transition.
 from __future__ import annotations
 
 from contextlib import contextmanager
-import os
 from pathlib import Path
 import re
 import threading
@@ -27,7 +26,6 @@ _MANUAL_ROLLBACK_WINDOW_SEC = 10 * 60
 PackagedUpdateError = packaged.PackagedUpdateError
 is_packaged_mode = packaged.is_packaged_mode
 read_update_state = packaged.read_update_state
-validate_current_data = packaged.validate_current_data
 restore_update_backup = packaged.restore_update_backup
 
 
@@ -66,7 +64,7 @@ def _pin_verified_feed(feed: dict[str, Any]) -> Iterator[None]:
     """Pin one verified feed object for the entire staging operation.
 
     Without this, a mutable file/HTTP feed could change between the pre-validation and
-    low-level staging fetch.  The process-local replacement is serialized and restored
+    low-level staging fetch. The process-local replacement is serialized and restored
     in ``finally`` so unrelated update checks keep normal behavior.
     """
 
@@ -165,6 +163,31 @@ def request_update() -> dict[str, Any]:
         "message": "Update download and validation started in the background.",
         "state": packaged.read_update_state(),
     }
+
+
+def prepare_activation_data() -> dict[str, Any]:
+    """Prepare durable data for the selected release after the old runtime stopped.
+
+    For a normal update this runs the already-preflighted migration and integrity gates
+    on the real runtime home. For a manual rollback it first restores the exact
+    pre-update backup recorded by the committed update, then validates the old release
+    against the restored data. The operation is safe to repeat after a tray crash because
+    restoring the same verified backup is idempotent.
+    """
+
+    request_path = packaged._paths()["request"]  # noqa: SLF001
+    request = packaged._read_json(request_path)  # noqa: SLF001
+    action = request.get("action")
+    if action == "rollback":
+        backup_value = request.get("backup_path")
+        backup = Path(backup_value) if isinstance(backup_value, str) else None
+        if backup is None or not backup.is_absolute() or not backup.is_file():
+            raise PackagedUpdateError("rollback_checkpoint_unavailable")
+        restored = packaged.restore_update_backup(backup)
+        return {"ok": True, "action": "rollback", "restored": restored}
+    if action != "activate":
+        raise PackagedUpdateError("update_action_invalid", repr(action))
+    return {"ok": True, "action": "activate", "validation": packaged.validate_current_data()}
 
 
 def _committed_timestamp(state: dict[str, Any]) -> float | None:
