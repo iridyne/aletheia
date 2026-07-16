@@ -1,0 +1,25 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-097
+title: Isolate manual CI concurrency
+status: in_progress
+packet_type: standard
+scope:
+  boundary: GitHub Actions concurrency grouping and its executable workflow contract.
+  excluded: Product runtime, Risk, Execution, exchanges, Live authority, credentials,
+    trading semantics, and unrelated CI jobs.
+intent: Prevent duplicate same-SHA master pushes from replacing a pending manually
+  dispatched full-regression run.
+acceptance:
+- Pull-request runs remain grouped by PR number and cancellable when superseded.
+- Push runs remain non-cancellable and isolated by event plus commit SHA.
+- A same-SHA push cannot replace a pending workflow-dispatch full-regression run.
+- Focused workflow contracts and strict changed-since validation pass.
+base_commit: 99446f9a960af4b6093f79058de1dc2bdd5e8105
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-097.md
+updated_at: '2026-07-16T05:50:15.236857Z'

@@ -18,10 +18,11 @@ permissions:
   pull-requests: read
 
 # Superseded commits on the same PR may cancel their older run. Every master push
-# uses its own SHA-scoped group so a later push cannot erase the only completed
-# integrity check for an earlier commit range.
+# uses its own event-and-SHA-scoped group so a later push cannot erase the only
+# completed integrity check for an earlier commit range, and a duplicate push of
+# the same SHA cannot replace a pending manual full-regression run.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('ci-{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('ci-{0}-{1}', github.workflow, github.sha) }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('ci-{0}-{1}-{2}', github.workflow, github.event_name, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

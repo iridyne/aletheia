@@ -73,12 +73,22 @@ The available repository connector exposes workflow and run facts but not the ac
 
 Severity: **configuration verification gap**, not a code defect.
 
+### CI-08 — A same-SHA push can replace pending manual validation
+
+GitHub keeps at most one pending run per concurrency group. Grouping every non-PR
+run only by SHA allows a duplicate push of the current `master` SHA to cancel and
+replace a pending `workflow_dispatch` full-regression run, even when
+`cancel-in-progress` is false.
+
+Severity: **P1**.
+
 ## 4. Implementation scope
 
 ### Phase A — Workflow semantics
 
 1. Keep superseded PR runs cancelable.
-2. Give every `master` push a SHA-scoped concurrency group and do not cancel it.
+2. Give every `master` push an event-and-SHA-scoped concurrency group and do not
+   cancel it; isolate `workflow_dispatch` from same-SHA push runs.
 3. On PRs, run workflow integrity against the PR base SHA.
 4. On `master` push, run full strict workflow integrity rather than an incremental range.
 5. Move full regression into its own manual-only job with a 45-minute timeout.
