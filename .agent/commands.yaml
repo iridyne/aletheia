@@ -1,5 +1,8 @@
 schema_version: 1
 commands:
+  autostart_tests:
+    command: uv run pytest tests/test_autostart.py tests/test_cli.py -q
+    purpose: Verify macOS launchd and Windows autostart registration, disable intent persistence, and gateway CLI.
   workflow_bootstrap:
     command: uv run python scripts/agent_bootstrap.py
     purpose: Recover the next task before any new repository change.
