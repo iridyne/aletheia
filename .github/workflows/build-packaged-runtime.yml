@@ -1,0 +1,199 @@
+name: Build Packaged Tray CLI Runtime
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "aletheia/**"
+      - "frontend/**"
+      - "native/aletheia-host/**"
+      - "packaging/pyinstaller/**"
+      - "scripts/release/build_packaged_runtime.py"
+      - "scripts/release/pyinstaller_entry.py"
+      - "tests/test_packaged_runtime_contract.py"
+      - "docs/plans/packaged_tray_cli_runtime.md"
+      - ".github/workflows/build-packaged-runtime.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packaged-runtime-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  contracts:
+    name: Packaged runtime contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked --all-groups
+      - run: uv run pytest tests/test_packaged_runtime_contract.py -q --tb=short
+
+  macos-package:
+    name: macOS self-contained CLI and tray
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked development dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Install pinned PyInstaller build tool
+        run: uv pip install --python .venv/bin/python "pyinstaller==6.16.0"
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build browser dashboard
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+
+      - name: Run focused packaging contracts
+        run: uv run pytest tests/test_packaged_runtime_contract.py tests/test_release_data_dir.py -q --tb=short
+
+      - name: Build PyInstaller one-folder payload
+        run: uv run python scripts/release/build_packaged_runtime.py --output-dir dist/packaged-runtime --max-mib 350
+
+      - name: Resolve packaged runtime paths
+        id: payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$PWD/build/pyinstaller/dist/aletheia-core/aletheia-core"
+          test -x "$core"
+          archive="$(find "$PWD/dist/packaged-runtime" -maxdepth 1 -name 'aletheia-runtime-*.tar.gz' -print -quit)"
+          test -f "$archive"
+          echo "core=$core" >> "$GITHUB_OUTPUT"
+          echo "payload_dir=$PWD/build/pyinstaller/dist/aletheia-core" >> "$GITHUB_OUTPUT"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "platform=$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)" >> "$GITHUB_OUTPUT"
+
+      - name: Prove CLI works without uv or system Python in the command path
+        shell: bash
+        env:
+          ALETHEIA_PACKAGED: "1"
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-packaged-home
+        run: |
+          set -euo pipefail
+          core="${{ steps.payload.outputs.core }}"
+          mkdir -p "$ALETHEIA_DATA_DIR"
+          env -i HOME="$HOME" PATH="/usr/bin:/bin" ALETHEIA_PACKAGED=1 ALETHEIA_DATA_DIR="$ALETHEIA_DATA_DIR" "$core" version
+          env -i HOME="$HOME" PATH="/usr/bin:/bin" ALETHEIA_PACKAGED=1 ALETHEIA_DATA_DIR="$ALETHEIA_DATA_DIR" "$core" --help >/dev/null
+          env -i HOME="$HOME" PATH="/usr/bin:/bin" ALETHEIA_PACKAGED=1 ALETHEIA_DATA_DIR="$ALETHEIA_DATA_DIR" "$core" doctor --help >/dev/null
+          env -i HOME="$HOME" PATH="/usr/bin:/bin" ALETHEIA_PACKAGED=1 ALETHEIA_DATA_DIR="$ALETHEIA_DATA_DIR" "$core" gateway --help >/dev/null
+
+      - name: Prove packaged gateway readiness and health
+        shell: bash
+        env:
+          ALETHEIA_PACKAGED: "1"
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-packaged-home
+        run: |
+          set -euo pipefail
+          core="${{ steps.payload.outputs.core }}"
+          "$core" gateway start
+          cleanup() { "$core" gateway stop || true; }
+          trap cleanup EXIT
+          for _ in $(seq 1 80); do
+            if curl --noproxy '*' --fail --silent http://127.0.0.1:8787/_infra/readyz >/dev/null; then break; fi
+            sleep 0.25
+          done
+          curl --noproxy '*' --fail --silent http://127.0.0.1:8787/_infra/readyz
+          curl --noproxy '*' --fail --silent http://127.0.0.1:8787/api/health >/dev/null
+          "$core" gateway stop
+          trap - EXIT
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate host lockfile and test release-state core
+        working-directory: native/aletheia-host
+        run: |
+          cargo generate-lockfile
+          cargo test --all-targets
+
+      - name: Build stable CLI and tray binaries
+        working-directory: native/aletheia-host
+        run: cargo build --release --bins
+
+      - name: Exercise stable CLI selection and tray smoke
+        shell: bash
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-host-data
+        run: |
+          set -euo pipefail
+          host_root="$RUNNER_TEMP/aletheia-host-root"
+          release_id="0.5.0-${GITHUB_SHA:0:12}"
+          release_root="$host_root/releases/$release_id"
+          mkdir -p "$release_root" "$ALETHEIA_DATA_DIR"
+          cp -R "${{ steps.payload.outputs.payload_dir }}/." "$release_root/"
+          cat > "$host_root/current.json" <<JSON
+          {
+            "schema_version": 1,
+            "current": "$release_id"
+          }
+          JSON
+          export ALETHEIA_HOST_ROOT="$host_root"
+          cli="$PWD/native/aletheia-host/target/release/aletheia"
+          tray="$PWD/native/aletheia-host/target/release/aletheia-tray"
+          "$cli" version
+          "$cli" doctor --help >/dev/null
+          "$cli" gateway --help >/dev/null
+          "$cli" __host status | tee "$RUNNER_TEMP/host-status.json"
+          "$tray" --smoke-test
+          "$cli" gateway stop || true
+
+      - name: Stage installable host artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$PWD/dist/host-macos"
+          mkdir -p "$stage/bin" "$stage/runtime"
+          cp native/aletheia-host/target/release/aletheia "$stage/bin/aletheia"
+          cp native/aletheia-host/target/release/aletheia "$stage/bin/ato"
+          cp native/aletheia-host/target/release/aletheia-tray "$stage/bin/aletheia-tray"
+          cp "${{ steps.payload.outputs.archive }}" "$stage/runtime/"
+          cp "${{ steps.payload.outputs.archive }}.sha256" "$stage/runtime/"
+          cp dist/packaged-runtime/packaged-runtime-size.json "$stage/runtime/"
+          cp native/aletheia-host/Cargo.lock "$stage/Cargo.lock"
+          tar -C "$PWD/dist" -czf "$PWD/dist/aletheia-packaged-host-macos.tar.gz" host-macos
+
+      - name: Upload packaged host and runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: aletheia-packaged-host-${{ github.sha }}
+          path: |
+            dist/aletheia-packaged-host-macos.tar.gz
+            dist/packaged-runtime/*.tar.gz
+            dist/packaged-runtime/*.sha256
+            dist/packaged-runtime/packaged-runtime-size.json
+            native/aletheia-host/Cargo.lock
+          if-no-files-found: error
+          retention-days: 14
