@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-099
 title: Fix runtime-home cross-platform CI regressions
-status: done
+status: in_progress
 packet_type: standard
 scope:
   boundary: SQLite migration validation handle lifetime and ControlLoopHarness runtime-home
@@ -18,11 +18,11 @@ acceptance:
   temporary sandbox.
 - The exact Linux and Windows CI failure families pass locally and the PR remains
   configured for auto-merge.
+- The audit-writer trust-boundary spec is recorded under its required dedicated command key.
 base_commit: 0f734a8fa6caadfddece04bccd3f99e350aaae6a
 next_action:
-  command_key: workflow_bootstrap
-  reason: Task complete; run bootstrap and create or claim a new task before changing
-    code.
+  command_key: spec_audit_chain
+  reason: Record the dedicated trust-boundary evidence required by the strict PR gate.
 blockers: []
 verification:
 - command_key: runtime_home_ci_repair
