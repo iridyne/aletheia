@@ -179,10 +179,10 @@ Durable storage of all framework state — SQLite for structured data, JSONL for
 - Recoverable state after crash
 
 ### Persistent State
-- `data/app.db` — SQLite (60+ tables)
-- `data/knowledge/` — Markdown research notes, reviews, dreaming logs
-- `data/logs/*.jsonl` — Event streams with rotation
-- `data/backups/` — Periodic backup archives
+- `~/.aletheia/app.db` — SQLite (60+ tables)
+- `~/.aletheia/knowledge/` — Markdown research notes, reviews, dreaming logs
+- `~/.aletheia/logs/*.jsonl` — Event streams with rotation
+- `~/.aletheia/backups/` — Periodic backup archives
 
 ### Main Services/Classes
 - `storage/sqlite.py`: `get_db()`, `close_db()`, WAL+busy_timeout setup
@@ -739,7 +739,7 @@ Agents are **workers** inside modules. They are not modules themselves.
 
 3. **Every important action persists.** Agent runs, decisions, proposals, risk evaluations, orders, fills, positions, knowledge items, lessons — all stored in SQLite or JSONL event logs.
 
-4. **Gateway restart loses nothing.** All state survives in `data/app.db` and `data/` directory. In-memory caches (OHLCV) are reconstructed on next scheduled fetch.
+4. **Gateway restart loses nothing.** All state survives in the per-user runtime home (by default `~/.aletheia/`). In-memory caches (OHLCV) are reconstructed on next scheduled fetch.
 
 5. **Forward-time paper trading is the primary training loop.** Historical backtesting and DSL validation may exist, but the loop that builds agent skill is: observe → decide → paper-trade → settle → review → learn → repeat.
 

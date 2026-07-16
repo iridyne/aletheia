@@ -1,6 +1,6 @@
 """Gateway log management.
 
-The gateway's stderr (uvicorn + tracebacks) streams to data/logs/errors.log via a
+The gateway's stderr (uvicorn + tracebacks) streams to runtime-home logs/errors.log via a
 raw subprocess redirect, so it is not a logging.Handler and a RotatingFileHandler
 cannot manage it. Instead we size-cap it explicitly: before each spawn the
 supervisor calls rotate_if_needed(), which rolls the file to numeric backups.

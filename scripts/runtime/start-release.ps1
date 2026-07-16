@@ -3,8 +3,8 @@ param(
     [Parameter(Mandatory = $false)]
     [string]$ReleaseRoot = ".",
 
-    [Parameter(Mandatory = $true)]
-    [string]$DataDir,
+    [Parameter(Mandatory = $false)]
+    [string]$DataDir = "",
 
     [switch]$SkipSync
 )
@@ -12,13 +12,17 @@ param(
 $ErrorActionPreference = "Stop"
 
 $resolvedRelease = (Resolve-Path -LiteralPath $ReleaseRoot).Path
-if (-not [System.IO.Path]::IsPathRooted($DataDir)) {
-    throw "DataDir must be an absolute path."
+if ($DataDir) {
+    if (-not [System.IO.Path]::IsPathRooted($DataDir)) {
+        throw "DataDir must be an absolute path."
+    }
+    New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+    $resolvedData = (Resolve-Path -LiteralPath $DataDir).Path
+    $env:ALETHEIA_DATA_DIR = $resolvedData
 }
-
-New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
-$resolvedData = (Resolve-Path -LiteralPath $DataDir).Path
-$env:ALETHEIA_DATA_DIR = $resolvedData
+else {
+    Remove-Item Env:ALETHEIA_DATA_DIR -ErrorAction SilentlyContinue
+}
 
 Push-Location $resolvedRelease
 try {

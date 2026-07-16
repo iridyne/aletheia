@@ -10,20 +10,21 @@ UM790 runs one Python gateway, one scheduler and one SQLite state root.
 ```text
 C:\Aletheia\
 ├── releases\<git-sha>\        immutable extracted release bundles
-└── shared\data\               durable state selected by ALETHEIA_DATA_DIR
-    ├── app.db
-    ├── config.yaml
-    ├── secrets.enc
-    ├── logs\
-    ├── reports\
-    └── artifacts\
+
+C:\Users\<user>\.aletheia\     default durable state for the running user
+├── app.db
+├── config.yaml
+├── secrets.enc
+├── logs\
+├── reports\
+└── artifacts\
 ```
 
-The release directory may be replaced or rolled back.  `shared\data` must never
-be deleted or included in a release archive.  Development checkouts remain
-backward compatible: without `ALETHEIA_DATA_DIR`, Aletheia still uses the
-repository-root `data` directory.  Preview mode keeps its stricter
-`data/dev-preview` isolation and ignores the runtime override.
+The release directory may be replaced or rolled back. The current user's
+`~/.aletheia` directory must never be deleted or included in a release archive.
+`ALETHEIA_DATA_DIR` may select a different absolute root explicitly; relative
+values fail closed. Preview instances remain isolated below
+`~/.aletheia/instances/dev-preview` and ignore the primary-runtime override.
 
 ## Bundle contract
 
@@ -79,14 +80,14 @@ runtime.
 
 ```powershell
 pwsh -File scripts/runtime/start-release.ps1 `
-  -ReleaseRoot C:\Aletheia\releases\<git-sha> `
-  -DataDir C:\Aletheia\shared\data
+  -ReleaseRoot C:\Aletheia\releases\<git-sha>
 
 pwsh -File scripts/runtime/health-check.ps1
 ```
 
 `start-release.ps1` performs a locked production-only dependency sync and starts
-the gateway without opening a browser.  The health probe requires both
+the gateway without opening a browser. `-DataDir C:\absolute\override` is
+optional; when omitted, Python selects the running user's `~/.aletheia`. The health probe requires both
 `/_infra/readyz` and `/api/health` to respond.
 
 ## Current automation boundary
@@ -98,8 +99,26 @@ the gateway without opening a browser.  The health probe requires both
 3. create the deterministic ZIP;
 4. extract it into a clean directory;
 5. install production dependencies from the lockfile;
-6. bootstrap against an external temporary data directory;
+6. bootstrap once with the default per-user `~/.aletheia` root and once with an
+   explicit absolute override;
 7. upload the ZIP, checksum and size report.
+
+## Migrate a legacy checkout
+
+An existing repository `data/` directory is never adopted silently. With the
+gateway and operator shell stopped, inspect the migration first:
+
+```powershell
+uv run aletheia runtime migrate-home --from C:\path\to\checkout\data --dry-run
+uv run aletheia runtime migrate-home --from C:\path\to\checkout\data --apply
+```
+
+Migration copies into a staging directory, verifies file hashes, config schema,
+SQLite integrity and the audit chain, then writes the completion marker last.
+PID/lock/WAL/SHM files are regenerated instead of copied. The source directory
+is preserved for rollback and requires a separate owner-approved cleanup. When
+the source is a legacy checkout `data/` directory, its adjacent repository-root
+`.env` is also copied into the runtime home without printing its contents.
 
 Automatic UM790 promotion, database backup, process drain and rollback are the
 next phase.  They must consume this immutable bundle rather than pull `master`

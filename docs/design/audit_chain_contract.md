@@ -1,8 +1,11 @@
 # Audit Chain Contract
 
-> **范围**: 两条独立防篡改链——(1) `data/logs/audit.jsonl` 及其轮转存档的**文件级哈希链**（系统事件记忆），(2) `trade_proposals` 表的**行级哈希链**（提案不可伪造链，TaG P0-1，见 §6.4）。  
-> **层级**: L2 信任边界契约（Trust Boundary — change control required）  
-> **权威实现**: `aletheia/files/jsonl.py`（文件链）、`aletheia/storage/repositories.py:_compute_proposal_hash`（行链）  
+> **范围**: 两条独立防篡改链——(1) runtime-home `logs/audit.jsonl`（默认 `~/.aletheia/logs/audit.jsonl`）及其轮转存档的**文件级哈希链**（系统事件记忆），(2) `trade_proposals` 表的**行级哈希链**（提案不可伪造链，TaG P0-1，见 §6.4）。
+>
+> **层级**: L2 信任边界契约（Trust Boundary — change control required）
+>
+> **权威实现**: `aletheia/files/jsonl.py`（文件链）、`aletheia/storage/repositories.py:_compute_proposal_hash`（行链）
+>
 > **最后更新**: 2026-06-29
 
 ---
@@ -12,7 +15,7 @@
 活跃文件路径（运行时）:
 
 ```
-data/logs/audit.jsonl
+~/.aletheia/logs/audit.jsonl
 ```
 
 轮转存档命名规则: `audit.jsonl.1`, `audit.jsonl.2`, … (数字递增，数字越小越旧)
@@ -183,7 +186,7 @@ detail 中包含: 总记录数、错误数、前 3 条错误的 `{文件名}:{�
 
 ### §6.1 仅追加（Append-Only）
 
-`data/logs/audit.jsonl` 及其轮转存档**只允许追加写入**，禁止任何路径对文件执行 `truncate`、`overwrite`、或删除行。
+runtime-home `logs/audit.jsonl` 及其轮转存档**只允许追加写入**，禁止任何路径对文件执行 `truncate`、`overwrite`、或删除行。
 
 - 实现保证: `write_audit()` 经 `_append_jsonl_line()` → `path.open("a", encoding="utf-8")` (`jsonl.py:59`)，以 `"a"` 模式打开，操作系统级别追加。
 - ⚠️ **无 truncate 防护**: 代码层面没有显式拒绝其他路径写入 audit 文件的机制；信任依赖进程隔离和 change-control 纪律（见 §8）。
@@ -219,7 +222,7 @@ detail 中包含: 总记录数、错误数、前 3 条错误的 `{文件名}:{�
 | 维度 | `audit.jsonl` 文件链（§6.1–6.3） | `trade_proposals` 行链（§6.4） |
 |------|---------------------------------|-------------------------------|
 | 保护对象 | 审计事件日志（系统级事件流） | 交易提案记录（决策级实体） |
-| 存储 | `data/logs/audit.jsonl` 及轮转 | SQLite `trade_proposals` 表 |
+| 存储 | runtime-home `logs/audit.jsonl` 及轮转 | SQLite `trade_proposals` 表 |
 | 链节点 | 每条 JSONL 行 | 每行 `trade_proposals` |
 | 前向引用字段 | `_prev_hash` | `parent_hash` |
 | 当前节点哈希字段 | 由下一行的 `_prev_hash` 间接反推 | 显式 `commit_hash` 列 |
@@ -281,7 +284,7 @@ uv run pytest tests/specs/spec_pipeline_adopted_position.py -k "commit_hash" -q
 
 `aletheia/files/jsonl.py` 已列入信任边界受控模块（`trust_and_change_control.md §6.1`）：
 
-> `aletheia/files/jsonl.py`: the append-only JSONL writer backing `data/logs/audit.jsonl`. Any change to write semantics, append guarantees, or file-path routing directly affects the §1.4 audit chain invariant.
+> `aletheia/files/jsonl.py`: the append-only JSONL writer backing runtime-home `logs/audit.jsonl`. Any change to write semantics, append guarantees, or file-path routing directly affects the §1.4 audit chain invariant.
 
 **变更前必须声明**（按 `trust_and_change_control.md §6.2`）:
 

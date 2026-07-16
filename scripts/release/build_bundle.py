@@ -220,13 +220,17 @@ def build_bundle(
         )
         manifest_files.sort(key=lambda item: str(item["path"]))
         manifest = {
-            "release_format": 1,
+            "release_format": 2,
             "application": "aletheia",
             "version": version,
             "git_sha": resolved_sha,
             "target": "windows-x64",
             "requires_python": requires_python,
-            "data_directory_contract": "ALETHEIA_DATA_DIR",
+            "data_directory_contract": {
+                "default": "~/.aletheia",
+                "override": "ALETHEIA_DATA_DIR",
+                "override_must_be_absolute": True,
+            },
             "files": manifest_files,
         }
         manifest_payload = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")

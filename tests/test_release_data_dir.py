@@ -26,9 +26,15 @@ def _imported_data_dir(env: dict[str, str]) -> Path:
     return Path(result.stdout.strip()).resolve()
 
 
-def test_runtime_data_dir_defaults_to_repository_data(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_data_dir_defaults_to_user_dot_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aletheia.runtime_paths as runtime_paths
+
     monkeypatch.delenv("ALETHEIA_DATA_DIR", raising=False)
-    assert loader.runtime_data_dir() == (loader._PROJECT_ROOT / "data").resolve()
+    monkeypatch.setattr(runtime_paths, "_user_home", lambda: tmp_path)
+    assert loader.runtime_data_dir() == (tmp_path / ".aletheia").resolve()
 
 
 def test_runtime_data_dir_accepts_absolute_external_path(
@@ -56,11 +62,12 @@ def test_primary_runtime_selects_external_data_dir_on_import(tmp_path: Path) -> 
 
 
 def test_preview_mode_keeps_preview_isolation_over_runtime_override(tmp_path: Path) -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    preview = (repo_root / "data" / "dev-preview" / "release-test").resolve()
+    preview = (tmp_path / ".aletheia" / "instances" / "dev-preview" / "release-test").resolve()
     durable = (tmp_path / "shared" / "data").resolve()
     env = os.environ.copy()
     env["ALETHEIA_PREVIEW_MODE"] = "1"
     env["ALETHEIA_PREVIEW_DATA_DIR"] = str(preview)
     env["ALETHEIA_DATA_DIR"] = str(durable)
+    env["HOME"] = str(tmp_path)
+    env["USERPROFILE"] = str(tmp_path)
     assert _imported_data_dir(env) == preview

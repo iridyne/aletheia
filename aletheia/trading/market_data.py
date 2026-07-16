@@ -165,7 +165,7 @@ async def collect_market_snapshots() -> dict:
         # NOTE: the DB row (market_snapshots) is the canonical, queried record.
         # The former append_jsonl("market_snapshots.jsonl", ...) write was
         # write-only — no reader anywhere in the codebase — so it only grew
-        # data/logs/ unbounded (~11.6MB) with zero consumers. Removed 2026-06-28
+        # runtime-home logs/ unbounded (~11.6MB) with zero consumers. Removed 2026-06-28
         # (junk-data sweep B2). Re-add a rotation-bounded sink here if a real
         # offline consumer ever needs the raw stream.
         return str(instrument)

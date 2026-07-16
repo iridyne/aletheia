@@ -1,4 +1,4 @@
-"""Config loader: reads/writes data/config.yaml, bootstraps defaults."""
+"""Config loader for the current user's Aletheia runtime home."""
 
 import os
 import tempfile
@@ -9,11 +9,11 @@ from pathlib import Path
 import yaml
 
 from aletheia.config.schema import AletheiaConfig
+from aletheia.runtime_paths import preview_root, runtime_home
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _PREVIEW_MODE_ENV = "ALETHEIA_PREVIEW_MODE"
 _PREVIEW_DATA_DIR_ENV = "ALETHEIA_PREVIEW_DATA_DIR"
-_RUNTIME_DATA_DIR_ENV = "ALETHEIA_DATA_DIR"
 
 
 def is_preview_mode() -> bool:
@@ -32,29 +32,20 @@ def preview_data_dir() -> Path:
     if not raw:
         raise RuntimeError("preview mode requires ALETHEIA_PREVIEW_DATA_DIR")
     candidate = Path(raw).expanduser().resolve()
-    allowed_root = (_PROJECT_ROOT / "data" / "dev-preview").resolve()
+    allowed_root = preview_root().resolve()
     if not candidate.is_relative_to(allowed_root):
-        raise RuntimeError("preview data directory must be under data/dev-preview")
+        raise RuntimeError("preview data directory must be under ~/.aletheia/instances/dev-preview")
     return candidate
 
 
 def runtime_data_dir() -> Path:
     """Return the durable data root for the primary runtime.
 
-    Release bundles may live in immutable, versioned directories while sharing
-    one persistent state directory.  ``ALETHEIA_DATA_DIR`` must therefore be an
-    absolute path so its meaning cannot change with the process working directory.
-    Development checkouts remain backward-compatible and default to ``<repo>/data``.
-    Preview mode deliberately ignores this override and keeps its stricter local
-    isolation contract.
+    Release bundles and development checkouts may live anywhere while sharing one
+    per-user state root. ``ALETHEIA_DATA_DIR`` remains an absolute override.
+    Preview mode deliberately ignores it and keeps stricter instance isolation.
     """
-    raw = os.environ.get(_RUNTIME_DATA_DIR_ENV, "").strip()
-    if not raw:
-        return (_PROJECT_ROOT / "data").resolve()
-    candidate = Path(raw).expanduser()
-    if not candidate.is_absolute():
-        raise RuntimeError("ALETHEIA_DATA_DIR must be an absolute path")
-    return candidate.resolve()
+    return runtime_home()
 
 
 DATA_DIR = preview_data_dir() if is_preview_mode() else runtime_data_dir()
@@ -69,7 +60,7 @@ def _load_dotenv() -> None:
     if _DOTENV_LOADED:
         return
     _DOTENV_LOADED = True
-    env_file = _PROJECT_ROOT / ".env"
+    env_file = DATA_DIR / ".env"
     if not env_file.exists():
         return
     try:
@@ -102,6 +93,14 @@ def ensure_data_dirs() -> None:
     global _dirs_ensured_for
     if _dirs_ensured_for == DATA_DIR:
         return
+    if not is_preview_mode():
+        from aletheia.runtime_home_migration import assert_runtime_home_ready
+
+        assert_runtime_home_ready(
+            project_root=_PROJECT_ROOT,
+            target=DATA_DIR,
+            override_active=bool(os.environ.get("ALETHEIA_DATA_DIR", "").strip()),
+        )
     dirs = [
         DATA_DIR,
         DATA_DIR / "logs",
@@ -183,6 +182,14 @@ def load_config() -> AletheiaConfig:
     the source of truth on disk.
     """
     global _config_cache
+    if not is_preview_mode():
+        from aletheia.runtime_home_migration import assert_runtime_home_ready
+
+        assert_runtime_home_ready(
+            project_root=_PROJECT_ROOT,
+            target=DATA_DIR,
+            override_active=bool(os.environ.get("ALETHEIA_DATA_DIR", "").strip()),
+        )
     if _config_cache is not None:
         ts, cached_path, cfg = _config_cache
         if time.monotonic() - ts < _CONFIG_CACHE_TTL and cached_path == CONFIG_PATH:

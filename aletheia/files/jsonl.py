@@ -49,7 +49,7 @@ def _max_bytes() -> int:
 
 
 def append_jsonl(filename: str, record: dict) -> None:
-    """Append a JSON record to a JSONL file in data/logs/, rotating at a size cap.
+    """Append a JSON record to the runtime home's logs/, rotating at a size cap.
 
     When the active file exceeds the cap it is rotated to the next numeric
     generation (`{filename}.1`, `{filename}.2`, ...). Rotation is best-effort and

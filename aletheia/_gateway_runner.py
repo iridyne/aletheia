@@ -7,7 +7,7 @@ This lets the system survive transient crashes while staying unattended.
 
 The supervisor writes the PID file exactly once (its own pid), so `gateway
 stop`/`status` keep working. The inner server's stderr is sent to
-data/logs/errors.log instead of being discarded.
+the runtime home's logs/errors.log instead of being discarded.
 """
 
 import os
@@ -29,7 +29,7 @@ from aletheia.runtime_continuity.processes import current_gateway_launch_context
 # Win32: forbid the OS from allocating a console for the inner uvicorn process.
 # Without this, Win11 hosts the console via Windows Terminal and a wt window pops
 # up every time the supervisor spawns the server. Suppression only — stderr still
-# flows to data/logs/errors.log via the existing redirect.
+# flows to the runtime home's logs/errors.log via the existing redirect.
 CREATE_NO_WINDOW = 0x08000000
 _SERVER_PORT_STARTUP_GRACE_SEC = 90.0
 _SERVER_PORT_LOST_GRACE_SEC = 15.0

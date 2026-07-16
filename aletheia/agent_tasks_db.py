@@ -1,6 +1,6 @@
 """Machine-local SQLite claim store for agent task coordination.
 
-Separate from data/app.db (trading runtime). Only tracks who is working on what
+Separate from app.db (trading runtime). Only tracks who is working on what
 and when claims expire — durable intent (status, verification, handoff) stays in
 git-tracked YAML.
 """
@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-_DB_PATH = "data/tasks.db"
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS agent_task_claims (
     task_id     TEXT PRIMARY KEY,
@@ -31,7 +30,10 @@ def _now() -> str:
 
 
 def _connect(root: Path) -> sqlite3.Connection:
-    db_path = root / _DB_PATH
+    from aletheia.config.loader import get_data_dir
+    from aletheia.runtime_paths import workflow_claims_db
+
+    db_path = workflow_claims_db(root, get_data_dir())
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(db_path), timeout=5.0)
     con.row_factory = sqlite3.Row

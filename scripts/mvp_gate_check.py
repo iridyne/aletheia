@@ -13,13 +13,14 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-DB_PATH = Path("data/app.db")
+from aletheia.storage.sqlite import db_path
+
 PROTOCOL_PATH = Path("docs/product/EXPERIMENT_PROTOCOL.md")
 CLAUDE_MD_PATH = Path("CLAUDE.md")
 
 
 def _db():
-    return sqlite3.connect(str(DB_PATH))
+    return sqlite3.connect(str(db_path()))
 
 
 def check_domain_1() -> list[tuple[str, bool, str]]:
@@ -327,9 +328,9 @@ def main():
                 domain_pass = False
 
         if domain_pass:
-            print(f"  >>> DOMAIN PASS")
+            print("  >>> DOMAIN PASS")
         else:
-            print(f"  >>> DOMAIN FAIL")
+            print("  >>> DOMAIN FAIL")
             all_pass = False
 
     print(f"\n{'=' * 70}")

@@ -223,9 +223,7 @@ def _workflow_paths(task: dict[str, Any]) -> set[str]:
 
 
 def _assert_only_workflow_metadata_dirty(root: Path, task: dict[str, Any]) -> None:
-    # Exclude machine-local SQLite claim store (gitignored, never a git concern).
-    _db_files = {"data/tasks.db", "data/tasks.db-shm", "data/tasks.db-wal"}
-    unexpected = sorted(_dirty_paths(root) - _workflow_paths(task) - _db_files)
+    unexpected = sorted(_dirty_paths(root) - _workflow_paths(task))
     if unexpected:
         raise ValueError(
             "commit implementation before verification; non-workflow files are dirty: "
@@ -251,7 +249,7 @@ def _missing_handoff_headings(text: str, task: dict[str, Any] | None = None) -> 
 def claim_task(task_id: str, *, holder: str, hours: int = 8, root: Path | None = None) -> dict[str, Any]:
     """Claim an existing ready/backlog task for the current branch.
 
-    Ownership is recorded in SQLite (data/tasks.db) via an atomic UPDATE...RETURNING
+    Ownership is recorded in per-user SQLite state via an atomic UPDATE...RETURNING
     to prevent concurrent agents on the same machine from claiming the same task.
     Branch info is intentionally kept out of git-tracked YAML to avoid ownership
     noise in the audit trail.

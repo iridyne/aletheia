@@ -180,17 +180,24 @@ def _safe_thesis_diagnostic() -> dict:
 
 
 def _log_hint_for_check(name: str) -> str:
+    try:
+        from aletheia.config.loader import get_data_dir
+
+        runtime_root = get_data_dir()
+    except Exception:
+        runtime_root = Path.home() / ".aletheia"
+    logs = runtime_root / "logs"
     if name.startswith("process.") or name.startswith("webui."):
-        return "data/logs/errors.log or data/logs/frontdoor-errors.log"
+        return f"{logs / 'errors.log'} or {logs / 'frontdoor-errors.log'}"
     if name.startswith("data."):
-        return "data/logs/errors.log plus recent scheduler/collector agent_runs"
+        return f"{logs / 'errors.log'} plus recent scheduler/collector agent_runs"
     if name.startswith("loop.") or name.startswith("content.") or name.startswith("operator."):
-        return "data/logs/agent_runs.jsonl and app.db agent_runs/run_steps"
+        return f"{logs / 'agent_runs.jsonl'} and {runtime_root / 'app.db'} agent_runs/run_steps"
     if name.startswith("trust.") or name.startswith("config."):
-        return "data/logs/audit.jsonl"
+        return str(logs / "audit.jsonl")
     if name.startswith("network.") or name.startswith("creds."):
-        return "data/logs/errors.log; secrets are intentionally never printed"
-    return "data/logs/"
+        return f"{logs / 'errors.log'}; secrets are intentionally never printed"
+    return str(logs)
 
 
 def _system_info() -> dict:
@@ -583,7 +590,7 @@ def _probe_gateway_restart_history(report: Report) -> None:
     if total >= 10:
         fix_hint = "high restart volume — check git hook churn, frontdoor port loss, and supervisor errors"
     elif critical_seen and not recovered:
-        fix_hint = "spawn/give-up event seen — inspect data/logs/errors.log and frontdoor-errors.log"
+        fix_hint = f"spawn/give-up event seen — inspect {_log_hint_for_check('process.gateway')}"
     recovered_text = "; historical failure recovered, current gateway healthy" if recovered else ""
     report.add(
         "process.restart_history",
@@ -2040,7 +2047,9 @@ def _probe_operator_shell(report: Report) -> None:
         ):
             hint = "install Node in a stable fnm/Homebrew location, then restart the gateway"
         else:
-            hint = "inspect data/logs/operator-shell-errors.log and restart the gateway"
+            from aletheia.config.loader import get_data_dir
+
+            hint = f"inspect {get_data_dir() / 'logs' / 'operator-shell-errors.log'} and restart the gateway"
         report.add("operator.shell", "warn", detail, hint)
     except Exception as e:
         report.add("operator.shell", "info", f"probe error: {e}")

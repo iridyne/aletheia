@@ -9,6 +9,8 @@ from pathlib import Path
 
 import typer
 
+from aletheia.runtime_paths import preview_instance_dir
+
 dev_app = typer.Typer(no_args_is_help=True)
 _RESERVED_PORTS = frozenset({8787, 8788})
 
@@ -23,7 +25,7 @@ def project_root() -> Path:
 
 
 def _preview_data_dir(root: Path, port: int) -> Path:
-    return root / "data" / "dev-preview" / str(port)
+    return preview_instance_dir(root, port)
 
 
 @dev_app.command()
@@ -52,7 +54,7 @@ def api(
     ]
     typer.echo(
         f"Starting isolated preview API at http://127.0.0.1:{port} "
-        f"with data under {data_dir.relative_to(root)}"
+        f"with isolated runtime state under {data_dir}"
     )
     result = subprocess.run(command, cwd=root, env=env, check=False)
     raise typer.Exit(getattr(result, "returncode", 0))

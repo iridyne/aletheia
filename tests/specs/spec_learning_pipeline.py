@@ -261,7 +261,7 @@ def test_guard_candidates_reachable_by_promoter():
               status="implemented"),
 )
 def test_runtime_pi_decisions_carry_opportunity_id():
-    """GREEN tripwire on the PRODUCTION DB (mirrors LP-S01's data/app.db read).
+    """GREEN tripwire on the selected runtime app.db.
 
     The learning loop attributes trade outcomes back to the opportunity that
     triggered them via pi_decisions.opportunity_id. The population that MUST carry
@@ -286,9 +286,9 @@ def test_runtime_pi_decisions_carry_opportunity_id():
     attribution is covered by the static LP-S05 + PL-PT record_decision_trade.
     Skips on machines without a populated app.db (CI / fresh clone).
     """
-    import pathlib
+    from aletheia.storage.sqlite import db_path
 
-    db = pathlib.Path(_project_root()) / "data" / "app.db"
+    db = db_path()
     if not db.exists():
         pytest.skip("no production app.db on this machine")
 
@@ -450,7 +450,9 @@ def test_applied_policy_version_closure():
         "stamp a policy version. See FIX 2 (LP-S10)."
     )
 
-    db = pathlib.Path(_project_root()) / "data" / "app.db"
+    from aletheia.storage.sqlite import db_path
+
+    db = db_path()
     if not db.exists():
         pytest.skip("no production app.db on this machine")
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)

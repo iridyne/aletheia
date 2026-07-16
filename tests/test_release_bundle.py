@@ -75,7 +75,12 @@ def test_bundle_contains_only_runtime_whitelist_and_manifest(tmp_path: Path) -> 
 
     assert manifest["git_sha"] == "a" * 40
     assert manifest["version"] == "9.9.9"
-    assert manifest["data_directory_contract"] == "ALETHEIA_DATA_DIR"
+    assert manifest["release_format"] == 2
+    assert manifest["data_directory_contract"] == {
+        "default": "~/.aletheia",
+        "override": "ALETHEIA_DATA_DIR",
+        "override_must_be_absolute": True,
+    }
     assert result.compressed_size_bytes < 2 * 1024 * 1024
     assert result.sha256_path.is_file()
     assert result.summary_path.is_file()

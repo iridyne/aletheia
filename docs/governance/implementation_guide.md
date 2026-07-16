@@ -670,21 +670,21 @@ dreaming logs
 
 ### 9.4 Optional Git
 
-Git is optional.
-
-If enabled, version:
+Runtime state itself stays outside Git. If an operator explicitly exports selected
+knowledge into a separate Git checkout, version only exported content such as:
 
 ```text
-data/knowledge/
-data/playbooks/
-data/reports/
+knowledge/
+playbooks/
+reports/
 ```
 
 Do not commit:
 
 ```text
-data/secrets.enc
-data/app.db
+the runtime home itself
+secrets.enc
+app.db
 raw API keys
 private logs with secrets
 ```
@@ -693,7 +693,7 @@ private logs with secrets
 
 ## 10. Config model
 
-Create `data/config.yaml` on first run.
+Create `~/.aletheia/config.yaml` on first run (or use an explicit absolute `ALETHEIA_DATA_DIR`).
 
 Example:
 

@@ -50,7 +50,9 @@ def test_shadow_trades_resolution_bounded():
     is to catch a *systemic* resolver failure (the original 94% backlog), not to
     demand perfection. Skips on machines without a populated app.db.
     """
-    db = pathlib.Path(_project_root()) / "data" / "app.db"
+    from aletheia.storage.sqlite import db_path
+
+    db = db_path()
     if not db.exists():
         pytest.skip("no production app.db on this machine")
 

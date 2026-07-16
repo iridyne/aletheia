@@ -33,7 +33,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path, PureWindowsPath
 
-from aletheia.config.loader import _PROJECT_ROOT
+from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.files.jsonl import write_audit
 from aletheia.gateway.pidfile import _no_window_kwargs
 
@@ -249,7 +249,7 @@ def _build_launchd_plist() -> dict:
     command in a tight loop. AbandonProcessGroup preserves the detached supervisor
     spawned by the gated lifecycle command after the watchdog invocation exits.
     """
-    log_dir = _PROJECT_ROOT / "data" / "logs"
+    log_dir = get_data_dir() / "logs"
     return {
         "Label": LAUNCHD_LABEL,
         "ProgramArguments": [
@@ -306,7 +306,7 @@ def _write_launchd_plist() -> Path:
         raise ValueError("launchd plist serialization failed validation")
 
     target = _launchd_plist_path()
-    (_PROJECT_ROOT / "data" / "logs").mkdir(parents=True, exist_ok=True)
+    (get_data_dir() / "logs").mkdir(parents=True, exist_ok=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp: str | None = None
     try:
@@ -906,7 +906,7 @@ def status() -> dict:
 
 
 def write_watchdog_tick(action: str, exit_code: int = 0, duration_ms: int = 0) -> None:
-    """Record a watchdog tick to data/logs/watchdog.jsonl for diagnostics."""
+    """Record a watchdog tick to runtime-home logs/watchdog.jsonl for diagnostics."""
     from datetime import timezone as tz
     from aletheia.files.jsonl import append_jsonl
 

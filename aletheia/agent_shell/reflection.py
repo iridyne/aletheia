@@ -10,14 +10,23 @@ Storage: a rotating JSON pointer plus the durable pi_decisions audit row.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import logging
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("aletheia.agent_shell.reflection")
 
-_REFLECTION_FILE = Path("data/pi_reflection.json")
+
+_REFLECTION_FILE: Path | None = None
+
+
+def _reflection_file() -> Path:
+    if _REFLECTION_FILE is not None:
+        return _REFLECTION_FILE
+    from aletheia.config.loader import get_data_dir
+
+    return get_data_dir() / "pi_reflection.json"
 
 
 class PendingSourceClaimError(RuntimeError):
@@ -204,8 +213,9 @@ def _reflection_record(decision_result: dict) -> dict:
 def _write_reflection_record(record: dict) -> None:
     """Update the rotating convenience pointer after durable finalization."""
     try:
-        _REFLECTION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _REFLECTION_FILE.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+        path = _reflection_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         logger.debug("reflection record failed: %s", e)
 
@@ -501,9 +511,10 @@ def get_last_reflection() -> str | None:
     Returns a one-paragraph string for prompt injection, or None if unavailable.
     """
     try:
-        if not _REFLECTION_FILE.exists():
+        path = _reflection_file()
+        if not path.exists():
             return None
-        raw = json.loads(_REFLECTION_FILE.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
 
