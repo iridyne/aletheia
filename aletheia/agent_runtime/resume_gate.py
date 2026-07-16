@@ -13,6 +13,9 @@ from aletheia.config.loader import load_config, save_config
 def summarize_resume_gate(result: dict[str, Any]) -> str:
     """Compact operator-facing summary that never includes secrets."""
     reason = result.get("reason") or "unknown"
+    blockers = result.get("blockers") or []
+    if blockers:
+        return f"{reason}: blockers={'; '.join(str(blocker) for blocker in blockers)}"
     parts = []
     for row in result.get("results") or []:
         provider = row.get("provider", "?")
@@ -61,12 +64,40 @@ async def resume_if_llm_available(
     cause: str = "manual_resume",
     max_retries: int | None = None,
 ) -> dict[str, Any]:
-    """Resume only if the configured LLM gate is disabled or real inference works.
+    """Resume only if every enabled startup gate permits it.
 
     `max_retries` is forwarded to the probe; a manual operator resume passes 1 so
     the request returns within a single probe instead of the full startup window.
     """
     cfg = load_config()
+
+    if cfg.health.startup_behavior_gate_enabled:
+        try:
+            from aletheia.agent_runtime.startup_behavior_gate import evaluate_startup_gate
+
+            startup_gate = evaluate_startup_gate(cfg)
+        except Exception:
+            response = {
+                "allowed": False,
+                "reason": "startup_behavior_gate_unavailable",
+                "checked": 0,
+                "results": [],
+                "blockers": [],
+            }
+            _audit_resume_blocked(actor=actor, source=source, cause=cause, result=response)
+            return response
+
+        if not bool(startup_gate.get("passed")):
+            response = {
+                "allowed": False,
+                "reason": "startup_behavior_gate_blocked",
+                "checked": 0,
+                "results": [],
+                "blockers": list(startup_gate.get("blockers") or []),
+            }
+            _audit_resume_blocked(actor=actor, source=source, cause=cause, result=response)
+            return response
+
     if not cfg.health.require_llm_at_startup:
         _persist_resumed()
         return {
