@@ -1,0 +1,23 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-099
+title: Fix runtime-home cross-platform CI regressions
+status: in_progress
+packet_type: standard
+scope:
+  boundary: SQLite migration validation handle lifetime and ControlLoopHarness runtime-home protection only.
+  excluded: Risk, Execution, exchange adapters, Live authority, scheduler behavior, database schema, runtime facts, and credentials.
+intent: Close SQLite validation handles before migration moves and preserve ControlLoopHarness
+  isolation without treating pytest sandboxes as the real runtime home.
+acceptance:
+- SQLite validation always closes its connection before a staged database is moved, including on Windows.
+- ControlLoopHarness rejects the real selected runtime home but accepts pytest's in-memory-backed temporary sandbox.
+- The exact Linux and Windows CI failure families pass locally and the PR remains configured for auto-merge.
+base_commit: 0f734a8fa6caadfddece04bccd3f99e350aaae6a
+next_action:
+  command_key: runtime_home_ci_repair
+  reason: Reproduce and fix the two cross-platform runtime-home CI failure families.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-099.md
+updated_at: '2026-07-16T07:48:21.574184Z'

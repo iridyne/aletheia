@@ -150,12 +150,16 @@ def _assert_source_stopped(source: Path) -> None:
 def _checkpoint_and_verify_database(path: Path) -> None:
     if not path.exists():
         return
+    db: sqlite3.Connection | None = None
     try:
-        with sqlite3.connect(str(path), timeout=30) as db:
-            db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-            row = db.execute("PRAGMA integrity_check").fetchone()
+        db = sqlite3.connect(str(path), timeout=30)
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        row = db.execute("PRAGMA integrity_check").fetchone()
     except sqlite3.DatabaseError as exc:
         raise RuntimeHomeMigrationError(f"SQLite validation failed for {path}: {exc}") from exc
+    finally:
+        if db is not None:
+            db.close()
     if not row or row[0] != "ok":
         raise RuntimeHomeMigrationError(f"SQLite integrity_check failed for {path}: {row}")
 

@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from aletheia.runtime_home_migration import (
     MIGRATION_MARKER,
     RuntimeHomeMigrationError,
+    _checkpoint_and_verify_database,
     apply_migration,
     assert_runtime_home_ready,
     build_plan,
@@ -42,6 +43,37 @@ def test_plan_is_read_only_and_reports_primary_state(tmp_path: Path) -> None:
     assert plan.target_has_primary_state is False
     assert plan.file_count == 4
     assert not target.exists()
+
+
+def test_database_validation_closes_connection_before_return(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "app.db"
+    with sqlite3.connect(database) as db:
+        db.execute("CREATE TABLE proof (id INTEGER PRIMARY KEY)")
+
+    real_connect = sqlite3.connect
+    opened: list[sqlite3.Connection] = []
+
+    class TrackingConnection(sqlite3.Connection):
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            super().close()
+
+    def tracking_connect(*args, **kwargs):
+        kwargs["factory"] = TrackingConnection
+        connection = real_connect(*args, **kwargs)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", tracking_connect)
+
+    _checkpoint_and_verify_database(database)
+
+    assert opened and all(connection.closed for connection in opened)
 
 
 def test_apply_preserves_source_validates_db_and_skips_transients(tmp_path: Path) -> None:

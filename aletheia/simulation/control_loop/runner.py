@@ -61,9 +61,11 @@ class ControlLoopHarness:
         self._loader = loader
         self._original_data_dir = loader.DATA_DIR
         self._original_config_path = loader.CONFIG_PATH
+        from aletheia.runtime_paths import runtime_home
+
         protected_data_dirs = {
             (Path(loader._PROJECT_ROOT) / "data").resolve(),
-            loader.get_data_dir().resolve(),
+            runtime_home().resolve(),
         }
         active_connection = sqlite_store._db_conn
         self._original_db_connection = active_connection
