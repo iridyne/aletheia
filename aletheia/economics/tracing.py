@@ -220,12 +220,19 @@ def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
                 return parsed if parsed >= 0 else None
         return None
 
+    top_level_reasoning = token("reasoning_tokens")
     return {
         "input_tokens": token("prompt_tokens", "input_tokens"),
         "output_tokens": token("completion_tokens", "output_tokens"),
         "total_tokens": token("total_tokens"),
-        "reasoning_tokens": detail(completion_details, "reasoning_tokens"),
-        "cached_input_tokens": detail(prompt_details, "cached_tokens", "cached_input_tokens"),
+        "reasoning_tokens": (
+            top_level_reasoning
+            if top_level_reasoning is not None
+            else detail(completion_details, "reasoning_tokens")
+        ),
+        "cached_input_tokens": detail(
+            prompt_details, "cached_tokens", "cached_input_tokens"
+        ),
     }
 
 
@@ -395,25 +402,10 @@ def record_tool_event(
                 cost_profile_id,estimated_cost_usd,currency,cost_status,metadata_json,created_at
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                event_id,
-                "tool",
-                run_id,
-                provenance.get("runtime_session_id"),
-                call_id,
-                "tool",
-                tool_name,
-                int(attempt_index),
-                status,
-                start,
-                end,
-                latency_ms,
-                "{}",
-                profile.get("id") if profile else None,
-                cost,
-                "USD",
-                resolved_status,
-                _json(metadata or {}),
-                _utcnow(),
+                event_id,"tool",run_id,provenance.get("runtime_session_id"),call_id,"tool",
+                tool_name,int(attempt_index),status,start,end,latency_ms,"{}",
+                profile.get("id") if profile else None,cost,"USD",resolved_status,
+                _json(metadata or {}),_utcnow(),
             ),
         )
         return event_id
@@ -421,45 +413,91 @@ def record_tool_event(
         return None
 
 
+def record_fixed_cost_event(
+    *,
+    event_type: str,
+    name: str,
+    cost_usd: float | None,
+    started_at: str,
+    finished_at: str | None = None,
+    cost_status: str = "known",
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    if event_type not in {"data", "infrastructure", "other"}:
+        raise ValueError("fixed cost event_type must be data, infrastructure, or other")
+    parsed = _float(cost_usd)
+    if parsed is not None and parsed < 0:
+        raise ValueError("cost_usd must be non-negative")
+    resolved_status = cost_status if parsed is not None and cost_status in {"known", "estimated"} else "unknown"
+    event_id = "cost_" + uuid4().hex[:16]
+    call_id = "fixed_" + hashlib.sha256(
+        f"{event_type}:{name}:{started_at}:{finished_at or ''}".encode()
+    ).hexdigest()[:16]
+    db = ensure_economics_schema()
+    db.execute(
+        """INSERT OR IGNORE INTO runtime_cost_events (
+            id,event_type,call_id,provider,model_or_tool,attempt_index,status,started_at,
+            finished_at,usage_json,estimated_cost_usd,currency,cost_status,metadata_json,created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            event_id,event_type,call_id,event_type,name,0,"allocated",started_at,
+            finished_at or started_at,"{}",parsed,"USD",resolved_status,
+            _json(metadata or {}),_utcnow(),
+        ),
+    )
+    return event_id
+
+
 def aggregate_agent_run_cost(run_id: str) -> dict[str, Any]:
     db = ensure_economics_schema()
-    rows = [dict(row) for row in db.execute(
-        "SELECT * FROM runtime_cost_events WHERE run_id=? ORDER BY started_at,id", (run_id,)
-    ).fetchall()]
-    known = [r for r in rows if r["cost_status"] in {"known", "estimated"} and r["estimated_cost_usd"] is not None]
-    unknown = [r for r in rows if r["cost_status"] == "unknown" or r["estimated_cost_usd"] is None]
-    total = round(sum(float(r["estimated_cost_usd"]) for r in known), 12)
-    complete = bool(rows) and not unknown
-    models = [r["model_or_tool"] for r in rows if r["event_type"] == "llm" and r["status"] == "success"]
+    rows = [
+        dict(row) for row in db.execute(
+            "SELECT * FROM runtime_cost_events WHERE run_id=? ORDER BY started_at,attempt_index,id",
+            (run_id,),
+        ).fetchall()
+    ]
+    known = sum(float(row["estimated_cost_usd"] or 0) for row in rows if row["estimated_cost_usd"] is not None)
+    unknown = sum(1 for row in rows if row["cost_status"] == "unknown" or row["estimated_cost_usd"] is None)
+    llm_rows = [row for row in rows if row["event_type"] == "llm"]
+    final_model = next((row["model_or_tool"] for row in reversed(llm_rows) if row["status"] == "success"), None)
     return {
         "run_id": run_id,
         "event_count": len(rows),
-        "known_event_count": len(known),
-        "unknown_event_count": len(unknown),
-        "cost_estimate_usd": total if complete else None,
-        "known_cost_subtotal_usd": total,
-        "cost_complete": complete,
-        "final_model": models[-1] if models else None,
+        "llm_attempt_count": len(llm_rows),
+        "tool_event_count": sum(1 for row in rows if row["event_type"] == "tool"),
+        "known_cost_subtotal_usd": round(known, 12),
+        "unknown_event_count": unknown,
+        "cost_estimate_usd": round(known, 12) if rows and unknown == 0 else None,
+        "cost_complete": bool(rows) and unknown == 0,
+        "final_model": final_model,
     }
 
 
-def list_cost_summary(*, window_start: str, window_end: str, run_id: str | None = None) -> dict[str, Any]:
+def list_cost_summary(
+    *,
+    window_start: str,
+    window_end: str,
+    run_id: str | None = None,
+) -> dict[str, Any]:
     db = ensure_economics_schema()
-    conditions = ["replace(started_at, ' ', 'T') >= replace(?, ' ', 'T')", "replace(started_at, ' ', 'T') < replace(?, ' ', 'T')"]
+    where = [
+        "replace(started_at,' ','T') >= replace(?,' ','T')",
+        "replace(started_at,' ','T') < replace(?,' ','T')",
+    ]
     params: list[Any] = [window_start, window_end]
     if run_id:
-        conditions.append("run_id=?")
+        where.append("run_id=?")
         params.append(run_id)
     rows = [dict(row) for row in db.execute(
-        "SELECT * FROM runtime_cost_events WHERE " + " AND ".join(conditions) + " ORDER BY started_at,id",
+        "SELECT * FROM runtime_cost_events WHERE " + " AND ".join(where) + " ORDER BY started_at,id",
         params,
     ).fetchall()]
     by_type: dict[str, dict[str, Any]] = {}
     for row in rows:
-        bucket = by_type.setdefault(row["event_type"], {"events": 0, "known_cost_usd": 0.0, "unknown_events": 0})
-        bucket["events"] += 1
+        bucket = by_type.setdefault(row["event_type"], {"event_count": 0, "known_cost_usd": 0.0, "unknown_count": 0})
+        bucket["event_count"] += 1
         if row["estimated_cost_usd"] is None or row["cost_status"] == "unknown":
-            bucket["unknown_events"] += 1
+            bucket["unknown_count"] += 1
         else:
             bucket["known_cost_usd"] += float(row["estimated_cost_usd"])
     for bucket in by_type.values():
@@ -468,8 +506,8 @@ def list_cost_summary(*, window_start: str, window_end: str, run_id: str | None 
         "window_start": window_start,
         "window_end": window_end,
         "event_count": len(rows),
-        "known_cost_usd": round(sum(float(r["estimated_cost_usd"] or 0) for r in rows), 12),
-        "unknown_event_count": sum(1 for r in rows if r["cost_status"] == "unknown" or r["estimated_cost_usd"] is None),
+        "known_cost_subtotal_usd": round(sum(float(row["estimated_cost_usd"] or 0) for row in rows), 12),
+        "unknown_event_count": sum(1 for row in rows if row["estimated_cost_usd"] is None or row["cost_status"] == "unknown"),
         "by_type": by_type,
         "events": rows,
     }
