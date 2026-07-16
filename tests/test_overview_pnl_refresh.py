@@ -34,6 +34,6 @@ def test_overview_curve_distinguishes_live_mark_from_verified_realized() -> None
 
     assert "current_mark_point" in client
     assert "Live mark (closed raw + open uPnL)" in chart
-    assert "No verified strategy closes yet" in chart
+    assert "No verified strategy outcomes yet" in chart
     assert "raw_recorded_points" not in overview_chart
     assert "genuine_points" not in overview_chart

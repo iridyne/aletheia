@@ -32,11 +32,11 @@ def test_overview_rail_uses_canonical_responsive_breakpoints() -> None:
         "/* ---------- Cockpit main: feed (main) + right rail ---------- */", 1
     )[1].split("/* Go-Live Scorecard", 1)[0]
 
-    assert "grid-template-columns: minmax(0, 1fr) clamp(320px, 22vw, 380px)" in cockpit_css
+    assert "grid-template-columns: minmax(0, 1fr) clamp(300px, 26vw, 420px)" in cockpit_css
     assert "@media (max-width: 1100px)" in cockpit_css
-    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in cockpit_css
+    assert "column-count: 2" in cockpit_css
     assert "@media (max-width: 700px)" in cockpit_css
-    assert ".cockpit-rail { grid-template-columns: 1fr; }" in cockpit_css
+    assert ".cockpit-rail { column-count: 1; }" in cockpit_css
     assert ".agent-feed-viewport" in css
     assert ".agent-feed-viewport .feed-list-scroll" in css
     assert "overflow-y: auto" in css

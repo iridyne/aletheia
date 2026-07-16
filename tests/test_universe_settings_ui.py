@@ -84,7 +84,10 @@ def test_settings_uses_vertical_information_architecture_and_switches():
     assert "NumberFieldGrid" in ui_index
     assert "SwitchGrid" in ui_index
     assert "settings-toggle-grid" in Path("frontend/src/components/ui/SettingsSection.tsx").read_text(encoding="utf-8")
-    assert "type=\"checkbox\"" not in settings
+    # The paper-influence path picker intentionally uses a native multi-select
+    # checkbox list; ordinary boolean controls still use the shared Switch.
+    assert "paperInfluencePaths" in settings
+    assert "type=\"checkbox\"" in settings
     assert "type=\"checkbox\"" in Path("frontend/src/components/ui/Switch.tsx").read_text(encoding="utf-8")
     assert css.count(".settings-switch-input") >= 1
     assert "settings-switch-input:checked + .settings-switch-track" in css

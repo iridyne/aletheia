@@ -30,9 +30,13 @@ def setup_test_env(tmp_path, monkeypatch):
 
 def test_risk_approves_valid_paper_proposal(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
+    from tests.paper_trade_fixture import approvable_paper_trade
+    trade = approvable_paper_trade(
+        monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000,
+    )
     proposal = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.001, price=60000,
+        execution_mode="paper_internal", quantity=0.001, price=60000, **trade,
     )
     repo.insert_trade_proposal(proposal)
     result = evaluate_proposal(proposal)
@@ -67,9 +71,13 @@ def test_risk_blacklist_mode_allows_non_blocked(tmp_path, monkeypatch):
     cfg.risk.symbol_list = ["DOGE/USDT"]
     cfg.agent.permission_mode = "Paper"
     save_config(cfg)
+    from tests.paper_trade_fixture import approvable_paper_trade
+    trade = approvable_paper_trade(
+        monkeypatch, symbol="XRP/USDT", market_type="spot", direction="long", price=1.0,
+    )
     proposal = TradeProposal(
         symbol="XRP/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.1, price=1.0,
+        execution_mode="paper_internal", quantity=0.1, price=1.0, **trade,
     )
     repo.insert_trade_proposal(proposal)
     result = evaluate_proposal(proposal)
@@ -181,10 +189,14 @@ def test_execution_gateway_paper_flow(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     save_config(cfg)
+    from tests.paper_trade_fixture import approvable_paper_trade
+    trade = approvable_paper_trade(
+        monkeypatch, symbol="SOL/USDT", market_type="spot", direction="long", price=150.0,
+    )
 
     result = submit_proposal(
         symbol="SOL/USDT", market_type="spot", direction="long",
-        quantity=1.0, price=150.0, execution_mode="paper_internal",
+        quantity=0.5, price=150.0, execution_mode="paper_internal", **trade,
     )
     assert result["status"] == "executed"
     assert "order_id" in result

@@ -42,9 +42,13 @@ async def test_approve_proposal_executes_paper(client, monkeypatch):
     # PaperAuto so paper execution is permitted
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
+    from tests.paper_trade_fixture import approvable_paper_trade
+    trade = approvable_paper_trade(
+        monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000,
+    )
 
     p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
-                      quantity=0.001, price=60000, execution_mode="paper_internal")
+                      quantity=0.001, price=60000, execution_mode="paper_internal", **trade)
     repo.insert_trade_proposal(p)
 
     resp = await client.post(f"/api/proposals/{p.id}/approve-paper")
@@ -86,6 +90,10 @@ async def test_approve_proposal_idempotent_after_execute(client, monkeypatch):
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     save_config(cfg)
+    from tests.paper_trade_fixture import approvable_paper_trade
+    trade = approvable_paper_trade(
+        monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60_000,
+    )
 
     p = TradeProposal(
         symbol="BTC/USDT",
@@ -94,6 +102,7 @@ async def test_approve_proposal_idempotent_after_execute(client, monkeypatch):
         quantity=0.001,
         price=60000,
         execution_mode="paper_internal",
+        **trade,
     )
     repo.insert_trade_proposal(p)
 
@@ -121,6 +130,15 @@ async def test_approve_recovers_persisted_approved_gap_and_ignores_audit_sink_fa
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     save_config(cfg)
+    from tests.paper_trade_fixture import approvable_paper_trade
+    trade = approvable_paper_trade(
+        monkeypatch,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        price=60_000.0,
+        opportunity_id=f"approval-opportunity-{initial_status}",
+    )
 
     proposal = TradeProposal(
         id=f"approval-recovery-{initial_status}",
@@ -131,6 +149,7 @@ async def test_approve_recovers_persisted_approved_gap_and_ignores_audit_sink_fa
         price=60_000.0,
         execution_mode="paper_internal",
         status=initial_status,
+        **trade,
     )
     repo.insert_trade_proposal(proposal)
     monkeypatch.setattr(
@@ -385,8 +404,12 @@ async def test_paper_order_persists_with_fk_enforcement(tmp_path, monkeypatch):
     cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
 
     from aletheia.execution.gateway import submit_proposal
+    from tests.paper_trade_fixture import approvable_paper_trade
+    trade = approvable_paper_trade(
+        monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000,
+    )
     result = submit_proposal(symbol="BTC/USDT", market_type="spot", direction="long",
-                             quantity=0.001, price=60000, execution_mode="paper_internal")
+                             quantity=0.001, price=60000, execution_mode="paper_internal", **trade)
     assert result["status"] == "executed"
     assert len(repo.list_orders()) == 1
     _reset()

@@ -1,0 +1,29 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-087
+title: Repair CI fast and integration baseline fixtures
+status: done
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: Align deterministic test fixtures and assertions with fail-closed paper-trading
+  contracts without changing risk or execution semantics.
+acceptance: []
+base_commit: 832861e461c4a5996cd0c4579c8e7e93334338a4
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: c15bc14636795abd6b54b891b91a7ab807b051d6
+  run_at: '2026-07-15T16:25:14.821084Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-087.md
+updated_at: '2026-07-15T16:25:14.889127Z'
