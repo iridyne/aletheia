@@ -59,7 +59,7 @@ minimum surface is:
 - open the dashboard in the user's default browser;
 - restart or stop the runtime without opening a terminal window;
 - retain a single product instance;
-- later consume signed update metadata, stage a candidate, switch atomically, and
+- consume signed update metadata, stage a candidate, switch atomically, and
   roll back when startup or migration validation fails.
 
 It must never inspect or modify positions, strategies, credentials, risk limits, or
@@ -114,9 +114,9 @@ A release is selectable only when:
 Activation writes a temporary pointer and renames it atomically. Rollback exchanges
 `current` and `previous`; it never edits a release directory.
 
-## Update transaction target
+## Update transaction contract
 
-The long-term button flow is one transaction shared by the browser, tray menu, and CLI:
+The implemented button flow is one transaction shared by the browser, tray menu, and CLI:
 
 1. download while the current runtime remains available;
 2. verify transport hash and release signature;
@@ -128,10 +128,11 @@ The long-term button flow is one transaction shared by the browser, tray menu, a
 8. require readiness, health, and a short soak;
 9. commit the pointer or automatically restore the backup and previous release.
 
-The first implementation milestone proves the packaging and launch boundary. Network
-release feeds, signing-key operations, destructive migration approval, and delta updates
-are later increments on the same state model; they must not cause the first payload to
-pull or overwrite its own executable.
+The signed feed, staging, additive-migration preflight, activation, health soak, and
+backup-based rollback are implemented on this state model. Release infrastructure still
+has to supply the external Ed25519 private key, stable HTTPS feed/artifact location, and
+Apple signing/notarization credentials. Destructive migrations and delta updates remain
+out of scope; installed payloads never pull or overwrite their own executable.
 
 ## Validation gates
 

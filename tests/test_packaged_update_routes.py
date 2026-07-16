@@ -85,3 +85,21 @@ def test_same_origin_dashboard_request_can_start_packaged_update(monkeypatch):
     )
     assert result["accepted"] is True
     assert result["reason"] == "update_started_in_background"
+
+
+def test_rollback_requires_confirmation_before_calling_applier(monkeypatch):
+    monkeypatch.setattr(update_routes, "is_preview_mode", lambda: False)
+    monkeypatch.setattr(
+        update_routes.applier,
+        "rollback_update",
+        lambda: (_ for _ in ()).throw(AssertionError("rollback applier must not run")),
+    )
+
+    result = asyncio.run(
+        update_routes.update_rollback(_request(), update_routes.ApplyBody(confirm=False))
+    )
+    assert result == {
+        "accepted": False,
+        "reason": "confirmation_required",
+        "message": "Set confirm=true to request rollback.",
+    }

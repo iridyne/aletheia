@@ -16,6 +16,8 @@ menu-bar/system-tray host and stable CLI dispatcher.
 The native host and immutable Python payload are intentionally separate. Routine releases
 replace the versioned payload. The host owns process supervision, pointer switching, and
 rollback so a failed payload cannot replace the component required to recover it.
+The Rust host dependency graph is fixed by the committed `Cargo.lock`; package builds and
+tests use Cargo's `--locked` mode rather than resolving a new graph during release creation.
 
 ## Installation and first launch
 

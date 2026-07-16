@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import json
 import os
@@ -179,6 +180,18 @@ def test_frozen_child_commands_reenter_the_payload_instead_of_treating_it_as_pyt
     assert translate_frozen_command(
         ["git", "status"], executable=str(executable)
     ) == ["git", "status"]
+
+
+def test_gateway_runner_import_survives_frozen_popen_adapter(monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: None)
+    sys.modules.pop("aletheia._gateway_runner", None)
+    try:
+        runner = importlib.import_module("aletheia._gateway_runner")
+        assert callable(runner._ensure_frontdoor_running)
+    finally:
+        sys.modules.pop("aletheia._gateway_runner", None)
 
 
 def test_rust_host_contract_keeps_tray_cli_and_payload_separate():

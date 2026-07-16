@@ -55,6 +55,9 @@ frontend/tsconfig.tsbuildinfo
 # Test runner output
 test-results/
 
+# Rust host build output; Cargo.lock is tracked for reproducible packaged binaries.
+native/aletheia-host/target/
+
 # Chat exports (large personal conversation dumps — keep out of repo history)
 docs/ChatExport_*/
 docs/ChatExport_*.zip
