@@ -1,0 +1,27 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-095
+title: Harden CI coverage and execution semantics
+status: in_progress
+packet_type: standard
+scope:
+  boundary: GitHub Actions trigger/concurrency semantics, CI-only test coverage, cross-platform smoke coverage, and repository documentation for CI reliability.
+  excluded: Production trading behavior, Risk or Execution policy changes, exchange adapters, Live authority, credentials, dependency upgrades, and application feature work.
+intent: Re-evaluate the current pull-request and master-push CI against real workflow runs, then close the confirmed coverage and false-green gaps without expanding the trading system.
+acceptance:
+  - Pull-request runs remain cancelable on superseding commits while every master push keeps an independent non-cancelled run.
+  - Master-push workflow integrity validates the full tracked state instead of an increment that can be skipped by cancellation.
+  - Operator Shell tests and TypeScript compilation run in GitHub Actions.
+  - A narrow Windows runtime smoke validates the platform-sensitive event-loop and process-state path.
+  - The active paper trading chain has an independent CI gate beyond one Golden Path test.
+  - Full regression is a separately timed manual job rather than an unreachable step inside the 15-minute backend job.
+  - Deterministic execution-contract tests fail instead of skipping when a valid local-paper proposal cannot execute.
+  - The repository contains an implementation plan, CI workflow contract tests, and a structured handoff.
+base_commit: 69717bc2cbad9f834d112874bac015c93a77f869
+next_action:
+  command_key: workflow_tests
+  reason: Validate the tracked workflow contract and run the pull-request CI matrix.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-095.md
+updated_at: '2026-07-16T05:22:00Z'
