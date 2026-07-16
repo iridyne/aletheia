@@ -30,14 +30,23 @@ def _sha256(path: Path) -> str:
 
 
 def _copy_executable(source: Path, destination: Path) -> None:
-    if not source.is_file():
-        raise RuntimeError(f"required executable is missing: {source}")
+    if source.is_symlink() or not source.is_file():
+        raise RuntimeError(f"required executable is missing or symbolic: {source}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
     destination.chmod(destination.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def _reject_symlinks(root: Path) -> None:
+    if root.is_symlink():
+        raise RuntimeError(f"application package input cannot be a symbolic link: {root}")
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise RuntimeError(f"application package input contains a symbolic link: {path}")
+
+
 def _validate_payload(payload_dir: Path) -> dict:
+    _reject_symlinks(payload_dir)
     manifest_path = payload_dir / "release-manifest.json"
     if not manifest_path.is_file():
         raise RuntimeError(f"packaged runtime manifest is missing: {manifest_path}")
@@ -109,6 +118,11 @@ esac
 """
 
 
+def _zip_mode(path: Path) -> int:
+    mode = 0o755 if path.stat().st_mode & stat.S_IXUSR else 0o644
+    return stat.S_IFREG | mode
+
+
 def _deterministic_zip(source_root: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
@@ -118,9 +132,14 @@ def _deterministic_zip(source_root: Path, destination: Path) -> None:
             relative = path.relative_to(source_root.parent).as_posix()
             info = zipfile.ZipInfo(relative, date_time=FIXED_ZIP_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
-            mode = 0o755 if path.stat().st_mode & stat.S_IXUSR else 0o644
-            info.external_attr = (mode & 0xFFFF) << 16
-            archive.writestr(info, path.read_bytes())
+            info.external_attr = _zip_mode(path) << 16
+            info.create_system = 3
+            archive.writestr(
+                info,
+                path.read_bytes(),
+                compress_type=zipfile.ZIP_DEFLATED,
+                compresslevel=9,
+            )
 
 
 def build_macos_app(
@@ -133,6 +152,8 @@ def build_macos_app(
     public_key: Path | None = None,
     feed_url_file: Path | None = None,
 ) -> dict:
+    if payload_dir.is_symlink() or host_bin_dir.is_symlink():
+        raise RuntimeError("application package roots cannot be symbolic links")
     payload_dir = payload_dir.resolve()
     host_bin_dir = host_bin_dir.resolve()
     output_dir = output_dir.resolve()
@@ -157,11 +178,15 @@ def build_macos_app(
     shutil.copytree(payload_dir, runtime_destination, symlinks=False)
 
     if public_key is not None:
+        if public_key.is_symlink():
+            raise RuntimeError(f"update public key cannot be symbolic: {public_key}")
         public_key = public_key.resolve()
         if not public_key.is_file():
             raise RuntimeError(f"update public key is missing: {public_key}")
         shutil.copy2(public_key, resources / "update-public-key.pem")
     if feed_url_file is not None:
+        if feed_url_file.is_symlink():
+            raise RuntimeError(f"update feed URL file cannot be symbolic: {feed_url_file}")
         feed_url_file = feed_url_file.resolve()
         if not feed_url_file.is_file() or not feed_url_file.read_text(encoding="utf-8").strip():
             raise RuntimeError(f"update feed URL file is missing or empty: {feed_url_file}")
