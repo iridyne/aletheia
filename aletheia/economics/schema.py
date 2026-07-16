@@ -258,8 +258,8 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
 
     ``sqlite3.Connection.executescript`` commits any active transaction before it
     runs. Runtime measurement must never cross that boundary. First-time DDL
-    initialization refuses to run inside a caller transaction; historical tool
-    backfill is deferred when a caller transaction is already active.
+    initialization refuses to run inside a caller transaction. DML backfill may
+    join a caller transaction but only commits when it opened the transaction.
     """
     if db is None:
         from aletheia.storage.sqlite import get_db
@@ -295,12 +295,9 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
             (_TOOL_BACKFILL_KEY,),
         ).fetchone()
         if not marker:
-            # Do not mix a one-time accounting backfill into a caller-owned trading
-            # transaction. A later startup/trace initialization will retry it.
-            if db.in_transaction:
-                return db
+            caller_owned_transaction = db.in_transaction
             _backfill_existing_tool_calls(db)
-            if db.in_transaction:
+            if not caller_owned_transaction and db.in_transaction:
                 db.commit()
 
     return db
