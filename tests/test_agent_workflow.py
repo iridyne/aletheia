@@ -15,6 +15,7 @@ from aletheia.agent_workflow import (
     complete_task,
     create_task,
     rebase_base,
+    revalidate_completed_task,
     recovery_test,
     update_task,
     validate,
@@ -604,6 +605,53 @@ def test_rebase_base_rejects_done_tasks(tmp_path, monkeypatch):
     path.write_text(yaml.safe_dump(task), encoding="utf-8")
     with pytest.raises(ValueError, match="only in-progress or blocked tasks"):
         rebase_base("TASK-1", root=root)
+
+
+def test_revalidate_completed_task_runs_registered_command_and_resets_base(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["status"] = "done"
+    task["verification"] = [{
+        "command_key": "test",
+        "command": "git status --short",
+        "commit": "0" * 40,
+        "exit_code": 0,
+        "result": "passed",
+        "recorded_by": "agent_workflow.verify/v1",
+        "command_sha256": hashlib.sha256(b"git status --short").hexdigest(),
+    }]
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+
+    revalidated = revalidate_completed_task("TASK-1", command_key="test", root=root)
+
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, text=True, capture_output=True
+    ).stdout.strip()
+    assert revalidated["status"] == "done"
+    assert revalidated["base_commit"] == head
+    assert revalidated["verification"][-1]["commit"] == head
+    assert revalidated["verification"][-1]["recorded_by"] == "agent_workflow.verify/v1"
+    assert revalidated["revalidated_at"].endswith("Z")
+
+
+def test_revalidate_completed_task_rejects_active_tasks(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="only completed tasks"):
+        revalidate_completed_task("TASK-1", command_key="test", root=root)
+
+
+def test_revalidate_completed_task_cli(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["status"] = "done"
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    result = CliRunner().invoke(
+        workflow_app, ["task", "revalidate", "TASK-1", "--command-key", "test"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "Revalidated TASK-1" in result.stdout
 
 
 def test_rebase_base_cli(tmp_path, monkeypatch):
