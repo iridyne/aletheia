@@ -46,8 +46,9 @@ proved locally.
   `aletheia/config/secrets.py`, `aletheia/agent_runtime/permissions.py`, `aletheia/agent_runtime/tool_registry.py`
   `aletheia/agent_shell/registry.py`, `aletheia/files/jsonl.py`, `aletheia/server/routes/live.py`
 
-A behavior change here needs a focused regression test and matching task-packet
-evidence. Read [trust and change control](docs/governance/trust_and_change_control.md)
+A behavior change here needs a focused regression test. The commit, PR, and CI
+record are the verification evidence; Task Lite must not duplicate that proof.
+Read [trust and change control](docs/governance/trust_and_change_control.md)
 before changing one; this list must stay aligned with the machine-readable policy.
 
 ## Rules that prevent recurring data mistakes
@@ -85,7 +86,21 @@ before changing one; this list must stay aligned with the machine-readable polic
 - Keep knowledge-item types truthful. Do not repurpose an item type to populate
   a page, and do not hard-delete knowledge: archive or deprecate it.
 - Keep Git-tracked intent separate from local runtime facts. Do not record the
-  gateway process, `app.db`, local config, or credentials in tracked documents.
+  gateway process, `app.db`, local config, credentials, or Task Lite state in
+  tracked documents.
+
+## Task Lite and local parallelism
+
+Task Lite exists only to coordinate AI agents and sibling worktrees on this
+machine. Its SQLite state lives below `~/.aletheia/development/agent-tasks/` and
+must never be committed. Git branches/worktrees prevent code collisions; Git,
+PRs, and CI prove implementation quality. The historical `.agent/tasks/` and
+`.agent/handoffs/` trees are frozen archives and are not active workflow state.
+
+Use one active local task per branch. Keep only the minimum recovery context:
+intent, scope boundary/exclusions, acceptance conditions, blockers, and one
+exact next action. Do not create evidence ledgers, commit-SHA bindings, mandatory
+handoffs, or task-only commits.
 
 ## Work safely and prove changes
 
@@ -101,11 +116,12 @@ uv run python scripts/agent_bootstrap.py
 uv run aletheia doctor
 ```
 
-`bootstrap` recovers tracked task intent; `doctor` is the source of local runtime
-truth. For a change: inspect the path, add or update the focused regression test
-first for safety/trading/audit/secrets/lifecycle behavior, make the smallest
-change, run the focused test, then broaden verification as warranted. Do not
-claim a safety-sensitive fix without evidence.
+`bootstrap` recovers machine-local task context; `doctor` is the source of local
+runtime truth. A missing active task is valid: create or claim one before
+non-trivial work. For a change, inspect the path, add or update the focused
+regression test first for safety/trading/audit/secrets/lifecycle behavior, make
+the smallest change, run the focused test, then broaden verification as
+warranted. Do not claim a safety-sensitive fix without evidence in Git/PR/CI.
 
 For decision-pipeline coverage, prefer expanding failure-path E2E tests; the
 Golden Path is frozen unless the user explicitly changes that direction. When a
@@ -113,13 +129,16 @@ change has a documented contract surface, update its document and executable
 spec together. Register a new data source in the data-utilization table and add
 its DU claim before writing collection code.
 
-At task end, commit the implementation, record real verification with
-`uv run python scripts/agent_task.py verify TASK-ID --command-key KEY`, update
-`.agent/handoffs/TASK-*.md`, complete the task with
-`uv run python scripts/agent_task.py complete TASK-ID`, and run
-`uv run python scripts/agent_check.py --strict`. `docs/_ai/AI_HANDOFF.md` is a
-frozen archive; use the per-task handoff, `DEVLOG.md`, and
-`docs/_ai/DECISIONS.md` as directed by the workflow.
+At task end, commit only implementation/documentation changes, run the relevant
+focused commands directly, and publish through the normal PR workflow. Then
+release local coordination with:
+
+```sh
+uv run aletheia agent workflow task complete TASK-ID
+```
+
+Do not stage or commit Task Lite state, verification records, or handoff files.
+The PR and CI results are the durable handoff and proof.
 
 Use a dedicated worktree and branch for non-trivial edits. If the user explicitly
 requires the current shared checkout, re-check branch and status before every
