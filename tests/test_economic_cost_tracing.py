@@ -201,3 +201,15 @@ def test_tool_cost_profile_can_explicitly_price_local_or_external_tool():
     assert row["cost_status"] == "estimated"
     assert row["estimated_cost_usd"] == pytest.approx(0.0)
     assert row["cost_profile_id"] is not None
+
+
+def test_first_schema_install_refuses_to_commit_an_active_transaction():
+    db = get_db()
+    db.execute("INSERT INTO settings(key,value) VALUES ('economics-tx-test','pending')")
+    assert db.in_transaction is True
+    with pytest.raises(RuntimeError, match="active transaction"):
+        ensure_economics_schema(db)
+    db.rollback()
+    assert db.execute(
+        "SELECT value FROM settings WHERE key='economics-tx-test'"
+    ).fetchone() is None
