@@ -43,9 +43,8 @@ def data(
     min_bars = cfg.historical_data.min_bars_for_backtest
     db = get_db()
 
-    # Per-symbol coverage matrix
-    members = get_active_universe_members()
     symbol_coverage: list[dict] = []
+    members = get_active_universe_members()
     for m in members:
         sym = m.get("symbol", "")
         if not sym:
@@ -65,7 +64,6 @@ def data(
                 "newest_ts": newest_ts,
             })
 
-    # Signal effectiveness (last 7d, 24h horizon)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     row = db.execute(
         """SELECT COUNT(*),
@@ -100,12 +98,10 @@ def data(
         typer.echo(json.dumps(report, indent=2))
         return
 
-    # Human-readable output
     typer.echo(f"\nData Audit — {report['generated_at']}")
     typer.echo(f"Active members: {len(members)}  |  min_bars_for_backtest: {min_bars}")
     typer.echo("")
 
-    # Group by symbol
     by_symbol: dict[str, list] = {}
     for entry in symbol_coverage:
         by_symbol.setdefault(entry["symbol"], []).append(entry)
@@ -202,12 +198,12 @@ def costs(
     typer.echo("Runtime Cost Audit")
     typer.echo(f"Window: {report['window_start']} → {report['window_end']}")
     typer.echo(f"Events: {report['event_count']}")
-    typer.echo(f"Known subtotal: ${report['known_cost_usd']:.8f}")
+    typer.echo(f"Known subtotal: ${report['known_cost_subtotal_usd']:.8f}")
     typer.echo(f"Unknown events: {report['unknown_event_count']}")
     for kind, bucket in sorted(report["by_type"].items()):
         typer.echo(
-            f"  {kind}: events={bucket['events']} "
-            f"known=${bucket['known_cost_usd']:.8f} unknown={bucket['unknown_events']}"
+            f"  {kind}: events={bucket['event_count']} "
+            f"known=${bucket['known_cost_usd']:.8f} unknown={bucket['unknown_count']}"
         )
 
 
