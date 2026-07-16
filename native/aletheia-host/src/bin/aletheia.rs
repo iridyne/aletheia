@@ -1,6 +1,6 @@
 use aletheia_host::{
-    activate_release, current_release, gateway_ready, open_dashboard, payload_command,
-    read_selection, rollback_release, run_payload, wait_gateway_ready, HostPaths,
+    activate_release, current_release, ensure_bootstrapped, gateway_ready, open_dashboard,
+    payload_command, read_selection, rollback_release, run_payload, wait_gateway_ready, HostPaths,
 };
 use anyhow::{bail, Context, Result};
 use std::env;
@@ -117,6 +117,7 @@ fn forward_to_payload(paths: &HostPaths, args: &[String]) -> Result<i32> {
 
 fn real_main() -> Result<i32> {
     let paths = HostPaths::discover()?;
+    ensure_bootstrapped(&paths)?;
     let args: Vec<String> = env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("__host") {
         return run_internal(&paths, &args[1..]);
