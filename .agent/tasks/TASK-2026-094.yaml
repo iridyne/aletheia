@@ -1,0 +1,25 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-094
+title: Preserve scheduler recovery observations
+status: in_progress
+packet_type: tiny
+scope:
+  boundary: Preserve the already-captured July 16 scheduler recovery observations
+    as documentation only.
+  excluded: Runtime behavior, scheduler configuration, gateway lifecycle, Risk,
+    Execution, Live authority, credentials, and new trading capability.
+intent: Merge the already-captured scheduler recovery observations from the previously
+  dirty master checkout without changing runtime behavior.
+acceptance:
+- The archived monitoring observations are present on current origin/master without
+  importing the old master branch history.
+- The change is documentation-only and passes whitespace plus strict workflow checks.
+base_commit: 0ad16c3424f41cfba6c89217e856b4dfed2e4b9f
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-094.md
+updated_at: '2026-07-16T04:56:39.159640Z'
