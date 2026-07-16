@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
+import PackagedUpdateBanner from './components/PackagedUpdateBanner'
 import { ToastProvider } from './components/ui/Toast'
 import { ConfirmProvider } from './components/ui/ConfirmModal'
 import './index.css'
@@ -40,6 +41,7 @@ createRoot(document.getElementById('root')!).render(
         <ToastProvider>
           <ConfirmProvider>
             <App />
+            <PackagedUpdateBanner />
           </ConfirmProvider>
         </ToastProvider>
       </BrowserRouter>
