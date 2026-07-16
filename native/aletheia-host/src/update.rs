@@ -1,6 +1,6 @@
 use crate::{
     activate_release, gateway_healthy, gateway_ready, read_selection, resolve_release,
-    wait_gateway_ready, HostPaths, PACKAGED_ENV, HOST_ROOT_ENV,
+    wait_gateway_ready, HostPaths, HOST_ROOT_ENV, PACKAGED_ENV,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -42,9 +42,10 @@ pub struct UpdateTransactionResult {
     pub previous_release: Option<String>,
     pub rolled_back: bool,
     pub message: String,
+    pub resume_warning: Option<String>,
 }
 
-fn now_isoish() -> String {
+fn now_timestamp() -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -59,7 +60,9 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     fs::create_dir_all(parent)?;
     let temporary = parent.join(format!(
         ".{}.tmp-{}",
-        path.file_name().and_then(|name| name.to_str()).unwrap_or("state"),
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("state"),
         std::process::id()
     ));
     let bytes = serde_json::to_vec_pretty(value)?;
@@ -79,11 +82,11 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
 fn write_state(
     paths: &HostPaths,
     request: &UpdateRequest,
-    *,
     phase: &str,
     status: &str,
     message: &str,
     error: Option<&str>,
+    resume_warning: Option<&str>,
 ) -> Result<()> {
     let selection = read_selection(paths).ok();
     atomic_json(
@@ -97,9 +100,11 @@ fn write_state(
             "current_release": selection.as_ref().map(|value| value.current.clone()),
             "previous_release": selection.and_then(|value| value.previous),
             "target_release": request.candidate_release,
+            "backup_path": request.backup_path,
             "message": message,
             "error": error,
-            "updated_at": now_isoish(),
+            "resume_warning": resume_warning,
+            "updated_at": now_timestamp(),
         }),
     )
 }
@@ -114,11 +119,15 @@ pub fn has_pending_request(paths: &HostPaths) -> bool {
 
 pub fn read_pending_request(paths: &HostPaths) -> Result<UpdateRequest> {
     let path = pending_request_path(paths);
-    let bytes = fs::read(&path).with_context(|| format!("read update request {}", path.display()))?;
+    let bytes = fs::read(&path)
+        .with_context(|| format!("read update request {}", path.display()))?;
     let request: UpdateRequest = serde_json::from_slice(&bytes)
         .with_context(|| format!("parse update request {}", path.display()))?;
     if request.schema_version != 1 {
-        bail!("unsupported update request schema: {}", request.schema_version);
+        bail!(
+            "unsupported update request schema: {}",
+            request.schema_version
+        );
     }
     if request.operation_id.is_empty() {
         bail!("update request operation id is empty");
@@ -128,6 +137,9 @@ pub fn read_pending_request(paths: &HostPaths) -> Result<UpdateRequest> {
     }
     resolve_release(paths, &request.candidate_release)?;
     resolve_release(paths, &request.previous_release)?;
+    if request.action == "rollback" && request.backup_path.is_none() {
+        bail!("rollback requires the pre-update backup recorded by the committed update");
+    }
     if let Some(path) = &request.backup_path {
         let backup = Path::new(path);
         if !backup.is_absolute() || !backup.is_file() {
@@ -193,11 +205,16 @@ fn start_release(paths: &HostPaths, release_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn resume_release(paths: &HostPaths, release_id: &str) -> Result<()> {
-    require_success(
-        run_release(paths, release_id, &["gateway", "resume"] )?,
-        "resume selected runtime",
-    )
+fn resume_release_best_effort(paths: &HostPaths, release_id: &str) -> Option<String> {
+    match run_release(paths, release_id, &["gateway", "resume"]) {
+        Ok(status) if status.success() => None,
+        Ok(status) => Some(format!(
+            "runtime stayed paused because the safety resume gate returned {status}"
+        )),
+        Err(error) => Some(format!(
+            "runtime stayed paused because the safety resume gate could not run: {error:#}"
+        )),
+    }
 }
 
 fn validate_real_data(paths: &HostPaths, release_id: &str) -> Result<()> {
@@ -233,6 +250,14 @@ fn soak_health(seconds: u64) -> Result<()> {
     Ok(())
 }
 
+fn remove_request(paths: &HostPaths) -> Result<()> {
+    match fs::remove_file(pending_request_path(paths)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn recover_previous(
     paths: &HostPaths,
     request: &UpdateRequest,
@@ -241,10 +266,11 @@ fn recover_previous(
     let _ = write_state(
         paths,
         request,
-        phase: "rolling_back",
-        status: "running",
-        message: "New runtime failed; restoring previous release",
-        error: Some(failure),
+        "rolling_back",
+        "running",
+        "New runtime failed; restoring previous release",
+        Some(failure),
+        None,
     );
     stop_release(paths, &request.candidate_release);
     activate_release(paths, &request.previous_release)?;
@@ -252,18 +278,21 @@ fn recover_previous(
         restore_backup(paths, &request.previous_release, Path::new(backup_path))?;
     }
     start_release(paths, &request.previous_release)?;
-    if !request.was_paused {
-        resume_release(paths, &request.previous_release)?;
-    }
+    let resume_warning = if request.was_paused {
+        None
+    } else {
+        resume_release_best_effort(paths, &request.previous_release)
+    };
     write_state(
         paths,
         request,
-        phase: "rolled_back",
-        status: "rolled_back",
-        message: "Update failed and the previous release was restored",
-        error: Some(failure),
+        "rolled_back",
+        "rolled_back",
+        "Update failed and the previous release was restored",
+        Some(failure),
+        resume_warning.as_deref(),
     )?;
-    pending_request_path(paths).unlink_if_exists()?;
+    remove_request(paths)?;
     let selection = read_selection(paths)?;
     Ok(UpdateTransactionResult {
         operation_id: request.operation_id.clone(),
@@ -272,21 +301,8 @@ fn recover_previous(
         previous_release: selection.previous,
         rolled_back: true,
         message: "Update failed and the previous release was restored".into(),
+        resume_warning,
     })
-}
-
-trait UnlinkIfExists {
-    fn unlink_if_exists(&self) -> Result<()>;
-}
-
-impl UnlinkIfExists for PathBuf {
-    fn unlink_if_exists(&self) -> Result<()> {
-        match fs::remove_file(self) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.into()),
-        }
-    }
 }
 
 pub fn process_pending_update(paths: &HostPaths) -> Result<Option<UpdateTransactionResult>> {
@@ -309,10 +325,11 @@ pub fn process_pending_update(paths: &HostPaths) -> Result<Option<UpdateTransact
             write_state(
                 paths,
                 &request,
-                phase: "quiescing",
-                status: "running",
-                message: "Pausing autonomous work and stopping the current runtime",
-                error: None,
+                "quiescing",
+                "running",
+                "Pausing autonomous work and stopping the current runtime",
+                None,
+                None,
             )?;
             if !request.was_paused {
                 pause_release(paths, &request.previous_release)?;
@@ -320,51 +337,62 @@ pub fn process_pending_update(paths: &HostPaths) -> Result<Option<UpdateTransact
             stop_release(paths, &request.previous_release);
             activate_release(paths, &request.candidate_release)?;
         } else {
+            // Tray restart during an incomplete transaction: stop the selected
+            // candidate and resume the idempotent migrate/start sequence.
             stop_release(paths, &request.candidate_release);
         }
 
         write_state(
             paths,
             &request,
-            phase: "migrating",
-            status: "running",
-            message: "Applying preflighted migrations to durable runtime data",
-            error: None,
+            "migrating",
+            "running",
+            "Applying preflighted migrations to durable runtime data",
+            None,
+            None,
         )?;
         validate_real_data(paths, &request.candidate_release)?;
 
         write_state(
             paths,
             &request,
-            phase: "starting",
-            status: "running",
-            message: "Starting the selected runtime",
-            error: None,
+            "starting",
+            "running",
+            "Starting the selected runtime",
+            None,
+            None,
         )?;
         start_release(paths, &request.candidate_release)?;
 
         write_state(
             paths,
             &request,
-            phase: "soaking",
-            status: "running",
-            message: "Observing the new runtime before committing the update",
-            error: None,
+            "soaking",
+            "running",
+            "Observing the new runtime before committing the update",
+            None,
+            None,
         )?;
         soak_health(request.health_soak_sec)?;
-        if !request.was_paused {
-            resume_release(paths, &request.candidate_release)?;
-        }
+        let resume_warning = if request.was_paused {
+            None
+        } else {
+            // A blocked resume usually means an external LLM/exchange/startup gate.
+            // The new code and data are healthy, so preserve the safety pause instead
+            // of misclassifying the update as broken and restoring old code.
+            resume_release_best_effort(paths, &request.candidate_release)
+        };
 
         write_state(
             paths,
             &request,
-            phase: "committed",
-            status: "success",
-            message: "Update installed successfully",
-            error: None,
+            "committed",
+            "success",
+            "Update installed successfully",
+            None,
+            resume_warning.as_deref(),
         )?;
-        pending_request_path(paths).unlink_if_exists()?;
+        remove_request(paths)?;
         let selection = read_selection(paths)?;
         Ok(UpdateTransactionResult {
             operation_id: request.operation_id.clone(),
@@ -373,6 +401,7 @@ pub fn process_pending_update(paths: &HostPaths) -> Result<Option<UpdateTransact
             previous_release: selection.previous,
             rolled_back: false,
             message: "Update installed successfully".into(),
+            resume_warning,
         })
     })();
 
@@ -380,7 +409,26 @@ pub fn process_pending_update(paths: &HostPaths) -> Result<Option<UpdateTransact
         Ok(result) => Ok(Some(result)),
         Err(error) => {
             let failure = format!("{error:#}");
-            recover_previous(paths, &request, &failure).map(Some)
+            match recover_previous(paths, &request, &failure) {
+                Ok(result) => Ok(Some(result)),
+                Err(rollback_error) => {
+                    let detail = format!(
+                        "update failed: {failure}; automatic rollback also failed: {rollback_error:#}"
+                    );
+                    let _ = write_state(
+                        paths,
+                        &request,
+                        "rollback_failed",
+                        "failed",
+                        "Update and automatic rollback failed; manual recovery is required",
+                        Some(&detail),
+                        None,
+                    );
+                    // Keep update-request.json for idempotent recovery on the next tray
+                    // start; deleting it here would erase the only durable recovery intent.
+                    Err(anyhow!(detail))
+                }
+            }
         }
     }
 }
@@ -389,24 +437,35 @@ pub fn process_pending_update(paths: &HostPaths) -> Result<Option<UpdateTransact
 mod tests {
     use super::*;
     use crate::{host_platform_id, ReleaseManifest, ReleaseSelection};
-    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     fn fake_release(paths: &HostPaths, id: &str) {
         let root = paths.releases.join(id);
         fs::create_dir_all(&root).unwrap();
-        let executable = root.join("aletheia-core");
-        fs::write(&executable, b"#!/bin/sh\nexit 0\n").unwrap();
-        let mut permissions = executable.metadata().unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&executable, permissions).unwrap();
+        let executable = root.join(if cfg!(windows) {
+            "aletheia-core.exe"
+        } else {
+            "aletheia-core"
+        });
+        fs::write(&executable, b"fake").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = executable.metadata().unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&executable, permissions).unwrap();
+        }
         let manifest = ReleaseManifest {
             schema_version: 1,
             target: "packaged-runtime".into(),
             platform: host_platform_id(),
             version: id.into(),
             git_sha: id.into(),
-            runtime_entrypoint: "aletheia-core".into(),
+            runtime_entrypoint: executable
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
             dashboard_url: None,
             runtime_data_contract: None,
         };
@@ -424,11 +483,7 @@ mod tests {
         paths.ensure().unwrap();
         fake_release(&paths, "old");
         fake_release(&paths, "new");
-        atomic_json(
-            &paths.current_file,
-            &ReleaseSelection::initial("old"),
-        )
-        .unwrap();
+        atomic_json(&paths.current_file, &ReleaseSelection::initial("old")).unwrap();
         atomic_json(
             &pending_request_path(&paths),
             &serde_json::json!({
@@ -439,6 +494,31 @@ mod tests {
                 "previous_release": "old",
                 "backup_path": "relative.tar.gz",
                 "was_paused": false,
+                "health_soak_sec": 0
+            }),
+        )
+        .unwrap();
+        assert!(read_pending_request(&paths).is_err());
+    }
+
+    #[test]
+    fn manual_rollback_requires_the_recorded_pre_update_backup() {
+        let temp = TempDir::new().unwrap();
+        let paths = HostPaths::from_root(temp.path().join("host"));
+        paths.ensure().unwrap();
+        fake_release(&paths, "old");
+        fake_release(&paths, "new");
+        atomic_json(&paths.current_file, &ReleaseSelection::initial("new")).unwrap();
+        atomic_json(
+            &pending_request_path(&paths),
+            &serde_json::json!({
+                "schema_version": 1,
+                "operation_id": "rollback-test",
+                "action": "rollback",
+                "candidate_release": "old",
+                "previous_release": "new",
+                "backup_path": null,
+                "was_paused": true,
                 "health_soak_sec": 0
             }),
         )
