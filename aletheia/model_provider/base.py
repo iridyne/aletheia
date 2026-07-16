@@ -6,21 +6,16 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
-
 _ACTIVE_STRUCTURED_REQUEST: ContextVar[Any | None] = ContextVar(
-    "aletheia_active_structured_cost_request",
-    default=None,
+    "aletheia_active_structured_cost_request", default=None
+)
+_ACTIVE_STREAM_REQUEST: ContextVar[Any | None] = ContextVar(
+    "aletheia_active_stream_cost_request", default=None
 )
 
 
 def _configured_provider_name(provider: Any) -> str:
-    """Resolve the user-facing provider alias once, without changing routing.
-
-    Router instances do not currently carry their config key. Exact cost pricing
-    must distinguish two endpoints that share the same provider implementation,
-    so we recover the unique matching alias from the immutable provider config and
-    cache it on the instance. Fallback clones inherit the cached attribute.
-    """
+    """Resolve an exact configured alias without changing provider routing."""
     existing = str(getattr(provider, "_aletheia_provider_name", "") or "").strip()
     if existing:
         return existing
@@ -52,7 +47,7 @@ def _configured_provider_name(provider: Any) -> str:
                 continue
             configured_model = str(getattr(pcfg, "model", "") or "")
             candidates.append((alias, configured_model == provider_model))
-        exact = [alias for alias, model_match in candidates if model_match]
+        exact = [alias for alias, matches_model in candidates if matches_model]
         if len(exact) == 1:
             resolved = exact[0]
         elif len(candidates) == 1:
@@ -68,48 +63,20 @@ def _configured_provider_name(provider: Any) -> str:
     return resolved
 
 
-def _logical_agent_from_stack() -> str | None:
-    """Identify direct System Operator calls that have no generic AgentRun.
-
-    The event-driven PI daemon intentionally calls the typed trading command
-    directly, so no ``agent_runs`` row surrounds its LLM assessment. We retain a
-    narrow logical identity on the cost event instead of fabricating an AgentRun or
-    changing the daemon lifecycle. The module check is exact and applies only while
-    the trading-decision engine is on the active Python stack.
-    """
-    try:
-        from aletheia.agent_runtime.run_context import current_agent_run_id
-
-        if current_agent_run_id():
-            return None
-    except Exception:
-        pass
-    try:
-        import inspect
-
-        frame = inspect.currentframe()
-        while frame is not None:
-            if frame.f_globals.get("__name__") == "aletheia.agent_shell.trading_decision":
-                return "pi_trading_decision"
-            frame = frame.f_back
-    except Exception:
-        return None
-    finally:
-        try:
-            del frame
-        except UnboundLocalError:
-            pass
-    return None
-
-
-def _cost_metadata(provider: Any, *, stream: bool = False) -> dict[str, Any]:
+def _cost_metadata(provider: Any, *, mode: str | None = None) -> dict[str, Any]:
+    """Return explicit task-local accounting identity; never inspect the stack."""
     metadata: dict[str, Any] = {"provider_class": type(provider).__name__}
-    if stream:
-        metadata["stream"] = True
-    logical_agent = _logical_agent_from_stack()
-    if logical_agent:
-        metadata["logical_agent"] = logical_agent
-        metadata["identity_source"] = "active_module_stack"
+    if mode:
+        metadata[mode] = True
+    try:
+        from aletheia.agent_runtime.run_context import current_economic_attribution
+
+        attribution = current_economic_attribution()
+    except Exception:
+        attribution = {}
+    if attribution:
+        metadata.update(attribution)
+        metadata["identity_source"] = "explicit_economic_context"
     return metadata
 
 
@@ -155,14 +122,7 @@ class ModelHealth:
 
 
 class ModelProvider:
-    """Base class for model providers.
-
-    Physical provider calls are wrapped once at subclass-definition time. The
-    wrapper is measurement-only: it records append-only cost facts and always
-    returns or raises exactly what the provider implementation returned or raised.
-    Measurement failures are swallowed by the tracing function and can never
-    change model routing, retries, fallback, or trading behavior.
-    """
+    """Base provider with transparent append-only physical-call measurement."""
 
     name: str = "base"
 
@@ -175,15 +135,16 @@ class ModelProvider:
         super().__init_subclass__(**kwargs)
         original_complete = cls.__dict__.get("complete")
         if original_complete is not None and not getattr(
-            original_complete,
-            "_aletheia_cost_traced",
-            False,
+            original_complete, "_aletheia_cost_traced", False
         ):
 
             @functools.wraps(original_complete)
             async def traced_complete(self, request: ModelRequest):
-                structured_request = _ACTIVE_STRUCTURED_REQUEST.get()
-                cost_request = structured_request or request
+                grouped_request = (
+                    _ACTIVE_STRUCTURED_REQUEST.get()
+                    or _ACTIVE_STREAM_REQUEST.get()
+                )
+                cost_request = grouped_request or request
                 call_id = getattr(cost_request, "_aletheia_cost_call_id", None)
                 if not call_id:
                     call_id = "llm_" + uuid4().hex[:16]
@@ -198,9 +159,7 @@ class ModelProvider:
                 )
                 model = str(getattr(self, "model", "") or "unknown")
                 requested_model = getattr(
-                    cost_request,
-                    "_aletheia_requested_model",
-                    None,
+                    cost_request, "_aletheia_requested_model", None
                 )
                 if not requested_model:
                     requested_model = model
@@ -209,10 +168,12 @@ class ModelProvider:
                         "_aletheia_requested_model",
                         requested_model,
                     )
-                provider_name = _configured_provider_name(self)
                 metadata = _cost_metadata(self)
-                if structured_request is not None:
+                if _ACTIVE_STRUCTURED_REQUEST.get() is not None:
                     metadata["structured"] = True
+                if _ACTIVE_STREAM_REQUEST.get() is not None:
+                    metadata["stream"] = True
+                provider_name = _configured_provider_name(self)
                 started_dt = datetime.now(timezone.utc)
                 started_mono = time.perf_counter()
                 try:
@@ -270,13 +231,13 @@ class ModelProvider:
 
         original_structured = cls.__dict__.get("structured")
         if original_structured is not None and not getattr(
-            original_structured,
-            "_aletheia_cost_grouped",
-            False,
+            original_structured, "_aletheia_cost_grouped", False
         ):
 
             @functools.wraps(original_structured)
-            async def grouped_structured(self, request: StructuredModelRequest, schema: type):
+            async def grouped_structured(
+                self, request: StructuredModelRequest, schema: type
+            ):
                 call_id = getattr(request, "_aletheia_cost_call_id", None)
                 if not call_id:
                     call_id = "llm_structured_" + uuid4().hex[:16]
@@ -296,7 +257,9 @@ class ModelProvider:
                 try:
                     result = await original_structured(self, request, schema)
                 except BaseException as exc:
-                    if int(getattr(request, "_aletheia_cost_attempt_index", 0)) == before_attempt:
+                    if int(
+                        getattr(request, "_aletheia_cost_attempt_index", 0)
+                    ) == before_attempt:
                         setattr(
                             request,
                             "_aletheia_cost_attempt_index",
@@ -310,19 +273,19 @@ class ModelProvider:
                                 provider=_configured_provider_name(self),
                                 model=str(getattr(self, "model", "") or "unknown"),
                                 requested_model=getattr(
-                                    request,
-                                    "_aletheia_requested_model",
+                                    request, "_aletheia_requested_model"
                                 ),
                                 attempt_index=before_attempt,
                                 status="error",
                                 started_at=started_dt.isoformat(),
                                 finished_at=datetime.now(timezone.utc).isoformat(),
-                                latency_ms=(time.perf_counter() - started_mono) * 1000.0,
+                                latency_ms=(
+                                    time.perf_counter() - started_mono
+                                ) * 1000.0,
                                 raw_usage=None,
                                 error_type=type(exc).__name__,
                                 metadata={
-                                    **_cost_metadata(self),
-                                    "structured": True,
+                                    **_cost_metadata(self, mode="structured"),
                                     "structured_direct": True,
                                 },
                             )
@@ -330,7 +293,9 @@ class ModelProvider:
                             pass
                     raise
                 else:
-                    if int(getattr(request, "_aletheia_cost_attempt_index", 0)) == before_attempt:
+                    if int(
+                        getattr(request, "_aletheia_cost_attempt_index", 0)
+                    ) == before_attempt:
                         setattr(
                             request,
                             "_aletheia_cost_attempt_index",
@@ -344,18 +309,18 @@ class ModelProvider:
                                 provider=_configured_provider_name(self),
                                 model=str(getattr(self, "model", "") or "unknown"),
                                 requested_model=getattr(
-                                    request,
-                                    "_aletheia_requested_model",
+                                    request, "_aletheia_requested_model"
                                 ),
                                 attempt_index=before_attempt,
                                 status="success",
                                 started_at=started_dt.isoformat(),
                                 finished_at=datetime.now(timezone.utc).isoformat(),
-                                latency_ms=(time.perf_counter() - started_mono) * 1000.0,
+                                latency_ms=(
+                                    time.perf_counter() - started_mono
+                                ) * 1000.0,
                                 raw_usage=None,
                                 metadata={
-                                    **_cost_metadata(self),
-                                    "structured": True,
+                                    **_cost_metadata(self, mode="structured"),
                                     "structured_direct": True,
                                 },
                             )
@@ -370,17 +335,19 @@ class ModelProvider:
 
         original_stream = cls.__dict__.get("stream")
         if original_stream is not None and not getattr(
-            original_stream,
-            "_aletheia_cost_traced",
-            False,
+            original_stream, "_aletheia_cost_grouped", False
         ):
 
             @functools.wraps(original_stream)
-            async def traced_stream(self, request: ModelRequest):
-                call_id = "llm_stream_" + uuid4().hex[:16]
-                model = str(getattr(self, "model", "") or "unknown")
-                provider_name = _configured_provider_name(self)
-                metadata = _cost_metadata(self, stream=True)
+            async def grouped_stream(self, request: ModelRequest):
+                call_id = getattr(request, "_aletheia_cost_call_id", None)
+                if not call_id:
+                    call_id = "llm_stream_" + uuid4().hex[:16]
+                    setattr(request, "_aletheia_cost_call_id", call_id)
+                before_attempt = int(
+                    getattr(request, "_aletheia_cost_attempt_index", 0)
+                )
+                token = _ACTIVE_STREAM_REQUEST.set(request)
                 started_dt = datetime.now(timezone.utc)
                 started_mono = time.perf_counter()
                 final_usage = None
@@ -390,49 +357,70 @@ class ModelProvider:
                             final_usage = chunk.usage
                         yield chunk
                 except BaseException as exc:
-                    finished_dt = datetime.now(timezone.utc)
-                    try:
-                        from aletheia.economics.tracing import record_llm_attempt
+                    if int(
+                        getattr(request, "_aletheia_cost_attempt_index", 0)
+                    ) == before_attempt:
+                        try:
+                            from aletheia.economics.tracing import record_llm_attempt
 
-                        record_llm_attempt(
-                            call_id=call_id,
-                            provider=provider_name,
-                            model=model,
-                            requested_model=model,
-                            attempt_index=0,
-                            status="error",
-                            started_at=started_dt.isoformat(),
-                            finished_at=finished_dt.isoformat(),
-                            latency_ms=(time.perf_counter() - started_mono) * 1000.0,
-                            raw_usage=final_usage,
-                            error_type=type(exc).__name__,
-                            metadata=metadata,
-                        )
-                    except Exception:
-                        pass
+                            record_llm_attempt(
+                                call_id=call_id,
+                                provider=_configured_provider_name(self),
+                                model=str(getattr(self, "model", "") or "unknown"),
+                                requested_model=str(
+                                    getattr(self, "model", "") or "unknown"
+                                ),
+                                attempt_index=before_attempt,
+                                status="error",
+                                started_at=started_dt.isoformat(),
+                                finished_at=datetime.now(timezone.utc).isoformat(),
+                                latency_ms=(
+                                    time.perf_counter() - started_mono
+                                ) * 1000.0,
+                                raw_usage=final_usage,
+                                error_type=type(exc).__name__,
+                                metadata={
+                                    **_cost_metadata(self, mode="stream"),
+                                    "stream_direct": True,
+                                },
+                            )
+                        except Exception:
+                            pass
                     raise
-                finished_dt = datetime.now(timezone.utc)
-                try:
-                    from aletheia.economics.tracing import record_llm_attempt
+                else:
+                    if int(
+                        getattr(request, "_aletheia_cost_attempt_index", 0)
+                    ) == before_attempt:
+                        try:
+                            from aletheia.economics.tracing import record_llm_attempt
 
-                    record_llm_attempt(
-                        call_id=call_id,
-                        provider=provider_name,
-                        model=model,
-                        requested_model=model,
-                        attempt_index=0,
-                        status="success",
-                        started_at=started_dt.isoformat(),
-                        finished_at=finished_dt.isoformat(),
-                        latency_ms=(time.perf_counter() - started_mono) * 1000.0,
-                        raw_usage=final_usage,
-                        metadata=metadata,
-                    )
-                except Exception:
-                    pass
+                            record_llm_attempt(
+                                call_id=call_id,
+                                provider=_configured_provider_name(self),
+                                model=str(getattr(self, "model", "") or "unknown"),
+                                requested_model=str(
+                                    getattr(self, "model", "") or "unknown"
+                                ),
+                                attempt_index=before_attempt,
+                                status="success",
+                                started_at=started_dt.isoformat(),
+                                finished_at=datetime.now(timezone.utc).isoformat(),
+                                latency_ms=(
+                                    time.perf_counter() - started_mono
+                                ) * 1000.0,
+                                raw_usage=final_usage,
+                                metadata={
+                                    **_cost_metadata(self, mode="stream"),
+                                    "stream_direct": True,
+                                },
+                            )
+                        except Exception:
+                            pass
+                finally:
+                    _ACTIVE_STREAM_REQUEST.reset(token)
 
-            traced_stream._aletheia_cost_traced = True
-            cls.stream = traced_stream
+            grouped_stream._aletheia_cost_grouped = True
+            cls.stream = grouped_stream
 
     def _get_http_client(self, factory, *, timeout: float = 300):
         """Return one managed HTTP client per provider and owning event loop.
