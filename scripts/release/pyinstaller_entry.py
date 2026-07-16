@@ -47,9 +47,12 @@ def _run_update_stage() -> None:
 
 
 def _run_update_validate() -> None:
-    from aletheia.update.packaged_commands import validate_current_data
+    # This is the sole data-preparation entry used after the old runtime is stopped.
+    # Normal updates apply/validate migrations. Manual rollback restores the exact
+    # pre-update backup first, then validates the old release against restored data.
+    from aletheia.update.packaged_commands import prepare_activation_data
 
-    print(json.dumps(validate_current_data(), ensure_ascii=False))
+    print(json.dumps(prepare_activation_data(), ensure_ascii=False))
 
 
 def _run_update_restore() -> None:
