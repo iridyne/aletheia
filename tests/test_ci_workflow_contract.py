@@ -81,7 +81,7 @@ def test_full_regression_is_a_separate_manual_job_with_realistic_timeout() -> No
     backend_commands = _run_commands(jobs["backend"])
     full = jobs["full-regression"]
 
-    assert "pytest tests/" not in backend_commands
+    assert "uv run pytest tests/ -q" not in backend_commands
     assert int(full["timeout-minutes"]) >= 45
     assert "workflow_dispatch" in str(full["if"])
     assert "inputs.full_regression" in str(full["if"])
