@@ -2,13 +2,13 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-094
 title: Preserve scheduler recovery observations
-status: in_progress
+status: done
 packet_type: tiny
 scope:
   boundary: Preserve the already-captured July 16 scheduler recovery observations
     as documentation only.
-  excluded: Runtime behavior, scheduler configuration, gateway lifecycle, Risk,
-    Execution, Live authority, credentials, and new trading capability.
+  excluded: Runtime behavior, scheduler configuration, gateway lifecycle, Risk, Execution,
+    Live authority, credentials, and new trading capability.
 intent: Merge the already-captured scheduler recovery observations from the previously
   dirty master checkout without changing runtime behavior.
 acceptance:
@@ -17,9 +17,18 @@ acceptance:
 - The change is documentation-only and passes whitespace plus strict workflow checks.
 base_commit: 0ad16c3424f41cfba6c89217e856b4dfed2e4b9f
 next_action:
-  command_key: workflow_tests
-  reason: Claim the task and define the first focused verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 3484d712ecf91745f700a6b000bfc51b39df216f
+  run_at: '2026-07-16T04:57:36.410973Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-094.md
-updated_at: '2026-07-16T04:56:39.159640Z'
+updated_at: '2026-07-16T04:58:09.522947Z'
