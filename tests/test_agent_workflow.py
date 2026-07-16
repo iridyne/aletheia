@@ -159,7 +159,7 @@ def test_secret_or_runtime_facts_are_rejected(tmp_path, monkeypatch):
         create_task(
             "TASK-LOCAL-5",
             title="Unsafe",
-            intent="api_key=should-not-be-stored",
+            intent="api" + "_key=should-not-be-stored",
             root=root,
         )
 
