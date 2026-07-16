@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-096
 title: Build modular monolith dogfood release bundle
-status: running
+status: in_progress
 packet_type: standard
 scope:
   boundary: External durable data-directory selection, deterministic Windows release
@@ -32,4 +32,4 @@ next_action:
 blockers: []
 verification: []
 handoff: .agent/handoffs/TASK-2026-096.md
-updated_at: '2026-07-16T06:34:30Z'
+updated_at: '2026-07-16T06:37:30Z'
