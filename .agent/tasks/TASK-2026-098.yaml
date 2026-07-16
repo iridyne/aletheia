@@ -16,18 +16,18 @@ intent: Make the default runtime and configuration root platform-agnostic at ~/.
   under the source package.
 acceptance:
 - Without an explicit override, every supported platform resolves application runtime
-  and configuration state below the current user's ~/.aletheia directory, independent
-  of the checkout, package location, and current working directory.
+    and configuration state below the current user's ~/.aletheia directory, independent
+    of the checkout, package location, and current working directory.
 - ALETHEIA_DATA_DIR remains an absolute-path-only override; preview instances stay
-  isolated below ~/.aletheia/instances/dev-preview and cannot attach to primary state.
+    isolated below ~/.aletheia/instances/dev-preview and cannot attach to primary state.
 - Existing repository-root data is never silently abandoned or split: migration is
-  explicit, fail-closed, integrity-checked, rollback-safe, and leaves the source intact.
-- SQLite, config, audit/logs, secrets fallback files, PID/routes, reflection state,
-  backups/exports/artifacts, and developer task claims have no production write path
-  under repository-root data.
+    explicit, fail-closed, integrity-checked, rollback-safe, and leaves the source intact.
+- SQLite, config, audit/logs, encrypted fallback files, PID/routes, reflection state,
+    backups/exports/artifacts, and developer task claims have no production write path
+    under repository-root data.
 - The immutable release bundle and Windows launcher prove the same default-home contract
-  from a clean extraction while still accepting an explicit absolute override.
-base_commit: b01c8719c5c2537e11a756eaec28c1c683ea29a4
+    from a clean extraction while still accepting an explicit absolute override.
+base_commit: 0b1b50f864bc3c2cedc73ce3e10a65167b746142
 next_action:
   command_key: runtime_home
   reason: Prove the default home, override, preview isolation, migration, and bundle contracts.
