@@ -23,8 +23,20 @@ def _install_packaged_integrity_contract() -> None:
                 ) from exc
             raise
 
+    def safe_request_update():
+        from aletheia.update.packaged_commands import request_update
+
+        return request_update()
+
+    def safe_request_rollback():
+        from aletheia.update.packaged_commands import request_rollback
+
+        return request_rollback()
+
     packaged._extract_archive = compatible_extract_archive
     packaged._validate_release_dir = validate_release_dir
+    packaged.request_update = safe_request_update
+    packaged.request_rollback = safe_request_rollback
 
 
 _install_packaged_integrity_contract()
