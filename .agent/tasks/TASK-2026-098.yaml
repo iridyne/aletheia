@@ -6,32 +6,34 @@ status: in_progress
 packet_type: standard
 scope:
   boundary: Cross-platform runtime-home resolution, legacy-state migration, development
-    preview isolation, local workflow claim storage, release packaging contracts, and
-    focused path/integrity tests.
+    preview isolation, local workflow claim storage, release packaging contracts,
+    and focused path/integrity tests.
   excluded: Trading decisions, Risk, Execution, exchange adapters, Live authority,
-    credential values or signer semantics, scheduler behavior, and database schema changes.
+    credential values or signer semantics, scheduler behavior, and database schema
+    changes.
 intent: Make the default runtime and configuration root platform-agnostic at ~/.aletheia,
   preserve explicit absolute overrides, isolate previews and developer claims, provide
   fail-closed legacy migration, and prove release bundles never write runtime state
   under the source package.
 acceptance:
 - Without an explicit override, every supported platform resolves application runtime
-    and configuration state below the current user's ~/.aletheia directory, independent
-    of the checkout, package location, and current working directory.
+  and configuration state below the current user's ~/.aletheia directory, independent
+  of the checkout, package location, and current working directory.
 - ALETHEIA_DATA_DIR remains an absolute-path-only override; preview instances stay
-    isolated below ~/.aletheia/instances/dev-preview and cannot attach to primary state.
+  isolated below ~/.aletheia/instances/dev-preview and cannot attach to primary state.
 - Existing repository-root data is never silently abandoned or split: migration is
-    explicit, fail-closed, integrity-checked, rollback-safe, and leaves the source intact.
+    explicit, fail-closed, integrity-checked, rollback-safe, and leaves the source
+    intact.
 - SQLite, config, audit/logs, encrypted fallback files, PID/routes, reflection state,
-    backups/exports/artifacts, and developer task claims have no production write path
-    under repository-root data.
+  backups/exports/artifacts, and developer task claims have no production write path
+  under repository-root data.
 - The immutable release bundle and Windows launcher prove the same default-home contract
-    from a clean extraction while still accepting an explicit absolute override.
+  from a clean extraction while still accepting an explicit absolute override.
 base_commit: 0b1b50f864bc3c2cedc73ce3e10a65167b746142
 next_action:
   command_key: runtime_home
-  reason: Prove the default home, override, preview isolation, migration, and bundle contracts.
+  reason: Record runtime-home verification without forbidden metadata in the evidence command.
 blockers: []
 verification: []
 handoff: .agent/handoffs/TASK-2026-098.md
-updated_at: '2026-07-16T07:10:28.793238Z'
+updated_at: '2026-07-16T07:35:01.907939Z'
