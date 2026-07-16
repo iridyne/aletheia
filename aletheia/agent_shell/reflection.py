@@ -269,7 +269,7 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
 
     pi_dec = _build_pi_decision(decision_result)
     claim_failure: str | None = None
-    with transaction(immediate=True):
+    with transaction(immediate=True, savepoint=True):
         existing = (
             find_final_pi_decision_for_opportunity(
                 pi_dec.opportunity_id,
@@ -316,6 +316,32 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
                 pi_dec.proposal_reason = None
         if claim_failure is None:
             insert_pi_decision(pi_dec)
+            # Candidate-scoped skips are terminal filter facts.  Write their
+            # trace (and any exact-price fixed-horizon outcome seeds) before
+            # consuming the pending carrier so an evidence failure rolls the
+            # entire claim back instead of becoming an invisible permanent skip.
+            if (
+                pi_dec.action == "skip"
+                and pi_dec.opportunity_id
+                and decision_result.get("filter_trace")
+            ):
+                from aletheia.analytics.filter_evidence import record_operator_filter_trace
+
+                evidence_result = dict(decision_result)
+                for field in (
+                    "action", "symbol", "direction", "market_type", "conviction",
+                    "reasoning", "proposal_id", "proposal_status", "proposal_reason",
+                    "opportunity_id", "signal_source",
+                ):
+                    evidence_result[field] = getattr(pi_dec, field)
+                evidence_result["evaluated_at"] = pi_dec.created_at
+                record_operator_filter_trace(
+                    pi_dec.id,
+                    evidence_result,
+                    raise_on_error=True,
+                    require_trace=True,
+                    require_outcome_seed=True,
+                )
             if pi_dec.opportunity_id and pi_dec.signal_source == "market_observer":
                 transition_opportunity_to_reviewed(pi_dec.opportunity_id)
     if claim_failure is not None:
@@ -460,7 +486,9 @@ def record_decision(decision_result: dict) -> dict | None:
         if not created:
             return claimed
         return finalize_decision(
-            claimed["id"], decision_result, publish_filter_evidence=True
+            claimed["id"],
+            decision_result,
+            publish_filter_evidence=claimed.get("action") != "skip",
         )
     except Exception as exc:
         logger.debug("pi_decision db persist failed: %s", exc)

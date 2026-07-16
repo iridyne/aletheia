@@ -370,8 +370,6 @@ def test_parse_oi_delta_sanity_cap_drops_artifact(tmp_path, monkeypatch):
     assert snap.open_interest_usd == 1000.0
     assert snap.oi_change_1h_pct is None  # 99900% delta capped out
     sq.close_db()
-
-
 # ---------------------------------------------------------------------------
 # collect() — batch (OKX) vs per-symbol (Bitget) fetch strategy + full coverage
 # ---------------------------------------------------------------------------

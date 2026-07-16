@@ -1,0 +1,52 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-090
+title: Repair PI feature snapshot identity mapping
+status: done
+packet_type: standard
+scope:
+  boundary: declare before implementation
+  excluded: runtime facts and credentials
+intent: 'Repair the A-class System Operator context read bug: universe feature rows
+  use asset_id but the read path assumes symbol and price, collapsing all rows into
+  one blank-symbol feature. Restore correct existing registry identity mapping with
+  focused regression and SDD evidence; do not alter ranking, conviction policy, aggregate-health
+  behavior, Risk, Execution, Live, sizing, credentials, or runtime data.'
+acceptance:
+- Layer 1 renders each universe feature with its true registry symbol and market_type;
+  it must not collapse asset_id rows into a blank symbol.
+- Prices remain absent unless the existing fresh cache supplies them; the repair must
+  not invent a price.
+- The focused regression and affected decision-lifecycle SDD suite pass without changing
+  ranking, conviction, PI health policy, Risk, Execution, Live, or runtime data.
+ownership:
+  branch: iridite/skip-problem
+  lease_holder: codex
+  claimed_at: '2026-07-15T07:30:23.869076Z'
+  expires_at: '2026-07-15T15:30:23.869237Z'
+base_commit: 8723b0a3bf6f2a25d7adf99440c14647a50c4ffb
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: b00a58a79e1f1c54557d7a8c714570b8a85f8c40
+  run_at: '2026-07-15T07:35:06.959662Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 8723b0a3bf6f2a25d7adf99440c14647a50c4ffb
+  run_at: '2026-07-16T03:29:15.825063Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-090.md
+updated_at: '2026-07-16T03:29:15.825237Z'
+revalidated_at: '2026-07-16T03:29:15.825234Z'

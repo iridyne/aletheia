@@ -413,6 +413,48 @@ def verify_task(task_id: str, *, command_key: str, root: Path | None = None) -> 
     return task
 
 
+def revalidate_completed_task(
+    task_id: str, *, command_key: str, root: Path | None = None
+) -> dict[str, Any]:
+    """Refresh a completed task's proof after rebase by running a real command.
+
+    This intentionally does not reopen the task or accept caller-provided
+    evidence.  It is the narrow recovery path for a legitimate completed task
+    whose prior verification commit is unavailable in a shallow CI checkout.
+    """
+    root = repo_root(root)
+    path, task = _task(root, task_id)
+    if task.get("status") != "done":
+        raise ValueError(f"only completed tasks may be revalidated (is {task.get('status')!r})")
+    commands = _commands(root)
+    if command_key not in commands:
+        raise ValueError(f"unknown command key: {command_key}")
+    command = commands[command_key].get("command")
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError(f"registered command is empty: {command_key}")
+    _assert_only_workflow_metadata_dirty(root, task)
+    _, head = _git(root, "rev-parse", "HEAD")
+    result = subprocess.run(shlex.split(command), cwd=root, check=False)
+    if result.returncode:
+        raise ValueError(f"revalidation command failed with exit code {result.returncode}: {command_key}")
+    evidence = {
+        "command_key": command_key,
+        "command": command,
+        "command_sha256": hashlib.sha256(command.encode("utf-8")).hexdigest(),
+        "exit_code": result.returncode,
+        "commit": head,
+        "run_at": _now(),
+        "result": "passed",
+        "recorded_by": "agent_workflow.verify/v1",
+    }
+    task["base_commit"] = head
+    task["verification"] = list(task.get("verification", [])) + [evidence]
+    task["revalidated_at"] = _now()
+    task["updated_at"] = _now()
+    _write_yaml(path, task)
+    return task
+
+
 def complete_task(task_id: str, *, root: Path | None = None) -> dict[str, Any]:
     """Complete a task only with current tool-produced evidence and a full handoff."""
     root = repo_root(root)

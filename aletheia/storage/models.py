@@ -1260,6 +1260,22 @@ class PiDecision(_Provenanced):
     learning_manifest_json: str = "{}"
 
 
+class OperatorEvaluationEvent(BaseModel):
+    """Append-only observation outside the candidate-trading state machine."""
+
+    id: str = Field(default_factory=new_id)
+    dedup_key: str
+    event_kind: str
+    trigger: str
+    pending_unresolved_total: int
+    pending_visible_count: int
+    pending_oldest_created_at: str | None = None
+    queue_snapshot_json: str = "{}"
+    data_health_json: str = "{}"
+    policy_epoch_id: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+
+
 class CapitalEvent(BaseModel):
     id: str = Field(default_factory=new_id)
     broker_id: str

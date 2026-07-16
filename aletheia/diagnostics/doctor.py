@@ -1412,6 +1412,120 @@ def _probe_profit_loop(report: Report) -> None:
                    f"opportunities {_fmt_age(opp_age)}, proposals {_fmt_age(prop_age) if prop_age else 'none'}")
 
 
+def _probe_skip_halt(report: Report) -> None:
+    """Expose candidate-skip evidence gaps without changing trading behavior.
+
+    ``loop.profit`` detects proposal drought.  This companion probe answers the
+    necessary next question: are candidate-scoped skips actually auditable and
+    waiting for fixed outcomes, or did the Operator consume work without trace
+    evidence?  Legacy unscoped heartbeat skips are reported separately and never
+    enter the candidate cohort.  Current zero-pending heartbeats are counted from
+    their dedicated observation table.  The probe is read-only by design.
+    """
+    try:
+        from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
+        from aletheia.storage.sqlite import get_db
+
+        db = get_db()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        row = db.execute(
+            """SELECT
+                 COUNT(*) AS candidate_skips,
+                 SUM(CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM filter_decisions fd
+                     WHERE fd.candidate_key = 'pi_decision:' || p.id
+                       AND fd.filter_name = 'operator_action_assessment'
+                 ) THEN 1 ELSE 0 END) AS missing_trace,
+                 SUM(CASE WHEN (
+                     SELECT COUNT(DISTINCT fco.horizon)
+                     FROM filter_candidate_outcomes fco
+                     WHERE fco.outcome_candidate_key = 'pi_decision:' || p.id
+                 ) < 4 THEN 1 ELSE 0 END) AS missing_outcome_seed
+               FROM pi_decisions p
+               WHERE p.action = 'skip'
+                 AND p.opportunity_id IS NOT NULL
+                 AND p.created_at >= ?""",
+            (cutoff,),
+        ).fetchone()
+        unscoped = db.execute(
+            """SELECT COUNT(*) FROM pi_decisions
+               WHERE action = 'skip' AND opportunity_id IS NULL AND created_at >= ?""",
+            (cutoff,),
+        ).fetchone()[0]
+        no_candidate_events = db.execute(
+            """SELECT COUNT(*) FROM operator_evaluation_events
+               WHERE event_kind = 'no_evaluable_candidate' AND created_at >= ?""",
+            (cutoff,),
+        ).fetchone()[0]
+        pending = db.execute(
+            """SELECT COUNT(*) FROM pi_decisions
+               WHERE action = 'signal_pending' AND created_at >= ?""",
+            (cutoff,),
+        ).fetchone()[0]
+        # A reload can leave pre-remediation decisions inside the rolling 24h
+        # window.  Keep those raw counts visible, but judge the current B1
+        # behavior only from the active, versioned remediation epoch.  This is
+        # a read-only reporting boundary; it never creates/rotates an epoch.
+        epoch_row = db.execute(
+            """SELECT epoch_id FROM learning_policy_epochs
+               WHERE epoch_kind='system_operator_skip_remediation'
+                 AND ended_at IS NULL
+               ORDER BY started_at DESC LIMIT 1"""
+        ).fetchone()
+        policy_epoch_id = str(epoch_row[0]) if epoch_row is not None else None
+        proposals = db.execute(
+            "SELECT COUNT(*) FROM trade_proposals WHERE created_at >= ?",
+            (cutoff,),
+        ).fetchone()[0]
+    except Exception as exc:
+        report.add("loop.skip_halt", "info", f"probe error: {exc}")
+        return
+
+    candidate_skips = int((row or [0])[0] or 0)
+    missing_trace = int((row or [0, 0])[1] or 0)
+    missing_outcome_seed = int((row or [0, 0, 0])[2] or 0)
+    diagnosis = diagnose_skip_halt(policy_epoch_id=policy_epoch_id)
+    scoped_counts = diagnosis.counts
+    epoch_label = policy_epoch_id or "none"
+    detail = (
+        f"raw_24h_candidate_skips={candidate_skips}, raw_24h_missing_trace={missing_trace}, "
+        f"raw_24h_missing_outcome_seed={missing_outcome_seed}, "
+        f"unscoped_heartbeat_skips={int(unscoped or 0)}, "
+        f"no_evaluable_candidate_events={int(no_candidate_events or 0)}, "
+        f"raw_24h_pending_signals={int(pending or 0)}, proposals={int(proposals or 0)}, "
+        f"diagnosis_epoch={epoch_label}, "
+        f"current_epoch_candidate_skips={int(scoped_counts.get('candidate_skips', 0))}, "
+        f"current_epoch_pending_signals={int(scoped_counts.get('pending_signals', 0))}, "
+        f"finding={diagnosis.finding}, threshold={diagnosis.threshold_version}"
+    )
+    fix_hint = (
+        "inspect candidate skip trace/outcome coverage and the read-only Skip diagnosis; "
+        "does not change PI, config, Risk, or execution"
+    )
+    if diagnosis.finding in {"recording_incident", "operator_liveness_incident", "diagnosis_unavailable"}:
+        report.add("loop.skip_halt", "warn", detail, fix_hint)
+    elif unscoped:
+        report.add(
+            "loop.skip_halt",
+            "warn",
+            detail + " — legacy unscoped heartbeat skips are excluded from effectiveness cohorts",
+            fix_hint,
+        )
+    elif candidate_skips:
+        report.add(
+            "loop.skip_halt",
+            "info",
+            detail + " — candidate evidence complete; await fixed-horizon settlement before judging protection",
+            fix_hint,
+        )
+    else:
+        report.add(
+            "loop.skip_halt", "info",
+            detail + " — no candidate-scoped skips in window; no-target heartbeats are observations",
+            fix_hint,
+        )
+
+
 def _probe_round1(report: Report) -> None:
     """Round 1 experiment progress vs Go/Kill thresholds.
 
@@ -2594,8 +2708,8 @@ def _probe_signal_effectiveness(report: Report) -> None:
             report.add(
                 "data.signal", "warn",
                 f"24h net signal win_rate {win_rate:.1f}% ({total} settled, avg_net={avg_str}) — "
-                "universe selection may be degraded",
-                "review scanner weights; consider updating Optuna strategy params",
+                "aggregate observation requires cohort diagnosis",
+                "inspect outcome coverage, candidate-skip evidence, and cohort splits; do not auto-tune PI",
             )
         elif win_rate >= 55:
             report.add("data.signal", "ok",
@@ -2988,6 +3102,7 @@ def build_report() -> Report:
         _probe_signal_effectiveness,
         _probe_trading_loop,
         _probe_profit_loop,
+        _probe_skip_halt,
         _probe_round1,
         _probe_knowledge_flood,
         _probe_learning_retrieval,

@@ -114,6 +114,7 @@ def record_filter_decision(
     entry_price_usd: float | None = None,
     entry_spread_bps: float | None = None,
     funding_rate_at_entry: float | None = None,
+    entry_ts: str | None = None,
     raise_on_error: bool = False,
 ) -> str:
     """Persist one gate fact and, when economically identifiable, its outcomes.
@@ -140,6 +141,7 @@ def record_filter_decision(
     side = str(direction or "").lower() or None
     market = _normalize_market(market_type)
     timestamp = evaluated_at or _utcnow()
+    outcome_entry_ts = entry_ts or timestamp
 
     learnable = (
         side in _VALID_DIRECTIONS
@@ -192,7 +194,7 @@ def record_filter_decision(
                 entry_price_usd=float(entry_price_usd),
                 entry_spread_bps=entry_spread_bps,
                 funding_rate_at_entry=funding_rate_at_entry,
-                entry_ts=timestamp,
+                entry_ts=outcome_entry_ts,
             )
     except Exception as exc:  # observation must not mutate the trading decision
         if raise_on_error:
@@ -618,12 +620,27 @@ def ensure_candidate_outcomes(
     )
 
 
-def record_operator_filter_trace(decision_id: str, decision_result: dict[str, Any]) -> int:
-    """Persist System Operator gates after its authoritative PiDecision exists."""
+def record_operator_filter_trace(
+    decision_id: str,
+    decision_result: dict[str, Any],
+    *,
+    raise_on_error: bool = False,
+    require_trace: bool = False,
+    require_outcome_seed: bool = False,
+) -> int:
+    """Persist System Operator gates for one authoritative PiDecision.
+
+    General observations retain the historical best-effort default.  A terminal
+    candidate skip calls this inside its claim transaction with ``require_trace``,
+    ``require_outcome_seed`` and ``raise_on_error`` so no queue carrier can be
+    consumed without its exact operator evidence and fixed-outcome cohort.
+    """
     trace = decision_result.get("filter_trace") or []
     symbol = decision_result.get("symbol")
     direction = decision_result.get("direction")
     if not trace or not symbol:
+        if require_trace:
+            raise ValueError("terminal_operator_evidence_incomplete")
         return 0
     opportunity_id = decision_result.get("opportunity_id")
     opportunity = repo.get_opportunity(opportunity_id) if opportunity_id else None
@@ -639,11 +656,39 @@ def record_operator_filter_trace(decision_id: str, decision_result: dict[str, An
         or "spot"
     )
     venue = _default_venue()
-    entry_price = _exact_snapshot_price(str(symbol), market)
+    entry_snapshot = _exact_snapshot(str(symbol), market, max_age_seconds=120)
+    entry_price = _positive_float((entry_snapshot or {}).get("price"))
+    outcome_entry_ts = evaluated_at = decision_result.get("evaluated_at") or _utcnow()
+    entry_spread_bps = _optional_float((member or {}).get("spread_bps"))
+    funding_rate_at_entry = _optional_float((opportunity or {}).get("funding_rate"))
+    outcome_seed_source = "live_snapshot"
+    if entry_price is None and opportunity_id:
+        queued_seed = _queued_candidate_outcome_seed(
+            opportunity_id=str(opportunity_id),
+            symbol=str(symbol),
+            market_type=market,
+            direction=str(direction or "").lower(),
+        )
+        if queued_seed is not None:
+            entry_price = queued_seed["entry_price_usd"]
+            outcome_entry_ts = queued_seed["entry_ts"]
+            venue = queued_seed["venue"]
+            entry_spread_bps = queued_seed["entry_spread_bps"]
+            funding_rate_at_entry = queued_seed["funding_rate_at_entry"]
+            outcome_seed_source = "queued_candidate_fixed"
+    if require_outcome_seed and (
+        direction not in _VALID_DIRECTIONS or not venue or entry_price is None
+    ):
+        raise ValueError("terminal_operator_outcome_unavailable")
     candidate_key = f"pi_decision:{decision_id}"
-    evaluated_at = _utcnow()
     count = 0
     for sequence, step in enumerate(trace, start=1):
+        inputs = dict(step.get("inputs") or {})
+        inputs["outcome_seed_source"] = outcome_seed_source
+        if entry_snapshot is not None:
+            inputs["entry_snapshot_id"] = entry_snapshot.get("id")
+            inputs["entry_snapshot_at"] = entry_snapshot.get("snapshot_at")
+            inputs["entry_price_usd"] = entry_price
         record_filter_decision(
             candidate_key=candidate_key,
             candidate_kind="pi_decision",
@@ -665,16 +710,62 @@ def record_operator_filter_trace(decision_id: str, decision_result: dict[str, An
             sequence_no=sequence,
             decision=str(step["decision"]),
             reason_code=str(step.get("reason_code") or step["decision"]),
-            inputs=step.get("inputs") or {},
+            inputs=inputs,
             parameters=step.get("parameters") or {},
             evaluated_at=evaluated_at,
             outcome_candidate_key=candidate_key,
             entry_price_usd=entry_price,
-            entry_spread_bps=_optional_float((member or {}).get("spread_bps")),
-            funding_rate_at_entry=_optional_float((opportunity or {}).get("funding_rate")),
+            entry_spread_bps=entry_spread_bps,
+            funding_rate_at_entry=funding_rate_at_entry,
+            entry_ts=outcome_entry_ts,
+            raise_on_error=raise_on_error,
         )
         count += 1
     return count
+
+
+def _queued_candidate_outcome_seed(
+    *,
+    opportunity_id: str,
+    symbol: str,
+    market_type: str,
+    direction: str,
+) -> dict[str, Any] | None:
+    """Return one immutable producer seed only when its whole cohort is exact."""
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        rows = get_db().execute(
+            "SELECT venue, symbol, market_type, direction, entry_price_usd, "
+            "entry_spread_bps, funding_rate_at_entry, entry_ts, horizon "
+            "FROM filter_candidate_outcomes WHERE outcome_candidate_key=? "
+            "ORDER BY horizon",
+            (f"opportunity:{opportunity_id}",),
+        ).fetchall()
+    except Exception:
+        return None
+    if {row["horizon"] for row in rows} != set(_HORIZONS):
+        return None
+    normalized_rows = [dict(row) for row in rows]
+    identities = {
+        (row.get("venue"), row.get("symbol"), _normalize_market(row.get("market_type")),
+         str(row.get("direction") or "").lower(), _positive_float(row.get("entry_price_usd")),
+         row.get("entry_ts"))
+        for row in normalized_rows
+    }
+    if len(identities) != 1:
+        return None
+    venue, seed_symbol, seed_market, seed_direction, entry_price, entry_ts = identities.pop()
+    if (not venue or seed_symbol != symbol or seed_market != market_type
+            or seed_direction != direction or entry_price is None
+            or _parse_dt(str(entry_ts or "")) is None):
+        return None
+    first = normalized_rows[0]
+    return {
+        "venue": str(venue), "entry_price_usd": entry_price, "entry_ts": str(entry_ts),
+        "entry_spread_bps": _optional_float(first.get("entry_spread_bps")),
+        "funding_rate_at_entry": _optional_float(first.get("funding_rate_at_entry")),
+    }
 
 
 def record_risk_filter_decision(
@@ -856,8 +947,13 @@ def _cohort_key(row: dict[str, Any]) -> tuple:
     )
 
 
-def _exact_snapshot_price(symbol: str, market_type: str) -> float | None:
-    """Read only an exact typed snapshot; never fall back across spot/perp."""
+def _exact_snapshot(
+    symbol: str,
+    market_type: str,
+    *,
+    max_age_seconds: float | None = None,
+) -> dict[str, Any] | None:
+    """Read one exact typed snapshot, optionally requiring bounded freshness."""
     try:
         from aletheia.data.symbols import to_canonical
 
@@ -866,9 +962,27 @@ def _exact_snapshot_price(symbol: str, market_type: str) -> float | None:
             market_type=market_type,
             limit=1,
         )
-        return _positive_float(rows[0].get("price")) if rows else None
+        snapshot = rows[0] if rows else None
+        if snapshot is None or _positive_float(snapshot.get("price")) is None:
+            return None
+        if max_age_seconds is not None:
+            snapshot_at = _parse_dt(str(snapshot.get("snapshot_at") or ""))
+            now = datetime.now(timezone.utc)
+            if (
+                snapshot_at is None
+                or snapshot_at > now
+                or (now - snapshot_at).total_seconds() > max_age_seconds
+            ):
+                return None
+        return snapshot
     except Exception:
         return None
+
+
+def _exact_snapshot_price(symbol: str, market_type: str) -> float | None:
+    """Read only an exact typed snapshot; never fall back across spot/perp."""
+    snapshot = _exact_snapshot(symbol, market_type)
+    return _positive_float((snapshot or {}).get("price"))
 
 
 def _default_venue() -> str | None:

@@ -1,6 +1,7 @@
 """Command handlers for the Agent Shell control plane."""
 
 import json
+import hashlib
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -1647,6 +1648,62 @@ def _proposal_status_from_execution_result(execution_result: dict) -> str | None
     return execution_result.get("proposal_status") or execution_result.get("status")
 
 
+def _record_no_evaluable_candidate_observation(
+    queue: dict,
+    data_health: dict,
+    *,
+    trigger: str,
+    policy_epoch_id: str,
+) -> dict:
+    """Write a bounded, non-trading observation for an empty pending queue."""
+    from aletheia.storage.models import OperatorEvaluationEvent
+    from aletheia.storage.repositories import record_operator_evaluation_event
+
+    now = datetime.now(timezone.utc)
+    window_start = now.replace(
+        minute=now.minute - (now.minute % 5), second=0, microsecond=0,
+    ).isoformat()
+    queue_snapshot = {
+        "observation_window_start": window_start,
+        "unresolved_total": int(queue.get("unresolved_total") or 0),
+        "visible_count": int(queue.get("visible_count") or 0),
+        "overflow_count": int(queue.get("overflow_count") or 0),
+        "oldest_at": queue.get("oldest_at"),
+        "expired_unconsumed_rows": int(queue.get("expired_unconsumed_rows") or 0),
+    }
+    # Aggregate health remains operational telemetry.  Store only its compact,
+    # typed summary; no prompt, provider exception, or credential can enter this
+    # event stream.
+    health_summary = {
+        "signal_status": data_health.get("signal_status"),
+        "signal_win_rate_24h": data_health.get("signal_win_rate_24h"),
+        "members_with_full_coverage": data_health.get("members_with_full_coverage"),
+        "total_members": data_health.get("total_members"),
+        "ohlcv_ready": data_health.get("ohlcv_ready"),
+    }
+    queue_json = json.dumps(queue_snapshot, sort_keys=True, separators=(",", ":"))
+    dedup_payload = {
+        "event_kind": "no_evaluable_candidate",
+        "trigger": str(trigger or "manual"),
+        "policy_epoch_id": policy_epoch_id,
+        "queue_snapshot": queue_snapshot,
+    }
+    dedup_key = hashlib.sha256(
+        json.dumps(dedup_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return record_operator_evaluation_event(OperatorEvaluationEvent(
+        dedup_key=dedup_key,
+        event_kind="no_evaluable_candidate",
+        trigger=str(trigger or "manual"),
+        pending_unresolved_total=queue_snapshot["unresolved_total"],
+        pending_visible_count=queue_snapshot["visible_count"],
+        pending_oldest_created_at=queue_snapshot["oldest_at"],
+        queue_snapshot_json=queue_json,
+        data_health_json=json.dumps(health_summary, sort_keys=True, separators=(",", ":")),
+        policy_epoch_id=policy_epoch_id,
+    ))
+
+
 async def evaluate_trading_opportunity(params: dict) -> dict:
     """System Operator evaluates market state and submits a paper proposal if conviction >= 55."""
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
@@ -1655,10 +1712,42 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         evaluate_trading_opportunity as _evaluate,
         prepare_decision_as_proposal,
     )
+    params = params or {}
     execution_mode = _configured_paper_execution_mode()
 
     # Build three-layer enriched context
     ctx = build_enriched_trading_context()
+    from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
+    from aletheia.agent_shell.b2_evidence_policy import (
+        attach_b2_candidate_evidence,
+        ensure_b2_candidate_evidence_policy_epoch,
+    )
+
+    policy_epoch_id = ensure_skip_remediation_policy_epoch()
+    b2_policy_epoch_id = ensure_b2_candidate_evidence_policy_epoch()
+    ctx["skip_policy_epoch_id"] = policy_epoch_id
+    attach_b2_candidate_evidence(ctx, policy_epoch_id=b2_policy_epoch_id)
+
+    # A zero-pending heartbeat is an operator observation, not a trade decision.
+    # Only short-circuit an explicit queue summary: lightweight unit callers that
+    # omit the queue retain their existing decision-path contract.
+    queue = ctx.get("layer2", {}).get("pending_queue")
+    if isinstance(queue, dict) and queue.get("unresolved_total") == 0:
+        event = _record_no_evaluable_candidate_observation(
+            queue,
+            ctx.get("layer1", {}).get("data_health", {}),
+            trigger=str(params.get("_trigger") or "manual"),
+            policy_epoch_id=policy_epoch_id,
+        )
+        return {
+            "action": "no_evaluable_candidate",
+            "observation_status": "observed",
+            "operator_evaluation_event_id": event["id"],
+            "policy_epoch_id": policy_epoch_id,
+            "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
+            "pending_queue_remaining": 0,
+            "pending_queue": queue,
+        }
 
     # Wake context (exit-intent plan M1.5): when the daemon woke us for specific
     # positions (coalesced + rate-limited WakeEvents), carry the batches into the
@@ -1737,6 +1826,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "proposal_status": "not_applicable",
         "proposal_reason": "action_not_trade",
         "filter_trace": decision.filter_trace,
+        "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
         # One bundle-level attribution unit for all overlapping Learning prompt channels.
         "learning_manifest": ctx.get("learning_manifest") or {},
     }
@@ -2004,7 +2094,12 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     settled_final = finalize_decision(
         claimed_final["id"],
         result,
-        publish_filter_evidence=claim_created,
+        # Candidate skip trace/outcome facts were written atomically with the
+        # claim.  Do not turn a later best-effort reflection retry into their
+        # only evidence path.
+        publish_filter_evidence=(
+            claim_created and claimed_final.get("action") != "skip"
+        ),
     )
     if claim_created:
         result["proposal_id"] = settled_final.get("proposal_id")
@@ -2013,15 +2108,12 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     else:
         _apply_claim_to_result(settled_final, replay=True)
 
-    # Self-heal: emit system_action when data environment is degraded
+    # Data completeness can trigger a maintenance request. Aggregate signal
+    # quality is deliberately observation-only under B1: it must not create an
+    # implicit pause or confidence veto after the candidate was evaluated.
     try:
         data_health = ctx.get("layer1", {}).get("data_health", {})
-        if data_health.get("signal_status") == "degraded":
-            _emit_self_heal_action(
-                "pause_low_conviction",
-                reason=f"24h signal win_rate {data_health.get('signal_win_rate_24h', '?')}% below threshold",
-            )
-        elif not data_health.get("ohlcv_ready"):
+        if not data_health.get("ohlcv_ready"):
             _emit_self_heal_action(
                 "request_backfill",
                 reason=f"only {data_health.get('members_with_full_coverage', 0)}/{data_health.get('total_members', 0)} members have full OHLCV coverage",

@@ -10,6 +10,7 @@ from aletheia.agent_workflow import (
     create_task,
     load_tasks,
     rebase_base,
+    revalidate_completed_task,
     recovery_test,
     render_bootstrap,
     repo_root,
@@ -58,7 +59,7 @@ def claim(task_id: str, holder: str = typer.Option(..., "--holder"), hours: int 
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1)
-    typer.echo(f"Claimed {task['id']} on {task['ownership']['branch']}.")
+    typer.echo(f"Claimed {task['id']} on the current branch.")
 
 @task_app.command("create")
 def create(
@@ -117,6 +118,18 @@ def rebase_base_command(task_id: str):
         typer.echo(str(exc), err=True)
         raise typer.Exit(1)
     typer.echo(f"Rebased base_commit of {task['id']} to {task['base_commit'][:7]}.")
+
+
+@task_app.command("revalidate")
+def revalidate_command(task_id: str, command_key: str = typer.Option(..., "--command-key")):
+    """Refresh a completed task's evidence by executing a registered command."""
+    try:
+        task = revalidate_completed_task(task_id, command_key=command_key)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+    evidence = task["verification"][-1]
+    typer.echo(f"Revalidated {task['id']} at {evidence['commit'][:7]} with {command_key}.")
 
 
 @task_app.command("update")

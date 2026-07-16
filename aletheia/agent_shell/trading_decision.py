@@ -280,6 +280,28 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
 
     trade_actions = ("trade",)
     trade_intent = decision.action in trade_actions
+    # A direct model skip is a real System Operator filter result.  It used to
+    # return before debate/conviction tracing, leaving the most common terminal
+    # path with no machine-readable fact or fixed-outcome link.  Record the
+    # model's action before any deterministic gate can amend it; the terminal
+    # claim persists this trace atomically with the candidate decision.
+    assessment_inputs = {
+        "model_action": decision.action,
+        "initial_conviction": decision.conviction,
+    }
+    if trading_context.get("skip_policy_epoch_id"):
+        assessment_inputs["policy_epoch_id"] = trading_context["skip_policy_epoch_id"]
+    b2_evidence = _b2_evidence_for_decision(decision, trading_context)
+    if b2_evidence:
+        assessment_inputs["b2_evidence"] = b2_evidence
+    decision.filter_trace.insert(0, {
+        "filter_name": "operator_action_assessment",
+        "stage": "system_operator",
+        "decision": "passed" if trade_intent else "rejected",
+        "reason_code": "operator_model_trade" if trade_intent else "operator_model_skip",
+        "inputs": assessment_inputs,
+        "parameters": {"schema_actions": ["trade", "skip"]},
+    })
 
     bias_brake_reason = _proposal_bias_brake_reason(decision)
     if bias_brake_reason:
@@ -1342,16 +1364,6 @@ def _build_assessment_prompt(ctx: dict) -> str:
             f"({_ready}/{_total} members ready, <50%). "
             "Backtest/Optuna coverage thin — weight live signals over backtested ones."
         )
-    if data_health.get("signal_status") == "degraded":
-        wr = data_health.get("signal_win_rate_24h", "?")
-        # Labelled signal_accuracy_24h (not win_rate) to avoid colliding with the
-        # 7d trade win_rate in the stats block — two same-named metrics let the
-        # LLM stack them into a double-crisis reading.
-        health_alerts.append(
-            f"⚠️ SIGNAL DEGRADATION: 24h universe signal_accuracy_24h={wr}% (below 40%). "
-            "Consider: reducing position sizing, tightening stops, skipping low-conviction trades."
-        )
-
     # ── Assemble prompt ──
     parts = []
     if health_alerts:
@@ -1386,7 +1398,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
         opp_lines = "\n".join(
             f"  {o['symbol']} [{o.get('market', '?')}] {o.get('direction_bias', '?')} "
             f"conf={o.get('confidence_score', '?')} "
-            f"[{o.get('scanner_family', '')}]{_fmt_family_edge(o.get('family_edge'))}: {o.get('thesis', '')}"
+            f"[{o.get('scanner_family', '')}]: {o.get('thesis', '')}"
             f"{(' | obs: ' + '; '.join(o['key_observations'])) if o.get('key_observations') else ''}"
             f"{_fmt_position_x_context(o.get('structure_context'))}"
             for o in opps[:8]
@@ -1395,6 +1407,16 @@ def _build_assessment_prompt(ctx: dict) -> str:
         skew_note = _direction_skew_note(opps[:8], "open opportunities")
         if skew_note:
             parts += [skew_note, ""]
+
+    pending_evidence = layer2.get("pending_signals", [])
+    if pending_evidence:
+        from aletheia.analytics.pi_evidence import render_b2_evidence_summary
+        evidence_lines = "\n".join(
+            f"  {p.get('symbol', '?')} {p.get('direction', '?')}: "
+            f"{render_b2_evidence_summary(p.get('b2_evidence'))}"
+            for p in pending_evidence[:8]
+        )
+        parts += ["## B2 Candidate-Conditioned Evidence (shared across assessment and debate)", evidence_lines, ""]
 
     # Factor feedback — blocked/preferred categories
     factors = layer1.get("factor_feedback", [])
@@ -1713,11 +1735,13 @@ def _build_bull_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
         note = "Note: FR>+0.01% = crowded longs → supports short; taker<0.8 = seller aggression → supports short; OI_div=weak_rally = distribution → supports short."
     else:
         note = "Note: FR<-0.01% = crowded shorts → bullish; taker>1.2 = buyer aggression; OI_div=hidden_acc = potential reversal long."
+    evidence = _render_b2_evidence_for(symbol, _dir, ctx)
     return f"""You are a bull analyst. Make the STRONGEST case for {symbol} {_dir} RIGHT NOW.
 
 Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}{deriv_extras}{div_note}
 {regime_str}
 {note}
+{evidence}
 
 Be specific: technical setup, regime alignment, risk/reward.
 Return confidence (0-100) where 100 = near-certain win. Provide 3-5 evidence points."""
@@ -1737,17 +1761,37 @@ def _build_bear_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
         note = "Note: FR<-0.01% = crowded shorts → fade risk (short squeeze); taker>1.2 = buyer aggression → challenges short; OI_div=hidden_acc = potential reversal → challenges short."
     else:
         note = "Note: FR>+0.01% = crowded longs → bearish; taker<0.8 = seller aggression; OI_div=weak_rally = distribution risk."
+    evidence = _render_b2_evidence_for(symbol, _dir, ctx)
     return f"""You are a bear analyst. Find every reason why {symbol} {_dir} RIGHT NOW is a BAD idea.
 
 Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}{deriv_extras}{div_note}
 {regime_str}
 {note}
+{evidence}
 
 Challenge aggressively: overbought/oversold, adverse regime, funding cost, better entry timing.
 Return confidence (0-100) where 100 = trade will definitely fail. Provide 3-5 counter-evidence points."""
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
+
+def _b2_evidence_for(symbol: str | None, direction: str | None, ctx: dict) -> dict | None:
+    for candidate in (ctx.get("layer2") or {}).get("pending_signals") or []:
+        if candidate.get("symbol") != symbol or candidate.get("direction") != direction:
+            continue
+        evidence = candidate.get("b2_evidence")
+        if isinstance(evidence, dict):
+            return evidence
+    return None
+
+
+def _b2_evidence_for_decision(decision: TradingDecision, ctx: dict) -> dict | None:
+    return _b2_evidence_for(decision.symbol, decision.direction, ctx)
+
+
+def _render_b2_evidence_for(symbol: str, direction: str, ctx: dict) -> str:
+    from aletheia.analytics.pi_evidence import render_b2_evidence_summary
+    return render_b2_evidence_summary(_b2_evidence_for(symbol, direction, ctx))
 
 def _parse_decision(raw: dict) -> TradingDecision:
     mt = raw.get("market_type")

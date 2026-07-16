@@ -7,14 +7,12 @@ packet_type: standard
 scope:
   boundary: declare before implementation
   excluded: runtime facts and credentials
-intent: Align deterministic test fixtures and assertions with fail-closed paper-trading
-  contracts without changing risk or execution semantics.
+intent: Align deterministic test fixtures and assertions with fail-closed paper-trading contracts without changing risk or execution semantics.
 acceptance: []
 base_commit: 832861e461c4a5996cd0c4579c8e7e93334338a4
 next_action:
   command_key: workflow_bootstrap
-  reason: Task complete; run bootstrap and create or claim a new task before changing
-    code.
+  reason: Task complete; run bootstrap and create or claim a new task before changing code.
 blockers: []
 verification:
 - command_key: workflow_tests

@@ -54,6 +54,47 @@ def _init_agent_shell_db(tmp_path, monkeypatch):
     return conn
 
 
+def test_operator_context_features_keep_registry_identity(tmp_path, monkeypatch):
+    """Feature snapshots must not collapse into one blank-symbol PI feature."""
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc).isoformat()
+    conn.executemany(
+        "INSERT INTO universe_registry (id, venue, market_type, symbol) VALUES (?, ?, ?, ?)",
+        [
+            ("asset-btc-perp", "okx", "perp", "BTC/USDT"),
+            ("asset-eth-perp", "okx", "perp", "ETH/USDT"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO universe_feature_snapshots "
+        "(id, asset_id, ts, rsi_14, return_24h) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("feature-btc", "asset-btc-perp", now, 61.0, 2.5),
+            ("feature-eth", "asset-eth-perp", now, 39.0, -1.5),
+        ],
+    )
+    conn.commit()
+
+    import aletheia.data.price_feed as price_feed
+    from aletheia.agent_shell.trading_context import _build_layer1_snapshot
+
+    monkeypatch.setattr(
+        price_feed,
+        "get_cached_price_with_meta",
+        lambda symbol: {"price": {"BTC/USDT": 100.0, "ETH/USDT": 200.0}[symbol], "provider": "test"},
+    )
+
+    features = _build_layer1_snapshot()["features"]
+
+    assert {
+        row["symbol"]: (row["price"], row["rsi_14"])
+        for row in features
+    } == {
+        "BTC/USDT": (100.0, 61.0),
+        "ETH/USDT": (200.0, 39.0),
+    }
+
+
 @pytest.mark.asyncio
 async def test_portfolio_review_can_close_old_target_beyond_default_position_page(
     tmp_path, monkeypatch
@@ -625,6 +666,38 @@ async def test_trading_decision_records_debate_trace(tmp_path, monkeypatch):
     assert decision.debate_bull_confidence == 40
     assert decision.debate_bear_confidence == 80
     assert decision.debate_adjustment == -12
+
+
+@pytest.mark.asyncio
+async def test_direct_model_skip_records_operator_action_trace(tmp_path, monkeypatch):
+    """A direct model skip remains an auditable operator gate, not a trace-less exit."""
+    _init_agent_shell_db(tmp_path, monkeypatch)
+
+    from aletheia.agent_shell import trading_decision as td
+
+    monkeypatch.setattr(td, "_assess_opportunity", AsyncMock(return_value={
+        "action": "skip",
+        "symbol": "BTC/USDT",
+        "direction": "short",
+        "market_type": "usdt_futures",
+        "conviction": 31,
+        "reasoning": "sideways market offers no directional edge",
+    }))
+
+    decision = await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
+
+    assert decision.action == "skip"
+    assert decision.filter_trace[0] == {
+        "filter_name": "operator_action_assessment",
+        "stage": "system_operator",
+        "decision": "rejected",
+        "reason_code": "operator_model_skip",
+        "inputs": {
+            "model_action": "skip",
+            "initial_conviction": 31,
+        },
+        "parameters": {"schema_actions": ["trade", "skip"]},
+    }
 
 
 # --- Synthesis fallback tests ---

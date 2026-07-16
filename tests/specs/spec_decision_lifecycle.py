@@ -213,8 +213,12 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
-    from aletheia.storage.models import Opportunity, PiDecision
-    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
+    from aletheia.storage.repositories import (
+        insert_market_snapshot,
+        insert_opportunity,
+        insert_pi_decision,
+    )
     from aletheia.storage.sqlite import get_db
 
     opportunity = Opportunity(
@@ -234,6 +238,12 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(
         symbol=opportunity.symbol,
         direction="long",
         market_type=opportunity.market,
+    ))
+    insert_market_snapshot(MarketSnapshot(
+        symbol=opportunity.symbol,
+        market_type="perp",
+        exchange="test",
+        price=100.0,
     ))
 
     async def assess_pending_candidate(_context):
@@ -400,7 +410,11 @@ def test_existing_final_decision_blocks_duplicate_proposal(tmp_path, monkeypatch
             "layer1": {
                 "data_health": {"signal_status": "healthy", "ohlcv_ready": True}
             },
-            "layer2": {"pending_queue": {"unresolved_total": 0}},
+            # This idempotency unit deliberately omits a real queue summary.
+            # Explicit production zero-pending summaries short-circuit before
+            # any candidate evaluation (DL-S18); this fixture exercises only
+            # the existing-final replay branch below that boundary.
+            "layer2": {},
         },
     )
     monkeypatch.setattr(
@@ -444,8 +458,12 @@ def test_submission_exception_keeps_pending_source_retryable(tmp_path, monkeypat
         DecisionUnavailable,
         TradingDecision,
     )
-    from aletheia.storage.models import Opportunity, PiDecision
-    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
+    from aletheia.storage.repositories import (
+        insert_market_snapshot,
+        insert_opportunity,
+        insert_pi_decision,
+    )
     from aletheia.storage.sqlite import get_db
 
     decision = TradingDecision(
@@ -741,8 +759,12 @@ def test_llm_unavailable_keeps_oldest_pending_signal_retryable(tmp_path, monkeyp
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
-    from aletheia.storage.models import Opportunity, PiDecision
-    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
+    from aletheia.storage.repositories import (
+        insert_market_snapshot,
+        insert_opportunity,
+        insert_pi_decision,
+    )
     from aletheia.storage.sqlite import get_db
 
     opportunity = Opportunity(
@@ -760,6 +782,12 @@ def test_llm_unavailable_keeps_oldest_pending_signal_retryable(tmp_path, monkeyp
         signal_source="market_observer",
     )
     insert_pi_decision(pending)
+    insert_market_snapshot(MarketSnapshot(
+        symbol=opportunity.symbol,
+        market_type="perp",
+        exchange="test",
+        price=100.0,
+    ))
 
     async def unavailable(_context):
         return None
@@ -1020,12 +1048,13 @@ def test_serenity_pending_signal_is_not_hidden_by_market_queue_ttl(tmp_path, mon
 @spec_claim(
     SpecClaim(
         "DL-S18", "decision_lifecycle_contract", "§2.3 pending-only operator input", "L2b",
-        "A heartbeat with zero unresolved signal_pending rows cannot turn an open/ranker "
-        "Opportunity into a TradeProposal; paper_trader must create the durable queue carrier first.",
+        "A heartbeat with zero unresolved signal_pending rows records one observed "
+        "no-evaluable-candidate event and never invokes the trading LLM, creates a final "
+        "PiDecision, or changes an open/ranker Opportunity.",
         status="implemented",
     ),
 )
-def test_heartbeat_cannot_submit_unqueued_open_or_ranker_opportunity(tmp_path, monkeypatch):
+def test_zero_pending_heartbeat_is_observed_without_trading_evaluation(tmp_path, monkeypatch):
     import asyncio
 
     from tests.test_entry_logic import setup_env
@@ -1040,10 +1069,9 @@ def test_heartbeat_cannot_submit_unqueued_open_or_ranker_opportunity(tmp_path, m
     close_db()
     run_migrations()
     from aletheia.agent_runtime import pi_daemon
-    from aletheia.agent_shell import reflection, trading_decision
+    from aletheia.agent_shell import trading_decision
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
     from aletheia.config.loader import load_config, save_config
-    from aletheia.execution import gateway
     from aletheia.storage.models import MarketSnapshot, Opportunity
     from aletheia.storage.repositories import insert_market_snapshot, insert_opportunity
     from aletheia.storage.sqlite import get_db
@@ -1087,37 +1115,13 @@ def test_heartbeat_cannot_submit_unqueued_open_or_ranker_opportunity(tmp_path, m
         for row in context["layer2"]["analysis_only_candidates"]
     )
 
-    async def choose_unqueued_candidate(_context):
-        return {
-            "action": "trade",
-            "symbol": "BTC/USDT",
-            "direction": "long",
-            "market_type": "spot",
-            "conviction": 90,
-            "reasoning": "select the visible open ranker candidate",
-            "bear_case": "the breakout can fail",
-            "key_assumptions": ["the stored snapshot remains representative"],
-            "parameter_rationale": {
-                "entry_price": "the current snapshot anchors the entry",
-                "stop_loss": "the stop invalidates the setup",
-                "take_profit": "the target preserves positive reward to risk",
-                "notional_usdt": "the notional is intentionally bounded",
-                "leverage": "spot uses no leverage",
-            },
-        }
+    async def llm_must_not_run(_context):
+        raise AssertionError("zero-pending heartbeat must not invoke the trading LLM")
 
-    def store_without_executing(proposal, **_kwargs):
-        return {
-            "proposal_id": proposal.id,
-            "status": "stored_only",
-            "reason": "test_blocks_execution_after_persistence",
-        }
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", llm_must_not_run)
 
-    monkeypatch.setattr(trading_decision, "_assess_opportunity", choose_unqueued_candidate)
-    monkeypatch.setattr(gateway, "_execute_proposal", store_without_executing)
-    monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
-
-    asyncio.run(pi_daemon._run_evaluation("heartbeat"))
+    remaining = asyncio.run(pi_daemon._run_evaluation("heartbeat"))
+    remaining_repeat = asyncio.run(pi_daemon._run_evaluation("heartbeat"))
 
     db = get_db()
     pending_count = db.execute(
@@ -1128,30 +1132,44 @@ def test_heartbeat_cannot_submit_unqueued_open_or_ranker_opportunity(tmp_path, m
         "SELECT id, opportunity_id FROM trade_proposals WHERE opportunity_id=?",
         (opportunity.id,),
     ).fetchall()
-    anonymous_finals = db.execute(
-        "SELECT id FROM pi_decisions WHERE action!='signal_pending' "
-        "AND opportunity_id IS NULL"
+    final_count = db.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action!='signal_pending'"
+    ).fetchone()[0]
+    events = db.execute(
+        "SELECT event_kind, trigger, pending_unresolved_total, policy_epoch_id "
+        "FROM operator_evaluation_events"
     ).fetchall()
     opportunity_status = db.execute(
         "SELECT status FROM opportunities WHERE id=?", (opportunity.id,)
     ).fetchone()[0]
     assert pending_count == 0
-    assert not proposals, (
-        "heartbeat formed a TradeProposal from an open/ranker Opportunity with no "
-        f"signal_pending carrier: {[dict(row) for row in proposals]!r}"
-    )
-    assert not anonymous_finals, (
-        "a trade-like choice without a durable carrier persisted an anonymous final: "
-        f"{[dict(row) for row in anonymous_finals]!r}"
-    )
+    assert remaining == 0
+    assert remaining_repeat == 0
+    assert not proposals
+    assert final_count == 0
+    assert [dict(row) for row in events] == [{
+        "event_kind": "no_evaluable_candidate",
+        "trigger": "heartbeat",
+        "pending_unresolved_total": 0,
+        "policy_epoch_id": events[0]["policy_epoch_id"],
+    }]
+    assert events[0]["policy_epoch_id"]
+    epoch = db.execute(
+        "SELECT effective_values_json FROM learning_policy_epochs WHERE epoch_id=?",
+        (events[0]["policy_epoch_id"],),
+    ).fetchone()[0]
+    assert '"aggregate_signal_health_candidate_veto": false' in epoch
+    assert '"zero_pending_heartbeat_trading_evaluation": false' in epoch
+    assert '"ranker_neutral_confidence_floor": "medium"' in epoch
+    assert '"auto_tightened_confidence_supply_recovery": true' in epoch
     assert opportunity_status == "open"
 
 
 @spec_claim(
     SpecClaim(
         "DL-S35", "decision_lifecycle_contract", "§2.3 pending-only terminal identity", "L2b",
-        "A zero-pending heartbeat may record an unscoped skip, but skip/watch cannot bind or "
-        "retire a Layer-1 or ranker Opportunity without its exact durable pending carrier.",
+        "A final entry action must have the exact durable pending carrier; no-target "
+        "heartbeat state belongs only to operator_evaluation_events, not pi_decisions.",
         status="implemented",
     ),
 )
@@ -1170,7 +1188,7 @@ def test_heartbeat_skip_or_watch_cannot_retire_unqueued_opportunity(
     close_db()
     run_migrations()
     from aletheia.agent_runtime import pi_daemon
-    from aletheia.agent_shell import reflection, trading_decision
+    from aletheia.agent_shell import trading_decision
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
     from aletheia.config.loader import load_config, save_config
     from aletheia.storage.models import MarketSnapshot, Opportunity
@@ -1216,20 +1234,13 @@ def test_heartbeat_skip_or_watch_cannot_retire_unqueued_opportunity(
     )
 
     async def assess_visible_but_unqueued(_context):
-        return {
-            "action": raw_action,
-            "symbol": opportunity.symbol,
-            "direction": "long",
-            "market_type": "spot",
-            "conviction": 45,
-            "reasoning": "observe but do not enter the visible candidate",
-        }
+        raise AssertionError(
+            f"zero-pending heartbeat must not assess unqueued raw action {raw_action}"
+        )
 
     monkeypatch.setattr(
         trading_decision, "_assess_opportunity", assess_visible_but_unqueued
     )
-    monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
-
     asyncio.run(pi_daemon._run_evaluation("heartbeat"))
 
     db = get_db()
@@ -1241,6 +1252,9 @@ def test_heartbeat_skip_or_watch_cannot_retire_unqueued_opportunity(
         "SELECT action, opportunity_id FROM pi_decisions "
         "WHERE action!='signal_pending' AND opportunity_id IS NULL"
     ).fetchall()
+    observations = db.execute(
+        "SELECT event_kind, trigger FROM operator_evaluation_events"
+    ).fetchall()
     proposal_count = db.execute(
         "SELECT COUNT(*) FROM trade_proposals WHERE opportunity_id=?",
         (opportunity.id,),
@@ -1250,9 +1264,9 @@ def test_heartbeat_skip_or_watch_cannot_retire_unqueued_opportunity(
     ).fetchone()[0]
 
     assert not linked_finals
-    assert [dict(row) for row in unscoped_finals] == [{
-        "action": "skip",
-        "opportunity_id": None,
+    assert not unscoped_finals
+    assert [dict(row) for row in observations] == [{
+        "event_kind": "no_evaluable_candidate", "trigger": "heartbeat",
     }]
     assert proposal_count == 0
     assert opportunity_status == "open"
@@ -1383,6 +1397,87 @@ def test_old_position_beyond_layer1_display_is_counted_without_fake_entry_action
     actions = prompt.split("Actions available:", 1)[1].split("Return:", 1)[0]
     assert "- close:" not in actions
     assert "- reduce:" not in actions
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S43", "decision_lifecycle_contract", "§2.2b Layer 1 technical feature identity", "L2b",
+        "System Operator Layer 1 resolves feature snapshots through their registry asset identity, "
+        "so distinct instruments are not collapsed into one blank-symbol feature.",
+        status="implemented",
+    ),
+)
+def test_layer1_features_resolve_snapshot_asset_identity(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.data.price_feed as price_feed
+    from aletheia.agent_shell.trading_context import _build_layer1_snapshot
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    db.executemany(
+        "INSERT INTO universe_registry (id, venue, market_type, symbol) VALUES (?, ?, ?, ?)",
+        [
+            ("asset-btc-perp", "okx", "perp", "BTC/USDT"),
+            ("asset-eth-perp", "okx", "perp", "ETH/USDT"),
+        ],
+    )
+    db.executemany(
+        "INSERT INTO universe_feature_snapshots "
+        "(id, asset_id, ts, rsi_14) VALUES (?, ?, ?, ?)",
+        [
+            ("feature-btc", "asset-btc-perp", now, 61.0),
+            ("feature-eth", "asset-eth-perp", now, 39.0),
+        ],
+    )
+    db.commit()
+    monkeypatch.setattr(
+        price_feed,
+        "get_cached_price_with_meta",
+        lambda symbol: {"price": {"BTC/USDT": 100.0, "ETH/USDT": 200.0}[symbol]},
+    )
+
+    assert {
+        row["symbol"]: (row["market_type"], row["price"], row["rsi_14"])
+        for row in _build_layer1_snapshot()["features"]
+    } == {
+        "BTC/USDT": ("perp", 100.0, 61.0),
+        "ETH/USDT": ("perp", 200.0, 39.0),
+    }
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S42", "decision_lifecycle_contract", "§2.4 aggregate-health isolation", "L2b",
+        "Aggregate signal-health observations remain available to operations but do not enter "
+        "the single-candidate PI prompt as a skip, sizing, or stop-adjustment instruction.",
+        status="implemented",
+    ),
+)
+def test_degraded_aggregate_signal_health_is_absent_from_candidate_prompt():
+    from aletheia.agent_shell.trading_decision import _build_assessment_prompt
+
+    prompt = _build_assessment_prompt({
+        "layer1": {
+            "data_health": {
+                "signal_status": "degraded",
+                "signal_win_rate_24h": 37.0,
+                "members_with_full_coverage": 10,
+                "total_members": 10,
+            },
+        },
+        "layer2": {},
+        "layer3": {},
+    })
+
+    assert "SIGNAL DEGRADATION" not in prompt
+    assert "signal_accuracy_24h" not in prompt
+    assert "skipping low-conviction" not in prompt
+    assert "reducing position sizing" not in prompt
 
 
 @spec_claim(

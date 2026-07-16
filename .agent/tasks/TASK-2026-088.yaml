@@ -1,0 +1,38 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-088
+title: Preserve task verification continuity after rebase
+status: done
+packet_type: standard
+scope:
+  boundary: Git-tracked agent-workflow packet validation and task CLI only.
+  excluded: trading runtime, Risk, Execution, exchange adapters, Live authority, credentials,
+    gateway lifecycle, and any runtime-state mutation.
+intent: Allow completed task packets to retain verifiable evidence after a feature
+  branch is rebased, without weakening fabricated-evidence detection.
+acceptance:
+- A completed task that was rebased can record a fresh registered-command proof without
+  reopening or rewriting its terminal status.
+- The revalidation resets base_commit to the verified implementation HEAD and preserves
+  the requirement that the command actually succeeds.
+- CI still rejects a changed completed task whose evidence is absent and has not been
+  explicitly revalidated.
+- Focused workflow tests, executable specification, and strict range validation pass
+  in a shallow-clone reproduction of the P0 failure.
+base_commit: d4b31c6798868a75e8050fcb83e4d9aead55f04e
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 2eea3cc0c2abc07a40ad7b908ee8b308f3bbb5ca
+  run_at: '2026-07-16T03:28:25.344110Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-088.md
+updated_at: '2026-07-16T03:28:25.506183Z'

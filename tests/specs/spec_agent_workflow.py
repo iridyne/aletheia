@@ -127,3 +127,12 @@ def test_range_strict_evidence_validation_is_change_aware():
     source = Path(validate.__code__.co_filename).read_text(encoding="utf-8")
     assert "unchanged historical completed task evidence commit does not exist" in source
     assert "task_changed_in_range" in source
+
+
+@spec_claim(SpecClaim("AW-S12", _CONTRACT, "§invariants", "L2b", "Completed tasks may be explicitly revalidated only by executing a registered command."))
+def test_completed_task_revalidation_is_command_backed():
+    from aletheia.agent_workflow import revalidate_completed_task
+    source = Path(revalidate_completed_task.__code__.co_filename).read_text(encoding="utf-8")
+    assert "only completed tasks may be revalidated" in source
+    assert "subprocess.run(shlex.split(command)" in source
+    assert '"revalidated_at"' in source

@@ -2527,6 +2527,26 @@ CREATE INDEX IF NOT EXISTS idx_pi_decisions_created ON pi_decisions(created_at D
 CREATE INDEX IF NOT EXISTS idx_pi_decisions_opportunity ON pi_decisions(opportunity_id);
 """
 
+_OPERATOR_EVALUATION_EVENTS_DDL = """
+CREATE TABLE IF NOT EXISTS operator_evaluation_events (
+    id TEXT PRIMARY KEY,
+    dedup_key TEXT NOT NULL UNIQUE,
+    event_kind TEXT NOT NULL,
+    trigger TEXT NOT NULL,
+    pending_unresolved_total INTEGER NOT NULL,
+    pending_visible_count INTEGER NOT NULL,
+    pending_oldest_created_at TEXT,
+    queue_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    data_health_json TEXT NOT NULL DEFAULT '{}',
+    policy_epoch_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_operator_evaluation_events_created
+    ON operator_evaluation_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_operator_evaluation_events_kind
+    ON operator_evaluation_events(event_kind, created_at DESC);
+"""
+
 _CAPITAL_EVENTS_DDL = """
 CREATE TABLE IF NOT EXISTS capital_events (
     id TEXT PRIMARY KEY,
@@ -3020,6 +3040,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_STRATEGY_BACKTEST_DDL)
     db.executescript(_MARKET_REGIME_DDL)
     db.executescript(_PI_DECISIONS_DDL)
+    db.executescript(_OPERATOR_EVALUATION_EVENTS_DDL)
     db.executescript(_CAPITAL_EVENTS_DDL)
     db.executescript(_PAPER_ACCOUNT_EVENTS_DDL)
     db.executescript(_POSITION_CLOSE_EVENTS_DDL)

@@ -115,9 +115,11 @@ def test_operator_loop_converged_actions_not_emitted():
         "the TS operator-shell now (retire/demote via command registry, backfill via Auto "
         "Repair). Python operator_loop must keep only config tuning (owner decision 2026-06-28)."
     )
-    # Sanity: it must still emit the RETAINED config-tuning actions (not over-pruned).
-    assert "tighten_confidence" in emitted and "loosen_confidence" in emitted, (
-        "config-tuning actions were over-pruned — those are the ONE thing Python keeps"
+    # Aggregate outcome quality is diagnosis-only; the retained Python mutation is
+    # the bounded recovery from a previously automatic tightening.
+    assert "tighten_confidence" not in emitted
+    assert "loosen_confidence" in emitted and "notify_operator" in emitted, (
+        "Python must retain bounded confidence recovery and aggregate-quality diagnosis"
     )
 
 

@@ -160,7 +160,7 @@ and spec `AR-S08`.
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `universe_registry` | All known tradeable assets | symbol, exchange, asset_class, metadata (JSON) |
-| `universe_feature_snapshots` | Per-symbol feature vectors | symbol, rsi, bb_width, vol_ratio, taker_buy_ratio |
+| `universe_feature_snapshots` | Per-instrument feature vectors; identity is `asset_id → universe_registry` (not a denormalized symbol column) | asset_id, ts, rsi, bb_width, vol_ratio, taker_buy_ratio |
 | `universe_scanner_runs` | Scanner execution log | scanner_name, symbols_scanned, signals_emitted |
 | `universe_snapshots` | Universe composition snapshots | snapshot_id, created_at |
 | `universe_members` | Assets in a universe snapshot | snapshot_id, symbol, market_type, rank, score, scanner_direction |
@@ -240,11 +240,20 @@ production trading state and cannot authorize a parameter change.
 | `prediction_probability_snapshots` | Probability time series |
 | `prediction_market_claims` | Claims derived from predictions |
 
-### K. System Operator Decisions (1 table)
+### K. System Operator Decisions and Observations (2 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `pi_decisions` | Structured System Operator decisions | action, symbol, direction, **market_type**, conviction, reasoning, opportunity_id, **signal_source**, proposal_id, **proposal_status**, **proposal_reason**, learning_manifest_json, debate trace fields |
+| `operator_evaluation_events` | Append-only non-trading observations when no candidate can be evaluated | event_kind, trigger, pending counts/oldest time, compact queue/data-health JSON, policy_epoch_id, dedup_key |
+
+> `operator_evaluation_events` is intentionally not a `PiDecision`: a no-pending heartbeat has no
+> candidate identity, trade intent, proposal authority, or filter outcome. Its dedup key scopes
+> `event_kind + trigger + policy_epoch + queue snapshot` to a five-minute observation window so
+> repeated heartbeats remain visible without becoming unbounded duplicates. It stores no raw prompt,
+> provider exception, or credential and is consumed read-only by the skip-halt doctor probe. It is
+> operational telemetry, retained for 30 days by the normal cleanup job rather than treated as a
+> permanent trading fact.
 
 > `signal_source ∈ {'market_observer','serenity'}` (default `'market_observer'`) — discriminator for which table `opportunity_id` resolves against. Both `opportunities.id` (market_observer) and `serenity_opportunities.id` are bare `uuid4().hex[:12]` with no type tag, so the id alone is cross-table ambiguous. Stamped by `_attach_opportunity_context` (market_observer takes precedence). Phase 2 of Serenity Option A — see `docs/plans/serenity_execution_path.md` §3.2.
 
@@ -325,6 +334,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | UniverseForwardOutcome | universe_forward_outcomes | Universe |
 | UniversePolicy | universe_policies | Universe |
 | PiDecision | pi_decisions | System Operator |
+| OperatorEvaluationEvent | operator_evaluation_events | System Operator |
 
 ---
 

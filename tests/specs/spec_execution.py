@@ -379,7 +379,7 @@ def test_re_execute_already_executed_proposal_rejected(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "EX-B13", "execution_contract", "§5 durable execution lease", "L2b",
+        "EX-B17", "execution_contract", "§5 durable execution lease", "L2b",
         "A fresh durable Proposal execution lease rejects a concurrent wake before "
         "the execution pipeline or any broker side effect runs.",
         status="implemented",

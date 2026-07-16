@@ -355,6 +355,10 @@ class SystemAssessment:
     max_demo_notional: float = 200.0
     # Param drift state
     param_drift: dict[str, str] = field(default_factory=dict)
+    # Read-only evidence from the candidate queue.  This is deliberately
+    # separate from trade performance: a never-opened pipeline has no last fill
+    # timestamp and must still be able to recover from an automatic supply gate.
+    candidate_supply_drought: dict[str, Any] | None = None
 
 
 def build_system_assessment() -> SystemAssessment:
@@ -520,6 +524,20 @@ def build_system_assessment() -> SystemAssessment:
     # Param drift
     assessment.param_drift = {name: _get_param_drift(name) for name in PARAM_REGISTRY}
 
+    # Candidate supply liveness.  This consumes durable ranker telemetry only;
+    # it never invokes the ranker, PI, risk, or execution path.  In particular,
+    # a confidence-gate drought is different from poor trade outcomes: it means
+    # the downstream decision layers are receiving no work at all.
+    try:
+        from aletheia.agent_shell.operator_store import list_events
+        from aletheia.analytics.candidate_supply import evaluate_candidate_supply_drought
+
+        assessment.candidate_supply_drought = evaluate_candidate_supply_drought(
+            list_events(limit=20)
+        )
+    except Exception as e:
+        logger.debug("assessment: candidate supply state unavailable: %s", e)
+
     # Content health — the manager ingests its own content-quality diagnostics so it
     # supervises "is the AI output garbage", not just "is the loop alive". Cheap subset
     # of doctor (content probes only). Best-effort; never breaks the assessment.
@@ -534,6 +552,95 @@ def build_system_assessment() -> SystemAssessment:
         logger.debug("assessment: content health error: %s", e)
 
     return assessment
+
+
+def _auto_confidence_tightening_is_active() -> bool:
+    """Whether the current ``high`` setting was last set by the old auto loop.
+
+    A user-selected high threshold is a product control and B1.1 must not
+    silently override it.  The recovery applies only to the durable
+    ``operator_loop`` config patch that tightened medium -> high.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT before_state, after_state, message FROM audit_events "
+            "WHERE actor='operator_loop' AND event_type='config_patch' "
+            "AND entity_id='min_confidence_to_trade' "
+            "ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return False
+        return (
+            row["before_state"] == "medium"
+            and row["after_state"] == "high"
+            and str(row["message"] or "").startswith("tighten:")
+        )
+    except Exception as e:
+        logger.debug("assessment: confidence patch provenance unavailable: %s", e)
+        return False
+
+
+def _legacy_aggregate_confidence_tightening_is_active() -> bool:
+    """Whether B1's retired aggregate-health writer left the current gate high.
+
+    This is a one-way compatibility repair, not a general relaxation: only the
+    exact legacy audit rationale is eligible.  A later owner setting, another
+    controller, or an unproven historical patch remains untouched.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT before_state, after_state, message FROM audit_events "
+            "WHERE actor='operator_loop' AND event_type='config_patch' "
+            "AND entity_id='min_confidence_to_trade' "
+            "ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+        return bool(
+            row is not None
+            and row["before_state"] == "medium"
+            and row["after_state"] == "high"
+            and "signal win_rate degraded" in str(row["message"] or "")
+        )
+    except Exception as e:
+        logger.debug("assessment: legacy confidence patch provenance unavailable: %s", e)
+        return False
+
+
+def _confidence_recovery_reason(assessment: SystemAssessment) -> str | None:
+    """Return a bounded reason to restore automatic ``high`` to neutral.
+
+    The legacy fill-clock branch remains for an established trading history.
+    The B1.1 branch closes its blind spot: zero fills leave that clock ``None``,
+    so two consecutive ranker snapshots showing that the confidence gate is the
+    main exclusion reason become sufficient liveness evidence.  Recovery never
+    goes below the neutral ``medium`` tier and never relaxes guards or risk.
+    """
+    if (assessment.param_drift.get("min_confidence_to_trade") != "tightened"
+            or assessment.kill_switch_active):
+        return None
+    if _legacy_aggregate_confidence_tightening_is_active():
+        return (
+            "legacy aggregate signal-health patch: restoring retired automatic "
+            "min_confidence_to_trade tightening from high to neutral medium"
+        )
+    if (assessment.hours_since_last_trade is not None
+            and assessment.hours_since_last_trade >= 4):
+        return (
+            f"confidence drought: no fills in {assessment.hours_since_last_trade:.1f}h; "
+            "restoring min_confidence_to_trade from high to neutral medium"
+        )
+    drought = assessment.candidate_supply_drought or {}
+    if (drought.get("main_reason") == "confidence_below"
+            and _auto_confidence_tightening_is_active()):
+        return (
+            "candidate supply drought: confidence gate excluded the ranked working set "
+            f"for {int(drought.get('consecutive_cycles') or 0)} consecutive cycles; "
+            "restoring auto-tightened min_confidence_to_trade from high to neutral medium"
+        )
+    return None
 
 
 def _get_strategy_performance(strategy_id: str) -> dict | None:
@@ -1185,26 +1292,28 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     # (which TS does not do). assessment.underperforming_strategies is still surfaced in the
     # assessment for observability and for the TS shell's own evaluation.
 
-    # Stage 3: Parameter Tuning — TIGHTEN rules (Level 1, with escalation).
-    # Do not immediately undo drought recovery. Once fills have stopped for one
-    # Operator cadence, let confidence return to neutral while sizing remains the
-    # safety control for poor realized performance.
-    in_confidence_drought = (
-        assessment.hours_since_last_trade is not None
-        and assessment.hours_since_last_trade >= 4
-    )
+    # Stage 3: Aggregate signal quality is a diagnosis, never an automatic
+    # confidence mutation.  A low aggregate forward-outcome WR can be caused by
+    # sparse/legacy/mixed cohorts; using it to tighten the candidate threshold
+    # created the same all-skip feedback loop that B1 removes from the PI prompt.
     if (assessment.signal_status == "degraded"
             and assessment.signal_win_rate is not None
-            and assessment.signal_win_rate < 40
-            and not in_confidence_drought):
-        act = OperatorAction(
-            action_type="tighten_confidence",
+            and assessment.signal_win_rate < 40):
+        actions.append(OperatorAction(
+            action_type="notify_operator",
             level=1,
-            params={"delta": 5},
-            reason=f"signal win_rate degraded to {assessment.signal_win_rate:.1f}%",
-        )
-        act = _maybe_escalate(act, "min_confidence_to_trade", "tighten")
-        actions.append(act)
+            params={
+                "diagnosis_kind": "aggregate_signal_quality",
+                "message": (
+                    "Aggregate 24h signal quality is degraded; inspect candidate "
+                    "skip evidence and cohort coverage. No confidence/config change was made."
+                ),
+            },
+            reason=(
+                f"aggregate signal win_rate={assessment.signal_win_rate:.1f}% below 40%; "
+                "diagnosis only"
+            ),
+        ))
 
     if assessment.win_rate_7d is not None and assessment.win_rate_7d < 35:
         act = OperatorAction(
@@ -1222,17 +1331,25 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     # 2026-07-13: this one bounded recovery is Level 1 because the proposal path has
     # no consumer and left the loop permanently locked. Poor 7d performance does
     # not suppress candidate supply; reduce_sizing remains active independently.
-    if (assessment.hours_since_last_trade is not None
-            and assessment.hours_since_last_trade >= 4
-            and assessment.param_drift.get("min_confidence_to_trade") == "tightened"
-            and not assessment.kill_switch_active):
+    confidence_recovery_reason = _confidence_recovery_reason(assessment)
+    if confidence_recovery_reason:
+        params: dict[str, str] = {}
+        # Only the B1.1 supply branch changes candidate admission behavior.
+        # Keep the pre-existing fill-clock recovery byte-for-byte epoch-neutral
+        # so its deterministic simulation/replay contract remains intact.
+        if confidence_recovery_reason.startswith((
+                "candidate supply drought:", "legacy aggregate signal-health patch:")):
+            from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
+            policy_epoch_id = ensure_skip_remediation_policy_epoch()
+            params["policy_epoch_id"] = policy_epoch_id
+            confidence_recovery_reason = (
+                f"{confidence_recovery_reason}; policy_epoch={policy_epoch_id}"
+            )
         actions.append(OperatorAction(
             action_type="loosen_confidence",
             level=1,
-            params={},
-            reason=(f"confidence drought: no fills in "
-                    f"{assessment.hours_since_last_trade:.1f}h; restoring "
-                    "min_confidence_to_trade from high to neutral medium"),
+            params=params,
+            reason=confidence_recovery_reason,
         ))
 
     # Rule 5B: Winning streak + high PF -> restore sizing toward neutral.
@@ -1420,10 +1537,8 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
     # assert_confidence_liveness invariant: a decision to loosen that is prevented
     # by a transient guard must leave DB evidence so the invariant can distinguish
     # "legitimately blocked" from "loop silently failed to act".
-    if (assessment.hours_since_last_trade is not None
-            and assessment.hours_since_last_trade >= 4
-            and assessment.param_drift.get("min_confidence_to_trade") == "tightened"
-            and not assessment.kill_switch_active):
+    confidence_recovery_reason = _confidence_recovery_reason(assessment)
+    if confidence_recovery_reason:
         loosen_decided = any(a.action_type == "loosen_confidence" for a in actions)
         loosen_executed = any(
             r.get("action") == "loosen_confidence" and r.get("status") == "executed"
@@ -1440,7 +1555,7 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
                 param="min_confidence_to_trade",
                 before="high",
                 after="high",
-                reason=f"confidence drought {assessment.hours_since_last_trade:.1f}h: {blocker_reason}",
+                reason=f"{confidence_recovery_reason}: {blocker_reason}",
             )
 
     # Phase 4: Persist assessment as knowledge_item
@@ -1467,6 +1582,7 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
             "kill_switch": assessment.kill_switch_active,
             "open_positions": assessment.open_positions,
             "param_drift": assessment.param_drift,
+            "candidate_supply_drought": assessment.candidate_supply_drought,
             "content_health": assessment.content_health,
         },
         "actions_decided": len(actions),
