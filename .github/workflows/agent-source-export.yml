@@ -1,0 +1,21 @@
+name: Agent Source Export
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package source
+        run: tar --exclude=.git --exclude=aletheia-source.tar.gz -czf aletheia-source.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aletheia-source
+          path: aletheia-source.tar.gz
+          retention-days: 1
