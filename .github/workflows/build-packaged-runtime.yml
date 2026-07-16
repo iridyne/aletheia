@@ -12,6 +12,7 @@ on:
       - "scripts/release/pyinstaller_entry.py"
       - "tests/test_packaged_runtime_contract.py"
       - "docs/plans/packaged_tray_cli_runtime.md"
+      - "docs/operations/PACKAGED_RUNTIME.md"
       - ".github/workflows/build-packaged-runtime.yml"
       - "pyproject.toml"
       - "uv.lock"
@@ -42,7 +43,7 @@ jobs:
   macos-package:
     name: macOS self-contained CLI and tray
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 50
     steps:
       - name: Check out exact source
         uses: actions/checkout@v4
@@ -111,6 +112,8 @@ jobs:
           env -i HOME="$HOME" PATH="/usr/bin:/bin" ALETHEIA_PACKAGED=1 ALETHEIA_DATA_DIR="$ALETHEIA_DATA_DIR" "$core" gateway --help >/dev/null
 
       - name: Prove packaged gateway readiness and health
+        id: gateway_smoke
+        continue-on-error: true
         shell: bash
         env:
           ALETHEIA_PACKAGED: "1"
@@ -118,10 +121,10 @@ jobs:
         run: |
           set -euo pipefail
           core="${{ steps.payload.outputs.core }}"
-          "$core" gateway start
           cleanup() { "$core" gateway stop || true; }
           trap cleanup EXIT
-          for _ in $(seq 1 80); do
+          "$core" gateway start --no-browser
+          for _ in $(seq 1 160); do
             if curl --noproxy '*' --fail --silent http://127.0.0.1:8787/_infra/readyz >/dev/null; then break; fi
             sleep 0.25
           done
@@ -129,6 +132,26 @@ jobs:
           curl --noproxy '*' --fail --silent http://127.0.0.1:8787/api/health >/dev/null
           "$core" gateway stop
           trap - EXIT
+
+      - name: Capture packaged gateway diagnostics
+        if: always()
+        shell: bash
+        run: |
+          diagnostic="$RUNNER_TEMP/packaged-gateway-diagnostics"
+          mkdir -p "$diagnostic"
+          cp -R "$RUNNER_TEMP/aletheia-packaged-home/logs" "$diagnostic/logs" 2>/dev/null || true
+          cp "$RUNNER_TEMP/aletheia-packaged-home/gateway.pid" "$diagnostic/" 2>/dev/null || true
+          cp build/pyinstaller/work/aletheia-core/warn-aletheia-core.txt "$diagnostic/" 2>/dev/null || true
+          find "$diagnostic" -type f -maxdepth 3 -print || true
+
+      - name: Upload packaged gateway diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-gateway-diagnostics-${{ github.sha }}
+          path: ${{ runner.temp }}/packaged-gateway-diagnostics
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -144,6 +167,8 @@ jobs:
         run: cargo build --release --bins
 
       - name: Exercise stable CLI selection and tray smoke
+        id: host_smoke
+        continue-on-error: true
         shell: bash
         env:
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-host-data
@@ -171,6 +196,7 @@ jobs:
           "$cli" gateway stop || true
 
       - name: Stage installable host artifact
+        if: steps.host_smoke.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -186,6 +212,7 @@ jobs:
           tar -C "$PWD/dist" -czf "$PWD/dist/aletheia-packaged-host-macos.tar.gz" host-macos
 
       - name: Upload packaged host and runtime
+        if: steps.host_smoke.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: aletheia-packaged-host-${{ github.sha }}
@@ -197,3 +224,10 @@ jobs:
             native/aletheia-host/Cargo.lock
           if-no-files-found: error
           retention-days: 14
+
+      - name: Require packaged gateway and host smoke
+        if: always()
+        shell: bash
+        run: |
+          test "${{ steps.gateway_smoke.outcome }}" = "success"
+          test "${{ steps.host_smoke.outcome }}" = "success"
