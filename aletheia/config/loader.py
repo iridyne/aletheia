@@ -13,6 +13,7 @@ from aletheia.config.schema import AletheiaConfig
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _PREVIEW_MODE_ENV = "ALETHEIA_PREVIEW_MODE"
 _PREVIEW_DATA_DIR_ENV = "ALETHEIA_PREVIEW_DATA_DIR"
+_RUNTIME_DATA_DIR_ENV = "ALETHEIA_DATA_DIR"
 
 
 def is_preview_mode() -> bool:
@@ -37,7 +38,26 @@ def preview_data_dir() -> Path:
     return candidate
 
 
-DATA_DIR = preview_data_dir() if is_preview_mode() else _PROJECT_ROOT / "data"
+def runtime_data_dir() -> Path:
+    """Return the durable data root for the primary runtime.
+
+    Release bundles may live in immutable, versioned directories while sharing
+    one persistent state directory.  ``ALETHEIA_DATA_DIR`` must therefore be an
+    absolute path so its meaning cannot change with the process working directory.
+    Development checkouts remain backward-compatible and default to ``<repo>/data``.
+    Preview mode deliberately ignores this override and keeps its stricter local
+    isolation contract.
+    """
+    raw = os.environ.get(_RUNTIME_DATA_DIR_ENV, "").strip()
+    if not raw:
+        return (_PROJECT_ROOT / "data").resolve()
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        raise RuntimeError("ALETHEIA_DATA_DIR must be an absolute path")
+    return candidate.resolve()
+
+
+DATA_DIR = preview_data_dir() if is_preview_mode() else runtime_data_dir()
 CONFIG_PATH = DATA_DIR / "config.yaml"
 
 _DOTENV_LOADED = False
