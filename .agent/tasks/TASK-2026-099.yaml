@@ -20,7 +20,10 @@ acceptance:
   configured for auto-merge.
 - The audit-writer trust-boundary spec is recorded under its required dedicated command
   key.
-base_commit: 0f734a8fa6caadfddece04bccd3f99e350aaae6a
+base_commit: dd7235ae9051db4979e8b7096fb296ba309cecae
+base_commit_repaired_at: '2026-07-16T09:13:00Z'
+base_commit_repair_reason: The original temporary feature commit was removed after integration;
+  this reachable merge commit is the repository fact that introduced and completed the task.
 next_action:
   command_key: workflow_bootstrap
   reason: Task complete; run bootstrap and create or claim a new task before changing
@@ -48,4 +51,4 @@ verification:
   result: passed
   recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-099.md
-updated_at: '2026-07-16T07:54:23.299506Z'
+updated_at: '2026-07-16T09:13:00Z'
