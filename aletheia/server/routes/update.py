@@ -1,9 +1,8 @@
-"""Self-upgrade API routes — human-triggered code update (guide: not a daemon).
+"""Human-triggered software update routes.
 
-GET /api/update/status   — check whether an update is available (read-only fetch).
-POST /api/update/apply   — pull latest, reinstall deps if needed, signal restart.
-
-These call the same applier the CLI uses. They are NOT agent-callable tools.
+Development checkouts keep the explicit Git workflow. Installed packaged runtimes use
+signed immutable releases, durable progress state, and tray-controlled activation.
+These routes are not agent-callable tools.
 """
 
 from fastapi import APIRouter
@@ -19,11 +18,12 @@ router = APIRouter(prefix="/api/update", tags=["update"])
 def _reject_preview_update() -> None:
     if is_preview_mode():
         from fastapi import HTTPException
+
         raise HTTPException(
             403,
             detail={
                 "reason_code": "preview_update_blocked",
-                "message": "Code update control is unavailable in preview mode.",
+                "message": "Software update control is unavailable in preview mode.",
             },
         )
 
@@ -31,6 +31,13 @@ def _reject_preview_update() -> None:
 @router.get("/status")
 async def update_status():
     return applier.check_for_update()
+
+
+@router.get("/progress")
+async def update_progress():
+    """Read durable local update progress without repeating a network check."""
+
+    return applier.update_progress()
 
 
 class ApplyBody(BaseModel):
@@ -46,18 +53,55 @@ class ContinuityBody(BaseModel):
 async def update_apply(body: ApplyBody = ApplyBody()):
     _reject_preview_update()
     if not body.confirm:
-        return {"applied": False, "reason": "confirmation_required",
-                "message": "Set confirm=true to apply the update."}
-    write_audit({
-        "actor": "human", "source": "api", "event_type": "code_update_requested",
-        "entity_type": "system_update", "entity_id": "apply",
-        "message": "Human confirmed code update via API",
-    })
+        return {
+            "applied": False,
+            "accepted": False,
+            "reason": "confirmation_required",
+            "message": "Set confirm=true to apply the update.",
+        }
+    write_audit(
+        {
+            "actor": "human",
+            "source": "api",
+            "event_type": "code_update_requested",
+            "entity_type": "system_update",
+            "entity_id": "apply",
+            "message": "Human confirmed software update via API",
+        }
+    )
     return applier.apply_update()
+
+
+@router.post("/rollback")
+async def update_rollback(body: ApplyBody = ApplyBody()):
+    _reject_preview_update()
+    if not body.confirm:
+        return {
+            "accepted": False,
+            "reason": "confirmation_required",
+            "message": "Set confirm=true to request rollback.",
+        }
+    write_audit(
+        {
+            "actor": "human",
+            "source": "api",
+            "event_type": "packaged_update_rollback_requested",
+            "entity_type": "system_update",
+            "entity_id": "rollback",
+            "message": "Human confirmed packaged update rollback via API",
+        }
+    )
+    return applier.rollback_update()
 
 
 @router.post("/continuity")
 async def update_continuity(body: ContinuityBody = ContinuityBody()):
+    """Legacy development-checkout candidate materialisation.
+
+    Installed packages already stage their immutable candidate before the tray switch and
+    must not create a Git worktree candidate.
+    """
+
     _reject_preview_update()
     if not body.confirm:
         return {
@@ -66,6 +110,12 @@ async def update_continuity(body: ContinuityBody = ContinuityBody()):
             "message": "Set confirm=true to create a runtime continuity candidate.",
         }
     status = applier.check_for_update()
+    if status.get("mode") == "packaged":
+        return {
+            "created": False,
+            "reason": "packaged_candidate_managed_by_tray",
+            "message": "Installed releases are staged and promoted by Aletheia Tray.",
+        }
     if not status.get("ok"):
         return {"created": False, "reason": status.get("reason", "update_status_unavailable")}
     remote_commit = status.get("remote_commit") or status.get("current_commit") or "unknown"
@@ -89,14 +139,11 @@ async def update_continuity(body: ContinuityBody = ContinuityBody()):
             "update_status": status,
         }
     from aletheia.runtime_continuity.service import RuntimeContinuityService
-
-    # #82 fix: this update-driven candidate creation now honours the same kill switch
-    # as the operator routes — if runtime_continuity is disabled the write is rejected
-    # rather than silently succeeding. Owner sees "off" in Settings, we behave "off".
     from aletheia.config.loader import load_config as _load_cfg
-    _cfg = _load_cfg()
+
+    cfg = _load_cfg()
     candidate = RuntimeContinuityService(
-        enabled=_cfg.runtime.runtime_continuity_enabled,
+        enabled=cfg.runtime.runtime_continuity_enabled,
     ).prepare_candidate(
         actor="human",
         cause=body.cause,
@@ -114,9 +161,14 @@ async def update_continuity(body: ContinuityBody = ContinuityBody()):
             "artifact_path": artifact_path,
         },
     )
-    write_audit({
-        "actor": "human", "source": "api", "event_type": "runtime_candidate_created",
-        "entity_type": "runtime", "entity_id": candidate["runtime_id"],
-        "message": f"Runtime candidate created from update status ({remote_commit})",
-    })
+    write_audit(
+        {
+            "actor": "human",
+            "source": "api",
+            "event_type": "runtime_candidate_created",
+            "entity_type": "runtime",
+            "entity_id": candidate["runtime_id"],
+            "message": f"Runtime candidate created from update status ({remote_commit})",
+        }
+    )
     return {"created": True, "candidate": candidate, "update_status": status}
