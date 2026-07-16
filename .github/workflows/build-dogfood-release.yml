@@ -1,0 +1,139 @@
+name: Build Dogfood Release Bundle
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "aletheia/**"
+      - "frontend/**"
+      - "scripts/release/**"
+      - "scripts/runtime/**"
+      - "tests/test_release_bundle.py"
+      - "tests/test_release_data_dir.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/build-dogfood-release.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit SHA to package
+        required: true
+        default: master
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dogfood-bundle-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-bundle:
+    name: Windows modular-monolith bundle
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Resolve checked-out source SHA
+        id: source
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse HEAD).Trim()
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "short_sha=$($sha.Substring(0, 12))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked development dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked dashboard dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint dashboard
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Build dashboard into Python static package
+        working-directory: frontend
+        run: npm run build
+
+      - name: Verify release data and bundle contracts
+        run: uv run pytest tests/test_release_data_dir.py tests/test_release_bundle.py -q --tb=short
+
+      - name: Build deterministic release ZIP
+        shell: pwsh
+        run: >-
+          uv run python scripts/release/build_bundle.py
+          --output-dir dist
+          --git-sha "${{ steps.source.outputs.sha }}"
+          --warn-mib 60
+          --max-mib 100
+
+      - name: Verify bundle from a clean extracted directory
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem -Path dist -Filter "aletheia-dogfood-*.zip" | Select-Object -First 1
+          if (-not $archive) { throw "Dogfood bundle was not produced." }
+          $extractRoot = Join-Path $env:RUNNER_TEMP "aletheia-release-clean"
+          $dataRoot = Join-Path $env:RUNNER_TEMP "aletheia-release-data"
+          Remove-Item -Recurse -Force $extractRoot -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force $dataRoot -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $extractRoot
+          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+          $env:ALETHEIA_DATA_DIR = $dataRoot
+          Push-Location $extractRoot
+          try {
+            uv sync --locked --no-dev
+            uv run --no-sync python -c "from aletheia.config.loader import bootstrap, get_data_dir; bootstrap(); assert str(get_data_dir()) == r'$dataRoot'; print(get_data_dir())"
+            uv run --no-sync aletheia version
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Publish bundle size summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path dist/bundle-size.json) {
+            $summary = Get-Content dist/bundle-size.json | ConvertFrom-Json
+            "### Dogfood release bundle" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "- Archive: ``$($summary.archive)``" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "- Compressed: **$($summary.compressed_size_mib) MiB**" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "- Uncompressed: $($summary.uncompressed_size_mib) MiB" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "- Files: $($summary.file_count)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "- Soft / hard limits: $($summary.warn_mib) / $($summary.max_mib) MiB" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          }
+
+      - name: Upload immutable release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aletheia-dogfood-${{ steps.source.outputs.short_sha }}-win-x64
+          path: |
+            dist/aletheia-dogfood-*.zip
+            dist/aletheia-dogfood-*.zip.sha256
+            dist/bundle-size.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

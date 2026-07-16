@@ -1,0 +1,35 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-096
+title: Build modular monolith dogfood release bundle
+status: in_progress
+packet_type: standard
+scope:
+  boundary: External durable data-directory selection, deterministic Windows release
+    bundle construction, focused release tests, runtime launch/probe scripts, and a
+    GitHub Actions clean-install artifact gate.
+  excluded: Trading decisions, Risk, Execution, exchange adapters, Live authority,
+    credentials, scheduler behavior, database schema changes, UM790 automatic deployment,
+    release promotion, and runtime rollback orchestration.
+intent: Package the existing Python backend and compiled React dashboard as one immutable
+  single-machine dogfood artifact below 100 MiB while keeping all runtime state outside
+  the release directory.
+acceptance:
+- ALETHEIA_DATA_DIR selects an absolute durable state root for the primary runtime while
+  preview isolation remains unchanged and the repository data directory remains the default.
+- The bundle is produced from an explicit runtime whitelist and excludes tests, frontend
+  sources, Node modules, VCS metadata, caches, source maps, and runtime data.
+- The same source inputs and Git SHA produce byte-identical ZIP output.
+- CI compiles the dashboard, runs focused tests, builds the ZIP, extracts it into a clean
+  directory, installs locked production dependencies, and bootstraps against external data.
+- The compressed bundle warns above 60 MiB and fails closed above 100 MiB.
+- The bundle contains release manifest and SHA-256 verification metadata.
+base_commit: b97e9fd0cac4a6ed6716442f8d34436704808ca1
+next_action:
+  command_key: release_bundle
+  reason: Run the registered focused test command on agent/modular-monolith-release-final
+    and record real task evidence before completion.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-096.md
+updated_at: '2026-07-16T06:37:30Z'

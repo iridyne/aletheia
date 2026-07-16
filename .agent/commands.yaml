@@ -63,6 +63,9 @@ commands:
   frontend_build:
     command: cd frontend && npm run build
     purpose: Verify the dashboard honestly renders unavailable PnL and funding state.
+  release_bundle:
+    command: uv run pytest tests/test_release_data_dir.py tests/test_release_bundle.py -q --tb=short
+    purpose: Verify the external durable-data boundary, deterministic runtime-only bundle, and 100 MiB fail-closed size gate.
   doctor:
     command: uv run aletheia doctor
     purpose: Probe local runtime facts; never stored as Git state.
