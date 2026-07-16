@@ -1235,7 +1235,7 @@ def test_demo_daily_loss_uses_demo_capital_base(tmp_path, monkeypatch):
 
 
 @spec_claim(
-    SpecClaim("RE-B14", "risk_engine_contract", "§17.2 fail-closed", "L2b",
+    SpecClaim("RE-B19", "risk_engine_contract", "§17.2 fail-closed", "L2b",
               "When a risk-check helper raises internally, it returns a violation "
               "(fail-closed), never an empty list (fail-open). Covers the leverage, "
               "correlation, and lesson checks."),

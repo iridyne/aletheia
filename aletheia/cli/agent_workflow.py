@@ -59,7 +59,7 @@ def claim(task_id: str, holder: str = typer.Option(..., "--holder"), hours: int 
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1)
-    typer.echo(f"Claimed {task['id']} on {task['ownership']['branch']}.")
+    typer.echo(f"Claimed {task['id']} on the current branch.")
 
 @task_app.command("create")
 def create(

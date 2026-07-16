@@ -146,6 +146,19 @@ def test_claim_and_handoff_only_change_selected_task(tmp_path, monkeypatch):
     assert recovery_test(root)["recoverable"] is True
 
 
+def test_claim_cli_reports_success_without_yaml_ownership(tmp_path, monkeypatch):
+    root = _repo(tmp_path, monkeypatch)
+    path = root / ".agent/tasks/TASK-1.yaml"
+    task = yaml.safe_load(path.read_text(encoding="utf-8"))
+    task["status"] = "ready"
+    path.write_text(yaml.safe_dump(task), encoding="utf-8")
+    result = CliRunner().invoke(
+        workflow_app, ["task", "claim", "TASK-1", "--holder", "fresh-agent"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "Claimed TASK-1 on the current branch." in result.stdout
+
+
 def test_handoff_rejects_secret_like_text(tmp_path, monkeypatch):
     root = _repo(tmp_path, monkeypatch)
     import pytest

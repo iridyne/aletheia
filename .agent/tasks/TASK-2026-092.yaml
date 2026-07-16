@@ -1,0 +1,24 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-092
+title: Restore unique risk contract claim identifiers
+status: in_progress
+packet_type: standard
+scope:
+  boundary: Git-tracked workflow CLI and executable-spec metadata only.
+  excluded: Risk Engine behavior, trading runtime, Execution, exchange adapters,
+    Live authority, credentials, gateway lifecycle, and runtime-state mutation.
+intent: Repair duplicate executable-spec claim IDs so conformance validation is deterministic;
+  no Risk Engine behavior changes.
+acceptance:
+- Workflow task claim reports success without relying on removed YAML ownership metadata.
+- Each executable-spec claim ID is unique within its contract.
+- Focused workflow, conformance, Risk, and Execution specs pass without changing Risk Engine behavior.
+base_commit: 75045fce64ac409739426f414cc7ccb7fedd0ef6
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-092.md
+updated_at: '2026-07-16T03:34:37.508072Z'
