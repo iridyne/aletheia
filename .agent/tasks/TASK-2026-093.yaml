@@ -1,0 +1,30 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-093
+title: Consolidate remaining valuable branch patches
+status: in_progress
+packet_type: standard
+scope:
+  boundary: Branch consolidation plus the exact scheduler, startup-gate, operator-lifecycle,
+    and PI evidence patches selected from existing pull requests.
+  excluded: Risk, Execution, exchange adapters, Live authority, credentials, gateway
+    lifecycle, new trading capability, and unrelated runtime-state mutation.
+intent: Evaluate remaining independent PR patches on current origin/master, merge
+  only validated repairs, and retire redundant branches without weakening trading
+  or workflow invariants.
+acceptance:
+- Every remaining independent PR patch is classified as valuable, redundant, or obsolete
+  against current origin/master with explicit evidence.
+- Valuable repairs pass their focused regression commands on current origin/master before merge.
+- Redundant or obsolete PRs, remote branches, and clean Orca worktrees are retired without
+  discarding uncommitted files.
+- Local master is synchronized to origin/master with a clean Git workspace after preserving
+  its pre-existing uncommitted monitoring document.
+base_commit: 468d123bfa5ebfcd06f227d82d7205e2fb3ab4e0
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-093.md
+updated_at: '2026-07-16T04:26:11.194231Z'
