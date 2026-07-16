@@ -4,7 +4,12 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from scripts.release.build_bundle import build_bundle
+
+
+_UNIX_ONLY = pytest.mark.skipif(os.name == "nt", reason="requires Unix shell and symlink semantics")
 
 
 def _write(path: Path, content: str) -> None:
@@ -30,6 +35,7 @@ requires-python = ">=3.12"
     _write(root / runtime_source / "start-release.ps1", "Write-Output ok\n")
 
 
+@_UNIX_ONLY
 def test_installer_verifies_and_atomically_activates_release(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     _fake_repository(root)
@@ -73,6 +79,7 @@ def test_installer_verifies_and_atomically_activates_release(tmp_path: Path) -> 
     assert os.access(installed / "scripts/runtime/start-release.sh", os.X_OK)
 
 
+@_UNIX_ONLY
 def test_installer_fails_closed_on_checksum_mismatch(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     _fake_repository(root)
@@ -107,6 +114,7 @@ def test_installer_fails_closed_on_checksum_mismatch(tmp_path: Path) -> None:
     assert "SHA-256 does not match" in completed.stderr
 
 
+@_UNIX_ONLY
 def test_stable_launcher_requires_manifest_and_absolute_data_override(tmp_path: Path) -> None:
     release = tmp_path / "release"
     release.mkdir()
