@@ -1,6 +1,6 @@
 use aletheia_host::{
     gateway_healthy, gateway_ready, open_dashboard, run_gateway_action, run_payload,
-    wait_gateway_ready, HostPaths,
+    update, wait_gateway_ready, HostPaths,
 };
 use anyhow::{bail, Context, Result};
 use std::env;
@@ -20,6 +20,7 @@ use winit::window::WindowId;
 enum TrayState {
     Starting,
     Healthy,
+    Updating,
     Degraded,
     Stopped,
 }
@@ -29,6 +30,7 @@ impl TrayState {
         match self {
             Self::Starting => "Aletheia: starting",
             Self::Healthy => "Aletheia: running",
+            Self::Updating => "Aletheia: updating",
             Self::Degraded => "Aletheia: degraded",
             Self::Stopped => "Aletheia: stopped",
         }
@@ -38,7 +40,8 @@ impl TrayState {
         match self {
             Self::Starting => [48, 132, 255, 255],
             Self::Healthy => [40, 190, 95, 255],
-            Self::Degraded => [240, 160, 32, 255],
+            Self::Updating => [242, 190, 30, 255],
+            Self::Degraded => [230, 90, 60, 255],
             Self::Stopped => [130, 130, 130, 255],
         }
     }
@@ -103,6 +106,14 @@ fn restart_without_browser(paths: &HostPaths) -> Result<()> {
     Ok(())
 }
 
+fn stage_update(paths: &HostPaths) -> Result<bool> {
+    let status = run_payload(paths, &["__packaged_update_stage".into()])?;
+    if !status.success() {
+        bail!("signed update staging failed with status {status}");
+    }
+    Ok(update::has_pending_request(paths))
+}
+
 fn smoke_test(paths: &HostPaths) -> Result<()> {
     ensure_started_without_browser(paths)?;
     if !gateway_healthy() {
@@ -118,6 +129,8 @@ enum UserEvent {
     Tray(TrayIconEvent),
     RuntimeStartFinished(Result<(), String>),
     RuntimeRestartFinished(Result<(), String>),
+    UpdateStageFinished(Result<bool, String>),
+    UpdateTransactionFinished(Result<Option<update::UpdateTransactionResult>, String>),
 }
 
 struct TrayApplication {
@@ -126,10 +139,12 @@ struct TrayApplication {
     tray: Option<TrayIcon>,
     status_item: Option<MenuItem>,
     open_id: Option<MenuId>,
+    update_id: Option<MenuId>,
     restart_id: Option<MenuId>,
     stop_id: Option<MenuId>,
     quit_id: Option<MenuId>,
     state: TrayState,
+    update_in_progress: bool,
     next_poll: Instant,
 }
 
@@ -141,10 +156,12 @@ impl TrayApplication {
             tray: None,
             status_item: None,
             open_id: None,
+            update_id: None,
             restart_id: None,
             stop_id: None,
             quit_id: None,
             state: TrayState::Starting,
+            update_in_progress: false,
             next_poll: Instant::now(),
         }
     }
@@ -153,18 +170,22 @@ impl TrayApplication {
         let menu = Menu::new();
         let status_item = MenuItem::new(self.state.label(), false, None);
         let open_item = MenuItem::new("Open Aletheia", true, None);
+        let update_item = MenuItem::new("Check & Install Update", true, None);
         let restart_item = MenuItem::new("Restart Runtime", true, None);
         let stop_item = MenuItem::new("Stop Runtime", true, None);
         let quit_item = MenuItem::new("Quit Aletheia", true, None);
         menu.append(&status_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&open_item)?;
+        menu.append(&update_item)?;
+        menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&restart_item)?;
         menu.append(&stop_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&quit_item)?;
 
         self.open_id = Some(open_item.id().clone());
+        self.update_id = Some(update_item.id().clone());
         self.restart_id = Some(restart_item.id().clone());
         self.stop_id = Some(stop_item.id().clone());
         self.quit_id = Some(quit_item.id().clone());
@@ -216,18 +237,59 @@ impl TrayApplication {
         });
     }
 
+    fn spawn_update_stage(&mut self) {
+        if self.update_in_progress {
+            return;
+        }
+        self.update_in_progress = true;
+        self.set_state(TrayState::Updating);
+        let paths = self.paths.clone();
+        let proxy = self.proxy.clone();
+        thread::spawn(move || {
+            let result = stage_update(&paths).map_err(|error| format!("{error:#}"));
+            let _ = proxy.send_event(UserEvent::UpdateStageFinished(result));
+        });
+    }
+
+    fn spawn_update_transaction(&mut self) {
+        if self.update_in_progress {
+            return;
+        }
+        self.update_in_progress = true;
+        self.set_state(TrayState::Updating);
+        let paths = self.paths.clone();
+        let proxy = self.proxy.clone();
+        thread::spawn(move || {
+            let result = update::process_pending_update(&paths).map_err(|error| format!("{error:#}"));
+            let _ = proxy.send_event(UserEvent::UpdateTransactionFinished(result));
+        });
+    }
+
+    fn continue_update_transaction(&mut self) {
+        // Stage completion already owns the in-progress flag. Transfer ownership to the
+        // short activation worker without opening a window where polling can start it twice.
+        let paths = self.paths.clone();
+        let proxy = self.proxy.clone();
+        thread::spawn(move || {
+            let result = update::process_pending_update(&paths).map_err(|error| format!("{error:#}"));
+            let _ = proxy.send_event(UserEvent::UpdateTransactionFinished(result));
+        });
+    }
+
     fn handle_menu(&mut self, event: MenuEvent, event_loop: &ActiveEventLoop) {
         if self.open_id.as_ref() == Some(&event.id) {
             let _ = open_dashboard();
-        } else if self.restart_id.as_ref() == Some(&event.id) {
+        } else if self.update_id.as_ref() == Some(&event.id) {
+            self.spawn_update_stage();
+        } else if self.restart_id.as_ref() == Some(&event.id) && !self.update_in_progress {
             self.set_state(TrayState::Starting);
             self.spawn_restart();
-        } else if self.stop_id.as_ref() == Some(&event.id) {
+        } else if self.stop_id.as_ref() == Some(&event.id) && !self.update_in_progress {
             let paths = self.paths.clone();
             thread::spawn(move || {
                 let _ = run_gateway_action(&paths, "stop");
             });
-        } else if self.quit_id.as_ref() == Some(&event.id) {
+        } else if self.quit_id.as_ref() == Some(&event.id) && !self.update_in_progress {
             let _ = run_gateway_action(&self.paths, "stop");
             event_loop.exit();
         }
@@ -269,19 +331,51 @@ impl ApplicationHandler<UserEvent> for TrayApplication {
                 event_loop.exit();
                 return;
             }
-            self.spawn_start();
+            if update::has_pending_request(&self.paths) {
+                self.spawn_update_transaction();
+            } else {
+                self.spawn_start();
+            }
             self.next_poll = Instant::now() + Duration::from_secs(2);
             event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_poll));
         }
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
-            UserEvent::Menu(event) => self.handle_menu(event, event_loop),
+            UserEvent::Menu(event) => self.handle_menu(event, _event_loop),
             UserEvent::Tray(event) => self.handle_tray(event),
             UserEvent::RuntimeStartFinished(result) | UserEvent::RuntimeRestartFinished(result) => {
                 match result {
                     Ok(()) => self.set_state(observed_state()),
+                    Err(error) => {
+                        eprintln!("aletheia-tray: {error}");
+                        self.set_state(TrayState::Degraded);
+                    }
+                }
+            }
+            UserEvent::UpdateStageFinished(result) => match result {
+                Ok(true) => self.continue_update_transaction(),
+                Ok(false) => {
+                    self.update_in_progress = false;
+                    self.set_state(observed_state());
+                }
+                Err(error) => {
+                    eprintln!("aletheia-tray: {error}");
+                    self.update_in_progress = false;
+                    self.set_state(TrayState::Degraded);
+                }
+            },
+            UserEvent::UpdateTransactionFinished(result) => {
+                self.update_in_progress = false;
+                match result {
+                    Ok(Some(outcome)) => {
+                        if let Some(warning) = &outcome.resume_warning {
+                            eprintln!("aletheia-tray: {warning}");
+                        }
+                        self.set_state(observed_state());
+                    }
+                    Ok(None) => self.set_state(observed_state()),
                     Err(error) => {
                         eprintln!("aletheia-tray: {error}");
                         self.set_state(TrayState::Degraded);
@@ -293,7 +387,11 @@ impl ApplicationHandler<UserEvent> for TrayApplication {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if Instant::now() >= self.next_poll {
-            self.set_state(observed_state());
+            if !self.update_in_progress && update::has_pending_request(&self.paths) {
+                self.spawn_update_transaction();
+            } else if !self.update_in_progress {
+                self.set_state(observed_state());
+            }
             self.next_poll = Instant::now() + Duration::from_secs(2);
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_poll));
