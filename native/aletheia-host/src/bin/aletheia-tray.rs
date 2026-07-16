@@ -5,11 +5,16 @@ use aletheia_host::{
 use anyhow::{bail, Context, Result};
 use std::env;
 use std::process;
+use std::thread;
 use std::time::{Duration, Instant};
-use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIconBuilder};
-use winit::event::Event;
-use winit::event_loop::{ControlFlow, EventLoop};
+use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+use tray_icon::{
+    Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
+};
+use winit::application::ApplicationHandler;
+use winit::event::{StartCause, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::window::WindowId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TrayState {
@@ -107,6 +112,194 @@ fn smoke_test(paths: &HostPaths) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
+enum UserEvent {
+    Menu(MenuEvent),
+    Tray(TrayIconEvent),
+    RuntimeStartFinished(Result<(), String>),
+    RuntimeRestartFinished(Result<(), String>),
+}
+
+struct TrayApplication {
+    paths: HostPaths,
+    proxy: winit::event_loop::EventLoopProxy<UserEvent>,
+    tray: Option<TrayIcon>,
+    status_item: Option<MenuItem>,
+    open_id: Option<MenuId>,
+    restart_id: Option<MenuId>,
+    stop_id: Option<MenuId>,
+    quit_id: Option<MenuId>,
+    state: TrayState,
+    next_poll: Instant,
+}
+
+impl TrayApplication {
+    fn new(paths: HostPaths, proxy: winit::event_loop::EventLoopProxy<UserEvent>) -> Self {
+        Self {
+            paths,
+            proxy,
+            tray: None,
+            status_item: None,
+            open_id: None,
+            restart_id: None,
+            stop_id: None,
+            quit_id: None,
+            state: TrayState::Starting,
+            next_poll: Instant::now(),
+        }
+    }
+
+    fn create_tray(&mut self) -> Result<()> {
+        let menu = Menu::new();
+        let status_item = MenuItem::new(self.state.label(), false, None);
+        let open_item = MenuItem::new("Open Aletheia", true, None);
+        let restart_item = MenuItem::new("Restart Runtime", true, None);
+        let stop_item = MenuItem::new("Stop Runtime", true, None);
+        let quit_item = MenuItem::new("Quit Aletheia", true, None);
+        menu.append(&status_item)?;
+        menu.append(&PredefinedMenuItem::separator())?;
+        menu.append(&open_item)?;
+        menu.append(&restart_item)?;
+        menu.append(&stop_item)?;
+        menu.append(&PredefinedMenuItem::separator())?;
+        menu.append(&quit_item)?;
+
+        self.open_id = Some(open_item.id().clone());
+        self.restart_id = Some(restart_item.id().clone());
+        self.stop_id = Some(stop_item.id().clone());
+        self.quit_id = Some(quit_item.id().clone());
+        self.status_item = Some(status_item);
+        self.tray = Some(
+            TrayIconBuilder::new()
+                .with_menu(Box::new(menu))
+                .with_menu_on_left_click(false)
+                .with_menu_on_right_click(true)
+                .with_tooltip(self.state.label())
+                .with_icon(icon_for(self.state)?)
+                .build()
+                .context("create Aletheia tray icon")?,
+        );
+        Ok(())
+    }
+
+    fn set_state(&mut self, next: TrayState) {
+        if self.state == next {
+            return;
+        }
+        self.state = next;
+        if let Some(status_item) = &self.status_item {
+            status_item.set_text(next.label());
+        }
+        if let Some(tray) = &self.tray {
+            let _ = tray.set_tooltip(Some(next.label()));
+            if let Ok(icon) = icon_for(next) {
+                let _ = tray.set_icon(Some(icon));
+            }
+        }
+    }
+
+    fn spawn_start(&self) {
+        let paths = self.paths.clone();
+        let proxy = self.proxy.clone();
+        thread::spawn(move || {
+            let result = ensure_started_without_browser(&paths).map_err(|error| format!("{error:#}"));
+            let _ = proxy.send_event(UserEvent::RuntimeStartFinished(result));
+        });
+    }
+
+    fn spawn_restart(&self) {
+        let paths = self.paths.clone();
+        let proxy = self.proxy.clone();
+        thread::spawn(move || {
+            let result = restart_without_browser(&paths).map_err(|error| format!("{error:#}"));
+            let _ = proxy.send_event(UserEvent::RuntimeRestartFinished(result));
+        });
+    }
+
+    fn handle_menu(&mut self, event: MenuEvent, event_loop: &ActiveEventLoop) {
+        if self.open_id.as_ref() == Some(&event.id) {
+            let _ = open_dashboard();
+        } else if self.restart_id.as_ref() == Some(&event.id) {
+            self.set_state(TrayState::Starting);
+            self.spawn_restart();
+        } else if self.stop_id.as_ref() == Some(&event.id) {
+            let paths = self.paths.clone();
+            thread::spawn(move || {
+                let _ = run_gateway_action(&paths, "stop");
+            });
+        } else if self.quit_id.as_ref() == Some(&event.id) {
+            let _ = run_gateway_action(&self.paths, "stop");
+            event_loop.exit();
+        }
+    }
+
+    fn handle_tray(&self, event: TrayIconEvent) {
+        match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            }
+            | TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => {
+                let _ = open_dashboard();
+            }
+            _ => {}
+        }
+    }
+}
+
+impl ApplicationHandler<UserEvent> for TrayApplication {
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+
+    fn window_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        _event: WindowEvent,
+    ) {
+    }
+
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
+        if cause == StartCause::Init {
+            if let Err(error) = self.create_tray() {
+                eprintln!("aletheia-tray: {error:#}");
+                event_loop.exit();
+                return;
+            }
+            self.spawn_start();
+            self.next_poll = Instant::now() + Duration::from_secs(2);
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_poll));
+        }
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::Menu(event) => self.handle_menu(event, event_loop),
+            UserEvent::Tray(event) => self.handle_tray(event),
+            UserEvent::RuntimeStartFinished(result) | UserEvent::RuntimeRestartFinished(result) => {
+                match result {
+                    Ok(()) => self.set_state(observed_state()),
+                    Err(error) => {
+                        eprintln!("aletheia-tray: {error}");
+                        self.set_state(TrayState::Degraded);
+                    }
+                }
+            }
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if Instant::now() >= self.next_poll {
+            self.set_state(observed_state());
+            self.next_poll = Instant::now() + Duration::from_secs(2);
+        }
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_poll));
+    }
+}
+
 fn real_main() -> Result<()> {
     let paths = HostPaths::discover()?;
     paths.ensure()?;
@@ -114,70 +307,22 @@ fn real_main() -> Result<()> {
         return smoke_test(&paths);
     }
 
-    let event_loop = EventLoop::new().context("create tray event loop")?;
-    let menu = Menu::new();
-    let status_item = MenuItem::new(TrayState::Starting.label(), false, None);
-    let open_item = MenuItem::new("Open Aletheia", true, None);
-    let restart_item = MenuItem::new("Restart Runtime", true, None);
-    let stop_item = MenuItem::new("Stop Runtime", true, None);
-    let quit_item = MenuItem::new("Quit Aletheia", true, None);
-    menu.append(&status_item)?;
-    menu.append(&PredefinedMenuItem::separator())?;
-    menu.append(&open_item)?;
-    menu.append(&restart_item)?;
-    menu.append(&stop_item)?;
-    menu.append(&PredefinedMenuItem::separator())?;
-    menu.append(&quit_item)?;
-
-    let mut state = TrayState::Starting;
-    let tray = TrayIconBuilder::new()
-        .with_menu(Box::new(menu))
-        .with_tooltip(state.label())
-        .with_icon(icon_for(state)?)
+    let event_loop = EventLoop::<UserEvent>::with_user_event()
         .build()
-        .context("create Aletheia tray icon")?;
+        .context("create tray event loop")?;
+    let proxy = event_loop.create_proxy();
+    let menu_proxy = proxy.clone();
+    MenuEvent::set_event_handler(Some(move |event| {
+        let _ = menu_proxy.send_event(UserEvent::Menu(event));
+    }));
+    let tray_proxy = proxy.clone();
+    TrayIconEvent::set_event_handler(Some(move |event| {
+        let _ = tray_proxy.send_event(UserEvent::Tray(event));
+    }));
 
-    let _ = ensure_started_without_browser(&paths);
-    let menu_events = MenuEvent::receiver();
-    let mut next_poll = Instant::now();
-
+    let mut app = TrayApplication::new(paths, proxy);
     event_loop
-        .run(move |event, event_loop| {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(next_poll));
-
-            while let Ok(menu_event) = menu_events.try_recv() {
-                if menu_event.id == open_item.id() {
-                    let _ = open_dashboard();
-                } else if menu_event.id == restart_item.id() {
-                    state = TrayState::Starting;
-                    status_item.set_text(state.label());
-                    let _ = tray.set_tooltip(Some(state.label()));
-                    if let Ok(icon) = icon_for(state) {
-                        let _ = tray.set_icon(Some(icon));
-                    }
-                    let _ = restart_without_browser(&paths);
-                } else if menu_event.id == stop_item.id() {
-                    let _ = run_gateway_action(&paths, "stop");
-                } else if menu_event.id == quit_item.id() {
-                    let _ = run_gateway_action(&paths, "stop");
-                    event_loop.exit();
-                }
-            }
-
-            if matches!(event, Event::AboutToWait) && Instant::now() >= next_poll {
-                let observed = observed_state();
-                if observed != state {
-                    state = observed;
-                    status_item.set_text(state.label());
-                    let _ = tray.set_tooltip(Some(state.label()));
-                    if let Ok(icon) = icon_for(state) {
-                        let _ = tray.set_icon(Some(icon));
-                    }
-                }
-                next_poll = Instant::now() + Duration::from_secs(2);
-                event_loop.set_control_flow(ControlFlow::WaitUntil(next_poll));
-            }
-        })
+        .run_app(&mut app)
         .context("run Aletheia tray event loop")?;
     Ok(())
 }
