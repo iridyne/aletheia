@@ -52,6 +52,16 @@ async def set_autostart(req: AutostartRequest):
         result = autostart.enable(source="api")
     else:
         result = autostart.disable(source="api")
+    if result.get("ok"):
+        # Persist user intent so _auto_register_watchdog respects the decision on
+        # subsequent 'gateway start' calls — prevents silent re-registration after disable.
+        from aletheia.config.loader import load_config, save_config
+        cfg = load_config()
+        cfg.runtime.autostart_on_start = req.enabled
+        await asyncio.get_event_loop().run_in_executor(None, save_config, cfg)
+        if not req.enabled:
+            from aletheia.gateway.pidfile import is_running
+            result = {**result, "gateway_still_running": is_running()}
     write_audit({
         "actor": "human", "source": "api", "event_type": "autostart_changed",
         "entity_type": "gateway_autostart", "entity_id": "global",

@@ -744,6 +744,27 @@ def test_lifecycle_auto_registers_watchdog_on_macos(monkeypatch):
     assert calls == ["auto"]
 
 
+def test_lifecycle_skips_auto_register_when_user_disabled(monkeypatch):
+    """_auto_register_watchdog must NOT re-register if the user explicitly ran
+    disable-autostart (autostart_on_start=False).  This is the root-cause fix for
+    the bug where 'gateway start' silently reversed a user's disable decision."""
+    from aletheia.gateway import autostart, lifecycle
+
+    cfg = SimpleNamespace(runtime=SimpleNamespace(autostart_on_start=False))
+    monkeypatch.setattr(autostart, "is_supported_platform", lambda: True)
+    monkeypatch.setattr(autostart, "status", lambda: {"supported": True, "enabled": False})
+    calls: list[str] = []
+    monkeypatch.setattr(
+        autostart,
+        "enable",
+        lambda source="api": calls.append(source) or {"ok": True, "enabled": True},
+    )
+
+    lifecycle._auto_register_watchdog(cfg)
+
+    assert calls == [], "enable() must not be called when user explicitly disabled autostart"
+
+
 def test_settings_distinguishes_loaded_from_verified_watchdog():
     source = Path("frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
     assert "macOS launchd" in source
