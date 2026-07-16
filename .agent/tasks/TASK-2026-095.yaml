@@ -1,0 +1,29 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-095
+title: Harden CI reliability gates
+status: in_progress
+packet_type: standard
+scope:
+  boundary: GitHub Actions workflow semantics and focused CI contract tests for
+    existing Operator Shell, active-paper, Windows runtime, and full-regression surfaces.
+  excluded: Production Risk or Execution behavior, exchange adapters, Live authority,
+    credentials, runtime state, new trading capability, and release packaging.
+intent: Integrate the independently prepared CI reliability patch on current master
+  while resolving its stale task-packet identity.
+acceptance:
+- Operator Shell test/build, active-paper execution contracts, and Windows runtime
+  smoke tests are independent non-optional CI jobs.
+- Master push validation cannot be cancelled by a later master push, while superseded
+  PR runs remain cancellable.
+- The manual full regression has its own realistic timeout and artifact.
+- CI workflow contract tests and the non-skipping execution proof pass on current master.
+- The stale TASK-2026-094 packet from the source branch is not imported.
+base_commit: 69717bc2cbad9f834d112874bac015c93a77f869
+next_action:
+  command_key: workflow_tests
+  reason: Claim the task and define the first focused verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-095.md
+updated_at: '2026-07-16T05:18:59.201162Z'
