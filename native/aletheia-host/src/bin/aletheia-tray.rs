@@ -1,6 +1,6 @@
 use aletheia_host::{
-    gateway_healthy, gateway_ready, open_dashboard, run_gateway_action, run_payload, update,
-    wait_gateway_ready, HostPaths,
+    ensure_bootstrapped, gateway_healthy, gateway_ready, open_dashboard, run_gateway_action,
+    run_payload, update, wait_gateway_ready, HostPaths,
 };
 use anyhow::{bail, Context, Result};
 use std::env;
@@ -404,6 +404,7 @@ impl ApplicationHandler<UserEvent> for TrayApplication {
 
 fn real_main() -> Result<()> {
     let paths = HostPaths::discover()?;
+    ensure_bootstrapped(&paths)?;
     paths.ensure()?;
     if env::args().any(|arg| arg == "--smoke-test") {
         return smoke_test(&paths);
