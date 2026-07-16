@@ -18,6 +18,10 @@ import sys
 from uuid import uuid4
 
 from aletheia.update import packaged
+from aletheia.update.package_integrity import (
+    iter_payload_entries,
+    validate_filesystem_symlink,
+)
 
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 
@@ -87,12 +91,16 @@ def _validate_selection(path: Path) -> dict:
     return selection
 
 
-def _reject_links(root: Path) -> None:
+def _validate_links(root: Path) -> None:
     if root.is_symlink():
         raise packaged.PackagedUpdateError("bootstrap_source_symlink", str(root))
-    for path in root.rglob("*"):
+    for path in iter_payload_entries(root):
         if path.is_symlink():
-            raise packaged.PackagedUpdateError("bootstrap_source_symlink", str(path))
+            try:
+                validate_filesystem_symlink(root, path)
+            except Exception as exc:
+                reason = getattr(exc, "reason", "bootstrap_source_symlink_invalid")
+                raise packaged.PackagedUpdateError(reason, str(exc)) from exc
 
 
 def install_bootstrap_runtime(
@@ -123,7 +131,7 @@ def install_bootstrap_runtime(
         source_root = raw_source.resolve()
         if not source_root.is_dir():
             raise packaged.PackagedUpdateError("bootstrap_source_missing", str(source_root))
-        _reject_links(source_root)
+        _validate_links(source_root)
         manifest = packaged._read_json(source_root / "release-manifest.json")  # noqa: SLF001
         version = str(manifest.get("version") or "").strip()
         git_sha = str(manifest.get("git_sha") or "").strip()
@@ -141,7 +149,7 @@ def install_bootstrap_runtime(
         if destination.is_symlink():
             raise packaged.PackagedUpdateError("bootstrap_destination_symlink")
         if destination.exists():
-            _reject_links(destination)
+            _validate_links(destination)
             packaged._validate_release_dir(  # noqa: SLF001
                 destination,
                 expected_release_id=release_id,
@@ -150,8 +158,8 @@ def install_bootstrap_runtime(
         else:
             staging = paths["releases"] / f".bootstrap-{uuid4().hex}"
             try:
-                shutil.copytree(source_root, staging, symlinks=False)
-                _reject_links(staging)
+                shutil.copytree(source_root, staging, symlinks=True)
+                _validate_links(staging)
                 packaged._validate_release_dir(  # noqa: SLF001
                     staging,
                     expected_release_id=release_id,
