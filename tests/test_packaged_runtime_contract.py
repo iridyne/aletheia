@@ -20,8 +20,6 @@ def _builder_module():
     spec = importlib.util.spec_from_file_location("build_packaged_runtime", BUILDER_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    # Python 3.12 dataclasses resolve their owning module through sys.modules while
-    # decorating classes. Mirror the normal import machinery before exec_module.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
@@ -76,6 +74,57 @@ def test_packaged_runtime_manifest_and_archive_are_deterministic(tmp_path):
         names = archive.getnames()
     assert any(name.endswith("/release-manifest.json") for name in names)
     assert not any("/.git/" in name or "/tests/" in name or "/.aletheia/" in name for name in names)
+
+
+def test_packaged_runtime_preserves_safe_internal_symlinks(tmp_path):
+    if os.name == "nt" or not hasattr(os, "symlink"):
+        pytest.skip("POSIX symlink contract")
+    builder = _builder_module()
+    payload = _fake_payload(tmp_path / "input")
+    link = payload / "_internal" / "runtime-link.dat"
+    try:
+        link.symlink_to("runtime.dat")
+    except OSError:
+        pytest.skip("symlink creation is not permitted")
+
+    result = builder.package_existing_payload(
+        payload,
+        tmp_path / "output",
+        git_sha="c" * 40,
+        version="0.5.0",
+        target=builder.platform_id(),
+    )
+    manifest = json.loads(result.manifest.read_text(encoding="utf-8"))
+    link_entry = next(item for item in manifest["files"] if item["path"] == "_internal/runtime-link.dat")
+    assert link_entry["type"] == "symlink"
+    assert link_entry["target"] == "runtime.dat"
+
+    with tarfile.open(result.archive, "r:gz") as archive:
+        member = archive.getmember(f"{payload.name}/_internal/runtime-link.dat")
+        assert member.issym()
+        assert member.linkname == "runtime.dat"
+
+
+def test_packaged_runtime_rejects_escaping_symlink(tmp_path):
+    if os.name == "nt" or not hasattr(os, "symlink"):
+        pytest.skip("POSIX symlink contract")
+    builder = _builder_module()
+    payload = _fake_payload(tmp_path / "input")
+    outside = tmp_path / "outside.dat"
+    outside.write_bytes(b"outside")
+    try:
+        (payload / "_internal" / "outside-link.dat").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation is not permitted")
+
+    with pytest.raises(RuntimeError, match="outside-link"):
+        builder.package_existing_payload(
+            payload,
+            tmp_path / "output",
+            git_sha="d" * 40,
+            version="0.5.0",
+            target=builder.platform_id(),
+        )
 
 
 def test_packaged_runtime_size_limit_fails_closed(tmp_path):
