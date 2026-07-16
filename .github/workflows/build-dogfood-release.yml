@@ -29,6 +29,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  runtime-home-contract:
+    name: Runtime home (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Verify per-user runtime-home contract
+        run: uv run pytest tests/test_release_data_dir.py tests/test_runtime_home_migration.py tests/test_dev_preview.py -q --tb=short
+
   build-bundle:
     name: Windows modular-monolith bundle
     runs-on: windows-latest
@@ -96,16 +122,24 @@ jobs:
           $archive = Get-ChildItem -Path dist -Filter "aletheia-dogfood-*.zip" | Select-Object -First 1
           if (-not $archive) { throw "Dogfood bundle was not produced." }
           $extractRoot = Join-Path $env:RUNNER_TEMP "aletheia-release-clean"
-          $dataRoot = Join-Path $env:RUNNER_TEMP "aletheia-release-data"
+          $userRoot = Join-Path $env:RUNNER_TEMP "aletheia-release-user"
+          $defaultDataRoot = Join-Path $userRoot ".aletheia"
+          $overrideDataRoot = Join-Path $env:RUNNER_TEMP "aletheia-release-override"
           Remove-Item -Recurse -Force $extractRoot -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force $dataRoot -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force $userRoot -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force $overrideDataRoot -ErrorAction SilentlyContinue
           Expand-Archive -LiteralPath $archive.FullName -DestinationPath $extractRoot
-          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
-          $env:ALETHEIA_DATA_DIR = $dataRoot
+          New-Item -ItemType Directory -Force -Path $userRoot | Out-Null
+          New-Item -ItemType Directory -Force -Path $overrideDataRoot | Out-Null
+          $env:HOME = $userRoot
+          $env:USERPROFILE = $userRoot
+          Remove-Item Env:ALETHEIA_DATA_DIR -ErrorAction SilentlyContinue
           Push-Location $extractRoot
           try {
             uv sync --locked --no-dev
-            uv run --no-sync python -c "from aletheia.config.loader import bootstrap, get_data_dir; bootstrap(); assert str(get_data_dir()) == r'$dataRoot'; print(get_data_dir())"
+            uv run --no-sync python -c "from aletheia.config.loader import bootstrap, get_data_dir; bootstrap(); assert str(get_data_dir()) == r'$defaultDataRoot'; print(get_data_dir())"
+            $env:ALETHEIA_DATA_DIR = $overrideDataRoot
+            uv run --no-sync python -c "from aletheia.config.loader import bootstrap, get_data_dir; bootstrap(); assert str(get_data_dir()) == r'$overrideDataRoot'; print(get_data_dir())"
             uv run --no-sync aletheia version
           }
           finally {

@@ -1,6 +1,6 @@
 """Focused regressions for B7-mini honesty batch (#58, #65, #87).
 
-- #58: backup omitted data/logs/audit.jsonl (the hash-chained audit log).
+- #58: backup omitted runtime-home logs/audit.jsonl (the hash-chained audit log).
        A restore of the archive couldn't verify audit integrity because the
        file itself was gone.
 - #65: /trades/export claimed tax/PnL in its docstring but returned rows from
@@ -45,7 +45,7 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# #58 — backup now includes data/logs/ (audit.jsonl)
+# #58 — backup now includes runtime-home logs/ (audit.jsonl)
 # ---------------------------------------------------------------------------
 
 

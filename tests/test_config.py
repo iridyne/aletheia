@@ -112,7 +112,7 @@ def test_fresh_config_does_not_gate_startup_on_llm():
 
 
 def test_bootstrap_seeded_config_stays_blank(tmp_path):
-    """The initial data/config.yaml written on first launch reflects the blank
+    """The initial runtime-home config.yaml written on first launch reflects the blank
     defaults — no phantom localhost:8000/8001 providers on disk."""
     config_file = tmp_path / "config.yaml"
     data_dir = tmp_path

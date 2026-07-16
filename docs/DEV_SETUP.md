@@ -121,10 +121,10 @@ Body 写**根因 + 策略 + 逐文件改动**（见 feedback-detailed-commit-mes
 
 ## 环境变量 / 配置
 
-运行时配置通过 `data/config.yaml` 管理（gitignored，通过 Web UI 修改）。
+运行时配置通过当前用户的 `~/.aletheia/config.yaml` 管理（仓库外，通过 Web UI 修改）。
 
 新增 config 字段：
 1. 在 `aletheia/config/schema.py` 加字段
 2. 同步在前端 Settings 页面加控件（Config ↔ UI 铁律）
 
-**不得**直接编辑 `data/config.yaml`——用 Web UI 或 API。
+**不得**直接编辑 `~/.aletheia/config.yaml`——用 Web UI 或 API。

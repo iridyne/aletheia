@@ -134,11 +134,13 @@ def check_database() -> PreflightCheck:
         db.execute("SELECT 1").fetchone()
         return PreflightCheck("database", "pass", "Database accessible")
     except Exception as e:
+        from aletheia.config.loader import get_data_dir
+
         return PreflightCheck(
             "database",
             "fail",
             f"Database connection failed: {e}",
-            remedy="Check data/app.db permissions and disk space. Run: uv run aletheia doctor",
+            remedy=f"Check {get_data_dir() / 'app.db'} permissions and disk space. Run: uv run aletheia doctor",
         )
 
 
@@ -153,11 +155,13 @@ def check_config() -> PreflightCheck:
             raise ValueError("app.dashboard_port not set")
         return PreflightCheck("config", "pass", "Configuration valid")
     except Exception as e:
+        from aletheia.config.loader import get_data_dir
+
         return PreflightCheck(
             "config",
             "fail",
             f"Configuration load failed: {e}",
-            remedy="Check data/config.yaml syntax. Run: uv run aletheia doctor",
+            remedy=f"Check {get_data_dir() / 'config.yaml'} syntax. Run: uv run aletheia doctor",
         )
 
 

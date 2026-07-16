@@ -129,7 +129,7 @@ class BackupService:
                         file_count += 1
                         total_bytes += f.stat().st_size
 
-            # #58 fix: copy data/logs/ (contains audit.jsonl, the hash-chained
+            # #58 fix: copy runtime-home logs/ (contains audit.jsonl, the hash-chained
             # append-only audit log). Backup previously only captured app.db +
             # config + events + artifacts — restoring from that omitted the entire
             # audit chain, so a fresh restore couldn't verify the audit-integrity

@@ -49,7 +49,9 @@ def test_strategy_records_ddl_missing_kpi_columns():
     in Round 2 the test must be updated (forcing a deliberate change).
     """
     import sqlite3
-    conn = sqlite3.connect(f"{_project_root()}/data/app.db")
+    from aletheia.storage.sqlite import db_path
+
+    conn = sqlite3.connect(db_path())
     cols = [r[1] for r in conn.execute("PRAGMA table_info(strategy_records)")]
     conn.close()
     assert "win_rate" not in cols

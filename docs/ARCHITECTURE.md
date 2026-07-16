@@ -10,7 +10,7 @@
 |-------|-----------|
 | 语言 | Python 3.12（后端）/ TypeScript + React 18（前端）|
 | Web 框架 | FastAPI + uvicorn（`--loop none` 强制，防 IOCP 冻结）|
-| 数据库 | SQLite（WAL 模式，`busy_timeout=10s`，单文件 `data/app.db`）|
+| 数据库 | SQLite（WAL 模式，`busy_timeout=10s`，单文件 `~/.aletheia/app.db`）|
 | 包管理 | `uv`（禁用 pip/poetry）|
 | 前端构建 | Vite + React（产物 `aletheia/dashboard_static/`，gitignored）|
 | 交易所接入 | CCXT（统一接口，三家：Bitget / Binance / OKX）|

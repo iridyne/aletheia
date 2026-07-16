@@ -43,7 +43,7 @@ class _JsonlErrorWriter:
 
 
 class JsonlErrorMirror(logging.Handler):
-    """Mirror ERROR+ records into data/logs/errors.jsonl (structured)."""
+    """Mirror ERROR+ records into runtime-home logs/errors.jsonl (structured)."""
 
     def emit(self, record):
         try:

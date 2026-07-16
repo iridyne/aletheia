@@ -1,12 +1,41 @@
 """Runtime continuity CLI: `aletheia runtime ...`."""
 
 import json
+from pathlib import Path
 
 import typer
 
 from aletheia.runtime_continuity.service import RuntimeContinuityService, RuntimeTransitionError
 
 runtime_app = typer.Typer(no_args_is_help=True)
+
+
+@runtime_app.command("migrate-home")
+def migrate_home(
+    source: Path = typer.Option(..., "--from", exists=True, file_okay=False, resolve_path=True),
+    target: Path | None = typer.Option(None, "--target", file_okay=False, resolve_path=True),
+    apply: bool = typer.Option(False, "--apply", help="Perform the migration; default is dry-run."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the migration plan without writing."),
+):
+    """Copy verified legacy runtime state into the per-user runtime home."""
+    from aletheia.runtime_home_migration import (
+        RuntimeHomeMigrationError,
+        apply_migration,
+        build_plan,
+    )
+    from aletheia.runtime_paths import default_runtime_home
+
+    if apply and dry_run:
+        raise typer.BadParameter("choose either --apply or --dry-run")
+    destination = (target or default_runtime_home()).expanduser().resolve()
+    try:
+        plan = apply_migration(source, destination) if apply else build_plan(source, destination)
+    except RuntimeHomeMigrationError as exc:
+        typer.echo(f"Runtime-home migration rejected: {exc}")
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(plan.to_dict(), indent=2, ensure_ascii=False))
+    if not apply:
+        typer.echo("Dry-run only. Stop the gateway and repeat with --apply to migrate.")
 
 
 def _service() -> RuntimeContinuityService:

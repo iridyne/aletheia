@@ -10,8 +10,8 @@ git **不**同步**运行态事实**——这些都是每台机器本地的、�
 | 运行态事实 | 存在哪 | 是否进 git |
 |---|---|---|
 | gateway 进程是否在跑 | OS 进程表 / pidfile | ✗ 本地 |
-| `app.db`（orders/fills/opportunities）| `data/app.db` | ✗ gitignored |
-| `config.yaml`（开关 / kill_switch）| `data/config.yaml` | ✗ gitignored |
+| `app.db`（orders/fills/opportunities）| `~/.aletheia/app.db` | ✗ 本地用户状态 |
+| `config.yaml`（开关 / kill_switch）| `~/.aletheia/config.yaml` | ✗ 本地用户状态 |
 | secrets（凭证）| Windows 凭据管理器 / 加密文件 | ✗ 本地 |
 | 观察期跑了多久 | 由上面派生 | ✗ 本地 |
 

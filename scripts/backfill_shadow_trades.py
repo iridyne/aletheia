@@ -12,7 +12,7 @@ It reuses the exact same logic as the periodic shadow_resolver scheduler job
 (aletheia.analytics.shadow_trades.resolve_stale_shadows) so the one-time backfill
 and the forward catch-up can never diverge.
 
-DATA op — run from the repo root so get_db() targets the production data/app.db,
+DATA op — set ALETHEIA_DATA_DIR explicitly when targeting a non-default runtime home;
 NOT a worktree's empty data dir:
 
     uv run python scripts/backfill_shadow_trades.py --dry-run   # inspect first

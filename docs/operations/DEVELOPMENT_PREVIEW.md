@@ -9,7 +9,7 @@ preview platform and does not create a second production runtime.
 | Need | Start | Open | Safety boundary |
 | --- | --- | --- | --- |
 | Frontend-only change or API read inspection | `cd frontend && npm run dev` | `http://127.0.0.1:5173` | The default `:8787` master API is read-only through the Vite proxy. |
-| Frontend plus backend change | `uv run aletheia dev api --port 8791`, then `VITE_API_TARGET=http://127.0.0.1:8791 npm run dev` | `http://127.0.0.1:5173` | The API owns `data/dev-preview/8791`; secret reads return nothing and all proposal execution is blocked. |
+| Frontend plus backend change | `uv run aletheia dev api --port 8791`, then `VITE_API_TARGET=http://127.0.0.1:8791 npm run dev` | `http://127.0.0.1:5173` | The API owns `~/.aletheia/instances/dev-preview/<checkout-id>/8791`; secret reads return nothing and all proposal execution is blocked. |
 | Release/operator acceptance | Normal gateway lifecycle only | `http://127.0.0.1:8787` | This remains the stable master gateway and is the only daily-use endpoint. |
 
 `8787` (front door) and `8788` (its internal worker) are reserved. Do not run a
@@ -63,7 +63,7 @@ cd frontend; npm run dev
 
 The CLI sets preview mode itself. Do not hand-set its environment variables to
 point at a normal `data/` directory: the config loader accepts only
-`data/dev-preview/<port>` under the current checkout. Preview mode has three
+`~/.aletheia/instances/dev-preview/<checkout-id>/<port>`. Preview mode has three
 fail-closed properties:
 
 - secret reads return no value and secret writes are rejected;

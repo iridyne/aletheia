@@ -55,8 +55,10 @@ before changing one; this list must stay aligned with the machine-readable polic
 - Use `get_market_data_provider()` for market data. Do not use `BitgetClient`
   outside the execution context. Providers are per-call, never cached. The only
   exception is a documented Bitget-only ON-series xStock call site.
-- `aletheia/data/` is source code; repository-root `data/` is ignored runtime
-  state. Keep the `.gitignore` runtime rule root-anchored as `/data/`.
+- `aletheia/data/` is source code; runtime state belongs under the current user's
+  `~/.aletheia/` (or an explicit absolute `ALETHEIA_DATA_DIR`). Repository-root
+  `data/` is a legacy migration source only and must not receive new runtime writes.
+  Keep its compatibility `.gitignore` rule root-anchored as `/data/`.
 - Store symbols canonically as `BTC/USDT`; convert to exchange-native `BTCUSDT`
   only at the execution adapter (`to_bitget()`). In the frontend, every rendered
   market symbol must use `fmtSymbol(symbol, marketType)`: perpetual/futures has
@@ -65,7 +67,7 @@ before changing one; this list must stay aligned with the machine-readable polic
   connection; and capture `was_in_tx = db.in_transaction` **before** every write,
   committing only when it was false. Do not raise scheduler `max_workers` above 3.
 - A new config-schema field needs a Settings UI control; users do not edit
-  `data/config.yaml`. After frontend changes run `cd frontend && npm run build`.
+  `~/.aletheia/config.yaml`. After frontend changes run `cd frontend && npm run build`.
   `aletheia/dashboard_static/` is generated and untracked. For worktree UI HMR,
   use Vite on `http://127.0.0.1:5173`; it proxies the master `:8787` API as
   read-only by default. See `docs/operations/DEVELOPMENT_PREVIEW.md` before

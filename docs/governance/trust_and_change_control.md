@@ -104,7 +104,8 @@ Failures must leave inspectable state.
 
 ### 1.4 Audit Requirements
 
-Every important state transition must write to `data/logs/audit.jsonl`.
+Every important state transition must write to the selected runtime home's
+`logs/audit.jsonl` (normally `~/.aletheia/logs/audit.jsonl`).
 
 Minimum audit event fields:
 
@@ -622,7 +623,7 @@ aletheia/server/routes/live.py
   39) — the list of tool names that are never callable by LLM-driven agents.
   Removing a name here grants agents live, credential, or risk-limit capabilities.
 - `aletheia/files/jsonl.py`: the append-only JSONL writer backing
-  `data/logs/audit.jsonl`. Any change to write semantics, append guarantees, or
+  runtime-home `logs/audit.jsonl`. Any change to write semantics, append guarantees, or
   file-path routing directly affects the §1.4 audit chain invariant.
 
 Changes here require stricter review and testing.
@@ -746,4 +747,3 @@ Use these defaults unless the user explicitly overrides them:
 - A safety regression test is required before changing risk, execution, live,
   secrets, or permissions.
 - Feature expansion is out of scope during trust-hardening work.
-

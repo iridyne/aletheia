@@ -18,10 +18,12 @@ def test_dev_api_refuses_the_stable_gateway_ports():
 
 def test_dev_api_launches_a_shadow_process_with_isolated_data(monkeypatch, tmp_path):
     import aletheia.cli.dev as dev
+    import aletheia.runtime_paths as runtime_paths
 
     captured: dict = {}
 
     monkeypatch.setattr(dev, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(runtime_paths, "_user_home", lambda: tmp_path)
     monkeypatch.setattr(dev.subprocess, "run", lambda command, **kwargs: captured.update(command=command, **kwargs))
 
     result = CliRunner().invoke(dev.dev_app, ["api", "--port", "8791"])
@@ -30,13 +32,16 @@ def test_dev_api_launches_a_shadow_process_with_isolated_data(monkeypatch, tmp_p
     assert captured["command"][captured["command"].index("--port") + 1] == "8791"
     assert captured["env"]["ALETHEIA_PREVIEW_MODE"] == "1"
     assert captured["env"]["ALETHEIA_RUNTIME_STATE"] == "shadow"
-    assert Path(captured["env"]["ALETHEIA_PREVIEW_DATA_DIR"]) == tmp_path / "data" / "dev-preview" / "8791"
+    expected = runtime_paths.preview_instance_dir(tmp_path, 8791)
+    assert Path(captured["env"]["ALETHEIA_PREVIEW_DATA_DIR"]) == expected
 
 
 def test_preview_data_dir_requires_the_worktree_preview_root(monkeypatch, tmp_path):
     import aletheia.config.loader as loader
+    import aletheia.runtime_paths as runtime_paths
 
-    preview_root = tmp_path / "data" / "dev-preview"
+    monkeypatch.setattr(runtime_paths, "_user_home", lambda: tmp_path)
+    preview_root = tmp_path / ".aletheia" / "instances" / "dev-preview"
     allowed = preview_root / "8791"
     monkeypatch.setattr(loader, "_PROJECT_ROOT", tmp_path)
     monkeypatch.setenv("ALETHEIA_PREVIEW_MODE", "1")

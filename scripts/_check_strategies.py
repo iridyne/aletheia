@@ -1,6 +1,8 @@
 """Check current strategy state"""
 import sqlite3
-conn = sqlite3.connect('data/app.db')
+from aletheia.storage.sqlite import db_path
+
+conn = sqlite3.connect(str(db_path()))
 
 print('=== All strategies (current) ===')
 for row in conn.execute('''

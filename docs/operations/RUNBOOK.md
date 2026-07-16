@@ -33,7 +33,7 @@ The gateway runs under a **supervisor**: if the inner server crashes it is
 respawned with backoff; after too many restarts in a window it gives up, writes a
 `gateway_supervisor_gave_up` audit event, and alerts through the operator
 notification sink (Windows toast and Telegram when configured). The inner
-server's stderr goes to `data/logs/errors.log`.
+server's stderr goes to `~/.aletheia/logs/errors.log` by default.
 
 `8787` is owned by a small local **front door**. The backend worker runs on an
 internal loopback port behind it, so the dashboard port can keep serving static
@@ -41,7 +41,8 @@ UI and `/_infra/*` diagnostics while the worker is restarting. During that
 window, `/api/*` returns a structured `503 backend_unavailable` instead of a raw
 connection failure.
 
-The front door reads its active backend from `data/frontdoor-route.json`. The
+The front door reads its active backend from `~/.aletheia/frontdoor-route.json`
+by default. The
 supervisor refreshes that file on backend spawn, and runtime-continuity promotion
 can atomically switch it to a ready shadow backend without rebinding `:8787`.
 Inspect `http://127.0.0.1:8787/_infra/status` to see the active
@@ -114,7 +115,7 @@ to trade paper autonomously:
    ```bash
    uv run aletheia permission set PaperAuto
    ```
-2. **Autonomous paper trading** → `true`. Edit `data/config.yaml`:
+2. **Autonomous paper trading** → `true`. Change Settings in the Web UI (persisted to `~/.aletheia/config.yaml`):
    ```yaml
    agent:
      permission_mode: PaperAuto
