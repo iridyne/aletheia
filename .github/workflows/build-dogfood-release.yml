@@ -41,6 +41,14 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
           fetch-depth: 0
 
+      - name: Resolve checked-out source SHA
+        id: source
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse HEAD).Trim()
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "short_sha=$($sha.Substring(0, 12))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@v6
         with:
@@ -78,7 +86,7 @@ jobs:
         run: >-
           uv run python scripts/release/build_bundle.py
           --output-dir dist
-          --git-sha "${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}"
+          --git-sha "${{ steps.source.outputs.sha }}"
           --warn-mib 60
           --max-mib 100
 
@@ -121,7 +129,7 @@ jobs:
       - name: Upload immutable release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aletheia-dogfood-${{ github.sha }}-win-x64
+          name: aletheia-dogfood-${{ steps.source.outputs.short_sha }}-win-x64
           path: |
             dist/aletheia-dogfood-*.zip
             dist/aletheia-dogfood-*.zip.sha256
