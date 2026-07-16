@@ -11,13 +11,14 @@ The feature is measurement-only. It does not change prompts, model routing, cand
 
 ## Runtime facts
 
-The economics ledger is append-only and is installed idempotently on the first AgentRun, physical model call, or audit command.
+The economics ledger is append-only and is installed idempotently on the first AgentRun, physical model call, or audit command. Schema initialization refuses to run inside an active SQLite transaction, so measurement cannot implicitly commit trading state.
 
 ### LLM attempts
 
-Every physical provider `complete()` attempt is recorded separately, including retries and fallback models. A record contains:
+Every physical provider `complete()` attempt is recorded separately, including retries and fallback models. Structured provider calls currently delegate to the same physical `complete()` boundary, so their usage is captured before business JSON is returned. A record contains:
 
 - AgentRun and Runtime Session identity when available;
+- a logical System Operator identity for event-driven daemon calls that intentionally have no generic AgentRun;
 - configured provider alias and exact model;
 - requested model and attempt index;
 - start/end timestamps and latency;
@@ -48,6 +49,8 @@ Explicitly free local tools must be configured with a per-call cost of `0`. Exte
 - otherwise it remains `NULL`;
 - the known subtotal and unknown-event count remain available from `runtime_cost_events`;
 - retries and fallback attempts are never collapsed into the final successful call.
+
+The event-driven System Operator daemon is deliberately not represented as a fabricated AgentRun. Its physical model calls carry `logical_agent=pi_trading_decision` and are included directly in the Operator audit.
 
 ## Pricing contracts
 
@@ -108,7 +111,7 @@ Therefore the viability audit never deducts fee, spread/slippage, or funding a s
 
 Unrealized PnL, administrative closes, maintenance closes, incomplete fills, missing funding economics, and incomplete attribution are excluded by the existing outcome contract.
 
-Data, infrastructure, and other fixed allocations must be supplied explicitly for the same window, including explicit zero values. Missing allocations produce `invalid`, not a partial positive result.
+Data, infrastructure, and other fixed allocations must be supplied explicitly for the same window, including explicit zero values. Missing allocations produce `invalid`, not a partial positive result. If metered `data`, `infrastructure`, or `other` events already exist in the ledger, the explicit allocation is charged in addition to those metered events rather than silently replacing them.
 
 ```bash
 uv run aletheia audit viability \
@@ -149,7 +152,7 @@ Operator Agentic Viability Amount
 - explicit Operator-attributable dynamic data cost
 ```
 
-All Operator runs are charged, including skipped decisions. This prevents the audit from assigning the cost of unsuccessful research to nobody.
+All Operator AgentRuns and direct daemon trading-decision calls are charged, including skipped decisions. This prevents the audit from assigning the cost of unsuccessful research to nobody.
 
 Risk, execution, and deterministic exit behavior remain embedded in actual realized PnL. V1 does not claim that every difference from Shadow was caused only by the LLM.
 
@@ -200,5 +203,6 @@ Disabling tracing stops new cost facts. Disabling viability blocks report genera
 - Existing Tool Calls lack measured latency; V1 exposes this gap as `NULL`.
 - Provider pricing must be entered before a call; unknown historical calls are not retroactively guessed.
 - Fixed data/infrastructure allocations are supplied per report rather than fetched from cloud billing APIs.
+- Operator runtime cost is charged at the audit-window level; V1 does not claim a perfect per-Proposal allocation for every skipped or multi-call decision.
 - Operator attribution is an exact accepted-vs-Shadow cohort comparison, not a causal decomposition of Prompt, Memory, Risk, Execution, and Exit components.
 - V1 covers `paper_internal`; it does not qualify live trading economics.
