@@ -282,15 +282,18 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
                 "economics schema initialization refused inside an active transaction"
             )
         db.executescript(ECONOMICS_DDL)
-        table_ready = True
+
+    # DDL must be installed before the DML backfill. On non-autocommit test
+    # connections the backfill opens a transaction; running executescript after it
+    # would silently commit caller state or force an initialization failure.
+    if tool_table and not trigger_ready:
+        if db.in_transaction:
+            raise RuntimeError(
+                "economics trigger initialization refused inside an active transaction"
+            )
+        _install_tool_trigger(db)
 
     if tool_table:
         _backfill_existing_tool_calls(db)
-        if not trigger_ready:
-            if db.in_transaction:
-                raise RuntimeError(
-                    "economics trigger initialization refused inside an active transaction"
-                )
-            _install_tool_trigger(db)
 
     return db
