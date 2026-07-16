@@ -37,6 +37,13 @@ def setup_env(tmp_path, monkeypatch):
     from aletheia.gateway import preflight
     monkeypatch.setattr(preflight, "run_preflight_checks", lambda: preflight.PreflightResult())
 
+    # A successful background start auto-registers the OS watchdog and tunnel.
+    # These lifecycle tests mock the spawn itself, so they must also isolate its
+    # post-start integrations instead of writing the real user LaunchAgents.
+    from aletheia.gateway import lifecycle
+    monkeypatch.setattr(lifecycle, "_auto_register_watchdog", lambda cfg: None)
+    monkeypatch.setattr(lifecycle, "_auto_start_tunnel", lambda cfg: None)
+
 
 def test_do_stop_clears_pid_only_after_port_freed(tmp_path, monkeypatch, capsys):
     setup_env(tmp_path, monkeypatch)
