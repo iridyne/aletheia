@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from aletheia.update.package_integrity import (
+from aletheia.package_integrity import (
     iter_payload_entries,
     manifest_entry,
     validate_filesystem_symlink,
