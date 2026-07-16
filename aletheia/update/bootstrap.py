@@ -38,6 +38,31 @@ def _atomic_json(path: Path, value: dict) -> None:
             os.close(descriptor)
 
 
+def _validate_selection(path: Path) -> dict:
+    selection = packaged._read_json(path)  # noqa: SLF001
+    current = selection.get("current")
+    previous = selection.get("previous")
+    if selection.get("schema_version") != 1 or not isinstance(current, str):
+        raise packaged.PackagedUpdateError("current_selection_invalid")
+    if not _RELEASE_ID.fullmatch(current) or current in {".", ".."}:
+        raise packaged.PackagedUpdateError("current_selection_invalid")
+    if previous is not None and (
+        not isinstance(previous, str)
+        or not _RELEASE_ID.fullmatch(previous)
+        or previous in {".", ".."}
+    ):
+        raise packaged.PackagedUpdateError("current_selection_invalid")
+    return selection
+
+
+def _reject_links(root: Path) -> None:
+    if root.is_symlink():
+        raise packaged.PackagedUpdateError("bootstrap_source_symlink", str(root))
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise packaged.PackagedUpdateError("bootstrap_source_symlink", str(path))
+
+
 def install_bootstrap_runtime(
     *,
     host_root: Path,
@@ -55,10 +80,13 @@ def install_bootstrap_runtime(
         "feed_url": host_root / "update-feed-url.txt",
     }
     if paths["current"].exists():
-        selection = packaged._read_json(paths["current"])  # noqa: SLF001
+        selection = _validate_selection(paths["current"])
         return {"installed": False, "reason": "already_bootstrapped", "selection": selection}
 
     source_root = (source_root or Path(sys.executable).resolve().parent).resolve()
+    if not source_root.is_dir():
+        raise packaged.PackagedUpdateError("bootstrap_source_missing", str(source_root))
+    _reject_links(source_root)
     manifest = packaged._read_json(source_root / "release-manifest.json")  # noqa: SLF001
     version = str(manifest.get("version") or "").strip()
     git_sha = str(manifest.get("git_sha") or "").strip()
@@ -76,6 +104,7 @@ def install_bootstrap_runtime(
     if destination.is_symlink():
         raise packaged.PackagedUpdateError("bootstrap_destination_symlink")
     if destination.exists():
+        _reject_links(destination)
         packaged._validate_release_dir(  # noqa: SLF001
             destination,
             expected_release_id=release_id,
@@ -83,21 +112,29 @@ def install_bootstrap_runtime(
         )
     else:
         staging = paths["releases"] / f".bootstrap-{uuid4().hex}"
-        shutil.copytree(source_root, staging, symlinks=False)
-        packaged._validate_release_dir(  # noqa: SLF001
-            staging,
-            expected_release_id=release_id,
-            expected_sha=git_sha,
-        )
-        os.replace(staging, destination)
+        try:
+            shutil.copytree(source_root, staging, symlinks=False)
+            _reject_links(staging)
+            packaged._validate_release_dir(  # noqa: SLF001
+                staging,
+                expected_release_id=release_id,
+                expected_sha=git_sha,
+            )
+            os.replace(staging, destination)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
 
     if public_key is not None:
-        if not public_key.is_absolute() or not public_key.is_file():
+        if not public_key.is_absolute() or not public_key.is_file() or public_key.is_symlink():
             raise packaged.PackagedUpdateError("bootstrap_public_key_missing")
         paths["public_key"].write_bytes(public_key.read_bytes())
         os.chmod(paths["public_key"], 0o600)
     if feed_url_file is not None:
-        if not feed_url_file.is_absolute() or not feed_url_file.is_file():
+        if (
+            not feed_url_file.is_absolute()
+            or not feed_url_file.is_file()
+            or feed_url_file.is_symlink()
+        ):
             raise packaged.PackagedUpdateError("bootstrap_feed_url_missing")
         feed_url = feed_url_file.read_text(encoding="utf-8").strip()
         if not feed_url:
