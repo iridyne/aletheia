@@ -1,6 +1,6 @@
 """Build an unsigned browser-first macOS Aletheia tray application.
 
-The app bundle contains only the stable Rust tray/CLI host and one bootstrap PyInstaller
+The app bundle contains the stable Rust tray/CLI host and one bootstrap PyInstaller
 runtime. The browser dashboard remains the sole product UI. Production signing and Apple
 notarization are deliberately separate release-credential steps.
 """
@@ -16,6 +16,11 @@ import plistlib
 import shutil
 import stat
 import zipfile
+
+from aletheia.update.package_integrity import (
+    iter_payload_entries,
+    validate_filesystem_symlink,
+)
 
 DEFAULT_BUNDLE_ID = "io.aletheia.trading-os"
 FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
@@ -37,16 +42,16 @@ def _copy_executable(source: Path, destination: Path) -> None:
     destination.chmod(destination.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _reject_symlinks(root: Path) -> None:
+def _validate_payload_links(root: Path) -> None:
     if root.is_symlink():
-        raise RuntimeError(f"application package input cannot be a symbolic link: {root}")
-    for path in root.rglob("*"):
+        raise RuntimeError(f"application package root cannot be a symbolic link: {root}")
+    for path in iter_payload_entries(root):
         if path.is_symlink():
-            raise RuntimeError(f"application package input contains a symbolic link: {path}")
+            validate_filesystem_symlink(root, path)
 
 
 def _validate_payload(payload_dir: Path) -> dict:
-    _reject_symlinks(payload_dir)
+    _validate_payload_links(payload_dir)
     manifest_path = payload_dir / "release-manifest.json"
     if not manifest_path.is_file():
         raise RuntimeError(f"packaged runtime manifest is missing: {manifest_path}")
@@ -58,8 +63,8 @@ def _validate_payload(payload_dir: Path) -> dict:
             f"macOS app requires darwin-arm64 payload, got {manifest.get('platform')!r}"
         )
     entrypoint = payload_dir / str(manifest.get("runtime_entrypoint") or "")
-    if not entrypoint.is_file():
-        raise RuntimeError(f"bootstrap runtime entrypoint is missing: {entrypoint}")
+    if entrypoint.is_symlink() or not entrypoint.is_file():
+        raise RuntimeError(f"bootstrap runtime entrypoint is missing or symbolic: {entrypoint}")
     return manifest
 
 
@@ -118,7 +123,7 @@ esac
 """
 
 
-def _zip_mode(path: Path) -> int:
+def _zip_regular_mode(path: Path) -> int:
     mode = 0o755 if path.stat().st_mode & stat.S_IXUSR else 0o644
     return stat.S_IFREG | mode
 
@@ -126,20 +131,24 @@ def _zip_mode(path: Path) -> int:
 def _deterministic_zip(source_root: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        for path in sorted(source_root.rglob("*"), key=lambda item: item.as_posix()):
-            if not path.is_file():
-                continue
+        for path in iter_payload_entries(source_root):
             relative = path.relative_to(source_root.parent).as_posix()
             info = zipfile.ZipInfo(relative, date_time=FIXED_ZIP_TIME)
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = _zip_mode(path) << 16
             info.create_system = 3
-            archive.writestr(
-                info,
-                path.read_bytes(),
-                compress_type=zipfile.ZIP_DEFLATED,
-                compresslevel=9,
-            )
+            if path.is_symlink():
+                target = validate_filesystem_symlink(source_root, path)
+                info.compress_type = zipfile.ZIP_STORED
+                info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                archive.writestr(info, target.encode("utf-8"), compress_type=zipfile.ZIP_STORED)
+            else:
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = _zip_regular_mode(path) << 16
+                archive.writestr(
+                    info,
+                    path.read_bytes(),
+                    compress_type=zipfile.ZIP_DEFLATED,
+                    compresslevel=9,
+                )
 
 
 def build_macos_app(
@@ -175,7 +184,8 @@ def build_macos_app(
     launcher.chmod(0o755)
     _copy_executable(host_bin_dir / "aletheia", macos / "aletheia")
     _copy_executable(host_bin_dir / "aletheia", macos / "ato")
-    shutil.copytree(payload_dir, runtime_destination, symlinks=False)
+    shutil.copytree(payload_dir, runtime_destination, symlinks=True)
+    _validate_payload_links(runtime_destination)
 
     if public_key is not None:
         if public_key.is_symlink():
