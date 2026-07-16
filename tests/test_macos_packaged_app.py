@@ -87,14 +87,12 @@ def test_macos_app_is_menu_bar_only_and_contains_bootstrap_runtime(tmp_path):
     assert info["LSUIElement"] is True
     assert info["CFBundlePackageType"] == "APPL"
 
-    for name in ("aletheia", "ato", "aletheia-tray", "aletheia-tray-bin"):
+    for name in ("aletheia", "ato", "aletheia-tray"):
         path = contents / "MacOS" / name
         assert path.is_file()
         assert path.stat().st_mode & stat.S_IXUSR
-    launcher = (contents / "MacOS" / "aletheia-tray").read_text(encoding="utf-8")
-    assert "__packaged_bootstrap" in launcher
-    assert "Application Support/Aletheia" in launcher
-    assert "exec \"$CONTENTS/MacOS/aletheia-tray-bin\" \"$@\"" in launcher
+    assert (contents / "MacOS" / "aletheia-tray").read_bytes() == b"host"
+    assert not (contents / "MacOS" / "aletheia-tray-bin").exists()
 
     runtime = contents / "Resources" / "runtime" / "aletheia-core"
     assert (runtime / "aletheia-core").is_file()
@@ -113,7 +111,7 @@ def test_macos_app_is_menu_bar_only_and_contains_bootstrap_runtime(tmp_path):
         launcher_mode = launcher_info.external_attr >> 16
     assert "Aletheia.app/Contents/Info.plist" in names
     assert "Aletheia.app/Contents/MacOS/aletheia-tray" in names
-    assert "Aletheia.app/Contents/MacOS/aletheia-tray-bin" in names
+    assert "Aletheia.app/Contents/MacOS/aletheia-tray-bin" not in names
     assert launcher_info.create_system == 3
     assert stat.S_IFMT(launcher_mode) == stat.S_IFREG
     assert launcher_mode & 0o111

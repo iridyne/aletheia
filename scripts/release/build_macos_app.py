@@ -85,28 +85,6 @@ def _info_plist(*, version: str, bundle_id: str) -> dict:
     }
 
 
-def _tray_launcher() -> str:
-    return """#!/bin/sh
-set -eu
-CONTENTS=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-RESOURCES="$CONTENTS/Resources"
-HOST_ROOT=${ALETHEIA_HOST_ROOT:-"$HOME/Library/Application Support/Aletheia"}
-CORE="$RESOURCES/runtime/aletheia-core/aletheia-core"
-if [ ! -f "$HOST_ROOT/current.json" ]; then
-  if [ -f "$RESOURCES/update-public-key.pem" ] && [ -f "$RESOURCES/update-feed-url.txt" ]; then
-    "$CORE" __packaged_bootstrap --host-root "$HOST_ROOT" --source-root "$RESOURCES/runtime/aletheia-core" --public-key "$RESOURCES/update-public-key.pem" --feed-url-file "$RESOURCES/update-feed-url.txt"
-  elif [ -f "$RESOURCES/update-public-key.pem" ]; then
-    "$CORE" __packaged_bootstrap --host-root "$HOST_ROOT" --source-root "$RESOURCES/runtime/aletheia-core" --public-key "$RESOURCES/update-public-key.pem"
-  elif [ -f "$RESOURCES/update-feed-url.txt" ]; then
-    "$CORE" __packaged_bootstrap --host-root "$HOST_ROOT" --source-root "$RESOURCES/runtime/aletheia-core" --feed-url-file "$RESOURCES/update-feed-url.txt"
-  else
-    "$CORE" __packaged_bootstrap --host-root "$HOST_ROOT" --source-root "$RESOURCES/runtime/aletheia-core"
-  fi
-fi
-exec "$CONTENTS/MacOS/aletheia-tray-bin" "$@"
-"""
-
-
 def _cli_installer() -> str:
     return """#!/bin/sh
 set -eu
@@ -178,10 +156,7 @@ def build_macos_app(
     macos.mkdir(parents=True, exist_ok=True)
     resources.mkdir(parents=True, exist_ok=True)
 
-    _copy_executable(host_bin_dir / "aletheia-tray", macos / "aletheia-tray-bin")
-    launcher = macos / "aletheia-tray"
-    launcher.write_text(_tray_launcher(), encoding="utf-8", newline="\n")
-    launcher.chmod(0o755)
+    _copy_executable(host_bin_dir / "aletheia-tray", macos / "aletheia-tray")
     _copy_executable(host_bin_dir / "aletheia", macos / "aletheia")
     _copy_executable(host_bin_dir / "aletheia", macos / "ato")
     shutil.copytree(payload_dir, runtime_destination, symlinks=True)
