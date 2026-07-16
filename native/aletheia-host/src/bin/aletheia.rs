@@ -1,6 +1,6 @@
 use aletheia_host::{
-    activate_release, current_release, ensure_gateway_started, open_dashboard, payload_command,
-    read_selection, rollback_release, HostPaths,
+    activate_release, current_release, gateway_ready, open_dashboard, payload_command,
+    read_selection, rollback_release, run_payload, wait_gateway_ready, HostPaths,
 };
 use anyhow::{bail, Context, Result};
 use std::env;
@@ -17,6 +17,23 @@ fn print_host_help() {
          aletheia __host open-dashboard\n\
          aletheia __host smoke-test"
     );
+}
+
+fn ensure_started_without_browser(paths: &HostPaths) -> Result<()> {
+    if gateway_ready() {
+        return Ok(());
+    }
+    let status = run_payload(
+        paths,
+        &["gateway".into(), "start".into(), "--no-browser".into()],
+    )?;
+    if !status.success() {
+        bail!("packaged gateway start failed with status {status}");
+    }
+    if !wait_gateway_ready(Duration::from_secs(30)) {
+        bail!("packaged gateway did not become ready within 30 seconds");
+    }
+    Ok(())
 }
 
 fn run_internal(paths: &HostPaths, args: &[String]) -> Result<i32> {
@@ -50,7 +67,7 @@ fn run_internal(paths: &HostPaths, args: &[String]) -> Result<i32> {
             Ok(0)
         }
         Some("ensure-started") => {
-            ensure_gateway_started(paths, Duration::from_secs(30))?;
+            ensure_started_without_browser(paths)?;
             println!("Aletheia gateway is ready");
             Ok(0)
         }
@@ -70,7 +87,7 @@ fn run_internal(paths: &HostPaths, args: &[String]) -> Result<i32> {
             if !version_status.success() {
                 bail!("packaged version smoke failed with status {version_status}");
             }
-            ensure_gateway_started(paths, Duration::from_secs(30))?;
+            ensure_started_without_browser(paths)?;
             println!("packaged CLI and gateway smoke passed");
             Ok(0)
         }
