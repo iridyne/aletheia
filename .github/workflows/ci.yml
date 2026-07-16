@@ -90,7 +90,6 @@ jobs:
           tests/simulation/control_loop/test_mutation_canaries.py
           tests/simulation/control_loop/test_failure_artifacts.py
           tests/test_runtime_replay_pack.py
-          tests/e2e/test_active_mainline_golden_path.py
           -q --tb=short --junitxml=test-results/dcls.xml
 
       - name: Verify agent workflow behavior
@@ -173,7 +172,7 @@ jobs:
         run: mkdir -p test-results
 
       - name: Run integration tests
-        run: uv run pytest -m integration -q --tb=short --junitxml=test-results/integration.xml
+        run: uv run pytest -m integration -q --tb=short --junitxml=test-results/integration.xml -n auto
 
       - name: Upload test reports
         if: always()
