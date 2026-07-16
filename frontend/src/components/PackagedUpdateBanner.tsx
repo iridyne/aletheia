@@ -12,6 +12,7 @@ type UpdateState = {
   message?: string | null
   error?: string | null
   resume_warning?: string | null
+  updated_at?: string | null
 }
 
 const ACTIVE_PHASES = new Set([
@@ -29,6 +30,7 @@ const ACTIVE_PHASES = new Set([
 ])
 
 const TERMINAL_PHASES = new Set(['committed', 'rolled_back', 'rollback_failed', 'failed'])
+const TERMINAL_RELOAD_KEY = 'aletheia.packaged-update.last-reload'
 
 function phaseLabel(phase: string): string {
   const labels: Record<string, string> = {
@@ -51,11 +53,28 @@ function phaseLabel(phase: string): string {
   return labels[phase] || phase.replaceAll('_', ' ')
 }
 
+function stateTimestamp(value: string | null | undefined): number | null {
+  if (!value) return null
+  if (value.startsWith('unix:')) {
+    const seconds = Number(value.slice('unix:'.length))
+    return Number.isFinite(seconds) ? seconds * 1000 : null
+  }
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function terminalStillVisible(state: UpdateState, phase: string): boolean {
+  if (!TERMINAL_PHASES.has(phase)) return false
+  const timestamp = stateTimestamp(state.updated_at)
+  if (timestamp === null) return true
+  const ageMs = Math.max(0, Date.now() - timestamp)
+  return ageMs <= (phase === 'committed' || phase === 'rolled_back' ? 30_000 : 5 * 60_000)
+}
+
 export default function PackagedUpdateBanner() {
   const [state, setState] = useState<UpdateState | null>(null)
   const [temporarilyOffline, setTemporarilyOffline] = useState(false)
   const activeRef = useRef(false)
-  const terminalSeenRef = useRef<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -75,19 +94,21 @@ export default function PackagedUpdateBanner() {
         } else {
           const phase = String(next.phase || 'idle')
           const active = ACTIVE_PHASES.has(phase)
-          setState(next)
-          setTemporarilyOffline(false)
           activeRef.current = active
+          setTemporarilyOffline(false)
+          setState(active || terminalStillVisible(next, phase) ? next : null)
 
           if (TERMINAL_PHASES.has(phase) && next.operation_id) {
             const terminalKey = `${next.operation_id}:${phase}`
-            if (terminalSeenRef.current !== terminalKey) {
-              terminalSeenRef.current = terminalKey
-              // The selected runtime may contain a newer frontend bundle. Reload once
-              // after the replacement backend is healthy so the browser follows it.
-              if (phase === 'committed' || phase === 'rolled_back') {
-                window.setTimeout(() => window.location.reload(), 1200)
-              }
+            const alreadyReloaded = window.sessionStorage.getItem(TERMINAL_RELOAD_KEY)
+            // The selected runtime may contain a newer frontend bundle. Reload exactly
+            // once per terminal operation after the replacement backend is healthy.
+            if (
+              alreadyReloaded !== terminalKey
+              && (phase === 'committed' || phase === 'rolled_back')
+            ) {
+              window.sessionStorage.setItem(TERMINAL_RELOAD_KEY, terminalKey)
+              window.setTimeout(() => window.location.reload(), 1200)
             }
           }
         }
@@ -110,7 +131,7 @@ export default function PackagedUpdateBanner() {
 
   if (!state || state.mode !== 'packaged') return null
   const phase = String(state.phase || 'idle')
-  const visible = ACTIVE_PHASES.has(phase) || TERMINAL_PHASES.has(phase)
+  const visible = ACTIVE_PHASES.has(phase) || terminalStillVisible(state, phase)
   if (!visible) return null
 
   const failed = phase === 'failed' || phase === 'rollback_failed'
