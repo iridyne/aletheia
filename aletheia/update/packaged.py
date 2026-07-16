@@ -556,7 +556,7 @@ def _preflight_candidate(
 ) -> Path:
     preflight_root = _paths()["preflight"] / operation_id
     shutil.rmtree(preflight_root, ignore_errors=True)
-    data_copy = preflight_root / "data"
+    data_copy = preflight_root / "data-copy"
     restore = RestoreService().restore(backup_path, data_copy)
     if not restore.success:
         raise PackagedUpdateError("update_preflight_restore_failed", "; ".join(restore.errors))

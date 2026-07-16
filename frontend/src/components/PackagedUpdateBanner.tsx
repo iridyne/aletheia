@@ -50,7 +50,7 @@ function phaseLabel(phase: string): string {
     rollback_failed: 'Manual recovery required',
     failed: 'Update could not be prepared',
   }
-  return labels[phase] || phase.replaceAll('_', ' ')
+  return labels[phase] || phase.replace(/_/g, ' ')
 }
 
 function stateTimestamp(value: string | null | undefined): number | null {

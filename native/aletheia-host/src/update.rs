@@ -119,8 +119,8 @@ pub fn has_pending_request(paths: &HostPaths) -> bool {
 
 pub fn read_pending_request(paths: &HostPaths) -> Result<UpdateRequest> {
     let path = pending_request_path(paths);
-    let bytes = fs::read(&path)
-        .with_context(|| format!("read update request {}", path.display()))?;
+    let bytes =
+        fs::read(&path).with_context(|| format!("read update request {}", path.display()))?;
     let request: UpdateRequest = serde_json::from_slice(&bytes)
         .with_context(|| format!("parse update request {}", path.display()))?;
     if request.schema_version != 1 {
@@ -182,18 +182,14 @@ fn pause_release(paths: &HostPaths, release_id: &str) -> Result<()> {
         return Ok(());
     }
     require_success(
-        run_release(paths, release_id, &["gateway", "pause"] )?,
+        run_release(paths, release_id, &["gateway", "pause"])?,
         "pause current runtime",
     )
 }
 
 fn start_release(paths: &HostPaths, release_id: &str) -> Result<()> {
     require_success(
-        run_release(
-            paths,
-            release_id,
-            &["gateway", "start", "--no-browser"],
-        )?,
+        run_release(paths, release_id, &["gateway", "start", "--no-browser"])?,
         "start selected runtime",
     )?;
     if !wait_gateway_ready(Duration::from_secs(45)) {
@@ -219,7 +215,7 @@ fn resume_release_best_effort(paths: &HostPaths, release_id: &str) -> Option<Str
 
 fn validate_real_data(paths: &HostPaths, release_id: &str) -> Result<()> {
     require_success(
-        run_release(paths, release_id, &["__packaged_update_validate"] )?,
+        run_release(paths, release_id, &["__packaged_update_validate"])?,
         "apply and validate candidate migrations",
     )
 }

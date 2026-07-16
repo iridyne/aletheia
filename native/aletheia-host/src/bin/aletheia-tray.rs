@@ -1,6 +1,6 @@
 use aletheia_host::{
-    gateway_healthy, gateway_ready, open_dashboard, run_gateway_action, run_payload,
-    update, wait_gateway_ready, HostPaths,
+    gateway_healthy, gateway_ready, open_dashboard, run_gateway_action, run_payload, update,
+    wait_gateway_ready, HostPaths,
 };
 use anyhow::{bail, Context, Result};
 use std::env;
@@ -8,9 +8,7 @@ use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
-use tray_icon::{
-    Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
-};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use winit::application::ApplicationHandler;
 use winit::event::{StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -119,7 +117,10 @@ fn smoke_test(paths: &HostPaths) -> Result<()> {
     if !gateway_healthy() {
         bail!("packaged gateway reached readiness but failed business health");
     }
-    println!("Aletheia tray smoke passed: {}", aletheia_host::DASHBOARD_URL);
+    println!(
+        "Aletheia tray smoke passed: {}",
+        aletheia_host::DASHBOARD_URL
+    );
     Ok(())
 }
 
@@ -223,7 +224,8 @@ impl TrayApplication {
         let paths = self.paths.clone();
         let proxy = self.proxy.clone();
         thread::spawn(move || {
-            let result = ensure_started_without_browser(&paths).map_err(|error| format!("{error:#}"));
+            let result =
+                ensure_started_without_browser(&paths).map_err(|error| format!("{error:#}"));
             let _ = proxy.send_event(UserEvent::RuntimeStartFinished(result));
         });
     }
@@ -260,7 +262,8 @@ impl TrayApplication {
         let paths = self.paths.clone();
         let proxy = self.proxy.clone();
         thread::spawn(move || {
-            let result = update::process_pending_update(&paths).map_err(|error| format!("{error:#}"));
+            let result =
+                update::process_pending_update(&paths).map_err(|error| format!("{error:#}"));
             let _ = proxy.send_event(UserEvent::UpdateTransactionFinished(result));
         });
     }
@@ -271,7 +274,8 @@ impl TrayApplication {
         let paths = self.paths.clone();
         let proxy = self.proxy.clone();
         thread::spawn(move || {
-            let result = update::process_pending_update(&paths).map_err(|error| format!("{error:#}"));
+            let result =
+                update::process_pending_update(&paths).map_err(|error| format!("{error:#}"));
             let _ = proxy.send_event(UserEvent::UpdateTransactionFinished(result));
         });
     }

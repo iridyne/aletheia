@@ -1,4 +1,6 @@
-use crate::{host_platform_id, read_selection, HostPaths, ReleaseManifest, HOST_ROOT_ENV, PACKAGED_ENV};
+use crate::{
+    host_platform_id, read_selection, HostPaths, ReleaseManifest, HOST_ROOT_ENV, PACKAGED_ENV,
+};
 use anyhow::{anyhow, bail, Context, Result};
 use std::env;
 use std::fs;
@@ -47,7 +49,10 @@ pub fn bootstrap_bundle_from_root(source_root: &Path) -> Result<BootstrapBundle>
         .canonicalize()
         .with_context(|| format!("resolve bootstrap runtime {}", source_root.display()))?;
     if !source_root.is_dir() {
-        bail!("bootstrap runtime is not a directory: {}", source_root.display());
+        bail!(
+            "bootstrap runtime is not a directory: {}",
+            source_root.display()
+        );
     }
 
     let manifest_path = source_root.join("release-manifest.json");
@@ -67,10 +72,14 @@ pub fn bootstrap_bundle_from_root(source_root: &Path) -> Result<BootstrapBundle>
         );
     }
 
-    let requested_executable = source_root.join(contained_relative_path(&manifest.runtime_entrypoint)?);
-    let executable = requested_executable
-        .canonicalize()
-        .with_context(|| format!("resolve bootstrap entrypoint {}", requested_executable.display()))?;
+    let requested_executable =
+        source_root.join(contained_relative_path(&manifest.runtime_entrypoint)?);
+    let executable = requested_executable.canonicalize().with_context(|| {
+        format!(
+            "resolve bootstrap entrypoint {}",
+            requested_executable.display()
+        )
+    })?;
     if !executable.starts_with(&source_root) || !executable.is_file() {
         bail!("bootstrap entrypoint escapes its bundle or is not a file");
     }
@@ -78,7 +87,10 @@ pub fn bootstrap_bundle_from_root(source_root: &Path) -> Result<BootstrapBundle>
     {
         use std::os::unix::fs::PermissionsExt;
         if executable.metadata()?.permissions().mode() & 0o111 == 0 {
-            bail!("bootstrap entrypoint is not executable: {}", executable.display());
+            bail!(
+                "bootstrap entrypoint is not executable: {}",
+                executable.display()
+            );
         }
     }
 
@@ -148,7 +160,10 @@ pub fn discover_bootstrap_bundle() -> Result<BootstrapBundle> {
             "no bundled Aletheia runtime was found; reinstall the application or set {BOOTSTRAP_ROOT_ENV}"
         );
     }
-    bail!("no valid bundled Aletheia runtime was found: {}", failures.join("; "))
+    bail!(
+        "no valid bundled Aletheia runtime was found: {}",
+        failures.join("; ")
+    )
 }
 
 pub fn ensure_bootstrapped(paths: &HostPaths) -> Result<()> {
@@ -181,7 +196,9 @@ pub fn ensure_bootstrapped(paths: &HostPaths) -> Result<()> {
         command.creation_flags(0x0800_0000);
     }
 
-    let output = command.output().context("install bundled Aletheia runtime")?;
+    let output = command
+        .output()
+        .context("install bundled Aletheia runtime")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(

@@ -204,8 +204,9 @@ def test_archive_extraction_rejects_traversal_and_links(tmp_path):
         import io
 
         bundle.addfile(traversal, io.BytesIO(b"x"))
-    with pytest.raises(packaged.PackagedUpdateError, match="unsafe"):
+    with pytest.raises(packaged.PackagedUpdateError) as exc_info:
         packaged._extract_archive(archive, tmp_path / "stage")
+    assert exc_info.value.reason == "update_archive_path_unsafe"
     assert not (tmp_path / "outside").exists()
 
     link_archive = tmp_path / "link.tar.gz"
@@ -214,8 +215,9 @@ def test_archive_extraction_rejects_traversal_and_links(tmp_path):
         link.type = tarfile.SYMTYPE
         link.linkname = "/tmp/escape"
         bundle.addfile(link)
-    with pytest.raises(packaged.PackagedUpdateError, match="unsupported"):
+    with pytest.raises(packaged.PackagedUpdateError) as exc_info:
         packaged._extract_archive(link_archive, tmp_path / "link-stage")
+    assert exc_info.value.reason == "update_symlink_target_unsafe"
 
 
 def test_stage_writes_switch_request_only_after_backup_and_preflight(monkeypatch, tmp_path):
@@ -288,20 +290,16 @@ def test_manual_rollback_requires_recent_committed_backup(monkeypatch, tmp_path)
         ),
         encoding="utf-8",
     )
-    (host / "update-state.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "phase": "committed",
-                "status": "success",
-                "current_release": "0.5.1+abc123",
-                "previous_release": "0.5.0+old",
-                "backup_path": str(backup),
-                "updated_at": f"unix:{time.time()}",
-            }
-        ),
-        encoding="utf-8",
-    )
+    committed_state = {
+        "schema_version": 1,
+        "phase": "committed",
+        "status": "success",
+        "current_release": "0.5.1+abc123",
+        "previous_release": "0.5.0+old",
+        "backup_path": str(backup),
+        "updated_at": f"unix:{time.time()}",
+    }
+    (host / "update-state.json").write_text(json.dumps(committed_state), encoding="utf-8")
 
     accepted = packaged_commands.request_rollback()
     assert accepted["accepted"] is True
@@ -310,9 +308,8 @@ def test_manual_rollback_requires_recent_committed_backup(monkeypatch, tmp_path)
     assert request["backup_path"] == str(backup)
 
     (host / "update-request.json").unlink()
-    state = json.loads((host / "update-state.json").read_text(encoding="utf-8"))
-    state["updated_at"] = f"unix:{time.time() - 3600}"
-    (host / "update-state.json").write_text(json.dumps(state), encoding="utf-8")
+    committed_state["updated_at"] = f"unix:{time.time() - 3600}"
+    (host / "update-state.json").write_text(json.dumps(committed_state), encoding="utf-8")
     expired = packaged_commands.request_rollback()
     assert expired == {"accepted": False, "reason": "rollback_window_expired"}
 

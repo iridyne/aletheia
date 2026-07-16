@@ -48,6 +48,8 @@ jobs:
             tests/test_packaged_bootstrap.py \
             tests/test_packaged_update.py \
             tests/test_packaged_update_activation.py \
+            tests/test_packaged_update_recovery.py \
+            tests/test_packaged_update_routes.py \
             tests/test_macos_packaged_app.py \
             -q --tb=short
 
@@ -102,6 +104,8 @@ jobs:
             tests/test_packaged_bootstrap.py \
             tests/test_packaged_update.py \
             tests/test_packaged_update_activation.py \
+            tests/test_packaged_update_recovery.py \
+            tests/test_packaged_update_routes.py \
             tests/test_macos_packaged_app.py \
             tests/test_release_data_dir.py \
             -q --tb=short
@@ -182,15 +186,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Generate host lockfile and test release/update core
+      - name: Test locked host release/update core
         working-directory: native/aletheia-host
-        run: |
-          cargo generate-lockfile
-          cargo test --all-targets
+        run: cargo test --locked --all-targets
 
       - name: Build stable CLI and tray binaries
         working-directory: native/aletheia-host
-        run: cargo build --release --bins
+        run: cargo build --locked --release --bins
 
       - name: Exercise stable CLI selection and direct tray smoke
         id: host_smoke
