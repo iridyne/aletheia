@@ -1,9 +1,13 @@
-"""Child-process command construction for source and frozen Aletheia runtimes.
+"""Child-process and lifecycle adapters for frozen Aletheia runtimes.
 
 A PyInstaller executable cannot be treated as a generic Python interpreter. In a
 source checkout the gateway may launch a script or ``python -m uvicorn``. In a frozen
 payload every child process must re-enter the same executable through an explicit,
 private dispatch mode handled by ``scripts/release/pyinstaller_entry.py``.
+
+The installed product also has one lifecycle owner: ``aletheia-tray``. The legacy
+Python gateway watchdog remains available to development checkouts, but a packaged
+runtime must not register a second LaunchAgent/Task Scheduler entry behind the tray.
 """
 
 from __future__ import annotations
@@ -109,8 +113,28 @@ def translate_frozen_command(
     return translated
 
 
+def _install_packaged_lifecycle_policy() -> None:
+    """Disable the legacy Python autostart registrar inside frozen payloads.
+
+    This is a process-local policy patch, not a configuration mutation. It leaves the
+    user's development/runtime preference untouched and prevents the installed tray and
+    the historical gateway watchdog from racing to own the same runtime.
+    """
+
+    if not is_frozen_runtime():
+        return
+    try:
+        from aletheia.gateway import lifecycle
+
+        lifecycle._auto_register_watchdog = lambda _cfg: None
+    except Exception:
+        # The lifecycle module is not required for every CLI command. If it cannot be
+        # imported here, its own command path will surface the real error later.
+        pass
+
+
 def install_frozen_subprocess_adapter() -> None:
-    """Install the frozen child-process adapter once for this process.
+    """Install packaged child-process and lifecycle adapters once per process.
 
     Existing gateway code keeps its well-tested source-mode process lifecycle. In a
     frozen process only, this adapter rewrites the two Python-specific spawn shapes at
@@ -118,7 +142,10 @@ def install_frozen_subprocess_adapter() -> None:
     ``Popen``. The captured original function prevents recursive re-entry.
     """
 
-    if not is_frozen_runtime() or getattr(subprocess.Popen, "_aletheia_frozen_adapter", False):
+    if not is_frozen_runtime():
+        return
+    _install_packaged_lifecycle_policy()
+    if getattr(subprocess.Popen, "_aletheia_frozen_adapter", False):
         return
 
     original_popen = subprocess.Popen
