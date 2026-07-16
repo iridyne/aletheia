@@ -52,6 +52,51 @@ def _configured_provider_name(provider: Any) -> str:
     return resolved
 
 
+def _logical_agent_from_stack() -> str | None:
+    """Identify direct System Operator calls that have no generic AgentRun.
+
+    The event-driven PI daemon intentionally calls the typed trading command
+    directly, so no ``agent_runs`` row surrounds its LLM assessment. We retain a
+    narrow logical identity on the cost event instead of fabricating an AgentRun or
+    changing the daemon lifecycle. The module check is exact and applies only while
+    the trading-decision engine is on the active Python stack.
+    """
+    try:
+        from aletheia.agent_runtime.run_context import current_agent_run_id
+
+        if current_agent_run_id():
+            return None
+    except Exception:
+        pass
+    try:
+        import inspect
+
+        frame = inspect.currentframe()
+        while frame is not None:
+            if frame.f_globals.get("__name__") == "aletheia.agent_shell.trading_decision":
+                return "pi_trading_decision"
+            frame = frame.f_back
+    except Exception:
+        return None
+    finally:
+        try:
+            del frame
+        except UnboundLocalError:
+            pass
+    return None
+
+
+def _cost_metadata(provider: Any, *, stream: bool = False) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"provider_class": type(provider).__name__}
+    if stream:
+        metadata["stream"] = True
+    logical_agent = _logical_agent_from_stack()
+    if logical_agent:
+        metadata["logical_agent"] = logical_agent
+        metadata["identity_source"] = "active_module_stack"
+    return metadata
+
+
 @dataclass
 class ModelRequest:
     messages: list[dict[str, str]]
@@ -128,6 +173,7 @@ class ModelProvider:
                     requested_model = model
                     setattr(request, "_aletheia_requested_model", requested_model)
                 provider_name = _configured_provider_name(self)
+                metadata = _cost_metadata(self)
                 started_dt = datetime.now(timezone.utc)
                 started_mono = time.perf_counter()
                 try:
@@ -149,7 +195,7 @@ class ModelProvider:
                             latency_ms=(time.perf_counter() - started_mono) * 1000.0,
                             raw_usage=None,
                             error_type=type(exc).__name__,
-                            metadata={"provider_class": type(self).__name__},
+                            metadata=metadata,
                         )
                     except Exception:
                         pass
@@ -174,7 +220,7 @@ class ModelProvider:
                         finished_at=finished_dt.isoformat(),
                         latency_ms=(time.perf_counter() - started_mono) * 1000.0,
                         raw_usage=raw_usage,
-                        metadata={"provider_class": type(self).__name__},
+                        metadata=metadata,
                     )
                 except Exception:
                     pass
@@ -190,6 +236,7 @@ class ModelProvider:
                 call_id = "llm_stream_" + uuid4().hex[:16]
                 model = str(getattr(self, "model", "") or "unknown")
                 provider_name = _configured_provider_name(self)
+                metadata = _cost_metadata(self, stream=True)
                 started_dt = datetime.now(timezone.utc)
                 started_mono = time.perf_counter()
                 final_usage = None
@@ -215,7 +262,7 @@ class ModelProvider:
                             latency_ms=(time.perf_counter() - started_mono) * 1000.0,
                             raw_usage=final_usage,
                             error_type=type(exc).__name__,
-                            metadata={"provider_class": type(self).__name__, "stream": True},
+                            metadata=metadata,
                         )
                     except Exception:
                         pass
@@ -235,7 +282,7 @@ class ModelProvider:
                         finished_at=finished_dt.isoformat(),
                         latency_ms=(time.perf_counter() - started_mono) * 1000.0,
                         raw_usage=final_usage,
-                        metadata={"provider_class": type(self).__name__, "stream": True},
+                        metadata=metadata,
                     )
                 except Exception:
                     pass
