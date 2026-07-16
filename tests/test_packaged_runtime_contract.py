@@ -119,7 +119,14 @@ def test_rust_host_contract_keeps_tray_cli_and_payload_separate():
 
 def test_plan_preserves_browser_only_ui_and_plain_cli():
     plan = (ROOT / "docs" / "plans" / "packaged_tray_cli_runtime.md").read_text(encoding="utf-8")
+    operations = (ROOT / "docs" / "operations" / "PACKAGED_RUNTIME.md").read_text(encoding="utf-8")
+
     assert "the only product UI is the dashboard" in plan
-    assert "does not require a system Python" in plan
+    assert "must not require a system Python, `uv`, Node.js" in plan
     assert "aletheia doctor" in plan
     assert "No installed command requires" in plan
+    assert "Installed product:" in operations
+    installed_section = operations.split("Installed product:", 1)[1].split("The installed launchers", 1)[0]
+    assert "aletheia doctor" in installed_section
+    assert "ato gateway status" in installed_section
+    assert "uv run" not in installed_section
