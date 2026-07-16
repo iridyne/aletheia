@@ -2620,3 +2620,361 @@ LIT/USDT position 已关闭（系统自动止盈/止损），总未实现亏损�
 - **data.lsr**：4.8h stale（01:14Z 为 3.8h），持续老化，LSR 数据在今日已全天未刷新。Binance FAPI 可达性问题需关注，但当前 health.rollup 未受影响。
 
 - **data.onchain**：6.6h stale，持续老化（DefiLlama），同时 defillama collector 进入 skipped_budget 状态——budget 限制主动跳过，说明该 collector 每次运行成本超过 40s 时间预算。不影响交易决策，属次要问题。
+
+---
+
+## 定时观测 2026-07-15T03:14Z
+
+### 摘要
+
+系统在今日 03:12Z 前后因 `self_heal_restart:code_drift`（HEAD 升至 90eab5f）自动重启，重启后 paper trading 状态全部清零：orders/fills/positions 三张表均归零，三笔 open positions（HYPE/PI/BASED）从数据库中消失，累计 opportunities（27k条）、fills（484条）、closed positions（253条）的历史记录不再可见。最大的正向进展是 signal win_rate 达到 **40.4%**，首次越过 40% 阈值，`data.signal` 降级为 INFO，`loop.profit` 警告解除（变为"pipeline warming up"）。Operator 最新跳过理由已不再包含"$0 capital"——WED-001 似乎随代码部署一并修复。系统目前处于 fresh-start 热身状态，运行约 25min，已产出 23 个 opportunities，尚无 proposals。
+
+### 问题更新 / 新增
+
+- **WED-006 NEW 🔴**：paper trading 状态在 03:12Z 的 `self_heal_restart:code_drift` 重启后全部清零。`orders=0, fills=0, positions(open=0,closed=0), opportunities=23`（仅当前会话的25分钟产出）。三笔 short positions（HYPE/USDT -$1.57、PI/USDT -$4.91、BASED/USDT -$1.62，合计约 -$8.1 未实现亏损）已从数据库中消失，fate 未知——无法判断它们是以行政关闭（亏损已实现但不被计入 verified PnL）方式退出，还是在 database swap 中完全丢失。`cash_compensation_candidates=0`（02:14Z 时为 5），意味着这些仓位不在待补偿队列中。若亏损在 swap 时被丢弃而未记录，这将是 paper trading 账户完整性问题。需确认 app.db 是否被替换，以及历史数据是否保存在备份路径。
+
+- **WED-001**：✅ 可能已修复。最新 Operator 决策理由（3min ago）不再包含"Available capital is $0"，取而代之的是对历史信号质量的定性判断。这是 WED-001 首次不出现在跳过理由中。若下一批候选出现时 Operator 仍不报告 $0 capital，可确认已修复。
+
+- **MON-036**：signal win_rate 突破 40%（**40.4%**），达到今日最高，`data.signal` 从 WARNING 转为 INFO。`loop.profit` 警告解除。但 `candidate_supply.executable=0, drought=yes` 仍然——系统刚重启 25min，候选池有 13 个 watch 候选，factor_status 尚未随新 win_rate 刷新（ranker 还未完成首次完整评分周期）。预计 1-2 个 batch 后 factor_status 会从 watch 翻转为 eligible，proposals 将重新出现。
+
+- **MON-037**：三仓持仓数据全部消失（WED-006），无法继续跟踪 HYPE/PI/BASED 的 unrealized PnL。若是 database reset 造成的，这些仓位的浮亏（约 -$8.1）在账面上不被记录，paper trading 账户的净值历史将出现不连续。
+
+- **WED-005**：Serenity dreaming_daily 仍为 failed (unknown_error)，stale 1.4d，无变化。系统重启未解决此问题。
+
+- **data.hyperliquid**：39min stale，出现新的 WARNING——hyperliquid OI 数据在本次重启后开始积累延迟，collector 从 02:14Z 的 timed_out 转为此刻的真正过时。与 data.lsr（5.8h stale）一起成为当前数据质量的主要残留问题。
+
+---
+
+## 定时观测 2026-07-15T04:14Z
+
+### 摘要
+
+Gateway 进程已停止（`process.gateway: stopped`），且 launchd watchdog 指向过时路径无法自动拉起（同 TUE-001 模式）。Operator 最后一条决策（1min ago）再次出现"TRADE BTC/USDT long, Reason: test reasoning"——与 TUE-002 完全相同的上下文损坏特征，说明 gateway 在停止前内部状态已经损坏。Signal win_rate 保持在 40.3%（仍高于 40% 阈值），候选池 9 个（全部 watch），但系统处于停止状态，无任何新交易活动。
+
+⚡ P0：Gateway 进程停止，autostart 指向过时路径，系统无法自动恢复 — 需手动执行 `uv run aletheia gateway restart && uv run aletheia gateway enable-autostart`
+
+### 问题更新 / 新增
+
+- **WED-007 NEW 🔴 P0**：Gateway 进程停止，`process.autostart` 报告 watchdog 注册路径过时（`registration points at stale code/path`）。最近一次自动重启发生在 1.0h 前（03:14Z，`self_heal_restart:code_drift`），之后 HEAD 再次更新至 95db840，导致 launchd 注册失效。当 gateway 在此次停止时，watchdog 无法拉起，系统进入无监控状态。复现机制与 TUE-001 完全相同：代码快速迭代 → launchd 路径失效 → 停止后无法自愈。根治方案：代码部署流水线中每次 `git hook` 重启后自动执行 `enable-autostart` 刷新注册。
+
+- **WED-008 NEW 🟠**：Operator 最后决策（gateway 停止前 1min）= "TRADE BTC/USDT long conviction=7, Reason: test reasoning"——与 TUE-002（07-14T15:11Z）完全一致的上下文损坏特征。两次均在 gateway 停止前约 1-3min 出现，可视为 gateway 即将崩溃的先行警告信号。根因尚未定位，可能是 LLM 上下文在高压状态（多轮 code_drift 重启后状态不一致）下返回降级输出。TUE-002 曾自愈，本次预计重启后同样自愈。
+
+- **MON-036**：win_rate 40.3%，仍在阈值以上，data.signal 维持 INFO 状态。候选 9 个，factor_status 仍为 watch，未翻转为 eligible。Gateway 停止使这一判断暂时失效——恢复后需重新观察首轮提案是否出现。
+
+- **WED-006**：positions(open=0,closed=0) 无变化，paper trading 数据仍处于重置后的空白状态。
+
+- **WED-005**：Serenity stale 1.4d，attempt=failed，无变化。
+
+- **operator.shell**：heartbeat stale，最后心跳约 1min 前——与 gateway 停止时间吻合，Operator 进程在 gateway 关闭时同步停止。
+
+---
+
+## 定时观测 2026-07-15T05:14Z
+
+### 摘要
+
+WED-007（Gateway 停止）和 WED-008（test reasoning 损坏决策）均已自愈：Gateway 重新运行（PID 6773，autostart 正常），Operator 决策恢复正常逻辑（2min ago SKIP on LAB/USDT，理由合理）。数据采集器显著恢复：derivatives/hyperliquid 超时问题消除，仅剩 defillama:skipped_budget。系统整体稳定，win_rate 维持 40.3%。但 factor_status 在 win_rate 持续高于 40% 整整 2h 后仍未翻转为 eligible，这开始看起来像结构性问题而非启动延迟。debate 开始报告 missed_alpha_suspect=3，表明 Operator 已过度保守。upstream 出现 6 个未合入提交，dirty worktree，系统运行的代码可能滞后。
+
+### 问题更新 / 新增
+
+- **WED-007**：✅ 已解决。Gateway 48min 前恢复（历史记录显示 `gateway_spawn_failed` 后手动恢复），autostart 重新注册（runs=44），heartbeat 正常，operator.shell ✅。
+
+- **WED-008**：✅ 自愈。Operator 决策回归正常逻辑，"test reasoning" 不再出现，确认为 gateway 崩溃前的一次性上下文损坏。
+
+- **MON-036**：win_rate 40.3% 持续 2h+，factor_status 仍全部为 watch，executable=0，drought=yes。这不再是"启动延迟"——2.4h 足够 ranker 完成多个 batch 周期。我判断 `factor_status` 的判定逻辑不是基于 aggregate 24h win_rate，而是基于**各 scanner family 独立 win_rate**。历史数据显示 mean_reversion win_rate ~36%（远低于 40% 阈值），即使 aggregate 超过 40%，包含 mean_reversion 候选的批次整体仍处于 watch。这解释了为什么 aggregate 40.3% 仍不能解锁 eligible 状态。missed_alpha_suspect 从 0 升至 3，说明 Operator 的保守跳过开始错过真实 alpha。
+
+- **WED-009 NEW 🟠**：`code.sync` 出现新变化：`6 behind origin, dirty worktree`（上次为"3 unpushed, 0 behind"）。upstream 有 6 个新提交未合入本地，意味着本机当前运行的代码可能落后于最新部署版本。若上游提交包含对 WED-001、MON-036 factor_status 逻辑或 Serenity pipeline 的修复，当前系统无法受益。需 `git pull --ff-only` 后重启。
+
+- **WED-005**：Serenity stale 1.5d，attempt=failed，持续无改善。dreaming_daily 已错过两个计划时间点（02:00 CST 07-14 和 07-15），unknown_error 根因未定位。
+
+- **data.lsr**：7.8h stale（自 ~21:24Z 07-14 起），今日全天无刷新。Binance FAPI 持续不可达，影响 LSR 数据覆盖。
+
+- **data.onchain**：9.6h stale，DefiLlama 连续接近 10h 未更新。defillama collector 持续以 `skipped_budget` 绕过，实质上等同于停用。
+
+---
+
+## 定时观测 2026-07-15T06:14Z
+
+### 摘要
+
+win_rate 再次跌破 40%（39.2%，232 settled），`data.signal` 重回 WARNING，候选池清空（no results），factor_status 问题重演。与此同时发现 `data.outcome_economics` 从 18,354 条暴跌至 3,371 条，与 Gateway PID 变化（6773→49325）同步出现——又一次局部数据重置。upstream 积压从 6 → 13 个提交（1h 内新增 7 个），开发节奏极快但本地运行代码持续滞后。missed_alpha_suspect 从 3 升至 5，Operator 过度保守的代价正在累积。系统目前功能正常但提案流仍完全停止，造成这一状态的核心问题是反复重启触发的信号样本重置。
+
+### 问题更新 / 新增
+
+- **MON-036**：win_rate 从 40.3% 跌回 39.2%，候选池清空（`inspect candidates` 无结果），drought=yes。问题的模式现在更清晰：每次 gateway 重启后，outcome 样本量急剧缩小（此次从 3720 降至 232），win_rate 基于极小样本计算，极易落入 39% 区间。信号数据未被彻底清除，但 24h 滚动窗口现在只包含 ~3.4h 的新鲜数据——高度不稳定，2-3 个好结果就能把 win_rate 推回 40% 以上，同理 2-3 个坏结果就能让它掉下来。factor_status 尚未解锁，提案停止 3.4h。missed_alpha_suspect: 5（上次 3），Operator 过度保守趋势持续恶化。
+
+- **WED-010 NEW 🔴**：`data.outcome_economics` 在本次 gateway 重启（PID 6773→49325）后从 18,354 条降至 3,371 条，降幅 82%。结合 WED-006（03:12Z 的全量 paper trading 重置），这表明系统在每次 `self_heal_restart:code_drift` 或相关代码部署重启时，会部分或全量清除 cost-aware outcome 数据和 signal_outcome 窗口，强制系统从近乎零起点重建信号置信度。根因推测：gateway 重启时执行了某种 DB migration 或 schema init 逻辑，将 outcome 表重置为空或仅保留最新的少量行。每次重启都会把系统推回"样本不足→drought"的起始状态，形成 restart-driven 反馈死锁。
+
+- **WED-009**：escalated。code.sync 从"6 behind"扩大到"13 behind origin"，1h 内上游新增 7 个提交，且本地有 dirty worktree。本机运行 HEAD=23d0567，但 origin 已远超此版本。若上游修复了 WED-010 相关的重置逻辑，当前系统无法受益。`git pull --ff-only` 是迫切需要的操作。
+
+- **WED-005**：Serenity stale 1.5d，attempt=failed，无改善。
+
+- **data.lsr**：8.8h stale，持续恶化，今日 Binance FAPI 全天不可达。
+
+---
+
+## 定时观测 2026-07-15T07:14Z
+
+### 摘要
+
+本次最重要的变化：用户完成了 `git pull --ff-only`（合并了之前积压的 13 个 upstream 提交），gateway 触发 `git_hook` 重启（46min 前），代码现已同步至 HEAD=611c516，仅剩 1 个本地 unpushed。pull 之后 win_rate 从 39.2% 跳升至 **44.1%**（306 settled），signal 警告消除，drought 根因从 `no_candidates` 降级为 `confidence_below`——系统终于在生成候选（BILL/USDT short、LAB/USDT short），但个体置信度评分未过关。`health.rollup` 回到 ✅ healthy。持仓仍为零（WED-006 reset 至今无新成交）。WED-001（$0 capital）skip reason 已不再出现，可能随此次 pull 的代码修复一并解决。
+
+### 问题更新 / 新增
+
+- **MON-036**：drought 状态改善但未解除。`main_reason` 从 `no_candidates` 变为 `confidence_below`，代表从"漏斗完全空"升级为"有候选但评分不足"，是结构性进展。反射日志确认：Operator 0min 前刚做出 SKIP，原因是 BILL/USDT short 和 LAB/USDT short 均被标记 `confidence_below`（非 win_rate、非 capital）。win_rate 44.1% 已远超 40% 阈值，factor_status 阻断已解除；当前瓶颈是个体机会置信度评分依赖的 outcome 样本仍不足（306 settled，post-reset）。`missed_alpha_suspect: 6`（上次 5），趋势未扭转。
+
+- **WED-009**：✅ 已解决。`git pull` 合并了 13 个 upstream 提交，`code.sync` 现为"1 unpushed, dirty worktree"，本地脏工作树中的未提交变更（MON-028 修复等）需在合适时机 push 或 stash 整理。
+
+- **WED-001**：可能已随 pull 解决。本次 Operator 的 skip reason 为 `confidence_below`，未出现"$0 capital"或"insufficient capital"描述。由于仍无实际提案产生，无法完全确认，下次有提案时应验证资金计算是否正常。
+
+- **WED-010**：稳定。`data.outcome_economics` 从 3371 增长至 3657（有机增长），无新的数据重置迹象。
+
+- **WED-005**：Serenity stale 1.5d，attempt=failed，无改善。dreaming_daily 仍未运行。
+
+- **data.lsr**：9.8h stale（持续恶化）。
+
+- **data.onchain**：11.6h stale（持续恶化）。
+
+---
+
+## 定时观测 2026-07-15T08:14Z
+
+### 摘要
+
+win_rate 继续攀升至 46.2%（344 settled），signal 状态健康。但新出现 `loop.skip_halt` WARNING——29 个候选跳过事件无 trace 记录、17 个无 outcome seed，系统已自诊为 `recording_incident`（threshold=skip-halt-v1）。drought 根因此次显示为 `no_candidates`（回退，07:14Z 曾是 `confidence_below`）但 Operator 的最新决策（32min 前）实际上仍是 `confidence_below`（ARB/PEPE/BASED short）——两者存在不一致，说明候选评分在 Operator 评估与 audit snapshot 之间存在时序差。代码层面高度活跃：1h 内新增 12 个本地 commit（1→13 unpushed），git_hook 触发第 6 次重启（PID 49325→11300）。Operator 未做全批次 loop 已 2.5h（05:44Z），missed_alpha_suspect 升至 7。
+
+### 问题更新 / 新增
+
+- **WED-011 NEW 🟠**：`loop.skip_halt` 首次触发。`missing_trace=29/29`（所有候选跳过事件均无 trace 记录）、`missing_outcome_seed=17`、`unscoped_heartbeat_skips=26`，系统已登记为 `recording_incident`。根因推断：skip trace 写入路径出现静默失败，candidate 被拒绝时未能持久化拒绝理由，导致 outcome 追踪链断裂、置信度评分无法正常积累。这解释了为何 win_rate 已回到 46% 但系统仍无法产生提案——confidence scoring 依赖 skip trace 来区分"被合理拒绝"与"样本不足"。结合 1h 内 12 个新 commit 的高强度开发节奏，极可能是某个上游改动破坏了 skip 记录路径。
+
+- **MON-036**：drought 持续，win_rate 46.2% 信号健康，但 executable=0。Operator 最近一次决策（32min 前）基于 `confidence_below` 跳过 ARB/PEPE/BASED；opportunity audit snapshot 显示 `no_candidates`——时序不一致，候选在被评估后迅速失效或被重新分级。`missed_alpha_suspect: 7`（连续 4 次上升），`thesis_lineage.missed=51`（上次 40）。WED-011 的 skip trace 断链是当前 drought 的直接维持因素。
+
+- **WED-009**：复发。code.sync 从"1 unpushed"增长到"13 unpushed"，HEAD 从 611c516 变为 52cd7fa，1h 内 12 个本地 commit。开发节奏极快，git_hook 第 6 次触发重启。本地有 dirty worktree。
+
+- **WED-005**：Serenity stale 1.6d，attempt=failed，无改善。
+
+- **data.lsr**：10.8h stale，worsening。
+
+- **data.onchain**：12.6h stale，worsening。
+
+---
+
+## 定时观测 2026-07-15T09:41Z
+
+### 摘要
+
+系统在本次观测窗口内进入 **`runtime.paused=True`** 状态（所有自主任务暂停，health.rollup=degraded:trading_paused，Operator 模式变为 Paused）。这是一个新 P0 阻断，直接原因尚不明确——可能是开发者主动暂停（15 unpushed commits，活跃开发中），也可能由 `self_heal_restart:market_data_stale`（11min 前触发）触发安全中断。暂停导致：机会观测者 49min 未产生新 opportunity，signal settler 停摆（94 个 forward outcome 过期未结算），数据采集器大规模退化（microstructure:failed、derivatives:failed，5 个域 overdue）。win_rate 维持在 45.9%，信号层面健康，但整个执行管道因暂停而冻结。重启事件从 8 次增至 11 次，新增类型 `self_heal_restart:market_data_stale`。机会详情首次显示 `factor=watch` 标签——证实候选池的因子状态跨全部 scanner family 仍处于 watch 模式。⚡ 系统进入 runtime.paused 状态（新 P0 阻断），需手动 `aletheia gateway resume` 恢复。
+
+### 问题更新 / 新增
+
+- **WED-012 NEW 🔴**：`runtime.paused=True`，health.rollup=degraded:trading_paused，所有自主任务暂停。Operator 模式从 Reviewing 切换为 Paused。暂停起点约在 08:14Z—09:41Z 之间，与第 8 次 git_hook 重启和首次 `self_heal_restart:market_data_stale`（11min 前）同期出现。恢复路径：`uv run aletheia gateway resume`。暂停期间 signal settler 积压 94 个过期 outcome（oldest=37min），机会观测停止 49min，如不恢复会持续恶化。
+
+- **WED-013 NEW 🟠**：数据采集器大规模退化。`microstructure:failed`（非 timed_out，是 failed）、`derivatives:failed`，另有 volume_scanner/coingecko_top/macro/hyperliquid/defillama 全部 overdue。orderbook 46min 未刷新（WARNING 阈值 15min）。`active members` 从 12 降至 10。根因推断：系统暂停后采集器 scheduler 未收到正常心跳，导致多个 budget 周期失火。若 `gateway resume` 后采集器未自动恢复，需单独触发重采集。
+
+- **WED-011**：持续，`missing_trace=29`（未变），`pending_signals` 从 46 升至 59，`no_evaluable_candidate_events` 从 6 升至 11。暂停加剧了 skip trace 缺失的积压。机会审计首次在 opportunity reason 中明确展示 `factor=watch` 标签（所有 scanner family：volatility、momentum、short_bias 全部 factor=watch）——这直接确认了候选无法到达执行层的根因，与 win_rate 无关，与 signal_accuracy 无关，是 factor_status 全局 watch 的结构性阻断。
+
+- **MON-036**：drought 持续。Operator 47min 前 SKIP ZEC/USDT long——在自己的评估中承认 ZEC 是"可用信号中最强的动量 setup"（RSI 64，+9.9% 24h，RS24h +6.7% vs BTC）却仍跳过，说明 Operator 定性判断与执行层评分之间存在系统性落差：无论定性多好，`factor=watch` 的结构性阻断让候选无法成为提案。WED-011 的 skip trace 缺失和 WED-012 的暂停是当前 drought 的两层叠加障碍。`missed_alpha_suspect: 8`（连续 5 次上升）。
+
+- **WED-005**：Serenity stale 1.6d，无改善。
+
+- **data.lsr**：12.3h stale，持续恶化。
+
+- **data.onchain**：14.0h stale，持续恶化。
+
+---
+
+## 定时观测 2026-07-15T10:14Z
+
+### 摘要
+
+WED-012（系统暂停）和 WED-013（数据采集器大规模失效）均已恢复——`config.paused` 消失，health.rollup 回到 ✅ healthy，Operator 重回 Reviewing，采集器恢复到仅剩 defillama:timed_out 降级，signal settler 从 94 个积压降回正常水位（26 个在 cadence 窗口内）。新增瞬态问题：`process.backend` ReadTimeout（backend 未在 frontdoor 后就绪），可能随 gateway 完全启动自愈。code.sync 出现新的 6-behind（upstream 在本地暂停期间又推进了 6 个提交）。WED-011 持续，`pending_signals=64`（+5）。最值得关注的是 Operator 的行为模式固化：0min 前 SKIP ZEC/USDT long，Operator 自己评估为"最高分待处理信号、技术面合理支撑（RSI=67，动量）"，但仍跳过——与 09:41Z 的 ZEC/USDT 跳过逻辑相同。`missed_alpha_suspect` 从 8 跳至 10，33min 内+2，thesis_lineage.missed=69（上次 62）。
+
+### 问题更新 / 新增
+
+- **WED-012**：✅ 已恢复。`runtime.paused` 消失，Operator 回到 Reviewing，health.rollup=healthy。恢复路径与 `self_heal_restart:market_data_stale`（44min 前）之后的重启（PID 42103→70944）同步，推测系统在 market data 自愈重启后自动解除暂停。
+
+- **WED-013**：✅ 大部分恢复。data.collectors 从 7 域降级/failed 回到仅 defillama:timed_out，active members perp 从 10 恢复至 14，signal settler stale_overdue 从 580 清零。DefiLlama 超时仍持续，onchain 14.6h stale。
+
+- **WED-011**：持续。`missing_trace=29`（未变），`pending_signals=64`（+5），`no_evaluable_candidate_events=11`（不变）。恢复后未见改善，skip trace 缺失问题是结构性的，不会随暂停解除自愈。
+
+- **MON-036**：drought 持续，但进入一个新阶段。所有技术性阻断（win_rate、runtime.paused）均已解除，win_rate 45.4%，Operator 正常运行且 9min 前刚做评估；但 Operator 自主判断仍持续跳过最高分候选。0min 前对 ZEC/USDT long 的 SKIP 理由是"最高分信号但技术面仅'合理支撑'"——这是主观保守，不是技术门控。`missed_alpha_suspect: 10`（连续6次上升，33min 内+2 是本监控周期单次最大涨幅）。Operator 的保守阈值与 debate panel 的判断之间正在形成系统性分歧，需要调参而非修 bug。
+
+- **process.backend**: 当前瞬态 WARNING（ReadTimeout）。gateway 刚从暂停后重启（PID 70944），backend supervisor 可能尚未完全就绪。若下次观测仍存在，则升级为新问题。
+
+- **code.sync**：再次出现 6-behind origin（15 unpushed, 6 behind）。upstream 在本地暂停期间推进了 6 个新提交。需要在稳定窗口内再次 `git pull --ff-only`。
+
+- **data.lsr**：12.8h stale，data.onchain：14.6h stale，均持续恶化。WED-005（Serenity）1.7d stale 无改善。
+
+---
+
+## 定时观测 2026-07-15T11:14Z
+
+### 摘要
+
+data.lsr（Binance FAPI 12.8h 断线后恢复，TIA/USDT LSR 0min 前新鲜）、data.onchain（DefiLlama 14.6h 断线后恢复）、process.backend（ReadTimeout 自愈）三项同步恢复，WARNING 数从 9 降至 5。最重要的新信息来自 `inspect candidates`——本监控周期首次返回完整候选列表（16 条），与此同时 factor_status=watch 的范围得到确认性证据：全部 16 个候选无一例外全是 factor_status=watch，guard_blocked=False，confidence_score 45-56，没有任何其他阻断。这确定性地验证了 MON-036 的根因：drought 不是信号质量问题、不是 Operator 决策问题，是 factor_status 全局 watch 门控把所有候选归类为"不可执行"。win_rate 从 45.4% 降至 41.8%（avg_net=-0.294%），若持续下行将于 1-2h 内再次触及 40% 红线。
+
+### 问题更新 / 新增
+
+- **MON-036**：根因确认。`inspect candidates` 首次完整输出（16 候选），每一条均为 `factor_status=watch`，confidence_score 45-56，guard_blocked=False。这意味着候选生成、guard 评估、confidence 评分均正常工作，唯一的执行阻断是 `factor_status=watch` 门控。drought 持续的根本原因是 factor 模型尚未积累到足够样本将状态从 watch 升级到 eligible——这是 WED-006 数据库重置的后遗症，无法通过重启或代码修复绕过，需要 factor 样本自然积累。win_rate 41.8%（452 settled, avg_net=-0.294%），接近 40% 警戒线。Operator 51min 前 SKIP BEAT/USDT short，skip reason 中明确列出所有候选均有 `factor=watch` 标签，表明 Operator 将 factor watch 作为跳过依据之一。`missed_alpha_suspect: 11`（连续第 7 次上升），`thesis_lineage.missed=83`（1h 内+14）。
+
+- **WED-011**：持续，`missing_trace=29`（静态），`pending_signals=79`（+15 in 1h，加速积累），`candidate_skips=36`（+3）。skip trace 断链是结构性问题，factor_status 门控每次新候选被跳过都在加深这个缺口。
+
+- **data.lsr**：✅ 恢复。Binance FAPI 重新可达，LSR 数据 0min 前新鲜（TIA/USDT LSR=1.45）。中断时长约 13h。
+
+- **data.onchain**：✅ 恢复。DefiLlama 重新可达，on-chain 数据 20min 前更新（中断约 14.6h）。
+
+- **code.sync**：仍为"15 unpushed, 6 behind origin, dirty worktree"。本地与 upstream 分叉状态未变，未进行 git pull。
+
+- **WED-005**：Serenity stale 1.7d，无改善。
+
+---
+
+## 定时观测 2026-07-15T12:15Z
+
+### 摘要
+
+`self_heal_restart:code_drift` 在 30min 前（~11:45Z）触发第二次代码漂移自愈重启（HEAD→15e2688, 20 unpushed, +5 提交）。重启携带的新代码显著改变了 WED-011 的诊断状态：`loop.skip_halt` 从 `recording_incident` 变为 `awaiting_outcomes`，新诊断 epoch（2fd018a3b300）在新会话内只有 15 个 skip 和 9 个 pending signals，历史 29 条 missing trace 被归类为遗留数据排除出效果队列。数据管道完全健康（5 WARNING 降至主要是 code.sync + serenity + process.restart_history）。但两个恶化趋势显著：win_rate 连续下行（45.4%→41.8%→40.8%，avg_net=-0.404%），接近 40% 红线；`thesis_lineage.missed` 从 83 跳至 119（+36 in 1h），`missed_alpha_suspect` 从 11 升至 14（+3）。`inspect candidates` 首次出现 `execution_eligible=False` 标签，明确命名了 factor_status=watch 在执行层的实现机制。
+
+### 问题更新 / 新增
+
+- **WED-011**：状态演进。新代码（11:45Z code_drift 重启）重置了诊断 epoch，finding 从 `recording_incident` 变为 `awaiting_outcomes`。当前 epoch 内只有 15 个 candidate_skips、9 个 pending signals，系统在等待这些 skip 产出 outcome 数据以评估是否仍有结构性问题。历史 29 条 missing trace 被标记为 legacy 并排除。这是实质性改进——新代码至少修复了 skip trace 记录路径，当前 epoch 的 skips 正常追踪中。
+
+- **MON-036**：drought 仍活跃，但根因链进一步完整。`inspect candidates` 首次出现 `skip_reason=execution_eligible=False`（SLX/USDT），明确了机制：`factor_status=watch` → 执行层设置 `execution_eligible=False` → ranker 赋 `trade_score=-999.0`。`candidate_supply.main_reason` 从 `no_candidates` 变为 `ttl_expired`——候选正在生成，但 Operator 评估频次不足（最近一次全批次评估 2.2h 前），导致候选在 Operator 处理前 TTL 到期。Operator 的最新 skip（23min 前）引入新维度：市场制度=SIDEWAYS（56% 置信度），Operator 以"方向性赌注在 SIDEWAYS 制度下不合适"为由跳过——这是独立于 factor_status 的第二层软门控。win_rate 40.8%（503 settled, avg_net=-0.404%），下行趋势未止，预计 30-60min 内可能再次跌破 40%。`missed_alpha_suspect: 14`（+3 in 1h），`thesis_lineage.missed=119`（+36 in 1h，明显加速）。
+
+- **WED-005**：Serenity stale 1.7d，无改善。
+
+- **code.sync**：20 unpushed, 6 behind origin。本地 1h 内又新增 5 个提交，HEAD 更新。上游未 merge 状态持续。
+
+---
+
+## 定时观测 2026-07-15T13:14Z
+
+### 摘要
+
+win_rate 从 40.8% 反弹至 **42.5%**（560 settled, avg_net=+0.028%）——结束了连续三次下行趋势，跌破 40% 的风险暂时解除。代码变更活跃：HEAD 从 15e2688 更新至 12a1123（22 unpushed, +2 提交），PID 从 15016 变为 20674（新的进程重启，未在 restart_history 中留下记录，可能为 watchdog 无声重启）。数据管道保持全绿。WED-011 当前 epoch 稳定积累（skip=21, pending_signals=12），仍处于 `awaiting_outcomes`。最需要关注的新信号：`operator.loop` 最近一次批次评估距今 **3.2h**（连续 3 次观测均在扩大：1.2h→2.2h→3.2h），Operator 个体决策仍在运行（37min 前 SKIP BASED/USDT），但批次循环停滞导致 `ttl_expired` 成为持续的主要 drop 原因（占 54 次，超过 operator_skip 21 次）。`missed_alpha_suspect: 15`，`thesis_lineage.missed=134`。
+
+### 问题更新 / 新增
+
+- **WED-014 NEW 🟠**：`operator.loop` 批次评估间隔持续扩大，从 1.2h（10:14Z）→ 2.2h（12:15Z）→ 3.2h（13:14Z），三次观测线性增长，批次循环似乎已停止调度。Operator shell 在线（heartbeat 0min）且仍做个体决策（反射 37min 前），说明不是进程挂死，而是批次任务调度失效。直接后果：候选在被批次评估前超时（`ttl_expired=54`，为主要 drop 原因），`candidate_supply.main_reason=ttl_expired` 。根因推断：最近的代码变更（20-22 unpushed commits）可能修改了 Operator loop 的调度触发逻辑，导致批次评估不再定时触发。若批次间隔继续扩大至 4-5h，ttl_expired 将完全主导 drought，即便 factor_status 最终转为 eligible 也无法产出提案。
+
+- **MON-036**：drought 持续，`candidate_supply.main_reason=ttl_expired`（上次同为 ttl_expired）。win_rate 42.5% 暂时稳定在安全区。候选池仍为全部 `factor_status=watch`，但现在有第二层叠加障碍——WED-014 的批次评估停滞使 TTL 到期成为额外拦截点。`missed_alpha_suspect: 15`，`thesis_lineage.missed=134`（+15 in 1h，vs 上次 +36，已在减速）。Operator skip 中反复出现"信号最强但不够有说服力"的模式（ALLO/USDT 51.46 分、BASED/USDT 50.85 分均被识别为最优候选后跳过）——这已不再是 factor gate 问题而是 Operator 置信度门槛过高的校准问题。
+
+- **WED-011**：当前 epoch 稳定（skip=21, pending_signals=12），`finding=awaiting_outcomes` 未变。旧 epoch 的 missing_trace=29 被视为遗留数据。新 epoch 追踪完整，正常等待 outcome 结算。
+
+- **WED-005**：Serenity stale 1.8d，无改善。
+
+---
+
+## 定时观测 2026-07-15T14:14Z
+
+### 摘要
+
+**drought 首次突破**：ZEC/USDT long 在 14:02Z 前后成交（entry=580.79，uPnL=+$0.077，持有 0.2h），`loop.profit` 从 WARNING 变为 ✅ healthy，`trade_funnel: ok`，`loop.activity: orders=1 fills=1 positions(open=1)`。win_rate 46.6%（631 settled，avg_net=+0.539%）——监控周期内最高读数。WARNING 从 5 降至 4。同时揭示了一个重要的机制性误判：**`factor_status=watch` 不等于执行被阻断**——ZEC/USDT 以 trade_score=54.35、confidence_score=59 突破了 watch 标签成交，说明 `execution_eligible=False` 是独立的高分条件触发，之前认为 factor_status=watch 是硬性门控是错误的。WED-014（operator.loop 批次评估停滞）扩大至 4.2h，但 drought 通过 Operator 个体决策路径而非批次路径突破。ZEC/USDT 有 shadow guard（20260628 momentum 4h loss，观测模式不阻断）。
+
+### 问题更新 / 新增
+
+- **MON-036**：drought 突破但立即复归。ZEC/USDT long 成交（第一笔新交易），`candidate_supply` 当前仍为 `executable=0 main_reason=ttl_expired drought=yes`——成交后其他候选因超时消耗完毕，候选池重新清空。重要的机制修正：`factor_status=watch` 不是执行硬门控，只是候选的一个属性标签；ZEC/USDT 以高分（54.35）成功执行证明分数超过某个动态阈值时可以绕过 watch 标签。上次观测判断"factor_status=watch=不可执行"已被推翻——真正的门控可能是 confidence_score 阈值或 execution_eligible 的动态条件，而非 factor_status 本身。shadow guard ZEC/USDT 匹配（4h 动量亏损 guard，仅观测不阻断），需在持仓期间持续关注是否触发升级为正式 guard。`missed_alpha_suspect: 16`，`thesis_lineage.missed=145`（+11 in 1h，减速）。
+
+- **WED-014**：operator.loop 批次评估间隔继续扩大至 4.2h（1.2h→2.2h→3.2h→4.2h，每小时+1h，线性增长模式确认）。drought 突破验证了 Operator 个体决策路径仍正常工作。`ttl_expired=63`（占总 drop 的 71%），批次停滞是候选 TTL 到期的主因。Operator 仍在 Reviewing 模式，heartbeat 0min，个体决策 0min 前。
+
+- **WED-011**：current_epoch_candidate_skips=26（+5），current_epoch_pending_signals=10（-2），finding=awaiting_outcomes（未变）。新 epoch 内 skip 在积累，但 pending_signals 小幅回落，可能部分 signal 已开始 settle。
+
+- **ZEC/USDT 新开多头持仓**：entry=580.79025，uPnL=+$0.077，持有 ~12min。shadow guard 观测中（不阻断）。这是 WED-006 数据库重置后的第一笔纸面交易。无止损配置信息可见，注意跟踪。
+
+- **WED-005**：Serenity stale 1.8d，无改善。
+
+---
+
+## 定时观测 2026-07-15T15:14Z
+
+### 摘要
+
+win_rate 创监控周期新高：**49.2%**（705 settled，avg_net=+0.777%），信号层面持续健康。最重要的正面变化：`operator.loop` 批次评估从 4.2h 降至 **49min**，WED-014 大幅改善——一次未被记录在历史中的 gateway 重启（PID 20674→82825）似乎重置了 Operator 调度状态，批次循环恢复正常。新开 ZEC/USDT long 持仓已从 +$0.077 转为 **uPnL=-$0.672**（持有 1.2h），entry=580.79，shadow guard 仍观测中（不阻断）。score 从 54.35 降至 49.23，置信度从 59 降至 53——价格走势对持仓不利，进一步监控是否触发止损或持续恶化。数据采集器出现新一轮降级（derivatives/macro/defillama 全部 timed_out，4 完成），这与 PID 重启后的恢复节奏一致，预计在下次观测前自愈。
+
+### 问题更新 / 新增
+
+- **WED-014**：大幅改善。`operator.loop` 从 4.2h 降至 49min，批次调度恢复。推测原因是 PID 从 20674 变为 82825 的一次静默 gateway 重启（未在 restart_history 中记录）重置了调度状态。个体决策也活跃（1min 前 SKIP BEAT/USDT short）。ttl_expired 依然是最大的 drop 原因（69 次，占总 drop=100 中的 69%），但比例可能随批次循环恢复而改善。若下次观测批次评估间隔再次超过 2h，则问题未根治。
+
+- **MON-036**：drought 名义上持续（`candidate_supply: executable=0 main_reason=ttl_expired`），但系统实际上已完成首笔成交（ZEC/USDT long 持仓中）。提案流健康（`loop.profit=✅`），最近提案 1.2h 前。debate_skips=30，trade_like_decisions=1——Operator 仍主要在跳过，但具有明显改善的节律。`missed_alpha_suspect: 17`，`thesis_lineage.missed=140`（轻微下降，上次 145）。
+
+- **ZEC/USDT 持仓风险**：uPnL=-$0.672（持有 1.2h），entry=580.79，当前持仓亏损中。候选得分从 54.35 降至 49.23，显示该资产动量减弱。Shadow guard（`20260628-211917-auto-guard-candidate-zecusdt-momentum-4h-loss`）再次匹配，仍为观测模式不阻断。目前亏损规模尚小，但若持续恶化需关注是否有止损机制介入。这是 WED-006 重置后的第一笔实际交易，后续表现将积累 Operator 的置信度数据。
+
+- **WED-011**：current_epoch_candidate_skips=38（+12），pending_signals=14（+4）。仍在 `awaiting_outcomes`，新 epoch 数据在正常积累。
+
+- **data.collectors**：出现新一轮降级（derivatives/macro/defillama timed_out），与 PID 重启时序吻合，预计自愈。
+
+- **WED-005**：Serenity stale 1.9d，无改善。
+
+---
+
+## 定时观测 2026-07-15T15:25Z
+
+### 摘要
+
+ZEC/USDT long 持仓亏损持续扩大：uPnL 从 -$0.672（15:14Z）降至 **-$1.003**（持有 1.4h），entry=580.79，候选得分维持 49.23 低位，动量延续走弱趋势。Shadow guard 持续匹配（观测不阻断）。信号层面保持稳健：win_rate 49.1%（721 settled，avg_net=+0.826%），较上次观测 avg_net 略有提升（+0.777%→+0.826%），settled 量增加 16 条，数据质量正向积累。`operator.loop` 批次评估间隔从 49min 延长至 1.0h，仍在 WED-014 改善后的正常区间（<2h 阈值）。`thesis_lineage.missed` 从 140 轻微降至 134（-6），是监控周期内首次回落。新发现：`process.restart_history` 显示 24h 内共 12 次重启事件，其中 **`gateway_restart:git_hook=8`（67%）**——git hooks 是压倒性主因，远超预期；结合 `gateway_spawn_failed=1`（端口/PID 文件丢失），提示高频 git 操作正在引发系统稳定性风险，未在本监控周期之前正式记录。
+
+### 问题更新 / 新增
+
+- **WED-015 NEW 🟠**：`gateway_restart:git_hook=8` 占 24h 重启的 67%（12 次中的 8 次）。git 的 post-merge/post-checkout/post-rewrite hooks 每次触发都强制 gateway 重启，而本地 22 unpushed + 6 behind origin 的活跃开发状态意味着 git 操作频率很高。直接后果：每次 gateway 重启短暂中断进程状态（包括 Operator 批次调度），可能是 WED-014 持续反复的结构性诱因；`gateway_spawn_failed=1` 表明至少有一次重启时 PID 文件/端口未就绪即再次被 hook 触发。建议评估是否需要给 git hooks 加 debounce 或在活跃开发周期内临时调整 hook 触发条件。
+
+- **ZEC/USDT 持仓风险**：uPnL=-$1.003（-$0.33 in 11min），持有 1.4h，entry=580.79。亏损速率（约 1.8$/h）在持续，Shadow guard 观测匹配未升级。如无止损机制介入，下次观测若 uPnL 跌破 -$2 需标记为升级风险。
+
+- **WED-014**：持续改善中。`operator.loop` 从 49min 延长至 1.0h，仍属正常。ttl_expired=65（同占主要 drop 原因），drought 状态未变（executable=0）。Operator 个体决策活跃（12min 前 SKIP BEAT/USDT short），反射正常。
+
+- **MON-036**：drought 持续。`candidate_supply: executable=0 main_reason=ttl_expired drought=yes`。全部 20 个候选为 factor_status=watch，得分区间 43-49，无 guard 阻断。`missed_alpha_suspect=17`（不变），`thesis_lineage.missed=134`（-6，首次回落）。仅 1 个提案 in 24h（proposal_bias 无法判断）。
+
+- **data.collectors**：microstructure:timed_out、derivatives:timed_out 降级持续（8/8 域报告，5 完成 latest tick）。与 15:14Z 观测状态一致，未自愈。coinalyze inactive（非配置问题，属预期状态）。
+
+- **WED-011**：current_epoch_candidate_skips=38（不变，+0 vs 15:14Z），pending_signals=12（-2，部分 signal 已 settle）。积累趋势稳定，`awaiting_outcomes` 未变。
+
+- **WED-005**：Serenity stale 1.9d，latest attempt=failed (unknown_error)，无改善。
+
+---
+
+## 定时观测 2026-07-16T00:04Z（UTC 2026-07-15T16:04Z）
+
+### 摘要
+
+**进程再度无声更换**：PID 从 82825 变为 36775，`process.autostart runs=9`（之前最高达 617）——launchd 登记重置，表明在上次观测（15:25Z）至本次（16:04Z）的 39 分钟内发生了一次未被 `restart_history` 捕获的重启。`restart_history` 仍显示 12 个事件 latest=code_drift 4.3h ago，说明此次 PID 变更漏记——WED-015 从理论推测进入实证确认阶段。正向变化：win_rate 升至 **49.8%**（761 settled，avg_net=+0.968%），为监控周期最高；ZEC/USDT uPnL 从 -$1.003 部分回收至 **-$0.814**（持有 2.0h），走势好转。采集器降级模式轮换：microstructure/derivatives 恢复（6/8 完成），defillama 重新超时——与 PID 重启后恢复节奏一致。`candidate_supply.main_reason` 从 `ttl_expired` 切换为 `no_candidates`，active members perp 从 14 降至 13，drought 根因出现新变化。`current_epoch_pending_signals` 从 12 骤降至 4，信号结算进展显著。
+
+### 问题更新 / 新增
+
+- **WED-015**：实证确认。PID 82825→36775，`autostart runs=9` 重置，39min 内发生了一次不在 `restart_history` 24h 记录中的重启。`code.sync` 同期 HEAD 从 12a1123 更新至 950bd58（27 unpushed，12 behind，+5 commits），上游新提交意味着 git hooks 触发重启条件持续成立。已知 8 次 git_hook 重启加上本次漏记，实际 24h 重启次数至少 9+。监控结论：`restart_history` 对部分 git_hook 触发的重启存在漏记，需以 PID 变化和 `autostart runs` 重置作为补充验证手段。
+
+- **MON-036**：drought 根因微变。`candidate_supply.main_reason` 从 `ttl_expired` 切换为 `no_candidates`——候选池当前为空，不再是"生成但超时"而是"尚未生成"。同期 active members perp 从 14 降至 13（一个 symbol 离开宇宙），候选供给进一步收窄。候选得分区间从 43-49 压缩至 43-48，ZEC/USDT long 得分从 49.23 降至 48.17，整体候选质量继续走低。`thesis_lineage.missed=145`（从 134 反弹 +11），`missed_alpha_suspect=17`（不变）。Operator 反射正常（1min 前 SKIP LAB/USDT short），跳过理由继续提及 "sub-50 scores and no B2 evidence"，B2 evidence 缺失已成为系统性跳过模式。
+
+- **ZEC/USDT 持仓**：uPnL -$1.003→-$0.814（+$0.189 部分回收），持有 2.0h，亏损速率明显减慢。Shadow guard 仍匹配（观测不阻断），LSR=0.50（多空比均衡），走势暂时企稳。
+
+- **WED-014**：`operator.loop` 从 1.0h 延长至 1.6h，距 2h 阈值尚有空间，但处于上升趋势。最近提案 2.0h 前（上次 1.4h），提案间隔也在小幅扩大。ttl_expired=64（持平）。未到告警级别，继续跟踪。
+
+- **WED-011**：`current_epoch_pending_signals` 从 12 骤降至 4，大量信号已结算，clearing 进展显著。`current_epoch_candidate_skips=44`（+6）。若结算继续，epoch 可能在 1-2h 内达到可评估状态。finding=awaiting_outcomes 未变。
+
+- **data.collectors**：降级模式轮换。microstructure/derivatives 恢复（6/8 tick 完成，优于上次 5/8），defillama:timed_out 接替为单一降级域。符合 PID 重启后采集器逐步重连的规律。
+
+- **overdue outcomes**：`overdue=447, awaiting_cadence=447`（上次 40），40min 内大幅跳升，但 `stale_overdue=0`，全部在 settler 正常处理窗口内，系属批量到期正常现象，不构成结算危机。
+
+- **WED-005**：Serenity stale 1.9d，无改善。
+
+---
+
+## 定时观测 2026-07-16T01:07Z
+
+### 摘要
+
+**WARNING 从 5 跳升至 9，市场数据管道全面停顿。** `data.market` 快照 43min 未更新，`data.orderbook` 2.2h 无新数据，`loop.newest_opportunity` 1.3h 未产出，`health.rollup` 从 ✅ healthy 转为 🔴 **degraded: market_data_stale:43min, observer_stale:75min**。系统已自愈重启 2 次（`self_heal_restart:market_data_stale` 从 1 增至 3），但市场数据仍未恢复，当前 gateway（PID 52215）是本次观测窗口内第三个不同 PID。直接后果：`inspect candidates` 返回空集（零候选），Operator 最后一次决策停留在 2.6h 前，提案流最近一次在 **11.1h 前**。ZEC/USDT long 在管道停顿期间亏损加速：uPnL -$0.814→**-$1.448**（1h 内 -$0.634，接近 -$2 告警线）。一个重要正面变化：**WED-005 已解决**——Serenity 在 5.0h 前成功运行（1.9d 停顿后首次），105 个活跃机会，当前 latest=running。
+
+### 问题更新 / 新增
+
+- **THU-001 NEW 🔴**：市场数据管道停顿，根因已定位。**直接根因**：`market_observer` APScheduler Job（max_instances=1）在 PI Daemon LLM 调用等待中持有单实例锁约 **28 分钟**（08:40–09:07 CST），导致所有 scheduler jobs（price_feed、data_collectors、universe_refresh 等）排队等待，触发 150+ 次 `maximum number of running instances reached`。LLM 调用在 09:07 CST 触发 180s wall-clock 超时（`structured_timeout`），锁释放后系统自愈。完整根因链见 `docs/issues/incident-report-2026-07-16-market-data-stall.md`。**历史模式**：同类问题可追溯至 2026-06-26，历史日志（errors.log.1）中 `market_observer job timed out after 240s` + `executor thread abandoned` 多次出现，abandoned threads 最高达 23。这是调度架构问题（LLM 调用在调度锁内执行），每次 LLM 响应缓慢时必然触发。`stale_overdue=97` 首次出现。01:12Z 状态：observers 已恢复（opportunities 1min 前），但 `data.market` 仍 48min stale（MO 下一次完整 run 后自愈）。
+
+- **ZEC/USDT 持仓 🟠**：uPnL -$0.814→-$1.448（1h 内 -$0.634），持有 11.1h，亏损速率在管道停顿期间明显加速。距 -$2 告警线仅剩 $0.55。Shadow guard 仍观测中（不阻断）。市场数据停顿导致止损机制依赖的实时行情不可用，需关注止损是否仍能正常触发。
+
+- **WED-005**：✅ **已解决**。Serenity 在 5.0h 前成功运行（本监控周期首次恢复），105 个活跃机会，latest attempt=running，1.9d 停顿后恢复正常。
+
+- **WED-015**：继续扩大。PID 36775→52215，restart_history 12→14（+2 新 market_data_stale 事件）。24h 累计 14 次重启中 git_hook=8，market_data_stale=3，code_drift=2，spawn_failed=1。频繁重启已成为 THU-001 无法根治的结构性原因之一。
+
+- **MON-036**：drought 从"候选稀缺"演变为"管道断流"。`inspect candidates` 返回空集（上次 20 条），`thesis_lineage.missed=181`（+36 in 1h），`missed_alpha_suspect=20`（+3）。根因已从 factor_status=watch 转为 THU-001 采集断层。
+
+- **WED-011**：`current_epoch_pending_signals=3`（-1，近清零），`current_epoch_candidate_skips=82`（+38）。skip 急剧积累，epoch 即将具备可评估条件，但 THU-001 下的 skips 主要为超时导致，代表性存疑。
+
+- **WED-014**：提案流 11.1h 无更新（上次 2.0h，显著恶化），Operator shell 状态从 Reviewing 变为 **Working**，两次观测间已做过一次批次评估（last assessment 1.6h ago 与上次巧合相同，但时钟基准已移动）。
