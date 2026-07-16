@@ -22,7 +22,7 @@ acceptance:
   in the disable response.
 - test_lifecycle_skips_auto_register_when_user_disabled passes.
 - All 38 test_autostart tests pass.
-base_commit: 1907efdf607711e1691259a8f52b819d7673906e
+base_commit: a180c9f70d808d2a1b636eb4e3f83db32b72b551
 next_action:
   command_key: workflow_bootstrap
   reason: Task complete; run bootstrap and create or claim a new task before changing
@@ -37,5 +37,14 @@ verification:
   run_at: '2026-07-16T08:39:55.988135Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: spec_audit_chain
+  command: uv run pytest tests/specs/spec_audit_chain.py -q
+  command_sha256: 30056798b6a046dba928dec3de9857a1177b569dfa66724ff10e77010ec91cfa
+  exit_code: 0
+  commit: a180c9f70d808d2a1b636eb4e3f83db32b72b551
+  run_at: '2026-07-16T08:54:16.469517Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-100.md
-updated_at: '2026-07-16T08:39:59.491323Z'
+updated_at: '2026-07-16T08:54:16.469707Z'
+revalidated_at: '2026-07-16T08:54:16.469705Z'
