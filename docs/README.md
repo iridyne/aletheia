@@ -1,108 +1,65 @@
-# docs/ — Aletheia Trading OS Documentation
 
-## 4-Layer Documentation Pyramid
+# docs/ - Aletheia Agent Documentation Map
 
-```
-Layer 1: WHY (产品定义)          — What we're building and why
-  └─ product/PRD.md              ← Product requirements, scope, glossary
-  └─ product/DIRECTION.md        ← Durable owner product direction and non-goals
-  └─ product/METRICS.md          ← North-star metric + phase KPIs + Go-Live Scorecard
-  └─ product/PHASE_GATES.md      ← Pass/fail checklists for each phase gate
+This directory is organized for AI agents first: read the smallest routing file, then jump to the narrowest authoritative folder. Do not bulk-read `docs/`.
 
-Layer 2: WHAT (系统设计)          — How the system is built
-  └─ SYSTEM_ARCHITECTURE_GUIDE.md ← 8-chapter architecture overview
-  └─ design/data_model.md        ← Complete SQLite schema (83 tables, 52+ models)
-  └─ design/api_reference.md     ← REST API complete reference (~293 endpoints)
-  └─ design/agent_contracts.md   ← 14 agents: trigger, reads, writes, LLM usage, chains
-  └─ design/*.md                 ← Subsystem designs (operator, data layer, UI, etc.)
+## Agent Reading Protocol
 
-Layer 3: HOW (实施规范)           — Rules that must hold while building
-  └─ governance/implementation_guide.md ← Product identity, design principles, red lines
-  └─ governance/trust_and_change_control.md ← Change control boundaries
-  └─ plans/*.md                  ← Step-by-step implementation plans
+1. Start with this file.
+2. Pick exactly one task lane below.
+3. Read that lane's `README.md` before opening individual documents.
+4. Prefer authoritative contracts and runbooks over old plans, audits, or session notes.
+5. Treat `archive/`, `research/`, `_ai/audits/`, and `issues/archive/` as evidence, not current truth.
+6. Runtime truth still comes from `aletheia doctor`, logs, DB state, and code inspection.
 
-Layer 4: WHERE (状态追踪)         — Current progress
-  └─ status/ROADMAP.md           ← Phased development plan (Phase 0–7+)
-  └─ status/PIPELINE_STATUS.md   ← Per-stage implementation status
-  └─ status/WORLD_MAP.md         ← Trading cognitive loop + module map
-  └─ issues/*.md                 ← Active problem lists (backend/frontend)
-```
+## Authority Order
 
----
+1. `../AGENTS.md` - mandatory safety and repo rules.
+2. `governance/policies/` and `governance/protocols/` - change-control and triage rules.
+3. `product/definition/` and `product/gates/` - product scope and acceptance gates.
+4. `design/contracts/`, `design/data/`, `design/api/`, `design/architecture/` - executable system intent.
+5. `operations/runbooks/`, `operations/development/`, `operations/recovery/` - how to operate or recover.
+6. `issues/` and `plans/` - work queues and implementation intent.
+7. `research/`, `references/`, `_ai/`, `status/`, `archive/` - context and historical evidence.
 
-## Quick Start
+## Task Lanes
 
-**New to the project?** Read in this order:
-1. [PRD](product/PRD.md) — what we're building (5 min)
-2. [ARCHITECTURE](ARCHITECTURE.md) — tech stack, directory map, forbidden zones (5 min)
-3. [DEV_SETUP](DEV_SETUP.md) — install, configure, run (5 min)
-4. [SYSTEM_ARCHITECTURE_GUIDE](SYSTEM_ARCHITECTURE_GUIDE.md) — deep architecture (15 min)
-5. [Implementation Guide](governance/implementation_guide.md) — what rules to follow (10 min)
-
-**Starting a session?** (AI agents: always do this)
-1. `git pull --ff-only && aletheia doctor`
-2. Read [CURRENT_TASK](_ai/CURRENT_TASK.md) + [AI_HANDOFF](_ai/AI_HANDOFF.md)
-3. Check [ROADMAP](status/ROADMAP.md) for current phase
-
-**Making a decision?**
-- Feature scope: [PRD §5](product/PRD.md#5-functional-scope) (MVP in / deferred / never)
-- Architecture: [Implementation Guide](governance/implementation_guide.md)
-- Phase readiness: [PHASE_GATES](product/PHASE_GATES.md)
-- Safety boundaries: [Trust & Change Control](governance/trust_and_change_control.md)
-
----
+| Task | Read first | Then narrow to |
+|---|---|---|
+| New agent session | `_ai/README.md` | `_ai/session/`, `_ai/workflow/` |
+| Product direction or scope | `product/README.md` | `product/definition/`, `product/gates/`, `product/experiments/` |
+| Architecture or subsystem behavior | `design/README.md` | `design/contracts/`, `design/architecture/`, `design/data/` |
+| API or schema work | `design/README.md` | `design/api/`, `design/data/`, `design/contracts/` |
+| Risk, execution, live unlock, audit chain | `governance/README.md` | `governance/policies/`, `design/contracts/` |
+| Local setup, preview, tests, deployment | `operations/README.md` | `operations/development/`, `operations/deployment/`, `operations/runbooks/` |
+| Bug triage or known problems | `issues/README.md` | `issues/domain/`, `issues/incidents/`, `issues/backlog/` |
+| Implementation sequencing | `plans/README.md` | one domain folder under `plans/` |
+| External inspiration or papers | `references/README.md` | `references/external-systems/`, `references/papers-and-benchmarks/` |
+| Research/audit evidence | `research/README.md` | one domain folder under `research/` |
+| Progress snapshot | `status/README.md` | `status/roadmap/`, `status/snapshots/`, `status/audits/` |
+| Diagrams | `diagrams/README.md` | `diagrams/source/`, `diagrams/rendered/` |
 
 ## Directory Map
 
-| Directory | Purpose | When to add here |
+| Directory | Agent purpose | Write policy |
 |---|---|---|
-| `product/` | Product definition: PRD, metrics, phase gates | Changes to product scope or success criteria |
-| `_ai/` | AI session meta-docs (handoff, devlog, decisions, protocol) | Every session reads/updates these |
-| `governance/` | Boundaries that must hold while the system changes | Rarely — new constitutional constraints only |
-| `operations/` | How to run, maintain, and recover the system | New runbooks or SOPs |
-| `status/` | Where we are and where we're going (roadmap, pipeline, world map) | Updates to progress/direction |
-| `design/` | Architecture and subsystem design docs | New subsystem designs |
-| `issues/` | Active problem lists (backend/frontend) + `archive/` | Append findings; archive when superseded |
-| `facts/` | One-time, machine-independent fact records with evidence | Audits/analyses that won't change |
-| `references/` | External framework comparisons and reference analyses | New external system deep-dives |
-| `plans/` | Implementation plans (step-by-step, for agentic workers) | New feature/subsystem plans |
-| `research/` | First-hand research materials and knowledge bases | New research corpora |
-| `archive/` | Expired/superseded snapshots (kept for provenance) | Files that are no longer active |
+| `_ai/` | Agent workflow, handoff, decisions, session context | Update only when maintaining agent-facing context |
+| `product/` | Product identity, scope, metrics, experiment rules | Durable product decisions only |
+| `governance/` | Safety, trust boundaries, protocols | Rare; requires high confidence |
+| `design/` | System contracts and architecture | Update with executable specs when contract changes |
+| `operations/` | Runbooks, setup, deployment, recovery | Update when operator procedure changes |
+| `issues/` | Known defects, incidents, backlog ledgers | Add evidence; close or archive when superseded |
+| `plans/` | Implementation plans for future work | Keep plans domain-scoped and mark when superseded |
+| `research/` | Audits, investigations, domain research | Evidence store; not a source of current truth by itself |
+| `references/` | External systems, papers, captured reference material | External reference only; never implementation authorization |
+| `status/` | Roadmaps and point-in-time progress | Snapshot carefully; can drift |
+| `diagrams/` | Diagram sources and rendered assets | Keep source and rendered output paired |
+| `archive/` | Superseded project history | Read only for provenance |
+| `superpowers/` | Optional/experimental specialized specs | Do not treat as core contract unless linked from design |
 
----
+## Naming Rules For New Docs
 
-## Key Documents
-
-**Product definition (Layer 1):**
-- [PRD](product/PRD.md) — what/why/who, functional scope, glossary
-- [Product Direction](product/DIRECTION.md) — durable product choices distilled from owner direction
-- [METRICS](product/METRICS.md) — north-star metric, phase KPIs, Go-Live Scorecard criteria
-- [PHASE_GATES](product/PHASE_GATES.md) — pass/fail checklists for each phase
-
-**System design (Layer 2):**
-- [SYSTEM_ARCHITECTURE_GUIDE](SYSTEM_ARCHITECTURE_GUIDE.md) — 8-chapter architecture
-- [Data Model](design/data_model.md) — all 83 tables, schema, concurrency model
-- [API Reference](design/api_reference.md) — all ~293 REST endpoints
-- [Agent Contracts](design/agent_contracts.md) — all 14 agents + 30 scheduler jobs
-
-**Context Engineering（AI 可读工程环境）:**
-- [ARCHITECTURE](ARCHITECTURE.md) — tech stack, directory map, forbidden zones
-- [API_CONTRACT](API_CONTRACT.md) — endpoint conventions, compatibility rules
-- [DEV_SETUP](DEV_SETUP.md) — install, configure, commit conventions, DB migration rules
-- [TESTING](TESTING.md) — SDD flow, test commands, mock boundaries
-- [DEPLOYMENT](DEPLOYMENT.md) — gateway lifecycle, Task Scheduler, health checks
-
-**Governance (Layer 3):**
-- [Implementation Guide](governance/implementation_guide.md) — product identity and red lines
-- [Trust & Change Control](governance/trust_and_change_control.md) — change-controlled boundaries
-- [AGENTS.md](../AGENTS.md) — red lines for AI agents specifically
-- [DEV_PROTOCOL](_ai/DEV_PROTOCOL.md) — two-machine intent vs fact separation
-
-**Operations:**
-- [RUNBOOK](operations/RUNBOOK.md) — running the system unattended
-
-**Status (Layer 4):**
-- [ROADMAP](status/ROADMAP.md) — phased plan with observation gates
-- [PIPELINE_STATUS](status/PIPELINE_STATUS.md) — per-stage implementation status
-- [WORLD_MAP](status/WORLD_MAP.md) — trading cognitive loop and module map
-- [North Star](references/north_star.md) — long-term vision reference
+- Use a domain folder instead of adding files to a crowded parent directory.
+- Prefer lowercase kebab-case for new filenames unless the existing family uses uppercase.
+- Add or update the nearest `README.md` when a new subfolder is created.
+- Put current contracts in `design/contracts/`; put implementation plans in `plans/<domain>/`; put investigation evidence in `research/<domain>/`; put known defects in `issues/<domain>/`.

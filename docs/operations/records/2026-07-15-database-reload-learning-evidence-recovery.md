@@ -1,7 +1,7 @@
 # 2026-07-15 数据库重载：学习证据恢复记录
 
 > 状态：已完成的一次性维护记录。
-> 执行依据：[数据库重载后的学习证据恢复 SOP](../DATABASE_RELOAD_RECOVERY_SOP.md)
+> 执行依据：[数据库重载后的学习证据恢复 SOP](../runbooks/DATABASE_RELOAD_RECOVERY_SOP.md)
 > 边界：仅处理重载前仍留在**活动**学习输入中的历史证据；不改变代码、PI 门槛、Risk、
 > Execution、Live、凭据或交易链事实。
 

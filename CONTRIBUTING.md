@@ -12,8 +12,8 @@ Read these files before making a non-trivial change:
 1. `README.md` for setup and the product overview.
 2. `docs/README.md` for the documentation map.
 3. `AGENTS.md` for project rules, safety boundaries, test expectations, and AI-agent workflow.
-4. `docs/governance/trust_and_change_control.md` before touching risk, execution, live trading, secrets, or permissions.
-5. `docs/design/data_model.md` and `docs/design/api_reference.md` when changing schema or API behavior.
+4. `docs/governance/policies/trust_and_change_control.md` before touching risk, execution, live trading, secrets, or permissions.
+5. `docs/design/data/data_model.md` and `docs/design/api/api_reference.md` when changing schema or API behavior.
 
 `CLAUDE.md` and `CODEX.md` intentionally point back to `AGENTS.md`; do not
 maintain separate rule copies.
@@ -126,10 +126,10 @@ credentials.
 
 When adding or removing:
 
-- API endpoints: update `docs/design/api_reference.md`.
-- Data tables: update `docs/design/data_model.md`.
-- Data sources: update `docs/design/data_utilization.md`.
-- Scheduler jobs: update `docs/design/agent_contracts.md` and related system maps.
+- API endpoints: update `docs/design/api/api_reference.md`.
+- Data tables: update `docs/design/data/data_model.md`.
+- Data sources: update `docs/design/data/data_utilization.md`.
+- Scheduler jobs: update `docs/design/contracts/agent_contracts.md` and related system maps.
 - Config fields: update backend schema and the frontend Settings page.
 
 ## AI Agent Contributions

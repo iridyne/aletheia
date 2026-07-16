@@ -2,10 +2,10 @@
 
 Local-first, file-based, Trading-as-Git, AI-native, self-learning agentic trading system.
 
-> **Running it unattended?** See **[docs/operations/RUNBOOK.md](docs/operations/RUNBOOK.md)** — how to take
+> **Running it unattended?** See **[docs/operations/runbooks/RUNBOOK.md](docs/operations/runbooks/RUNBOOK.md)** — how to take
 > the system live for paper trading, the brakes, self-upgrade, and health monitoring.
 > For the phase-by-phase local runtime hardening plan, see
-> **[docs/operations/STABILITY_TARGET_ARCHITECTURE.md](docs/operations/STABILITY_TARGET_ARCHITECTURE.md)**.
+> **[docs/operations/architecture/STABILITY_TARGET_ARCHITECTURE.md](docs/operations/architecture/STABILITY_TARGET_ARCHITECTURE.md)**.
 
 ## Quick Start
 
@@ -60,7 +60,7 @@ cd frontend && npm run dev
 It can read from the stable `:8787` API but blocks writes. For an isolated
 backend preview, start `uv run aletheia dev api --port 8791` and set
 `VITE_API_TARGET=http://127.0.0.1:8791`. The full safety contract and Windows
-commands are in [Development preview](docs/operations/DEVELOPMENT_PREVIEW.md).
+commands are in [Development preview](docs/operations/development/DEVELOPMENT_PREVIEW.md).
 
 ## Contributing
 
@@ -86,15 +86,15 @@ safety and audit honesty come first. Before contributing, read:
 
 ### System Overview
 
-![System Overview](docs/diagrams/01_system_overview.png)
+![System Overview](docs/diagrams/rendered/01_system_overview.png)
 
 ### Trading Flow (System Operator Sole Decision Maker)
 
-![Trading Flow](docs/diagrams/trading_flow_pi_sole_decision_maker.png)
+![Trading Flow](docs/diagrams/rendered/trading_flow_pi_sole_decision_maker.png)
 
 > For detailed flow diagrams (data collection, signal discovery, decision process,
 > execution, position management, feedback loop, strategy lifecycle), see
-> **[docs/SYSTEM_ARCHITECTURE_GUIDE.md](docs/SYSTEM_ARCHITECTURE_GUIDE.md)**.
+> **[docs/design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md](docs/design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md)**.
 
 ## Safety invariants
 

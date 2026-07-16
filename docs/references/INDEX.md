@@ -12,7 +12,7 @@
 
 > 交易侧的"形"（OpenAlice 那一类：local-first / Trading-as-Git / 多角色 agent / guard pipeline）**我们已做齐且往往更硬**。
 > 真正缺的、且 Hermes / ALMA / AlphaQuanter / TradingAgents 共同指向的是**同一件事——经验闭环**：写进记忆的东西要能反哺下一次决策。
-> 当前已推进到"软闭环"（FTS5 检索注入 LLM prompt），剩余差距是**参数化反馈**与**跨 agent 协作流**。详见 [north_star.md](north_star.md)。
+> 当前已推进到"软闭环"（FTS5 检索注入 LLM prompt），剩余差距是**参数化反馈**与**跨 agent 协作流**。详见 [north_star.md](external-systems/north_star.md)。
 
 ---
 
@@ -42,16 +42,16 @@
 
 | 系统 | 一句话定位 | 对我们的贡献 | 深拆文档 |
 |---|---|---|---|
-| **OpenAlice** | 本地优先的通用 AI 交易 agent（"one-person Wall Street"） | 交易侧范式答案：local-first / Trading-as-Git / 凭证隔离 / guard pipeline | [openalice_prism_review.md](openalice_prism_review.md) · [north_star.md](north_star.md) §3 |
-| **prism** | 多 agent + async task 的中国公募基金研究 MVP | **反面教材**：LLM multi-agent 是死代码，后台实跑纯规则算术（与 Aletheia 同病）；另含可内联的工程片段 | [openalice_prism_review.md](openalice_prism_review.md) · [prism_extraction.md](prism_extraction.md) |
-| **TradingAgents** | 多 agent 投研框架（分析师/交易员/风控 + 多空辩论） | 多角色 + 反方 + **交易前辩论**的结构化数据流 | [north_star.md](north_star.md) §5 |
-| **nautilus-practice** | 用户自有，基于 NautilusTrader 的三模式（回测/沙盒/实盘）+ LangGraph 多 agent 策略生成 | 工程侧：成熟撮合内核 + 三模式同心圆 + 资金费率熔断 + agent **造策略**而非**做决策** | [north_star.md](north_star.md) §10 |
-| **hermes-agent** | 自我改进的常驻 agent（skill from experience + 持久记忆 + 三层 prompt） | 自学习侧范式答案：FTS5 可检索记忆 + skill 注入 + 记忆反哺决策 | [north_star.md](north_star.md) §4 |
-| **AlphaQuanter** | 工具编排式 agentic RL 交易框架（verl 强化学习栈） | 透明工具调用 + 从交易反馈优化策略（经验闭环的 RL 版，远期） | [north_star.md](north_star.md) §5 |
-| **Sophia** | 持久数字生命体（叙事记忆/自我模型/长程适应） | 长程身份 + dreaming/consolidation + 自我解释（研究级远期） | [north_star.md](north_star.md) §5 |
-| **ALMA** | 让 agent 学习更好的记忆设计（meta-learning） | 记忆不是死库；schema 可进化、影响未来检索（研究级远期） | [north_star.md](north_star.md) §5 |
+| **OpenAlice** | 本地优先的通用 AI 交易 agent（"one-person Wall Street"） | 交易侧范式答案：local-first / Trading-as-Git / 凭证隔离 / guard pipeline | [openalice_prism_review.md](external-systems/openalice_prism_review.md) · [north_star.md](external-systems/north_star.md) §3 |
+| **prism** | 多 agent + async task 的中国公募基金研究 MVP | **反面教材**：LLM multi-agent 是死代码，后台实跑纯规则算术（与 Aletheia 同病）；另含可内联的工程片段 | [openalice_prism_review.md](external-systems/openalice_prism_review.md) · [prism_extraction.md](external-systems/prism_extraction.md) |
+| **TradingAgents** | 多 agent 投研框架（分析师/交易员/风控 + 多空辩论） | 多角色 + 反方 + **交易前辩论**的结构化数据流 | [north_star.md](external-systems/north_star.md) §5 |
+| **nautilus-practice** | 用户自有，基于 NautilusTrader 的三模式（回测/沙盒/实盘）+ LangGraph 多 agent 策略生成 | 工程侧：成熟撮合内核 + 三模式同心圆 + 资金费率熔断 + agent **造策略**而非**做决策** | [north_star.md](external-systems/north_star.md) §10 |
+| **hermes-agent** | 自我改进的常驻 agent（skill from experience + 持久记忆 + 三层 prompt） | 自学习侧范式答案：FTS5 可检索记忆 + skill 注入 + 记忆反哺决策 | [north_star.md](external-systems/north_star.md) §4 |
+| **AlphaQuanter** | 工具编排式 agentic RL 交易框架（verl 强化学习栈） | 透明工具调用 + 从交易反馈优化策略（经验闭环的 RL 版，远期） | [north_star.md](external-systems/north_star.md) §5 |
+| **Sophia** | 持久数字生命体（叙事记忆/自我模型/长程适应） | 长程身份 + dreaming/consolidation + 自我解释（研究级远期） | [north_star.md](external-systems/north_star.md) §5 |
+| **ALMA** | 让 agent 学习更好的记忆设计（meta-learning） | 记忆不是死库；schema 可进化、影响未来检索（研究级远期） | [north_star.md](external-systems/north_star.md) §5 |
 
-> 另有一份外部综述的对照分析（非系统、是报告）：[agent_framework_research_2025_2026.md](agent_framework_research_2025_2026.md)
+> 另有一份外部综述的对照分析（非系统、是报告）：[agent_framework_research_2025_2026.md](papers-and-benchmarks/agent_framework_research_2025_2026.md)
 > —— 结论：那份报告是验证镜而非新需求源，其推荐的重型栈（Postgres/向量库/Redis/LangGraph）恰好命中我们写死的红线，已显式拒绝。
 
 ---
@@ -61,13 +61,13 @@
 | 文件 | 性质 | 一句话 |
 |---|---|---|
 | [INDEX.md](INDEX.md) | 入口 | 本文件——参考实现总览 |
-| [north_star.md](north_star.md) | 方向地图 | 六系统全景 + 范式 vs 现状映射 + 排序（含 §10 nautilus-practice 深拆） |
-| [openalice_prism_review.md](openalice_prism_review.md) | 深拆（2026-06-10） | OpenAlice（升级对照）vs prism（反面教材）逐项对照 + §5 施工蓝图；P0 borrow 状态见 ../research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md |
-| [../research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md](../research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md) | 深拆（2026-06-29，升级版） | 13-agent workflow 三层 ground truth（博客 + 真实 TS 源码 + Aletheia 对照）+ 5 镜头 + 5 轮对抗核查；含 Vibe Trading 帖交叉核查 §八点五；落地状态见 ../issues/TAG_BORROW_BACKLOG.md |
-| [prism_extraction.md](prism_extraction.md) | 代码清仓 | prism 删库前的工程片段留存（ProgressHub / TaskStore / WS endpoint 等） |
-| [agent_framework_research_2025_2026.md](agent_framework_research_2025_2026.md) | 验证镜 | 外部综述报告对照——确认而非启发，显式拒绝其重型栈 |
-| [competitors_and_papers.md](competitors_and_papers.md) | 竞品+论文 | 已克隆之外的同领域竞品（TradingAgents/RD-Agent/Qlib/FinRL…）与参考论文（arXiv 编号已核实） |
-| [FRAMEWORK_MODULE_MAP.md](FRAMEWORK_MODULE_MAP.md) | 自身架构 | Aletheia 12 模块地图（非外部参考，但与本目录互参） |
+| [north_star.md](external-systems/north_star.md) | 方向地图 | 六系统全景 + 范式 vs 现状映射 + 排序（含 §10 nautilus-practice 深拆） |
+| [openalice_prism_review.md](external-systems/openalice_prism_review.md) | 深拆（2026-06-10） | OpenAlice（升级对照）vs prism（反面教材）逐项对照 + §5 施工蓝图；P0 borrow 状态见 ../research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md |
+| [../research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md](../research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md) | 深拆（2026-06-29，升级版） | 13-agent workflow 三层 ground truth（博客 + 真实 TS 源码 + Aletheia 对照）+ 5 镜头 + 5 轮对抗核查；含 Vibe Trading 帖交叉核查 §八点五；落地状态见 ../issues/TAG_BORROW_BACKLOG.md |
+| [prism_extraction.md](external-systems/prism_extraction.md) | 代码清仓 | prism 删库前的工程片段留存（ProgressHub / TaskStore / WS endpoint 等） |
+| [agent_framework_research_2025_2026.md](papers-and-benchmarks/agent_framework_research_2025_2026.md) | 验证镜 | 外部综述报告对照——确认而非启发，显式拒绝其重型栈 |
+| [competitors_and_papers.md](papers-and-benchmarks/competitors_and_papers.md) | 竞品+论文 | 已克隆之外的同领域竞品（TradingAgents/RD-Agent/Qlib/FinRL…）与参考论文（arXiv 编号已核实） |
+| [FRAMEWORK_MODULE_MAP.md](external-systems/FRAMEWORK_MODULE_MAP.md) | 自身架构 | Aletheia 12 模块地图（非外部参考，但与本目录互参） |
 
 ---
 
@@ -98,4 +98,4 @@
 
 - 新增参考系统：克隆到 `_refs/`（浅克隆优先）→ 在本 INDEX 第 1、2 节登记 → 视价值决定是否写独立深拆。
 - 论文类（无公开代码）：登记在第 1 节"未克隆"块，不强行找代码。
-- 本目录只承载**机器无关的意图/参考**；具体 bug/contract 偏移入 `docs/issues/BACKEND_ISSUES.md`，不混进来。
+- 本目录只承载**机器无关的意图/参考**；具体 bug/contract 偏移入 `docs/issues/domain/BACKEND_ISSUES.md`，不混进来。

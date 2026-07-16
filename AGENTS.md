@@ -48,7 +48,7 @@ proved locally.
 
 A behavior change here needs a focused regression test. The commit, PR, and CI
 record are the verification evidence.
-Read [trust and change control](docs/governance/trust_and_change_control.md)
+Read [trust and change control](docs/governance/policies/trust_and_change_control.md)
 before changing one; this list must stay aligned with the machine-readable policy.
 
 ## Rules that prevent recurring data mistakes
@@ -71,10 +71,10 @@ before changing one; this list must stay aligned with the machine-readable polic
   `~/.aletheia/config.yaml`. After frontend changes run `cd frontend && npm run build`.
   `aletheia/dashboard_static/` is generated and untracked. For worktree UI HMR,
   use Vite on `http://127.0.0.1:5173`; it proxies the master `:8787` API as
-  read-only by default. See `docs/operations/DEVELOPMENT_PREVIEW.md` before
+  read-only by default. See `docs/operations/development/DEVELOPMENT_PREVIEW.md` before
   starting an isolated dev API.
 - An async FastAPI handler must not perform blocking I/O on the event loop. Read
-  [the async performance checklist](docs/_ai/ASYNC_PERFORMANCE_LESSONS.md)
+  [the async performance checklist](docs/_ai/workflow/ASYNC_PERFORMANCE_LESSONS.md)
   before adding or changing a hot endpoint; measure new endpoints directly on
   backend port `8788`.
 
@@ -153,21 +153,21 @@ owner in unexplained project jargon.
 - **C — defer:** new agents/assets/pages, self-evolution modes, strategy features,
   or broad new abstractions while core stability work remains.
 
-Read the full [bug triage protocol](docs/governance/BUG_TRIAGE_PROTOCOL.md)
+Read the full [bug triage protocol](docs/governance/protocols/BUG_TRIAGE_PROTOCOL.md)
 before classifying a non-obvious case.
 
 ## Read when needed
 
 | If the task involves… | Read before acting |
 | --- | --- |
-| Any controlled module, live unlock, risk, execution, secrets, permissions, or audit chain | [Trust and change control](docs/governance/trust_and_change_control.md) and affected `tests/specs/` |
-| Agent decisions, strategy, learning, `paper_trader`, or market observer | [Experiment protocol](docs/product/EXPERIMENT_PROTOCOL.md); update affected `tests/specs/spec_*.py` and run `aletheia doctor` |
-| An async route, polling UI, settings/config read, or endpoint latency | [Async performance lessons](docs/_ai/ASYNC_PERFORMANCE_LESSONS.md) |
-| A new/changed API route, data table, data source, scheduler job, promotion gate, or restricted tool | [Implementation guide](docs/governance/implementation_guide.md), then the matching [API](docs/design/api_reference.md), [data model](docs/design/data_model.md), [data utilization](docs/design/data_utilization.md), [agent contracts](docs/design/agent_contracts.md), or [promotion gates](docs/design/promotion_gates_contract.md) reference and its executable spec |
-| System ownership, data flow, agent jobs, or an unfamiliar subsystem | [System map](docs/design/SYSTEM_MAP.md) and [agent contracts](docs/design/agent_contracts.md) |
-| Parallel work, a dirty checkout, merge, worktree, or frontend build conflict | [Worktree playbook](docs/_ai/GIT_WORKTREE_PLAYBOOK.md) |
-| Cross-machine development, handoff, or what belongs in Git | [Development protocol](docs/_ai/DEV_PROTOCOL.md) |
-| A backend bug or a UI honesty gap | [Backend issues](docs/issues/BACKEND_ISSUES.md) or [frontend issues](docs/issues/FRONTEND_ISSUES.md) |
+| Any controlled module, live unlock, risk, execution, secrets, permissions, or audit chain | [Trust and change control](docs/governance/policies/trust_and_change_control.md) and affected `tests/specs/` |
+| Agent decisions, strategy, learning, `paper_trader`, or market observer | [Experiment protocol](docs/product/experiments/EXPERIMENT_PROTOCOL.md); update affected `tests/specs/spec_*.py` and run `aletheia doctor` |
+| An async route, polling UI, settings/config read, or endpoint latency | [Async performance lessons](docs/_ai/workflow/ASYNC_PERFORMANCE_LESSONS.md) |
+| A new/changed API route, data table, data source, scheduler job, promotion gate, or restricted tool | [Implementation guide](docs/governance/policies/implementation_guide.md), then the matching [API](docs/design/api/api_reference.md), [data model](docs/design/data/data_model.md), [data utilization](docs/design/data/data_utilization.md), [agent contracts](docs/design/contracts/agent_contracts.md), or [promotion gates](docs/design/contracts/promotion_gates_contract.md) reference and its executable spec |
+| System ownership, data flow, agent jobs, or an unfamiliar subsystem | [System map](docs/design/architecture/SYSTEM_MAP.md) and [agent contracts](docs/design/contracts/agent_contracts.md) |
+| Parallel work, a dirty checkout, merge, worktree, or frontend build conflict | [Worktree playbook](docs/_ai/workflow/GIT_WORKTREE_PLAYBOOK.md) |
+| Cross-machine development, handoff, or what belongs in Git | [Development protocol](docs/_ai/workflow/DEV_PROTOCOL.md) |
+| A backend bug or a UI honesty gap | [Backend issues](docs/issues/domain/BACKEND_ISSUES.md) or [frontend issues](docs/issues/domain/FRONTEND_ISSUES.md) |
 
 For routine tests, run the narrow `uv run pytest tests/test_<area>.py -q` first.
 The full suite is `uv run pytest tests/ -q --tb=line`; do not let it replace
@@ -175,4 +175,4 @@ focused proof. For gateway operations use
 `uv run aletheia gateway <start|stop|restart|status|logs>` rather than manually
 killing processes. Use `http://127.0.0.1:8787/` for daily operation and release
 acceptance. Use Vite `:5173` only for worktree HMR as documented in
-`docs/operations/DEVELOPMENT_PREVIEW.md`.
+`docs/operations/development/DEVELOPMENT_PREVIEW.md`.
