@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from aletheia.agent_runtime.run_context import (
@@ -148,6 +150,34 @@ async def test_fallback_attempts_are_accounted_separately_on_one_request():
     assert aggregate["cost_estimate_usd"] is None
 
 
+@pytest.mark.asyncio
+async def test_direct_daemon_operator_call_keeps_logical_identity(monkeypatch):
+    ensure_economics_schema()
+    add_pricing_snapshot(
+        provider="measured_test",
+        model="measured-model",
+        input_usd_per_million=1.0,
+        output_usd_per_million=2.0,
+        effective_from="2020-01-01T00:00:00+00:00",
+        source="test",
+    )
+    monkeypatch.setattr(
+        "aletheia.model_provider.base._logical_agent_from_stack",
+        lambda: "pi_trading_decision",
+    )
+
+    await _MeasuredProvider().complete(ModelRequest(messages=[]))
+
+    row = get_db().execute(
+        "SELECT * FROM runtime_cost_events WHERE event_type='llm' ORDER BY rowid DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    assert row["run_id"] is None
+    metadata = json.loads(row["metadata_json"])
+    assert metadata["logical_agent"] == "pi_trading_decision"
+    assert metadata["identity_source"] == "active_module_stack"
+
+
 def test_existing_tool_ledger_is_mirrored_as_unknown_not_zero():
     initialize_runtime_tracing()
     run = AgentRun(
@@ -212,4 +242,16 @@ def test_first_schema_install_refuses_to_commit_an_active_transaction():
     db.rollback()
     assert db.execute(
         "SELECT value FROM settings WHERE key='economics-tx-test'"
+    ).fetchone() is None
+
+
+def test_initialized_schema_probe_does_not_commit_an_active_transaction():
+    db = ensure_economics_schema()
+    db.execute("INSERT INTO settings(key,value) VALUES ('economics-tx-ready','pending')")
+    assert db.in_transaction is True
+    assert ensure_economics_schema(db) is db
+    assert db.in_transaction is True
+    db.rollback()
+    assert db.execute(
+        "SELECT value FROM settings WHERE key='economics-tx-ready'"
     ).fetchone() is None
