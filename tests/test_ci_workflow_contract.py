@@ -134,10 +134,10 @@ def test_full_regression_is_a_separate_manual_job_with_realistic_timeout() -> No
     assert "uv run pytest tests/" in _run_commands(full)
 
 
-def test_task_lite_is_not_a_git_or_ci_integrity_gate() -> None:
-    backend_commands = _run_commands(_workflow()["jobs"]["backend"])
+def test_repository_task_subsystem_is_absent_from_ci() -> None:
+    workflow_text = _WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    assert "agent workflow check --strict" not in backend_commands
-    assert "--changed-since" not in backend_commands
-    assert "task packet" not in backend_commands.lower()
-    assert "handoff" not in backend_commands.lower()
+    assert "agent workflow" not in workflow_text.lower()
+    assert "test_agent_workflow" not in workflow_text
+    assert ".agent/" not in workflow_text
+    assert "--changed-since" not in workflow_text

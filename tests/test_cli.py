@@ -24,13 +24,6 @@ def test_version():
     assert f"v{__version__}" in result.output
 
 
-def test_agent_workflow_cli_is_registered():
-    result = runner.invoke(app, ["agent", "workflow", "check", "--help"])
-
-    assert result.exit_code == 0
-    assert "Validate local Task Lite state" in result.output
-
-
 def test_gateway_status(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)

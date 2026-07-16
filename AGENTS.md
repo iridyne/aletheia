@@ -1,9 +1,9 @@
 # Aletheia Agent Guide
 
 This is the root instruction file for this repository. Read it first, then load
-only the task-specific document named in **Read when needed**. Do not bulk-load
+only the topic-specific document named in **Read when needed**. Do not bulk-load
 the linked documents: they are mandatory only when their trigger matches the
-task.
+work.
 
 ## Mission and priorities
 
@@ -47,7 +47,7 @@ proved locally.
   `aletheia/agent_shell/registry.py`, `aletheia/files/jsonl.py`, `aletheia/server/routes/live.py`
 
 A behavior change here needs a focused regression test. The commit, PR, and CI
-record are the verification evidence; Task Lite must not duplicate that proof.
+record are the verification evidence.
 Read [trust and change control](docs/governance/trust_and_change_control.md)
 before changing one; this list must stay aligned with the machine-readable policy.
 
@@ -86,21 +86,19 @@ before changing one; this list must stay aligned with the machine-readable polic
 - Keep knowledge-item types truthful. Do not repurpose an item type to populate
   a page, and do not hard-delete knowledge: archive or deprecate it.
 - Keep Git-tracked intent separate from local runtime facts. Do not record the
-  gateway process, `app.db`, local config, credentials, or Task Lite state in
-  tracked documents.
+  gateway process, `app.db`, local config, credentials, or external orchestrator
+  session state in tracked documents.
 
-## Task Lite and local parallelism
+## External agent orchestration
 
-Task Lite exists only to coordinate AI agents and sibling worktrees on this
-machine. Its SQLite state lives below `~/.aletheia/development/agent-tasks/` and
-must never be committed. Git branches/worktrees prevent code collisions; Git,
-PRs, and CI prove implementation quality. The historical `.agent/tasks/` and
-`.agent/handoffs/` trees are frozen archives and are not active workflow state.
+Agent/session assignment, parallel panes, worktree lifecycle, and completion
+state belong to the external development orchestrator (for example ORCA), not
+to Aletheia. This repository must not implement its own development-task
+database, worker lease, task packet, handoff ledger, or orchestration CLI.
 
-Use one active local task per branch. Keep only the minimum recovery context:
-intent, scope boundary/exclusions, acceptance conditions, blockers, and one
-exact next action. Do not create evidence ledgers, commit-SHA bindings, mandatory
-handoffs, or task-only commits.
+Use an isolated worktree for non-trivial parallel changes and give each agent a
+clear prompt containing goal, allowed paths, excluded paths, acceptance checks,
+and expected final report. Git/PR/CI remain the durable code and proof surfaces.
 
 ## Work safely and prove changes
 
@@ -112,13 +110,11 @@ At session start, run:
 ```sh
 git pull --ff-only
 uv sync
-uv run python scripts/agent_bootstrap.py
 uv run aletheia doctor
 ```
 
-`bootstrap` recovers machine-local task context; `doctor` is the source of local
-runtime truth. A missing active task is valid: create or claim one before
-non-trivial work. For a change, inspect the path, add or update the focused
+The external orchestrator supplies session/worktree context; `doctor` is the source of local
+runtime truth. For a change, inspect the path, add or update the focused
 regression test first for safety/trading/audit/secrets/lifecycle behavior, make
 the smallest change, run the focused test, then broaden verification as
 warranted. Do not claim a safety-sensitive fix without evidence in Git/PR/CI.
@@ -129,16 +125,11 @@ change has a documented contract surface, update its document and executable
 spec together. Register a new data source in the data-utilization table and add
 its DU claim before writing collection code.
 
-At task end, commit only implementation/documentation changes, run the relevant
-focused commands directly, and publish through the normal PR workflow. Then
-release local coordination with:
-
-```sh
-uv run aletheia agent workflow task complete TASK-ID
-```
-
-Do not stage or commit Task Lite state, verification records, or handoff files.
-The PR and CI results are the durable handoff and proof.
+At the end, commit only implementation/documentation changes, run the relevant
+focused commands directly, and publish through the normal PR workflow. Put durable
+decisions in design/decision documents and use the PR for review context. Do not
+add repository-local task state, worker leases, verification ledgers, or handoff
+packets; the external orchestrator owns ephemeral coordination.
 
 Use a dedicated worktree and branch for non-trivial edits. If the user explicitly
 requires the current shared checkout, re-check branch and status before every
@@ -180,7 +171,7 @@ before classifying a non-obvious case.
 
 For routine tests, run the narrow `uv run pytest tests/test_<area>.py -q` first.
 The full suite is `uv run pytest tests/ -q --tb=line`; do not let it replace
-task-specific proof. For gateway operations use
+focused proof. For gateway operations use
 `uv run aletheia gateway <start|stop|restart|status|logs>` rather than manually
 killing processes. Use `http://127.0.0.1:8787/` for daily operation and release
 acceptance. Use Vite `:5173` only for worktree HMR as documented in
