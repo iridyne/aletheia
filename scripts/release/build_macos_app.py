@@ -78,23 +78,17 @@ CONTENTS=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 RESOURCES="$CONTENTS/Resources"
 HOST_ROOT=${ALETHEIA_HOST_ROOT:-"$HOME/Library/Application Support/Aletheia"}
 CORE="$RESOURCES/runtime/aletheia-core/aletheia-core"
-ORIGINAL_ARGS_FILE=$(mktemp "${TMPDIR:-/tmp}/aletheia-tray-args.XXXXXX")
-trap 'rm -f "$ORIGINAL_ARGS_FILE"' EXIT HUP INT TERM
-printf '%s\0' "$@" > "$ORIGINAL_ARGS_FILE"
 if [ ! -f "$HOST_ROOT/current.json" ]; then
-  set -- __packaged_bootstrap --host-root "$HOST_ROOT" --source-root "$RESOURCES/runtime/aletheia-core"
-  if [ -f "$RESOURCES/update-public-key.pem" ]; then
-    set -- "$@" --public-key "$RESOURCES/update-public-key.pem"
+  if [ -f "$RESOURCES/update-public-key.pem" ] && [ -f "$RESOURCES/update-feed-url.txt" ]; then
+    "$CORE" __packaged_bootstrap --host-root "$HOST_ROOT" --source-root "$RESOURCES/runtime/aletheia-core" --public-key "$RESOURCES/update-public-key.pem" --feed-url-file "$RESOURCES/update-feed-url.txt"
+  elif [ -f "$RESOURCES/update-public-key.pem" ]; then
+    "$CORE" __packaged_bootstrap --host-root "$HOST_ROOT" --source-root "$RESOURCES/runtime/aletheia-core" --public-key "$RESOURCES/update-public-key.pem"
+  elif [ -f "$RESOURCES/update-feed-url.txt" ]; then
+    "$CORE" __packaged_bootstrap --host-root "$HOST_ROOT" --source-root "$RESOURCES/runtime/aletheia-core" --feed-url-file "$RESOURCES/update-feed-url.txt"
+  else
+    "$CORE" __packaged_bootstrap --host-root "$HOST_ROOT" --source-root "$RESOURCES/runtime/aletheia-core"
   fi
-  if [ -f "$RESOURCES/update-feed-url.txt" ]; then
-    set -- "$@" --feed-url-file "$RESOURCES/update-feed-url.txt"
-  fi
-  "$CORE" "$@"
 fi
-# shellcheck disable=SC2046
-set -- $(xargs -0 printf '%s\n' < "$ORIGINAL_ARGS_FILE")
-rm -f "$ORIGINAL_ARGS_FILE"
-trap - EXIT HUP INT TERM
 exec "$CONTENTS/MacOS/aletheia-tray-bin" "$@"
 """
 
