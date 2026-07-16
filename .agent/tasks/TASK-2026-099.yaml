@@ -20,7 +20,11 @@ acceptance:
   configured for auto-merge.
 - The audit-writer trust-boundary spec is recorded under its required dedicated command
   key.
-base_commit: 0f734a8fa6caadfddece04bccd3f99e350aaae6a
+base_commit: 0c0020a6a2356672de2caf8d682c96dd5fc85449
+base_commit_repaired_at: '2026-07-16T09:24:15.187369Z'
+base_commit_repair_reason: The original temporary feature commits were removed after integration;
+  the repository verifier revalidated the completed task and reset its base to this reachable
+  branch commit.
 next_action:
   command_key: workflow_bootstrap
   reason: Task complete; run bootstrap and create or claim a new task before changing
@@ -47,5 +51,18 @@ verification:
   run_at: '2026-07-16T07:54:08.777080Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: runtime_home_ci_repair
+  command: uv run pytest tests/test_runtime_home_migration.py tests/simulation/control_loop/test_confidence_deadlock.py
+    tests/simulation/control_loop/test_confidence_supply_recovery.py tests/simulation/control_loop/test_failure_artifacts.py
+    tests/simulation/control_loop/test_mutation_canaries.py tests/simulation/control_loop/test_runner_outcome_integrity.py
+    tests/simulation/control_loop/test_sizing_ratchet.py tests/simulation/control_loop/test_skip_diagnosis_observation.py
+    tests/simulation/control_loop/test_stateful_control_loop.py -q --tb=short
+  command_sha256: f3c9de7fbb1c830265f55b306c1b46456eba6863bcfb386eca611a4338b47eb5
+  exit_code: 0
+  commit: 0c0020a6a2356672de2caf8d682c96dd5fc85449
+  run_at: '2026-07-16T09:24:15.187340Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-099.md
-updated_at: '2026-07-16T07:54:23.299506Z'
+updated_at: '2026-07-16T09:24:15.187373Z'
+revalidated_at: '2026-07-16T09:24:15.187369Z'

@@ -29,6 +29,7 @@ _EXCLUDED_DIR_NAMES = {
     "node_modules",
 }
 _EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".map"}
+_EXECUTABLE_SUFFIXES = {".sh"}
 
 
 class BundleBuildError(RuntimeError):
@@ -157,6 +158,13 @@ def _copy_sources(root: Path, staging: Path, source_files: Iterable[Path]) -> li
     return manifest_files
 
 
+def _zip_mode(relative: Path) -> int:
+    """Return a stable Unix file mode stored in the cross-platform ZIP."""
+    if relative.suffix.lower() in _EXECUTABLE_SUFFIXES:
+        return 0o100755
+    return 0o100644
+
+
 def _write_deterministic_zip(staging: Path, archive_path: Path) -> None:
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(
@@ -168,10 +176,11 @@ def _write_deterministic_zip(staging: Path, archive_path: Path) -> None:
         for path in sorted(staging.rglob("*"), key=lambda item: item.relative_to(staging).as_posix()):
             if not path.is_file():
                 continue
-            relative = path.relative_to(staging).as_posix()
+            relative_path = path.relative_to(staging)
+            relative = relative_path.as_posix()
             info = zipfile.ZipInfo(relative, date_time=_FIXED_ZIP_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = 0o100644 << 16
+            info.external_attr = _zip_mode(relative_path) << 16
             info.create_system = 3
             archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
 
@@ -201,7 +210,7 @@ def build_bundle(
     version, requires_python = _project_metadata(root)
     source_files = collect_bundle_files(root)
     output_dir.mkdir(parents=True, exist_ok=True)
-    archive_path = output_dir / f"aletheia-dogfood-{short_sha}-win-x64.zip"
+    archive_path = output_dir / f"aletheia-dogfood-{short_sha}.zip"
     sha256_path = archive_path.with_suffix(archive_path.suffix + ".sha256")
     summary_path = output_dir / "bundle-size.json"
 
@@ -220,12 +229,17 @@ def build_bundle(
         )
         manifest_files.sort(key=lambda item: str(item["path"]))
         manifest = {
-            "release_format": 2,
+            "release_format": 3,
             "application": "aletheia",
             "version": version,
             "git_sha": resolved_sha,
-            "target": "windows-x64",
+            "target": "portable-source",
+            "supported_platforms": ["linux", "macos", "windows"],
             "requires_python": requires_python,
+            "runtime_entrypoints": {
+                "windows": "scripts/runtime/start-release.ps1",
+                "unix": "scripts/runtime/start-release.sh",
+            },
             "data_directory_contract": {
                 "default": "~/.aletheia",
                 "override": "ALETHEIA_DATA_DIR",
@@ -243,6 +257,7 @@ def build_bundle(
     sha256_path.write_text(f"{bundle_sha}  {archive_path.name}\n", encoding="utf-8", newline="\n")
     summary = {
         "archive": archive_path.name,
+        "target": "portable-source",
         "compressed_size_bytes": compressed_size,
         "compressed_size_mib": round(compressed_size / MIB, 3),
         "uncompressed_size_bytes": uncompressed_size,

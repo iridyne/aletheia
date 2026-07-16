@@ -66,6 +66,9 @@ commands:
   release_bundle:
     command: uv run pytest tests/test_release_data_dir.py tests/test_release_bundle.py -q --tb=short
     purpose: Verify the external durable-data boundary, deterministic runtime-only bundle, and 100 MiB fail-closed size gate.
+  macos_release:
+    command: uv run pytest tests/test_release_data_dir.py tests/test_release_bundle.py tests/test_macos_release_runtime.py -q --tb=short
+    purpose: Verify the portable source bundle, Unix installer and launcher contracts, executable script modes, and macOS clean-runtime workflow.
   runtime_home:
     command: uv run pytest tests/test_runtime_home_contract.py tests/test_runtime_home_migration.py tests/test_release_data_dir.py tests/test_release_bundle.py tests/test_dev_preview.py tests/test_autostart.py tests/test_lifecycle.py tests/test_agent_workflow.py tests/test_config.py tests/specs/spec_audit_chain.py -q --tb=short
     purpose: Verify the platform-independent per-user runtime home, fail-closed legacy migration, preview isolation, release contract, and inherited audit paths.
