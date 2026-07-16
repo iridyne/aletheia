@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -135,8 +136,57 @@ def test_signed_feed_accepts_exact_payload_and_rejects_tampering(monkeypatch, tm
     assert tampered["reason"] == "update_feed_signature_invalid"
 
 
-def test_safe_facade_rejects_path_like_release_id_before_download(monkeypatch, tmp_path):
-    _, feed, public_key = _archive_and_feed(tmp_path, release_id="../outside")
+def test_safe_facade_rejects_validly_signed_path_like_release_id(monkeypatch, tmp_path):
+    builder = _builder()
+    payload = _fake_payload(tmp_path / "payload")
+    artifact = builder.package_existing_payload(
+        payload,
+        tmp_path / "dist",
+        git_sha="abc123" + "0" * 34,
+        version="0.5.1",
+        target=packaged.platform_id(),
+    ).archive
+    private = Ed25519PrivateKey.generate()
+    public_key = tmp_path / "public.pem"
+    public_key.write_bytes(
+        private.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    malicious_payload = json.dumps(
+        {
+            "schema_version": 1,
+            "release_id": "../outside",
+            "version": "0.5.1",
+            "git_sha": "abc123" + "0" * 34,
+            "published_at": "2026-07-16T00:00:00Z",
+            "artifacts": {
+                packaged.platform_id(): {
+                    "url": artifact.as_uri(),
+                    "sha256": digest,
+                    "size_bytes": artifact.stat().st_size,
+                    "archive_format": "tar.gz",
+                }
+            },
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    feed = tmp_path / "feed.json"
+    feed.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "signed_payload": malicious_payload,
+                "signature": base64.b64encode(
+                    private.sign(malicious_payload.encode("utf-8"))
+                ).decode("ascii"),
+            }
+        ),
+        encoding="utf-8",
+    )
     host, _ = _configure_host(monkeypatch, tmp_path, feed, public_key)
 
     result = packaged_commands.stage_update_blocking()
