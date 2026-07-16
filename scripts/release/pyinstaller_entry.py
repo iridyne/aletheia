@@ -10,7 +10,14 @@ from __future__ import annotations
 import sys
 
 
+def _install_process_adapter() -> None:
+    from aletheia.packaged_process import install_frozen_subprocess_adapter
+
+    install_frozen_subprocess_adapter()
+
+
 def _run_packaged_gateway_runner() -> None:
+    _install_process_adapter()
     sys.argv = [sys.argv[0], *sys.argv[2:]]
     from aletheia._gateway_runner import main
 
@@ -18,6 +25,7 @@ def _run_packaged_gateway_runner() -> None:
 
 
 def _run_packaged_uvicorn() -> None:
+    _install_process_adapter()
     # Reuse uvicorn's own CLI parser so the source and packaged child processes accept
     # the same options and exit semantics.
     sys.argv = ["uvicorn", *sys.argv[2:]]
@@ -27,6 +35,7 @@ def _run_packaged_uvicorn() -> None:
 
 
 def main() -> None:
+    _install_process_adapter()
     mode = sys.argv[1] if len(sys.argv) > 1 else None
     if mode == "__packaged_gateway_runner":
         _run_packaged_gateway_runner()
