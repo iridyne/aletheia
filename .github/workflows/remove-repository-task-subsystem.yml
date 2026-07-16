@@ -1,0 +1,559 @@
+name: Remove repository task subsystem
+
+on:
+  push:
+    branches: [agent/task-lite-local]
+    paths:
+      - .github/workflows/remove-repository-task-subsystem.yml
+
+permissions:
+  contents: write
+
+jobs:
+  remove-task-subsystem:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/task-lite-local
+          fetch-depth: 0
+
+      - name: Remove failed task subsystem and preserve safety contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import shutil
+
+          root = Path.cwd()
+
+          def read(path: str) -> str:
+              return (root / path).read_text(encoding="utf-8")
+
+          def write(path: str, text: str) -> None:
+              target = root / path
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_text(text, encoding="utf-8")
+
+          def remove(path: str) -> None:
+              target = root / path
+              if target.is_dir():
+                  shutil.rmtree(target)
+              elif target.exists():
+                  target.unlink()
+
+          # Preserve the safety boundary as a governance contract, without task IDs,
+          # command registries, evidence ledgers, or local workflow ownership.
+          write(
+              "docs/governance/trust_boundaries.yaml",
+              '''schema_version: 1
+          # Machine-readable projection of AGENTS.md and
+          # docs/governance/trust_and_change_control.md §6.1.
+          #
+          # This file is a safety/documentation contract only. It does not create a
+          # repository task system, grant authority, track workers, or store evidence.
+          trust_boundaries:
+            - id: risk
+              paths:
+                - aletheia/risk/**
+              focused_commands:
+                - uv run pytest tests/specs/spec_risk_engine.py -q
+                - uv run pytest tests/specs/spec_kill_conditions.py -q
+            - id: execution
+              paths:
+                - aletheia/execution/**
+              focused_commands:
+                - uv run pytest tests/specs/spec_execution.py -q
+                - uv run pytest tests/specs/spec_pipeline_execution_chain.py -q
+            - id: bitget_auth
+              paths:
+                - aletheia/exchanges/bitget/auth.py
+              focused_commands:
+                - uv run pytest tests/specs/spec_execution.py -q
+            - id: bitget_client
+              paths:
+                - aletheia/exchanges/bitget/client.py
+              focused_commands:
+                - uv run pytest tests/specs/spec_execution.py -q
+            - id: secrets
+              paths:
+                - aletheia/config/secrets.py
+              focused_commands:
+                - uv run pytest tests/specs/spec_execution.py -q
+            - id: permissions
+              paths:
+                - aletheia/agent_runtime/permissions.py
+              focused_commands:
+                - uv run pytest tests/specs/spec_execution.py -q
+            - id: tool_registry
+              paths:
+                - aletheia/agent_runtime/tool_registry.py
+              focused_commands:
+                - uv run pytest tests/specs/spec_execution.py -q
+            - id: agent_shell_registry
+              paths:
+                - aletheia/agent_shell/registry.py
+              focused_commands:
+                - uv run pytest tests/specs/spec_execution.py -q
+            - id: audit_writer
+              paths:
+                - aletheia/files/jsonl.py
+              focused_commands:
+                - uv run pytest tests/specs/spec_audit_chain.py -q
+            - id: live_routes
+              paths:
+                - aletheia/server/routes/live.py
+              focused_commands:
+                - uv run pytest tests/specs/spec_live_unlock.py -q
+                - uv run pytest tests/specs/spec_audit_chain.py -q
+          ''',
+          )
+
+          # Entire tracked task database/packet/handoff subsystem is obsolete.
+          remove(".agent")
+          for path in (
+              "aletheia/agent_workflow.py",
+              "aletheia/agent_tasks_db.py",
+              "aletheia/cli/agent_workflow.py",
+              "scripts/agent_bootstrap.py",
+              "scripts/agent_check.py",
+              "scripts/agent_handoff.py",
+              "scripts/agent_task.py",
+              "scripts/agent_check_staged.py",
+              "scripts/agent_recovery_test.py",
+              "docs/design/agent_workflow_contract.md",
+              "docs/plans/agent_session_independent_workflow.md",
+              "tests/specs/spec_agent_workflow.py",
+              "tests/test_agent_workflow.py",
+              "CURRENT_TASK.md",
+          ):
+              remove(path)
+
+          # Remove the development workflow from the product/operator CLI.
+          operator = read("aletheia/cli/operator.py")
+          operator = operator.replace("from aletheia.cli.agent_workflow import workflow_app\n", "")
+          operator = operator.replace(
+              '\nagent_app.add_typer(workflow_app, name="workflow", help="Repository task recovery and verification commands.")\n',
+              "\n",
+          )
+          write("aletheia/cli/operator.py", operator)
+
+          # Remove task-store and Git-worktree identity helpers from runtime paths.
+          runtime_paths = read("aletheia/runtime_paths.py")
+          marker = "\ndef _git_common_dir(project_root: Path) -> Path:\n"
+          if marker not in runtime_paths:
+              raise SystemExit("runtime_paths.py Task Lite marker missing")
+          runtime_paths = runtime_paths.split(marker, 1)[0].rstrip() + "\n"
+          write("aletheia/runtime_paths.py", runtime_paths)
+
+          # Project instructions retain safety/test rules; orchestration is external.
+          agents = read("AGENTS.md")
+          agents = agents.replace(
+              "only the task-specific document named in **Read when needed**. Do not bulk-load\n"
+              "the linked documents: they are mandatory only when their trigger matches the\n"
+              "task.\n",
+              "only the topic-specific document named in **Read when needed**. Do not bulk-load\n"
+              "the linked documents: they are mandatory only when their trigger matches the\n"
+              "work.\n",
+          )
+          agents = agents.replace(
+              "A behavior change here needs a focused regression test. The commit, PR, and CI\n"
+              "record are the verification evidence; Task Lite must not duplicate that proof.\n",
+              "A behavior change here needs a focused regression test. The commit, PR, and CI\n"
+              "record are the verification evidence.\n",
+          )
+          agents = agents.replace(
+              "- Keep Git-tracked intent separate from local runtime facts. Do not record the\n"
+              "  gateway process, `app.db`, local config, credentials, or Task Lite state in\n"
+              "  tracked documents.\n",
+              "- Keep Git-tracked intent separate from local runtime facts. Do not record the\n"
+              "  gateway process, `app.db`, local config, credentials, or external orchestrator\n"
+              "  session state in tracked documents.\n",
+          )
+          agents = re.sub(
+              r"\n## Task Lite and local parallelism\n.*?(?=\n## Work safely and prove changes\n)",
+              "\n## External agent orchestration\n\n"
+              "Agent/session assignment, parallel panes, worktree lifecycle, and completion\n"
+              "state belong to the external development orchestrator (for example ORCA), not\n"
+              "to Aletheia. This repository must not implement its own development-task\n"
+              "database, worker lease, task packet, handoff ledger, or orchestration CLI.\n\n"
+              "Use an isolated worktree for non-trivial parallel changes and give each agent a\n"
+              "clear prompt containing goal, allowed paths, excluded paths, acceptance checks,\n"
+              "and expected final report. Git/PR/CI remain the durable code and proof surfaces.\n",
+              agents,
+              flags=re.S,
+          )
+          agents = agents.replace(
+              "git pull --ff-only\nuv sync\nuv run python scripts/agent_bootstrap.py\nuv run aletheia doctor\n",
+              "git pull --ff-only\nuv sync\nuv run aletheia doctor\n",
+          )
+          agents = re.sub(
+              r"`bootstrap` recovers machine-local task context; `doctor` is the source of local\n"
+              r"runtime truth\. A missing active task is valid: create or claim one before\n"
+              r"non-trivial work\. For a change,",
+              "The external orchestrator supplies session/worktree context; `doctor` is the source of local\n"
+              "runtime truth. For a change,",
+              agents,
+          )
+          agents = re.sub(
+              r"At task end, commit only implementation/documentation changes, run the relevant\n"
+              r"focused commands directly, and publish through the normal PR workflow\. Then\n"
+              r"release local coordination with:\n\n```sh\nuv run aletheia agent workflow task complete TASK-ID\n```\n\n"
+              r"Do not stage or commit Task Lite state, verification records, or handoff files\.\n"
+              r"The PR and CI results are the durable handoff and proof\.\n",
+              "At the end, commit only implementation/documentation changes, run the relevant\n"
+              "focused commands directly, and publish through the normal PR workflow. Put durable\n"
+              "decisions in design/decision documents and use the PR for review context. Do not\n"
+              "add repository-local task state, worker leases, verification ledgers, or handoff\n"
+              "packets; the external orchestrator owns ephemeral coordination.\n",
+              agents,
+          )
+          agents = agents.replace("task-specific proof", "focused proof")
+          write("AGENTS.md", agents)
+
+          # Static AI workflow now describes repository boundaries, not a task engine.
+          write(
+              "docs/_ai/AI_WORKFLOW.md",
+              '''# AI Development Workflow
+
+          ## Responsibility split
+
+          - **External orchestrator (for example ORCA):** agent sessions, prompts, panes,
+            worktree creation, parallel assignment, monitoring, and ephemeral completion state.
+          - **Aletheia repository:** project instructions, architecture contracts, code,
+            tests, decisions, pull requests, and CI.
+          - **Local runtime:** probed with `uv run aletheia doctor`; runtime facts are never
+            inferred from an orchestrator session or committed document.
+
+          Aletheia deliberately has no development-task database, task packet format,
+          worker lease, handoff ledger, or task-management CLI.
+
+          ## Start of work
+
+          1. Read `AGENTS.md` and only the topic-specific documents it points to.
+          2. Use the external orchestrator to create/select an isolated worktree when work
+             runs in parallel.
+          3. Run `git status` and `uv run aletheia doctor` before changing behavior.
+          4. State the boundary, invariant, exclusions, and focused verification command.
+
+          A good agent prompt contains:
+
+          ```text
+          Goal:
+          Allowed paths:
+          Excluded paths:
+          Acceptance checks:
+          Final report:
+          ```
+
+          ## End of work
+
+          1. Run focused tests, then broader tests appropriate to the changed surface.
+          2. Review the diff and commit only intended source/documentation changes.
+          3. Push the branch and use the PR as the durable review and handoff surface.
+          4. Record long-lived decisions in `docs/_ai/DECISIONS.md` or the relevant
+             design document. Do not commit external-orchestrator session state.
+
+          ## SDD development cycle
+
+          See [SDD_METHODOLOGY](../design/SDD_METHODOLOGY.md).
+
+          ```text
+          1. Constitution  Confirm AGENTS.md constraints
+          2. Specify       Find or create the L2 contract
+          3. Clarify       Cover error, empty, boundary, concurrency, idempotency,
+                           safety, and observability cases
+          4. Plan          Write the smallest implementation plan when needed
+          5. Implement     Add/update spec → RED → implementation → GREEN
+          6. Review        Diff, focused proof, PR, CI
+          ```
+
+          Contract and executable spec must change together. CI failure means the
+          implementation or contract is incomplete; it is never repaired by changing a
+          development-task record.
+          ''',
+          )
+
+          # Keep the old change history but remove the obsolete handoff routing header.
+          handoff = read("docs/_ai/AI_HANDOFF.md")
+          handoff = re.sub(
+              r"> \*\*FROZEN AS OF 2026-07-12.*?(?=> \*\*本文件是 append-only)",
+              "> **HISTORICAL CHANGE LOG — no repository-local handoff system is active.**\n"
+              "> New development coordination belongs to the external orchestrator and PR.\n"
+              "> The entries below remain historical context only; current runtime facts come\n"
+              "> from `aletheia doctor`.\n>\n",
+              handoff,
+              flags=re.S,
+          )
+          write("docs/_ai/AI_HANDOFF.md", handoff)
+
+          # Remove the public CLI assertion for a command that no longer exists.
+          cli_test = read("tests/test_cli.py")
+          cli_test = re.sub(
+              r"\n\ndef test_agent_workflow_cli_is_registered\(\):\n.*?(?=\n\ndef )",
+              "",
+              cli_test,
+              flags=re.S,
+          )
+          write("tests/test_cli.py", cli_test)
+
+          # Trust-boundary specs remain safety tripwires, independent from task metadata.
+          write(
+              "tests/specs/spec_trust_boundary.py",
+              '''"""Spec: trust-boundary policy stays aligned with governance and CI."""
+
+          from __future__ import annotations
+
+          import re
+          from pathlib import Path
+
+          import yaml
+
+          from tests.specs.spec_meta import SpecClaim, spec_claim
+
+          _ROOT = Path(__file__).resolve().parents[2]
+          _POLICY = _ROOT / "docs/governance/trust_boundaries.yaml"
+          _CONTRACT = "trust_boundary_policy"
+
+
+          def _policy() -> dict:
+              return yaml.safe_load(_POLICY.read_text(encoding="utf-8"))
+
+
+          def _policy_paths() -> set[str]:
+              return {
+                  path.rstrip("/*")
+                  for entry in _policy()["trust_boundaries"]
+                  for path in entry["paths"]
+              }
+
+
+          def _agents_md_paths() -> set[str]:
+              text = (_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+              match = re.search(r"- Trust boundaries[^\n]*\n((?:  [^\n]+\n){0,4})", text)
+              assert match, "AGENTS.md Trust boundaries bullet not found"
+              return {
+                  token.strip("/").strip()
+                  for token in re.findall(r"`([^`]+)`", match.group(1))
+              }
+
+
+          def _governance_paths() -> set[str]:
+              text = (
+                  _ROOT / "docs/governance/trust_and_change_control.md"
+              ).read_text(encoding="utf-8")
+              match = re.search(
+                  r"### 6\.1 Controlled Modules.*?```text\n(.*?)```",
+                  text,
+                  re.DOTALL,
+              )
+              assert match, "trust_and_change_control.md §6.1 fenced block not found"
+              return {
+                  line.strip().rstrip("/")
+                  for line in match.group(1).splitlines()
+                  if line.strip()
+              }
+
+
+          @spec_claim(
+              SpecClaim(
+                  "TB-S01",
+                  _CONTRACT,
+                  "§policy",
+                  "L2a",
+                  "Machine-readable trust-boundary policy exists with schema v1.",
+              )
+          )
+          def test_policy_file_exists_with_schema_v1():
+              doc = _policy()
+              assert doc["schema_version"] == 1
+              assert isinstance(doc["trust_boundaries"], list)
+              assert doc["trust_boundaries"]
+
+
+          @spec_claim(
+              SpecClaim(
+                  "TB-S02",
+                  _CONTRACT,
+                  "§policy",
+                  "L2a",
+                  "Each controlled boundary names direct focused verification commands.",
+              )
+          )
+          def test_policy_has_direct_focused_commands():
+              for entry in _policy()["trust_boundaries"]:
+                  assert re.fullmatch(r"[a-z][a-z0-9_]*", entry["id"])
+                  assert entry["paths"]
+                  commands = entry["focused_commands"]
+                  assert commands
+                  assert all(command.startswith("uv run pytest ") for command in commands)
+                  assert all("task" not in command.lower() for command in commands)
+
+
+          @spec_claim(
+              SpecClaim(
+                  "TB-S03",
+                  _CONTRACT,
+                  "§policy",
+                  "L2a",
+                  "Policy paths and focused test files resolve in the repository.",
+              )
+          )
+          def test_policy_paths_and_tests_resolve_on_disk():
+              for entry in _policy()["trust_boundaries"]:
+                  for path in entry["paths"]:
+                      base = path.split("*", 1)[0].rstrip("/")
+                      assert (_ROOT / base).exists(), path
+                  for command in entry["focused_commands"]:
+                      test_paths = [token for token in command.split() if token.startswith("tests/")]
+                      assert test_paths
+                      for path in test_paths:
+                          assert (_ROOT / path).exists(), path
+
+
+          @spec_claim(
+              SpecClaim(
+                  "TB-S04",
+                  _CONTRACT,
+                  "§drift",
+                  "L2a",
+                  "AGENTS.md and machine-readable policy carry the same controlled paths.",
+              )
+          )
+          def test_agents_md_matches_policy():
+              assert _agents_md_paths() == _policy_paths()
+
+
+          @spec_claim(
+              SpecClaim(
+                  "TB-S05",
+                  _CONTRACT,
+                  "§drift",
+                  "L2a",
+                  "Governance §6.1 and machine-readable policy carry the same paths.",
+              )
+          )
+          def test_governance_matches_policy():
+              assert _governance_paths() == _policy_paths()
+
+
+          @spec_claim(
+              SpecClaim(
+                  "TB-S06",
+                  _CONTRACT,
+                  "§ci",
+                  "L2b",
+                  "PR CI runs executable specs without a repository task gate.",
+              )
+          )
+          def test_ci_runs_specs_without_task_workflow_gate():
+              workflow = (_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+              assert "uv run pytest tests/specs/" in workflow
+              assert "agent workflow" not in workflow.lower()
+              assert "test_agent_workflow" not in workflow
+              assert ".agent/" not in workflow
+          ''',
+          )
+
+          conformance = read("tests/test_spec_conformance.py")
+          conformance = conformance.replace("        spec_agent_workflow,\n", "")
+          write("tests/test_spec_conformance.py", conformance)
+
+          ci_contract = read("tests/test_ci_workflow_contract.py")
+          ci_contract = re.sub(
+              r"\n\ndef test_task_lite_is_not_a_git_or_ci_integrity_gate\(\).*\Z",
+              "\n\ndef test_repository_task_subsystem_is_absent_from_ci() -> None:\n"
+              "    workflow_text = _WORKFLOW_PATH.read_text(encoding=\"utf-8\")\n\n"
+              "    assert \"agent workflow\" not in workflow_text.lower()\n"
+              "    assert \"test_agent_workflow\" not in workflow_text\n"
+              "    assert \".agent/\" not in workflow_text\n"
+              "    assert \"--changed-since\" not in workflow_text\n",
+              ci_contract,
+              flags=re.S,
+          )
+          write("tests/test_ci_workflow_contract.py", ci_contract)
+
+          # Pre-commit protects secrets only; CI owns code verification.
+          write(
+              "scripts/hooks/pre-commit",
+              '''#!/bin/sh
+          # Optional Aletheia pre-commit hook.
+          # Install: cp scripts/hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+          # Development-agent orchestration is external and never gates Git commits here.
+
+          RED='\\033[0;31m'
+          NC='\\033[0m'
+
+          if git diff --cached --name-only | grep -qE '^\\.(env|env\\..*)$'; then
+              echo "${RED}ERROR: Attempting to commit .env file. Aborting.${NC}"
+              echo "Remove with: git reset HEAD .env"
+              exit 1
+          fi
+
+          SECRETS_PATTERN='(PRIVATE_KEY|API_KEY|SECRET_KEY|ACCESS_TOKEN|sk-[a-zA-Z0-9]{20,}|dapi[a-f0-9]{32,})'
+          if git diff --cached -U0 | grep -qE "$SECRETS_PATTERN"; then
+              echo "${RED}WARNING: Possible secret/token detected in staged changes.${NC}"
+              echo "Review carefully before committing."
+              echo "To bypass a verified false positive: git commit --no-verify"
+              exit 1
+          fi
+
+          exit 0
+          ''',
+          )
+
+          decisions = read("docs/_ai/DECISIONS.md")
+          decision = '''
+
+          ---
+
+          ## 2026-07-16 — Remove repository-local development task management
+
+          **Decision:** Aletheia no longer implements a development-task database,
+          task packets, worker leases, handoff ledgers, verification evidence records,
+          or task-management CLI. Agent/session/worktree coordination belongs to the
+          external orchestrator (currently ORCA or an equivalent tool). The repository
+          owns only durable project rules, code, architecture contracts, tests, PRs,
+          decisions, and CI.
+
+          **Reason:** The internal mechanism duplicated the external orchestration layer
+          and expanded until Git and CI had to maintain its metadata. This added a second
+          source of truth, generated task-only commits, and made squash/rebase behavior a
+          workflow concern without improving trading-system correctness.
+
+          **Guardrail:** Do not reintroduce a repository-local development task store.
+          A new coordination need must first be solved through the external orchestrator,
+          a clear agent prompt, isolated worktrees, GitHub issues/PRs, or a static project
+          instruction/decision document.
+          '''
+          if "Remove repository-local development task management" not in decisions:
+              write("docs/_ai/DECISIONS.md", decisions.rstrip() + decision + "\n")
+
+          # The migration workflow deletes itself in the same commit.
+          remove(".github/workflows/remove-repository-task-subsystem.yml")
+          PY
+
+          # No active repository task-system references may remain.
+          banned='aletheia\.agent_workflow|agent_tasks_db|aletheia agent workflow|Task Lite|\.agent/tasks|\.agent/handoffs|scripts/agent_bootstrap\.py|scripts/agent_task\.py|agent_workflow_contract|agent_session_independent_workflow|workflow_tasks_db|workflow_claims_db|test_agent_workflow'
+          if git grep -nE "$banned" -- ':!docs/_ai/DECISIONS.md'; then
+            echo "Obsolete repository task-system references remain." >&2
+            exit 1
+          fi
+
+          git diff --check
+
+      - name: Commit complete removal
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor: remove repository task subsystem"
+          git push origin HEAD:agent/task-lite-local
