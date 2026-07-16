@@ -152,7 +152,18 @@ pub fn read_selection(paths: &HostPaths) -> Result<ReleaseSelection> {
 
 pub fn resolve_release(paths: &HostPaths, id: &str) -> Result<ResolvedRelease> {
     validate_release_id(id)?;
-    let root = paths.releases.join(id);
+    let managed_root = paths
+        .releases
+        .canonicalize()
+        .with_context(|| format!("resolve managed release root {}", paths.releases.display()))?;
+    let requested_root = paths.releases.join(id);
+    let root = requested_root
+        .canonicalize()
+        .with_context(|| format!("resolve release directory {}", requested_root.display()))?;
+    if !root.starts_with(&managed_root) {
+        bail!("release {id} resolves outside the managed release root");
+    }
+
     let manifest_path = root.join("release-manifest.json");
     let manifest_bytes = fs::read(&manifest_path)
         .with_context(|| format!("read release manifest {}", manifest_path.display()))?;
@@ -169,9 +180,12 @@ pub fn resolve_release(paths: &HostPaths, id: &str) -> Result<ResolvedRelease> {
         );
     }
     let relative = contained_relative_path(&manifest.runtime_entrypoint)?;
-    let executable = root.join(relative);
-    if !executable.is_file() {
-        bail!("release runtime entrypoint does not exist: {}", executable.display());
+    let requested_executable = root.join(relative);
+    let executable = requested_executable
+        .canonicalize()
+        .with_context(|| format!("resolve release runtime entrypoint {}", requested_executable.display()))?;
+    if !executable.starts_with(&root) || !executable.is_file() {
+        bail!("release runtime entrypoint escapes or is not a file: {}", executable.display());
     }
     #[cfg(unix)]
     {
@@ -212,22 +226,27 @@ fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     }
     fs::rename(&temporary, path)
         .with_context(|| format!("atomically replace {}", path.display()))?;
+    #[cfg(unix)]
+    File::open(parent)?.sync_all()?;
     Ok(())
 }
 
 pub fn activate_release(paths: &HostPaths, id: &str) -> Result<ReleaseSelection> {
     paths.ensure()?;
     resolve_release(paths, id)?;
-    let next = match read_selection(paths) {
-        Ok(current) if current.current == id => current,
-        Ok(current) => ReleaseSelection {
-            schema_version: 1,
-            current: id.to_string(),
-            previous: Some(current.current),
-        },
-        Err(error) if error.downcast_ref::<std::io::Error>().is_some() => ReleaseSelection::initial(id),
-        Err(error) if !paths.current_file.exists() => ReleaseSelection::initial(id),
-        Err(error) => return Err(error),
+    let next = if paths.current_file.exists() {
+        let current = read_selection(paths)?;
+        if current.current == id {
+            current
+        } else {
+            ReleaseSelection {
+                schema_version: 1,
+                current: id.to_string(),
+                previous: Some(current.current),
+            }
+        }
+    } else {
+        ReleaseSelection::initial(id)
     };
     atomic_write_json(&paths.current_file, &next)?;
     Ok(next)
@@ -321,7 +340,10 @@ pub fn ensure_gateway_started(paths: &HostPaths, timeout: Duration) -> Result<()
     if gateway_ready() {
         return Ok(());
     }
-    let status = run_gateway_action(paths, "start")?;
+    let status = run_payload(
+        paths,
+        &["gateway".into(), "start".into(), "--no-browser".into()],
+    )?;
     if !status.success() {
         bail!("packaged gateway start failed with status {status}");
     }
@@ -398,6 +420,7 @@ mod tests {
     fn activation_and_rollback_are_atomic_pointer_changes() {
         let temp = TempDir::new().unwrap();
         let paths = HostPaths::from_root(temp.path().join("host"));
+        paths.ensure().unwrap();
         fake_release(&paths, "1.0.0", "aletheia-core");
         fake_release(&paths, "1.1.0", "aletheia-core");
 
@@ -416,6 +439,7 @@ mod tests {
     fn release_paths_cannot_escape_the_release_root() {
         let temp = TempDir::new().unwrap();
         let paths = HostPaths::from_root(temp.path().join("host"));
+        paths.ensure().unwrap();
         fake_release(&paths, "safe", "aletheia-core");
         assert!(resolve_release(&paths, "../safe").is_err());
 
@@ -429,11 +453,15 @@ mod tests {
     }
 
     #[test]
-    fn malformed_current_pointer_fails_closed() {
+    fn malformed_current_pointer_fails_closed_and_is_not_overwritten() {
         let temp = TempDir::new().unwrap();
         let paths = HostPaths::from_root(temp.path().join("host"));
-        fs::create_dir_all(&paths.root).unwrap();
-        fs::write(&paths.current_file, b"{\"schema_version\":1,\"current\":\"../../repo\"}").unwrap();
+        paths.ensure().unwrap();
+        fake_release(&paths, "safe", "aletheia-core");
+        let malformed = b"{\"schema_version\":1,\"current\":\"../../repo\"}";
+        fs::write(&paths.current_file, malformed).unwrap();
         assert!(read_selection(&paths).is_err());
+        assert!(activate_release(&paths, "safe").is_err());
+        assert_eq!(fs::read(&paths.current_file).unwrap(), malformed);
     }
 }
