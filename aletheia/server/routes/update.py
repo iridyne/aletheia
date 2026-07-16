@@ -5,7 +5,7 @@ signed immutable releases, durable progress state, and tray-controlled activatio
 These routes are not agent-callable tools.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from aletheia.config.loader import is_preview_mode
@@ -13,6 +13,11 @@ from aletheia.files.jsonl import write_audit
 from aletheia.update import applier
 
 router = APIRouter(prefix="/api/update", tags=["update"])
+_LOOPBACK_UI_ORIGINS = (
+    "http://127.0.0.1:8787/",
+    "http://localhost:8787/",
+    "http://[::1]:8787/",
+)
 
 
 def _reject_preview_update() -> None:
@@ -26,6 +31,22 @@ def _reject_preview_update() -> None:
                 "message": "Software update control is unavailable in preview mode.",
             },
         )
+
+
+def _same_origin_dashboard_confirmation(request: Request) -> bool:
+    """Accept the legacy Dashboard POST only when browser-controlled headers prove origin.
+
+    The Settings card already presents a human confirmation modal but historically sent an
+    empty JSON body. CLI, scripts, agents, and cross-site browser requests still have to send
+    ``confirm=true`` explicitly. ``Sec-Fetch-Site`` is a forbidden browser header, so page
+    JavaScript from another origin cannot forge the same-origin classification.
+    """
+
+    if request.headers.get("sec-fetch-site", "").lower() not in {"same-origin", "same-site"}:
+        return False
+    referer = request.headers.get("referer", "")
+    origin = request.headers.get("origin", "")
+    return any(referer.startswith(base) or origin == base.rstrip("/") for base in _LOOPBACK_UI_ORIGINS)
 
 
 @router.get("/status")
@@ -50,9 +71,9 @@ class ContinuityBody(BaseModel):
 
 
 @router.post("/apply")
-async def update_apply(body: ApplyBody = ApplyBody()):
+async def update_apply(request: Request, body: ApplyBody = ApplyBody()):
     _reject_preview_update()
-    if not body.confirm:
+    if not body.confirm and not _same_origin_dashboard_confirmation(request):
         return {
             "applied": False,
             "accepted": False,
@@ -69,13 +90,16 @@ async def update_apply(body: ApplyBody = ApplyBody()):
             "message": "Human confirmed software update via API",
         }
     )
-    return applier.apply_update()
+    result = applier.apply_update()
+    if result.get("mode") == "packaged" and result.get("accepted") and not result.get("applied"):
+        result.setdefault("reason", "update_started_in_background")
+    return result
 
 
 @router.post("/rollback")
-async def update_rollback(body: ApplyBody = ApplyBody()):
+async def update_rollback(request: Request, body: ApplyBody = ApplyBody()):
     _reject_preview_update()
-    if not body.confirm:
+    if not body.confirm and not _same_origin_dashboard_confirmation(request):
         return {
             "accepted": False,
             "reason": "confirmation_required",
@@ -98,8 +122,9 @@ async def update_rollback(body: ApplyBody = ApplyBody()):
 async def update_continuity(body: ContinuityBody = ContinuityBody()):
     """Legacy development-checkout candidate materialisation.
 
-    Installed packages already stage their immutable candidate before the tray switch and
-    must not create a Git worktree candidate.
+    Installed packaged updates do not create Git worktrees. They stage signed payloads and
+    use the Tray host for activation. Keep this endpoint only for explicit development
+    continuity experiments.
     """
 
     _reject_preview_update()
@@ -113,8 +138,8 @@ async def update_continuity(body: ContinuityBody = ContinuityBody()):
     if status.get("mode") == "packaged":
         return {
             "created": False,
-            "reason": "packaged_candidate_managed_by_tray",
-            "message": "Installed releases are staged and promoted by Aletheia Tray.",
+            "reason": "packaged_runtime_uses_signed_update_flow",
+            "update_status": status,
         }
     if not status.get("ok"):
         return {"created": False, "reason": status.get("reason", "update_status_unavailable")}
