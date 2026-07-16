@@ -257,10 +257,9 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
     """Create the append-only economics schema if needed and return the connection.
 
     ``sqlite3.Connection.executescript`` commits any active transaction before it
-    runs. Runtime measurement must never cross that boundary, so after the schema
-    and trigger exist this function returns using read-only sqlite_master probes.
-    First-time initialization refuses to run inside an active transaction; callers
-    then fail measurement-only and leave trading state untouched.
+    runs. Runtime measurement must never cross that boundary. First-time DDL
+    initialization refuses to run inside a caller transaction; historical tool
+    backfill is deferred when a caller transaction is already active.
     """
     if db is None:
         from aletheia.storage.sqlite import get_db
@@ -283,9 +282,6 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
             )
         db.executescript(ECONOMICS_DDL)
 
-    # DDL must be installed before the DML backfill. On non-autocommit test
-    # connections the backfill opens a transaction; running executescript after it
-    # would silently commit caller state or force an initialization failure.
     if tool_table and not trigger_ready:
         if db.in_transaction:
             raise RuntimeError(
@@ -294,6 +290,17 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
         _install_tool_trigger(db)
 
     if tool_table:
-        _backfill_existing_tool_calls(db)
+        marker = db.execute(
+            "SELECT 1 FROM economics_settings WHERE key=?",
+            (_TOOL_BACKFILL_KEY,),
+        ).fetchone()
+        if not marker:
+            # Do not mix a one-time accounting backfill into a caller-owned trading
+            # transaction. A later startup/trace initialization will retry it.
+            if db.in_transaction:
+                return db
+            _backfill_existing_tool_calls(db)
+            if db.in_transaction:
+                db.commit()
 
     return db
