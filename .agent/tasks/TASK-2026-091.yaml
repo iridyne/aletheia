@@ -7,13 +7,19 @@ packet_type: standard
 scope:
   boundary: declare before implementation
   excluded: runtime facts and credentials
-intent: 'B2 policy epoch: replace System Operator raw family aggregate with one candidate-conditioned evidence summary shared by initial assessment, Bull and Bear; insufficient evidence is neutral; preserve Ranker, Risk, Execution and Live.'
+intent: 'B2 policy epoch: replace System Operator raw family aggregate with one candidate-conditioned
+  evidence summary shared by initial assessment, Bull and Bear; insufficient evidence
+  is neutral; preserve Ranker, Risk, Execution and Live.'
 acceptance:
-- B2 creates a distinct policy epoch and never reuses full-pool family edge as PI prompt evidence.
-- The cohort is same B2 epoch, Ranker-enqueued, direction/market/score-bucket matched, 24h settled and cost-aware.
-- Insufficient or invalid evidence is neutral and one identical serialized summary reaches assessment, Bull and Bear.
-- Ranker, Risk, Execution and Live semantics are unchanged; focused tests and executable spec pass.
-base_commit: 15e26882ef8a009a46716d8dec59583b65e43f70
+- B2 creates a distinct policy epoch and never reuses full-pool family edge as PI
+  prompt evidence.
+- The cohort is same B2 epoch, Ranker-enqueued, direction/market/score-bucket matched,
+  24h settled and cost-aware.
+- Insufficient or invalid evidence is neutral and one identical serialized summary
+  reaches assessment, Bull and Bear.
+- Ranker, Risk, Execution and Live semantics are unchanged; focused tests and executable
+  spec pass.
+base_commit: 6aed3edae9fd5119a7a5f2494d7b267a85a2533a
 next_action:
   command_key: workflow_bootstrap
   reason: Task complete; run bootstrap and create or claim a new task before changing
@@ -28,5 +34,14 @@ verification:
   run_at: '2026-07-15T12:06:00.707621Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 6aed3edae9fd5119a7a5f2494d7b267a85a2533a
+  run_at: '2026-07-16T03:29:21.412392Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-091.md
-updated_at: '2026-07-15T12:06:00.772620Z'
+updated_at: '2026-07-16T03:29:21.412591Z'
+revalidated_at: '2026-07-16T03:29:21.412587Z'
