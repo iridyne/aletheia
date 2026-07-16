@@ -323,6 +323,62 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  pr-ci-gate:
+    name: PR CI gate
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs:
+      - secrets-scan
+      - backend
+      - fast-tests
+      - integration-tests
+      - active-paper-chain
+      - frontend
+      - operator-shell
+      - windows-runtime-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every PR CI surface
+        run: |
+          test "${{ needs.secrets-scan.result }}" = "success"
+          test "${{ needs.backend.result }}" = "success"
+          test "${{ needs.fast-tests.result }}" = "success"
+          test "${{ needs.integration-tests.result }}" = "success"
+          test "${{ needs.active-paper-chain.result }}" = "success"
+          test "${{ needs.frontend.result }}" = "success"
+          test "${{ needs.operator-shell.result }}" = "success"
+          test "${{ needs.windows-runtime-smoke.result }}" = "success"
+          echo "All required PR CI surfaces passed."
+
+  master-verification-gate:
+    name: Master verification gate
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    needs:
+      - secrets-scan
+      - backend
+      - fast-tests
+      - integration-tests
+      - active-paper-chain
+      - frontend
+      - operator-shell
+      - windows-runtime-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every master verification surface
+        run: |
+          test "${{ needs.secrets-scan.result }}" = "success"
+          test "${{ needs.backend.result }}" = "success"
+          test "${{ needs.fast-tests.result }}" = "success"
+          test "${{ needs.integration-tests.result }}" = "success"
+          test "${{ needs.active-paper-chain.result }}" = "success"
+          test "${{ needs.frontend.result }}" = "success"
+          test "${{ needs.operator-shell.result }}" = "success"
+          test "${{ needs.windows-runtime-smoke.result }}" = "success"
+          echo "All required master verification surfaces passed."
+
   full-regression:
     name: Full Python regression audit
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_regression }}
