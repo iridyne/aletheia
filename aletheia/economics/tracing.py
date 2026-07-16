@@ -34,7 +34,10 @@ def _normalize_iso(value: str | None) -> str:
 
 def tracing_enabled() -> bool:
     return os.getenv("ALETHEIA_COST_TRACING", "1").strip().lower() not in {
-        "0", "false", "off", "no"
+        "0",
+        "false",
+        "off",
+        "no",
     }
 
 
@@ -50,7 +53,9 @@ def initialize_runtime_tracing() -> bool:
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    )
 
 
 def _float(value: Any) -> float | None:
@@ -89,12 +94,14 @@ def add_pricing_snapshot(
             raise ValueError(f"{name} must be a finite non-negative number")
     created_at = _utcnow()
     effective = _normalize_iso(effective_from)
-    identity = _json({
-        "provider": provider,
-        "model": model,
-        "effective_from": effective,
-        "version": version,
-    })
+    identity = _json(
+        {
+            "provider": provider,
+            "model": model,
+            "effective_from": effective,
+            "version": version,
+        }
+    )
     snapshot_id = "price_" + hashlib.sha256(identity.encode()).hexdigest()[:16]
     row = {
         "id": snapshot_id,
@@ -103,8 +110,12 @@ def add_pricing_snapshot(
         "effective_from": effective,
         "input_usd_per_million": float(input_usd_per_million),
         "output_usd_per_million": float(output_usd_per_million),
-        "reasoning_usd_per_million": None if reasoning_usd_per_million is None else float(reasoning_usd_per_million),
-        "cached_input_usd_per_million": None if cached_input_usd_per_million is None else float(cached_input_usd_per_million),
+        "reasoning_usd_per_million": None
+        if reasoning_usd_per_million is None
+        else float(reasoning_usd_per_million),
+        "cached_input_usd_per_million": None
+        if cached_input_usd_per_million is None
+        else float(cached_input_usd_per_million),
         "currency": "USD",
         "source": source,
         "version": version,
@@ -119,11 +130,15 @@ def add_pricing_snapshot(
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
         tuple(row.values()),
     )
-    stored = db.execute("SELECT * FROM pricing_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+    stored = db.execute(
+        "SELECT * FROM pricing_snapshots WHERE id=?", (snapshot_id,)
+    ).fetchone()
     return dict(stored) if stored else row
 
 
-def resolve_pricing_snapshot(provider: str, model: str, at: str) -> dict[str, Any] | None:
+def resolve_pricing_snapshot(
+    provider: str, model: str, at: str
+) -> dict[str, Any] | None:
     db = ensure_economics_schema()
     row = db.execute(
         """SELECT * FROM pricing_snapshots
@@ -151,11 +166,13 @@ def add_tool_cost_profile(
         raise ValueError("usd_per_call must be a finite non-negative number")
     created_at = _utcnow()
     effective = _normalize_iso(effective_from)
-    identity = _json({
-        "tool_name": tool_name,
-        "effective_from": effective,
-        "version": version,
-    })
+    identity = _json(
+        {
+            "tool_name": tool_name,
+            "effective_from": effective,
+            "version": version,
+        }
+    )
     profile_id = "toolprice_" + hashlib.sha256(identity.encode()).hexdigest()[:16]
     row = {
         "id": profile_id,
@@ -174,7 +191,9 @@ def add_tool_cost_profile(
         ) VALUES (?,?,?,?,?,?,?,?)""",
         tuple(row.values()),
     )
-    stored = db.execute("SELECT * FROM tool_cost_profiles WHERE id=?", (profile_id,)).fetchone()
+    stored = db.execute(
+        "SELECT * FROM tool_cost_profiles WHERE id=?", (profile_id,)
+    ).fetchone()
     return dict(stored) if stored else row
 
 
@@ -193,8 +212,14 @@ def resolve_tool_cost_profile(tool_name: str, at: str) -> dict[str, Any] | None:
 def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
     """Normalize common provider usage shapes without inventing absent counters."""
     usage = raw_usage if isinstance(raw_usage, dict) else {}
-    prompt_details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
-    completion_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
+    prompt_details = (
+        usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
+    )
+    completion_details = (
+        usage.get("completion_tokens_details")
+        or usage.get("output_tokens_details")
+        or {}
+    )
 
     def token(*keys: str) -> int | None:
         for key in keys:
@@ -233,6 +258,8 @@ def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
         "cached_input_tokens": detail(
             prompt_details, "cached_tokens", "cached_input_tokens"
         ),
+        "provider_cache_read_input_tokens": token("cache_read_input_tokens"),
+        "provider_cache_creation_input_tokens": token("cache_creation_input_tokens"),
     }
 
 
@@ -245,6 +272,18 @@ def estimate_llm_cost(
     output_tokens = usage.get("output_tokens")
     reasoning_tokens = usage.get("reasoning_tokens") or 0
     cached_tokens = usage.get("cached_input_tokens") or 0
+    provider_cache_read = usage.get("provider_cache_read_input_tokens") or 0
+    provider_cache_creation = usage.get("provider_cache_creation_input_tokens") or 0
+    if provider_cache_read or provider_cache_creation:
+        return (
+            None,
+            "unknown",
+            {
+                "reason": "provider_cache_pricing_contract_unsupported",
+                "cache_read_input_tokens": provider_cache_read,
+                "cache_creation_input_tokens": provider_cache_creation,
+            },
+        )
     if input_tokens is None or output_tokens is None:
         return None, "unknown", {"reason": "billable_token_usage_incomplete"}
     if cached_tokens > input_tokens:
@@ -262,17 +301,25 @@ def estimate_llm_cost(
         return None, "unknown", {"reason": "reasoning_tokens_exceed_output_tokens"}
 
     ordinary_input = input_tokens - cached_tokens
-    ordinary_output = output_tokens - reasoning_tokens if reasoning_rate is not None else output_tokens
+    ordinary_output = (
+        output_tokens - reasoning_tokens
+        if reasoning_rate is not None
+        else output_tokens
+    )
     cost = ordinary_input * input_rate / 1_000_000
     cost += cached_tokens * (cached_rate or 0.0) / 1_000_000
     cost += ordinary_output * output_rate / 1_000_000
     if reasoning_rate is not None:
         cost += reasoning_tokens * reasoning_rate / 1_000_000
-    return round(cost, 12), "estimated", {
-        "ordinary_input_tokens": ordinary_input,
-        "ordinary_output_tokens": ordinary_output,
-        "reasoning_priced_separately": reasoning_rate is not None,
-    }
+    return (
+        round(cost, 12),
+        "estimated",
+        {
+            "ordinary_input_tokens": ordinary_input,
+            "ordinary_output_tokens": ordinary_output,
+            "reasoning_priced_separately": reasoning_rate is not None,
+        },
+    )
 
 
 def _current_provenance() -> dict[str, Any]:
@@ -388,10 +435,15 @@ def record_tool_event(
             cost = _float(external_cost_usd)
             if cost is None or cost < 0:
                 raise ValueError("external_cost_usd must be finite and non-negative")
-            resolved_status = cost_status if cost_status in {"known", "estimated"} else "known"
-        call_id = "tool_" + hashlib.sha256(
-            f"{run_id}:{tool_name}:{attempt_index}:{start}".encode()
-        ).hexdigest()[:16]
+            resolved_status = (
+                cost_status if cost_status in {"known", "estimated"} else "known"
+            )
+        call_id = (
+            "tool_"
+            + hashlib.sha256(
+                f"{run_id}:{tool_name}:{attempt_index}:{start}".encode()
+            ).hexdigest()[:16]
+        )
         provenance = _current_provenance()
         event_id = "cost_" + uuid4().hex[:16]
         db = ensure_economics_schema()
@@ -402,10 +454,25 @@ def record_tool_event(
                 cost_profile_id,estimated_cost_usd,currency,cost_status,metadata_json,created_at
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                event_id,"tool",run_id,provenance.get("runtime_session_id"),call_id,"tool",
-                tool_name,int(attempt_index),status,start,end,latency_ms,"{}",
-                profile.get("id") if profile else None,cost,"USD",resolved_status,
-                _json(metadata or {}),_utcnow(),
+                event_id,
+                "tool",
+                run_id,
+                provenance.get("runtime_session_id"),
+                call_id,
+                "tool",
+                tool_name,
+                int(attempt_index),
+                status,
+                start,
+                end,
+                latency_ms,
+                "{}",
+                profile.get("id") if profile else None,
+                cost,
+                "USD",
+                resolved_status,
+                _json(metadata or {}),
+                _utcnow(),
             ),
         )
         return event_id
@@ -428,11 +495,18 @@ def record_fixed_cost_event(
     parsed = _float(cost_usd)
     if parsed is not None and parsed < 0:
         raise ValueError("cost_usd must be non-negative")
-    resolved_status = cost_status if parsed is not None and cost_status in {"known", "estimated"} else "unknown"
+    resolved_status = (
+        cost_status
+        if parsed is not None and cost_status in {"known", "estimated"}
+        else "unknown"
+    )
     event_id = "cost_" + uuid4().hex[:16]
-    call_id = "fixed_" + hashlib.sha256(
-        f"{event_type}:{name}:{started_at}:{finished_at or ''}".encode()
-    ).hexdigest()[:16]
+    call_id = (
+        "fixed_"
+        + hashlib.sha256(
+            f"{event_type}:{name}:{started_at}:{finished_at or ''}".encode()
+        ).hexdigest()[:16]
+    )
     db = ensure_economics_schema()
     db.execute(
         """INSERT OR IGNORE INTO runtime_cost_events (
@@ -440,9 +514,21 @@ def record_fixed_cost_event(
             finished_at,usage_json,estimated_cost_usd,currency,cost_status,metadata_json,created_at
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            event_id,event_type,call_id,event_type,name,0,"allocated",started_at,
-            finished_at or started_at,"{}",parsed,"USD",resolved_status,
-            _json(metadata or {}),_utcnow(),
+            event_id,
+            event_type,
+            call_id,
+            event_type,
+            name,
+            0,
+            "allocated",
+            started_at,
+            finished_at or started_at,
+            "{}",
+            parsed,
+            "USD",
+            resolved_status,
+            _json(metadata or {}),
+            _utcnow(),
         ),
     )
     return event_id
@@ -451,15 +537,31 @@ def record_fixed_cost_event(
 def aggregate_agent_run_cost(run_id: str) -> dict[str, Any]:
     db = ensure_economics_schema()
     rows = [
-        dict(row) for row in db.execute(
+        dict(row)
+        for row in db.execute(
             "SELECT * FROM runtime_cost_events WHERE run_id=? ORDER BY started_at,attempt_index,id",
             (run_id,),
         ).fetchall()
     ]
-    known = sum(float(row["estimated_cost_usd"] or 0) for row in rows if row["estimated_cost_usd"] is not None)
-    unknown = sum(1 for row in rows if row["cost_status"] == "unknown" or row["estimated_cost_usd"] is None)
+    known = sum(
+        float(row["estimated_cost_usd"] or 0)
+        for row in rows
+        if row["estimated_cost_usd"] is not None
+    )
+    unknown = sum(
+        1
+        for row in rows
+        if row["cost_status"] == "unknown" or row["estimated_cost_usd"] is None
+    )
     llm_rows = [row for row in rows if row["event_type"] == "llm"]
-    final_model = next((row["model_or_tool"] for row in reversed(llm_rows) if row["status"] == "success"), None)
+    final_model = next(
+        (
+            row["model_or_tool"]
+            for row in reversed(llm_rows)
+            if row["status"] == "success"
+        ),
+        None,
+    )
     return {
         "run_id": run_id,
         "event_count": len(rows),
@@ -488,13 +590,21 @@ def list_cost_summary(
     if run_id:
         where.append("run_id=?")
         params.append(run_id)
-    rows = [dict(row) for row in db.execute(
-        "SELECT * FROM runtime_cost_events WHERE " + " AND ".join(where) + " ORDER BY started_at,id",
-        params,
-    ).fetchall()]
+    rows = [
+        dict(row)
+        for row in db.execute(
+            "SELECT * FROM runtime_cost_events WHERE "
+            + " AND ".join(where)
+            + " ORDER BY started_at,id",
+            params,
+        ).fetchall()
+    ]
     by_type: dict[str, dict[str, Any]] = {}
     for row in rows:
-        bucket = by_type.setdefault(row["event_type"], {"event_count": 0, "known_cost_usd": 0.0, "unknown_count": 0})
+        bucket = by_type.setdefault(
+            row["event_type"],
+            {"event_count": 0, "known_cost_usd": 0.0, "unknown_count": 0},
+        )
         bucket["event_count"] += 1
         if row["estimated_cost_usd"] is None or row["cost_status"] == "unknown":
             bucket["unknown_count"] += 1
@@ -506,8 +616,14 @@ def list_cost_summary(
         "window_start": window_start,
         "window_end": window_end,
         "event_count": len(rows),
-        "known_cost_subtotal_usd": round(sum(float(row["estimated_cost_usd"] or 0) for row in rows), 12),
-        "unknown_event_count": sum(1 for row in rows if row["estimated_cost_usd"] is None or row["cost_status"] == "unknown"),
+        "known_cost_subtotal_usd": round(
+            sum(float(row["estimated_cost_usd"] or 0) for row in rows), 12
+        ),
+        "unknown_event_count": sum(
+            1
+            for row in rows
+            if row["estimated_cost_usd"] is None or row["cost_status"] == "unknown"
+        ),
         "by_type": by_type,
         "events": rows,
     }
