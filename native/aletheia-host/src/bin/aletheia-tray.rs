@@ -1,7 +1,8 @@
 use aletheia_host::{
-    ensure_gateway_started, gateway_healthy, open_dashboard, run_gateway_action, HostPaths,
+    gateway_healthy, gateway_ready, open_dashboard, run_gateway_action, run_payload,
+    wait_gateway_ready, HostPaths,
 };
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::env;
 use std::process;
 use std::time::{Duration, Instant};
@@ -58,7 +59,7 @@ fn icon_for(state: TrayState) -> Result<Icon> {
 }
 
 fn observed_state() -> TrayState {
-    if aletheia_host::gateway_ready() {
+    if gateway_ready() {
         if gateway_healthy() {
             TrayState::Healthy
         } else {
@@ -69,10 +70,38 @@ fn observed_state() -> TrayState {
     }
 }
 
+fn ensure_started_without_browser(paths: &HostPaths) -> Result<()> {
+    if gateway_ready() {
+        return Ok(());
+    }
+    let status = run_payload(
+        paths,
+        &["gateway".into(), "start".into(), "--no-browser".into()],
+    )?;
+    if !status.success() {
+        bail!("packaged gateway start failed with status {status}");
+    }
+    if !wait_gateway_ready(Duration::from_secs(30)) {
+        bail!("packaged gateway did not become ready within 30 seconds");
+    }
+    Ok(())
+}
+
+fn restart_without_browser(paths: &HostPaths) -> Result<()> {
+    let status = run_payload(
+        paths,
+        &["gateway".into(), "restart".into(), "--no-browser".into()],
+    )?;
+    if !status.success() {
+        bail!("packaged gateway restart failed with status {status}");
+    }
+    Ok(())
+}
+
 fn smoke_test(paths: &HostPaths) -> Result<()> {
-    ensure_gateway_started(paths, Duration::from_secs(30))?;
+    ensure_started_without_browser(paths)?;
     if !gateway_healthy() {
-        anyhow::bail!("packaged gateway reached readiness but failed business health");
+        bail!("packaged gateway reached readiness but failed business health");
     }
     println!("Aletheia tray smoke passed: {}", aletheia_host::DASHBOARD_URL);
     Ok(())
@@ -108,7 +137,7 @@ fn real_main() -> Result<()> {
         .build()
         .context("create Aletheia tray icon")?;
 
-    let _ = ensure_gateway_started(&paths, Duration::from_secs(30));
+    let _ = ensure_started_without_browser(&paths);
     let menu_events = MenuEvent::receiver();
     let mut next_poll = Instant::now();
 
@@ -121,10 +150,12 @@ fn real_main() -> Result<()> {
                     let _ = open_dashboard();
                 } else if menu_event.id == restart_item.id() {
                     state = TrayState::Starting;
-                    let _ = status_item.set_text(state.label());
+                    status_item.set_text(state.label());
                     let _ = tray.set_tooltip(Some(state.label()));
-                    let _ = tray.set_icon(Some(icon_for(state).ok()).flatten());
-                    let _ = run_gateway_action(&paths, "restart");
+                    if let Ok(icon) = icon_for(state) {
+                        let _ = tray.set_icon(Some(icon));
+                    }
+                    let _ = restart_without_browser(&paths);
                 } else if menu_event.id == stop_item.id() {
                     let _ = run_gateway_action(&paths, "stop");
                 } else if menu_event.id == quit_item.id() {
@@ -137,7 +168,7 @@ fn real_main() -> Result<()> {
                 let observed = observed_state();
                 if observed != state {
                     state = observed;
-                    let _ = status_item.set_text(state.label());
+                    status_item.set_text(state.label());
                     let _ = tray.set_tooltip(Some(state.label()));
                     if let Ok(icon) = icon_for(state) {
                         let _ = tray.set_icon(Some(icon));
