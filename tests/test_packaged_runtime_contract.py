@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import stat
+import sys
 import tarfile
 from pathlib import Path
 
@@ -17,6 +18,9 @@ def _builder_module():
     spec = importlib.util.spec_from_file_location("build_packaged_runtime", BUILDER_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    # Python 3.12 dataclasses resolve their owning module through sys.modules while
+    # decorating classes. Mirror the normal import machinery before exec_module.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
