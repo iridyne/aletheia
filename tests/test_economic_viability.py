@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -18,7 +19,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _insert_known_llm_cost(*, event_id: str, cost: float, run_id: str | None = None) -> None:
+def _insert_known_llm_cost(
+    *,
+    event_id: str,
+    cost: float,
+    run_id: str | None = None,
+    metadata: dict | None = None,
+) -> None:
     now = _now()
     ensure_economics_schema()
     get_db().execute(
@@ -28,8 +35,22 @@ def _insert_known_llm_cost(*, event_id: str, cost: float, run_id: str | None = N
             metadata_json,created_at
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            event_id,"llm",run_id,event_id,"test","model",0,"success",now,now,
-            "{}",cost,"USD","estimated","{}",now,
+            event_id,
+            "llm",
+            run_id,
+            event_id,
+            "test",
+            "model",
+            0,
+            "success",
+            now,
+            now,
+            "{}",
+            cost,
+            "USD",
+            "estimated",
+            json.dumps(metadata or {}),
+            now,
         ),
     )
 
@@ -73,12 +94,6 @@ def test_operator_viability_requires_same_close_shadow_cohort(monkeypatch):
     db = ensure_economics_schema()
     now = _now()
     db.execute(
-        """INSERT INTO agent_runs
-           (id,agent_name,trigger_type,permission_mode,status,started_at)
-           VALUES ('operator-run','pi_trading_decision','test','Paper','completed',?)""",
-        (now,),
-    )
-    db.execute(
         """INSERT INTO trade_proposals
            (id,opportunity_id,symbol,market_type,direction,quantity,price,
             execution_mode,status,created_at)
@@ -97,19 +112,28 @@ def test_operator_viability_requires_same_close_shadow_cohort(monkeypatch):
             0,100.5,0.5,0.5,?,'shadow-cost-v1',?)""",
         (now, now, now, now),
     )
-    _insert_known_llm_cost(event_id="operator-cost", cost=0.2, run_id="operator-run")
+    _insert_known_llm_cost(
+        event_id="operator-cost",
+        cost=0.2,
+        metadata={
+            "logical_agent": "pi_trading_decision",
+            "identity_source": "active_module_stack",
+        },
+    )
     monkeypatch.setattr(
         "aletheia.analytics.outcome_integrity.eligible_strategy_outcomes",
-        lambda **kwargs: [{
-            "id": "position-1",
-            "proposal_id": "proposal-1",
-            "market_type": "spot",
-            "direction": "long",
-            "entry_price": 100.0,
-            "quantity": 1.0,
-            "realized_pnl": 1.5,
-            "closed_at": now,
-        }],
+        lambda **kwargs: [
+            {
+                "id": "position-1",
+                "proposal_id": "proposal-1",
+                "market_type": "spot",
+                "direction": "long",
+                "entry_price": 100.0,
+                "quantity": 1.0,
+                "realized_pnl": 1.5,
+                "closed_at": now,
+            }
+        ],
     )
 
     report = build_operator_viability(days=1, data_cost_usd=0, persist=False)
@@ -118,6 +142,8 @@ def test_operator_viability_requires_same_close_shadow_cohort(monkeypatch):
     assert report["incremental_value_usd"] == pytest.approx(1.0)
     assert report["viability_amount_usd"] == pytest.approx(0.8)
     assert report["verdict"] == "positive"
+    assert report["operator_run_count"] == 0
+    assert report["logical_operator_cost_event_count"] == 1
 
 
 def test_operator_horizon_mismatch_is_excluded(monkeypatch):
@@ -143,16 +169,18 @@ def test_operator_horizon_mismatch_is_excluded(monkeypatch):
     )
     monkeypatch.setattr(
         "aletheia.analytics.outcome_integrity.eligible_strategy_outcomes",
-        lambda **kwargs: [{
-            "id": "position-mismatch",
-            "proposal_id": "proposal-mismatch",
-            "market_type": "spot",
-            "direction": "long",
-            "entry_price": 100.0,
-            "quantity": 1.0,
-            "realized_pnl": 1.0,
-            "closed_at": closed_iso,
-        }],
+        lambda **kwargs: [
+            {
+                "id": "position-mismatch",
+                "proposal_id": "proposal-mismatch",
+                "market_type": "spot",
+                "direction": "long",
+                "entry_price": 100.0,
+                "quantity": 1.0,
+                "realized_pnl": 1.0,
+                "closed_at": closed_iso,
+            }
+        ],
     )
     report = build_operator_viability(days=1, data_cost_usd=0, persist=False)
     assert report["verdict"] == "insufficient_data"
@@ -188,6 +216,7 @@ def test_viability_report_is_idempotent_for_fixed_window(monkeypatch):
     assert first["report_id"] == second["report_id"]
     assert first["dedup_key"] == second["dedup_key"]
     count = get_db().execute(
-        "SELECT COUNT(*) FROM viability_reports WHERE id=?", (first["report_id"],)
+        "SELECT COUNT(*) FROM viability_reports WHERE id=?",
+        (first["report_id"],),
     ).fetchone()[0]
     assert count == 1
