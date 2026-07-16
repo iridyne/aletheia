@@ -11,6 +11,7 @@ import sqlite3
 
 
 ECONOMICS_SCHEMA_VERSION = "economic-viability-v1"
+_TOOL_BACKFILL_KEY = "tool_cost_backfill_v1"
 
 ECONOMICS_DDL = """
 CREATE TABLE IF NOT EXISTS economics_settings (
@@ -119,6 +120,138 @@ CREATE INDEX IF NOT EXISTS idx_viability_reports_scope_window
     ON viability_reports(scope, window_end DESC);
 """
 
+_TOOL_COST_SELECT = """
+SELECT
+    'toolcost_' || calls.id,
+    'tool',
+    calls.run_id,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    'tool_' || calls.id,
+    'tool',
+    calls.tool_name,
+    NULL,
+    0,
+    CASE WHEN calls.permitted=1 THEN 'recorded' ELSE 'denied' END,
+    calls.created_at,
+    calls.created_at,
+    NULL,
+    '{}',
+    NULL,
+    CASE WHEN calls.permitted=0 THEN NULL ELSE (
+        SELECT id FROM tool_cost_profiles
+        WHERE tool_name=calls.tool_name
+          AND replace(effective_from,' ','T') <= replace(calls.created_at,' ','T')
+        ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1
+    ) END,
+    CASE WHEN calls.permitted=0 THEN 0.0 ELSE (
+        SELECT usd_per_call FROM tool_cost_profiles
+        WHERE tool_name=calls.tool_name
+          AND replace(effective_from,' ','T') <= replace(calls.created_at,' ','T')
+        ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1
+    ) END,
+    'USD',
+    CASE
+        WHEN calls.permitted=0 THEN 'known'
+        WHEN EXISTS (
+            SELECT 1 FROM tool_cost_profiles
+            WHERE tool_name=calls.tool_name
+              AND replace(effective_from,' ','T') <= replace(calls.created_at,' ','T')
+        ) THEN 'estimated'
+        ELSE 'unknown'
+    END,
+    NULL,
+    json_object(
+        'tool_class',calls.tool_class,
+        'permitted',calls.permitted,
+        'legacy_backfill',1
+    ),
+    calls.created_at
+FROM agent_tool_calls AS calls
+"""
+
+
+def _backfill_existing_tool_calls(db: sqlite3.Connection) -> None:
+    marker = db.execute(
+        "SELECT 1 FROM economics_settings WHERE key=?",
+        (_TOOL_BACKFILL_KEY,),
+    ).fetchone()
+    if marker:
+        return
+    db.execute(
+        """INSERT OR IGNORE INTO runtime_cost_events (
+            id,event_type,run_id,runtime_session_id,opportunity_id,decision_id,
+            proposal_id,call_id,provider,model_or_tool,requested_model,attempt_index,
+            status,started_at,finished_at,latency_ms,usage_json,pricing_snapshot_id,
+            cost_profile_id,estimated_cost_usd,currency,cost_status,error_type,
+            metadata_json,created_at
+        ) """ + _TOOL_COST_SELECT
+    )
+    db.execute(
+        "INSERT OR REPLACE INTO economics_settings(key,value,updated_at) "
+        "VALUES (?,?,datetime('now'))",
+        (_TOOL_BACKFILL_KEY, "complete"),
+    )
+
+
+def _install_tool_trigger(db: sqlite3.Connection) -> None:
+    db.executescript(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_agent_tool_call_cost_event
+        AFTER INSERT ON agent_tool_calls
+        WHEN COALESCE((SELECT value FROM economics_settings WHERE key='cost_tracing_enabled'),'1')='1'
+        BEGIN
+            INSERT OR IGNORE INTO runtime_cost_events (
+                id,event_type,run_id,call_id,provider,model_or_tool,attempt_index,
+                status,started_at,finished_at,usage_json,cost_profile_id,
+                estimated_cost_usd,currency,cost_status,metadata_json,created_at
+            ) VALUES (
+                'toolcost_' || NEW.id,
+                'tool',
+                NEW.run_id,
+                'tool_' || NEW.id,
+                'tool',
+                NEW.tool_name,
+                0,
+                CASE WHEN NEW.permitted=1 THEN 'recorded' ELSE 'denied' END,
+                NEW.created_at,
+                NEW.created_at,
+                '{}',
+                CASE WHEN NEW.permitted=0 THEN NULL ELSE (
+                    SELECT id FROM tool_cost_profiles
+                    WHERE tool_name=NEW.tool_name
+                      AND replace(effective_from,' ','T') <= replace(NEW.created_at,' ','T')
+                    ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1
+                ) END,
+                CASE WHEN NEW.permitted=0 THEN 0.0 ELSE (
+                    SELECT usd_per_call FROM tool_cost_profiles
+                    WHERE tool_name=NEW.tool_name
+                      AND replace(effective_from,' ','T') <= replace(NEW.created_at,' ','T')
+                    ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1
+                ) END,
+                'USD',
+                CASE
+                    WHEN NEW.permitted=0 THEN 'known'
+                    WHEN EXISTS (
+                        SELECT 1 FROM tool_cost_profiles
+                        WHERE tool_name=NEW.tool_name
+                          AND replace(effective_from,' ','T') <= replace(NEW.created_at,' ','T')
+                    ) THEN 'estimated'
+                    ELSE 'unknown'
+                END,
+                json_object(
+                    'tool_class',NEW.tool_class,
+                    'permitted',NEW.permitted,
+                    'legacy_backfill',0
+                ),
+                NEW.created_at
+            );
+        END;
+        """
+    )
+
 
 def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Connection:
     """Create the append-only economics schema if needed and return the connection.
@@ -142,50 +275,22 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
     tool_table = db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_tool_calls'"
     ).fetchone()
-    if table_ready and (not tool_table or trigger_ready):
-        return db
-    if db.in_transaction:
-        raise RuntimeError(
-            "economics schema initialization refused inside an active transaction"
-        )
-    db.executescript(ECONOMICS_DDL)
-    # Existing tool calls have no timing/cost columns. Mirror each durable tool-ledger
-    # insert into the economics ledger with an honest unknown cost. Future callers can
-    # emit a richer explicit event through record_tool_event without changing this
-    # compatibility path.
+
+    if not table_ready:
+        if db.in_transaction:
+            raise RuntimeError(
+                "economics schema initialization refused inside an active transaction"
+            )
+        db.executescript(ECONOMICS_DDL)
+        table_ready = True
+
     if tool_table:
-        db.executescript(
-            """
-            CREATE TRIGGER IF NOT EXISTS trg_agent_tool_call_cost_event
-            AFTER INSERT ON agent_tool_calls
-            WHEN COALESCE((SELECT value FROM economics_settings WHERE key='cost_tracing_enabled'),'1')='1'
-            BEGIN
-                INSERT OR IGNORE INTO runtime_cost_events (
-                    id,event_type,run_id,call_id,provider,model_or_tool,attempt_index,
-                    status,started_at,finished_at,usage_json,cost_profile_id,
-                    estimated_cost_usd,currency,cost_status,metadata_json,created_at
-                ) VALUES (
-                    'toolcost_' || NEW.id,'tool',NEW.run_id,'tool_' || NEW.id,'tool',
-                    NEW.tool_name,0,CASE WHEN NEW.permitted=1 THEN 'recorded' ELSE 'denied' END,
-                    NEW.created_at,NEW.created_at,'{}',
-                    (SELECT id FROM tool_cost_profiles
-                     WHERE tool_name=NEW.tool_name
-                       AND replace(effective_from,' ','T') <= replace(NEW.created_at,' ','T')
-                     ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1),
-                    (SELECT usd_per_call FROM tool_cost_profiles
-                     WHERE tool_name=NEW.tool_name
-                       AND replace(effective_from,' ','T') <= replace(NEW.created_at,' ','T')
-                     ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1),
-                    'USD',
-                    CASE WHEN EXISTS (
-                        SELECT 1 FROM tool_cost_profiles
-                        WHERE tool_name=NEW.tool_name
-                          AND replace(effective_from,' ','T') <= replace(NEW.created_at,' ','T')
-                    ) THEN 'estimated' ELSE 'unknown' END,
-                    json_object('tool_class',NEW.tool_class,'permitted',NEW.permitted),
-                    NEW.created_at
-                );
-            END;
-            """
-        )
+        _backfill_existing_tool_calls(db)
+        if not trigger_ready:
+            if db.in_transaction:
+                raise RuntimeError(
+                    "economics trigger initialization refused inside an active transaction"
+                )
+            _install_tool_trigger(db)
+
     return db
