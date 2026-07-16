@@ -121,19 +121,38 @@ CREATE INDEX IF NOT EXISTS idx_viability_reports_scope_window
 
 
 def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Connection:
-    """Create the append-only economics schema if needed and return the connection."""
+    """Create the append-only economics schema if needed and return the connection.
+
+    ``sqlite3.Connection.executescript`` commits any active transaction before it
+    runs. Runtime measurement must never cross that boundary, so after the schema
+    and trigger exist this function returns using read-only sqlite_master probes.
+    First-time initialization refuses to run inside an active transaction; callers
+    then fail measurement-only and leave trading state untouched.
+    """
     if db is None:
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
+    table_ready = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_cost_events'"
+    ).fetchone()
+    trigger_ready = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='trg_agent_tool_call_cost_event'"
+    ).fetchone()
+    tool_table = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_tool_calls'"
+    ).fetchone()
+    if table_ready and (not tool_table or trigger_ready):
+        return db
+    if db.in_transaction:
+        raise RuntimeError(
+            "economics schema initialization refused inside an active transaction"
+        )
     db.executescript(ECONOMICS_DDL)
     # Existing tool calls have no timing/cost columns. Mirror each durable tool-ledger
     # insert into the economics ledger with an honest unknown cost. Future callers can
     # emit a richer explicit event through record_tool_event without changing this
     # compatibility path.
-    tool_table = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_tool_calls'"
-    ).fetchone()
     if tool_table:
         db.executescript(
             """
