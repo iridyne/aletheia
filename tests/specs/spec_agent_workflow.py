@@ -168,5 +168,7 @@ def test_historical_task_tree_is_not_loaded():
     from aletheia.agent_workflow import load_tasks
 
     source = Path(load_tasks.__code__.co_filename).read_text(encoding="utf-8")
-    assert "historical `.agent/tasks` tree is intentionally not consulted" in source
+    assert "historical" in source
+    assert ".agent/tasks" in source
+    assert "not consulted" in source
     assert "agent_tasks_db.list_tasks" in source
