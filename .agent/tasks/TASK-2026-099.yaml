@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-099
 title: Fix runtime-home cross-platform CI regressions
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: SQLite migration validation handle lifetime and ControlLoopHarness runtime-home
@@ -18,11 +18,13 @@ acceptance:
   temporary sandbox.
 - The exact Linux and Windows CI failure families pass locally and the PR remains
   configured for auto-merge.
-- The audit-writer trust-boundary spec is recorded under its required dedicated command key.
+- The audit-writer trust-boundary spec is recorded under its required dedicated command
+  key.
 base_commit: 0f734a8fa6caadfddece04bccd3f99e350aaae6a
 next_action:
-  command_key: spec_audit_chain
-  reason: Record the dedicated trust-boundary evidence required by the strict PR gate.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
 verification:
 - command_key: runtime_home_ci_repair
@@ -37,5 +39,13 @@ verification:
   run_at: '2026-07-16T07:49:48.150021Z'
   result: passed
   recorded_by: agent_workflow.verify/v1
+- command_key: spec_audit_chain
+  command: uv run pytest tests/specs/spec_audit_chain.py -q
+  command_sha256: 30056798b6a046dba928dec3de9857a1177b569dfa66724ff10e77010ec91cfa
+  exit_code: 0
+  commit: 59c7e5d5505b7c4216f4681249d3556bedf9461c
+  run_at: '2026-07-16T07:54:08.777080Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-099.md
-updated_at: '2026-07-16T07:50:04.315570Z'
+updated_at: '2026-07-16T07:54:23.299506Z'
