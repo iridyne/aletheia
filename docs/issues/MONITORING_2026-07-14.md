@@ -2978,3 +2978,57 @@ ZEC/USDT long 持仓亏损持续扩大：uPnL 从 -$0.672（15:14Z）降至 **-$
 - **WED-011**：`current_epoch_pending_signals=3`（-1，近清零），`current_epoch_candidate_skips=82`（+38）。skip 急剧积累，epoch 即将具备可评估条件，但 THU-001 下的 skips 主要为超时导致，代表性存疑。
 
 - **WED-014**：提案流 11.1h 无更新（上次 2.0h，显著恶化），Operator shell 状态从 Reviewing 变为 **Working**，两次观测间已做过一次批次评估（last assessment 1.6h ago 与上次巧合相同，但时钟基准已移动）。
+
+---
+
+## 定时观测 2026-07-16T03:10Z
+
+### 摘要
+
+**WARNING 从 9 升至 15，系统进入第二次调度器崩溃**，且烈度显著高于 THU-001：errors.log 显示 PID 5743 实例内 `executor thread abandoned` 累计达 **88 次**（上次最高 23），gateway 在观测期间于 11:10:45 CST（03:10Z）再次自愈重启（backend ReadTimeout 由此而来）。所有外部数据源（LSR、CoinGecko、Hyperliquid、onchain、volume ranking、orderbook）均约 1.6h 无更新，collector-health API 显示 7/8 域 overdue。两个重要的进展性变化：ZEC/USDT long 持仓已**关闭**（fills=2, open=0, closed=1，realized 因 funding 未完整暂不可用）；**win_rate 首次突破 50%**（50.5%，840 settled，avg_net=+1.124%）。
+
+### 问题更新 / 新增
+
+- **THU-002 NEW 🔴**：调度器崩溃第二轮，烈度升级。PID 5743 运行约 1h50m（约 01:20Z 启动）期间累计 `executor thread abandoned` **88 次**，其中包括 `job price_feed: coroutine exceeded thread budget (60s) — 88 abandoned threads`。根因与 THU-001 相同（LLM 调用或长时任务持有 max_instances=1 锁，阻塞所有 scheduler slots），但线程泄漏速率明显更高（之前同类事件单次最高 23 线程）。gateway 在 11:10:45 CST 自愈重启（errors.log 末行：`Started server process [54076]`），此时 doctor 的 `process.backend: ReadTimeout` 正是重启窗口期的反映。`content.signal_settlement: 356 stalled, stale_overdue=1555`（上次 97，增长 16 倍）——outcome settler 在两轮停顿期间无法调度，大量结算积压。
+
+- **ZEC/USDT 持仓已关闭**：`orders=2, fills=2, positions(open=0,closed=1)`，`loop.round1: closed=1/60, realized=+0.00`，`reconciled_ratio: strategy=1(100.0%)`。系统以策略决策方式关闭仓位，入场 580.79 后持有约 14.2h（13:00Z 前后至约 03:00Z）。realized 暂不可用（`incomplete_funding_economics=1`），uPnL 最后可见值为 -$1.448，实际亏损金额待结算后确认。
+
+- **win_rate 突破 50%**：50.5%（840 settled，avg_net=+1.124%），为监控周期最高。这是本轮数据库重置后信号质量的首次正式突破均值，avg_net=+1.124% 在样本量 840 下具有统计意义。
+
+- **WED-014**：`operator.loop` 从 1.6h 急升至 **3.7h**，超过 2h 告警阈值，回到本监控周期最差水平。提案流 **13.1h** 无更新（上次 11.1h）。两轮 THU 停顿彻底打断了批次评估调度。
+
+- **WED-011**：`current_epoch_pending_signals=0`（从 3 清零），epoch 现已具备可评估条件。`current_epoch_candidate_skips=91`（+9），但大量 skips 发生在停顿期（超时驱动而非主动决策），评估结果代表性仍存疑。
+
+- **THU-001**：第一轮停顿后遗效应持续。`stale_overdue=1555`（从 97 飙升），`overdue=1802, awaiting_cadence=247`。7/8 collectors 仍 overdue，age 约 99min。gateway 自愈重启次数累计 3 次 market_data_stale（24h 内）。
+
+- **WED-015**：PID 52215→5743（autostart runs=61，约 01:20Z 启动），restart_history latest=3.7h ago（23:24Z），与 PID 实际启动时间（01:20Z）不符——再次证实存在未记录重启。24h 内已追踪到至少 3 次 PID 更换，加上漏记部分，实际重启次数更高。
+
+- **MON-036**：drought 持续（executable=0，no_candidates）。但随着 ZEC 仓位关闭，portfolio 现为空仓，系统下一笔交易将是净新增持仓，无集中度风险。`thesis_lineage.missed=175`（从 181 略降），`missed_alpha_suspect=20`（不变）。
+
+- **WED-005**：`data.serenity_pipeline` 1.9h 前成功运行，109 活跃机会，保持 ✅。
+
+---
+
+## 定时观测 2026-07-16T03:14Z
+
+### 摘要
+
+THU-002 部分恢复：WARNING 在 4 分钟内从 15 骤降至 **6**，`self_heal_restart:code_drift`（03:11Z）重启 backend（PID 54076），数据管道恢复全面刷新（collectors 7/8 ✅，所有外部源 2-3min 新鲜，`content.signal_settlement` 从 356 stalled 恢复至 ✅ current，settler 处理了大量积压）。然而调度器锁问题**尚未解除**：errors.log 中 `maximum running instances reached` 错误延续至 11:14:30 CST（与当前观测时间同步），`loop.newest_opportunity` 仍 1.7h 停产，`health.rollup` 维持 degraded。`operator.loop` 3.7h 无批次评估，无新提案（13.2h）。
+
+### 问题更新 / 新增
+
+- **THU-002**：部分缓解，调度锁仍持续。backend code_drift 自愈重启（03:11Z）成功恢复数据管道（collectors、外部数据源全绿），但 errors.log 末行时间戳 11:14:30 CST 仍在报 `skipped: maximum running instances reached (1)`——调度器锁尚未释放，market_observer 无法启动新 tick。重启策略（自愈 → backend 重建）能恢复数据采集，但无法清除持有锁的长跑任务。`stale_overdue=1182`（从 1555 下降中，settler 正在处理积压）。
+
+- **content.signal_settlement**：✅ 快速恢复。从 356 stalled → settlement current（8496 total），4 分钟内清零。backend 重启后 settler job 立即执行并处理了全部积压，效率高。
+
+- **observer 停产**：`loop.newest_opportunity` 1.7h（101min），`health.rollup: degraded: observer_stale:101min`。不同于数据采集（已恢复），market_observer 本身仍未完成一次完整 run——原因是调度锁仍被某持有任务占据，market_observer 无法进入新轮次。预计在锁释放后（backend 进一步重启或持有任务超时）15min 内自愈。
+
+- **WED-014**：`operator.loop` 3.7h（与 03:10Z 完全相同，无进展），提案流 13.2h。observer 停产导致 Operator 没有新信号可评估。
+
+- **MON-036**：无持仓（ZEC 已关闭），drought 延续。`thesis_lineage.missed=187`（+12 vs 03:10Z），`missed_alpha_suspect=20`（不变）。数据管道恢复后，若 observer 重启将重新产出候选。
+
+- **data.signal**：win_rate 49.5%（981 settled，avg_net=+0.924%）。较 03:10Z 的 50.5% 略有回落，但 settled 量从 840 增至 981（+141 in 4min，settler 快速处理积压所致），avg_net 维持正值。
+
+- **WED-015**：`restart_history: latest=self_heal_restart:code_drift 3min ago`，新增一次 code_drift 事件（backend PID 54076），24h 累计 10 次重启（git_hook=4, market_data_stale=3, code_drift=2+1=3, spawn_failed=1）。PID 5743（gateway）本身未改变，backend 子进程重启后计数更新。
+
+- **data.filter_evidence**：`stale_overdue=1182`（从 1555 下降，settler 持续处理），`overdue=1386, awaiting_cadence=204`。未完全清零，预计继续降低。
