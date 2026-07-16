@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from uuid import uuid4
 
 from aletheia.agent_runtime.wake_events import WakeCoalescer, WakeEvent
 
@@ -259,18 +260,26 @@ def _build_wake_context(triggered_by: str, batches: list) -> dict:
 
 async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -> int:
     try:
+        from aletheia.agent_runtime.run_context import bind_economic_attribution
         from aletheia.agent_shell.commands import evaluate_trading_opportunity
         from aletheia.agent_runtime.scheduler import _record_job_success
+
         logger.info(
             "pi_daemon: evaluating (trigger=%s, positions=%d)",
             triggered_by, len((wake_context or {}).get("wake_batches", [])),
         )
         evaluation_params = dict(wake_context or {})
         evaluation_params["_trigger"] = triggered_by
-        result = await asyncio.wait_for(
-            evaluate_trading_opportunity(evaluation_params),
-            timeout=300.0,
-        )
+        evaluation_id = "operator_eval_" + uuid4().hex[:16]
+        with bind_economic_attribution(
+            logical_agent="pi_trading_decision",
+            evaluation_id=evaluation_id,
+            trigger=triggered_by,
+        ):
+            result = await asyncio.wait_for(
+                evaluate_trading_opportunity(evaluation_params),
+                timeout=300.0,
+            )
         action = result.get("action", "unknown") if isinstance(result, dict) else "unknown"
         remaining = (
             result.get("pending_queue_remaining", 0)
