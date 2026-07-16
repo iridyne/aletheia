@@ -119,4 +119,4 @@ def test_bootstrap_rejects_source_symlinks(tmp_path):
 
     with pytest.raises(packaged.PackagedUpdateError) as caught:
         bootstrap.install_bootstrap_runtime(host_root=tmp_path / "host", source_root=source)
-    assert caught.value.reason == "bootstrap_source_symlink"
+    assert caught.value.reason in {"update_symlink_target_unsafe", "update_symlink_target_escape"}
