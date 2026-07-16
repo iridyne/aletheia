@@ -1,0 +1,36 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-100
+title: Add macOS stable release runtime
+status: in_progress
+packet_type: standard
+scope:
+  boundary: Portable release-bundle metadata, Unix/macOS install-start-health scripts,
+    macOS clean-extract runtime validation, and focused release tests/documentation.
+  excluded: Trading decisions, Risk, Execution, exchange adapters, Live authority,
+    credential values, scheduler semantics, database schema changes, automatic release
+    promotion, and multi-host deployment.
+intent: Make the immutable modular-monolith bundle installable and verifiably runnable
+  as a stable macOS user instance isolated from the high-frequency development checkout,
+  while preserving Windows support and the per-user ~/.aletheia state contract.
+acceptance:
+- The release artifact is platform-neutral source content rather than falsely labelled
+  as Windows-only, and its manifest declares the supported source-runtime platforms.
+- Unix shell scripts install a verified release into a fixed user application directory,
+  atomically select the current release, start only a manifest-backed release, and probe
+  both readiness and health endpoints.
+- Shell launchers are shipped with executable ZIP metadata and reject relative data-root
+  overrides or development checkouts without a release manifest.
+- GitHub Actions downloads the exact built artifact on macos-latest, installs it under a
+  temporary user application root, bootstraps ~/.aletheia, starts the gateway, passes
+  readiness/health checks, stops it, and leaves no LaunchAgent registration behind.
+- Windows clean-extract validation and the 100 MiB hard bundle limit continue to pass.
+base_commit: 77af45c216ebb7f23aac7623ce0c81a8e9744be3
+next_action:
+  command_key: macos_release
+  reason: Implement the portable bundle and macOS runtime scripts, then run the focused
+    release-contract verification.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-100.md
+updated_at: '2026-07-16T08:35:00Z'
