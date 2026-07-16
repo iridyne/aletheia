@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-098
 title: Move all runtime state into per-user .aletheia home
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: Cross-platform runtime-home resolution, legacy-state migration, development
@@ -31,9 +31,21 @@ acceptance:
   from a clean extraction while still accepting an explicit absolute override.
 base_commit: 0b1b50f864bc3c2cedc73ce3e10a65167b746142
 next_action:
-  command_key: runtime_home
-  reason: Record runtime-home verification without forbidden metadata in the evidence command.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: runtime_home
+  command: uv run pytest tests/test_runtime_home_contract.py tests/test_runtime_home_migration.py
+    tests/test_release_data_dir.py tests/test_release_bundle.py tests/test_dev_preview.py
+    tests/test_autostart.py tests/test_agent_workflow.py tests/test_config.py tests/specs/spec_audit_chain.py
+    -q --tb=short
+  command_sha256: 0c68112c5b34e3a36848794f2fbdaf00f95712a6f825989103ad1b51bce5dbab
+  exit_code: 0
+  commit: 6bf5e0129130ee5a8f280113fe9e05f9fa97dc46
+  run_at: '2026-07-16T07:36:16.816269Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-098.md
-updated_at: '2026-07-16T07:35:01.907939Z'
+updated_at: '2026-07-16T07:36:31.191466Z'
