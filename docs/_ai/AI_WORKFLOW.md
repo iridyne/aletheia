@@ -12,6 +12,11 @@
 Aletheia deliberately has no development-task database, task packet format,
 worker lease, handoff ledger, or task-management CLI.
 
+Old installations may still contain an inert
+`~/.aletheia/development/agent-tasks/` directory. Current code never reads,
+migrates, or recreates it; it may be removed manually after confirming no external
+tool uses that path.
+
 ## Start of work
 
 1. Read `AGENTS.md` and only the topic-specific documents it points to.
