@@ -377,6 +377,96 @@ def test_resume_gate_allows_when_one_provider_usable(tmp_path, monkeypatch):
     assert load_config().runtime.paused is False
 
 
+def test_resume_gate_keeps_startup_behavior_blocker_paused(tmp_path, monkeypatch):
+    """A usable LLM cannot override an active Startup Behavior Gate blocker.
+
+    This is the manual-resume counterpart of the startup gate's durable pause:
+    an active reconciliation incident must stay paused until the gate itself
+    evaluates cleanly.  Before the regression fix, this path resumed solely on
+    the LLM probe and silently cleared the gate-owned pause.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import resume_gate
+    from aletheia.agent_runtime import startup_behavior_gate
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
+    cfg.health.startup_behavior_gate_enabled = True
+    cfg.runtime.paused = True
+    save_config(cfg)
+
+    probe_called = False
+
+    async def usable_probe(_cfg):
+        nonlocal probe_called
+        probe_called = True
+        return {"any_usable": True, "checked": 1, "results": []}
+
+    monkeypatch.setattr(resume_gate, "probe_llm_providers_at_startup", usable_probe)
+    monkeypatch.setattr(
+        startup_behavior_gate,
+        "evaluate_startup_gate",
+        lambda _cfg: {
+            "passed": False,
+            "blockers": ["reconciliation_incident"],
+            "checks": [],
+            "user_blocked": False,
+            "user_block_reason": None,
+        },
+    )
+
+    result = asyncio.run(resume_gate.resume_if_llm_available(actor="human", source="test"))
+
+    assert result["allowed"] is False
+    assert result["reason"] == "startup_behavior_gate_blocked"
+    assert result["blockers"] == ["reconciliation_incident"]
+    assert probe_called is False
+    assert load_config().runtime.paused is True
+
+
+def test_resume_gate_keeps_real_reconciliation_incident_paused(tmp_path, monkeypatch):
+    """A durable SQLite incident blocks manual resume before the LLM probe."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import resume_gate
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.portfolio import reconciliation_integrity as integrity
+
+    cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
+    cfg.health.startup_behavior_gate_enabled = True
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.runtime.paused = True
+    cfg.learning.paper_influence_enabled = False
+    cfg.learning.lifecycle_automation_enabled = False
+    save_config(cfg)
+    _invalidate_config_cache()
+    integrity.record_reconciliation_integrity_incident(
+        {
+            "is_thrashing": True,
+            "window_minutes": 30,
+            "churn_count": 9,
+            "churned_identities": ["BTC/USDT"],
+            "reopened_by_source": {"reconcile": 9},
+        }
+    )
+
+    probe_called = False
+
+    async def usable_probe(_cfg):
+        nonlocal probe_called
+        probe_called = True
+        return {"any_usable": True, "checked": 1, "results": []}
+
+    monkeypatch.setattr(resume_gate, "probe_llm_providers_at_startup", usable_probe)
+
+    result = asyncio.run(resume_gate.resume_if_llm_available(actor="human", source="test"))
+
+    assert result["allowed"] is False
+    assert result["reason"] == "startup_behavior_gate_blocked"
+    assert "reconciliation_incident" in result["blockers"]
+    assert probe_called is False
+    assert load_config().runtime.paused is True
+
+
 # --- 9. DNS failure short-circuits the retry loop ---
 
 def test_dns_failure_short_circuits_retries(tmp_path, monkeypatch):

@@ -1,0 +1,60 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-093
+title: Consolidate remaining valuable branch patches
+status: done
+packet_type: standard
+scope:
+  boundary: Branch consolidation plus the exact scheduler, startup-gate, operator-lifecycle,
+    and PI evidence patches selected from existing pull requests.
+  excluded: Risk, Execution, exchange adapters, Live authority, credentials, gateway
+    lifecycle, new trading capability, and unrelated runtime-state mutation.
+intent: Evaluate remaining independent PR patches on current origin/master, merge
+  only validated repairs, and retire redundant branches without weakening trading
+  or workflow invariants.
+acceptance:
+- Every remaining independent PR patch is classified as valuable, redundant, or obsolete
+  against current origin/master with explicit evidence.
+- Valuable repairs pass their focused regression commands on current origin/master
+  before merge.
+- Redundant or obsolete PRs, remote branches, and clean Orca worktrees are retired
+  without discarding uncommitted files.
+- Local master is synchronized to origin/master with a clean Git workspace after preserving
+  its pre-existing uncommitted monitoring document.
+base_commit: 468d123bfa5ebfcd06f227d82d7205e2fb3ab4e0
+next_action:
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
+blockers: []
+verification:
+- command_key: startup_behavior_gate
+  command: uv run pytest tests/test_startup_behavior_gate.py tests/test_layered_pause.py
+    -q
+  command_sha256: 5ebac7e48ccdb1be43edd4f0e994bfd8415ba3d4b412d9fb15d432ae22cf95fd
+  exit_code: 0
+  commit: fa86c13e683210ed2d9073aae947e90f89391831
+  run_at: '2026-07-16T04:33:10.631621Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: collector_shadow
+  command: uv run pytest tests/test_scheduler_timeouts.py tests/test_derivatives_collector.py
+    tests/test_collector_health.py tests/test_data_collectors_integration.py tests/test_layered_pause.py
+    tests/specs/spec_gateway_stability.py tests/specs/spec_data_utilization.py tests/specs/spec_pipeline_local_funding.py
+    -q --tb=short
+  command_sha256: c5b514599ceaf6074a73c75a10ae6a2a0855ce7e6d42eb520ef459263cc4a2d5
+  exit_code: 0
+  commit: fa86c13e683210ed2d9073aae947e90f89391831
+  run_at: '2026-07-16T04:34:22.768320Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: fa86c13e683210ed2d9073aae947e90f89391831
+  run_at: '2026-07-16T04:34:28.232484Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
+handoff: .agent/handoffs/TASK-2026-093.md
+updated_at: '2026-07-16T04:34:47.631878Z'

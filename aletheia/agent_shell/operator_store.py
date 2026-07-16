@@ -283,7 +283,7 @@ def create_task(
     effective_runtime_id = runtime_id or _current_runtime_id()
     effective_started_at = started_at or (_utc_now() if status == "running" else None)
     effective_completed_at = completed_at or (
-        _utc_now() if status in {"completed", "failed"} else None
+        _utc_now() if status in {"completed", "failed", "cancelled"} else None
     )
     db.execute(
         "INSERT INTO agent_shell_tasks ("
@@ -334,7 +334,7 @@ def update_task(task_id: str, **kwargs) -> None:
     status = updates.get("status")
     if status == "running" and "started_at" not in updates:
         updates["started_at"] = _utc_now()
-    if status in {"completed", "failed"} and "completed_at" not in updates:
+    if status in {"completed", "failed", "cancelled"} and "completed_at" not in updates:
         updates["completed_at"] = _utc_now()
 
     db = get_db()

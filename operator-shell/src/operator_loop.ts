@@ -2551,7 +2551,7 @@ export class OperatorLoop {
     const recoveredTasks = Array.from(
       new Map([...recentTasks, ...queuedTasks].map(task => [task.id, task])).values(),
     )
-    this.taskRuntime.restore(recoveredTasks)
+    this.taskRuntime.restore(await this.taskRuntime.reconcileExpiredRunningTasks(recoveredTasks))
     const recoveryLastError = this.recoveryLastError(operatorStatus.last_error)
     const recoveryHeartbeatIntent = this.recoveryHeartbeatIntent(operatorStatus.current_intent)
     this.lastError = recoveryLastError

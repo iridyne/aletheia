@@ -117,6 +117,8 @@ def _task_event_type(status: str) -> str | None:
         return "task_completed"
     if status == "failed":
         return "task_failed"
+    if status == "cancelled":
+        return "task_cancelled"
     return None
 
 
@@ -1258,7 +1260,7 @@ async def operator_update_task(task_id: str, payload: OperatorTaskUpdate):
         # Idempotent: client marking a terminal state on an already-evicted task
         # (e.g. after gateway restart) gets a 200 no-op instead of 404, so the
         # operator loop does not enter Degraded mode for a stale task reference.
-        if payload.status in ("completed", "failed"):
+        if payload.status in ("completed", "failed", "cancelled"):
             return {"id": task_id, "status": payload.status, "evicted": True}
         raise HTTPException(404, "Task not found")
     updates = payload.model_dump(exclude_none=True)

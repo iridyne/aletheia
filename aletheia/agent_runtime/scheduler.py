@@ -2502,18 +2502,6 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
                 deriv_persist_errors.append(
                     "derivatives_open_interest_persist_failed"
                 )
-        liq_count = 0
-        for event in deriv_result.get("liquidations", []):
-            try:
-                repo.insert_liquidation_event(event.model_dump())
-                liq_count += 1
-            except Exception as e:
-                logger.debug("liquidation persist failed: %s", e)
-                deriv_persist_errors.append(
-                    "derivatives_liquidation_persist_failed"
-                )
-        if liq_count:
-            logger.info("liquidations persisted: %d", liq_count)
         if raw_deriv_result is not None:
             if deriv_persist_errors:
                 unique_errors = list(dict.fromkeys(deriv_persist_errors))

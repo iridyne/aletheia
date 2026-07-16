@@ -10,6 +10,11 @@
      source serenity_opportunity (pending_signals don't carry it).
 """
 
+import json
+import math
+
+import pytest
+
 from aletheia.agent_shell.trading_decision import (
     TradingDecision,
     _parse_decision,
@@ -135,6 +140,58 @@ def test_submit_decision_reads_snapshot_for_final_market_type(tmp_path, monkeypa
     assert captured["price"] == 200.0
     assert captured["quantity"] == 0.1
     assert captured["order_type"] == "market"
+
+
+@pytest.mark.parametrize(
+    ("requested_stop", "requested_take_profit"),
+    [(0.0, -1.0), (math.nan, math.inf)],
+)
+def test_submit_decision_replaces_invalid_protection_with_defaults(
+    tmp_path, monkeypatch, requested_stop, requested_take_profit
+):
+    """LLM sentinel values (0/negative) must not become a rejected entry plan."""
+    import asyncio
+    import aletheia.agent_shell.trading_decision as td
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config
+
+    venue = load_config().market_data.ccxt_exchange or "binance"
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT", market_type="perp", exchange=venue, price=200.0,
+    ))
+    captured: dict = {}
+    monkeypatch.setattr(
+        "aletheia.execution.paper_tools.create_paper_proposal",
+        lambda **kwargs: captured.update(kwargs) or {"status": "pending"},
+    )
+    monkeypatch.setattr(
+        "aletheia.trading.entry_snapshot.capture_attribution_snapshot_json",
+        lambda _symbol: None,
+    )
+    monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda ctx: [])
+    monkeypatch.setattr(
+        "aletheia.trust.guard_chain.summarize",
+        lambda verdicts: {"blocks": [], "details": []},
+    )
+    monkeypatch.setattr(td, "_proposal_direction_overheated", lambda *args: None)
+
+    decision = TradingDecision(
+        action="trade", symbol="BTC/USDT", direction="long", conviction=80,
+        reasoning="zero means unspecified", position_size_usdt=20.0,
+        market_type="usdt_futures", stop_price=requested_stop, take_profit=requested_take_profit,
+    )
+    asyncio.run(td.submit_decision_as_proposal(decision, "paper_internal"))
+
+    assert captured["stop_price"] == 196.0
+    assert captured["take_profit"] == 208.0
+    assert captured["risk_reward"] == 2.0
+    entry_parameters = json.loads(captured["agent_rationale"].split("\n---\n", 1)[1])["entry_parameters"]
+    assert entry_parameters["stop_loss"]["value_source"] == "default_config"
+    assert entry_parameters["take_profit"]["value_source"] == "default_config"
 
 
 def test_attribution_survives_conflicting_layer1_via_ranker():
