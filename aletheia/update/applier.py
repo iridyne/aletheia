@@ -1,6 +1,6 @@
 """Self-upgrade orchestration for development and installed runtimes.
 
-A development checkout keeps the existing explicit ``git pull`` workflow.  A frozen,
+A development checkout keeps the existing explicit ``git pull`` workflow. A frozen,
 installed payload must never modify source or invoke ``uv``; it stages a signed immutable
 runtime in the background and hands the short activation/rollback transaction to the
 stable tray host.
@@ -11,7 +11,7 @@ import os
 import subprocess
 from datetime import datetime, timezone
 
-from aletheia.config.loader import load_config, save_config, _PROJECT_ROOT
+from aletheia.config.loader import _PROJECT_ROOT, load_config, save_config
 from aletheia.files.jsonl import write_audit
 from aletheia.gateway.pidfile import _no_window_kwargs
 from aletheia.update import git_ops
@@ -36,9 +36,11 @@ logger = logging.getLogger("aletheia.update.applier")
 
 
 def _packaged_module():
-    from aletheia.update import packaged
+    # All installed callers go through the safety facade. The low-level staging module
+    # remains an implementation detail and cannot be invoked by Web/CLI code directly.
+    from aletheia.update import packaged_commands
 
-    return packaged
+    return packaged_commands
 
 
 def _is_packaged() -> bool:
