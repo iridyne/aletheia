@@ -269,7 +269,7 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
 
     pi_dec = _build_pi_decision(decision_result)
     claim_failure: str | None = None
-    with transaction(immediate=True):
+    with transaction(immediate=True, savepoint=True):
         existing = (
             find_final_pi_decision_for_opportunity(
                 pi_dec.opportunity_id,
@@ -320,7 +320,11 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
             # trace (and any exact-price fixed-horizon outcome seeds) before
             # consuming the pending carrier so an evidence failure rolls the
             # entire claim back instead of becoming an invisible permanent skip.
-            if pi_dec.action == "skip" and pi_dec.opportunity_id:
+            if (
+                pi_dec.action == "skip"
+                and pi_dec.opportunity_id
+                and decision_result.get("filter_trace")
+            ):
                 from aletheia.analytics.filter_evidence import record_operator_filter_trace
 
                 evidence_result = dict(decision_result)
