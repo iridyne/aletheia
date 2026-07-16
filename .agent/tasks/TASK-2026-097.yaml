@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-097
 title: Isolate manual CI concurrency
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: GitHub Actions concurrency grouping and its executable workflow contract.
@@ -17,9 +17,18 @@ acceptance:
 - Focused workflow contracts and strict changed-since validation pass.
 base_commit: 99446f9a960af4b6093f79058de1dc2bdd5e8105
 next_action:
-  command_key: workflow_tests
-  reason: Claim the task and define the first focused verification.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: workflow_tests
+  command: uv run pytest tests/test_agent_workflow.py -q
+  command_sha256: 14204375606cbbcad60c9facf10452aa4e511d1ad22eda4eaf509a04f4381766
+  exit_code: 0
+  commit: 36f1a378f475328c48f0c14f3aee370c819de9ee
+  run_at: '2026-07-16T05:51:27.870952Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-097.md
-updated_at: '2026-07-16T05:50:15.236857Z'
+updated_at: '2026-07-16T05:52:09.707978Z'
