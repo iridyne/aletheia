@@ -878,4 +878,3 @@ workflow concern without improving trading-system correctness.
 A new coordination need must first be solved through the external orchestrator,
 a clear agent prompt, isolated worktrees, GitHub issues/PRs, or a static project
 instruction/decision document.
-

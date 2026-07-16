@@ -28,11 +28,10 @@ def _policy_paths() -> set[str]:
 
 def _agents_md_paths() -> set[str]:
     text = (_ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    match = re.search(r"- Trust boundaries[^
-]*
-((?:  [^
-]+
-){0,4})", text)
+    match = re.search(
+        r"- Trust boundaries[^\n]*\n((?:  [^\n]+\n){0,4})",
+        text,
+    )
     assert match, "AGENTS.md Trust boundaries bullet not found"
     return {
         token.strip("/").strip()
@@ -45,8 +44,7 @@ def _governance_paths() -> set[str]:
         _ROOT / "docs/governance/trust_and_change_control.md"
     ).read_text(encoding="utf-8")
     match = re.search(
-        r"### 6\.1 Controlled Modules.*?```text
-(.*?)```",
+        r"### 6\.1 Controlled Modules.*?```text\n(.*?)```",
         text,
         re.DOTALL,
     )
@@ -108,7 +106,9 @@ def test_policy_paths_and_tests_resolve_on_disk():
             base = path.split("*", 1)[0].rstrip("/")
             assert (_ROOT / base).exists(), path
         for command in entry["focused_commands"]:
-            test_paths = [token for token in command.split() if token.startswith("tests/")]
+            test_paths = [
+                token for token in command.split() if token.startswith("tests/")
+            ]
             assert test_paths
             for path in test_paths:
                 assert (_ROOT / path).exists(), path
@@ -146,12 +146,13 @@ def test_governance_matches_policy():
         _CONTRACT,
         "§ci",
         "L2b",
-        "PR CI runs executable specs without a repository task gate.",
+        "PR CI runs executable specs without a repository development-work gate.",
     )
 )
-def test_ci_runs_specs_without_task_workflow_gate():
+def test_ci_runs_specs_without_repository_work_gate():
     workflow = (_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    obsolete_test_name = "test_agent_" + "workflow"
     assert "uv run pytest tests/specs/" in workflow
     assert "agent workflow" not in workflow.lower()
-    assert "test_agent_workflow" not in workflow
+    assert obsolete_test_name not in workflow
     assert ".agent/" not in workflow

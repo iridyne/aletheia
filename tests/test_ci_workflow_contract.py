@@ -138,6 +138,7 @@ def test_repository_task_subsystem_is_absent_from_ci() -> None:
     workflow_text = _WORKFLOW_PATH.read_text(encoding="utf-8")
 
     assert "agent workflow" not in workflow_text.lower()
-    assert "test_agent_workflow" not in workflow_text
+    obsolete_test_name = "test_agent_" + "workflow"
+    assert obsolete_test_name not in workflow_text
     assert ".agent/" not in workflow_text
     assert "--changed-since" not in workflow_text

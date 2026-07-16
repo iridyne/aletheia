@@ -1018,7 +1018,7 @@ uv run pytest tests/test_architecture_fitness.py tests/specs/spec_trust_boundary
 uv run pytest tests/specs/ -q
 uv run pytest tests/ -q --tb=line
 uv run aletheia doctor
-uv run aletheia agent workflow check --strict
+git diff --check  # then require the normal PR CI matrix
 ```
 
 Frontend phases also run `cd frontend && npm run build`. New/changed API endpoints update

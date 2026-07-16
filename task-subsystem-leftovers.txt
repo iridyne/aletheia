@@ -1,7 +1,0 @@
-docs/design/skip_research/04_comprehensive_skip_remediation_plan.md:502:uv run aletheia agent workflow check --strict
-docs/issues/BACKEND_ISSUES.md:31:具备合并/上线结论。准确接手步骤见 `.agent/handoffs/TASK-2026-067.md`。
-docs/plans/learning_positive_contribution_implementation_plan_2026-07-12.md:1021:uv run aletheia agent workflow check --strict
-docs/plans/reconciled_gone_integrity_remediation_plan_2026-07-12.md:448:uv run aletheia agent workflow task verify <TASK-ID> --command-key <registered-key>
-docs/plans/reconciled_gone_integrity_remediation_plan_2026-07-12.md:449:uv run aletheia agent workflow check --strict
-tests/specs/spec_trust_boundary.py:156:    assert "test_agent_workflow" not in workflow
-tests/test_ci_workflow_contract.py:141:    assert "test_agent_workflow" not in workflow_text
