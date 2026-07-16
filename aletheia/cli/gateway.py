@@ -82,6 +82,11 @@ def enable_autostart():
     from aletheia.gateway import autostart
     result = autostart.enable(source="cli")
     if result.get("ok"):
+        # Persist user intent: subsequent 'gateway start' calls should keep autostart on.
+        from aletheia.config.loader import load_config, save_config
+        cfg = load_config()
+        cfg.runtime.autostart_on_start = True
+        save_config(cfg)
         typer.echo(f"Autostart enabled (task: {result.get('task_name') or autostart.TASK_NAME}).")
     elif not result.get("supported"):
         typer.echo(f"Autostart not available on this OS ({result.get('reason')}).")
@@ -97,7 +102,16 @@ def disable_autostart():
     from aletheia.gateway import autostart
     result = autostart.disable(source="cli")
     if result.get("ok"):
-        typer.echo("Autostart disabled.")
+        # Persist user intent: subsequent 'gateway start' calls must NOT re-register.
+        from aletheia.config.loader import load_config, save_config
+        cfg = load_config()
+        cfg.runtime.autostart_on_start = False
+        save_config(cfg)
+        from aletheia.gateway.pidfile import is_running
+        msg = "Autostart disabled."
+        if is_running():
+            msg += " The gateway is still running — use 'gateway stop' to stop it."
+        typer.echo(msg)
     elif not result.get("supported"):
         typer.echo(f"Autostart not available on this OS ({result.get('reason')}).")
     else:
