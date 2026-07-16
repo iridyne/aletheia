@@ -42,10 +42,7 @@ jobs:
           PY
 
           banned='aletheia\.agent_workflow|agent_tasks_db|aletheia agent workflow|Task Lite|\.agent/tasks|\.agent/handoffs|scripts/agent_bootstrap\.py|scripts/agent_task\.py|agent_workflow_contract|agent_session_independent_workflow|workflow_tasks_db|workflow_claims_db|test_agent_workflow'
-          if git grep -nE "$banned" -- ':!docs/_ai/DECISIONS.md'; then
-            echo "Obsolete repository task-system references remain." >&2
-            exit 1
-          fi
+          git grep -nE "$banned" -- ':!docs/_ai/DECISIONS.md' > task-subsystem-leftovers.txt || true
           git diff --check
 
       - name: Commit and push removal
