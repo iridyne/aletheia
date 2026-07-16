@@ -1,0 +1,32 @@
+schema_version: 1
+handoff_version: 1
+id: TASK-2026-100
+title: Fix macOS launchd autostart re-registration after user disable
+status: in_progress
+packet_type: standard
+scope:
+  boundary: gateway autostart CLI (gateway.py), API route (routes/gateway.py), and
+    autostart tests. No changes to trading runtime, Risk, Execution, exchange adapters,
+    Live authority, credentials, or gateway lifecycle logic.
+  excluded: trading runtime, Risk, Execution, exchange adapters, Live authority, credentials,
+    gateway lifecycle, and any runtime-state mutation.
+intent: Prevent _auto_register_watchdog from silently reversing a user's explicit
+  disable-autostart decision, and surface that the gateway supervisor process stays
+  alive after bootout.
+acceptance:
+- After 'gateway disable-autostart' succeeds, runtime.autostart_on_start is written
+  False to config; subsequent 'gateway start' does not re-register the launchd plist.
+- After 'gateway enable-autostart' succeeds, runtime.autostart_on_start is written
+  True to config.
+- The API route POST /api/gateway/autostart persists the same intent and returns
+  gateway_still_running in the disable response.
+- test_lifecycle_skips_auto_register_when_user_disabled passes.
+- All 38 test_autostart tests pass.
+base_commit: 1907efdf4dc8f4d7012b0ebb70ee3d76a39a33cb
+next_action:
+  command_key: autostart_tests
+  reason: Run focused autostart test suite to record evidence.
+blockers: []
+verification: []
+handoff: .agent/handoffs/TASK-2026-100.md
+updated_at: '2026-07-16T08:38:39.553371Z'
