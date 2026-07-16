@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import plistlib
 import stat
 import sys
 import zipfile
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,7 +94,7 @@ def test_macos_app_is_menu_bar_only_and_contains_bootstrap_runtime(tmp_path):
     launcher = (contents / "MacOS" / "aletheia-tray").read_text(encoding="utf-8")
     assert "__packaged_bootstrap" in launcher
     assert "Application Support/Aletheia" in launcher
-    assert "exec \"$CONTENTS/MacOS/aletheia-tray-bin\"" in launcher
+    assert "exec \"$CONTENTS/MacOS/aletheia-tray-bin\" \"$@\"" in launcher
 
     runtime = contents / "Resources" / "runtime" / "aletheia-core"
     assert (runtime / "aletheia-core").is_file()
@@ -106,9 +109,14 @@ def test_macos_app_is_menu_bar_only_and_contains_bootstrap_runtime(tmp_path):
 
     with zipfile.ZipFile(result["archive"]) as archive:
         names = set(archive.namelist())
+        launcher_info = archive.getinfo("Aletheia.app/Contents/MacOS/aletheia-tray")
+        launcher_mode = launcher_info.external_attr >> 16
     assert "Aletheia.app/Contents/Info.plist" in names
     assert "Aletheia.app/Contents/MacOS/aletheia-tray" in names
     assert "Aletheia.app/Contents/MacOS/aletheia-tray-bin" in names
+    assert launcher_info.create_system == 3
+    assert stat.S_IFMT(launcher_mode) == stat.S_IFREG
+    assert launcher_mode & 0o111
     assert any(name.endswith("/Resources/runtime/aletheia-core/release-manifest.json") for name in names)
 
 
@@ -127,3 +135,24 @@ def test_macos_app_archive_is_deterministic(tmp_path):
         output_dir=tmp_path / "second",
     )
     assert first["archive"].read_bytes() == second["archive"].read_bytes()
+
+
+def test_macos_app_rejects_symbolic_payload_members(tmp_path):
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlinks unavailable")
+    builder = _builder_module()
+    payload = _payload(tmp_path / "payload")
+    host = _host(tmp_path / "host")
+    outside = tmp_path / "outside"
+    outside.write_text("outside", encoding="utf-8")
+    try:
+        (payload / "linked-outside").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation is not permitted")
+
+    with pytest.raises(RuntimeError, match="symbolic link"):
+        builder.build_macos_app(
+            payload_dir=payload,
+            host_bin_dir=host,
+            output_dir=tmp_path / "dist",
+        )
