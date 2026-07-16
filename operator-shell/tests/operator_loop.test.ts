@@ -667,6 +667,33 @@ test('recommendation engine surfaces failed and stuck operator tasks from backen
   assert.match(stuck?.summary || '', /appears stuck/i)
 })
 
+test('recommendation engine keeps historical task failures as audit history, not active supervision alerts', () => {
+  const engine = new RecommendationEngine()
+  const old = new Date(Date.now() - 31 * 60 * 1000).toISOString()
+
+  const recommendations = engine.list(
+    makeSnapshot(),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    [
+      makeTask({
+        id: 'historical-failure',
+        status: 'failed',
+        error: 'transient gateway failure',
+        completed_at: old,
+        created_at: old,
+      }),
+    ],
+  )
+
+  assert.equal(recommendations.some(item => item.kind === 'failed_tasks_present'), false)
+})
+
 test('recommendation engine surfaces queued operator task backlog from backend truth', () => {
   const engine = new RecommendationEngine()
 
@@ -1829,6 +1856,31 @@ test('task runtime supersedes legacy unversioned opportunity-audit backlog after
   assert.equal(calls.createdTasks[0].status, 'running')
   assert.equal(typeof calls.createdTasks[0].input_data.recommendation_fingerprint, 'string')
   assert.deepEqual(runtime.snapshot(), { currentTaskId: 'task-1', queueSize: 1 })
+})
+
+test('task runtime retires expired running tasks before recovery while retaining a fresh task', async () => {
+  const { backend, calls } = makeFakeBackend(makeSnapshot())
+  const runtime = new TaskRuntime(backend)
+  const now = Date.now()
+  const expiredAt = new Date(now - 31 * 60 * 1000).toISOString()
+  const freshAt = new Date(now - 29 * 60 * 1000).toISOString()
+
+  const recovered = await runtime.reconcileExpiredRunningTasks([
+    makeTask({ id: 'expired-first', status: 'running', started_at: expiredAt, created_at: expiredAt }),
+    makeTask({ id: 'fresh-running', status: 'running', started_at: freshAt, created_at: freshAt }),
+    makeTask({ id: 'expired-second', status: 'running', started_at: expiredAt, created_at: expiredAt }),
+  ])
+  runtime.restore(recovered)
+
+  assert.deepEqual(
+    calls.updatedTasks.map(item => [item.taskId, item.payload.status, item.payload.error]),
+    [
+      ['expired-first', 'cancelled', 'operator_runtime_recovery_timeout'],
+      ['expired-second', 'cancelled', 'operator_runtime_recovery_timeout'],
+    ],
+  )
+  assert.equal(calls.updatedTasks[0].payload.output_data?.recovery_reason, 'running_task_expired')
+  assert.deepEqual(runtime.snapshot(), { currentTaskId: 'fresh-running', queueSize: 1 })
 })
 
 test('task runtime creates a queued backlog and promotes the next queued task after the active one clears', async () => {
