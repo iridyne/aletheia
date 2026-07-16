@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from aletheia.packaged_process import translate_frozen_command
+
 ROOT = Path(__file__).resolve().parents[1]
 BUILDER_PATH = ROOT / "scripts" / "release" / "build_packaged_runtime.py"
 
@@ -98,6 +100,36 @@ def test_pyinstaller_contract_is_one_folder_and_includes_dashboard():
     assert "dashboard_static" in source
     assert "console=True" in source
     assert "onefile" not in source.lower()
+
+
+def test_frozen_child_commands_reenter_the_payload_instead_of_treating_it_as_python(tmp_path):
+    executable = tmp_path / "aletheia-core"
+    executable.write_text("payload", encoding="utf-8")
+    runner = tmp_path / "aletheia" / "_gateway_runner.py"
+
+    assert translate_frozen_command(
+        [str(executable), str(runner), "--no-browser"], executable=str(executable)
+    ) == [str(executable), "__packaged_gateway_runner", "--no-browser"]
+    assert translate_frozen_command(
+        [
+            str(executable),
+            "-m",
+            "uvicorn",
+            "aletheia.server.app:app",
+            "--port",
+            "8788",
+        ],
+        executable=str(executable),
+    ) == [
+        str(executable),
+        "__packaged_uvicorn",
+        "aletheia.server.app:app",
+        "--port",
+        "8788",
+    ]
+    assert translate_frozen_command(
+        ["git", "status"], executable=str(executable)
+    ) == ["git", "status"]
 
 
 def test_rust_host_contract_keeps_tray_cli_and_payload_separate():
