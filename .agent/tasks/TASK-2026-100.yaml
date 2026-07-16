@@ -2,7 +2,7 @@ schema_version: 1
 handoff_version: 1
 id: TASK-2026-100
 title: Fix macOS launchd autostart re-registration after user disable
-status: in_progress
+status: done
 packet_type: standard
 scope:
   boundary: gateway autostart CLI (gateway.py), API route (routes/gateway.py), and
@@ -18,15 +18,24 @@ acceptance:
   False to config; subsequent 'gateway start' does not re-register the launchd plist.
 - After 'gateway enable-autostart' succeeds, runtime.autostart_on_start is written
   True to config.
-- The API route POST /api/gateway/autostart persists the same intent and returns
-  gateway_still_running in the disable response.
+- The API route POST /api/gateway/autostart persists the same intent and returns gateway_still_running
+  in the disable response.
 - test_lifecycle_skips_auto_register_when_user_disabled passes.
 - All 38 test_autostart tests pass.
-base_commit: 1907efdf4dc8f4d7012b0ebb70ee3d76a39a33cb
+base_commit: 1907efdf607711e1691259a8f52b819d7673906e
 next_action:
-  command_key: autostart_tests
-  reason: Run focused autostart test suite to record evidence.
+  command_key: workflow_bootstrap
+  reason: Task complete; run bootstrap and create or claim a new task before changing
+    code.
 blockers: []
-verification: []
+verification:
+- command_key: autostart_tests
+  command: uv run pytest tests/test_autostart.py tests/test_cli.py -q
+  command_sha256: 2b319d4311d220bc1485fa748038b11741c3d5e8acfc28888e7763d60ce46195
+  exit_code: 0
+  commit: 6091ee0423be953563eaf6b25596ca08abb13bb3
+  run_at: '2026-07-16T08:39:55.988135Z'
+  result: passed
+  recorded_by: agent_workflow.verify/v1
 handoff: .agent/handoffs/TASK-2026-100.md
-updated_at: '2026-07-16T08:38:39.553371Z'
+updated_at: '2026-07-16T08:39:59.491323Z'
