@@ -71,7 +71,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "post_trade_reviewer": 300.0,
     "risk_critic": 300.0,
     "universe_refresh": 600.0,
-    "data_collectors": 45.0,
+    "data_collectors": 55.0,
     "data_collector_context": 60.0,
     "exchange_sync": 60.0,
     "portfolio_snapshot": 45.0,
@@ -2066,6 +2066,7 @@ def _run_cleanup():
             "filter_shadow_experiments": repo.prune_filter_shadow_experiments(r.filter_shadow_experiments_days),
             "operator_evaluation_events": repo.prune_operator_evaluation_events(30),
             "pi_decisions_transient": repo.prune_pi_decisions(7),
+            "signal_pending_stale": repo.prune_signal_pending_stale(30),
             "system_actions": repo.prune_system_actions(7),
             # Market OHLCV per-timeframe TTL + legacy_unknown hard drop.
             "market_ohlcv": repo.prune_market_ohlcv(ttl_days={
@@ -2879,7 +2880,7 @@ def _run_data_collector_context():
 # job timeout so the coroutine returns before asyncio.wait_for cancels it — the
 # same anti-thread-leak rule as market_observer.  _bounded() caps both each
 # collector and its lane's cumulative wall-clock.
-_DC_DEADLINE_S = 40.0
+_DC_DEADLINE_S = 50.0
 # Context has the same anti-thread-leak bound but a new deadline.  It never
 # inherits elapsed work from the primary-venue collector lane.
 _DC_CONTEXT_DEADLINE_S = 55.0
@@ -2887,7 +2888,15 @@ _DC_CONTEXT_DEADLINE_S = 55.0
 
 async def _bounded(coro, label: str, cap: float, deadline: float):
     """Await `coro` under min(cap, time-left-to-deadline). On timeout/skip/error
-    return None and keep the job moving — never let one collector hang the tick."""
+    return None and keep the job moving — never let one collector hang the tick.
+
+    Python 3.12 changed asyncio.wait_for: on timeout it cancels the inner task
+    and then *awaits the cancellation* before raising TimeoutError.  CCXT coroutines
+    (load_markets / fetch_tickers) can take tens of seconds to respond to
+    CancelledError, causing the lane to stall well past the cap.  Fix: wrap the
+    real coro in a Task and shield it so wait_for cancels the shield (instant),
+    then fire-and-forget task.cancel() without awaiting it.
+    """
     import time as _time
     started = _time.monotonic()
     remaining = deadline - started
@@ -2897,8 +2906,10 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         coro.close()  # avoid 'coroutine was never awaited' warning
         _record_collector_health(label, "skipped_budget", duration_ms=0)
         return None
+
+    task = asyncio.ensure_future(coro)
     try:
-        result = await asyncio.wait_for(coro, timeout=min(cap, remaining))
+        result = await asyncio.wait_for(asyncio.shield(task), timeout=min(cap, remaining))
         from aletheia.data.collector_health import classify_collector_result
 
         if label not in _PERSISTENCE_GATED_COLLECTOR_HEALTH:
@@ -2909,21 +2920,25 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
             )
         return result
     except asyncio.TimeoutError:
+        elapsed_ms = int((_time.monotonic() - started) * 1000)
         logger.warning("data_collectors: %s timed out (%.0fs cap) — skipped this tick",
                        label, min(cap, remaining))
+        task.cancel()  # fire-and-forget: don't await, avoids 3.12 cancellation hang
         _record_collector_health(
             label,
             "timed_out",
-            duration_ms=int((_time.monotonic() - started) * 1000),
+            duration_ms=elapsed_ms,
             error_code="asyncio_timeout",
         )
         return None
     except Exception as e:
+        elapsed_ms = int((_time.monotonic() - started) * 1000)
         logger.debug("data_collectors: %s failed: %s", label, e)
+        task.cancel()
         _record_collector_health(
             label,
             "failed",
-            duration_ms=int((_time.monotonic() - started) * 1000),
+            duration_ms=elapsed_ms,
             error_code=type(e).__name__,
         )
         return None
@@ -2958,7 +2973,7 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
         deriv = DerivativesCollector()
         deriv_started = _time.monotonic()
         raw_deriv_result = await _bounded(
-            deriv.collect(derivative_symbols), "derivatives", 18.0, _deadline
+            deriv.collect(derivative_symbols), "derivatives", 25.0, _deadline
         )
         deriv_duration_ms = int((_time.monotonic() - deriv_started) * 1000)
         deriv_result = raw_deriv_result or {}

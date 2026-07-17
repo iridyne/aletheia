@@ -53,10 +53,10 @@ def _ttl_soft_penalty_factor(
     carrier_expires_at: str | None,
     now_iso: str,
     scanner_family: str | None,
-) -> tuple[float, int, int]:
+) -> tuple[float, int, int, str | None]:
     """Compute soft-TTL decay factor for an expired carrier.
 
-    Returns (factor, expired_seconds, ttl_sec):
+    Returns (factor, expired_seconds, ttl_sec, error_code):
       - factor: 1.0 if not expired; 0.5 ** (expired_sec / ttl_sec) if expired;
         0.0 if past the hard cap (caller must hard-reject).
       - expired_seconds: 0 if not expired; positive value if expired.
@@ -64,18 +64,24 @@ def _ttl_soft_penalty_factor(
     """
     from aletheia.universe.allocator import _FAMILY_TTL
     ttl_sec = int(_FAMILY_TTL.get(str(scanner_family or ""), 3600))
-    if not carrier_expires_at or carrier_expires_at >= now_iso:
-        return 1.0, 0, ttl_sec
+    if not carrier_expires_at:
+        return 1.0, 0, ttl_sec, None
     try:
         valid_dt = datetime.fromisoformat(str(carrier_expires_at).replace("Z", "+00:00"))
         now_dt = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+        if valid_dt.tzinfo is None:
+            valid_dt = valid_dt.replace(tzinfo=timezone.utc)
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=timezone.utc)
+        if valid_dt >= now_dt:
+            return 1.0, 0, ttl_sec, None
         expired_sec = int(max(0, (now_dt - valid_dt).total_seconds()))
     except (TypeError, ValueError):
-        return 1.0, 0, ttl_sec
+        return 0.0, 0, ttl_sec, "ttl_timestamp_invalid"
     if expired_sec > _TTL_SOFT_HARD_CAP_MULT * ttl_sec:
-        return 0.0, expired_sec, ttl_sec
+        return 0.0, expired_sec, ttl_sec, None
     factor = 0.5 ** (expired_sec / max(1, ttl_sec))
-    return factor, expired_sec, ttl_sec
+    return factor, expired_sec, ttl_sec, None
 
 # Evidence-based strategy gates (not_executable is NOT a block — strategies
 # without a RuleSet can still trade from LLM signals; the entry validation
@@ -286,12 +292,22 @@ def _evaluate_candidate(
     # cannot be loaded. Do not let a missing parent row turn an expired signal fresh.
     # Soft filter: past valid_until, apply score penalty (half-life = family TTL).
     # Past HARD_CAP × TTL, still hard-reject so paper_trader can clean it up.
-    ttl_factor_opp, ttl_expired_opp, ttl_sec_family = _ttl_soft_penalty_factor(
+    ttl_factor_opp, ttl_expired_opp, ttl_sec_family, ttl_error_opp = _ttl_soft_penalty_factor(
         opp.get("valid_until"), now_iso, opp.get("scanner_family"),
     )
+    if ttl_error_opp:
+        _filter_step(
+            filter_trace, "family_ttl", "error", ttl_error_opp,
+            inputs={"valid_until": opp.get("valid_until")},
+            parameters={"source": "opportunity.valid_until"},
+        )
+        return _make_candidate(
+            opp, skip_reason="ttl_invalid", direction=direction,
+            filter_trace=filter_trace,
+        )
     if ttl_factor_opp == 0.0:
         _filter_step(
-            filter_trace, "family_ttl", "rejected", "opportunity_valid_until_expired",
+            filter_trace, "family_ttl", "rejected", "ttl_expired",
             inputs={
                 "valid_until": opp.get("valid_until"), "now": now_iso,
                 "expired_seconds": ttl_expired_opp,
@@ -342,12 +358,22 @@ def _evaluate_candidate(
             # Soft filter mirrors the opportunity.valid_until case above. When
             # both parents are expired, the tighter (smaller factor) penalty
             # wins — the reduce-to-min happens naturally below.
-            ttl_factor_member, ttl_expired_member, _ = _ttl_soft_penalty_factor(
+            ttl_factor_member, ttl_expired_member, _, ttl_error_member = _ttl_soft_penalty_factor(
                 universe_member.get("expires_at"), now_iso, opp.get("scanner_family"),
             )
+            if ttl_error_member:
+                _filter_step(
+                    filter_trace, "family_ttl", "error", ttl_error_member,
+                    inputs={"expires_at": universe_member.get("expires_at")},
+                    parameters={"source": "universe_member.expires_at"},
+                )
+                return _make_candidate(
+                    opp, skip_reason="ttl_invalid", direction=direction,
+                    universe_member=universe_member, filter_trace=filter_trace,
+                )
             if ttl_factor_member == 0.0:
                 _filter_step(
-                    filter_trace, "family_ttl", "rejected", "universe_member_expired",
+                    filter_trace, "family_ttl", "rejected", "ttl_expired",
                     inputs={
                         "expires_at": universe_member.get("expires_at"), "now": now_iso,
                         "expired_seconds": ttl_expired_member,
@@ -355,6 +381,7 @@ def _evaluate_candidate(
                     parameters={
                         "ttl_sec": universe_member.get("ttl_sec"),
                         "hard_cap_multiplier": _TTL_SOFT_HARD_CAP_MULT,
+                        "source": "universe_member.expires_at",
                     },
                 )
                 return _make_candidate(

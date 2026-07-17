@@ -35,7 +35,7 @@
 | 22 | price_feed | 30s | fast_io | Exact-instrument (venue + spot/perp) in-memory price cache refresh |
 | 23 | daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
 | 24 | data_collectors | 2min | io | 主交易所 orderbook、Funding rate、OI（串行 CCXT） |
-| 24a | data_collector_context | 10min | io | volume ranking、Hyperliquid、DefiLlama、CoinGecko、macro、Coinalyze、稀疏 derivatives history；独立 40s 时间盒 |
+| 24a | data_collector_context | 10min | io | volume ranking、Hyperliquid、DefiLlama、CoinGecko、macro、Coinalyze、稀疏 derivatives history；独立 55s 时间盒 |
 | 25 | okx_demo_symbols | 4h | io | Refresh OKX demo symbol list |
 | 26 | guard_promotion | cron 04:00 CST | io | Promote candidate trading guards to active (learning; re-homed from deleted backtest_orchestrator, Position C) |
 | 27 | universe_refresh | 10min | io | Universe composition refresh |
@@ -140,6 +140,10 @@ backlog health are persisted in `learning_job_health`.
 - **Outputs**: ranked + filtered opportunity list → PI daemon signal
 - **Side effects**: None
 - **Contract**: Must NEVER call LLM directly
+- **Admission/backpressure**: at most 5 unresolved market-observer carriers may be
+  queued at once. Overflow remains `open` and is retried; stale carriers are
+  pruned only after source expiry/review and never while proposal submission is
+  recovering.
 - **TTL soft filter** (`paper_trader_ranker._ttl_soft_penalty_factor`): a carrier
   past its `valid_until` is no longer hard-rejected. Its `trade_score` is
   multiplied by `0.5 ** (expired_sec / family_ttl_sec)` — half-life = family

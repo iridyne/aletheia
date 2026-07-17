@@ -427,7 +427,9 @@ export const api = {
       operator_watch: number
       user_reject: number
       auto_reject: number
+      reject_unknown: number
     }
+    total_count: number
     items: Array<{
       opportunity_id: string | null
       proposal_id: string | null
@@ -436,7 +438,7 @@ export const api = {
       direction: string | null
       market_type: string | null
       decided_at: string
-      outcome: 'trade' | 'operator_skip' | 'operator_watch' | 'user_reject' | 'auto_reject'
+      outcome: 'trade' | 'operator_skip' | 'operator_watch' | 'user_reject' | 'auto_reject' | 'reject_unknown'
       action: string
       conviction: number | null
       one_line_reason: string | null
@@ -463,6 +465,7 @@ export const api = {
         stage?: string
         actor?: string
         summary?: string
+        reason?: string
         details?: Record<string, unknown>
       }>
       counterfactual?: {
@@ -479,7 +482,10 @@ export const api = {
     emitted_count: number
     reviewed_count: number
     still_open_count: number
+    queued_count: number
+    expired_count: number
     proposed_count: number
+    cohort_basis: 'opportunities_emitted_in_window'
     snapshot: {
       executable_count: number
       excluded_by_reason: Array<{
@@ -501,6 +507,9 @@ export const api = {
       floor: number | null
       snapshot_at: string | null
       checked_at: string | null
+      freshness: 'fresh' | 'stale' | 'missing' | 'unavailable'
+      age_sec: number | null
+      stale_after_sec: number
     }
     config: { min_confidence_to_trade: string }
     family_ttl_sec: Record<string, number>

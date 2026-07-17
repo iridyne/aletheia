@@ -23,7 +23,7 @@
 | `market_data` | 5min | market_snapshots | price_feed, market_observer, paper_trader_ranker, risk_engine(data freshness) | ✅ |
 | `price_feed` | 30s | (内存缓存 watched_prices；输入保留 venue+spot/perp) | position_manager(mark-to-market), portfolio_snapshot | ✅ |
 | `data_collectors` | 2min | orderbook_snapshots, funding_rates, oi_snapshots | market_observer + universe/service | ⚠️ 主所采集按 InstrumentId 路由；只做实时 orderbook/Funding/OI |
-| `data_collector_context` | 10min | liquidation_events, macro_snapshots, volume ranking, cross-venue OI, CoinGecko/Hyperliquid/DefiLlama context | market_observer + universe/service | ⚠️ 独立 40s 时间盒；与主所 CCXT 串行，不让慢上下文继承核心预算 |
+| `data_collector_context` | 10min | liquidation_events, macro_snapshots, volume ranking, cross-venue OI, CoinGecko/Hyperliquid/DefiLlama context | market_observer + universe/service | ⚠️ 独立 55s 时间盒；与主所 CCXT 串行，不让慢上下文继承核心预算 |
 | `exchange_sync` | 5min | positions(sync), portfolio_snapshots(side-effect) | risk_engine(exposure), position_manager, UI | ✅ |
 | `portfolio_snapshot` | 10min | portfolio_snapshots | risk_engine(drawdown scale), UI, Telegram | ✅ |
 | `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes，Learning treatment/control exposures，filter_decision_batches/filter_decisions/filter_candidate_outcomes | paper_trader_ranker、System Operator family edge、filter controller、risk live-evidence、doctor、guard candidate | ✅ 历史 family 校准只提 shadow 假设；无真实前瞻两组结果时保持 1.0 中性倍率 |
@@ -44,7 +44,7 @@
 | Job ID | 频率 | 输入数据 | 输出数据 | 下游 | 管道 |
 |--------|------|---------|---------|------|------|
 | `market_observer` | 15min | market_snapshots + context_builder(微结构) + advisory bundle | opportunities（metadata 含 observer Learning manifest）, knowledge_items(research) | paper_trader_ranker | ✅ observer bundle 与下游 Operator bundle 分开归因 |
-| `paper_trader` | 3min | opportunities + PiDecision + guards | trade_proposals → risk_engine → orders → fills | ✅ 核心链路（3min 起自 5min，配合 `_FAMILY_TTL` 30–60min 保证 momentum/mean_reversion 有足够 review 次数） |
+| `paper_trader` | 3min | opportunities + PiDecision + guards | 最多 5 个 unresolved `signal_pending` → System Operator → trade_proposals → risk_engine → orders → fills | ✅ 核心链路；队列满时 Opportunity 保持 open 重试，不提前排队后超时 |
 | `pi_trading_decision` | ~15min | market context + one Learning bundle（reflection/memo/reasoning/calibration/cases/lessons） | PiDecision（含 opportunity/proposal 因果 id + learning_manifest_json） | paper_trader(消费 decision) | ✅ |
 | `position_manager` | 5min | open positions + market prices + exit_rules | close proposals / TP-SL updates | ✅ |
 | `position_reconcile` | 5min | exchange positions vs local | reconciliation_reports | ✅ |

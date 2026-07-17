@@ -804,7 +804,6 @@ def _decision_events(decision: dict[str, Any]) -> list[dict[str, Any]]:
         "decision_id": decision.get("id"),
         "action": action,
         "conviction": decision.get("conviction"),
-        "reasoning": reason,
     }
     reason_l = reason.lower()
     if "okx_demo_symbol_not_supported" in reason or "unsupported" in reason_l:

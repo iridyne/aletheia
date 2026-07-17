@@ -2217,7 +2217,8 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .desk-panel   { max-height: 640px; overflow-y: auto; }
 
 /* Recent decisions — collapsible history inside the Approval Desk */
-.decisions-toggle { margin-top: var(--space-2); }
+.rail-card > p.text-muted { flex-shrink: 0; margin-bottom: var(--space-2); }
+.decisions-toggle { margin-top: var(--space-3); }
 .decisions-panel {
   padding: var(--space-2) 0 0;
   display: flex; flex-direction: column; gap: 4px;
@@ -2287,8 +2288,9 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .trace-event-details {
   margin: 6px 0 0; padding: 6px 8px; background: var(--surface);
   border-radius: 3px; font-size: 0.7rem; color: var(--muted);
-  max-height: 200px; overflow: auto;
-  white-space: pre; font-family: var(--mono);
+  max-height: 320px; overflow: auto;
+  white-space: pre-wrap; font-family: var(--mono);
+  word-break: break-word;
 }
 
 .risk-panel   { max-height: 320px; }

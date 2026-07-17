@@ -86,8 +86,8 @@ _EXECUTOR_WORKERS = {
 | 22 | `post_trade_reviewer` | 424 | interval | hours=4 | agents | 300 | 300 |
 | 23 | `risk_critic` | 430 | interval | hours=6 | agents | 300 | 300 |
 | 24 | `universe_refresh` | 436 | interval | minutes=10 | io | 600 | 120 |
-| 25 | `data_collectors` | 444 | interval | minutes=2 | io | 45 | 60 |
-| 25a | `data_collector_context` | 449 | interval | minutes=10 | io | 45 | 60 |
+| 25 | `data_collectors` | 444 | interval | minutes=2 | io | 55 | 60 |
+| 25a | `data_collector_context` | 449 | interval | minutes=10 | io | 60 | 60 |
 | 26 | `guard_promotion` | — | cron | hour=4, minute=0, tz=Asia/Shanghai | io | — | 600 |
 | 27 | `ohlcv_nightly_backfill` | 457 | cron | hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30, tz=Asia/Shanghai | io | 3600 | 600 |
 | 28 | `okx_demo_symbols` | 464 | interval | hours=4 | io | — | 600 |
@@ -157,9 +157,16 @@ daemon worker。两条 lane 的 outstanding 容量都固定为 16，不再为每
 - `data_collectors` 中由 scheduler 负责落库的 derivatives 输出，必须等 funding/OI 写库完成后才记域成功；
   任一写入失败以稳定 `derivatives_*_persist_failed` 码把域标为 failed，并把整个 fan-out 记为 partial failure，
   但不阻断同轮其它数据域。
-- `data_collectors` 只承担主交易所实时 orderbook/Funding/OI；`data_collector_context` 有独立的 40 秒时间盒，
+- `data_collectors` 只承担主交易所实时 orderbook/Funding/OI；`data_collector_context` 有独立的 55 秒时间盒，
   负责较慢的跨源上下文。两个 job 共享单线程 `io` executor，因此主交易所 CCXT 仍串行；context job 内仅独立
   公共 HTTP 请求可并发等待。LSR 和稀疏 derivatives history 都不得占用实时 Funding/OI 的时间盒。
+- `_bounded()` 辅助函数对所有 collector 强制执行 `min(cap, 时间盒剩余)` 时间上界。Python 3.12 起
+  `asyncio.wait_for` 在超时后会等待内部 task 响应取消再抛出 TimeoutError，CCXT 的
+  `load_markets`/`fetch_tickers` 对取消信号响应很慢（实测最多延迟 30+ 秒）。`_bounded()` 已改用
+  `asyncio.shield(task)` + `task.cancel()` 不等待模式：超时后立即返回 `None`，后台 task 异步取消，
+  lane 不再被挂起。各 collector 当前 cap：`microstructure` 18s、`derivatives` 25s（核心 lane，
+  串行，deadline 50s）；`volume_scanner` 20s、`hyperliquid`/`defillama` 12s、`coingecko_top` 15s、
+  `macro` 25s（context lane，wave 并发，deadline 55s）。
 - `market_data` 与 `price_feed` 即使保留了同轮成功抓取，只要返回 `errors` 非空，就分别以
   `market_data_reported_errors` / `price_feed_reported_errors` 登记任务失败；空观察列表且 `errors=[]` 仍是合法成功。
 - `exchange_sync.sync_all_exchanges()` 的公开契约规定 `None` 是所有账户视图均失败，scheduler 以

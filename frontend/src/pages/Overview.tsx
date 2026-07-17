@@ -288,6 +288,7 @@ const OUTCOME_LABEL: Record<string, string> = {
   operator_watch: 'operator watch',
   user_reject: 'you rejected',
   auto_reject: 'auto rejected',
+  reject_unknown: 'Reject attribution unavailable',
 }
 
 const OUTCOME_ICON: Record<string, string> = {
@@ -296,6 +297,7 @@ const OUTCOME_ICON: Record<string, string> = {
   operator_watch: '◔',
   user_reject: '⊘',
   auto_reject: '⊗',
+  reject_unknown: '?',
 }
 
 const OUTCOME_TONE: Record<string, 'green' | 'yellow' | 'red' | 'muted'> = {
@@ -304,6 +306,7 @@ const OUTCOME_TONE: Record<string, 'green' | 'yellow' | 'red' | 'muted'> = {
   operator_watch: 'yellow',
   user_reject: 'red',
   auto_reject: 'red',
+  reject_unknown: 'yellow',
 }
 
 function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
@@ -325,9 +328,7 @@ function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
 
   const counts = decisions?.counts
   const items = decisions?.items || []
-  const historyTotal = counts
-    ? counts.trade + counts.operator_skip + counts.operator_watch + counts.user_reject + counts.auto_reject
-    : 0
+  const historyTotal = decisions?.total_count || 0
 
   return (
     <Card className="rail-card desk-panel">
@@ -417,7 +418,7 @@ function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
 
 function RecentCountsInline({ counts }: { counts: {
   trade: number; operator_skip: number; operator_watch: number
-  user_reject: number; auto_reject: number
+  user_reject: number; auto_reject: number; reject_unknown: number
 } }) {
   return (
     <span className="decisions-counts">
@@ -425,6 +426,7 @@ function RecentCountsInline({ counts }: { counts: {
       {counts.operator_skip > 0 && <span className="decisions-count decisions-count-muted">✗ {counts.operator_skip}</span>}
       {counts.user_reject > 0 && <span className="decisions-count decisions-count-red">⊘ {counts.user_reject}</span>}
       {counts.auto_reject > 0 && <span className="decisions-count decisions-count-red">⊗ {counts.auto_reject}</span>}
+      {counts.reject_unknown > 0 && <span className="decisions-count decisions-count-yellow">? {counts.reject_unknown}</span>}
       {counts.operator_watch > 0 && <span className="decisions-count decisions-count-yellow">◔ {counts.operator_watch}</span>}
     </span>
   )
@@ -463,7 +465,9 @@ function DecisionTraceDrawer({ opportunityId, onClose }: {
                   <li key={i} className="trace-event">
                     <span className="trace-event-ts mono text-xs">{fmtTimestamp(ev.at)}</span>
                     {ev.stage && <span className="trace-event-stage text-xs">{ev.stage}</span>}
-                    {ev.summary && <div className="trace-event-summary">{ev.summary}</div>}
+                    {(ev.summary || ev.reason) && (
+                      <div className="trace-event-summary">{ev.summary || ev.reason}</div>
+                    )}
                     {ev.details && Object.keys(ev.details).length > 0 && (
                       <pre className="trace-event-details">{JSON.stringify(ev.details, null, 2)}</pre>
                     )}
@@ -531,13 +535,19 @@ type FunnelData = ReturnType<typeof api.getOpportunityFunnel> extends Promise<in
 
 function buildDiagnosis(data: FunnelData): { text: string; tone: 'green' | 'yellow' | 'red' | 'muted' } {
   const snap = data.snapshot
-  const hasSnap = snap.checked_at != null
   const excluded = snap.excluded_by_reason || []
   const rejectedTotal = excluded.reduce((s, r) => s + (r.count || 0), 0)
   const executable = snap.executable_count
 
-  if (!hasSnap) {
+  if (data.snapshot.freshness === 'missing') {
     return { text: 'No operator eval yet in this session. Snapshot appears after the first candidate refresh.', tone: 'muted' }
+  }
+  if (data.snapshot.freshness === 'unavailable') {
+    return { text: 'Operator snapshot time is not available; current supply cannot be verified.', tone: 'yellow' }
+  }
+  if (data.snapshot.freshness === 'stale') {
+    const age = data.snapshot.age_sec != null ? ` (${fmtDurMin(data.snapshot.age_sec)} old)` : ''
+    return { text: `Snapshot stale${age}; current candidate supply is not verified.`, tone: 'yellow' }
   }
   if (executable === 0 && rejectedTotal === 0) {
     return { text: `Idle: no candidates in ranker view (${data.still_open_count} awaiting review).`, tone: 'muted' }
@@ -554,7 +564,7 @@ function buildDiagnosis(data: FunnelData): { text: string; tone: 'green' | 'yell
   if (snap.below_floor) {
     return { text: `Low supply: ${executable} executable candidate${executable === 1 ? '' : 's'} (floor ${snap.floor}).`, tone: 'yellow' }
   }
-  return { text: `Healthy: ${executable} executable candidate${executable === 1 ? '' : 's'} in ranker view.`, tone: 'green' }
+  return { text: `Current snapshot: ${executable} executable candidate${executable === 1 ? '' : 's'} in ranker view.`, tone: 'green' }
 }
 
 function FunnelBar({ label, count, denom, hint, tone = 'muted' }: {
@@ -588,7 +598,7 @@ function OpportunityFunnelCard() {
   const excluded = snap.excluded_by_reason || []
   const rejectedTotal = excluded.reduce((s, r) => s + (r.count || 0), 0)
   const executable = snap.executable_count
-  const hasSnapshot = snap.checked_at != null
+  const hasSnapshot = snap.freshness === 'fresh'
 
   const diag = buildDiagnosis(data)
 
@@ -599,7 +609,7 @@ function OpportunityFunnelCard() {
     ...excluded.filter(r => !ALWAYS_SHOWN_REASONS.includes(r.reason)),
   ]
 
-  const acceptRatePct = data.emitted_count > 0
+  const proposalConversionPct = data.emitted_count > 0
     ? (data.proposed_count / data.emitted_count) * 100
     : null
 
@@ -623,17 +633,17 @@ function OpportunityFunnelCard() {
           <span className="text-xs text-muted">cumulative</span>
         </div>
         <FunnelBar label="Discovered" count={data.emitted_count} denom={data.emitted_count} tone="muted" />
+        <FunnelBar label="Awaiting ranker" count={data.still_open_count} denom={data.emitted_count} tone="muted" />
+        <FunnelBar label="Queued for Operator" count={data.queued_count} denom={data.emitted_count} tone="accent" />
         <FunnelBar label="Reviewed" count={data.reviewed_count} denom={data.emitted_count} tone="muted"
-          hint={data.still_open_count > 0 ? `${data.still_open_count} still open` : undefined} />
-        <FunnelBar label="Passed gates" count={executable} denom={data.emitted_count}
-          tone={executable > 0 ? 'green' : 'muted'}
-          hint="snapshot" />
+          hint="terminal operator review" />
+        <FunnelBar label="Expired / invalidated" count={data.expired_count} denom={data.emitted_count} tone="red" />
         <FunnelBar label="Proposed" count={data.proposed_count} denom={data.emitted_count}
-          tone={data.proposed_count > 0 ? 'accent' : 'muted'} />
-        {acceptRatePct != null && (
+          tone={data.proposed_count > 0 ? 'green' : 'muted'} hint="same emitted cohort" />
+        {proposalConversionPct != null && (
           <div className="funnel-accept-rate">
-            <span className="funnel-bar-label">accept rate</span>
-            <span className="mono">{acceptRatePct.toFixed(1)}%</span>
+            <span className="funnel-bar-label">proposal conversion</span>
+            <span className="mono">{proposalConversionPct.toFixed(1)}%</span>
           </div>
         )}
       </div>
@@ -642,7 +652,7 @@ function OpportunityFunnelCard() {
       {hasSnapshot && (
         <div className="funnel-section">
           <div className="funnel-section-title">
-            <span>Working set (now)</span>
+            <span>Working set (fresh snapshot)</span>
             <span className="text-xs text-muted">{executable + rejectedTotal} in ranker view</span>
           </div>
           <div className="funnel-workingset">

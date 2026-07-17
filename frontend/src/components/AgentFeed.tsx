@@ -129,7 +129,7 @@ export default function AgentFeed() {
       const viewportHeight = window.visualViewport?.height ?? window.innerHeight
       const nextHeight = Math.max(
         MIN_FEED_HEIGHT,
-        Math.floor(viewportHeight - top - VIEWPORT_BOTTOM_GAP),
+        Math.floor(viewportHeight - Math.max(0, top) - VIEWPORT_BOTTOM_GAP),
       )
       setAvailableHeight(current => current === nextHeight ? current : nextHeight)
     }
