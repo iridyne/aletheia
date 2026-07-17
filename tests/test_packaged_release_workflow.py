@@ -15,7 +15,10 @@ def test_manual_publish_builds_a_signed_public_pages_feed():
     assert "--public-key-output" in source
     assert "--public-key" in source
     assert "--feed-url-file" in source
-    assert "actions/upload-pages-artifact@v3" in source
+    assert 'tar -C "$PWD/dist/update-site" -cvf "$RUNNER_TEMP/artifact.tar" .' in source
+    assert "uses: actions/upload-artifact@v4" in source
+    assert "name: github-pages" in source
+    assert "path: ${{ runner.temp }}/artifact.tar" in source
     assert "actions/deploy-pages@v4" in source
     assert "pages: write" in source
     assert "id-token: write" in source

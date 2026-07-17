@@ -395,11 +395,23 @@ jobs:
           uv run python -c 'import json, pathlib; envelope=json.loads(pathlib.Path("dist/update-site/update-feed.json").read_text()); assert envelope["schema_version"] == 1 and envelope["signed_payload"] and envelope["signature"]'
           find "$site" -maxdepth 1 -type f -print
 
+      - name: Archive signed release site for GitHub Pages
+        if: github.event_name == 'workflow_dispatch' && inputs.publish && steps.app_smoke.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/artifact.tar"
+          tar -C "$PWD/dist/update-site" -cvf "$RUNNER_TEMP/artifact.tar" .
+          test -s "$RUNNER_TEMP/artifact.tar"
+
       - name: Upload signed release site for GitHub Pages
         if: github.event_name == 'workflow_dispatch' && inputs.publish && steps.app_smoke.outcome == 'success'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          path: dist/update-site
+          name: github-pages
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Require packaged gateway, host, and app smoke
         if: always()
