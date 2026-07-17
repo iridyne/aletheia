@@ -1,12 +1,12 @@
 # Performance、并发与 SQLite 静态审计
 
-> 日期：2026-07-17  
-> 代码快照：`31535cfc2d07529f7675f20f34cfc6aee2cb8bc6`  
-> 状态：开放，等待按整改顺序拆分实施任务  
+> 日期：2026-07-17
+> 代码快照：`31535cfc2d07529f7675f20f34cfc6aee2cb8bc6`
+> 状态：开放，等待按整改顺序拆分实施任务
 > 范围：LLM entry point、Provider 请求控制、Agent 并发、Scheduler、FastAPI
-> 事件循环、SQLite 写入与索引、数据采集和 retention。  
+> 事件循环、SQLite 写入与索引、数据采集和 retention。
 > 方法：当前源码和设计文档静态核对。没有执行负载测试、SQL
-> `EXPLAIN QUERY PLAN`、生产流量采样或数据库写入。  
+> `EXPLAIN QUERY PLAN`、生产流量采样或数据库写入。
 > 边界：本文不构成 Live、Risk、Execution、Exchange、凭据或硬风险限制的变更授权。
 
 ## 1. 结论
@@ -279,4 +279,3 @@
 | PERF-08 | 待实施 | — | 静态审计 | 等待任务授权 |
 | PERF-09 | 待实施 | — | 静态审计 | 等待任务授权 |
 | PERF-10 | 待实施 | — | 静态审计 | 等待任务授权 |
-
