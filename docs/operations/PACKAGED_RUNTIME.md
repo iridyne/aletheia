@@ -4,6 +4,14 @@ Aletheia's installed product is browser-first. The browser at
 `http://127.0.0.1:8787` remains the only product UI; the native component is a small
 menu-bar/system-tray host and stable CLI dispatcher.
 
+## Agent entry point
+
+For the shortest safe path from an exact `master` SHA to an installed macOS dogfood
+Runtime, read the [packaged Runtime dogfood playbook](deployment/packaged-runtime-dogfood-playbook.md).
+It separates a one-machine private session from the signed owner publication channel and
+states the required acceptance evidence. This document remains the detailed authority for
+the payload, trust root, update transaction, and recovery semantics.
+
 ## Components
 
 - `Aletheia.app`: macOS menu-bar application (`LSUIElement=true`, no Dock window);

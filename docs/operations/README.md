@@ -14,6 +14,15 @@ Use this directory for procedural instructions: running the gateway, local devel
 | `architecture/` | Stability target architecture for operations |
 | `records/` | Dated operational recovery records |
 
+## Packaged Runtime release lane
+
+For the browser-first macOS installed product, start with
+[Packaged Runtime Operations](PACKAGED_RUNTIME.md). For an exact `master` SHA that
+must be dogfooded on one Mac or promoted through the signed Feed, then read the
+[packaged Runtime dogfood playbook](deployment/packaged-runtime-dogfood-playbook.md).
+These documents define the release path; do not substitute `git pull`, a development
+gateway, or Docker Compose for an installed Runtime update.
+
 ## Agent Rule
 
 Operational docs can contain commands. Prefer `uv run` for Python commands and preserve safety rules from `AGENTS.md`.
