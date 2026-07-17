@@ -288,6 +288,8 @@ const OUTCOME_LABEL: Record<string, string> = {
   operator_watch: 'operator watch',
   user_reject: 'you rejected',
   auto_reject: 'auto rejected',
+  unknown_reject: 'rejected · unknown actor',
+  cascade_expired: 'cascade expired',
 }
 
 const OUTCOME_ICON: Record<string, string> = {
@@ -296,6 +298,8 @@ const OUTCOME_ICON: Record<string, string> = {
   operator_watch: '◔',
   user_reject: '⊘',
   auto_reject: '⊗',
+  unknown_reject: '?',
+  cascade_expired: '⊙',
 }
 
 const OUTCOME_TONE: Record<string, 'green' | 'yellow' | 'red' | 'muted'> = {
@@ -304,6 +308,8 @@ const OUTCOME_TONE: Record<string, 'green' | 'yellow' | 'red' | 'muted'> = {
   operator_watch: 'yellow',
   user_reject: 'red',
   auto_reject: 'red',
+  unknown_reject: 'yellow',
+  cascade_expired: 'muted',
 }
 
 function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
@@ -326,7 +332,9 @@ function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
   const counts = decisions?.counts
   const items = decisions?.items || []
   const historyTotal = counts
-    ? counts.trade + counts.operator_skip + counts.operator_watch + counts.user_reject + counts.auto_reject
+    ? counts.trade + counts.operator_skip + counts.operator_watch
+      + counts.user_reject + counts.auto_reject + counts.unknown_reject
+      + counts.cascade_expired
     : 0
 
   return (
@@ -418,13 +426,16 @@ function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
 function RecentCountsInline({ counts }: { counts: {
   trade: number; operator_skip: number; operator_watch: number
   user_reject: number; auto_reject: number
+  unknown_reject: number; cascade_expired: number
 } }) {
   return (
     <span className="decisions-counts">
       {counts.trade > 0 && <span className="decisions-count decisions-count-green">✓ {counts.trade}</span>}
       {counts.operator_skip > 0 && <span className="decisions-count decisions-count-muted">✗ {counts.operator_skip}</span>}
-      {counts.user_reject > 0 && <span className="decisions-count decisions-count-red">⊘ {counts.user_reject}</span>}
-      {counts.auto_reject > 0 && <span className="decisions-count decisions-count-red">⊗ {counts.auto_reject}</span>}
+      {counts.user_reject > 0 && <span className="decisions-count decisions-count-red" title="you clicked Reject">⊘ {counts.user_reject}</span>}
+      {counts.auto_reject > 0 && <span className="decisions-count decisions-count-red" title="system rejected before execution">⊗ {counts.auto_reject}</span>}
+      {counts.unknown_reject > 0 && <span className="decisions-count decisions-count-yellow" title="rejected but audit actor missing — treat as suspect">? {counts.unknown_reject}</span>}
+      {counts.cascade_expired > 0 && <span className="decisions-count decisions-count-muted" title="parent universe snapshot superseded — bookkeeping cleanup, not an operator choice">⊙ {counts.cascade_expired}</span>}
       {counts.operator_watch > 0 && <span className="decisions-count decisions-count-yellow">◔ {counts.operator_watch}</span>}
     </span>
   )

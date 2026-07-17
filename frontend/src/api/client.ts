@@ -427,6 +427,8 @@ export const api = {
       operator_watch: number
       user_reject: number
       auto_reject: number
+      unknown_reject: number
+      cascade_expired: number
     }
     items: Array<{
       opportunity_id: string | null
@@ -436,8 +438,9 @@ export const api = {
       direction: string | null
       market_type: string | null
       decided_at: string
-      outcome: 'trade' | 'operator_skip' | 'operator_watch' | 'user_reject' | 'auto_reject'
+      outcome: 'trade' | 'operator_skip' | 'operator_watch' | 'user_reject' | 'auto_reject' | 'unknown_reject' | 'cascade_expired'
       action: string
+      signal_source?: string
       conviction: number | null
       one_line_reason: string | null
       rejected_actor?: string | null

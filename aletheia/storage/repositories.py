@@ -3849,43 +3849,147 @@ def get_active_universe_snapshot(market_type: str = "crypto") -> dict | None:
 def expire_opportunities_from_superseded_snapshots(market_type: str = "crypto") -> int:
     """Mark opportunities linked to already-superseded universe_snapshots as expired.
 
-    When `expire_universe_snapshots` flips a snapshot from 'active' to
-    'superseded', its member opportunities are logically orphaned — the
-    scanner no longer confirms that thesis. Before the soft-TTL filter and
-    change-suppression valid_until slide, those opportunities would age out
-    at the ranker's family-TTL cliff (30-60min for momentum/mean_reversion)
-    and paper_trader would set status='expired' via `_settle_permanent_skips`.
+    Three-step atomic cascade per orphaned opportunity, all inside one
+    transaction so the pool, evidence and consumer-side queues stay in sync:
 
-    With soft-TTL now scoring rather than hard-rejecting past valid_until,
-    and change-suppression sliding valid_until forward every 10-min tick for
-    the active snapshot, orphans never expire on their own. Every stable
-    fingerprint window that then breaks leaves a fresh generation of open
-    opportunities pointing at a superseded snapshot, and the pool grows
-    unboundedly.
+    1. `UPDATE opportunities SET status='expired'` — pool cleanup.
+    2. `record_filter_decision(...)` with `filter_name='universe_snapshot_supersession'`,
+        `reason_code='universe_snapshot_superseded'` — writes a filter_decisions
+        row so opportunity_flow.trace_opportunity_flow surfaces "why did this
+        transition to expired" (closes the audit trail gap where cascade
+        expiry produced status changes with no matching filter_evidence fact).
+    3. `INSERT INTO pi_decisions` a terminal skip row with
+       `signal_source='system_cascade'` for every unresolved signal_pending
+        pointing at the cascaded opp — closes the dangling-record class
+        (previously 145 signal_pending rows stayed "unresolved" forever
+        because nothing wrote a matching terminal action). Operators and
+        analytics can filter these out by signal_source; unlike a real
+        operator skip, they carry no LLM reasoning and no debate trace.
 
-    This helper closes the cascade: whenever a snapshot's status becomes
-    'superseded', its still-open opportunities transition to 'expired' in a
-    single UPDATE. Idempotent — running it repeatedly is a no-op after the
-    first pass. Only touches `status='open'` rows so terminal states are
-    preserved. Filter-evidence pipelines that key off opportunities.status
-    see the transition naturally.
+    Before the soft-TTL filter and change-suppression valid_until slide,
+    opportunities aged out at the ranker's family-TTL cliff (30-60min for
+    momentum/mean_reversion) and paper_trader.`_settle_permanent_skips`
+    naturally wrote `status='expired'`. With those two fixes both softened,
+    orphans never expire on their own — every stable-fingerprint window that
+    breaks leaves a new generation pointing at a superseded snapshot.
+
+    Idempotent — subsequent calls are a no-op once the pool is clean. Only
+    touches `status='open'` rows so terminal states are preserved.
 
     Returns the number of opportunities transitioned.
     """
+    from aletheia.analytics.filter_evidence import record_filter_decision
+
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
-        "UPDATE opportunities SET status = 'expired' "
-        "WHERE status = 'open' AND universe_snapshot_id IN ("
-        "  SELECT id FROM universe_snapshots "
-        "  WHERE market_type = ? AND status = 'superseded'"
-        ")",
+
+    # Fetch enough context to write evidence + resolver rows in one pass.
+    orphans = db.execute(
+        "SELECT o.id, o.symbol, o.market, o.direction_bias, o.scanner_family, "
+        "o.universe_snapshot_id, o.universe_member_id, o.regime_tag "
+        "FROM opportunities o "
+        "JOIN universe_snapshots us ON us.id = o.universe_snapshot_id "
+        "WHERE o.status = 'open' "
+        "AND us.market_type = ? AND us.status = 'superseded' "
+        "LIMIT 1000",
         (market_type,),
-    )
-    n = int(cur.rowcount or 0)
-    if not was_in_tx:
-        db.commit()
-    return n
+    ).fetchall()
+    if not orphans:
+        return 0
+
+    orphan_ids = [str(r["id"]) for r in orphans]
+    orphan_index = {str(r["id"]): dict(r) for r in orphans}
+
+    def _apply() -> int:
+        # Step 1 — pool cleanup. Bulk UPDATE, uses the same WHERE clause the
+        # helper always used so any orphan not present in `orphans` (e.g.
+        # inserted between the SELECT and this UPDATE) also gets caught.
+        cur = db.execute(
+            "UPDATE opportunities SET status = 'expired' "
+            "WHERE status = 'open' AND universe_snapshot_id IN ("
+            "  SELECT id FROM universe_snapshots "
+            "  WHERE market_type = ? AND status = 'superseded'"
+            ")",
+            (market_type,),
+        )
+        transitioned = int(cur.rowcount or 0)
+
+        # Step 2 — filter evidence per opp we already have context for. If
+        # something extra was caught by the UPDATE, its evidence write is
+        # skipped (SELECT was best-effort); the status change is authoritative.
+        for r in orphans:
+            try:
+                record_filter_decision(
+                    candidate_key=f"opportunity:{r['id']}",
+                    candidate_kind="opportunity",
+                    filter_name="universe_snapshot_supersession",
+                    stage="lifecycle_expiry",
+                    decision="rejected",
+                    reason_code="universe_snapshot_superseded",
+                    symbol=str(r["symbol"] or "unknown"),
+                    market_type=str(r["market"] or "spot"),
+                    direction=r["direction_bias"],
+                    opportunity_id=r["id"],
+                    universe_snapshot_id=r["universe_snapshot_id"],
+                    universe_member_id=r["universe_member_id"],
+                    scanner_family=r["scanner_family"],
+                    regime_tag=r["regime_tag"],
+                    reason_detail="parent universe_snapshot moved to superseded",
+                    parameters={"cascade_source": "universe_refresh"},
+                    inputs={},
+                )
+            except Exception:
+                # Evidence is auxiliary; a write failure must not roll back
+                # the status transition (§filter_evidence_contract §4.2:
+                # evidence pipelines never gate authoritative state).
+                pass
+
+        # Step 3 — resolve unresolved signal_pending rows pointing at any
+        # cascaded opportunity. Uses a single query with an IN () chunk.
+        # Batch by 500 to stay under SQLite parameter limit for very large
+        # cascades (SQLITE_MAX_VARIABLE_NUMBER = 999 by default).
+        for chunk_start in range(0, len(orphan_ids), 500):
+            chunk = orphan_ids[chunk_start:chunk_start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            unresolved = db.execute(
+                f"SELECT DISTINCT p.opportunity_id, p.signal_source "
+                f"FROM pi_decisions p "
+                f"WHERE p.action = 'signal_pending' "
+                f"AND p.opportunity_id IN ({placeholders}) "
+                f"AND NOT EXISTS ("
+                f"  SELECT 1 FROM pi_decisions f "
+                f"  WHERE f.opportunity_id = p.opportunity_id "
+                f"  AND f.action != 'signal_pending' "
+                f")",
+                chunk,
+            ).fetchall()
+            for row in unresolved:
+                opp_id = str(row["opportunity_id"])
+                ctx = orphan_index.get(opp_id, {})
+                skip_row = PiDecision(
+                    symbol=ctx.get("symbol"),
+                    direction=ctx.get("direction_bias"),
+                    market_type=ctx.get("market"),
+                    action="skip",
+                    conviction=0,
+                    reasoning="cascade_expired: parent universe snapshot superseded",
+                    opportunity_id=opp_id,
+                    signal_source="system_cascade",
+                    debate_ran=False,
+                )
+                try:
+                    insert_pi_decision(skip_row)
+                except Exception:
+                    # Same rule as evidence: cascade cleanup is best-effort
+                    # bookkeeping; the pool is already correct.
+                    pass
+
+        return transitioned
+
+    if was_in_tx:
+        return _apply()
+    with transaction(immediate=True):
+        return _apply()
 
 
 def expire_universe_snapshots(market_type: str = "crypto", except_id: str | None = None) -> None:

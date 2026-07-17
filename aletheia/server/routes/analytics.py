@@ -692,11 +692,17 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
 
     items: list[dict] = []
 
-    # pi_decisions — operator trade / skip
+    # pi_decisions — operator trade / skip / watch, plus system cascade cleanup.
+    # signal_source='system_cascade' rows are written by
+    # repositories.expire_opportunities_from_superseded_snapshots as terminal
+    # bookkeeping when a parent snapshot is superseded — surface them as a
+    # distinct 'cascade_expired' outcome so their counts don't inflate the
+    # LLM operator's skip/watch metrics.
     try:
         rows = list(db.execute(
             "SELECT id, created_at, symbol, direction, market_type, action, "
-            "conviction, reasoning, opportunity_id, proposal_id "
+            "conviction, reasoning, opportunity_id, proposal_id, "
+            "COALESCE(signal_source, 'market_observer') AS signal_source "
             "FROM pi_decisions "
             "WHERE action IN ('trade','skip','flip','scale_in','watch') "
             "AND created_at >= datetime('now', ?) "
@@ -706,7 +712,10 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
         ))
         for r in rows:
             act = str(r["action"] or "")
-            if act == "skip":
+            source = str(r["signal_source"] or "market_observer")
+            if source == "system_cascade":
+                outcome = "cascade_expired"
+            elif act == "skip":
                 outcome = "operator_skip"
             elif act == "watch":
                 outcome = "operator_watch"
@@ -722,13 +731,27 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
                 "decided_at": r["created_at"],
                 "outcome": outcome,
                 "action": act,
+                "signal_source": source,
                 "conviction": r["conviction"],
                 "one_line_reason": _first_line(r["reasoning"], 140),
             })
     except Exception:
         pass
 
-    # trade_proposals rejected — user vs auto reject determined by paired audit event
+    # trade_proposals rejected — actor split via paired audit event.
+    #
+    # §4 audit robustness: the previous fallback "actor != 'human' → auto_reject"
+    # silently misclassified any proposal whose audit_events row was missing,
+    # lost to a write failure, or lagged behind the rejection commit. We now
+    # explicitly distinguish three states and expose them separately so a
+    # missing audit trail cannot masquerade as a system rejection:
+    #   - actor='human'   AND source='dashboard'    → user_reject (owner)
+    #   - actor='system' (any source)               → auto_reject
+    #   - LEFT JOIN produced no audit row           → unknown_reject
+    # A missing audit is normally transient (audit sink flake, gateway
+    # crash-loop mid-rollback); the UI treats unknown_reject as red like
+    # auto_reject but the badge/label says "unknown actor" so it does not
+    # falsely blame the system.
     try:
         rows = list(db.execute(
             "SELECT tp.id AS proposal_id, tp.opportunity_id, tp.created_at, "
@@ -748,10 +771,17 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
             if pid in seen_props:
                 continue  # dedupe if multiple audit rows for the same proposal
             seen_props.add(pid)
-            actor = str(r["actor"] or "")
-            if actor == "human":
+            actor = str(r["actor"] or "").lower() or None
+            source = str(r["source"] or "").lower() or None
+            if actor == "human" and (source is None or source == "dashboard"):
                 outcome = "user_reject"
+            elif actor == "system":
+                outcome = "auto_reject"
+            elif actor is None:
+                # Audit row missing entirely — do not fabricate an actor.
+                outcome = "unknown_reject"
             else:
+                # Non-human, non-system actor (future integration, etc.).
                 outcome = "auto_reject"
             items.append({
                 "opportunity_id": r["opportunity_id"],
@@ -765,8 +795,8 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
                 "action": "reject",
                 "conviction": None,
                 "one_line_reason": _first_line(r["message"], 140),
-                "rejected_actor": actor or None,
-                "rejected_source": r["source"],
+                "rejected_actor": actor,
+                "rejected_source": source,
             })
     except Exception:
         pass
@@ -775,7 +805,8 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
     items = items[:limit_i]
 
     counts = {"trade": 0, "operator_skip": 0, "operator_watch": 0,
-              "user_reject": 0, "auto_reject": 0}
+              "user_reject": 0, "auto_reject": 0, "unknown_reject": 0,
+              "cascade_expired": 0}
     for it in items:
         oc = it.get("outcome")
         if oc in counts:
