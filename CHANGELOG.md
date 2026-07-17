@@ -1,5 +1,41 @@
 # Changelog
 
+## [Unreleased] - 2026-07-17 — Approval Desk records final-stage rejections
+
+Closes the loop on "why didn't this reach me?" once a candidate crosses into
+the operator stage — the Funnel card covers everything BEFORE that boundary,
+the Approval Desk now records everything AFTER.
+
+### feat(overview): Approval Desk Recent decisions section + trace drawer
+
+- Adds a collapsible "Recent" section beneath the pending approval list.
+  Shows outcome counts (trade / operator_skip / user_reject / auto_reject /
+  operator_watch) with distinct icons and colored left borders.
+- Each row shows symbol / direction / outcome label / relative timestamp +
+  the operator's own one-line reason (from pi_decisions.reasoning or the
+  reject audit event message).
+- Clicking a row opens a DetailDrawer that fetches the full lifecycle trace
+  (emit → filter_trace → pi_decision → risk_decision → proposal → order →
+  fill → position → close) via a new /opportunity-trace endpoint.
+- `user_reject` vs `auto_reject` distinguished at the endpoint layer by
+  joining trade_proposals with audit_events (actor='human' → user, else
+  auto). Users see clearly whether *they* pressed reject or the system did.
+
+### feat(api): two new analytics endpoints
+
+- `GET /api/analytics/operator-decisions?hours=24&limit=50` — merges
+  pi_decisions (action IN 'trade'/'skip'/'watch'/'flip'/'scale_in') with
+  rejected trade_proposals into a unified outcome timeline. Actor split
+  computed from audit_events.
+- `GET /api/analytics/opportunity-trace/{opportunity_id}` — thin route over
+  `analytics.opportunity_flow.trace_opportunity_flow`. Reuses the existing
+  CLI trace builder (`aletheia opportunity trace --id`) with no logic
+  duplication.
+
+### docs
+
+- `api_reference.md`: two new endpoint rows.
+
 ## [Unreleased] - 2026-07-17 — Inline paper_trader nudge on universe events
 
 Cuts new-opportunity → ranker-review latency from up to 3 minutes to ~1

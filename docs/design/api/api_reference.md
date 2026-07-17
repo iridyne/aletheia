@@ -144,6 +144,8 @@ the same two completeness columns; it writes an empty realized-PnL cell rather t
 | GET | `/analytics/round1-progress` | Historical Round 1 progress metrics |
 | GET | `/analytics/pipeline-funnel` | Pipeline conversion funnel counts |
 | GET | `/analytics/opportunity-funnel` | Market Observer → Operator funnel: 24h cumulative counts (emitted/reviewed/still_open/proposed) plus the latest ranker snapshot (executable_count + excluded_by_reason with example carriers, expired_seconds annotations, `family_ttl_sec`, universe_snapshot_age_sec). Powers the Overview page's Funnel card. Read-only. |
+| GET | `/analytics/operator-decisions` | Final-stage decision log companion to the funnel. Merges pi_decisions (trade / operator_skip / operator_watch) with rejected trade_proposals split by actor into `user_reject` (dashboard human) vs `auto_reject` (execution gateway / pre-flight system). Params: `hours` (default 24), `limit` (default 50, max 200). Returns counts by outcome + item list with one-line reason. Read-only. |
+| GET | `/analytics/opportunity-trace/{opportunity_id}` | Full lifecycle trace for a single opportunity — emit → filter_trace → pi_decision → risk_decision → proposal → order → fill → position → close. Thin route over `analytics.opportunity_flow.trace_opportunity_flow`. Powers the Approval Desk's per-decision drill-down drawer. Read-only. |
 | GET | `/analytics/family-scorecard` | Scanner family performance |
 | GET | `/analytics/shadow-trades` | Shadow trade comparison data |
 | GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |

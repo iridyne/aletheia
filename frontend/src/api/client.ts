@@ -415,6 +415,63 @@ export const api = {
     }
     fills: number
   }>(`/analytics/pipeline-funnel?hours=${hours}`),
+  // Recent operator decisions — final-stage companion to the funnel.
+  // Merges pi_decisions (trade/skip/watch/flip/scale_in) with rejected
+  // trade_proposals (user vs auto reject distinguished via audit_events).
+  getOperatorDecisions: (hours = 24, limit = 50) => fetchJson<{
+    window_hours: number
+    limit: number
+    counts: {
+      trade: number
+      operator_skip: number
+      operator_watch: number
+      user_reject: number
+      auto_reject: number
+    }
+    items: Array<{
+      opportunity_id: string | null
+      proposal_id: string | null
+      decision_id: string | null
+      symbol: string | null
+      direction: string | null
+      market_type: string | null
+      decided_at: string
+      outcome: 'trade' | 'operator_skip' | 'operator_watch' | 'user_reject' | 'auto_reject'
+      action: string
+      conviction: number | null
+      one_line_reason: string | null
+      rejected_actor?: string | null
+      rejected_source?: string | null
+    }>
+  }>(`/analytics/operator-decisions?hours=${hours}&limit=${limit}`),
+
+  // Full lifecycle trace for one opportunity — powers the decision drawer.
+  getOpportunityTrace: (opportunityId: string) =>
+    fetchJson<{
+      opportunity_id: string
+      found: boolean
+      symbol?: string | null
+      direction?: string | null
+      market?: string | null
+      scanner_family?: string | null
+      created_at?: string | null
+      final_state?: string | null
+      final_stage?: string | null
+      final_reason?: string | null
+      timeline?: Array<{
+        at: string
+        stage?: string
+        actor?: string
+        summary?: string
+        details?: Record<string, unknown>
+      }>
+      counterfactual?: {
+        verdict?: string | null
+        shadow?: Record<string, unknown> | null
+        forward?: Record<string, unknown> | null
+      }
+    }>(`/analytics/opportunity-trace/${encodeURIComponent(opportunityId)}`),
+
   // Market Observer → Operator funnel. Surfaces WHY opportunities don't reach
   // the operator (e.g. confidence gate, TTL expiry) — counterpart to Approval Desk.
   getOpportunityFunnel: (hours = 24) => fetchJson<{

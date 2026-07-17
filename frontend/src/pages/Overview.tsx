@@ -7,6 +7,7 @@ import SetupBanner from '../components/SetupBanner'
 import PnLZone from '../components/PnLZone'
 import AgentFeed from '../components/AgentFeed'
 import CollectorHealthDetails from '../components/CollectorHealthDetails'
+import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import { Badge, Button, Card, CardHeader, StatusText } from '../components/ui'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
@@ -108,26 +109,9 @@ export default function Overview() {
         <AgentFeed />
 
         <div className="cockpit-rail">
-          {/* Approval Desk — the one human-in-loop control point */}
-          <Card className="rail-card desk-panel">
-            <CardHeader title="Approval Desk" />
-            {pendingProposals.length > 0 ? (
-              <>
-                <Badge tone="yellow">{pendingProposals.length}</Badge>
-                <ul className="approval-list">
-                  {pendingProposals.slice(0, 4).map((p: any) => (
-                    <li key={p.id}>
-                      <span><span className="mono">{fmtSymbol(p.symbol, p.market_type)}</span> {humanize(p.direction)}</span>
-                      <span className="ts mono">{fmtTimestamp(p.created_at)}</span>
-                    </li>
-                  ))}
-                </ul>
-                <Button className="btn-control mt-3" onClick={() => navigate('/proposals')}>Review →</Button>
-              </>
-            ) : (
-              <p className="text-muted text-sm">No pending actions</p>
-            )}
-          </Card>
+          {/* Approval Desk — the human-in-loop control point + recent decisions history */}
+          <ApprovalDeskCard pendingProposals={pendingProposals} />
+
 
           {/* Funnel — the counterpart to the Approval Desk: why nothing (or few) reached it */}
           <OpportunityFunnelCard />
@@ -285,6 +269,212 @@ export default function Overview() {
         </div>
       </div>
     </div>
+  )
+}
+
+// ── Approval Desk Card (pending + recent decisions history) ─────────────────
+// The Approval Desk's "action queue" role stays intact at the top; a folded
+// Recent decisions section beneath it records every terminal outcome for the
+// same instrument stream — trade / operator_skip / user_reject / auto_reject —
+// with the operator's own reasoning as the one-line summary. Clicking a row
+// opens the full lifecycle trace drawer (emit → filter_trace → pi_decision →
+// risk_decision → proposal → order → close). This closes the loop on "why
+// didn't this reach me?" once a candidate crosses INTO the operator stage —
+// the Funnel card covers everything BEFORE that boundary.
+
+const OUTCOME_LABEL: Record<string, string> = {
+  trade: 'trade',
+  operator_skip: 'operator skip',
+  operator_watch: 'operator watch',
+  user_reject: 'you rejected',
+  auto_reject: 'auto rejected',
+}
+
+const OUTCOME_ICON: Record<string, string> = {
+  trade: '✓',
+  operator_skip: '✗',
+  operator_watch: '◔',
+  user_reject: '⊘',
+  auto_reject: '⊗',
+}
+
+const OUTCOME_TONE: Record<string, 'green' | 'yellow' | 'red' | 'muted'> = {
+  trade: 'green',
+  operator_skip: 'muted',
+  operator_watch: 'yellow',
+  user_reject: 'red',
+  auto_reject: 'red',
+}
+
+function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
+  const navigate = useNavigate()
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [selectedOppId, setSelectedOppId] = useState<string | null>(null)
+  const historyRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (historyOpen) requestAnimationFrame(() =>
+      historyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+  }, [historyOpen])
+
+  const { data: decisions } = useQuery({
+    queryKey: ['operator-decisions'],
+    queryFn: () => api.getOperatorDecisions(24, 20),
+    refetchInterval: 60000,
+  })
+
+  const counts = decisions?.counts
+  const items = decisions?.items || []
+  const historyTotal = counts
+    ? counts.trade + counts.operator_skip + counts.operator_watch + counts.user_reject + counts.auto_reject
+    : 0
+
+  return (
+    <Card className="rail-card desk-panel">
+      <CardHeader title="Approval Desk" />
+      {pendingProposals.length > 0 ? (
+        <>
+          <Badge tone="yellow">{pendingProposals.length}</Badge>
+          <ul className="approval-list">
+            {pendingProposals.slice(0, 4).map((p: any) => (
+              <li key={p.id}>
+                <span><span className="mono">{fmtSymbol(p.symbol, p.market_type)}</span> {humanize(p.direction)}</span>
+                <span className="ts mono">{fmtTimestamp(p.created_at)}</span>
+              </li>
+            ))}
+          </ul>
+          <Button className="btn-control mt-3" onClick={() => navigate('/proposals')}>Review →</Button>
+        </>
+      ) : (
+        <p className="text-muted text-sm">No pending actions</p>
+      )}
+
+      {/* Recent decisions — collapsible history of terminal operator outcomes */}
+      {decisions && (
+        <>
+          <table className="status-board decisions-toggle">
+            <tbody>
+              <tr
+                className={`status-row status-row-clickable`}
+                onClick={() => setHistoryOpen(x => !x)}
+              >
+                <th>Recent</th>
+                <td className="status-cell">
+                  <span className="status-value text-xs">
+                    {historyTotal > 0
+                      ? <RecentCountsInline counts={counts!} />
+                      : <span className="text-muted">no decisions in 24h</span>}
+                  </span>
+                  <span className="status-row-chevron">{historyOpen ? '▾' : '▸'}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <CollapsibleSection ref={historyRef} open={historyOpen}>
+            <div className="decisions-panel">
+              <div className="decisions-title">Last {decisions.window_hours}h · {items.length} shown</div>
+              {items.length === 0 && (
+                <p className="text-muted text-sm mb-0">No operator decisions yet.</p>
+              )}
+              {items.map((it) => {
+                const tone = OUTCOME_TONE[it.outcome] || 'muted'
+                return (
+                  <button
+                    key={`${it.decision_id || it.proposal_id || it.opportunity_id}-${it.decided_at}`}
+                    type="button"
+                    className={`decisions-row decisions-row-${tone}`}
+                    onClick={() => it.opportunity_id && setSelectedOppId(it.opportunity_id)}
+                    disabled={!it.opportunity_id}
+                  >
+                    <span className={`decisions-icon decisions-icon-${tone}`}>{OUTCOME_ICON[it.outcome] || '·'}</span>
+                    <div className="decisions-body">
+                      <div className="decisions-head">
+                        <span className="mono">{fmtSymbol(it.symbol || '', it.market_type || undefined)}</span>
+                        {it.direction && <span className="text-xs"> {humanize(it.direction)}</span>}
+                        <span className="text-xs text-muted"> · {OUTCOME_LABEL[it.outcome] || it.outcome}</span>
+                        <span className="ts mono text-xs">{fmtTimestamp(it.decided_at)}</span>
+                      </div>
+                      {it.one_line_reason && (
+                        <div className="decisions-reason text-xs">{it.one_line_reason}</div>
+                      )}
+                    </div>
+                    {it.opportunity_id && <span className="decisions-chev">▸</span>}
+                  </button>
+                )
+              })}
+            </div>
+          </CollapsibleSection>
+        </>
+      )}
+
+      <DecisionTraceDrawer
+        opportunityId={selectedOppId}
+        onClose={() => setSelectedOppId(null)}
+      />
+    </Card>
+  )
+}
+
+function RecentCountsInline({ counts }: { counts: {
+  trade: number; operator_skip: number; operator_watch: number
+  user_reject: number; auto_reject: number
+} }) {
+  return (
+    <span className="decisions-counts">
+      {counts.trade > 0 && <span className="decisions-count decisions-count-green">✓ {counts.trade}</span>}
+      {counts.operator_skip > 0 && <span className="decisions-count decisions-count-muted">✗ {counts.operator_skip}</span>}
+      {counts.user_reject > 0 && <span className="decisions-count decisions-count-red">⊘ {counts.user_reject}</span>}
+      {counts.auto_reject > 0 && <span className="decisions-count decisions-count-red">⊗ {counts.auto_reject}</span>}
+      {counts.operator_watch > 0 && <span className="decisions-count decisions-count-yellow">◔ {counts.operator_watch}</span>}
+    </span>
+  )
+}
+
+function DecisionTraceDrawer({ opportunityId, onClose }: {
+  opportunityId: string | null; onClose: () => void
+}) {
+  const { data } = useQuery({
+    queryKey: ['opportunity-trace', opportunityId],
+    queryFn: () => api.getOpportunityTrace(opportunityId!),
+    enabled: !!opportunityId,
+  })
+  const title = data?.symbol
+    ? `${fmtSymbol(data.symbol, data.market || undefined)}  ·  ${humanize(data.direction || '')}`
+    : 'Decision trace'
+  return (
+    <DetailDrawer open={!!opportunityId} onClose={onClose} title={title}>
+      {!data && opportunityId && <p className="text-muted text-sm">Loading trace…</p>}
+      {data && data.found === false && (
+        <p className="text-muted text-sm">{data.final_reason || 'Opportunity trace not found.'}</p>
+      )}
+      {data && data.found !== false && (
+        <>
+          <DrawerSection label="Summary">
+            <DrawerField label="Final state" value={data.final_state || '—'} />
+            <DrawerField label="Final stage" value={data.final_stage || '—'} />
+            <DrawerField label="Final reason" value={data.final_reason || '—'} />
+            <DrawerField label="Scanner family" value={data.scanner_family || '—'} />
+            <DrawerField label="Emitted at" value={data.created_at ? fmtTimestamp(data.created_at) : '—'} />
+          </DrawerSection>
+          {data.timeline && data.timeline.length > 0 && (
+            <DrawerSection label={`Timeline (${data.timeline.length})`}>
+              <ul className="trace-timeline">
+                {data.timeline.map((ev, i) => (
+                  <li key={i} className="trace-event">
+                    <span className="trace-event-ts mono text-xs">{fmtTimestamp(ev.at)}</span>
+                    {ev.stage && <span className="trace-event-stage text-xs">{ev.stage}</span>}
+                    {ev.summary && <div className="trace-event-summary">{ev.summary}</div>}
+                    {ev.details && Object.keys(ev.details).length > 0 && (
+                      <pre className="trace-event-details">{JSON.stringify(ev.details, null, 2)}</pre>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </DrawerSection>
+          )}
+        </>
+      )}
+    </DetailDrawer>
   )
 }
 

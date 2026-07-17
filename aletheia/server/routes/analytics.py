@@ -658,6 +658,171 @@ def get_opportunity_funnel(hours: int = 24):
     }
 
 
+@router.get("/operator-decisions")
+def get_operator_decisions(hours: int = 24, limit: int = 50):
+    """Recent operator decisions — the "final-stage" companion to the Funnel card.
+
+    Merges three sources into one time-ordered list so the Approval Desk can
+    surface not only pending / accepted proposals but also every kind of
+    rejection that happened after a candidate reached the operator:
+
+    - `operator_skip`: pi_decisions.action = 'skip' — the LLM operator saw an
+      executable candidate and decided not to trade (reason in `reasoning`).
+    - `trade`: pi_decisions.action IN ('trade','flip','scale_in') — operator
+      chose to trade; a proposal typically follows.
+    - `user_reject`: trade_proposals.status='rejected' with matching
+      audit_events row actor='human', source='dashboard' — a human pressed
+      Reject in the dashboard before execution began.
+    - `auto_reject`: trade_proposals.status='rejected' with matching
+      audit_events row actor='system' — gateway pre-flight or risk-engine
+      auto-rejected before execution.
+
+    All decisions are keyed by `opportunity_id` where available so the UI can
+    request the full lifecycle trace via /analytics/opportunity-trace/{id}.
+
+    Read-only. Purely reconstructive over already-persisted evidence.
+    """
+    from aletheia.storage.sqlite import get_db
+    from aletheia.data.symbols import to_canonical
+
+    db = get_db()
+    hours_i = max(1, int(hours or 24))
+    limit_i = max(1, min(int(limit or 50), 200))
+    window = f"-{hours_i} hours"
+
+    items: list[dict] = []
+
+    # pi_decisions — operator trade / skip
+    try:
+        rows = list(db.execute(
+            "SELECT id, created_at, symbol, direction, market_type, action, "
+            "conviction, reasoning, opportunity_id, proposal_id "
+            "FROM pi_decisions "
+            "WHERE action IN ('trade','skip','flip','scale_in','watch') "
+            "AND created_at >= datetime('now', ?) "
+            "AND (symbol IS NOT NULL AND symbol != '') "
+            "ORDER BY created_at DESC LIMIT ?",
+            (window, limit_i * 2),
+        ))
+        for r in rows:
+            act = str(r["action"] or "")
+            if act == "skip":
+                outcome = "operator_skip"
+            elif act == "watch":
+                outcome = "operator_watch"
+            else:
+                outcome = "trade"  # trade / flip / scale_in — operator chose to act
+            items.append({
+                "opportunity_id": r["opportunity_id"],
+                "proposal_id": r["proposal_id"],
+                "decision_id": r["id"],
+                "symbol": r["symbol"],
+                "direction": r["direction"],
+                "market_type": r["market_type"],
+                "decided_at": r["created_at"],
+                "outcome": outcome,
+                "action": act,
+                "conviction": r["conviction"],
+                "one_line_reason": _first_line(r["reasoning"], 140),
+            })
+    except Exception:
+        pass
+
+    # trade_proposals rejected — user vs auto reject determined by paired audit event
+    try:
+        rows = list(db.execute(
+            "SELECT tp.id AS proposal_id, tp.opportunity_id, tp.created_at, "
+            "tp.symbol, tp.direction, tp.market_type, "
+            "ae.actor, ae.source, ae.message, ae.timestamp AS rejected_at "
+            "FROM trade_proposals tp "
+            "LEFT JOIN audit_events ae ON ae.entity_id = tp.id "
+            "  AND ae.event_type = 'proposal_rejected' "
+            "WHERE tp.status = 'rejected' "
+            "AND tp.created_at >= datetime('now', ?) "
+            "ORDER BY COALESCE(ae.timestamp, tp.created_at) DESC LIMIT ?",
+            (window, limit_i * 2),
+        ))
+        seen_props: set[str] = set()
+        for r in rows:
+            pid = r["proposal_id"]
+            if pid in seen_props:
+                continue  # dedupe if multiple audit rows for the same proposal
+            seen_props.add(pid)
+            actor = str(r["actor"] or "")
+            if actor == "human":
+                outcome = "user_reject"
+            else:
+                outcome = "auto_reject"
+            items.append({
+                "opportunity_id": r["opportunity_id"],
+                "proposal_id": pid,
+                "decision_id": None,
+                "symbol": r["symbol"],
+                "direction": r["direction"],
+                "market_type": r["market_type"],
+                "decided_at": r["rejected_at"] or r["created_at"],
+                "outcome": outcome,
+                "action": "reject",
+                "conviction": None,
+                "one_line_reason": _first_line(r["message"], 140),
+                "rejected_actor": actor or None,
+                "rejected_source": r["source"],
+            })
+    except Exception:
+        pass
+
+    items.sort(key=lambda x: str(x.get("decided_at") or ""), reverse=True)
+    items = items[:limit_i]
+
+    counts = {"trade": 0, "operator_skip": 0, "operator_watch": 0,
+              "user_reject": 0, "auto_reject": 0}
+    for it in items:
+        oc = it.get("outcome")
+        if oc in counts:
+            counts[oc] += 1
+
+    # Canonicalize symbols so the UI's fmtSymbol path matches the pending queue
+    for it in items:
+        sym = it.get("symbol")
+        if sym:
+            try:
+                it["symbol"] = to_canonical(sym)
+            except Exception:
+                pass
+
+    return {
+        "window_hours": hours_i,
+        "limit": limit_i,
+        "counts": counts,
+        "items": items,
+    }
+
+
+def _first_line(text: str | None, max_chars: int) -> str | None:
+    """Return the first non-empty line trimmed to max_chars, or None."""
+    if not text:
+        return None
+    for line in str(text).splitlines():
+        s = line.strip()
+        if s:
+            return s if len(s) <= max_chars else s[: max_chars - 1] + "…"
+    return None
+
+
+@router.get("/opportunity-trace/{opportunity_id}")
+def get_opportunity_trace(opportunity_id: str):
+    """Read-only lifecycle trace for one opportunity.
+
+    Thin route over analytics.opportunity_flow.trace_opportunity_flow — returns
+    the full timeline (emit → filter_trace → pi_decision → risk_decision →
+    proposal → order → fill → position → close), reasons at each stage, and
+    the counterfactual shadow/forward slice if present. Powers the Approval
+    Desk's per-row drill-down drawer.
+    """
+    from aletheia.analytics.opportunity_flow import trace_opportunity_flow
+    return trace_opportunity_flow(opportunity_id)
+
+
 @router.get("/learning-funnel")
 def get_learning_funnel():
     """Learning subsystem visibility: what gets written vs what PI actually sees.
