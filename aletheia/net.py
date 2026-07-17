@@ -67,7 +67,7 @@ _SECRET_HEADERS = (
 
 def raise_for_status_without_secrets(resp: "httpx.Response") -> None:
     """Like ``resp.raise_for_status()`` but strips credential headers from the
-    exception and uses a message naming only status + URL (no headers/body).
+    exception and includes truncated response body for diagnostics.
 
     Shared by every model provider so a 401/403 from any LLM backend cannot leak
     the api key through the raised exception. Keeps httpx.HTTPStatusError as the
@@ -90,7 +90,29 @@ def raise_for_status_without_secrets(resp: "httpx.Response") -> None:
         url = str(resp.url)
     except Exception:
         url = "?"
-    msg = f"HTTP {status} from {url}"
+    # Include response body so callers see the upstream error detail (e.g. LiteLLM
+    # "model not found", Databricks "invalid token") rather than just the status code.
+    # Response bodies don't contain credentials; truncate to 500 chars to avoid noise.
+    body_detail = ""
+    try:
+        try:
+            data = resp.json()
+            if isinstance(data, dict):
+                err = data.get("error") or {}
+                body_detail = (
+                    (err.get("message") if isinstance(err, dict) else str(err))
+                    or data.get("detail")
+                    or data.get("message")
+                    or str(data)
+                )
+            else:
+                body_detail = str(data)
+        except Exception:
+            body_detail = resp.text
+        body_detail = (body_detail or "").strip()[:500]
+    except Exception:
+        pass
+    msg = f"HTTP {status} from {url}" + (f": {body_detail}" if body_detail else "")
     raise httpx.HTTPStatusError(msg, request=getattr(resp, "request", None), response=resp)
 
 # Reachability probe result cache: avoids a TCP connect on every aiohttp_session()
