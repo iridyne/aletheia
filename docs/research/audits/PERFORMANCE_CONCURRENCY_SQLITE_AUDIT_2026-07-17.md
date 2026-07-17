@@ -337,3 +337,9 @@ Gateway；该门禁/文档基线问题不在性能整改边界内，应单独修
 语义；尚不能仅凭本地测试证明真实远程 Provider 与长期 SQLite 负载下的 P50/P95。合并后
 观察窗口仍需采集第 5 节指标，并以 overload、queue wait、writer wait、WAL/checkpoint 和
 retention wall-clock 判断是否需要调参，不应直接提高并发上限。
+
+发布证据为 Draft PR [#123](https://github.com/iridite/aletheia/pull/123)，实现提交
+`b4680998`，最终验证文档提交 `087e7683`（后续本文状态更新另有提交）。PR 首轮 GitHub
+Actions 没有执行任何 step：所有 job 的统一 annotation 为账户近期付款失败或 Actions
+spending limit 需要提高。这是 GitHub 账户级外部阻塞，不是测试失败；恢复 Billing/Actions
+额度后必须 re-run checks，不能把当前红色状态视为代码回归，也不能在仓库内绕过门禁。
