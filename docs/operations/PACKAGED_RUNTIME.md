@@ -256,7 +256,12 @@ Each invocation writes an auditable session directory under
 and public key. Its Feed URL is passed only to the invoking installed CLI through
 `ALETHEIA_UPDATE_FEED_URL`; the permanent installed Feed configuration is not modified.
 The Tray receives an already staged `update-request.json`, so it does not need the local
-server after staging begins.
+server after staging begins. A local build can use a distinct `.local-*` release label,
+but the updater treats an equal immutable `git_sha` as already current. For a different
+SHA, it only accepts a normal Feed whose signed `published_at` is later than the local
+release timestamp; an older public Feed cannot silently downgrade a newer local dogfood
+build. A later signed Feed remains eligible. The helper refuses a dirty worktree, so the
+payload code always matches the Git SHA recorded in its manifest.
 
 This mode is intentionally local to one machine. A `127.0.0.1` Feed cannot update UM790 or
 another Mac. Cross-machine private distribution needs a separately authenticated private

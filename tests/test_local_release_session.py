@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
 from urllib.request import urlopen
 
@@ -171,3 +172,34 @@ def test_local_session_rejects_a_relative_installed_cli_path():
             feed_url="http://127.0.0.1:9911/update-feed.json",
             timeout_sec=3,
         )
+
+
+def test_local_session_treats_an_equivalent_payload_as_a_successful_noop(monkeypatch, tmp_path):
+    session = _session_module()
+    launcher = tmp_path / "aletheia"
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
+    responses = iter(["already current", "already current", json.dumps({"status": "up_to_date"})])
+    monkeypatch.setattr(session, "_cli_output", lambda *_args, **_kwargs: next(responses))
+
+    state = session.apply_via_installed_cli(
+        cli=launcher,
+        feed_url="http://127.0.0.1:9911/update-feed.json",
+        timeout_sec=3,
+    )
+
+    assert state["status"] == "up_to_date"
+
+
+def test_local_session_refuses_to_publish_a_dirty_worktree(monkeypatch):
+    session = _session_module()
+    monkeypatch.setattr(
+        session.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["git", "status", "--porcelain"], returncode=0, stdout=" M aletheia/foo.py\n"
+        ),
+    )
+
+    with pytest.raises(session.LocalReleaseSessionError, match="clean worktree"):
+        session._require_clean_worktree()

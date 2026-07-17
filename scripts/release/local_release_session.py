@@ -39,7 +39,7 @@ DEFAULT_OUTPUT_ROOT = ROOT / "dist" / "local-release-sessions"
 DEFAULT_PRIVATE_KEY = (
     Path.home() / ".aletheia" / "release-signing" / "update-signing-private-key.pem"
 )
-TERMINAL_SUCCESS = {"success"}
+TERMINAL_SUCCESS = {"success", "up_to_date"}
 TERMINAL_FAILURE = {"failed"}
 
 
@@ -128,6 +128,22 @@ def _run(command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = N
     subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
+def _require_clean_worktree() -> None:
+    """Refuse to publish a payload whose source cannot be named by its Git SHA."""
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    if status.stdout.strip():
+        raise LocalReleaseSessionError(
+            "local release session requires a clean worktree; commit or stash changes first"
+        )
+
+
 def _ensure_pyinstaller() -> None:
     try:
         import PyInstaller  # noqa: F401
@@ -154,6 +170,7 @@ def _build_frontend() -> None:
 def build_local_payload(session_dir: Path, *, max_mib: int = runtime_builder.DEFAULT_MAX_MIB):
     """Build a fresh immutable runtime under this session directory only."""
 
+    _require_clean_worktree()
     _build_frontend()
     _ensure_pyinstaller()
     payload_dir = runtime_builder.run_pyinstaller(build_root=session_dir / "pyinstaller")
