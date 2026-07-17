@@ -2217,42 +2217,135 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .desk-panel   { max-height: 360px; }
 .risk-panel   { max-height: 320px; }
 .system-panel { }
-.funnel-panel { max-height: 420px; overflow-y: auto; }
+.funnel-panel { max-height: 640px; overflow-y: auto; }
 
-/* Funnel — Market Observer → Operator flow visualization */
-.funnel-counts { margin-top: var(--space-2); }
-.funnel-counts th {
-  font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.06em;
-  color: var(--muted); text-transform: uppercase; text-align: left;
-  padding: var(--space-1) 0; width: 5.5rem;
+/* Funnel — Market Observer → Operator flow visualization
+ *
+ * Structure: head + diagnosis banner + N sections + footer.
+ * Section = title + rows. Rows are either bars (24h) or reason lines (snapshot).
+ */
+.funnel-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--space-2); margin-bottom: var(--space-2);
 }
-.funnel-counts td { padding: var(--space-1) 0; }
-.funnel-hint { margin-left: auto; }
-.funnel-blocked { margin-top: var(--space-2); }
+.funnel-head h3 { margin: 0; }
+
+.funnel-diagnosis {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-2); margin-bottom: var(--space-2);
+  border-radius: var(--r-sm); border: 1px solid var(--border);
+  font-size: var(--fs-sm); line-height: 1.4;
+}
+.funnel-diag-red    { background: rgba(232,90,90,0.06); border-color: rgba(232,90,90,0.25); }
+.funnel-diag-yellow { background: rgba(245,185,66,0.06); border-color: rgba(245,185,66,0.25); }
+.funnel-diag-green  { background: rgba(70,180,120,0.06); border-color: rgba(70,180,120,0.22); }
+.funnel-diag-muted  { background: var(--bg-2); }
+.funnel-diag-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; }
+.funnel-diag-dot-red    { background: var(--red); }
+.funnel-diag-dot-yellow { background: var(--yellow); }
+.funnel-diag-dot-green  { background: var(--green); }
+.funnel-diag-dot-muted  { background: var(--faint); }
+.funnel-diag-text { color: var(--text); }
+
+.funnel-section {
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
+}
+.funnel-section-title {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--space-2); margin-bottom: var(--space-2);
+  font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted);
+}
+
+/* 24h cumulative funnel bars */
+.funnel-bar-row {
+  display: grid;
+  grid-template-columns: 5.5rem 3rem 1fr auto;
+  align-items: center; gap: var(--space-2);
+  font-size: var(--fs-sm); padding: 2px 0;
+}
+.funnel-bar-label { color: var(--text); }
+.funnel-bar-count { color: var(--text); font-weight: 500; text-align: right; }
+.funnel-bar-track {
+  height: 4px; background: var(--border); border-radius: 2px; overflow: hidden;
+}
+.funnel-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+.funnel-bar-fill-muted  { background: var(--faint); opacity: 0.6; }
+.funnel-bar-fill-green  { background: var(--green); }
+.funnel-bar-fill-yellow { background: var(--yellow); }
+.funnel-bar-fill-red    { background: var(--red); }
+.funnel-bar-fill-accent { background: var(--accent); }
+.funnel-bar-hint { grid-column: 3 / span 2; padding-left: var(--space-1); }
+
+.funnel-accept-rate {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: var(--space-2) 0 0; margin-top: 2px;
+  border-top: 1px dashed var(--border);
+  font-size: var(--fs-sm); color: var(--text);
+}
+
+/* Working-set snapshot row */
+.funnel-workingset {
+  display: flex; gap: var(--space-3);
+  padding: var(--space-1) 0 var(--space-2);
+  font-size: var(--fs-sm);
+}
+.funnel-ws-item { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text); }
+.funnel-ws-mark { font-family: var(--mono); font-weight: 700; }
+.funnel-ws-accepted { color: var(--green); }
+.funnel-ws-rejected { color: var(--yellow); }
+
+/* Rejection reasons */
+.funnel-reasons { display: flex; flex-direction: column; gap: 2px; }
+.funnel-reasons-title { margin-bottom: 4px; }
 .funnel-reason {
-  border-bottom: 1px solid var(--border); padding: 4px 0;
+  border-radius: 3px;
 }
-.funnel-reason:last-of-type { border-bottom: none; }
 .funnel-reason-head {
-  display: flex; align-items: center; gap: var(--space-2);
-  font-size: var(--fs-sm); padding: 2px 4px; border-radius: 3px;
+  display: grid;
+  grid-template-columns: 1.2rem 1fr auto auto;
+  align-items: center; gap: var(--space-2);
+  font-size: var(--fs-sm); padding: 3px 4px;
 }
-.funnel-reason-name { color: var(--text); flex: 1; min-width: 0; }
+.funnel-reason-dot { font-size: 0.7rem; line-height: 1; }
+.funnel-reason-dot-main   { color: var(--red); }
+.funnel-reason-dot-active { color: var(--yellow); }
+.funnel-reason-dot-empty  { color: var(--faint); }
+.funnel-reason-name { color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.funnel-reason-name-muted { color: var(--muted); }
 .funnel-reason-count { color: var(--text); font-weight: 500; }
-.funnel-reason-hint {
-  font-size: var(--fs-2xs); color: var(--muted); margin-top: 2px; padding-left: 22px;
+.funnel-reason-count-muted { color: var(--faint); }
+.funnel-reason-subtitle {
+  padding: 2px 0 4px 22px; font-size: var(--fs-2xs); color: var(--muted); font-style: italic;
+}
+.funnel-examples {
+  list-style: none; margin: 2px 0 4px; padding: 0 0 0 22px;
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: var(--fs-2xs);
+}
+.funnel-examples li {
+  padding: 3px var(--space-2); border-left: 2px solid var(--border);
+  background: var(--bg-2); border-radius: 0 3px 3px 0;
+}
+.funnel-example-head { color: var(--text); }
+.funnel-example-hint { color: var(--muted); margin-top: 1px; }
+
+/* Footer */
+.funnel-footer {
+  padding-top: var(--space-2); margin-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.funnel-footer-row {
+  display: flex; justify-content: space-between; align-items: baseline;
 }
 .funnel-link {
   background: none; border: none; padding: 0; color: var(--accent);
-  cursor: pointer; font-family: var(--mono); font-size: inherit;
+  cursor: pointer; font-family: var(--mono); font-size: var(--fs-sm);
   text-decoration: underline; text-underline-offset: 2px;
 }
 .funnel-link:hover { color: var(--text); }
-.funnel-examples {
-  list-style: none; margin: 4px 0 0; padding: 0 0 0 22px;
-  font-size: var(--fs-2xs); color: var(--text);
-}
-.funnel-examples li { padding: 1px 0; }
 
 /* Go-Live Scorecard — Overview.tsx GoLiveScoreCard EXCLUSIVE namespace.
    Any new component that wants this style should rename to its own prefix; a second

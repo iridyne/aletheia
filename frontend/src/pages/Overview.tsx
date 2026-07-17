@@ -289,13 +289,17 @@ export default function Overview() {
 }
 
 // ── Opportunity Funnel Card ──────────────────────────────────────────────────
-// Answers "why didn't we open a position?" by surfacing where opportunities were
-// blocked between Market Observer and System Operator. Cumulative counts for
-// emitted/proposed (last N hours); the excluded-by-reason breakdown is the
-// point-in-time snapshot the operator last saw. The min_confidence_to_trade
-// value is a link to Settings — clicking on the "confidence_below" row is the
-// fastest path from "I don't know why we're idle" to "here's the exact threshold
-// that's holding it back".
+// Answers "why didn't we open a position?" in three sections:
+//   1. Top diagnosis headline — one sentence, honestly derived from counts
+//   2. 24h cumulative funnel — Discovered / Reviewed / Passed / Proposed, bar-lengths
+//      show ratio to Discovered
+//   3. Working-set snapshot (now) — accepted vs rejected, then rejection reasons
+//      with dot/hollow-dot for count>0/=0, TTL examples annotated with
+//      "expired X min ago · ttl was N min"
+// Footer surfaces min_confidence_to_trade (clickable) + universe snapshot age.
+//
+// Time-scale honesty: cumulative counts explicitly labeled "last N h"; snapshot
+// counts explicitly labeled "now". No fabricated causal join.
 const REASON_LABEL: Record<string, string> = {
   confidence_below: 'confidence below threshold',
   guard_blocked: 'guard blocked',
@@ -307,8 +311,77 @@ const REASON_LABEL: Record<string, string> = {
   execution_eligible_false: 'execution disabled',
 }
 
+// Reasons we always show a row for (even when count=0), so the reader can see
+// "not this one" as an affirmative signal, not a silent omission.
+const ALWAYS_SHOWN_REASONS = ['confidence_below', 'ttl_expired', 'guard_blocked']
+
+const REASON_SUBTITLE: Record<string, string> = {
+  ttl_expired: 'family window elapsed before ranker scan',
+  confidence_below: 'ranker confidence gate rejected',
+  guard_blocked: 'active guard suppressed entry',
+  unsupported_demo_symbol: 'demo venue does not list this pair',
+  universe_not_eligible: 'universe member marked ineligible',
+  neutral_bias: 'scanner did not pick a side',
+  execution_eligible_false: 'no live price at emit time',
+}
+
 function fmtReason(reason: string): string {
   return REASON_LABEL[reason] || reason.replace(/_/g, ' ')
+}
+
+function fmtDurMin(sec: number): string {
+  const m = Math.floor(sec / 60)
+  if (m < 60) return `${m} min`
+  const h = Math.floor(m / 60)
+  const mm = m % 60
+  return mm ? `${h}h ${mm}m` : `${h}h`
+}
+
+type FunnelData = ReturnType<typeof api.getOpportunityFunnel> extends Promise<infer R> ? R : never
+
+function buildDiagnosis(data: FunnelData): { text: string; tone: 'green' | 'yellow' | 'red' | 'muted' } {
+  const snap = data.snapshot
+  const hasSnap = snap.checked_at != null
+  const excluded = snap.excluded_by_reason || []
+  const rejectedTotal = excluded.reduce((s, r) => s + (r.count || 0), 0)
+  const executable = snap.executable_count
+
+  if (!hasSnap) {
+    return { text: 'No operator eval yet in this session. Snapshot appears after the first candidate refresh.', tone: 'muted' }
+  }
+  if (executable === 0 && rejectedTotal === 0) {
+    return { text: `Idle: no candidates in ranker view (${data.still_open_count} awaiting review).`, tone: 'muted' }
+  }
+  if (executable === 0 && snap.main_reason === 'ttl_expired') {
+    return { text: `Idle: all ${rejectedTotal} open signals expired before review.`, tone: 'red' }
+  }
+  if (executable === 0 && snap.main_reason === 'confidence_below') {
+    return { text: `Idle: confidence gate rejected all ${rejectedTotal} candidates (threshold=${data.config.min_confidence_to_trade}).`, tone: 'red' }
+  }
+  if (executable === 0 && snap.main_reason) {
+    return { text: `Idle: ${fmtReason(snap.main_reason)} blocked all ${rejectedTotal} candidates.`, tone: 'red' }
+  }
+  if (snap.below_floor) {
+    return { text: `Low supply: ${executable} executable candidate${executable === 1 ? '' : 's'} (floor ${snap.floor}).`, tone: 'yellow' }
+  }
+  return { text: `Healthy: ${executable} executable candidate${executable === 1 ? '' : 's'} in ranker view.`, tone: 'green' }
+}
+
+function FunnelBar({ label, count, denom, hint, tone = 'muted' }: {
+  label: string; count: number; denom: number; hint?: string
+  tone?: 'green' | 'yellow' | 'red' | 'muted' | 'accent'
+}) {
+  const pct = denom > 0 ? Math.max(0, Math.min(100, (count / denom) * 100)) : 0
+  return (
+    <div className="funnel-bar-row">
+      <span className="funnel-bar-label">{label}</span>
+      <span className="funnel-bar-count mono">{count}</span>
+      <div className="funnel-bar-track" aria-hidden>
+        <div className={`funnel-bar-fill funnel-bar-fill-${tone}`} style={{ width: `${pct}%` }} />
+      </div>
+      {hint && <span className="funnel-bar-hint text-xs text-muted">{hint}</span>}
+    </div>
+  )
 }
 
 function OpportunityFunnelCard() {
@@ -323,115 +396,157 @@ function OpportunityFunnelCard() {
 
   const snap = data.snapshot
   const excluded = snap.excluded_by_reason || []
-  const totalExcluded = excluded.reduce((sum, r) => sum + (r.count || 0), 0)
-  const droughtActive = !!snap.below_floor
-  const confidenceIsMain = snap.main_reason === 'confidence_below'
-  const minConf = data.config.min_confidence_to_trade
-  const confTone: 'green' | 'yellow' | 'red' | 'muted' =
-    droughtActive && confidenceIsMain ? 'red'
-      : droughtActive ? 'yellow'
-      : 'green'
-
-  const hasSnapshot = snap.checked_at != null
+  const rejectedTotal = excluded.reduce((s, r) => s + (r.count || 0), 0)
   const executable = snap.executable_count
+  const hasSnapshot = snap.checked_at != null
+
+  const diag = buildDiagnosis(data)
+
+  // Merge always-shown reasons with any others that appeared this snapshot
+  const excludedByReason = new Map(excluded.map(r => [r.reason, r]))
+  const reasonRows = [
+    ...ALWAYS_SHOWN_REASONS.map(k => excludedByReason.get(k) || { reason: k, count: 0, examples: [] }),
+    ...excluded.filter(r => !ALWAYS_SHOWN_REASONS.includes(r.reason)),
+  ]
+
+  const acceptRatePct = data.emitted_count > 0
+    ? (data.proposed_count / data.emitted_count) * 100
+    : null
 
   return (
     <Card className="rail-card funnel-panel">
-      <div className="risk-head">
+      <div className="funnel-head">
         <h3>Funnel</h3>
-        <StatusText tone={confTone}>
-          {hasSnapshot
-            ? droughtActive ? `${executable} exec · low` : `${executable} exec`
-            : 'no snapshot yet'}
-        </StatusText>
+        <span className="text-xs text-muted">Market Observer → Operator</span>
       </div>
 
-      <table className="status-board funnel-counts">
-        <tbody>
-          <tr>
-            <th>Emitted</th>
-            <td className="status-cell">
-              <span className="status-value mono">{data.emitted_count}</span>
-              <span className="funnel-hint text-xs text-muted">last {data.window_hours}h</span>
-            </td>
-          </tr>
-          <tr>
-            <th>Executable</th>
-            <td className="status-cell">
-              <span className={`status-light light-${confTone === 'red' ? 'red' : confTone === 'yellow' ? 'yellow' : 'green'}`} />
-              <span className="status-value mono">{executable}</span>
-              <span className="funnel-hint text-xs text-muted">
-                {hasSnapshot ? 'current working set' : '—'}
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <th>Proposed</th>
-            <td className="status-cell">
-              <span className="status-value mono">{data.proposed_count}</span>
-              <span className="funnel-hint text-xs text-muted">last {data.window_hours}h</span>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      {/* Section 1: Diagnosis */}
+      <div className={`funnel-diagnosis funnel-diag-${diag.tone}`}>
+        <span className={`funnel-diag-dot funnel-diag-dot-${diag.tone}`} />
+        <span className="funnel-diag-text">{diag.text}</span>
+      </div>
 
-      {hasSnapshot && excluded.length > 0 && (
-        <div className="funnel-blocked">
-          <div className="chd-title">Why blocked · working set ({totalExcluded})</div>
-          {excluded.map((row) => {
-            const isConfidence = row.reason === 'confidence_below'
-            const isOpen = openReason === row.reason
-            return (
-              <div key={row.reason} className="funnel-reason">
-                <div
-                  className="funnel-reason-head status-row-clickable"
-                  onClick={() => setOpenReason(isOpen ? null : row.reason)}
-                >
-                  <span className={`status-light light-${isConfidence ? (confidenceIsMain ? 'red' : 'yellow') : 'muted'}`} />
-                  <span className="funnel-reason-name">{fmtReason(row.reason)}</span>
-                  <span className="funnel-reason-count mono">{row.count}</span>
-                  <span className="status-row-chevron">{isOpen ? '▾' : '▸'}</span>
-                </div>
-                {isConfidence && (
-                  <div className="funnel-reason-hint">
-                    threshold ={' '}
-                    <button
-                      type="button"
-                      className="funnel-link"
-                      onClick={(e) => { e.stopPropagation(); navigate('/settings?tab=trading') }}
+      {/* Section 2: 24h cumulative funnel */}
+      <div className="funnel-section">
+        <div className="funnel-section-title">
+          <span>Last {data.window_hours} h</span>
+          <span className="text-xs text-muted">cumulative</span>
+        </div>
+        <FunnelBar label="Discovered" count={data.emitted_count} denom={data.emitted_count} tone="muted" />
+        <FunnelBar label="Reviewed" count={data.reviewed_count} denom={data.emitted_count} tone="muted"
+          hint={data.still_open_count > 0 ? `${data.still_open_count} still open` : undefined} />
+        <FunnelBar label="Passed gates" count={executable} denom={data.emitted_count}
+          tone={executable > 0 ? 'green' : 'muted'}
+          hint="snapshot" />
+        <FunnelBar label="Proposed" count={data.proposed_count} denom={data.emitted_count}
+          tone={data.proposed_count > 0 ? 'accent' : 'muted'} />
+        {acceptRatePct != null && (
+          <div className="funnel-accept-rate">
+            <span className="funnel-bar-label">accept rate</span>
+            <span className="mono">{acceptRatePct.toFixed(1)}%</span>
+          </div>
+        )}
+      </div>
+
+      {/* Section 3: Working set now */}
+      {hasSnapshot && (
+        <div className="funnel-section">
+          <div className="funnel-section-title">
+            <span>Working set (now)</span>
+            <span className="text-xs text-muted">{executable + rejectedTotal} in ranker view</span>
+          </div>
+          <div className="funnel-workingset">
+            <span className="funnel-ws-item">
+              <span className="funnel-ws-mark funnel-ws-accepted">✓</span>
+              accepted <span className="mono">{executable}</span>
+            </span>
+            <span className="funnel-ws-item">
+              <span className="funnel-ws-mark funnel-ws-rejected">✗</span>
+              rejected <span className="mono">{rejectedTotal}</span>
+            </span>
+          </div>
+
+          {(rejectedTotal > 0 || reasonRows.some(r => r.count > 0)) && (
+            <div className="funnel-reasons">
+              <div className="funnel-reasons-title text-xs text-muted">Rejection reasons</div>
+              {reasonRows.map((row) => {
+                const isMain = row.reason === snap.main_reason && row.count > 0
+                const hasCount = (row.count || 0) > 0
+                const isOpen = openReason === row.reason
+                const canExpand = hasCount && (row.examples?.length || 0) > 0
+                return (
+                  <div key={row.reason} className="funnel-reason">
+                    <div
+                      className={`funnel-reason-head${canExpand ? ' status-row-clickable' : ''}`}
+                      onClick={canExpand ? () => setOpenReason(isOpen ? null : row.reason) : undefined}
                     >
-                      {minConf}
-                    </button>
-                  </div>
-                )}
-                {isOpen && row.examples && row.examples.length > 0 && (
-                  <ul className="funnel-examples">
-                    {row.examples.slice(0, 4).map((ex, i) => (
-                      <li key={i}>
-                        <span className="mono">{fmtSymbol(ex.symbol || '', undefined)}</span>
-                        {ex.direction && <span className="text-muted text-xs"> {ex.direction}</span>}
-                        {ex.scanner_family && <span className="text-muted text-xs"> · {ex.scanner_family}</span>}
-                        {ex.trade_score != null && (
-                          <span className="text-muted text-xs"> · score {Number(ex.trade_score).toFixed(2)}</span>
+                      <span className={`funnel-reason-dot${hasCount ? (isMain ? ' funnel-reason-dot-main' : ' funnel-reason-dot-active') : ' funnel-reason-dot-empty'}`}>
+                        {hasCount ? '●' : '○'}
+                      </span>
+                      <span className={`funnel-reason-name${hasCount ? '' : ' funnel-reason-name-muted'}`}>
+                        {fmtReason(row.reason)}
+                      </span>
+                      <span className={`funnel-reason-count mono${hasCount ? '' : ' funnel-reason-count-muted'}`}>{row.count}</span>
+                      {canExpand && <span className="status-row-chevron">{isOpen ? '▾' : '▸'}</span>}
+                    </div>
+                    {isOpen && (
+                      <>
+                        {REASON_SUBTITLE[row.reason] && (
+                          <div className="funnel-reason-subtitle">{REASON_SUBTITLE[row.reason]}</div>
                         )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )
-          })}
+                        {row.examples && row.examples.length > 0 && (
+                          <ul className="funnel-examples">
+                            {row.examples.slice(0, 4).map((ex, i) => {
+                              const familyTtl = ex.scanner_family
+                                ? data.family_ttl_sec[ex.scanner_family]
+                                : undefined
+                              return (
+                                <li key={i}>
+                                  <div className="funnel-example-head">
+                                    <span className="mono">{fmtSymbol(ex.symbol || '', undefined)}</span>
+                                    {ex.direction && <span className="text-xs"> {ex.direction}</span>}
+                                    {ex.scanner_family && <span className="text-xs text-muted"> · {ex.scanner_family}</span>}
+                                  </div>
+                                  {row.reason === 'ttl_expired' && ex.expired_seconds != null && (
+                                    <div className="funnel-example-hint">
+                                      expired {fmtDurMin(ex.expired_seconds)} ago
+                                      {familyTtl != null && ` · ttl was ${fmtDurMin(familyTtl)}`}
+                                    </div>
+                                  )}
+                                </li>
+                              )
+                            })}
+                          </ul>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 
-      {hasSnapshot && excluded.length === 0 && (
-        <p className="text-muted text-sm mb-0">Working set clean — no blocks in latest snapshot.</p>
-      )}
-      {!hasSnapshot && (
-        <p className="text-muted text-sm mb-0">
-          No operator eval yet in this session. Snapshot appears after the first candidate refresh.
-        </p>
-      )}
+      {/* Footer — thresholds & context */}
+      <div className="funnel-footer">
+        <div className="funnel-footer-row">
+          <span className="text-xs text-muted">min_confidence_to_trade</span>
+          <button
+            type="button"
+            className="funnel-link mono"
+            onClick={() => navigate('/settings?tab=trading')}
+          >
+            {data.config.min_confidence_to_trade}  ⚙
+          </button>
+        </div>
+        {data.universe_snapshot_age_sec != null && (
+          <div className="funnel-footer-row">
+            <span className="text-xs text-muted">universe snapshot age</span>
+            <span className="mono text-xs">{fmtDurMin(data.universe_snapshot_age_sec)}</span>
+          </div>
+        )}
+      </div>
     </Card>
   )
 }

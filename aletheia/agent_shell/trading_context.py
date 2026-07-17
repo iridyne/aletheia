@@ -193,6 +193,10 @@ def _excluded_candidates_summary(items: list[dict[str, Any]], *, examples_per_re
                 "trade_score": item.get("trade_score"),
                 "scanner_family": item.get("scanner_family"),
                 "skip_reason": raw_reason,
+                # Carrier lifecycle — lets the funnel UI render
+                # "expired X min ago · ttl was N min" for ttl_expired bucket.
+                "opportunity_id": item.get("opportunity_id"),
+                "valid_until": item.get("valid_until"),
             })
     return [
         {"reason": reason, "count": count, "examples": examples.get(reason, [])}
@@ -981,6 +985,7 @@ def _build_layer2_short_term() -> dict[str, Any]:
                 "scanner_family": c.get("scanner_family"),
                 "strategy_id": c.get("strategy_id") or c.get("linked_strategy_id"),
                 "market_type": c.get("market_type") or c.get("market"),
+                "valid_until": c.get("valid_until"),
             }
             for c in candidates
         ]

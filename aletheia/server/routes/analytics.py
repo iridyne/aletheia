@@ -528,24 +528,37 @@ def get_opportunity_funnel(hours: int = 24):
 
     Cumulative counts (window):
       - emitted_count: opportunities.created_at in window
+      - reviewed_count: emitted AND status != 'open' (settled by ranker)
+      - still_open_count: emitted AND status = 'open' (waiting for ranker)
       - proposed_count: trade_proposals.created_at in window
 
     Point-in-time snapshot (latest candidate_supply_snapshot event, written by
     trading_context every operator eval):
       - executable_count: candidates that survived the ranker gates AND have a
-        matching pending signal
+        matching pending signal (= "accepted" in the working set)
       - excluded_by_reason: bucketed skip reasons (confidence_below, guard_blocked,
-        ttl_expired, ...) with a few example candidates
+        ttl_expired, ...) with a few example candidates. Each example carries
+        opportunity_id + valid_until so the UI can render "expired X min ago".
       - main_reason / below_floor: what the operator loop reads to decide whether
-        confidence recovery should fire
+        confidence recovery should fire.
+
+    Auxiliary state:
+      - family_ttl_sec: per-scanner-family TTL from allocator._FAMILY_TTL — the UI
+        needs this to render "ttl was N min" without a second round trip.
+      - universe_snapshot_age_sec: how long since the active universe snapshot was
+        written. Combined with valid_until, this exposes the change-suppression
+        interaction with TTL that drives the "everything ttl_expired" pattern.
 
     Read-only. Consumes existing telemetry — never invokes the ranker/operator.
     """
+    from datetime import datetime, timezone
     from aletheia.storage.sqlite import get_db
     from aletheia.config.loader import load_config
+    from aletheia.universe.allocator import _FAMILY_TTL
 
     db = get_db()
-    window = f"-{max(1, int(hours or 24))} hours"
+    hours_i = max(1, int(hours or 24))
+    window = f"-{hours_i} hours"
 
     def _count(sql: str) -> int:
         try:
@@ -556,6 +569,11 @@ def get_opportunity_funnel(hours: int = 24):
     emitted = _count(
         "SELECT COUNT(*) FROM opportunities WHERE created_at >= datetime('now', ?)"
     )
+    still_open = _count(
+        "SELECT COUNT(*) FROM opportunities "
+        "WHERE created_at >= datetime('now', ?) AND status = 'open'"
+    )
+    reviewed = max(0, emitted - still_open)
     proposed = _count(
         "SELECT COUNT(*) FROM trade_proposals WHERE created_at >= datetime('now', ?)"
     )
@@ -581,12 +599,47 @@ def get_opportunity_funnel(hours: int = 24):
     executable_count = int(snapshot.get("executable_count") or 0)
     excluded_by_reason = list(snapshot.get("excluded_candidates_summary") or [])
 
+    # Enrich TTL-expired examples with expired_seconds so the UI doesn't have to
+    # re-parse timestamps in JS. Values are Best-effort: older snapshots may not
+    # carry valid_until (pre-enrichment) — we simply leave the field null.
+    now = datetime.now(timezone.utc)
+    for bucket in excluded_by_reason:
+        for ex in bucket.get("examples") or []:
+            valid_until = ex.get("valid_until")
+            if valid_until:
+                try:
+                    parsed = datetime.fromisoformat(str(valid_until).replace("Z", "+00:00"))
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    ex["expired_seconds"] = int((now - parsed).total_seconds())
+                except ValueError:
+                    ex["expired_seconds"] = None
+
+    # Universe snapshot age — critical to interpret the ttl_expired pattern,
+    # because the reuse_previous_snapshot short-circuit skips valid_until refresh.
+    snapshot_age_sec = None
+    try:
+        srow = db.execute(
+            "SELECT created_at FROM universe_snapshots "
+            "WHERE market_type = 'crypto' AND (expires_at IS NULL OR expires_at > datetime('now')) "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        if srow and srow["created_at"]:
+            parsed = datetime.fromisoformat(str(srow["created_at"]).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            snapshot_age_sec = int((now - parsed).total_seconds())
+    except Exception:
+        snapshot_age_sec = None
+
     cfg = load_config()
     min_confidence = getattr(cfg.trading, "min_confidence_to_trade", "medium")
 
     return {
-        "window_hours": max(1, int(hours or 24)),
+        "window_hours": hours_i,
         "emitted_count": emitted,
+        "reviewed_count": reviewed,
+        "still_open_count": still_open,
         "proposed_count": proposed,
         "snapshot": {
             "executable_count": executable_count,
@@ -600,6 +653,8 @@ def get_opportunity_funnel(hours: int = 24):
         "config": {
             "min_confidence_to_trade": min_confidence,
         },
+        "family_ttl_sec": dict(_FAMILY_TTL),
+        "universe_snapshot_age_sec": snapshot_age_sec,
     }
 
 
