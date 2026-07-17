@@ -1,6 +1,5 @@
 import asyncio
 import threading
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -216,32 +215,93 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
     assert ("defillama", "skipped_budget") not in health
 
 
-def test_sync_timeout_abandons_hung_function(monkeypatch):
-    """_run_sync_with_timeout abandons a hung sync function via concurrent.futures."""
-    import concurrent.futures
+def test_async_timeout_worker_reuses_one_thread(monkeypatch):
+    """Repeated cooperative timeouts do not allocate disposable worker threads."""
     from aletheia.agent_runtime import scheduler
 
-    hung = threading.Event()
+    monkeypatch.setitem(scheduler._ASYNC_JOB_TIMEOUT_SEC, "market_data", 0.01)
+    scheduler._async_timeout_worker.close()
 
-    def slow_sync():
-        hung.set()
-        time.sleep(60)
+    async def slow():
+        await asyncio.sleep(1)
 
-    # Use a short timeout entry — thread_timeout will be timeout + 15 = 15.05s
-    # but we test the mechanism by submitting to a pool directly with short timeout
-    monkeypatch.setitem(scheduler._ASYNC_JOB_TIMEOUT_SEC, "exchange_sync", 0.05)
+    try:
+        for _ in range(5):
+            with pytest.raises(TimeoutError):
+                scheduler._run_async_with_timeout("market_data", slow())
 
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(slow_sync)
-    hung.wait(timeout=2)
-    assert hung.is_set(), "function should have started"
+        workers = [
+            thread
+            for thread in threading.enumerate()
+            if thread.name == "aletheia-scheduler-async"
+        ]
+        metrics = scheduler.scheduler_timeout_metrics_snapshot()
+        assert len(workers) == 1
+        assert metrics["async_pending"] == 0
+        assert metrics["abandoned_threads"] == 0
+    finally:
+        scheduler._async_timeout_worker.close()
 
-    # The function is running; verify future.result times out
-    import pytest
-    with pytest.raises(concurrent.futures.TimeoutError):
-        future.result(timeout=0.1)
 
-    pool.shutdown(wait=False)
+def test_async_timeout_worker_rejects_when_capacity_is_exhausted(monkeypatch):
+    """An unresponsive loop cannot build an unbounded scheduler queue."""
+    from aletheia.agent_runtime import scheduler
+
+    worker = scheduler._PersistentAsyncTimeoutWorker()
+    monkeypatch.setattr(scheduler, "_TIMEOUT_WORKER_CAPACITY", 1)
+    release = threading.Event()
+
+    async def blocked():
+        await asyncio.to_thread(release.wait)
+
+    first = worker.submit(blocked())
+    try:
+        extra = blocked()
+        with pytest.raises(RuntimeError, match="queue is full"):
+            worker.submit(extra)
+        assert extra.cr_frame is None
+    finally:
+        release.set()
+        first.cancel()
+        worker.close()
+
+
+def test_sync_timeout_worker_reuses_one_daemon_thread():
+    from aletheia.agent_runtime import scheduler
+
+    for _ in range(5):
+        assert scheduler._run_sync_with_timeout("portfolio_snapshot", lambda: "ok") == "ok"
+
+    workers = [
+        thread
+        for thread in threading.enumerate()
+        if thread.name == "aletheia-scheduler-sync"
+    ]
+    metrics = scheduler.scheduler_timeout_metrics_snapshot()
+    assert len(workers) == 1
+    assert workers[0].daemon is True
+    assert metrics["sync_pending"] == 0
+    assert metrics["abandoned_threads"] == 0
+
+
+def test_sync_timeout_worker_rejects_when_capacity_is_exhausted(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+
+    monkeypatch.setattr(scheduler, "_TIMEOUT_WORKER_CAPACITY", 1)
+    worker = scheduler._PersistentSyncTimeoutWorker()
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked():
+        started.set()
+        release.wait(timeout=2)
+
+    first = worker.submit(blocked)
+    assert started.wait(timeout=1)
+    with pytest.raises(RuntimeError, match="queue is full"):
+        worker.submit(lambda: None)
+    release.set()
+    assert first.result(timeout=1) is None
 
 
 def test_scheduler_guard_allows_concurrent_job_bodies():

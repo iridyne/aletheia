@@ -317,11 +317,18 @@ export const api = {
   // Model provider config
   getModelConfig: () => fetchJson<{ default_provider: string; deep_provider: string | null; fast_provider: string | null; providers: Record<string, any> }>('/model'),
   getModelHealth: () => fetchJson<{ provider: string; available: boolean; model: string; error: string | null; models: string[] }[]>('/model/health'),
+  getInferenceBroker: () => fetchJson<{
+    running: boolean
+    providers: Record<string, { policy: Record<string, number>; metrics: Record<string, number> }>
+  }>('/model/broker'),
   pingModel: () => post<{ ok: boolean; latency_ms: number; model: string; response: string; error: string | null }>('/model/ping'),
   setModelProvider: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
     enabled?: boolean; default?: boolean; set_as_deep?: boolean; set_as_fast?: boolean
     api_key?: string; codex_model?: string; workspace_url?: string; auth_scheme?: string
+    inference_max_concurrency?: number; inference_requests_per_minute?: number
+    inference_tpm?: number; inference_queue_capacity?: number
+    inference_reserved_high_priority_slots?: number; inference_timeout_sec?: number
   }) => post('/settings/model', body),
   testModelCandidate: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string

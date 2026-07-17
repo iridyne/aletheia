@@ -1,5 +1,6 @@
 """OpenAI-compatible model provider (chat_completions and responses protocols)."""
 
+import asyncio
 import json
 
 import httpx
@@ -61,10 +62,10 @@ class OpenAICompatibleProvider(ModelProvider):
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
         }
-        async with httpx_client(timeout=60) as client:
-            resp = await client.post(f"{self.base_url}/chat/completions", json=payload, headers=self._headers())
-            _raise_without_secrets(resp)
-            data = resp.json()
+        client = self._get_http_client(httpx_client)
+        resp = await client.post(f"{self.base_url}/chat/completions", json=payload, headers=self._headers())
+        _raise_without_secrets(resp)
+        data = resp.json()
         choice = data["choices"][0]
         raw_content = choice["message"]["content"]
         content = _extract_text_content(raw_content)
@@ -85,10 +86,10 @@ class OpenAICompatibleProvider(ModelProvider):
             "temperature": request.temperature,
             "max_output_tokens": request.max_tokens,
         }
-        async with httpx_client(timeout=60) as client:
-            resp = await client.post(f"{self.base_url}/responses", json=payload, headers=self._headers())
-            _raise_without_secrets(resp)
-            data = resp.json()
+        client = self._get_http_client(httpx_client)
+        resp = await client.post(f"{self.base_url}/responses", json=payload, headers=self._headers())
+        _raise_without_secrets(resp)
+        data = resp.json()
         content = ""
         for item in data.get("output", []):
             if item.get("type") == "message":
@@ -115,11 +116,12 @@ class OpenAICompatibleProvider(ModelProvider):
     async def list_models(self) -> list[dict]:
         """Fetch available models from the OpenAI-compatible /models endpoint."""
         try:
-            async with httpx_client(timeout=4) as client:
+            client = self._get_http_client(httpx_client)
+            async with asyncio.timeout(4):
                 resp = await client.get(f"{self.base_url}/models", headers=self._headers())
-                if resp.status_code != 200:
-                    return []
-                data = resp.json()
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
         except Exception:
             return []
         models = []
@@ -137,24 +139,18 @@ class OpenAICompatibleProvider(ModelProvider):
 
     async def healthcheck(self) -> ModelHealth:
         try:
-            async with httpx_client(timeout=4) as client:
-                resp = await client.get(f"{self.base_url}/models", headers=self._headers())
-                if resp.status_code == 200:
-                    models = await self.list_models()
-                    slugs = [m["slug"] for m in models]
-                    return ModelHealth(
-                        provider=self.name, available=True, model=self.model,
-                        models=slugs, model_metadata=models,
-                    )
-        except Exception:
-            pass
-        # /models not available (Databricks, some gateways) — probe with inference
-        try:
-            from aletheia.model_provider.base import ModelRequest
-            await self.complete(ModelRequest(
-                messages=[{"role": "user", "content": "Say OK"}],
-                max_tokens=200, temperature=0,
-            ))
-            return ModelHealth(provider=self.name, available=True, model=self.model, models=[], model_metadata=[])
+            models = await self.list_models()
+            if models:
+                slugs = [m["slug"] for m in models]
+                return ModelHealth(
+                    provider=self.name, available=True, model=self.model,
+                    models=slugs, model_metadata=models,
+                )
+            return ModelHealth(
+                provider=self.name,
+                available=False,
+                model=self.model,
+                error="model catalogue unavailable; use explicit Ping to test inference",
+            )
         except Exception as e:
             return ModelHealth(provider=self.name, available=False, error=str(e))

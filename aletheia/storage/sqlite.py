@@ -9,6 +9,8 @@ from aletheia.config.loader import get_data_dir
 # One connection per OS thread — eliminates "database is locked" / "no transaction is
 # active" races between APScheduler background threads and uvicorn async handlers.
 _local = threading.local()
+_connection_generation = 0
+_injected_db_path: Path | None = None
 
 
 def db_path() -> Path:
@@ -17,6 +19,10 @@ def db_path() -> Path:
 
 def get_db() -> sqlite3.Connection:
     conn = getattr(_local, "conn", None)
+    if conn is not None and getattr(_local, "generation", -1) != _connection_generation:
+        conn.close()
+        conn = None
+        _local.conn = None
     if conn is None:
         # isolation_level=None → true autocommit. Each DML statement commits
         # immediately unless wrapped in an explicit BEGIN/COMMIT block (via the
@@ -30,7 +36,7 @@ def get_db() -> sqlite3.Connection:
         # in_transaction=True until GC — which never happens for thread-local conns
         # on daemon threads. Under uvicorn this caused permanent "database is locked".
         conn = sqlite3.connect(
-            str(db_path()), check_same_thread=True, timeout=30,
+            str(_injected_db_path or db_path()), check_same_thread=True, timeout=30,
             isolation_level=None,
         )
         conn.row_factory = sqlite3.Row
@@ -43,6 +49,7 @@ def get_db() -> sqlite3.Connection:
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA wal_autocheckpoint=1000")
         _local.conn = conn
+        _local.generation = _connection_generation
     return conn
 
 
@@ -71,7 +78,11 @@ def rollback_if_in_transaction() -> bool:
 
 def reset_db() -> None:
     """Reset connection for this thread (for testing)."""
+    global _connection_generation, _injected_db_path
+
     close_db()
+    _connection_generation += 1
+    _injected_db_path = None
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +97,24 @@ class _DbConnDescriptor:
         return getattr(_local, "conn", None)
 
     def __set__(self, obj, value):
+        global _connection_generation, _injected_db_path
+
         _local.conn = value
+        _connection_generation += 1
+        _local.generation = _connection_generation
+        if value is None:
+            return
+        # Legacy tests inject a file-backed connection on the ASGI loop thread.
+        # Sync FastAPI endpoints correctly run in worker threads, so retain only
+        # the file path and let every worker open its own production-like
+        # thread-local connection. Autocommit mirrors get_db().
+        value.isolation_level = None
+        try:
+            row = value.execute("PRAGMA database_list").fetchone()
+            raw_path = row[2] if row else ""
+            _injected_db_path = Path(raw_path) if raw_path else None
+        except sqlite3.Error:
+            _injected_db_path = None
 
     def __delete__(self, obj):
         _local.conn = None

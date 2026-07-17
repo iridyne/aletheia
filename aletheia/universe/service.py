@@ -11,6 +11,8 @@ import hashlib
 from contextlib import contextmanager
 import json
 import logging
+import threading
+import time
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 
@@ -34,6 +36,35 @@ _SNAPSHOT_HEARTBEAT_SEC = 55 * 60  # 6 × 10-min refresh cadence, minus jitter.
 # alpha_control_observations sampling: reduce from every refresh (~10 min)
 # to once per hour to keep the causal-audit table size bounded.
 _ALPHA_CONTROL_SAMPLE_SEC = 55 * 60
+_publication_metrics_lock = threading.Lock()
+_publication_metrics = {
+    "transactions": 0,
+    "total_ms": 0.0,
+    "max_ms": 0.0,
+}
+
+
+def universe_publication_metrics() -> dict[str, float | int]:
+    with _publication_metrics_lock:
+        count = int(_publication_metrics["transactions"])
+        return {
+            **_publication_metrics,
+            "avg_ms": round(_publication_metrics["total_ms"] / count, 3) if count else 0.0,
+        }
+
+
+def _record_publication_duration(started: float) -> None:
+    duration_ms = (time.monotonic() - started) * 1000
+    with _publication_metrics_lock:
+        _publication_metrics["transactions"] += 1
+        _publication_metrics["total_ms"] = round(
+            _publication_metrics["total_ms"] + duration_ms,
+            3,
+        )
+        _publication_metrics["max_ms"] = round(
+            max(_publication_metrics["max_ms"], duration_ms),
+            3,
+        )
 
 
 @contextmanager
@@ -44,21 +75,25 @@ def _atomic_universe_publication():
     Repository transactions intentionally join that caller, so use a nested
     SAVEPOINT in that case; otherwise acquire the writer slot up front.
     """
-    db = repo.get_db()
-    if not db.in_transaction:
-        with repo.transaction(immediate=True):
-            yield
-        return
-
-    savepoint = f"universe_publication_{uuid4().hex}"
-    db.execute(f"SAVEPOINT {savepoint}")
+    started = time.monotonic()
     try:
-        yield
-        db.execute(f"RELEASE SAVEPOINT {savepoint}")
-    except Exception:
-        db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-        db.execute(f"RELEASE SAVEPOINT {savepoint}")
-        raise
+        db = repo.get_db()
+        if not db.in_transaction:
+            with repo.transaction(immediate=True):
+                yield
+            return
+
+        savepoint = f"universe_publication_{uuid4().hex}"
+        db.execute(f"SAVEPOINT {savepoint}")
+        try:
+            yield
+            db.execute(f"RELEASE SAVEPOINT {savepoint}")
+        except Exception:
+            db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            db.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+    finally:
+        _record_publication_duration(started)
 
 
 def _volume_ranked_instruments(rows: list, default_venue: str):
@@ -201,7 +236,7 @@ def _should_sample_alpha_control(now: datetime) -> bool:
     return (now - parsed).total_seconds() >= _ALPHA_CONTROL_SAMPLE_SEC
 
 
-def _register_experiment_candidate_outcomes(scored: list[dict], cfg, *, entry_ts: str) -> int:
+def _register_experiment_candidate_outcomes(scored: list[dict], cfg, *, entry_ts: str) -> list:
     """P0-3: settle the FULL experiment arms, not just the survivors.
 
     A Universe Learning exposure is created for every calibrated candidate during
@@ -218,39 +253,43 @@ def _register_experiment_candidate_outcomes(scored: list[dict], cfg, *, entry_ts
     branch as ``outcome_candidate_key || ':' || horizon``, which equals the exposure's
     ``outcome_candidate_key`` (``candidate_key:horizon``) — so both arms settle in full.
     """
-    from aletheia.analytics.filter_evidence import ensure_candidate_outcomes
+    from aletheia.analytics.filter_evidence import build_candidate_outcomes
 
     default_venue = getattr(getattr(cfg, "market_data", None), "ccxt_exchange", None)
-    registered = 0
+    outcomes = []
     for item in scored:
         key = item.get("learning_candidate_key")
         if not key:
             continue
         try:
-            registered += ensure_candidate_outcomes(
-                outcome_candidate_key=key,
-                venue=item.get("venue") or default_venue,
-                symbol=item.get("symbol"),
-                market_type=item.get("market_type", "spot"),
-                direction=item.get("scanner_direction") or item.get("direction"),
-                scanner_family=item.get("scanner_family"),
-                regime_tag=None,
-                entry_price_usd=item.get("last_price"),
-                entry_spread_bps=item.get("spread_bps"),
-                funding_rate_at_entry=item.get("funding_rate"),
-                entry_ts=entry_ts,
+            direction = item.get("scanner_direction") or item.get("direction")
+            venue = item.get("venue") or default_venue
+            entry_price = item.get("last_price")
+            if direction not in {"long", "short"} or not venue or not item.get("symbol"):
+                continue
+            if float(entry_price or 0) <= 0:
+                continue
+            outcomes.extend(
+                build_candidate_outcomes(
+                    outcome_candidate_key=key,
+                    venue=venue,
+                    symbol=item.get("symbol"),
+                    market_type=item.get("market_type", "spot"),
+                    direction=direction,
+                    scanner_family=item.get("scanner_family"),
+                    regime_tag=None,
+                    entry_price_usd=float(entry_price),
+                    entry_spread_bps=item.get("spread_bps"),
+                    funding_rate_at_entry=item.get("funding_rate"),
+                    entry_ts=entry_ts,
+                )
             )
         except Exception:
             logger.debug(
                 "experiment candidate outcome registration skipped for %s",
                 item.get("symbol"), exc_info=True,
             )
-    if registered:
-        logger.info(
-            "Registered %d experiment candidate outcome row(s) across full arms "
-            "(selection-bias fix)", registered,
-        )
-    return registered
+    return outcomes
 
 
 class UniverseService:
@@ -319,7 +358,7 @@ class UniverseService:
         from aletheia.universe.allocator import (
             allocate_universe, compute_total_score, get_family_multipliers,
         )
-        from aletheia.universe.outcome_recorder import settle_due, register_pending
+        from aletheia.universe.outcome_recorder import build_pending, settle_due
         from aletheia.universe.signal_emitter import (
             emit_deterministic_opportunities,
             _infer_direction,
@@ -513,110 +552,100 @@ class UniverseService:
                 }),
             )
             attempted_snapshot_id = snap.id
+            # Precompute every member object and JSON payload before acquiring
+            # SQLite's single writer slot. The transaction below should spend
+            # its time executing SQL, not serializing Python structures.
+            regime_tag = current_regime.state if current_regime else None
+            member_models: list[UniverseMember] = []
+            inserted_members: list[dict] = []
+            for rank, item in enumerate(allocated, 1):
+                ttl_sec = min(item.get("ttl_sec", 3600), snapshot_ttl_sec)
+                member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
+                entry_price = item.get("last_price")
+                scanner_direction = (
+                    item.get("scanner_direction")
+                    or _infer_direction(item.get("scanner_family"), item)
+                )
+                member = UniverseMember(
+                    snapshot_id=snap.id,
+                    asset_id=item["asset_id"],
+                    symbol=item["symbol"],
+                    market_type=item.get("market_type", "spot"),
+                    rank=rank,
+                    total_score=item["total_score"],
+                    opportunity_score=item.get("opportunity_score"),
+                    tradability_score=item.get("tradability_score"),
+                    liquidity_score=item.get("liquidity_score"),
+                    estimated_cost=item.get("estimated_cost"),
+                    crowding_risk=item.get("crowding_risk"),
+                    late_entry_penalty=item.get("late_entry_penalty"),
+                    scanner_family=item.get("scanner_family"),
+                    scanner_direction=scanner_direction,
+                    regime_tag=regime_tag,
+                    all_scores=json.dumps(item.get("all_scores", {})),
+                    quote_volume_24h=item.get("quote_volume_24h"),
+                    spread_bps=item.get("spread_bps"),
+                    ttl_sec=ttl_sec,
+                    expires_at=member_expires,
+                    inclusion_reason=json.dumps(item.get("reasons", [])),
+                    risk_flags=json.dumps(item.get("risk_flags", [])),
+                    execution_eligible=item.get("execution_eligible", True),
+                    entry_price_usd=entry_price,
+                )
+                member_models.append(member)
+                inserted_members.append({
+                    "id": member.id,
+                    "snapshot_id": snap.id,
+                    "symbol": item["symbol"],
+                    "venue": item.get("venue") or cfg.market_data.ccxt_exchange,
+                    "market_type": item.get("market_type", "spot"),
+                    "scanner_family": item.get("scanner_family"),
+                    "regime_tag": regime_tag,
+                    "direction": scanner_direction,
+                    "entry_price_usd": entry_price,
+                    "spread_bps": item.get("spread_bps"),
+                    "funding_rate": item.get("funding_rate"),
+                    "total_score": item["total_score"],
+                    "learning_candidate_key": item.get("learning_candidate_key"),
+                    "learning_exposure_id": item.get("learning_exposure_id"),
+                    "expires_at": member_expires,
+                })
+            entry_ts = now.isoformat()
+            pending_outcomes = build_pending(inserted_members, entry_ts=entry_ts)
+            try:
+                experiment_outcomes = _register_experiment_candidate_outcomes(
+                    scored, cfg, entry_ts=entry_ts,
+                ) or []
+            except Exception as e:
+                experiment_outcomes = []
+                logger.debug("experiment candidate outcome build skipped: %s", e)
+            sample_alpha_control = _should_sample_alpha_control(now)
             # Do not expose the new active snapshot before every selected member
             # and its Opportunity handoff are durable. Superseding the previous
             # healthy snapshot is the final write in this publication unit.
             with _atomic_universe_publication():
                 repo.insert_universe_snapshot(snap)
-
-                regime_tag = current_regime.state if current_regime else None
-                inserted_members: list[dict] = []
-                for rank, item in enumerate(allocated, 1):
-                    ttl_sec = min(item.get("ttl_sec", 3600), snapshot_ttl_sec)
-                    member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
-                    entry_price = item.get("last_price")
-                    scanner_direction = (
-                        item.get("scanner_direction")
-                        or _infer_direction(item.get("scanner_family"), item)
-                    )
-                    member = UniverseMember(
-                        snapshot_id=snap.id,
-                        asset_id=item["asset_id"],
-                        symbol=item["symbol"],
-                        market_type=item.get("market_type", "spot"),
-                        rank=rank,
-                        total_score=item["total_score"],
-                        opportunity_score=item.get("opportunity_score"),
-                        tradability_score=item.get("tradability_score"),
-                        liquidity_score=item.get("liquidity_score"),
-                        estimated_cost=item.get("estimated_cost"),
-                        crowding_risk=item.get("crowding_risk"),
-                        late_entry_penalty=item.get("late_entry_penalty"),
-                        scanner_family=item.get("scanner_family"),
-                        scanner_direction=scanner_direction,
-                        regime_tag=regime_tag,
-                        all_scores=json.dumps(item.get("all_scores", {})),
-                        quote_volume_24h=item.get("quote_volume_24h"),
-                        spread_bps=item.get("spread_bps"),
-                        ttl_sec=ttl_sec,
-                        expires_at=member_expires,
-                        inclusion_reason=json.dumps(item.get("reasons", [])),
-                        risk_flags=json.dumps(item.get("risk_flags", [])),
-                        execution_eligible=item.get("execution_eligible", True),
-                        entry_price_usd=entry_price,
-                    )
-                    repo.insert_universe_member(member)
-                    inserted_members.append({
-                        "id": member.id,
-                        "snapshot_id": snap.id,
-                        "symbol": item["symbol"],
-                        "venue": item.get("venue") or cfg.market_data.ccxt_exchange,
-                        # Carry market_type so signal_emitter labels perp opportunities
-                        # correctly. Without this key every emitted opportunity fell back
-                        # to "spot" (signal_emitter:70), mislabeling perp/derivatives.
-                        "market_type": item.get("market_type", "spot"),
-                        "scanner_family": item.get("scanner_family"),
-                        "regime_tag": regime_tag,
-                        # Direction MUST come from the same source the opportunity
-                        # uses (signal_emitter: scanner_direction first). Re-inferring
-                        # here dropped the scanner's own direction — momentum/event
-                        # candidates whose _infer_direction returned None were logged
-                        # to forward outcomes as direction=None (54% of momentum rows),
-                        # and the recorded direction could disagree with the emitted
-                        # opportunity, double-corrupting win-rate stats.
-                        "direction": scanner_direction,
-                        "entry_price_usd": entry_price,
-                        "spread_bps": item.get("spread_bps"),
-                        "funding_rate": item.get("funding_rate"),
-                        "total_score": item["total_score"],
-                        "learning_candidate_key": item.get("learning_candidate_key"),
-                        "learning_exposure_id": item.get("learning_exposure_id"),
-                        "expires_at": member_expires,
-                    })
+                repo.insert_universe_members_batch(member_models)
 
                 # Register forward outcome tracking for all members with valid prices
                 try:
-                    register_pending(inserted_members, entry_ts=now.isoformat())
+                    repo.insert_forward_outcomes_batch(pending_outcomes)
                 except Exception as e:
                     logger.warning("Forward outcome registration failed (non-fatal): %s", e)
-
-                # Phase 3 retention: alpha_control_observations sampling reduced
-                # from every refresh (~10 min) to once per hour. Universe
-                # allocation is stable enough over an hour that the causal
-                # signal is preserved at 1/6 the row count.
-                if _should_sample_alpha_control(now):
-                    try:
-                        from aletheia.analytics.causal_controls import record_universe_control_cohort
-                        record_universe_control_cohort(
-                            snapshot_id=snap.id,
-                            selected_members=inserted_members,
-                            scored_candidates=scored,
-                            entry_ts=now.isoformat(),
-                        )
-                    except Exception as e:
-                        logger.debug("Universe causal control cohort logging skipped: %s", e)
-                else:
-                    logger.debug(
-                        "Universe causal control cohort sampling skipped (hourly cadence)"
-                    )
 
                 # P0-3: settle the full treatment/control arms (every exposed candidate),
                 # not only the allocator's survivors, so the contribution verdict is not
                 # corrupted by post-treatment selection bias.
                 try:
-                    _register_experiment_candidate_outcomes(
-                        scored, cfg, entry_ts=now.isoformat()
+                    inserted_experiment_outcomes = (
+                        repo.insert_filter_candidate_outcomes_batch(experiment_outcomes)
                     )
+                    if inserted_experiment_outcomes:
+                        logger.info(
+                            "Registered %d experiment candidate outcome row(s) "
+                            "across full arms",
+                            inserted_experiment_outcomes,
+                        )
                 except Exception as e:
                     logger.debug("experiment candidate outcome registration skipped: %s", e)
 
@@ -629,6 +658,27 @@ class UniverseService:
                     short_enabled=cfg.regime.short_enabled,
                 )
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
+
+            # Alpha-control observations are analytics telemetry, not part of
+            # snapshot/Opportunity authority. Persist them after the atomic
+            # publication so their JSON/control construction cannot extend the
+            # SQLite writer critical section.
+            if sample_alpha_control:
+                try:
+                    from aletheia.analytics.causal_controls import record_universe_control_cohort
+
+                    record_universe_control_cohort(
+                        snapshot_id=snap.id,
+                        selected_members=inserted_members,
+                        scored_candidates=scored,
+                        entry_ts=entry_ts,
+                    )
+                except Exception as e:
+                    logger.debug("Universe causal control cohort logging skipped: %s", e)
+            else:
+                logger.debug(
+                    "Universe causal control cohort sampling skipped (hourly cadence)"
+                )
 
             repo.update_universe_scanner_run(
                 run.id,

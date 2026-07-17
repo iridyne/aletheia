@@ -124,7 +124,7 @@ def _cached_compute_health(ttl_sec: float = 5.0) -> dict:
 
 
 @router.get("/health")
-async def health():
+def health():
     h = _cached_compute_health()
     return {
         "status": "healthy" if h["healthy"] else "degraded",
@@ -134,7 +134,7 @@ async def health():
 
 
 @router.get("/infra/events")
-async def infra_events(limit: int = 20, min_severity: str | None = None):
+def infra_events(limit: int = 20, min_severity: str | None = None):
     """Recent sanitized infra/runtime events for dashboard status surfaces."""
     return {
         "events": list_infra_events(limit=limit, min_severity=min_severity),
@@ -142,7 +142,7 @@ async def infra_events(limit: int = 20, min_severity: str | None = None):
 
 
 @router.get("/ready")
-async def ready():
+def ready():
     """Cheap liveness probe for the dashboard reconnect guard.
 
     This intentionally avoids DB/config reads: if this route responds, the HTTP
@@ -152,7 +152,7 @@ async def ready():
 
 
 @infra_router.get("/livez")
-async def infra_livez():
+def infra_livez():
     """Infra liveness probe: process + HTTP loop are alive.
 
     No DB/config/health rollup is read here. This endpoint is deliberately safe
@@ -163,7 +163,7 @@ async def infra_livez():
 
 
 @infra_router.get("/readyz")
-async def infra_readyz():
+def infra_readyz():
     """Infra readiness probe: API is serving and dashboard static is present.
 
     Degraded trading/model/market health stays visible on `/api/health`; it does
@@ -175,7 +175,7 @@ async def infra_readyz():
 
 
 @infra_router.get("/status")
-async def infra_status():
+def infra_status():
     """Cheap infra snapshot for diagnostics and future stable front-door use."""
     cfg = load_config()
     status_code, readiness = _readiness_payload()
@@ -206,7 +206,7 @@ def infra_doctor():
 
 
 @router.get("/version")
-async def version():
+def version():
     from aletheia.agent_runtime.build_info import get_boot_commit
     return {
         "version": __version__,
@@ -217,7 +217,7 @@ async def version():
 
 
 @router.get("/stability")
-async def stability():
+def stability():
     """Quantified stability report — orphan counts, strategy_id drift, 24h failure
     ratio, uptime, 0-100 score. Read-only; safe for dashboards. Closes the gap
     between 'process alive' (health) and 'data internally consistent' (north-star
@@ -227,7 +227,7 @@ async def stability():
 
 
 @router.get("/status")
-async def status():
+def status():
     cfg = load_config()
     paper_execution_mode = cfg.exchange.paper_execution_mode
     uses_external_exchange = paper_execution_mode != "paper_internal"
@@ -292,7 +292,7 @@ async def status():
 
 
 @router.post("/gateway/pause")
-async def pause():
+def pause():
     cfg = load_config()
     cfg.runtime.paused = True
     save_config(cfg)

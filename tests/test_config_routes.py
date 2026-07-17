@@ -52,6 +52,16 @@ async def test_get_model_config(client):
 
 
 @pytest.mark.anyio
+async def test_get_inference_broker_metrics_is_sanitized(client):
+    response = await client.get("/api/model/broker")
+
+    assert response.status_code == 200
+    assert set(response.json()) == {"running", "providers"}
+    assert "api_key" not in response.text
+    assert "oauth" not in response.text
+
+
+@pytest.mark.anyio
 async def test_set_model_provider(client):
     resp = await client.post("/api/settings/model", json={
         "provider": "openai_compatible",
@@ -65,6 +75,35 @@ async def test_set_model_provider(client):
     resp = await client.get("/api/model")
     assert resp.json()["providers"]["openai_compatible"]["base_url"] == "http://localhost:9000/v1"
     assert resp.json()["providers"]["openai_compatible"]["model"] == "my-model"
+
+
+@pytest.mark.anyio
+async def test_set_model_inference_limits_are_visible_and_validated(client):
+    response = await client.post("/api/settings/model", json={
+        "provider": "openai_compatible",
+        "inference_max_concurrency": 3,
+        "inference_requests_per_minute": 40,
+        "inference_tpm": 90_000,
+        "inference_queue_capacity": 20,
+        "inference_reserved_high_priority_slots": 4,
+        "inference_timeout_sec": 180,
+    })
+    assert response.status_code == 200
+
+    provider = (await client.get("/api/model")).json()["providers"]["openai_compatible"]
+    assert provider["inference_max_concurrency"] == 3
+    assert provider["inference_requests_per_minute"] == 40
+    assert provider["inference_tpm"] == 90_000
+    assert provider["inference_queue_capacity"] == 20
+    assert provider["inference_reserved_high_priority_slots"] == 4
+    assert provider["inference_timeout_sec"] == 180
+
+    invalid = await client.post("/api/settings/model", json={
+        "provider": "openai_compatible",
+        "inference_queue_capacity": 2,
+        "inference_reserved_high_priority_slots": 3,
+    })
+    assert invalid.status_code == 422
 
 
 @pytest.mark.anyio

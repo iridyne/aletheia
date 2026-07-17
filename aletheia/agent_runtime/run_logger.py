@@ -9,19 +9,71 @@ from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_agent_run_log, write_audit
 
 
-def start_run(agent_name: str, trigger_type: str, permission_mode: str, model_provider: str | None = None) -> AgentRun:
+def _create_run(
+    agent_name: str,
+    trigger_type: str,
+    permission_mode: str,
+    model_provider: str | None,
+    *,
+    status: str,
+    event: str,
+) -> AgentRun:
     run = AgentRun(
         agent_name=agent_name,
         trigger_type=trigger_type,
         permission_mode=permission_mode,
         model_provider=model_provider,
+        status=status,
     )
     insert_agent_run(run)
-    write_agent_run_log({"event": "run_started", **run.model_dump()})
+    write_agent_run_log({"event": event, **run.model_dump()})
     return run
 
 
+def start_run(agent_name: str, trigger_type: str, permission_mode: str, model_provider: str | None = None) -> AgentRun:
+    return _create_run(
+        agent_name,
+        trigger_type,
+        permission_mode,
+        model_provider,
+        status="running",
+        event="run_started",
+    )
+
+
+def queue_run(agent_name: str, trigger_type: str, permission_mode: str, model_provider: str | None = None) -> AgentRun:
+    return _create_run(
+        agent_name,
+        trigger_type,
+        permission_mode,
+        model_provider,
+        status="queued",
+        event="run_queued",
+    )
+
+
+def begin_queued_run(run: AgentRun, *, permission_mode: str, model_provider: str | None) -> None:
+    """Transition a pre-created manual job from queued to running."""
+
+    run.permission_mode = permission_mode
+    run.model_provider = model_provider
+    run.status = "running"
+    update_agent_run(
+        run.id,
+        status="running",
+        permission_mode=permission_mode,
+        model_provider=model_provider,
+    )
+    write_agent_run_log({"event": "run_started", **run.model_dump()})
+
+
 def end_run(run: AgentRun, status: str = "completed", outputs: list[str] | None = None, errors: list[str] | None = None) -> None:
+    try:
+        from aletheia.agents.helpers import flush_run_telemetry
+
+        flush_run_telemetry(run.id)
+    except Exception:
+        pass
     tools_called = _aggregate_tools_called(run.id)
     update_data = {
         "status": status,
@@ -65,7 +117,7 @@ def mark_stale_running_runs(
     reason: str = "gateway startup reconciled incomplete agent run",
     source: str = "agent_runtime",
 ) -> int:
-    """Mark leftover `running` agent rows as stale.
+    """Mark leftover `running` or `queued` agent rows as stale.
 
     A gateway restart can interrupt an agent between `start_run()` and
     `end_run()`. Leaving those rows as `running` makes the dashboard claim work is
@@ -74,8 +126,8 @@ def mark_stale_running_runs(
     """
     now = datetime.now(timezone.utc)
     ended_at = now.isoformat()
-    where = "status = ?"
-    params: list[object] = ["running"]
+    where = "status IN (?, ?)"
+    params: list[object] = ["running", "queued"]
     if max_age_minutes is not None:
         cutoff = (now - timedelta(minutes=max_age_minutes)).isoformat()
         where += " AND started_at <= ?"
@@ -103,9 +155,16 @@ def mark_stale_running_runs(
                 """
                 UPDATE agent_runs
                 SET status = ?, ended_at = ?, errors = ?
-                WHERE id = ? AND status = ?
+                WHERE id = ? AND status IN (?, ?)
                 """,
-                ("stale", ended_at, json.dumps(errors, ensure_ascii=False), row["id"], "running"),
+                (
+                    "stale",
+                    ended_at,
+                    json.dumps(errors, ensure_ascii=False),
+                    row["id"],
+                    "running",
+                    "queued",
+                ),
             )
             if cur.rowcount:
                 marked += 1
@@ -133,9 +192,11 @@ def mark_stale_running_runs(
                 "event_type": "agent_runs_marked_stale",
                 "entity_type": "agent_run",
                 "entity_id": "multiple",
-                "before_state": {"status": "running", "count": marked},
+        "before_state": {"status": "running_or_queued", "count": marked},
                 "after_state": {"status": "stale", "count": marked},
-                "message": f"{marked} running agent run(s) marked stale: {reason}",
+                "message": (
+                    f"{marked} running or queued agent run(s) marked stale: {reason}"
+                ),
             }
         )
     return marked

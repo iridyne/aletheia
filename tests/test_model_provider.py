@@ -1,5 +1,6 @@
 """Tests for model provider layer."""
 
+import asyncio
 import pytest
 from unittest.mock import patch, AsyncMock
 import json
@@ -9,7 +10,14 @@ from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
 from aletheia.model_provider.databricks import DatabricksProvider, _normalize_workspace_url
 from aletheia.model_provider.codex_cli import CodexCLIProvider
-from aletheia.model_provider.router import get_provider, clear_cache
+from aletheia.model_provider.router import (
+    clear_cache,
+    healthcheck_all,
+    invalidate_health_cache,
+    invalidate_model_directory,
+    get_provider,
+    list_models_cached,
+)
 
 
 def test_router_injects_api_key_from_secret_ref(tmp_path, monkeypatch):
@@ -106,6 +114,93 @@ def test_router_raises_clear_error_when_no_provider_configured(tmp_path, monkeyp
 
 
 @pytest.mark.anyio
+async def test_model_directory_cache_is_single_flight():
+    invalidate_model_directory("test_provider")
+
+    class FakeProvider:
+        calls = 0
+
+        async def list_models(self):
+            self.calls += 1
+            await asyncio.sleep(0.03)
+            return [{"slug": "m1", "display_name": "M1"}]
+
+    provider = FakeProvider()
+    first, second, third = await asyncio.gather(
+        list_models_cached("test_provider", provider),
+        list_models_cached("test_provider", provider),
+        list_models_cached("test_provider", provider),
+    )
+
+    assert first == second == third
+    assert provider.calls == 1
+    cached = await list_models_cached("test_provider", provider)
+    assert cached == first
+    assert provider.calls == 1
+    invalidate_model_directory("test_provider")
+
+
+@pytest.mark.anyio
+async def test_http_provider_reuses_loop_owned_client(monkeypatch):
+    created = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"data": [{"id": "m1"}]}
+
+    class FakeClient:
+        async def get(self, url, headers=None):
+            return FakeResponse()
+
+        async def aclose(self):
+            return None
+
+    def factory(*, timeout):
+        created.append(timeout)
+        return FakeClient()
+
+    monkeypatch.setattr(
+        "aletheia.model_provider.openai_compatible.httpx_client",
+        factory,
+    )
+    provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")
+
+    assert await provider.list_models()
+    assert await provider.list_models()
+    assert len(created) == 1
+    await provider.aclose()
+
+
+@pytest.mark.anyio
+async def test_model_health_cache_is_single_flight(monkeypatch):
+    calls = 0
+
+    async def fake_refresh():
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.03)
+        return [ModelHealth(provider="fake", available=True, model="m1")]
+
+    invalidate_health_cache()
+    monkeypatch.setattr(
+        "aletheia.model_provider.router._refresh_health_all",
+        fake_refresh,
+    )
+    snapshots = await asyncio.gather(
+        healthcheck_all(),
+        healthcheck_all(),
+        healthcheck_all(),
+    )
+    assert calls == 1
+    assert all(snapshot[0].available for snapshot in snapshots)
+    assert (await healthcheck_all())[0].model == "m1"
+    assert calls == 1
+    invalidate_health_cache()
+
+
+@pytest.mark.anyio
 async def test_codex_healthcheck_disabled():
     provider = CodexCLIProvider(enabled=False)
     health = await provider.healthcheck()
@@ -139,6 +234,9 @@ async def test_inline_candidate_key_used_in_healthcheck():
 
     class FakeResp:
         status_code = 200
+
+        def json(self):
+            return {"data": [{"id": "m"}]}
 
     class FakeClient:
         def __init__(self, *a, **k): pass

@@ -5,12 +5,17 @@ returns a key. GET responses only report whether a key is configured + last-4.
 """
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from aletheia.config.loader import load_config, save_config
 from aletheia.config.secrets import set_secret, get_secret
 from aletheia.files.jsonl import write_audit
-from aletheia.model_provider.router import clear_cache, healthcheck_all, PROVIDER_REGISTRY
+from aletheia.model_provider.router import (
+    clear_cache,
+    clear_cache_async,
+    healthcheck_all,
+    PROVIDER_REGISTRY,
+)
 
 router = APIRouter(prefix="/api", tags=["model"])
 
@@ -18,6 +23,16 @@ VALID_PROVIDERS = set(PROVIDER_REGISTRY.keys())
 
 HTTP_PROVIDERS = {"openai_compatible", "anthropic_compatible", "anthropic_native", "openai_native"}
 CLI_PROVIDERS = {"codex_cli", "claude_cli"}
+
+
+async def _close_candidate_provider(provider) -> None:
+    """Close every loop-owned pool used by an ephemeral candidate probe."""
+
+    from aletheia.model_provider.broker import inference_broker
+
+    if inference_broker.running:
+        await inference_broker.run_auxiliary(provider.aclose)
+    await provider.aclose()
 
 
 def _key_status(secret_ref: str | None) -> dict:
@@ -31,7 +46,7 @@ def _key_status(secret_ref: str | None) -> dict:
 
 
 @router.get("/model")
-async def get_model_config():
+def get_model_config():
     """Return provider config + key-configured status (NEVER the raw key)."""
     cfg = load_config()
     providers = {}
@@ -46,6 +61,12 @@ async def get_model_config():
             "api_key": _key_status(pcfg.api_key_secret_ref),
             "auth_type": pcfg.auth_type,
             "oauth": _key_status(pcfg.oauth_token_ref),
+            "inference_max_concurrency": pcfg.inference_max_concurrency,
+            "inference_requests_per_minute": pcfg.inference_requests_per_minute,
+            "inference_tpm": pcfg.inference_tokens_per_minute,
+            "inference_queue_capacity": pcfg.inference_queue_capacity,
+            "inference_reserved_high_priority_slots": pcfg.inference_reserved_high_priority_slots,
+            "inference_timeout_sec": pcfg.inference_timeout_sec,
         }
         if ptype in HTTP_PROVIDERS:
             entry["base_url"] = pcfg.base_url
@@ -76,6 +97,15 @@ async def get_model_health():
     ]
 
 
+@router.get("/model/broker")
+async def get_model_broker():
+    """Sanitized process-local inference admission and queue-wait metrics."""
+
+    from aletheia.model_provider.broker import inference_broker
+
+    return await inference_broker.snapshot()
+
+
 @router.post("/model/ping")
 async def ping_model():
     """Instant inference test on the current default provider.
@@ -86,15 +116,22 @@ async def ping_model():
     import time
     from aletheia.model_provider.router import get_provider_async
     from aletheia.model_provider.base import ModelRequest
+    from aletheia.model_provider.broker import (
+        InferencePriority,
+        brokered_complete,
+    )
+    from aletheia.config.loader import load_config
 
     t0 = time.monotonic()
     try:
-        provider = await get_provider_async()
-        resp = await provider.complete(ModelRequest(
+        cfg = load_config()
+        provider_name = cfg.models.default_provider
+        provider = await get_provider_async(provider_name)
+        resp = await brokered_complete(provider_name, provider, ModelRequest(
             messages=[{"role": "user", "content": "Say OK"}],
             max_tokens=10,
             temperature=0,
-        ))
+        ), priority=InferencePriority.INTERACTIVE)
         latency_ms = int((time.monotonic() - t0) * 1000)
         content = (resp.content or "").strip()
         if not content:
@@ -109,7 +146,7 @@ async def ping_model():
 
 
 @router.get("/model/provider-types")
-async def get_provider_types():
+def get_provider_types():
     """Return schema metadata for each provider type (used by frontend for dynamic forms)."""
     return {
         "openai_compatible": {
@@ -193,8 +230,11 @@ async def detect_models(req: DetectModelsRequest):
     else:
         raise HTTPException(400, f"No detect-models support for {req.provider}")
 
-    models = await provider.list_models()
-    return {"models": models}
+    try:
+        models = await provider.list_models()
+        return {"models": models}
+    finally:
+        await _close_candidate_provider(provider)
 
 
 class TestCandidateRequest(BaseModel):
@@ -255,23 +295,27 @@ async def test_model_candidate(req: TestCandidateRequest):
     else:
         raise HTTPException(400, f"No test-candidate support for {req.provider}")
 
-    health = await provider.healthcheck()
-    if not health.available:
-        return {"available": False, "model": health.model, "error": health.error}
+    try:
+        health = await provider.healthcheck()
+        if not health.available:
+            return {"available": False, "model": health.model, "error": health.error}
 
-    if req.probe:
-        from aletheia.model_provider.base import ModelRequest
-        try:
-            resp = await provider.complete(ModelRequest(
-                messages=[{"role": "user", "content": "Say OK"}],
-                max_tokens=200, temperature=0,
-            ))
-            # Thinking-mode models may exhaust budget on reasoning without text;
-            # a successful HTTP round-trip is sufficient proof of connectivity.
-        except Exception as e:
-            return {"available": False, "model": health.model, "error": f"inference failed: {e}"}
+        if req.probe:
+            from aletheia.model_provider.base import ModelRequest
+            from aletheia.model_provider.broker import InferencePriority, brokered_complete
+            try:
+                await brokered_complete(req.provider, provider, ModelRequest(
+                    messages=[{"role": "user", "content": "Say OK"}],
+                    max_tokens=200, temperature=0,
+                ), priority=InferencePriority.INTERACTIVE)
+                # Thinking-mode models may exhaust budget on reasoning without text;
+                # a successful HTTP round-trip is sufficient proof of connectivity.
+            except Exception as e:
+                return {"available": False, "model": health.model, "error": f"inference failed: {e}"}
 
-    return {"available": True, "model": health.model, "error": None, "models": health.models}
+        return {"available": True, "model": health.model, "error": None, "models": health.models}
+    finally:
+        await _close_candidate_provider(provider)
 
 
 # --- Codex subscription provider: web-triggered device-auth login + model listing ---
@@ -298,7 +342,7 @@ async def codex_login_status():
 
 
 @router.post("/model/codex/login-cancel")
-async def codex_login_cancel():
+def codex_login_cancel():
     from aletheia.model_provider import codex_auth
     result = codex_auth.cancel()
     write_audit({
@@ -338,6 +382,12 @@ class ModelConfigRequest(BaseModel):
     auth_scheme: str | None = None
     model_fallback_enabled: bool | None = None
     fallback_models: list[str] | None = None
+    inference_max_concurrency: int | None = Field(default=None, ge=1, le=16)
+    inference_requests_per_minute: int | None = Field(default=None, ge=0, le=10_000)
+    inference_tpm: int | None = Field(default=None, ge=0, le=100_000_000)
+    inference_queue_capacity: int | None = Field(default=None, ge=1, le=1_000)
+    inference_reserved_high_priority_slots: int | None = Field(default=None, ge=0, le=1_000)
+    inference_timeout_sec: float | None = Field(default=None, ge=1, le=1_800)
 
 
 @router.post("/settings/model")
@@ -379,6 +429,23 @@ async def set_model(req: ModelConfigRequest):
         pcfg.fallback_models = list(dict.fromkeys(
             m.strip() for m in req.fallback_models if isinstance(m, str) and m.strip()
         ))
+    for field_name in (
+        "inference_max_concurrency",
+        "inference_requests_per_minute",
+        "inference_queue_capacity",
+        "inference_reserved_high_priority_slots",
+        "inference_timeout_sec",
+    ):
+        value = getattr(req, field_name)
+        if value is not None:
+            setattr(pcfg, field_name, value)
+    if req.inference_tpm is not None:
+        pcfg.inference_tokens_per_minute = req.inference_tpm
+    if pcfg.inference_reserved_high_priority_slots > pcfg.inference_queue_capacity:
+        raise HTTPException(
+            422,
+            "inference_reserved_high_priority_slots cannot exceed inference_queue_capacity",
+        )
     if req.default:
         cfg.models.default_provider = req.provider
     if req.set_as_deep:
@@ -392,7 +459,10 @@ async def set_model(req: ModelConfigRequest):
         pcfg.api_key_secret_ref = secret_ref
 
     save_config(cfg)
-    clear_cache()
+    await clear_cache_async()
+    from aletheia.model_provider.broker import inference_broker
+
+    await inference_broker.invalidate_provider(req.provider)
 
     write_audit({
         "actor": "human",
@@ -424,14 +494,14 @@ async def openai_oauth_start():
 
 
 @router.get("/model/openai-oauth/status")
-async def openai_oauth_status():
+def openai_oauth_status():
     """Poll OpenAI OAuth login status. No tokens exposed, no side-effects."""
     from aletheia.model_provider import openai_oauth
     return openai_oauth.get_status()
 
 
 @router.post("/model/openai-oauth/finalize")
-async def openai_oauth_finalize():
+def openai_oauth_finalize():
     """Persist completed OpenAI OAuth tokens. Idempotent — safe to call multiple times."""
     from aletheia.model_provider import openai_oauth
     from aletheia.config.secrets import get_secret
@@ -466,7 +536,7 @@ async def openai_oauth_cancel():
 
 
 @router.post("/model/openai-oauth/disconnect")
-async def openai_oauth_disconnect():
+def openai_oauth_disconnect():
     """Disconnect OpenAI OAuth — clear tokens, revert to api_key auth."""
     from aletheia.config.secrets import set_secret
     cfg = load_config()
@@ -555,20 +625,20 @@ async def claude_oauth_complete(req: ClaudeOAuthCompleteRequest):
 
 
 @router.get("/model/claude-oauth/status")
-async def claude_oauth_status():
+def claude_oauth_status():
     """Poll Claude OAuth login status."""
     from aletheia.model_provider import claude_oauth
     return claude_oauth.get_status()
 
 
 @router.post("/model/claude-oauth/cancel")
-async def claude_oauth_cancel():
+def claude_oauth_cancel():
     from aletheia.model_provider import claude_oauth
     return claude_oauth.cancel()
 
 
 @router.post("/model/claude-oauth/disconnect")
-async def claude_oauth_disconnect():
+def claude_oauth_disconnect():
     """Disconnect Claude OAuth — clear tokens, revert to api_key auth."""
     from aletheia.config.secrets import set_secret
     cfg = load_config()

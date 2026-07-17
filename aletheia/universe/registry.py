@@ -120,7 +120,7 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
     venue = md.ccxt_exchange
     fallback_venue = md.ccxt_fallback or venue
     provider = CCXTProvider(exchange=venue, fallback_exchange=fallback_venue)
-    count = 0
+    assets: list[UniverseAsset] = []
     sync_started_at = datetime.now(timezone.utc).isoformat()
 
     try:
@@ -195,16 +195,18 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
                 is_blacklisted=blacklisted,
                 blacklist_reason="config_blacklist" if blacklisted else None,
             )
-            repo.upsert_universe_asset(asset)
-            count += 1
+            assets.append(asset)
 
+        count, deactivated_other, deactivated_stale = repo.sync_universe_assets(
+            assets,
+            active_venue=venue,
+            stale_cutoff_iso=sync_started_at,
+        )
         # Deactivate other venues' assets (exchange was switched)
-        deactivated_other = repo.deactivate_universe_assets_not_in_venue(venue)
         if deactivated_other:
             logger.info("Deactivated %d assets from other venues", deactivated_other)
 
         # Deactivate symbols no longer seen on current venue
-        deactivated_stale = repo.deactivate_stale_universe_assets(venue, sync_started_at)
         if deactivated_stale:
             logger.info("Deactivated %d stale assets from %s", deactivated_stale, venue)
 

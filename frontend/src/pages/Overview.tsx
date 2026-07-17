@@ -41,7 +41,7 @@ export default function Overview() {
   const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
   const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
   const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
-  const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
+  const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 30000 })
   const { data: collectorHealth } = useQuery({
     queryKey: ['collector-health'],
     queryFn: api.getCollectorHealth,

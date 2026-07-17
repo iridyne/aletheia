@@ -3,6 +3,8 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 import json
+import threading
+import time
 import uuid
 from aletheia.storage.sqlite import get_db
 from aletheia.storage.models import (
@@ -16,6 +18,28 @@ from aletheia.storage.models import (
 )
 
 _PROVENANCE_FIELDS = ("runtime_session_id", "producer_commit", "behavior_fingerprint")
+_retention_metrics_lock = threading.Lock()
+_retention_metrics: dict[str, dict[str, float | int]] = {}
+
+
+def retention_metrics_snapshot() -> dict[str, dict[str, float | int]]:
+    with _retention_metrics_lock:
+        return {table: dict(values) for table, values in _retention_metrics.items()}
+
+
+def _record_retention_batch(table: str, deleted: int, duration_ms: float) -> None:
+    with _retention_metrics_lock:
+        metrics = _retention_metrics.setdefault(
+            table,
+            {"batches": 0, "deleted": 0, "total_ms": 0.0, "max_batch_ms": 0.0},
+        )
+        metrics["batches"] += 1
+        metrics["deleted"] += deleted
+        metrics["total_ms"] = round(float(metrics["total_ms"]) + duration_ms, 3)
+        metrics["max_batch_ms"] = round(
+            max(float(metrics["max_batch_ms"]), duration_ms),
+            3,
+        )
 
 
 def _stamp_provenance(data: dict) -> dict:
@@ -45,6 +69,22 @@ def _insert(table: str, data: dict) -> None:
     cols = ", ".join(data.keys())
     placeholders = ", ".join(["?"] * len(data))
     db.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", list(data.values()))
+
+
+def _insert_many(table: str, rows: list[dict]) -> int:
+    """Insert homogeneous rows with one executemany call in the current transaction."""
+
+    if not rows:
+        return 0
+    columns = list(rows[0])
+    if any(list(row) != columns for row in rows):
+        raise ValueError(f"{table} batch rows must have identical ordered columns")
+    placeholders = ", ".join(["?"] * len(columns))
+    get_db().executemany(
+        f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})",
+        [[row[column] for column in columns] for row in rows],
+    )
+    return len(rows)
 
 
 def _select_all(table: str, where: str | None = None, params: tuple = (), order: str = "rowid DESC", limit: int = 100) -> list[dict]:
@@ -2848,7 +2888,19 @@ def insert_tool_call(run_id: str, tool_name: str, tool_class: str, permitted: bo
 
 def list_tool_calls(run_id: str | None = None, limit: int = 100) -> list[dict]:
     if run_id:
+        try:
+            from aletheia.agents.helpers import flush_run_telemetry
+
+            flush_run_telemetry(run_id)
+        except Exception:
+            pass
         return _select_all("agent_tool_calls", where="run_id = ?", params=(run_id,), limit=limit)
+    try:
+        from aletheia.agents.helpers import flush_all_agent_telemetry
+
+        flush_all_agent_telemetry()
+    except Exception:
+        pass
     return _select_all("agent_tool_calls", limit=limit)
 
 
@@ -2872,6 +2924,42 @@ def insert_run_step(run_id: str, step_number: int, action: str,
     })
 
 
+def insert_agent_telemetry_batch(events: list[dict]) -> int:
+    """Flush buffered, non-authoritative Agent trace telemetry in one transaction."""
+
+    from aletheia.storage.models import new_id
+
+    tool_rows: list[dict] = []
+    step_rows: list[dict] = []
+    for event in events:
+        created_at = event.get("created_at") or _step_timestamp()
+        if event.get("kind") == "tool":
+            tool_rows.append({
+                "id": new_id(),
+                "run_id": event["run_id"],
+                "tool_name": event["tool_name"],
+                "tool_class": event["tool_class"],
+                "input_data": event.get("input_data"),
+                "output_data": event.get("output_data"),
+                "permitted": 1 if event.get("permitted") else 0,
+                "created_at": created_at,
+            })
+        elif event.get("kind") == "step":
+            step_rows.append({
+                "id": new_id(),
+                "run_id": event["run_id"],
+                "step_number": event["step_number"],
+                "action": event["action"],
+                "input_data": event.get("input_data"),
+                "output_data": event.get("output_data"),
+                "created_at": created_at,
+            })
+    with transaction():
+        _insert_many("agent_tool_calls", tool_rows)
+        _insert_many("agent_run_steps", step_rows)
+    return len(tool_rows) + len(step_rows)
+
+
 def list_run_steps(run_id: str, limit: int = 500) -> list[dict]:
     """Return a run's reasoning/action trace in execution order.
 
@@ -2884,6 +2972,12 @@ def list_run_steps(run_id: str, limit: int = 500) -> list[dict]:
     `action = 'tool:<tool_name>'` and a `source='tool_call'` marker so callers
     that want to style them distinctly can.
     """
+    try:
+        from aletheia.agents.helpers import flush_run_telemetry
+
+        flush_run_telemetry(run_id)
+    except Exception:
+        pass
     db = get_db()
     steps = db.execute(
         "SELECT id, run_id, action, input_data, output_data, created_at, "
@@ -3005,19 +3099,50 @@ def _delete_old_rows(
     else:
         raise ValueError(f"table {table!r} is not prunable")
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    # See _insert: commit when not nested in a transaction(). The old
-    # `and not db.in_transaction` guard never fired (DELETE auto-opens a tx).
-    was_in_tx = db.in_transaction
     where = f"{ts_col} < ?"
     params = (cutoff,)
     if extra_where:
         where = f"({where}) AND ({extra_where})"
         params = (*params, *extra_params)
-    cur = db.execute(f"DELETE FROM {table} WHERE {where}", params)
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount if cur.rowcount is not None else 0
+    return _delete_by_rowid_batches(table, where, params)
+
+
+def _delete_by_rowid_batches(
+    table: str,
+    where: str,
+    params: tuple = (),
+    *,
+    batch_size: int = 5_000,
+) -> int:
+    """Delete telemetry in bounded writer transactions and publish batch metrics."""
+
+    db = get_db()
+    total = 0
+    size = max(1, int(batch_size))
+    while True:
+        rowids = [
+            row[0]
+            for row in db.execute(
+                f"SELECT rowid FROM {table} WHERE {where} ORDER BY rowid LIMIT ?",
+                (*params, size),
+            ).fetchall()
+        ]
+        if not rowids:
+            break
+        placeholders = ",".join("?" for _ in rowids)
+        started = time.monotonic()
+        with transaction():
+            cur = db.execute(
+                f"DELETE FROM {table} WHERE rowid IN ({placeholders})",
+                rowids,
+            )
+        deleted = max(0, cur.rowcount or 0)
+        duration_ms = (time.monotonic() - started) * 1000
+        _record_retention_batch(table, deleted, duration_ms)
+        total += deleted
+        if len(rowids) < size or deleted == 0:
+            break
+    return total
 
 
 def prune_agent_runs(days: int = 30) -> int:
@@ -3025,17 +3150,39 @@ def prune_agent_runs(days: int = 30) -> int:
     # Delete children first in the same transaction to avoid IntegrityError.
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
-    run_ids = [row[0] for row in db.execute(
-        "SELECT id FROM agent_runs WHERE started_at < ?", (cutoff,)
-    ).fetchall()]
-    if not run_ids:
-        return 0
-    placeholders = ",".join("?" * len(run_ids))
-    with transaction():
-        db.execute(f"DELETE FROM agent_run_steps WHERE run_id IN ({placeholders})", run_ids)
-        db.execute(f"DELETE FROM agent_tool_calls WHERE run_id IN ({placeholders})", run_ids)
-        db.execute("DELETE FROM agent_runs WHERE started_at < ?", (cutoff,))
-    return len(run_ids)
+    total = 0
+    while True:
+        run_ids = [row[0] for row in db.execute(
+            "SELECT id FROM agent_runs WHERE started_at < ? ORDER BY started_at LIMIT 1000",
+            (cutoff,),
+        ).fetchall()]
+        if not run_ids:
+            break
+        placeholders = ",".join("?" * len(run_ids))
+        started = time.monotonic()
+        with transaction():
+            db.execute(
+                f"DELETE FROM agent_run_steps WHERE run_id IN ({placeholders})",
+                run_ids,
+            )
+            db.execute(
+                f"DELETE FROM agent_tool_calls WHERE run_id IN ({placeholders})",
+                run_ids,
+            )
+            cur = db.execute(
+                f"DELETE FROM agent_runs WHERE id IN ({placeholders})",
+                run_ids,
+            )
+        deleted = max(0, cur.rowcount or 0)
+        _record_retention_batch(
+            "agent_runs",
+            deleted,
+            (time.monotonic() - started) * 1000,
+        )
+        total += deleted
+        if len(run_ids) < 1000 or deleted == 0:
+            break
+    return total
 
 
 def prune_run_steps(days: int = 14) -> int:
@@ -3130,12 +3277,7 @@ def prune_filter_decisions(
     if min_experiment_started_at is None:
         min_experiment_started_at = _min_open_experiment_started_at()
     cutoff = _effective_cutoff(days, min_experiment_started_at)
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM filter_decisions WHERE evaluated_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches("filter_decisions", "evaluated_at < ?", (cutoff,))
 
 
 def prune_filter_candidate_outcomes(
@@ -3151,12 +3293,9 @@ def prune_filter_candidate_outcomes(
     if min_experiment_started_at is None:
         min_experiment_started_at = _min_open_experiment_started_at()
     cutoff = _effective_cutoff(days, min_experiment_started_at)
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM filter_candidate_outcomes WHERE entry_ts < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "filter_candidate_outcomes", "entry_ts < ?", (cutoff,)
+    )
 
 
 def prune_operator_evaluation_events(days: int = 30) -> int:
@@ -3271,6 +3410,7 @@ def prune_system_actions(days: int = 7) -> int:
 # ---------------------------------------------------------------------------
 
 _OHLCV_WINDOW_DEFAULT = 50_000  # max bars kept per (symbol, timeframe) pair
+_OHLCV_PRUNE_MARGIN = 1_000
 
 
 def _ohlcv_window() -> int:
@@ -3301,7 +3441,7 @@ def upsert_ohlcv_candles(
         return
     effective_exchange = (exchange or "legacy_unknown").lower()
     effective_market_type = market_type or "spot"
-    effective_window = window if window is not None else _ohlcv_window()
+    effective_window = max(1, int(window if window is not None else _ohlcv_window()))
     db = get_db()
     was_in_tx = db.in_transaction
     db.executemany(
@@ -3314,17 +3454,26 @@ def upsert_ohlcv_candles(
             for c in candles
         ],
     )
-    db.execute(
-        "DELETE FROM market_ohlcv "
-        "WHERE exchange = ? AND symbol = ? AND market_type = ? AND timeframe = ? "
-        "AND ts NOT IN ("
-        "  SELECT ts FROM market_ohlcv "
-        "  WHERE exchange = ? AND symbol = ? AND market_type = ? AND timeframe = ? "
-        "  ORDER BY ts DESC LIMIT ?"
-        ")",
-        (effective_exchange, symbol, effective_market_type, timeframe,
-         effective_exchange, symbol, effective_market_type, timeframe, effective_window),
-    )
+    scope = (effective_exchange, symbol, effective_market_type, timeframe)
+    row_count = db.execute(
+        "SELECT COUNT(*) FROM market_ohlcv "
+        "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=?",
+        scope,
+    ).fetchone()[0]
+    if row_count > effective_window + _OHLCV_PRUNE_MARGIN:
+        cutoff_row = db.execute(
+            "SELECT ts FROM market_ohlcv "
+            "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? "
+            "ORDER BY ts DESC LIMIT 1 OFFSET ?",
+            (*scope, effective_window - 1),
+        ).fetchone()
+        if cutoff_row is not None:
+            db.execute(
+                "DELETE FROM market_ohlcv "
+                "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? "
+                "AND ts < ?",
+                (*scope, cutoff_row[0]),
+            )
     if not was_in_tx:
         db.commit()
 
@@ -3549,6 +3698,53 @@ def upsert_universe_asset(asset: UniverseAsset) -> None:
         db.commit()
 
 
+def sync_universe_assets(
+    assets: list[UniverseAsset],
+    *,
+    active_venue: str,
+    stale_cutoff_iso: str,
+) -> tuple[int, int, int]:
+    """Bulk upsert one registry refresh and set-deactivate stale rows atomically."""
+
+    rows = [asset.model_dump() for asset in assets]
+    columns = list(rows[0]) if rows else list(UniverseAsset.model_fields)
+    placeholders = ", ".join(["?"] * len(columns))
+    update_columns = [
+        "status",
+        "last_seen_at",
+        "min_notional",
+        "price_precision",
+        "amount_precision",
+        "is_blacklisted",
+        "blacklist_reason",
+        "metadata",
+    ]
+    update_sql = ", ".join(
+        f"{column}=excluded.{column}" for column in update_columns
+    )
+    db = get_db()
+    with transaction():
+        if rows:
+            db.executemany(
+                f"INSERT INTO universe_registry ({', '.join(columns)}) "
+                f"VALUES ({placeholders}) "
+                "ON CONFLICT(venue, symbol, market_type) DO UPDATE SET "
+                f"{update_sql}",
+                [[row[column] for column in columns] for row in rows],
+            )
+        other = db.execute(
+            "UPDATE universe_registry SET status='inactive' "
+            "WHERE venue != ? AND status='active'",
+            (active_venue,),
+        ).rowcount
+        stale = db.execute(
+            "UPDATE universe_registry SET status='inactive' "
+            "WHERE venue = ? AND status='active' AND last_seen_at < ?",
+            (active_venue, stale_cutoff_iso),
+        ).rowcount
+    return len(rows), other, stale
+
+
 def deactivate_universe_assets_not_in_venue(active_venue: str) -> int:
     """Mark all registry rows from other venues as inactive."""
     db = get_db()
@@ -3605,7 +3801,23 @@ def get_universe_asset(asset_id: str) -> dict | None:
 
 
 def insert_universe_feature_snapshot(snap: UniverseFeatureSnapshot) -> None:
-    _insert("universe_feature_snapshots", snap.model_dump())
+    data = snap.model_dump()
+    data.pop("raw", None)
+    _insert("universe_feature_snapshots", data)
+
+
+def insert_universe_feature_snapshots_batch(
+    snapshots: list[UniverseFeatureSnapshot],
+) -> int:
+    """Persist one feature-collection pass in one executemany transaction."""
+
+    rows = []
+    for snapshot in snapshots:
+        data = snapshot.model_dump()
+        data.pop("raw", None)
+        rows.append(data)
+    with transaction():
+        return _insert_many("universe_feature_snapshots", rows)
 
 
 def insert_universe_scanner_run(run: UniverseScannerRun) -> None:
@@ -3651,6 +3863,15 @@ def expire_universe_snapshots(market_type: str = "crypto", except_id: str | None
 
 def insert_universe_member(member: UniverseMember) -> None:
     _insert("universe_members", member.model_dump())
+
+
+def insert_universe_members_batch(members: list[UniverseMember]) -> int:
+    if not members:
+        return 0
+    return _insert_many(
+        "universe_members",
+        [member.model_dump() for member in members],
+    )
 
 
 def list_universe_members(snapshot_id: str, limit: int = 50) -> list[dict]:
@@ -3732,18 +3953,13 @@ def insert_forward_outcome(outcome) -> None:
 
 
 def insert_forward_outcomes_batch(outcomes: list) -> None:
-    db = get_db()
-    was_in_tx = db.in_transaction
-    for o in outcomes:
-        data = o.model_dump()
-        cols = ", ".join(data.keys())
-        placeholders = ", ".join(["?"] * len(data))
-        db.execute(
-            f"INSERT INTO universe_forward_outcomes ({cols}) VALUES ({placeholders})",
-            list(data.values()),
+    if not outcomes:
+        return
+    with transaction():
+        _insert_many(
+            "universe_forward_outcomes",
+            [outcome.model_dump() for outcome in outcomes],
         )
-    if not was_in_tx:
-        db.commit()
 
 
 def list_pending_forward_outcomes(before_ts: str, limit: int = 500) -> list[dict]:
@@ -3849,21 +4065,18 @@ def insert_filter_candidate_outcomes_batch(outcomes: list) -> int:
     """Register fixed-horizon candidate outcomes without duplicating a candidate."""
     if not outcomes:
         return 0
+    rows = [outcome.model_dump() for outcome in outcomes]
+    columns = list(rows[0])
+    placeholders = ", ".join("?" for _ in columns)
     db = get_db()
-    was_in_tx = db.in_transaction
-    inserted = 0
-    for outcome in outcomes:
-        data = outcome.model_dump()
-        cols = ", ".join(data.keys())
-        placeholders = ", ".join("?" for _ in data)
-        cur = db.execute(
-            f"INSERT OR IGNORE INTO filter_candidate_outcomes ({cols}) VALUES ({placeholders})",
-            list(data.values()),
+    before = db.total_changes
+    with transaction():
+        db.executemany(
+            f"INSERT OR IGNORE INTO filter_candidate_outcomes "
+            f"({', '.join(columns)}) VALUES ({placeholders})",
+            [[row[column] for column in columns] for row in rows],
         )
-        inserted += max(0, cur.rowcount or 0)
-    if not was_in_tx:
-        db.commit()
-    return inserted
+    return db.total_changes - before
 
 
 def list_pending_filter_candidate_outcomes(
@@ -4358,6 +4571,62 @@ def insert_open_interest_snapshot(data: dict) -> None:
     _insert("open_interest_snapshots", data)
 
 
+class CollectorBatchPersistError(RuntimeError):
+    """Identify which collector domain caused an atomic batch rollback."""
+
+    def __init__(self, stage: str, cause: BaseException) -> None:
+        self.stage = stage
+        super().__init__(f"collector batch {stage} persistence failed: {cause}")
+
+
+def insert_collector_snapshot_batch(
+    *,
+    orderbooks: list[dict] | None = None,
+    funding: list[dict] | None = None,
+    open_interest: list[dict] | None = None,
+    liquidations: list[dict] | None = None,
+) -> dict[str, int]:
+    """Persist one collector tick in one short transaction.
+
+    Funding keeps its existing duplicate-heartbeat guard. The guard still reads
+    per instrument, but all accepted DML shares one commit instead of generating
+    one WAL commit per snapshot.
+    """
+
+    counts = {"orderbooks": 0, "funding": 0, "open_interest": 0}
+    if liquidations is not None:
+        counts["liquidations"] = 0
+    if not orderbooks and not funding and not open_interest and not liquidations:
+        return counts
+    with transaction():
+        try:
+            for row in orderbooks or []:
+                insert_orderbook_snapshot(dict(row))
+                counts["orderbooks"] += 1
+        except Exception as exc:
+            raise CollectorBatchPersistError("orderbooks", exc) from exc
+        try:
+            before = get_db().total_changes
+            for row in funding or []:
+                insert_funding_rate_snapshot(dict(row))
+            counts["funding"] = get_db().total_changes - before
+        except Exception as exc:
+            raise CollectorBatchPersistError("funding", exc) from exc
+        try:
+            for row in open_interest or []:
+                insert_open_interest_snapshot(dict(row))
+                counts["open_interest"] += 1
+        except Exception as exc:
+            raise CollectorBatchPersistError("open_interest", exc) from exc
+        try:
+            for row in liquidations or []:
+                insert_liquidation_event(dict(row))
+                counts["liquidations"] += 1
+        except Exception as exc:
+            raise CollectorBatchPersistError("liquidations", exc) from exc
+    return counts
+
+
 def latest_open_interest(symbol: str, exchange: str | None = None) -> dict | None:
     where_tail, extra = _latest_deriv_where(exchange)
     rows = _select_all(
@@ -4614,25 +4883,18 @@ def insert_coingecko_top_rows(rows: list[dict]) -> int:
     if not rows:
         return 0
     from aletheia.storage.models import new_id
+    prepared = [dict(row) for row in rows]
+    for row in prepared:
+        row.setdefault("id", new_id())
     db = get_db()
     already_in_tx = db.in_transaction
     if not already_in_tx:
         db.execute("BEGIN")
     try:
-        n = 0
-        for row in rows:
-            if "id" not in row:
-                row["id"] = new_id()
-            cols = ", ".join(row.keys())
-            placeholders = ", ".join(["?"] * len(row))
-            db.execute(
-                f"INSERT INTO coingecko_top_snapshots ({cols}) VALUES ({placeholders})",
-                list(row.values()),
-            )
-            n += 1
+        inserted = _insert_many("coingecko_top_snapshots", prepared)
         if not already_in_tx:
             db.commit()
-        return n
+        return inserted
     except Exception:
         if not already_in_tx:
             db.rollback()
@@ -4664,33 +4926,23 @@ def prune_coingecko_top_snapshots(days: int = 3) -> int:
     """~14k rows/day; default lowered 14d→3d (Phase 3). Freshness doctor probe
     reads MAX(observed_at) which is unaffected by shorter history."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute(
-        "DELETE FROM coingecko_top_snapshots WHERE observed_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "coingecko_top_snapshots", "observed_at < ?", (cutoff,)
+    )
 
 
 def prune_orderbook_snapshots(days: int = 7) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM orderbook_snapshots WHERE observed_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "orderbook_snapshots", "observed_at < ?", (cutoff,)
+    )
 
 
 def prune_perp_structure_snapshots(days: int = 30) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM perp_structure_snapshots WHERE observed_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "perp_structure_snapshots", "observed_at < ?", (cutoff,)
+    )
 
 
 def prune_perp_structure_shadow_outcomes(days: int = 30) -> int:
@@ -4720,6 +4972,20 @@ def insert_onchain_snapshot(data: dict) -> None:
     if "id" not in data:
         data["id"] = new_id()
     _insert("onchain_snapshots", data)
+
+
+def insert_onchain_snapshot_batch(rows: list[dict]) -> int:
+    """Persist one DefiLlama result set with one executemany call."""
+
+    if not rows:
+        return 0
+    from aletheia.storage.models import new_id
+
+    prepared = [dict(row) for row in rows]
+    for row in prepared:
+        row.setdefault("id", new_id())
+    with transaction():
+        return _insert_many("onchain_snapshots", prepared)
 
 
 def latest_onchain_snapshots(
@@ -4756,14 +5022,9 @@ def prune_onchain_snapshots(days: int = 30) -> int:
     ≈ 8640 rows/day — capped at 30d default (≈ 259k rows max).
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute(
-        "DELETE FROM onchain_snapshots WHERE observed_at < ?", (cutoff,)
+    return _delete_by_rowid_batches(
+        "onchain_snapshots", "observed_at < ?", (cutoff,)
     )
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
 
 
 def prune_prediction_probability_snapshots(days: int = 90) -> int:
@@ -4771,22 +5032,16 @@ def prune_prediction_probability_snapshots(days: int = 90) -> int:
     telemetry (prediction_observer, 30-min cadence, gated on prediction_enabled) that
     previously had no retention path."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM prediction_probability_snapshots WHERE ts < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "prediction_probability_snapshots", "ts < ?", (cutoff,)
+    )
 
 
 def prune_liquidation_events(days: int = 7) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM liquidation_events WHERE observed_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "liquidation_events", "observed_at < ?", (cutoff,)
+    )
 
 
 def _max_open_position_hold_hours() -> int:
@@ -4817,34 +5072,31 @@ def prune_funding_rate_snapshots(days: int = 7) -> int:
     """
     floor_hours = max(24 * days, 2 * _max_open_position_hold_hours())
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=floor_hours)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM funding_rate_snapshots WHERE observed_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "funding_rate_snapshots",
+        "observed_at < ?",
+        (cutoff,),
+    )
 
 
 def prune_open_interest_snapshots(days: int = 7) -> int:
     """Prune open-interest history. Default lowered 30d→7d (Phase 3)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM open_interest_snapshots WHERE observed_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "open_interest_snapshots",
+        "observed_at < ?",
+        (cutoff,),
+    )
 
 
 def prune_universe_feature_snapshots(days: int = 14) -> int:
     """Prune universe_feature_snapshots. Default lowered 30d→14d (Phase 3)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM universe_feature_snapshots WHERE ts < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "universe_feature_snapshots",
+        "ts < ?",
+        (cutoff,),
+    )
 
 
 def prune_universe_forward_outcomes(days: int = 30) -> int:
@@ -4855,21 +5107,15 @@ def prune_universe_forward_outcomes(days: int = 30) -> int:
     anyway; 30d keeps the retention windows aligned. (DB-SIZE / B-sweep gap #1.)
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM universe_forward_outcomes WHERE entry_ts < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "universe_forward_outcomes",
+        "entry_ts < ?",
+        (cutoff,),
+    )
 
 def prune_macro_snapshots(days: int = 90) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM macro_snapshots WHERE observed_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches("macro_snapshots", "observed_at < ?", (cutoff,))
 
 
 def save_volume_ranking_snapshot(symbols: list, observed_at: str) -> None:
@@ -4912,23 +5158,17 @@ def get_volume_ranking_snapshot() -> dict:
 def prune_agent_shell_heartbeats(days: int = 2) -> int:
     """Prune old agent_shell_heartbeats rows (latest-row-only liveness telemetry)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM agent_shell_heartbeats WHERE created_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "agent_shell_heartbeats", "created_at < ?", (cutoff,)
+    )
 
 
 def prune_agent_shell_events(days: int = 14) -> int:
     """Prune old agent_shell_events rows (telemetry, no causal-chain value)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM agent_shell_events WHERE created_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "agent_shell_events", "created_at < ?", (cutoff,)
+    )
 
 
 def prune_agent_shell_messages(
@@ -5041,34 +5281,21 @@ def prune_market_regimes(days: int = 60) -> int:
     """Prune market_regimes older than ``days``. Latest row protected by heartbeat floor
     in insert_market_regime — the doctor probe reads MAX(detected_at) unaffected."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM market_regimes WHERE detected_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches("market_regimes", "detected_at < ?", (cutoff,))
 
 
 def prune_serenity_evidence(days: int = 60) -> int:
     """Prune serenity_evidence older than ``days`` (by created_at)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM serenity_evidence WHERE created_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches("serenity_evidence", "created_at < ?", (cutoff,))
 
 
 def prune_serenity_run_events(days: int = 60) -> int:
     """Prune serenity_run_events older than ``days`` (by created_at)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM serenity_run_events WHERE created_at < ?", (cutoff,))
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
+    return _delete_by_rowid_batches(
+        "serenity_run_events", "created_at < ?", (cutoff,)
+    )
 
 
 def prune_runtime_sessions(days: int = 30) -> int:
@@ -5401,24 +5628,21 @@ def prune_market_ohlcv(
     if ttl_days:
         ttl.update(ttl_days)
     now = datetime.now(timezone.utc)
-    db = get_db()
-    was_in_tx = db.in_transaction
     total = 0
     for timeframe, days in ttl.items():
         cutoff_ms = int(
             (now - timedelta(days=days)).timestamp() * 1000
         )
-        cur = db.execute(
-            "DELETE FROM market_ohlcv WHERE timeframe = ? AND ts < ?",
+        total += _delete_by_rowid_batches(
+            "market_ohlcv",
+            "timeframe = ? AND ts < ?",
             (timeframe, cutoff_ms),
         )
-        total += cur.rowcount or 0
-    legacy = db.execute(
-        "DELETE FROM market_ohlcv WHERE exchange = 'legacy_unknown'"
+    total += _delete_by_rowid_batches(
+        "market_ohlcv",
+        "exchange = ?",
+        ("legacy_unknown",),
     )
-    total += legacy.rowcount or 0
-    if not was_in_tx:
-        db.commit()
     return total
 
 

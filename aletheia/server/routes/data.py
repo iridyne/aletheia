@@ -217,26 +217,26 @@ def _build_research_cycle_payload(opportunity: dict) -> dict:
 
 
 @router.get("/agent-runs")
-async def get_agent_runs():
+def get_agent_runs():
     _ensure_db()
     return repo.list_agent_runs()
 
 
 @router.get("/agent-runs/{run_id}")
-async def get_agent_run(run_id: str):
+def get_agent_run(run_id: str):
     _ensure_db()
     return repo.get_agent_run(run_id)
 
 
 @router.get("/agent-runs/{run_id}/tool-calls")
-async def get_agent_run_tool_calls(run_id: str):
+def get_agent_run_tool_calls(run_id: str):
     """Get structured tool call records for a specific agent run."""
     _ensure_db()
     return repo.list_tool_calls(run_id=run_id, limit=200)
 
 
 @router.get("/agent-runs/{run_id}/steps")
-async def get_agent_run_steps(run_id: str):
+def get_agent_run_steps(run_id: str):
     """Get the ordered reasoning/action steps (inputs/outputs) for an agent run.
 
     UNIONs `agent_run_steps` (non-tool reasoning steps) with `agent_tool_calls`
@@ -279,16 +279,42 @@ class StartAgentRequest(BaseModel):
     agent_name: str = "market_observer"
 
 
-@router.post("/agent-runs/start")
-async def start_agent_run(req: StartAgentRequest):
+@router.post("/agent-runs/start", status_code=202)
+def start_agent_run(req: StartAgentRequest):
     _ensure_db()
-    from aletheia.agent_runtime.orchestrator import run_agent
-    result = await run_agent(req.agent_name, trigger_type="manual")
-    return result
+    from fastapi import HTTPException
+    from aletheia.agent_runtime.job_queue import (
+        AgentJobManagerClosed,
+        AgentJobQueueFull,
+        get_agent_job_manager,
+    )
+
+    manager = get_agent_job_manager()
+    try:
+        run = manager.enqueue(req.agent_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AgentJobQueueFull as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "agent_job_queue_full",
+                "job_id": exc.run_id,
+                "capacity": exc.capacity,
+            },
+        ) from exc
+    except AgentJobManagerClosed as exc:
+        raise HTTPException(status_code=503, detail="agent_job_manager_unavailable") from exc
+    return {
+        "job_id": run.id,
+        "run_id": run.id,
+        "status": "queued",
+        "queue": manager.snapshot(),
+    }
 
 
 @router.get("/opportunities")
-async def get_opportunities(asset_class: str | None = None):
+def get_opportunities(asset_class: str | None = None):
     _ensure_db()
     if asset_class:
         return repo.list_opportunities_by_asset_class(asset_class)
@@ -306,7 +332,7 @@ class SerenityThemeCreate(BaseModel):
 
 
 @router.get("/serenity/themes")
-async def get_serenity_themes(status: str = Query(default="active")):
+def get_serenity_themes(status: str = Query(default="active")):
     _ensure_db()
     items = repo.list_serenity_themes(status=status)
     for item in items:
@@ -315,7 +341,7 @@ async def get_serenity_themes(status: str = Query(default="active")):
 
 
 @router.post("/serenity/themes")
-async def create_serenity_theme(payload: SerenityThemeCreate):
+def create_serenity_theme(payload: SerenityThemeCreate):
     _ensure_db()
     theme = SerenityTheme(
         name=payload.name,
@@ -331,7 +357,7 @@ async def create_serenity_theme(payload: SerenityThemeCreate):
 
 
 @router.get("/serenity/themes/{theme_id}/overview")
-async def get_serenity_theme_overview(theme_id: str):
+def get_serenity_theme_overview(theme_id: str):
     _ensure_db()
     row = repo.get_serenity_theme(theme_id)
     if row is None:
@@ -360,7 +386,7 @@ async def get_serenity_theme_overview(theme_id: str):
 
 
 @router.get("/serenity/themes/{theme_id}")
-async def get_serenity_theme(theme_id: str):
+def get_serenity_theme(theme_id: str):
     _ensure_db()
     row = repo.get_serenity_theme(theme_id)
     if row is None:
@@ -386,7 +412,7 @@ class SerenityEvidenceCreate(BaseModel):
 
 
 @router.get("/serenity/evidence")
-async def get_serenity_evidence(theme_id: str | None = None, limit: int = 100):
+def get_serenity_evidence(theme_id: str | None = None, limit: int = 100):
     _ensure_db()
     items = repo.list_serenity_evidence(theme_id=theme_id, limit=limit)
     for item in items:
@@ -395,7 +421,7 @@ async def get_serenity_evidence(theme_id: str | None = None, limit: int = 100):
 
 
 @router.post("/serenity/evidence")
-async def create_serenity_evidence(payload: SerenityEvidenceCreate):
+def create_serenity_evidence(payload: SerenityEvidenceCreate):
     _ensure_db()
     evidence = SerenityEvidence(
         theme_id=payload.theme_id,
@@ -436,7 +462,7 @@ class SerenityOpportunityCreate(BaseModel):
 
 
 @router.get("/serenity/opportunities")
-async def get_serenity_opportunities(
+def get_serenity_opportunities(
     theme_id: str | None = None,
     status: str | None = None,
     stage: str | None = None,
@@ -451,7 +477,7 @@ async def get_serenity_opportunities(
 
 
 @router.post("/serenity/opportunities")
-async def create_serenity_opportunity(payload: SerenityOpportunityCreate):
+def create_serenity_opportunity(payload: SerenityOpportunityCreate):
     _ensure_db()
     # #100 fix: manual operator-created opportunities used to copy
     # `payload.evidence_tier` directly into `assessed_tier` and label the
@@ -498,7 +524,7 @@ async def create_serenity_opportunity(payload: SerenityOpportunityCreate):
 
 
 @router.get("/serenity/opportunities/{opportunity_id}")
-async def get_serenity_opportunity(opportunity_id: str, include_scores: bool = True):
+def get_serenity_opportunity(opportunity_id: str, include_scores: bool = True):
     _ensure_db()
     row = repo.get_serenity_opportunity(opportunity_id)
     if row is None:
@@ -511,14 +537,14 @@ async def get_serenity_opportunity(opportunity_id: str, include_scores: bool = T
 
 
 @router.get("/serenity/opportunities/{opportunity_id}/research-cycle")
-async def get_serenity_opportunity_research_cycle(opportunity_id: str):
+def get_serenity_opportunity_research_cycle(opportunity_id: str):
     _ensure_db()
     opp = _ensure_serenity_opportunity_exists(opportunity_id)
     return _build_research_cycle_payload(opp)
 
 
 @router.get("/serenity/opportunities/{opportunity_id}/score")
-async def score_serenity_opportunity_endpoint(opportunity_id: str):
+def score_serenity_opportunity_endpoint(opportunity_id: str):
     _ensure_db()
     opp = repo.get_serenity_opportunity(opportunity_id)
     if opp is None:
@@ -538,14 +564,14 @@ class SerenityRiskGateCreate(BaseModel):
 
 
 @router.get("/serenity/opportunities/{opportunity_id}/risk-gates")
-async def get_serenity_opportunity_risk_gates(opportunity_id: str):
+def get_serenity_opportunity_risk_gates(opportunity_id: str):
     _ensure_db()
     _ensure_serenity_opportunity_exists(opportunity_id)
     return repo.list_serenity_risk_gates(opportunity_id=opportunity_id, limit=200)
 
 
 @router.post("/serenity/opportunities/{opportunity_id}/risk-gates")
-async def create_serenity_opportunity_risk_gate(opportunity_id: str, payload: SerenityRiskGateCreate):
+def create_serenity_opportunity_risk_gate(opportunity_id: str, payload: SerenityRiskGateCreate):
     _ensure_db()
     _ensure_serenity_opportunity_exists(opportunity_id)
     gate = SerenityRiskGate(
@@ -570,14 +596,14 @@ class SerenityReplaySnapshotCreate(BaseModel):
 
 
 @router.get("/serenity/opportunities/{opportunity_id}/replay")
-async def get_serenity_replay(opportunity_id: str, limit: int = 50):
+def get_serenity_replay(opportunity_id: str, limit: int = 50):
     _ensure_db()
     _ensure_serenity_opportunity_exists(opportunity_id)
     return repo.list_serenity_replay_snapshots(opportunity_id=opportunity_id, limit=limit)
 
 
 @router.post("/serenity/opportunities/{opportunity_id}/replay")
-async def create_serenity_replay_snapshot(opportunity_id: str, payload: SerenityReplaySnapshotCreate):
+def create_serenity_replay_snapshot(opportunity_id: str, payload: SerenityReplaySnapshotCreate):
     _ensure_db()
     opp = _ensure_serenity_opportunity_exists(opportunity_id)
     evidence = repo.list_serenity_evidence(theme_id=opp.get("theme_id"), limit=200)
@@ -608,14 +634,14 @@ class SerenityPostMortemCreate(BaseModel):
 
 
 @router.get("/serenity/opportunities/{opportunity_id}/post-mortems")
-async def get_serenity_post_mortems(opportunity_id: str):
+def get_serenity_post_mortems(opportunity_id: str):
     _ensure_db()
     _ensure_serenity_opportunity_exists(opportunity_id)
     return repo.list_serenity_post_mortems(opportunity_id=opportunity_id, limit=200)
 
 
 @router.post("/serenity/opportunities/{opportunity_id}/post-mortems")
-async def create_serenity_post_mortem(opportunity_id: str, payload: SerenityPostMortemCreate):
+def create_serenity_post_mortem(opportunity_id: str, payload: SerenityPostMortemCreate):
     _ensure_db()
     _ensure_serenity_opportunity_exists(opportunity_id)
     row = SerenityPostMortem(
@@ -639,7 +665,7 @@ def _ensure_serenity_opportunity_exists(opportunity_id: str) -> dict:
 
 
 @router.get("/serenity/pipeline")
-async def get_serenity_pipeline():
+def get_serenity_pipeline():
     """Serenity research pipeline summary: recent runs + active opportunity count (D7)."""
     _ensure_db()
     from aletheia.storage.sqlite import get_db as _get_db
@@ -652,13 +678,13 @@ async def get_serenity_pipeline():
 
 
 @router.get("/proposals")
-async def get_proposals():
+def get_proposals():
     _ensure_db()
     return repo.list_trade_proposals()
 
 
 @router.get("/proposals/{proposal_id}")
-async def get_proposal(proposal_id: str):
+def get_proposal(proposal_id: str):
     _ensure_db()
     row = repo.get_trade_proposal(proposal_id)
     if not row:
@@ -801,7 +827,7 @@ def reject_proposal(proposal_id: str):
 
 
 @router.get("/trades")
-async def get_trades():
+def get_trades():
     _ensure_db()
     return repo.list_orders()
 
@@ -889,7 +915,7 @@ def get_portfolio():
 
 
 @router.get("/exchange/account")
-async def get_exchange_account():
+def get_exchange_account():
     """Cached real-account view (closes portfolio-sync-gap).
 
     Read-only. Returns the last sync result + freshness + status. The HTTP path
@@ -930,14 +956,14 @@ def run_positions_reconcile():
 
 
 @router.get("/audit/events")
-async def get_audit_events(limit: int = 100):
+def get_audit_events(limit: int = 100):
     _ensure_db()
     limit = max(1, min(limit, 500))
     return repo.list_audit_events(limit=limit)
 
 
 @router.get("/strategies")
-async def get_strategies():
+def get_strategies():
     _ensure_db()
     return repo.list_strategies()
 
@@ -997,7 +1023,7 @@ def _strategy_operator_summary(strategies: list[dict]) -> dict:
 
 
 @router.get("/strategies/summary")
-async def get_strategy_summary():
+def get_strategy_summary():
     """Operator-facing strategy summary used by the local operator shell."""
     _ensure_db()
     return _strategy_operator_summary(repo.list_strategies(limit=500))
@@ -1005,7 +1031,7 @@ async def get_strategy_summary():
 
 
 @router.get("/market/snapshots")
-async def get_market_snapshots(
+def get_market_snapshots(
     symbol: str | None = None,
     limit: int = 200,
     exchange: str = "",
@@ -1153,13 +1179,13 @@ async def get_market_ohlcv(
 
 
 @router.get("/market/portfolio-history")
-async def get_portfolio_history(limit: int = 500, days: int | None = None):
+def get_portfolio_history(limit: int = 500, days: int | None = None):
     _ensure_db()
     return repo.list_portfolio_snapshots(limit=limit, days=days)
 
 
 @router.get("/market/account-equity-history")
-async def get_account_equity_history(limit: int = 500, days: int | None = None):
+def get_account_equity_history(limit: int = 500, days: int | None = None):
     """One stable account-equity curve for the Overview.
 
     The endpoint selects the current account's explicit equity snapshot field.
@@ -1189,7 +1215,7 @@ async def get_account_equity_history(limit: int = 500, days: int | None = None):
 
 
 @router.get("/market/macro")
-async def get_macro_snapshot():
+def get_macro_snapshot():
     """Latest macro snapshot: VIX, DXY, SPY, BTC dominance, risk regime."""
     _ensure_db()
     snap = repo.latest_macro_snapshot()
@@ -1217,7 +1243,7 @@ def get_market_data_coverage():
 
 
 @router.get("/knowledge")
-async def get_knowledge(type: str = Query(default="research_note")):
+def get_knowledge(type: str = Query(default="research_note")):
     _ensure_db()
     if type not in VALID_KNOWLEDGE_TYPES:
         raise HTTPException(400, f"Invalid knowledge type. Choose from: {sorted(VALID_KNOWLEDGE_TYPES)}")
@@ -1225,25 +1251,25 @@ async def get_knowledge(type: str = Query(default="research_note")):
 
 
 @router.get("/knowledge/research-notes")
-async def get_research_notes():
+def get_research_notes():
     _ensure_db()
     return repo.list_knowledge_items(item_type="research_note")
 
 
 @router.get("/knowledge/dreaming-logs")
-async def get_dreaming_logs():
+def get_dreaming_logs():
     _ensure_db()
     return repo.list_knowledge_items(item_type="dreaming_log")
 
 
 @router.get("/knowledge/strategy-memory")
-async def get_strategy_memory():
+def get_strategy_memory():
     _ensure_db()
     return repo.list_knowledge_items(item_type="strategy_memory")
 
 
 @router.get("/knowledge/guards")
-async def get_guards():
+def get_guards():
     """List all active trading guards."""
     try:
         from aletheia.knowledge.guards import load_trading_guards
@@ -1254,7 +1280,7 @@ async def get_guards():
 
 
 @router.get("/knowledge/guard-candidates")
-async def get_guard_candidates():
+def get_guard_candidates():
     """List guard candidates awaiting manual review."""
     try:
         from aletheia.knowledge.guards import load_trading_guards
@@ -1265,7 +1291,7 @@ async def get_guard_candidates():
 
 
 @router.post("/knowledge/guard-candidates/{guard_id}/promote")
-async def promote_guard_candidate(guard_id: str):
+def promote_guard_candidate(guard_id: str):
     """Manually promote a candidate guard to an active trading guard."""
     from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
     from aletheia.knowledge.guards import load_trading_guards
@@ -1287,7 +1313,7 @@ async def promote_guard_candidate(guard_id: str):
 
 
 @router.get("/knowledge/guards/stats")
-async def get_guard_stats():
+def get_guard_stats():
     """Guard effectiveness statistics."""
     try:
         from aletheia.analytics.guard_effectiveness import compute_guard_stats
@@ -1297,13 +1323,13 @@ async def get_guard_stats():
 
 
 @router.get("/knowledge/case-studies")
-async def get_case_studies():
+def get_case_studies():
     _ensure_db()
     return repo.list_knowledge_items(item_type="trade_case_study")
 
 
 @router.get("/proposals/{proposal_id}/risk-decision")
-async def get_proposal_risk_decision(proposal_id: str):
+def get_proposal_risk_decision(proposal_id: str):
     """Get risk decision for a specific proposal."""
     _ensure_db()
     rows = repo._select_all("risk_decisions", where="proposal_id = ?", params=(proposal_id,), limit=1)
@@ -1313,7 +1339,7 @@ async def get_proposal_risk_decision(proposal_id: str):
 
 
 @router.get("/dreaming/summary")
-async def get_dreaming_summary():
+def get_dreaming_summary():
     """Aggregated dreaming/learning summary for the Dreaming page (§23.5).
 
     Returns recent 24h activity across knowledge types + deprecated items.
@@ -1370,7 +1396,7 @@ async def get_dreaming_summary():
 
 
 @router.get("/reviews/summary")
-async def get_reviews_summary():
+def get_reviews_summary():
     """Aggregated post-trade review summary for operator delegation.
 
     Returns recent closed positions, recent post-trade reviews, recent reviewer runs,
@@ -1429,7 +1455,7 @@ async def get_reviews_summary():
 
 
 @router.get("/knowledge/{item_id}/content")
-async def get_knowledge_content(item_id: str):
+def get_knowledge_content(item_id: str):
     """Read the markdown content of a knowledge item by its file_path."""
     _ensure_db()
     from pathlib import Path
@@ -1454,7 +1480,7 @@ async def get_knowledge_content(item_id: str):
 # ---------------------------------------------------------------------------
 
 @router.get("/serenity/status")
-async def get_serenity_status():
+def get_serenity_status():
     """Workbench status: engine state, current/last runs, artifact counts."""
     _ensure_db()
     active = repo.get_active_serenity_research_run()
@@ -1504,7 +1530,7 @@ async def get_serenity_status():
 
 
 @router.post("/serenity/runs", status_code=202)
-async def create_serenity_run(body: dict):
+def create_serenity_run(body: dict):
     """Create a new research run. Returns 409 if one is already active."""
     _ensure_db()
     mode = body.get("mode", "standard")
@@ -1574,7 +1600,7 @@ async def create_serenity_run(body: dict):
 
 
 @router.get("/serenity/runs")
-async def list_serenity_runs(
+def list_serenity_runs(
     status: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
 ):
@@ -1599,7 +1625,7 @@ async def list_serenity_runs(
 
 
 @router.get("/serenity/runs/{run_id}")
-async def get_serenity_run_detail(run_id: str):
+def get_serenity_run_detail(run_id: str):
     _ensure_db()
     run = repo.get_serenity_research_run(run_id)
     if not run:
@@ -1635,7 +1661,7 @@ async def get_serenity_run_detail(run_id: str):
 
 
 @router.post("/serenity/runs/{run_id}/retry")
-async def retry_serenity_run(run_id: str):
+def retry_serenity_run(run_id: str):
     _ensure_db()
     run = repo.get_serenity_research_run(run_id)
     if not run:
@@ -1662,7 +1688,7 @@ async def retry_serenity_run(run_id: str):
 
 
 @router.post("/serenity/runs/{run_id}/cancel")
-async def cancel_serenity_run(run_id: str):
+def cancel_serenity_run(run_id: str):
     _ensure_db()
     run = repo.get_serenity_research_run(run_id)
     if not run:
@@ -1678,7 +1704,7 @@ async def cancel_serenity_run(run_id: str):
 
 
 @router.get("/serenity/profile")
-async def get_serenity_profile():
+def get_serenity_profile():
     _ensure_db()
     profile = repo.get_serenity_user_profile()
     if not profile:
@@ -1698,7 +1724,7 @@ async def get_serenity_profile():
 
 
 @router.patch("/serenity/profile")
-async def patch_serenity_profile(body: dict):
+def patch_serenity_profile(body: dict):
     _ensure_db()
     existing = repo.get_serenity_user_profile()
     now = datetime.now(timezone.utc).isoformat()
@@ -1736,7 +1762,7 @@ async def patch_serenity_profile(body: dict):
 
 
 @router.post("/serenity/profile/parse")
-async def parse_serenity_brief(body: dict):
+def parse_serenity_brief(body: dict):
     _ensure_db()
     brief = body.get("brief", "")
     if len(brief) > 2000:
@@ -1754,7 +1780,7 @@ async def parse_serenity_brief(body: dict):
 
 
 @router.patch("/serenity/themes/{theme_id}/status")
-async def patch_serenity_theme_status(theme_id: str, body: dict):
+def patch_serenity_theme_status(theme_id: str, body: dict):
     _ensure_db()
     new_status = body.get("status")
     valid = {"active", "watching", "dismissed", "promoted", "expired"}
@@ -1774,7 +1800,7 @@ async def patch_serenity_theme_status(theme_id: str, body: dict):
 
 
 @router.post("/serenity/themes/{theme_id}/feedback")
-async def post_serenity_theme_feedback(theme_id: str, body: dict):
+def post_serenity_theme_feedback(theme_id: str, body: dict):
     _ensure_db()
     theme = repo.get_serenity_theme(theme_id)
     if not theme:
@@ -1790,7 +1816,7 @@ async def post_serenity_theme_feedback(theme_id: str, body: dict):
 
 
 @router.post("/serenity/themes/{theme_id}/deep-dive")
-async def post_serenity_theme_deep_dive(theme_id: str, body: dict):
+def post_serenity_theme_deep_dive(theme_id: str, body: dict):
     _ensure_db()
     theme = repo.get_serenity_theme(theme_id)
     if not theme:
@@ -1876,7 +1902,7 @@ def promote_serenity_theme(theme_id: str):
 
 
 @router.get("/serenity/claims")
-async def list_serenity_claims(
+def list_serenity_claims(
     run_id: str | None = Query(None),
     price_relevant: bool | None = Query(None),
     limit: int = Query(200, le=500),
@@ -1887,7 +1913,7 @@ async def list_serenity_claims(
 
 
 @router.get("/serenity/themes/{theme_id}/claims")
-async def get_serenity_theme_claims(theme_id: str, limit: int = Query(200, le=500)):
+def get_serenity_theme_claims(theme_id: str, limit: int = Query(200, le=500)):
     _ensure_db()
     theme = repo.get_serenity_theme(theme_id)
     if not theme:
@@ -1897,7 +1923,7 @@ async def get_serenity_theme_claims(theme_id: str, limit: int = Query(200, le=50
 
 
 @router.get("/serenity/themes/{theme_id}/detail")
-async def get_serenity_theme_detail(theme_id: str):
+def get_serenity_theme_detail(theme_id: str):
     _ensure_db()
     theme = repo.get_serenity_theme(theme_id)
     if not theme:
@@ -1916,7 +1942,7 @@ async def get_serenity_theme_detail(theme_id: str):
 
 
 @router.get("/serenity/runs/{run_id}/artifacts")
-async def get_serenity_run_artifacts(run_id: str):
+def get_serenity_run_artifacts(run_id: str):
     _ensure_db()
     run = repo.get_serenity_research_run(run_id)
     if not run:
@@ -2008,7 +2034,7 @@ def get_family_scorecard():
 
 
 @router.get("/analytics/shadow-trades")
-async def get_shadow_trades(
+def get_shadow_trades(
     batch_id: str | None = None,
     scanner_family: str | None = None,
     resolved: bool | None = None,

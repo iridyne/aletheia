@@ -315,6 +315,12 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
 
 ### LLM Fallback (request-level, unified — `model_provider/fallback.py:215-299`)
 
+- Every provider completion is admitted by the process-wide Inference Broker before
+  fallback execution. Admission is Provider-scoped and enforces bounded priority
+  queues, concurrency, RPM/TPM and one total queue+execution deadline. Manual agent
+  HTTP requests create a durable queued AgentRun and return `202 + job_id`; a
+  persistent single worker owns execution outside the Uvicorn event loop.
+
 - `complete_with_fallback()`: on **transient** errors (429/502/503/504, rate-limit, connect/network/remote-protocol/proxy transport failures), tries the next candidate model (primary → config `fallback_models` → discovered). Authentication and other permanent 4xx failures do not retry. Timeout exceptions remain terminal so five sequential 60-second model attempts cannot overrun bounded agent jobs.
 - `agents.helpers.llm_structured()` 对非对象/不可解析 JSON 和推理预算耗尽的空输出最多尝试 3 次，输出预算依次为 `1x / 1.5x / 2x`；最后一次把上一轮坏输出带回修复提示。全部尝试共享 180 秒总墙钟预算（小于 Observer 200 秒循环预算和 240 秒任务上限），不继承 provider 面向长研究输出的 300 秒上限。`fallback_to_defaults` 默认关闭；只有非关键调用方显式开启时，失败才返回 schema 派生默认值，并在 error 字符串保留 `(fallback)` 标记。当前生产调用方均未开启该选项。
 - **Cooldown**: a model with ≥2 consecutive failures is benched 300s (`_record_model_failure:116`).

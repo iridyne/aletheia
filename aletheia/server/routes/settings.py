@@ -88,7 +88,7 @@ class ExchangeModeRequest(SettingsRequest):
 
 
 @router.get("")
-async def get_settings():
+def get_settings():
     cfg = load_config()
     from aletheia.learning.registry import paper_influence_path_options
     providers_safe = {}
@@ -108,6 +108,12 @@ async def get_settings():
             "oauth_expires_at": p.oauth_expires_at,
             "model_fallback_enabled": p.model_fallback_enabled,
             "fallback_models": list(p.fallback_models or []),
+            "inference_max_concurrency": p.inference_max_concurrency,
+            "inference_requests_per_minute": p.inference_requests_per_minute,
+            "inference_tpm": p.inference_tokens_per_minute,
+            "inference_queue_capacity": p.inference_queue_capacity,
+            "inference_reserved_high_priority_slots": p.inference_reserved_high_priority_slots,
+            "inference_timeout_sec": p.inference_timeout_sec,
         }
     return {
         "app": cfg.app.model_dump(mode="json"),

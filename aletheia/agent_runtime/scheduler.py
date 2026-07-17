@@ -1,15 +1,17 @@
 """Scheduler for periodic agent + market-data tasks using APScheduler."""
 
 import asyncio
+import concurrent.futures
 from contextvars import ContextVar
 from functools import partial
 import logging
+import queue
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
-from apscheduler.executors.pool import ThreadPoolExecutor
+from apscheduler.executors.pool import ThreadPoolExecutor as APSchedulerThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from aletheia.config.loader import load_config
@@ -98,9 +100,214 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
 }
 
 
-# Track leaked daemon threads that couldn't be interrupted. Used by health
-# checks to detect resource exhaustion trending toward process restart.
-_abandoned_thread_count: list[int] = [0]
+# Process-owned timeout workers.  The previous implementation allocated one
+# ThreadPoolExecutor and one asyncio loop for every invocation, then abandoned
+# the worker thread whenever teardown exceeded the grace period.  A degraded
+# provider could therefore grow the process by one thread per scheduler tick.
+# These fixed workers bound both threads and pending work for the process life.
+_TIMEOUT_WORKER_CAPACITY = 16
+_SYNC_TIMEOUT_WORKERS = 1
+_timeout_metrics_lock = threading.Lock()
+_timeout_metrics: dict[str, int] = {
+    "async_submitted": 0,
+    "async_completed": 0,
+    "async_timed_out": 0,
+    "async_cancelled": 0,
+    "async_rejected": 0,
+    "sync_submitted": 0,
+    "sync_completed": 0,
+    "sync_timed_out": 0,
+    "sync_rejected": 0,
+}
+
+
+def _bump_timeout_metric(name: str) -> None:
+    with _timeout_metrics_lock:
+        _timeout_metrics[name] = _timeout_metrics.get(name, 0) + 1
+
+
+def scheduler_timeout_metrics_snapshot() -> dict[str, object]:
+    """Return bounded-worker state without exposing job inputs or credentials."""
+
+    with _timeout_metrics_lock:
+        metrics = dict(_timeout_metrics)
+    worker = _async_timeout_worker
+    metrics.update(
+        {
+            "async_worker_running": worker.running,
+            "async_pending": worker.pending,
+            "async_capacity": _TIMEOUT_WORKER_CAPACITY,
+            "sync_pending": _sync_timeout_worker.pending,
+            "sync_workers": _SYNC_TIMEOUT_WORKERS,
+            # Kept for compatibility with health/reporting consumers.  The new
+            # design never abandons a per-invocation thread.
+            "abandoned_threads": 0,
+        }
+    )
+    return metrics
+
+
+class _PersistentAsyncTimeoutWorker:
+    """One persistent event loop with bounded cross-thread admission."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._started = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._pending = 0
+
+    @property
+    def running(self) -> bool:
+        return bool(self._thread and self._thread.is_alive() and self._loop)
+
+    @property
+    def pending(self) -> int:
+        with self._lock:
+            return self._pending
+
+    def _start(self) -> asyncio.AbstractEventLoop:
+        with self._lock:
+            if self.running:
+                assert self._loop is not None
+                return self._loop
+            self._started.clear()
+            self._thread = threading.Thread(
+                target=self._thread_main,
+                name="aletheia-scheduler-async",
+                daemon=True,
+            )
+            self._thread.start()
+        if not self._started.wait(timeout=5):
+            raise RuntimeError("scheduler async worker did not start")
+        assert self._loop is not None
+        return self._loop
+
+    def _thread_main(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._loop = loop
+        self._started.set()
+        try:
+            loop.run_forever()
+        finally:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+            self._loop = None
+
+    def submit(self, coroutine) -> concurrent.futures.Future:
+        loop = self._start()
+        with self._lock:
+            if self._pending >= _TIMEOUT_WORKER_CAPACITY:
+                if asyncio.iscoroutine(coroutine):
+                    coroutine.close()
+                raise RuntimeError("scheduler async timeout queue is full")
+            self._pending += 1
+        try:
+            future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+        except BaseException:
+            with self._lock:
+                self._pending -= 1
+            if asyncio.iscoroutine(coroutine):
+                coroutine.close()
+            raise
+
+        def _release(_future) -> None:
+            with self._lock:
+                self._pending = max(0, self._pending - 1)
+
+        future.add_done_callback(_release)
+        return future
+
+    def close(self) -> None:
+        loop = self._loop
+        thread = self._thread
+        if loop is None or thread is None:
+            return
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+        except RuntimeError:
+            return
+        thread.join(timeout=5)
+
+
+_async_timeout_worker = _PersistentAsyncTimeoutWorker()
+
+
+class _PersistentSyncTimeoutWorker:
+    """One daemon sync worker; equivalent to ``max_workers=1`` with a hard queue cap."""
+
+    def __init__(self) -> None:
+        self._queue: queue.Queue[tuple[object, concurrent.futures.Future] | None] = (
+            queue.Queue(maxsize=_TIMEOUT_WORKER_CAPACITY)
+        )
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._pending = 0
+
+    @property
+    def pending(self) -> int:
+        with self._lock:
+            return self._pending
+
+    def _start(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._thread = threading.Thread(
+                target=self._worker_main,
+                name="aletheia-scheduler-sync",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def submit(self, fn) -> concurrent.futures.Future:
+        self._start()
+        future: concurrent.futures.Future = concurrent.futures.Future()
+        with self._lock:
+            if self._pending >= _TIMEOUT_WORKER_CAPACITY:
+                raise RuntimeError("scheduler sync timeout queue is full")
+            self._pending += 1
+
+        def _release(_future) -> None:
+            with self._lock:
+                self._pending = max(0, self._pending - 1)
+
+        future.add_done_callback(_release)
+        try:
+            self._queue.put_nowait((fn, future))
+        except queue.Full as exc:
+            future.cancel()
+            raise RuntimeError("scheduler sync timeout queue is full") from exc
+        return future
+
+    def _worker_main(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None:
+                self._queue.task_done()
+                return
+            fn, future = item
+            try:
+                if future.set_running_or_notify_cancel():
+                    try:
+                        future.set_result(fn())  # type: ignore[operator]
+                    except BaseException as exc:  # noqa: BLE001 - preserve job failure
+                        future.set_exception(exc)
+            finally:
+                self._queue.task_done()
+
+
+_sync_timeout_worker = _PersistentSyncTimeoutWorker()
+
+
+class _AsyncJobDeadline(TimeoutError):
+    """The coroutine cooperatively reached its configured job deadline."""
 
 # Consecutive failure counter per IO job. Resets on success; emits infra_event
 # at threshold so failures surface in the dashboard status popover.
@@ -234,17 +441,14 @@ def _guarded(job_id: str, fn):
 
 
 def _run_sync_with_timeout(job_id: str, fn) -> object:
-    """Run a sync function with a hard wall-clock bound.
+    """Run sync work on one process-owned, capacity-bounded worker lane.
 
-    Same daemon-thread-abandon pattern as _run_async_with_timeout but for sync
-    callables (e.g. exchange_sync which internally calls asyncio.run() multiple
-    times). If the function hangs (e.g. ProactorEventLoop IOCP drain), the
-    calling APScheduler thread gets back control after timeout + 15s grace.
-
-    DB cleanup happens inside the worker thread's finally block so a hung thread
-    doesn't leave an uncommitted transaction holding the WAL write lock.
+    Python cannot safely interrupt a running thread.  Keeping a single fixed
+    worker therefore contains a non-cooperative call to one thread instead of
+    allocating and abandoning a new thread on every retry.  The bounded slot
+    gate also prevents an unresponsive lane from accumulating an unbounded
+    future queue.
     """
-    import concurrent.futures
     from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
 
     timeout = _ASYNC_JOB_TIMEOUT_SEC[job_id]
@@ -257,20 +461,27 @@ def _run_sync_with_timeout(job_id: str, fn) -> object:
             rollback_if_in_transaction()
             close_db()
 
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(_run)
+    _bump_timeout_metric("sync_submitted")
     try:
-        return future.result(timeout=thread_timeout)
+        future = _sync_timeout_worker.submit(_run)
+    except RuntimeError:
+        _bump_timeout_metric("sync_rejected")
+        raise
+    try:
+        result = future.result(timeout=thread_timeout)
+        _bump_timeout_metric("sync_completed")
+        return result
     except concurrent.futures.TimeoutError:
+        # Cancel queued (not-yet-running) work. A running Python call cannot be
+        # interrupted, but it occupies only the one process-owned daemon lane.
+        future.cancel()
+        _bump_timeout_metric("sync_timed_out")
         logger.error(
             "job %s: sync function hung after %.0fs — "
-            "executor thread abandoned",
+            "fixed worker remains occupied; new work stays bounded",
             job_id, thread_timeout,
         )
-        pool.shutdown(wait=False)
         raise TimeoutError(f"job {job_id} hung after {thread_timeout}s")
-    finally:
-        pool.shutdown(wait=False)
 
 
 def _ensure_agent_run_ended(job_id: str, target_status: str) -> None:
@@ -299,101 +510,60 @@ def _ensure_agent_run_ended(job_id: str, target_status: str) -> None:
 def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object:
     """Run an async job with a hard wall-clock bound.
 
-    Runs the coroutine in a dedicated daemon thread so that a hung asyncio.run()
-    teardown (Windows ProactorEventLoop IOCP drain) cannot pin the calling
-    APScheduler executor thread indefinitely. The caller gets back control after
-    timeout + 15s grace regardless of internal loop state.
+    Every invocation is admitted to one persistent process-owned event loop.
+    Timeout cancellation therefore does not tear down an event loop or create a
+    disposable thread.  If the loop is blocked by non-cooperative synchronous
+    work, pending admission remains bounded and later calls fail closed.
 
     Critical: DB cleanup (rollback + close) happens INSIDE the event loop via a
-    wrapper coroutine's finally block — before asyncio.run() starts teardown.
-    Without this, a hung teardown leaves the daemon thread's thread-local sqlite
-    connection open with a potential uncommitted write transaction, permanently
-    holding the WAL write lock and blocking all other DB writers in the process.
+    wrapper coroutine's finally block so timeout cancellation cannot leave the
+    worker's thread-local SQLite connection holding a write transaction.
     """
-    import concurrent.futures
-
     timeout = _ASYNC_JOB_TIMEOUT_SEC[job_id]
-    thread_timeout = timeout + 15.0
-
-    _loop_ref: list[asyncio.AbstractEventLoop | None] = [None]
 
     async def _guarded_coro():
         from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
         try:
-            return await asyncio.wait_for(awaitable, timeout=timeout)
+            try:
+                return await asyncio.wait_for(awaitable, timeout=timeout)
+            except TimeoutError as exc:
+                raise _AsyncJobDeadline from exc
         finally:
             rollback_if_in_transaction()
             close_db()
 
-    def _run():
-        import sys
-        if sys.platform == "win32":
-            # Redundant-but-harmless belt-and-suspenders: the backend process now
-            # installs WindowsSelectorEventLoopPolicy at server/app.py import time
-            # (see aletheia/async_utils.py), so new_event_loop() already returns a
-            # SelectorEventLoop here. Kept explicit for defence in depth.
-            loop = asyncio.SelectorEventLoop()
-        else:
-            loop = asyncio.new_event_loop()
-        _loop_ref[0] = loop
-        try:
-            return loop.run_until_complete(_guarded_coro())
-        finally:
-            try:
-                loop.run_until_complete(loop.shutdown_asyncgens())
-            except Exception:
-                pass
-            try:
-                loop.close()
-            except Exception:
-                pass
-            _loop_ref[0] = None
-
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(_run)
     try:
-        result = future.result(timeout=thread_timeout)
+        future = _async_timeout_worker.submit(_guarded_coro())
+    except RuntimeError:
+        if asyncio.iscoroutine(awaitable):
+            awaitable.close()
+        _bump_timeout_metric("async_rejected")
+        raise
+    _bump_timeout_metric("async_submitted")
+    try:
+        result = future.result(timeout=timeout + 5.0)
+        _bump_timeout_metric("async_completed")
         _ensure_agent_run_ended(job_id, "completed")
         return result
+    except _AsyncJobDeadline as exc:
+        # asyncio.wait_for enforced the actual job deadline on the worker loop.
+        _bump_timeout_metric("async_timed_out")
+        _ensure_agent_run_ended(job_id, "timed_out")
+        raise TimeoutError(f"job {job_id} timed out after {timeout}s") from exc
     except concurrent.futures.TimeoutError:
-        # Try to interrupt the stuck event loop from this thread
-        loop = _loop_ref[0]
-        if loop is not None:
-            try:
-                loop.call_soon_threadsafe(loop.stop)
-            except Exception:
-                pass
-        _abandoned_thread_count[0] += 1
+        # The persistent loop itself did not respond to cancellation in time.
+        # Cancel the exact future but keep the one fixed worker thread; capacity
+        # remains accounted until its done callback actually runs.
+        future.cancel()
+        _bump_timeout_metric("async_timed_out")
+        _bump_timeout_metric("async_cancelled")
         logger.error(
-            "job %s: coroutine exceeded thread budget (%.0fs) and teardown stalled — "
-            "executor thread abandoned. Loop is SelectorEventLoop (IOCP not in play); "
-            "root cause is the job running longer than its timeout (e.g. many sequential "
-            "LLM calls under provider contention — see per-job wall-clock budgets). "
-            "Total abandoned threads: %d",
-            job_id, thread_timeout, _abandoned_thread_count[0],
+            "job %s: persistent async worker did not respond within %.0fs; "
+            "future cancelled and worker capacity remains bounded",
+            job_id, timeout + 5.0,
         )
-        # Immediately mark the corresponding agent_run as timed_out so that
-        # dashboards and health checks don't see a ghost 'running' row for up
-        # to 20 minutes (the periodic cleanup threshold).  We do this from the
-        # *caller* thread (not the abandoned daemon thread) to avoid racing on
-        # the thread-local DB connection.
-        try:
-            from aletheia.storage.sqlite import get_db
-            _db = get_db()
-            _was_in_tx = _db.in_transaction
-            _db.execute(
-                "UPDATE agent_runs SET status = 'timed_out', ended_at = datetime('now') "
-                "WHERE agent_name = ? AND status = 'running'",
-                (job_id,),
-            )
-            if not _was_in_tx:
-                _db.commit()
-        except Exception as _db_err:
-            logger.debug("Failed to mark agent_run timed_out for job %s: %s", job_id, _db_err)
-        pool.shutdown(wait=False)
-        raise TimeoutError(f"job {job_id} teardown hung after {thread_timeout}s")
-    finally:
-        pool.shutdown(wait=False)
+        _ensure_agent_run_ended(job_id, "timed_out")
+        raise TimeoutError(f"job {job_id} worker unresponsive after {timeout + 5.0}s")
 
 
 def _serenity_schedule_boundary(now: datetime | None = None) -> datetime:
@@ -602,7 +772,10 @@ def init_scheduler() -> BackgroundScheduler | None:
     # per-thread transactions and closes thread-local SQLite connections at job
     # end so one failed job cannot pin the writer lock for the next jobs.
     _scheduler = BackgroundScheduler(
-        executors={name: ThreadPoolExecutor(workers) for name, workers in _EXECUTOR_WORKERS.items()},
+        executors={
+            name: APSchedulerThreadPoolExecutor(workers)
+            for name, workers in _EXECUTOR_WORKERS.items()
+        },
         job_defaults={"coalesce": True, "max_instances": 1},
     )
 
@@ -919,6 +1092,7 @@ def stop_scheduler() -> None:
     if _scheduler:
         _scheduler.shutdown(wait=False)
         _scheduler = None
+    _async_timeout_worker.close()
 
 
 def pause_scheduler(layered: bool | None = None) -> None:
@@ -2552,7 +2726,9 @@ _DC_HEALTH_TICK: ContextVar[int | None] = ContextVar("dc_health_tick", default=N
 # These collectors return in-memory rows that are useful only after the
 # scheduler persists them. Their successful call status is therefore recorded
 # by the caller after storage, rather than eagerly inside _bounded().
-_PERSISTENCE_GATED_COLLECTOR_HEALTH = frozenset({"derivatives"})
+_PERSISTENCE_GATED_COLLECTOR_HEALTH = frozenset(
+    {"derivatives", "hyperliquid", "defillama"}
+)
 
 
 def _record_collector_health(
@@ -2714,14 +2890,11 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     # --- Phase A: microstructure + derivatives (every tick) ---
     micro_result: dict = {}
     deriv_result: dict = {}
+    raw_deriv_result = None
+    deriv_duration_ms = 0
     if instruments:
         micro = MicrostructureCollector()
         micro_result = await _bounded(micro.collect(instruments), "microstructure", 18.0, _deadline) or {}
-        for snap in micro_result.get("snapshots", []):
-            try:
-                repo.insert_orderbook_snapshot(snap.model_dump())
-            except Exception as e:
-                logger.debug("orderbook persist failed: %s", e)
     else:
         _record_collector_health("microstructure", "not_configured")
 
@@ -2733,41 +2906,48 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
         )
         deriv_duration_ms = int((_time.monotonic() - deriv_started) * 1000)
         deriv_result = raw_deriv_result or {}
-        deriv_persist_errors: list[str] = []
-        for snap in deriv_result.get("funding", []):
-            try:
-                repo.insert_funding_rate_snapshot(snap.model_dump())
-            except Exception as e:
-                logger.debug("funding persist failed: %s", e)
-                deriv_persist_errors.append("derivatives_funding_persist_failed")
-        for snap in deriv_result.get("open_interest", []):
-            try:
-                repo.insert_open_interest_snapshot(snap.model_dump())
-            except Exception as e:
-                logger.debug("OI persist failed: %s", e)
-                deriv_persist_errors.append(
-                    "derivatives_open_interest_persist_failed"
-                )
-        if raw_deriv_result is not None:
-            if deriv_persist_errors:
-                unique_errors = list(dict.fromkeys(deriv_persist_errors))
-                job_error_codes.extend(unique_errors)
-                _record_collector_health(
-                    "derivatives",
-                    "failed",
-                    duration_ms=deriv_duration_ms,
-                    error_code=unique_errors[0],
-                )
-            else:
-                from aletheia.data.collector_health import classify_collector_result
-
-                _record_collector_health(
-                    "derivatives",
-                    classify_collector_result(deriv_result),
-                    duration_ms=deriv_duration_ms,
-                )
     else:
         _record_collector_health("derivatives", "not_configured")
+
+    deriv_persist_errors: list[str] = []
+    try:
+        repo.insert_collector_snapshot_batch(
+            orderbooks=[
+                snap.model_dump() for snap in micro_result.get("snapshots", [])
+            ],
+            funding=[
+                snap.model_dump() for snap in deriv_result.get("funding", [])
+            ],
+            open_interest=[
+                snap.model_dump() for snap in deriv_result.get("open_interest", [])
+            ],
+        )
+    except Exception as e:
+        logger.debug("collector batch persist failed: %s", e)
+        persist_code = {
+            "funding": "derivatives_funding_persist_failed",
+            "open_interest": "derivatives_open_interest_persist_failed",
+        }.get(getattr(e, "stage", None), "collector_batch_persist_failed")
+        deriv_persist_errors.append(persist_code)
+
+    if raw_deriv_result is not None:
+        if deriv_persist_errors:
+            unique_errors = list(dict.fromkeys(deriv_persist_errors))
+            job_error_codes.extend(unique_errors)
+            _record_collector_health(
+                "derivatives",
+                "failed",
+                duration_ms=deriv_duration_ms,
+                error_code=unique_errors[0],
+            )
+        else:
+            from aletheia.data.collector_health import classify_collector_result
+
+            _record_collector_health(
+                "derivatives",
+                classify_collector_result(deriv_result),
+                duration_ms=deriv_duration_ms,
+            )
     if not instruments and not derivative_symbols:
         logger.debug(
             "data_collectors: no observed instruments; "
@@ -2828,7 +3008,8 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
         tasks.append((
             "hyperliquid",
             _bounded(
-                HyperliquidCollector().collect(symbols), "hyperliquid", 12.0, deadline,
+                HyperliquidCollector(persist=False).collect(symbols),
+                "hyperliquid", 12.0, deadline,
             ),
         ))
     elif not getattr(cfg.market_data, "enable_hyperliquid", True):
@@ -2838,7 +3019,10 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     if getattr(cfg.market_data, "enable_defillama", True):
         tasks.append((
             "defillama",
-            _bounded(DefiLlamaCollector().collect(), "defillama", 12.0, deadline),
+            _bounded(
+                DefiLlamaCollector(persist=False).collect(),
+                "defillama", 12.0, deadline,
+            ),
         ))
     else:
         _record_collector_health("defillama", "disabled")
@@ -2854,12 +3038,6 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
             "symbols": volume_result["top_symbols"],
             "observed_at": volume_result["observed_at"],
         })
-        try:
-            repo.save_volume_ranking_snapshot(
-                volume_result["top_symbols"], volume_result["observed_at"]
-            )
-        except Exception as exc:
-            logger.debug("volume_ranking persist failed: %s", exc)
     for domain in ("hyperliquid", "defillama"):
         result = wave_one.get(domain) or {}
         if result.get("errors"):
@@ -2902,34 +3080,102 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     ))
 
     cg_result = wave_two.get("coingecko_top") or {}
-    if cg_result.get("rows"):
-        try:
-            repo.insert_coingecko_top_rows(cg_result["rows"])
-        except Exception as exc:
-            logger.debug("coingecko_top persist failed: %s", exc)
     macro_result = wave_two.get("macro") or {}
     macro_snapshot = macro_result.get("snapshot")
     if macro_snapshot:
-        try:
-            movers_summary = cg_result.get("movers_summary")
-            if movers_summary:
-                macro_snapshot.top_movers_summary = movers_summary
-            repo.insert_macro_snapshot(macro_snapshot.model_dump())
-        except Exception as exc:
-            logger.debug("macro persist failed: %s", exc)
+        movers_summary = cg_result.get("movers_summary")
+        if movers_summary:
+            macro_snapshot.top_movers_summary = movers_summary
     coinalyze_result = wave_two.get("coinalyze") or {}
-    for snapshot in coinalyze_result.get("open_interest", []):
-        try:
-            repo.insert_open_interest_snapshot(snapshot.model_dump())
-        except Exception as exc:
-            logger.debug("coinalyze OI persist failed: %s", exc)
-    for event in coinalyze_result.get("liquidations", []):
-        try:
-            repo.insert_liquidation_event(event.model_dump())
-        except Exception as exc:
-            logger.debug("coinalyze liquidation persist failed: %s", exc)
     if coinalyze_result.get("errors"):
         logger.debug("coinalyze collection errors: %s", coinalyze_result["errors"])
+
+    # Build all persistence payloads before opening SQLite's single writer slot.
+    hyperliquid_result = wave_one.get("hyperliquid") or {}
+    defillama_result = wave_one.get("defillama") or {}
+    hyperliquid_funding = [
+        row.model_dump() for row in hyperliquid_result.get("funding", [])
+    ]
+    hyperliquid_oi = [
+        row.model_dump() for row in hyperliquid_result.get("open_interest", [])
+    ]
+    onchain_rows = [
+        row.model_dump() for row in defillama_result.get("snapshots", [])
+    ]
+    coinalyze_oi = [
+        row.model_dump() for row in coinalyze_result.get("open_interest", [])
+    ]
+    coinalyze_liquidations = [
+        row.model_dump() for row in coinalyze_result.get("liquidations", [])
+    ]
+    macro_row = macro_snapshot.model_dump() if macro_snapshot else None
+    context_error_codes: list[str] = []
+
+    def _persist_domain(domain: str, operation) -> None:
+        try:
+            # One outer COMMIT for the tick; savepoints retain the previous
+            # best-effort isolation between independent public data sources.
+            with repo.transaction(savepoint=True):
+                operation()
+        except Exception as exc:
+            code = f"{domain}_persist_failed"
+            context_error_codes.append(code)
+            logger.debug("%s persist failed: %s", domain, exc)
+
+    with repo.transaction():
+        if volume_result.get("top_symbols"):
+            _persist_domain(
+                "volume_ranking",
+                lambda: repo.save_volume_ranking_snapshot(
+                    volume_result["top_symbols"], volume_result["observed_at"]
+                ),
+            )
+        if hyperliquid_funding or hyperliquid_oi:
+            _persist_domain(
+                "hyperliquid",
+                lambda: repo.insert_collector_snapshot_batch(
+                    funding=hyperliquid_funding,
+                    open_interest=hyperliquid_oi,
+                ),
+            )
+        if onchain_rows:
+            _persist_domain(
+                "defillama",
+                lambda: repo.insert_onchain_snapshot_batch(onchain_rows),
+            )
+        if cg_result.get("rows"):
+            _persist_domain(
+                "coingecko_top",
+                lambda: repo.insert_coingecko_top_rows(cg_result["rows"]),
+            )
+        if macro_row:
+            _persist_domain("macro", lambda: repo.insert_macro_snapshot(macro_row))
+        if coinalyze_oi or coinalyze_liquidations:
+            _persist_domain(
+                "coinalyze",
+                lambda: repo.insert_collector_snapshot_batch(
+                    open_interest=coinalyze_oi,
+                    liquidations=coinalyze_liquidations,
+                ),
+            )
+
+    from aletheia.data.collector_health import classify_collector_result
+
+    for domain, result in (
+        ("hyperliquid", hyperliquid_result),
+        ("defillama", defillama_result),
+    ):
+        if domain not in wave_one:
+            continue
+        persist_error = next(
+            (code for code in context_error_codes if code.startswith(f"{domain}_")),
+            None,
+        )
+        _record_collector_health(
+            domain,
+            "failed" if persist_error else classify_collector_result(result),
+            error_code=persist_error,
+        )
 
     # Sparse derivatives history is useful but must never spend the two-minute
     # live Funding/OI budget.  It runs last in the context lane and is dropped
@@ -2951,7 +3197,11 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
             except Exception as exc:
                 logger.debug("derivatives history backfill failed: %s", exc)
 
-    return {"status": "success", "error_codes": []}
+    unique_errors = list(dict.fromkeys(context_error_codes))
+    return {
+        "status": "partial" if unique_errors else "success",
+        "error_codes": unique_errors,
+    }
 
 
 def _get_observed_instruments(cfg):

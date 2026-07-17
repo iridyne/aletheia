@@ -2482,6 +2482,21 @@ CREATE INDEX IF NOT EXISTS idx_positions_strategy_id ON positions(strategy_id);
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 CREATE INDEX IF NOT EXISTS idx_knowledge_items_type_status ON knowledge_items(item_type, status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_news_dedup ON news_items(dedup_key);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_started_at ON agent_runs(started_at);
+CREATE INDEX IF NOT EXISTS idx_agent_run_steps_run_created
+ON agent_run_steps(run_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_run_created
+ON agent_tool_calls(run_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_funding_symbol_exchange_observed
+ON funding_rate_snapshots(symbol, exchange, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_oi_symbol_exchange_observed
+ON open_interest_snapshots(symbol, exchange, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_filter_decision_batches_evaluated
+ON filter_decision_batches(evaluated_at);
+CREATE INDEX IF NOT EXISTS idx_filter_candidate_outcomes_entry
+ON filter_candidate_outcomes(entry_ts);
+CREATE INDEX IF NOT EXISTS idx_market_ohlcv_timeframe_ts
+ON market_ohlcv(timeframe, ts);
 """
 
 

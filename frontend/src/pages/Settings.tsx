@@ -4067,7 +4067,8 @@ function NetworkCard({ settings, qc }: any) {
 
 function ModelProviderCard({ qc }: any) {
   const { data } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
-  const { data: health = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
+  const { data: health = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 30000 })
+  const { data: broker } = useQuery({ queryKey: ['model-broker'], queryFn: api.getInferenceBroker, refetchInterval: 30000 })
   const [expanded, setExpanded] = useState<string | null>(null)
 
   if (!data) return <p className="hint">Loading providers…</p>
@@ -4116,6 +4117,7 @@ function ModelProviderCard({ qc }: any) {
           anthroConfig={anthroConfig}
           health={cardHealth}
           allHealth={health as any[]}
+          broker={broker}
           isDefault={cardIsDefault}
           isDeep={cardIsDeep}
           isFast={cardIsFast}
@@ -4148,8 +4150,9 @@ function ModelPingButton({ configured }: { configured: boolean }) {
   )
 }
 
-function ProviderCard({ name, config, anthroConfig, health, allHealth, isDefault, isDeep, isFast, isExpanded, onToggle, qc }: {
-  name: string; config: any; anthroConfig?: any; health: any; allHealth: any[]; isDefault: boolean; isDeep: boolean; isFast: boolean
+function ProviderCard({ name, config, anthroConfig, health, allHealth, broker, isDefault, isDeep, isFast, isExpanded, onToggle, qc }: {
+  name: string; config: any; anthroConfig?: any; health: any; allHealth: any[]; isDefault: boolean; isDeep: boolean; isFast: boolean;
+  broker?: any;
   isExpanded: boolean; onToggle: () => void; qc: any
 }) {
   const isHTTP = HTTP_PROVIDERS.has(name)
@@ -4283,8 +4286,69 @@ function ProviderCard({ name, config, anthroConfig, health, allHealth, isDefault
           ) : (
             <ClaudeCLIPanel config={config} health={health} isDefault={isDefault} qc={qc} />
           )}
+          <InferenceLimitsForm
+            name={effectiveToggleProvider}
+            config={effectiveToggleProvider === 'anthropic_compatible' ? anthroConfig : config}
+            metrics={broker?.providers?.[effectiveToggleProvider]?.metrics}
+            qc={qc}
+          />
         </div>
       )}
+    </div>
+  )
+}
+
+function InferenceLimitsForm({ name, config, metrics, qc }: {
+  name: string; config: any; metrics?: Record<string, number>; qc: any
+}) {
+  const [maxConcurrency, setMaxConcurrency] = useState(config?.inference_max_concurrency ?? 2)
+  const [rpm, setRpm] = useState(config?.inference_requests_per_minute ?? 60)
+  const [tpm, setTpm] = useState(config?.inference_tpm ?? 120000)
+  const [queueCapacity, setQueueCapacity] = useState(config?.inference_queue_capacity ?? 64)
+  const [reservedSlots, setReservedSlots] = useState(config?.inference_reserved_high_priority_slots ?? 8)
+  const [timeoutSec, setTimeoutSec] = useState(config?.inference_timeout_sec ?? 300)
+  const save = useMutation({
+    mutationFn: () => api.setModelProvider({
+      provider: name,
+      inference_max_concurrency: Number(maxConcurrency),
+      inference_requests_per_minute: Number(rpm),
+      inference_tpm: Number(tpm),
+      inference_queue_capacity: Number(queueCapacity),
+      inference_reserved_high_priority_slots: Number(reservedSlots),
+      inference_timeout_sec: Number(timeoutSec),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['model'] })
+      qc.invalidateQueries({ queryKey: ['model-broker'] })
+    },
+  })
+
+  return (
+    <div style={{ marginTop: '0.9rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
+      <div className="flex items-center gap-2 mb-2">
+        <strong style={{ fontSize: '0.78rem' }}>Inference admission</strong>
+        {metrics && (
+          <span className="hint mono" style={{ marginLeft: 'auto' }}>
+            active {metrics.active ?? 0} · queued {metrics.queued ?? 0} · wait avg {Math.round(metrics.queue_wait_avg_ms ?? 0)}ms
+          </span>
+        )}
+      </div>
+      <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+        <label>Max concurrency<input type="number" min={1} max={16} value={maxConcurrency} onChange={e => setMaxConcurrency(Number(e.target.value))} /></label>
+        <label>Requests/min<input type="number" min={0} max={10000} value={rpm} onChange={e => setRpm(Number(e.target.value))} /></label>
+        <label>Tokens/min<input type="number" min={0} max={100000000} value={tpm} onChange={e => setTpm(Number(e.target.value))} /></label>
+        <label>Queue capacity<input type="number" min={1} max={1000} value={queueCapacity} onChange={e => setQueueCapacity(Number(e.target.value))} /></label>
+        <label>Reserved priority slots<input type="number" min={0} max={queueCapacity} value={reservedSlots} onChange={e => setReservedSlots(Number(e.target.value))} /></label>
+        <label>Total timeout (sec)<input type="number" min={1} max={1800} value={timeoutSec} onChange={e => setTimeoutSec(Number(e.target.value))} /></label>
+      </div>
+      <div className="flex items-center gap-2 mt-2">
+        <button className="secondary" onClick={() => save.mutate()} disabled={save.isPending}>
+          {save.isPending ? 'Saving…' : 'Save inference limits'}
+        </button>
+        <span className="hint">0 RPM/TPM means unlimited. Priority slots are reserved for interactive/trading work.</span>
+      </div>
+      {save.isSuccess && <div className="settings-save-msg ok">Inference limits saved.</div>}
+      {save.isError && <div className="settings-save-msg err">{(save.error as any)?.message || 'Save failed'}</div>}
     </div>
   )
 }

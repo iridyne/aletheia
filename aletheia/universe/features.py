@@ -105,17 +105,7 @@ def _persist_feature_snapshot(snap: "UniverseFeatureSnapshot") -> None:
     `universe_feature_snapshots`. Filter the field out of the payload here so
     the writer stays compatible before and after the migration runs.
     """
-    from aletheia.storage.sqlite import get_db
-
-    data = snap.model_dump()
-    data.pop("raw", None)
-    db = get_db()
-    cols = ", ".join(data.keys())
-    placeholders = ", ".join(["?"] * len(data))
-    db.execute(
-        f"INSERT INTO universe_feature_snapshots ({cols}) VALUES ({placeholders})",
-        list(data.values()),
-    )
+    repo.insert_universe_feature_snapshot(snap)
 
 _OHLCV_CONCURRENCY = 10
 _OHLCV_TIMEOUT = 12.0
@@ -406,6 +396,7 @@ async def _fetch_single_feature(
     btc_return_24h: float | None = None,
     btc_return_4h: float | None = None,
     btc_closes_1h: list[float] | None = None,
+    snapshot_buffer: list[UniverseFeatureSnapshot] | None = None,
 ) -> dict | None:
     """Fetch OHLCV + enrich for a single asset. Returns feature dict or None."""
     symbol = asset.get("symbol", "")
@@ -722,7 +713,10 @@ async def _fetch_single_feature(
                     feat["feature_snapshot_id"] = prev_row.get("id", snap.id)
 
     if should_write:
-        _persist_feature_snapshot(snap)
+        if snapshot_buffer is None:
+            _persist_feature_snapshot(snap)
+        else:
+            snapshot_buffer.append(snap)
 
     return feat
 
@@ -806,6 +800,7 @@ async def collect_features(
         # --- Phase B: concurrent OHLCV fetch ---
         now = datetime.now(timezone.utc)
         sem = asyncio.Semaphore(_OHLCV_CONCURRENCY)
+        pending_snapshots: list[UniverseFeatureSnapshot] = []
 
         async def _guarded_fetch(asset_ticker_pair):
             asset, ticker = asset_ticker_pair
@@ -816,6 +811,7 @@ async def collect_features(
                         btc_return_24h=btc_return_24h,
                         btc_return_4h=btc_return_4h,
                         btc_closes_1h=btc_closes_1h,
+                        snapshot_buffer=pending_snapshots,
                     )
                 except Exception as e:
                     logger.debug("Feature collect failed for %s: %s", asset.get("symbol"), e)
@@ -826,9 +822,22 @@ async def collect_features(
             return_exceptions=True,
         )
 
+        failed_snapshot_ids: set[str] = set()
+        if pending_snapshots:
+            try:
+                repo.insert_universe_feature_snapshots_batch(pending_snapshots)
+            except Exception as exc:
+                failed_snapshot_ids = {snapshot.id for snapshot in pending_snapshots}
+                logger.warning(
+                    "Feature snapshot batch persist failed for %d assets: %s",
+                    len(pending_snapshots),
+                    exc,
+                )
+
         for result in gathered:
             if result is not None and not isinstance(result, BaseException):
-                results.append(result)
+                if result.get("feature_snapshot_id") not in failed_snapshot_ids:
+                    results.append(result)
 
     finally:
         await provider.close()

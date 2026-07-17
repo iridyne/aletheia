@@ -131,11 +131,18 @@ System Operator 使用两个互不覆盖的健康身份：
 
 ### 4.3 超时隔离（`_run_async_with_timeout` / `_run_sync_with_timeout`）
 
-对于异步或长时同步 job，每次执行在独立的 `concurrent.futures.ThreadPoolExecutor(max_workers=1)` 线程中运行（`scheduler.py:165`、`scheduler.py:253`）。超时后：
+异步 job 统一提交到一个进程级常驻 event-loop worker；长时同步 job 统一提交到一个进程级
+daemon worker。两条 lane 的 outstanding 容量都固定为 16，不再为每次调用创建 executor
+或 event loop。超时后：
 
-1. APScheduler executor 线程得到控制权（不被卡死）。
-2. 内部 daemon 线程被放弃（`pool.shutdown(wait=False)`），`_abandoned_thread_count` 递增（`scheduler.py:267`）。
-3. 对于异步 job，在 caller 线程中立即将 `agent_runs.status` 更新为 `'timed_out'`（`scheduler.py:279–291`），防止 dashboard 出现幽灵 'running' 行。
+1. 异步 job 由 `asyncio.wait_for` 取消实际 coroutine；如果 event loop 本身在额外 5 秒内仍
+   无响应，则取消对应 cross-thread future，容量持续计数到 future 真正结束。
+2. Python 无法安全中断正在执行的同步 thread，因此超时只取消尚未开始的 future；已经运行
+   的非协作调用最多占住唯一一条固定 daemon lane，后续排队仍受 16 项上限约束。
+3. caller 线程立即将相应 `agent_runs.status` 更新为 `'timed_out'`，避免 dashboard 出现幽灵
+   `running` 行。
+4. `scheduler_timeout_metrics_snapshot()` 暴露 submitted/completed/timed_out/cancelled/rejected、
+   pending、worker 状态和兼容字段 `abandoned_threads=0`。
 
 ### 4.4 返回值也属于任务成败
 
@@ -196,7 +203,9 @@ PRAGMA wal_autocheckpoint=1000
 
 注：`_SCHEDULER_JOB_LOCK`（`threading.RLock`，`scheduler.py:18`）仅包裹 cleanup 调用（前/后各一次），**不**包裹 job 函数体本身（`scheduler.py:125–134`），避免长时 job 持锁饿死其他线程。
 
-对于带超时的 job，DB cleanup（`rollback_if_in_transaction` + `close_db`）在异步协程的 `finally` 块中于 `asyncio.run()` teardown 前执行（`scheduler.py:225–231`），或在同步 wrapper 的 `finally` 块中执行（`scheduler.py:161–163`），确保即使线程被放弃，写锁也已释放。
+对于带超时的 job，DB cleanup（`rollback_if_in_transaction` + `close_db`）在常驻异步 worker
+协程的 `finally` 块中执行，或在固定同步 worker wrapper 的 `finally` 块中执行。异步取消会
+执行 cleanup；同步非协作调用则在它最终返回时执行 cleanup，且不会再创建额外遗弃线程。
 
 ---
 
@@ -210,9 +219,12 @@ def stop_scheduler() -> None:
     if _scheduler:
         _scheduler.shutdown(wait=False)   # 不等待 running jobs 完成
         _scheduler = None
+    _async_timeout_worker.close()
 ```
 
-`wait=False`：立即返回，不阻塞 FastAPI lifespan 关停路径。已派发但未完成的 job 在各自的 executor thread 中继续运行直到完成或 Python 进程退出。对于异步 job，`_run_async_with_timeout` 内部的 `concurrent.futures.ThreadPoolExecutor` 以 `wait=False` shutdown，守护线程随进程退出。
+APScheduler 使用 `wait=False`，不等待其 executor 中的 running job。常驻 async worker 收到
+loop stop 后会取消 pending task，并最多等待 5 秒完成线程清理；固定 sync worker 是 daemon，
+非协作的运行中调用只能等自身返回或随进程退出，且不会产生第二条替代线程。
 
 `pause_scheduler(layered=True)` 只暂停非 essential job；`resume_scheduler()` 恢复这些选择性暂停项。`layered=False`
 才暂停/恢复 APScheduler 整体派发循环。两种模式都不修改已注册的 job 表。
@@ -223,7 +235,7 @@ def stop_scheduler() -> None:
 
 | ID | 不变量 | 来源 | Spec |
 |---|---|---|---|
-| INV-SCH-1 | 所有命名池 `max_workers` 均 ≤ 3；临时池也 ≤ 1 | `_EXECUTOR_WORKERS`（`scheduler.py:96`）；`_run_async_with_timeout`（`scheduler.py:253`） | AC-S01 |
+| INV-SCH-1 | 所有 APScheduler 命名池 `max_workers` 均 ≤ 3；timeout 层固定为 1 条 async lane + 1 条 sync lane，outstanding 各 ≤ 16 | `_EXECUTOR_WORKERS`、`_PersistentAsyncTimeoutWorker`、`_PersistentSyncTimeoutWorker` | AC-S01；`test_scheduler_timeouts.py` |
 | INV-SCH-2 | `init_scheduler()` 注册 ≥ 28 个 job | `scheduler.py:324–481`，当前 30 个（条件分支最少 29） | AC-S08 |
 | INV-SCH-3 | 任何 job 函数抛出的异常不得终止调度器线程 | 各 `_run_xxx()` 顶层 `try/except Exception`；APScheduler 内部也兜底捕获 | — |
 | INV-SCH-4 | job 执行前后，本线程泄漏的 SQLite 事务必须被回滚 | `_run_job_guarded()`（`scheduler.py:110`）；async/sync timeout wrapper `finally` 块 | — |

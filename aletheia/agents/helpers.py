@@ -4,6 +4,8 @@ import asyncio
 import logging
 import json
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
+import threading
 
 from aletheia.model_provider.base import ModelRequest, StreamChunk
 from aletheia.model_provider.router import get_provider
@@ -333,9 +335,14 @@ async def llm_stream(system: str, user: str, *, max_tokens: int = 800, provider:
     Callers should iterate with `async for chunk in llm_stream(...)`.
     provider: explicit provider name (or None → use default_provider).
     """
+    provider_name = provider
     try:
-        provider = get_provider(provider)
-        async for chunk in provider.stream(ModelRequest(
+        provider = get_provider(provider_name)
+        from aletheia.config.loader import load_config
+        from aletheia.model_provider.broker import brokered_stream
+
+        resolved_name = provider_name or load_config().models.default_provider
+        async for chunk in brokered_stream(resolved_name, provider, ModelRequest(
             messages=[{"role": "user", "content": user}],
             system=system,
             max_tokens=max_tokens,
@@ -364,17 +371,82 @@ def _record_llm(success: bool) -> None:
 # keeping the counter in-process avoids a SELECT-MAX round-trip on every tool call.
 # Lost on restart, which is fine: a step trace only matters for currently-running agents.
 _step_counters: dict[str, int] = {}
+_TELEMETRY_FLUSH_SIZE = 16
+_TELEMETRY_MAX_PENDING_PER_RUN = 256
+_telemetry_buffers: dict[str, list[dict]] = {}
+_telemetry_lock = threading.Lock()
+_telemetry_metrics = {"buffered": 0, "flushed": 0, "flush_failures": 0, "dropped": 0}
 
 
 def _next_step(run_id: str) -> int:
-    n = _step_counters.get(run_id, 0) + 1
-    _step_counters[run_id] = n
-    return n
+    with _telemetry_lock:
+        n = _step_counters.get(run_id, 0) + 1
+        _step_counters[run_id] = n
+        return n
 
 
 def _release_run_counter(run_id: str) -> None:
     """Drop the per-run step counter after the run finishes (orchestrator calls this)."""
-    _step_counters.pop(run_id, None)
+    flush_run_telemetry(run_id)
+    with _telemetry_lock:
+        _step_counters.pop(run_id, None)
+
+
+def _buffer_telemetry(run_id: str, event: dict) -> None:
+    should_flush = False
+    with _telemetry_lock:
+        pending = _telemetry_buffers.setdefault(run_id, [])
+        if len(pending) >= _TELEMETRY_MAX_PENDING_PER_RUN:
+            _telemetry_metrics["dropped"] += 1
+            return
+        event["created_at"] = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S.%f"
+        )
+        pending.append(event)
+        _telemetry_metrics["buffered"] += 1
+        should_flush = len(pending) >= _TELEMETRY_FLUSH_SIZE
+    if should_flush:
+        flush_run_telemetry(run_id)
+
+
+def flush_run_telemetry(run_id: str) -> int:
+    """Flush one run's bounded telemetry buffer; retain it on transient failure."""
+
+    with _telemetry_lock:
+        events = _telemetry_buffers.pop(run_id, [])
+    if not events:
+        return 0
+    try:
+        from aletheia.storage.repositories import insert_agent_telemetry_batch
+
+        count = insert_agent_telemetry_batch(events)
+        with _telemetry_lock:
+            _telemetry_metrics["flushed"] += count
+        return count
+    except Exception:
+        logger.exception("Agent telemetry batch flush failed for run %s", run_id)
+        with _telemetry_lock:
+            _telemetry_metrics["flush_failures"] += 1
+            existing = _telemetry_buffers.setdefault(run_id, [])
+            available = max(0, _TELEMETRY_MAX_PENDING_PER_RUN - len(existing))
+            existing[:0] = events[:available]
+            _telemetry_metrics["dropped"] += max(0, len(events) - available)
+        return 0
+
+
+def agent_telemetry_snapshot() -> dict[str, int]:
+    with _telemetry_lock:
+        return {
+            **_telemetry_metrics,
+            "pending": sum(len(events) for events in _telemetry_buffers.values()),
+            "runs_pending": len(_telemetry_buffers),
+        }
+
+
+def flush_all_agent_telemetry() -> int:
+    with _telemetry_lock:
+        run_ids = list(_telemetry_buffers)
+    return sum(flush_run_telemetry(run_id) for run_id in run_ids)
 
 
 def log_tool(run_id: str | None, tool_name: str, tool_class: str, permitted: bool,
@@ -389,12 +461,15 @@ def log_tool(run_id: str | None, tool_name: str, tool_class: str, permitted: boo
     """
     if not run_id:
         return
-    try:
-        from aletheia.storage.repositories import insert_tool_call
-        insert_tool_call(run_id, tool_name, tool_class, permitted, output_data=output,
-                         input_data=input_data)
-    except Exception:
-        pass
+    _buffer_telemetry(run_id, {
+        "kind": "tool",
+        "run_id": run_id,
+        "tool_name": tool_name,
+        "tool_class": tool_class,
+        "permitted": permitted,
+        "output_data": output,
+        "input_data": input_data,
+    })
 
 
 def record_step(run_id: str | None, action: str, input_data: str | None = None,
@@ -406,14 +481,11 @@ def record_step(run_id: str | None, action: str, input_data: str | None = None,
     """
     if not run_id:
         return
-    try:
-        from aletheia.storage.repositories import insert_run_step
-        insert_run_step(
-            run_id=run_id,
-            step_number=_next_step(run_id),
-            action=action,
-            input_data=input_data,
-            output_data=output_data,
-        )
-    except Exception:
-        pass
+    _buffer_telemetry(run_id, {
+        "kind": "step",
+        "run_id": run_id,
+        "step_number": _next_step(run_id),
+        "action": action,
+        "input_data": input_data,
+        "output_data": output_data,
+    })

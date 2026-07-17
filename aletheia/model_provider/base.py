@@ -1,6 +1,7 @@
 """Base model provider abstraction."""
 
 from collections.abc import AsyncIterator
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -50,6 +51,36 @@ class ModelProvider:
     """Base class for model providers."""
 
     name: str = "base"
+
+    def _get_http_client(self, factory, *, timeout: float = 300):
+        """Return one managed HTTP client per provider and owning event loop.
+
+        Inference work is consolidated onto the broker loop, while explicit
+        candidate probes may run on the API loop. Keeping one connection pool
+        per owning loop avoids cross-loop httpx locks without rebuilding TLS
+        and TCP connections for every request.
+        """
+
+        loop_key = id(asyncio.get_running_loop())
+        clients = getattr(self, "_http_clients", None)
+        if clients is None:
+            clients = {}
+            self._http_clients = clients
+        client = clients.get(loop_key)
+        if client is None:
+            client = factory(timeout=timeout)
+            clients[loop_key] = client
+        return client
+
+    async def aclose(self) -> None:
+        """Close the client owned by the current loop, if this is an HTTP provider."""
+
+        clients = getattr(self, "_http_clients", None)
+        if not clients:
+            return
+        client = clients.pop(id(asyncio.get_running_loop()), None)
+        if client is not None:
+            await client.aclose()
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         raise NotImplementedError

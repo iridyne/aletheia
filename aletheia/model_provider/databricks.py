@@ -9,6 +9,7 @@ The model field doubles as the endpoint_name for URL construction.
 
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import urlparse
 
 from aletheia.net import httpx_client, raise_for_status_without_secrets
@@ -49,14 +50,15 @@ class DatabricksProvider(OpenAICompatibleProvider):
     async def list_models(self) -> list[dict]:
         """Fetch serving endpoints from Databricks workspace."""
         try:
-            async with httpx_client(timeout=4) as client:
+            client = self._get_http_client(httpx_client)
+            async with asyncio.timeout(4):
                 resp = await client.get(
                     f"{self.workspace_url}/api/2.0/serving-endpoints",
                     headers=self._headers(),
                 )
-                if resp.status_code != 200:
-                    return []
-                data = resp.json()
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
         except Exception:
             return []
         models = []
@@ -71,20 +73,15 @@ class DatabricksProvider(OpenAICompatibleProvider):
 
     async def healthcheck(self) -> ModelHealth:
         try:
-            async with httpx_client(timeout=4) as client:
-                resp = await client.get(
-                    f"{self.workspace_url}/api/2.0/serving-endpoints",
-                    headers=self._headers(),
+            models = await self.list_models()
+            if models:
+                slugs = [m["slug"] for m in models]
+                return ModelHealth(
+                    provider=self.name, available=True, model=self.model,
+                    models=slugs, model_metadata=models,
                 )
-                if resp.status_code == 200:
-                    models = await self.list_models()
-                    slugs = [m["slug"] for m in models]
-                    return ModelHealth(
-                        provider=self.name, available=True, model=self.model,
-                        models=slugs, model_metadata=models,
-                    )
-                return ModelHealth(provider=self.name, available=False,
-                                   error=f"HTTP {resp.status_code}")
+            return ModelHealth(provider=self.name, available=False,
+                               error="serving endpoint catalogue unavailable")
         except Exception as e:
             return ModelHealth(provider=self.name, available=False, error=str(e))
 
@@ -101,13 +98,13 @@ class DatabricksProvider(OpenAICompatibleProvider):
             "messages": messages,
             "max_tokens": request.max_tokens,
         }
-        async with httpx_client(timeout=60) as client:
-            resp = await client.post(
-                f"{self.workspace_url}/serving-endpoints/{self.model}/invocations",
-                json=payload, headers=self._headers(),
-            )
-            raise_for_status_without_secrets(resp)
-            data = resp.json()
+        client = self._get_http_client(httpx_client)
+        resp = await client.post(
+            f"{self.workspace_url}/serving-endpoints/{self.model}/invocations",
+            json=payload, headers=self._headers(),
+        )
+        raise_for_status_without_secrets(resp)
+        data = resp.json()
         choice = data["choices"][0]
         return ModelResponse(
             content=choice["message"]["content"],

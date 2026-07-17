@@ -38,6 +38,11 @@ _TOP_DEXS_N = 10
 class DefiLlamaCollector:
     domain = "defillama"
 
+    def __init__(self, *, persist: bool = True) -> None:
+        # Scheduler collection defers persistence into its one-tick batch;
+        # standalone/spec callers retain collect-and-store behavior.
+        self.persist = persist
+
     async def collect(self) -> dict[str, Any]:
         """Collect stablecoin market cap, chain TVL, and DEX volume.
 
@@ -67,14 +72,18 @@ class DefiLlamaCollector:
             elif result is not None:
                 snapshots.append(result)
 
-        # Persist to DB
-        try:
-            from aletheia.storage.repositories import insert_onchain_snapshot
-            for snap in snapshots:
-                insert_onchain_snapshot(snap.model_dump())
-        except Exception as e:
-            errors.append(f"db_write: {e}")
-            logger.error("DefiLlama DB write failed: %s", e)
+        # Persist to DB only for standalone use. Scheduler ticks publish the
+        # returned rows with their other context data in one transaction.
+        if self.persist:
+            try:
+                from aletheia.storage.repositories import insert_onchain_snapshot_batch
+
+                insert_onchain_snapshot_batch(
+                    [snap.model_dump() for snap in snapshots]
+                )
+            except Exception as e:
+                errors.append(f"db_write: {e}")
+                logger.error("DefiLlama DB write failed: %s", e)
 
         logger.info(
             "DefiLlama collected: %d snapshots, %d errors",
