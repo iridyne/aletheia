@@ -195,18 +195,30 @@ jobs:
         env:
           ALETHEIA_PACKAGED: "1"
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-packaged-home
+          ALETHEIA_PACKAGED_SMOKE: "1"
+          ALETHEIA_SMOKE_DASHBOARD_PORT: "18787"
         run: |
           set -euo pipefail
           core="${{ steps.payload.outputs.core }}"
           cleanup() { "$core" gateway stop || true; }
           trap cleanup EXIT
+          mkdir -p "$ALETHEIA_DATA_DIR"
+          cat > "$ALETHEIA_DATA_DIR/config.yaml" <<YAML
+          app:
+            dashboard_port: $ALETHEIA_SMOKE_DASHBOARD_PORT
+            auto_open_browser: false
+          runtime:
+            scheduler_enabled: false
+            autostart_on_start: false
+            auto_reload: false
+          YAML
           "$core" gateway start --no-browser
           for _ in $(seq 1 180); do
-            if curl --noproxy '*' --fail --silent http://127.0.0.1:8787/_infra/readyz >/dev/null; then break; fi
+            if curl --noproxy '*' --fail --silent "http://127.0.0.1:$ALETHEIA_SMOKE_DASHBOARD_PORT/_infra/readyz" >/dev/null; then break; fi
             sleep 0.25
           done
-          curl --noproxy '*' --fail --silent http://127.0.0.1:8787/_infra/readyz
-          curl --noproxy '*' --fail --silent http://127.0.0.1:8787/api/health >/dev/null
+          curl --noproxy '*' --fail --silent "http://127.0.0.1:$ALETHEIA_SMOKE_DASHBOARD_PORT/_infra/readyz"
+          curl --noproxy '*' --fail --silent "http://127.0.0.1:$ALETHEIA_SMOKE_DASHBOARD_PORT/api/health" >/dev/null
           "$core" gateway stop
           trap - EXIT
 
@@ -298,11 +310,22 @@ jobs:
         env:
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-app-data
           ALETHEIA_HOST_ROOT: ${{ runner.temp }}/aletheia-app-host
+          ALETHEIA_PACKAGED_SMOKE: "1"
+          ALETHEIA_SMOKE_DASHBOARD_PORT: "19787"
         run: |
           set -euo pipefail
           app="$PWD/dist/macos-app/Aletheia.app"
           rm -rf "$ALETHEIA_HOST_ROOT" "$ALETHEIA_DATA_DIR"
           mkdir -p "$ALETHEIA_DATA_DIR"
+          cat > "$ALETHEIA_DATA_DIR/config.yaml" <<YAML
+          app:
+            dashboard_port: $ALETHEIA_SMOKE_DASHBOARD_PORT
+            auto_open_browser: false
+          runtime:
+            scheduler_enabled: false
+            autostart_on_start: false
+            auto_reload: false
+          YAML
           "$app/Contents/MacOS/aletheia" __host status | tee "$RUNNER_TEMP/app-host-status.json"
           test -f "$ALETHEIA_HOST_ROOT/current.json"
           if [[ -s "$RUNNER_TEMP/update-public-key.pem" ]]; then
@@ -312,8 +335,8 @@ jobs:
           "$app/Contents/MacOS/aletheia" version
           "$app/Contents/MacOS/ato" doctor --help >/dev/null
           "$app/Contents/MacOS/aletheia-tray" --smoke-test
-          curl --noproxy '*' --fail --silent http://127.0.0.1:8787/_infra/readyz >/dev/null
-          curl --noproxy '*' --fail --silent http://127.0.0.1:8787/api/health >/dev/null
+          curl --noproxy '*' --fail --silent "http://127.0.0.1:$ALETHEIA_SMOKE_DASHBOARD_PORT/_infra/readyz" >/dev/null
+          curl --noproxy '*' --fail --silent "http://127.0.0.1:$ALETHEIA_SMOKE_DASHBOARD_PORT/api/health" >/dev/null
           "$app/Contents/MacOS/aletheia" gateway stop
 
       - name: Stage portable host artifact

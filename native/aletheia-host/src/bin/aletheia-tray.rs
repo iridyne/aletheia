@@ -119,7 +119,7 @@ fn smoke_test(paths: &HostPaths) -> Result<()> {
     }
     println!(
         "Aletheia tray smoke passed: {}",
-        aletheia_host::DASHBOARD_URL
+        aletheia_host::dashboard_url()
     );
     Ok(())
 }
