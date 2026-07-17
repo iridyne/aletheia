@@ -129,10 +129,13 @@ The implemented button flow is one transaction shared by the browser, tray menu,
 9. commit the pointer or automatically restore the backup and previous release.
 
 The signed feed, staging, additive-migration preflight, activation, health soak, and
-backup-based rollback are implemented on this state model. Release infrastructure still
-has to supply the external Ed25519 private key, stable HTTPS feed/artifact location, and
-Apple signing/notarization credentials. Destructive migrations and delta updates remain
-out of scope; installed payloads never pull or overwrite their own executable.
+backup-based rollback are implemented on this state model. The manual packaged-runtime
+workflow publishes the signed Feed and immutable artifacts to the stable public GitHub
+Pages channel from an exact `master` SHA. Release infrastructure still has to supply the
+external Ed25519 private key as an Actions secret; Apple signing/notarization credentials
+remain optional external prerequisites for warning-free public distribution. Destructive
+migrations and delta updates remain out of scope; installed payloads never pull or overwrite
+their own executable.
 
 ## Validation gates
 

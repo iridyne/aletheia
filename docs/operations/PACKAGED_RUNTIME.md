@@ -167,16 +167,77 @@ ALETHEIA_UPDATE_BEARER_TOKEN   # optional private artifact host
 Without a public key and feed URL, the installed runtime remains fully usable but reports
 `update_feed_not_configured`; it does not silently fall back to Git or unsigned downloads.
 
+### Owner dogfood publication channel
+
+The repository's `Build Packaged Tray CLI Runtime` workflow is also the release publisher.
+Run it manually from the `master` branch with `publish=true`. A publishing run:
+
+1. checks out the exact `master` SHA selected by the workflow run;
+2. builds and smokes the self-contained `darwin-arm64` Runtime, stable CLI, and Tray app;
+3. signs the Runtime metadata with the repository secret
+   `ALETHEIA_UPDATE_SIGNING_PRIVATE_KEY_PEM`;
+4. embeds only the matching public key and the stable Feed URL in `Aletheia.app`;
+5. deploys the signed Feed, immutable Runtime archive, checksums, and fresh-install App ZIP
+   to the public GitHub Pages endpoint.
+
+Publishing uses the repository's dedicated Apple Silicon self-hosted Runner labels:
+
+```text
+self-hosted, macOS, ARM64, aletheia-release
+```
+
+This keeps manual owner releases available when GitHub-hosted Actions minutes are exhausted.
+Pull-request builds do not select this Runner; only an explicit `workflow_dispatch` on
+`master` with `publish=true` can run release code on the owner machine.
+
+Stable endpoints:
+
+```text
+Feed:       https://iridite.github.io/aletheia/update-feed.json
+Public key: https://iridite.github.io/aletheia/update-public-key.pem
+Artifacts:  https://iridite.github.io/aletheia/<versioned archive name>
+```
+
+The source repository remains private. Pages is used because an installed product cannot
+download assets from a private GitHub Release without holding a GitHub credential. The
+public channel contains compiled release files and signed metadata only; it does not expose
+the private repository or grant repository access.
+
+The signing secret must be an unencrypted Ed25519 PKCS#8 PEM. Generate and store it outside
+the repository, then add it under **Repository Settings → Secrets and variables → Actions**.
+Never reuse the private key as an application secret, commit it, print it, or copy it into
+`~/.aletheia`. Rotating this trust root requires distributing a new installer containing the
+new public key; an existing signed Feed cannot authorize its own replacement key.
+
+After a successful publishing run, verify from an installed package:
+
+```bash
+aletheia update check
+aletheia update apply --yes
+aletheia update status --json
+```
+
+`update check` verifies the signed envelope before reporting a release. `update apply`
+downloads and verifies the archive, preflights it, and leaves the short activation and
+rollback transaction to the Tray.
+
+Installing a Feed-enabled `Aletheia.app` over an earlier owner-dogfood build seeds a
+missing public key and Feed URL on the next Tray/CLI start without replacing
+`current.json`, the selected Runtime, or any existing trust root. This makes the first
+online-update-capable installer an in-place upgrade for current local installations.
+
 ## Distribution status and external prerequisites
 
 The repository builds an unsigned deterministic macOS arm64 app ZIP and records that fact
-in `macos-app-report.json`. Public distribution without Gatekeeper warnings additionally
-requires repository-external credentials and release operations:
+in `macos-app-report.json`. The signed owner-dogfood update channel is implemented through
+GitHub Pages, but a publication run still requires Actions capacity and the external
+Ed25519 signing secret described above. Distribution without Gatekeeper warnings additionally
+requires repository-external Apple credentials:
 
 - Apple Developer ID Application signing certificate;
 - Apple notarization credentials;
-- an Ed25519 update-signing private key;
-- a stable HTTPS feed/artifact location.
+- an Ed25519 update-signing private key configured as the Actions secret;
+- GitHub Pages enabled by the publishing workflow for the stable HTTPS channel.
 
 These secrets must not be committed. Until configured, the output is appropriate for
 owner dogfooding through explicit macOS approval, not public release.

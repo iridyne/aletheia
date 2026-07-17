@@ -194,6 +194,19 @@ def test_gateway_runner_import_survives_frozen_popen_adapter(monkeypatch):
         sys.modules.pop("aletheia._gateway_runner", None)
 
 
+def test_candidate_preflight_is_distinct_from_real_data_activation():
+    staging = (ROOT / "aletheia" / "update" / "packaged.py").read_text(encoding="utf-8")
+    entrypoint = (ROOT / "scripts" / "release" / "pyinstaller_entry.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert '[str(executable), "__packaged_update_preflight"]' in staging
+    assert 'mode == "__packaged_update_preflight"' in entrypoint
+    assert "validate_current_data()" in entrypoint
+    assert 'mode == "__packaged_update_validate"' in entrypoint
+    assert "prepare_activation_data()" in entrypoint
+
+
 def test_rust_host_contract_keeps_tray_cli_and_payload_separate():
     cargo = (ROOT / "native" / "aletheia-host" / "Cargo.toml").read_text(encoding="utf-8")
     library = (ROOT / "native" / "aletheia-host" / "src" / "lib.rs").read_text(encoding="utf-8")

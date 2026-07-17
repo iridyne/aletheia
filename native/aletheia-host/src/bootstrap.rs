@@ -3,7 +3,8 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use std::env;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -36,12 +37,92 @@ fn contained_relative_path(value: &str) -> Result<PathBuf> {
 fn optional_absolute_file(env_name: &str, fallback: PathBuf) -> Result<Option<PathBuf>> {
     if let Some(value) = env::var_os(env_name).filter(|value| !value.is_empty()) {
         let path = PathBuf::from(value);
-        if !path.is_absolute() || !path.is_file() {
+        if !path.is_absolute() || !path.is_file() || path.is_symlink() {
             bail!("{env_name} must point to an existing absolute file");
         }
         return Ok(Some(path));
     }
+    if fallback.is_symlink() {
+        bail!("bundled update configuration cannot be a symbolic link");
+    }
     Ok(fallback.is_file().then_some(fallback))
+}
+
+fn copy_configuration_if_missing(
+    source: Option<&Path>,
+    destination: &Path,
+    mode: u32,
+) -> Result<()> {
+    let Some(source) = source else {
+        return Ok(());
+    };
+    if source.is_symlink() || !source.is_file() {
+        bail!(
+            "bundled update configuration is missing or symbolic: {}",
+            source.display()
+        );
+    }
+    if destination.exists() || destination.is_symlink() {
+        let metadata = fs::symlink_metadata(destination)
+            .with_context(|| format!("inspect update configuration {}", destination.display()))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            bail!(
+                "installed update configuration is not a regular file: {}",
+                destination.display()
+            );
+        }
+        return Ok(());
+    }
+
+    let bytes = fs::read(source)
+        .with_context(|| format!("read bundled update configuration {}", source.display()))?;
+    let mut file = match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(destination).with_context(|| {
+                format!(
+                    "inspect concurrently installed update configuration {}",
+                    destination.display()
+                )
+            })?;
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                bail!(
+                    "installed update configuration is not a regular file: {}",
+                    destination.display()
+                );
+            }
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("create update configuration {}", destination.display()))
+        }
+    };
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(destination, fs::Permissions::from_mode(mode))?;
+    }
+    Ok(())
+}
+
+fn seed_missing_update_configuration(paths: &HostPaths, bundle: &BootstrapBundle) -> Result<()> {
+    copy_configuration_if_missing(
+        bundle.public_key.as_deref(),
+        &paths.root.join("update-public-key.pem"),
+        0o600,
+    )?;
+    copy_configuration_if_missing(
+        bundle.feed_url_file.as_deref(),
+        &paths.root.join("update-feed-url.txt"),
+        0o644,
+    )
 }
 
 pub fn bootstrap_bundle_from_root(source_root: &Path) -> Result<BootstrapBundle> {
@@ -170,6 +251,9 @@ pub fn ensure_bootstrapped(paths: &HostPaths) -> Result<()> {
     paths.ensure()?;
     if paths.current_file.exists() {
         read_selection(paths)?;
+        if let Ok(bundle) = discover_bootstrap_bundle() {
+            seed_missing_update_configuration(paths, &bundle)?;
+        }
         return Ok(());
     }
 
@@ -267,5 +351,43 @@ mod tests {
         let root = temp.path().join("runtime");
         write_fake_bundle(&root, "aletheia-core", "other-platform");
         assert!(bootstrap_bundle_from_root(&root).is_err());
+    }
+
+    #[test]
+    fn existing_install_receives_missing_feed_config_without_rotating_trust() {
+        let temp = TempDir::new().unwrap();
+        let paths = HostPaths::from_root(temp.path().join("host"));
+        paths.ensure().unwrap();
+        let source_public_key = temp.path().join("source-public.pem");
+        let source_feed_url = temp.path().join("source-feed.txt");
+        fs::write(&source_public_key, b"first-public-key").unwrap();
+        fs::write(
+            &source_feed_url,
+            b"https://updates.example.test/update-feed.json\n",
+        )
+        .unwrap();
+        let bundle = BootstrapBundle {
+            source_root: temp.path().join("runtime"),
+            executable: temp.path().join("runtime/aletheia-core"),
+            public_key: Some(source_public_key.clone()),
+            feed_url_file: Some(source_feed_url.clone()),
+        };
+
+        seed_missing_update_configuration(&paths, &bundle).unwrap();
+        assert_eq!(
+            fs::read(paths.root.join("update-public-key.pem")).unwrap(),
+            b"first-public-key"
+        );
+        assert_eq!(
+            fs::read_to_string(paths.root.join("update-feed-url.txt")).unwrap(),
+            "https://updates.example.test/update-feed.json\n"
+        );
+
+        fs::write(&source_public_key, b"rotated-key-must-not-replace-trust").unwrap();
+        seed_missing_update_configuration(&paths, &bundle).unwrap();
+        assert_eq!(
+            fs::read(paths.root.join("update-public-key.pem")).unwrap(),
+            b"first-public-key"
+        );
     }
 }

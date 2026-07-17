@@ -75,6 +75,18 @@ def _run_update_validate() -> None:
     print(json.dumps(prepare_activation_data(), ensure_ascii=False))
 
 
+def _run_update_preflight() -> None:
+    """Validate migrations against the isolated restored copy only.
+
+    Unlike activation this command must not read ``update-request.json`` because the
+    durable switch request is intentionally written only after preflight succeeds.
+    """
+
+    from aletheia.update.packaged import validate_current_data
+
+    print(json.dumps(validate_current_data(), ensure_ascii=False))
+
+
 def _run_update_restore() -> None:
     if len(sys.argv) != 3:
         raise SystemExit("__packaged_update_restore requires one absolute backup path")
@@ -100,6 +112,9 @@ def main() -> None:
         return
     if mode == "__packaged_update_stage":
         _run_update_stage()
+        return
+    if mode == "__packaged_update_preflight":
+        _run_update_preflight()
         return
     if mode == "__packaged_update_validate":
         _run_update_validate()

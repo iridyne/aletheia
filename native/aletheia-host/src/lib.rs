@@ -14,10 +14,33 @@ use std::time::{Duration, Instant};
 pub const DASHBOARD_URL: &str = "http://127.0.0.1:8787";
 pub const READY_PATH: &str = "/_infra/readyz";
 pub const HEALTH_PATH: &str = "/api/health";
+pub const PACKAGED_SMOKE_ENV: &str = "ALETHEIA_PACKAGED_SMOKE";
+pub const SMOKE_DASHBOARD_PORT_ENV: &str = "ALETHEIA_SMOKE_DASHBOARD_PORT";
 pub const HOST_ROOT_ENV: &str = "ALETHEIA_HOST_ROOT";
 pub const DATA_DIR_ENV: &str = "ALETHEIA_DATA_DIR";
 pub const PACKAGED_ENV: &str = "ALETHEIA_PACKAGED";
 pub const HOST_BIN_ENV: &str = "ALETHEIA_HOST_BIN";
+
+fn dashboard_port_from_values(smoke: Option<&str>, override_port: Option<&str>) -> u16 {
+    if smoke != Some("1") {
+        return 8787;
+    }
+    override_port
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .unwrap_or(8787)
+}
+
+fn dashboard_port() -> u16 {
+    dashboard_port_from_values(
+        env::var(PACKAGED_SMOKE_ENV).ok().as_deref(),
+        env::var(SMOKE_DASHBOARD_PORT_ENV).ok().as_deref(),
+    )
+}
+
+pub fn dashboard_url() -> String {
+    format!("http://127.0.0.1:{}", dashboard_port())
+}
 
 #[derive(Debug, Clone)]
 pub struct HostPaths {
@@ -292,7 +315,8 @@ pub fn run_gateway_action(paths: &HostPaths, action: &str) -> Result<ExitStatus>
 }
 
 fn probe_http(path: &str, timeout: Duration) -> bool {
-    let address: SocketAddr = match "127.0.0.1:8787".parse() {
+    let port = dashboard_port();
+    let address: SocketAddr = match format!("127.0.0.1:{port}").parse() {
         Ok(value) => value,
         Err(_) => return false,
     };
@@ -303,7 +327,7 @@ fn probe_http(path: &str, timeout: Duration) -> bool {
     let _ = stream.set_read_timeout(Some(timeout));
     let _ = stream.set_write_timeout(Some(timeout));
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:8787\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
     );
     if stream.write_all(request.as_bytes()).is_err() {
         return false;
@@ -354,22 +378,23 @@ pub fn ensure_gateway_started(paths: &HostPaths, timeout: Duration) -> Result<()
 }
 
 pub fn open_dashboard() -> Result<()> {
+    let url = dashboard_url();
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut value = Command::new("open");
-        value.arg(DASHBOARD_URL);
+        value.arg(&url);
         value
     };
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut value = Command::new("cmd");
-        value.args(["/C", "start", "", DASHBOARD_URL]);
+        value.args(["/C", "start", "", url.as_str()]);
         value
     };
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut command = {
         let mut value = Command::new("xdg-open");
-        value.arg(DASHBOARD_URL);
+        value.arg(&url);
         value
     };
     command
@@ -414,6 +439,15 @@ mod tests {
         )
         .unwrap();
         root
+    }
+
+    #[test]
+    fn smoke_port_override_is_explicit_and_fail_closed() {
+        assert_eq!(dashboard_port_from_values(None, Some("18787")), 8787);
+        assert_eq!(dashboard_port_from_values(Some("0"), Some("18787")), 8787);
+        assert_eq!(dashboard_port_from_values(Some("1"), Some("18787")), 18787);
+        assert_eq!(dashboard_port_from_values(Some("1"), Some("invalid")), 8787);
+        assert_eq!(dashboard_port_from_values(Some("1"), Some("0")), 8787);
     }
 
     #[test]

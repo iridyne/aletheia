@@ -65,6 +65,7 @@ def signed_feed(
     release_id: str | None = None,
     health_soak_sec: int = 30,
     published_at: str | None = None,
+    public_key_output: Path | None = None,
 ) -> dict[str, Any]:
     archive = archive.resolve()
     manifest = _load_manifest(archive)
@@ -97,7 +98,18 @@ def signed_feed(
         sort_keys=True,
         separators=(",", ":"),
     )
-    signature = _private_key(private_key_path).sign(signed_payload.encode("utf-8"))
+    private_key = _private_key(private_key_path)
+    signature = private_key.sign(signed_payload.encode("utf-8"))
+    if public_key_output is not None:
+        if public_key_output.is_symlink():
+            raise ValueError("public key output cannot be a symbolic link")
+        public_key_output.parent.mkdir(parents=True, exist_ok=True)
+        public_key_output.write_bytes(
+            private_key.public_key().public_bytes(
+                serialization.Encoding.PEM,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+        )
     return {
         "schema_version": 1,
         "signed_payload": signed_payload,
@@ -112,6 +124,11 @@ def main() -> int:
     parser.add_argument("--private-key", type=Path, required=True)
     parser.add_argument("--release-id")
     parser.add_argument("--health-soak-sec", type=int, default=30)
+    parser.add_argument(
+        "--public-key-output",
+        type=Path,
+        help="Write the matching public PEM for embedding in the packaged application.",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -121,6 +138,7 @@ def main() -> int:
         private_key_path=args.private_key,
         release_id=args.release_id,
         health_soak_sec=args.health_soak_sec,
+        public_key_output=args.public_key_output,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(

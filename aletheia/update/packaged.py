@@ -571,7 +571,7 @@ def _preflight_candidate(
     env[HOST_ROOT_ENV] = str(host_root())
     env["ALETHEIA_DATA_DIR"] = str(data_copy)
     result = subprocess.run(
-        [str(executable), "__packaged_update_validate"],
+        [str(executable), "__packaged_update_preflight"],
         cwd=candidate_root,
         env=env,
         capture_output=True,
