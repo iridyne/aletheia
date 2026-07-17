@@ -7,12 +7,16 @@ gateway_app = typer.Typer(no_args_is_help=True)
 
 @gateway_app.command()
 def start(
-    no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser."),
+    browser: bool = typer.Option(
+        False, "--browser/--no-browser",
+        help="Open dashboard in browser after start. Default: off. Use "
+             "'aletheia gateway open-dashboard' to open it later.",
+    ),
     foreground: bool = typer.Option(False, "--foreground", help="Run in foreground."),
 ):
     """Start the Aletheia gateway."""
     from aletheia.gateway.lifecycle import do_start
-    do_start(no_browser=no_browser, foreground=foreground)
+    do_start(no_browser=not browser, foreground=foreground)
 
 
 @gateway_app.command()
@@ -24,7 +28,11 @@ def stop():
 
 @gateway_app.command()
 def restart(
-    no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser."),
+    browser: bool = typer.Option(
+        False, "--browser/--no-browser",
+        help="Open dashboard in browser after restart. Default: off. Use "
+             "'aletheia gateway open-dashboard' to open it later.",
+    ),
 ):
     """Restart the gateway.
 
@@ -34,7 +42,7 @@ def restart(
     """
     from aletheia.gateway.lifecycle import do_stop, do_start
     do_stop()
-    do_start(no_browser=no_browser, foreground=False)
+    do_start(no_browser=not browser, foreground=False)
 
 
 @gateway_app.command()

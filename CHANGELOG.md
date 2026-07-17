@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased] - 2026-07-17 — Gateway CLI: no-browser as default
+
+Flips the `gateway start` / `gateway restart` default: the browser no longer
+pops open on every restart. Owner has to explicitly opt in with `--browser`,
+or use the already-existing `aletheia gateway open-dashboard` helper any time.
+
+- `--browser/--no-browser` is a two-way typer flag; default is `--no-browser`.
+- Backward compatible: existing scripts and docs passing `--no-browser`
+  continue to work (the flag becomes redundant but not an error).
+- `cfg.app.auto_open_browser` config option is untouched; the CLI default
+  short-circuits it. To restore auto-open on start, pass `--browser`
+  explicitly or invoke `aletheia gateway open-dashboard` after boot.
+
 ## [Unreleased] - 2026-07-17 — Approval Desk records final-stage rejections
 
 Closes the loop on "why didn't this reach me?" once a candidate crosses into
