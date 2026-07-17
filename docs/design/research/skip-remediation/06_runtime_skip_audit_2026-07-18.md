@@ -147,6 +147,11 @@ Doctor 同时分列 `direct_model_skips`、`trade_intent_gated_skips`、`confirm
 `deferred_unchanged_context_events`。因此 b1.2 生效后可直接验证：旧 direct 洪泛是否下降、确认后的
 adverse skip 是否仍有合理占比、neutral defer 是否被上下文去重，而不是只凭 Overview 视觉判断。
 
+合入前使用 b1.2 的实际 `_parse_decision + _direct_skip_validation_reason` 对运行库最近 24h direct
+skip 做只读离线重放：`117/117` 均被判为 `neutral_or_missing_skip_kind`，即不会再在第一次输出上
+terminalize；它们会进入唯一一次反事实确认。该结果证明修复能抓住当前已观察到的洪泛形态，但不预测
+确认后的 trade/valid-adverse/defer 比例，后者必须由新 epoch 在线窗口回答。
+
 明确未改：55 分门槛、Debate 调整公式、Ranker 入选/权重、sizing、Risk、Execution、Exchange、Live、
 额度与凭据。
 
