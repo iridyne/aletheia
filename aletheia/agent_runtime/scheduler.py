@@ -41,6 +41,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "position_reconcile",
     "tpsl_fill_check",
     "outcome_settler",
+    "paper_funding_settler",
     "outcome_hook_replay",
     "shadow_resolver",
     "learning_contribution_evaluator",
@@ -85,6 +86,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "lesson_reviewer": 300.0,
     "shadow_resolver": 60.0,
     "outcome_settler": 120.0,
+    "paper_funding_settler": 60.0,
     "learning_contribution_evaluator": 60.0,
     "learning_lifecycle_controller": 60.0,
     "learning_verdict_runner": 120.0,
@@ -789,6 +791,13 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("outcome_settler", _run_outcome_settler), "interval", minutes=10,
         id="outcome_settler", misfire_grace_time=120, max_instances=1, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=120),
+    )
+    _scheduler.add_job(
+        _guarded("paper_funding_settler", _run_paper_funding_settler),
+        "interval", minutes=30,
+        id="paper_funding_settler", misfire_grace_time=120, max_instances=1,
+        executor="io",
+        next_run_time=datetime.now() + timedelta(minutes=3),
     )
     # AT-01 evaluator is measurement-only and remains available while autonomous
     # Learning is disabled or layered pause is active.  Lifecycle control is a
@@ -2341,6 +2350,37 @@ def _run_outcome_settler():
     except Exception as e:
         logger.warning("outcome_settler failed: %s", e)
         _record_job_failure("outcome_settler", str(e))
+
+
+async def _async_paper_funding_settler():
+    from aletheia.portfolio.paper_account import settle_unsettled_paper_closes
+    result = await settle_unsettled_paper_closes()
+    logger.debug(
+        "paper_funding_settler: settled=%d still_pending=%d errors=%d",
+        result["settled"], result["still_pending"], len(result["errors"]),
+    )
+
+
+def _run_paper_funding_settler():
+    """Retry funding economics for paper_internal futures positions that closed
+    during a collection outage (realized_pnl=NULL, funding_source='unavailable').
+
+    Fetches historical funding rates from the exchange when a gap is detected,
+    then re-computes and settles the cash ledger.  Runs unconditionally — the
+    paper account health must not depend on the runtime being unpaused.
+    """
+    try:
+        _run_async_with_timeout("paper_funding_settler", _async_paper_funding_settler())
+        _record_job_success("paper_funding_settler")
+    except TimeoutError:
+        logger.warning(
+            "paper_funding_settler timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["paper_funding_settler"],
+        )
+        _record_job_failure("paper_funding_settler", "timed out")
+    except Exception as e:
+        logger.warning("paper_funding_settler failed: %s", e)
+        _record_job_failure("paper_funding_settler", str(e))
 
 
 def _run_guard_promotion():

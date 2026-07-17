@@ -1,7 +1,22 @@
 """Cash ledger and affordability view for the local ``paper_internal`` account."""
 
+import logging
+import math
+
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import PaperAccountEvent
+
+logger = logging.getLogger(__name__)
+
+# Funding-computation failure reasons that can be resolved by fetching historical
+# exchange data — as opposed to structural problems (invalid direction, missing fills).
+_BACKFILLABLE_REASONS = frozenset({
+    "missing_event_observation",
+    "missing_schedule_transition",
+    "missing_close_anchor",
+    "missing_open_anchor",
+    "stale_open_anchor",
+})
 
 INITIAL_PAPER_CASH_USDT = 200.0
 
@@ -144,3 +159,175 @@ def settle_position_closed(position_id: str, realized_pnl: float) -> None:
             _write_event(action="position_closed", amount_usdt=realized_pnl, actor="system",
                          source="portfolio_pnl", position_id=position_id,
                          note="Local paper position realized PnL")
+
+
+def _update_position_economics(
+    position_id: str,
+    realized_pnl: float,
+    funding_cost: float,
+    outcome_eligible: bool,
+    outcome_exclusion_reason: str,
+) -> None:
+    from aletheia.storage.sqlite import get_db
+    with repo.transaction(immediate=True):
+        get_db().execute(
+            """UPDATE positions SET
+               realized_pnl=?, funding_cost=?, funding_source='local_simulation',
+               outcome_eligible=?, outcome_exclusion_reason=?
+               WHERE id=?""",
+            (realized_pnl, funding_cost, int(outcome_eligible),
+             outcome_exclusion_reason, position_id),
+        )
+
+
+async def _backfill_historical_funding_for_position(row: dict) -> int:
+    """Fetch and store historical funding snapshots for a position's symbol+window.
+
+    Used by settle_unsettled_paper_closes() when compute_local_funding() fails
+    due to a collection gap.  The inserted rows use the event+transition anchor
+    schema (see _insert_historical_funding_snapshot_pair) so they are immediately
+    usable by _load_scheduled_snapshots().
+
+    Returns the number of new rows inserted.
+    """
+    from aletheia.data.collectors.derivatives import _insert_historical_funding_snapshot_pair
+    from aletheia.data.ccxt_provider import get_market_data_provider
+    from aletheia.config.exchanges import to_ccxt
+
+    sym = str(row.get("symbol") or "")
+    if not sym:
+        return 0
+    try:
+        provider = get_market_data_provider()
+        exchange = provider._ensure_primary()
+        exchange_name = provider._primary_name
+        perp_sym = to_ccxt(sym, market_type="usdt_futures", exchange=exchange_name)
+        history = await exchange.fetch_funding_rate_history(perp_sym, limit=48)
+    except Exception as exc:
+        logger.debug("paper_funding_settler: funding history fetch failed for %s: %s", sym, exc)
+        return 0
+
+    valid_items = sorted(
+        [(item["timestamp"], float(item["fundingRate"]))
+         for item in history
+         if item.get("timestamp") is not None and item.get("fundingRate") is not None],
+        key=lambda x: x[0],
+    )
+    n = 0
+    for i, (ts_ms, rate) in enumerate(valid_items):
+        next_ts_ms = valid_items[i + 1][0] if i + 1 < len(valid_items) else None
+        try:
+            n += _insert_historical_funding_snapshot_pair(
+                sym, exchange_name, ts_ms, rate, next_ts_ms=next_ts_ms,
+            )
+        except Exception as exc:
+            logger.debug("paper_funding_settler: snapshot insert failed: %s", exc)
+    return n
+
+
+async def settle_unsettled_paper_closes() -> dict:
+    """Retry funding computation for paper_internal futures with realized_pnl=NULL.
+
+    Scans for closed local-paper usdt_futures positions whose funding economics
+    are still unknown (funding_source='unavailable', realized_pnl IS NULL).
+    For each, re-runs compute_local_funding().  If that still fails due to a
+    collection gap, fetches historical funding from the exchange and retries.
+    On success, updates the position and settles the cash ledger.
+
+    Designed to run as a periodic maintenance job after a collection outage.
+    Returns {'settled': int, 'still_pending': int, 'errors': list[str]}.
+    """
+    from aletheia.storage.sqlite import get_db
+    from aletheia.portfolio.local_funding import compute_local_funding
+    from aletheia.analytics.outcome_integrity import outcome_write_eligibility
+    from aletheia.files.jsonl import write_audit
+
+    db = get_db()
+    rows = [
+        dict(r) for r in db.execute(
+            """SELECT * FROM positions
+               WHERE status='closed' AND execution_mode='paper_internal'
+                 AND market_type='usdt_futures' AND realized_pnl IS NULL
+               ORDER BY rowid ASC LIMIT 50"""
+        ).fetchall()
+    ]
+    if not rows:
+        return {"settled": 0, "still_pending": 0, "errors": []}
+
+    settled = 0
+    still_pending = 0
+    errors: list[str] = []
+
+    for row in rows:
+        position_id = str(row.get("id") or "")
+        sym = str(row.get("symbol") or "")
+        try:
+            result = compute_local_funding(row, closed_at=row["closed_at"])
+            if not result.complete and result.evidence.get("reason") in _BACKFILLABLE_REASONS:
+                inserted = await _backfill_historical_funding_for_position(row)
+                if inserted:
+                    result = compute_local_funding(row, closed_at=row["closed_at"])
+
+            if not result.complete:
+                still_pending += 1
+                continue
+
+            entry = float(row["entry_price"])
+            exit_p = float(row["current_price"])
+            qty = float(row["quantity"])
+            efee = float(row["entry_fee"])
+            xfee = float(row["exit_fee"])
+            funding_cost = result.funding_cost
+
+            direction = str(row.get("direction") or "").lower()
+            if direction in {"long", "buy"}:
+                gross = (exit_p - entry) * qty
+            elif direction in {"short", "sell"}:
+                gross = (entry - exit_p) * qty
+            else:
+                errors.append(f"{position_id}: invalid direction {direction!r}")
+                still_pending += 1
+                continue
+
+            realized_pnl = round(gross - efee - xfee - funding_cost, 8)
+            if not math.isfinite(realized_pnl):
+                errors.append(f"{position_id}: non-finite realized_pnl")
+                still_pending += 1
+                continue
+
+            check_row = {**row, "realized_pnl": realized_pnl, "funding_cost": funding_cost,
+                         "funding_source": "local_simulation", "exit_fill_verified": True}
+            outcome_eligible, outcome_reason = outcome_write_eligibility(
+                check_row, exit_fill_verified=True,
+            )
+            _update_position_economics(position_id, realized_pnl, funding_cost,
+                                       outcome_eligible, outcome_reason)
+            settle_position_closed(position_id, realized_pnl)
+            write_audit({
+                "actor": "system",
+                "source": "paper_funding_settler",
+                "event_type": "paper_position_funding_settled",
+                "entity_type": "position",
+                "entity_id": position_id,
+                "before": {"realized_pnl": None, "funding_source": "unavailable"},
+                "after": {"realized_pnl": realized_pnl, "funding_source": "local_simulation"},
+                "message": (
+                    f"Auto-settled {sym} paper_internal position {position_id}: "
+                    f"realized_pnl={realized_pnl}"
+                ),
+            })
+            logger.info(
+                "paper_funding_settler: settled %s position %s realized_pnl=%s",
+                sym, position_id, realized_pnl,
+            )
+            settled += 1
+
+        except Exception as exc:
+            logger.warning(
+                "paper_funding_settler: error settling %s position %s: %s",
+                sym, position_id, exc,
+            )
+            errors.append(f"{position_id}: {exc}")
+            still_pending += 1
+
+    return {"settled": settled, "still_pending": still_pending, "errors": errors}
