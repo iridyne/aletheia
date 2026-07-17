@@ -487,7 +487,7 @@ function OpportunityFunnelCard() {
                         {fmtReason(row.reason)}
                       </span>
                       <span className={`funnel-reason-count mono${hasCount ? '' : ' funnel-reason-count-muted'}`}>{row.count}</span>
-                      {canExpand && <span className="status-row-chevron">{isOpen ? '▾' : '▸'}</span>}
+                      <span className="status-row-chevron">{canExpand ? (isOpen ? '▾' : '▸') : ''}</span>
                     </div>
                     {isOpen && (
                       <>
@@ -531,7 +531,7 @@ function OpportunityFunnelCard() {
       {/* Footer — thresholds & context */}
       <div className="funnel-footer">
         <div className="funnel-footer-row">
-          <span className="text-xs text-muted">min_confidence_to_trade</span>
+          <span className="text-xs text-muted">Confidence threshold</span>
           <button
             type="button"
             className="funnel-link mono"

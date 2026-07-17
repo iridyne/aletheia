@@ -653,23 +653,23 @@ function LearningFunnelPanel() {
   return (
     <Card>
       <CardHeader title="Knowledge Funnel" meta={`${totalItems.toLocaleString()} items`} />
-      <div className="funnel-meta-row">
-        <span className="funnel-meta-pill">System Operator lessons (case studies): <strong>{visibility.layer3_lesson_hits}</strong></span>
-        <span className="funnel-meta-pill">Guards available: <strong>{visibility.layer3_guards_available}</strong></span>
-        <span className="funnel-meta-pill">Lessons applied: <strong>{lessonApplied}</strong> / proposed: <strong>{lessonProposed}</strong></span>
-        <span className="funnel-meta-pill">Serenity active: <strong>{data.serenity_opportunities_active}</strong></span>
-        <span className="funnel-meta-pill">Contradictions needing review: <strong>{contradictionCount}</strong></span>
+      <div className="lf-meta-row">
+        <span className="lf-meta-pill">System Operator lessons (case studies): <strong>{visibility.layer3_lesson_hits}</strong></span>
+        <span className="lf-meta-pill">Guards available: <strong>{visibility.layer3_guards_available}</strong></span>
+        <span className="lf-meta-pill">Lessons applied: <strong>{lessonApplied}</strong> / proposed: <strong>{lessonProposed}</strong></span>
+        <span className="lf-meta-pill">Serenity active: <strong>{data.serenity_opportunities_active}</strong></span>
+        <span className="lf-meta-pill">Contradictions needing review: <strong>{contradictionCount}</strong></span>
       </div>
-      <div className="funnel-bars">
+      <div className="lf-bars">
         {data.knowledge_items_by_type.map(({ item_type, count }) => {
           const pct = totalItems > 0 ? (count / totalItems) * 100 : 0
           return (
-            <div key={item_type} className="funnel-bar-row">
-              <span className="funnel-bar-label">{ITEM_TYPE_LABEL[item_type] ?? humanize(item_type)}</span>
-              <div className="funnel-bar-track">
-                <Meter pct={pct} className="funnel-bar-fill" />
+            <div key={item_type} className="lf-bar-row">
+              <span className="lf-bar-label">{ITEM_TYPE_LABEL[item_type] ?? humanize(item_type)}</span>
+              <div className="lf-bar-track">
+                <Meter pct={pct} className="lf-bar-fill" />
               </div>
-              <span className="funnel-bar-count mono">{count.toLocaleString()}</span>
+              <span className="lf-bar-count mono">{count.toLocaleString()}</span>
             </div>
           )
         })}

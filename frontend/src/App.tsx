@@ -169,7 +169,7 @@ function StatusBar() {
   const { data: collectorHealth } = useQuery({
     queryKey: ['collector-health'],
     queryFn: api.getCollectorHealth,
-    refetchInterval: 30000,
+    refetchInterval: () => adaptiveStatusPollMs(restarting),
   })
   // #174 fix: /status doesn't carry risk_status — the topbar used to read
   // `data?.risk_status || data?.risk?.status` and always got '', so
