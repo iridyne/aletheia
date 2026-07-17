@@ -296,6 +296,29 @@ Not in scope for Phase 3.
 
 ---
 
+## 10.5. Deferred write-side guardrails
+
+Phase 3 deployed the top-priority write guardrails (Section 4) but did not
+close every writer path considered during the workflow. A running list of
+unfinished items, with rationale, expected impact, and code touchpoints,
+lives in **`RETENTION_WRITE_GUARDRAILS_TODO.md`** (companion doc). Read
+that file before starting a "second-round retention" push so previously
+analyzed context is not re-discovered.
+
+Highest-leverage deferred items (see companion doc for details):
+
+- **P0-1** `agent_shell/sessions/` strategy-stem file writes — the main
+  reason `agent_shell/` sits at ~246 MiB instead of the 50 MiB synthesis
+  target. Requires a new session_kind gate in `append_session_log`.
+- **P0-2** Cross-repo `operator-shell/src/operator_loop.ts:1023` context
+  sender — server strips the payload, TS side still generates it.
+- **P0-3** `filter_decisions` scanner_weights_quota — flip writer to
+  batch form (read-side dual-decode already shipped in PR #121).
+- **P0-4** `market_ohlcv` legacy_unknown writer — one-time delete done;
+  writer path still needs sealing to prevent regrowth.
+
+---
+
 ## 11. Legacy source tree removal (2026-08-16)
 
 The runtime-home migration (`.runtime-home-migration.json.completed_at =
