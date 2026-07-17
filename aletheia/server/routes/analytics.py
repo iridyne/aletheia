@@ -1,9 +1,18 @@
 """Read-only analytics API routes."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+
+
+def _rolling_cutoff(hours: int) -> tuple[int, str]:
+    """Return a normalized UTC cutoff for analytics rows with mixed ISO formats."""
+    hours_i = max(1, int(hours or 24))
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_i)
+    return hours_i, cutoff.isoformat()
 
 
 @router.get("/exit-policy-advice")
@@ -440,34 +449,35 @@ def get_pipeline_funnel(hours: int = 24):
     """
     from aletheia.storage.sqlite import get_db
     db = get_db()
-    window = f"-{int(hours)} hours"
+    hours_i, cutoff = _rolling_cutoff(hours)
 
     def _count(sql: str) -> int:
         try:
-            return int(db.execute(sql, (window,)).fetchone()[0])
+            return int(db.execute(sql, (cutoff,)).fetchone()[0])
         except Exception:
             return 0
 
-    opps = _count("SELECT COUNT(*) FROM opportunities WHERE created_at >= datetime('now', ?)")
+    opps = _count("SELECT COUNT(*) FROM opportunities WHERE julianday(created_at) >= julianday(?)")
     sig_pending = _count(
         "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' "
-        "AND created_at >= datetime('now', ?)"
+        "AND julianday(created_at) >= julianday(?)"
     )
     pi_trade = _count(
         "SELECT COUNT(*) FROM pi_decisions WHERE action IN ('trade','scale_in','flip') "
-        "AND created_at >= datetime('now', ?)"
+        "AND julianday(created_at) >= julianday(?)"
     )
     pi_skip = _count(
         "SELECT COUNT(*) FROM pi_decisions WHERE action='skip' "
-        "AND created_at >= datetime('now', ?)"
+        "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
+        "AND julianday(created_at) >= julianday(?)"
     )
 
     # Risk decisions: count approved/rejected + top rejection violations.
     try:
         rd_rows = list(db.execute(
             "SELECT approved, COUNT(*) n FROM risk_decisions "
-            "WHERE created_at >= datetime('now', ?) GROUP BY approved",
-            (window,),
+            "WHERE julianday(created_at) >= julianday(?) GROUP BY approved",
+            (cutoff,),
         ))
         risk_approved = next((int(r["n"]) for r in rd_rows if r["approved"] == 1), 0)
         risk_rejected = next((int(r["n"]) for r in rd_rows if r["approved"] == 0), 0)
@@ -478,9 +488,9 @@ def get_pipeline_funnel(hours: int = 24):
     try:
         for r in db.execute(
             "SELECT message, COUNT(*) n FROM risk_decisions "
-            "WHERE approved=0 AND created_at >= datetime('now', ?) "
+            "WHERE approved=0 AND julianday(created_at) >= julianday(?) "
             "GROUP BY message ORDER BY n DESC LIMIT 5",
-            (window,),
+            (cutoff,),
         ):
             rejection_top.append({"message": (r["message"] or "")[:200], "count": int(r["n"])})
     except Exception:
@@ -490,8 +500,8 @@ def get_pipeline_funnel(hours: int = 24):
     try:
         # fills has filled_at not created_at
         fills = int(db.execute(
-            "SELECT COUNT(*) FROM fills WHERE filled_at >= datetime('now', ?)",
-            (window,),
+            "SELECT COUNT(*) FROM fills WHERE julianday(filled_at) >= julianday(?)",
+            (cutoff,),
         ).fetchone()[0])
     except Exception:
         fills = 0
@@ -500,7 +510,7 @@ def get_pipeline_funnel(hours: int = 24):
     risk_approve_rate = round(risk_approved / risk_total * 100.0, 2) if risk_total else None
 
     return {
-        "window_hours": hours,
+        "window_hours": hours_i,
         "opportunities": opps,
         "signal_pending": sig_pending,
         "pi_decisions": {
@@ -550,21 +560,22 @@ def get_opportunity_funnel(hours: int = 24):
 
     Read-only. Consumes existing telemetry — never invokes the ranker/operator.
     """
-    from datetime import datetime, timedelta, timezone
     from aletheia.storage.sqlite import get_db
     from aletheia.config.loader import load_config
     from aletheia.universe.allocator import _FAMILY_TTL
 
     db = get_db()
-    hours_i = max(1, int(hours or 24))
+    hours_i, window_start = _rolling_cutoff(hours)
     now = datetime.now(timezone.utc)
-    window_start = (now - timedelta(hours=hours_i)).isoformat()
     window_end = now.isoformat()
 
     def _count(sql: str, params: tuple = ()) -> int:
         return int(db.execute(sql, params).fetchone()[0])
 
-    cohort_where = "datetime(created_at)>=datetime(?) AND datetime(created_at)<=datetime(?)"
+    cohort_where = (
+        "julianday(created_at)>=julianday(?) "
+        "AND julianday(created_at)<=julianday(?)"
+    )
     cohort_params = (window_start, window_end)
     emitted = _count(f"SELECT COUNT(*) FROM opportunities WHERE {cohort_where}", cohort_params)
     still_open = _count(
@@ -586,9 +597,9 @@ def get_opportunity_funnel(hours: int = 24):
     proposed = _count(
         "SELECT COUNT(DISTINCT tp.opportunity_id) FROM trade_proposals tp "
         "JOIN opportunities o ON o.id=tp.opportunity_id "
-        "WHERE datetime(o.created_at)>=datetime(?) "
-        "AND datetime(o.created_at)<=datetime(?) "
-        "AND datetime(tp.created_at)<=datetime(?)",
+        "WHERE julianday(o.created_at)>=julianday(?) "
+        "AND julianday(o.created_at)<=julianday(?) "
+        "AND julianday(tp.created_at)<=julianday(?)",
         (window_start, window_end, window_end),
     )
 
@@ -730,16 +741,13 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
 
     Read-only. Purely reconstructive over already-persisted evidence.
     """
-    from datetime import datetime, timedelta, timezone
     from aletheia.storage.sqlite import get_db
     from aletheia.data.symbols import to_canonical
 
     db = get_db()
-    hours_i = max(1, int(hours or 24))
+    hours_i, window_start = _rolling_cutoff(hours)
     limit_i = max(1, min(int(limit or 50), 200))
-    now = datetime.now(timezone.utc)
-    window_start = (now - timedelta(hours=hours_i)).isoformat()
-    window_end = now.isoformat()
+    window_end = datetime.now(timezone.utc).isoformat()
 
     pi_items: list[dict] = []
     reject_items: list[dict] = []
@@ -747,12 +755,15 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
     # pi_decisions — operator trade / skip
     rows = list(db.execute(
         "SELECT id, created_at, symbol, direction, market_type, action, "
-        "conviction, reasoning, opportunity_id, proposal_id "
+        "conviction, reasoning, opportunity_id, proposal_id, "
+        "julianday(created_at) AS sort_instant "
         "FROM pi_decisions "
         "WHERE action IN ('trade','skip','flip','scale_in','watch') "
-        "AND datetime(created_at)>=datetime(?) AND datetime(created_at)<=datetime(?) "
+        "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
+        "AND julianday(created_at)>=julianday(?) "
+        "AND julianday(created_at)<=julianday(?) "
         "AND (symbol IS NOT NULL AND symbol != '') "
-        "ORDER BY datetime(created_at) DESC, rowid DESC",
+        "ORDER BY julianday(created_at) DESC, rowid DESC",
         (window_start, window_end),
     ))
     for r in rows:
@@ -775,26 +786,28 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
             "action": act,
             "conviction": r["conviction"],
             "one_line_reason": _first_line(r["reasoning"], 140),
+            "_sort_instant": float(r["sort_instant"] or 0),
         })
 
     # trade_proposals rejected — user vs auto reject determined by paired audit event
     rows = list(db.execute(
         "SELECT tp.id AS proposal_id, tp.opportunity_id, tp.created_at, "
         "tp.symbol, tp.direction, tp.market_type, ae.actor, ae.source, ae.message, "
-        "ae.timestamp AS rejected_at "
+        "ae.timestamp AS rejected_at, "
+        "julianday(COALESCE(ae.timestamp,tp.created_at)) AS sort_instant "
         "FROM trade_proposals tp "
         "LEFT JOIN audit_events ae ON ae.rowid=("
         " SELECT candidate.rowid FROM audit_events candidate "
         " WHERE candidate.entity_id=tp.id "
         " AND candidate.event_type='proposal_rejected' "
-        " ORDER BY datetime(candidate.timestamp) DESC, candidate.rowid DESC LIMIT 1"
+        " ORDER BY julianday(candidate.timestamp) DESC, candidate.rowid DESC LIMIT 1"
         ") "
         "WHERE tp.status='rejected' AND ("
-        " (ae.timestamp IS NOT NULL AND datetime(ae.timestamp)>=datetime(?) "
-        "  AND datetime(ae.timestamp)<=datetime(?)) "
-        " OR (ae.timestamp IS NULL AND datetime(tp.created_at)>=datetime(?) "
-        "  AND datetime(tp.created_at)<=datetime(?))"
-        ") ORDER BY datetime(COALESCE(ae.timestamp,tp.created_at)) DESC, tp.rowid DESC",
+        " (ae.timestamp IS NOT NULL AND julianday(ae.timestamp)>=julianday(?) "
+        "  AND julianday(ae.timestamp)<=julianday(?)) "
+        " OR (ae.timestamp IS NULL AND julianday(tp.created_at)>=julianday(?) "
+        "  AND julianday(tp.created_at)<=julianday(?))"
+        ") ORDER BY julianday(COALESCE(ae.timestamp,tp.created_at)) DESC, tp.rowid DESC",
         (window_start, window_end, window_start, window_end),
     ))
     for r in rows:
@@ -824,6 +837,7 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
             "rejected_actor": actor or None,
             "rejected_source": source or None,
             "time_basis": "rejected_at" if r["rejected_at"] else "proposal_created_fallback",
+            "_sort_instant": float(r["sort_instant"] or 0),
         })
 
     rejected_proposals = {item["proposal_id"] for item in reject_items if item["proposal_id"]}
@@ -847,7 +861,7 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
         )
     ]
     all_items = pi_items + reject_items
-    all_items.sort(key=lambda x: str(x.get("decided_at") or ""), reverse=True)
+    all_items.sort(key=lambda x: float(x.get("_sort_instant") or 0), reverse=True)
 
     counts = {"trade": 0, "operator_skip": 0, "operator_watch": 0,
               "user_reject": 0, "auto_reject": 0, "reject_unknown": 0}
@@ -857,6 +871,8 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
             counts[oc] += 1
 
     items = all_items[:limit_i]
+    for item in items:
+        item.pop("_sort_instant", None)
 
     # Canonicalize symbols so the UI's fmtSymbol path matches the pending queue
     for it in items:

@@ -26,10 +26,11 @@ Finding = Literal[
     "diagnosis_unavailable",
 ]
 
-_THRESHOLD_VERSION = "skip-halt-v1"
+_THRESHOLD_VERSION = "skip-halt-v2"
 _WINDOW_HOURS = 24
 _OUTCOME_HORIZONS = frozenset({"15m", "1h", "4h", "24h"})
 _PRIMARY_HORIZON = "24h"
+_PRIMARY_HORIZON_HOURS = 24
 _MIN_SETTLED_PER_COHORT = 5
 
 
@@ -77,16 +78,25 @@ def diagnose_skip_halt(
     cohort can be reported as protective, but a positive cohort becomes only an
     experiment/replay draft recommendation after a comparable pass cohort exists.
     """
-    end = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    start = end - timedelta(hours=max(1, int(window_hours)))
+    observed_end = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    window_delta = timedelta(hours=max(1, int(window_hours)))
+    recent_start = observed_end - window_delta
+    cohort_end = observed_end - timedelta(hours=_PRIMARY_HORIZON_HOURS)
+    cohort_start = cohort_end - window_delta
     try:
-        return _diagnose(start=start, end=end, policy_epoch_id=policy_epoch_id)
+        return _diagnose(
+            start=cohort_start,
+            end=cohort_end,
+            recent_start=recent_start,
+            observed_end=observed_end,
+            policy_epoch_id=policy_epoch_id,
+        )
     except Exception:
         return _report(
             "diagnosis_unavailable",
             "repair_diagnosis_read_path",
-            start,
-            end,
+            cohort_start,
+            cohort_end,
             policy_epoch_id=policy_epoch_id,
             counts={},
             metrics={},
@@ -96,7 +106,12 @@ def diagnose_skip_halt(
 
 
 def _diagnose(
-    *, start: datetime, end: datetime, policy_epoch_id: str | None,
+    *,
+    start: datetime,
+    end: datetime,
+    recent_start: datetime,
+    observed_end: datetime,
+    policy_epoch_id: str | None,
 ) -> SkipDiagnosisReport:
     db = get_db()
     if policy_epoch_id:
@@ -107,40 +122,74 @@ def _diagnose(
         if epoch is None:
             raise ValueError("skip_diagnosis_policy_epoch_unknown")
         epoch_start = datetime.fromisoformat(str(epoch["started_at"]).replace("Z", "+00:00"))
-        start = max(start, epoch_start.astimezone(timezone.utc))
+        if epoch_start.tzinfo is None:
+            epoch_start = epoch_start.replace(tzinfo=timezone.utc)
+        epoch_start = epoch_start.astimezone(timezone.utc)
+        start = max(start, epoch_start)
+        recent_start = max(recent_start, epoch_start)
     start_iso, end_iso = start.isoformat(), end.isoformat()
-    candidates = db.execute(
+    recent_start_iso, observed_end_iso = recent_start.isoformat(), observed_end.isoformat()
+    mature_candidates = db.execute(
         """SELECT id, created_at FROM pi_decisions
            WHERE action='skip' AND opportunity_id IS NOT NULL
-             AND created_at >= ? AND created_at <= ?
+             AND COALESCE(signal_source, 'market_observer') != 'system_cascade'
+             AND julianday(created_at) >= julianday(?)
+             AND julianday(created_at) < julianday(?)
            ORDER BY created_at ASC, rowid ASC""",
         (start_iso, end_iso),
     ).fetchall()
-    candidate_ids = [str(row["id"]) for row in candidates]
+    recent_candidates = db.execute(
+        """SELECT id, created_at FROM pi_decisions
+           WHERE action='skip' AND opportunity_id IS NOT NULL
+             AND COALESCE(signal_source, 'market_observer') != 'system_cascade'
+             AND julianday(created_at) >= julianday(?)
+             AND julianday(created_at) <= julianday(?)
+           ORDER BY created_at ASC, rowid ASC""",
+        (recent_start_iso, observed_end_iso),
+    ).fetchall()
+    mature_candidate_ids = [str(row["id"]) for row in mature_candidates]
+    recent_candidate_ids = [str(row["id"]) for row in recent_candidates]
+    administrative_skips_excluded = int(db.execute(
+        """SELECT COUNT(*) FROM pi_decisions
+           WHERE action='skip' AND opportunity_id IS NOT NULL
+             AND signal_source='system_cascade'
+             AND julianday(created_at) >= julianday(?)
+             AND julianday(created_at) <= julianday(?)""",
+        (recent_start_iso, observed_end_iso),
+    ).fetchone()[0] or 0)
     pending_count = int(db.execute(
         """SELECT COUNT(*) FROM pi_decisions pending
            JOIN opportunities source ON source.id=pending.opportunity_id
            WHERE pending.action='signal_pending'
-             AND pending.created_at >= ? AND pending.created_at <= ?
+             AND julianday(pending.created_at) >= julianday(?)
+             AND julianday(pending.created_at) <= julianday(?)
              AND source.status='queued'
              AND NOT EXISTS (
                  SELECT 1 FROM pi_decisions final
                  WHERE final.opportunity_id=pending.opportunity_id
                    AND final.action IN ('skip', 'watch', 'trade')
              )""",
-        (start_iso, end_iso),
+        (recent_start_iso, observed_end_iso),
     ).fetchone()[0] or 0)
+    candidate_ids = list(dict.fromkeys([*mature_candidate_ids, *recent_candidate_ids]))
+    keys = [f"pi_decision:{item}" for item in candidate_ids]
+    mature_keys = [f"pi_decision:{item}" for item in mature_candidate_ids]
+    counts = {
+        "candidate_skips": len(recent_candidate_ids),
+        "mature_candidate_skips": len(mature_candidate_ids),
+        "immature_candidate_skips": len(recent_candidate_ids),
+        "administrative_skips_excluded": administrative_skips_excluded,
+        "pending_signals": pending_count,
+    }
     if not candidate_ids:
         finding = "operator_liveness_incident" if pending_count >= _MIN_SETTLED_PER_COHORT else "not_applicable"
         action = "create_non_executable_replay_draft" if finding == "operator_liveness_incident" else "record_supply_state"
         return _report(
             finding, action, start, end,
-            counts={"candidate_skips": 0, "pending_signals": pending_count},
-            metrics={}, reason_codes={}, policy_epoch_id=policy_epoch_id,
+            counts=counts, metrics={}, reason_codes={}, policy_epoch_id=policy_epoch_id,
         )
 
     placeholders = ",".join("?" for _ in candidate_ids)
-    keys = [f"pi_decision:{item}" for item in candidate_ids]
     trace_rows = db.execute(
         f"""SELECT outcome_candidate_key, reason_code
             FROM filter_decisions
@@ -165,21 +214,27 @@ def _diagnose(
         1 for key in keys
         if {str(row["horizon"]) for row in outcomes[key]} != _OUTCOME_HORIZONS
     )
-    counts = {
-        "candidate_skips": len(keys),
-        "pending_signals": pending_count,
+    counts.update({
         "missing_trace": missing_trace,
         "missing_outcome_seed": missing_seed,
-    }
+    })
     if missing_trace or missing_seed:
         return _report(
             "recording_incident", "create_recording_repair_task", start, end,
             counts=counts, metrics={}, reason_codes=dict(reason_codes), policy_epoch_id=policy_epoch_id,
         )
 
+    if not mature_keys:
+        counts["settled_candidate_skips"] = 0
+        counts["unsettled_candidate_skips"] = len(recent_candidate_ids)
+        return _report(
+            "awaiting_outcomes", "await_fixed_horizon_settlement", start, end,
+            counts=counts, metrics={}, reason_codes=dict(reason_codes), policy_epoch_id=policy_epoch_id,
+        )
+
     settled_skip_nets: list[float] = []
     unsettled = 0
-    for key in keys:
+    for key in mature_keys:
         primary = next((row for row in outcomes[key] if row["horizon"] == _PRIMARY_HORIZON), None)
         if primary is None or primary["status"] != "settled" or primary["net_return_pct"] is None:
             unsettled += 1
@@ -200,7 +255,8 @@ def _diagnose(
              ON fo.outcome_candidate_key=fd.outcome_candidate_key
            WHERE fd.filter_name='operator_action_assessment'
              AND fd.decision='passed'
-             AND fd.evaluated_at >= ? AND fd.evaluated_at <= ?
+             AND julianday(fd.evaluated_at) >= julianday(?)
+             AND julianday(fd.evaluated_at) < julianday(?)
              AND fo.horizon=? AND fo.status='settled' AND fo.net_return_pct IS NOT NULL""",
         (start_iso, end_iso, _PRIMARY_HORIZON),
     ).fetchall()

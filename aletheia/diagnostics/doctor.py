@@ -1361,7 +1361,9 @@ def _probe_profit_loop(report: Report) -> None:
         try:
             rows = db.execute(
                 "SELECT action, COUNT(*) c FROM pi_decisions "
-                "WHERE created_at >= datetime('now','-12 hours') GROUP BY action"
+                "WHERE COALESCE(signal_source, 'market_observer') != 'system_cascade' "
+                "AND julianday(created_at) >= julianday('now','-12 hours') "
+                "GROUP BY action"
             ).fetchall()
             mix = {r[0]: r[1] for r in rows}
             skips = mix.get("skip", 0)
@@ -1373,7 +1375,9 @@ def _probe_profit_loop(report: Report) -> None:
                 # pipeline stalled even if they appear in the 12h window.
                 reason_rows = db.execute(
                     "SELECT reasoning FROM pi_decisions WHERE action='skip' "
-                    "AND created_at >= datetime('now','-12 hours') LIMIT 10"
+                    "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
+                    "AND julianday(created_at) >= julianday('now','-12 hours') "
+                    "ORDER BY julianday(created_at) DESC LIMIT 10"
                 ).fetchall()
                 distress_kws = ("structural distress", "acute distress", "systematic distress")
                 for r in reason_rows:
@@ -1450,22 +1454,33 @@ def _probe_skip_halt(report: Report) -> None:
                FROM pi_decisions p
                WHERE p.action = 'skip'
                  AND p.opportunity_id IS NOT NULL
-                 AND p.created_at >= ?""",
+                 AND COALESCE(p.signal_source, 'market_observer') != 'system_cascade'
+                 AND julianday(p.created_at) >= julianday(?)""",
             (cutoff,),
         ).fetchone()
+        administrative_skips = db.execute(
+            """SELECT COUNT(*) FROM pi_decisions
+               WHERE action='skip' AND opportunity_id IS NOT NULL
+                 AND signal_source='system_cascade'
+                 AND julianday(created_at) >= julianday(?)""",
+            (cutoff,),
+        ).fetchone()[0]
         unscoped = db.execute(
             """SELECT COUNT(*) FROM pi_decisions
-               WHERE action = 'skip' AND opportunity_id IS NULL AND created_at >= ?""",
+               WHERE action = 'skip' AND opportunity_id IS NULL
+                 AND julianday(created_at) >= julianday(?)""",
             (cutoff,),
         ).fetchone()[0]
         no_candidate_events = db.execute(
             """SELECT COUNT(*) FROM operator_evaluation_events
-               WHERE event_kind = 'no_evaluable_candidate' AND created_at >= ?""",
+               WHERE event_kind = 'no_evaluable_candidate'
+                 AND julianday(created_at) >= julianday(?)""",
             (cutoff,),
         ).fetchone()[0]
         pending = db.execute(
             """SELECT COUNT(*) FROM pi_decisions
-               WHERE action = 'signal_pending' AND created_at >= ?""",
+               WHERE action = 'signal_pending'
+                 AND julianday(created_at) >= julianday(?)""",
             (cutoff,),
         ).fetchone()[0]
         # A reload can leave pre-remediation decisions inside the rolling 24h
@@ -1480,7 +1495,8 @@ def _probe_skip_halt(report: Report) -> None:
         ).fetchone()
         policy_epoch_id = str(epoch_row[0]) if epoch_row is not None else None
         proposals = db.execute(
-            "SELECT COUNT(*) FROM trade_proposals WHERE created_at >= ?",
+            "SELECT COUNT(*) FROM trade_proposals "
+            "WHERE julianday(created_at) >= julianday(?)",
             (cutoff,),
         ).fetchone()[0]
     except Exception as exc:
@@ -1496,11 +1512,14 @@ def _probe_skip_halt(report: Report) -> None:
     detail = (
         f"raw_24h_candidate_skips={candidate_skips}, raw_24h_missing_trace={missing_trace}, "
         f"raw_24h_missing_outcome_seed={missing_outcome_seed}, "
+        f"administrative_cascade_skips_excluded={int(administrative_skips or 0)}, "
         f"unscoped_heartbeat_skips={int(unscoped or 0)}, "
         f"no_evaluable_candidate_events={int(no_candidate_events or 0)}, "
         f"raw_24h_pending_signals={int(pending or 0)}, proposals={int(proposals or 0)}, "
         f"diagnosis_epoch={epoch_label}, "
         f"current_epoch_candidate_skips={int(scoped_counts.get('candidate_skips', 0))}, "
+        f"mature_epoch_candidate_skips={int(scoped_counts.get('mature_candidate_skips', 0))}, "
+        f"immature_epoch_candidate_skips={int(scoped_counts.get('immature_candidate_skips', 0))}, "
         f"current_epoch_pending_signals={int(scoped_counts.get('pending_signals', 0))}, "
         f"finding={diagnosis.finding}, threshold={diagnosis.threshold_version}"
     )
@@ -1518,10 +1537,19 @@ def _probe_skip_halt(report: Report) -> None:
             fix_hint,
         )
     elif candidate_skips:
+        finding_note = {
+            "awaiting_outcomes": (
+                "recent candidate evidence complete; await the preceding bounded "
+                "cohort's fixed-horizon settlement"
+            ),
+            "protective_skip_observed": (
+                "mature fixed-horizon cohort supports retaining the current policy"
+            ),
+        }.get(diagnosis.finding, "candidate evidence complete; no behavior change authorized")
         report.add(
             "loop.skip_halt",
             "info",
-            detail + " — candidate evidence complete; await fixed-horizon settlement before judging protection",
+            detail + f" — {finding_note}",
             fix_hint,
         )
     else:

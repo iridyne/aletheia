@@ -583,6 +583,83 @@ def test_doctor_excludes_pre_remediation_skip_gaps_from_current_finding(tmp_path
 
 @spec_claim(
     SpecClaim(
+        "FE-S17", _CONTRACT, "§3 skip-halt mature cohort", "L2b",
+        "Recent candidate evidence is checked immediately, while effectiveness uses "
+        "the preceding fixed-horizon-mature cohort so new skips cannot block a finding.",
+    )
+)
+def test_skip_halt_judges_mature_cohort_while_recent_skips_settle(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+    from tests.test_skip_diagnosis import _add_candidate
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
+
+    now = datetime.now(timezone.utc)
+    for index in range(5):
+        _add_candidate(
+            key=f"pi_decision:spec-mature-protective-{index}",
+            action="rejected",
+            net=-1.0,
+            now=now - timedelta(hours=25, minutes=index),
+        )
+    _add_candidate(
+        key="pi_decision:spec-recent-unsettled",
+        action="rejected",
+        net=None,
+        now=now - timedelta(minutes=5),
+        pending=True,
+    )
+
+    report = diagnose_skip_halt(now=now)
+
+    assert report.finding == "protective_skip_observed"
+    assert report.counts["candidate_skips"] == 1
+    assert report.counts["mature_candidate_skips"] == 5
+
+
+@spec_claim(
+    SpecClaim(
+        "FE-S18", _CONTRACT, "§3 skip-halt administrative exclusion", "L2b",
+        "Lifecycle cascade cleanup skips are reported separately and never treated "
+        "as Operator candidate decisions or evidence gaps.",
+    )
+)
+def test_doctor_excludes_administrative_cascade_from_candidate_skips(
+    tmp_path, monkeypatch,
+):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.diagnostics import doctor
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+
+    insert_pi_decision(PiDecision(
+        id="administrative-cascade",
+        action="skip",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        opportunity_id="expired-source",
+        signal_source="system_cascade",
+        reasoning="cascade_expired: administrative cleanup",
+    ))
+
+    report = doctor.Report()
+    doctor._probe_skip_halt(report)
+
+    check = next(check for check in report.checks if check.name == "loop.skip_halt")
+    assert check.severity == "info"
+    assert "raw_24h_candidate_skips=0" in check.detail
+    assert "raw_24h_missing_trace=0" in check.detail
+    assert "administrative_cascade_skips_excluded=1" in check.detail
+
+
+@spec_claim(
+    SpecClaim(
         "FE-B07", _CONTRACT, "§5 risk authority", "L2b",
         "RiskDecision remains authoritative while a report-only risk filter fact is appended after persistence.",
         status="implemented",
