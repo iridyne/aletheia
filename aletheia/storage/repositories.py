@@ -4086,6 +4086,78 @@ def calibration_stats() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def filter_pressure_stats() -> list[dict]:
+    """Aggregate cost-aware returns for filter-rejected candidates where scanner_family is known.
+
+    These rows come from risk/PI filter stages that run after scanner assignment, so
+    scanner_family is populated. Returns per-family miss rates: how often do this
+    family's rejected candidates produce positive net returns?
+    """
+    from aletheia.analytics.learning_window import clean_window_cutoff
+
+    db = get_db()
+    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    rows = db.execute(
+        "SELECT scanner_family, direction, "
+        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
+        "COUNT(*) AS n, "
+        "AVG(net_return_pct) AS avg_net, "
+        "MIN(net_return_pct) AS min_net, "
+        "MAX(net_return_pct) AS max_net, "
+        "AVG(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0) "
+        "  THEN 1.0 ELSE 0.0 END) AS miss_rate "
+        "FROM filter_candidate_outcomes "
+        "WHERE status = 'settled' "
+        "AND scanner_family IS NOT NULL "
+        "AND cost_model_version IS NOT NULL "
+        "AND net_return_pct IS NOT NULL "
+        "AND ABS(net_return_pct) <= 100 "
+        "AND direction IN ('long', 'short') "
+        "AND entry_ts >= ? "
+        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
+        "ORDER BY scanner_family, direction, market_type, horizon",
+        (cutoff,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def family_spread_tolerance_stats() -> list[dict]:
+    """Per-family spread sensitivity from settled universe forward outcomes.
+
+    Splits outcomes into low-spread (<=15 bps) and high-spread (>15 bps) buckets to
+    measure whether a family retains positive net expectancy at higher spreads. Used
+    by filter_advisor to compute per-family spread tolerance multipliers.
+    """
+    from aletheia.analytics.learning_window import clean_window_cutoff
+
+    db = get_db()
+    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    rows = db.execute(
+        "SELECT scanner_family, direction, "
+        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
+        "COUNT(*) AS n, "
+        "AVG(net_return_pct) AS avg_net, "
+        "MIN(net_return_pct) AS min_net, "
+        "COUNT(CASE WHEN entry_spread_bps <= 15 THEN 1 END) AS n_low_spread, "
+        "AVG(CASE WHEN entry_spread_bps <= 15 THEN net_return_pct END) AS avg_net_low_spread, "
+        "COUNT(CASE WHEN entry_spread_bps > 15 THEN 1 END) AS n_high_spread, "
+        "AVG(CASE WHEN entry_spread_bps > 15 THEN net_return_pct END) AS avg_net_high_spread "
+        "FROM universe_forward_outcomes "
+        "WHERE status = 'settled' "
+        "AND scanner_family IS NOT NULL "
+        "AND entry_spread_bps IS NOT NULL "
+        "AND cost_model_version IS NOT NULL "
+        "AND net_return_pct IS NOT NULL "
+        "AND ABS(net_return_pct) <= 100 "
+        "AND direction IN ('long', 'short') "
+        "AND entry_ts >= ? "
+        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
+        "ORDER BY scanner_family, direction, market_type, horizon",
+        (cutoff,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[dict]:
     """Per-(scanner_family, direction, market_type) cost-aware edge.
 

@@ -259,6 +259,28 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
                     )
         except Exception:
             pass
+    # Log per-family filter pressure: families whose filter-rejected candidates
+    # show positive net returns (only meaningful once filter_candidate_outcomes
+    # accumulates rows with scanner_family from the fine filter stage).
+    if total_settled:
+        try:
+            from aletheia.universe.filter_advisor import get_family_filter_pressure_summary
+            pressure = get_family_filter_pressure_summary()
+            for entry in pressure:
+                logger.info(
+                    "FILTER_PRESSURE family=%s direction=%s market_type=%s "
+                    "horizon=%s avg_net_missed=%.3f%% miss_rate=%.1f%% n=%d",
+                    entry["scanner_family"],
+                    entry["direction"],
+                    entry["market_type"],
+                    entry["horizon"],
+                    entry["avg_net_missed"],
+                    entry["miss_rate"] * 100,
+                    entry["n"],
+                )
+        except Exception:
+            pass
+
     # Tier 1: auto-generate guard candidates for significant losses
     if all_settled_rows:
         _maybe_generate_guard_candidates(all_settled_rows)

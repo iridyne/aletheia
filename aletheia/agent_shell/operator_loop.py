@@ -349,6 +349,8 @@ class SystemAssessment:
     open_positions: int = 0
     # Scanner calibration
     family_multipliers: dict[str, float] = field(default_factory=dict)
+    # Filter pressure: families whose blocked candidates show positive net returns
+    filter_pressure: list[dict] = field(default_factory=list)
     # Config snapshot (safe params)
     min_confidence: str = "medium"  # speculative < medium < high
     default_stop_loss_pct: float = 3.0
@@ -515,6 +517,14 @@ def build_system_assessment() -> SystemAssessment:
         assessment.family_multipliers = get_family_multipliers()
     except Exception:
         pass
+
+    # Filter pressure: families whose filter-rejected candidates show positive net
+    # returns — indicates the filter may be too conservative for those families.
+    try:
+        from aletheia.universe.filter_advisor import get_family_filter_pressure_summary
+        assessment.filter_pressure = get_family_filter_pressure_summary()
+    except Exception:
+        assessment.filter_pressure = []
 
     # Config snapshot
     assessment.min_confidence = getattr(cfg.trading, "min_confidence_to_trade", "medium")

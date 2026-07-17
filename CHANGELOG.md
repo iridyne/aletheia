@@ -1,5 +1,64 @@
 # Changelog
 
+## [Unreleased] - 2026-07-17 — Universe scanner signal improvements + filter closed-loop feedback
+
+### Universe Scanner — Signal Quality (scanners.py)
+
+Five targeted fixes to scanner scoring quality and correctness:
+
+1. **`oi_price_divergence` into derivatives scanner**: The +1 (OI↑/price↓ accumulation) and
+   -1 (OI↓/price↑ weak-rally) divergence signal was collected but never consumed. Each
+   non-zero reading now contributes ±15 pts to `score_derivatives`, raising the family's
+   max achievable score from ~85 to ~100.
+
+2. **`short_bias` score ceiling raised**: Was capped at ~78 pts vs ~100 for other families,
+   causing consistent under-selection. Added `oi_delta_1h` (+10–12 pts for liquidation or
+   new-shorts flow) and `rsi_4h` gate/bonus (+10 pts room-to-fall, early exit if already
+   oversold on 4h). Max now ~100.
+
+3. **`mean_reversion` gains `rsi_4h`**: 4h RSI ≥75 (overbought) or ≤25 (oversold) adds 15
+   pts and sets direction, complementing the existing 1h RSI extremes.
+
+4. **Volume penalty ordering bug fixed** (volatility + event scanners): `score *= 0.5`
+   penalty was applied mid-accumulation (after ATR but before BB/taker/4h signals). The
+   penalty was then effectively cancelled by subsequent additions. Moved to end of signal
+   accumulation in both scanners; added `score *= 0.7` for unknown volume.
+
+### Universe Filter — Two-Pass Architecture + Depth Gate (filters.py, service.py)
+
+- **`apply_coarse_tradability_filters`** (pre-scan, spread threshold 3× max_spread_bps):
+  runs before scanners assign families. Borderline spread assets (2×–3×) survive.
+- **`apply_fine_tradability_filters`** (post-scan, per-family tolerance × 2×):
+  applies after scanners run, using per-family spread tolerance multipliers from
+  `filter_advisor`. Records rejections with `scanner_family` populated.
+- **Depth hard gate**: rejects when `depth_10bps_usd < 10%` of configured minimum (only
+  when depth data is available; missing data does not block).
+- **Depth scoring in `_compute_tradability_score`**: +10 for deep (≥3× min), +5 for
+  adequate (≥min), 0 for marginal (≥25% min), −10 for critically shallow (<25% min).
+
+### Filter Feedback Loop — filter_advisor (filter_advisor.py, repositories.py)
+
+Closes the feedback gap where filter-rejected candidates had no path back to scanner
+calibration. Fine-filter rejections now populate `filter_candidate_outcomes` with
+`scanner_family` and `direction`, enabling:
+
+- **`repositories.filter_pressure_stats()`**: aggregates missed-alpha by family from
+  settled fine-filter rejections.
+- **`repositories.family_spread_tolerance_stats()`**: per-family spread sensitivity from
+  `universe_forward_outcomes` (split by entry_spread_bps ≤15 / >15).
+- **`filter_advisor.get_family_spread_tolerances()`**: computes per-family tolerance
+  multipliers with empirical Bayes shrinkage. Initially all 1.0 (no behavioral change);
+  calibrates as data accumulates over ~30 settled outcomes per family.
+- **`filter_advisor.get_family_filter_pressure_summary()`**: surfaced in
+  `operator_loop.SystemAssessment.filter_pressure` and logged by `outcome_recorder`.
+
+### Dashboard — Opportunity Funnel Card (Overview.tsx, analytics.py)
+
+New `OpportunityFunnelCard` in Overview surfaces why opportunities don't reach the
+operator: emitted → proposed cumulative counts + point-in-time ranker snapshot (excluded
+by reason, confidence floor, main_reason). Backed by new `/api/analytics/opportunity-funnel`
+route reading `candidate_supply_snapshot` events.
+
 ## [0.5.0] - 2026-06-05 — Codex subscription provider (Web UI login + model listing)
 
 Delivers guide §12.1.3 properly: the "ChatGPT Codex subscription / local

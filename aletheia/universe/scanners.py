@@ -145,6 +145,7 @@ def score_mean_reversion(feat: dict) -> tuple[float, list[str], str | None]:
     direction = None
 
     rsi_val = feat.get("rsi_14")
+    rsi_4h = feat.get("rsi_4h")
     ret_4h = feat.get("return_4h")
     ret_24h = feat.get("return_24h")
     vol_ratio = feat.get("vol_ratio")
@@ -168,6 +169,20 @@ def score_mean_reversion(feat: dict) -> tuple[float, list[str], str | None]:
             score += 20.0
             direction = "long"
             reasons.append(f"RSI {rsi_val:.0f} oversold")
+
+    # === 4h RSI confirmation: higher-timeframe extreme is a stronger signal ===
+    # 1h RSI extremes can be single-candle noise; 4h RSI extremes carry more weight.
+    if rsi_4h is not None:
+        if rsi_4h >= 75:
+            score += 15.0
+            if direction is None:
+                direction = "short"
+            reasons.append(f"4h RSI {rsi_4h:.0f} overbought")
+        elif rsi_4h <= 25:
+            score += 15.0
+            if direction is None:
+                direction = "long"
+            reasons.append(f"4h RSI {rsi_4h:.0f} oversold")
 
     # === Overextended returns ===
     if ret_4h is not None:
@@ -238,15 +253,6 @@ def score_volatility(feat: dict) -> tuple[float, list[str], str | None]:
             score += 20.0
             reasons.append(f"ATR {atr:.1f}% expanding")
 
-    # === Volume spike (necessary condition) ===
-    if vol_ratio is not None and vol_ratio > 2.0:
-        score += 25.0
-        reasons.append(f"vol {vol_ratio:.1f}x avg")
-    elif vol_ratio is not None and vol_ratio > 1.5:
-        score += 10.0
-    else:
-        score = score * 0.5
-
     # === BB squeeze (relative compression detection) ===
     bb_squeeze = feat.get("bb_squeeze")
     if bb_squeeze:
@@ -284,7 +290,21 @@ def score_volatility(feat: dict) -> tuple[float, list[str], str | None]:
             reasons.append(f"taker confirms {direction}")
 
     if direction is None:
-        score = 0.0
+        return 0.0, [], None
+
+    # === Volume: contribution for high vol, penalty for low vol applied to
+    # full accumulated score. Moved after all signals so the penalty correctly
+    # covers ATR + BB + 4h + taker, not just the ATR portion. ===
+    if vol_ratio is not None:
+        if vol_ratio > 2.0:
+            score += 25.0
+            reasons.append(f"vol {vol_ratio:.1f}x avg")
+        elif vol_ratio > 1.5:
+            score += 10.0
+        else:
+            score *= 0.5
+    else:
+        score *= 0.7  # unknown volume: moderate penalty
 
     return max(0.0, min(100.0, score)), reasons, direction
 
@@ -344,6 +364,24 @@ def score_derivatives(feat: dict) -> tuple[float, list[str], str | None]:
             elif ret < -0.5:
                 direction = "short"
                 reasons.append("OI build-up, price down")
+
+    # OI/price divergence: hidden accumulation or weak-rally distribution signal.
+    # oi_price_divergence = +1: OI rising while price falling → absorption/accumulation
+    # (smart money absorbing sells); fades the apparent weakness → long.
+    # oi_price_divergence = -1: OI falling while price rising → weak rally on
+    # dwindling conviction; likely to reverse → short.
+    oi_divergence = feat.get("oi_price_divergence")
+    if oi_divergence is not None:
+        if oi_divergence == 1:
+            score += 15.0
+            if direction is None:
+                direction = "long"
+            reasons.append("OI↑/price↓ accumulation divergence")
+        elif oi_divergence == -1:
+            score += 15.0
+            if direction is None:
+                direction = "short"
+            reasons.append("OI↓/price↑ weak-rally divergence")
 
     # Fallback when no derivatives data
     if funding is None and oi_delta is None:
@@ -407,22 +445,6 @@ def score_event(feat: dict) -> tuple[float, list[str], str | None]:
     if direction is None:
         return 0.0, [], None
 
-    # === Volume confirmation (required co-signal) ===
-    # Without volume the price move may be low-liquidity noise.
-    if vol_ratio is not None:
-        if vol_ratio >= 4.0:
-            score += 30.0
-            reasons.append(f"vol x{vol_ratio:.1f} vs 72h avg")
-        elif vol_ratio >= 2.0:
-            score += 20.0
-            reasons.append(f"vol x{vol_ratio:.1f} vs 72h avg")
-        elif vol_ratio >= 1.5:
-            score += 10.0
-            reasons.append(f"vol x{vol_ratio:.1f} slightly elevated")
-        else:
-            # Volume below 1.5× baseline → price move lacks participation, halve score
-            score *= 0.5
-
     # === Taker directional confirmation ===
     if taker_ratio is not None:
         if direction == "long" and taker_ratio > 1.5:
@@ -456,6 +478,25 @@ def score_event(feat: dict) -> tuple[float, list[str], str | None]:
             score += 5.0
             reasons.append("4h trend aligned")
 
+    # === Volume confirmation applied to full accumulated score ===
+    # Moved after all confirmations so the low-volume penalty applies to the
+    # entire event thesis (price jump + taker + OI + 4h), not just the price
+    # jump portion. Without volume the whole event signal is weaker.
+    if vol_ratio is not None:
+        if vol_ratio >= 4.0:
+            score += 30.0
+            reasons.append(f"vol x{vol_ratio:.1f} vs 72h avg")
+        elif vol_ratio >= 2.0:
+            score += 20.0
+            reasons.append(f"vol x{vol_ratio:.1f} vs 72h avg")
+        elif vol_ratio >= 1.5:
+            score += 10.0
+            reasons.append(f"vol x{vol_ratio:.1f} slightly elevated")
+        else:
+            score *= 0.5
+    else:
+        score *= 0.7  # unknown volume: moderate penalty
+
     return max(0.0, min(100.0, score)), reasons, direction
 
 
@@ -477,7 +518,9 @@ def score_short_bias(feat: dict) -> tuple[float, list[str], str | None]:
     ret_4h = feat.get("return_4h")
     ret_24h = feat.get("return_24h")
     rsi_val = feat.get("rsi_14")
+    rsi_4h = feat.get("rsi_4h")
     funding = feat.get("funding_rate")
+    oi_delta = feat.get("oi_delta_1h")
     rs_24h = feat.get("rs_beta_adj_24h") or feat.get("relative_strength_24h")
 
     # === Core gate: meaningful downward momentum on 4h (not noise) ===
@@ -515,12 +558,32 @@ def score_short_bias(feat: dict) -> tuple[float, list[str], str | None]:
         score += 10.0
         reasons.append(f"funding {funding:.3f} (longs paying)")
 
-    # === RSI room-to-fall gate: reject if already oversold (poor entry) ===
+    # === RSI 1h room-to-fall gate: reject if already oversold (poor entry) ===
     if rsi_val is not None and rsi_val < 25:
         return 0.0, [], None
     if rsi_val is not None and rsi_val < 45:
         score += 8.0
         reasons.append(f"rsi {rsi_val:.0f} room to fall")
+
+    # === 4h RSI: higher-timeframe confirmation of room to fall ===
+    if rsi_4h is not None:
+        if rsi_4h < 25:
+            # Already oversold on 4h — risk of snap-back is too high
+            return 0.0, [], None
+        elif rsi_4h < 50:
+            score += 10.0
+            reasons.append(f"4h rsi {rsi_4h:.0f} room to fall")
+
+    # === OI flow: confirms the short thesis ===
+    # Declining OI + price decline = long liquidation cascade (bearish confirmation)
+    # Rising OI + price decline = new shorts entering = directional conviction
+    if oi_delta is not None:
+        if oi_delta < -10:
+            score += 12.0
+            reasons.append(f"OI liquidation {oi_delta:.0f}%")
+        elif oi_delta > 10:
+            score += 10.0
+            reasons.append(f"new shorts OI +{oi_delta:.0f}%")
 
     return max(0.0, min(100.0, score)), reasons, "short"
 

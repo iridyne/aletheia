@@ -310,7 +310,11 @@ class UniverseService:
         """
         from aletheia.universe.registry import sync_registry
         from aletheia.universe.features import collect_features
-        from aletheia.universe.filters import apply_tradability_filters
+        from aletheia.universe.filters import (
+            apply_coarse_tradability_filters,
+            apply_fine_tradability_filters,
+        )
+        from aletheia.universe.filter_advisor import get_family_spread_tolerances
         from aletheia.universe.scanners import run_all_scanners
         from aletheia.universe.allocator import (
             allocate_universe, compute_total_score, get_family_multipliers,
@@ -408,23 +412,44 @@ class UniverseService:
                 assets, cfg, scanner_run_id=run.id,
             )
 
-            filtered = apply_tradability_filters(
+            # Pass 1: coarse filter (stablecoin/blacklist/freshness/volume + extreme spread ≥3×).
+            # Borderline spread cases (2×–3× max_spread_bps) pass through for family-aware
+            # fine filtering after scanner assigns families.
+            coarse_filtered = apply_coarse_tradability_filters(
                 features_list, cfg.universe, scanner_run_id=run.id,
             )
-            repo.update_universe_scanner_run(run.id, assets_passed=len(filtered))
 
             calibration = get_family_multipliers()
             if calibration:
                 logger.info("Calibration multipliers: %s", calibration)
 
-            scored = []
-            for feat in filtered:
+            # Load per-family spread tolerances from filter_advisor (empty until data
+            # accumulates; defaults to 1.0 = no change from standard 2× threshold).
+            try:
+                family_tolerances = get_family_spread_tolerances()
+            except Exception as _e:
+                logger.debug("filter_advisor tolerance fetch failed (non-fatal): %s", _e)
+                family_tolerances = {}
+
+            # Scan all coarsely-filtered candidates to get family + direction assignments.
+            pre_scored = []
+            for feat in coarse_filtered:
                 scanner_result = run_all_scanners(feat)
                 total = compute_total_score(
                     feat, scanner_result, cfg.universe, calibration=calibration or None,
                     scoring_cohort_key=run.id,
                 )
-                scored.append({**feat, **scanner_result, "total_score": total})
+                pre_scored.append({**feat, **scanner_result, "total_score": total})
+
+            # Pass 2: fine spread filter with per-family tolerance. Records rejections
+            # via record_filter_decision with scanner_family → filter_candidate_outcomes
+            # rows get family populated, closing the calibration feedback loop.
+            scored = apply_fine_tradability_filters(
+                pre_scored, cfg.universe,
+                family_tolerances=family_tolerances or None,
+                scanner_run_id=run.id,
+            )
+            repo.update_universe_scanner_run(run.id, assets_passed=len(scored))
 
             # A symbol's spot/perp alternatives represent one candidate thesis.
             # Deduplicate before quota allocation so the discarded instrument does
@@ -483,7 +508,7 @@ class UniverseService:
                 expires_at=expires_at,
                 summary=json.dumps({
                     "scanned": len(assets),
-                    "filtered": len(filtered),
+                    "filtered": len(scored),
                     "selected": len(allocated),
                 }),
             )
@@ -613,7 +638,7 @@ class UniverseService:
             )
             logger.info(
                 "Universe refresh complete: %d scanned → %d filtered → %d selected (snapshot=%s)",
-                len(assets), len(filtered), len(allocated), snap.id,
+                len(assets), len(scored), len(allocated), snap.id,
             )
             return snap.id
 
