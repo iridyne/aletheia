@@ -13,9 +13,22 @@
 > - 🟠 让数据失真或学习失效（promotion gate 错算 / KB 类型混淆 / PnL 不可信）
 > - 🟡 dead code / cosmetic / future-violation tripwire
 >
-> **最后更新**：2026-07-14 · 维护者：Aletheia Dev
+> **最后更新**：2026-07-17 · 维护者：Aletheia Dev
 > **来源**：6 个并行 subagent 审计（agents+runtime / risk+execution / storage+knowledge /
 > server+config / lifecycle+gateway / model+telegram+update+cli）+ 早期对照表
+
+---
+
+## 0d. Performance、并发与 SQLite 专项审计（2026-07-17）
+
+当前 LLM entry point、Provider 请求放大、跨入口并发、FastAPI event loop、SQLite
+事务/索引和 retention 的静态核对见：
+
+- [`PERFORMANCE_CONCURRENCY_SQLITE_AUDIT_2026-07-17.md`](../../research/audits/PERFORMANCE_CONCURRENCY_SQLITE_AUDIT_2026-07-17.md)
+
+该报告登记 PERF-01～PERF-10，并给出固定整改顺序和统一测量指标。它是开放问题和后续
+实施证据的引用入口，**不是提高并发、拆除 Universe 原子事务、修改交易安全边界或启动
+Live 的授权**。当前所有条目均为“待实施”；实现前仍需按工作包独立授权、回归和测量。
 
 ---
 
