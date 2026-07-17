@@ -531,6 +531,7 @@ class UniverseService:
                 # every carrier to be ttl_expired on the next ranker scan even
                 # though we just re-confirmed the same working set is valid.
                 # See repositories.refresh_active_snapshot_ttls for semantics.
+                refreshed_opps = 0
                 try:
                     refreshed_members, refreshed_opps = repo.refresh_active_snapshot_ttls(
                         prev_snapshot_id, now,
@@ -547,6 +548,15 @@ class UniverseService:
                     logger.warning(
                         "Universe refresh: TTL slide failed (non-fatal): %s", _e,
                     )
+                # Nudge ranker only when the slide made previously-expired
+                # opportunities eligible again. Without this the operator has
+                # to wait up to 3 min for the next tick to re-see them.
+                if refreshed_opps:
+                    try:
+                        from aletheia.agent_runtime.scheduler import notify_paper_trader
+                        notify_paper_trader(source="universe_refresh_ttl_slide")
+                    except Exception as _e:
+                        logger.debug("paper_trader nudge skipped (non-fatal): %s", _e)
                 # Advance the scanner run pointer to the reused snapshot, then
                 # short-circuit the publication block: no new members to insert,
                 # no downstream cohort logging (freshness monitors read the
@@ -707,6 +717,14 @@ class UniverseService:
                 completed_at=datetime.now(timezone.utc).isoformat(),
                 snapshot_id=snap.id,
             )
+            # Nudge paper_trader ranker to evaluate the newly-emitted carriers
+            # instead of waiting for its 3-min interval tick. Debounced,
+            # fire-and-forget, respects scheduler pause / kill switch.
+            try:
+                from aletheia.agent_runtime.scheduler import notify_paper_trader
+                notify_paper_trader(source="universe_refresh_new_snapshot")
+            except Exception as _e:
+                logger.debug("paper_trader nudge skipped (non-fatal): %s", _e)
             logger.info(
                 "Universe refresh complete: %d scanned → %d filtered → %d selected (snapshot=%s)",
                 len(assets), len(scored), len(allocated), snap.id,

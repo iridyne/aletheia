@@ -15,7 +15,7 @@
 | 2 | market_observer | 15min | observer | Scan for trading opportunities |
 | 3 | equity_observer | cron 工作日 14-21UTC /30min | agents | xStocks/equity market scan (replaces stock_observer) |
 | 4 | prediction_observer | 30min | agents | Prediction market scan |
-| 5 | paper_trader | 3min | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a). Cadence tightened from 5min so momentum (30min TTL) and mean_reversion (60min TTL) carriers get enough review passes before the family window elapses. |
+| 5 | paper_trader | 3min + on-demand | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a). Cadence tightened from 5min so momentum (30min TTL) and mean_reversion (60min TTL) carriers get enough review passes before the family window elapses. Additionally `scheduler.notify_paper_trader(source)` pulls the next fire time forward to now — called by `UniverseService.refresh` after a new snapshot is published or after change-suppression's TTL slide makes previously-expired opportunities eligible. Debounced 3s; APScheduler `max_instances=1` handles overlap. |
 | 6 | pi_trading_decision | ~15min (configurable) | agents | System Operator heartbeat (daemon fallback) |
 | 7 | position_manager | 5min | io | Manage open positions (trailing stop, exit) |
 | 8 | tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
@@ -169,7 +169,7 @@ backlog health are persisted in `learning_job_health`.
 
 #### paper_trader (refactored: signal collector)
 
-- **Trigger**: scheduler every 3min
+- **Trigger**: scheduler every 3min + on-demand nudge via `scheduler.notify_paper_trader(source)` from producers (universe refresh, TTL slide). Debounced 3s. APScheduler `max_instances=1` handles overlap so a nudge during an in-flight run is a no-op.
 - **Inputs**: opportunities, universe features, System Operator decisions
 - **LLM**: No (pure rule evaluation)
 - **Outputs**: signal_pending PiDecisions (Phase 4a: System Operator is the **sole** proposal submitter — paper_trader no longer creates proposals directly)

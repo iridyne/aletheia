@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased] - 2026-07-17 — Inline paper_trader nudge on universe events
+
+Cuts new-opportunity → ranker-review latency from up to 3 minutes to ~1
+second, without introducing a daemon. Debounced (3s) and gated by
+APScheduler's `max_instances=1` so a burst of universe emits collapses into
+one wake and never races an in-flight run.
+
+- `agent_runtime/scheduler.py::notify_paper_trader(source)`: pulls the
+  paper_trader job's `next_run_time` forward to `now + 0.5s` via
+  `_scheduler.modify_job`. Fire-and-forget, thread-safe, non-raising.
+  Skips silently when scheduler is down / paused / job absent.
+- `universe/service.py`: calls it after a new snapshot is published, and
+  from the change-suppression branch when `refresh_active_snapshot_ttls`
+  actually slid opportunities forward (previously-expired now eligible).
+
+Docs: `agent_contracts.md` describes the on-demand trigger alongside the
+scheduled 3min cadence.
+
 ## [Unreleased] - 2026-07-17 — Opportunity funnel Tier-2: change-suppression TTL slide, ranker cadence, soft TTL, dashboard redesign
 
 Follows the initial funnel card (commit 25a886d8) with a redesigned UI and three

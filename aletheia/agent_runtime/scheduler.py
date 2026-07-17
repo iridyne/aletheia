@@ -72,7 +72,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "risk_critic": 300.0,
     "universe_refresh": 600.0,
     "data_collectors": 45.0,
-    "data_collector_context": 45.0,
+    "data_collector_context": 60.0,
     "exchange_sync": 60.0,
     "portfolio_snapshot": 45.0,
     "price_feed": 45.0,
@@ -1170,6 +1170,58 @@ def get_pause_state() -> dict:
             ),
         }
     return {"scheduler_active": True, "mode": "running"}
+
+
+_LAST_PAPER_TRADER_NUDGE_MONO: float = 0.0
+_PAPER_TRADER_NUDGE_DEBOUNCE_SEC = 3.0
+_PAPER_TRADER_NUDGE_DELAY_SEC = 0.5
+
+
+def notify_paper_trader(source: str = "unknown") -> bool:
+    """Pull paper_trader's next fire time forward to now — inline event trigger.
+
+    Fire-and-forget: safe to call from any thread, never blocks, never raises.
+    APScheduler's max_instances=1 gate handles overlap: if paper_trader is
+    already running, the modify is a no-op and the current run absorbs the
+    pending work. If not running, it fires within ~1s.
+
+    Debounced: a burst of notifications within _PAPER_TRADER_NUDGE_DEBOUNCE_SEC
+    collapses into a single wake so a universe refresh emitting N opportunities
+    in tight succession does not thrash the modify path.
+
+    Guards: skips silently when the scheduler is down, paused, or the job is
+    absent. Layered-pause / kill-switch state is respected via the same executor
+    the regular tick uses — no bypass.
+
+    Returns True if a modify was issued, False otherwise. The boolean is
+    diagnostic; the caller should not treat False as a failure.
+    """
+    global _LAST_PAPER_TRADER_NUDGE_MONO
+    import time as _time
+
+    if _scheduler is None or not _scheduler.running:
+        return False
+    now_mono = _time.monotonic()
+    with _SCHEDULER_JOB_LOCK:
+        if now_mono - _LAST_PAPER_TRADER_NUDGE_MONO < _PAPER_TRADER_NUDGE_DEBOUNCE_SEC:
+            return False
+        try:
+            job = _scheduler.get_job("paper_trader")
+        except Exception:
+            return False
+        if job is None:
+            return False
+        try:
+            _scheduler.modify_job(
+                "paper_trader",
+                next_run_time=datetime.now() + timedelta(seconds=_PAPER_TRADER_NUDGE_DELAY_SEC),
+            )
+            _LAST_PAPER_TRADER_NUDGE_MONO = now_mono
+            logger.debug("paper_trader: nudged forward (source=%s)", source)
+            return True
+        except Exception as exc:
+            logger.debug("paper_trader: nudge failed (source=%s): %s", source, exc)
+            return False
 
 
 def reschedule_universe_refresh(interval_min: int) -> bool:
@@ -2830,7 +2882,7 @@ def _run_data_collector_context():
 _DC_DEADLINE_S = 40.0
 # Context has the same anti-thread-leak bound but a new deadline.  It never
 # inherits elapsed work from the primary-venue collector lane.
-_DC_CONTEXT_DEADLINE_S = 40.0
+_DC_CONTEXT_DEADLINE_S = 55.0
 
 
 async def _bounded(coro, label: str, cap: float, deadline: float):
@@ -3003,7 +3055,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
             "volume_scanner",
             _bounded(
                 VolumeScannerCollector(top_n=30).collect(instruments[:200]),
-                "volume_scanner", 12.0, deadline,
+                "volume_scanner", 20.0, deadline,
             ),
         ))
     else:
@@ -3065,7 +3117,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
         _record_collector_health("coingecko_top", "disabled")
     tasks.append((
         "macro",
-        _bounded(MacroCollector().collect(symbols), "macro", 15.0, deadline),
+        _bounded(MacroCollector().collect(symbols), "macro", 25.0, deadline),
     ))
     if getattr(cfg.market_data, "enable_coinalyze", True) and symbols:
         from aletheia.data.collectors.coinalyze import CoinalyzeCollector
