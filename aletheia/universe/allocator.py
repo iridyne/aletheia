@@ -142,6 +142,7 @@ def compute_total_score(
     scanner_result: dict,
     cfg: UniverseConfig,
     calibration: dict[str, float] | None = None,
+    scoring_cohort_key: str | None = None,
 ) -> float:
     """Compute the final total_score for universe ranking.
 
@@ -172,6 +173,10 @@ def compute_total_score(
                 f"universe:{feature_id}:{family}:{direction}:{market_type}"
                 if feature_id else None
             )
+            cluster_key = (
+                f"universe:cluster:{scoring_cohort_key}:{family}:{direction}:{market_type}"
+                if scoring_cohort_key else None
+            )
             horizon = _FAMILY_CALIBRATION_HORIZON.get(family, _DEFAULT_CALIBRATION_HORIZON)
             influence = apply_numeric_treatment(
                 path_id="universe_family_calibration",
@@ -186,6 +191,7 @@ def compute_total_score(
                 consumer_stage="opportunity_score",
                 outcome_candidate_key=(f"{candidate_key}:{horizon}" if candidate_key else None),
                 manifest={"raw_multiplier": raw_multiplier, "proposed_multiplier": proposed_multiplier},
+                assignment_key=cluster_key,
             )
             opportunity = influence.value
             if candidate_key:

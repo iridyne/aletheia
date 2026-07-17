@@ -160,6 +160,7 @@ def apply_numeric_treatment(
     treatment: float, consumer: str, consumer_stage: str,
     outcome_candidate_key: str | None = None, opportunity_id: str | None = None,
     manifest: dict | None = None,
+    assignment_key: str | None = None,
 ) -> InfluenceDecision:
     """Record prospective exposure and apply only an authorized paper treatment."""
     gate_reason = _learning_gate_reason()
@@ -172,7 +173,7 @@ def apply_numeric_treatment(
         path_id=path_id, scope=scope, action=action, source_cohort=source_cohort,
         target_horizon=target_horizon, consumer=consumer,
     )
-    assignment = stable_assignment(experiment, candidate_key)
+    assignment = stable_assignment(experiment, assignment_key or candidate_key)
     policy_epoch = _policy_epoch(path_id)
     from aletheia.learning.authority import resolve_learning_authority
     authority = resolve_learning_authority(path_id, experiment, policy_epoch)
