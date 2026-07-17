@@ -192,20 +192,27 @@ async def _backfill_historical_funding_for_position(row: dict) -> int:
     """
     from aletheia.data.collectors.derivatives import _insert_historical_funding_snapshot_pair
     from aletheia.data.ccxt_provider import get_market_data_provider
-    from aletheia.config.exchanges import to_ccxt
+    from aletheia.data.symbols import to_ccxt_perp
 
     sym = str(row.get("symbol") or "")
     if not sym:
         return 0
+    provider = None
     try:
         provider = get_market_data_provider()
         exchange = provider._ensure_primary()
         exchange_name = provider._primary_name
-        perp_sym = to_ccxt(sym, market_type="usdt_futures", exchange=exchange_name)
+        perp_sym = to_ccxt_perp(sym)
         history = await exchange.fetch_funding_rate_history(perp_sym, limit=48)
     except Exception as exc:
         logger.debug("paper_funding_settler: funding history fetch failed for %s: %s", sym, exc)
         return 0
+    finally:
+        if provider is not None:
+            try:
+                await provider.close()
+            except Exception:
+                pass
 
     valid_items = sorted(
         [(item["timestamp"], float(item["fundingRate"]))
