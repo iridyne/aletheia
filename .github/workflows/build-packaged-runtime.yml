@@ -48,7 +48,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-          enable-cache: true
+          enable-cache: ${{ github.event_name != 'workflow_dispatch' || !inputs.publish }}
           cache-dependency-glob: uv.lock
       - run: uv sync --locked --all-groups
       - name: Run focused package, bootstrap, update, and app-layout contracts
@@ -85,7 +85,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-          enable-cache: true
+          enable-cache: ${{ github.event_name != 'workflow_dispatch' || !inputs.publish }}
           cache-dependency-glob: uv.lock
 
       - name: Synchronize locked development dependencies
