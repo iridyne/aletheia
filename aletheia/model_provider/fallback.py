@@ -19,6 +19,7 @@ import httpx
 from aletheia.config.loader import load_config
 from aletheia.infra.events import emit_infra_event
 from aletheia.model_provider.base import ModelProvider, ModelRequest, ModelResponse
+from aletheia.model_provider.broker import brokered_complete
 from aletheia.model_provider import router as provider_router
 
 logger = logging.getLogger("aletheia.model_provider.fallback")
@@ -188,7 +189,7 @@ async def _candidate_models(provider_name: str, provider: ModelProvider) -> list
     # Best effort: reuse the existing endpoint/model discovery path so the
     # runtime learns the live catalogue instead of relying only on static config.
     try:
-        detected = await provider.list_models()
+        detected = await provider_router.list_models_cached(provider_name, provider)
         candidates.extend(str(m.get("slug") or "").strip() for m in detected if isinstance(m, dict))
     except Exception as exc:  # noqa: BLE001 - detection is advisory only
         logger.debug("model fallback list_models failed for %s: %s", provider_name, exc)
@@ -242,7 +243,7 @@ async def complete_with_fallback(
     provider = provider or provider_router.get_provider(resolved_provider_name)
     models = await _candidate_models(resolved_provider_name, provider)
     if not models:
-        return await provider.complete(request)
+        return await brokered_complete(resolved_provider_name, provider, request)
 
     requested_model = models[0]
     skipped_cooldown = [
@@ -269,7 +270,11 @@ async def complete_with_fallback(
         attempted.append(model)
         candidate = provider if model == str(getattr(provider, "model", "") or "") else _clone_provider_with_model(provider, model)
         try:
-            response = await candidate.complete(request)
+            response = await brokered_complete(
+                resolved_provider_name,
+                candidate,
+                request,
+            )
             _record_model_success(resolved_provider_name, model)
             if skipped_cooldown and isinstance(response.raw, dict):
                 response.raw = dict(response.raw)

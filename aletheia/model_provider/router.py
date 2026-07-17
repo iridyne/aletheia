@@ -1,7 +1,9 @@
 """Model provider router — creates and caches provider instances from config."""
 
 import asyncio
+from concurrent.futures import Future
 import logging
+import threading
 import time
 
 from aletheia.config.loader import load_config, save_config
@@ -25,6 +27,15 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
 }
 
 _cache: dict[str, ModelProvider] = {}
+
+_MODEL_DIRECTORY_TTL_SEC = 15 * 60
+_model_directory_cache: dict[str, tuple[float, list[dict]]] = {}
+_model_directory_inflight: dict[str, Future[list[dict]]] = {}
+_model_directory_lock = threading.Lock()
+_HEALTH_TTL_SEC = 30.0
+_health_cache: tuple[float, list[ModelHealth]] | None = None
+_health_inflight: Future[list[ModelHealth]] | None = None
+_health_lock = threading.Lock()
 
 _REFRESH_MARGIN_MS = 5 * 60 * 1000  # refresh 5 min before expiry
 
@@ -290,16 +301,135 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
     return provider
 
 
+def invalidate_model_directory(name: str | None = None) -> None:
+    """Invalidate cached remote model catalogues after config changes."""
+
+    with _model_directory_lock:
+        if name is None:
+            _model_directory_cache.clear()
+        else:
+            _model_directory_cache.pop(name, None)
+
+
+def invalidate_health_cache() -> None:
+    global _health_cache
+
+    with _health_lock:
+        _health_cache = None
+
+
+async def list_models_cached(
+    name: str,
+    provider: ModelProvider | None = None,
+    *,
+    force: bool = False,
+) -> list[dict]:
+    """Return one Provider catalogue with a 15-minute cross-loop single-flight."""
+
+    now = time.monotonic()
+    leader = False
+    with _model_directory_lock:
+        cached = _model_directory_cache.get(name)
+        if not force and cached is not None and cached[0] > now:
+            return [dict(item) for item in cached[1]]
+        inflight = _model_directory_inflight.get(name)
+        if inflight is None:
+            inflight = Future()
+            _model_directory_inflight[name] = inflight
+            leader = True
+
+    if not leader:
+        result = await asyncio.wrap_future(inflight)
+        return [dict(item) for item in result]
+
+    try:
+        resolved = provider or await get_provider_async(name)
+        from aletheia.model_provider.broker import inference_broker
+
+        models = await inference_broker.run_auxiliary(resolved.list_models)
+        sanitized = [dict(item) for item in models if isinstance(item, dict)]
+        with _model_directory_lock:
+            _model_directory_cache[name] = (
+                time.monotonic() + _MODEL_DIRECTORY_TTL_SEC,
+                sanitized,
+            )
+        inflight.set_result(sanitized)
+        return [dict(item) for item in sanitized]
+    except asyncio.CancelledError:
+        error = RuntimeError(f"model directory refresh cancelled for {name}")
+        inflight.set_exception(error)
+        raise
+    except BaseException as exc:
+        inflight.set_exception(exc)
+        raise
+    finally:
+        with _model_directory_lock:
+            _model_directory_inflight.pop(name, None)
+
+
 def clear_cache() -> None:
+    """Drop provider routing and catalogue caches; async callers should close clients too."""
+
     _cache.clear()
+    invalidate_model_directory()
+    invalidate_health_cache()
+
+
+async def clear_cache_async() -> None:
+    """Invalidate cached providers and close their loop-owned HTTP pools."""
+
+    providers = list({id(provider): provider for provider in _cache.values()}.values())
+    clear_cache()
+    if not providers:
+        return
+    from aletheia.model_provider.broker import inference_broker
+
+    for provider in providers:
+        if inference_broker.running:
+            await inference_broker.run_auxiliary(provider.aclose)
+        await provider.aclose()
 
 
 _HTTP_TYPES = {"openai_compatible", "anthropic_compatible", "anthropic_native", "openai_native"}
 _DEFAULT_URLS = {"http://localhost:8000/v1", "http://localhost:8001", ""}
 
 
-async def healthcheck_all() -> list[ModelHealth]:
-    """Run healthcheck on all configured providers concurrently (K8s-style fan-out)."""
+async def healthcheck_all(*, force: bool = False) -> list[ModelHealth]:
+    """Return a 30-second cached, cross-loop single-flight health snapshot."""
+
+    global _health_cache, _health_inflight
+    now = time.monotonic()
+    leader = False
+    with _health_lock:
+        if not force and _health_cache is not None and _health_cache[0] > now:
+            return list(_health_cache[1])
+        inflight = _health_inflight
+        if inflight is None:
+            inflight = Future()
+            _health_inflight = inflight
+            leader = True
+
+    if not leader:
+        return list(await asyncio.wrap_future(inflight))
+
+    try:
+        results = await _refresh_health_all()
+        with _health_lock:
+            _health_cache = (time.monotonic() + _HEALTH_TTL_SEC, results)
+        inflight.set_result(results)
+        return list(results)
+    except asyncio.CancelledError:
+        inflight.set_exception(RuntimeError("model health refresh cancelled"))
+        raise
+    except BaseException as exc:
+        inflight.set_exception(exc)
+        raise
+    finally:
+        with _health_lock:
+            _health_inflight = None
+
+
+async def _refresh_health_all() -> list[ModelHealth]:
     cfg = load_config()
     tasks: list = []
     for name, pcfg in cfg.models.providers.items():
@@ -323,7 +453,9 @@ async def _safe_healthcheck(name: str) -> ModelHealth:
     """Single-provider healthcheck with catch-all. Uses async OAuth refresh path."""
     try:
         provider = await get_provider_async(name)
-        return await provider.healthcheck()
+        from aletheia.model_provider.broker import inference_broker
+
+        return await inference_broker.run_auxiliary(provider.healthcheck)
     except Exception as e:
         return ModelHealth(provider=name, available=False, error=str(e))
 

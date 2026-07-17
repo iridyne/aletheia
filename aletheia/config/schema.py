@@ -241,6 +241,14 @@ class ProviderConfig(BaseModel):
     # a best-effort catalogue. This never changes the persisted default model.
     model_fallback_enabled: bool = True
     fallback_models: list[str] = Field(default_factory=list)
+    # Process-wide inference admission. Every completion for this Provider is
+    # executed on the persistent broker loop; zero RPM/TPM means unlimited.
+    inference_max_concurrency: int = Field(default=2, ge=1, le=16)
+    inference_requests_per_minute: int = Field(default=60, ge=0, le=10_000)
+    inference_tokens_per_minute: int = Field(default=120_000, ge=0, le=100_000_000)
+    inference_queue_capacity: int = Field(default=64, ge=1, le=1_000)
+    inference_reserved_high_priority_slots: int = Field(default=8, ge=0, le=1_000)
+    inference_timeout_sec: float = Field(default=300.0, ge=1.0, le=1_800.0)
 
 
 class ModelsConfig(BaseModel):

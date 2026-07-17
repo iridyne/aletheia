@@ -4,6 +4,7 @@ Each test maps to one of the 16 acceptance criteria in IMPLEMENTATION_GUIDE.md Â
 """
 
 import json
+import asyncio
 from datetime import datetime, timezone
 import pytest
 from httpx import AsyncClient, ASGITransport
@@ -44,7 +45,22 @@ async def client(tmp_path, monkeypatch):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c, tmp_path
+    from aletheia.agent_runtime.job_queue import get_agent_job_manager
+    await asyncio.to_thread(get_agent_job_manager().stop)
     reset_db()
+
+
+async def _wait_for_agent_run(c, run_id: str, timeout_sec: float = 5.0) -> dict:
+    """Poll the public job resource after the 202 asynchronous admission response."""
+
+    deadline = asyncio.get_running_loop().time() + timeout_sec
+    while asyncio.get_running_loop().time() < deadline:
+        response = await c.get(f"/api/agent-runs/{run_id}")
+        payload = response.json()
+        if payload and payload.get("status") not in {"queued", "running"}:
+            return payload
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"agent run {run_id} did not finish within {timeout_sec}s")
 
 
 # #3 gateway status/stop/pause/resume works (CLI)
@@ -143,8 +159,11 @@ async def test_ac07_agent_creates_artifacts(client, monkeypatch):
                 "ETH funding rates suggest crowded longs. Recommend reducing spot exposure.", None)
     monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", _fake_llm)
 
-    await c.post("/api/agent-runs/start", json={"agent_name": "research_agent"})
-    await c.post("/api/agent-runs/start", json={"agent_name": "market_observer"})
+    first = await c.post("/api/agent-runs/start", json={"agent_name": "research_agent"})
+    second = await c.post("/api/agent-runs/start", json={"agent_name": "market_observer"})
+    assert first.status_code == second.status_code == 202
+    await _wait_for_agent_run(c, first.json()["job_id"])
+    await _wait_for_agent_run(c, second.json()["job_id"])
     assert len((await c.get("/api/agent-runs")).json()) >= 2
     assert len(repo.list_knowledge_items(item_type="research_note")) >= 1
 
@@ -159,7 +178,9 @@ async def test_ac08_knowledge_base(client, monkeypatch):
                 "Insight: momentum correlated with funding divergence. Focus: validate SOL breakout.", None)
     monkeypatch.setattr("aletheia.agents.dreaming_agent.llm_complete", _fake_llm)
 
-    await c.post("/api/agent-runs/start", json={"agent_name": "dreaming_agent"})
+    response = await c.post("/api/agent-runs/start", json={"agent_name": "dreaming_agent"})
+    assert response.status_code == 202
+    await _wait_for_agent_run(c, response.json()["job_id"])
     assert len((await c.get("/api/knowledge/dreaming-logs")).json()) >= 1
     assert len((await c.get("/api/knowledge?type=daily_review")).json()) >= 1
 

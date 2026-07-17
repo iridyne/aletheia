@@ -222,7 +222,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | GET | `/agent-runs/{id}` | Run detail (status, outputs, errors) |
 | GET | `/agent-runs/{id}/tool-calls` | Tool calls made during run |
 | GET | `/agent-runs/{id}/steps` | Step-by-step execution trace |
-| POST | `/agent-runs/start` | Manually trigger an agent run |
+| POST | `/agent-runs/start` | Queue a manual agent run; returns HTTP 202 with durable `job_id`/`run_id` |
 
 ---
 
@@ -327,6 +327,7 @@ reconciled.
 |--------|------|-------------|
 | GET | `/model` | Current model config (providers, default) |
 | GET | `/model/health` | Per-provider health status |
+| GET | `/model/broker` | Provider admission policy plus sanitized queue/concurrency/wait metrics |
 | POST | `/model/ping` | Ping specific provider |
 | GET | `/model/provider-types` | Available provider type definitions |
 | POST | `/model/detect-models` | Auto-detect models on a provider |

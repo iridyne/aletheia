@@ -2,12 +2,18 @@
 
 import traceback
 
-from aletheia.agent_runtime.run_logger import start_run, end_run
+from aletheia.agent_runtime.run_logger import begin_queued_run, start_run, end_run
+from aletheia.storage.models import AgentRun
 from aletheia.config.loader import load_config
 from aletheia.files.jsonl import write_audit
 
 
-async def run_agent(agent_name: str, trigger_type: str = "scheduled") -> dict:
+async def run_agent(
+    agent_name: str,
+    trigger_type: str = "scheduled",
+    *,
+    existing_run: AgentRun | None = None,
+) -> dict:
     """Run a named agent with full lifecycle logging."""
     # Migrations run once at gateway startup (aletheia/server/app.py:44); scheduler
     # jobs MUST NOT call run_migrations() — concurrent executescript() across threads
@@ -21,17 +27,28 @@ async def run_agent(agent_name: str, trigger_type: str = "scheduled") -> dict:
     raw_provider_name = getattr(getattr(cfg, "models", None), "default_provider", None)
     provider_name = raw_provider_name if isinstance(raw_provider_name, str) else None
 
-    run = start_run(agent_name, trigger_type, permission_mode, provider_name)
+    if existing_run is None:
+        run = start_run(agent_name, trigger_type, permission_mode, provider_name)
+    else:
+        run = existing_run
+        begin_queued_run(
+            run,
+            permission_mode=permission_mode,
+            model_provider=provider_name,
+        )
     outputs = []
     errors = []
 
     try:
         from aletheia.agents import get_agent_fn
+        from aletheia.model_provider.broker import inference_priority, priority_for_agent
+
         agent_fn = get_agent_fn(agent_name)
-        result = await agent_fn(permission_mode=permission_mode, run_id=run.id)
-        if isinstance(result, dict):
-            outputs = result.get("outputs", [])
-            errors = result.get("errors", [])
+        with inference_priority(priority_for_agent(agent_name, trigger_type)):
+            result = await agent_fn(permission_mode=permission_mode, run_id=run.id)
+            if isinstance(result, dict):
+                outputs = result.get("outputs", [])
+                errors = result.get("errors", [])
     except Exception as e:
         # #70 fix: persist only the exception type + first line (not the full
         # traceback which leaks internal paths and possibly credentials from

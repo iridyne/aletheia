@@ -376,6 +376,11 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Runtime session start failed (non-fatal): %s", e)
     init_tool_registry()
+    from aletheia.agent_runtime.job_queue import get_agent_job_manager
+
+    agent_job_manager = get_agent_job_manager()
+    if background_services_enabled:
+        agent_job_manager.start()
     if background_services_enabled:
         try:
             init_scheduler()
@@ -497,6 +502,7 @@ async def lifespan(app: FastAPI):
                 stop_scheduler()
             except Exception:
                 pass
+            await asyncio.to_thread(agent_job_manager.stop)
 
         await _cancel_background_task(llm_gate_task, "LLM startup gate")
         await _cancel_background_task(exchange_gate_task, "exchange startup gate")
@@ -522,6 +528,13 @@ async def lifespan(app: FastAPI):
             await stop_exchange_auto_resume_task()
         except Exception as exc:
             logger.debug("exchange auto-resume shutdown failed: %s", exc)
+
+        try:
+            from aletheia.model_provider.broker import inference_broker
+
+            await inference_broker.aclose()
+        except Exception as exc:
+            logger.debug("inference broker shutdown failed: %s", exc)
 
         if telegram_task is not None and telegram_bot is not None:
             try:

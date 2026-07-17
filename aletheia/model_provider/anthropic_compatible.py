@@ -1,5 +1,6 @@
 """Anthropic-compatible model provider."""
 
+import asyncio
 import json
 
 from aletheia.net import httpx_client, raise_for_status_without_secrets
@@ -48,10 +49,10 @@ class AnthropicCompatibleProvider(ModelProvider):
             payload["temperature"] = request.temperature
         if request.system:
             payload["system"] = request.system
-        async with httpx_client(timeout=300) as client:  # was 60s, too short for 8192-tok generation on LongCat
-            resp = await client.post(f"{self.base_url}/v1/messages", json=payload, headers=self._headers())
-            raise_for_status_without_secrets(resp)
-            data = resp.json()
+        client = self._get_http_client(httpx_client)
+        resp = await client.post(f"{self.base_url}/v1/messages", json=payload, headers=self._headers())
+        raise_for_status_without_secrets(resp)
+        data = resp.json()
         content = ""
         for block in data.get("content", []):
             if block.get("type") == "text":
@@ -77,11 +78,12 @@ class AnthropicCompatibleProvider(ModelProvider):
     async def list_models(self) -> list[dict]:
         """Fetch available models from the gateway's /v1/models endpoint."""
         try:
-            async with httpx_client(timeout=4) as client:
+            client = self._get_http_client(httpx_client)
+            async with asyncio.timeout(4):
                 resp = await client.get(f"{self.base_url}/v1/models", headers=self._headers())
-                if resp.status_code != 200:
-                    return []
-                data = resp.json()
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
         except Exception:
             return []
         models = []
@@ -99,15 +101,18 @@ class AnthropicCompatibleProvider(ModelProvider):
 
     async def healthcheck(self) -> ModelHealth:
         try:
-            async with httpx_client(timeout=10) as client:
-                resp = await client.get(f"{self.base_url}/v1/models", headers=self._headers())
-                if resp.status_code == 200:
-                    models = await self.list_models()
-                    slugs = [m["slug"] for m in models]
-                    return ModelHealth(
-                        provider=self.name, available=True, model=self.model,
-                        models=slugs, model_metadata=models,
-                    )
-                return ModelHealth(provider=self.name, available=False, error=f"HTTP {resp.status_code}")
+            models = await self.list_models()
+            if models:
+                slugs = [m["slug"] for m in models]
+                return ModelHealth(
+                    provider=self.name, available=True, model=self.model,
+                    models=slugs, model_metadata=models,
+                )
+            return ModelHealth(
+                provider=self.name,
+                available=False,
+                model=self.model,
+                error="model catalogue unavailable; use explicit Ping to test inference",
+            )
         except Exception as e:
             return ModelHealth(provider=self.name, available=False, error=str(e))

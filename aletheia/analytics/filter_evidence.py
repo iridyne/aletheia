@@ -832,10 +832,42 @@ def _ensure_candidate_outcomes(
     funding_rate_at_entry: float | None,
     entry_ts: str,
 ) -> int:
+    outcomes = build_candidate_outcomes(
+        outcome_candidate_key=outcome_candidate_key,
+        venue=venue,
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+        scanner_family=scanner_family,
+        regime_tag=regime_tag,
+        entry_price_usd=entry_price_usd,
+        entry_spread_bps=entry_spread_bps,
+        funding_rate_at_entry=funding_rate_at_entry,
+        entry_ts=entry_ts,
+    )
+    return repo.insert_filter_candidate_outcomes_batch(outcomes)
+
+
+def build_candidate_outcomes(
+    *,
+    outcome_candidate_key: str,
+    venue: str,
+    symbol: str,
+    market_type: str,
+    direction: str,
+    scanner_family: str | None,
+    regime_tag: str | None,
+    entry_price_usd: float,
+    entry_spread_bps: float | None,
+    funding_rate_at_entry: float | None,
+    entry_ts: str,
+) -> list[FilterCandidateOutcome]:
+    """Build a fixed-horizon outcome matrix without touching SQLite."""
+
     entry_dt = _parse_dt(entry_ts)
     if entry_dt is None:
-        return 0
-    outcomes = []
+        return []
+    outcomes: list[FilterCandidateOutcome] = []
     for horizon, delta in _HORIZONS.items():
         material = f"{outcome_candidate_key}|{horizon}"
         outcomes.append(FilterCandidateOutcome(
@@ -854,7 +886,7 @@ def _ensure_candidate_outcomes(
             entry_ts=entry_ts,
             due_at=(entry_dt + delta).isoformat(),
         ))
-    return repo.insert_filter_candidate_outcomes_batch(outcomes)
+    return outcomes
 
 
 def _filter_version(filter_name: str, parameter_json: str) -> str:

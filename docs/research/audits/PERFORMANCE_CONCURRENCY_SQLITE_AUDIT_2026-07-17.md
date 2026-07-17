@@ -2,11 +2,12 @@
 
 > 日期：2026-07-17
 > 代码快照：`31535cfc2d07529f7675f20f34cfc6aee2cb8bc6`
-> 状态：开放，等待按整改顺序拆分实施任务
+> 状态：整改已实现，正在完成全量回归与发布证据
 > 范围：LLM entry point、Provider 请求控制、Agent 并发、Scheduler、FastAPI
 > 事件循环、SQLite 写入与索引、数据采集和 retention。
-> 方法：当前源码和设计文档静态核对。没有执行负载测试、SQL
-> `EXPLAIN QUERY PLAN`、生产流量采样或数据库写入。
+> 初始审计方法：当前源码和设计文档静态核对；当时没有执行负载测试、SQL
+> `EXPLAIN QUERY PLAN`、生产流量采样或数据库写入。本文第 7、8 节持续记录后续实现和
+> 代表性数据库副本验证，避免把初始静态结论与整改证据混为一谈。
 > 边界：本文不构成 Live、Risk、Execution、Exchange、凭据或硬风险限制的变更授权。
 
 ## 1. 结论
@@ -269,13 +270,76 @@
 
 | ID | 状态 | 实现/PR | 验证证据 | 备注 |
 |---|---|---|---|---|
-| PERF-01 | 待实施 | — | 静态审计 | 等待任务授权 |
-| PERF-02 | 待实施 | — | 静态审计 | 等待任务授权 |
-| PERF-03 | 待实施 | — | 静态审计 | 等待任务授权 |
-| PERF-04 | 待实施 | — | 静态审计 | 等待任务授权 |
-| PERF-05 | 待实施 | — | 静态审计 | 等待任务授权 |
-| PERF-06 | 待实施 | — | 静态审计 | 等待任务授权 |
-| PERF-07 | 待实施 | — | 静态审计 | 等待任务授权 |
-| PERF-08 | 待实施 | — | 静态审计 | 等待任务授权 |
-| PERF-09 | 待实施 | — | 静态审计 | 等待任务授权 |
-| PERF-10 | 待实施 | — | 静态审计 | 等待任务授权 |
+| PERF-01 | 已实现 | `iridite/perf-inference-storage-hardening` | `test_model_provider.py`、`test_inference_broker.py` | 15 分钟目录 cache、跨 loop single-flight、每 Provider/loop 长连接 client，配置变更和 shutdown 关闭 |
+| PERF-02 | 已实现 | 同上 | model provider focused tests、frontend build | health 30 秒 TTL/single-flight；UI 30 秒；周期 health 不再发 inference，显式 Ping 保留 |
+| PERF-03 | 已实现 | 同上 | Broker 并发/RPM/TPM/优先级/满队列/取消测试；Agent job queue tests | 所有 complete 和 stream 入口统一准入；手工 Agent 返回 `202 + job_id`，后台有界串行执行 |
+| PERF-04 | 已实现 | 同上 | `test_performance_storage_batches.py` | Registry `executemany UPSERT` + set-based deactivation；核心/context collector 单 tick 单 commit |
+| PERF-05 | 已实现 | 同上 | Universe service/spec focused tests | publication 原子边界保留；member/outcome/候选参数在事务外预构建，事务内 `executemany`；记录事务时长 |
+| PERF-06 | 已实现 | 同上 | `test_route_threadpool_boundaries.py`、route tests | data/model/settings 读取和高频 health/status 阻塞 handler 改为同步 `def`；完整 Agent run 脱离 request |
+| PERF-07 | 已实现 | 同上 | storage batch tests、write guardrails | Agent trace 每 16 条/结束时批量 flush，有界 256 条和 drop/error 计数；feature snapshot/context collector 批量事务 |
+| PERF-08 | 已实现 | 同上 | 557 MB 代表性 DB 副本 before/after `EXPLAIN`；index focused test | 增加 8 个最小热点索引；详见第 8 节 |
+| PERF-09 | 已实现 | 同上 | retention batch/metrics/OHLCV margin tests | 通用 retention 按 rowid 5,000 行分批；Agent run 按 PK 1,000；OHLCV 超过 window+1,000 才滚动清理 |
+| PERF-10 | 已实现 | 同上 | `test_scheduler_timeouts.py` | 一个长期 async loop + 一个固定 daemon sync lane；两者都有界 16，重复 timeout 不再创建/遗弃线程 |
+
+## 8. 代表性 SQLite 副本验证
+
+验证时间为 2026-07-17。Gateway 当时正在运行，因此没有停止、重启或迁移全局服务；使用
+SQLite 在线 backup 从 `~/.aletheia/app.db` 创建 `/tmp` 一致性副本，所有 DDL、`ANALYZE`
+和查询计划只在副本执行。副本约 557 MB，主要代表性行数如下：
+
+| 表 | 行数 |
+|---|---:|
+| `agent_run_steps` | 29,703 |
+| `agent_tool_calls` | 99,841 |
+| `funding_rate_snapshots` | 77,604 |
+| `open_interest_snapshots` | 76,383 |
+| `filter_decision_batches` | 3,891 |
+| `filter_candidate_outcomes` | 127,104 |
+| `market_ohlcv` | 427,042 |
+
+`EXPLAIN QUERY PLAN` 对比：
+
+| 查询形态 | 整改前 | 整改后 |
+|---|---|---|
+| Agent steps：`run_id` + `ORDER BY created_at` | 全表 `SCAN` + temporary B-tree sort | `idx_agent_run_steps_run_created` 精确查找，无临时排序 |
+| Agent tool calls：`run_id` + `ORDER BY created_at` | 全表 `SCAN` + temporary B-tree sort | `idx_agent_tool_calls_run_created` 精确查找，无临时排序 |
+| Funding latest：`symbol + exchange + observed_at DESC` | 只使用 `(symbol, observed_at)`，仍需过滤 exchange | `idx_funding_symbol_exchange_observed` 同时匹配 symbol/exchange/order |
+| OI latest：`symbol + exchange + observed_at DESC` | 只使用 `(symbol, observed_at)`，仍需过滤 exchange | `idx_oi_symbol_exchange_observed` 同时匹配 symbol/exchange/order |
+| Filter batch retention：`evaluated_at < cutoff` | 复合索引 skip-scan（首列不匹配） | `idx_filter_decision_batches_evaluated` covering range search |
+| Candidate outcome retention：`entry_ts < cutoff` | 全表 `SCAN` | `idx_filter_candidate_outcomes_entry` covering range search |
+| OHLCV retention：`timeframe + ts < cutoff` | 五列索引 skip-scan前三列 | `idx_market_ohlcv_timeframe_ts` covering range search |
+
+副本创建 8 个索引和执行 `ANALYZE` 合计约 0.45 秒；最大单索引为 42.7 万行 OHLCV，创建
+约 0.136 秒。该结果证明查询计划方向已对齐，但不等同于生产负载 P95；真实 writer wait、
+WAL/checkpoint 和 inference queue P95 仍应在合并后的观察窗口持续采样。
+
+## 9. 整改验证与已知基线
+
+2026-07-17 在独立工作树 `iridite/perf-inference-storage-hardening` 完成以下验证：
+
+- 在最新 `origin/master` 上的性能专项回归覆盖 Inference Broker、Agent job queue、Provider
+  cache/client、Scheduler timeout、Registry/collector/Agent telemetry 批处理、Universe
+  原子发布、同步数据库路由边界、热点索引和 retention 分块，并补跑同基线新增的
+  VergeX/Universe 集成用例：`388 passed, 2 skipped`。
+- 针对全量测试暴露的 Broker shutdown/restart 和 CoinGecko 事务契约补充回归后，相关聚焦
+  组为 `98 passed`；另有 1 个与本分支无关的既有失败：Universe 当前配置默认开启，而旧
+  测试仍断言默认关闭。
+- 变更 Python 文件的 `ruff check` 通过，`git diff --check` 通过；Frontend production
+  build 通过。
+
+全量 `tests/` 当前不能作为可收敛证明：既有
+`test_startup_behavior_gate.py::test_gate_passes_clears_blocker_and_returns_result` 在
+`active_runtime_scope` 文档缺失或无法解析时进入持续复检，并重复执行 SQLite
+`PRAGMA integrity_check`。本次只终止了由该验证启动的 pytest 进程，没有停止或重启全局
+Gateway；该门禁/文档基线问题不在性能整改边界内，应单独修复后再补跑全量 suite。
+
+本轮可以静态和专项证明请求准入、并发上限、事务数量、SQL 查询计划、线程数量上界及失败
+语义；尚不能仅凭本地测试证明真实远程 Provider 与长期 SQLite 负载下的 P50/P95。合并后
+观察窗口仍需采集第 5 节指标，并以 overload、queue wait、writer wait、WAL/checkpoint 和
+retention wall-clock 判断是否需要调参，不应直接提高并发上限。
+
+发布证据为 Draft PR [#123](https://github.com/iridite/aletheia/pull/123)，实现提交
+`b4680998`，最终验证文档提交 `087e7683`（后续本文状态更新另有提交）。PR 首轮 GitHub
+Actions 没有执行任何 step：所有 job 的统一 annotation 为账户近期付款失败或 Actions
+spending limit 需要提高。这是 GitHub 账户级外部阻塞，不是测试失败；恢复 Billing/Actions
+额度后必须 re-run checks，不能把当前红色状态视为代码回归，也不能在仓库内绕过门禁。

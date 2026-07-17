@@ -74,13 +74,18 @@ def test_get_permitted_tools_observe():
     assert "unlock_live" not in tools
 
 
-def test_mark_stale_running_runs_closes_only_running_rows(tmp_path, monkeypatch):
+def test_mark_stale_running_runs_closes_running_and_queued_rows(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
 
     from aletheia.agent_runtime.run_logger import mark_stale_running_runs
     from aletheia.storage.models import AgentRun
 
     running = AgentRun(agent_name="market_observer", trigger_type="scheduled")
+    queued = AgentRun(
+        agent_name="research_agent",
+        trigger_type="manual",
+        status="queued",
+    )
     completed = AgentRun(
         agent_name="research_agent",
         trigger_type="manual",
@@ -89,15 +94,20 @@ def test_mark_stale_running_runs_closes_only_running_rows(tmp_path, monkeypatch)
         errors=json.dumps(["already done"]),
     )
     repo.insert_agent_run(running)
+    repo.insert_agent_run(queued)
     repo.insert_agent_run(completed)
 
     count = mark_stale_running_runs(reason="gateway startup recovery", source="test")
 
-    assert count == 1
+    assert count == 2
     stale_row = repo.get_agent_run(running.id)
     assert stale_row["status"] == "stale"
     assert stale_row["ended_at"]
     assert any("gateway startup recovery" in err for err in json.loads(stale_row["errors"]))
+
+    queued_row = repo.get_agent_run(queued.id)
+    assert queued_row["status"] == "stale"
+    assert queued_row["ended_at"]
 
     completed_row = repo.get_agent_run(completed.id)
     assert completed_row["status"] == "completed"
@@ -108,7 +118,7 @@ def test_mark_stale_running_runs_closes_only_running_rows(tmp_path, monkeypatch)
     ).fetchall()
     assert audit_rows
     assert audit_rows[0]["event_type"] == "agent_runs_marked_stale"
-    assert "1 running agent run" in audit_rows[0]["message"]
+    assert "2 running or queued agent run" in audit_rows[0]["message"]
     reset_db()
 
 

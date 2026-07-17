@@ -45,7 +45,7 @@ _MAX_CONCURRENT_FETCHES = 8
 _FETCH_TIMEOUT_SEC = 20.0
 
 
-def register_pending(members: list[dict], entry_ts: str) -> int:
+def build_pending(members: list[dict], entry_ts: str) -> list[UniverseForwardOutcome]:
     """Create pending outcome rows for each member × horizon.
 
     Args:
@@ -54,7 +54,7 @@ def register_pending(members: list[dict], entry_ts: str) -> int:
         entry_ts: ISO timestamp of the universe snapshot creation.
 
     Returns:
-        Number of outcome rows created.
+        Precomputed outcome rows ready for bulk persistence.
     """
     ts = datetime.fromisoformat(entry_ts.replace("Z", "+00:00"))
     if ts.tzinfo is None:
@@ -90,16 +90,22 @@ def register_pending(members: list[dict], entry_ts: str) -> int:
                 due_at=due_at,
             ))
 
-    if outcomes:
-        repo.insert_forward_outcomes_batch(outcomes)
-        logger.debug("Registered %d forward outcome rows", len(outcomes))
-
     if skipped_no_price:
         logger.info(
             "Forward-outcome registration skipped %d/%d members with no entry price "
             "(missing 1h OHLCV at feature collection)", skipped_no_price, len(members),
         )
 
+    return outcomes
+
+
+def register_pending(members: list[dict], entry_ts: str) -> int:
+    """Build outside the writer transaction when possible, then bulk insert."""
+
+    outcomes = build_pending(members, entry_ts)
+    if outcomes:
+        repo.insert_forward_outcomes_batch(outcomes)
+        logger.debug("Registered %d forward outcome rows", len(outcomes))
     return len(outcomes)
 
 

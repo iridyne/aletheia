@@ -159,29 +159,22 @@ def test_log_tool_does_not_double_write_run_steps(monkeypatch):
     """
     from aletheia.agents import helpers
 
-    tool_calls: list[dict] = []
-    run_steps: list[dict] = []
+    events: list[dict] = []
 
-    def fake_insert_tool_call(run_id, tool_name, tool_class, permitted, *,
-                               output_data=None, input_data=None):
-        tool_calls.append({
-            "run_id": run_id,
-            "tool_name": tool_name,
-            "tool_class": tool_class,
-        })
-
-    def fake_insert_run_step(**kwargs):
-        run_steps.append(kwargs)
+    def fake_insert_batch(batch):
+        events.extend(batch)
+        return len(batch)
 
     import aletheia.storage.repositories as repo
-    monkeypatch.setattr(repo, "insert_tool_call", fake_insert_tool_call)
-    monkeypatch.setattr(repo, "insert_run_step", fake_insert_run_step)
+    monkeypatch.setattr(repo, "insert_agent_telemetry_batch", fake_insert_batch)
 
     helpers.log_tool("run-1", "get_x", "read", True,
                      output="ok", input_data="{}")
+    helpers.flush_run_telemetry("run-1")
 
-    assert len(tool_calls) == 1
-    assert run_steps == [], (
+    assert len(events) == 1
+    assert events[0]["kind"] == "tool"
+    assert not any(event["kind"] == "step" for event in events), (
         "log_tool must not double-write agent_run_steps; see spec §Agent 8."
     )
 

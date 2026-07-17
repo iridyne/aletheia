@@ -1,5 +1,6 @@
 """Anthropic native provider — direct connection to api.anthropic.com."""
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 
@@ -60,12 +61,12 @@ class AnthropicNativeProvider(ModelProvider):
         }
         if request.system:
             payload["system"] = request.system
-        async with httpx_client(timeout=60) as client:
-            resp = await client.post(
-                f"{BASE_URL}/v1/messages", json=payload, headers=self._headers()
-            )
-            raise_for_status_without_secrets(resp)
-            data = resp.json()
+        client = self._get_http_client(httpx_client)
+        resp = await client.post(
+            f"{BASE_URL}/v1/messages", json=payload, headers=self._headers()
+        )
+        raise_for_status_without_secrets(resp)
+        data = resp.json()
         content = ""
         for block in data.get("content", []):
             if block.get("type") == "text":
@@ -87,27 +88,27 @@ class AnthropicNativeProvider(ModelProvider):
         }
         if request.system:
             payload["system"] = request.system
-        async with httpx_client(timeout=120) as client:
-            async with client.stream(
+        client = self._get_http_client(httpx_client)
+        async with client.stream(
                 "POST", f"{BASE_URL}/v1/messages",
                 json=payload, headers=self._headers(),
-            ) as resp:
-                raise_for_status_without_secrets(resp)
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data = json.loads(line[6:])
-                    event_type = data.get("type", "")
-                    if event_type == "content_block_delta":
-                        delta = data.get("delta", {})
-                        if delta.get("type") == "text_delta":
-                            yield StreamChunk(content=delta.get("text", ""))
-                    elif event_type == "message_stop":
-                        yield StreamChunk(content="", done=True)
-                    elif event_type == "message_delta":
-                        usage = data.get("usage")
-                        if usage:
-                            yield StreamChunk(content="", done=True, usage=usage)
+        ) as resp:
+            raise_for_status_without_secrets(resp)
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data = json.loads(line[6:])
+                event_type = data.get("type", "")
+                if event_type == "content_block_delta":
+                    delta = data.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        yield StreamChunk(content=delta.get("text", ""))
+                elif event_type == "message_stop":
+                    yield StreamChunk(content="", done=True)
+                elif event_type == "message_delta":
+                    usage = data.get("usage")
+                    if usage:
+                        yield StreamChunk(content="", done=True, usage=usage)
 
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
         messages = list(request.messages)
@@ -129,13 +130,14 @@ class AnthropicNativeProvider(ModelProvider):
 
     async def list_models(self) -> list[dict]:
         try:
-            async with httpx_client(timeout=10) as client:
+            client = self._get_http_client(httpx_client)
+            async with asyncio.timeout(10):
                 resp = await client.get(
                     f"{BASE_URL}/v1/models", headers=self._headers()
                 )
-                if resp.status_code != 200:
-                    return []
-                data = resp.json()
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
         except Exception:
             return []
         models = []
@@ -155,21 +157,17 @@ class AnthropicNativeProvider(ModelProvider):
 
     async def healthcheck(self) -> ModelHealth:
         try:
-            async with httpx_client(timeout=10) as client:
-                resp = await client.get(
-                    f"{BASE_URL}/v1/models", headers=self._headers()
-                )
-                if resp.status_code == 200:
-                    models = await self.list_models()
-                    slugs = [m["slug"] for m in models]
-                    return ModelHealth(
-                        provider=self.name, available=True,
-                        model=self.model, models=slugs,
-                        model_metadata=models,
-                    )
+            models = await self.list_models()
+            if models:
+                slugs = [m["slug"] for m in models]
                 return ModelHealth(
-                    provider=self.name, available=False,
-                    error=f"HTTP {resp.status_code}",
+                    provider=self.name, available=True,
+                    model=self.model, models=slugs,
+                    model_metadata=models,
                 )
+            return ModelHealth(
+                provider=self.name, available=False,
+                error="model catalogue unavailable; use explicit Ping to test inference",
+            )
         except Exception as e:
             return ModelHealth(provider=self.name, available=False, error=str(e))
