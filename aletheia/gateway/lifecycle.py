@@ -414,6 +414,27 @@ def do_stop() -> None:
         )
 
     _audit_stop(freed=freed, killed_any=killed_any)
+    _auto_deregister_watchdog()
+
+
+def _auto_deregister_watchdog() -> None:
+    """Disable the OS autostart watchdog after a stop so the user's intent is honored.
+
+    The LaunchAgent / Task Scheduler job runs `gateway start` on a 60s interval;
+    leaving it active after a user-initiated stop would silently resurrect the
+    gateway within a minute. Re-registration happens automatically on the next
+    `gateway start` (see _auto_register_watchdog), so this is safe to call here.
+    """
+    try:
+        from aletheia.gateway import autostart
+        if not autostart.is_supported_platform():
+            return
+        current = autostart.status()
+        if not current.get("enabled"):
+            return
+        autostart.disable(source="auto")
+    except Exception:
+        pass
 
 
 def _audit_stop(*, freed: bool, killed_any: bool) -> None:
