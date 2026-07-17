@@ -835,8 +835,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=10),
         executor="io",
     )
+    # 3-min cadence gives momentum (30min TTL) ~10 review chances, mean_reversion
+    # (60min TTL) ~20. Was 5-min (6 / 12), which combined with the change-suppression
+    # TTL bug (fixed in repositories.refresh_active_snapshot_ttls) starved fast
+    # families of review opportunities. Well below any SQLite/agent-executor budget.
     _scheduler.add_job(
-        _guarded("paper_trader", _run_paper_trader), "interval", minutes=5, id="paper_trader",
+        _guarded("paper_trader", _run_paper_trader), "interval", minutes=3, id="paper_trader",
         misfire_grace_time=60, executor="agents",
     )
     # pi_trading_decision is the ~15min safety-net fallback (agent_contracts.md row 6).

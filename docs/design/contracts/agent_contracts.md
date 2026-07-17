@@ -15,7 +15,7 @@
 | 2 | market_observer | 15min | observer | Scan for trading opportunities |
 | 3 | equity_observer | cron 工作日 14-21UTC /30min | agents | xStocks/equity market scan (replaces stock_observer) |
 | 4 | prediction_observer | 30min | agents | Prediction market scan |
-| 5 | paper_trader | 5min | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a) |
+| 5 | paper_trader | 3min | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a). Cadence tightened from 5min so momentum (30min TTL) and mean_reversion (60min TTL) carriers get enough review passes before the family window elapses. |
 | 6 | pi_trading_decision | ~15min (configurable) | agents | System Operator heartbeat (daemon fallback) |
 | 7 | position_manager | 5min | io | Manage open positions (trailing stop, exit) |
 | 8 | tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
@@ -160,7 +160,7 @@ backlog health are persisted in `learning_job_health`.
 
 #### paper_trader (refactored: signal collector)
 
-- **Trigger**: scheduler every 5min
+- **Trigger**: scheduler every 3min
 - **Inputs**: opportunities, universe features, System Operator decisions
 - **LLM**: No (pure rule evaluation)
 - **Outputs**: signal_pending PiDecisions (Phase 4a: System Operator is the **sole** proposal submitter — paper_trader no longer creates proposals directly)
@@ -355,7 +355,7 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
         +-------------------+              |
                    |                       v
                    v               risk_decisions
-         paper_trader (5min)              |
+         paper_trader (3min)              |
          (signal collection)              |
                    |                      |
                    v                      v

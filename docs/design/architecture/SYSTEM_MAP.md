@@ -44,7 +44,7 @@
 | Job ID | 频率 | 输入数据 | 输出数据 | 下游 | 管道 |
 |--------|------|---------|---------|------|------|
 | `market_observer` | 15min | market_snapshots + context_builder(微结构) + advisory bundle | opportunities（metadata 含 observer Learning manifest）, knowledge_items(research) | paper_trader_ranker | ✅ observer bundle 与下游 Operator bundle 分开归因 |
-| `paper_trader` | 5min | opportunities + PiDecision + guards | trade_proposals → risk_engine → orders → fills | ✅ 核心链路 |
+| `paper_trader` | 3min | opportunities + PiDecision + guards | trade_proposals → risk_engine → orders → fills | ✅ 核心链路（3min 起自 5min，配合 `_FAMILY_TTL` 30–60min 保证 momentum/mean_reversion 有足够 review 次数） |
 | `pi_trading_decision` | ~15min | market context + one Learning bundle（reflection/memo/reasoning/calibration/cases/lessons） | PiDecision（含 opportunity/proposal 因果 id + learning_manifest_json） | paper_trader(消费 decision) | ✅ |
 | `position_manager` | 5min | open positions + market prices + exit_rules | close proposals / TP-SL updates | ✅ |
 | `position_reconcile` | 5min | exchange positions vs local | reconciliation_reports | ✅ |
