@@ -3,7 +3,7 @@
 These operational commands (permission / model / risk / strategy / update /
 secrets / `bitget test`) all have a web-dashboard equivalent now. Human
 interaction is being funnelled to the web UI; the CLI stays the *bootstrap*
-surface (gateway start/restart/enable-autostart + doctor) — the things you
+surface (gateway start/restart + doctor) — the things you
 cannot do from a UI that does not exist yet.
 
 This is a SOFT deprecation: the commands still work unchanged. We only print a

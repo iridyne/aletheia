@@ -11,7 +11,6 @@ human-triggered enable/disable.
 import sqlite3
 import plistlib
 from pathlib import Path
-from types import SimpleNamespace
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -110,7 +109,7 @@ def test_enable_builds_correct_argv_and_xml(tmp_path, monkeypatch):
     assert "pythonw.exe" in xml
     assert "<Hidden>true</Hidden>" in xml
     # schtasks /Create itself must not flash a console window when called from a
-    # detached parent (e.g. the inner uvicorn API route serving /api/gateway/autostart).
+    # detached parent (for example an inner uvicorn worker).
     assert rec.calls[0][1].get("creationflags", 0) & 0x08000000 == 0x08000000
     assert any("/Run" in call[0] for call in rec.calls)
     assert result["primed"] is True
@@ -490,67 +489,7 @@ def test_verify_after_prime_timeout(monkeypatch):
     assert "verify_detail" in result
 
 
-# --- 16-19. API routes ---
-
-async def _client():
-    from httpx import AsyncClient, ASGITransport
-    from aletheia.server.app import app
-    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
-
-async def test_api_get_autostart_honest_passthrough(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import autostart
-    monkeypatch.setattr(autostart, "status",
-                        lambda: {"supported": True, "enabled": False, "task_name": autostart.TASK_NAME})
-    async with await _client() as c:
-        resp = await c.get("/api/gateway/autostart")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["supported"] is True
-    assert body["enabled"] is False
-
-
-async def test_api_post_enable_audits(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import autostart
-    monkeypatch.setattr(autostart.platform, "system", lambda: "Windows")
-    monkeypatch.setattr(autostart, "_python_for_task", lambda: r"C:\venv\Scripts\pythonw.exe")
-    monkeypatch.setattr(autostart.subprocess, "run", _Recorder(returncode=0, stdout="SUCCESS"))
-    monkeypatch.setattr(autostart, "_verify_after_prime", lambda **kw: {"verified": True})
-    async with await _client() as c:
-        resp = await c.post("/api/gateway/autostart", json={"enabled": True})
-    assert resp.status_code == 200
-    assert resp.json()["enabled"] is True
-    from aletheia.files.jsonl import read_jsonl
-    evts = [e for e in read_jsonl("audit.jsonl") if e.get("event_type") == "autostart_enabled"]
-    assert evts and evts[0]["source"] == "api"
-
-
-async def test_api_post_disable_audits(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import autostart
-    monkeypatch.setattr(autostart.platform, "system", lambda: "Windows")
-    monkeypatch.setattr(autostart.subprocess, "run", _Recorder(returncode=0, stdout="SUCCESS"))
-    async with await _client() as c:
-        resp = await c.post("/api/gateway/autostart", json={"enabled": False})
-    assert resp.status_code == 200
-    assert resp.json()["enabled"] is False
-    from aletheia.files.jsonl import read_jsonl
-    assert any(e.get("event_type") == "autostart_disabled" for e in read_jsonl("audit.jsonl"))
-
-
-async def test_api_unsupported_linux_supported_false(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import autostart
-    monkeypatch.setattr(autostart.platform, "system", lambda: "Linux")
-    async with await _client() as c:
-        resp = await c.get("/api/gateway/autostart")
-    assert resp.status_code == 200
-    assert resp.json()["supported"] is False
-
-
-# --- 21. macOS launchd support ---
+# --- 16. macOS launchd support ---
 
 def test_macos_plist_uses_safe_periodic_gated_start(tmp_path, monkeypatch):
     from aletheia.gateway import autostart
@@ -724,53 +663,6 @@ def test_parse_launchctl_status_short_lived_success_is_primed():
         "pid": 0,
         "primed": True,
     }
-
-
-def test_lifecycle_auto_registers_watchdog_on_macos(monkeypatch):
-    from aletheia.gateway import autostart, lifecycle
-
-    cfg = SimpleNamespace(runtime=SimpleNamespace(autostart_on_start=True))
-    monkeypatch.setattr(autostart, "is_supported_platform", lambda: True)
-    monkeypatch.setattr(autostart, "status", lambda: {"supported": True, "enabled": False})
-    calls: list[str] = []
-    monkeypatch.setattr(
-        autostart,
-        "enable",
-        lambda source="api": calls.append(source) or {"ok": True, "enabled": True},
-    )
-
-    lifecycle._auto_register_watchdog(cfg)
-
-    assert calls == ["auto"]
-
-
-def test_lifecycle_skips_auto_register_when_user_disabled(monkeypatch):
-    """_auto_register_watchdog must NOT re-register if the user explicitly ran
-    disable-autostart (autostart_on_start=False).  This is the root-cause fix for
-    the bug where 'gateway start' silently reversed a user's disable decision."""
-    from aletheia.gateway import autostart, lifecycle
-
-    cfg = SimpleNamespace(runtime=SimpleNamespace(autostart_on_start=False))
-    monkeypatch.setattr(autostart, "is_supported_platform", lambda: True)
-    monkeypatch.setattr(autostart, "status", lambda: {"supported": True, "enabled": False})
-    calls: list[str] = []
-    monkeypatch.setattr(
-        autostart,
-        "enable",
-        lambda source="api": calls.append(source) or {"ok": True, "enabled": True},
-    )
-
-    lifecycle._auto_register_watchdog(cfg)
-
-    assert calls == [], "enable() must not be called when user explicitly disabled autostart"
-
-
-def test_settings_distinguishes_loaded_from_verified_watchdog():
-    source = Path("frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
-    assert "macOS launchd" in source
-    assert "Needs Attention" in source
-    assert "config_valid === false" in source
-    assert "primed !== true" in source
 
 
 # --- 20. Governance guard: autostart must never be agent-callable ---

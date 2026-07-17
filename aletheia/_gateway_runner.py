@@ -41,37 +41,6 @@ _FRONTDOOR_STARTUP_GRACE_SEC = 20.0
 _WILDCARD_HOSTS = {"", "0.0.0.0", "::", "*"}
 
 
-def _detach_from_launcher() -> bool:
-    """Detach a POSIX supervisor before it initializes gateway state.
-
-    ``Popen(start_new_session=True)`` prevents terminal hangups, but its runner
-    remains a direct child of the CLI until that CLI returns.  Terminal hosts
-    that tear down their complete child tree (rather than merely sending SIGHUP)
-    can therefore still take the gateway down during startup.  A standard
-    double-fork makes the real supervisor an init-owned grandchild immediately.
-
-    Windows already gets the equivalent behaviour from the detached process
-    creation flags in ``gateway.lifecycle._spawn_background``.  Returning
-    ``False`` lets each intermediate launcher exit successfully; the original
-    CLI still waits for the pidfile/readiness probe, so this does not turn a
-    failed startup into a success.
-    """
-    if os.name != "posix" or not hasattr(os, "fork"):
-        return True
-
-    try:
-        if os.fork() > 0:
-            return False
-        os.setsid()
-        if os.fork() > 0:
-            return False
-    except OSError:
-        # The existing process-session detach remains in effect when a host
-        # refuses a fork (for example under an exhausted process limit).
-        return True
-    return True
-
-
 def _sleep(seconds: float) -> None:
     time.sleep(seconds)
 
@@ -501,8 +470,6 @@ def _record_frontdoor_restart(port: int, pid: int) -> None:
 
 
 def main():
-    if not _detach_from_launcher():
-        return
     from aletheia.logging_config import configure_logging
     configure_logging()
     no_browser = "--no-browser" in sys.argv

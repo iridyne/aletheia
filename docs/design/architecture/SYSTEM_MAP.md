@@ -10,7 +10,8 @@
 
 | 层 | 平台/频率 | 责任 | 边界 |
 |---|---|---|---|
-| OS watchdog | Windows Task Scheduler / macOS launchd，每 60 秒 | 登录启动；supervisor 整体死亡后重新执行幂等 gated start | 用户级、无提权、无凭证、不会解锁 live |
+| OS session service | macOS launchd / Linux systemd --user / Windows Task Scheduler，按需 | `gateway start` 托管 gateway runner；关闭终端/ORCA 不会终止它 | `gateway stop` 停止并删除定义；无登录触发、间隔、KeepAlive 或 Restart |
+| legacy OS watchdog | Windows Task Scheduler / macOS launchd（迁移清理） | 仅识别旧版本的无人值守恢复注册 | `gateway stop` 解除注册，防止显式 stop 后复活 |
 | gateway supervisor | 常驻 | 管理 frontdoor:8787 + backend:8788，内部子进程异常时重生 | 唯一 pidfile/lifecycle 入口；不由 launchd 分别管理子进程 |
 
 ---

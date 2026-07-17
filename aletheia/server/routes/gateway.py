@@ -1,9 +1,4 @@
-"""Gateway autostart + restart API routes — human-triggered control.
-
-GET  /api/gateway/autostart   — live status (read-only; honest about OS support).
-POST /api/gateway/autostart   — {enabled: bool} register/remove the scheduled task.
-POST /api/gateway/restart     — kill inner uvicorn so supervisor respawns with fresh code.
-"""
+"""Gateway restart API route — human-triggered control."""
 
 import asyncio
 import os
@@ -14,13 +9,8 @@ from pydantic import BaseModel
 
 from aletheia.config.loader import is_preview_mode
 from aletheia.files.jsonl import write_audit
-from aletheia.gateway import autostart
 
 router = APIRouter(prefix="/api/gateway", tags=["gateway"])
-
-
-class AutostartRequest(BaseModel):
-    enabled: bool
 
 
 class RestartRequest(BaseModel):
@@ -35,40 +25,9 @@ def _reject_preview_gateway_control() -> None:
             403,
             detail={
                 "reason_code": "preview_gateway_control_blocked",
-                "message": "Gateway lifecycle and autostart control are unavailable in preview mode.",
+                "message": "Gateway lifecycle control is unavailable in preview mode.",
             },
         )
-
-
-@router.get("/autostart")
-async def get_autostart():
-    return autostart.status()
-
-
-@router.post("/autostart")
-async def set_autostart(req: AutostartRequest):
-    _reject_preview_gateway_control()
-    if req.enabled:
-        result = autostart.enable(source="api")
-    else:
-        result = autostart.disable(source="api")
-    if result.get("ok"):
-        # Persist user intent so _auto_register_watchdog respects the decision on
-        # subsequent 'gateway start' calls — prevents silent re-registration after disable.
-        from aletheia.config.loader import load_config, save_config
-        cfg = load_config()
-        cfg.runtime.autostart_on_start = req.enabled
-        await asyncio.get_event_loop().run_in_executor(None, save_config, cfg)
-        if not req.enabled:
-            from aletheia.gateway.pidfile import is_running
-            result = {**result, "gateway_still_running": is_running()}
-    write_audit({
-        "actor": "human", "source": "api", "event_type": "autostart_changed",
-        "entity_type": "gateway_autostart", "entity_id": "global",
-        "after": {"enabled": req.enabled},
-        "message": f"Gateway autostart {'enabled' if req.enabled else 'disabled'} via API",
-    })
-    return result
 
 
 def _is_reload_mode() -> bool:
@@ -99,17 +58,16 @@ async def restart_gateway(request: Request, body: Optional[RestartRequest] = Bod
     Strategy depends on the runtime mode:
     - Under --reload (dev mode): touch a sentinel .py file to trigger uvicorn's
       file-watcher reload. Worker stays alive until the reloader kills it cleanly.
-    - Without --reload: os._exit(42) kills this process; the supervisor or
-      autostart watchdog respawns fresh.
+    - Without --reload: os._exit(42) kills this process; the managed supervisor
+      owns the normal restart path.
     """
     _reject_preview_gateway_control()
     has_supervisor = not getattr(request.app.state, "_owns_pid", True)
-    has_autostart = autostart.status().get("enabled", False)
     reload_mode = _is_reload_mode()
 
-    if not reload_mode and not has_supervisor and not has_autostart:
+    if not reload_mode and not has_supervisor:
         return {"mode": "cold", "ok": False,
-                "message": "No supervisor or autostart active — restart would kill the gateway permanently."}
+                "message": "No supervisor active — restart would kill the gateway permanently."}
 
     reason = body.reason if body else "manual"
     changed = body.changed_files[:10] if body and body.changed_files else []

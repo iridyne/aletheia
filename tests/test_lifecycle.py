@@ -37,12 +37,12 @@ def setup_env(tmp_path, monkeypatch):
     from aletheia.gateway import preflight
     monkeypatch.setattr(preflight, "run_preflight_checks", lambda: preflight.PreflightResult())
 
-    # A successful background start auto-registers the OS watchdog and tunnel.
-    # These lifecycle tests mock the spawn itself, so they must also isolate its
-    # post-start integrations instead of writing the real user LaunchAgents.
+    # These lifecycle tests do not register a real OS service or tunnel.
     from aletheia.gateway import lifecycle
-    monkeypatch.setattr(lifecycle, "_auto_register_watchdog", lambda cfg: None)
     monkeypatch.setattr(lifecycle, "_auto_start_tunnel", lambda cfg: None)
+    from aletheia.gateway import managed_service
+    monkeypatch.setattr(managed_service, "start", lambda **_kwargs: {"ok": True})
+    monkeypatch.setattr(managed_service, "stop", lambda: {"ok": True})
 
 
 def test_do_stop_clears_pid_only_after_port_freed(tmp_path, monkeypatch, capsys):
@@ -133,12 +133,8 @@ def test_do_start_refuses_when_port_held_by_foreign_process(tmp_path, monkeypatc
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: False)
     monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [])
     monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
-    spawned = []
-    monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
-
     with pytest.raises(typer.Exit):
         lifecycle.do_start(no_browser=True)
-    assert spawned == []
     err = capsys.readouterr().err
     assert "foreign" in err.lower()
 
@@ -161,13 +157,14 @@ def test_do_start_self_heals_orphan_then_proceeds(tmp_path, monkeypatch):
         return call_count["n"] > 1  # False first time, True second time
     monkeypatch.setattr(lifecycle, "wait_port_free", staged_wait)
 
-    spawned = []
-    monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
-    monkeypatch.setattr(lifecycle, "_verify_started", lambda proc, cfg: None)
+    from aletheia.gateway import managed_service
+    started = []
+    monkeypatch.setattr(managed_service, "start", lambda **kwargs: started.append(kwargs) or {"ok": True})
+    monkeypatch.setattr(lifecycle, "_verify_started", lambda cfg: None)
 
     lifecycle.do_start(no_browser=True)
     assert killed == [9999]
-    assert spawned == [True]
+    assert started == [{"no_browser": True}]
 
 
 def test_do_start_refuses_when_orphan_kill_doesnt_free_port(tmp_path, monkeypatch, capsys):
@@ -180,12 +177,8 @@ def test_do_start_refuses_when_orphan_kill_doesnt_free_port(tmp_path, monkeypatc
     monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: None)
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: False)
     monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
-    spawned = []
-    monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
-
     with pytest.raises(typer.Exit):
         lifecycle.do_start(no_browser=True)
-    assert spawned == []
     err = capsys.readouterr().err
     assert "still in use" in err.lower()
 
@@ -198,12 +191,13 @@ def test_do_start_proceeds_after_transient_port_clears(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
     # Port frees within the grace window.
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
-    spawned = []
-    monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
-    monkeypatch.setattr(lifecycle, "_verify_started", lambda proc, cfg: None)
+    from aletheia.gateway import managed_service
+    started = []
+    monkeypatch.setattr(managed_service, "start", lambda **kwargs: started.append(kwargs) or {"ok": True})
+    monkeypatch.setattr(lifecycle, "_verify_started", lambda cfg: None)
 
     lifecycle.do_start(no_browser=True)
-    assert spawned == [True]  # transient hold tolerated
+    assert started == [{"no_browser": True}]  # transient hold tolerated
 
 
 def test_do_start_proceeds_when_port_free(tmp_path, monkeypatch):
@@ -211,12 +205,13 @@ def test_do_start_proceeds_when_port_free(tmp_path, monkeypatch):
     from aletheia.gateway import lifecycle
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
-    spawned = []
-    monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
-    monkeypatch.setattr(lifecycle, "_verify_started", lambda proc, cfg: None)
+    from aletheia.gateway import managed_service
+    started = []
+    monkeypatch.setattr(managed_service, "start", lambda **kwargs: started.append(kwargs) or {"ok": True})
+    monkeypatch.setattr(lifecycle, "_verify_started", lambda cfg: None)
 
     lifecycle.do_start(no_browser=True)
-    assert spawned == [True]
+    assert started == [{"no_browser": True}]
 
 
 def test_do_start_foreground_guard_refuses_when_port_taken(tmp_path, monkeypatch, capsys):
@@ -235,54 +230,6 @@ def test_do_start_foreground_guard_refuses_when_port_taken(tmp_path, monkeypatch
     with pytest.raises(typer.Exit):
         lifecycle.do_start(no_browser=True, foreground=True)
     assert ran == [] and wrote == []  # guard fired before write_pid / _run_server
-
-
-# --- Background spawn console suppression (no Windows Terminal pop-up) ---
-
-def test_spawn_background_uses_create_no_window_on_windows(tmp_path, monkeypatch):
-    """Win11 needs CREATE_NO_WINDOW alongside DETACHED_PROCESS to forbid console
-    allocation; without it Windows Terminal pops up for the supervisor child."""
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import lifecycle
-
-    captured = {}
-
-    def fake_popen(args, **kwargs):
-        captured["args"] = args
-        captured["kwargs"] = kwargs
-        class P: pass  # noqa: E701
-        return P()
-
-    monkeypatch.setattr(lifecycle.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(lifecycle.platform, "system", lambda: "Windows", raising=False)
-
-    lifecycle._spawn_background(no_browser=True)
-
-    flags = captured["kwargs"].get("creationflags", 0)
-    assert flags & 0x08000000 == 0x08000000  # CREATE_NO_WINDOW
-    assert flags & 0x00000008 == 0x00000008  # DETACHED_PROCESS still set
-    assert flags & 0x00000200 == 0x00000200  # CREATE_NEW_PROCESS_GROUP still set
-
-
-def test_spawn_background_posix_unchanged(tmp_path, monkeypatch):
-    """POSIX path: no creationflags, start_new_session=True preserved."""
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import lifecycle
-
-    captured = {}
-
-    def fake_popen(args, **kwargs):
-        captured["kwargs"] = kwargs
-        class P: pass  # noqa: E701
-        return P()
-
-    monkeypatch.setattr(lifecycle.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(lifecycle.platform, "system", lambda: "Linux", raising=False)
-
-    lifecycle._spawn_background(no_browser=True)
-
-    assert "creationflags" not in captured["kwargs"]
-    assert captured["kwargs"].get("start_new_session") is True
 
 
 # --- Headless detection + safe echo ---
@@ -316,22 +263,7 @@ def test_echo_safe_writes_stderr_when_not_headless(tmp_path, monkeypatch, capsys
     assert "visible error" in out.err
 
 
-# --- Spawn verification: the watchdog's success signal must be honest ---
-#
-# Regression for the 13.5h silent-death zombie: _spawn_background returns exit 0
-# the instant it forks, even when the supervisor immediately dies, so the PT5M
-# watchdog recorded LastResult=0x0 ("success") on every tick while the gateway
-# stayed dead. _verify_started turns that signal honest.
-
-class _FakeProc:
-    """Stand-in for a Popen launcher handle. poll() returns `code` (None = alive)."""
-    def __init__(self, code=None):
-        self._code = code
-        self.returncode = code
-
-    def poll(self):
-        return self._code
-
+# --- Managed-service readiness verification ---
 
 def test_verify_started_returns_when_gateway_comes_up(tmp_path, monkeypatch):
     """pid file written + port listening → confirmed up, returns cleanly."""
@@ -343,22 +275,7 @@ def test_verify_started_returns_when_gateway_comes_up(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda cfg: True)
     monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: True)
 
-    # Launcher still alive (poll None); gateway up → no raise.
-    lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=1.0)
-
-
-def test_verify_started_accepts_replacement_after_launcher_sigterm(tmp_path, monkeypatch):
-    """A newer restart may replace the launcher before its gateway binds."""
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import lifecycle
-    cfg = lifecycle.load_config()
-    running = iter([False, False, True])
-    monkeypatch.setattr(lifecycle, "is_running", lambda: next(running, True))
-    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
-    monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda cfg: True)
-    monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: True)
-
-    lifecycle._verify_started(_FakeProc(code=-15), cfg, timeout=0.2, poll_interval=0.01)
+    lifecycle._verify_started(cfg, timeout=1.0)
 
 
 def test_verify_started_waits_for_api_ready_before_success(tmp_path, monkeypatch):
@@ -373,11 +290,11 @@ def test_verify_started_waits_for_api_ready_before_success(tmp_path, monkeypatch
     monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: True)
 
     with pytest.raises(typer.Exit):
-        lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=0.1, poll_interval=0.01)
+        lifecycle._verify_started(cfg, timeout=0.1, poll_interval=0.01)
 
 
-def test_verify_started_raises_when_launcher_dies_immediately(tmp_path, monkeypatch, capsys):
-    """Launcher exits non-zero before gateway is up → Exit(1) + spawn-failed audit."""
+def test_verify_started_raises_when_gateway_never_comes_up(tmp_path, monkeypatch, capsys):
+    """Manager registration without a live gateway exits nonzero and is audited."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
     cfg = lifecycle.load_config()
@@ -386,7 +303,7 @@ def test_verify_started_raises_when_launcher_dies_immediately(tmp_path, monkeypa
     monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
 
     with pytest.raises(typer.Exit):
-        lifecycle._verify_started(_FakeProc(code=1), cfg, timeout=2.0)
+        lifecycle._verify_started(cfg, timeout=0.1, poll_interval=0.01)
 
     # The death is no longer silent: it is audited.
     from aletheia.files.jsonl import read_jsonl
@@ -394,7 +311,7 @@ def test_verify_started_raises_when_launcher_dies_immediately(tmp_path, monkeypa
 
 
 def test_verify_started_raises_on_timeout_when_never_up(tmp_path, monkeypatch):
-    """Launcher stays alive but gateway never binds the port → Exit(1) on timeout."""
+    """Managed service stays unready until the lifecycle timeout."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
     cfg = lifecycle.load_config()
@@ -403,11 +320,11 @@ def test_verify_started_raises_on_timeout_when_never_up(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
 
     with pytest.raises(typer.Exit):
-        lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=0.6, poll_interval=0.01)
+        lifecycle._verify_started(cfg, timeout=0.6, poll_interval=0.01)
 
 
 def test_verify_started_kills_api_only_gateway_when_webui_missing(tmp_path, monkeypatch):
-    """API-only startup is not success: kill it so watchdog can retry after build.
+    """API-only startup is not success: clean it up after a failed start.
 
     Regression: if dashboard_static/index.html disappeared during frontend build,
     uvicorn could bind /api while "/" stayed 404. The old verifier returned
@@ -429,7 +346,7 @@ def test_verify_started_kills_api_only_gateway_when_webui_missing(tmp_path, monk
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
 
     with pytest.raises(typer.Exit):
-        lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=0.1)
+        lifecycle._verify_started(cfg, timeout=0.1)
 
     assert killed == [4242]
     assert cleared == [True]
@@ -446,7 +363,7 @@ def test_verify_started_surfaces_errors_log_tail(tmp_path, monkeypatch, capsys):
     errors_log_path().write_text("Traceback: ImportError boom\n", encoding="utf-8")
 
     with pytest.raises(typer.Exit):
-        lifecycle._verify_started(_FakeProc(code=1), cfg=lifecycle.load_config(), timeout=1.0)
+        lifecycle._verify_started(lifecycle.load_config(), timeout=1.0)
     err = capsys.readouterr().err
     assert "ImportError boom" in err
 
@@ -473,20 +390,22 @@ def test_do_logs_shows_all_operational_logs_redacted(tmp_path, monkeypatch, caps
     assert "[REDACTED]" in out
 
 
-def test_do_start_background_raises_when_spawn_dies(tmp_path, monkeypatch):
-    """End-to-end: do_start background path now propagates a dead spawn as Exit(1),
-    instead of silently returning 0 (the false-green the watchdog used to record)."""
+def test_do_start_background_stops_registration_when_readiness_fails(tmp_path, monkeypatch):
+    """A failed readiness probe removes the just-created OS service definition."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
     monkeypatch.setattr(lifecycle, "_is_headless", lambda: True)
-    monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: _FakeProc(code=1))
-    # Gateway never comes up.
-    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
+    from aletheia.gateway import managed_service
+    stopped = []
+    monkeypatch.setattr(managed_service, "start", lambda **_kwargs: {"ok": True})
+    monkeypatch.setattr(managed_service, "stop", lambda: stopped.append(True) or {"ok": True})
+    monkeypatch.setattr(lifecycle, "_verify_started", lambda *_args, **_kwargs: (_ for _ in ()).throw(typer.Exit(1)))
 
     with pytest.raises(typer.Exit):
         lifecycle.do_start(no_browser=True)
+    assert stopped == [True]
 
 
 def test_do_resume_prefers_running_gateway_api(tmp_path, monkeypatch):

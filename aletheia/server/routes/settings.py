@@ -453,7 +453,6 @@ class RuntimeConfigUpdate(SettingsRequest):
     scheduler_enabled: Optional[bool] = None
     git_enabled: Optional[bool] = None
     auto_reload: Optional[bool] = None
-    autostart_on_start: Optional[bool] = None
     runtime_continuity_enabled: Optional[bool] = None
     runtime_continuity_lock_ttl_sec: Optional[int] = None
     runtime_continuity_shadow_port_offset: Optional[int] = None

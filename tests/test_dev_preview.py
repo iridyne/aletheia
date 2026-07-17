@@ -62,12 +62,12 @@ async def test_preview_blocks_machine_level_gateway_and_update_controls(monkeypa
     monkeypatch.setattr(gateway_routes, "is_preview_mode", lambda: True)
     monkeypatch.setattr(update_routes, "is_preview_mode", lambda: True)
 
-    with pytest.raises(HTTPException) as autostart:
-        await gateway_routes.set_autostart(gateway_routes.AutostartRequest(enabled=True))
     with pytest.raises(HTTPException) as update:
         await update_routes.update_apply(update_routes.ApplyBody(confirm=True))
 
-    assert autostart.value.status_code == 403
-    assert autostart.value.detail["reason_code"] == "preview_gateway_control_blocked"
+    with pytest.raises(HTTPException) as restart:
+        await gateway_routes.restart_gateway(type("Request", (), {"app": type("App", (), {"state": type("State", (), {})()})()})())
+    assert restart.value.status_code == 403
+    assert restart.value.detail["reason_code"] == "preview_gateway_control_blocked"
     assert update.value.status_code == 403
     assert update.value.detail["reason_code"] == "preview_update_blocked"

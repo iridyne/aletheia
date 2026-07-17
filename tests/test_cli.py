@@ -33,19 +33,6 @@ def test_gateway_status(tmp_path, monkeypatch):
     assert "stopped" in result.output
 
 
-def test_gateway_status_shows_autostart(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
-    from aletheia.gateway import autostart
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    monkeypatch.setattr(autostart, "status",
-                        lambda: {"supported": True, "enabled": False, "task_name": autostart.TASK_NAME})
-    result = runner.invoke(app, ["gateway", "status"])
-    assert result.exit_code == 0
-    assert "Autostart:" in result.output
-    assert "disabled" in result.output
-
-
 def test_gateway_status_labels_local_paper_without_an_exchange(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
 
@@ -61,23 +48,6 @@ def test_gateway_status_labels_local_paper_without_an_exchange(tmp_path, monkeyp
     assert result.exit_code == 0
     assert "Exchange: Local paper (no external exchange)" in result.output
     assert "Exchange: okx" not in result.output
-
-
-def test_gateway_enable_disable_autostart_smoke(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
-    from aletheia.gateway import autostart
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    monkeypatch.setattr(autostart, "enable",
-                        lambda source="cli": {"supported": True, "enabled": True, "ok": True})
-    monkeypatch.setattr(autostart, "disable",
-                        lambda source="cli": {"supported": True, "enabled": False, "ok": True})
-    r1 = runner.invoke(app, ["gateway", "enable-autostart"])
-    assert r1.exit_code == 0
-    assert "Autostart enabled" in r1.output
-    r2 = runner.invoke(app, ["gateway", "disable-autostart"])
-    assert r2.exit_code == 0
-    assert "Autostart disabled" in r2.output
 
 
 def test_gateway_resume_blocks_when_llm_unavailable(tmp_path, monkeypatch):
