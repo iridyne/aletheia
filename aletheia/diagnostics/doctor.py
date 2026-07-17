@@ -1231,6 +1231,18 @@ def _probe_trading_loop(report: Report) -> None:
             newest_opp = row[0] if row else None
         except Exception:
             pass
+
+        # Current session uptime — used to distinguish post-restart warmup from a stall.
+        session_uptime = None
+        try:
+            row = db.execute(
+                "SELECT started_at FROM runtime_sessions WHERE ended_at IS NULL"
+                " ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                session_uptime = _age_minutes(row[0])
+        except Exception:
+            pass
     except Exception as e:
         report.add("loop.activity", "info", f"could not read trading tables: {e}")
         return
@@ -1242,9 +1254,16 @@ def _probe_trading_loop(report: Report) -> None:
     if opp_age is None:
         report.add("loop.newest_opportunity", "info", "no opportunities yet")
     elif opp_age > 30:
-        report.add("loop.newest_opportunity", "warn",
-                   f"newest opportunity {_fmt_age(opp_age)} — observe stage not producing",
-                   "observer should fire every ~15min when gateway runs unpaused")
+        in_warmup = session_uptime is not None and session_uptime < 30
+        if in_warmup:
+            # Gateway recently started after a stop; first MO cycle hasn't fired yet.
+            report.add("loop.newest_opportunity", "info",
+                       f"newest opportunity {_fmt_age(opp_age)}, session {_fmt_age(session_uptime)} old"
+                       " — warming up after restart")
+        else:
+            report.add("loop.newest_opportunity", "warn",
+                       f"newest opportunity {_fmt_age(opp_age)} — observe stage not producing",
+                       "observer should fire every ~15min when gateway runs unpaused")
     else:
         report.add("loop.newest_opportunity", "ok", f"newest opportunity {_fmt_age(opp_age)}")
 

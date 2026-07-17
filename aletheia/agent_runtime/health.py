@@ -92,6 +92,25 @@ def _market_data_stale_minutes(cfg) -> float | None:
         return None
 
 
+def _session_uptime_minutes() -> float | None:
+    """Minutes since the current runtime session started. None if unavailable."""
+    try:
+        from datetime import datetime, timezone
+        from aletheia.storage.sqlite import get_db
+        row = get_db().execute(
+            "SELECT started_at FROM runtime_sessions WHERE ended_at IS NULL"
+            " ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+        if not row or not row[0]:
+            return None
+        dt = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+    except Exception:
+        return None
+
+
 def _observer_stale_minutes() -> float | None:
     """Minutes since the last opportunity was created. None if no data."""
     try:
@@ -171,12 +190,17 @@ def compute_health() -> dict:
     if _llm_consecutive_failures >= cfg.health.llm_unavailable_alert_after:
         issues.append(f"llm_unavailable:{_llm_consecutive_failures}")
 
-    # Observer stale: Market Observer should produce opportunities every 15 min.
-    # If nothing in 45 min while running, the analysis loop has silently broken.
+    # Observer stale: Market Observer should produce opportunities every ~15 min.
+    # Skip during the first 30 min of a new session — the gateway may have been
+    # stopped intentionally (maintenance, overnight) and the first refresh cycle
+    # hasn't completed yet. Only alert once the session has been running long
+    # enough that a missed observer run is a real stall, not a normal warmup.
     if not cfg.runtime.paused and cfg.runtime.scheduler_enabled:
-        obs_age = _observer_stale_minutes()
-        if obs_age is not None and obs_age > 45:
-            issues.append(f"observer_stale:{obs_age:.0f}min")
+        uptime = _session_uptime_minutes()
+        if uptime is None or uptime >= 30:
+            obs_age = _observer_stale_minutes()
+            if obs_age is not None and obs_age > 45:
+                issues.append(f"observer_stale:{obs_age:.0f}min")
 
     # Exchange connectivity: can't trade if the exchange API is unreachable.
     if not cfg.runtime.paused:
