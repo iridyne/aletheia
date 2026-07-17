@@ -109,6 +109,20 @@ veto”冲突。`qualified_positive` 也没有形成可观察的 action differen
 6. **隐性重复成本**：相同 symbol/direction 的新 carrier 约每 50 分钟重新进入，Opportunity id 与时间
    变化掩盖“物质上下文未变化”，造成同质模型调用与 Overview skip 洪泛。
 
+### 4.4 实施前最终运行快照（2026-07-18 CST）
+
+合入前再次只读刷新运行库，最近 24 小时有约 116 个 candidate skip：115 个 direct
+`operator_model_skip`，只有 1 个先表达 trade；direct skip 全部 `conviction=0`。B2 状态为
+`insufficient_evidence=90`、`qualified_negative=16`、`qualified_positive=10`。理由中 76 条提到
+score、53 条提到证据不足、12 条自行发明 threshold、43 条提到 range/sideways；耐久 reasoning 的
+最小、最大和平均长度均为 200，确认不是自然短文本而是统一截断。64/116 属于相同
+symbol/direction 的重复进入，平均间隔 54 分钟。
+
+同一 b1.1 epoch 已结算 24h 反事实仍为：direct skip `n=106, avg_net=+1.4403%, positive=54.7%`；
+trade-intent 后被 Debate/conviction 门控 `n=38, avg_net=-1.1394%, positive=39.5%`。这同时满足
+“行为几乎全落在 direct 分支”和“两个分支后续结果方向相反”，足以确认存在过度 direct skip；但它
+仍不是止损止盈账户 PnL，不能外推为每个被拦候选都应交易。
+
 ## 5. 已实施：单变量 Direct-Skip 语义实验（B 类）
 
 本任务未与 A 类可观测性修复同 PR。owner 在看到后续增长的 direct skip 后明确授权先实施修复；
@@ -128,6 +142,10 @@ B2 状态、候选技术特征与 regime，物质变化会重新开放评估。�
 配套 A 类修复：unsupported/missing action 与 malformed conviction 改为 typed unavailable；权威
 reasoning 不再截断；`evidence_manifest.operator_rationale` 保存 skip kind、adverse/supporting/opposing/
 risk evidence。已有 submitting claim 的恢复优先级不变。
+
+Doctor 同时分列 `direct_model_skips`、`trade_intent_gated_skips`、`confirmed_adverse_skips` 与
+`deferred_unchanged_context_events`。因此 b1.2 生效后可直接验证：旧 direct 洪泛是否下降、确认后的
+adverse skip 是否仍有合理占比、neutral defer 是否被上下文去重，而不是只凭 Overview 视觉判断。
 
 明确未改：55 分门槛、Debate 调整公式、Ranker 入选/权重、sizing、Risk、Execution、Exchange、Live、
 额度与凭据。

@@ -532,11 +532,66 @@ def test_doctor_surfaces_skip_halt_evidence_gaps_read_only(tmp_path, monkeypatch
     assert "raw_24h_candidate_skips=1" in check.detail
     assert "raw_24h_missing_trace=1" in check.detail
     assert "raw_24h_missing_outcome_seed=1" in check.detail
+    assert "raw_24h_direct_model_skips=0" in check.detail
+    assert "raw_24h_trade_intent_gated_skips=0" in check.detail
+    assert "raw_24h_confirmed_adverse_skips=0" in check.detail
     assert "unscoped_heartbeat_skips=1" in check.detail
     assert "no_evaluable_candidate_events=0" in check.detail
     assert "deferred_unchanged_context_events=0" in check.detail
     assert "finding=recording_incident" in check.detail
     assert "does not change PI, config, Risk, or execution" in check.fix_hint
+
+
+def test_doctor_separates_confirmed_direct_and_trade_gated_skip_paths(
+    tmp_path, monkeypatch
+):
+    import json
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.diagnostics import doctor
+    from aletheia.storage.models import FilterDecision, PiDecision
+    from aletheia.storage.repositories import insert_filter_decision, insert_pi_decision
+
+    for decision_id, reason_code, attempts in (
+        ("confirmed-direct-skip", "operator_model_skip", 1),
+        ("trade-gated-skip", "operator_model_trade", 0),
+    ):
+        insert_pi_decision(PiDecision(
+            id=decision_id,
+            action="skip",
+            symbol="BTC/USDT",
+            direction="long",
+            market_type="spot",
+            opportunity_id=f"opp-{decision_id}",
+            signal_source="market_observer",
+        ))
+        insert_filter_decision(FilterDecision(
+            dedup_key=f"trace-{decision_id}",
+            candidate_key=f"pi_decision:{decision_id}",
+            candidate_kind="pi_decision",
+            opportunity_id=f"opp-{decision_id}",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            filter_name="operator_action_assessment",
+            stage="system_operator",
+            decision="rejected",
+            reason_code=reason_code,
+            input_snapshot=json.dumps({"confirmation_attempts": attempts}),
+            filter_version="test",
+        ))
+
+    report = doctor.Report()
+    doctor._probe_skip_halt(report)
+    detail = next(
+        check.detail for check in report.checks if check.name == "loop.skip_halt"
+    )
+
+    assert "raw_24h_direct_model_skips=1" in detail
+    assert "raw_24h_trade_intent_gated_skips=1" in detail
+    assert "raw_24h_confirmed_adverse_skips=1" in detail
 
 
 @spec_claim(

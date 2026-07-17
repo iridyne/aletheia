@@ -1483,6 +1483,26 @@ def _probe_skip_halt(report: Report) -> None:
                  AND julianday(created_at) >= julianday(?)""",
             (cutoff,),
         ).fetchone()[0]
+        path_counts = db.execute(
+            """SELECT
+                 SUM(CASE WHEN fd.reason_code='operator_model_skip' THEN 1 ELSE 0 END)
+                   AS direct_model_skips,
+                 SUM(CASE WHEN fd.reason_code='operator_model_trade' THEN 1 ELSE 0 END)
+                   AS trade_intent_gated_skips,
+                 SUM(CASE WHEN fd.reason_code='operator_model_skip'
+                           AND COALESCE(json_extract(fd.input_snapshot,
+                               '$.confirmation_attempts'), 0) > 0
+                          THEN 1 ELSE 0 END) AS confirmed_adverse_skips
+               FROM filter_decisions fd
+               JOIN pi_decisions p
+                 ON fd.candidate_key='pi_decision:' || p.id
+               WHERE fd.filter_name='operator_action_assessment'
+                 AND p.action='skip'
+                 AND p.opportunity_id IS NOT NULL
+                 AND COALESCE(p.signal_source, 'market_observer') != 'system_cascade'
+                 AND julianday(p.created_at) >= julianday(?)""",
+            (cutoff,),
+        ).fetchone()
         pending = db.execute(
             """SELECT COUNT(*) FROM pi_decisions
                WHERE action = 'signal_pending'
@@ -1512,12 +1532,18 @@ def _probe_skip_halt(report: Report) -> None:
     candidate_skips = int((row or [0])[0] or 0)
     missing_trace = int((row or [0, 0])[1] or 0)
     missing_outcome_seed = int((row or [0, 0, 0])[2] or 0)
+    direct_model_skips = int((path_counts or [0])[0] or 0)
+    trade_intent_gated_skips = int((path_counts or [0, 0])[1] or 0)
+    confirmed_adverse_skips = int((path_counts or [0, 0, 0])[2] or 0)
     diagnosis = diagnose_skip_halt(policy_epoch_id=policy_epoch_id)
     scoped_counts = diagnosis.counts
     epoch_label = policy_epoch_id or "none"
     detail = (
         f"raw_24h_candidate_skips={candidate_skips}, raw_24h_missing_trace={missing_trace}, "
         f"raw_24h_missing_outcome_seed={missing_outcome_seed}, "
+        f"raw_24h_direct_model_skips={direct_model_skips}, "
+        f"raw_24h_trade_intent_gated_skips={trade_intent_gated_skips}, "
+        f"raw_24h_confirmed_adverse_skips={confirmed_adverse_skips}, "
         f"administrative_cascade_skips_excluded={int(administrative_skips or 0)}, "
         f"unscoped_heartbeat_skips={int(unscoped or 0)}, "
         f"no_evaluable_candidate_events={int(no_candidate_events or 0)}, "

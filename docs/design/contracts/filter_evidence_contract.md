@@ -80,6 +80,7 @@ entry timestamp）；trace 必须标注 `queued_candidate_fixed`。不完整或�
 `doctor` 必须只读报告近期 candidate skip 的 action-trace 覆盖、四个 outcome seed 覆盖、legacy 无 target
 skip、`operator_evaluation_events` 的 no-candidate heartbeat/unchanged-context defer、pending 与 proposal 计数。若存在活跃的
 `system_operator_skip_remediation` policy epoch，raw 24h 计数必须与该 epoch 的诊断计数同时展示：
+raw 路径还必须分列 direct model skip、trade-intent 后门控 skip、经过 b1.2 确认的 adverse skip；
 重载前的缺口仍可审计，但不得污染当前 epoch 的 finding。无 target 记录
 不得混入 candidate effectiveness cohort；coverage 缺失是 `recording_incident` 的诊断输入，不授予自动
 放行、自动调参或执行权限。新 zero-pending heartbeat 只能写 observation event，不能再写无 target skip。
