@@ -408,6 +408,33 @@ export const api = {
     }
     fills: number
   }>(`/analytics/pipeline-funnel?hours=${hours}`),
+  // Market Observer → Operator funnel. Surfaces WHY opportunities don't reach
+  // the operator (e.g. confidence gate) — the counterpart to the Approval Desk.
+  getOpportunityFunnel: (hours = 24) => fetchJson<{
+    window_hours: number
+    emitted_count: number
+    proposed_count: number
+    snapshot: {
+      executable_count: number
+      excluded_by_reason: Array<{
+        reason: string
+        count: number
+        examples: Array<{
+          symbol?: string | null
+          direction?: string | null
+          trade_score?: number | null
+          scanner_family?: string | null
+          skip_reason?: string | null
+        }>
+      }>
+      main_reason: string | null
+      below_floor: boolean | null
+      floor: number | null
+      snapshot_at: string | null
+      checked_at: string | null
+    }
+    config: { min_confidence_to_trade: string }
+  }>(`/analytics/opportunity-funnel?hours=${hours}`),
   getLearningFunnel: () => fetchJson<{
     knowledge_items_by_type: Array<{ item_type: string; count: number }>
     pi_actual_visibility: { layer3_lesson_hits: number; layer3_guards_available: number; note: string }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, forwardRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
@@ -128,6 +128,9 @@ export default function Overview() {
               <p className="text-muted text-sm">No pending actions</p>
             )}
           </Card>
+
+          {/* Funnel — the counterpart to the Approval Desk: why nothing (or few) reached it */}
+          <OpportunityFunnelCard />
 
           {/* Risk state */}
           <Card className="rail-card risk-panel">
@@ -263,18 +266,18 @@ export default function Overview() {
               </tbody>
             </table>
             {collectorHealth?.domains?.length ? (
-              <div ref={chdRef} className={`chd-collapsible${collectorsExpanded ? ' chd-collapsible--open' : ''}`}>
-                <div><CollectorHealthDetails health={collectorHealth} mode="full" /></div>
-              </div>
+              <CollapsibleSection ref={chdRef} open={collectorsExpanded}>
+                <CollectorHealthDetails health={collectorHealth} mode="full" />
+              </CollapsibleSection>
             ) : null}
             {dataCoverage?.domains?.length ? (
-              <div ref={coverageRef} className={`chd-collapsible${coverageExpanded ? ' chd-collapsible--open' : ''}`}>
-                <div><DataCoverageDetail coverage={dataCoverage} /></div>
-              </div>
+              <CollapsibleSection ref={coverageRef} open={coverageExpanded}>
+                <DataCoverageDetail coverage={dataCoverage} />
+              </CollapsibleSection>
             ) : null}
-            <div ref={modeRef} className={`chd-collapsible${modeExpanded ? ' chd-collapsible--open' : ''}`}>
-              <div><ModeDetail s={s} paused={paused} killed={killed} liveState={liveState} riskState={riskState} /></div>
-            </div>
+            <CollapsibleSection ref={modeRef} open={modeExpanded}>
+              <ModeDetail s={s} paused={paused} killed={killed} liveState={liveState} riskState={riskState} />
+            </CollapsibleSection>
           </Card>
 
           {/* Go-Live Scorecard */}
@@ -282,6 +285,154 @@ export default function Overview() {
         </div>
       </div>
     </div>
+  )
+}
+
+// ── Opportunity Funnel Card ──────────────────────────────────────────────────
+// Answers "why didn't we open a position?" by surfacing where opportunities were
+// blocked between Market Observer and System Operator. Cumulative counts for
+// emitted/proposed (last N hours); the excluded-by-reason breakdown is the
+// point-in-time snapshot the operator last saw. The min_confidence_to_trade
+// value is a link to Settings — clicking on the "confidence_below" row is the
+// fastest path from "I don't know why we're idle" to "here's the exact threshold
+// that's holding it back".
+const REASON_LABEL: Record<string, string> = {
+  confidence_below: 'confidence below threshold',
+  guard_blocked: 'guard blocked',
+  ttl_expired: 'signal TTL expired',
+  unsupported_demo_symbol: 'demo venue unsupported',
+  universe_not_eligible: 'not in universe',
+  neutral_bias: 'no directional bias',
+  factor_hard_blocked: 'factor blocked',
+  execution_eligible_false: 'execution disabled',
+}
+
+function fmtReason(reason: string): string {
+  return REASON_LABEL[reason] || reason.replace(/_/g, ' ')
+}
+
+function OpportunityFunnelCard() {
+  const navigate = useNavigate()
+  const [openReason, setOpenReason] = useState<string | null>(null)
+  const { data } = useQuery({
+    queryKey: ['opportunity-funnel'],
+    queryFn: () => api.getOpportunityFunnel(24),
+    refetchInterval: 30000,
+  })
+  if (!data) return null
+
+  const snap = data.snapshot
+  const excluded = snap.excluded_by_reason || []
+  const totalExcluded = excluded.reduce((sum, r) => sum + (r.count || 0), 0)
+  const droughtActive = !!snap.below_floor
+  const confidenceIsMain = snap.main_reason === 'confidence_below'
+  const minConf = data.config.min_confidence_to_trade
+  const confTone: 'green' | 'yellow' | 'red' | 'muted' =
+    droughtActive && confidenceIsMain ? 'red'
+      : droughtActive ? 'yellow'
+      : 'green'
+
+  const hasSnapshot = snap.checked_at != null
+  const executable = snap.executable_count
+
+  return (
+    <Card className="rail-card funnel-panel">
+      <div className="risk-head">
+        <h3>Funnel</h3>
+        <StatusText tone={confTone}>
+          {hasSnapshot
+            ? droughtActive ? `${executable} exec · low` : `${executable} exec`
+            : 'no snapshot yet'}
+        </StatusText>
+      </div>
+
+      <table className="status-board funnel-counts">
+        <tbody>
+          <tr>
+            <th>Emitted</th>
+            <td className="status-cell">
+              <span className="status-value mono">{data.emitted_count}</span>
+              <span className="funnel-hint text-xs text-muted">last {data.window_hours}h</span>
+            </td>
+          </tr>
+          <tr>
+            <th>Executable</th>
+            <td className="status-cell">
+              <span className={`status-light light-${confTone === 'red' ? 'red' : confTone === 'yellow' ? 'yellow' : 'green'}`} />
+              <span className="status-value mono">{executable}</span>
+              <span className="funnel-hint text-xs text-muted">
+                {hasSnapshot ? 'current working set' : '—'}
+              </span>
+            </td>
+          </tr>
+          <tr>
+            <th>Proposed</th>
+            <td className="status-cell">
+              <span className="status-value mono">{data.proposed_count}</span>
+              <span className="funnel-hint text-xs text-muted">last {data.window_hours}h</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {hasSnapshot && excluded.length > 0 && (
+        <div className="funnel-blocked">
+          <div className="chd-title">Why blocked · working set ({totalExcluded})</div>
+          {excluded.map((row) => {
+            const isConfidence = row.reason === 'confidence_below'
+            const isOpen = openReason === row.reason
+            return (
+              <div key={row.reason} className="funnel-reason">
+                <div
+                  className="funnel-reason-head status-row-clickable"
+                  onClick={() => setOpenReason(isOpen ? null : row.reason)}
+                >
+                  <span className={`status-light light-${isConfidence ? (confidenceIsMain ? 'red' : 'yellow') : 'muted'}`} />
+                  <span className="funnel-reason-name">{fmtReason(row.reason)}</span>
+                  <span className="funnel-reason-count mono">{row.count}</span>
+                  <span className="status-row-chevron">{isOpen ? '▾' : '▸'}</span>
+                </div>
+                {isConfidence && (
+                  <div className="funnel-reason-hint">
+                    threshold ={' '}
+                    <button
+                      type="button"
+                      className="funnel-link"
+                      onClick={(e) => { e.stopPropagation(); navigate('/settings?tab=trading') }}
+                    >
+                      {minConf}
+                    </button>
+                  </div>
+                )}
+                {isOpen && row.examples && row.examples.length > 0 && (
+                  <ul className="funnel-examples">
+                    {row.examples.slice(0, 4).map((ex, i) => (
+                      <li key={i}>
+                        <span className="mono">{fmtSymbol(ex.symbol || '', undefined)}</span>
+                        {ex.direction && <span className="text-muted text-xs"> {ex.direction}</span>}
+                        {ex.scanner_family && <span className="text-muted text-xs"> · {ex.scanner_family}</span>}
+                        {ex.trade_score != null && (
+                          <span className="text-muted text-xs"> · score {Number(ex.trade_score).toFixed(2)}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {hasSnapshot && excluded.length === 0 && (
+        <p className="text-muted text-sm mb-0">Working set clean — no blocks in latest snapshot.</p>
+      )}
+      {!hasSnapshot && (
+        <p className="text-muted text-sm mb-0">
+          No operator eval yet in this session. Snapshot appears after the first candidate refresh.
+        </p>
+      )}
+    </Card>
   )
 }
 
@@ -371,6 +522,77 @@ function StatusRow({
     </tr>
   )
 }
+
+// ── Collapsible panel — explicit pixel heights to avoid fr-unit jump on close ──
+/**
+ * Shadcn/Radix pattern: measure the inner div's scrollHeight before each
+ * transition so the browser always has a concrete "from" and "to" pixel value.
+ * grid-template-rows: 0fr → 1fr can't reliably capture the "from" value at the
+ * very first frame on close, which produces the visible jump at scrollTop = 0.
+ */
+const CollapsibleSection = forwardRef<HTMLDivElement, { open: boolean; children: React.ReactNode }>(
+  ({ open, children }, forwardedRef) => {
+    const outerRef = useRef<HTMLDivElement>(null)
+    const innerRef = useRef<HTMLDivElement>(null)
+    const committedOpen = useRef(open)
+
+    const mergeRef = (el: HTMLDivElement | null) => {
+      outerRef.current = el
+      if (!forwardedRef) return
+      if (typeof forwardedRef === 'function') forwardedRef(el)
+      else (forwardedRef as React.MutableRefObject<HTMLDivElement | null>).current = el
+    }
+
+    useLayoutEffect(() => {
+      const outer = outerRef.current
+      const inner = innerRef.current
+      if (!outer || !inner || open === committedOpen.current) return
+      committedOpen.current = open
+
+      if (open) {
+        const h = inner.scrollHeight
+        outer.style.overflow = 'hidden'
+        outer.style.height = '0px'
+        outer.style.opacity = '0'
+        void outer.offsetHeight                          // force reflow — capture start state
+        outer.style.transition = 'height .22s cubic-bezier(.4,0,.2,1), opacity .16s ease-out .06s'
+        outer.style.height = `${h}px`
+        outer.style.opacity = '1'
+        const onEnd = (e: TransitionEvent) => {
+          if (e.propertyName !== 'height') return
+          outer.style.height = 'auto'
+          outer.style.overflow = ''
+          outer.style.transition = ''
+        }
+        outer.addEventListener('transitionend', onEnd)
+        return () => outer.removeEventListener('transitionend', onEnd)
+      } else {
+        const h = outer.offsetHeight                     // snapshot current pixel height
+        outer.style.overflow = 'hidden'
+        outer.style.height = `${h}px`
+        void outer.offsetHeight                          // force reflow — capture start state
+        outer.style.transition = 'height .22s cubic-bezier(.4,0,.2,1), opacity .14s ease-out'
+        outer.style.height = '0px'
+        outer.style.opacity = '0'
+        const onEnd = (e: TransitionEvent) => {
+          if (e.propertyName !== 'height') return
+          outer.style.transition = ''
+        }
+        outer.addEventListener('transitionend', onEnd)
+        return () => outer.removeEventListener('transitionend', onEnd)
+      }
+    }, [open])
+
+    return (
+      <div ref={mergeRef} style={{ overflow: 'hidden', height: '0px', opacity: 0 }}>
+        <div ref={innerRef} style={{ paddingTop: 'var(--space-2)' }}>
+          {children}
+        </div>
+      </div>
+    )
+  }
+)
+CollapsibleSection.displayName = 'CollapsibleSection'
 
 // ── Inline detail panels ──────────────────────────────────────────────────────
 

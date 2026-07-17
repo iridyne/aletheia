@@ -2035,26 +2035,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   font-size: 0.7rem; color: var(--faint); flex-shrink: 0; margin-left: auto; padding-left: 4px;
 }
 
-/* Collector health — shadcn-style grid-template-rows collapsible */
-.chd-collapsible {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 0.22s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.chd-collapsible--open {
-  grid-template-rows: 1fr;
-}
-.chd-collapsible > div {
-  overflow: hidden;
-  min-height: 0;
-  opacity: 0;
-  transition: opacity 0.16s ease-out;
-  padding-top: var(--space-2);
-}
-.chd-collapsible--open > div {
-  opacity: 1;
-  transition: opacity 0.16s ease-out 0.06s;
-}
+/* CollapsibleSection uses inline styles — no CSS class needed. */
 .chd-panel {
   padding: var(--space-2) var(--space-2) var(--space-1);
   background: var(--bg-2);
@@ -2236,6 +2217,42 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .desk-panel   { max-height: 360px; }
 .risk-panel   { max-height: 320px; }
 .system-panel { }
+.funnel-panel { max-height: 420px; overflow-y: auto; }
+
+/* Funnel — Market Observer → Operator flow visualization */
+.funnel-counts { margin-top: var(--space-2); }
+.funnel-counts th {
+  font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.06em;
+  color: var(--muted); text-transform: uppercase; text-align: left;
+  padding: var(--space-1) 0; width: 5.5rem;
+}
+.funnel-counts td { padding: var(--space-1) 0; }
+.funnel-hint { margin-left: auto; }
+.funnel-blocked { margin-top: var(--space-2); }
+.funnel-reason {
+  border-bottom: 1px solid var(--border); padding: 4px 0;
+}
+.funnel-reason:last-of-type { border-bottom: none; }
+.funnel-reason-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--fs-sm); padding: 2px 4px; border-radius: 3px;
+}
+.funnel-reason-name { color: var(--text); flex: 1; min-width: 0; }
+.funnel-reason-count { color: var(--text); font-weight: 500; }
+.funnel-reason-hint {
+  font-size: var(--fs-2xs); color: var(--muted); margin-top: 2px; padding-left: 22px;
+}
+.funnel-link {
+  background: none; border: none; padding: 0; color: var(--accent);
+  cursor: pointer; font-family: var(--mono); font-size: inherit;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.funnel-link:hover { color: var(--text); }
+.funnel-examples {
+  list-style: none; margin: 4px 0 0; padding: 0 0 0 22px;
+  font-size: var(--fs-2xs); color: var(--text);
+}
+.funnel-examples li { padding: 1px 0; }
 
 /* Go-Live Scorecard — Overview.tsx GoLiveScoreCard EXCLUSIVE namespace.
    Any new component that wants this style should rename to its own prefix; a second

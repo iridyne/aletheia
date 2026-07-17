@@ -522,6 +522,87 @@ def get_pipeline_funnel(hours: int = 24):
     }
 
 
+@router.get("/opportunity-funnel")
+def get_opportunity_funnel(hours: int = 24):
+    """Market Observer → Operator funnel: exposes WHY opportunities don't reach the operator.
+
+    Cumulative counts (window):
+      - emitted_count: opportunities.created_at in window
+      - proposed_count: trade_proposals.created_at in window
+
+    Point-in-time snapshot (latest candidate_supply_snapshot event, written by
+    trading_context every operator eval):
+      - executable_count: candidates that survived the ranker gates AND have a
+        matching pending signal
+      - excluded_by_reason: bucketed skip reasons (confidence_below, guard_blocked,
+        ttl_expired, ...) with a few example candidates
+      - main_reason / below_floor: what the operator loop reads to decide whether
+        confidence recovery should fire
+
+    Read-only. Consumes existing telemetry — never invokes the ranker/operator.
+    """
+    from aletheia.storage.sqlite import get_db
+    from aletheia.config.loader import load_config
+
+    db = get_db()
+    window = f"-{max(1, int(hours or 24))} hours"
+
+    def _count(sql: str) -> int:
+        try:
+            return int(db.execute(sql, (window,)).fetchone()[0])
+        except Exception:
+            return 0
+
+    emitted = _count(
+        "SELECT COUNT(*) FROM opportunities WHERE created_at >= datetime('now', ?)"
+    )
+    proposed = _count(
+        "SELECT COUNT(*) FROM trade_proposals WHERE created_at >= datetime('now', ?)"
+    )
+
+    # Latest ranker-view snapshot (what the operator saw on its last eval)
+    snapshot: dict = {}
+    try:
+        row = db.execute(
+            "SELECT payload, created_at FROM agent_shell_events "
+            "WHERE event_type = 'candidate_supply_snapshot' "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+        if row:
+            import json as _json
+            try:
+                snapshot = _json.loads(row["payload"]) or {}
+            except (TypeError, ValueError):
+                snapshot = {}
+            snapshot["snapshot_at"] = row["created_at"]
+    except Exception:
+        snapshot = {}
+
+    executable_count = int(snapshot.get("executable_count") or 0)
+    excluded_by_reason = list(snapshot.get("excluded_candidates_summary") or [])
+
+    cfg = load_config()
+    min_confidence = getattr(cfg.trading, "min_confidence_to_trade", "medium")
+
+    return {
+        "window_hours": max(1, int(hours or 24)),
+        "emitted_count": emitted,
+        "proposed_count": proposed,
+        "snapshot": {
+            "executable_count": executable_count,
+            "excluded_by_reason": excluded_by_reason,
+            "main_reason": snapshot.get("main_reason"),
+            "below_floor": snapshot.get("below_floor"),
+            "floor": snapshot.get("floor"),
+            "snapshot_at": snapshot.get("snapshot_at"),
+            "checked_at": snapshot.get("checked_at"),
+        },
+        "config": {
+            "min_confidence_to_trade": min_confidence,
+        },
+    }
+
+
 @router.get("/learning-funnel")
 def get_learning_funnel():
     """Learning subsystem visibility: what gets written vs what PI actually sees.
