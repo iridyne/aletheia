@@ -145,7 +145,7 @@ def _task_arguments() -> str:
 def _build_task_xml() -> str:
     """Build the Task Scheduler definition XML.
 
-    LogonTrigger + indefinite 2-minute repetition (omitting <Duration> with
+    LogonTrigger + indefinite 1-minute repetition (omitting <Duration> with
     StopAtDurationEnd=false means repeat forever). InteractiveToken + the omission
     of /RU SYSTEM keeps creation non-elevated; LeastPrivilege keeps the started
     gateway unprivileged. MultipleInstancesPolicy=IgnoreNew guards the only
@@ -526,15 +526,17 @@ def _enable_macos(source: str) -> dict:
                     "detail": (old.stderr or "").strip()[:200],
                 }
     except FileNotFoundError:
+        path.unlink(missing_ok=True)
         return {
             "supported": False, "enabled": False, "ok": False,
-            "installed": True, "platform": "launchd",
+            "installed": False, "platform": "launchd",
             "task_name": LAUNCHD_LABEL, "reason": "launchctl_unavailable",
         }
     except Exception as exc:
+        path.unlink(missing_ok=True)
         return {
             "supported": True, "enabled": None, "ok": False,
-            "installed": True, "platform": "launchd",
+            "installed": False, "platform": "launchd",
             "task_name": LAUNCHD_LABEL, "reason": "launchctl_error",
             "detail": type(exc).__name__,
         }
@@ -542,9 +544,10 @@ def _enable_macos(source: str) -> dict:
     try:
         loaded = _launchctl(["bootstrap", _launchd_domain(), str(path)])
     except FileNotFoundError:
+        path.unlink(missing_ok=True)
         return {
             "supported": False, "enabled": False, "ok": False,
-            "installed": True, "platform": "launchd",
+            "installed": False, "platform": "launchd",
             "task_name": LAUNCHD_LABEL, "reason": "launchctl_unavailable",
         }
     except Exception as exc:
@@ -559,6 +562,7 @@ def _enable_macos(source: str) -> dict:
             else _classify_launchctl_error(loaded.stderr)
         )
         detail = load_error if loaded is None else (loaded.stderr or "").strip()[:200]
+        path.unlink(missing_ok=True)
         write_audit({
             "actor": "human", "source": source,
             "event_type": "autostart_enable_failed",
@@ -567,7 +571,7 @@ def _enable_macos(source: str) -> dict:
         })
         return {
             "supported": True, "enabled": False, "ok": False,
-            "installed": True, "platform": "launchd",
+            "installed": False, "platform": "launchd",
             "task_name": LAUNCHD_LABEL, "reason": reason, "detail": detail,
         }
 

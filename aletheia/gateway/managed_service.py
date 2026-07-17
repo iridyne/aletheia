@@ -144,7 +144,10 @@ def _launchctl(args: list[str]):
 
 def _is_not_found(detail: str) -> bool:
     low = (detail or "").lower()
-    return any(marker in low for marker in ("not found", "no such process", "could not find service"))
+    return any(marker in low for marker in (
+        "not found", "no such process", "could not find service",
+        "does not exist", "cannot find the file",
+    ))
 
 
 def _parse_launchctl(output: str) -> dict:
@@ -182,20 +185,27 @@ def _status_macos() -> dict:
 
 
 def _start_macos(*, no_browser: bool) -> dict:
+    path = None
     try:
         path = _write_macos_plist(no_browser=no_browser)
         old = _launchctl(["bootout", _macos_target()])
         if old.returncode != 0 and not _is_not_found(old.stderr):
+            path.unlink(missing_ok=True)
             return {"supported": True, "managed": None, "ok": False, "platform": "launchd", "reason": "launchctl_error", "detail": (old.stderr or "").strip()[:200]}
         loaded = _launchctl(["bootstrap", _macos_domain(), str(path)])
         if loaded.returncode != 0:
+            path.unlink(missing_ok=True)
             return {"supported": True, "managed": False, "ok": False, "platform": "launchd", "reason": "launchctl_error", "detail": (loaded.stderr or "").strip()[:200]}
         started = _launchctl(["kickstart", _macos_target()])
         if started.returncode != 0:
             return {"supported": True, "managed": True, "ok": False, "platform": "launchd", "reason": "launchctl_error", "detail": (started.stderr or "").strip()[:200]}
     except FileNotFoundError:
+        if path is not None:
+            path.unlink(missing_ok=True)
         return {"supported": False, "managed": False, "ok": False, "platform": "launchd", "reason": "launchctl_unavailable"}
     except Exception as exc:
+        if path is not None:
+            path.unlink(missing_ok=True)
         return {"supported": True, "managed": None, "ok": False, "platform": "launchd", "reason": "launchctl_error", "detail": type(exc).__name__}
     return {"supported": True, "managed": True, "ok": True, "platform": "launchd"}
 

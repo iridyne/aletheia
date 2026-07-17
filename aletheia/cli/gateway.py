@@ -67,6 +67,46 @@ def resume():
     do_resume()
 
 
+@gateway_app.command(name="enable")
+def enable_autostart():
+    """Register the OS watchdog to start and resurrect the gateway."""
+    from aletheia.gateway import autostart
+    result = autostart.enable(source="cli")
+    if result.get("ok"):
+        typer.echo(f"Autostart enabled (task: {result.get('task_name') or autostart.TASK_NAME}).")
+    elif not result.get("supported"):
+        typer.echo(f"Autostart not available on this OS ({result.get('reason')}).")
+    else:
+        typer.echo(
+            f"Failed to enable autostart: {result.get('reason')}"
+            + (f" — {result['detail']}" if result.get("detail") else ""),
+            err=True,
+        )
+        raise typer.Exit(1)
+
+
+@gateway_app.command(name="disable")
+def disable_autostart():
+    """Remove the gateway OS autostart/watchdog registration."""
+    from aletheia.gateway import autostart
+    result = autostart.disable(source="cli")
+    if result.get("ok"):
+        from aletheia.gateway.pidfile import is_running
+        msg = "Autostart disabled."
+        if is_running():
+            msg += " The gateway is still running — use 'gateway stop' to stop it."
+        typer.echo(msg)
+    elif not result.get("supported"):
+        typer.echo(f"Autostart not available on this OS ({result.get('reason')}).")
+    else:
+        typer.echo(
+            f"Failed to disable autostart: {result.get('reason')}"
+            + (f" — {result['detail']}" if result.get("detail") else ""),
+            err=True,
+        )
+        raise typer.Exit(1)
+
+
 @gateway_app.command(name="open-dashboard")
 def open_dashboard():
     """Open the dashboard in the default browser."""
