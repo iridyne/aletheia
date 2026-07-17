@@ -67,12 +67,23 @@ def _run_update_stage() -> None:
 
 
 def _run_update_validate() -> None:
-    # This is the sole data-preparation entry used after the old runtime is stopped.
-    # Normal updates apply/validate migrations. Manual rollback restores the exact
-    # pre-update backup first, then validates the old release against restored data.
+    # Current runtimes call ``__packaged_update_preflight`` before writing the durable
+    # request. The first feed-enabled candidate must also accept the legacy staging
+    # protocol, whose old updater calls this mode against an isolated data copy before
+    # the request exists. Once a request exists this remains the sole activation path.
+    from aletheia.update.packaged import host_root, validate_current_data
     from aletheia.update.packaged_commands import prepare_activation_data
 
-    print(json.dumps(prepare_activation_data(), ensure_ascii=False))
+    request_path = host_root() / "update-request.json"
+    if request_path.is_file():
+        result = prepare_activation_data()
+    else:
+        result = {
+            "ok": True,
+            "action": "legacy_preflight",
+            "validation": validate_current_data(),
+        }
+    print(json.dumps(result, ensure_ascii=False))
 
 
 def _run_update_preflight() -> None:
