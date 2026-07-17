@@ -28,6 +28,7 @@ AUTONOMOUS_LEARNING_JOBS: frozenset[str] = frozenset({
     "persona_rollout",
     "learning_startup_catchup",
     "learning_lifecycle_controller",
+    "learning_verdict_runner",
 })
 
 DAILY_LEARNING_SCHEDULES: dict[str, tuple[int, int]] = {
@@ -49,6 +50,7 @@ _SCHEDULE_KEYS: dict[str, str] = {
     "learning_startup_catchup": "startup:once",
     "learning_contribution_evaluator": "interval:config.learning.evaluation_interval_minutes",
     "learning_lifecycle_controller": "interval:config.learning.evaluation_interval_minutes",
+    "learning_verdict_runner": "interval:6h",
 }
 
 _INTERVAL_HOURS = {
@@ -56,6 +58,7 @@ _INTERVAL_HOURS = {
     "post_trade_reviewer": 4,
     "risk_critic": 6,
     "persona_rollout": 8,
+    "learning_verdict_runner": 6,
 }
 
 _REVIEWER_STALE_AFTER = timedelta(hours=48)

@@ -87,6 +87,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "outcome_settler": 120.0,
     "learning_contribution_evaluator": 60.0,
     "learning_lifecycle_controller": 60.0,
+    "learning_verdict_runner": 120.0,
     # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
     # asyncio.run() internally. Without a bound, a stuck exchange session can
     # block the scheduler pool for the full IOCP drain (~255s on Windows) and
@@ -809,6 +810,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         "interval", minutes=_learning_interval, id="learning_lifecycle_controller",
         misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
         next_run_time=datetime.now() + timedelta(minutes=4),
+    )
+    _scheduler.add_job(
+        _guarded("learning_verdict_runner", _run_learning_verdict_runner),
+        "interval", hours=6, id="learning_verdict_runner",
+        misfire_grace_time=600, max_instances=1, coalesce=True, executor="io",
+        next_run_time=datetime.now() + timedelta(hours=6),
     )
     # Core collector lane: primary-venue orderbook/funding/OI every two minutes.
     # Cross-venue and macro context has a separate job below so it cannot inherit
@@ -2021,6 +2028,15 @@ def _run_learning_lifecycle_controller():
     except Exception as e:
         logger.warning("learning_lifecycle_controller failed: %s", e)
         _record_job_failure("learning_lifecycle_controller", str(e))
+
+
+def _run_learning_verdict_runner():
+    try:
+        from aletheia.learning.contribution_runner import run_verdict_cycle
+        return _run_sync_with_timeout("learning_verdict_runner", run_verdict_cycle)
+    except Exception as e:
+        logger.warning("learning_verdict_runner failed: %s", e)
+        _record_job_failure("learning_verdict_runner", str(e))
 
 
 def _run_measurement_startup_catchup():

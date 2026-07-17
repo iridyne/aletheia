@@ -10,13 +10,49 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from aletheia.learning.cohorts import ContributionCohort, build_experiment_cohorts
 from aletheia.learning.ledger import get_record, insert_record
 from aletheia.learning.models import LearningContributionVerdict
 from aletheia.learning.verdicts import METRIC_VERSION, VerdictEvaluation, evaluate_cohort
 from aletheia.storage.sqlite import get_db
+
+
+def run_verdict_cycle() -> dict:
+    """Evaluate all active experiments that have enough settled data.
+
+    Called by the ``learning_verdict_runner`` scheduler job every 6h.
+    Returns a summary dict with counts of experiments evaluated, verdicts
+    written, and experiments skipped.
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT experiment_id FROM learning_experiments WHERE ended_at IS NULL",
+    ).fetchall()
+    evaluated = 0
+    verdicts_written = 0
+    skipped = 0
+    for row in rows:
+        experiment_id = row["experiment_id"]
+        try:
+            cohorts = build_experiment_cohorts(experiment_id)
+            if not any(
+                len(c.treatment_samples) + len(c.control_samples) > 0
+                for c in cohorts
+            ):
+                skipped += 1
+                continue
+            new_verdicts = evaluate_experiment(experiment_id)
+            evaluated += 1
+            verdicts_written += len(new_verdicts)
+        except Exception as exc:
+            logger.warning("run_verdict_cycle: experiment %s failed: %s", experiment_id, exc)
+            skipped += 1
+    return {"evaluated": evaluated, "verdicts_written": verdicts_written, "skipped": skipped}
 
 
 def evaluate_experiment(experiment_id: str) -> list[LearningContributionVerdict]:
