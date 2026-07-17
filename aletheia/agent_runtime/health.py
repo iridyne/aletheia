@@ -92,23 +92,36 @@ def _market_data_stale_minutes(cfg) -> float | None:
         return None
 
 
-def _session_uptime_minutes() -> float | None:
-    """Minutes since the current runtime session started. None if unavailable."""
+def _mo_ran_in_current_session() -> bool:
+    """Return True if market_observer completed at least one run since this session started.
+
+    Warmup guard: after any restart (manual, git-hook, self-heal) the scheduler
+    needs up to one MO interval (~15 min) before the first run fires.  Using
+    session uptime would reset on every restart and permanently suppress the
+    alert during high-churn periods.  Checking agent_runs avoids that — once
+    MO has actually executed, we know warmup is done regardless of how many
+    restarts occurred.
+
+    Returns True on any DB error so the caller defaults to alerting (safer
+    than silently suppressing a real stall).
+    """
     try:
-        from datetime import datetime, timezone
         from aletheia.storage.sqlite import get_db
-        row = get_db().execute(
+        db = get_db()
+        session_row = db.execute(
             "SELECT started_at FROM runtime_sessions WHERE ended_at IS NULL"
             " ORDER BY rowid DESC LIMIT 1"
         ).fetchone()
-        if not row or not row[0]:
-            return None
-        dt = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+        if not session_row or not session_row[0]:
+            return True
+        run_row = db.execute(
+            "SELECT id FROM agent_runs WHERE agent_name='market_observer'"
+            " AND started_at >= ? LIMIT 1",
+            (session_row[0],),
+        ).fetchone()
+        return run_row is not None
     except Exception:
-        return None
+        return True
 
 
 def _observer_stale_minutes() -> float | None:
@@ -191,13 +204,12 @@ def compute_health() -> dict:
         issues.append(f"llm_unavailable:{_llm_consecutive_failures}")
 
     # Observer stale: Market Observer should produce opportunities every ~15 min.
-    # Skip during the first 30 min of a new session — the gateway may have been
-    # stopped intentionally (maintenance, overnight) and the first refresh cycle
-    # hasn't completed yet. Only alert once the session has been running long
-    # enough that a missed observer run is a real stall, not a normal warmup.
+    # Only check after MO has completed at least one run in the current session —
+    # before that, the scheduler is still warming up after a restart (manual,
+    # git-hook, or self-heal).  Keying on agent_runs rather than session uptime
+    # means high-churn restart periods don't permanently suppress the alert.
     if not cfg.runtime.paused and cfg.runtime.scheduler_enabled:
-        uptime = _session_uptime_minutes()
-        if uptime is None or uptime >= 30:
+        if _mo_ran_in_current_session():
             obs_age = _observer_stale_minutes()
             if obs_age is not None and obs_age > 45:
                 issues.append(f"observer_stale:{obs_age:.0f}min")

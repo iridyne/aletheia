@@ -1232,15 +1232,25 @@ def _probe_trading_loop(report: Report) -> None:
         except Exception:
             pass
 
-        # Current session uptime — used to distinguish post-restart warmup from a stall.
+        # Session uptime (display only) and whether MO has run yet this session.
+        # Using agent_runs as the warmup signal avoids false suppression during
+        # high-churn restart periods (git hooks, self-heal) where session_uptime
+        # would always reset before 30 min and permanently hide real stalls.
         session_uptime = None
+        mo_ran = True  # default to True so unknown DB state doesn't suppress warn
         try:
-            row = db.execute(
+            session_row = db.execute(
                 "SELECT started_at FROM runtime_sessions WHERE ended_at IS NULL"
                 " ORDER BY rowid DESC LIMIT 1"
             ).fetchone()
-            if row:
-                session_uptime = _age_minutes(row[0])
+            if session_row:
+                session_uptime = _age_minutes(session_row[0])
+                run_row = db.execute(
+                    "SELECT id FROM agent_runs WHERE agent_name='market_observer'"
+                    " AND started_at >= ? LIMIT 1",
+                    (session_row[0],),
+                ).fetchone()
+                mo_ran = run_row is not None
         except Exception:
             pass
     except Exception as e:
@@ -1254,12 +1264,12 @@ def _probe_trading_loop(report: Report) -> None:
     if opp_age is None:
         report.add("loop.newest_opportunity", "info", "no opportunities yet")
     elif opp_age > 30:
-        in_warmup = session_uptime is not None and session_uptime < 30
-        if in_warmup:
-            # Gateway recently started after a stop; first MO cycle hasn't fired yet.
+        if not mo_ran:
+            # MO hasn't fired yet this session — scheduler is still warming up.
+            uptime_str = f", session {_fmt_age(session_uptime)} old" if session_uptime is not None else ""
             report.add("loop.newest_opportunity", "info",
-                       f"newest opportunity {_fmt_age(opp_age)}, session {_fmt_age(session_uptime)} old"
-                       " — warming up after restart")
+                       f"newest opportunity {_fmt_age(opp_age)}{uptime_str}"
+                       " — warming up after restart, first MO run pending")
         else:
             report.add("loop.newest_opportunity", "warn",
                        f"newest opportunity {_fmt_age(opp_age)} — observe stage not producing",
