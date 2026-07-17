@@ -463,7 +463,9 @@ function DecisionTraceDrawer({ opportunityId, onClose }: {
                   <li key={i} className="trace-event">
                     <span className="trace-event-ts mono text-xs">{fmtTimestamp(ev.at)}</span>
                     {ev.stage && <span className="trace-event-stage text-xs">{ev.stage}</span>}
-                    {ev.summary && <div className="trace-event-summary">{ev.summary}</div>}
+                    {(ev.summary || ev.reason) && (
+                      <div className="trace-event-summary">{ev.summary || ev.reason}</div>
+                    )}
                     {ev.details && Object.keys(ev.details).length > 0 && (
                       <pre className="trace-event-details">{JSON.stringify(ev.details, null, 2)}</pre>
                     )}

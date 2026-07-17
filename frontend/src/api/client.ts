@@ -463,6 +463,7 @@ export const api = {
         stage?: string
         actor?: string
         summary?: string
+        reason?: string
         details?: Record<string, unknown>
       }>
       counterfactual?: {
