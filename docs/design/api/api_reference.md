@@ -143,6 +143,7 @@ the same two completeness columns; it writes an empty realized-PnL cell rather t
 | GET | `/analytics/thesis-lineage` | Read-only thesis lineage records layered over the trade causal chain (`?position_id=...&order_id=...&days=90`) |
 | GET | `/analytics/round1-progress` | Historical Round 1 progress metrics |
 | GET | `/analytics/pipeline-funnel` | Pipeline conversion funnel counts |
+| GET | `/analytics/opportunity-funnel` | Market Observer → Operator funnel: 24h cumulative counts (emitted/reviewed/still_open/proposed) plus the latest ranker snapshot (executable_count + excluded_by_reason with example carriers, expired_seconds annotations, `family_ttl_sec`, universe_snapshot_age_sec). Powers the Overview page's Funnel card. Read-only. |
 | GET | `/analytics/family-scorecard` | Scanner family performance |
 | GET | `/analytics/shadow-trades` | Shadow trade comparison data |
 | GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |

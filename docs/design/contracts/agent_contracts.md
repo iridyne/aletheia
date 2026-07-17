@@ -137,6 +137,15 @@ backlog health are persisted in `learning_job_health`.
 - **Outputs**: ranked + filtered opportunity list → PI daemon signal
 - **Side effects**: None
 - **Contract**: Must NEVER call LLM directly
+- **TTL soft filter** (`paper_trader_ranker._ttl_soft_penalty_factor`): a carrier
+  past its `valid_until` is no longer hard-rejected. Its `trade_score` is
+  multiplied by `0.5 ** (expired_sec / family_ttl_sec)` — half-life = family
+  TTL — so an aged signal ranks lower without disappearing. Only past
+  `_TTL_SOFT_HARD_CAP_MULT × ttl_sec` (3× family TTL) does the ranker hard-reject
+  with `skip_reason=ttl_expired` so `paper_trader._settle_permanent_skips` can
+  clean it up. `filter_trace` records `passed_with_penalty` /
+  `opportunity_ttl_soft_penalty` / `universe_member_ttl_soft_penalty` reason
+  codes for the soft branch. Family TTL lookup: `allocator._FAMILY_TTL`.
 
 #### research_agent / research_worker
 

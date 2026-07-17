@@ -96,6 +96,27 @@ Opportunity 的 open/queued TTL 过期也必须与 `ttl_expired` 记录同事务
 Proposal preflight 之后才越过 `valid_until`，preflight/claim 必须共用同一个仓储 CAS，写且只写一条
 `opportunity_ttl / ttl_expired` 事实；证据失败时不得单独提交 `expired`、最终 PiDecision 或 TradeProposal。
 
+Ranker 层的 `family_ttl` 关卡走**软过滤**语义：`valid_until` 到期后不再立即
+硬拒，而是按 `trade_score *= 0.5 ** (expired_sec / family_ttl_sec)` 衰减（半衰期
+= 家族 TTL，见 `allocator._FAMILY_TTL`），并在 `filter_trace` 里写入
+`passed_with_penalty` + `opportunity_ttl_soft_penalty` /
+`universe_member_ttl_soft_penalty` 事实。只有当过期时间超过
+`_TTL_SOFT_HARD_CAP_MULT × ttl_sec`（默认 3 倍家族 TTL）后 Ranker 才回退到
+硬拒 `skip_reason=ttl_expired`，交由 `paper_trader._settle_permanent_skips`
+写入终态 `ttl_expired` 证据。软过滤路径的 `passed_with_penalty` 事实只是
+分数决策的证据，不是候选被终结的终态——因此它不会导致 opportunities.status
+从 open 迁出，也不参与 `filter_candidate_outcomes` 的终态归因。硬拒才终结。
+
+`UniverseService.refresh` 的 change-suppression 分支（fingerprint 未变且
+`_SNAPSHOT_HEARTBEAT_SEC` 未到）在复用旧 snapshot 时，必须调用
+`repositories.refresh_active_snapshot_ttls` **前滑**该 snapshot 的
+`universe_members.expires_at` 和其 open `opportunities.valid_until`（
+`WHERE expires_at < new_expires`，只前滑不回退）。这是把 "reuse snapshot"
+真正做成 no-op 的必要一步：没有这条前滑，第一次分配后 30–60 分钟内 fingerprint
+稳定的家族全部会在 Ranker 扫时集体 `ttl_expired`，与"依然被推荐"这个复用
+判定相矛盾。前滑写属于 idempotent 前进操作，允许非事务性失败（降级为软过滤
+兜底），但成功时必须在日志留下 `members=N opps=M` 计数便于回放。
+
 业务写入只允许 INSERT，不回写历史判断。幂等键至少包含
 `candidate_key + filter_name + decision + filter_version`，重试不制造重复证据，
 但同一候选先被批次上限拒绝、后来真实放行时可分别保留两条事实。

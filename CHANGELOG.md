@@ -1,5 +1,76 @@
 # Changelog
 
+## [Unreleased] - 2026-07-17 — Opportunity funnel Tier-2: change-suppression TTL slide, ranker cadence, soft TTL, dashboard redesign
+
+Follows the initial funnel card (commit 25a886d8) with a redesigned UI and three
+root-cause fixes for the "everything expires before review" pattern the funnel
+made visible.
+
+### fix(universe): change-suppression must refresh valid_until (service.py, repositories.py)
+
+- `repositories.refresh_active_snapshot_ttls(snapshot_id, now)` batches
+  `UPDATE universe_members.expires_at` and `UPDATE opportunities.valid_until`
+  forward-only (`WHERE expires_at < new_expires`). Idempotent, transactional
+  against the shared writer slot.
+- `UniverseService.refresh` calls it from the `reuse_previous_snapshot` branch.
+  Previously, when the allocation fingerprint stayed stable for 30–60min, every
+  carrier of the reused snapshot got hard-rejected as `ttl_expired` on the next
+  ranker scan — even though the same working set had just been reconfirmed.
+  Reuse is now a genuine no-op, not a wall-clock cliff.
+
+### chore(scheduler): paper_trader cadence 5min → 3min (scheduler.py)
+
+- Momentum (30min TTL) now gets ~10 review passes (was 6); mean_reversion (60min
+  TTL) gets ~20 (was 12). Well below the `agents` executor budget.
+
+### feat(ranker): soft-TTL filter with score decay (paper_trader_ranker.py)
+
+- New `_ttl_soft_penalty_factor` returns `0.5 ** (expired_sec / family_ttl_sec)`
+  — half-life = family TTL. Applied multiplicatively to `trade_score` at end of
+  `_evaluate_candidate` (after guard penalty).
+- Only past `_TTL_SOFT_HARD_CAP_MULT × ttl_sec` (3× family TTL) does the ranker
+  hard-reject with `skip_reason=ttl_expired`. `paper_trader._settle_permanent_skips`
+  continues to clean these up.
+- `filter_trace` records new reason codes: `opportunity_ttl_soft_penalty` /
+  `universe_member_ttl_soft_penalty` under `passed_with_penalty` decision.
+- Symptom this fixes: signals aging just past their family window would vanish
+  entirely; now they degrade gracefully so a late-arriving ranker can still
+  consider them when there's nothing fresher.
+
+### feat(overview): funnel card redesign per ASCII spec (Overview.tsx, index.css)
+
+- Three sections: (1) top diagnosis headline ("Idle: all N open signals expired
+  before review" / "Confidence gate rejected all N candidates" / "Healthy"); (2)
+  24h cumulative bars — Discovered / Reviewed / Passed gates / Proposed + accept
+  rate; (3) working set now — ✓ accepted / ✗ rejected + per-reason breakdown
+  with dot (●) for count>0 and hollow dot (○) for count=0.
+- TTL example rows now render "expired 42 min ago · ttl was 60 min" — no more
+  `score -999` mystery numbers.
+- Footer surfaces `min_confidence_to_trade` (clickable → Settings) and
+  `universe_snapshot_age` so the change-suppression interaction with TTL is
+  visible to the operator.
+
+### feat(api): /analytics/opportunity-funnel payload enrichments (analytics.py, trading_context.py, paper_trader_ranker.py)
+
+- Adds `reviewed_count` / `still_open_count` / `universe_snapshot_age_sec` /
+  `family_ttl_sec` (map).
+- `excluded_by_reason` examples now carry `opportunity_id`, `valid_until`, and
+  `expired_seconds` — required for the redesigned UI's "expired X min ago" line.
+- `paper_trader_ranker._make_candidate` and `trading_context.ranker_candidates`
+  propagate `valid_until` end-to-end.
+
+### docs
+
+- `scheduler_contract.md`, `agent_contracts.md`, `SYSTEM_MAP.md`: paper_trader
+  cadence 5min → 3min.
+- `agent_contracts.md` (paper_trader_ranker): documents the TTL soft-filter
+  contract (half-life formula, hard cap, filter_trace reason codes).
+- `filter_evidence_contract.md`: two new paragraphs — soft-filter semantics and
+  the change-suppression TTL slide invariant.
+- `api_reference.md`: new `/analytics/opportunity-funnel` endpoint entry.
+
+---
+
 ## [Unreleased] - 2026-07-17 — Universe scanner signal improvements + filter closed-loop feedback
 
 ### Universe Scanner — Signal Quality (scanners.py)
