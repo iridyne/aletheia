@@ -317,9 +317,10 @@ WAL/checkpoint 和 inference queue P95 仍应在合并后的观察窗口持续�
 
 2026-07-17 在独立工作树 `iridite/perf-inference-storage-hardening` 完成以下验证：
 
-- 性能专项回归覆盖 Inference Broker、Agent job queue、Provider cache/client、Scheduler
-  timeout、Registry/collector/Agent telemetry 批处理、Universe 原子发布、同步数据库路由
-  边界、热点索引和 retention 分块：`296 passed, 2 skipped`。
+- 在最新 `origin/master` 上的性能专项回归覆盖 Inference Broker、Agent job queue、Provider
+  cache/client、Scheduler timeout、Registry/collector/Agent telemetry 批处理、Universe
+  原子发布、同步数据库路由边界、热点索引和 retention 分块，并补跑同基线新增的
+  VergeX/Universe 集成用例：`388 passed, 2 skipped`。
 - 针对全量测试暴露的 Broker shutdown/restart 和 CoinGecko 事务契约补充回归后，相关聚焦
   组为 `98 passed`；另有 1 个与本分支无关的既有失败：Universe 当前配置默认开启，而旧
   测试仍断言默认关闭。
