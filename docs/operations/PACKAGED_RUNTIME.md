@@ -229,6 +229,40 @@ The new candidate also treats the legacy pre-request validation command as isola
 preflight, so the previously installed Runtime can stage this first signed update safely;
 after the request is written, the same command retains its activation-only semantics.
 
+### Private one-shot local release session
+
+For owner dogfooding, GitHub Actions and a permanent release server are optional. The
+development checkout provides a local-only release session that builds one fresh payload,
+signs a Feed with the existing owner key, serves it on `127.0.0.1` only while staging, and
+then waits for the normal Tray transaction to finish. The temporary server always stops on
+success, failure, or interruption.
+
+Run this only from a clean, intended release worktree and only while the installed Tray is
+running:
+
+```bash
+uv run python scripts/release/local_release_session.py \
+  --cli "$(command -v aletheia)"
+```
+
+The command uses the owner key at
+`~/.aletheia/release-signing/update-signing-private-key.pem` by default. Supply an absolute
+`--private-key` path only when the key is intentionally stored elsewhere. It first compares
+the derived public key with the installed App's trust root and refuses to stage if they do
+not match. It does not print, copy, or commit the private key.
+
+Each invocation writes an auditable session directory under
+`dist/local-release-sessions/` containing the immutable archive, checksum, signed Feed,
+and public key. Its Feed URL is passed only to the invoking installed CLI through
+`ALETHEIA_UPDATE_FEED_URL`; the permanent installed Feed configuration is not modified.
+The Tray receives an already staged `update-request.json`, so it does not need the local
+server after staging begins.
+
+This mode is intentionally local to one machine. A `127.0.0.1` Feed cannot update UM790 or
+another Mac. Cross-machine private distribution needs a separately authenticated private
+artifact endpoint or a deliberate signed-file transfer; do not expose this helper on a
+LAN interface by changing its bind address.
+
 ## Distribution status and external prerequisites
 
 The repository builds an unsigned deterministic macOS arm64 app ZIP and records that fact
