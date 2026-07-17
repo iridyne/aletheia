@@ -62,8 +62,8 @@ class RuntimeConfig(BaseModel):
 
 
 class ExchangeConfig(BaseModel):
-    name: str = "bitget"
-    mode: str = "demo"
+    name: str = "paper_internal"
+    mode: str = "paper"
     enabled_markets: dict[str, bool] = Field(default_factory=lambda: {"spot": True, "usdt_futures": True})
     # When both spot and usdt_futures are enabled, which market_type to emit per
     # canonical symbol in the legacy observed_instruments_from_config path.
@@ -82,7 +82,7 @@ class ExchangeConfig(BaseModel):
     #   "bitget_demo"     → Bitget demo/simulated-trading API (paptrading header,
     #                       USDT-futures only, 42 pairs). Requires mode == "demo".
     #   "paper_internal"  → local simulated fills (no exchange call).
-    paper_execution_mode: str = "bitget_demo"
+    paper_execution_mode: str = "paper_internal"
     # Futures position mode: "hedge" (long/short separate) or "one_way".
     position_mode: str = "hedge"
     # Explicit perp symbol allowlist. Empty = all perps passing universe registry.
@@ -324,7 +324,7 @@ class RiskConfig(BaseModel):
     # "whitelist" = only symbol_list may trade; "blacklist" = all except symbol_list.
     symbol_filter_mode: str = "blacklist"
     symbol_list: list[str] = Field(default_factory=list)
-    allowed_exchange: str = "bitget"
+    allowed_exchange: str = "paper_internal"
     allow_short_demo: bool = True
     allow_short_live: bool = True
     require_risk_check_for_all_orders: bool = True
