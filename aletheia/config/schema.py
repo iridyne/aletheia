@@ -725,7 +725,7 @@ class UpdateConfig(BaseModel):
 
 
 class UniverseConfig(BaseModel):
-    enabled: bool = False
+    enabled: bool = True
     refresh_interval_min: int = 10
     market_type: str = "crypto"
     max_candidates: int = 30
