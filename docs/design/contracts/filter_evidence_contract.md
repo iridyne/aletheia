@@ -106,6 +106,10 @@ Ranker 层的 `family_ttl` 关卡走**软过滤**语义：`valid_until` 到期�
 写入终态 `ttl_expired` 证据。软过滤路径的 `passed_with_penalty` 事实只是
 分数决策的证据，不是候选被终结的终态——因此它不会导致 opportunities.status
 从 open 迁出，也不参与 `filter_candidate_outcomes` 的终态归因。硬拒才终结。
+无法解析的 TTL timestamp 不得按新鲜载体 fail-open；必须写
+`family_ttl=error / ttl_timestamp_invalid`，以 `ttl_invalid` 收口为 reviewed，等待上游
+数据修复产生新 identity。超过硬顶的 Opportunity/member 统一使用 `ttl_expired` reason code，
+具体来源放在 parameter snapshot 中，避免同一终态出现多个不兼容机器码。
 
 `UniverseService.refresh` 的 change-suppression 分支（fingerprint 未变且
 `_SNAPSHOT_HEARTBEAT_SEC` 未到）在复用旧 snapshot 时，必须调用
@@ -116,6 +120,16 @@ Ranker 层的 `family_ttl` 关卡走**软过滤**语义：`valid_until` 到期�
 稳定的家族全部会在 Ranker 扫时集体 `ttl_expired`，与"依然被推荐"这个复用
 判定相矛盾。前滑写属于 idempotent 前进操作，允许非事务性失败（降级为软过滤
 兜底），但成功时必须在日志留下 `members=N opps=M` 计数便于回放。
+Change-suppression fingerprint 必须覆盖会改变载体语义的字段：venue、market、rank、
+scanner family/direction、execution eligibility、family TTL、risk flags 与精确入场证据价；
+只允许排除不会改变这些语义的 ranking score 抖动。任一字段变化必须发布新 snapshot，
+不得前滑旧方向、旧资格或旧 outcome seed 的 TTL。
+
+snapshot 被 supersede 时，其 `open` 与 `queued` Opportunity 都必须在同一事务中转为
+`expired` 并写 `universe_snapshot_status / universe_snapshot_superseded`。已有
+`reviewed/expired` 终态不得改写。证据失败时整个 cascade 回滚；重复运行不得生成重复事实。
+对应的 market-observer `signal_pending` carrier 可保留作历史，但来源已 `expired` 且没有
+`proposal_status=submitting` 恢复 claim 时，Operator 工作集必须立即排除它。
 
 业务写入只允许 INSERT，不回写历史判断。幂等键至少包含
 `candidate_key + filter_name + decision + filter_version`，重试不制造重复证据，
@@ -249,6 +263,13 @@ shadow treatment 各自达到 20 个完整净结果和 70% 覆盖后才判定；
 3. 已持仓则记 `open_position_duplicate=rejected`，继续看下一个；
 4. 冷却中则记 `signal_cooldown=rejected`，继续看下一个；
 5. 未满 limit 则放行；已满后其余候选记 `signal_batch_limit=rejected`。
+
+生产端 admission 还受一个独立的 unresolved queue capacity（当前 5）约束。容量在
+open-position/cooldown 后、单轮 batch limit 前检查；满载候选写
+`signal_queue_capacity=rejected` 并保持 Opportunity `open`，让后续轮次重试，不得提前
+`queued` 后等待 30 分钟超时。旧 market-observer pending carrier 只可在来源已经
+`reviewed/expired` 且不存在 `proposal_status=submitting` 恢复 claim 时删除；queued、Serenity
+或 submitting carrier 必须保留。
 
 Shadow 批次的 `was_selected` 必须对应真正写入 `signal_pending` 的候选，不能在冷却/持仓检查之前就标记“已选中”。
 `signal_batch_limit=passed` 只代表被选中；真正写入队列另记

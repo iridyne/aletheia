@@ -16,7 +16,7 @@ def test_overview_agent_feed_uses_remaining_viewport_height() -> None:
 
     assert "getBoundingClientRect().top" in feed
     assert "window.innerHeight" in feed
-    assert "Math.floor(viewportHeight - top - VIEWPORT_BOTTOM_GAP)" in feed
+    assert "Math.floor(viewportHeight - Math.max(0, top) - VIEWPORT_BOTTOM_GAP)" in feed
     assert "MIN_FEED_HEIGHT" in feed
     assert "window.addEventListener('resize', scheduleMeasure)" in feed
     assert "window.visualViewport?.addEventListener('resize', scheduleMeasure)" in feed
@@ -40,3 +40,24 @@ def test_overview_rail_uses_canonical_responsive_breakpoints() -> None:
     assert ".agent-feed-viewport" in css
     assert ".agent-feed-viewport .feed-list-scroll" in css
     assert "overflow-y: auto" in css
+
+
+def test_opportunity_funnel_labels_cohort_and_snapshot_without_false_health() -> None:
+    overview = (ROOT / "frontend/src/pages/Overview.tsx").read_text(encoding="utf-8")
+
+    assert "snapshot.freshness" in overview
+    assert "Snapshot stale" in overview
+    assert 'label="Queued for Operator"' in overview
+    assert 'label="Expired / invalidated"' in overview
+    assert "proposal conversion" in overview
+    assert 'label="Passed gates"' not in overview
+    assert "Healthy:" not in overview
+
+
+def test_approval_desk_surfaces_unattributed_rejections() -> None:
+    overview = (ROOT / "frontend/src/pages/Overview.tsx").read_text(encoding="utf-8")
+    client = (ROOT / "frontend/src/api/client.ts").read_text(encoding="utf-8")
+
+    assert "reject_unknown" in overview
+    assert "Reject attribution unavailable" in overview
+    assert "reject_unknown" in client

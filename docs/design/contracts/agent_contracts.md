@@ -140,6 +140,10 @@ backlog health are persisted in `learning_job_health`.
 - **Outputs**: ranked + filtered opportunity list → PI daemon signal
 - **Side effects**: None
 - **Contract**: Must NEVER call LLM directly
+- **Admission/backpressure**: at most 5 unresolved market-observer carriers may be
+  queued at once. Overflow remains `open` and is retried; stale carriers are
+  pruned only after source expiry/review and never while proposal submission is
+  recovering.
 - **TTL soft filter** (`paper_trader_ranker._ttl_soft_penalty_factor`): a carrier
   past its `valid_until` is no longer hard-rejected. Its `trade_score` is
   multiplied by `0.5 ** (expired_sec / family_ttl_sec)` — half-life = family

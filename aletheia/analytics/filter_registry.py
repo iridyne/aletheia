@@ -313,10 +313,18 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
     _report_only_gate(
         name="signal_enqueue",
         stage="paper_trader_enqueue",
-        reason_codes=("signal_enqueue_error", "opportunity_not_open"),
+        reason_codes=("signal_enqueue_error", "opportunity_not_open", "signal_queue_capacity"),
         current_value="signal_pending insert and opportunity queued transition are atomic",
         note="State-consistency evidence; selection is not reported as delivered until the "
              "queue row and source lifecycle transition commit together.",
+    ),
+    _report_only_gate(
+        name="signal_queue_capacity",
+        stage="paper_trader_selection",
+        reason_codes=("signal_queue_capacity",),
+        current_value="at most 5 unresolved market-observer candidates",
+        note="Admission backpressure keeps overflow Opportunities open and retryable instead "
+             "of queueing work that cannot fit the Operator's visible recovery window.",
     ),
     _report_only_gate(
         name="proposal_identity",

@@ -157,18 +157,44 @@ def _dedupe_by_symbol_preferred_market(allocated: list[dict], cfg) -> list[dict]
 def _member_fingerprint(allocated: list[dict], regime_tag: str | None) -> str:
     """Deterministic hash of a sorted allocation for change-suppression.
 
-    Uses (symbol, market_type, rank, scanner_family) per member plus the
-    regime tag. Any reordering, drop/add, or regime flip yields a different
-    hash. Numeric scores are intentionally excluded — small score jitter
-    between refreshes is common and does not warrant a new snapshot.
+    The fingerprint covers every persisted member field that can change the
+    downstream candidate's identity, eligibility, TTL, evidence seed, or guard
+    treatment. Numeric ranking scores remain excluded because small score jitter
+    alone does not change those semantics.
     """
+
+    def _risk_flags(value) -> tuple[str, ...]:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (TypeError, ValueError):
+                value = [value]
+        if not isinstance(value, (list, tuple, set)):
+            return ()
+        return tuple(sorted(str(flag) for flag in value))
+
+    def _entry_price(item: dict) -> float | None:
+        raw = item.get("last_price")
+        if raw is None:
+            raw = item.get("entry_price_usd")
+        try:
+            return float(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            return None
+
     material: list[tuple] = []
     for rank, item in enumerate(allocated, 1):
         material.append((
             str(item.get("symbol") or ""),
+            str(item.get("venue") or ""),
             str(item.get("market_type") or "spot"),
             int(rank),
             str(item.get("scanner_family") or ""),
+            str(item.get("scanner_direction") or item.get("direction") or ""),
+            bool(item.get("execution_eligible", True)),
+            int(item.get("ttl_sec") or 0),
+            _risk_flags(item.get("risk_flags")),
+            _entry_price(item),
         ))
     payload = json.dumps({"members": material, "regime": regime_tag}, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -185,14 +211,24 @@ def _previous_snapshot_fingerprint(
     if not prev:
         return None, None, None
     prev_members = repo.list_universe_members(prev["id"], limit=1000)
-    materialized = [
-        {
+    venue_by_asset: dict[str, str] = {}
+    materialized = []
+    for m in sorted(prev_members, key=lambda row: row.get("rank") or 0):
+        asset_id = str(m.get("asset_id") or "")
+        if asset_id not in venue_by_asset:
+            asset = repo.get_universe_asset(asset_id) if asset_id else None
+            venue_by_asset[asset_id] = str((asset or {}).get("venue") or "")
+        materialized.append({
             "symbol": m.get("symbol"),
+            "venue": venue_by_asset[asset_id],
             "market_type": m.get("market_type"),
             "scanner_family": m.get("scanner_family"),
-        }
-        for m in sorted(prev_members, key=lambda m: m.get("rank") or 0)
-    ]
+            "scanner_direction": m.get("scanner_direction"),
+            "execution_eligible": m.get("execution_eligible", True),
+            "ttl_sec": m.get("ttl_sec"),
+            "risk_flags": m.get("risk_flags"),
+            "entry_price_usd": m.get("entry_price_usd"),
+        })
     prev_regime = None
     for m in prev_members:
         if m.get("regime_tag"):

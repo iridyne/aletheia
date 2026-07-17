@@ -398,7 +398,7 @@ def transition_opportunity_to_reviewed(oid: str) -> bool:
     """Advance a produced/evaluated Opportunity to its terminal reviewed state."""
     cur = get_db().execute(
         "UPDATE opportunities SET status='reviewed' "
-        "WHERE id=? AND status IN ('open', 'queued', 'expired')",
+        "WHERE id=? AND status IN ('open', 'queued')",
         (oid,),
     )
     return cur.rowcount == 1
@@ -628,6 +628,30 @@ def list_pending_pi_decisions_for_opportunity(
         (opportunity_id, signal_source or "market_observer"),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def count_unresolved_signal_pending(max_age_minutes: int = 30) -> int:
+    """Count distinct queued market-observer candidates still needing a final action."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
+    row = get_db().execute(
+        "SELECT COUNT(DISTINCT pending.opportunity_id) "
+        "FROM pi_decisions pending "
+        "JOIN opportunities source ON source.id=pending.opportunity_id "
+        "WHERE pending.action='signal_pending' "
+        "AND COALESCE(pending.signal_source, 'market_observer')='market_observer' "
+        "AND source.status='queued' "
+        "AND datetime(pending.created_at)>=datetime(?) "
+        "AND NOT EXISTS ("
+        " SELECT 1 FROM pi_decisions final "
+        " WHERE final.opportunity_id=pending.opportunity_id "
+        " AND COALESCE(final.signal_source, 'market_observer')="
+        "     COALESCE(pending.signal_source, 'market_observer') "
+        " AND final.action!='signal_pending' "
+        " AND COALESCE(final.proposal_status, '')!='submitting'"
+        ")",
+        (cutoff,),
+    ).fetchone()
+    return int(row[0] or 0)
 
 
 def _expire_opportunity_rows_with_ttl_evidence(
@@ -3348,15 +3372,30 @@ def prune_pi_decisions(days: int = 7) -> int:
 
 
 def prune_signal_pending_stale(minutes: int = 30) -> int:
-    """Delete signal_pending rows older than `minutes`.
+    """Delete old market-observer carriers only after their source is terminal.
 
-    trading_context.py only reads the last 30 min of signal_pending rows, so
-    anything older is dead weight and pollutes monitoring counts.
+    A queued source remains restart-recoverable even when old, and a final row in
+    ``submitting`` remains an active execution-recovery claim. Serenity carriers
+    have a different age contract and are intentionally excluded.
     """
     db = get_db()
     cur = db.execute(
-        "DELETE FROM pi_decisions WHERE action = 'signal_pending'"
-        " AND datetime(created_at) < datetime('now', ? || ' minutes')",
+        "DELETE FROM pi_decisions WHERE action='signal_pending' "
+        "AND COALESCE(signal_source, 'market_observer')='market_observer' "
+        "AND datetime(created_at) < datetime('now', ? || ' minutes') "
+        "AND EXISTS ("
+        " SELECT 1 FROM opportunities source "
+        " WHERE source.id=pi_decisions.opportunity_id "
+        " AND source.status IN ('reviewed','expired')"
+        ") "
+        "AND NOT EXISTS ("
+        " SELECT 1 FROM pi_decisions final "
+        " WHERE final.opportunity_id=pi_decisions.opportunity_id "
+        " AND COALESCE(final.signal_source, 'market_observer')="
+        "     COALESCE(pi_decisions.signal_source, 'market_observer') "
+        " AND final.action!='signal_pending' "
+        " AND final.proposal_status='submitting'"
+        ")",
         (f"-{minutes}",),
     )
     return cur.rowcount
@@ -3847,149 +3886,80 @@ def get_active_universe_snapshot(market_type: str = "crypto") -> dict | None:
 
 
 def expire_opportunities_from_superseded_snapshots(market_type: str = "crypto") -> int:
-    """Mark opportunities linked to already-superseded universe_snapshots as expired.
+    """Expire open/queued children of superseded snapshots with durable evidence.
 
-    Three-step atomic cascade per orphaned opportunity, all inside one
-    transaction so the pool, evidence and consumer-side queues stay in sync:
-
-    1. `UPDATE opportunities SET status='expired'` — pool cleanup.
-    2. `record_filter_decision(...)` with `filter_name='universe_snapshot_supersession'`,
-        `reason_code='universe_snapshot_superseded'` — writes a filter_decisions
-        row so opportunity_flow.trace_opportunity_flow surfaces "why did this
-        transition to expired" (closes the audit trail gap where cascade
-        expiry produced status changes with no matching filter_evidence fact).
-    3. `INSERT INTO pi_decisions` a terminal skip row with
-       `signal_source='system_cascade'` for every unresolved signal_pending
-        pointing at the cascaded opp — closes the dangling-record class
-        (previously 145 signal_pending rows stayed "unresolved" forever
-        because nothing wrote a matching terminal action). Operators and
-        analytics can filter these out by signal_source; unlike a real
-        operator skip, they carry no LLM reasoning and no debate trace.
-
-    Before the soft-TTL filter and change-suppression valid_until slide,
-    opportunities aged out at the ranker's family-TTL cliff (30-60min for
-    momentum/mean_reversion) and paper_trader.`_settle_permanent_skips`
-    naturally wrote `status='expired'`. With those two fixes both softened,
-    orphans never expire on their own — every stable-fingerprint window that
-    breaks leaves a new generation pointing at a superseded snapshot.
-
-    Idempotent — subsequent calls are a no-op once the pool is clean. Only
-    touches `status='open'` rows so terminal states are preserved.
-
-    Returns the number of opportunities transitioned.
+    ``queued`` is included because an already-enqueued carrier is not permission
+    to outlive the snapshot that supplied its thesis. Reviewed/expired terminal
+    rows are preserved. A SAVEPOINT makes the lifecycle CAS and append-only fact
+    all-or-nothing even when this helper joins Universe publication's transaction.
     """
-    from aletheia.analytics.filter_evidence import record_filter_decision
-
     db = get_db()
-    was_in_tx = db.in_transaction
-
-    # Fetch enough context to write evidence + resolver rows in one pass.
-    orphans = db.execute(
-        "SELECT o.id, o.symbol, o.market, o.direction_bias, o.scanner_family, "
-        "o.universe_snapshot_id, o.universe_member_id, o.regime_tag "
-        "FROM opportunities o "
-        "JOIN universe_snapshots us ON us.id = o.universe_snapshot_id "
-        "WHERE o.status = 'open' "
-        "AND us.market_type = ? AND us.status = 'superseded' "
-        "LIMIT 1000",
-        (market_type,),
-    ).fetchall()
-    if not orphans:
-        return 0
-
-    orphan_ids = [str(r["id"]) for r in orphans]
-    orphan_index = {str(r["id"]): dict(r) for r in orphans}
-
-    def _apply() -> int:
-        # Step 1 — pool cleanup. Bulk UPDATE, uses the same WHERE clause the
-        # helper always used so any orphan not present in `orphans` (e.g.
-        # inserted between the SELECT and this UPDATE) also gets caught.
-        cur = db.execute(
-            "UPDATE opportunities SET status = 'expired' "
-            "WHERE status = 'open' AND universe_snapshot_id IN ("
-            "  SELECT id FROM universe_snapshots "
-            "  WHERE market_type = ? AND status = 'superseded'"
-            ")",
-            (market_type,),
-        )
-        transitioned = int(cur.rowcount or 0)
-
-        # Step 2 — filter evidence per opp we already have context for. If
-        # something extra was caught by the UPDATE, its evidence write is
-        # skipped (SELECT was best-effort); the status change is authoritative.
-        for r in orphans:
-            try:
-                record_filter_decision(
-                    candidate_key=f"opportunity:{r['id']}",
-                    candidate_kind="opportunity",
-                    filter_name="universe_snapshot_supersession",
-                    stage="lifecycle_expiry",
-                    decision="rejected",
-                    reason_code="universe_snapshot_superseded",
-                    symbol=str(r["symbol"] or "unknown"),
-                    market_type=str(r["market"] or "spot"),
-                    direction=r["direction_bias"],
-                    opportunity_id=r["id"],
-                    universe_snapshot_id=r["universe_snapshot_id"],
-                    universe_member_id=r["universe_member_id"],
-                    scanner_family=r["scanner_family"],
-                    regime_tag=r["regime_tag"],
-                    reason_detail="parent universe_snapshot moved to superseded",
-                    parameters={"cascade_source": "universe_refresh"},
-                    inputs={},
-                )
-            except Exception:
-                # Evidence is auxiliary; a write failure must not roll back
-                # the status transition (§filter_evidence_contract §4.2:
-                # evidence pipelines never gate authoritative state).
-                pass
-
-        # Step 3 — resolve unresolved signal_pending rows pointing at any
-        # cascaded opportunity. Uses a single query with an IN () chunk.
-        # Batch by 500 to stay under SQLite parameter limit for very large
-        # cascades (SQLITE_MAX_VARIABLE_NUMBER = 999 by default).
-        for chunk_start in range(0, len(orphan_ids), 500):
-            chunk = orphan_ids[chunk_start:chunk_start + 500]
-            placeholders = ",".join("?" for _ in chunk)
-            unresolved = db.execute(
-                f"SELECT DISTINCT p.opportunity_id, p.signal_source "
-                f"FROM pi_decisions p "
-                f"WHERE p.action = 'signal_pending' "
-                f"AND p.opportunity_id IN ({placeholders}) "
-                f"AND NOT EXISTS ("
-                f"  SELECT 1 FROM pi_decisions f "
-                f"  WHERE f.opportunity_id = p.opportunity_id "
-                f"  AND f.action != 'signal_pending' "
-                f")",
-                chunk,
-            ).fetchall()
-            for row in unresolved:
-                opp_id = str(row["opportunity_id"])
-                ctx = orphan_index.get(opp_id, {})
-                skip_row = PiDecision(
-                    symbol=ctx.get("symbol"),
-                    direction=ctx.get("direction_bias"),
-                    market_type=ctx.get("market"),
-                    action="skip",
-                    conviction=0,
-                    reasoning="cascade_expired: parent universe snapshot superseded",
-                    opportunity_id=opp_id,
-                    signal_source="system_cascade",
-                    debate_ran=False,
-                )
-                try:
-                    insert_pi_decision(skip_row)
-                except Exception:
-                    # Same rule as evidence: cascade cleanup is best-effort
-                    # bookkeeping; the pool is already correct.
-                    pass
-
-        return transitioned
-
-    if was_in_tx:
-        return _apply()
+    evaluated_at = datetime.now(timezone.utc).isoformat()
     with transaction(immediate=True):
-        return _apply()
+        rows = db.execute(
+            "SELECT o.* FROM opportunities o "
+            "JOIN universe_snapshots s ON s.id=o.universe_snapshot_id "
+            "WHERE o.status IN ('open','queued') "
+            "AND s.market_type=? AND s.status='superseded' "
+            "ORDER BY o.created_at, o.rowid",
+            (market_type,),
+        ).fetchall()
+        savepoint = f"snapshot_cascade_{uuid.uuid4().hex}"
+        db.execute(f"SAVEPOINT {savepoint}")
+        try:
+            expired = 0
+            for raw in rows:
+                row = dict(raw)
+                opportunity_id = str(row["id"])
+                source_status = str(row["status"])
+                dedup_key = (
+                    f"universe_snapshot_status:{row.get('universe_snapshot_id')}:"
+                    f"{opportunity_id}"
+                )
+                updated = db.execute(
+                    "UPDATE opportunities SET status='expired' "
+                    "WHERE id=? AND status=?",
+                    (opportunity_id, source_status),
+                )
+                if updated.rowcount != 1:
+                    continue
+                db.execute(
+                    "INSERT OR IGNORE INTO filter_decisions ("
+                    "id,dedup_key,candidate_key,candidate_kind,parent_candidate_key,"
+                    "run_id,opportunity_id,universe_snapshot_id,universe_member_id,"
+                    "proposal_id,venue,symbol,market_type,direction,scanner_family,"
+                    "regime_tag,filter_name,stage,sequence_no,decision,reason_code,"
+                    "reason_detail,input_snapshot,parameter_snapshot,filter_version,"
+                    "code_commit,outcome_candidate_key,evaluated_at"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        dedup_key, dedup_key, f"opportunity:{opportunity_id}",
+                        "opportunity", None, None, opportunity_id,
+                        row.get("universe_snapshot_id"), row.get("universe_member_id"),
+                        None, None, str(row.get("symbol") or "unknown"),
+                        str(row.get("market") or "spot"), row.get("direction_bias"),
+                        row.get("scanner_family"), row.get("regime_tag"),
+                        "universe_snapshot_status", "opportunity_lifecycle", 0,
+                        "rejected", "universe_snapshot_superseded",
+                        "parent Universe snapshot is no longer active",
+                        json.dumps({"source_status": source_status}, sort_keys=True),
+                        json.dumps({"required_snapshot_status": "active"}, sort_keys=True),
+                        "universe_snapshot_status:v1", None, None, evaluated_at,
+                    ),
+                )
+                if db.execute(
+                    "SELECT 1 FROM filter_decisions WHERE dedup_key=?", (dedup_key,)
+                ).fetchone() is None:
+                    raise RuntimeError(
+                        f"snapshot expiry evidence unavailable for Opportunity {opportunity_id}"
+                    )
+                expired += 1
+            db.execute(f"RELEASE SAVEPOINT {savepoint}")
+            return expired
+        except Exception:
+            db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            db.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
 
 
 def expire_universe_snapshots(market_type: str = "crypto", except_id: str | None = None) -> None:

@@ -30,8 +30,10 @@ from aletheia.agents.paper_trader_ranker import build_paper_candidate_workset
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
 from aletheia.storage.repositories import (
+    count_unresolved_signal_pending,
     expire_stale_queued_opportunities,
     list_all_open_positions,
+    prune_signal_pending_stale,
     transition_open_opportunity_to_queued,
 )
 
@@ -40,6 +42,8 @@ logger = logging.getLogger("aletheia.agents.paper_trader")
 _BASE_NOTIONAL_USDT = 25.0  # legacy fallback; prefer cfg.trading.default_notional_usdt
 _ATR_TARGET_PCT = 1.5  # legacy fallback; prefer cfg.trading.vol_target_pct
 _RECENT_SIGNAL_COOLDOWN_MINUTES = 30
+_PENDING_SIGNAL_MAX_AGE_MINUTES = 30
+_PENDING_SIGNAL_QUEUE_CAPACITY = 5
 
 
 @dataclass
@@ -205,8 +209,9 @@ def _plan_signal_batch(
     recent_signal_pairs: set[tuple[str, str]],
     operator_evaluated_opportunity_ids: set[str] | None = None,
     limit: int = 3,
+    available_queue_slots: int | None = None,
 ) -> SignalBatchPlan:
-    """Apply occupancy/cooldown before the batch cap so lower ranks can backfill."""
+    """Apply occupancy/cooldown/backpressure before the per-run batch cap."""
     selected: list[dict] = []
     decisions: dict[str, tuple[str, str]] = {}
     seen_symbols: set[str] = set()
@@ -229,6 +234,9 @@ def _plan_signal_batch(
             continue
         if (symbol, direction) in recent_signal_pairs:
             decisions[opp_id] = ("signal_cooldown", "rejected")
+            continue
+        if available_queue_slots is not None and len(selected) >= max(available_queue_slots, 0):
+            decisions[opp_id] = ("signal_queue_capacity", "rejected")
             continue
         if len(selected) >= limit:
             decisions[opp_id] = ("signal_batch_limit", "rejected")
@@ -263,6 +271,12 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             outputs.append(f"expired_pending:{expired_pending}")
     except Exception as exc:
         logger.warning("pending opportunity expiry unavailable: %s", exc)
+    try:
+        pruned_pending = prune_signal_pending_stale(_PENDING_SIGNAL_MAX_AGE_MINUTES)
+        if pruned_pending:
+            outputs.append(f"pruned_pending_carriers:{pruned_pending}")
+    except Exception as exc:
+        logger.warning("terminal pending carrier cleanup unavailable: %s", exc)
 
     # Snapshot of currently open symbols — used to skip redundant signal writes.
     open_symbols: set[str] = {p["symbol"] for p in list_all_open_positions()}
@@ -282,7 +296,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     _PERMANENT_SKIP_PREFIXES = (
         "neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:",
         "equity_shadow_track", "execution_eligible=False", "universe_not_eligible",
-        "ttl_expired", "factor_hard_blocked", "okx_demo_symbol_not_supported",
+        "ttl_expired", "ttl_invalid", "factor_hard_blocked", "okx_demo_symbol_not_supported",
         "symbol_not_allowed:",
     )
     def _is_permanent_skip(candidate: dict) -> bool:
@@ -354,12 +368,22 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             outputs.append("no_ranked_candidate")
         return {"outputs": outputs, "errors": errors}
 
+    try:
+        queue_depth = count_unresolved_signal_pending(_PENDING_SIGNAL_MAX_AGE_MINUTES)
+        available_queue_slots = max(_PENDING_SIGNAL_QUEUE_CAPACITY - queue_depth, 0)
+    except Exception as exc:
+        queue_depth = None
+        available_queue_slots = 0
+        errors.append("signal_queue_capacity_unavailable")
+        logger.warning("pending queue capacity unavailable: %s", type(exc).__name__)
+
     plan = _plan_signal_batch(
         eligible,
         open_symbols=open_symbols,
         recent_signal_pairs=recent_signal_pairs,
         operator_evaluated_opportunity_ids=_operator_evaluated_opportunity_ids(),
         limit=3,
+        available_queue_slots=available_queue_slots,
     )
 
     evidence_persisted = _persist_filter_evidence(
@@ -404,6 +428,12 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 )
             else:
                 outputs.append(f"skip_stale_plan:{candidate.get('symbol')}")
+        elif filter_name == "signal_queue_capacity":
+            outputs.append(
+                f"backpressure:{candidate.get('symbol')}:"
+                f"{queue_depth if queue_depth is not None else 'unknown'}/"
+                f"{_PENDING_SIGNAL_QUEUE_CAPACITY}"
+            )
 
     # Write up to 3 candidates after occupancy/cooldown rejects have been removed.
     signals_written = 0
@@ -441,6 +471,13 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                     )
                 if claimed:
                     insert_pi_decision(pi_dec)
+                    _persist_signal_enqueue_evidence(
+                        candidate,
+                        run_id=evaluation_run_id,
+                        decision="passed",
+                        reason_code="signal_enqueued",
+                        raise_on_error=True,
+                    )
             if not claimed:
                 _persist_signal_enqueue_evidence(
                     candidate,
@@ -450,12 +487,6 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 )
                 outputs.append(f"skip_stale_plan:{candidate.get('symbol')}")
                 continue
-            _persist_signal_enqueue_evidence(
-                candidate,
-                run_id=evaluation_run_id,
-                decision="passed",
-                reason_code="signal_enqueued",
-            )
             if direction:
                 recent_signal_pairs.add((sym, direction))
             signals_written += 1
@@ -698,7 +729,8 @@ def _persist_signal_enqueue_evidence(
     decision: str,
     reason_code: str,
     reason_detail: str | None = None,
-) -> None:
+    raise_on_error: bool = False,
+) -> bool:
     """Record actual queue insertion outcome separately from batch selection."""
     try:
         from aletheia.analytics.filter_evidence import record_candidate_filter_trace
@@ -715,13 +747,18 @@ def _persist_signal_enqueue_evidence(
                 "inputs": {"target_opportunity_status": "queued"},
                 "parameters": {},
             }],
+            raise_on_error=raise_on_error,
         )
+        return True
     except Exception as exc:
+        if raise_on_error:
+            raise
         logger.warning(
             "signal enqueue evidence unavailable opportunity=%s: %s",
             candidate.get("opportunity_id"),
             exc,
         )
+        return False
 
 
 # Position C (2026-07-02): _handle_ruleset_entry removed with the rules engine.

@@ -42,7 +42,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 ### A. Trading Core (17 tables)
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
-| `opportunities` | Scanner output -- trading signals; open rows rotate through a bounded paper-trader workset | symbol, direction, confidence, key_observations (JSON), last_ranked_at | market_observer |
+| `opportunities` | Scanner output -- trading signals; lifecycle is `open→queued→reviewed` or `open/queued→expired`; expired never regresses to reviewed | symbol, direction, confidence, key_observations (JSON), last_ranked_at, universe snapshot/member identity | market_observer |
 | `trade_proposals` | Actionable trade candidates | symbol, direction, entry_price, stop_price, target_price, **`agent_rationale.entry_parameters`** (final entry/stop/target/notional/leverage reasons + value sources), **commit_hash**, **parent_hash** (TaG, P0-1) | paper_trader / System Operator |
 | `proposal_execution_claims` | One durable, expiring execution owner per Proposal; kept outside the hash-covered Proposal intent and removed only by owner-token compare-and-set | proposal_id, owner_token, claimed_at, lease_expires_at | execution gateway |
 | `entry_risk_reservations` | Durable pre-Order allowance acquired atomically with authoritative Risk; retained after a worker crash and superseded by the first durable Order | proposal_id, proposal_commit_hash, symbol, market_type, execution_mode, quantity, price, leverage | risk engine / execution gateway |
@@ -67,6 +67,13 @@ retry rows, with unused capacity borrowed by the other half. The partial express
 indexes `idx_opportunities_trade_unranked_rotation` and
 `idx_opportunities_trade_retry_rotation` provide the two ordered streams without a
 full table scan or temporary sort.
+
+Queued market-observer work is admission-bounded to 5 unresolved identities. A
+superseded parent snapshot atomically expires both open and queued children with an
+immutable `universe_snapshot_superseded` filter fact. Old `signal_pending` rows are
+transient carriers, but cleanup may remove them only after their source is terminal
+and no `submitting` recovery claim exists. Until cleanup, an expired source is excluded
+from the Operator working set unless a `submitting` claim requires crash recovery.
 
 ### B. Strategy Management (4 tables)
 
