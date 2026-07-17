@@ -41,6 +41,42 @@ _CONFIDENCE_SCORE_DEFAULT = {"speculative": 20, "medium": 50, "high": 75}
 _DEFAULT_CANDIDATE_LIMIT = 50
 _MAX_OPPORTUNITY_SCAN_LIMIT = 250
 
+# Soft TTL filter: an expired carrier is not hard-rejected until its expiry has
+# exceeded HARD_CAP_MULT × ttl_sec. Between valid_until and the hard cap, the
+# trade_score is multiplied by 0.5 ** (expired_sec / ttl_sec) — half-life = ttl.
+# This lets a late-arriving ranker still consider a signal that just aged past
+# its family window instead of throwing it away in favor of nothing.
+_TTL_SOFT_HARD_CAP_MULT = 3.0
+
+
+def _ttl_soft_penalty_factor(
+    carrier_expires_at: str | None,
+    now_iso: str,
+    scanner_family: str | None,
+) -> tuple[float, int, int]:
+    """Compute soft-TTL decay factor for an expired carrier.
+
+    Returns (factor, expired_seconds, ttl_sec):
+      - factor: 1.0 if not expired; 0.5 ** (expired_sec / ttl_sec) if expired;
+        0.0 if past the hard cap (caller must hard-reject).
+      - expired_seconds: 0 if not expired; positive value if expired.
+      - ttl_sec: family TTL used for the decay calculation (default 3600).
+    """
+    from aletheia.universe.allocator import _FAMILY_TTL
+    ttl_sec = int(_FAMILY_TTL.get(str(scanner_family or ""), 3600))
+    if not carrier_expires_at or carrier_expires_at >= now_iso:
+        return 1.0, 0, ttl_sec
+    try:
+        valid_dt = datetime.fromisoformat(str(carrier_expires_at).replace("Z", "+00:00"))
+        now_dt = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+        expired_sec = int(max(0, (now_dt - valid_dt).total_seconds()))
+    except (TypeError, ValueError):
+        return 1.0, 0, ttl_sec
+    if expired_sec > _TTL_SOFT_HARD_CAP_MULT * ttl_sec:
+        return 0.0, expired_sec, ttl_sec
+    factor = 0.5 ** (expired_sec / max(1, ttl_sec))
+    return factor, expired_sec, ttl_sec
+
 # Evidence-based strategy gates (not_executable is NOT a block — strategies
 # without a RuleSet can still trade from LLM signals; the entry validation
 # handles the no-ruleset case independently)
@@ -248,17 +284,39 @@ def _evaluate_candidate(
 
     # The Opportunity carrier keeps its own expiry even when its Universe member
     # cannot be loaded. Do not let a missing parent row turn an expired signal fresh.
-    if opp.get("valid_until") and opp["valid_until"] < now_iso:
+    # Soft filter: past valid_until, apply score penalty (half-life = family TTL).
+    # Past HARD_CAP × TTL, still hard-reject so paper_trader can clean it up.
+    ttl_factor_opp, ttl_expired_opp, ttl_sec_family = _ttl_soft_penalty_factor(
+        opp.get("valid_until"), now_iso, opp.get("scanner_family"),
+    )
+    if ttl_factor_opp == 0.0:
         _filter_step(
             filter_trace, "family_ttl", "rejected", "opportunity_valid_until_expired",
-            inputs={"valid_until": opp.get("valid_until"), "now": now_iso},
-            parameters={"source": "opportunity.valid_until"},
+            inputs={
+                "valid_until": opp.get("valid_until"), "now": now_iso,
+                "expired_seconds": ttl_expired_opp,
+                "hard_cap_seconds": int(_TTL_SOFT_HARD_CAP_MULT * ttl_sec_family),
+            },
+            parameters={
+                "source": "opportunity.valid_until",
+                "hard_cap_multiplier": _TTL_SOFT_HARD_CAP_MULT,
+            },
         )
         return _make_candidate(
             opp,
             skip_reason="ttl_expired",
             direction=direction,
             filter_trace=filter_trace,
+        )
+    if ttl_expired_opp > 0:
+        _filter_step(
+            filter_trace, "family_ttl", "passed_with_penalty", "opportunity_ttl_soft_penalty",
+            inputs={
+                "valid_until": opp.get("valid_until"),
+                "expired_seconds": ttl_expired_opp,
+                "penalty_factor": round(ttl_factor_opp, 4),
+            },
+            parameters={"halflife_seconds": ttl_sec_family, "source": "opportunity.valid_until"},
         )
 
     # Universe TTL gate
@@ -281,21 +339,47 @@ def _evaluate_candidate(
                 "universe_eligible",
                 inputs={"execution_eligible": True}, parameters={"required": True},
             )
-            if universe_member.get("expires_at") and universe_member["expires_at"] < now_iso:
+            # Soft filter mirrors the opportunity.valid_until case above. When
+            # both parents are expired, the tighter (smaller factor) penalty
+            # wins — the reduce-to-min happens naturally below.
+            ttl_factor_member, ttl_expired_member, _ = _ttl_soft_penalty_factor(
+                universe_member.get("expires_at"), now_iso, opp.get("scanner_family"),
+            )
+            if ttl_factor_member == 0.0:
                 _filter_step(
                     filter_trace, "family_ttl", "rejected", "universe_member_expired",
-                    inputs={"expires_at": universe_member.get("expires_at"), "now": now_iso},
-                    parameters={"ttl_sec": universe_member.get("ttl_sec")},
+                    inputs={
+                        "expires_at": universe_member.get("expires_at"), "now": now_iso,
+                        "expired_seconds": ttl_expired_member,
+                    },
+                    parameters={
+                        "ttl_sec": universe_member.get("ttl_sec"),
+                        "hard_cap_multiplier": _TTL_SOFT_HARD_CAP_MULT,
+                    },
                 )
                 return _make_candidate(
                     opp, skip_reason="ttl_expired", direction=direction,
                     universe_member=universe_member, filter_trace=filter_trace,
                 )
-            _filter_step(
-                filter_trace, "family_ttl", "passed", "universe_member_fresh",
-                inputs={"expires_at": universe_member.get("expires_at"), "now": now_iso},
-                parameters={"ttl_sec": universe_member.get("ttl_sec")},
-            )
+            if ttl_expired_member > 0:
+                _filter_step(
+                    filter_trace, "family_ttl", "passed_with_penalty",
+                    "universe_member_ttl_soft_penalty",
+                    inputs={
+                        "expires_at": universe_member.get("expires_at"),
+                        "expired_seconds": ttl_expired_member,
+                        "penalty_factor": round(ttl_factor_member, 4),
+                    },
+                    parameters={"halflife_seconds": ttl_sec_family, "source": "universe_member.expires_at"},
+                )
+                # Reduce-to-min so trade_score reflects the worst-case decay
+                ttl_factor_opp = min(ttl_factor_opp, ttl_factor_member)
+            else:
+                _filter_step(
+                    filter_trace, "family_ttl", "passed", "universe_member_fresh",
+                    inputs={"expires_at": universe_member.get("expires_at"), "now": now_iso},
+                    parameters={"ttl_sec": universe_member.get("ttl_sec")},
+                )
 
     # Strategy attribution passthrough (Position C 2026-07-02): the rules engine is
     # gone. We no longer resolve a StrategyRecord, check pause/regime/market-type
@@ -433,6 +517,13 @@ def _evaluate_candidate(
     # Apply guard penalty
     if guard_eval:
         trade_score -= guard_eval.total_penalty
+
+    # Apply soft-TTL penalty (multiplicative). Factor is 1.0 when carrier is
+    # fresh, decays with half-life = family TTL when expired, and 0.0 past the
+    # hard cap (which returned earlier). Guard-penalty subtraction stays absolute
+    # so a strong guard still dominates a mild TTL decay.
+    if ttl_factor_opp < 1.0:
+        trade_score = trade_score * ttl_factor_opp
 
     return _make_candidate(
         opp,
@@ -971,6 +1062,9 @@ def _make_candidate(
         "skip_reason": skip_reason,
         "filter_trace": list(filter_trace or []),
         "learning_score_trace": list(learning_trace or []),
+        # Carrier expiry — surfaced so the funnel UI can render
+        # "expired X min ago" against the FAMILY_TTL for this candidate.
+        "valid_until": opp.get("valid_until"),
     }
 
 
