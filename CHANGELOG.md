@@ -16,7 +16,10 @@ one wake and never races an in-flight run.
   actually slid opportunities forward (previously-expired now eligible).
 
 Docs: `agent_contracts.md` describes the on-demand trigger alongside the
-scheduled 3min cadence.
+scheduled 3min cadence. Follow-up upgrade paths (Tier 2 — wider notify
+surface; Tier 3 — full event-driven daemon) filed as a plan at
+`docs/plans/trading-pipeline/ranker_on_demand_upgrade_plan_2026-07-17.md`
+with explicit observation gates to prevent premature escalation.
 
 ## [Unreleased] - 2026-07-17 — Opportunity funnel Tier-2: change-suppression TTL slide, ranker cadence, soft TTL, dashboard redesign
 

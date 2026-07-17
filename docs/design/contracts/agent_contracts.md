@@ -169,7 +169,7 @@ backlog health are persisted in `learning_job_health`.
 
 #### paper_trader (refactored: signal collector)
 
-- **Trigger**: scheduler every 3min + on-demand nudge via `scheduler.notify_paper_trader(source)` from producers (universe refresh, TTL slide). Debounced 3s. APScheduler `max_instances=1` handles overlap so a nudge during an in-flight run is a no-op.
+- **Trigger**: scheduler every 3min + on-demand nudge via `scheduler.notify_paper_trader(source)` from producers (universe refresh, TTL slide). Debounced 3s. APScheduler `max_instances=1` handles overlap so a nudge during an in-flight run is a no-op. Escalation path to a wider notify surface (Tier 2) or a full event-driven daemon (Tier 3) is documented in `docs/plans/trading-pipeline/ranker_on_demand_upgrade_plan_2026-07-17.md` — do not upgrade without meeting the observation gates listed there.
 - **Inputs**: opportunities, universe features, System Operator decisions
 - **LLM**: No (pure rule evaluation)
 - **Outputs**: signal_pending PiDecisions (Phase 4a: System Operator is the **sole** proposal submitter — paper_trader no longer creates proposals directly)
