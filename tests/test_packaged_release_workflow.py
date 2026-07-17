@@ -38,3 +38,11 @@ def test_pull_request_build_never_publishes_the_release_site():
 
     publish_guard = "github.event_name == 'workflow_dispatch' && inputs.publish"
     assert source.count(publish_guard) >= 4
+
+
+def test_packaged_workflow_covers_the_private_local_release_session():
+    source = WORKFLOW.read_text(encoding="utf-8")
+
+    assert '"scripts/release/local_release_session.py"' in source
+    assert '"tests/test_local_release_session.py"' in source
+    assert source.count("tests/test_local_release_session.py") == 3

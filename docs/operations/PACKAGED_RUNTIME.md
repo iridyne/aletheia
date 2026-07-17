@@ -4,6 +4,14 @@ Aletheia's installed product is browser-first. The browser at
 `http://127.0.0.1:8787` remains the only product UI; the native component is a small
 menu-bar/system-tray host and stable CLI dispatcher.
 
+## Agent entry point
+
+For the shortest safe path from an exact `master` SHA to an installed macOS dogfood
+Runtime, read the [packaged Runtime dogfood playbook](deployment/packaged-runtime-dogfood-playbook.md).
+It separates a one-machine private session from the signed owner publication channel and
+states the required acceptance evidence. This document remains the detailed authority for
+the payload, trust root, update transaction, and recovery semantics.
+
 ## Components
 
 - `Aletheia.app`: macOS menu-bar application (`LSUIElement=true`, no Dock window);
@@ -228,6 +236,45 @@ online-update-capable installer an in-place upgrade for current local installati
 The new candidate also treats the legacy pre-request validation command as isolated
 preflight, so the previously installed Runtime can stage this first signed update safely;
 after the request is written, the same command retains its activation-only semantics.
+
+### Private one-shot local release session
+
+For owner dogfooding, GitHub Actions and a permanent release server are optional. The
+development checkout provides a local-only release session that builds one fresh payload,
+signs a Feed with the existing owner key, serves it on `127.0.0.1` only while staging, and
+then waits for the normal Tray transaction to finish. The temporary server always stops on
+success, failure, or interruption.
+
+Run this only from a clean, intended release worktree and only while the installed Tray is
+running:
+
+```bash
+uv run python scripts/release/local_release_session.py \
+  --cli "$(command -v aletheia)"
+```
+
+The command uses the owner key at
+`~/.aletheia/release-signing/update-signing-private-key.pem` by default. Supply an absolute
+`--private-key` path only when the key is intentionally stored elsewhere. It first compares
+the derived public key with the installed App's trust root and refuses to stage if they do
+not match. It does not print, copy, or commit the private key.
+
+Each invocation writes an auditable session directory under
+`dist/local-release-sessions/` containing the immutable archive, checksum, signed Feed,
+and public key. Its Feed URL is passed only to the invoking installed CLI through
+`ALETHEIA_UPDATE_FEED_URL`; the permanent installed Feed configuration is not modified.
+The Tray receives an already staged `update-request.json`, so it does not need the local
+server after staging begins. A local build can use a distinct `.local-*` release label,
+but the updater treats an equal immutable `git_sha` as already current. For a different
+SHA, it only accepts a normal Feed whose signed `published_at` is later than the local
+release timestamp; an older public Feed cannot silently downgrade a newer local dogfood
+build. A later signed Feed remains eligible. The helper refuses a dirty worktree, so the
+payload code always matches the Git SHA recorded in its manifest.
+
+This mode is intentionally local to one machine. A `127.0.0.1` Feed cannot update UM790 or
+another Mac. Cross-machine private distribution needs a separately authenticated private
+artifact endpoint or a deliberate signed-file transfer; do not expose this helper on a
+LAN interface by changing its bind address.
 
 ## Distribution status and external prerequisites
 

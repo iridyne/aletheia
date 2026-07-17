@@ -30,6 +30,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -70,6 +71,7 @@ _ACTIVE_PHASES = {
 _STAGE_LOCK_TTL_SEC = 60 * 60
 _stage_thread_lock = threading.Lock()
 _stage_thread: threading.Thread | None = None
+_LOCAL_RELEASE_TIMESTAMP = re.compile(r"\.local-(\d{14})$")
 
 
 class PackagedUpdateError(RuntimeError):
@@ -322,6 +324,69 @@ def _artifact_for_host(feed: dict[str, Any]) -> dict[str, Any]:
     return artifact
 
 
+def _current_release_git_sha(selection: dict[str, Any]) -> str | None:
+    """Return the current immutable payload SHA when its manifest is safe to inspect.
+
+    Release IDs are normally validated by the stable host before it launches a payload.
+    Update checks still treat an absent, malformed, or escaped local manifest as unknown
+    rather than trusting it to suppress a signed update.
+    """
+
+    current = selection.get("current")
+    if not isinstance(current, str) or not current or Path(current).name != current:
+        return None
+    release = _paths()["releases"] / current
+    if release.is_symlink() or not release.is_dir():
+        return None
+    try:
+        manifest = _read_json(release / "release-manifest.json")
+    except PackagedUpdateError:
+        return None
+    git_sha = manifest.get("git_sha")
+    return git_sha if isinstance(git_sha, str) and git_sha else None
+
+
+def _feed_targets_current_source(selection: dict[str, Any], feed: dict[str, Any]) -> bool:
+    """Treat distinct local release labels for the same immutable source as equivalent."""
+
+    feed_sha = feed.get("git_sha")
+    current_sha = _current_release_git_sha(selection)
+    return isinstance(feed_sha, str) and bool(feed_sha) and feed_sha == current_sha
+
+
+def _feed_is_not_newer_than_current_local_release(
+    selection: dict[str, Any], feed: dict[str, Any]
+) -> bool:
+    """Prevent an older public feed from replacing an explicit local dogfood build.
+
+    Git SHA values are opaque identifiers on an installed machine; they cannot establish
+    ancestry without shipping a Git graph. Local release IDs deliberately contain an UTC
+    timestamp, while signed feeds contain their publication time. Only a Feed published
+    after that local build can be considered newer. If either value is malformed, leave
+    the normal update path available rather than trusting ambiguous metadata.
+    """
+
+    current = selection.get("current")
+    if not isinstance(current, str):
+        return False
+    matched = _LOCAL_RELEASE_TIMESTAMP.search(current)
+    if matched is None:
+        return False
+    published_at = feed.get("published_at")
+    if not isinstance(published_at, str):
+        return False
+    try:
+        local_time = datetime.strptime(matched.group(1), "%Y%m%d%H%M%S").replace(
+            tzinfo=timezone.utc
+        )
+        feed_time = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+        if feed_time.tzinfo is None:
+            return False
+    except ValueError:
+        return False
+    return feed_time <= local_time
+
+
 def check_for_update() -> dict[str, Any]:
     try:
         selection = current_selection()
@@ -331,14 +396,19 @@ def check_for_update() -> dict[str, Any]:
         if not target:
             raise PackagedUpdateError("update_release_id_missing")
         current = str(selection["current"])
+        same_source = _feed_targets_current_source(selection, feed)
+        stale_for_local = _feed_is_not_newer_than_current_local_release(selection, feed)
         return {
             "ok": True,
             "mode": "packaged",
-            "has_update": target != current,
+            "has_update": target != current and not same_source and not stale_for_local,
             "current_release": current,
             "available_release": target,
             "version": feed.get("version"),
             "git_sha": feed.get("git_sha"),
+            "current_git_sha": _current_release_git_sha(selection),
+            "same_source": same_source,
+            "feed_stale_for_local_current": stale_for_local,
             "published_at": feed.get("published_at"),
             "platform": platform_id(),
             "size_bytes": artifact.get("size_bytes"),
@@ -601,14 +671,18 @@ def _stage_update(operation_id: str) -> None:
             target_release = str(feed.get("release_id") or "").strip()
             if not target_release:
                 raise PackagedUpdateError("update_release_id_missing")
-            if target_release == selection["current"]:
+            if (
+                target_release == selection["current"]
+                or _feed_targets_current_source(selection, feed)
+                or _feed_is_not_newer_than_current_local_release(selection, feed)
+            ):
                 _write_state(
                     operation_id=operation_id,
                     phase="idle",
                     status="up_to_date",
                     target_release=target_release,
                     progress=1.0,
-                    message="Already running the selected release",
+                    message="Already running the selected release source",
                 )
                 return
 

@@ -10,10 +10,12 @@ on:
       - "packaging/pyinstaller/**"
       - "scripts/release/build_packaged_runtime.py"
       - "scripts/release/build_macos_app.py"
+      - "scripts/release/local_release_session.py"
       - "scripts/release/pyinstaller_entry.py"
       - "scripts/release/sign_update_feed.py"
       - "tests/test_packaged_*.py"
       - "tests/test_macos_packaged_app.py"
+      - "tests/test_local_release_session.py"
       - "docs/plans/packaged_tray_cli_runtime.md"
       - "docs/operations/PACKAGED_RUNTIME.md"
       - ".github/workflows/build-packaged-runtime.yml"
@@ -62,6 +64,7 @@ jobs:
             tests/test_packaged_update_routes.py \
             tests/test_packaged_release_workflow.py \
             tests/test_macos_packaged_app.py \
+            tests/test_local_release_session.py \
             -q --tb=short
 
   macos-package:
@@ -119,6 +122,7 @@ jobs:
             tests/test_packaged_update_routes.py \
             tests/test_packaged_release_workflow.py \
             tests/test_macos_packaged_app.py \
+            tests/test_local_release_session.py \
             tests/test_release_data_dir.py \
             -q --tb=short
 

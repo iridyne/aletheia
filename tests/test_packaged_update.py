@@ -159,6 +159,80 @@ def test_signed_feed_accepts_exact_payload_and_rejects_tampering(monkeypatch, tm
     assert tampered["reason"] == "update_feed_signature_invalid"
 
 
+def test_same_git_sha_with_a_distinct_local_release_label_is_not_an_update(monkeypatch, tmp_path):
+    _, feed, public_key = _archive_and_feed(tmp_path, release_id="0.5.1+remote")
+    host, _ = _configure_host(monkeypatch, tmp_path, feed, public_key)
+    current = "0.5.0+local-build"
+    (host / "current.json").write_text(
+        json.dumps({"schema_version": 1, "current": current, "previous": None}),
+        encoding="utf-8",
+    )
+    current_release = host / "releases" / current
+    current_release.mkdir(parents=True)
+    (current_release / "release-manifest.json").write_text(
+        json.dumps({"git_sha": "abc123" + "0" * 34}),
+        encoding="utf-8",
+    )
+
+    checked = packaged_commands.check_for_update()
+    staged = packaged_commands.stage_update_blocking()
+
+    assert checked["ok"] is True
+    assert checked["has_update"] is False
+    assert checked["same_source"] is True
+    assert staged["ok"] is True
+    assert staged["state"]["status"] == "up_to_date"
+    assert not (host / "update-request.json").exists()
+
+
+def test_older_public_feed_does_not_replace_a_newer_local_release(monkeypatch, tmp_path):
+    _, feed, public_key = _archive_and_feed(tmp_path, release_id="0.5.1+remote")
+    host, _ = _configure_host(monkeypatch, tmp_path, feed, public_key)
+    current = "0.5.0+local-build.local-20260717030000"
+    (host / "current.json").write_text(
+        json.dumps({"schema_version": 1, "current": current, "previous": None}),
+        encoding="utf-8",
+    )
+    current_release = host / "releases" / current
+    current_release.mkdir(parents=True)
+    (current_release / "release-manifest.json").write_text(
+        json.dumps({"git_sha": "f" * 40}),
+        encoding="utf-8",
+    )
+
+    checked = packaged_commands.check_for_update()
+    staged = packaged_commands.stage_update_blocking()
+
+    assert checked["ok"] is True
+    assert checked["has_update"] is False
+    assert checked["same_source"] is False
+    assert checked["feed_stale_for_local_current"] is True
+    assert staged["state"]["status"] == "up_to_date"
+    assert not (host / "update-request.json").exists()
+
+
+def test_newer_public_feed_remains_available_after_a_local_release(monkeypatch, tmp_path):
+    _, feed, public_key = _archive_and_feed(tmp_path, release_id="0.5.1+remote")
+    host, _ = _configure_host(monkeypatch, tmp_path, feed, public_key)
+    current = "0.5.0+local-build.local-20260715030000"
+    (host / "current.json").write_text(
+        json.dumps({"schema_version": 1, "current": current, "previous": None}),
+        encoding="utf-8",
+    )
+    current_release = host / "releases" / current
+    current_release.mkdir(parents=True)
+    (current_release / "release-manifest.json").write_text(
+        json.dumps({"git_sha": "f" * 40}),
+        encoding="utf-8",
+    )
+
+    checked = packaged_commands.check_for_update()
+
+    assert checked["ok"] is True
+    assert checked["has_update"] is True
+    assert checked["feed_stale_for_local_current"] is False
+
+
 def test_signer_exports_the_public_key_matching_the_feed(tmp_path):
     builder = _builder()
     signer = _signer()
