@@ -10,6 +10,7 @@ FRED API key: env var FRED_API_KEY (register free at https://fred.stlouisfed.org
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -43,32 +44,57 @@ class MacroCollector:
         now = datetime.now(timezone.utc).isoformat()
         errors: list[str] = []
 
-        # CoinGecko global crypto metrics
-        btc_dominance = None
-        total_cap = None
-        total_cap_change = None
-        try:
-            btc_dominance, total_cap, total_cap_change = await _fetch_coingecko()
-        except Exception as e:
-            errors.append(f"coingecko: {e}")
-            logger.debug("CoinGecko global fetch failed: %s", e)
-
-        # Traditional finance: FRED (primary) → yFinance (fallback)
-        spy = None
-        vix = None
-        dxy = None
-        nasdaq = None
-
         fred_key = os.environ.get("FRED_API_KEY")
-        if fred_key:
-            try:
-                spy, vix, dxy, nasdaq = await _fetch_fred(fred_key)
-                logger.debug("FRED macro: spy=%s vix=%s dxy=%s nasdaq=%s", spy, vix, dxy, nasdaq)
-            except Exception as e:
-                errors.append(f"fred: {e}")
-                logger.debug("FRED fetch failed, falling back to yfinance: %s", e)
+        fng_enabled = False
+        try:
+            from aletheia.config.loader import load_config
+            fng_enabled = load_config().market_data.enable_fear_greed
+        except Exception:
+            pass
 
-        # Fallback: fill any None values from yFinance.
+        # CoinGecko, FRED, and FNG are fully independent — run concurrently.
+        cg_coro = _fetch_coingecko()
+        fred_coro = _fetch_fred(fred_key) if fred_key else None
+        fng_coro = _fetch_fng() if fng_enabled else None
+
+        coros: list = [cg_coro]
+        if fred_coro is not None:
+            coros.append(fred_coro)
+        if fng_coro is not None:
+            coros.append(fng_coro)
+
+        gathered = await asyncio.gather(*coros, return_exceptions=True)
+        idx = 0
+
+        cg_result = gathered[idx]; idx += 1
+        btc_dominance = total_cap = total_cap_change = None
+        if isinstance(cg_result, BaseException):
+            errors.append(f"coingecko: {cg_result}")
+            logger.debug("CoinGecko global fetch failed: %s", cg_result)
+        else:
+            btc_dominance, total_cap, total_cap_change = cg_result
+
+        spy = vix = dxy = nasdaq = None
+        if fred_coro is not None:
+            fred_result = gathered[idx]; idx += 1
+            if isinstance(fred_result, BaseException):
+                errors.append(f"fred: {fred_result}")
+                logger.debug("FRED fetch failed, falling back to yfinance: %s", fred_result)
+            else:
+                spy, vix, dxy, nasdaq = fred_result
+                logger.debug("FRED macro: spy=%s vix=%s dxy=%s nasdaq=%s", spy, vix, dxy, nasdaq)
+
+        fng_value: int | None = None
+        fng_classification: str | None = None
+        if fng_coro is not None:
+            fng_result = gathered[idx]; idx += 1
+            if isinstance(fng_result, BaseException):
+                errors.append(f"fng: {fng_result}")
+                logger.debug("Alt.me F&G fetch failed (non-fatal): %s", fng_result)
+            else:
+                fng_value, fng_classification = fng_result
+
+        # Fallback: fill any None tradfi values from yFinance.
         # #92 fix: yfinance's Ticker.history() is synchronous and can block the
         # event loop for several seconds — each ticker does its own HTTP round
         # trip. This tick runs from the scheduler's async worker, so a sync
@@ -77,8 +103,7 @@ class MacroCollector:
         # asyncio.to_thread so the blocking work happens off-loop.
         if any(v is None for v in (spy, vix, dxy, nasdaq)):
             try:
-                import asyncio as _asyncio
-                yf_spy, yf_vix, yf_dxy, yf_nasdaq = await _asyncio.to_thread(_fetch_tradfi)
+                yf_spy, yf_vix, yf_dxy, yf_nasdaq = await asyncio.to_thread(_fetch_tradfi)
                 spy = spy or yf_spy
                 vix = vix or yf_vix
                 dxy = dxy or yf_dxy
@@ -89,19 +114,6 @@ class MacroCollector:
 
         # Risk regime heuristic
         risk_regime = _classify_risk_regime(vix, total_cap_change)
-
-        # Fear & Greed Index — Alt.me (Step 2). Failure here MUST NOT regress
-        # any other field per spec MS-C02.
-        fng_value: int | None = None
-        fng_classification: str | None = None
-        try:
-            from aletheia.config.loader import load_config
-            cfg = load_config()
-            if cfg.market_data.enable_fear_greed:
-                fng_value, fng_classification = await _fetch_fng()
-        except Exception as e:
-            errors.append(f"fng: {e}")
-            logger.debug("Alt.me F&G fetch failed (non-fatal): %s", e)
 
         snapshot = MacroSnapshot(
             btc_dominance=btc_dominance,
@@ -153,31 +165,39 @@ async def _fetch_fred(
     FRED returns daily data; we grab the most recent non-"." observation
     (FRED uses "." for missing values on holidays/weekends).
     Free tier: 120 requests/min — we use 4 per call (one per series).
+    All four requests run concurrently on a shared client connection pool.
     """
     results: dict[str, float | None] = {"spy": None, "vix": None, "dxy": None, "nasdaq": None}
 
+    async def _one(client, key: str, series_id: str) -> tuple[str, float | None]:
+        try:
+            resp = await client.get(
+                _FRED_BASE_URL,
+                params={
+                    "series_id": series_id,
+                    "api_key": api_key,
+                    "file_type": "json",
+                    "sort_order": "desc",
+                    "limit": 5,  # grab last 5 to skip holidays
+                },
+            )
+            resp.raise_for_status()
+            observations = resp.json().get("observations", [])
+            for obs in observations:
+                val = obs.get("value", ".")
+                if val != ".":
+                    return key, round(float(val), 2)
+        except Exception as e:
+            logger.debug("FRED series %s failed: %s", series_id, e)
+        return key, None
+
     async with httpx_client(timeout=10) as client:
-        for key, series_id in _FRED_SERIES.items():
-            try:
-                resp = await client.get(
-                    _FRED_BASE_URL,
-                    params={
-                        "series_id": series_id,
-                        "api_key": api_key,
-                        "file_type": "json",
-                        "sort_order": "desc",
-                        "limit": 5,  # grab last 5 to skip holidays
-                    },
-                )
-                resp.raise_for_status()
-                observations = resp.json().get("observations", [])
-                for obs in observations:
-                    val = obs.get("value", ".")
-                    if val != ".":
-                        results[key] = round(float(val), 2)
-                        break
-            except Exception as e:
-                logger.debug("FRED series %s failed: %s", series_id, e)
+        pairs = await asyncio.gather(*[
+            _one(client, key, series_id)
+            for key, series_id in _FRED_SERIES.items()
+        ])
+    for key, value in pairs:
+        results[key] = value
 
     return results["spy"], results["vix"], results["dxy"], results["nasdaq"]
 

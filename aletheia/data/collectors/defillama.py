@@ -15,6 +15,7 @@ metric_type values: "stablecoin_mcap" | "chain_tvl" | "dex_volume"
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -41,7 +42,8 @@ class DefiLlamaCollector:
         """Collect stablecoin market cap, chain TVL, and DEX volume.
 
         Each of the three endpoints is isolated: one endpoint failure does not
-        prevent the other two from writing (per spec DL-C01).
+        prevent the other two from writing (per spec DL-C01). All three run
+        concurrently so a slow endpoint does not serialize the others.
 
         Returns {"snapshots": [...OnchainSnapshot dicts...], "errors": [...]}.
         """
@@ -51,32 +53,19 @@ class DefiLlamaCollector:
         errors: list[str] = []
         now = datetime.now(timezone.utc).isoformat()
 
-        # --- Stablecoin market cap ---
-        try:
-            snap = await _fetch_stablecoin_mcap(now)
-            if snap:
-                snapshots.append(snap)
-        except Exception as e:
-            errors.append(f"stablecoin_mcap: {e}")
-            logger.warning("DefiLlama stablecoins fetch failed: %s", e)
-
-        # --- Chain TVL ---
-        try:
-            snap = await _fetch_chain_tvl(now)
-            if snap:
-                snapshots.append(snap)
-        except Exception as e:
-            errors.append(f"chain_tvl: {e}")
-            logger.warning("DefiLlama chains fetch failed: %s", e)
-
-        # --- DEX volume ---
-        try:
-            snap = await _fetch_dex_volume(now)
-            if snap:
-                snapshots.append(snap)
-        except Exception as e:
-            errors.append(f"dex_volume: {e}")
-            logger.warning("DefiLlama DEX fetch failed: %s", e)
+        _LABELS = ("stablecoin_mcap", "chain_tvl", "dex_volume")
+        results = await asyncio.gather(
+            _fetch_stablecoin_mcap(now),
+            _fetch_chain_tvl(now),
+            _fetch_dex_volume(now),
+            return_exceptions=True,
+        )
+        for label, result in zip(_LABELS, results):
+            if isinstance(result, BaseException):
+                errors.append(f"{label}: {result}")
+                logger.warning("DefiLlama %s fetch failed: %s", label, result)
+            elif result is not None:
+                snapshots.append(result)
 
         # Persist to DB
         try:
