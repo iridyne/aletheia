@@ -2814,6 +2814,23 @@ def get_latest_portfolio_snapshot() -> dict | None:
 
 # --- Agent Tool Calls ---
 
+def _step_timestamp() -> str:
+    """UTC timestamp with microsecond precision for step/tool-call ordering.
+
+    Phase 3 A8 removed the double-write to `agent_run_steps`, so `list_run_steps`
+    now UNIONs `agent_run_steps` with `agent_tool_calls` at read time. To keep
+    cross-table ordering stable when several rows are inserted in the same
+    wall-clock second (common in tests and hot loops), both writers stamp
+    `created_at` with microsecond precision here rather than relying on the
+    column DEFAULT `datetime('now')` which is only second-precision.
+
+    Format matches SQLite's `datetime()` shape (space separator, optional
+    fractional seconds) so `datetime()`/`julianday()` comparisons and lexical
+    sort agree.
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
 def insert_tool_call(run_id: str, tool_name: str, tool_class: str, permitted: bool,
                      input_data: str | None = None, output_data: str | None = None) -> None:
     from aletheia.storage.models import new_id
@@ -2825,6 +2842,7 @@ def insert_tool_call(run_id: str, tool_name: str, tool_class: str, permitted: bo
         "input_data": input_data,
         "output_data": output_data,
         "permitted": 1 if permitted else 0,
+        "created_at": _step_timestamp(),
     })
 
 
@@ -2836,7 +2854,12 @@ def list_tool_calls(run_id: str | None = None, limit: int = 100) -> list[dict]:
 
 def insert_run_step(run_id: str, step_number: int, action: str,
                     input_data: str | None = None, output_data: str | None = None) -> None:
-    """Record one reasoning/action step of an agent run (ordered by step_number)."""
+    """Record one reasoning/action step of an agent run (ordered by insertion time).
+
+    `step_number` is preserved on the row for compatibility, but callers that read
+    via `list_run_steps` see a step number reassigned by merged execution order
+    (see `list_run_steps`).
+    """
     from aletheia.storage.models import new_id
     _insert("agent_run_steps", {
         "id": new_id(),
@@ -2845,13 +2868,60 @@ def insert_run_step(run_id: str, step_number: int, action: str,
         "action": action,
         "input_data": input_data,
         "output_data": output_data,
+        "created_at": _step_timestamp(),
     })
 
 
 def list_run_steps(run_id: str, limit: int = 500) -> list[dict]:
-    """Return a run's steps in execution order (step_number ASC)."""
-    return _select_all("agent_run_steps", where="run_id = ?", params=(run_id,),
-                       order="step_number ASC", limit=limit)
+    """Return a run's reasoning/action trace in execution order.
+
+    UNIONs `agent_run_steps` (non-tool reasoning recorded via `record_step`) with
+    `agent_tool_calls` (tool events recorded via `log_tool`) so the trace stays
+    complete after Phase 3 A8 removed the double-write to `agent_run_steps`.
+    Rows are merged by `created_at` (with `rowid` as an intra-table tiebreaker)
+    and `step_number` is reassigned by position so the merged sequence numbers
+    1..N regardless of what the writer stored. Tool-call rows are surfaced with
+    `action = 'tool:<tool_name>'` and a `source='tool_call'` marker so callers
+    that want to style them distinctly can.
+    """
+    db = get_db()
+    steps = db.execute(
+        "SELECT id, run_id, action, input_data, output_data, created_at, "
+        "rowid AS _rowid "
+        "FROM agent_run_steps WHERE run_id = ? ORDER BY created_at ASC, rowid ASC "
+        "LIMIT ?",
+        (run_id, limit),
+    ).fetchall()
+    tool_calls = db.execute(
+        "SELECT id, run_id, tool_name, tool_class, permitted, input_data, "
+        "output_data, created_at, rowid AS _rowid "
+        "FROM agent_tool_calls WHERE run_id = ? ORDER BY created_at ASC, rowid ASC "
+        "LIMIT ?",
+        (run_id, limit),
+    ).fetchall()
+    merged: list[dict] = []
+    for raw in steps:
+        row = dict(raw)
+        row["source"] = "step"
+        merged.append(row)
+    for raw in tool_calls:
+        row = dict(raw)
+        permitted = bool(row.pop("permitted", 1))
+        tool_name = row.pop("tool_name", "") or ""
+        row.pop("tool_class", None)
+        row["action"] = f"tool:{tool_name}" + ("" if permitted else " (denied)")
+        row["source"] = "tool_call"
+        merged.append(row)
+    merged.sort(key=lambda r: (
+        r.get("created_at") or "",
+        0 if r.get("source") == "step" else 1,
+        r.get("_rowid") or 0,
+    ))
+    merged = merged[:limit]
+    for idx, row in enumerate(merged, start=1):
+        row["step_number"] = idx
+        row.pop("_rowid", None)
+    return merged
 
 
 # --- Data retention / cleanup (Component 3) ---
@@ -2884,6 +2954,30 @@ _PRUNABLE = {
     # from growing the local SQLite database indefinitely.
     "operator_evaluation_events": "created_at",
     "ohlcv_backfill_state": "updated_at",
+    # Phase 3 data-retention additions (2026-07-17). Telemetry-only tables that
+    # were unbounded prior to this pass. Audit-chain + learning tables remain
+    # intentionally absent (see AGENTS.md hard rules). Only entries where the
+    # column is an ISO-8601 timestamp are listed — bespoke-column tables
+    # (integer-ms `ts` on market_ohlcv/backtest_trades, cascade-only children
+    # like universe_members/filter_shadow_evaluations) rely on their dedicated
+    # prune_* functions.
+    "alpha_control_observations": "entry_ts",
+    "controller_recommendations": "created_at",
+    "agent_shell_sessions": "created_at",
+    "agent_shell_commands": "created_at",
+    "agent_shell_events": "created_at",
+    "agent_shell_heartbeats": "created_at",
+    "agent_shell_messages": "created_at",
+    "agent_shell_artifacts": "created_at",
+    "universe_snapshots": "created_at",
+    "universe_scanner_runs": "started_at",
+    "universe_feature_snapshots": "ts",
+    "market_regimes": "detected_at",
+    "serenity_evidence": "created_at",
+    "serenity_run_events": "created_at",
+    "runtime_sessions": "started_at",
+    "backtest_runs": "created_at",
+    "filter_shadow_experiments": "started_at",
 }
 
 _CONDITIONALLY_PRUNABLE = {
@@ -2944,7 +3038,8 @@ def prune_agent_runs(days: int = 30) -> int:
     return len(run_ids)
 
 
-def prune_run_steps(days: int = 30) -> int:
+def prune_run_steps(days: int = 14) -> int:
+    """Prune telemetry-only agent_run_steps rows. Default lowered 30d→14d (Phase 3)."""
     return _delete_old_rows("agent_run_steps", days)
 
 
@@ -2989,12 +3084,79 @@ def prune_filter_decision_batches(days: int = 30) -> int:
     return _delete_old_rows("filter_decision_batches", days)
 
 
-def prune_filter_decisions(days: int = 90) -> int:
-    return _delete_old_rows("filter_decisions", days)
+def _min_open_experiment_started_at() -> str | None:
+    """Return MIN(started_at) among currently-open learning_experiments (ended_at IS NULL).
+
+    Used by the clean_window_cutoff guard for filter_decisions +
+    filter_candidate_outcomes: if any open experiment started earlier than the
+    default retention cutoff, we must keep evidence rows back to that point.
+    Returns None when the table is missing (fresh install) or no open row exists.
+    """
+    db = get_db()
+    try:
+        row = db.execute(
+            "SELECT MIN(started_at) AS m FROM learning_experiments WHERE ended_at IS NULL"
+        ).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    val = row["m"] if hasattr(row, "keys") else row[0]
+    return str(val) if val else None
 
 
-def prune_filter_candidate_outcomes(days: int = 90) -> int:
-    return _delete_old_rows("filter_candidate_outcomes", days)
+def _effective_cutoff(
+    days: int,
+    min_experiment_started_at: str | None,
+) -> str:
+    """Compute the clean_window_cutoff. Delete only rows older than min(default, open-experiment)."""
+    default = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    if not min_experiment_started_at:
+        return default
+    # Both ISO-8601; string comparison is date-safe for our formats.
+    return min(default, min_experiment_started_at)
+
+
+def prune_filter_decisions(
+    days: int = 45,
+    min_experiment_started_at: str | None = None,
+) -> int:
+    """Prune filter_decisions with clean_window_cutoff guard.
+
+    Default lowered 90d→45d (Phase 3). If an open learning_experiment started
+    before ``now - days``, keep everything back to that experiment's start so
+    the paired-cohort read stays reproducible.
+    """
+    if min_experiment_started_at is None:
+        min_experiment_started_at = _min_open_experiment_started_at()
+    cutoff = _effective_cutoff(days, min_experiment_started_at)
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM filter_decisions WHERE evaluated_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_filter_candidate_outcomes(
+    days: int = 30,
+    min_experiment_started_at: str | None = None,
+) -> int:
+    """Prune filter_candidate_outcomes with clean_window_cutoff guard.
+
+    Default lowered 90d→30d (Phase 3). Guard prevents deleting outcome rows an
+    open experiment still needs for its paired cohort — the effective cutoff is
+    the OLDER of ``now - days`` and the earliest open-experiment start.
+    """
+    if min_experiment_started_at is None:
+        min_experiment_started_at = _min_open_experiment_started_at()
+    cutoff = _effective_cutoff(days, min_experiment_started_at)
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM filter_candidate_outcomes WHERE entry_ts < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
 
 
 def prune_operator_evaluation_events(days: int = 30) -> int:
@@ -4024,10 +4186,61 @@ def latest_orderbook(
     return rows[0] if rows else None
 
 
+# Write-side dedup thresholds (Phase 3). If the newest row for a (symbol,
+# exchange) is identical to the incoming payload AND younger than the
+# heartbeat floor, skip the INSERT. Once the newest row crosses the floor,
+# the next INSERT lands regardless — the doctor probe reads MAX(observed_at)
+# so a stale-newest would trip freshness thresholds.
+_FUNDING_DEDUP_FIELDS = (
+    "funding_rate",
+    "funding_rate_annualized",
+    "next_funding_time",
+    "mark_price",
+)
+_FUNDING_HEARTBEAT_FLOOR_MINUTES = 60
+
+
 def insert_funding_rate_snapshot(data: dict) -> None:
+    """Insert a funding_rate_snapshots row, skipping identical repeats.
+
+    Guard (Phase 3): if the newest row for the same (symbol, exchange) has
+    the same funding_rate / annualized / next_funding_time / mark_price AND
+    its ``observed_at`` is younger than ``_FUNDING_HEARTBEAT_FLOOR_MINUTES``
+    minutes ago, the insert is skipped. This is idempotent — collectors that
+    poll on a 2-minute cadence stop writing 30× duplicate rows per hour while
+    still emitting one heartbeat row per hour so freshness probes stay green.
+    """
     from aletheia.storage.models import new_id
     if "id" not in data:
         data["id"] = new_id()
+    symbol = data.get("symbol")
+    exchange = data.get("exchange")
+    if symbol and exchange is not None:
+        db = get_db()
+        row = db.execute(
+            "SELECT funding_rate, funding_rate_annualized, next_funding_time, "
+            "mark_price, observed_at "
+            "FROM funding_rate_snapshots "
+            "WHERE symbol = ? AND exchange = ? "
+            "ORDER BY observed_at DESC LIMIT 1",
+            (symbol, exchange),
+        ).fetchone()
+        if row is not None:
+            latest = dict(row)
+            same = all(
+                data.get(field) == latest.get(field)
+                for field in _FUNDING_DEDUP_FIELDS
+            )
+            if same and latest.get("observed_at"):
+                try:
+                    prev_ts = datetime.fromisoformat(latest["observed_at"])
+                    if prev_ts.tzinfo is None:
+                        prev_ts = prev_ts.replace(tzinfo=timezone.utc)
+                    age = datetime.now(timezone.utc) - prev_ts
+                    if age < timedelta(minutes=_FUNDING_HEARTBEAT_FLOOR_MINUTES):
+                        return
+                except (TypeError, ValueError):
+                    pass
     _insert("funding_rate_snapshots", data)
 
 
@@ -4317,8 +4530,9 @@ def latest_coingecko_top(top_n: int = 50) -> list[dict]:
     )
 
 
-def prune_coingecko_top_snapshots(days: int = 14) -> int:
-    """~14k rows/day * 14d default ≈ 200k row ceiling; canonical was_in_tx pattern."""
+def prune_coingecko_top_snapshots(days: int = 3) -> int:
+    """~14k rows/day; default lowered 14d→3d (Phase 3). Freshness doctor probe
+    reads MAX(observed_at) which is unaffected by shorter history."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
@@ -4433,8 +4647,34 @@ def prune_liquidation_events(days: int = 7) -> int:
     return cur.rowcount or 0
 
 
-def prune_funding_rate_snapshots(days: int = 30) -> int:
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+def _max_open_position_hold_hours() -> int:
+    """Return the largest recorded 'open position hold' cap in hours (defensive default 48)."""
+    db = get_db()
+    try:
+        row = db.execute(
+            "SELECT MAX(CAST("
+            "(julianday(COALESCE(closed_at, datetime('now'))) - julianday(opened_at)) * 24 "
+            "AS INTEGER)) AS max_hours FROM positions"
+        ).fetchone()
+    except Exception:
+        return 48
+    if not row:
+        return 48
+    val = row["max_hours"] if hasattr(row, "keys") else row[0]
+    try:
+        return max(48, int(val or 0))
+    except (TypeError, ValueError):
+        return 48
+
+
+def prune_funding_rate_snapshots(days: int = 7) -> int:
+    """Prune funding-rate history. Default 7d + hard floor max(7d, 2×max_hold_hours).
+
+    Latest-row reads are always available (heartbeat floor enforced in
+    insert_funding_rate_snapshot), so we can safely trim to a small window.
+    """
+    floor_hours = max(24 * days, 2 * _max_open_position_hold_hours())
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=floor_hours)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
     cur = db.execute("DELETE FROM funding_rate_snapshots WHERE observed_at < ?", (cutoff,))
@@ -4443,7 +4683,8 @@ def prune_funding_rate_snapshots(days: int = 30) -> int:
     return cur.rowcount or 0
 
 
-def prune_open_interest_snapshots(days: int = 30) -> int:
+def prune_open_interest_snapshots(days: int = 7) -> int:
+    """Prune open-interest history. Default lowered 30d→7d (Phase 3)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
@@ -4452,7 +4693,9 @@ def prune_open_interest_snapshots(days: int = 30) -> int:
         db.commit()
     return cur.rowcount or 0
 
-def prune_universe_feature_snapshots(days: int = 30) -> int:
+
+def prune_universe_feature_snapshots(days: int = 14) -> int:
+    """Prune universe_feature_snapshots. Default lowered 30d→14d (Phase 3)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
@@ -4546,26 +4789,495 @@ def prune_agent_shell_events(days: int = 14) -> int:
     return cur.rowcount or 0
 
 
-def prune_agent_shell_messages(days: int = 30) -> int:
-    """Prune old agent_shell_messages rows (working-memory conversation log)."""
+def prune_agent_shell_messages(
+    days_context: int = 3,
+    days_other: int = 14,
+) -> int:
+    """Prune agent_shell_messages with type-tiered TTL (Phase 3).
+
+    - message_type='context' rows: dropped after ``days_context`` days (default 3).
+    - all other message_type values: dropped after ``days_other`` days (default 14).
+    """
+    now = datetime.now(timezone.utc)
+    ctx_cutoff = (now - timedelta(days=days_context)).isoformat()
+    other_cutoff = (now - timedelta(days=days_other)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    deleted = 0
+    ctx_cur = db.execute(
+        "DELETE FROM agent_shell_messages "
+        "WHERE message_type = 'context' AND created_at < ?",
+        (ctx_cutoff,),
+    )
+    deleted += ctx_cur.rowcount or 0
+    other_cur = db.execute(
+        "DELETE FROM agent_shell_messages "
+        "WHERE (message_type IS NULL OR message_type != 'context') AND created_at < ?",
+        (other_cutoff,),
+    )
+    deleted += other_cur.rowcount or 0
+    if not was_in_tx:
+        db.commit()
+    return deleted
+
+
+# Artifact type buckets. Anything outside the strategy/proposal buckets falls
+# through to the 14-day default.
+_ARTIFACT_TYPES_STRATEGY = ("strategy_evaluation",)
+_ARTIFACT_TYPES_PROPOSAL = ("proposal", "report", "daily_summary")
+
+
+def prune_agent_shell_artifacts(
+    days_strategy: int = 7,
+    days_proposal: int = 30,
+    days_other: int = 14,
+) -> int:
+    """Prune agent_shell_artifacts with type-tiered TTL (Phase 3).
+
+    - strategy_evaluation rows: ``days_strategy`` (default 7).
+    - proposal / report / daily_summary rows: ``days_proposal`` (default 30).
+    - all other artifact_type values: ``days_other`` (default 14).
+    """
+    now = datetime.now(timezone.utc)
+    strat_cutoff = (now - timedelta(days=days_strategy)).isoformat()
+    prop_cutoff = (now - timedelta(days=days_proposal)).isoformat()
+    other_cutoff = (now - timedelta(days=days_other)).isoformat()
+    strat_placeholders = ",".join("?" * len(_ARTIFACT_TYPES_STRATEGY))
+    prop_placeholders = ",".join("?" * len(_ARTIFACT_TYPES_PROPOSAL))
+    combined_types = (*_ARTIFACT_TYPES_STRATEGY, *_ARTIFACT_TYPES_PROPOSAL)
+    combined_placeholders = ",".join("?" * len(combined_types))
+    db = get_db()
+    was_in_tx = db.in_transaction
+    deleted = 0
+    strat_cur = db.execute(
+        f"DELETE FROM agent_shell_artifacts "
+        f"WHERE artifact_type IN ({strat_placeholders}) AND created_at < ?",
+        (*_ARTIFACT_TYPES_STRATEGY, strat_cutoff),
+    )
+    deleted += strat_cur.rowcount or 0
+    prop_cur = db.execute(
+        f"DELETE FROM agent_shell_artifacts "
+        f"WHERE artifact_type IN ({prop_placeholders}) AND created_at < ?",
+        (*_ARTIFACT_TYPES_PROPOSAL, prop_cutoff),
+    )
+    deleted += prop_cur.rowcount or 0
+    other_cur = db.execute(
+        f"DELETE FROM agent_shell_artifacts "
+        f"WHERE (artifact_type IS NULL OR artifact_type NOT IN ({combined_placeholders})) "
+        f"AND created_at < ?",
+        (*combined_types, other_cutoff),
+    )
+    deleted += other_cur.rowcount or 0
+    if not was_in_tx:
+        db.commit()
+    return deleted
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (2026-07-17): new prune functions
+# All targets are telemetry / analytics — none are on the audit chain or the
+# 7 learning tables. Parent tables cascade-delete their children FIRST in the
+# same transaction, following the prune_agent_runs reference pattern.
+# ---------------------------------------------------------------------------
+
+
+def prune_alpha_control_observations(days: int = 60) -> int:
+    """Prune alpha-control observation rows older than ``days`` (by entry_ts)."""
+    return _delete_old_rows("alpha_control_observations", days)
+
+
+def prune_controller_recommendations(days: int = 30) -> int:
+    """Prune controller_recommendations rows older than ``days`` (by created_at).
+
+    Rows are append-only shadow-log advice — none of the entries are ever
+    executed against production, so lossy pruning is safe.
+    """
+    return _delete_old_rows("controller_recommendations", days)
+
+
+def prune_market_regimes(days: int = 60) -> int:
+    """Prune market_regimes older than ``days``. Latest row protected by heartbeat floor
+    in insert_market_regime — the doctor probe reads MAX(detected_at) unaffected."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM agent_shell_messages WHERE created_at < ?", (cutoff,))
+    cur = db.execute("DELETE FROM market_regimes WHERE detected_at < ?", (cutoff,))
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0
 
 
-def prune_agent_shell_artifacts(days: int = 30) -> int:
-    """Prune old agent_shell_artifacts rows (task output telemetry)."""
+def prune_serenity_evidence(days: int = 60) -> int:
+    """Prune serenity_evidence older than ``days`` (by created_at)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute("DELETE FROM agent_shell_artifacts WHERE created_at < ?", (cutoff,))
+    cur = db.execute("DELETE FROM serenity_evidence WHERE created_at < ?", (cutoff,))
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0
+
+
+def prune_serenity_run_events(days: int = 60) -> int:
+    """Prune serenity_run_events older than ``days`` (by created_at)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM serenity_run_events WHERE created_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_runtime_sessions(days: int = 30) -> int:
+    """Prune finished runtime_sessions older than ``days`` (by started_at).
+
+    Only rows with ``ended_at IS NOT NULL`` are eligible so a still-running boot
+    is never removed. Provenance fields on audit-chain rows (runtime_session_id)
+    become dangling FK-less references but the referenced row was fully consumed
+    at write time — audit reconstruction does not require the session record.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "DELETE FROM runtime_sessions "
+        "WHERE ended_at IS NOT NULL AND started_at < ?",
+        (cutoff,),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_backtest_trades(days: int = 60) -> int:
+    """Prune backtest_trades whose parent run created_at is older than ``days``.
+
+    Exposed for symmetry with the _PRUNABLE whitelist; ``prune_backtest_runs``
+    cascades through this function first inside a single transaction.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "DELETE FROM backtest_trades WHERE run_id IN ("
+        "  SELECT id FROM backtest_runs WHERE created_at < ?"
+        ")",
+        (cutoff,),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_backtest_runs(days: int = 60) -> int:
+    """Prune backtest_runs older than ``days`` + cascade-delete backtest_trades.
+
+    backtest_trades.run_id has no ON DELETE CASCADE; children must be deleted
+    first in the same transaction to avoid FK IntegrityError.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    run_ids = [
+        row[0]
+        for row in db.execute(
+            "SELECT id FROM backtest_runs WHERE created_at < ?", (cutoff,)
+        ).fetchall()
+    ]
+    if not run_ids:
+        return 0
+    placeholders = ",".join("?" * len(run_ids))
+    with transaction():
+        db.execute(
+            f"DELETE FROM backtest_trades WHERE run_id IN ({placeholders})",
+            run_ids,
+        )
+        db.execute("DELETE FROM backtest_runs WHERE created_at < ?", (cutoff,))
+    return len(run_ids)
+
+
+def prune_filter_shadow_evaluations(days: int = 90) -> int:
+    """Prune filter_shadow_evaluations older than ``days`` (by created_at).
+
+    Called first by ``prune_filter_shadow_experiments`` to cascade-delete
+    children; can also be invoked independently.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "DELETE FROM filter_shadow_evaluations WHERE created_at < ?", (cutoff,)
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_filter_shadow_experiments(days: int = 90) -> int:
+    """Prune completed filter_shadow_experiments older than ``days`` + cascade evaluations.
+
+    Excludes rows still in ``status='collecting'`` — a still-open experiment
+    keeps its evidence indefinitely. FK on filter_shadow_evaluations.experiment_id
+    lacks ON DELETE CASCADE so children are deleted first.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    exp_ids = [
+        row[0]
+        for row in db.execute(
+            "SELECT id FROM filter_shadow_experiments "
+            "WHERE status != 'collecting' AND started_at < ?",
+            (cutoff,),
+        ).fetchall()
+    ]
+    if not exp_ids:
+        return 0
+    placeholders = ",".join("?" * len(exp_ids))
+    with transaction():
+        db.execute(
+            f"DELETE FROM filter_shadow_evaluations WHERE experiment_id IN ({placeholders})",
+            exp_ids,
+        )
+        db.execute(
+            f"DELETE FROM filter_shadow_experiments WHERE id IN ({placeholders})",
+            exp_ids,
+        )
+    return len(exp_ids)
+
+
+def prune_universe_members(days: int = 30) -> int:
+    """Prune universe_members whose parent snapshot is older than ``days``.
+
+    Exposed for the _PRUNABLE whitelist. ``prune_universe_snapshots`` calls
+    this first inside a single transaction.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "DELETE FROM universe_members WHERE snapshot_id IN ("
+        "  SELECT id FROM universe_snapshots WHERE created_at < ?"
+        ")",
+        (cutoff,),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_universe_snapshots(days: int = 30) -> int:
+    """Prune universe_snapshots older than ``days`` + cascade-delete universe_members.
+
+    FK universe_members.snapshot_id has no ON DELETE CASCADE; children must be
+    removed first in the same transaction. universe_forward_outcomes references
+    universe_members and is pruned separately at its own 30d cadence.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    snap_ids = [
+        row[0]
+        for row in db.execute(
+            "SELECT id FROM universe_snapshots WHERE created_at < ?",
+            (cutoff,),
+        ).fetchall()
+    ]
+    if not snap_ids:
+        return 0
+    placeholders = ",".join("?" * len(snap_ids))
+    with transaction():
+        # universe_forward_outcomes references universe_members. Delete those
+        # forward-outcome rows first to avoid FK IntegrityError.
+        db.execute(
+            f"DELETE FROM universe_forward_outcomes WHERE member_id IN ("
+            f"  SELECT id FROM universe_members WHERE snapshot_id IN ({placeholders})"
+            f")",
+            snap_ids,
+        )
+        db.execute(
+            f"DELETE FROM universe_members WHERE snapshot_id IN ({placeholders})",
+            snap_ids,
+        )
+        db.execute(
+            f"DELETE FROM universe_snapshots WHERE id IN ({placeholders})",
+            snap_ids,
+        )
+    return len(snap_ids)
+
+
+def prune_universe_scanner_runs(days: int = 30) -> int:
+    """Prune universe_scanner_runs older than ``days`` (by started_at)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "DELETE FROM universe_scanner_runs WHERE started_at < ?", (cutoff,)
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_agent_shell_commands(days: int = 14) -> int:
+    """Prune agent_shell_commands older than ``days`` (by created_at)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "DELETE FROM agent_shell_commands WHERE created_at < ?", (cutoff,)
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_agent_shell_tasks(
+    days_completed: int = 14,
+    days_failed: int = 30,
+) -> int:
+    """Prune agent_shell_tasks + cascade-delete their events and artifacts.
+
+    - completed rows older than ``days_completed`` (default 14).
+    - failed/cancelled rows older than ``days_failed`` (default 30).
+    - status IN ('running','pending') OR completed_at IS NULL are EXEMPT.
+
+    agent_shell_events.task_id and agent_shell_artifacts.task_id both have no
+    ON DELETE CASCADE — children are wiped first in the same transaction.
+    """
+    now = datetime.now(timezone.utc)
+    completed_cutoff = (now - timedelta(days=days_completed)).isoformat()
+    failed_cutoff = (now - timedelta(days=days_failed)).isoformat()
+    db = get_db()
+    task_ids = [
+        row[0]
+        for row in db.execute(
+            "SELECT id FROM agent_shell_tasks "
+            "WHERE completed_at IS NOT NULL AND ("
+            "  (status = 'completed' AND completed_at < ?)"
+            "  OR (status IN ('failed','cancelled') AND completed_at < ?)"
+            ")",
+            (completed_cutoff, failed_cutoff),
+        ).fetchall()
+    ]
+    if not task_ids:
+        return 0
+    placeholders = ",".join("?" * len(task_ids))
+    with transaction():
+        db.execute(
+            f"DELETE FROM agent_shell_events WHERE task_id IN ({placeholders})",
+            task_ids,
+        )
+        db.execute(
+            f"DELETE FROM agent_shell_artifacts WHERE task_id IN ({placeholders})",
+            task_ids,
+        )
+        db.execute(
+            f"DELETE FROM agent_shell_tasks WHERE id IN ({placeholders})",
+            task_ids,
+        )
+    return len(task_ids)
+
+
+def prune_agent_shell_sessions(days: int = 14) -> int:
+    """Prune agent_shell_sessions + cascade every child telemetry row.
+
+    Parent-window MUST be >= max child window (14d covers commands/messages/
+    events/artifacts/tasks at their per-table windows). FK columns on all
+    children lack ON DELETE CASCADE, so children are deleted first in one txn.
+    Excludes rows named as ``parent_session_id`` of a younger session so the
+    lineage-trace summary keeps working.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    session_ids = [
+        row[0]
+        for row in db.execute(
+            "SELECT id FROM agent_shell_sessions "
+            "WHERE created_at < ? "
+            "AND id NOT IN ("
+            "  SELECT DISTINCT parent_session_id FROM agent_shell_sessions "
+            "  WHERE parent_session_id IS NOT NULL"
+            ")",
+            (cutoff,),
+        ).fetchall()
+    ]
+    if not session_ids:
+        return 0
+    placeholders = ",".join("?" * len(session_ids))
+    with transaction():
+        db.execute(
+            f"DELETE FROM agent_shell_messages WHERE session_id IN ({placeholders})",
+            session_ids,
+        )
+        db.execute(
+            f"DELETE FROM agent_shell_events WHERE session_id IN ({placeholders})",
+            session_ids,
+        )
+        db.execute(
+            f"DELETE FROM agent_shell_artifacts WHERE session_id IN ({placeholders})",
+            session_ids,
+        )
+        db.execute(
+            f"DELETE FROM agent_shell_commands WHERE session_id IN ({placeholders})",
+            session_ids,
+        )
+        # agent_shell_tasks has no session_id column; it references tasks via
+        # events/artifacts task_id which we already cleared above. Nothing
+        # further to do for tasks here.
+        db.execute(
+            f"DELETE FROM agent_shell_sessions WHERE id IN ({placeholders})",
+            session_ids,
+        )
+    return len(session_ids)
+
+
+# Per-timeframe millisecond TTLs. Tuple order matches the config schema
+# additions in Agent 7's aletheia/config/schema.py (retention.market_ohlcv_*).
+_MARKET_OHLCV_TTL_DAYS_DEFAULT = {
+    "1m": 2,
+    "5m": 7,
+    "15m": 30,
+    "1h": 90,
+    "4h": 180,
+    "1d": 730,
+}
+
+
+def prune_market_ohlcv(
+    ttl_days: dict[str, int] | None = None,
+) -> int:
+    """Prune market_ohlcv per-timeframe (Phase 3) + drop legacy_unknown wholesale.
+
+    ``ttl_days`` maps timeframe → retention days. Rows are stored with
+    ``ts`` in unix milliseconds so the cutoff is converted to ms per-timeframe.
+    Unknown timeframes are left untouched (defensive).
+
+    Legacy rows with ``exchange='legacy_unknown'`` are hard-deleted entirely
+    regardless of age — those were the fall-back for callers that never
+    supplied a real venue and are of zero forensic value.
+    """
+    ttl = dict(_MARKET_OHLCV_TTL_DAYS_DEFAULT)
+    if ttl_days:
+        ttl.update(ttl_days)
+    now = datetime.now(timezone.utc)
+    db = get_db()
+    was_in_tx = db.in_transaction
+    total = 0
+    for timeframe, days in ttl.items():
+        cutoff_ms = int(
+            (now - timedelta(days=days)).timestamp() * 1000
+        )
+        cur = db.execute(
+            "DELETE FROM market_ohlcv WHERE timeframe = ? AND ts < ?",
+            (timeframe, cutoff_ms),
+        )
+        total += cur.rowcount or 0
+    legacy = db.execute(
+        "DELETE FROM market_ohlcv WHERE exchange = 'legacy_unknown'"
+    )
+    total += legacy.rowcount or 0
+    if not was_in_tx:
+        db.commit()
+    return total
 
 
 def expire_stale_opportunities(ttl_hours: int = 48) -> int:
@@ -4669,11 +5381,52 @@ def list_shadow_trades(
 
 # ── Market Regime ─────────────────────────────────────────────────────────────
 
+# Write-side dedup fields for market_regimes. `signals` is compared as a JSON
+# text — insert_market_regime always normalises it to json.dumps before we
+# reach the guard, so string equality is a semantic equality.
+_MARKET_REGIME_DEDUP_FIELDS = (
+    "state",
+    "confidence",
+    "long_bias",
+    "short_bias",
+    "signals",
+)
+_MARKET_REGIME_HEARTBEAT_FLOOR_MINUTES = 60
+
+
 def insert_market_regime(record) -> None:
-    from aletheia.storage.models import MarketRegimeRecord
+    """Insert a market_regimes row, skipping identical repeats.
+
+    Guard (Phase 3): identical to insert_funding_rate_snapshot — if the newest
+    row has the same state/bias/signals AND ``detected_at`` is younger than
+    ``_MARKET_REGIME_HEARTBEAT_FLOOR_MINUTES`` minutes, we skip. Doctor probes
+    read MAX(detected_at); we preserve that heartbeat by forcing a write once
+    the newest row crosses the floor.
+    """
     data = record.model_dump() if hasattr(record, "model_dump") else dict(record)
     if isinstance(data.get("signals"), dict):
         data["signals"] = json.dumps(data["signals"])
+    db = get_db()
+    row = db.execute(
+        "SELECT state, confidence, long_bias, short_bias, signals, detected_at "
+        "FROM market_regimes ORDER BY detected_at DESC LIMIT 1"
+    ).fetchone()
+    if row is not None:
+        latest = dict(row)
+        same = all(
+            data.get(field) == latest.get(field)
+            for field in _MARKET_REGIME_DEDUP_FIELDS
+        )
+        if same and latest.get("detected_at"):
+            try:
+                prev_ts = datetime.fromisoformat(latest["detected_at"])
+                if prev_ts.tzinfo is None:
+                    prev_ts = prev_ts.replace(tzinfo=timezone.utc)
+                age = datetime.now(timezone.utc) - prev_ts
+                if age < timedelta(minutes=_MARKET_REGIME_HEARTBEAT_FLOOR_MINUTES):
+                    return
+            except (TypeError, ValueError):
+                pass
     _insert("market_regimes", data)
 
 

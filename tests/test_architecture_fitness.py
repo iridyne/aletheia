@@ -129,6 +129,61 @@ def test_causal_tables_not_in_prunable_whitelist():
     )
 
 
+def test_audit_chain_12_tables_not_in_prunable_whitelist():
+    """AGENTS.md hard rule: the full audit-chain 12 must NEVER be prunable.
+
+    Phase 3 retention pass added many new prune functions; this assertion
+    guards the whitelist against accidentally including a trust-bearing table
+    in a follow-up refactor.
+    """
+    from aletheia.storage.repositories import _PRUNABLE
+
+    audit_chain_12 = {
+        "audit_events",
+        "fills",
+        "capital_events",
+        "orders",
+        "positions",
+        "proposals",
+        "risk_decisions",
+        "approvals",
+        "knowledge_items",
+        "trade_proposals",
+        "ps_orders",
+        "ps_fills",
+        "ps_positions",
+    }
+    violations = audit_chain_12 & set(_PRUNABLE.keys())
+    assert violations == set(), (
+        f"RETENTION VIOLATION: audit-chain-12 tables in _PRUNABLE: {violations}"
+    )
+
+
+def test_learning_7_tables_not_in_prunable_whitelist():
+    """AGENTS.md hard rule: the 7 learning tables must NEVER be prunable.
+
+    They are the persistent record of every hypothesis, experiment, exposure,
+    contribution verdict and policy epoch. Losing rows breaks paired-cohort
+    read reproducibility and epoch replay, so retention/prune paths must
+    never touch them.
+    """
+    from aletheia.storage.repositories import _PRUNABLE
+
+    learning_tables = {
+        "learning_experiments",
+        "learning_exposures",
+        "learning_hypotheses",
+        "learning_policy_epochs",
+        "learning_contribution_verdicts",
+        "learning_lifecycle_events",
+        "learning_job_health",
+    }
+    violations = learning_tables & set(_PRUNABLE.keys())
+    assert violations == set(), (
+        f"RETENTION VIOLATION: learning tables in _PRUNABLE: {violations}"
+    )
+
+
 def test_migration_schema_is_additive_only():
     """SCHEMA_SQL must not contain DROP TABLE / DROP COLUMN / RENAME TABLE."""
     from aletheia.storage.migrations import SCHEMA_SQL

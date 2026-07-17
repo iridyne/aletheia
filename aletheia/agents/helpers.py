@@ -379,26 +379,20 @@ def _release_run_counter(run_id: str) -> None:
 
 def log_tool(run_id: str | None, tool_name: str, tool_class: str, permitted: bool,
              output: str | None = None, input_data: str | None = None) -> None:
-    """Best-effort tool-call + reasoning-step logging (never raises).
+    """Best-effort tool-call logging (never raises).
 
-    Writes BOTH:
-      - `agent_tool_calls` (the existing structured tool ledger)
-      - `agent_run_steps` (the §6 reasoning trace; closes WEBUI_BACKEND_HANDOFF #2's
-        write-side gap so `GET /api/agent-runs/{id}/steps` actually returns content).
+    Writes only to `agent_tool_calls` — the structured tool ledger. The old
+    duplicate write to `agent_run_steps` doubled every tool-call payload on
+    disk; `/api/agent-runs/{id}/steps` now UNIONs both tables at read time so
+    the reasoning trace continues to include tool events without persisting
+    each one twice. Non-tool reasoning steps still go through `record_step`.
     """
     if not run_id:
         return
     try:
-        from aletheia.storage.repositories import insert_tool_call, insert_run_step
+        from aletheia.storage.repositories import insert_tool_call
         insert_tool_call(run_id, tool_name, tool_class, permitted, output_data=output,
                          input_data=input_data)
-        insert_run_step(
-            run_id=run_id,
-            step_number=_next_step(run_id),
-            action=f"tool:{tool_name}" + ("" if permitted else " (denied)"),
-            input_data=input_data,
-            output_data=output,
-        )
     except Exception:
         pass
 

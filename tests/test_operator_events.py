@@ -185,7 +185,10 @@ async def test_operator_task_routes_emit_lifecycle_events(client):
     listing = await client.get("/api/operator/events")
     event_types = [item["event_type"] for item in listing.json()]
 
-    assert "task_started" in event_types
+    # Phase 3 retention: task_started emission is deliberately dropped — the
+    # terminal task_completed / task_failed / task_cancelled event carries the
+    # lifecycle signal and avoids doubling agent_shell_events rows.
+    assert "task_started" not in event_types
     assert "task_completed" in event_types
 
 
@@ -255,7 +258,10 @@ async def test_operator_events_can_filter_by_session_and_task(client):
 
     by_task = await client.get(f"/api/operator/events?task_id={task_b_id}")
     assert by_task.status_code == 200
-    assert {item["event_type"] for item in by_task.json()} == {"task_started", "review_started"}
+    # Phase 3 retention: task_started is not emitted; only the paired terminal
+    # event (task_completed/failed/cancelled) plus any custom domain events
+    # reference the task_id.
+    assert {item["event_type"] for item in by_task.json()} == {"review_started"}
 
 
 @pytest.mark.anyio

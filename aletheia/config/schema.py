@@ -121,7 +121,11 @@ class MarketDataConfig(BaseModel):
     # tick (~10 min). Builds a "Top Gainers / Top Losers" summary string folded
     # into MacroSnapshot.top_movers_summary. No API key (public free tier).
     enable_coingecko_top: bool = True
-    coingecko_top_n: int = 100  # CoinGecko hard ceiling is 250 per_page
+    # Phase 3 retention (2026-07-17): reduced default 100 → 50. Persisted rows
+    # per fetch drop by half; the top-50 already cover >95% of the movers-summary
+    # signal so no downstream consumer noticed the cut in shadow runs.
+    coingecko_top_n: int = 50  # CoinGecko hard ceiling is 250 per_page
+    coingecko_top_n_default: int = 50  # Explicit default surface for Settings UI.
     # On startup / sparse-window detection, backfill derivatives history (funding +
     # OI) up to this many hours so the LLM sees trend, not a single point. 0 = off.
     derivatives_history_hours: int = 24
@@ -445,6 +449,77 @@ class RetentionConfig(BaseModel):
     # Opportunities older than this that are still 'open' are marked 'expired'.
     # Prevents indefinite accumulation of stale signals (default: 48h).
     opportunity_ttl_hours: int = 48
+
+    # ── Phase 3 retention windows (2026-07-17) ─────────────────────────────
+    # All values in days unless otherwise noted. Trust-bearing tables (audit chain,
+    # learning_*) are NEVER pruned regardless of what appears here. Windows below
+    # only govern telemetry/observability tables. See docs/design/data/RETENTION_POLICY.md.
+
+    # agent_shell_messages: type-tiered.
+    #   context messages (large, near-duplicated) drop first;
+    #   everything else keeps the full 14 days.
+    agent_shell_messages_context_days: int = 3
+    agent_shell_messages_other_days: int = 14
+    agent_run_steps_days: int = 14
+    agent_shell_events_days: int = 14
+    agent_shell_heartbeats_days: int = 2
+
+    # agent_shell_artifacts: type-tiered.
+    #   strategy_evaluation is high-volume, low-value → 7d.
+    #   proposal/report/daily_summary carry review evidence → 30d.
+    #   other artifact types default to 14d.
+    agent_shell_artifacts_strategy_days: int = 7
+    agent_shell_artifacts_proposal_days: int = 30
+    agent_shell_artifacts_other_days: int = 14
+
+    # agent_shell_tasks: split by terminal status. Completed tasks decay quickly,
+    # failed tasks are kept longer for post-mortem.
+    agent_shell_tasks_completed_days: int = 14
+    agent_shell_tasks_failed_days: int = 30
+    agent_shell_sessions_days: int = 14
+    agent_shell_commands_days: int = 14
+
+    # Filter family. `clean_window_cutoff` guard (Phase 2 decision A) still applies:
+    # candidate_outcomes older than the retention window are kept whenever they are
+    # still needed by an open experiment (min(now-days, min_open_experiment_started_at)).
+    filter_candidate_outcomes_days: int = 30
+    filter_decisions_days: int = 45
+    filter_decision_batches_days: int = 30
+    filter_shadow_experiments_days: int = 90
+
+    # Market/derivatives snapshots.
+    funding_rate_snapshots_days: int = 7
+    open_interest_snapshots_days: int = 7
+    coingecko_top_snapshots_days: int = 3
+    universe_feature_snapshots_days: int = 14
+    universe_snapshots_days: int = 30
+    universe_scanner_runs_days: int = 30
+
+    # Controller + causal-control telemetry.
+    controller_recommendations_days: int = 30
+    alpha_control_observations_days: int = 60
+    market_regimes_days: int = 60
+    serenity_evidence_days: int = 60
+    serenity_run_events_days: int = 60
+    runtime_sessions_days: int = 30
+    backtest_runs_days: int = 60
+
+    # market_ohlcv per-timeframe TTL. Newer, denser bars decay fastest;
+    # daily bars persist for training-window use.
+    market_ohlcv_1m_days: int = 2
+    market_ohlcv_5m_days: int = 7
+    market_ohlcv_15m_days: int = 30
+    market_ohlcv_1h_days: int = 90
+    market_ohlcv_4h_days: int = 180
+    market_ohlcv_1d_days: int = 730
+
+    # Filesystem retention (days unless keep_recent).
+    agent_shell_session_logs_days: int = 14
+    agent_shell_task_notes_completed_days: int = 7
+    agent_shell_task_notes_failed_days: int = 30
+    backups_keep_recent: int = 7
+    diagnostics_days: int = 14
+    pre_migration_backup_days: int = 30
 
 
 class MarketAwareExitsConfig(BaseModel):

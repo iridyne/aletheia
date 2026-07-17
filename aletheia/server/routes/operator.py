@@ -111,8 +111,11 @@ def _apply_stale_status(heartbeat: dict[str, Any]) -> dict[str, Any]:
 
 
 def _task_event_type(status: str) -> str | None:
-    if status == "running":
-        return "task_started"
+    # Retention guardrail: drop task_started events. The paired task_completed /
+    # task_failed / task_cancelled event carries the full lifecycle signal, so
+    # emitting a separate task_started row per task doubles agent_shell_events
+    # rows for no downstream reader benefit. Status "running" now returns None
+    # and the create/update handlers simply skip emission for it.
     if status == "completed":
         return "task_completed"
     if status == "failed":
@@ -138,6 +141,16 @@ def _looks_like_command_rejection(intent: str, response: str | None) -> bool:
 
 def _sse_block(event_name: str, data: dict[str, Any]) -> str:
     return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _truncate_event_field(value: Any, limit: int = 200) -> Any:
+    """Retention guardrail: shrink long command input/response strings before
+    they land in agent_shell_events.payload. Non-strings pass through so
+    numeric/bool/list fields are unaffected. Truncated strings preserve the
+    original length in a ``len=N`` suffix for diagnostics."""
+    if not isinstance(value, str) or len(value) <= limit:
+        return value
+    return f"{value[:limit]}... len={len(value)}"
 
 
 async def _set_paused(paused: bool, *, event_type: str, message: str) -> dict[str, Any]:
@@ -509,6 +522,9 @@ def _seed_branch_workspace(session_id: str, opening_text: str) -> None:
         profile=None,
         sections=None,
     )
+    # Retention guardrail: do NOT persist the full expanded `context` blob into
+    # the agent_shell_messages row. The context snapshot regenerates on read
+    # via /internal/context/query, and the raw payload dominates DB size.
     append_message(
         session_id=session_id,
         role="assistant",
@@ -517,7 +533,6 @@ def _seed_branch_workspace(session_id: str, opening_text: str) -> None:
             "profile": snapshot["profile"],
             "session_kind": snapshot["session_kind"],
             "sections": snapshot["sections"],
-            "context": snapshot["context"],
         },
         message_type="context",
         related_event_id=None,
@@ -1046,7 +1061,7 @@ async def operator_command(req: OperatorCommandRequest):
         session_id=target_session_id,
         related_entity_type="command",
         related_entity_id=target_session_id,
-        payload={"input": req.input},
+        payload={"input": _truncate_event_field(req.input)},
     )
     runtime = AgentShellRuntime()
     result = await runtime.handle(
@@ -1093,9 +1108,9 @@ async def operator_command(req: OperatorCommandRequest):
         related_entity_type="command",
         related_entity_id=target_session_id,
         payload={
-            "input": req.input,
+            "input": _truncate_event_field(req.input),
             "intent": payload.get("intent"),
-            "response": payload.get("response"),
+            "response": _truncate_event_field(payload.get("response")),
         },
     )
     return result
@@ -1125,7 +1140,7 @@ async def _execute_internal_command(command_name: str, payload: OperatorInternal
         related_entity_type="command",
         related_entity_id=command_name,
         payload={
-            "input": command_text,
+            "input": _truncate_event_field(command_text),
             "command": command_name,
             "parameters": payload.parameters or {},
         },
@@ -1157,10 +1172,10 @@ async def _execute_internal_command(command_name: str, payload: OperatorInternal
         related_entity_type="command",
         related_entity_id=command_name,
         payload={
-            "input": command_text,
+            "input": _truncate_event_field(command_text),
             "command": command_name,
             "permitted": result.permitted,
-            "response": result.response,
+            "response": _truncate_event_field(result.response),
         },
     )
     return result.model_dump()
@@ -1323,6 +1338,31 @@ async def operator_create_event(payload: OperatorEventCreate):
 
 @router.post("/internal/artifacts")
 async def operator_create_artifact(payload: OperatorArtifactCreate):
+    # Retention guardrail: reject the well-known stub strategy_evaluation
+    # artifact whose summary is literally "Unknown command: ..." — that
+    # payload originates from an intent-classification bug upstream and is
+    # never a useful evaluation. Refusing at the write boundary avoids
+    # accumulating dead rows in agent_shell_artifacts.
+    if payload.artifact_type == "strategy_evaluation":
+        summary_text = ""
+        if isinstance(payload.content, dict):
+            raw_summary = payload.content.get("summary")
+            if isinstance(raw_summary, str):
+                summary_text = raw_summary
+        if summary_text.startswith("Unknown command:"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "rejected_strategy_evaluation_stub",
+                    "reason": (
+                        "strategy_evaluation artifact whose content.summary "
+                        "starts with 'Unknown command:' is a classification "
+                        "stub and cannot be persisted."
+                    ),
+                    "artifact_type": payload.artifact_type,
+                    "summary_prefix": summary_text[:80],
+                },
+            )
     artifact_id = create_artifact(**payload.model_dump())
     artifacts = list_artifacts(
         task_id=payload.task_id,

@@ -15,6 +15,105 @@ from aletheia.trading.indicators import rsi, atr, sma, bollinger, volume_sma_rat
 
 logger = logging.getLogger("aletheia.universe.features")
 
+# Phase 3 retention (2026-07-17): change-suppression on universe_feature_snapshots.
+# Feature collection runs every ~10 min per asset. When the values are
+# effectively unchanged, we still wrote a full row every cycle → most of
+# the table's rows were near-duplicates.
+#
+# Rules (per (asset_id)):
+#   age < 30 min  → skip write (minimum interval between writes).
+#   age ≥ 60 min  → force write (heartbeat floor — data-freshness monitors and
+#                    downstream freshness gates rely on a live row per asset per hour).
+#   30 – 60 min   → skip only if all persisted numeric fields are equivalent
+#                    (exact-round on most, 0.5% relative delta on the noisy
+#                    percentage/rate fields).
+_FEATURE_SUPPRESSION_MIN_SEC = 30 * 60
+_FEATURE_SUPPRESSION_HEARTBEAT_SEC = 60 * 60
+# Fields that are inherently noisy percentage/rate quantities — compare with
+# a 0.5% relative delta rather than exact-rounded equality.
+_FEATURE_SOFT_DELTA_FIELDS = (
+    "atr_pct", "rsi_14", "return_1h", "funding_rate", "oi_delta_1h",
+)
+_FEATURE_SOFT_DELTA_TOLERANCE = 0.005  # 0.5%
+# All other numeric fields on UniverseFeatureSnapshot. Compared via rounded equality.
+_FEATURE_EXACT_FIELDS = (
+    "quote_volume_24h", "volume_1h", "spread_bps", "depth_10bps_usd",
+    "return_4h", "return_24h", "open_interest", "data_freshness_sec",
+    "btc_beta", "taker_buy_ratio", "vol_ratio", "relative_strength_24h",
+    "oi_price_divergence",
+)
+
+
+def _values_close_soft(prev, new) -> bool:
+    """Compare two floats with a 0.5% relative delta; None == None → equal."""
+    if prev is None and new is None:
+        return True
+    if prev is None or new is None:
+        return False
+    try:
+        prev_f = float(prev)
+        new_f = float(new)
+    except (TypeError, ValueError):
+        return prev == new
+    denom = max(abs(prev_f), 1e-9)
+    return abs(new_f - prev_f) / denom <= _FEATURE_SOFT_DELTA_TOLERANCE
+
+
+def _values_close_exact(prev, new) -> bool:
+    """Compare two values with rounded equality; None == None → equal."""
+    if prev is None and new is None:
+        return True
+    if prev is None or new is None:
+        return False
+    try:
+        return round(float(prev), 6) == round(float(new), 6)
+    except (TypeError, ValueError):
+        return prev == new
+
+
+def _feature_snapshot_equivalent(prev_row: dict, new_snap: "UniverseFeatureSnapshot") -> bool:
+    """True if the persisted numeric fields of `new_snap` match `prev_row` closely."""
+    for field in _FEATURE_SOFT_DELTA_FIELDS:
+        if not _values_close_soft(prev_row.get(field), getattr(new_snap, field, None)):
+            return False
+    for field in _FEATURE_EXACT_FIELDS:
+        if not _values_close_exact(prev_row.get(field), getattr(new_snap, field, None)):
+            return False
+    return True
+
+
+def _seconds_between(prev_ts: str | None, now: datetime) -> float | None:
+    """Return seconds between an ISO timestamp string and `now` (UTC)."""
+    if not prev_ts:
+        return None
+    try:
+        parsed = datetime.fromisoformat(prev_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (now - parsed).total_seconds()
+
+
+def _persist_feature_snapshot(snap: "UniverseFeatureSnapshot") -> None:
+    """Insert a feature snapshot, tolerating the post-migration raw-column drop.
+
+    A Phase 3 migration drops the always-empty `raw` column from
+    `universe_feature_snapshots`. Filter the field out of the payload here so
+    the writer stays compatible before and after the migration runs.
+    """
+    from aletheia.storage.sqlite import get_db
+
+    data = snap.model_dump()
+    data.pop("raw", None)
+    db = get_db()
+    cols = ", ".join(data.keys())
+    placeholders = ", ".join(["?"] * len(data))
+    db.execute(
+        f"INSERT INTO universe_feature_snapshots ({cols}) VALUES ({placeholders})",
+        list(data.values()),
+    )
+
 _OHLCV_CONCURRENCY = 10
 _OHLCV_TIMEOUT = 12.0
 _OHLCV_1H_LIMIT = 168  # 7 days of 1h candles
@@ -556,7 +655,28 @@ async def _fetch_single_feature(
         oi_price_divergence=oi_price_divergence,
     )
     feat["feature_snapshot_id"] = snap.id
-    repo.insert_universe_feature_snapshot(snap)
+
+    # Phase 3 retention: change-suppression. Skip near-duplicate writes; force
+    # a write past the 60-min heartbeat floor so per-asset freshness stays live.
+    prev_row = repo.get_latest_feature_snapshot(asset_id)
+    should_write = True
+    if prev_row is not None:
+        age_sec = _seconds_between(prev_row.get("ts"), now)
+        if age_sec is not None:
+            if age_sec < _FEATURE_SUPPRESSION_MIN_SEC:
+                # Within the 30-min minimum-interval window — never write.
+                should_write = False
+                # Reuse the previous snapshot id for downstream consumers so
+                # the feat dict still references a real row.
+                feat["feature_snapshot_id"] = prev_row.get("id", snap.id)
+            elif age_sec < _FEATURE_SUPPRESSION_HEARTBEAT_SEC:
+                # 30-60 min window — write only if the numeric shape moved.
+                if _feature_snapshot_equivalent(prev_row, snap):
+                    should_write = False
+                    feat["feature_snapshot_id"] = prev_row.get("id", snap.id)
+
+    if should_write:
+        _persist_feature_snapshot(snap)
 
     return feat
 

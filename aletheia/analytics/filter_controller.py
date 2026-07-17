@@ -73,6 +73,174 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _batch_scanner_weights_quota_stats(
+    *, evaluated_since: str | None = None,
+    shrinkage_k: float = 20.0,
+) -> list[dict[str, Any]]:
+    """Aggregate scanner_weights_quota rows out of the compressed batch stream.
+
+    Mirrors `filter_feedback_stats`' output shape so `compute_filter_feedback`
+    can consume batches side-by-side with legacy per-row filter_decisions rows.
+    Legacy rows in filter_decisions produced before the writer flip continue to
+    surface via `filter_feedback_stats`; this helper covers the batch format so
+    the observational signal survives the migration (dual-decode).
+    """
+    try:
+        from aletheia.analytics.filter_evidence import decode_filter_decision_batch
+        from aletheia.storage.sqlite import get_db
+    except Exception:
+        return []
+    time_clause = " AND datetime(evaluated_at) >= datetime(?)" if evaluated_since else ""
+    params: tuple[Any, ...] = (evaluated_since,) if evaluated_since else ()
+    try:
+        rows = get_db().execute(
+            "SELECT id, filter_name, stage, filter_version, parameter_snapshot, "
+            "candidate_facts, evaluated_at "
+            "FROM filter_decision_batches "
+            "WHERE filter_name = 'scanner_weights_quota'"
+            f"{time_clause} "
+            "ORDER BY datetime(evaluated_at) ASC, id ASC",
+            params,
+        ).fetchall()
+    except Exception:
+        return []
+
+    # {(cohort_tuple, decision): {"outcome_keys": set(), "first_ts": str}}
+    first_exposure: dict[str, str] = {}
+    facts_by_cohort: dict[tuple, list[dict[str, Any]]] = {}
+    for raw in rows:
+        row = dict(raw)
+        payload = row.get("candidate_facts") or "[]"
+        try:
+            facts = decode_filter_decision_batch(str(payload))
+        except Exception:
+            facts = []
+        stage = row.get("stage") or "universe_allocation"
+        version = row.get("filter_version")
+        param_snap = row.get("parameter_snapshot") or "{}"
+        evaluated_at = row.get("evaluated_at")
+        for fact in facts:
+            outcome_key = fact.get("outcome_candidate_key")
+            if not outcome_key:
+                continue
+            decision = str(fact.get("decision") or "")
+            if decision not in {"passed", "rejected"}:
+                continue
+            key = str(outcome_key)
+            existing = first_exposure.get(key)
+            if existing is not None and str(existing) <= str(evaluated_at or ""):
+                # Not the first exposure — skip to keep pass/reject cohorts disjoint.
+                continue
+            first_exposure[key] = str(evaluated_at or "")
+            cohort_key = (
+                "scanner_weights_quota",
+                stage,
+                version,
+                param_snap,
+                fact.get("scanner_family") or "unknown",
+                fact.get("direction"),
+                fact.get("market_type") or "spot",
+                decision,
+            )
+            facts_by_cohort.setdefault(cohort_key, []).append({
+                "outcome_candidate_key": key,
+                "decision": decision,
+            })
+
+    if not facts_by_cohort:
+        return []
+
+    # Join with filter_candidate_outcomes to attach per-horizon net returns.
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        outcome_rows = get_db().execute(
+            "SELECT outcome_candidate_key, horizon, status, net_return_pct "
+            "FROM filter_candidate_outcomes"
+        ).fetchall()
+    except Exception:
+        outcome_rows = []
+    outcomes: dict[str, list[dict[str, Any]]] = {}
+    for raw in outcome_rows:
+        row = dict(raw)
+        key = str(row.get("outcome_candidate_key") or "")
+        if not key:
+            continue
+        outcomes.setdefault(key, []).append(row)
+
+    aggregated: list[dict[str, Any]] = []
+    priors: dict[tuple, tuple[int, float]] = {}
+    for cohort_key, facts in facts_by_cohort.items():
+        (filter_name, stage, version, param_snap, family, direction,
+         market_type, decision) = cohort_key
+        per_horizon: dict[str, dict[str, Any]] = {}
+        for fact in facts:
+            key = fact["outcome_candidate_key"]
+            for outcome in outcomes.get(key, []):
+                horizon = outcome.get("horizon")
+                if not horizon:
+                    continue
+                bucket = per_horizon.setdefault(str(horizon), {
+                    "candidates": set(), "settled": [], "gains": 0.0, "losses": 0.0,
+                })
+                bucket["candidates"].add(key)
+                if outcome.get("status") == "settled" and outcome.get("net_return_pct") is not None:
+                    net = float(outcome["net_return_pct"])
+                    bucket["settled"].append(net)
+                    if net > 0:
+                        bucket["gains"] += net
+                    elif net < 0:
+                        bucket["losses"] += -net
+        for horizon, bucket in per_horizon.items():
+            n_total = len(bucket["candidates"])
+            settled = bucket["settled"]
+            n_net = len(settled)
+            avg_net = (sum(settled) / n_net) if n_net else 0.0
+            row_key = (filter_name, stage, version, param_snap, family, direction, market_type, horizon)
+            total, weighted = priors.get(row_key, (0, 0.0))
+            priors[row_key] = (total + n_net, weighted + n_net * avg_net)
+            aggregated.append({
+                "filter_name": filter_name,
+                "stage": stage,
+                "filter_version": version,
+                "parameter_snapshot": param_snap,
+                "decision": decision,
+                "scanner_family": family,
+                "direction": direction,
+                "market_type": market_type,
+                "horizon": horizon,
+                "n_total": n_total,
+                "n_net": n_net,
+                "n": n_net,
+                "avg_net": round(avg_net, 6),
+                "gains": bucket["gains"],
+                "losses": bucket["losses"],
+            })
+
+    output: list[dict[str, Any]] = []
+    for row in aggregated:
+        prior_key = (
+            row["filter_name"], row["stage"], row["filter_version"],
+            row["parameter_snapshot"], row["scanner_family"], row["direction"],
+            row["market_type"], row["horizon"],
+        )
+        prior_n, prior_sum = priors.get(prior_key, (0, 0.0))
+        prior = prior_sum / prior_n if prior_n else 0.0
+        n = row["n_net"]
+        sample = row["avg_net"]
+        gains = row.pop("gains", 0.0)
+        losses = row.pop("losses", 0.0)
+        row["outcome_coverage"] = round(n / row["n_total"], 4) if row["n_total"] else 0.0
+        row["shrunk_avg_net"] = round(
+            (n * sample + float(shrinkage_k) * prior) / (n + float(shrinkage_k)),
+            6,
+        )
+        row["profit_factor"] = round(gains / losses, 4) if losses > 0 else None
+        row["assignment_policy"] = "first_exposure"
+        output.append(row)
+    return output
+
+
 def compute_filter_feedback(
     min_samples: int = _DEFAULT_MIN_SAMPLES,
     *,
@@ -90,6 +258,15 @@ def compute_filter_feedback(
     except Exception as exc:
         logger.warning("filter_controller: filter evidence unavailable: %s", exc)
         stats = []
+
+    # Dual-decode: also pull scanner_weights_quota rows from the compressed
+    # batch stream so the writer flip does not silently drop that filter's
+    # observational signal. Legacy filter_decisions rows and new batch rows
+    # co-exist during migration; both feed the same cohort grouping below.
+    try:
+        stats = list(stats) + _batch_scanner_weights_quota_stats(evaluated_since=evaluated_since)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("filter_controller: batch dual-decode failed: %s", exc)
 
     grouped: dict[tuple, dict[str, dict[str, Any]]] = {}
     for row in stats:
@@ -215,17 +392,101 @@ def compute_filter_feedback(
     return recs
 
 
+def _is_fresh_prior_run(interval_hours: int) -> bool:
+    """Return True when the most recent observe row is younger than half the cadence.
+
+    The observe cycle is idempotent within a window: verdicts derive from
+    multi-hour forward returns, so a manual bounce or misfire replay firing the
+    job twice inside one interval only rewrites identical rows and inflates
+    `controller_recommendations`. Half the cadence is the widest guard that still
+    tolerates a legitimate late fire caused by scheduler drift.
+    """
+    if interval_hours <= 0:
+        return False
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT created_at FROM controller_recommendations "
+            "WHERE run_id IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+    except Exception:  # pragma: no cover - defensive
+        return False
+    created_at = row["created_at"] if row else None
+    if not created_at:
+        return False
+    try:
+        latest_dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if latest_dt.tzinfo is None:
+        latest_dt = latest_dt.replace(tzinfo=timezone.utc)
+    floor_dt = datetime.now(timezone.utc) - timedelta(hours=interval_hours * 0.5)
+    return latest_dt >= floor_dt
+
+
+def _empty_run_summary(
+    min_samples: int,
+    *,
+    generated_at: str,
+    skipped_reason: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "run_id": None,
+        "generated_at": generated_at,
+        "recommendations_written": 0,
+        "verdict_counts": {},
+        "min_samples": min_samples,
+        "shadow_only": True,
+        "experiments_registered": 0,
+        "experiments_evaluated": 0,
+        "experiment_registration": {
+            "registered": 0, "already_registered": 0, "skipped": 0,
+        },
+        "experiment_evaluation": {
+            "evaluated": 0, "ready_for_review": 0,
+            "completed_no_support": 0, "invalidated": 0,
+        },
+    }
+    if skipped_reason:
+        payload["skipped_reason"] = skipped_reason
+    return payload
+
+
 def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str, Any]:
     """Compute recommendations and PERSIST them as append-only shadow rows.
 
     Returns a summary dict for the scheduler log. Writes only to
     controller_recommendations with status='shadow_only'. No config is touched.
     """
-    run_id = uuid.uuid4().hex
     generated_at = _now_iso()
+
+    # Freshness gate — skip if the latest observe row is younger than half the
+    # configured cadence. Prevents scheduler misfires + manual re-triggers from
+    # doubling the append-only recommendation stream during one window.
+    interval_hours = 0
+    try:
+        from aletheia.config.loader import load_config
+
+        interval_hours = int(load_config().controller.observe_interval_hours or 0)
+    except Exception as exc:  # pragma: no cover - defensive config path
+        logger.warning("filter_controller: observe_interval_hours unavailable: %s", exc)
+    if _is_fresh_prior_run(interval_hours):
+        logger.info(
+            "filter_controller observe: skipped — prior run inside %.1fh floor",
+            interval_hours * 0.5,
+        )
+        return _empty_run_summary(
+            min_samples,
+            generated_at=generated_at,
+            skipped_reason="fresh_prior_run",
+        )
+
+    run_id = uuid.uuid4().hex
     recs = compute_filter_feedback(min_samples=min_samples)
 
     written = 0
+    skipped_insufficient = 0
     try:
         from aletheia.storage import repositories as repo
         from aletheia.storage.repositories import transaction
@@ -241,6 +502,15 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
                     if r.suggested_direction in {"loosen", "hold", "tighten", "n/a"}
                     else "n/a"
                 )
+                # Skip both-insufficient rows: when the evidence verdict itself is
+                # insufficient_data, the legacy verdict is also insufficient_data
+                # (no other legacy_verdict maps to it), so the row carries zero
+                # observational signal. `overrestrictive_suspect` and `hold` still
+                # persist unchanged — the coalesced summary row below records the
+                # count for cadence tracking without inflating the append-only stream.
+                if r.verdict == "insufficient_data":
+                    skipped_insufficient += 1
+                    continue
                 repo.insert_controller_recommendation({
                     "id": uuid.uuid4().hex,
                     "created_at": generated_at,
@@ -269,6 +539,39 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
                     "passed_shrunk_avg_net": r.passed_shrunk_avg_net,
                     "rejected_shrunk_avg_net": r.rejected_shrunk_avg_net,
                     "outcome_coverage": r.outcome_coverage,
+                })
+                written += 1
+            if skipped_insufficient:
+                # One summary row per run so operators still see the cell count
+                # without recording N near-empty near-duplicate rows.
+                repo.insert_controller_recommendation({
+                    "id": uuid.uuid4().hex,
+                    "created_at": generated_at,
+                    "filter_name": "(insufficient_summary)",
+                    "scanner_family": "(all)",
+                    "stage": "(summary)",
+                    "current_value": None,
+                    "suggested_direction": "n/a",
+                    "verdict": "insufficient_data",
+                    "error_signal": None,
+                    "n_samples": skipped_insufficient,
+                    "reasoning": (
+                        f"{skipped_insufficient} cells reported "
+                        "insufficient_data; coalesced to a single row per run."
+                    ),
+                    "status": "shadow_only",
+                    "run_id": run_id,
+                    "evidence_verdict": "insufficient_data",
+                    "evidence_direction": "n/a",
+                    "filter_version": None,
+                    "direction": None,
+                    "market_type": None,
+                    "horizon": None,
+                    "passed_n": None,
+                    "rejected_n": None,
+                    "passed_shrunk_avg_net": None,
+                    "rejected_shrunk_avg_net": None,
+                    "outcome_coverage": None,
                 })
                 written += 1
     except Exception as e:  # pragma: no cover - defensive

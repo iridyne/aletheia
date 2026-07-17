@@ -51,9 +51,15 @@ def build_policy_epoch(
     safety_required: bool = False,
 ) -> PolicyEpoch:
     safe_values = _without_secrets(effective_values)
+    # Strip ``code_commit`` from the hashing payload: a rebuild of the same
+    # policy must not rotate the epoch (that churned learning_policy_epochs
+    # every restart with no policy delta).  The commit is still recorded on
+    # ``learning_exposures.code_commit`` for downstream attribution, so no
+    # measurement replay is lost.
+    hash_values = _without_code_commit(safe_values)
     payload = {
         "epoch_kind": str(epoch_kind),
-        "effective_values": safe_values,
+        "effective_values": hash_values,
         "affected_path_ids": sorted(set(affected_path_ids)),
         "safety_required": bool(safety_required),
     }
@@ -61,7 +67,7 @@ def build_policy_epoch(
     return PolicyEpoch(
         epoch_kind=str(epoch_kind),
         epoch_hash=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
-        effective_values=safe_values,
+        effective_values=hash_values,
         affected_path_ids=tuple(payload["affected_path_ids"]),
         safety_required=bool(safety_required),
     )
@@ -126,3 +132,17 @@ def _without_secrets(value: Any) -> Any:
 def _is_secret_key(key: str) -> bool:
     lowered = key.lower()
     return any(fragment in lowered for fragment in _SECRET_FRAGMENTS)
+
+
+def _without_code_commit(value: Any) -> Any:
+    """Drop any ``code_commit`` key at the top level of the effective_values dict.
+
+    Only strips the top-level key that the epoch caller feeds in — nested
+    dicts (for example ``learning.model_dump()``) are left alone so a knob
+    literally named ``code_commit`` inside another config section is
+    preserved.  The caller in ``experiments._policy_epoch`` also stops
+    populating this key, so this is defense-in-depth.
+    """
+    if isinstance(value, dict):
+        return {str(key): item for key, item in value.items() if str(key) != "code_commit"}
+    return value

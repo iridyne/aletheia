@@ -1758,11 +1758,38 @@ def _run_cleanup():
     cfg = load_config()
     try:
         from aletheia.storage import repositories as repo
+        from aletheia.storage.sqlite import get_db
         from aletheia.files.jsonl import write_audit
         from aletheia.execution.stale_order_cleanup import cleanup_stale_orphan_orders
         r = cfg.retention
+        # ------------------------------------------------------------------
+        # FK cascade ordering (Phase 3 retention) — the agent_shell hierarchy
+        # forms a tree:
+        #     agent_shell_sessions
+        #       ├── agent_shell_messages    (FK: session_id)
+        #       ├── agent_shell_events      (FK: session_id, task_id)
+        #       ├── agent_shell_artifacts   (FK: session_id, task_id)
+        #       ├── agent_shell_commands    (FK: session_id)
+        #       ├── agent_shell_tasks       (FK: session_id)
+        #       └── agent_shell_heartbeats  (FK: session_id)
+        # Child rows MUST be deleted before parent rows in the same batch:
+        #   1. Each child prune honors its own (shorter or equal) retention
+        #      window on its own timestamp column.
+        #   2. The parent prune (agent_shell_sessions) then cascades any
+        #      leftover child rows younger than the child cutoff but older
+        #      than the parent cutoff. Per Agent 2, the parent function
+        #      cascade-deletes inside a single transaction, so this ordering
+        #      is a defense-in-depth safety belt rather than a strict
+        #      correctness requirement — it also keeps `counts` readable so
+        #      the audit trail shows what each window took out.
+        # A parallel rule applies to agent_shell_tasks (child of sessions,
+        # parent of events/artifacts) — task-scoped children are pruned by
+        # their own function before agent_shell_tasks fires. See
+        # repositories.prune_agent_shell_sessions for the cascade impl.
+        # ------------------------------------------------------------------
+        min_open_exp_at = _min_open_experiment_started_at()
         counts = {
-            "run_steps": repo.prune_run_steps(r.run_steps_days),
+            "run_steps": repo.prune_run_steps(r.agent_run_steps_days),
             "tool_calls": repo.prune_tool_calls(r.tool_calls_days),
             "agent_runs": repo.prune_agent_runs(r.agent_runs_days),
             "market_snapshots": repo.prune_market_snapshots(r.market_snapshots_days),
@@ -1770,36 +1797,93 @@ def _run_cleanup():
             "orderbook_snapshots": repo.prune_orderbook_snapshots(7),
             "perp_structure_snapshots": repo.prune_perp_structure_snapshots(30),
             "liquidation_events": repo.prune_liquidation_events(7),
-            "funding_rate_snapshots": repo.prune_funding_rate_snapshots(30),
-            "open_interest_snapshots": repo.prune_open_interest_snapshots(30),
+            "funding_rate_snapshots": repo.prune_funding_rate_snapshots(r.funding_rate_snapshots_days),
+            "open_interest_snapshots": repo.prune_open_interest_snapshots(r.open_interest_snapshots_days),
             "macro_snapshots": repo.prune_macro_snapshots(90),
-            "coingecko_top_snapshots": repo.prune_coingecko_top_snapshots(14),
+            "coingecko_top_snapshots": repo.prune_coingecko_top_snapshots(r.coingecko_top_snapshots_days),
             # #149/#150: these had a prune fn but no cleanup-job wiring (onchain) or no
             # prune at all (prediction), so they grew unbounded.
             "onchain_snapshots": repo.prune_onchain_snapshots(30),
             "prediction_probability_snapshots": repo.prune_prediction_probability_snapshots(90),
-            "universe_feature_snapshots": repo.prune_universe_feature_snapshots(30),
+            "universe_feature_snapshots": repo.prune_universe_feature_snapshots(r.universe_feature_snapshots_days),
             "ohlcv_backfill_state": repo.prune_ohlcv_backfill_state(90),
             "universe_forward_outcomes": repo.prune_universe_forward_outcomes(30),
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
-            "filter_decision_batches": repo.prune_filter_decision_batches(30),
-            "filter_decisions": repo.prune_filter_decisions(90),
-            "filter_candidate_outcomes": repo.prune_filter_candidate_outcomes(90),
+            "filter_decision_batches": repo.prune_filter_decision_batches(r.filter_decision_batches_days),
+            # Filter-family clean_window_cutoff guard: pass the oldest still-
+            # open learning experiment start so rows any open experiment
+            # might still cite are preserved even when their timestamp is
+            # older than the plain retention window.
+            "filter_decisions": repo.prune_filter_decisions(
+                r.filter_decisions_days,
+                min_experiment_started_at=min_open_exp_at,
+            ),
+            "filter_candidate_outcomes": repo.prune_filter_candidate_outcomes(
+                r.filter_candidate_outcomes_days,
+                min_experiment_started_at=min_open_exp_at,
+            ),
+            "filter_shadow_experiments": repo.prune_filter_shadow_experiments(r.filter_shadow_experiments_days),
             "operator_evaluation_events": repo.prune_operator_evaluation_events(30),
             "pi_decisions_transient": repo.prune_pi_decisions(7),
             "system_actions": repo.prune_system_actions(7),
+            # Market OHLCV per-timeframe TTL + legacy_unknown hard drop.
+            "market_ohlcv": repo.prune_market_ohlcv(ttl_days={
+                "1m": r.market_ohlcv_1m_days,
+                "5m": r.market_ohlcv_5m_days,
+                "15m": r.market_ohlcv_15m_days,
+                "1h": r.market_ohlcv_1h_days,
+                "4h": r.market_ohlcv_4h_days,
+                "1d": r.market_ohlcv_1d_days,
+            }),
+            "alpha_control_observations": repo.prune_alpha_control_observations(r.alpha_control_observations_days),
+            "controller_recommendations": repo.prune_controller_recommendations(r.controller_recommendations_days),
+            "market_regimes": repo.prune_market_regimes(r.market_regimes_days),
+            "serenity_evidence": repo.prune_serenity_evidence(r.serenity_evidence_days),
+            "serenity_run_events": repo.prune_serenity_run_events(r.serenity_run_events_days),
+            "runtime_sessions": repo.prune_runtime_sessions(r.runtime_sessions_days),
+            "backtest_runs": repo.prune_backtest_runs(r.backtest_runs_days),
+            # Universe: scanner_runs first (child rows), then snapshots which
+            # cascade-deletes universe_members inside its own transaction.
+            "universe_scanner_runs": repo.prune_universe_scanner_runs(r.universe_scanner_runs_days),
+            "universe_snapshots": repo.prune_universe_snapshots(r.universe_snapshots_days),
             # Operator-shell telemetry (DB-SIZE-1): heartbeats are the dominant
             # bloat — pure liveness, read latest-row-only, so a short window.
-            "agent_shell_heartbeats": repo.prune_agent_shell_heartbeats(2),
-            "agent_shell_events": repo.prune_agent_shell_events(14),
-            "agent_shell_messages": repo.prune_agent_shell_messages(30),
-            "agent_shell_artifacts": repo.prune_agent_shell_artifacts(30),
+            # Children BEFORE parents (agent_shell_sessions) — see FK cascade
+            # ordering comment above.
+            "agent_shell_heartbeats": repo.prune_agent_shell_heartbeats(r.agent_shell_heartbeats_days),
+            "agent_shell_messages": repo.prune_agent_shell_messages(
+                days_context=r.agent_shell_messages_context_days,
+                days_other=r.agent_shell_messages_other_days,
+            ),
+            "agent_shell_events": repo.prune_agent_shell_events(r.agent_shell_events_days),
+            "agent_shell_artifacts": repo.prune_agent_shell_artifacts(
+                days_strategy=r.agent_shell_artifacts_strategy_days,
+                days_proposal=r.agent_shell_artifacts_proposal_days,
+                days_other=r.agent_shell_artifacts_other_days,
+            ),
+            "agent_shell_commands": repo.prune_agent_shell_commands(r.agent_shell_commands_days),
+            "agent_shell_tasks": repo.prune_agent_shell_tasks(
+                days_completed=r.agent_shell_tasks_completed_days,
+                days_failed=r.agent_shell_tasks_failed_days,
+            ),
+            "agent_shell_sessions": repo.prune_agent_shell_sessions(r.agent_shell_sessions_days),
             # Per-session JSONL transcripts on disk (not a DB table): high file
             # COUNT, low bytes, pure working-memory telemetry never read by the
             # learning/PI chain. Had no cleanup path — ~175 files/day, 2.6k in 15
             # days. 14d matches agent_shell_events (the DB form of this stream).
             "agent_shell_session_logs": _prune_session_logs(cfg),
+            "agent_shell_task_notes": _prune_task_notes(cfg),
+            # Filesystem retention (backups, diagnostics, pre-migration
+            # backup) — dispatched to helpers in
+            # aletheia.maintenance.filesystem_retention (Agent 4).
+            "backups_rotated": _prune_backups(r.backups_keep_recent),
+            "diagnostics": _prune_diagnostics(r.diagnostics_days),
+            "pre_migration_backup": _prune_pre_migration_backup(r.pre_migration_backup_days),
+            # Secondary SQLite file (~/.aletheia/tasks.db) — holds
+            # agent_task_claims used for cross-process task fanout. Not part
+            # of app.db so it needs its own DELETE cycle.
+            "agent_task_claims": _prune_agent_task_claims_tasks_db(),
             "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
             "news_items": _prune_news(cfg),
             # Cancel abandoned unresolved Orders reconciliation can never resolve
@@ -1808,6 +1892,14 @@ def _run_cleanup():
             # Fill or open Position. Returns a summary dict, not a bare count.
             "stale_orders": cleanup_stale_orphan_orders(),
         }
+        # Reclaim freed pages from the prunes above without a full VACUUM.
+        # Requires PRAGMA auto_vacuum=INCREMENTAL to have been enabled at
+        # DB creation / by the Phase 4 backfill; the pragma is a silent
+        # no-op when auto_vacuum is NONE, so it is safe to call every cycle.
+        try:
+            get_db().execute("PRAGMA incremental_vacuum(1000)")
+        except Exception as vac_err:  # noqa: BLE001 — best-effort reclaim
+            logger.debug("incremental_vacuum skipped: %s", vac_err)
         write_audit({
             "actor": "system", "source": "scheduler",
             "event_type": "data_pruned", "entity_type": "telemetry",
@@ -1816,6 +1908,25 @@ def _run_cleanup():
     except Exception as e:
         logger.warning("cleanup job failed: %s", e)
         _record_job_failure("cleanup", str(e))
+
+
+def _min_open_experiment_started_at() -> str | None:
+    """Oldest `started_at` among open learning experiments — used as the
+    filter-family `clean_window_cutoff` so filter rows any open experiment
+    might still cite are preserved even when older than the retention
+    window. None means no open experiments (or query failed) — the prune
+    functions then fall back to the pure days-based cutoff."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        row = get_db().execute(
+            "SELECT MIN(started_at) FROM learning_experiments WHERE ended_at IS NULL"
+        ).fetchone()
+        if not row:
+            return None
+        val = row[0]
+        return val if isinstance(val, str) and val else None
+    except Exception:
+        return None
 
 
 def _prune_news(cfg) -> int:
@@ -1827,10 +1938,88 @@ def _prune_news(cfg) -> int:
 
 
 def _prune_session_logs(cfg) -> int:
+    """DB-JOIN-based session-log prune (Agent 4). Falls back to the legacy
+    file-only pruner if the DB-join variant is not yet importable. The
+    operator's persistent main session id is threaded through as an extra
+    exempt stem so it is never reaped even when its DB row falls outside
+    the retention window."""
     try:
-        from aletheia.agent_shell.file_artifacts import prune_session_logs
-        keep = (cfg.operator.main_session_id,)
-        return prune_session_logs(14, keep)
+        from aletheia.agent_shell.file_artifacts import prune_session_logs_db_join
+        days = int(getattr(cfg.retention, "agent_shell_session_logs_days", 14))
+        main_stem = str(getattr(getattr(cfg, "operator", None), "main_session_id", "") or "")
+        extra = (main_stem,) if main_stem else ()
+        return prune_session_logs_db_join(days, extra_exempt_stems=extra)
+    except Exception:
+        try:
+            from aletheia.agent_shell.file_artifacts import prune_session_logs
+            keep = (cfg.operator.main_session_id,)
+            return prune_session_logs(14, keep)
+        except Exception:
+            return 0
+
+
+def _prune_task_notes(cfg) -> int:
+    """Task-notes filesystem prune (Agent 4) — joins agent_shell_tasks to
+    unlink `.md` notes for finished tasks + orphan-sweeps stale files."""
+    try:
+        from aletheia.agent_shell.file_artifacts import prune_task_notes_db_join
+        return prune_task_notes_db_join(
+            days_completed=int(getattr(cfg.retention, "agent_shell_task_notes_completed_days", 7)),
+            days_failed=int(getattr(cfg.retention, "agent_shell_task_notes_failed_days", 30)),
+        )
+    except Exception:
+        return 0
+
+
+def _prune_backups(keep_recent: int) -> int:
+    try:
+        from aletheia.maintenance.filesystem_retention import prune_backups
+        return prune_backups(keep_recent=keep_recent)
+    except Exception:
+        return 0
+
+
+def _prune_diagnostics(days: int) -> int:
+    try:
+        from aletheia.maintenance.filesystem_retention import prune_diagnostics_dir
+        return prune_diagnostics_dir(days=days)
+    except Exception:
+        return 0
+
+
+def _prune_pre_migration_backup(days: int) -> int:
+    try:
+        from aletheia.maintenance.filesystem_retention import prune_pre_migration_backup
+        return prune_pre_migration_backup(days=days)
+    except Exception:
+        return 0
+
+
+def _prune_agent_task_claims_tasks_db() -> int:
+    """Best-effort DELETE of expired claims in the secondary tasks.db.
+
+    That file lives at `${ALETHEIA_DATA_DIR:-~/.aletheia}/tasks.db` and is
+    not managed by the app.db connection pool — the scheduler opens a
+    fresh short-lived connection every cleanup cycle. Returns rowcount, or
+    0 on any failure (missing file, unavailable table, locked DB).
+    """
+    try:
+        import sqlite3
+        from aletheia.config.loader import get_data_dir
+        db_file = get_data_dir() / "tasks.db"
+        if not db_file.exists():
+            return 0
+        now = datetime.now(timezone.utc).isoformat()
+        conn = sqlite3.connect(str(db_file), timeout=30, isolation_level=None)
+        try:
+            cur = conn.execute(
+                "DELETE FROM agent_task_claims "
+                "WHERE expires_at IS NOT NULL AND expires_at < ?",
+                (now,),
+            )
+            return cur.rowcount or 0
+        finally:
+            conn.close()
     except Exception:
         return 0
 

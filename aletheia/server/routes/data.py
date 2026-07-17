@@ -239,11 +239,40 @@ async def get_agent_run_tool_calls(run_id: str):
 async def get_agent_run_steps(run_id: str):
     """Get the ordered reasoning/action steps (inputs/outputs) for an agent run.
 
-    Read-only view of the agent_run_steps table. Returns [] for runs that recorded
-    no steps — the UI renders that honestly rather than implying a trace exists.
+    UNIONs `agent_run_steps` (non-tool reasoning steps) with `agent_tool_calls`
+    (tool events) so the write-side no longer has to mirror every tool call into
+    both tables. Rows are returned in execution order; tool-call rows carry a
+    `source='tool_call'` marker so the UI can style them distinctly.
     """
     _ensure_db()
-    return repo.list_run_steps(run_id=run_id, limit=500)
+    db = get_db()
+    rows: list[dict] = []
+    steps = db.execute(
+        "SELECT id, run_id, step_number, action, input_data, output_data, created_at "
+        "FROM agent_run_steps WHERE run_id = ? ORDER BY step_number ASC LIMIT 500",
+        (run_id,),
+    ).fetchall()
+    for raw in steps:
+        row = dict(raw)
+        row["source"] = "step"
+        rows.append(row)
+    tool_calls = db.execute(
+        "SELECT id, run_id, tool_name, tool_class, permitted, input_data, "
+        "output_data, created_at "
+        "FROM agent_tool_calls WHERE run_id = ? ORDER BY created_at ASC LIMIT 500",
+        (run_id,),
+    ).fetchall()
+    for raw in tool_calls:
+        row = dict(raw)
+        permitted = bool(row.pop("permitted", 1))
+        tool_name = row.pop("tool_name", "") or ""
+        row.pop("tool_class", None)
+        row["action"] = f"tool:{tool_name}" + ("" if permitted else " (denied)")
+        row["step_number"] = None
+        row["source"] = "tool_call"
+        rows.append(row)
+    rows.sort(key=lambda item: (item.get("created_at") or "", item.get("step_number") or 0))
+    return rows[:500]
 
 
 class StartAgentRequest(BaseModel):
