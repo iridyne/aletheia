@@ -557,6 +557,21 @@ class UniverseService:
                         notify_paper_trader(source="universe_refresh_ttl_slide")
                     except Exception as _e:
                         logger.debug("paper_trader nudge skipped (non-fatal): %s", _e)
+                # Even on reuse, sweep any orphan opportunities left over from
+                # earlier snapshots that became superseded before the cascade
+                # existed. Idempotent — a no-op once the pool is clean.
+                try:
+                    cascaded = repo.expire_opportunities_from_superseded_snapshots(market_type)
+                    if cascaded:
+                        logger.info(
+                            "Universe refresh (suppressed): cascaded expiry — %d orphan "
+                            "opportunity(s) from superseded snapshots marked expired",
+                            cascaded,
+                        )
+                except Exception as _e:
+                    logger.warning(
+                        "Universe refresh (suppressed): cascade expiry failed (non-fatal): %s", _e,
+                    )
                 # Advance the scanner run pointer to the reused snapshot, then
                 # short-circuit the publication block: no new members to insert,
                 # no downstream cohort logging (freshness monitors read the
@@ -689,6 +704,23 @@ class UniverseService:
                     short_enabled=cfg.regime.short_enabled,
                 )
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
+                # Cascade: cancel open opportunities whose parent snapshot just
+                # became superseded. Before the soft-TTL filter these expired
+                # naturally at the family-TTL cliff; now they need explicit
+                # cleanup or the pool grows unboundedly (see
+                # repositories.expire_opportunities_from_superseded_snapshots).
+                try:
+                    cascaded = repo.expire_opportunities_from_superseded_snapshots(market_type)
+                    if cascaded:
+                        logger.info(
+                            "Universe refresh: cascaded expiry — %d orphan opportunity(s) "
+                            "from superseded snapshots marked expired",
+                            cascaded,
+                        )
+                except Exception as _e:
+                    logger.warning(
+                        "Universe refresh: cascade expiry failed (non-fatal): %s", _e,
+                    )
 
             # Alpha-control observations are analytics telemetry, not part of
             # snapshot/Opportunity authority. Persist them after the atomic

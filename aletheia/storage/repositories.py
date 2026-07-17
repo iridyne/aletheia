@@ -3842,6 +3842,48 @@ def get_active_universe_snapshot(market_type: str = "crypto") -> dict | None:
     return dict(row) if row else None
 
 
+def expire_opportunities_from_superseded_snapshots(market_type: str = "crypto") -> int:
+    """Mark opportunities linked to already-superseded universe_snapshots as expired.
+
+    When `expire_universe_snapshots` flips a snapshot from 'active' to
+    'superseded', its member opportunities are logically orphaned — the
+    scanner no longer confirms that thesis. Before the soft-TTL filter and
+    change-suppression valid_until slide, those opportunities would age out
+    at the ranker's family-TTL cliff (30-60min for momentum/mean_reversion)
+    and paper_trader would set status='expired' via `_settle_permanent_skips`.
+
+    With soft-TTL now scoring rather than hard-rejecting past valid_until,
+    and change-suppression sliding valid_until forward every 10-min tick for
+    the active snapshot, orphans never expire on their own. Every stable
+    fingerprint window that then breaks leaves a fresh generation of open
+    opportunities pointing at a superseded snapshot, and the pool grows
+    unboundedly.
+
+    This helper closes the cascade: whenever a snapshot's status becomes
+    'superseded', its still-open opportunities transition to 'expired' in a
+    single UPDATE. Idempotent — running it repeatedly is a no-op after the
+    first pass. Only touches `status='open'` rows so terminal states are
+    preserved. Filter-evidence pipelines that key off opportunities.status
+    see the transition naturally.
+
+    Returns the number of opportunities transitioned.
+    """
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "UPDATE opportunities SET status = 'expired' "
+        "WHERE status = 'open' AND universe_snapshot_id IN ("
+        "  SELECT id FROM universe_snapshots "
+        "  WHERE market_type = ? AND status = 'superseded'"
+        ")",
+        (market_type,),
+    )
+    n = int(cur.rowcount or 0)
+    if not was_in_tx:
+        db.commit()
+    return n
+
+
 def expire_universe_snapshots(market_type: str = "crypto", except_id: str | None = None) -> None:
     db = get_db()
     was_in_tx = db.in_transaction

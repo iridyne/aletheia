@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased] - 2026-07-17 — Cascade opportunity expiry when parent snapshot is superseded
+
+Fixes an unbounded-growth backlog exposed by the change-suppression valid_until
+slide + soft-TTL filter fixes: after the pre-restart baseline of 52 open
+opportunities, the pool grew to 72 in the first hour post-restart, with
+observed 63/72 opps belonging to *superseded* universe snapshots. Root cause
+was a design gap: `expire_universe_snapshots` marks snapshots superseded but
+never cascaded to their child opportunities. Before the soft-TTL fix those
+would age out naturally at the family-TTL cliff; with soft-TTL they linger
+indefinitely at `status='open'`.
+
+- `repositories.expire_opportunities_from_superseded_snapshots(market_type)`:
+  single UPDATE that transitions `status='open'` opportunities linked to
+  any `universe_snapshots.status='superseded'` row into `status='expired'`.
+  Idempotent — no-op once pool is clean. Terminal states preserved.
+- `service.py` calls it in *both* branches of `UniverseService.refresh`:
+  after each new-snapshot publication AND after each change-suppressed
+  reuse. Self-healing at 10-min cadence regardless of fingerprint stability.
+- One-shot repair of the 63 orphans observed at diagnosis time: run
+  `python -c "from aletheia.storage.repositories import
+  expire_opportunities_from_superseded_snapshots as f; print(f('crypto'))"`.
+  Post-restart the running gateway will keep the pool tidy on its own.
+
 ## [Unreleased] - 2026-07-17 — Gateway CLI: no-browser as default
 
 Flips the `gateway start` / `gateway restart` default: the browser no longer
