@@ -27,6 +27,43 @@ def setup_env(tmp_path, monkeypatch):
     run_migrations()
 
 
+def test_posix_launcher_double_forks_before_gateway_bootstrap(monkeypatch):
+    """The surviving supervisor must be an init-owned grandchild, not a CLI child."""
+    from aletheia import _gateway_runner as runner
+
+    forks = iter([0, 0])
+    calls: list[str] = []
+    monkeypatch.setattr(runner.os, "name", "posix")
+    monkeypatch.setattr(runner.os, "fork", lambda: next(forks))
+    monkeypatch.setattr(runner.os, "setsid", lambda: calls.append("setsid"))
+
+    assert runner._detach_from_launcher() is True
+    assert calls == ["setsid"]
+
+
+def test_posix_launcher_parent_and_intermediate_exit_cleanly(monkeypatch):
+    """Both launcher parents return zero so CLI readiness verification continues."""
+    from aletheia import _gateway_runner as runner
+
+    monkeypatch.setattr(runner.os, "name", "posix")
+    monkeypatch.setattr(runner.os, "fork", lambda: 123)
+    monkeypatch.setattr(runner.os, "setsid", lambda: pytest.fail("parent must not setsid"))
+    assert runner._detach_from_launcher() is False
+
+    forks = iter([0, 456])
+    monkeypatch.setattr(runner.os, "fork", lambda: next(forks))
+    monkeypatch.setattr(runner.os, "setsid", lambda: None)
+    assert runner._detach_from_launcher() is False
+
+
+def test_windows_runner_leaves_detach_to_native_creation_flags(monkeypatch):
+    from aletheia import _gateway_runner as runner
+
+    monkeypatch.setattr(runner.os, "name", "nt")
+    monkeypatch.setattr(runner.os, "fork", lambda: pytest.fail("Windows must not fork"), raising=False)
+    assert runner._detach_from_launcher() is True
+
+
 def test_supervisor_respawns_on_crash_then_gives_up(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia import _gateway_runner as runner
