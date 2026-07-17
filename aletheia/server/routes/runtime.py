@@ -214,6 +214,8 @@ async def runtime_events(limit: int = 100):
 async def runtime_events_stream(limit: int = 100, once: bool = False):
     async def _stream():
         seen_ids: set[str] = set()
+        idle_poll_secs = 1.0
+        max_idle_poll_secs = 8.0
         backlog = _service().list_events(limit=limit)
         for event in reversed(backlog):
             seen_ids.add(event["id"])
@@ -222,13 +224,16 @@ async def runtime_events_stream(limit: int = 100, once: bool = False):
             return
 
         while True:
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(idle_poll_secs)
             latest = _service().list_events(limit=limit)
             fresh = [event for event in reversed(latest) if event["id"] not in seen_ids]
             for event in fresh:
                 seen_ids.add(event["id"])
                 yield _sse_block("runtime_event", event)
             if not fresh:
+                idle_poll_secs = min(max_idle_poll_secs, idle_poll_secs * 2)
                 yield ": keep-alive\n\n"
+            else:
+                idle_poll_secs = 1.0
 
     return StreamingResponse(_stream(), media_type="text/event-stream")

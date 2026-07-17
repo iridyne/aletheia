@@ -413,7 +413,7 @@ class HealthConfig(BaseModel):
     auto_resume_stall_backoff_factor: float = 2.0
     auto_resume_max_interval_sec: int = 1800
     # Exchange connectivity monitor: detect network outages and auto-pause/resume.
-    exchange_probe_interval_sec: int = 30
+    exchange_probe_interval_sec: int = 60
     exchange_probe_failure_threshold: int = 3
     exchange_auto_resume_interval_sec: int = 60
     exchange_auto_resume_success_threshold: int = 2

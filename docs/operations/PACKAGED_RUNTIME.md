@@ -116,6 +116,9 @@ business health. Its menu provides:
 The icon distinguishes starting, healthy, updating, degraded, and stopped states. The tray
 has no embedded WebView and does not duplicate Dashboard settings or trading controls.
 
+For detailed power-profile analysis and optimization options on macOS (especially for the
+“tray as remote control” direction), see [Packaged Runtime Power Optimization](packaged-runtime-power-optimization-report.md).
+
 ## Signed update transaction
 
 An installed update never modifies a Git checkout and never invokes `uv`.

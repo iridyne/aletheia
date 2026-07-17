@@ -23,6 +23,9 @@ must be dogfooded on one Mac or promoted through the signed Feed, then read the
 These documents define the release path; do not substitute `git pull`, a development
 gateway, or Docker Compose for an installed Runtime update.
 
+If you are specifically optimizing packaged runtime battery/power behavior (tray-first remote control + background efficiency),
+start from [Packaged Runtime Power Optimization](packaged-runtime-power-optimization-report.md).
+
 ## Agent Rule
 
 Operational docs can contain commands. Prefer `uv run` for Python commands and preserve safety rules from `AGENTS.md`.

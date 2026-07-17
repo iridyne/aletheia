@@ -94,6 +94,18 @@ export const NAV: NavGroup[] = [
  * Information density goal: same data as before, ~75px narrower, far less visual noise.
  */
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full'] as const
+const STATUS_POLL_INTERVAL_ACTIVE_MS = 2000
+const STATUS_POLL_INTERVAL_IDLE_MS = 15000
+const RISK_POLL_INTERVAL_ACTIVE_MS = 3000
+const RISK_POLL_INTERVAL_IDLE_MS = 30000
+
+function adaptiveStatusPollMs(isRestarting: boolean): number {
+  return isRestarting ? STATUS_POLL_INTERVAL_ACTIVE_MS : STATUS_POLL_INTERVAL_IDLE_MS
+}
+
+function adaptiveRiskPollMs(isRestarting: boolean): number {
+  return isRestarting ? RISK_POLL_INTERVAL_ACTIVE_MS : RISK_POLL_INTERVAL_IDLE_MS
+}
 
 function extractResumeError(e: any): string {
   return String(e?.message || 'failed')
@@ -120,18 +132,49 @@ function fmtEventTime(iso: string): string {
 
 function StatusBar() {
   const qc = useQueryClient()
-  const { data } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 10000 })
-  const { data: operator } = useQuery({ queryKey: ['operator-status'], queryFn: api.getOperatorStatus, refetchInterval: 10000 })
-  const { data: ks } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch, refetchInterval: 10000 })
-  const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000 })
-  const { data: health } = useQuery({ queryKey: ['health'], queryFn: api.getHealth, refetchInterval: 10000 })
-  const { data: infraEvents } = useQuery({ queryKey: ['infra-events'], queryFn: api.getInfraEvents, refetchInterval: 10000 })
+  const [restarting, setRestarting] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { data } = useQuery({
+    queryKey: ['status'],
+    queryFn: api.getStatus,
+    refetchInterval: () => adaptiveStatusPollMs(restarting),
+  })
+  const { data: operator } = useQuery({
+    queryKey: ['operator-status'],
+    queryFn: api.getOperatorStatus,
+    refetchInterval: () => adaptiveStatusPollMs(restarting),
+  })
+  const { data: ks } = useQuery({
+    queryKey: ['kill-switch'],
+    queryFn: api.getKillSwitch,
+    refetchInterval: () => adaptiveStatusPollMs(restarting),
+  })
+  const { data: runs = [] } = useQuery({
+    queryKey: ['agent-runs'],
+    queryFn: api.getAgentRuns,
+    refetchInterval: () => adaptiveStatusPollMs(restarting),
+  })
+  const { data: health } = useQuery({
+    queryKey: ['health'],
+    queryFn: api.getHealth,
+    refetchInterval: () => adaptiveStatusPollMs(restarting),
+  })
+  const { data: infraEvents } = useQuery({
+    queryKey: ['infra-events'],
+    queryFn: api.getInfraEvents,
+    refetchInterval: () => adaptiveStatusPollMs(restarting),
+  })
   // #174 fix: /status doesn't carry risk_status — the topbar used to read
   // `data?.risk_status || data?.risk?.status` and always got '', so
   // deriveMasterState never saw CAUTION/OPERATIONAL and defaulted to
   // STANDBY-with-green even when risk was actively warning. Mirror
   // RiskControls.tsx:83-86 and query getRiskStatus directly.
-  const { data: risk } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
+  const { data: risk } = useQuery({
+    queryKey: ['risk-status'],
+    queryFn: api.getRiskStatus,
+    refetchInterval: () => adaptiveRiskPollMs(restarting),
+  })
 
   // Code drift = disk HEAD has moved past the boot commit. Surfaces the
   // "code updated, restart needed" signal that build_info.code_drift_issue
@@ -140,10 +183,6 @@ function StatusBar() {
   const driftRange = driftIssue ? driftIssue.replace('code_updated_pending_restart:', '') : ''
   const healthIssues = (health?.issues || []).filter(i => !i.startsWith('code_updated_pending_restart:'))
   const recentInfraEvents = (infraEvents?.events || data?.infra_events || []).slice(0, 5)
-
-  const [restarting, setRestarting] = useState(false)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     return () => {

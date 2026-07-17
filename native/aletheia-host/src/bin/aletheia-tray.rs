@@ -76,6 +76,17 @@ fn observed_state() -> TrayState {
     }
 }
 
+const TRAY_POLL_SECS_NORMAL: u64 = 15;
+const TRAY_POLL_SECS_UPDATE: u64 = 2;
+
+fn tray_poll_interval(update_in_progress: bool, has_pending: bool) -> Duration {
+    if update_in_progress || has_pending {
+        Duration::from_secs(TRAY_POLL_SECS_UPDATE)
+    } else {
+        Duration::from_secs(TRAY_POLL_SECS_NORMAL)
+    }
+}
+
 fn ensure_started_without_browser(paths: &HostPaths) -> Result<()> {
     if gateway_ready() {
         return Ok(());
@@ -340,7 +351,8 @@ impl ApplicationHandler<UserEvent> for TrayApplication {
             } else {
                 self.spawn_start();
             }
-            self.next_poll = Instant::now() + Duration::from_secs(2);
+            let has_pending = update::has_pending_request(&self.paths);
+            self.next_poll = Instant::now() + tray_poll_interval(self.update_in_progress, has_pending);
             event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_poll));
         }
     }
@@ -396,7 +408,8 @@ impl ApplicationHandler<UserEvent> for TrayApplication {
             } else if !self.update_in_progress {
                 self.set_state(observed_state());
             }
-            self.next_poll = Instant::now() + Duration::from_secs(2);
+            let has_pending = update::has_pending_request(&self.paths);
+            self.next_poll = Instant::now() + tray_poll_interval(self.update_in_progress, has_pending);
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_poll));
     }
