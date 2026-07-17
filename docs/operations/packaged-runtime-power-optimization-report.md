@@ -2,6 +2,24 @@
 
 更新日期：2026-07-17
 
+本版本补充说明：本次已完成一轮 `master` 干净工作树 + local release session + installed runtime 交付验证。
+
+## 0. 最新实操证据（2026-07-17）
+
+1. 已在独立 worktree `/Users/yixian/orca/workspaces/aletheia-release-dogfood-20260717-133303`（commit `697e1844`）执行一键本地会话。
+2. 产物路径确认：
+   - `dist/local-release-sessions/session-20260717T053320Z-3e596d49/runtime/aletheia-runtime-0.5.0-697e18448e80-darwin-arm64.tar.gz`
+   - `site/update-feed.json` 发布 id：`0.5.0+697e18448e80.local-20260717053424`
+   - 包体大小：压缩 59.341 MiB，解压后 107.975 MiB
+3. 在已有安装态下执行更新并完成切换：
+   - `aletheia update status --json` 返回 `status: success`, `phase: committed`
+   - `current_release: 0.5.0+697e18448e80.local-20260717053424`
+   - `previous_release: 0.5.0+ac045439919b.local-20260717024914`
+   - `message: Update installed successfully`
+4. 读取 `/Users/yixian/Library/Application Support/Aletheia/update-state.json` 也为 `success/committed`，说明安装路径已持久切到新版本。
+
+与此对应，`/Users/yixian/orca/workspaces/aletheia-release-dogfood-20260717-133303/dist/local-release-sessions/session-.../runtime/packaged-runtime-size.json` 中的 payload 大小和 hash 已完整落库，可直接作为后续回归基线。
+
 ## 1. 结论与判断
 
 你这个判断是对的：`Aletheia.app`（托盘）应当尽量扮演远程遥控与状态可见性，不应承载交易主循环。
@@ -106,7 +124,42 @@
 2. 对齐窗口，观察平均与峰值 Energy Impact 与 `App Nap` 的变化。
 3. 对齐后再观察前端关键操作（重启、停止、更新）的 2 秒内可见性是否满足。
 
-## 6. 文档落地说明
+## 6. 是否应按当前模式走“master -> clean worktree -> 本地 runner -> 直接打包跑分发”？
+
+结论：
+
+1. 是。当前需求下，正确实践是“每次要交付一版就从 clean 的 `master` 工作树打包”。
+2. 不应从当前正在编辑的多工作树直接打包：任何脏内容会进入 `release-manifest`，影响签名一致性和回滚可追溯性。
+3. 你当前这条链路是可接受的：
+   - 产物体积约 60 MiB（压缩）
+   - 本次 local session 本质是临时 127.0.0.1 feed，不需要外网；
+   - 安装后仅发生一次本地解包和一次目录切换，运行时没有额外常驻进程。
+
+资源/网络评估（单次）
+
+1. 资源开销（构建时）
+   - CPU：中等偏高（PyInstaller / Python runtime 打包 + bundle 签名），属于“离线构建”窗口成本。
+   - 内存：中等，峰值与本机活跃任务/`node_modules` cache 情况有关；对在线 runtime 影响可控。
+2. 网络开销
+   - local release session：仅在本机 loopback；外部网络可近似为 0。
+   - 常规更新检查：取 `update-feed.json`，若用已公开 feed 则约几十到几百 KB，量级低。
+3. 持续运行开销
+   - 主要是运行时常驻循环（见下文），不是发布动作本身；发布只把同构资源迁入 `~/Library/Application Support/Aletheia/releases/<release-id>`。
+
+预期接受线：在普通开发机上，“构建/发布”作为低频离线任务，放在每个候选版本即可，不会形成持续性能耗；持续性能耗改善应集中在托盘轮询、UI轮询、SSE 空转这几个已标注热区。
+
+## 7. 与 macOS 同类应用实践映射（可接受阈值）
+
+在你这个边界（托盘遥控器 + 本地服务进程）上，和成熟桌面/服务类应用策略一致：
+
+1. 常驻控制层使用可恢复、可退避的短平快状态观察（例如本项目 15s）；
+2. 用户触发路径保持快反馈（更新待定、重启确认、手动操作）
+3. 不将高频网络探测塞到托盘主循环，而放在后台服务层（并按业务风险权重选择检测频率）；
+4. 更新逻辑保持原子切换和回退，不在运行时替换代码树。
+
+你的代码现状已经落在该模式上，建议下一步在“托盘外观状态”之外把 dashboard 与监控面的可观察性进一步切到“有交互即快、空闲即慢”闭环即可。
+
+## 8. 文档落地说明
 
 1. 主分析文档：本文件。
 2. 托盘行为权责说明：`docs/operations/PACKAGED_RUNTIME.md`。
