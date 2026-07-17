@@ -225,6 +225,9 @@ Installing a Feed-enabled `Aletheia.app` over an earlier owner-dogfood build see
 missing public key and Feed URL on the next Tray/CLI start without replacing
 `current.json`, the selected Runtime, or any existing trust root. This makes the first
 online-update-capable installer an in-place upgrade for current local installations.
+The new candidate also treats the legacy pre-request validation command as isolated
+preflight, so the previously installed Runtime can stage this first signed update safely;
+after the request is written, the same command retains its activation-only semantics.
 
 ## Distribution status and external prerequisites
 

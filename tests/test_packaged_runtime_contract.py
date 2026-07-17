@@ -15,6 +15,7 @@ from aletheia.packaged_process import translate_frozen_command
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILDER_PATH = ROOT / "scripts" / "release" / "build_packaged_runtime.py"
+ENTRYPOINT_PATH = ROOT / "scripts" / "release" / "pyinstaller_entry.py"
 
 
 def _builder_module():
@@ -22,6 +23,14 @@ def _builder_module():
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _entrypoint_module():
+    spec = importlib.util.spec_from_file_location("pyinstaller_entry", ENTRYPOINT_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
@@ -205,6 +214,37 @@ def test_candidate_preflight_is_distinct_from_real_data_activation():
     assert "validate_current_data()" in entrypoint
     assert 'mode == "__packaged_update_validate"' in entrypoint
     assert "prepare_activation_data()" in entrypoint
+
+
+def test_legacy_candidate_validation_is_preflight_only_until_request_exists(
+    monkeypatch, tmp_path, capsys
+):
+    entrypoint = _entrypoint_module()
+    from aletheia.update import packaged, packaged_commands
+
+    calls: list[str] = []
+    monkeypatch.setattr(packaged, "host_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        packaged,
+        "validate_current_data",
+        lambda: calls.append("preflight") or {"checked": True},
+    )
+    monkeypatch.setattr(
+        packaged_commands,
+        "prepare_activation_data",
+        lambda: calls.append("activation") or {"action": "activate"},
+    )
+
+    entrypoint._run_update_validate()
+    first = json.loads(capsys.readouterr().out)
+    assert first["action"] == "legacy_preflight"
+    assert calls == ["preflight"]
+
+    (tmp_path / "update-request.json").write_text("{}", encoding="utf-8")
+    entrypoint._run_update_validate()
+    second = json.loads(capsys.readouterr().out)
+    assert second["action"] == "activate"
+    assert calls == ["preflight", "activation"]
 
 
 def test_rust_host_contract_keeps_tray_cli_and_payload_separate():
