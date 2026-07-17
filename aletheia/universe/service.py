@@ -526,6 +526,27 @@ class UniverseService:
                     "prev_age=%.0fs, prev=%s)",
                     prev_age_sec, prev_snapshot_id,
                 )
+                # Slide member and opportunity expiries forward. Without this,
+                # a stable-allocation window longer than the family TTL causes
+                # every carrier to be ttl_expired on the next ranker scan even
+                # though we just re-confirmed the same working set is valid.
+                # See repositories.refresh_active_snapshot_ttls for semantics.
+                try:
+                    refreshed_members, refreshed_opps = repo.refresh_active_snapshot_ttls(
+                        prev_snapshot_id, now,
+                    )
+                    if refreshed_members or refreshed_opps:
+                        logger.info(
+                            "Universe refresh (suppressed): TTL slid forward — "
+                            "members=%d opps=%d snapshot=%s",
+                            refreshed_members, refreshed_opps, prev_snapshot_id,
+                        )
+                except Exception as _e:
+                    # Non-fatal: the worst case is the pre-fix behavior (some
+                    # carriers hard-reject as ttl_expired next scan).
+                    logger.warning(
+                        "Universe refresh: TTL slide failed (non-fatal): %s", _e,
+                    )
                 # Advance the scanner run pointer to the reused snapshot, then
                 # short-circuit the publication block: no new members to insert,
                 # no downstream cohort logging (freshness monitors read the

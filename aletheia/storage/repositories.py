@@ -3884,6 +3884,68 @@ def list_universe_members(snapshot_id: str, limit: int = 50) -> list[dict]:
     )
 
 
+def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> tuple[int, int]:
+    """Slide expires_at forward on every member of a reused snapshot, and mirror
+    onto linked open opportunities' valid_until.
+
+    Used by universe refresh's change-suppression branch (service._atomic_universe_publication
+    is skipped when the allocation fingerprint is unchanged). Without this slide,
+    the members' original expiry — `member.created_at + ttl_sec` — lapses even
+    though the allocation is still confirmed valid. The subsequent ranker scan
+    then hard-rejects every carrier with skip_reason=ttl_expired.
+
+    Only slides forward (`WHERE expires_at < new_expires_at`) so a legitimate
+    longer expiry set elsewhere is never shortened. Opportunities are only
+    touched while their status is 'open'; expired/reviewed/queued rows are left
+    terminal.
+
+    Returns (members_updated, opportunities_updated).
+    """
+    db = get_db()
+    was_in_tx = db.in_transaction
+
+    members = _select_all(
+        "universe_members",
+        where="snapshot_id = ?",
+        params=(snapshot_id,),
+        limit=1000,
+    )
+
+    n_members = 0
+    n_opps = 0
+
+    def _apply() -> None:
+        nonlocal n_members, n_opps
+        for m in members:
+            ttl_sec = int(m.get("ttl_sec") or 0)
+            if ttl_sec <= 0:
+                continue
+            new_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
+            cur_m = db.execute(
+                "UPDATE universe_members SET expires_at = ? "
+                "WHERE id = ? AND (expires_at IS NULL OR expires_at < ?)",
+                (new_expires, m["id"], new_expires),
+            )
+            if cur_m.rowcount and cur_m.rowcount > 0:
+                n_members += cur_m.rowcount
+            cur_o = db.execute(
+                "UPDATE opportunities SET valid_until = ? "
+                "WHERE universe_member_id = ? AND status = 'open' "
+                "AND (valid_until IS NULL OR valid_until < ?)",
+                (new_expires, m["id"], new_expires),
+            )
+            if cur_o.rowcount and cur_o.rowcount > 0:
+                n_opps += cur_o.rowcount
+
+    if was_in_tx:
+        _apply()
+    else:
+        with transaction(immediate=True):
+            _apply()
+
+    return n_members, n_opps
+
+
 def get_universe_member(member_id: str) -> dict | None:
     return _select_one("universe_members", member_id)
 
