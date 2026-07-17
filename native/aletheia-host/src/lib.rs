@@ -301,6 +301,11 @@ pub fn payload_command(paths: &HostPaths, args: &[String]) -> Result<Command> {
     if let Ok(host_bin) = env::current_exe() {
         command.env(HOST_BIN_ENV, host_bin);
     }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
     Ok(command)
 }
 
