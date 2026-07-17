@@ -4,6 +4,13 @@
 > **Created**: 2026-06-21
 > **协议状态**: Round 1 已于 2026-06-27 **提前终止**(详见下方「Round 1 终止判决」段);冻结已解除,进入「Round 1 后全量修复」阶段。Round 2 是否启动待修复完成后判定。
 
+> **2026-07-17 repair epoch**: funding raw-unit correction, candidate-specific
+> 15m/1h/4h context, Hyperliquid OI consumption, and the 1.5 ATR no-chase guard
+> are attributed under `system_operator_vergex_utilization/v1`. This is a new
+> B-class policy epoch inside the post-Round-1 repair period, not the start of
+> Round 2. Position X remains observation-only; its owner-aggregate cohort must
+> collect at least 14 days before a human review and has no decision influence.
+
 ---
 
 ## 核心赌注

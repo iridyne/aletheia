@@ -10,7 +10,7 @@ import yaml
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).resolve().parents[2]
-_POLICY = _ROOT / "docs/governance/trust_boundaries.yaml"
+_POLICY = _ROOT / "docs/governance/policies/trust_boundaries.yaml"
 _CONTRACT = "trust_boundary_policy"
 
 
@@ -41,7 +41,7 @@ def _agents_md_paths() -> set[str]:
 
 def _governance_paths() -> set[str]:
     text = (
-        _ROOT / "docs/governance/trust_and_change_control.md"
+        _ROOT / "docs/governance/policies/trust_and_change_control.md"
     ).read_text(encoding="utf-8")
     match = re.search(
         r"### 6\.1 Controlled Modules.*?```text\n(.*?)```",

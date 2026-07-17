@@ -261,6 +261,73 @@ def build_enriched_trading_context() -> dict[str, Any]:
     return authorize_operator_learning_context(ctx)
 
 
+def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str, Any]:
+    """Build a compact manifest of exact evidence available to one decision."""
+    from aletheia.data.collectors.vergex_structure import structure_source_status
+    from aletheia.data.freshness import fresh_row
+    from aletheia.storage import repositories as repo
+
+    symbol = getattr(decision, "symbol", None)
+    market_type = _normalize_market_type(getattr(decision, "market_type", None))
+    opportunity_id = getattr(decision, "opportunity_id", None)
+    opportunity = repo.get_opportunity(opportunity_id) if opportunity_id else None
+    member = (
+        repo.get_universe_member(opportunity.get("universe_member_id"))
+        if opportunity and opportunity.get("universe_member_id") else None
+    )
+    feature = _candidate_feature(
+        (ctx.get("layer1") or {}).get("feature_index") or {},
+        symbol=symbol,
+        market_type=market_type,
+        asset_id=member.get("asset_id") if member else None,
+    )
+    venue = feature.get("venue") if feature else None
+
+    funding = fresh_row(
+        repo.latest_funding_rate(symbol, exchange="hyperliquid") if symbol else None,
+        "cross_venue_funding",
+    )
+    open_interest = fresh_row(
+        repo.latest_open_interest(symbol, exchange="hyperliquid") if symbol else None,
+        "cross_venue_open_interest",
+    )
+    structure = (
+        repo.latest_perp_structure(symbol) if symbol and market_type == "perp" else None
+    )
+    structure = fresh_row(structure, "perp_structure")
+    source_status = structure_source_status()
+
+    return {
+        "version": "vergex-utilization-v1",
+        "policy_epoch_id": ctx.get("vergex_policy_epoch_id"),
+        "instrument": {
+            "venue": venue,
+            "symbol": symbol,
+            "market_type": market_type,
+        },
+        "technical_snapshot": ({
+            "id": feature.get("feature_snapshot_id"),
+            "observed_at": feature.get("feature_ts"),
+            "timeframes": ["15m", "1h", "4h"],
+        } if feature else {"status": "unavailable"}),
+        "hyperliquid": {
+            "funding_id": funding.get("id") if funding else None,
+            "funding_observed_at": funding.get("observed_at") if funding else None,
+            "open_interest_id": open_interest.get("id") if open_interest else None,
+            "open_interest_observed_at": open_interest.get("observed_at") if open_interest else None,
+        },
+        "position_x": ({
+            "status": "available_observation_only",
+            "snapshot_id": structure.get("id"),
+            "source": structure.get("source"),
+            "as_of_time": structure.get("as_of_time"),
+        } if structure else {
+            "status": "not_configured" if not source_status["automatic_source_configured"] else "unavailable",
+            "mode": source_status["mode"],
+        }),
+    }
+
+
 # ── Layer 1: Environment Snapshot ────────────────────────────────────────────
 
 
@@ -282,6 +349,33 @@ def _top_observations(raw, n: int = 2) -> list[str]:
     except Exception:
         pass
     return []
+
+
+def _normalize_market_type(value: object) -> str:
+    raw = str(value or "spot").lower()
+    return "perp" if raw in {"perp", "futures", "swap", "usdt_futures"} else "spot"
+
+
+def _feature_identity_key(venue: object, market_type: object, symbol: object) -> str:
+    return f"{venue or 'unknown'}|{_normalize_market_type(market_type)}|{symbol or ''}"
+
+
+def _candidate_feature(
+    feature_index: dict[str, dict], *, symbol: object, market_type: object,
+    asset_id: object = None,
+) -> dict | None:
+    if asset_id:
+        exact_asset = [
+            row for row in feature_index.values() if row.get("asset_id") == asset_id
+        ]
+        if len(exact_asset) == 1:
+            return exact_asset[0]
+    normalized = _normalize_market_type(market_type)
+    matches = [
+        row for row in feature_index.values()
+        if row.get("symbol") == symbol and row.get("market_type") == normalized
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _build_layer1_snapshot() -> dict[str, Any]:
@@ -442,13 +536,19 @@ def _build_layer1_snapshot() -> dict[str, Any]:
         from aletheia.data.price_feed import get_cached_price_with_meta
         from aletheia.storage.repositories import list_universe_feature_snapshots
         snaps = list_universe_feature_snapshots(limit=50)
-        seen: set[str] = set()
+        seen: set[tuple[str, str, str]] = set()
         features: list[dict] = []
+        feature_index: dict[str, dict] = {}
         for s in snaps:
             sym = s.get("symbol", "")
-            if sym in seen:
+            identity = (
+                str(s.get("venue") or ""),
+                _normalize_market_type(s.get("market_type")),
+                str(sym),
+            )
+            if identity in seen:
                 continue
-            seen.add(sym)
+            seen.add(identity)
             price_meta = get_cached_price_with_meta(sym)
             fr = s.get("funding_rate")
             oi_delta = s.get("oi_delta_1h")
@@ -456,12 +556,20 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 fr is not None and oi_delta is not None
                 and abs(fr) > 0.0005 and abs(oi_delta) > 5
             )
-            features.append({
+            feature = {
+                "asset_id": s.get("asset_id"),
+                "feature_snapshot_id": s.get("id"),
+                "feature_ts": s.get("ts"),
+                "venue": s.get("venue"),
                 "symbol": sym,
-                "market_type": s.get("market_type"),
+                "market_type": _normalize_market_type(s.get("market_type")),
                 "price": price_meta.get("price") if price_meta else None,
                 "price_source": price_meta.get("provider") if price_meta else None,
                 "rsi_14": s.get("rsi_14"),
+                "rsi_15m": s.get("rsi_15m"),
+                "atr_15m_pct": s.get("atr_15m_pct"),
+                "return_15m": s.get("return_15m"),
+                "last_candle_range_atr_15m": s.get("last_candle_range_atr_15m"),
                 "atr_pct": s.get("atr_pct"),
                 "return_1h": s.get("return_1h"),
                 "return_4h": s.get("return_4h"),
@@ -474,17 +582,27 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "vol_ratio": s.get("vol_ratio"),
                 "relative_strength_24h": s.get("relative_strength_24h"),
                 "oi_price_divergence": s.get("oi_price_divergence"),
+                "rsi_4h": s.get("rsi_4h"),
+                "atr_4h_pct": s.get("atr_4h_pct"),
+                "bb_width_4h": s.get("bb_width_4h"),
+                "vol_ratio_4h": s.get("vol_ratio_4h"),
+                "bb_squeeze": bool(s.get("bb_squeeze")) if s.get("bb_squeeze") is not None else None,
                 "crowding_signal": crowding_signal,
-            })
-            if len(features) >= 10:
-                break
+            }
+            feature_index[_feature_identity_key(*identity)] = feature
+            if len(features) < 10:
+                features.append(feature)
         layer["features"] = features
+        layer["feature_index"] = feature_index
     except Exception:
         layer["features"] = []
+        layer["feature_index"] = {}
 
     # Open opportunities (what market_observer has flagged — System Operator was blind to these)
     try:
-        from aletheia.storage.repositories import _select_all, latest_perp_structure
+        from aletheia.storage.repositories import (
+            _select_all, get_universe_member, latest_perp_structure,
+        )
         opps = _select_all(
             "opportunities",
             where="status = 'open' AND asset_class = 'crypto'",
@@ -522,6 +640,18 @@ def _build_layer1_snapshot() -> dict[str, Any]:
             )
             return _edge_map.get((fam, d, market_type))
 
+        def _opportunity_feature(o: dict) -> dict | None:
+            member = (
+                get_universe_member(o.get("universe_member_id"))
+                if o.get("universe_member_id") else None
+            )
+            return _candidate_feature(
+                layer.get("feature_index") or {},
+                symbol=o.get("symbol"),
+                market_type=o.get("market"),
+                asset_id=member.get("asset_id") if member else None,
+            )
+
         layer["opportunities"] = [
             {
                 # R0 fix: carry the opportunity id so the System Operator's pick can be
@@ -548,6 +678,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 # here; the PI was previously blind to it (only the truncated thesis
                 # surfaced). Expose the top observations so the decision can cite them.
                 "key_observations": _top_observations(o.get("key_observations")),
+                "technical_context": _opportunity_feature(o),
                 "structure_context": build_position_x_agent_context(latest_perp_structure(o.get("symbol"))),
             }
             for o in opps

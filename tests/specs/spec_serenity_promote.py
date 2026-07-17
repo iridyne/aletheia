@@ -34,7 +34,7 @@ _ROOT = Path(__file__).parent.parent.parent
 _SCHEMA = _ROOT / "aletheia" / "config" / "schema.py"
 _DATA_ROUTES = _ROOT / "aletheia" / "server" / "routes" / "data.py"
 _SETTINGS_ROUTES = _ROOT / "aletheia" / "server" / "routes" / "settings.py"
-_API_REF = _ROOT / "docs" / "design" / "api_reference.md"
+_API_REF = _ROOT / "docs" / "design" / "api" / "api_reference.md"
 
 
 def _promote_fn_body() -> str:

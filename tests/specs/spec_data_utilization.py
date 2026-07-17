@@ -30,6 +30,8 @@ _CONTEXT_BUILDER = _ROOT / "aletheia" / "data" / "context_builder.py"
 _DOCTOR = _ROOT / "aletheia" / "diagnostics" / "doctor.py"
 _VERGEX_STRUCTURE = _ROOT / "aletheia" / "data" / "collectors" / "vergex_structure.py"
 _POSITION_X = _ROOT / "aletheia" / "data" / "position_x.py"
+_DATA_UTILIZATION_DOC = _ROOT / "docs" / "design" / "data" / "data_utilization.md"
+_API_REFERENCE_DOC = _ROOT / "docs" / "design" / "api" / "api_reference.md"
 
 _CONTRACT = "data_utilization_contract"
 
@@ -43,7 +45,7 @@ _CONTRACT = "data_utilization_contract"
     ),
 )
 def test_operator_evaluation_observation_is_registered_and_consumed_read_only():
-    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(encoding="utf-8")
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
     doctor = _DOCTOR.read_text(encoding="utf-8")
     assert "operator_evaluation_events" in doc
     assert "observation-only" in doc
@@ -93,6 +95,47 @@ def test_hyperliquid_routed_to_decision_context():
     assert "xvenue_funding" in src, (
         "market_observer must pass xvenue_funding into render_enriched_context_md"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S21", _CONTRACT, "§cross-venue Hyperliquid OI", "L2c",
+        "Hyperliquid OI is freshness-qualified, rendered with source time, and its exact row id "
+        "is eligible for the System Operator evidence manifest.",
+        status="implemented",
+    ),
+)
+def test_hyperliquid_oi_is_consumed_with_provenance():
+    obs = _MARKET_OBS.read_text(encoding="utf-8")
+    ctx = _CONTEXT_BUILDER.read_text(encoding="utf-8")
+    trading_ctx = (_ROOT / "aletheia" / "agent_shell" / "trading_context.py").read_text(
+        encoding="utf-8"
+    )
+    assert "batch_open_interest" in obs
+    assert "cross_venue_open_interest" in obs
+    assert "hl_open_interest_usd" in ctx and "hl_observed_at" in ctx
+    assert "open_interest_id" in trading_ctx and "evidence_manifest" in trading_ctx
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S22", _CONTRACT, "§owner aggregate Position X shadow", "L2c",
+        "Owner-authorized aggregate imports preserve source provenance and seed only fixed-horizon "
+        "shadow outcomes; source status remains observation-only with a 14-day review floor.",
+        status="implemented",
+    ),
+)
+def test_owner_aggregate_structure_path_is_shadow_only():
+    collector = _VERGEX_STRUCTURE.read_text(encoding="utf-8")
+    shadow = (_ROOT / "aletheia" / "data" / "perp_structure_shadow.py").read_text(
+        encoding="utf-8"
+    )
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
+    assert "ingest_owner_aggregate" in collector
+    assert "source_hash" in collector and "decision_authority" in collector
+    assert "minimum_shadow_window_days" in collector
+    assert "decision_influence" in shadow and '"disabled"' in shadow
+    assert "perp_structure_shadow_outcomes" in doc and "14" in doc
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +188,7 @@ def test_market_data_visibility_surfaces_are_wired():
     routes = (_ROOT / "aletheia" / "server" / "routes" / "data.py").read_text(encoding="utf-8")
     client = (_ROOT / "frontend" / "src" / "api" / "client.ts").read_text(encoding="utf-8")
     overview = (_ROOT / "frontend" / "src" / "pages" / "Overview.tsx").read_text(encoding="utf-8")
-    api_doc = (_ROOT / "docs" / "design" / "api_reference.md").read_text(encoding="utf-8")
+    api_doc = _API_REFERENCE_DOC.read_text(encoding="utf-8")
 
     assert '@router.get("/market/data-coverage")' in routes
     assert "X-Aletheia-Data-Source" in routes
@@ -184,7 +227,7 @@ def test_exchange_source_divergence_is_guarded_and_visible():
     ),
 )
 def test_verified_exit_private_history_is_registered_and_bounded():
-    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(
+    doc = _DATA_UTILIZATION_DOC.read_text(
         encoding="utf-8"
     )
     protocol = (_ROOT / "aletheia" / "execution" / "verified_exit.py").read_text(
@@ -219,7 +262,7 @@ def test_verified_exit_private_history_is_registered_and_bounded():
     ),
 )
 def test_perp_structure_registered_and_consumed():
-    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(encoding="utf-8")
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
     assert "perp_structure_snapshots" in doc, (
         "data_utilization.md §3 must register the perp structure observation path"
     )
@@ -255,7 +298,7 @@ def test_perp_structure_registered_and_consumed():
     ),
 )
 def test_position_x_parser_and_consumers_exist():
-    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(encoding="utf-8")
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
     px = _POSITION_X.read_text(encoding="utf-8")
     obs = _MARKET_OBS.read_text(encoding="utf-8")
     tc = (_ROOT / "aletheia" / "agent_shell" / "trading_context.py").read_text(encoding="utf-8")
@@ -403,7 +446,7 @@ def test_yfinance_provider_declared_in_utilization_doc():
         "yfinance path must be gated by enable_yfinance_macro config flag"
     )
 
-    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(encoding="utf-8")
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
     assert "yfinance" in doc, (
         "data_utilization.md §3 must register the yfinance macro path (R5)"
     )
@@ -533,7 +576,7 @@ def test_official_news_feeds_registered_and_consumed():
             f"default news feeds must include official source {source!r} (DU-S12)"
         )
 
-    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(encoding="utf-8")
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
     assert "官方公告/监管 RSS" in doc, (
         "data_utilization.md §3 must register official RSS feeds (DU-S12)"
     )

@@ -4374,6 +4374,44 @@ def insert_perp_structure_snapshot(data: dict) -> None:
     _insert("perp_structure_snapshots", data)
 
 
+def insert_perp_structure_shadow_outcome(data: dict) -> None:
+    """Insert one observation-only Position X forward outcome row."""
+    _insert("perp_structure_shadow_outcomes", data)
+
+
+def list_due_perp_structure_shadow_outcomes(
+    before_ts: str, limit: int = 100,
+) -> list[dict]:
+    return _select_all(
+        "perp_structure_shadow_outcomes",
+        where="status = 'pending' AND due_at <= ?",
+        params=(before_ts,),
+        order="due_at ASC",
+        limit=limit,
+    )
+
+
+def settle_perp_structure_shadow_outcome(
+    outcome_id: str, *, exit_price: float, directional_return_pct: float,
+    settled_at: str, price_source: str | None, settlement_lag_sec: float | None,
+) -> None:
+    _update("perp_structure_shadow_outcomes", outcome_id, {
+        "exit_price_usd": exit_price,
+        "directional_return_pct": directional_return_pct,
+        "settled_at": settled_at,
+        "settlement_price_source": price_source,
+        "settlement_lag_sec": settlement_lag_sec,
+        "status": "settled",
+    })
+
+
+def fail_perp_structure_shadow_outcome(outcome_id: str, settled_at: str) -> None:
+    _update("perp_structure_shadow_outcomes", outcome_id, {
+        "settled_at": settled_at,
+        "status": "failed",
+    })
+
+
 def latest_perp_structure(symbol: str, source: str | None = None) -> dict | None:
     """Return the newest perp structure row for a symbol."""
     if source is not None:
@@ -4435,6 +4473,26 @@ def batch_funding_rates(symbols: list[str], exchange: str) -> dict[str, dict]:
         (*symbols, exchange),
     ).fetchall()
     return {dict(r)["symbol"]: dict(r) for r in rows}
+
+
+def batch_open_interest(symbols: list[str], exchange: str) -> dict[str, dict]:
+    """Return the newest exact-exchange OI row for each requested symbol."""
+    if not symbols:
+        return {}
+    placeholders = ",".join("?" * len(symbols))
+    rows = get_db().execute(
+        f"""
+        SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY symbol ORDER BY observed_at DESC
+            ) AS _rn
+            FROM open_interest_snapshots
+            WHERE symbol IN ({placeholders}) AND exchange = ?
+        ) WHERE _rn = 1
+        """,
+        (*symbols, exchange),
+    ).fetchall()
+    return {dict(row)["symbol"]: dict(row) for row in rows}
 
 
 def batch_news(
@@ -4558,6 +4616,18 @@ def prune_perp_structure_snapshots(days: int = 30) -> int:
     db = get_db()
     was_in_tx = db.in_transaction
     cur = db.execute("DELETE FROM perp_structure_snapshots WHERE observed_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_perp_structure_shadow_outcomes(days: int = 30) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "DELETE FROM perp_structure_shadow_outcomes WHERE entry_ts < ?", (cutoff,)
+    )
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0
@@ -5465,7 +5535,7 @@ def list_universe_feature_snapshots(limit: int = 50) -> list[dict]:
     """
     db = get_db()
     rows = db.execute(
-        "SELECT ufs.*, ur.symbol, ur.market_type "
+        "SELECT ufs.*, ur.symbol, ur.market_type, ur.venue "
         "FROM universe_feature_snapshots ufs "
         "JOIN universe_registry ur ON ur.id = ufs.asset_id "
         "ORDER BY datetime(ufs.ts) DESC, ufs.rowid DESC LIMIT ?",

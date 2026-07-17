@@ -33,6 +33,8 @@ _FEATURE_SUPPRESSION_HEARTBEAT_SEC = 60 * 60
 # a 0.5% relative delta rather than exact-rounded equality.
 _FEATURE_SOFT_DELTA_FIELDS = (
     "atr_pct", "rsi_14", "return_1h", "funding_rate", "oi_delta_1h",
+    "rsi_15m", "atr_15m_pct", "return_15m", "last_candle_range_atr_15m",
+    "rsi_4h", "atr_4h_pct", "bb_width_4h", "vol_ratio_4h",
 )
 _FEATURE_SOFT_DELTA_TOLERANCE = 0.005  # 0.5%
 # All other numeric fields on UniverseFeatureSnapshot. Compared via rounded equality.
@@ -41,6 +43,7 @@ _FEATURE_EXACT_FIELDS = (
     "return_4h", "return_24h", "open_interest", "data_freshness_sec",
     "btc_beta", "taker_buy_ratio", "vol_ratio", "relative_strength_24h",
     "oi_price_divergence",
+    "bb_squeeze",
 )
 
 
@@ -117,6 +120,7 @@ def _persist_feature_snapshot(snap: "UniverseFeatureSnapshot") -> None:
 _OHLCV_CONCURRENCY = 10
 _OHLCV_TIMEOUT = 12.0
 _OHLCV_1H_LIMIT = 168  # 7 days of 1h candles
+_OHLCV_15M_LIMIT = 100
 _TICKER_CHUNK_SIZE = 100
 # taker_buy_ratio is only consumed by the event family, which gates on a sharp
 # 1h move; fetch it lazily for movers above this |return_1h| % to keep the scan
@@ -140,6 +144,16 @@ def _atr_pct(highs: list[float], lows: list[float], closes: list[float], period:
     if atr_val is None or not closes or closes[-1] == 0:
         return None
     return (atr_val / closes[-1]) * 100.0
+
+
+def _last_candle_range_atr(
+    highs: list[float], lows: list[float], closes: list[float], period: int = 14,
+) -> float | None:
+    """Last candle high-low range expressed in ATR units."""
+    atr_val = atr(highs, lows, closes, period)
+    if atr_val is None or atr_val <= 0 or not highs or not lows:
+        return None
+    return (highs[-1] - lows[-1]) / atr_val
 
 
 def _compute_beta(asset_closes: list[float], btc_closes: list[float]) -> float | None:
@@ -408,8 +422,17 @@ async def _fetch_single_feature(
         float(ask) if ask else None,
     )
 
+    ohlcv_15m = []
     ohlcv_1h = []
     ohlcv_4h = []
+    try:
+        ohlcv_15m = await asyncio.wait_for(
+            exchange.fetch_ohlcv(ccxt_sym, timeframe="15m", limit=_OHLCV_15M_LIMIT),
+            timeout=_OHLCV_TIMEOUT,
+        )
+    except (asyncio.TimeoutError, Exception):
+        pass
+
     try:
         ohlcv_1h = await asyncio.wait_for(
             exchange.fetch_ohlcv(ccxt_sym, timeframe="1h", limit=_OHLCV_1H_LIMIT),
@@ -427,6 +450,9 @@ async def _fetch_single_feature(
     except (asyncio.TimeoutError, Exception):
         pass
 
+    closes_15m = [float(c[4]) for c in ohlcv_15m] if ohlcv_15m else []
+    highs_15m = [float(c[2]) for c in ohlcv_15m] if ohlcv_15m else []
+    lows_15m = [float(c[3]) for c in ohlcv_15m] if ohlcv_15m else []
     closes_1h = [float(c[4]) for c in ohlcv_1h] if ohlcv_1h else []
     highs_1h = [float(c[2]) for c in ohlcv_1h] if ohlcv_1h else []
     lows_1h = [float(c[3]) for c in ohlcv_1h] if ohlcv_1h else []
@@ -437,6 +463,13 @@ async def _fetch_single_feature(
     lows_4h = [float(c[3]) for c in ohlcv_4h] if ohlcv_4h else []
     volumes_4h = [float(c[5]) for c in ohlcv_4h] if ohlcv_4h else []
 
+    rsi_15m = rsi(closes_15m, 14) if len(closes_15m) >= 15 else None
+    atr_15m_pct = _atr_pct(highs_15m, lows_15m, closes_15m) if len(closes_15m) >= 15 else None
+    return_15m = _pct_return(closes_15m, 1)
+    last_candle_range_atr_15m = (
+        _last_candle_range_atr(highs_15m, lows_15m, closes_15m)
+        if len(closes_15m) >= 15 else None
+    )
     rsi_val = rsi(closes_1h, 14) if len(closes_1h) >= 15 else None
     atr_val = _atr_pct(highs_1h, lows_1h, closes_1h) if len(closes_1h) >= 15 else None
     return_1h = _pct_return(closes_1h, 1)
@@ -599,6 +632,10 @@ async def _fetch_single_feature(
         "depth_10bps_usd": depth_10bps,
         "atr_pct": atr_val,
         "rsi_14": rsi_val,
+        "rsi_15m": rsi_15m,
+        "atr_15m_pct": atr_15m_pct,
+        "return_15m": return_15m,
+        "last_candle_range_atr_15m": last_candle_range_atr_15m,
         "return_1h": return_1h,
         "return_4h": return_4h,
         "return_24h": return_24h,
@@ -641,6 +678,10 @@ async def _fetch_single_feature(
         depth_10bps_usd=depth_10bps,
         atr_pct=atr_val,
         rsi_14=rsi_val,
+        rsi_15m=rsi_15m,
+        atr_15m_pct=atr_15m_pct,
+        return_15m=return_15m,
+        last_candle_range_atr_15m=last_candle_range_atr_15m,
         return_1h=return_1h,
         return_4h=return_4h,
         return_24h=return_24h,
@@ -653,6 +694,11 @@ async def _fetch_single_feature(
         vol_ratio=vol_ratio,
         relative_strength_24h=relative_strength_24h,
         oi_price_divergence=oi_price_divergence,
+        rsi_4h=rsi_4h,
+        atr_4h_pct=atr_4h,
+        bb_width_4h=bb_width_4h,
+        vol_ratio_4h=vol_ratio_4h,
+        bb_squeeze=bb_squeeze,
     )
     feat["feature_snapshot_id"] = snap.id
 

@@ -172,14 +172,14 @@ backlog health are persisted in `learning_job_health`.
 
 - **Trigger**: Event-driven daemon (debounce 8s, cooldown 60s, heartbeat 5min)
 - **Inputs**: 
-  - Layer 1: market context (opportunities, factor_feedback, regime, positions)
+  - Layer 1: market context (opportunities, factor_feedback, regime, positions), plus exact-instrument candidate technical snapshots (15m/1h/4h) and freshness-qualified Hyperliquid funding/OI evidence
   - Layer 2: strategy context (ranker candidates, pending signals, universe features)
   - Layer 3: reflection (previous decisions, outcomes, Serenity research). Each
     Serenity opportunity surfaces `id`/`score`/`bucket`/`evidence_count`/`key_evidence`
     + the independently `assessed_tier` (D2), annotated as long-horizon analyst input —
     NOT a same-day setup and NOT to be rubber-stamped (PI remains sole decision maker).
 - **LLM**: Yes (structured decision with Bull/Bear debate)
-- **Outputs**: an exact-candidate PiDecision (action, symbol, conviction, reasoning JSON, opportunity_id, signal_source); a zero-pending wake instead writes one non-trading `operator_evaluation_event` and does not call the LLM
+- **Outputs**: an exact-candidate PiDecision (action, symbol, conviction, reasoning JSON, opportunity_id, signal_source) with `evidence_manifest_json` naming the actual technical snapshot, Hyperliquid rows, and Position X availability; a zero-pending wake instead writes one non-trading `operator_evaluation_event` and does not call the LLM
 - **Side effects**: Candidate path writes `pi_decisions`; zero-pending path appends only an observation event; neither path bypasses paper_trader queue authority
 - **Attribution**: `_attach_opportunity_context` backfills `opportunity_id` + `signal_source`
   (`market_observer` Layer 1 wins on tie; `serenity` Layer 3 is the fallback). `signal_source`
@@ -194,6 +194,7 @@ backlog health are persisted in `learning_job_health`.
 - **Actions**: active entry decision only `trade` / `skip`. The separate portfolio review exposes only `hold` / `close_one` for an explicit Position.
 - **Unsupported legacy outputs**: `close` / `reduce` / `watch` / `scale_in` / `flip` on the entry surface are normalized to an evidenced `skip` and never execute. `reduce_exposure` on portfolio review is treated as `hold`, never as a silent full close.
 - **Availability semantics**: missing assessment, a required debate side, a fresh exact local-paper mark, or complete entry reasons is retryable unavailability; no final PiDecision is written and no pending signal is consumed.
+- **Position X authority**: owner aggregate imports and their 1h/4h/24h outcomes are observation-only. No automatic source is claimed; a minimum 14-day shadow window is required before human review and the evidence never changes Risk/Execution authority.
 - **Safety**: Never executes orders directly. A complete `trade` prepares one immutable Proposal for the Gateway; `close_one` uses the central close router with an exact fresh mark.
 
 #### position_manager

@@ -9,7 +9,7 @@ opportunity.
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
@@ -60,6 +60,7 @@ class _DbCache:
     funding_hl_pred: dict[str, dict]   # symbol → latest HL-predicted funding row
     news: dict[str, list[dict]]        # symbol → up-to-3 recent news_items rows
     onchain_rows: list[dict]           # global on-chain metrics (all symbols share)
+    open_interest_hl: dict[str, dict] = field(default_factory=dict)
 
 
 @dataclass
@@ -416,6 +417,7 @@ def _batch_prefetch_db(symbols: list[str]) -> _DbCache:
         funding_hl_pred=repo.batch_funding_rates(symbols, "hyperliquid_predicted"),
         news=repo.batch_news(symbols, news_since),
         onchain_rows=fresh_rows(repo.latest_onchain_snapshots(limit=3), "onchain"),
+        open_interest_hl=repo.batch_open_interest(symbols, "hyperliquid"),
     )
 
 
@@ -493,12 +495,22 @@ async def _prefetch_symbol(
         # Cross-venue funding from batch cache (avoids 2 per-symbol DB round-trips)
         hl_fr = _fresh_row(db_cache.funding_hl.get(symbol), "cross_venue_funding")
         hl_pred = _fresh_row(db_cache.funding_hl_pred.get(symbol), "cross_venue_funding")
+        hl_oi = _fresh_row(
+            db_cache.open_interest_hl.get(symbol), "cross_venue_open_interest"
+        )
         xvenue_funding: dict = {}
-        if hl_fr or hl_pred:
+        if hl_fr or hl_pred or hl_oi:
             xvenue_funding[symbol] = {
+                "hl_funding_id": hl_fr.get("id") if hl_fr else None,
                 "hl_ann": hl_fr.get("funding_rate_annualized") if hl_fr else None,
                 "hl_predicted_ann": hl_pred.get("funding_rate_annualized") if hl_pred else None,
                 "primary_ann": lv.funding_annualized if lv else None,
+                "hl_open_interest_id": hl_oi.get("id") if hl_oi else None,
+                "hl_open_interest_usd": hl_oi.get("open_interest_usd") if hl_oi else None,
+                "hl_oi_change_1h_pct": hl_oi.get("oi_change_1h_pct") if hl_oi else None,
+                "hl_observed_at": hl_oi.get("observed_at") if hl_oi else (
+                    hl_fr.get("observed_at") if hl_fr else None
+                ),
             }
 
         # Perp structure from batch cache
@@ -686,11 +698,22 @@ async def _analyze_symbol(
                 repo.latest_funding_rate(symbol, exchange="hyperliquid_predicted"),
                 "cross_venue_funding",
             )
-            if hl_fr or hl_pred:
+            hl_oi = fresh_row(
+                repo.latest_open_interest(symbol, exchange="hyperliquid"),
+                "cross_venue_open_interest",
+            )
+            if hl_fr or hl_pred or hl_oi:
                 xvenue_funding[symbol] = {
+                    "hl_funding_id": hl_fr.get("id") if hl_fr else None,
                     "hl_ann": hl_fr.get("funding_rate_annualized") if hl_fr else None,
                     "hl_predicted_ann": hl_pred.get("funding_rate_annualized") if hl_pred else None,
                     "primary_ann": lv.funding_annualized if lv else None,
+                    "hl_open_interest_id": hl_oi.get("id") if hl_oi else None,
+                    "hl_open_interest_usd": hl_oi.get("open_interest_usd") if hl_oi else None,
+                    "hl_oi_change_1h_pct": hl_oi.get("oi_change_1h_pct") if hl_oi else None,
+                    "hl_observed_at": hl_oi.get("observed_at") if hl_oi else (
+                        hl_fr.get("observed_at") if hl_fr else None
+                    ),
                 }
 
             # Position X / perp-structure evidence stays advisory-only: we pass the

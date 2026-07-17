@@ -1204,7 +1204,7 @@ def test_entry_risk_reservation_schema_is_registered(tmp_path, monkeypatch):
     }
     root = Path(__file__).resolve().parents[2]
     assert "`entry_risk_reservations`" in (
-        root / "docs/design/data_model.md"
+        root / "docs/design/data/data_model.md"
     ).read_text(encoding="utf-8")
 
 

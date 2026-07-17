@@ -258,6 +258,9 @@ def _build_pi_decision(decision_result: dict):
         learning_manifest_json=json.dumps(
             decision_result.get("learning_manifest") or {}, sort_keys=True
         ),
+        evidence_manifest_json=json.dumps(
+            decision_result.get("evidence_manifest") or {}, sort_keys=True
+        ),
     )
 
 

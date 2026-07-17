@@ -1185,6 +1185,10 @@ CREATE TABLE IF NOT EXISTS universe_feature_snapshots (
     depth_10bps_usd REAL,
     atr_pct REAL,
     rsi_14 REAL,
+    rsi_15m REAL,
+    atr_15m_pct REAL,
+    return_15m REAL,
+    last_candle_range_atr_15m REAL,
     return_1h REAL,
     return_4h REAL,
     return_24h REAL,
@@ -1192,6 +1196,11 @@ CREATE TABLE IF NOT EXISTS universe_feature_snapshots (
     open_interest REAL,
     oi_delta_1h REAL,
     data_freshness_sec INTEGER,
+    rsi_4h REAL,
+    atr_4h_pct REAL,
+    bb_width_4h REAL,
+    vol_ratio_4h REAL,
+    bb_squeeze INTEGER,
     raw TEXT DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_universe_features_asset_ts
@@ -1390,10 +1399,13 @@ CREATE TABLE IF NOT EXISTS perp_structure_snapshots (
     symbol TEXT NOT NULL,
     venue TEXT NOT NULL DEFAULT 'hyperliquid',
     source TEXT NOT NULL DEFAULT 'vergex',
+    source_ref TEXT,
+    source_hash TEXT,
     as_of_time TEXT NOT NULL,
     observed_at TEXT NOT NULL DEFAULT (datetime('now')),
     data_quality TEXT NOT NULL DEFAULT 'unknown',
     coverage_note TEXT,
+    reference_price REAL,
     poc REAL,
     value_area_low REAL,
     value_area_high REAL,
@@ -1427,6 +1439,32 @@ CREATE TABLE IF NOT EXISTS perp_structure_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_perp_structure_sym_ts
     ON perp_structure_snapshots (symbol, as_of_time DESC);
+
+CREATE TABLE IF NOT EXISTS perp_structure_shadow_outcomes (
+    id TEXT PRIMARY KEY,
+    snapshot_id TEXT NOT NULL REFERENCES perp_structure_snapshots(id),
+    symbol TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    market_type TEXT NOT NULL DEFAULT 'perp',
+    direction TEXT NOT NULL,
+    horizon TEXT NOT NULL,
+    entry_price_usd REAL NOT NULL,
+    entry_ts TEXT NOT NULL,
+    due_at TEXT NOT NULL,
+    settled_at TEXT,
+    exit_price_usd REAL,
+    directional_return_pct REAL,
+    settlement_price_source TEXT,
+    settlement_lag_sec REAL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    policy_epoch_id TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    UNIQUE(snapshot_id, horizon)
+);
+CREATE INDEX IF NOT EXISTS idx_perp_structure_shadow_due
+    ON perp_structure_shadow_outcomes(status, due_at);
+CREATE INDEX IF NOT EXISTS idx_perp_structure_shadow_epoch
+    ON perp_structure_shadow_outcomes(policy_epoch_id, horizon, status);
 
 CREATE TABLE IF NOT EXISTS macro_snapshots (
     id TEXT PRIMARY KEY,
@@ -1997,6 +2035,19 @@ _ADDITIVE_COLUMNS = [
     # P1 (2026-06-28, AI Berkshire belief decomposition): structured assumption list.
     ("key_assumptions", "pi_decisions", "TEXT DEFAULT '[]'"),
     ("learning_manifest_json", "pi_decisions", "TEXT NOT NULL DEFAULT '{}'"),
+    ("evidence_manifest_json", "pi_decisions", "TEXT NOT NULL DEFAULT '{}'"),
+    ("rsi_15m", "universe_feature_snapshots", "REAL"),
+    ("atr_15m_pct", "universe_feature_snapshots", "REAL"),
+    ("return_15m", "universe_feature_snapshots", "REAL"),
+    ("last_candle_range_atr_15m", "universe_feature_snapshots", "REAL"),
+    ("rsi_4h", "universe_feature_snapshots", "REAL"),
+    ("atr_4h_pct", "universe_feature_snapshots", "REAL"),
+    ("bb_width_4h", "universe_feature_snapshots", "REAL"),
+    ("vol_ratio_4h", "universe_feature_snapshots", "REAL"),
+    ("bb_squeeze", "universe_feature_snapshots", "INTEGER"),
+    ("source_ref", "perp_structure_snapshots", "TEXT"),
+    ("source_hash", "perp_structure_snapshots", "TEXT"),
+    ("reference_price", "perp_structure_snapshots", "REAL"),
     # 2026-06-29: lesson block guard fields (dry-run window + TTL expiry).
     # Prevent immediately-accepted lessons from blocking all trades without
     # cooldown (sleeping bomb fix; see spec_lesson_guards.py LG-S01..S04).
@@ -2520,7 +2571,8 @@ CREATE TABLE IF NOT EXISTS pi_decisions (
     debate_bear_confidence INTEGER,
     debate_adjustment INTEGER,
     opportunity_id TEXT,
-    learning_manifest_json TEXT NOT NULL DEFAULT '{}'
+    learning_manifest_json TEXT NOT NULL DEFAULT '{}',
+    evidence_manifest_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_pi_decisions_symbol ON pi_decisions(symbol, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pi_decisions_created ON pi_decisions(created_at DESC);

@@ -72,10 +72,13 @@ class PerpStructureSnapshot(BaseModel):
     symbol: str
     venue: str = "hyperliquid"
     source: str = "vergex"
+    source_ref: str | None = None
+    source_hash: str | None = None
     as_of_time: str
     observed_at: str
     data_quality: str = "unknown"
     coverage_note: str | None = None
+    reference_price: float | None = None
     poc: float | None = None
     value_area_low: float | None = None
     value_area_high: float | None = None

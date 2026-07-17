@@ -1173,6 +1173,8 @@ def _fmt_feature_line(f: dict) -> str:
     """Format one universe feature entry for the assessment prompt."""
     sym = f["symbol"]
     rsi = f.get("rsi_14")
+    rsi15 = f.get("rsi_15m")
+    rsi4h = f.get("rsi_4h")
     atr = f.get("atr_pct")
     r1 = f.get("return_1h") or 0.0
     r4 = f.get("return_4h") or 0.0
@@ -1190,7 +1192,8 @@ def _fmt_feature_line(f: dict) -> str:
     rsi_s = f"{rsi:.0f}" if rsi is not None else "?"
     atr_s = f"{atr:.1f}" if atr is not None else "?"
     base = (
-        f"  {sym}: RSI={rsi_s} ATR={atr_s}% "
+        f"  {sym} [{f.get('market_type', '?')}]: RSI15m={rsi15 if rsi15 is not None else '?'} "
+        f"RSI1h={rsi_s} RSI4h={rsi4h if rsi4h is not None else '?'} ATR1h={atr_s}% "
         f"1h={r1:+.1f}% 4h={r4:+.1f}% 24h={r24:+.1f}% "
         f"FR={fr_str} OI_Δ={oi if oi is not None else '?'}"
     )
@@ -1203,6 +1206,11 @@ def _fmt_feature_line(f: dict) -> str:
         extras.append(f"taker={tkr:.2f}")
     if div and div != 0:
         extras.append(_OI_DIV_LABEL.get(div, ""))
+    range_atr = f.get("last_candle_range_atr_15m")
+    if range_atr is not None:
+        extras.append(f"15m_range={range_atr:.2f}ATR")
+    if f.get("bb_squeeze"):
+        extras.append("BB_squeeze")
     if crowding:
         extras.append("CROWDED")
     return base + (" [" + " ".join(x for x in extras if x) + "]" if extras else "")
@@ -1416,6 +1424,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
             f"conf={o.get('confidence_score', '?')} "
             f"[{o.get('scanner_family', '')}]: {o.get('thesis', '')}"
             f"{(' | obs: ' + '; '.join(o['key_observations'])) if o.get('key_observations') else ''}"
+            f"{(' | technical: ' + _fmt_feature_line(o['technical_context']).strip()) if o.get('technical_context') else ' | technical: unavailable'}"
             f"{_fmt_position_x_context(o.get('structure_context'))}"
             for o in opps[:8]
         )
@@ -1737,9 +1746,34 @@ def _fmt_funding(rate: float | None) -> str:
     return f"{rate * 100:+.4f}%"
 
 
+def _feature_for_candidate(symbol: str, direction: str | None, ctx: dict) -> dict:
+    """Resolve a feature snapshot by full instrument identity when available."""
+    layer1 = ctx.get("layer1") or {}
+    feature_index = layer1.get("feature_index") or {}
+    candidates = [
+        row for row in feature_index.values() if row.get("symbol") == symbol
+    ]
+    pending = [
+        row for row in (ctx.get("layer2") or {}).get("pending_signals", [])
+        if row.get("symbol") == symbol
+        and (not direction or row.get("direction") == direction)
+    ]
+    market = pending[0].get("market_type") if len(pending) == 1 else None
+    if market:
+        normalized = "perp" if str(market).lower() in {
+            "perp", "futures", "swap", "usdt_futures"
+        } else "spot"
+        exact = [row for row in candidates if row.get("market_type") == normalized]
+        if len(exact) == 1:
+            return exact[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    # Ambiguous identity is unavailable, never guessed from a same-symbol row.
+    return {}
+
+
 def _build_bull_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
-    features = ctx.get("layer1", {}).get("features", [])
-    snap = next((f for f in features if f.get("symbol") == symbol), {})
+    snap = _feature_for_candidate(symbol, direction, ctx)
     regime = ctx.get("layer1", {}).get("regime")
     regime_str = f"Regime: {regime['state']} (conf={regime['confidence']:.0%})" if regime else ""
 
@@ -1764,8 +1798,7 @@ Return confidence (0-100) where 100 = near-certain win. Provide 3-5 evidence poi
 
 
 def _build_bear_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
-    features = ctx.get("layer1", {}).get("features", [])
-    snap = next((f for f in features if f.get("symbol") == symbol), {})
+    snap = _feature_for_candidate(symbol, direction, ctx)
     regime = ctx.get("layer1", {}).get("regime")
     regime_str = f"Regime: {regime['state']} (conf={regime['confidence']:.0%})" if regime else ""
 

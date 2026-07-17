@@ -10,6 +10,11 @@ Called at the end of every universe refresh cycle (source_agent="universe_scanne
 
 from __future__ import annotations
 
+from aletheia.universe.funding_units import (
+    CROWDED_FUNDING_RATE,
+    ELEVATED_FUNDING_RATE,
+)
+
 import json
 import logging
 
@@ -483,9 +488,9 @@ def _funding_conflicts(direction: str, funding: float | None) -> bool:
     """
     if funding is None:
         return False
-    if direction == "long" and funding > 0.01:
+    if direction == "long" and funding > CROWDED_FUNDING_RATE:
         return True
-    if direction == "short" and funding < -0.01:
+    if direction == "short" and funding < -CROWDED_FUNDING_RATE:
         return True
     return False
 
@@ -561,9 +566,9 @@ def _infer_direction(family: str | None, feat: dict) -> str | None:
     if family == "derivatives":
         # Derivatives: fade crowded positions via funding rate signal
         if funding is not None:
-            if funding < -0.005:
+            if funding < -ELEVATED_FUNDING_RATE:
                 return "long"
-            if funding > 0.005:
+            if funding > ELEVATED_FUNDING_RATE:
                 return "short"
         # Fall back to 4h momentum if no funding data
         if ret_4h is not None and ret_4h != 0:

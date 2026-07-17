@@ -474,7 +474,7 @@ def test_cross_layer_outcome_lifecycle_has_final_e2e_inventory():
         source = _source(path)
         for test_name in tests:
             assert f"def {test_name}" in source, f"{path} missing {test_name}"
-    audit = _source("docs/status/OUTCOME_INTEGRITY_FINAL_AUDIT_2026-07-12.md")
+    audit = _source("docs/status/audits/OUTCOME_INTEGRITY_FINAL_AUDIT_2026-07-12.md")
     assert "not run" in audit.lower()
     assert "not approved and not applied" in audit.lower()
     assert "live remains disabled" in audit.lower()

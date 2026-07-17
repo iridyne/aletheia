@@ -70,6 +70,18 @@ def _stub_audit(monkeypatch, tmp_path):
     monkeypatch.setattr(jsonl_mod, "LOGS_DIR", tmp_path, raising=False)
 
 
+def _configure_exchange(name: str) -> None:
+    """Set the active exchange required by live execution-mode resolution."""
+    import yaml
+    import aletheia.config.loader as loader
+
+    loader.CONFIG_PATH.write_text(
+        yaml.safe_dump({"exchange": {"name": name, "mode": "live"}}),
+        encoding="utf-8",
+    )
+    loader._invalidate_config_cache()
+
+
 # Minimal exchange_pos dict that adopt_position() accepts
 def _make_exchange_pos(
     symbol: str = "BNB/USDT",
@@ -148,6 +160,7 @@ def test_live_adopted_position_has_stop_and_tp(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     _stub_notifications(monkeypatch)
     _stub_audit(monkeypatch, tmp_path)
+    _configure_exchange("bitget")
 
     from aletheia.portfolio.position_reconciler import adopt_position
     from aletheia.storage.sqlite import get_db
@@ -377,6 +390,7 @@ def test_no_open_adopted_position_has_null_stop(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     _stub_notifications(monkeypatch)
     _stub_audit(monkeypatch, tmp_path)
+    _configure_exchange("bitget")
 
     try:
         import aletheia.files.jsonl as jsonl_mod

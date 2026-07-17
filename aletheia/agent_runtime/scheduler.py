@@ -1804,6 +1804,7 @@ def _run_cleanup():
             "market_snapshots": repo.prune_market_snapshots(r.market_snapshots_days),
             "portfolio_snapshots": repo.prune_portfolio_snapshots(r.portfolio_snapshots_days),
             "orderbook_snapshots": repo.prune_orderbook_snapshots(7),
+            "perp_structure_shadow_outcomes": repo.prune_perp_structure_shadow_outcomes(30),
             "perp_structure_snapshots": repo.prune_perp_structure_snapshots(30),
             "liquidation_events": repo.prune_liquidation_events(7),
             "funding_rate_snapshots": repo.prune_funding_rate_snapshots(r.funding_rate_snapshots_days),

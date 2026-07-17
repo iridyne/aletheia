@@ -130,7 +130,7 @@ def test_research_worker_has_equity_chain_lens():
     ),
 )
 def test_data_utilization_doc_has_rstock_row():
-    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(encoding="utf-8")
+    doc = (_ROOT / "docs" / "design" / "data" / "data_utilization.md").read_text(encoding="utf-8")
     assert "r-series" in doc and "113" in doc, (
         "data_utilization.md §3 must contain the r-series row with 113-token count"
     )

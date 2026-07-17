@@ -487,11 +487,11 @@ def test_stale_epoch_verdict_does_not_authorize():
 
 @spec_claim(SpecClaim(
     "LE-B27", "learning_evolution", "§ exposure fingerprint", "L2b",
-    "The policy epoch rotates when the running build (code fingerprint) or universe "
+    "The policy epoch stays stable across code-only rebuilds, rotates when universe "
     "behavior config changes, and each exposure is stamped with the running build.",
     status="implemented",
 ))
-def test_policy_epoch_rotates_on_code_and_config_change(monkeypatch):
+def test_policy_epoch_ignores_code_only_rebuild_and_rotates_on_config_change(monkeypatch):
     from aletheia.learning import experiments as exp
     import aletheia.agent_runtime.build_info as build_info
     from aletheia.config.loader import load_config
@@ -505,7 +505,7 @@ def test_policy_epoch_rotates_on_code_and_config_change(monkeypatch):
     assert e1 == exp._policy_epoch("universe_family_calibration")  # deterministic
 
     monkeypatch.setattr(build_info, "get_boot_commit", lambda: "commit-BBB")
-    assert exp._policy_epoch("universe_family_calibration") != e1  # rebuild rotates it
+    assert exp._policy_epoch("universe_family_calibration") == e1  # same effective policy
 
     changed = base_cfg.model_copy(update={
         "universe": base_cfg.universe.model_copy(

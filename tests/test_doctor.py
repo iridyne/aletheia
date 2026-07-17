@@ -585,7 +585,7 @@ def test_doctor_perp_structure_warns_when_rows_are_stale(tmp_path, monkeypatch):
     assert "stale" in checks["data.perp_structure"].fix_hint
 
 
-def test_doctor_perp_structure_missing_table_reports_no_rows(tmp_path, monkeypatch):
+def test_doctor_perp_structure_missing_table_reports_not_configured(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
 
@@ -601,8 +601,21 @@ def test_doctor_perp_structure_missing_table_reports_no_rows(tmp_path, monkeypat
 
     checks = {c.name: c for c in report.checks}
     assert checks["data.perp_structure"].severity == "info"
-    assert checks["data.perp_structure"].detail == "no perp structure rows yet"
+    assert "not configured" in checks["data.perp_structure"].detail
     assert "no such table" not in checks["data.perp_structure"].detail
+
+
+def test_doctor_perp_structure_empty_table_reports_owner_import_mode(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    report = dx.Report(generated_at="t")
+
+    dx._probe_perp_structure(report)
+
+    check = {c.name: c for c in report.checks}["data.perp_structure"]
+    assert check.severity == "info"
+    assert "not configured" in check.detail
+    assert "owner_aggregate_import" in check.detail
+    assert "ingest-perp-structure" in check.fix_hint
 
 
 
