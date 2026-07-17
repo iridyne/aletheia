@@ -16,7 +16,7 @@ def test_overview_agent_feed_uses_remaining_viewport_height() -> None:
 
     assert "getBoundingClientRect().top" in feed
     assert "window.innerHeight" in feed
-    assert "Math.floor(viewportHeight - top - VIEWPORT_BOTTOM_GAP)" in feed
+    assert "Math.floor(viewportHeight - Math.max(0, top) - VIEWPORT_BOTTOM_GAP)" in feed
     assert "MIN_FEED_HEIGHT" in feed
     assert "window.addEventListener('resize', scheduleMeasure)" in feed
     assert "window.visualViewport?.addEventListener('resize', scheduleMeasure)" in feed
