@@ -35,7 +35,7 @@
 | 22 | price_feed | 30s | fast_io | Exact-instrument (venue + spot/perp) in-memory price cache refresh |
 | 23 | daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
 | 24 | data_collectors | 2min | io | 主交易所 orderbook、Funding rate、OI（串行 CCXT） |
-| 24a | data_collector_context | 10min | io | volume ranking、Hyperliquid、DefiLlama、CoinGecko、macro、Coinalyze、稀疏 derivatives history；独立 40s 时间盒 |
+| 24a | data_collector_context | 10min | io | volume ranking、Hyperliquid、DefiLlama、CoinGecko、macro、Coinalyze、稀疏 derivatives history；独立 55s 时间盒 |
 | 25 | okx_demo_symbols | 4h | io | Refresh OKX demo symbol list |
 | 26 | guard_promotion | cron 04:00 CST | io | Promote candidate trading guards to active (learning; re-homed from deleted backtest_orchestrator, Position C) |
 | 27 | universe_refresh | 10min | io | Universe composition refresh |

@@ -101,9 +101,20 @@ class MacroCollector:
         # call here stalled every other scheduled task (market observers,
         # heartbeats, exchange sync) for the duration. Route through
         # asyncio.to_thread so the blocking work happens off-loop.
+        # Each ticker runs in its own thread concurrently so fallback wall-clock
+        # is max(each ticker) instead of sum(each ticker).
         if any(v is None for v in (spy, vix, dxy, nasdaq)):
             try:
-                yf_spy, yf_vix, yf_dxy, yf_nasdaq = await asyncio.to_thread(_fetch_tradfi)
+                yf_results = await asyncio.gather(
+                    asyncio.to_thread(_fetch_one_tradfi_ticker, "SPY"),
+                    asyncio.to_thread(_fetch_one_tradfi_ticker, "^VIX"),
+                    asyncio.to_thread(_fetch_one_tradfi_ticker, "DX-Y.NYB"),
+                    asyncio.to_thread(_fetch_one_tradfi_ticker, "^IXIC"),
+                    return_exceptions=True,
+                )
+                yf_spy, yf_vix, yf_dxy, yf_nasdaq = [
+                    None if isinstance(r, BaseException) else r for r in yf_results
+                ]
                 spy = spy or yf_spy
                 vix = vix or yf_vix
                 dxy = dxy or yf_dxy
@@ -227,31 +238,33 @@ async def _fetch_coingecko() -> tuple[float | None, float | None, float | None]:
 # yFinance (fallback)
 # ---------------------------------------------------------------------------
 
-def _fetch_tradfi() -> tuple[float | None, float | None, float | None, float | None]:
-    """Fetch SPY, VIX, DXY, Nasdaq via yfinance. Fallback when FRED unavailable."""
+def _fetch_one_tradfi_ticker(ticker_sym: str) -> float | None:
+    """Fetch a single yfinance ticker. Intended to run in asyncio.to_thread."""
     try:
         import yfinance as yf
+        t = yf.Ticker(ticker_sym)
+        hist = t.history(period="2d")
+        if not hist.empty:
+            return round(float(hist["Close"].iloc[-1]), 2)
     except ImportError:
         logger.warning("yfinance not installed — tradfi macro fallback unavailable (FRED key required)")
-        return None, None, None, None
+    except Exception as e:
+        logger.debug("yfinance tradfi ticker %s failed: %s", ticker_sym, e)
+    return None
 
-    tickers = {"SPY": None, "^VIX": None, "DX-Y.NYB": None, "^IXIC": None}
-    for ticker_sym in tickers:
-        try:
-            t = yf.Ticker(ticker_sym)
-            hist = t.history(period="2d")
-            if not hist.empty:
-                tickers[ticker_sym] = round(float(hist["Close"].iloc[-1]), 2)
-        except Exception as e:
-            logger.debug("yfinance tradfi ticker %s failed: %s", ticker_sym, e)
 
-    all_none = all(v is None for v in tickers.values())
-    if all_none:
+def _fetch_tradfi() -> tuple[float | None, float | None, float | None, float | None]:
+    """Fetch SPY, VIX, DXY, Nasdaq via yfinance. Fallback when FRED unavailable."""
+    spy = _fetch_one_tradfi_ticker("SPY")
+    vix = _fetch_one_tradfi_ticker("^VIX")
+    dxy = _fetch_one_tradfi_ticker("DX-Y.NYB")
+    nasdaq = _fetch_one_tradfi_ticker("^IXIC")
+    if all(v is None for v in (spy, vix, dxy, nasdaq)):
         logger.warning(
             "yfinance tradfi fallback: all tickers returned None "
             "(yfinance library change or Yahoo Finance API outage?)"
         )
-    return tickers["SPY"], tickers["^VIX"], tickers["DX-Y.NYB"], tickers["^IXIC"]
+    return spy, vix, dxy, nasdaq
 
 
 def _classify_risk_regime(
