@@ -111,12 +111,12 @@ veto”冲突。`qualified_positive` 也没有形成可观察的 action differen
 
 ## 5. 已实施：单变量 Direct-Skip 语义实验（B 类）
 
-本任务未与 A 类可观测性修复同 PR。进入条件已由 owner 的明确授权、成熟 cohort 复算与独立
-worktree/branch 满足；旧 `b1.1` 窗口在新代码首次运行时由 policy epoch 机制关闭。
+本任务未与 A 类可观测性修复同 PR。owner 在看到后续增长的 direct skip 后明确授权先实施修复；
+旧 `b1.1` 窗口在新代码首次运行时由 policy epoch 机制关闭。原建议的三个进入条件状态必须诚实保留：
 
-1. `skip-halt-v2` 的成熟窗口完成结算，并至少产生一次可复现 finding；
-2. 当前 epoch 的 direct/gated 分层报告复算一致，记录 symbol/direction 相关性；
-3. owner 确认关闭旧行为窗口并创建新 policy epoch。
+1. `skip-halt-v2` 成熟窗口：**仍为 `awaiting_outcomes`**，因此不能把本次实现宣称为收益已证明；
+2. 当前 epoch 的 direct/gated 分层及 symbol/direction 相关性：**已复算并作为 b1.1 baseline**；
+3. owner 确认关闭旧行为窗口并创建新 policy epoch：**已明确授权**。
 
 唯一 treatment：**direct skip 必须经过一次有界反事实确认，并给出至少一个与当前候选相关、独立于
 `insufficient_evidence` 的 typed adverse reason/evidence；证据不足本身保持中性。** 第二次仍为中性
