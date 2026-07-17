@@ -323,6 +323,8 @@ export default function Settings() {
         role="Operate · Configure AI agent behaviour, exchange connections, risk limits, and system infrastructure. Secrets are write-only and never displayed."
       />
 
+      <SettingsSearch onPick={selectTab} />
+
       <div
         className={`settings-shell ${isNavCollapsed ? 'is-collapsed' : ''}`}
         style={{ '--settings-nav-width': `${navWidth}px` } as React.CSSProperties}
@@ -365,7 +367,6 @@ export default function Settings() {
           onPointerDown={onResizePointerDown}
         />
         <div className="settings-panel">
-          <SettingsSearch onPick={selectTab} />
           {tab === 'agent'     && <AgentModelsTab        status={status} settings={settings} qc={qc} />}
           {tab === 'execution' && <ExecutionTab          status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'risk'      && <RiskTab               settings={settings} qc={qc} onDirty={registerDirty} />}

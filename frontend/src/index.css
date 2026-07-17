@@ -526,7 +526,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 /* Settings uses a vertical IA: left section nav + right detail panel. */
 
 /* ─── Inline search — fuzzy-find across all 28 sections + 6 tabs ─── */
-.settings-search { position: relative; margin-bottom: var(--space-3); max-width: 480px; }
+.settings-search { position: relative; margin-bottom: var(--space-3); }
 .settings-search-input {
   width: 100%;
   background: var(--surface);
