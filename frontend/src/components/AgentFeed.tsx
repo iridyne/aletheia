@@ -143,18 +143,24 @@ export default function AgentFeed() {
     const resizeObserver = new ResizeObserver(scheduleMeasure)
     const observeLayoutDrivers = () => {
       const main = card.closest('main')
-      main?.querySelectorAll('.page-title, .setup-banner, .pnl-zone')
+      if (!main) return
+      // Observe main itself so any structural height change (setup-banner
+      // mounting, PnL zone loading) triggers a re-measure without needing
+      // a MutationObserver that fires on every text-content update.
+      resizeObserver.observe(main)
+      main.querySelectorAll('.page-title, .setup-banner, .pnl-zone')
         .forEach(element => resizeObserver.observe(element))
     }
+    // MutationObserver is only used to pick up newly-mounted layout drivers
+    // (e.g. setup-banner appearing after an async check). It must NOT call
+    // scheduleMeasure() — that would re-measure on every feed text update
+    // (agent-runs, timestamps) and cause the height to jitter every 10 s.
     const mutationRoot = card.closest('main')
-    const mutationObserver = new MutationObserver(() => {
-      observeLayoutDrivers()
-      scheduleMeasure()
-    })
+    const mutationObserver = new MutationObserver(observeLayoutDrivers)
 
     observeLayoutDrivers()
     if (mutationRoot) {
-      mutationObserver.observe(mutationRoot, { childList: true, subtree: true })
+      mutationObserver.observe(mutationRoot, { childList: true, subtree: false })
     }
     window.addEventListener('resize', scheduleMeasure)
     window.visualViewport?.addEventListener('resize', scheduleMeasure)
