@@ -362,37 +362,92 @@ All models in `aletheia/storage/models.py`. Key mapping:
 ## 7. Retention & Cleanup (data lifecycle)
 
 > Cleanup job runs daily (`scheduler.py:_run_cleanup`); writes an audit event `data_pruned`.
-> Two-class rule: **trust-bearing tables are NEVER pruned; only telemetry/market-data tables are.**
+> **Authoritative retention contract**: see [`RETENTION_POLICY.md`](RETENTION_POLICY.md) for the
+> full per-table window, prune column, function name, cascade order, archive flag, write-guardrail
+> file:line references, VACUUM strategy, and open-questions resolution (Phase 3, 2026-07-17).
+> Two-class rule: **trust-bearing tables (audit chain + 7 learning tables) are NEVER pruned;
+> only telemetry/market-data tables are.**
 
-### 7.1 Prunable tables (telemetry only)
+### 7.1 Prunable tables (telemetry only, Phase 3 windows)
 
-| Table | Retention | Configurable | Source |
-|-------|-----------|--------------|--------|
-| `agent_runs` / `agent_run_steps` / `agent_tool_calls` | 30d | yes (`retention.*`) | `repositories.py:990-999` |
-| `market_snapshots` | 30d | yes | `repositories.py:1002` |
-| `portfolio_snapshots` | 90d | yes | `repositories.py:1006` |
-| `orderbook_snapshots` / `liquidation_events` | 7d | hardcoded | `repositories.py:1539-1556` |
-| `funding_rate_snapshots` / `open_interest_snapshots` / `perp_structure_snapshots` / `universe_feature_snapshots` | 30d | hardcoded | `repositories.py` prune functions |
-| `ohlcv_backfill_state` | 90d since last update | hardcoded | `repositories.py:prune_ohlcv_backfill_state` |
-| `macro_snapshots` | 90d | hardcoded | `repositories.py:1587` |
-| `coingecko_top_snapshots` (Round 2 Step 3) | 14d | hardcoded | `repositories.py:prune_coingecko_top_snapshots` |
-| `universe_forward_outcomes` | 30d | hardcoded | `repositories.py:prune_universe_forward_outcomes` |
-| `filter_decision_batches` | 30d | hardcoded | `repositories.py:prune_filter_decision_batches` |
-| `filter_decisions` / `filter_candidate_outcomes` | 90d | hardcoded | `repositories.py` filter-evidence prune functions |
-| `agent_shell_heartbeats` / `_events` / `_messages` / `_artifacts` (operator telemetry, DB-SIZE-1) | 2d / 14d / 30d / 30d | hardcoded | `repositories.py` `_PRUNABLE` + `scheduler.py:_run_cleanup` |
-| `opportunities` (open) | 48h → `expired` | yes | `repositories.py:1597-1612` |
+Configurable via `cfg.retention.*` (see `aletheia/config/schema.py`). All windows below are
+current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
+
+| Table | Retention | Function |
+|-------|-----------|----------|
+| `agent_runs` / `agent_run_steps` / `agent_tool_calls` | 14d (`agent_run_steps`, was 30d) | `prune_agent_runs` (cascade), `prune_run_steps` |
+| `market_snapshots` | 30d | existing |
+| `portfolio_snapshots` | 90d | existing |
+| `orderbook_snapshots` / `liquidation_events` | 7d | existing |
+| `funding_rate_snapshots` | max(7d, 2 × max_open_position_hold_hours) | `prune_funding_rate_snapshots` |
+| `open_interest_snapshots` | 7d (was 30d) | `prune_open_interest_snapshots` |
+| `perp_structure_snapshots` | 30d | existing |
+| `universe_feature_snapshots` | 14d (was 30d); `raw` column dropped via migration | `prune_universe_feature_snapshots` |
+| `ohlcv_backfill_state` | 90d since last update | existing |
+| `macro_snapshots` | 90d | existing |
+| `coingecko_top_snapshots` | 3d (was 14d); `coingecko_top_n` default 50 (was 100) | `prune_coingecko_top_snapshots` |
+| `universe_forward_outcomes` | 30d | existing |
+| `universe_snapshots` / `universe_members` / `universe_scanner_runs` | 30d | `prune_universe_snapshots` (cascade) / `prune_universe_scanner_runs` (new) |
+| `market_ohlcv` | 1m=2d / 5m=7d / 15m=30d / 1h=90d / 4h=180d / 1d=730d + hard drop `exchange='legacy_unknown'` | `prune_market_ohlcv` (new) |
+| `market_regimes` | 60d + skip-if-unchanged dedup | `prune_market_regimes` (new) |
+| `filter_decision_batches` | 30d (contract) | `prune_filter_decision_batches` |
+| `filter_decisions` | 45d (was 90d) + clean_window_cutoff guard | `prune_filter_decisions` |
+| `filter_candidate_outcomes` | 30d (was 90d) + clean_window_cutoff guard | `prune_filter_candidate_outcomes` |
+| `controller_recommendations` | 30d + skip insufficient×insufficient rows | `prune_controller_recommendations` (new) |
+| `filter_shadow_experiments` / `filter_shadow_evaluations` | 90d completed / cascade child; `status='collecting'` exempt | `prune_filter_shadow_experiments` (new, cascade) |
+| `alpha_control_observations` | 60d + 6× cadence reduction | `prune_alpha_control_observations` (new) |
+| `agent_shell_heartbeats` | 2d + UPDATE-not-INSERT dedup | `prune_agent_shell_heartbeats` |
+| `agent_shell_events` | 14d + command_* payload trim + task_lifecycle coalesce | `prune_agent_shell_events` |
+| `agent_shell_messages` | 3d for `message_type='context'` / 14d otherwise + cap 1 context row per session | `prune_agent_shell_messages` (type-tiered) |
+| `agent_shell_artifacts` | 7d `strategy_evaluation` / 30d proposal+report+daily_summary / 14d other | `prune_agent_shell_artifacts` (type-tiered) |
+| `agent_shell_tasks` | 14d completed / 30d failed+cancelled; exempt `running`/`pending` | `prune_agent_shell_tasks` (new, cascade) |
+| `agent_shell_sessions` | 14d (30d if session has proposal/report/daily_summary artifact) | `prune_agent_shell_sessions` (new, cascade — children first) |
+| `agent_shell_commands` | 14d | `prune_agent_shell_commands` (new) |
+| `runtime_sessions` | 30d | `prune_runtime_sessions` (new) |
+| `serenity_evidence` / `serenity_run_events` | 60d | `prune_serenity_evidence` (new) / `prune_serenity_run_events` (new) |
+| `backtest_runs` / `backtest_trades` | 60d (parent cascade) | `prune_backtest_runs` (new, cascade) |
+| `opportunities` (open) | 48h → `expired` | existing |
+| `agent_task_claims` (in `~/.aletheia/tasks.db`) | honour `expires_at` | new helper `_prune_agent_task_claims_tasks_db` in scheduler |
 
 ### 7.2 NEVER-pruned (trust-bearing) — enforced by `_PRUNABLE` allowlist (`repositories.py:_PRUNABLE`)
 
-`trade_proposals` · `risk_decisions` · `orders` · `fills` · `positions` · `audit_events` · `knowledge_items`
+Audit chain (12): `trade_proposals` · `risk_decisions` · `orders` · `fills` · `positions` ·
+`audit_events` · `capital_events` · `approvals` · `knowledge_items` · `ps_orders` · `ps_fills` ·
+`ps_positions`.
 
-> **Invariant**: the causal record chain (§2) is permanent. Any new prune target MUST be added to `_PRUNABLE` explicitly and MUST NOT include a trust-bearing table.
+Measured Learning Ledger (7): `learning_experiments` · `learning_exposures` ·
+`learning_hypotheses` · `learning_policy_epochs` · `learning_contribution_verdicts` ·
+`learning_lifecycle_events` · `learning_job_health`.
+
+> **Invariant**: the causal record chain (§2) + the learning ledger (§C-bis) are permanent.
+> Any new prune target MUST be added to `_PRUNABLE` explicitly and MUST NOT include a
+> trust-bearing table. Enforced by `tests/test_architecture_fitness.py`.
 
 ### 7.3 JSONL rotation
 
 - Trigger: file ≥ `retention.jsonl_max_mb` (default 50MB) → rename `x.jsonl` → `x.jsonl.1` → `.2`... (`files/jsonl.py:27-104`)
 - Rotated files are **kept** (no auto-delete); new writes append to fresh file.
 - `audit.jsonl`: SHA-256 `_prev_hash` chain across rotations, tamper-evident (`jsonl.py:182-207`).
+
+### 7.4 Filesystem retention
+
+Runtime artefact trees under `~/.aletheia/`. Full details in `RETENTION_POLICY.md` §4.
+
+| Path | Window | Strategy |
+|------|--------|----------|
+| `~/.aletheia/agent_shell/sessions/` | 14d | DB-JOIN (mtime unreliable post-migration) + orphan sweep |
+| `~/.aletheia/agent_shell/tasks/` | 7d completed / 30d failed+cancelled | DB-JOIN + orphan sweep |
+| `~/.aletheia/backups/` | keep_recent=7 (count-based) | Rotate on every backup write path + daily cleanup |
+| `~/.aletheia/diagnostics/` | 14d | mtime-based |
+| `~/.aletheia/app.db.pre-migration-backup` | 30d after `migration.completed_at` | Conditional on `PRAGMA integrity_check == 'ok'` |
+| `~/.aletheia/knowledge/` | per-subdir (30d – 365d; some permanent) | Per-subdir policy |
+
+### 7.5 VACUUM strategy (Phase 3)
+
+`PRAGMA auto_vacuum = INCREMENTAL` (set during the Phase 4 one-shot backfill, persistent).
+The recurring `_run_cleanup` pass reclaims freelist pages via `PRAGMA incremental_vacuum(1000)`
+at the tail. Full `VACUUM` runs only in the one-shot backfill with the gateway stopped. See
+`RETENTION_POLICY.md` §6 for the full sequenced pragma steps.
 
 ---
 

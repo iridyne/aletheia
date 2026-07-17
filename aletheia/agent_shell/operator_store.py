@@ -1,8 +1,9 @@
 """Operator control-plane persistence helpers."""
 
+import hashlib
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from aletheia.agent_shell.file_artifacts import (
     append_session_log,
@@ -10,6 +11,118 @@ from aletheia.agent_shell.file_artifacts import (
     write_task_note,
 )
 from aletheia.storage.sqlite import get_db
+
+# Task types that are inherently non-idempotent (each call is a distinct request)
+# and MUST bypass the create_task dedup guardrail.
+_NON_IDEMPOTENT_TASK_TYPES: frozenset[str] = frozenset(
+    {
+        "pi_reasoning_session",
+        "create_repair_proposal",
+        "create_diagnostic_report",
+    }
+)
+
+# Idempotency window: if a matching-hash task landed in this window with
+# status in ('running', 'completed'), short-circuit and return that task_id.
+_TASK_IDEMPOTENCY_WINDOW_HOURS = 4
+_TASK_IDEMPOTENCY_STATUSES: tuple[str, ...] = ("running", "completed")
+
+# Backpressure: refuse new evaluate_strategy_state enqueue when the pending
+# queue is saturated. Callers see a RuntimeError; the FastAPI wrapper surfaces
+# it as 500 which is acceptable for a saturation signal.
+_EVALUATE_STRATEGY_STATE_TASK_TYPE = "evaluate_strategy_state"
+_EVALUATE_STRATEGY_STATE_BACKPRESSURE_LIMIT = 50
+
+
+def _canonical_json(value) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _heartbeat_semantic_hash(
+    *,
+    agent_id: str,
+    runtime_id: str,
+    runtime_mode: str,
+    runtime_state: str,
+    status: str,
+    mode: str,
+    permission_mode: str,
+    is_busy: bool,
+    current_task_id: str | None,
+    current_intent: str | None,
+    queue_size: int,
+    last_error: str | None,
+    model_provider: str | None,
+    session_id: str | None,
+    active_branch_id: str | None,
+    active_branch_kind: str | None,
+    active_branch_title: str | None,
+) -> str:
+    """Hash the semantic (non-timestamp, non-id) fields of a heartbeat row.
+
+    Two heartbeats with identical hashes describe the same state, so the store
+    can collapse them into a `last_seen_at` bump instead of a fresh INSERT.
+    """
+    payload = {
+        "agent_id": agent_id,
+        "runtime_id": runtime_id,
+        "runtime_mode": runtime_mode,
+        "runtime_state": runtime_state,
+        "status": status,
+        "mode": mode,
+        "permission_mode": permission_mode,
+        "is_busy": bool(is_busy),
+        "current_task_id": current_task_id,
+        "current_intent": current_intent,
+        "queue_size": int(queue_size),
+        "last_error": last_error,
+        "model_provider": model_provider,
+        "session_id": session_id,
+        "active_branch_id": active_branch_id,
+        "active_branch_kind": active_branch_kind,
+        "active_branch_title": active_branch_title,
+    }
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _heartbeat_semantic_hash_from_row(row: dict) -> str:
+    return _heartbeat_semantic_hash(
+        agent_id=row["agent_id"],
+        runtime_id=row.get("runtime_id") or "runtime-local-current",
+        runtime_mode=row.get("runtime_mode") or "current",
+        runtime_state=row.get("runtime_state") or "current",
+        status=row["status"],
+        mode=row["mode"],
+        permission_mode=row["permission_mode"],
+        is_busy=bool(row.get("is_busy") or 0),
+        current_task_id=row.get("current_task_id"),
+        current_intent=row.get("current_intent"),
+        queue_size=int(row.get("queue_size") or 0),
+        last_error=row.get("last_error"),
+        model_provider=row.get("model_provider"),
+        session_id=row.get("session_id"),
+        active_branch_id=row.get("active_branch_id"),
+        active_branch_kind=row.get("active_branch_kind"),
+        active_branch_title=row.get("active_branch_title"),
+    )
+
+
+def _task_semantic_hash(
+    *,
+    task_type: str,
+    created_by: str,
+    input_data: object,
+) -> str:
+    """Hash the (task_type, created_by, canonical(input_data)) tuple.
+
+    Used by create_task to short-circuit duplicate enqueues.
+    """
+    payload = {
+        "task_type": task_type,
+        "created_by": created_by,
+        "input_data": input_data if input_data is not None else {},
+    }
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 
 def _utc_now() -> str:
@@ -216,9 +329,60 @@ def record_heartbeat(
     effective_runtime_id = runtime_id or _current_runtime_id()
     if session_id:
         _ensure_session(session_id, runtime_id=effective_runtime_id)
-    heartbeat_id = str(uuid.uuid4())
     seen_at = last_seen_at or _utc_now()
     success_at = last_success_at or (seen_at if status == "online" else None)
+
+    # Semantic dedup: if the newest heartbeat for this agent describes the
+    # identical state, bump last_seen_at (and last_success_at when relevant)
+    # on that row instead of inserting a duplicate. Supervisor staleness
+    # detection reads last_seen_at, so the bump MUST happen.
+    new_hash = _heartbeat_semantic_hash(
+        agent_id=agent_id,
+        runtime_id=effective_runtime_id,
+        runtime_mode=runtime_mode,
+        runtime_state=runtime_state,
+        status=status,
+        mode=mode,
+        permission_mode=permission_mode,
+        is_busy=is_busy,
+        current_task_id=current_task_id,
+        current_intent=current_intent,
+        queue_size=queue_size,
+        last_error=last_error,
+        model_provider=model_provider,
+        session_id=session_id,
+        active_branch_id=active_branch_id,
+        active_branch_kind=active_branch_kind,
+        active_branch_title=active_branch_title,
+    )
+    latest_row = db.execute(
+        "SELECT * FROM agent_shell_heartbeats "
+        "WHERE agent_id = ? "
+        "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        (agent_id,),
+    ).fetchone()
+    if latest_row is not None:
+        latest_dict = dict(latest_row)
+        if _heartbeat_semantic_hash_from_row(latest_dict) == new_hash:
+            existing_id = str(latest_dict["id"])
+            if success_at is not None:
+                db.execute(
+                    "UPDATE agent_shell_heartbeats "
+                    "SET last_seen_at = ?, last_success_at = ? "
+                    "WHERE id = ?",
+                    (seen_at, success_at, existing_id),
+                )
+            else:
+                db.execute(
+                    "UPDATE agent_shell_heartbeats "
+                    "SET last_seen_at = ? "
+                    "WHERE id = ?",
+                    (seen_at, existing_id),
+                )
+            _commit_if_needed(db, was_in_tx)
+            return existing_id
+
+    heartbeat_id = str(uuid.uuid4())
     db.execute(
         "INSERT INTO agent_shell_heartbeats ("
         "id, agent_id, runtime_id, runtime_mode, runtime_state, status, mode, permission_mode, is_busy, current_task_id, "
@@ -279,12 +443,63 @@ def create_task(
 ) -> str:
     db = get_db()
     was_in_tx = db.in_transaction
-    task_id = str(uuid.uuid4())
     effective_runtime_id = runtime_id or _current_runtime_id()
     effective_started_at = started_at or (_utc_now() if status == "running" else None)
     effective_completed_at = completed_at or (
         _utc_now() if status in {"completed", "failed", "cancelled"} else None
     )
+
+    # Idempotency dedup: if a task with the same (task_type, created_by,
+    # canonical(input_data)) hash was enqueued within the last
+    # _TASK_IDEMPOTENCY_WINDOW_HOURS and is still running or already
+    # completed, return that task_id instead of writing a duplicate. Task
+    # types in _NON_IDEMPOTENT_TASK_TYPES are always allowed through.
+    if task_type not in _NON_IDEMPOTENT_TASK_TYPES:
+        new_hash = _task_semantic_hash(
+            task_type=task_type,
+            created_by=created_by,
+            input_data=input_data,
+        )
+        cutoff_dt = datetime.now(timezone.utc) - timedelta(
+            hours=_TASK_IDEMPOTENCY_WINDOW_HOURS
+        )
+        cutoff_iso = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
+        placeholders = ",".join("?" for _ in _TASK_IDEMPOTENCY_STATUSES)
+        candidate_rows = db.execute(
+            "SELECT id, task_type, created_by, input_data "
+            "FROM agent_shell_tasks "
+            f"WHERE task_type = ? AND created_by = ? AND status IN ({placeholders}) "
+            "AND created_at >= ? "
+            "ORDER BY created_at DESC, rowid DESC",
+            (task_type, created_by, *_TASK_IDEMPOTENCY_STATUSES, cutoff_iso),
+        ).fetchall()
+        for candidate in candidate_rows:
+            candidate_input = _json_load(candidate["input_data"]) or {}
+            candidate_hash = _task_semantic_hash(
+                task_type=candidate["task_type"],
+                created_by=candidate["created_by"],
+                input_data=candidate_input,
+            )
+            if candidate_hash == new_hash:
+                return str(candidate["id"])
+
+    # Backpressure: evaluate_strategy_state is high-frequency and can saturate
+    # the pending queue. Refuse to enqueue once pending >= limit.
+    if task_type == _EVALUATE_STRATEGY_STATE_TASK_TYPE:
+        pending_row = db.execute(
+            "SELECT COUNT(*) AS c FROM agent_shell_tasks "
+            "WHERE task_type = ? AND status = 'pending'",
+            (task_type,),
+        ).fetchone()
+        pending_count = int(pending_row["c"]) if pending_row else 0
+        if pending_count >= _EVALUATE_STRATEGY_STATE_BACKPRESSURE_LIMIT:
+            raise RuntimeError(
+                "create_task backpressure: pending "
+                f"{_EVALUATE_STRATEGY_STATE_TASK_TYPE} count "
+                f"{pending_count} >= {_EVALUATE_STRATEGY_STATE_BACKPRESSURE_LIMIT}"
+            )
+
+    task_id = str(uuid.uuid4())
     db.execute(
         "INSERT INTO agent_shell_tasks ("
         "id, runtime_id, task_type, status, priority, created_by, assigned_to, input_data, "
@@ -402,6 +617,14 @@ def append_message(
             related_event_id,
         ),
     )
+    # Context messages are latest-only per session: purge older 'context'
+    # rows so retention only ever keeps the newest snapshot.
+    if message_type == "context":
+        db.execute(
+            "DELETE FROM agent_shell_messages "
+            "WHERE session_id = ? AND message_type = 'context' AND id <> ?",
+            (session_id, message_id),
+        )
     _commit_if_needed(db, was_in_tx)
     append_session_log(
         session_id,

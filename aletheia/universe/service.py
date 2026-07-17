@@ -7,6 +7,7 @@ Falls back to static BTC/ETH/SOL when disabled or on any failure.
 
 from __future__ import annotations
 
+import hashlib
 from contextlib import contextmanager
 import json
 import logging
@@ -20,6 +21,19 @@ from aletheia.storage.models import (
 )
 
 logger = logging.getLogger("aletheia.universe")
+
+# Phase 3 retention (2026-07-17): universe_snapshots + universe_members
+# change-suppression. Universe refresh runs every ~10 min but the allocation
+# is stable across many refreshes (top-N by score barely moves in calm regimes),
+# so every 10-min tick used to write ~50 near-duplicate member rows.
+# Suppress when the fingerprint (sorted member list + ranks + regime tag)
+# is unchanged AND the previous active snapshot is younger than the heartbeat
+# floor; force a fresh write past that floor so downstream freshness gates
+# never see a stale snapshot.
+_SNAPSHOT_HEARTBEAT_SEC = 55 * 60  # 6 × 10-min refresh cadence, minus jitter.
+# alpha_control_observations sampling: reduce from every refresh (~10 min)
+# to once per hour to keep the causal-audit table size bounded.
+_ALPHA_CONTROL_SAMPLE_SEC = 55 * 60
 
 
 @contextmanager
@@ -103,6 +117,88 @@ def _dedupe_by_symbol_preferred_market(allocated: list[dict], cfg) -> list[dict]
             seen_symbols[sym] = item
 
     return sorted(seen_symbols.values(), key=lambda x: x["total_score"], reverse=True)
+
+
+def _member_fingerprint(allocated: list[dict], regime_tag: str | None) -> str:
+    """Deterministic hash of a sorted allocation for change-suppression.
+
+    Uses (symbol, market_type, rank, scanner_family) per member plus the
+    regime tag. Any reordering, drop/add, or regime flip yields a different
+    hash. Numeric scores are intentionally excluded — small score jitter
+    between refreshes is common and does not warrant a new snapshot.
+    """
+    material: list[tuple] = []
+    for rank, item in enumerate(allocated, 1):
+        material.append((
+            str(item.get("symbol") or ""),
+            str(item.get("market_type") or "spot"),
+            int(rank),
+            str(item.get("scanner_family") or ""),
+        ))
+    payload = json.dumps({"members": material, "regime": regime_tag}, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _previous_snapshot_fingerprint(
+    market_type: str, current_regime_tag: str | None,
+) -> tuple[str | None, str | None, float | None]:
+    """Return (fingerprint, snapshot_id, age_seconds) of the newest active snapshot.
+
+    All three may be None if no active snapshot exists yet.
+    """
+    prev = repo.get_active_universe_snapshot(market_type)
+    if not prev:
+        return None, None, None
+    prev_members = repo.list_universe_members(prev["id"], limit=1000)
+    materialized = [
+        {
+            "symbol": m.get("symbol"),
+            "market_type": m.get("market_type"),
+            "scanner_family": m.get("scanner_family"),
+        }
+        for m in sorted(prev_members, key=lambda m: m.get("rank") or 0)
+    ]
+    prev_regime = None
+    for m in prev_members:
+        if m.get("regime_tag"):
+            prev_regime = m["regime_tag"]
+            break
+    fp = _member_fingerprint(materialized, prev_regime)
+    age = None
+    created_at = prev.get("created_at")
+    if created_at:
+        try:
+            parsed = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - parsed).total_seconds()
+        except ValueError:
+            age = None
+    return fp, prev.get("id"), age
+
+
+def _should_sample_alpha_control(now: datetime) -> bool:
+    """Return True if enough time has passed since the last universe-layer sample."""
+    try:
+        db = repo.get_db()
+        row = db.execute(
+            "SELECT created_at FROM alpha_control_observations "
+            "WHERE layer = 'universe' ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+    except Exception:
+        return True  # fail-open — a missed sample is worse than a duplicate
+    if not row:
+        return True
+    created_at = row["created_at"] if hasattr(row, "keys") else row[0]
+    if not created_at:
+        return True
+    try:
+        parsed = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (now - parsed).total_seconds() >= _ALPHA_CONTROL_SAMPLE_SEC
 
 
 def _register_experiment_candidate_outcomes(scored: list[dict], cfg, *, entry_ts: str) -> int:
@@ -342,6 +438,46 @@ class UniverseService:
             now = datetime.now(timezone.utc)
             snapshot_ttl_sec = int(cfg.universe.snapshot_ttl_hours * 3600)
             expires_at = (now + timedelta(seconds=snapshot_ttl_sec)).isoformat()
+            regime_tag_for_fp = current_regime.state if current_regime else None
+
+            # Phase 3 retention: change-suppression on universe_snapshots.
+            # If the allocation fingerprint matches the currently-active snapshot
+            # AND that snapshot is younger than the heartbeat floor, skip the
+            # write and reuse the previous snapshot. This collapses ~5 of every
+            # 6 refreshes to a no-op when the top-N is stable.
+            new_fp = _member_fingerprint(allocated, regime_tag_for_fp)
+            prev_fp, prev_snapshot_id, prev_age_sec = _previous_snapshot_fingerprint(
+                market_type, regime_tag_for_fp,
+            )
+            reuse_previous_snapshot = (
+                prev_snapshot_id is not None
+                and prev_fp == new_fp
+                and prev_age_sec is not None
+                and prev_age_sec < _SNAPSHOT_HEARTBEAT_SEC
+            )
+
+            if reuse_previous_snapshot:
+                logger.debug(
+                    "Universe refresh: suppressed snapshot write (fingerprint unchanged, "
+                    "prev_age=%.0fs, prev=%s)",
+                    prev_age_sec, prev_snapshot_id,
+                )
+                # Advance the scanner run pointer to the reused snapshot, then
+                # short-circuit the publication block: no new members to insert,
+                # no downstream cohort logging (freshness monitors read the
+                # existing active snapshot as before).
+                repo.update_universe_scanner_run(
+                    run.id,
+                    status="completed",
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                    snapshot_id=prev_snapshot_id,
+                )
+                logger.info(
+                    "Universe refresh complete (change-suppressed): reused snapshot=%s",
+                    prev_snapshot_id,
+                )
+                return prev_snapshot_id
+
             snap = UniverseSnapshot(
                 market_type=market_type,
                 expires_at=expires_at,
@@ -429,16 +565,25 @@ class UniverseService:
                 except Exception as e:
                     logger.warning("Forward outcome registration failed (non-fatal): %s", e)
 
-                try:
-                    from aletheia.analytics.causal_controls import record_universe_control_cohort
-                    record_universe_control_cohort(
-                        snapshot_id=snap.id,
-                        selected_members=inserted_members,
-                        scored_candidates=scored,
-                        entry_ts=now.isoformat(),
+                # Phase 3 retention: alpha_control_observations sampling reduced
+                # from every refresh (~10 min) to once per hour. Universe
+                # allocation is stable enough over an hour that the causal
+                # signal is preserved at 1/6 the row count.
+                if _should_sample_alpha_control(now):
+                    try:
+                        from aletheia.analytics.causal_controls import record_universe_control_cohort
+                        record_universe_control_cohort(
+                            snapshot_id=snap.id,
+                            selected_members=inserted_members,
+                            scored_candidates=scored,
+                            entry_ts=now.isoformat(),
+                        )
+                    except Exception as e:
+                        logger.debug("Universe causal control cohort logging skipped: %s", e)
+                else:
+                    logger.debug(
+                        "Universe causal control cohort sampling skipped (hourly cadence)"
                     )
-                except Exception as e:
-                    logger.debug("Universe causal control cohort logging skipped: %s", e)
 
                 # P0-3: settle the full treatment/control arms (every exposed candidate),
                 # not only the allocator's survivors, so the contribution verdict is not

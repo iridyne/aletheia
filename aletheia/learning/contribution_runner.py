@@ -62,7 +62,25 @@ def evaluate_experiment(experiment_id: str) -> list[LearningContributionVerdict]
     place.  New settled inputs yield a new immutable measurement record.
     """
     verdicts: list[LearningContributionVerdict] = []
+    # Retention: a cohort whose exposures are still gathering data would
+    # otherwise mint a durable ``insufficient_data`` placeholder row every 6h
+    # cycle, inflating ``learning_contribution_verdicts`` for no gain.  Skip
+    # only those "still developing" cohorts — the next cycle will re-evaluate
+    # once real samples (or terminal reasons) land.  Cohorts that already carry
+    # terminal signal — samples, invalid reasons, or non-transient exclusion
+    # reasons (e.g. ``dirty_or_missing_entry_time`` for pre-floor observations)
+    # — must still produce their verdict so downstream integrity checks see it.
+    _TRANSIENT_EXCLUSIONS = frozenset({"unsettled", "missing_exact_outcome"})
     for cohort in build_experiment_cohorts(experiment_id):
+        if (
+            not cohort.samples
+            and not cohort.invalid_reasons
+            and not any(
+                reason not in _TRANSIENT_EXCLUSIONS
+                for reason in cohort.exclusion_reasons
+            )
+        ):
+            continue
         evaluation = evaluate_cohort(cohort)
         verdict = _build_verdict(cohort, evaluation)
         insert_record("learning_contribution_verdicts", verdict, ignore_duplicates=True)

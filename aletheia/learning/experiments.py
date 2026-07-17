@@ -121,10 +121,13 @@ def _policy_epoch(path_id: str) -> str:
             "scanner_regime_scoring": cfg.universe.scanner_regime_scoring,
             "risk": cfg.risk.model_dump(),
             "trading": cfg.trading.model_dump(),
-            # P1-1: rotate the epoch when the running code changes (captured on
-            # restart), so a verdict from an earlier build cannot authorize the new one
-            # (P0-4 requires an exact epoch match). None in tests → stable.
-            "code_commit": _code_fingerprint(),
+            # Note: the running build fingerprint is intentionally NOT folded
+            # into the epoch hash — a rebuild with an unchanged effective
+            # policy must not rotate the epoch (retention: it churned
+            # learning_policy_epochs every restart with zero policy delta).
+            # The commit is still attributed on each ``learning_exposures``
+            # row (see ``code_commit=_code_fingerprint()`` below) so build
+            # provenance survives without inflating the epoch table.
             # Lifecycle and paper-influence settings change the effective
             # consumer policy, so a successor cannot inherit authority across
             # a settings change.

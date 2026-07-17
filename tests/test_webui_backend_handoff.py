@@ -108,16 +108,23 @@ def test_positions_migration_has_fk_columns(tmp_path, monkeypatch):
 # --- #2 reasoning-steps endpoint ---
 
 def test_list_run_steps_ordered(tmp_path, monkeypatch):
+    """Phase 3 A8 contract: `list_run_steps` UNIONs steps + tool_calls and
+    orders by insertion (created_at). The caller-supplied step_number is not
+    authoritative for sort — it's reassigned by merged execution order — because
+    the tool-call side of the UNION has no such column. Callers that write in
+    execution order (via helpers.log_tool / record_step) see a monotonic 1..N.
+    """
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage.models import AgentRun
     run = AgentRun(agent_name="market_observer", permission_mode="Observe")
     repo.insert_agent_run(run)
-    # Insert out of order; list must return them sorted by step_number.
-    repo.insert_run_step(run.id, 2, "second", input_data="i2", output_data="o2")
+    # Insert in execution order; caller-supplied step_number is ignored on read.
     repo.insert_run_step(run.id, 1, "first", input_data="i1", output_data="o1")
+    repo.insert_run_step(run.id, 2, "second", input_data="i2", output_data="o2")
     steps = repo.list_run_steps(run.id)
     assert [s["step_number"] for s in steps] == [1, 2]
     assert steps[0]["action"] == "first"
+    assert steps[1]["action"] == "second"
 
 
 def test_list_run_steps_empty_is_honest(tmp_path, monkeypatch):
