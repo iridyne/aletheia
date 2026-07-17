@@ -64,9 +64,14 @@ before changing one; this list must stay aligned with the machine-readable polic
   only at the execution adapter (`to_bitget()`). In the frontend, every rendered
   market symbol must use `fmtSymbol(symbol, marketType)`: perpetual/futures has
   no slash; spot and unknown keep it.
-- Keep SQLite's three safeguards: WAL plus `busy_timeout`; one thread-local
-  connection; and capture `was_in_tx = db.in_transaction` **before** every write,
-  committing only when it was false. Do not raise scheduler `max_workers` above 3.
+- Keep SQLite's four safeguards: (1) `_WRITE_LOCK` in `sqlite.py` — process-wide
+  `threading.Lock` acquired by `transaction()` before every `BEGIN`, serializing all
+  writers at the Python level so `database is locked` cannot occur in normal operation;
+  (2) WAL + `busy_timeout=30000ms` as a last-resort fallback only; (3) one thread-local
+  connection via `threading.local`; (4) capture `was_in_tx = db.in_transaction` **before**
+  every write, committing only when it was false. Do not raise scheduler `max_workers`
+  above 3. Never open a `with transaction():` block that spans an `await` or any
+  network/I/O call — that would hold `_WRITE_LOCK` across I/O and block all other writers.
 - A new config-schema field needs a Settings UI control; users do not edit
   `~/.aletheia/config.yaml`. After frontend changes run `cd frontend && npm run build`.
   `aletheia/dashboard_static/` is generated and untracked. For worktree UI HMR,

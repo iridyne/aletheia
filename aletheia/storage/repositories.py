@@ -4,9 +4,10 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 import json
 import threading
+import sqlite3
 import time
 import uuid
-from aletheia.storage.sqlite import get_db
+from aletheia.storage.sqlite import get_db, _WRITE_LOCK, _WRITE_LOCK_TIMEOUT_S
 from aletheia.storage.models import (
     AuditEvent, AgentRun, Opportunity, TradeProposal,
     RiskDecision, Order, Fill, Position, PositionDisappearanceCandidate,
@@ -126,16 +127,28 @@ def transaction(*, immediate: bool = False, savepoint: bool = False):
             return
         yield
         return
-    # BEGIN IMMEDIATE is reserved for short compare-and-write claims.  It acquires
-    # SQLite's writer slot before the read so concurrent workers cannot both see
-    # an absent row and then perform the same external side effect.
-    db.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+    # Acquire the process-wide write lock before issuing BEGIN.  This serializes
+    # all write transactions at the Python level so that cross-thread "database is
+    # locked" OperationalErrors cannot occur during normal operation.  Any timeout
+    # here means a caller is holding a write transaction open across I/O — a bug,
+    # not a concurrency problem.
+    if not _WRITE_LOCK.acquire(timeout=_WRITE_LOCK_TIMEOUT_S):
+        raise sqlite3.OperationalError(
+            "write_lock_timeout: a write transaction was held open too long"
+        )
     try:
-        yield
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+        # BEGIN IMMEDIATE is reserved for short compare-and-write claims.  It
+        # acquires SQLite's writer slot before the read so concurrent workers cannot
+        # both see an absent row and then perform the same external side effect.
+        db.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+        try:
+            yield
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+    finally:
+        _WRITE_LOCK.release()
 
 
 # --- Runtime Sessions (one row per Gateway process lifecycle) ---
@@ -2626,22 +2639,13 @@ def insert_serenity_claims_bulk(claims: list) -> None:
     if not claims:
         return
     db = get_db()
-    already_in_tx = db.in_transaction
-    if not already_in_tx:
-        db.execute("BEGIN")
-    try:
+    with transaction():
         for c in claims:
             data = c.model_dump()
             data["price_relevant"] = int(data.get("price_relevant", False))
             cols = ", ".join(data.keys())
             placeholders = ", ".join(["?"] * len(data))
             db.execute(f"INSERT INTO serenity_claims ({cols}) VALUES ({placeholders})", list(data.values()))
-        if not already_in_tx:
-            db.commit()
-    except Exception:
-        if not already_in_tx:
-            db.rollback()
-        raise
 
 
 def list_serenity_claims(run_id: str | None = None, price_relevant: bool | None = None, limit: int = 200) -> list[dict]:
@@ -4990,19 +4994,8 @@ def insert_coingecko_top_rows(rows: list[dict]) -> int:
     prepared = [dict(row) for row in rows]
     for row in prepared:
         row.setdefault("id", new_id())
-    db = get_db()
-    already_in_tx = db.in_transaction
-    if not already_in_tx:
-        db.execute("BEGIN")
-    try:
-        inserted = _insert_many("coingecko_top_snapshots", prepared)
-        if not already_in_tx:
-            db.commit()
-        return inserted
-    except Exception:
-        if not already_in_tx:
-            db.rollback()
-        raise
+    with transaction():
+        return _insert_many("coingecko_top_snapshots", prepared)
 
 
 def latest_coingecko_top(top_n: int = 50) -> list[dict]:

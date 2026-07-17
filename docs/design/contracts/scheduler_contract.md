@@ -178,23 +178,30 @@ daemon worker。两条 lane 的 outstanding 容量都固定为 16，不再为每
 
 ## §5 SQLite 并发协议
 
-三支柱均在本调度器中落实：
+四支柱均在本调度器中落实：
 
-**支柱 1 — WAL + busy_timeout**（`aletheia/storage/sqlite.py:37–43`）
+**支柱 1 — 进程级写锁 `_WRITE_LOCK`**（`aletheia/storage/sqlite.py`，`repositories.py:transaction()`）
+
+`_WRITE_LOCK = threading.Lock()`（`sqlite.py`）是所有写事务的序列化点。`transaction()` 在每次
+`BEGIN` 之前调用 `_WRITE_LOCK.acquire(timeout=32)`，在 `COMMIT`/`ROLLBACK` 之后释放。所有写线程
+在 Python 层排队，**`database is locked` 在正常运营下不可能出现**。超时 32s 专门用于暴露"在
+事务内做了 I/O"这类 bug（会抛 `write_lock_timeout` `OperationalError`，而非无声重试）。
+
+**支柱 2 — WAL + busy_timeout（最后防线）**（`aletheia/storage/sqlite.py:37–43`）
 
 每个新连接在首次打开时执行：
 ```sql
 PRAGMA journal_mode=WAL
 PRAGMA synchronous=NORMAL
-PRAGMA busy_timeout=30000   -- 30s SQLite 级别重试
+PRAGMA busy_timeout=30000   -- 30s，仅作为 _WRITE_LOCK 的最终兜底
 PRAGMA wal_autocheckpoint=1000
 ```
 
-**支柱 2 — 每线程独立连接**（`sqlite.py:11`）
+**支柱 3 — 每线程独立连接**（`sqlite.py:11`）
 
 `threading.local()` 保证每个 APScheduler worker thread 持有各自的 `sqlite3.Connection`，连接不跨线程共享。
 
-**支柱 3 — `_run_job_guarded()` 清理包装**（`scheduler.py:110–134`）
+**支柱 4 — `_run_job_guarded()` 清理包装**（`scheduler.py:110–134`）
 
 每个 job 通过 `_guarded(job_id, fn)` 包装执行（`scheduler.py:137`）：
 
@@ -206,6 +213,9 @@ PRAGMA wal_autocheckpoint=1000
 对于带超时的 job，DB cleanup（`rollback_if_in_transaction` + `close_db`）在常驻异步 worker
 协程的 `finally` 块中执行，或在固定同步 worker wrapper 的 `finally` 块中执行。异步取消会
 执行 cleanup；同步非协作调用则在它最终返回时执行 cleanup，且不会再创建额外遗弃线程。
+
+**不变量**：任何 `with transaction():` 块内部均不得出现 `await`、网络请求或 `time.sleep`——
+否则 `_WRITE_LOCK` 将在 I/O 期间被持有，阻塞所有其他写线程。
 
 ---
 
