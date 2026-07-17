@@ -35,13 +35,14 @@ const PROVIDER_LABELS: Record<string, string> = {
 const OAUTH_PROVIDERS = new Set(['anthropic_native', 'openai_native'])
 const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
 
-type Tab = 'agent' | 'execution' | 'risk' | 'health' | 'runtime' | 'advanced'
+type Tab = 'agent' | 'execution' | 'risk' | 'health' | 'runtime' | 'signals' | 'advanced'
 const TABS: { id: Tab; label: string; description: string }[] = [
   { id: 'agent',     label: 'Agent & Models',      description: 'Autonomy, scheduler, and model providers' },
   { id: 'execution', label: 'Execution',           description: 'Exchange, credentials, live state, and paper fills' },
   { id: 'risk',      label: 'Risk & Universe',     description: 'Risk limits, tradable symbols, and universe board' },
   { id: 'health',    label: 'Health & Alerts',     description: 'Self-heal, startup gates, and notifications' },
   { id: 'runtime',   label: 'Runtime & System',    description: 'App shell, updates, autostart, retention, and network' },
+  { id: 'signals',   label: 'Signals',             description: 'Market data sources, news feeds, macro signals, and observed assets' },
   { id: 'advanced',  label: 'Advanced',            description: 'Read-only configuration coverage and diagnostics' },
 ]
 
@@ -65,11 +66,9 @@ const TAB_ALIASES: Record<string, Tab> = {
 const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   // Agent & Models
   { title: 'Permission Mode',          tab: 'agent', alt: ['autonomy', 'observe', 'paper', 'full'] },
-  { title: 'Learning',                 tab: 'agent', alt: ['dreaming', 'research', 'pi daemon'] },
-  { title: 'Guard Promotion',          tab: 'agent', alt: ['guard', 'lesson guard', 'auto promote', 'guard candidate'] },
+  { title: 'Learning',                 tab: 'agent', alt: ['dreaming', 'research', 'pi daemon', 'paper learning', 'experiments', 'contribution', 'lifecycle', 'guard', 'lesson guard', 'auto promote', 'guard candidate', 'controller', 'shadow', 'filter tuning', 'opportunity funnel'] },
   { title: 'Regime Detection',         tab: 'agent', alt: ['regime', 'bias', 'short enabled', 'bear', 'trend', 'direction'] },
   { title: 'Serenity Research',        tab: 'agent', alt: ['serenity', 'auto promote', 'pi evaluation', 'long horizon', 'industrial chain'] },
-  { title: 'Filter Feedback Controller', tab: 'agent', alt: ['controller', 'negative feedback', 'shadow', 'filter tuning', 'opportunity funnel', 'loosen tighten'] },
   { title: 'Scheduler',                tab: 'agent', alt: ['jobs', 'cron', 'autostart agents'] },
   { title: 'AI Model Providers',       tab: 'agent', alt: ['llm', 'openai', 'anthropic', 'claude', 'codex'] },
   // Execution
@@ -78,27 +77,26 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   { title: 'Paper Trading Parameters', tab: 'execution', alt: ['stop loss', 'take profit', 'hold time', 'confidence'] },
   { title: 'Capital Events',           tab: 'execution', alt: ['deposit', 'withdrawal', 'pnl baseline'] },
   { title: 'Local Paper Account',      tab: 'execution', alt: ['no exchange', 'paper cash', 'available balance', 'close positions'] },
-  { title: 'Market Data Sources',      tab: 'execution', alt: ['ohlcv', 'data provider', 'override', 'long short', 'lsr'] },
-  { title: 'Macro & Sentiment Signals',tab: 'execution', alt: ['fear greed', 'sentiment', 'coingecko', 'top movers', 'macro'] },
   // Risk & Universe
   { title: 'Universe Board',           tab: 'risk', alt: ['scanner', 'tradable universe'] },
   { title: 'Strategy Factory',         tab: 'risk', alt: ['auto-strategy', 'designer'] },
   { title: 'Event Triggers',           tab: 'risk', alt: ['threshold', 'fire conditions'] },
   { title: 'Tradable Symbols',         tab: 'risk', alt: ['allowlist', 'symbol filter'] },
-  { title: 'Observed US Equities',     tab: 'risk', alt: ['xstocks', 'equity'] },
-  { title: 'Prediction Markets',       tab: 'risk', alt: ['polymarket', 'categories'] },
   { title: 'Risk Limits',              tab: 'risk', alt: ['notional cap', 'leverage', 'daily loss', 'margin ratio', 'kill switch', 'force close'] },
   // Health & Alerts
   { title: 'Health Monitoring',        tab: 'health', alt: ['alert thresholds', 'self-heal'] },
   { title: 'Telegram',                 tab: 'health', alt: ['bot', 'chat id', 'notification'] },
   { title: 'Webhook',                  tab: 'health', alt: ['slack', 'discord', 'n8n', 'hmac'] },
   // Runtime & System
-  { title: 'Display',                  tab: 'runtime', alt: ['decimals', 'theme'] },
-  { title: 'App',                      tab: 'runtime', alt: ['dashboard', 'shell'] },
-  { title: 'Historical Data',          tab: 'runtime', alt: ['backfill', 'ohlcv storage', 'backtest'] },
-  { title: 'News Feeds',               tab: 'runtime', alt: ['rss', 'ingestion'] },
-  { title: 'Data Retention',           tab: 'runtime', alt: ['prune', 'cleanup', 'telemetry'] },
+  { title: 'Display & App',            tab: 'runtime', alt: ['decimals', 'theme', 'dashboard', 'shell', 'auto open browser', 'pnl mode'] },
+  { title: 'Data & Retention',         tab: 'runtime', alt: ['backfill', 'ohlcv storage', 'backtest', 'prune', 'cleanup', 'telemetry'] },
   { title: 'Software Updates',         tab: 'runtime', alt: ['git pull', 'upgrade', 'self-update'] },
+  // Signals
+  { title: 'Market Data Sources',      tab: 'signals', alt: ['ohlcv', 'data provider', 'override', 'long short', 'lsr'] },
+  { title: 'Macro & Sentiment Signals',tab: 'signals', alt: ['fear greed', 'sentiment', 'coingecko', 'top movers', 'macro'] },
+  { title: 'News Feeds',               tab: 'signals', alt: ['rss', 'ingestion'] },
+  { title: 'Prediction Markets',       tab: 'signals', alt: ['polymarket', 'categories'] },
+  { title: 'Observed US Equities',     tab: 'signals', alt: ['xstocks', 'equity'] },
   // Advanced
   { title: 'Configuration Coverage',   tab: 'advanced', alt: ['coverage matrix', 'config audit'] },
 ]
@@ -229,6 +227,7 @@ export default function Settings() {
           {tab === 'risk'      && <RiskTab               settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'health'    && <HealthNotificationsTab settings={settings} qc={qc} />}
           {tab === 'runtime'   && <RuntimeSystemTab      settings={settings} qc={qc} onDirty={registerDirty} />}
+          {tab === 'signals'   && <SignalsTab            settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'advanced'  && <AdvancedTab           settings={settings} />}
         </div>
       </div>
@@ -457,154 +456,199 @@ function AgentModelsTab({ status, settings, qc }: any) {
         <Row label="Bypass distress gate" hint="When ON, historical win-rate/PnL stats are hidden from the System Operator prompt so poor past performance cannot trigger self-protection. Use during demo/test phases only — disable before evaluating real results.">
           <Toggle checked={bypassDistressGate} onChange={v => bypassDistressMut.mutate(v)} disabled={bypassDistressMut.isPending} />
         </Row>
-      </Section>
-
-      <Section
-        title="Paper Learning Experiments"
-        description="Contribution measurement remains read-only. Lifecycle automation and paper influence are separately default-off, and never affect live trading."
-      >
-        <Row label="Contribution measurement" hint="Evaluate already-recorded shadow exposures and outcomes. This does not grant any influence.">
-          <Toggle checked={contributionEvaluationEnabled} onChange={v => learningMut.mutate({ contribution_evaluation_enabled: v })} disabled={learningMut.isPending} />
-        </Row>
-        <Row label="Lifecycle automation" hint="Allow stage recommendations to be recorded and, only with the gates below, move one paper experiment stage at a time. Default OFF.">
-          <Toggle checked={lifecycleAutomationEnabled} onChange={v => {
-            if (v && !confirm('Enable paper-experiment lifecycle automation? Paper influence remains separately disabled until you turn it on.')) return
-            learningMut.mutate({ lifecycle_automation_enabled: v })
-          }} disabled={learningMut.isPending} />
-        </Row>
-        <Row label="Paper influence" hint="Allow a fully gated paper experiment to use its treatment allocation. Default OFF; this never enables live trading.">
-          <Toggle checked={paperInfluenceEnabled} onChange={v => {
-            if (v && !confirm('Enable paper Learning influence? Only explicitly allowlisted paths can use paper treatment.')) return
-            learningMut.mutate({ paper_influence_enabled: v })
-          }} disabled={learningMut.isPending} />
-        </Row>
-        <Row label="Allowed paper paths" hint="Only paths with a wired consumer and prospective authority adapter can be selected. Unsupported design entries remain visible but disabled.">
-          <div style={{ display: 'grid', gap: 6, minWidth: 320 }}>
-            {learningPathOptions.map(option => (
-              <label key={option.path_id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="checkbox"
-                  checked={paperInfluencePaths.includes(option.path_id)}
-                  disabled={learningMut.isPending || !option.supported}
-                  onChange={e => {
-                    const configuredSupported = paperInfluencePaths.filter(
-                      (path: string) => learningPathOptions.some(
-                        candidate => candidate.path_id === path && candidate.supported,
-                      ),
-                    )
-                    const next = e.currentTarget.checked
-                      ? [...new Set([...configuredSupported, option.path_id])]
-                      : configuredSupported.filter((path: string) => path !== option.path_id)
-                    learningMut.mutate({ paper_influence_paths: next })
-                  }}
-                />
-                <span>{option.label}</span>
-                <code>{option.path_id}</code>
-                <span style={{ color: option.supported ? 'var(--green)' : 'var(--muted)' }}>
-                  {option.supported ? 'Supported' : 'Not connected'}
-                </span>
-              </label>
-            ))}
-            {unknownPaperInfluencePaths.map((path: string) => (
-              <div key={path} style={{ color: 'var(--yellow)' }}>
-                Unsupported saved path: <code>{path}</code>. Change any supported selection to remove it.
-              </div>
-            ))}
-          </div>
-        </Row>
-        <Row label="Auto-refreeze" hint="Immediately closes a paper experiment after a negative or invalid measurement verdict. Default ON.">
-          <Toggle checked={autoRefreeze} onChange={v => learningMut.mutate({ auto_refreeze: v })} disabled={learningMut.isPending} />
-        </Row>
-        <Row label="Evaluation interval (minutes)" hint="How often read-only measurement and lifecycle checks run. Default 60; allowed range 15–1440.">
-          <input type="number" min={15} max={1440} step={5} defaultValue={evaluationInterval} onBlur={e => {
-            const v = Math.round(Number(e.currentTarget.value))
-            if (Number.isFinite(v) && v >= 15 && v <= 1440 && v !== evaluationInterval) learningMut.mutate({ evaluation_interval_minutes: v })
-          }} disabled={learningMut.isPending} className="w-24" />
-        </Row>
-        <Row label="Active-stage treatment allocation" hint="Maximum paper treatment share at the final stage. A control holdout is mandatory; hard maximum 90%.">
-          <input type="number" min={0.01} max={0.90} step={0.05} defaultValue={paperActiveAllocation} onBlur={e => {
-            const v = Number(e.currentTarget.value)
-            if (Number.isFinite(v) && v > 0 && v <= 0.90 && v !== paperActiveAllocation) learningMut.mutate({ paper_active_allocation_pct: v })
-          }} disabled={learningMut.isPending} className="w-24" />
-        </Row>
-      </Section>
-
-      <Section
-        title="Guard Promotion"
-        description="Post-trade lesson guards learned by the dreaming agent. When auto-promote is ON, guard candidates that accumulate enough matching trades are automatically promoted to active guards that block future trades. When OFF, promotions are manual-only."
-      >
-        {/* #36 fix: previously only `auto_promote_enabled` was visible even though the
-            backend GuardConfig carries `enabled` / `enforce_in_paper_ranker` /
-            `min_matching_trades` / `max_score_penalty`. The API accepts all four,
-            so hiding them left the settings page mismatched with backend truth. */}
-        <Row
-          label="Guards enabled"
-          hint="Master switch. When OFF, guards do nothing — no scoring penalty, no auto-promotion, no candidate accumulation."
-        >
-          <Toggle
-            checked={guardCfg.enabled !== false}
-            onChange={v => guardMut.mutate({ enabled: v })}
-            disabled={guardMut.isPending}
-          />
-        </Row>
-        <Row
-          label="Enforce in paper ranker"
-          hint="When ON, active guards subtract score in the paper trader's ranking pass. When OFF, guards are advisory only (kept for observation but do not affect trade selection)."
-        >
-          <Toggle
-            checked={guardCfg.enforce_in_paper_ranker !== false}
-            onChange={v => guardMut.mutate({ enforce_in_paper_ranker: v })}
-            disabled={guardMut.isPending}
-          />
-        </Row>
-        <Row
-          label="Auto-promote guard candidates"
-          hint="When ON, the lesson_reviewer promotes guard_candidate entries to active trading guards automatically. When OFF, guards are promoted manually only."
-        >
-          <Toggle
-            checked={guardAutoPromote}
-            onChange={v => {
-              if (v && !confirm('Enable auto-promote for lesson guards? Candidates that accumulate enough matching trades will block future trades without human review.')) return
-              guardMut.mutate({ auto_promote_enabled: v })
-            }}
-            disabled={guardMut.isPending}
-          />
-        </Row>
-        <Row
-          label="Min matching trades before promotion"
-          hint="A candidate guard needs at least this many matching trades before auto-promotion considers it. Higher = more evidence required, slower promotions."
-        >
-          <input
-            type="number"
-            min={1}
-            max={20}
-            value={Number(guardCfg.min_matching_trades ?? 3)}
-            onChange={e => {
-              const n = Math.max(1, Math.min(20, Math.round(Number(e.target.value) || 0)))
-              guardMut.mutate({ min_matching_trades: n })
-            }}
-            disabled={guardMut.isPending}
-            style={{ width: 80 }}
-          />
-        </Row>
-        <Row
-          label="Max score penalty"
-          hint="Maximum score points a single guard can subtract in the ranker. Caps runaway penalties from broad-matching guards."
-        >
-          <input
-            type="number"
-            min={0}
-            max={100}
-            step={5}
-            value={Number(guardCfg.max_score_penalty ?? 40)}
-            onChange={e => {
-              const n = Math.max(0, Math.min(100, Number(e.target.value) || 0))
-              guardMut.mutate({ max_score_penalty: n })
-            }}
-            disabled={guardMut.isPending}
-            style={{ width: 80 }}
-          />
-        </Row>
+        <Collapsible title="Paper Learning Experiments">
+          <p className="hint mb-2">Contribution measurement remains read-only. Lifecycle automation and paper influence are separately default-off, and never affect live trading.</p>
+          <Row label="Contribution measurement" hint="Evaluate already-recorded shadow exposures and outcomes. This does not grant any influence.">
+            <Toggle checked={contributionEvaluationEnabled} onChange={v => learningMut.mutate({ contribution_evaluation_enabled: v })} disabled={learningMut.isPending} />
+          </Row>
+          <Row label="Lifecycle automation" hint="Allow stage recommendations to be recorded and, only with the gates below, move one paper experiment stage at a time. Default OFF.">
+            <Toggle checked={lifecycleAutomationEnabled} onChange={v => {
+              if (v && !confirm('Enable paper-experiment lifecycle automation? Paper influence remains separately disabled until you turn it on.')) return
+              learningMut.mutate({ lifecycle_automation_enabled: v })
+            }} disabled={learningMut.isPending} />
+          </Row>
+          <Row label="Paper influence" hint="Allow a fully gated paper experiment to use its treatment allocation. Default OFF; this never enables live trading.">
+            <Toggle checked={paperInfluenceEnabled} onChange={v => {
+              if (v && !confirm('Enable paper Learning influence? Only explicitly allowlisted paths can use paper treatment.')) return
+              learningMut.mutate({ paper_influence_enabled: v })
+            }} disabled={learningMut.isPending} />
+          </Row>
+          <Row label="Allowed paper paths" hint="Only paths with a wired consumer and prospective authority adapter can be selected. Unsupported design entries remain visible but disabled.">
+            <div style={{ display: 'grid', gap: 6, minWidth: 320 }}>
+              {learningPathOptions.map(option => (
+                <label key={option.path_id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={paperInfluencePaths.includes(option.path_id)}
+                    disabled={learningMut.isPending || !option.supported}
+                    onChange={e => {
+                      const configuredSupported = paperInfluencePaths.filter(
+                        (path: string) => learningPathOptions.some(
+                          candidate => candidate.path_id === path && candidate.supported,
+                        ),
+                      )
+                      const next = e.currentTarget.checked
+                        ? [...new Set([...configuredSupported, option.path_id])]
+                        : configuredSupported.filter((path: string) => path !== option.path_id)
+                      learningMut.mutate({ paper_influence_paths: next })
+                    }}
+                  />
+                  <span>{option.label}</span>
+                  <code>{option.path_id}</code>
+                  <span style={{ color: option.supported ? 'var(--green)' : 'var(--muted)' }}>
+                    {option.supported ? 'Supported' : 'Not connected'}
+                  </span>
+                </label>
+              ))}
+              {unknownPaperInfluencePaths.map((path: string) => (
+                <div key={path} style={{ color: 'var(--yellow)' }}>
+                  Unsupported saved path: <code>{path}</code>. Change any supported selection to remove it.
+                </div>
+              ))}
+            </div>
+          </Row>
+          <Row label="Auto-refreeze" hint="Immediately closes a paper experiment after a negative or invalid measurement verdict. Default ON.">
+            <Toggle checked={autoRefreeze} onChange={v => learningMut.mutate({ auto_refreeze: v })} disabled={learningMut.isPending} />
+          </Row>
+          <Row label="Evaluation interval (minutes)" hint="How often read-only measurement and lifecycle checks run. Default 60; allowed range 15–1440.">
+            <input type="number" min={15} max={1440} step={5} defaultValue={evaluationInterval} onBlur={e => {
+              const v = Math.round(Number(e.currentTarget.value))
+              if (Number.isFinite(v) && v >= 15 && v <= 1440 && v !== evaluationInterval) learningMut.mutate({ evaluation_interval_minutes: v })
+            }} disabled={learningMut.isPending} className="w-24" />
+          </Row>
+          <Row label="Active-stage treatment allocation" hint="Maximum paper treatment share at the final stage. A control holdout is mandatory; hard maximum 90%.">
+            <input type="number" min={0.01} max={0.90} step={0.05} defaultValue={paperActiveAllocation} onBlur={e => {
+              const v = Number(e.currentTarget.value)
+              if (Number.isFinite(v) && v > 0 && v <= 0.90 && v !== paperActiveAllocation) learningMut.mutate({ paper_active_allocation_pct: v })
+            }} disabled={learningMut.isPending} className="w-24" />
+          </Row>
+        </Collapsible>
+        <Collapsible title="Guard Promotion">
+          <p className="hint mb-2">Post-trade lesson guards learned by the dreaming agent. Candidates that accumulate enough matching trades are promoted to active guards that block future trades.</p>
+          {/* #36 fix: previously only `auto_promote_enabled` was visible even though the
+              backend GuardConfig carries `enabled` / `enforce_in_paper_ranker` /
+              `min_matching_trades` / `max_score_penalty`. The API accepts all four,
+              so hiding them left the settings page mismatched with backend truth. */}
+          <Row
+            label="Guards enabled"
+            hint="Master switch. When OFF, guards do nothing — no scoring penalty, no auto-promotion, no candidate accumulation."
+          >
+            <Toggle
+              checked={guardCfg.enabled !== false}
+              onChange={v => guardMut.mutate({ enabled: v })}
+              disabled={guardMut.isPending}
+            />
+          </Row>
+          <Row
+            label="Enforce in paper ranker"
+            hint="When ON, active guards subtract score in the paper trader's ranking pass. When OFF, guards are advisory only (kept for observation but do not affect trade selection)."
+          >
+            <Toggle
+              checked={guardCfg.enforce_in_paper_ranker !== false}
+              onChange={v => guardMut.mutate({ enforce_in_paper_ranker: v })}
+              disabled={guardMut.isPending}
+            />
+          </Row>
+          <Row
+            label="Auto-promote guard candidates"
+            hint="When ON, the lesson_reviewer promotes guard_candidate entries to active trading guards automatically. When OFF, guards are promoted manually only."
+          >
+            <Toggle
+              checked={guardAutoPromote}
+              onChange={v => {
+                if (v && !confirm('Enable auto-promote for lesson guards? Candidates that accumulate enough matching trades will block future trades without human review.')) return
+                guardMut.mutate({ auto_promote_enabled: v })
+              }}
+              disabled={guardMut.isPending}
+            />
+          </Row>
+          <Row
+            label="Min matching trades before promotion"
+            hint="A candidate guard needs at least this many matching trades before auto-promotion considers it. Higher = more evidence required, slower promotions."
+          >
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={Number(guardCfg.min_matching_trades ?? 3)}
+              onChange={e => {
+                const n = Math.max(1, Math.min(20, Math.round(Number(e.target.value) || 0)))
+                guardMut.mutate({ min_matching_trades: n })
+              }}
+              disabled={guardMut.isPending}
+              style={{ width: 80 }}
+            />
+          </Row>
+          <Row
+            label="Max score penalty"
+            hint="Maximum score points a single guard can subtract in the ranker. Caps runaway penalties from broad-matching guards."
+          >
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={5}
+              value={Number(guardCfg.max_score_penalty ?? 40)}
+              onChange={e => {
+                const n = Math.max(0, Math.min(100, Number(e.target.value) || 0))
+                guardMut.mutate({ max_score_penalty: n })
+              }}
+              disabled={guardMut.isPending}
+              style={{ width: 80 }}
+            />
+          </Row>
+        </Collapsible>
+        <Collapsible title="Filter Feedback Controller">
+          <p className="hint mb-2">Phase 1 (SHADOW): records whether each opportunity filter has enough causal evidence for a future review. It NEVER changes trading config in this phase.</p>
+          <Row
+            label="Shadow observe job enabled"
+            hint="When ON, the controller records read-only evidence-availability rows. It writes no trading config and does not issue threshold changes until passed/dropped cohorts are recorded."
+          >
+            <Toggle
+              checked={controllerShadowEnabled}
+              onChange={v => controllerMut.mutate({ shadow_enabled: v })}
+              disabled={controllerMut.isPending}
+            />
+          </Row>
+          <Row
+            label="Observe interval (hours)"
+            hint="How often the shadow observe job runs. Verdicts use multi-hour forward-return horizons, so frequent runs add no signal. Default 6."
+          >
+            <input
+              type="number"
+              min={1}
+              max={168}
+              step={1}
+              defaultValue={controllerObserveHours}
+              onBlur={e => {
+                const v = parseInt(e.currentTarget.value, 10)
+                if (!Number.isFinite(v) || v < 1 || v > 168 || v === controllerObserveHours) return
+                controllerMut.mutate({ observe_interval_hours: v })
+              }}
+              className="w-24"
+              disabled={controllerMut.isPending}
+            />
+          </Row>
+          <Row
+            label="Min samples gate"
+            hint="Reserved for future filter-specific evidence. Aggregate family samples never produce a filter threshold recommendation. Default 20."
+          >
+            <input
+              type="number"
+              min={5}
+              max={500}
+              step={1}
+              defaultValue={controllerMinSamples}
+              onBlur={e => {
+                const v = parseInt(e.currentTarget.value, 10)
+                if (!Number.isFinite(v) || v < 5 || v > 500 || v === controllerMinSamples) return
+                controllerMut.mutate({ min_samples_gate: v })
+              }}
+              className="w-24"
+              disabled={controllerMut.isPending}
+            />
+          </Row>
+        </Collapsible>
       </Section>
 
       <Section
@@ -707,60 +751,6 @@ function AgentModelsTab({ status, settings, qc }: any) {
             }}
             className="w-24"
             disabled={serenityMut.isPending}
-          />
-        </Row>
-      </Section>
-
-      <Section
-        title="Filter Feedback Controller"
-        description="Phase 1 (SHADOW): records whether each opportunity filter has enough causal evidence for a future review. Aggregate scanner results are not treated as proof that a specific filter should change. It NEVER changes trading config in this phase."
-      >
-        <Row
-          label="Shadow observe job enabled"
-          hint="When ON, the controller records read-only evidence-availability rows. It writes no trading config and does not issue threshold changes until passed/dropped cohorts are recorded."
-        >
-          <Toggle
-            checked={controllerShadowEnabled}
-            onChange={v => controllerMut.mutate({ shadow_enabled: v })}
-            disabled={controllerMut.isPending}
-          />
-        </Row>
-        <Row
-          label="Observe interval (hours)"
-          hint="How often the shadow observe job runs. Verdicts use multi-hour forward-return horizons, so frequent runs add no signal. Default 6."
-        >
-          <input
-            type="number"
-            min={1}
-            max={168}
-            step={1}
-            defaultValue={controllerObserveHours}
-            onBlur={e => {
-              const v = parseInt(e.currentTarget.value, 10)
-              if (!Number.isFinite(v) || v < 1 || v > 168 || v === controllerObserveHours) return
-              controllerMut.mutate({ observe_interval_hours: v })
-            }}
-            className="w-24"
-            disabled={controllerMut.isPending}
-          />
-        </Row>
-        <Row
-          label="Min samples gate"
-          hint="Reserved for future filter-specific evidence. Aggregate family samples never produce a filter threshold recommendation. Default 20."
-        >
-          <input
-            type="number"
-            min={5}
-            max={500}
-            step={1}
-            defaultValue={controllerMinSamples}
-            onBlur={e => {
-              const v = parseInt(e.currentTarget.value, 10)
-              if (!Number.isFinite(v) || v < 5 || v > 500 || v === controllerMinSamples) return
-              controllerMut.mutate({ min_samples_gate: v })
-            }}
-            className="w-24"
-            disabled={controllerMut.isPending}
           />
         </Row>
       </Section>
@@ -1366,21 +1356,6 @@ function ExecutionTab({ status, settings, qc, onDirty }: any) {
         </Section>
       )}
 
-      <Section
-        title="Market Data Sources (Advanced)"
-        description="Override primary exchange data routing. Normally managed by the Primary Exchange selector above."
-      >
-        <Collapsible title="Data Source Overrides">
-          <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
-        </Collapsible>
-      </Section>
-
-      <Section
-        title="Macro & Sentiment Signals"
-        description="Whole-market context fed into the LLM enriched_context: Fear & Greed Index (Alternative.me) and CoinGecko top movers. All free, no API key required."
-      >
-        <MacroSignalsCard settings={settings} qc={qc} onDirty={onDirty} />
-      </Section>
     </div>
   )
 }
@@ -2349,92 +2324,97 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
           Live positions are never auto-adopted.
         </p>
       </div>
-      <div className="settings-inline-note">
-        <Toggle
-          checked={trailEnabled}
-          label="Trailing stop + breakeven move (paper positions)"
-          onChange={v => { setTrailEnabled(v); setMsg(null) }}
-        />
-        <p className="hint mt-1">
-          Moves stop-loss up as price rises. Breakeven trigger: profit ≥ threshold → floor stop at entry price. Default off — enable only after verifying stop parameters.
-        </p>
-      </div>
-      {trailEnabled && (
+      <Collapsible title="Trailing Stop & Breakeven">
+        <div className="settings-inline-note">
+          <Toggle
+            checked={trailEnabled}
+            label="Trailing stop + breakeven move (paper positions)"
+            onChange={v => { setTrailEnabled(v); setMsg(null) }}
+          />
+          <p className="hint mt-1">
+            Moves stop-loss up as price rises. Breakeven trigger: profit ≥ threshold → floor stop at entry price. Default off — enable only after verifying stop parameters.
+          </p>
+        </div>
+        {trailEnabled && (
+          <div className="form-grid mb-3">
+            <label>
+              <span>Trail ATR multiplier</span>
+              <input type="number" min={0.5} max={5} step={0.1} value={trailAtrMult}
+                onChange={e => { setTrailAtrMult(e.target.value); setMsg(null) }} className="mono" />
+            </label>
+            <label>
+              <span>Trail % (fallback, no ATR)</span>
+              <input type="number" min={0.1} max={10} step={0.1} value={trailPct}
+                onChange={e => { setTrailPct(e.target.value); setMsg(null) }} className="mono" />
+            </label>
+            <label>
+              <span>Breakeven trigger (%)</span>
+              <input type="number" min={0.1} max={20} step={0.1} value={breakevenTriggerPct}
+                onChange={e => { setBreakevenTriggerPct(e.target.value); setMsg(null) }} className="mono" />
+            </label>
+          </div>
+        )}
+      </Collapsible>
+      <Collapsible title="Position Sizing">
+        <div className="settings-inline-note">
+          <Toggle
+            checked={volSizingEnabled}
+            label="Volatility-target sizing (ATR-normalized)"
+            onChange={v => { setVolSizingEnabled(v); setMsg(null) }}
+          />
+          <p className="hint mt-1">
+            Normalize position size so 1 ATR move ≈ risk_budget. High-vol coins get smaller positions, low-vol get larger.
+          </p>
+        </div>
         <div className="form-grid mb-3">
           <label>
-            <span>Trail ATR multiplier</span>
-            <input type="number" min={0.5} max={5} step={0.1} value={trailAtrMult}
-              onChange={e => { setTrailAtrMult(e.target.value); setMsg(null) }} className="mono" />
+            <span>Base notional (USDT)</span>
+            <input type="number" min={5} max={1000} step={5} value={defaultNotional}
+              onChange={e => { setDefaultNotional(e.target.value); setMsg(null) }} className="mono" />
           </label>
-          <label>
-            <span>Trail % (fallback, no ATR)</span>
-            <input type="number" min={0.1} max={10} step={0.1} value={trailPct}
-              onChange={e => { setTrailPct(e.target.value); setMsg(null) }} className="mono" />
-          </label>
-          <label>
-            <span>Breakeven trigger (%)</span>
-            <input type="number" min={0.1} max={20} step={0.1} value={breakevenTriggerPct}
-              onChange={e => { setBreakevenTriggerPct(e.target.value); setMsg(null) }} className="mono" />
-          </label>
+          {volSizingEnabled && (<>
+            <label>
+              <span>Risk budget (USDT)</span>
+              <input type="number" min={5} max={500} step={5} value={volRiskUsdt}
+                onChange={e => { setVolRiskUsdt(e.target.value); setMsg(null) }} className="mono" />
+            </label>
+            <label>
+              <span>ATR target (%)</span>
+              <input type="number" min={0.5} max={10} step={0.1} value={volTargetPct}
+                onChange={e => { setVolTargetPct(e.target.value); setMsg(null) }} className="mono" />
+            </label>
+            <label>
+              <span>Kelly cap fraction</span>
+              <input type="number" min={0.05} max={1} step={0.05} value={volKellyCap}
+                onChange={e => { setVolKellyCap(e.target.value); setMsg(null) }} className="mono" />
+            </label>
+          </>)}
         </div>
-      )}
-      <div className="settings-inline-note">
-        <Toggle
-          checked={volSizingEnabled}
-          label="Volatility-target sizing (ATR-normalized)"
-          onChange={v => { setVolSizingEnabled(v); setMsg(null) }}
-        />
-        <p className="hint mt-1">
-          Normalize position size so 1 ATR move ≈ risk_budget. High-vol coins get smaller positions, low-vol get larger.
-        </p>
-      </div>
-      <div className="form-grid mb-3">
-        <label>
-          <span>Base notional (USDT)</span>
-          <input type="number" min={5} max={1000} step={5} value={defaultNotional}
-            onChange={e => { setDefaultNotional(e.target.value); setMsg(null) }} className="mono" />
-        </label>
-        {volSizingEnabled && (<>
-          <label>
-            <span>Risk budget (USDT)</span>
-            <input type="number" min={5} max={500} step={5} value={volRiskUsdt}
-              onChange={e => { setVolRiskUsdt(e.target.value); setMsg(null) }} className="mono" />
-          </label>
-          <label>
-            <span>ATR target (%)</span>
-            <input type="number" min={0.5} max={10} step={0.1} value={volTargetPct}
-              onChange={e => { setVolTargetPct(e.target.value); setMsg(null) }} className="mono" />
-          </label>
-          <label>
-            <span>Kelly cap fraction</span>
-            <input type="number" min={0.05} max={1} step={0.05} value={volKellyCap}
-              onChange={e => { setVolKellyCap(e.target.value); setMsg(null) }} className="mono" />
-          </label>
-        </>)}
-      </div>
-      <div className="settings-inline-note">
-        <Toggle
-          checked={exchangeTpslEnabled}
-          label="Exchange-native TPSL bracket (Bitget demo/live)"
-          onChange={v => { setExchangeTpslEnabled(v); setMsg(null) }}
-        />
-        <p className="hint mt-1">
-          When ON, stop-loss and take-profit orders are placed directly on Bitget at position open.
-          The local polling loop remains active as a fallback. Enable only after verifying demo behavior.
-        </p>
-      </div>
-      <div className="settings-inline-note">
-        <Toggle
-          checked={personaEnabled}
-          label="Persona-based sizing (动态 sizing 蓝本)"
-          onChange={v => { setPersonaEnabled(v); setMsg(null) }}
-        />
-        <p className="hint mt-1">
-          When ON, sizing reads the active persona's bounds instead of the flat fields above.
-          P1 uses each param's <code>init</code>; the System Operator picks values within range in
-          later phases. Default OFF = legacy sizing (zero change). Risk-engine hard caps always bound
-          the final size regardless of persona.
-        </p>
+        <div className="settings-inline-note">
+          <Toggle
+            checked={exchangeTpslEnabled}
+            label="Exchange-native TPSL bracket (Bitget demo/live)"
+            onChange={v => { setExchangeTpslEnabled(v); setMsg(null) }}
+          />
+          <p className="hint mt-1">
+            When ON, stop-loss and take-profit orders are placed directly on Bitget at position open.
+            The local polling loop remains active as a fallback. Enable only after verifying demo behavior.
+          </p>
+        </div>
+      </Collapsible>
+      <Collapsible title="Persona-Based Sizing">
+        <div className="settings-inline-note">
+          <Toggle
+            checked={personaEnabled}
+            label="Persona-based sizing (动态 sizing 蓝本)"
+            onChange={v => { setPersonaEnabled(v); setMsg(null) }}
+          />
+          <p className="hint mt-1">
+            When ON, sizing reads the active persona's bounds instead of the flat fields above.
+            P1 uses each param's <code>init</code>; the System Operator picks values within range in
+            later phases. Default OFF = legacy sizing (zero change). Risk-engine hard caps always bound
+            the final size regardless of persona.
+          </p>
         {personaEnabled && (
           <>
             <label className="mt-2">
@@ -2535,41 +2515,44 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
           </>
         )}
       </div>
-      <div className="settings-inline-note">
-        <Toggle
-          checked={maeEnabled}
-          label="Market-aware exits (urgent exit / tighten stop / confidence collapse)"
-          onChange={v => { setMaeEnabled(v); setMsg(null) }}
-        />
-        <p className="hint mt-1">
-          When ON, position_manager evaluates market signals and may force-close losing positions early,
-          tighten stops on rising risk, or exit when System Operator confidence drops below threshold.
-        </p>
-      </div>
-      {maeEnabled && (
-        <div className="form-grid mb-3">
-          <label>
-            <span>Urgent exit score</span>
-            <input type="number" min={50} max={100} step={5} value={maeUrgentScore}
-              onChange={e => { setMaeUrgentScore(e.target.value); setMsg(null) }} className="mono" />
-          </label>
-          <label>
-            <span>Tighten stop score</span>
-            <input type="number" min={30} max={90} step={5} value={maeTightenScore}
-              onChange={e => { setMaeTightenScore(e.target.value); setMsg(null) }} className="mono" />
-          </label>
-          <label>
-            <span>Confidence collapse score</span>
-            <input type="number" min={10} max={50} step={5} value={maeCollapseScore}
-              onChange={e => { setMaeCollapseScore(e.target.value); setMsg(null) }} className="mono" />
-          </label>
-          <label>
-            <span>Tighten ATR multiplier</span>
-            <input type="number" min={0.3} max={2.0} step={0.1} value={maeTightenAtrMult}
-              onChange={e => { setMaeTightenAtrMult(e.target.value); setMsg(null) }} className="mono" />
-          </label>
+      </Collapsible>
+      <Collapsible title="Market-Aware Exits">
+        <div className="settings-inline-note">
+          <Toggle
+            checked={maeEnabled}
+            label="Market-aware exits (urgent exit / tighten stop / confidence collapse)"
+            onChange={v => { setMaeEnabled(v); setMsg(null) }}
+          />
+          <p className="hint mt-1">
+            When ON, position_manager evaluates market signals and may force-close losing positions early,
+            tighten stops on rising risk, or exit when System Operator confidence drops below threshold.
+          </p>
         </div>
-      )}
+        {maeEnabled && (
+          <div className="form-grid mb-3">
+            <label>
+              <span>Urgent exit score</span>
+              <input type="number" min={50} max={100} step={5} value={maeUrgentScore}
+                onChange={e => { setMaeUrgentScore(e.target.value); setMsg(null) }} className="mono" />
+            </label>
+            <label>
+              <span>Tighten stop score</span>
+              <input type="number" min={30} max={90} step={5} value={maeTightenScore}
+                onChange={e => { setMaeTightenScore(e.target.value); setMsg(null) }} className="mono" />
+            </label>
+            <label>
+              <span>Confidence collapse score</span>
+              <input type="number" min={10} max={50} step={5} value={maeCollapseScore}
+                onChange={e => { setMaeCollapseScore(e.target.value); setMsg(null) }} className="mono" />
+            </label>
+            <label>
+              <span>Tighten ATR multiplier</span>
+              <input type="number" min={0.3} max={2.0} step={0.1} value={maeTightenAtrMult}
+                onChange={e => { setMaeTightenAtrMult(e.target.value); setMsg(null) }} className="mono" />
+            </label>
+          </div>
+        )}
+      </Collapsible>
       <div className="flex gap-2">
         <button onClick={() => {
           const checks: [string, string][] = [
@@ -2630,20 +2613,6 @@ function RiskTab({ settings, qc, onDirty }: any) {
         description="Coins agents are allowed to analyse and trade. Applied to both the risk engine and exchange config atomically."
       >
         <SymbolsCard settings={settings} qc={qc} />
-      </Section>
-
-      <Section
-        title="Observed US Equities"
-        description="US equity tickers for equity_observer (observation-only, not traded). Requires Bitget xStock support for the ticker."
-      >
-        <EquitiesCard settings={settings} qc={qc} />
-      </Section>
-
-      <Section
-        title="Prediction Markets"
-        description="Polymarket observer — fetches probability data for information-edge signals. Observation-only, never routed to execution."
-      >
-        <PredictionToggleCard qc={qc} />
       </Section>
 
       <Section
@@ -3078,32 +3047,75 @@ function HealthNotificationsTab({ settings, qc }: any) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SIGNALS TAB — market data, news, macro signals, prediction markets, equities
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SignalsTab({ settings, qc, onDirty }: any) {
+  return (
+    <div>
+      <Section
+        title="Market Data Sources"
+        description="Override primary exchange data routing. Normally managed by the Primary Exchange selector in Execution."
+      >
+        <Collapsible title="Data Source Overrides">
+          <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
+        </Collapsible>
+      </Section>
+
+      <Section
+        title="Macro & Sentiment Signals"
+        description="Whole-market context fed into the LLM enriched_context: Fear & Greed Index (Alternative.me) and CoinGecko top movers. All free, no API key required."
+      >
+        <MacroSignalsCard settings={settings} qc={qc} onDirty={onDirty} />
+      </Section>
+
+      <Section
+        title="News Feeds"
+        description="Automated RSS news ingestion. Feeds are fetched periodically and displayed on the News Intelligence page."
+      >
+        <NewsFeedsCard settings={settings} qc={qc} />
+      </Section>
+
+      <Section
+        title="Prediction Markets"
+        description="Polymarket observer — fetches probability data for information-edge signals. Observation-only, never routed to execution."
+      >
+        <PredictionToggleCard qc={qc} />
+      </Section>
+
+      <Section
+        title="Observed US Equities"
+        description="US equity tickers for equity_observer (observation-only, not traded). Requires Bitget xStock support for the ticker."
+      >
+        <EquitiesCard settings={settings} qc={qc} />
+      </Section>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RUNTIME & SYSTEM TAB — display, app, retention, updates, autostart, network
 // ─────────────────────────────────────────────────────────────────────────────
 
 function RuntimeSystemTab({ settings, qc, onDirty }: any) {
   return (
     <div>
-      <Section title="Display" description="Visual formatting applied across the dashboard.">
+      <Section title="Display & App" description="Visual formatting and dashboard process settings.">
         <DisplayRow />
-      </Section>
-
-      <Section title="App" description="Dashboard process settings.">
         <AppRows settings={settings} qc={qc} />
       </Section>
 
-      <Section title="Historical Data" description="Controls local OHLCV bulk storage for backtesting. Nightly backfill downloads missing candles so backtests run entirely offline.">
-        <Collapsible title="Backfill & Storage Parameters">
-          <HistoricalDataCard settings={settings} qc={qc} />
+      <Section title="Data & Retention" description="Local OHLCV storage for backtesting and telemetry retention policy.">
+        <Collapsible title="Historical Data">
+          <p className="hint mb-2">Controls local OHLCV bulk storage for backtesting. Nightly backfill downloads missing candles so backtests run entirely offline.</p>
+          <Collapsible title="Backfill & Storage Parameters">
+            <HistoricalDataCard settings={settings} qc={qc} />
+          </Collapsible>
         </Collapsible>
-      </Section>
-
-      <Section title="News Feeds" description="Automated RSS news ingestion. Feeds are fetched periodically and displayed on the News Intelligence page.">
-        <NewsFeedsCard settings={settings} qc={qc} />
-      </Section>
-
-      <Section title="Data Retention" description="How long telemetry is kept before automatic pruning. Trust-bearing records (trades, audit log) are never pruned.">
-        <RetentionCard settings={settings} qc={qc} />
+        <Collapsible title="Data Retention">
+          <p className="hint mb-2">How long telemetry is kept before automatic pruning. Trust-bearing records (trades, audit log) are never pruned.</p>
+          <RetentionCard settings={settings} qc={qc} />
+        </Collapsible>
       </Section>
 
       <Section title="Software Updates" description="On-demand self-upgrade via git pull. Never runs automatically.">
