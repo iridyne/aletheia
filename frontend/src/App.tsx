@@ -25,6 +25,7 @@ import CommandPalette from './components/CommandPalette'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
 import FetchProgress from './components/FetchProgress'
+import CollectorHealthDetails from './components/CollectorHealthDetails'
 import type { InfraEvent } from './types'
 import { deriveMasterState, getOperatorDisplayStatus } from './lib/systemState'
 import { devPreviewLabel } from './dev-preview'
@@ -164,6 +165,11 @@ function StatusBar() {
     queryKey: ['infra-events'],
     queryFn: api.getInfraEvents,
     refetchInterval: () => adaptiveStatusPollMs(restarting),
+  })
+  const { data: collectorHealth } = useQuery({
+    queryKey: ['collector-health'],
+    queryFn: api.getCollectorHealth,
+    refetchInterval: 30000,
   })
   // #174 fix: /status doesn't carry risk_status — the topbar used to read
   // `data?.risk_status || data?.risk?.status` and always got '', so
@@ -389,6 +395,9 @@ function StatusBar() {
                 <span className="sp-label">Model</span>
                 <span className="sp-value">{modelProv}</span>
               </div>
+            )}
+            {collectorHealth && (
+              <CollectorHealthDetails health={collectorHealth} mode="compact" />
             )}
           </div>
 

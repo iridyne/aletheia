@@ -415,6 +415,7 @@ export interface CollectorHealthDomain {
   overdue: boolean
   degraded: boolean
   consecutive_problems?: number
+  last_error_code?: string | null
 }
 
 export interface CollectorHealthReport {

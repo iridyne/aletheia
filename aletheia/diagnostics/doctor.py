@@ -721,11 +721,21 @@ def _probe_collector_health(report: Report) -> None:
         detail += f"; inactive={','.join(inactive)}"
 
     if status == "degraded":
-        problems = ", ".join(
-            f"{row['domain']}:{row['last_status']}"
-            f"{'(overdue)' if row.get('overdue') else ''}"
-            for row in problem_rows
-        )
+        def _fmt_problem(row: dict) -> str:
+            s = f"{row['domain']}:{row['last_status']}"
+            extras: list[str] = []
+            if row.get("last_error_code"):
+                extras.append(row["last_error_code"])
+            cons = row.get("consecutive_problems") or 0
+            if cons > 1:
+                extras.append(f"{cons}x")
+            if row.get("overdue"):
+                extras.append("overdue")
+            if extras:
+                s += f"[{','.join(extras)}]"
+            return s
+
+        problems = ", ".join(_fmt_problem(row) for row in problem_rows)
         report.add(
             "data.collectors",
             "warn",

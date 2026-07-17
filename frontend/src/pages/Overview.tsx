@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
@@ -6,6 +6,7 @@ import type { GoLiveScorecard } from '../api/client'
 import SetupBanner from '../components/SetupBanner'
 import PnLZone from '../components/PnLZone'
 import AgentFeed from '../components/AgentFeed'
+import CollectorHealthDetails from '../components/CollectorHealthDetails'
 import { Badge, Button, Card, CardHeader, StatusText } from '../components/ui'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
@@ -20,6 +21,21 @@ import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
 export default function Overview() {
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const [collectorsExpanded, setCollectorsExpanded] = useState(false)
+  const [coverageExpanded, setCoverageExpanded] = useState(false)
+  const [modeExpanded, setModeExpanded] = useState(false)
+  const chdRef = useRef<HTMLDivElement>(null)
+  const coverageRef = useRef<HTMLDivElement>(null)
+  const modeRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (collectorsExpanded) requestAnimationFrame(() => chdRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+  }, [collectorsExpanded])
+  useEffect(() => {
+    if (coverageExpanded) requestAnimationFrame(() => coverageRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+  }, [coverageExpanded])
+  useEffect(() => {
+    if (modeExpanded) requestAnimationFrame(() => modeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+  }, [modeExpanded])
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
   const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
@@ -191,11 +207,15 @@ export default function Overview() {
                   title={s.exchange_diverged
                     ? 'Order execution and market analysis use different exchanges. This split was explicitly configured.'
                     : undefined}
+                  onClick={() => navigate('/settings?tab=execution')}
+                  externalLink
                 />
                 <StatusRow
                   label="Model"
                   light={dph?.available ? 'green' : dph ? 'red' : 'yellow'}
                   value={defaultProvider || '—'}
+                  onClick={() => navigate('/settings?tab=agent')}
+                  externalLink
                 />
                 <StatusRow
                   label="Collectors"
@@ -214,6 +234,8 @@ export default function Overview() {
                         ? `${collectorHealth.transient_problem_count} transient · ${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
                         : `${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
                   }
+                  onClick={collectorHealth?.domains?.length ? () => setCollectorsExpanded(x => !x) : undefined}
+                  expanded={collectorsExpanded}
                 />
                 <StatusRow
                   label="Data coverage"
@@ -226,9 +248,8 @@ export default function Overview() {
                     !dataCoverage ? 'loading' :
                     `${dataCoverage.fresh_count}/${dataCoverage.domain_count} current`
                   }
-                  title={dataCoverage?.domains.map(domain => (
-                    `${domain.label}: ${domain.state} · ${domain.symbol_count} symbols · ${domain.row_count} rows`
-                  )).join('\n')}
+                  onClick={dataCoverage?.domains?.length ? () => setCoverageExpanded(x => !x) : undefined}
+                  expanded={coverageExpanded}
                 />
                 {/* Live + Permission + Kill collapsed into one row to keep the System
                     card height short — open positions moved to the PnL Exposure tile. */}
@@ -236,9 +257,24 @@ export default function Overview() {
                   label="Mode"
                   light={killed ? 'red' : liveState === 'live_disabled' ? 'muted' : 'yellow'}
                   value={`Live: ${humanize(liveState)} · ${humanize(String(s.permission_mode))}${killed ? ' · KILL' : ''}`}
+                  onClick={() => setModeExpanded(x => !x)}
+                  expanded={modeExpanded}
                 />
               </tbody>
             </table>
+            {collectorHealth?.domains?.length ? (
+              <div ref={chdRef} className={`chd-collapsible${collectorsExpanded ? ' chd-collapsible--open' : ''}`}>
+                <div><CollectorHealthDetails health={collectorHealth} mode="full" /></div>
+              </div>
+            ) : null}
+            {dataCoverage?.domains?.length ? (
+              <div ref={coverageRef} className={`chd-collapsible${coverageExpanded ? ' chd-collapsible--open' : ''}`}>
+                <div><DataCoverageDetail coverage={dataCoverage} /></div>
+              </div>
+            ) : null}
+            <div ref={modeRef} className={`chd-collapsible${modeExpanded ? ' chd-collapsible--open' : ''}`}>
+              <div><ModeDetail s={s} paused={paused} killed={killed} liveState={liveState} riskState={riskState} /></div>
+            </div>
           </Card>
 
           {/* Go-Live Scorecard */}
@@ -318,15 +354,121 @@ type Light = 'green' | 'red' | 'yellow' | 'blue' | 'muted'
 
 /** One row of the System status board: label · status light · value. */
 function StatusRow({
-  label, light, value, title,
-}: { label: string; light: Light; value: string; title?: string }) {
+  label, light, value, title, onClick, expanded, externalLink,
+}: { label: string; light: Light; value: string; title?: string; onClick?: () => void; expanded?: boolean; externalLink?: boolean }) {
   return (
-    <tr className="status-row">
+    <tr className={`status-row${onClick ? ' status-row-clickable' : ''}`} onClick={onClick}>
       <th>{label}</th>
       <td className="status-cell">
         <span className={`status-light light-${light}`} />
         <span className="status-value" title={title}>{value}</span>
+        {onClick && (
+          <span className="status-row-chevron">
+            {externalLink ? '→' : (expanded ? '▾' : '▸')}
+          </span>
+        )}
       </td>
     </tr>
+  )
+}
+
+// ── Inline detail panels ──────────────────────────────────────────────────────
+
+function fmtAgeSec(sec: number): string {
+  if (sec < 60) return `${Math.round(sec)}s`
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`
+  return `${Math.floor(sec / 3600)}h${Math.floor((sec % 3600) / 60)}m`
+}
+
+function fmtMaxAge(sec: number): string {
+  if (sec < 60) return `${sec}s`
+  if (sec % 3600 === 0) return `${sec / 3600}h`
+  return `${Math.floor(sec / 60)}m`
+}
+
+const COVERAGE_LIGHT: Record<string, string> = {
+  fresh: 'green', stale: 'yellow', empty: 'muted', invalid: 'red', idle: 'muted',
+}
+const COVERAGE_RANK: Record<string, number> = {
+  invalid: 0, stale: 1, empty: 2, idle: 3, fresh: 4,
+}
+
+function DataCoverageDetail({ coverage }: { coverage: { domains: any[] } }) {
+  const sorted = [...coverage.domains].sort(
+    (a, b) => (COVERAGE_RANK[a.state] ?? 5) - (COVERAGE_RANK[b.state] ?? 5),
+  )
+  return (
+    <div className="chd-panel">
+      <div className="chd-title">Data coverage</div>
+      {sorted.map((d: any) => {
+        const light = COVERAGE_LIGHT[d.state] ?? 'muted'
+        return (
+          <div key={d.domain} className="chd-domain">
+            <div className="chd-domain-head">
+              <span className={`status-light light-${light}`} />
+              <span className="chd-domain-name">{(d.label || d.domain).toUpperCase()}</span>
+              <span className={`chd-status chd-status-${light}`}>{d.state}</span>
+            </div>
+            <div className="chd-domain-meta">
+              <span>{d.symbol_count} symbols · {(d.row_count as number).toLocaleString()} rows</span>
+              {d.age_sec != null && (
+                <span>{fmtAgeSec(d.age_sec)} old{d.max_age_sec ? ` · max ${fmtMaxAge(d.max_age_sec)}` : ''}</span>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function ModeDetail({ s, paused, killed, liveState, riskState }: {
+  s: any; paused: boolean; killed: boolean; liveState: string; riskState: string
+}) {
+  type ModeItem = { label: string; value: string; light: Light }
+  const items: ModeItem[] = [
+    {
+      label: 'LIVE MODE',
+      value: humanize(liveState),
+      light: liveState === 'live_full' ? 'green' : liveState === 'live_disabled' ? 'muted' : 'yellow',
+    },
+    {
+      label: 'PERMISSION',
+      value: humanize(String(s.permission_mode || '—')),
+      light: s.permission_mode === 'Full' ? 'yellow' : 'muted',
+    },
+    {
+      label: 'KILL SWITCH',
+      value: killed ? 'active' : 'inactive',
+      light: killed ? 'red' : 'muted',
+    },
+    {
+      label: 'SCHEDULER',
+      value: paused ? 'paused' : (typeof s.scheduler_running === 'boolean'
+        ? (s.scheduler_running ? 'running' : 'stopped')
+        : String(s.scheduler_state || '—')),
+      light: paused ? 'yellow' : (s.scheduler_running === false ? 'red' : 'green'),
+    },
+  ]
+  if (riskState && riskState !== 'not_available' && riskState !== 'not_evaluated') {
+    items.push({
+      label: 'RISK',
+      value: riskStateLabel(riskState),
+      light: riskState === 'blocked' ? 'red' : riskState === 'warning' ? 'yellow' : 'green',
+    })
+  }
+  return (
+    <div className="chd-panel">
+      <div className="chd-title">Mode &amp; permissions</div>
+      {items.map(({ label, value, light }) => (
+        <div key={label} className="chd-domain">
+          <div className="chd-domain-head">
+            <span className={`status-light light-${light}`} />
+            <span className="chd-domain-name">{label}</span>
+            <span className={`chd-status chd-status-${light}`}>{value}</span>
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }

@@ -2027,6 +2027,80 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   width: 64px; text-align: center; font-family: var(--mono);
 }
 
+/* Collector health — clickable status row affordance */
+.status-row-clickable { cursor: pointer; user-select: none; }
+.status-row-clickable:hover th,
+.status-row-clickable:hover td { background: var(--surface-raised); }
+.status-row-chevron {
+  font-size: 0.7rem; color: var(--faint); flex-shrink: 0; margin-left: auto; padding-left: 4px;
+}
+
+/* Collector health — shadcn-style grid-template-rows collapsible */
+.chd-collapsible {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.chd-collapsible--open {
+  grid-template-rows: 1fr;
+}
+.chd-collapsible > div {
+  overflow: hidden;
+  min-height: 0;
+  opacity: 0;
+  transition: opacity 0.16s ease-out;
+  padding-top: var(--space-2);
+}
+.chd-collapsible--open > div {
+  opacity: 1;
+  transition: opacity 0.16s ease-out 0.06s;
+}
+.chd-panel {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  background: var(--bg-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+}
+.chd-title {
+  font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: var(--space-2);
+}
+.chd-domain {
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+.chd-domain:last-of-type { border-bottom: none; }
+.chd-domain-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--fs-sm);
+}
+.chd-domain-name {
+  font-family: var(--mono); font-weight: 500; color: var(--text); letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+.chd-status { font-family: var(--mono); font-size: var(--fs-sm); flex-shrink: 0; }
+.chd-status-red    { color: var(--red); }
+.chd-status-yellow { color: var(--yellow); }
+.chd-status-green  { color: var(--green); }
+.chd-status-muted  { color: var(--muted); }
+.chd-badge-overdue {
+  font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--yellow);
+  background: rgba(245,185,66,0.1); border: 1px solid rgba(245,185,66,0.25);
+  border-radius: 3px; padding: 0 4px; flex-shrink: 0;
+}
+.chd-domain-meta {
+  display: flex; gap: var(--space-3); flex-wrap: wrap;
+  font-size: var(--fs-2xs); color: var(--muted); margin-top: 2px; padding-left: 18px;
+}
+.chd-err-code {
+  font-family: var(--mono); color: var(--red); font-size: var(--fs-2xs);
+}
+.chd-healthy-line {
+  font-size: var(--fs-2xs); color: var(--faint); margin-top: var(--space-1);
+  padding-top: var(--space-1);
+}
+
 
 /* ---------- PnL / Account zone (Decision 1) ---------- */
 .pnl-zone { margin-bottom: var(--space-3); }
@@ -2161,7 +2235,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .rail-card > :not(h3):not(.flex) { min-height: 0; }
 .desk-panel   { max-height: 360px; }
 .risk-panel   { max-height: 320px; }
-.system-panel { max-height: 280px; }
+.system-panel { }
 
 /* Go-Live Scorecard — Overview.tsx GoLiveScoreCard EXCLUSIVE namespace.
    Any new component that wants this style should rename to its own prefix; a second
