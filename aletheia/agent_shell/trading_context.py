@@ -10,6 +10,8 @@ Token budget target: ~2200 tokens total (vs ~800 in the old thin context).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -25,6 +27,99 @@ logger = logging.getLogger("aletheia.agent_shell.trading_context")
 
 _PENDING_SIGNAL_VISIBLE_LIMIT = 5
 _PENDING_SIGNAL_MAX_AGE_MINUTES = 30
+
+
+def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
+    """Hash material decision inputs while ignoring carrier/timestamp churn.
+
+    Opportunity ids and timestamps identify queue instances, not new market
+    information. Excluding them lets the command suppress repeated model calls
+    for materially identical symbol/direction contexts, while score, thesis,
+    B2 status, regime, and instrument changes reopen evaluation.
+    """
+
+    def _score(value: Any) -> float | None:
+        try:
+            return round(float(value), 2) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _candidate(item: dict[str, Any]) -> dict[str, Any]:
+        b2 = item.get("b2_evidence") or {}
+        return {
+            "symbol": item.get("symbol"),
+            "direction": item.get("direction") or item.get("direction_bias"),
+            "market_type": _normalize_market_type(
+                item.get("market_type") or item.get("market")
+            ),
+            "scanner_family": item.get("scanner_family"),
+            "rank_priority": _score(item.get("trade_score")),
+            "reasoning": " ".join(str(item.get("reasoning") or "").split()).lower(),
+            "b2": {
+                "status": b2.get("status"),
+                "sample_size": b2.get("sample_size"),
+                "avg_net_return_pct": _score(b2.get("avg_net_return_pct")),
+                "positive_rate": _score(b2.get("positive_rate")),
+            },
+        }
+
+    layer1 = ctx.get("layer1") or {}
+    layer2 = ctx.get("layer2") or {}
+    pending = [_candidate(item) for item in (layer2.get("pending_signals") or [])]
+    executable = [
+        _candidate(item) for item in (layer2.get("executable_candidates") or [])
+    ]
+    candidate_instruments = {
+        (item.get("symbol"), item.get("market_type"))
+        for item in pending + executable
+        if item.get("symbol")
+    }
+    material_feature_fields = (
+        "rsi_15m", "return_15m", "last_candle_range_atr_15m",
+        "return_1h", "return_4h", "return_24h", "funding_rate",
+        "oi_delta_1h", "taker_buy_ratio", "vol_ratio",
+        "relative_strength_24h", "oi_price_divergence", "rsi_4h",
+        "bb_width_4h", "vol_ratio_4h", "bb_squeeze", "crowding_signal",
+    )
+    features = []
+    for feature in ((layer1.get("feature_index") or {}).values()):
+        identity = (
+            feature.get("symbol"),
+            _normalize_market_type(feature.get("market_type")),
+        )
+        if identity not in candidate_instruments:
+            continue
+        features.append({
+            "symbol": identity[0],
+            "market_type": identity[1],
+            **{
+                field: (
+                    _score(feature.get(field))
+                    if not isinstance(feature.get(field), bool)
+                    else feature.get(field)
+                )
+                for field in material_feature_fields
+            },
+        })
+    key = lambda item: (
+        str(item.get("symbol") or ""),
+        str(item.get("direction") or ""),
+        str(item.get("market_type") or ""),
+        str(item.get("scanner_family") or ""),
+    )
+    projection = {
+        "version": "operator-decision-context-v1",
+        "skip_policy_epoch_id": ctx.get("skip_policy_epoch_id"),
+        "wake_context": ctx.get("wake_context"),
+        "regime": layer1.get("regime") or layer1.get("market_regime"),
+        "pending": sorted(pending, key=key),
+        "executable": sorted(executable, key=key),
+        "features": sorted(features, key=key),
+    }
+    encoded = json.dumps(
+        projection, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _dedupe_symbol_direction(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
@@ -333,6 +428,22 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
             "status": "not_configured" if not source_status["automatic_source_configured"] else "unavailable",
             "mode": source_status["mode"],
         }),
+        "operator_rationale": {
+            "skip_kind": getattr(decision, "skip_kind", None),
+            "adverse_reason_codes": list(
+                getattr(decision, "adverse_reason_codes", None) or []
+            ),
+            "adverse_evidence": list(
+                getattr(decision, "adverse_evidence", None) or []
+            ),
+            "supporting_signals": list(
+                getattr(decision, "supporting_signals", None) or []
+            ),
+            "opposing_signals": list(
+                getattr(decision, "opposing_signals", None) or []
+            ),
+            "risk_factors": list(getattr(decision, "risk_factors", None) or []),
+        },
     }
 
 

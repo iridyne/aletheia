@@ -7,7 +7,7 @@ from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_e
 
 _EPOCH_KIND = "system_operator_skip_remediation"
 _EFFECTIVE_VALUES = {
-    "version": "b1.1",
+    "version": "b1.2",
     "aggregate_signal_health_candidate_veto": False,
     "zero_pending_heartbeat_trading_evaluation": False,
     "aggregate_signal_health_config_tightening": False,
@@ -19,6 +19,13 @@ _EFFECTIVE_VALUES = {
     "ranker_neutral_confidence_floor": "medium",
     "auto_tightened_confidence_supply_recovery": True,
     "manual_high_confidence_preserved": True,
+    # B1.2: a direct model skip is no longer an asymmetric one-pass veto.
+    # One bounded counterfactual confirmation must provide typed,
+    # candidate-specific adverse evidence. Neutral insufficiency defers.
+    "direct_skip_confirmation_required": True,
+    "insufficient_evidence_terminal_skip": False,
+    "rank_priority_is_terminal_veto": False,
+    "unchanged_context_defer_window_minutes": 120,
 }
 _AFFECTED_PATHS = (
     "system_operator_candidate_context",
@@ -30,7 +37,7 @@ _AFFECTED_PATHS = (
 
 
 def ensure_skip_remediation_policy_epoch() -> str:
-    """Return the durable B1.1 policy epoch, rotating only if policy changes."""
+    """Return the durable B1.2 policy epoch, rotating only if policy changes."""
     epoch = build_policy_epoch(
         _EPOCH_KIND,
         _EFFECTIVE_VALUES,
@@ -38,3 +45,8 @@ def ensure_skip_remediation_policy_epoch() -> str:
         safety_required=False,
     )
     return persist_policy_epoch(epoch)
+
+
+def skip_policy_context() -> dict:
+    """Return the exact non-secret effective values used by the decision path."""
+    return dict(_EFFECTIVE_VALUES)

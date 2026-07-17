@@ -534,6 +534,7 @@ def test_doctor_surfaces_skip_halt_evidence_gaps_read_only(tmp_path, monkeypatch
     assert "raw_24h_missing_outcome_seed=1" in check.detail
     assert "unscoped_heartbeat_skips=1" in check.detail
     assert "no_evaluable_candidate_events=0" in check.detail
+    assert "deferred_unchanged_context_events=0" in check.detail
     assert "finding=recording_incident" in check.detail
     assert "does not change PI, config, Risk, or execution" in check.fix_hint
 
@@ -960,3 +961,88 @@ def test_filter_evidence_health_respects_settler_cadence():
     source = inspect.getsource(_probe_filter_evidence)
     assert "awaiting_cadence" in source
     assert "stale_overdue" in source
+
+
+@spec_claim(
+    SpecClaim(
+        "FE-S16", _CONTRACT, "§3 terminal System Operator evidence", "L2b",
+        "A terminal skip preserves its complete rationale and structured supporting, "
+        "opposing, risk, and adverse evidence in the durable PiDecision evidence manifest.",
+        status="implemented",
+    ),
+)
+def test_terminal_skip_preserves_complete_structured_rationale():
+    import json
+
+    from aletheia.agent_shell.reflection import _build_pi_decision
+
+    reasoning = "candidate-specific adverse thesis " + ("x" * 900)
+    result = {
+        "action": "skip",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "market_type": "spot",
+        "conviction": 30,
+        "reasoning": reasoning,
+        "skip_kind": "adverse_candidate_evidence",
+        "adverse_reason_codes": ["regime_mismatch"],
+        "adverse_evidence": ["1h range rejection remained intact"],
+        "supporting_signals": ["15m momentum turned positive"],
+        "opposing_signals": ["1h structure rejected the breakout"],
+        "risk_factors": ["range whipsaw"],
+        "evidence_manifest": {
+            "operator_rationale": {
+                "skip_kind": "adverse_candidate_evidence",
+                "adverse_reason_codes": ["regime_mismatch"],
+                "adverse_evidence": ["1h range rejection remained intact"],
+                "supporting_signals": ["15m momentum turned positive"],
+                "opposing_signals": ["1h structure rejected the breakout"],
+                "risk_factors": ["range whipsaw"],
+            }
+        },
+    }
+
+    decision = _build_pi_decision(result)
+    manifest = json.loads(decision.evidence_manifest_json)
+
+    assert decision.reasoning == reasoning
+    assert manifest["operator_rationale"]["skip_kind"] == "adverse_candidate_evidence"
+    assert manifest["operator_rationale"]["supporting_signals"] == [
+        "15m momentum turned positive"
+    ]
+
+
+def test_decision_evidence_builder_carries_operator_rationale(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.trading_context import build_decision_evidence_manifest
+    from aletheia.agent_shell.trading_decision import TradingDecision
+
+    decision = TradingDecision(
+        action="skip",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        conviction=30,
+        reasoning="confirmed candidate-specific conflict",
+        skip_kind="adverse_candidate_evidence",
+        adverse_reason_codes=["signal_conflict"],
+        adverse_evidence=["15m and 1h directions conflict"],
+        supporting_signals=["15m momentum"],
+        opposing_signals=["1h rejection"],
+        risk_factors=["whipsaw"],
+    )
+
+    rationale = build_decision_evidence_manifest(
+        {"layer1": {"feature_index": {}}}, decision
+    )["operator_rationale"]
+
+    assert rationale == {
+        "skip_kind": "adverse_candidate_evidence",
+        "adverse_reason_codes": ["signal_conflict"],
+        "adverse_evidence": ["15m and 1h directions conflict"],
+        "supporting_signals": ["15m momentum"],
+        "opposing_signals": ["1h rejection"],
+        "risk_factors": ["whipsaw"],
+    }

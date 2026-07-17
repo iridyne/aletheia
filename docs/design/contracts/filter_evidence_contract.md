@@ -64,6 +64,11 @@ Opportunity 主链上的“过滤”实际包含四种不同问题：
 对有精确 `signal_pending` 身份的终局 System Operator `skip`，PiDecision、其本轮
 `filter_trace` 与可识别候选的固定 horizon outcome seed 必须在同一 SQLite 提交边界中写入。
 direct model `skip` 不能因未进入 debate/conviction 分支而缺少 `operator_action_assessment`。
+在 `system_operator_skip_remediation/b1.2` 中，该 assessment 只有经过一次有界反事实确认，且
+`skip_kind=adverse_candidate_evidence`、typed adverse reason 与候选特定 evidence 均非空时才可
+成为 terminal reject。`insufficient_evidence`、rank priority 单值、unsupported action 或 malformed
+conviction 都不是拒绝事实；二次仍无效时只写去重的
+`operator_decision_deferred_unchanged_context` observation，保持 pending 且不生成 outcome cohort。
 任一必需 evidence 写入失败时，整个 final claim 回滚，pending 保持可重试；不得留下 `reviewed`
 Opportunity 或无证据的 skip。若决策时没有完整方向、市场、venue 或精确入场价，可保留非收益诊断，
 但禁止伪造 outcome 或事后补入场价。对于有精确 queued Opportunity 身份的 skip，若
@@ -73,7 +78,7 @@ entry timestamp）；trace 必须标注 `queued_candidate_fixed`。不完整或�
 仍必须回滚，不能以旧快照、别的市场或新造价格代替。
 
 `doctor` 必须只读报告近期 candidate skip 的 action-trace 覆盖、四个 outcome seed 覆盖、legacy 无 target
-skip、`operator_evaluation_events` 的 no-candidate heartbeat、pending 与 proposal 计数。若存在活跃的
+skip、`operator_evaluation_events` 的 no-candidate heartbeat/unchanged-context defer、pending 与 proposal 计数。若存在活跃的
 `system_operator_skip_remediation` policy epoch，raw 24h 计数必须与该 epoch 的诊断计数同时展示：
 重载前的缺口仍可审计，但不得污染当前 epoch 的 finding。无 target 记录
 不得混入 candidate effectiveness cohort；coverage 缺失是 `recording_incident` 的诊断输入，不授予自动
@@ -157,6 +162,10 @@ summary 的最小 trace（epoch、tier、bucket、样本/coverage、成本模型
 则为 `data_quality_incident`。同一序列化 summary 必须输入 assessment、Bull 与 Bear。该行为不
 改变 Ranker、Risk 的独立 `family_direction_edge()`、Execution 或 Live 权限。
 
+PiDecision 的 `evidence_manifest_json.operator_rationale` 必须完整保存 `skip_kind`、adverse reason/evidence、
+supporting/opposing signals 与 risk factors，权威 `reasoning` 保存全文。短 reflection 或 UI 可以截断显示，
+但不得把 200/300 字 convenience cap 当作耐久审计事实。
+
 对 registry/ticker/tradability 这类高频、无方向关卡，允许用
 `filter_decision_batches` 压缩表达：每个 scanner run + filter version 一行，
 `candidate_facts` JSON 内保留该关实际评估的每个候选键、标的身份、
@@ -197,7 +206,7 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 | LLM neutral/无效输出 | 可能否 | schema 结果、方向、置信度，不写 prompt | 仅有事前方向的行 |
 | Ranker symbol policy/execution/direction/confidence/TTL/factor/guard | 是 | 白/黑名单拒绝也必须写 `symbol_filter/symbol_not_allowed` 并终结 Opportunity；永久拒绝扫描批次与 top-N 执行短名单分离，状态与拒绝事实同事务提交 | 是（guard 只观测；symbol policy 不自动放宽） |
 | open-position/cooldown/batch limit | 是 | 当时占用、冷却截止、rank/limit | 是 |
-| System Operator action/conviction/debate/direction brakes | 是 | 仅活跃 `trade/skip`、原始/辩论后 conviction、实际暴露快照；direct model `skip` 也有 `operator_action_assessment`；遗留假动作记 `unsupported_action` | 是，但不在有对照前改门槛 |
+| System Operator action/conviction/debate/direction brakes | 是 | 仅活跃 `trade/skip`、原始/辩论后 conviction、实际暴露快照；direct model `skip` 有一次确认、typed adverse evidence 与 `operator_action_assessment`；遗留假动作是 retryable unavailable | 是，但不在有对照前改门槛 |
 | Proposal submission 方向/取价 | 是 | 方向集中度，最终 market_type，目标市场价格是否可用 | 是；用于解释 trade 意图为何没有 proposal，不自动放宽 |
 | Risk | 是 | `RiskDecision` 为权威，filter 记录只做统一索引 | 报告用，永不自动放宽 |
 | Execution adapter | 是 | order/error/venue reason | 用于成交率/实现率，不是方向 alpha |
@@ -323,6 +332,7 @@ Ranker 的 `limit=50` 只限制进入打分/入队选择的执行短名单，不
 11. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
 12. 已完成：Ranker 白名单漏项与黑名单命中不再静默 `return None`；拒绝事实与终态原子提交，且独立有界拒绝工作集不会被 top-N 执行上限截掉。
 13. 已完成：Universe emitter 与 Market Observer 新建 Opportunity 时同步原子写入 `opportunity_emitted`；Observer pre-filter 不再被误当成生产成功证明。
+14. 已完成：direct skip 一次有界反事实确认、neutral/invalid defer、120 分钟物质上下文去重，以及完整 operator rationale 持久化；不改 55、Risk、Execution 或 Ranker 门。
 
 ## 10. 诊断时间窗口与 sizing 口径
 

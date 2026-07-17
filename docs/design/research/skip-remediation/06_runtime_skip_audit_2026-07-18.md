@@ -1,6 +1,7 @@
 # 06 — Runtime Skip Audit and Partial Remediation (2026-07-18)
 
-> 状态：**A 类可观测性修复已实现于 `iridite/skip-observability-repair`；PI 行为未修改。**
+> 状态：**A 类可观测性修复已合入；B 类 direct-skip 语义修复已实现于
+> `iridite/direct-skip-semantics`，待独立 PR/新 epoch 生效。**
 > 证据快照：2026-07-17T16:58:43Z，本机 `paper_internal`、`live_disabled`。
 > 边界：不改 prompt、conviction=55、Debate、Risk、Execution、Exchange、Live、额度或凭据。
 
@@ -14,7 +15,8 @@ Overview 的 Recent 决策持续被 `operator skip` 占满。只读审计把问�
 3. direct model skip 与 Debate/conviction downgrade 的成熟结果方向相反，前者需要下一次
    单变量 B treatment，而不是删除 skip 或降低安全门。
 
-本轮只修 1/2，并把 3 固化为后续治理入口。这样先恢复可信测量，再决定是否改变 PI 行为。
+先前独立 PR 只修 1/2；owner 随后明确授权按顺序修复 3。本文件保留旧窗口证据，并记录新
+`b1.2` 行为边界，禁止把两批样本混为一个 cohort。
 
 ## 2. A 类修复一：Overview 时间窗口
 
@@ -71,7 +73,7 @@ administrative skip。修复后同一运行库复核为：真实 24h candidate
 skip=85、missing trace=0、missing four-horizon seed=0、administrative cascade excluded=145；mature=84，
 finding=`awaiting_outcomes`。排除只改变诊断归类，不删除历史行，也不改变清理或交易行为。
 
-## 4. Direct Skip 行为发现（本轮不改）
+## 4. Direct Skip 行为发现（b1.1 baseline）
 
 ### 4.1 分层结果
 
@@ -93,18 +95,42 @@ finding=`awaiting_outcomes`。排除只改变诊断归类，不删除历史行�
 出现把 `insufficient_evidence` 称为 disqualifier 的情况，与现行契约“neutral, not a directional
 veto”冲突。`qualified_positive` 也没有形成可观察的 action differentiation。
 
-## 5. 下一任务：单变量 Direct-Skip 语义实验（B 类）
+### 4.3 显性与隐性 bug 定性
 
-本任务不与 A 类修复同 PR。进入条件：
+1. **显性语义冲突**：B2 `insufficient_evidence` 契约规定为中性，direct skip 却把它当否决。
+2. **隐性分支不对称**：trade intent 在 40–80 进入 Bull/Bear debate，direct skip 一次模型输出即可
+   终结；正负动作的证据负担不对称。
+3. **隐性排序误读**：`trade_score` 是已经通过 upstream eligibility 后的排序量，不是胜率或隐含
+   执行阈值；prompt 的 `score=` 命名和重复呈现诱发模型自行发明 threshold。
+4. **显性容错错误**：缺失/不支持 action 被归一为 `skip`，malformed conviction 被归零，均可把
+   provider/schema 错误伪装为业务决定并消费 pending。
+5. **显性审计损失**：command/reflection 分别截断 300/200 字，structured supporting/opposing evidence
+   未进入耐久 PiDecision 证据包，事后无法验证模型的真实 adverse basis。
+6. **隐性重复成本**：相同 symbol/direction 的新 carrier 约每 50 分钟重新进入，Opportunity id 与时间
+   变化掩盖“物质上下文未变化”，造成同质模型调用与 Overview skip 洪泛。
+
+## 5. 已实施：单变量 Direct-Skip 语义实验（B 类）
+
+本任务未与 A 类可观测性修复同 PR。进入条件已由 owner 的明确授权、成熟 cohort 复算与独立
+worktree/branch 满足；旧 `b1.1` 窗口在新代码首次运行时由 policy epoch 机制关闭。
 
 1. `skip-halt-v2` 的成熟窗口完成结算，并至少产生一次可复现 finding；
 2. 当前 epoch 的 direct/gated 分层报告复算一致，记录 symbol/direction 相关性；
 3. owner 确认关闭旧行为窗口并创建新 policy epoch。
 
-建议唯一 treatment：**direct skip 必须给出至少一个与当前候选相关、独立于
-`insufficient_evidence` 的 adverse reason；证据不足本身保持中性。** 不改 55 分门槛、Debate 权重、
-Ranker、sizing 或任何下游安全门；也不把无法解释的 skip 自动改成 trade。具体 retry/unavailable
-语义须在该任务的 RED spec 中先定稿，避免制造强制交易器或无限重试。
+唯一 treatment：**direct skip 必须经过一次有界反事实确认，并给出至少一个与当前候选相关、独立于
+`insufficient_evidence` 的 typed adverse reason/evidence；证据不足本身保持中性。** 第二次仍为中性
+或无效时返回 `evaluation_deferred`，不写 final PiDecision、不消费 pending、不自动改成 trade。
+同一 epoch、同一物质上下文在 120 分钟窗口内只调用一次“assessment + confirmation”；fingerprint
+排除 Opportunity id/时间戳等 carrier churn，包含 instrument、方向、scanner thesis、rank priority、
+B2 状态、候选技术特征与 regime，物质变化会重新开放评估。若确认改为 trade，仍完整经过既有 Debate/55/Risk 链。
+
+配套 A 类修复：unsupported/missing action 与 malformed conviction 改为 typed unavailable；权威
+reasoning 不再截断；`evidence_manifest.operator_rationale` 保存 skip kind、adverse/supporting/opposing/
+risk evidence。已有 submitting claim 的恢复优先级不变。
+
+明确未改：55 分门槛、Debate 调整公式、Ranker 入选/权重、sizing、Risk、Execution、Exchange、Live、
+额度与凭据。
 
 预注册观察：direct/gated skip ratio、qualified-positive action differentiation、proposal funnel、
 queue age、24h 净结果、PF/ECE/回撤、trace/seed coverage。旧 epoch 数据只作 baseline，不与新窗口
@@ -119,5 +145,6 @@ cd frontend && npm run build
 uv run aletheia doctor
 ```
 
-本轮成功标准不是产生更多交易，而是让 Recent 数量真实、诊断能够完成、并为下一次行为实验保留
-单一可归因变量。
+本轮成功标准不是强行产生更多交易，而是减少无证据/重复 direct skip，同时保持所有下游安全门与
+可重试性。行为贡献必须在 `b1.2` 新窗口用 direct/gated ratio、proposal funnel、queue age、24h net、
+PF/ECE/回撤和 trace/seed coverage 判断；实现完成不等于已证明策略收益改善。

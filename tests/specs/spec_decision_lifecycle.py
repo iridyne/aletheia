@@ -198,16 +198,13 @@ def test_opportunity_producers_do_not_bypass_ranker_when_waking_operator():
 @spec_claim(
     SpecClaim(
         "DL-S09", "decision_lifecycle_contract", "§2.4 terminal decision identity", "L2b",
-        "A watch/skip System Operator result may persist an Opportunity identity only when an "
-        "exact signal_pending carrier authorized that evaluation; the final consumes the queue "
-        "without creating a TradeProposal.",
+        "A confirmed adverse skip may persist an Opportunity identity only when an exact "
+        "signal_pending carrier authorized that evaluation; unsupported actions remain "
+        "retryable and cannot consume the queue.",
         status="implemented",
     ),
 )
-@pytest.mark.parametrize("raw_action", ["skip", "watch"])
-def test_skip_decision_persists_evaluated_symbol_and_direction(
-    tmp_path, monkeypatch, raw_action
-):
+def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeypatch):
     import asyncio
     from tests.test_entry_logic import setup_env
 
@@ -248,18 +245,27 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(
 
     async def assess_pending_candidate(_context):
         return {
-            "action": raw_action,
+            "action": "skip",
             "symbol": opportunity.symbol,
             "direction": "long",
             "conviction": 48,
             "reasoning": "candidate evaluated but not selected",
             "market_type": opportunity.market,
+            "skip_kind": "adverse_candidate_evidence",
+            "adverse_reason_codes": ["signal_conflict"],
+            "adverse_evidence": ["candidate momentum conflicts with 1h structure"],
         }
+
+    async def confirm_pending_candidate(_context, _initial, _reason):
+        return await assess_pending_candidate(_context)
 
     monkeypatch.setattr(
         commands, "_configured_paper_execution_mode", lambda: "paper_internal"
     )
     monkeypatch.setattr(trading_decision, "_assess_opportunity", assess_pending_candidate)
+    monkeypatch.setattr(
+        trading_decision, "_reassess_direct_skip", confirm_pending_candidate
+    )
     monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
 
     result = asyncio.run(commands.evaluate_trading_opportunity({}))
@@ -277,7 +283,7 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(
         "SELECT COUNT(*) FROM trade_proposals WHERE opportunity_id=?",
         (opportunity.id,),
     ).fetchone()[0]
-    assert result["action"] == "skip"  # raw watch is normalized to informational skip
+    assert result["action"] == "skip"
     assert result["symbol"] == "BTC/USDT"
     assert result["direction"] == "long"
     assert result["pending_queue_remaining"] == 0
@@ -846,9 +852,18 @@ def test_llm_unavailable_keeps_oldest_pending_signal_retryable(tmp_path, monkeyp
             "conviction": 25,
             "reasoning": "the setup is not strong enough",
             "bear_case": "the signal has no follow-through",
+            "skip_kind": "adverse_candidate_evidence",
+            "adverse_reason_codes": ["adverse_price_structure"],
+            "adverse_evidence": ["the signal has no observed follow-through"],
         }
 
+    async def confirm_successful_skip(_context, _initial, _reason):
+        return await successful_skip(_context)
+
     monkeypatch.setattr(trading_decision, "_assess_opportunity", successful_skip)
+    monkeypatch.setattr(
+        trading_decision, "_reassess_direct_skip", confirm_successful_skip
+    )
     result = asyncio.run(commands.evaluate_trading_opportunity({}))
     replay = asyncio.run(commands.evaluate_trading_opportunity({}))
 
@@ -1486,65 +1501,25 @@ def test_degraded_aggregate_signal_health_is_absent_from_candidate_prompt():
         "decision_lifecycle_contract",
         "§2.1 unsupported entry action isolation",
         "L2b",
-        "A legacy close/reduce result is normalized to skip before context binding and cannot "
-        "borrow an unqueued Layer 1 or ranker Opportunity identity.",
+        "A legacy close/reduce result is retryable evaluation unavailability before context "
+        "binding and cannot borrow or consume an Opportunity identity.",
         status="implemented",
     ),
 )
 @pytest.mark.parametrize("action", ["close", "reduce"])
 def test_unmatched_position_action_never_falls_back_to_opportunity_identity(action):
     from aletheia.agent_shell.trading_decision import (
-        _attach_opportunity_context,
+        DecisionUnavailable,
         _parse_decision,
     )
 
-    decision = _parse_decision({
-        "action": action, "symbol": "BTC/USDT", "direction": "long",
-        "market_type": "spot", "conviction": 90,
-        "reasoning": f"{action} BTC despite no matching open Position",
-        "bear_case": "legacy action is unsupported",
-    })
-    ctx = {
-        "layer1": {
-            "position_authority": [
-                {
-                    "id": "different-open-position",
-                    "symbol": "ETH/USDT",
-                    "direction": "long",
-                    "market_type": "spot",
-                    "opportunity_id": "different-position-opportunity",
-                }
-            ],
-            "opportunities": [
-                {
-                    "id": "layer1-opportunity-must-not-bind",
-                    "symbol": "BTC/USDT",
-                    "direction_bias": "long",
-                    "market": "spot",
-                }
-            ],
-        },
-        "layer2": {
-            "pending_signals": [],
-            "pending_queue": {"unresolved_total": 0},
-            "ranker_candidates": [
-                {
-                    "opportunity_id": "ranker-opportunity-must-not-bind",
-                    "symbol": "BTC/USDT",
-                    "direction": "long",
-                    "market_type": "spot",
-                }
-            ],
-        },
-        "layer3": {},
-    }
-
-    _attach_opportunity_context(decision, ctx)
-
-    assert decision.action == "skip"
-    assert decision.opportunity_id is None
-    assert decision.filter_trace[-1]["reason_code"] == "unsupported_action"
-    assert decision.filter_trace[-1]["inputs"]["raw_action"] == action
+    with pytest.raises(DecisionUnavailable, match=f"unsupported_action:{action}"):
+        _parse_decision({
+            "action": action, "symbol": "BTC/USDT", "direction": "long",
+            "market_type": "spot", "conviction": 90,
+            "reasoning": f"{action} BTC despite no matching open Position",
+            "bear_case": "legacy action is unsupported",
+        })
 
 
 @spec_claim(
@@ -1554,7 +1529,7 @@ def test_unmatched_position_action_never_falls_back_to_opportunity_identity(acti
         "§4 honest action surface",
         "L2b",
         "The active entry Operator exposes only trade/skip. Legacy close/reduce/scale_in/"
-        "flip/watch results are normalized to an evidenced skip and cannot create a Proposal.",
+        "flip/watch results are retryable invalid output and cannot create a Proposal.",
         status="implemented",
     ),
     SpecClaim(
@@ -1570,11 +1545,12 @@ def test_unmatched_position_action_never_falls_back_to_opportunity_identity(acti
 @pytest.mark.parametrize(
     "action", ["close", "reduce", "scale_in", "flip", "watch"]
 )
-def test_active_operator_normalizes_unsupported_actions_to_evidenced_skip(action):
+def test_active_operator_rejects_unsupported_actions_as_retryable(action):
     from aletheia.agent_shell.trading_decision import (
         _DECISION_SCHEMA,
         _build_assessment_prompt,
         _parse_decision,
+        DecisionUnavailable,
     )
 
     assert _DECISION_SCHEMA["properties"]["action"]["enum"] == ["trade", "skip"]
@@ -1587,19 +1563,351 @@ def test_active_operator_normalizes_unsupported_actions_to_evidenced_skip(action
         for unsupported in ("close", "reduce", "scale_in", "flip", "watch")
     )
 
-    decision = _parse_decision({
-        "action": action,
+    with pytest.raises(DecisionUnavailable, match=f"unsupported_action:{action}"):
+        _parse_decision({
+            "action": action,
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "market_type": "spot",
+            "conviction": 90,
+            "reasoning": "legacy model output",
+            "bear_case": "the setup may fail",
+        })
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S43", "decision_lifecycle_contract", "§2.3 retryable model output", "L2b",
+        "A missing/unsupported action or malformed conviction is evaluation unavailability, "
+        "not a terminal skip that consumes a pending Opportunity.",
+        status="implemented",
+    ),
+)
+@pytest.mark.parametrize(
+    "payload, reason",
+    [
+        ({"action": "watch", "conviction": 30}, "unsupported_action"),
+        ({"action": "skip", "conviction": "low"}, "invalid_conviction"),
+        ({"conviction": 30}, "missing_action"),
+    ],
+)
+def test_invalid_active_operator_output_is_retryable(payload, reason):
+    from aletheia.agent_shell.trading_decision import DecisionUnavailable, _parse_decision
+
+    raw = {
         "symbol": "BTC/USDT",
         "direction": "long",
         "market_type": "spot",
-        "conviction": 90,
-        "reasoning": "legacy model output",
+        "reasoning": "malformed active-model response",
         "bear_case": "the setup may fail",
-    })
+        **payload,
+    }
+
+    with pytest.raises(DecisionUnavailable, match=reason):
+        _parse_decision(raw)
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S44", "decision_lifecycle_contract", "§2.3 direct-skip confirmation", "L2b",
+        "A direct model skip becomes terminal only after one bounded counterfactual "
+        "confirmation names candidate-specific adverse evidence; insufficient evidence and "
+        "rank ordering alone are neutral.",
+        status="implemented",
+    ),
+)
+def test_direct_skip_requires_one_structured_adverse_confirmation(monkeypatch):
+    import asyncio
+
+    from aletheia.agent_shell import trading_decision
+
+    initial = {
+        "action": "skip",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "market_type": "spot",
+        "conviction": 35,
+        "reasoning": "candidate conflicts with the current range structure",
+        "bear_case": "range rejection can continue",
+        "skip_kind": "adverse_candidate_evidence",
+        "adverse_reason_codes": ["regime_mismatch"],
+        "adverse_evidence": ["1h structure remains range-bound after the breakout signal"],
+    }
+    confirmed = {
+        **initial,
+        "reasoning": "independent challenge confirms the range mismatch",
+    }
+
+    async def assess(_ctx):
+        return initial
+
+    async def confirm(_ctx, _initial, _reason):
+        return confirmed
+
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
+    monkeypatch.setattr(trading_decision, "_reassess_direct_skip", confirm)
+    monkeypatch.setattr(
+        trading_decision, "_proposal_bias_brake_reason", lambda _decision: None
+    )
+
+    decision = asyncio.run(trading_decision.evaluate_trading_opportunity({
+        "skip_policy": {"direct_skip_confirmation_required": True},
+        "layer1": {},
+        "layer2": {"pending_signals": [{
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "market_type": "spot",
+            "opportunity_id": "opp-confirmed-skip",
+            "signal_source": "market_observer",
+        }]},
+        "layer3": {},
+    }))
+
     assert decision.action == "skip"
-    assert "unsupported_action" in decision.reasoning
-    assert decision.filter_trace[-1]["reason_code"] == "unsupported_action"
-    assert decision.filter_trace[-1]["inputs"]["raw_action"] == action
+    assert decision.skip_kind == "adverse_candidate_evidence"
+    assert decision.adverse_reason_codes == ["regime_mismatch"]
+    assert decision.filter_trace[0]["reason_code"] == "operator_model_skip"
+    assert decision.filter_trace[0]["inputs"]["confirmation_attempts"] == 1
+
+
+def test_insufficient_evidence_cannot_become_terminal_skip(monkeypatch):
+    import asyncio
+
+    from aletheia.agent_shell import trading_decision
+
+    neutral_skip = {
+        "action": "skip",
+        "symbol": "ETH/USDT",
+        "direction": "short",
+        "market_type": "usdt_futures",
+        "conviction": 20,
+        "reasoning": "not enough matured outcomes",
+        "bear_case": "the short may fail",
+        "skip_kind": "insufficient_evidence",
+        "adverse_reason_codes": [],
+        "adverse_evidence": [],
+    }
+
+    async def assess(_ctx):
+        return neutral_skip
+
+    async def confirm(_ctx, _initial, _reason):
+        return neutral_skip
+
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
+    monkeypatch.setattr(trading_decision, "_reassess_direct_skip", confirm)
+
+    with pytest.raises(
+        trading_decision.DecisionUnavailable,
+        match="direct_skip_not_confirmed",
+    ) as exc_info:
+        asyncio.run(trading_decision.evaluate_trading_opportunity({
+            "skip_policy": {"direct_skip_confirmation_required": True},
+            "layer1": {},
+            "layer2": {"pending_signals": [{
+                "symbol": "ETH/USDT",
+                "direction": "short",
+                "market_type": "usdt_futures",
+                "opportunity_id": "opp-neutral-skip",
+                "signal_source": "market_observer",
+            }]},
+            "layer3": {},
+        }))
+
+    assert exc_info.value.stage == "operator_skip_validation"
+
+
+def test_operator_context_fingerprint_ignores_carrier_churn_but_tracks_material_change():
+    from aletheia.agent_shell.trading_context import operator_decision_context_fingerprint
+
+    def context(opportunity_id, created_at, trade_score):
+        return {
+            "skip_policy_epoch_id": "epoch-direct-skip-v2",
+            "layer1": {"market_regime": "range"},
+            "layer2": {
+                "pending_signals": [{
+                    "opportunity_id": opportunity_id,
+                    "created_at": created_at,
+                    "symbol": "BTC/USDT",
+                    "direction": "long",
+                    "market_type": "spot",
+                    "trade_score": trade_score,
+                    "reasoning": "same scanner thesis",
+                    "b2_evidence": {"status": "insufficient_evidence"},
+                }],
+                "executable_candidates": [{
+                    "opportunity_id": opportunity_id,
+                    "symbol": "BTC/USDT",
+                    "direction": "long",
+                    "market_type": "spot",
+                    "trade_score": trade_score,
+                }],
+            },
+        }
+
+    first = operator_decision_context_fingerprint(
+        context("opp-a", "2026-07-18T01:00:00Z", 51.0)
+    )
+    carrier_churn = operator_decision_context_fingerprint(
+        context("opp-b", "2026-07-18T01:50:00Z", 51.0)
+    )
+    score_changed = operator_decision_context_fingerprint(
+        context("opp-c", "2026-07-18T02:20:00Z", 58.0)
+    )
+
+    assert first == carrier_churn
+    assert score_changed != first
+
+
+def test_rank_priority_is_presented_as_ordering_not_a_veto_threshold():
+    from aletheia.agent_shell.trading_decision import _build_assessment_prompt
+
+    prompt = _build_assessment_prompt({
+        "layer1": {},
+        "layer2": {"executable_candidates": [{
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "trade_score": 51,
+        }]},
+        "layer3": {},
+    })
+    executable = prompt.split("## Executable Candidates", 1)[1].split("# Layer 3", 1)[0]
+
+    assert "rank_priority=51" in executable
+    assert "not a probability, conviction, or hidden execution threshold" in executable
+    assert "score=51" not in executable
+
+
+def test_direct_skip_b12_rotates_a_distinct_policy_epoch(tmp_path, monkeypatch):
+    import json
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.skip_policy import (
+        ensure_skip_remediation_policy_epoch,
+        skip_policy_context,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    epoch_id = ensure_skip_remediation_policy_epoch()
+    row = get_db().execute(
+        "SELECT epoch_kind, effective_values_json FROM learning_policy_epochs "
+        "WHERE epoch_id=?",
+        (epoch_id,),
+    ).fetchone()
+    values = json.loads(row["effective_values_json"])
+
+    assert row["epoch_kind"] == "system_operator_skip_remediation"
+    assert values == skip_policy_context()
+    assert values["version"] == "b1.2"
+    assert values["direct_skip_confirmation_required"] is True
+    assert values["insufficient_evidence_terminal_skip"] is False
+
+
+def test_neutral_skip_defer_preserves_pending_and_suppresses_unchanged_retry(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell import commands, trading_decision
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.sqlite import get_db
+
+    opportunity = Opportunity(
+        id="opp-neutral-defer",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+        scanner_family="momentum",
+    )
+    insert_opportunity(opportunity)
+    insert_pi_decision(PiDecision(
+        id="pending-neutral-defer",
+        action="signal_pending",
+        opportunity_id=opportunity.id,
+        signal_source="market_observer",
+        symbol=opportunity.symbol,
+        direction="long",
+        market_type="spot",
+    ))
+    context = {
+        "layer1": {"data_health": {"ohlcv_ready": True}},
+        "layer2": {
+            "pending_signals": [{
+                "symbol": opportunity.symbol,
+                "direction": "long",
+                "market_type": "spot",
+                "opportunity_id": opportunity.id,
+                "signal_source": "market_observer",
+                "reasoning": "momentum candidate",
+                "trade_score": 51.0,
+            }],
+            "executable_candidates": [{
+                "symbol": opportunity.symbol,
+                "direction": "long",
+                "market_type": "spot",
+                "opportunity_id": opportunity.id,
+                "trade_score": 51.0,
+            }],
+            "pending_queue": {
+                "unresolved_total": 1,
+                "visible_count": 1,
+                "overflow_count": 0,
+            },
+        },
+        "layer3": {},
+    }
+    neutral = {
+        "action": "skip",
+        "symbol": opportunity.symbol,
+        "direction": "long",
+        "market_type": "spot",
+        "conviction": 20,
+        "reasoning": "history is not mature enough",
+        "bear_case": "momentum may fail",
+        "skip_kind": "insufficient_evidence",
+        "adverse_reason_codes": [],
+        "adverse_evidence": [],
+    }
+    calls = {"assess": 0, "confirm": 0}
+
+    async def assess(_ctx):
+        calls["assess"] += 1
+        return neutral
+
+    async def confirm(_ctx, _initial, _reason):
+        calls["confirm"] += 1
+        return neutral
+
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.build_enriched_trading_context",
+        lambda: context,
+    )
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
+    monkeypatch.setattr(trading_decision, "_reassess_direct_skip", confirm)
+
+    first = asyncio.run(commands.evaluate_trading_opportunity({}))
+    second = asyncio.run(commands.evaluate_trading_opportunity({}))
+
+    assert first["action"] == "evaluation_deferred"
+    assert first["model_invoked"] is True
+    assert second["action"] == "evaluation_deferred"
+    assert second["model_invoked"] is False
+    assert first["operator_evaluation_event_id"] == second["operator_evaluation_event_id"]
+    assert calls == {"assess": 1, "confirm": 1}
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE opportunity_id=? AND action='skip'",
+        (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert get_db().execute(
+        "SELECT status FROM opportunities WHERE id=?", (opportunity.id,)
+    ).fetchone()[0] == "queued"
 
 
 @pytest.mark.parametrize("action", ["trade", "scale_in", "flip"])

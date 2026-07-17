@@ -1477,6 +1477,12 @@ def _probe_skip_halt(report: Report) -> None:
                  AND julianday(created_at) >= julianday(?)""",
             (cutoff,),
         ).fetchone()[0]
+        deferred_context_events = db.execute(
+            """SELECT COUNT(*) FROM operator_evaluation_events
+               WHERE event_kind = 'operator_decision_deferred_unchanged_context'
+                 AND julianday(created_at) >= julianday(?)""",
+            (cutoff,),
+        ).fetchone()[0]
         pending = db.execute(
             """SELECT COUNT(*) FROM pi_decisions
                WHERE action = 'signal_pending'
@@ -1515,6 +1521,7 @@ def _probe_skip_halt(report: Report) -> None:
         f"administrative_cascade_skips_excluded={int(administrative_skips or 0)}, "
         f"unscoped_heartbeat_skips={int(unscoped or 0)}, "
         f"no_evaluable_candidate_events={int(no_candidate_events or 0)}, "
+        f"deferred_unchanged_context_events={int(deferred_context_events or 0)}, "
         f"raw_24h_pending_signals={int(pending or 0)}, proposals={int(proposals or 0)}, "
         f"diagnosis_epoch={epoch_label}, "
         f"current_epoch_candidate_skips={int(scoped_counts.get('candidate_skips', 0))}, "
