@@ -265,6 +265,29 @@ def test_port_cleanup_excludes_self_and_supervisor(tmp_path, monkeypatch):
     assert "self_heal_port_cleanup" in _audit_event_types()
 
 
+def test_port_cleanup_ignores_unverified_dashboard_listener(tmp_path, monkeypatch):
+    """An active gateway must never tree-kill a process merely for using its port."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    import aletheia.gateway.pidfile as pidfile
+    import os
+
+    unverified_listener = os.getpid() + 10
+    killed: list[int] = []
+    monkeypatch.setattr(pidfile, "read_pid", lambda: os.getpid() + 1)
+    monkeypatch.setattr(pidfile, "find_gateway_orphans", lambda: [])
+    monkeypatch.setattr(
+        pidfile, "find_port_holders", lambda port: [unverified_listener],
+    )
+    monkeypatch.setattr(pidfile, "kill_pid_tree", lambda p: killed.append(p))
+
+    _patch_health(monkeypatch, ["agent_failure_ratio:0.9>0.5"])
+    health.run_health_check()
+
+    assert killed == []
+    assert "self_heal_port_cleanup" not in _audit_event_types()
+
+
 def test_port_cleanup_noop_when_no_orphans(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health

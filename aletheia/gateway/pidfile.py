@@ -360,7 +360,7 @@ def find_port_holders(port: int) -> list[int]:
                             pass
         else:
             out = subprocess.run(
-                ["lsof", "-ti", f":{port}"],
+                ["lsof", "-nP", "-t", "-sTCP:LISTEN", f"-iTCP:{port}"],
                 capture_output=True, text=True, timeout=10,
             ).stdout
             for line in out.splitlines():

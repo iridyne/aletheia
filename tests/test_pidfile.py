@@ -103,6 +103,27 @@ def test_wait_port_free_times_out_when_stuck(monkeypatch):
     assert pidfile.wait_port_free(8787, "127.0.0.1", timeout=0.01) is False
 
 
+def test_find_port_holders_posix_queries_listeners_only(monkeypatch):
+    """Connected API clients must never be classified as killable port owners."""
+    from types import SimpleNamespace
+    from aletheia.gateway import pidfile
+
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        return SimpleNamespace(stdout="4242\n")
+
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(pidfile.subprocess, "run", fake_run)
+    monkeypatch.setattr(pidfile.os, "getpid", lambda: 9999)
+
+    assert pidfile.find_port_holders(8787) == [4242]
+    assert seen["command"] == [
+        "lsof", "-nP", "-t", "-sTCP:LISTEN", "-iTCP:8787",
+    ]
+
+
 def test_kill_pid_tree_windows_uses_ctypes_not_subprocess(monkeypatch):
     """On Windows, kill_pid_tree uses pure ctypes (no taskkill spawn), so no
     console window flash during orphan cleanup or gateway stop."""

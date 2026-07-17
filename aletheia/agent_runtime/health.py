@@ -380,35 +380,33 @@ def _alert_suppressed(scenario: str, why: str) -> None:
 
 
 def _heal_port_cleanup() -> bool:
-    """Kill orphan/port-holder gateway PIDs that aren't us or our supervisor.
+    """Kill verified orphan gateway PIDs that aren't us or our supervisor.
 
-    Opportunistic (only called when already unhealthy). find_gateway_orphans only
-    matches OUR markers (never a foreign process); find_port_holders excludes our
-    own pid. We additionally exclude the SUPERVISOR pid (read_pid) — find_port_holders
-    does NOT, and in normal operation the supervisor also holds the port, so without
-    this guard we would kill our own supervisor and create a new zombie. Returns
-    True if anything was cleaned."""
+    Opportunistic (only called when already unhealthy). ``find_gateway_orphans``
+    only matches Aletheia command-line markers. Never tree-kill a process merely
+    because it listens on or connects to the dashboard port: the current frontdoor
+    is a legitimate listener in the supervisor's process group, and clients are
+    unrelated processes. Generic port cleanup remains an explicit lifecycle action,
+    where the owner requested start/stop/restart. Returns True if anything was
+    cleaned."""
     from aletheia.gateway.pidfile import (
-        find_gateway_orphans, find_port_holders, kill_pid_tree, read_pid,
+        find_gateway_orphans, kill_pid_tree, read_pid,
     )
-    cfg = load_config()
     keep = {os.getpid()}
     sup = read_pid()
     if sup:
         keep.add(sup)
     targets = [p for p in find_gateway_orphans() if p not in keep]
-    targets += [p for p in find_port_holders(cfg.app.dashboard_port)
-                if p not in keep and p not in targets]
     if not targets:
         return False
     write_audit({
         "actor": "system", "source": "self_heal", "event_type": "self_heal_port_cleanup",
         "entity_type": "gateway", "entity_id": "gateway",
-        "message": f"Self-heal cleaned orphan/port-holder PIDs: {targets}",
+        "message": f"Self-heal cleaned verified gateway orphan PIDs: {targets}",
     })
     for p in targets:
         kill_pid_tree(p)
-    _send_alert(f"self-heal cleaned orphans {targets}")
+    _send_alert(f"self-heal cleaned verified gateway orphans {targets}")
     return True
 
 
