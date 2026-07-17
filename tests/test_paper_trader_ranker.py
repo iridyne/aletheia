@@ -136,7 +136,24 @@ def test_expired_opportunity_valid_until_skipped_without_member():
 
     assert len(candidates) == 1
     assert candidates[0]["skip_reason"] == "ttl_expired"
-    assert candidates[0]["filter_trace"][-1]["reason_code"] == "opportunity_valid_until_expired"
+    assert candidates[0]["filter_trace"][-1]["reason_code"] == "ttl_expired"
+    assert candidates[0]["filter_trace"][-1]["parameters"]["source"] == "opportunity.valid_until"
+
+
+def test_malformed_opportunity_ttl_fails_closed_with_truthful_reason():
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates
+
+    opps = [_make_opp(valid_until="not-an-iso-timestamp")]
+    with _patch_deps(opps, universe_member=None):
+        candidate = build_paper_candidates(limit=50)[0]
+
+    assert candidate["skip_reason"] == "ttl_invalid"
+    ttl_step = next(
+        step for step in candidate["filter_trace"]
+        if step["filter_name"] == "family_ttl"
+    )
+    assert ttl_step["decision"] == "error"
+    assert ttl_step["reason_code"] == "ttl_timestamp_invalid"
 
 
 def test_blocked_factor_diagnostic_is_neutral_without_authority():

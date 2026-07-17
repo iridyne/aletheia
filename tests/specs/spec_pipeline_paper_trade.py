@@ -842,6 +842,91 @@ def test_stale_signal_plan_cannot_regress_reviewed_opportunity(tmp_path, monkeyp
 
 @spec_claim(
     SpecClaim(
+        "PL-PT-13", "pipeline_paper_trade", "§2 atomic signal enqueue evidence", "L2b",
+        "A successful signal enqueue commits signal_pending, open→queued, and the "
+        "signal_enqueue=passed fact together. Evidence failure rolls back the carrier "
+        "and lifecycle claim, then records a retryable enqueue error.",
+        status="implemented",
+    ),
+)
+def test_signal_enqueue_passed_evidence_failure_rolls_back_carrier(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    opp_id = _insert_opportunity(conn, symbol="BTC/USDT", confidence_score=90)
+    _insert_market_snapshot(conn, "BTC/USDT", price=60000.0)
+
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agents import paper_trader
+    from aletheia.analytics import filter_evidence
+
+    init_tool_registry()
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
+        lambda source=None: None,
+        raising=False,
+    )
+    original = filter_evidence.record_candidate_filter_trace
+
+    def fail_only_passed_enqueue(candidate, *args, **kwargs):
+        trace = kwargs.get("trace") or []
+        if trace and trace[0].get("filter_name") == "signal_enqueue" \
+                and trace[0].get("decision") == "passed":
+            raise RuntimeError("forced enqueue evidence failure")
+        return original(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(filter_evidence, "record_candidate_filter_trace", fail_only_passed_enqueue)
+
+    import asyncio
+    result = asyncio.run(paper_trader.run_paper_trader(permission_mode="Paper"))
+
+    assert conn.execute(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' AND opportunity_id=?",
+        (opp_id,),
+    ).fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (opp_id,),
+    ).fetchone()[0] == "open"
+    evidence = conn.execute(
+        "SELECT decision, reason_code FROM filter_decisions "
+        "WHERE opportunity_id=? AND filter_name='signal_enqueue'",
+        (opp_id,),
+    ).fetchone()
+    assert tuple(evidence) == ("error", "signal_enqueue_error")
+    assert result["errors"] == [f"signal_enqueue_failed:{opp_id}"]
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-14", "pipeline_paper_trade", "§2 bounded pending admission", "L2b",
+        "When the unresolved Operator queue is full, paper_trader applies backpressure: "
+        "the candidate stays open and is marked signal_queue_capacity instead of being "
+        "queued into a window it cannot reach before expiry.",
+        status="implemented",
+    ),
+)
+def test_signal_batch_plan_applies_queue_capacity_without_selecting_candidate():
+    from aletheia.agents.paper_trader import _plan_signal_batch
+
+    candidate = {
+        "opportunity_id": "opp-backpressure",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "trade_score": 90,
+    }
+    plan = _plan_signal_batch(
+        [candidate],
+        open_symbols=set(),
+        recent_signal_pairs=set(),
+        operator_evaluated_opportunity_ids=set(),
+        limit=3,
+        available_queue_slots=0,
+    )
+
+    assert plan.selected == []
+    assert plan.decisions["opp-backpressure"] == ("signal_queue_capacity", "rejected")
+
+
+@spec_claim(
+    SpecClaim(
         "PL-PT-12",
         "pipeline_paper_trade",
         "§4 approved take-profit identity",

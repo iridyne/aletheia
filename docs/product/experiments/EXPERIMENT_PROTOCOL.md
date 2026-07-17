@@ -11,6 +11,16 @@
 > Round 2. Position X remains observation-only; its owner-aggregate cohort must
 > collect at least 14 days before a human review and has no decision influence.
 
+> **2026-07-18 Opportunity funnel integrity repair epoch**:
+> `opportunity_funnel_integrity/v1` adds a five-carrier admission bound ahead of
+> `signal_pending` and expands snapshot change detection to direction, eligibility,
+> TTL/risk flags, venue and exact entry evidence price. Overflow remains open and
+> retryable; ranking scores, thresholds, Operator cooldown, Risk and Execution are
+> unchanged. These B-class delivery/carrier-timing changes start a fresh observation
+> window and must not be compared as one cohort with earlier unbounded-enqueue or
+> coarse-fingerprint data. The other fixes in the batch are A-class
+> state/evidence/time-window/UI honesty repairs.
+
 ---
 
 ## 核心赌注

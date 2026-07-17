@@ -526,11 +526,10 @@ def get_pipeline_funnel(hours: int = 24):
 def get_opportunity_funnel(hours: int = 24):
     """Market Observer → Operator funnel: exposes WHY opportunities don't reach the operator.
 
-    Cumulative counts (window):
+    Causal cohort counts (window):
       - emitted_count: opportunities.created_at in window
-      - reviewed_count: emitted AND status != 'open' (settled by ranker)
-      - still_open_count: emitted AND status = 'open' (waiting for ranker)
-      - proposed_count: trade_proposals.created_at in window
+      - open/queued/reviewed/expired: exact stored status within that cohort
+      - proposed_count: distinct cohort Opportunities linked to any Proposal by now
 
     Point-in-time snapshot (latest candidate_supply_snapshot event, written by
     trading_context every operator eval):
@@ -551,35 +550,51 @@ def get_opportunity_funnel(hours: int = 24):
 
     Read-only. Consumes existing telemetry — never invokes the ranker/operator.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     from aletheia.storage.sqlite import get_db
     from aletheia.config.loader import load_config
     from aletheia.universe.allocator import _FAMILY_TTL
 
     db = get_db()
     hours_i = max(1, int(hours or 24))
-    window = f"-{hours_i} hours"
+    now = datetime.now(timezone.utc)
+    window_start = (now - timedelta(hours=hours_i)).isoformat()
+    window_end = now.isoformat()
 
-    def _count(sql: str) -> int:
-        try:
-            return int(db.execute(sql, (window,)).fetchone()[0])
-        except Exception:
-            return 0
+    def _count(sql: str, params: tuple = ()) -> int:
+        return int(db.execute(sql, params).fetchone()[0])
 
-    emitted = _count(
-        "SELECT COUNT(*) FROM opportunities WHERE created_at >= datetime('now', ?)"
-    )
+    cohort_where = "datetime(created_at)>=datetime(?) AND datetime(created_at)<=datetime(?)"
+    cohort_params = (window_start, window_end)
+    emitted = _count(f"SELECT COUNT(*) FROM opportunities WHERE {cohort_where}", cohort_params)
     still_open = _count(
-        "SELECT COUNT(*) FROM opportunities "
-        "WHERE created_at >= datetime('now', ?) AND status = 'open'"
+        f"SELECT COUNT(*) FROM opportunities WHERE {cohort_where} AND status='open'",
+        cohort_params,
     )
-    reviewed = max(0, emitted - still_open)
+    queued = _count(
+        f"SELECT COUNT(*) FROM opportunities WHERE {cohort_where} AND status='queued'",
+        cohort_params,
+    )
+    reviewed = _count(
+        f"SELECT COUNT(*) FROM opportunities WHERE {cohort_where} AND status='reviewed'",
+        cohort_params,
+    )
+    expired = _count(
+        f"SELECT COUNT(*) FROM opportunities WHERE {cohort_where} AND status='expired'",
+        cohort_params,
+    )
     proposed = _count(
-        "SELECT COUNT(*) FROM trade_proposals WHERE created_at >= datetime('now', ?)"
+        "SELECT COUNT(DISTINCT tp.opportunity_id) FROM trade_proposals tp "
+        "JOIN opportunities o ON o.id=tp.opportunity_id "
+        "WHERE datetime(o.created_at)>=datetime(?) "
+        "AND datetime(o.created_at)<=datetime(?) "
+        "AND datetime(tp.created_at)<=datetime(?)",
+        (window_start, window_end, window_end),
     )
 
     # Latest ranker-view snapshot (what the operator saw on its last eval)
     snapshot: dict = {}
+    snapshot_read_failed = False
     try:
         row = db.execute(
             "SELECT payload, created_at FROM agent_shell_events "
@@ -595,6 +610,7 @@ def get_opportunity_funnel(hours: int = 24):
             snapshot["snapshot_at"] = row["created_at"]
     except Exception:
         snapshot = {}
+        snapshot_read_failed = True
 
     executable_count = int(snapshot.get("executable_count") or 0)
     excluded_by_reason = list(snapshot.get("excluded_candidates_summary") or [])
@@ -602,7 +618,6 @@ def get_opportunity_funnel(hours: int = 24):
     # Enrich TTL-expired examples with expired_seconds so the UI doesn't have to
     # re-parse timestamps in JS. Values are Best-effort: older snapshots may not
     # carry valid_until (pre-enrichment) — we simply leave the field null.
-    now = datetime.now(timezone.utc)
     for bucket in excluded_by_reason:
         for ex in bucket.get("examples") or []:
             valid_until = ex.get("valid_until")
@@ -621,8 +636,10 @@ def get_opportunity_funnel(hours: int = 24):
     try:
         srow = db.execute(
             "SELECT created_at FROM universe_snapshots "
-            "WHERE market_type = 'crypto' AND (expires_at IS NULL OR expires_at > datetime('now')) "
-            "ORDER BY created_at DESC LIMIT 1"
+            "WHERE market_type='crypto' AND status='active' "
+            "AND (expires_at IS NULL OR datetime(expires_at)>datetime(?)) "
+            "ORDER BY created_at DESC LIMIT 1",
+            (window_end,),
         ).fetchone()
         if srow and srow["created_at"]:
             parsed = datetime.fromisoformat(str(srow["created_at"]).replace("Z", "+00:00"))
@@ -632,6 +649,26 @@ def get_opportunity_funnel(hours: int = 24):
     except Exception:
         snapshot_age_sec = None
 
+    candidate_snapshot_age_sec = None
+    candidate_snapshot_freshness = "unavailable" if snapshot_read_failed else "missing"
+    candidate_snapshot_stale_after_sec = 10 * 60
+    candidate_snapshot_at = snapshot.get("snapshot_at")
+    if candidate_snapshot_at:
+        try:
+            parsed = datetime.fromisoformat(
+                str(candidate_snapshot_at).replace("Z", "+00:00")
+            )
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            candidate_snapshot_age_sec = max(0, int((now - parsed).total_seconds()))
+            candidate_snapshot_freshness = (
+                "fresh"
+                if candidate_snapshot_age_sec <= candidate_snapshot_stale_after_sec
+                else "stale"
+            )
+        except (TypeError, ValueError):
+            candidate_snapshot_freshness = "unavailable"
+
     cfg = load_config()
     min_confidence = getattr(cfg.trading, "min_confidence_to_trade", "medium")
 
@@ -640,7 +677,10 @@ def get_opportunity_funnel(hours: int = 24):
         "emitted_count": emitted,
         "reviewed_count": reviewed,
         "still_open_count": still_open,
+        "queued_count": queued,
+        "expired_count": expired,
         "proposed_count": proposed,
+        "cohort_basis": "opportunities_emitted_in_window",
         "snapshot": {
             "executable_count": executable_count,
             "excluded_by_reason": excluded_by_reason,
@@ -649,6 +689,9 @@ def get_opportunity_funnel(hours: int = 24):
             "floor": snapshot.get("floor"),
             "snapshot_at": snapshot.get("snapshot_at"),
             "checked_at": snapshot.get("checked_at"),
+            "freshness": candidate_snapshot_freshness,
+            "age_sec": candidate_snapshot_age_sec,
+            "stale_after_sec": candidate_snapshot_stale_after_sec,
         },
         "config": {
             "min_confidence_to_trade": min_confidence,
@@ -674,143 +717,146 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
       audit_events row actor='human', source='dashboard' — a human pressed
       Reject in the dashboard before execution began.
     - `auto_reject`: trade_proposals.status='rejected' with matching
-      audit_events row actor='system' — gateway pre-flight or risk-engine
+      audit_events row actor='system', source='execution_gateway' — pre-flight/risk
       auto-rejected before execution.
+    - `reject_unknown`: rejected Proposal with missing or inconsistent audit actor/source.
+
+    The reject timestamp defines window membership when available. Counts cover the
+    full window before the display list is truncated, and a rejection supersedes the
+    earlier trade-intent row for the same Proposal/Opportunity.
 
     All decisions are keyed by `opportunity_id` where available so the UI can
     request the full lifecycle trace via /analytics/opportunity-trace/{id}.
 
     Read-only. Purely reconstructive over already-persisted evidence.
     """
+    from datetime import datetime, timedelta, timezone
     from aletheia.storage.sqlite import get_db
     from aletheia.data.symbols import to_canonical
 
     db = get_db()
     hours_i = max(1, int(hours or 24))
     limit_i = max(1, min(int(limit or 50), 200))
-    window = f"-{hours_i} hours"
+    now = datetime.now(timezone.utc)
+    window_start = (now - timedelta(hours=hours_i)).isoformat()
+    window_end = now.isoformat()
 
-    items: list[dict] = []
+    pi_items: list[dict] = []
+    reject_items: list[dict] = []
 
-    # pi_decisions — operator trade / skip / watch, plus system cascade cleanup.
-    # signal_source='system_cascade' rows are written by
-    # repositories.expire_opportunities_from_superseded_snapshots as terminal
-    # bookkeeping when a parent snapshot is superseded — surface them as a
-    # distinct 'cascade_expired' outcome so their counts don't inflate the
-    # LLM operator's skip/watch metrics.
-    try:
-        rows = list(db.execute(
-            "SELECT id, created_at, symbol, direction, market_type, action, "
-            "conviction, reasoning, opportunity_id, proposal_id, "
-            "COALESCE(signal_source, 'market_observer') AS signal_source "
-            "FROM pi_decisions "
-            "WHERE action IN ('trade','skip','flip','scale_in','watch') "
-            "AND created_at >= datetime('now', ?) "
-            "AND (symbol IS NOT NULL AND symbol != '') "
-            "ORDER BY created_at DESC LIMIT ?",
-            (window, limit_i * 2),
-        ))
-        for r in rows:
-            act = str(r["action"] or "")
-            source = str(r["signal_source"] or "market_observer")
-            if source == "system_cascade":
-                outcome = "cascade_expired"
-            elif act == "skip":
-                outcome = "operator_skip"
-            elif act == "watch":
-                outcome = "operator_watch"
-            else:
-                outcome = "trade"  # trade / flip / scale_in — operator chose to act
-            items.append({
-                "opportunity_id": r["opportunity_id"],
-                "proposal_id": r["proposal_id"],
-                "decision_id": r["id"],
-                "symbol": r["symbol"],
-                "direction": r["direction"],
-                "market_type": r["market_type"],
-                "decided_at": r["created_at"],
-                "outcome": outcome,
-                "action": act,
-                "signal_source": source,
-                "conviction": r["conviction"],
-                "one_line_reason": _first_line(r["reasoning"], 140),
-            })
-    except Exception:
-        pass
+    # pi_decisions — operator trade / skip
+    rows = list(db.execute(
+        "SELECT id, created_at, symbol, direction, market_type, action, "
+        "conviction, reasoning, opportunity_id, proposal_id "
+        "FROM pi_decisions "
+        "WHERE action IN ('trade','skip','flip','scale_in','watch') "
+        "AND datetime(created_at)>=datetime(?) AND datetime(created_at)<=datetime(?) "
+        "AND (symbol IS NOT NULL AND symbol != '') "
+        "ORDER BY datetime(created_at) DESC, rowid DESC",
+        (window_start, window_end),
+    ))
+    for r in rows:
+        act = str(r["action"] or "")
+        if act == "skip":
+            outcome = "operator_skip"
+        elif act == "watch":
+            outcome = "operator_watch"
+        else:
+            outcome = "trade"
+        pi_items.append({
+            "opportunity_id": r["opportunity_id"],
+            "proposal_id": r["proposal_id"],
+            "decision_id": r["id"],
+            "symbol": r["symbol"],
+            "direction": r["direction"],
+            "market_type": r["market_type"],
+            "decided_at": r["created_at"],
+            "outcome": outcome,
+            "action": act,
+            "conviction": r["conviction"],
+            "one_line_reason": _first_line(r["reasoning"], 140),
+        })
 
-    # trade_proposals rejected — actor split via paired audit event.
-    #
-    # §4 audit robustness: the previous fallback "actor != 'human' → auto_reject"
-    # silently misclassified any proposal whose audit_events row was missing,
-    # lost to a write failure, or lagged behind the rejection commit. We now
-    # explicitly distinguish three states and expose them separately so a
-    # missing audit trail cannot masquerade as a system rejection:
-    #   - actor='human'   AND source='dashboard'    → user_reject (owner)
-    #   - actor='system' (any source)               → auto_reject
-    #   - LEFT JOIN produced no audit row           → unknown_reject
-    # A missing audit is normally transient (audit sink flake, gateway
-    # crash-loop mid-rollback); the UI treats unknown_reject as red like
-    # auto_reject but the badge/label says "unknown actor" so it does not
-    # falsely blame the system.
-    try:
-        rows = list(db.execute(
-            "SELECT tp.id AS proposal_id, tp.opportunity_id, tp.created_at, "
-            "tp.symbol, tp.direction, tp.market_type, "
-            "ae.actor, ae.source, ae.message, ae.timestamp AS rejected_at "
-            "FROM trade_proposals tp "
-            "LEFT JOIN audit_events ae ON ae.entity_id = tp.id "
-            "  AND ae.event_type = 'proposal_rejected' "
-            "WHERE tp.status = 'rejected' "
-            "AND tp.created_at >= datetime('now', ?) "
-            "ORDER BY COALESCE(ae.timestamp, tp.created_at) DESC LIMIT ?",
-            (window, limit_i * 2),
-        ))
-        seen_props: set[str] = set()
-        for r in rows:
-            pid = r["proposal_id"]
-            if pid in seen_props:
-                continue  # dedupe if multiple audit rows for the same proposal
-            seen_props.add(pid)
-            actor = str(r["actor"] or "").lower() or None
-            source = str(r["source"] or "").lower() or None
-            if actor == "human" and (source is None or source == "dashboard"):
-                outcome = "user_reject"
-            elif actor == "system":
-                outcome = "auto_reject"
-            elif actor is None:
-                # Audit row missing entirely — do not fabricate an actor.
-                outcome = "unknown_reject"
-            else:
-                # Non-human, non-system actor (future integration, etc.).
-                outcome = "auto_reject"
-            items.append({
-                "opportunity_id": r["opportunity_id"],
-                "proposal_id": pid,
-                "decision_id": None,
-                "symbol": r["symbol"],
-                "direction": r["direction"],
-                "market_type": r["market_type"],
-                "decided_at": r["rejected_at"] or r["created_at"],
-                "outcome": outcome,
-                "action": "reject",
-                "conviction": None,
-                "one_line_reason": _first_line(r["message"], 140),
-                "rejected_actor": actor,
-                "rejected_source": source,
-            })
-    except Exception:
-        pass
+    # trade_proposals rejected — user vs auto reject determined by paired audit event
+    rows = list(db.execute(
+        "SELECT tp.id AS proposal_id, tp.opportunity_id, tp.created_at, "
+        "tp.symbol, tp.direction, tp.market_type, ae.actor, ae.source, ae.message, "
+        "ae.timestamp AS rejected_at "
+        "FROM trade_proposals tp "
+        "LEFT JOIN audit_events ae ON ae.rowid=("
+        " SELECT candidate.rowid FROM audit_events candidate "
+        " WHERE candidate.entity_id=tp.id "
+        " AND candidate.event_type='proposal_rejected' "
+        " ORDER BY datetime(candidate.timestamp) DESC, candidate.rowid DESC LIMIT 1"
+        ") "
+        "WHERE tp.status='rejected' AND ("
+        " (ae.timestamp IS NOT NULL AND datetime(ae.timestamp)>=datetime(?) "
+        "  AND datetime(ae.timestamp)<=datetime(?)) "
+        " OR (ae.timestamp IS NULL AND datetime(tp.created_at)>=datetime(?) "
+        "  AND datetime(tp.created_at)<=datetime(?))"
+        ") ORDER BY datetime(COALESCE(ae.timestamp,tp.created_at)) DESC, tp.rowid DESC",
+        (window_start, window_end, window_start, window_end),
+    ))
+    for r in rows:
+        actor = str(r["actor"] or "")
+        source = str(r["source"] or "")
+        if actor == "human" and source == "dashboard":
+            outcome = "user_reject"
+        elif actor == "system" and source == "execution_gateway":
+            outcome = "auto_reject"
+        else:
+            outcome = "reject_unknown"
+        reject_items.append({
+            "opportunity_id": r["opportunity_id"],
+            "proposal_id": r["proposal_id"],
+            "decision_id": None,
+            "symbol": r["symbol"],
+            "direction": r["direction"],
+            "market_type": r["market_type"],
+            "decided_at": r["rejected_at"] or r["created_at"],
+            "outcome": outcome,
+            "action": "reject",
+            "conviction": None,
+            "one_line_reason": (
+                _first_line(r["message"], 140)
+                or "Rejected; audit attribution unavailable"
+            ),
+            "rejected_actor": actor or None,
+            "rejected_source": source or None,
+            "time_basis": "rejected_at" if r["rejected_at"] else "proposal_created_fallback",
+        })
 
-    items.sort(key=lambda x: str(x.get("decided_at") or ""), reverse=True)
-    items = items[:limit_i]
+    rejected_proposals = {item["proposal_id"] for item in reject_items if item["proposal_id"]}
+    rejected_opportunities = {
+        item["opportunity_id"] for item in reject_items if item["opportunity_id"]
+    }
+    pi_items = [
+        item for item in pi_items
+        if not (
+            item["outcome"] == "trade"
+            and (
+                (
+                    item.get("proposal_id") is not None
+                    and item.get("proposal_id") in rejected_proposals
+                )
+                or (
+                    item.get("proposal_id") is None
+                    and item.get("opportunity_id") in rejected_opportunities
+                )
+            )
+        )
+    ]
+    all_items = pi_items + reject_items
+    all_items.sort(key=lambda x: str(x.get("decided_at") or ""), reverse=True)
 
     counts = {"trade": 0, "operator_skip": 0, "operator_watch": 0,
-              "user_reject": 0, "auto_reject": 0, "unknown_reject": 0,
-              "cascade_expired": 0}
-    for it in items:
+              "user_reject": 0, "auto_reject": 0, "reject_unknown": 0}
+    for it in all_items:
         oc = it.get("outcome")
         if oc in counts:
             counts[oc] += 1
+
+    items = all_items[:limit_i]
 
     # Canonicalize symbols so the UI's fmtSymbol path matches the pending queue
     for it in items:
@@ -824,6 +870,7 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
     return {
         "window_hours": hours_i,
         "limit": limit_i,
+        "total_count": len(all_items),
         "counts": counts,
         "items": items,
     }

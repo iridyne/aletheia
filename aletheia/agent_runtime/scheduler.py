@@ -2066,6 +2066,7 @@ def _run_cleanup():
             "filter_shadow_experiments": repo.prune_filter_shadow_experiments(r.filter_shadow_experiments_days),
             "operator_evaluation_events": repo.prune_operator_evaluation_events(30),
             "pi_decisions_transient": repo.prune_pi_decisions(7),
+            "signal_pending_stale": repo.prune_signal_pending_stale(30),
             "system_actions": repo.prune_system_actions(7),
             # Market OHLCV per-timeframe TTL + legacy_unknown hard drop.
             "market_ohlcv": repo.prune_market_ohlcv(ttl_days={

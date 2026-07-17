@@ -63,10 +63,16 @@ Rules:
 Allowed proposal status flow:
 
 ```text
-pending -> approved -> executed
-pending -> rejected
-approved -> rejected
-approved -> error
+pending -> approved -> executing
+pending ----------------> executing
+pending / approved -----> rejected
+approved ---------------> error
+executing -> submitted -> partially_filled -> executed
+executing -------------------------------> executed
+executing / submitted / partially_filled -> error
+executing / submitted / partially_filled -> submission_unknown
+executing / submitted / partially_filled -> materialization_missing
+submission_unknown / materialization_missing -> submitted / partially_filled / executed
 ```
 
 Rules:
@@ -74,11 +80,21 @@ Rules:
 - `pending` means no human approval/rejection has been applied.
 - `approved` means a human-controlled dashboard/API/CLI path approved paper/demo
   execution or a future explicitly allowed workflow approved execution.
-- `executed` means an order was successfully created through the Execution
-  Gateway.
+- `executing` means a durable execution owner/lease exists; retries must recover
+  that claim instead of creating a second submission.
+- `submitted` / `partially_filled` preserve confirmed exchange progress while
+  materialization or the remaining quantity is unresolved.
+- `executed` means the required Order/Fill/Position materialization chain is
+  durable, not merely that an order request was sent.
 - `rejected` means a human action or risk check rejected the proposal.
-- `error` means execution was attempted through the allowed gateway path but
-  failed after approval.
+- `error` means execution is confirmed not submitted or failed without an
+  accepted venue handoff.
+- `submission_unknown` means venue acceptance cannot be disproved; automatic
+  resubmission is forbidden until reconciliation.
+- `materialization_missing` means an Order or venue fill activity exists but the
+  required local Fill/Position chain is incomplete; automatic resubmission is
+  forbidden. The detailed recovery contract is authoritative in
+  `docs/design/contracts/execution_contract.md`.
 - Do not use status changes as a substitute for missing records. If execution
   occurs, an order must exist. If risk evaluation occurs, a risk decision must
   exist.
