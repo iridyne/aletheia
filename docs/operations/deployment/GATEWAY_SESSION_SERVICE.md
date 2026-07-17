@@ -35,6 +35,12 @@ uv run aletheia gateway stop
 manager owns an on-demand service. `gateway start` fails rather than silently
 falling back to an unowned detached process if the native manager is unavailable.
 
+Git operations never start or restart the gateway. A pull, merge, checkout, or
+rebase may make the running process report `code_updated_pending_restart`; the
+owner applies the new code explicitly with `gateway restart`. Gateway startup and
+`doctor --fix` remove obsolete Aletheia-managed auto-restart hooks left by older
+checkouts, while leaving unrelated user hooks untouched.
+
 ## Deliberate non-goals
 
 - No gateway configuration field, settings toggle, database state, or new API.

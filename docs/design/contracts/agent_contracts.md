@@ -74,6 +74,9 @@ backlog health are persisted in `learning_job_health`.
 - `gateway stop` stops and removes that service. `status()` queries the live OS
   service manager and distinguishes an absent registration from an unreadable
   manager state.
+- Git operations never start or restart the gateway. Applying new checkout code
+  requires an explicit owner-controlled `gateway restart`; legacy
+  Aletheia-managed auto-restart hooks are removed without touching foreign hooks.
 
 ---
 
