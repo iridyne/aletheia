@@ -77,8 +77,8 @@ def render_enriched_context_md(
     as its own market-regime section — fills the on-chain hole left by the
     never-built Glassnode. Omitted when empty.
 
-    xvenue_funding: {symbol: {hl_ann, hl_predicted_ann, primary_ann}} — Hyperliquid
-    cross-venue funding (ANNUALIZED, since HL uses 1h vs the primary venue's 8h
+    xvenue_funding: Hyperliquid cross-venue funding plus OI evidence. Funding is
+    ANNUALIZED, since HL uses 1h vs the primary venue's 8h
     interval — raw per-interval rates are not comparable). Routes the otherwise
     orphan Hyperliquid feed into the decision context as a basis/sentiment-
     divergence signal. Omitted when empty.
@@ -149,18 +149,30 @@ def render_enriched_context_md(
         xrows: list[str] = []
         for sym in symbols:
             xv = xvenue_funding.get(sym)
-            if not xv or xv.get("hl_ann") is None:
+            if not xv or (
+                xv.get("hl_ann") is None and xv.get("hl_open_interest_usd") is None
+            ):
                 continue
-            hl = xv["hl_ann"]
-            line = f"{sym}: Hyperliquid {hl * 100:+.1f}%/yr"
-            prim = xv.get("primary_ann")
-            if prim is not None:
-                line += f" vs primary {prim * 100:+.1f}%/yr → Δ{(hl - prim) * 100:+.1f}pp"
-            if xv.get("hl_predicted_ann") is not None:
-                line += f"; HL predicted {xv['hl_predicted_ann'] * 100:+.1f}%/yr"
+            line = f"{sym}: Hyperliquid"
+            hl = xv.get("hl_ann")
+            if hl is not None:
+                line += f" funding {hl * 100:+.1f}%/yr"
+                prim = xv.get("primary_ann")
+                if prim is not None:
+                    line += f" vs primary {prim * 100:+.1f}%/yr → Δ{(hl - prim) * 100:+.1f}pp"
+                if xv.get("hl_predicted_ann") is not None:
+                    line += f"; predicted {xv['hl_predicted_ann'] * 100:+.1f}%/yr"
+            hl_oi = xv.get("hl_open_interest_usd")
+            if hl_oi is not None:
+                line += f"; OI {_fmt_usd_compact_precise(hl_oi)}"
+                oi_delta = xv.get("hl_oi_change_1h_pct")
+                if oi_delta is not None:
+                    line += f"; OI Delta1h {float(oi_delta):+.1f}%"
+            if xv.get("hl_observed_at"):
+                line += f"; observed {xv['hl_observed_at']}"
             xrows.append(line)
         if xrows:
-            sections.append("### Cross-venue funding (Hyperliquid, annualized)\n" + "  \n".join(xrows))
+            sections.append("### Cross-venue funding and OI (Hyperliquid)\n" + "  \n".join(xrows))
 
     # --- Perp structure (observation-only positioning map) ---
     if perp_structure:
@@ -269,6 +281,19 @@ def _fmt_usd_compact(value: object) -> str:
         return f"${num / 1_000_000_000:.1f}B".replace(".0B", "B")
     if abs_num >= 1_000_000:
         return f"${num / 1_000_000:.0f}M"
+    return f"${num:,.0f}"
+
+
+def _fmt_usd_compact_precise(value: object) -> str:
+    """Compact USD formatter retaining useful precision for aggregate OI."""
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    if abs(num) >= 1_000_000_000:
+        return f"${num / 1_000_000_000:.2f}B"
+    if abs(num) >= 1_000_000:
+        return f"${num / 1_000_000:.1f}M"
     return f"${num:,.0f}"
 
 

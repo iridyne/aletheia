@@ -2,11 +2,27 @@
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Optional
 
 import typer
 
 data_app = typer.Typer(no_args_is_help=True)
+
+
+@data_app.command("ingest-perp-structure")
+def ingest_perp_structure(
+    path: Path = typer.Argument(..., exists=True, readable=True, dir_okay=False),
+):
+    """Import an owner-authorized aggregate Position X export (observation-only)."""
+    from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
+    from aletheia.storage.migrations import run_migrations
+
+    run_migrations()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    typer.echo(json.dumps(
+        ingest_owner_aggregate(payload), indent=2, ensure_ascii=False, sort_keys=True,
+    ))
 
 
 @data_app.command("reconcile-local-paper-accounting")

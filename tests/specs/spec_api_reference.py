@@ -33,7 +33,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 def test_learning_settings_endpoint_is_documented():
     from pathlib import Path
 
-    reference = (Path(__file__).parents[2] / "docs" / "design" / "api_reference.md").read_text(
+    reference = (Path(__file__).parents[2] / "docs" / "design" / "api" / "api_reference.md").read_text(
         encoding="utf-8",
     )
     assert "`/settings/learning`" in reference

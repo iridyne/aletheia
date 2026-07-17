@@ -868,19 +868,25 @@ def _probe_perp_structure(report: Report) -> None:
             report.add(
                 "data.perp_structure",
                 "info",
-                "no perp structure rows yet",
-                "no action unless this observation-only feed is expected to be populated",
+                "not configured: no trusted automatic perp structure source "
+                "(observation-only)",
+                "run migrations, then use the owner aggregate import only when "
+                "a trustworthy export is available",
             )
             return
         report.add("data.perp_structure", "info", f"could not read perp structure: {e}")
         return
 
     if not row:
+        from aletheia.data.collectors.vergex_structure import structure_source_status
+        source_status = structure_source_status()
         report.add(
             "data.perp_structure",
             "info",
-            "no perp structure rows yet",
-            "no action unless this observation-only feed is expected to be populated",
+            "not configured: no trusted automatic perp structure source; "
+            f"mode={source_status['mode']} (observation-only)",
+            "import an owner-authorized aggregate with `aletheia data "
+            "ingest-perp-structure PATH` when a trustworthy export is available",
         )
         return
 

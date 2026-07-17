@@ -281,6 +281,16 @@ async def settle_due(max_rows: int = 2000, time_budget_sec: float = 100.0) -> in
         except Exception as exc:
             logger.warning("filter outcome settlement failed (non-fatal): %s", exc)
 
+    # Position X rows are a separate, observation-only cohort. They reuse the
+    # exact-instrument price path but never enter scanner or Operator ranking.
+    try:
+        from aletheia.data.perp_structure_shadow import (
+            settle_due_perp_structure_outcomes,
+        )
+        total_settled += await settle_due_perp_structure_outcomes(limit=100)
+    except Exception as exc:
+        logger.warning("perp structure shadow settlement failed (non-fatal): %s", exc)
+
     return total_settled
 
 

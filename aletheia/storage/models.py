@@ -1096,6 +1096,10 @@ class UniverseFeatureSnapshot(BaseModel):
     depth_10bps_usd: float | None = None
     atr_pct: float | None = None
     rsi_14: float | None = None
+    rsi_15m: float | None = None
+    atr_15m_pct: float | None = None
+    return_15m: float | None = None
+    last_candle_range_atr_15m: float | None = None
     return_1h: float | None = None
     return_4h: float | None = None
     return_24h: float | None = None
@@ -1108,6 +1112,11 @@ class UniverseFeatureSnapshot(BaseModel):
     vol_ratio: float | None = None
     relative_strength_24h: float | None = None
     oi_price_divergence: int | None = None  # +1=hidden_accumulation, -1=weak_rally, 0=neutral
+    rsi_4h: float | None = None
+    atr_4h_pct: float | None = None
+    bb_width_4h: float | None = None
+    vol_ratio_4h: float | None = None
+    bb_squeeze: bool | None = None
     raw: str = "{}"
 
 
@@ -1258,6 +1267,9 @@ class PiDecision(_Provenanced):
     key_assumptions: str = "[]"
     # One bundle-level manifest for overlapping Learning prompt components.
     learning_manifest_json: str = "{}"
+    # Compact source identities used for this decision. Never stores prompts or
+    # raw external payloads.
+    evidence_manifest_json: str = "{}"
 
 
 class OperatorEvaluationEvent(BaseModel):

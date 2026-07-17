@@ -60,18 +60,28 @@ def test_autocommit_isolation_level():
 @spec_claim(
     SpecClaim(
         "DM-S04", "data_model", "§4 prunable whitelist", "L2a",
-        "_PRUNABLE whitelist contains telemetry/analytics tables only — bounded, "
-        "no causal-chain tables (currently at most 12 telemetry/analytics tables)",
+        "_PRUNABLE whitelist contains only the explicitly reviewed telemetry/analytics "
+        "table set and no causal-chain tables.",
     ),
 )
 def test_prunable_whitelist_bounded():
     from aletheia.storage.repositories import _PRUNABLE
 
-    # Bound is a tripwire against the whitelist ballooning into causal tables —
-    # the real protection is the causal-set guard below. Telemetry families:
-    # agent_runs/steps/tool_calls, market/portfolio snapshots, serenity_claims,
-    # shadow_trades, and the 4 agent_shell_* operator-telemetry tables (DB-SIZE-1).
-    assert len(_PRUNABLE) <= 12, f"_PRUNABLE has too many entries: {len(_PRUNABLE)}"
+    reviewed_telemetry = {
+        "agent_runs", "agent_run_steps", "agent_tool_calls", "market_snapshots",
+        "portfolio_snapshots", "serenity_claims", "shadow_trades",
+        "filter_decision_batches", "filter_decisions", "filter_candidate_outcomes",
+        "operator_evaluation_events", "ohlcv_backfill_state",
+        "alpha_control_observations", "controller_recommendations",
+        "agent_shell_sessions", "agent_shell_commands", "agent_shell_events",
+        "agent_shell_heartbeats", "agent_shell_messages", "agent_shell_artifacts",
+        "universe_snapshots", "universe_scanner_runs", "universe_feature_snapshots",
+        "market_regimes", "serenity_evidence", "serenity_run_events",
+        "runtime_sessions", "backtest_runs", "filter_shadow_experiments",
+    }
+    assert set(_PRUNABLE) <= reviewed_telemetry, (
+        f"Unreviewed table entered _PRUNABLE: {set(_PRUNABLE) - reviewed_telemetry}"
+    )
     causal = {"trade_proposals", "risk_decisions", "orders", "fills",
               "positions", "audit_events", "knowledge_items"}
     violations = causal & set(_PRUNABLE.keys())

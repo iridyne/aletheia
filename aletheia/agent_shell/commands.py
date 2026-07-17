@@ -1722,10 +1722,13 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         attach_b2_candidate_evidence,
         ensure_b2_candidate_evidence_policy_epoch,
     )
+    from aletheia.agent_shell.vergex_policy import ensure_vergex_utilization_policy_epoch
 
     policy_epoch_id = ensure_skip_remediation_policy_epoch()
     b2_policy_epoch_id = ensure_b2_candidate_evidence_policy_epoch()
+    vergex_policy_epoch_id = ensure_vergex_utilization_policy_epoch()
     ctx["skip_policy_epoch_id"] = policy_epoch_id
+    ctx["vergex_policy_epoch_id"] = vergex_policy_epoch_id
     attach_b2_candidate_evidence(ctx, policy_epoch_id=b2_policy_epoch_id)
 
     # A zero-pending heartbeat is an operator observation, not a trade decision.
@@ -1830,6 +1833,8 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         # One bundle-level attribution unit for all overlapping Learning prompt channels.
         "learning_manifest": ctx.get("learning_manifest") or {},
     }
+    from aletheia.agent_shell.trading_context import build_decision_evidence_manifest
+    result["evidence_manifest"] = build_decision_evidence_manifest(ctx, decision)
 
     if trade_like:
         result["proposal_status"] = "submitting"

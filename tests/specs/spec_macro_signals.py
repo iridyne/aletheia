@@ -278,37 +278,40 @@ def test_fng_render_when_present():
         "and fng_value remains None without raising",
     ),
 )
-def test_fng_failure_isolated_from_other_fields():
-    """AST: the _fetch_fng call must live inside a try/except block whose
-    body does NOT contain calls to _fetch_coingecko or _fetch_fred or _fetch_tradfi.
-    """
-    tree = ast.parse(_MACRO.read_text(encoding="utf-8"))
-    collect_fn = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "collect":
-            collect_fn = node
-            break
-    assert collect_fn, "MacroCollector.collect not found"
+@pytest.mark.asyncio
+async def test_fng_failure_isolated_from_other_fields(monkeypatch):
+    """A failed concurrent F&G request must not erase independent results."""
+    from types import SimpleNamespace
 
-    found_isolated_try = False
-    for node in ast.walk(collect_fn):
-        if not isinstance(node, ast.Try):
-            continue
-        calls_inside = set()
-        for sub in ast.walk(node):
-            if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name):
-                calls_inside.add(sub.func.id)
-        if "_fetch_fng" in calls_inside:
-            forbidden = {"_fetch_coingecko", "_fetch_fred", "_fetch_tradfi"}
-            assert not (calls_inside & forbidden), (
-                f"_fetch_fng try block must not contain {forbidden & calls_inside} "
-                "— other field collection must be in separate try blocks"
-            )
-            found_isolated_try = True
-    assert found_isolated_try, (
-        "_fetch_fng must be wrapped in its OWN try/except so its failure cannot "
-        "regress other macro fields (per MS-C02 invariant)."
+    import aletheia.config.loader as loader
+    from aletheia.data.collectors import macro as mod
+
+    async def fake_coingecko():
+        return 52.0, 2_000_000_000_000.0, 1.5
+
+    async def failing_fng():
+        raise RuntimeError("fng unavailable")
+
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+    monkeypatch.setattr(
+        loader,
+        "load_config",
+        lambda: SimpleNamespace(
+            market_data=SimpleNamespace(enable_fear_greed=True),
+        ),
     )
+    monkeypatch.setattr(mod, "_fetch_coingecko", fake_coingecko)
+    monkeypatch.setattr(mod, "_fetch_fng", failing_fng)
+    monkeypatch.setattr(mod, "_fetch_tradfi", lambda: (500.0, 18.0, 104.0, 18000.0))
+
+    result = await mod.MacroCollector().collect([])
+
+    snapshot = result["snapshot"]
+    assert snapshot.btc_dominance == 52.0
+    assert snapshot.total_market_cap_usd == 2_000_000_000_000.0
+    assert snapshot.fng_value is None
+    assert snapshot.fng_classification is None
+    assert any(error.startswith("fng:") for error in result["errors"])
 
 
 # ---------------------------------------------------------------------------

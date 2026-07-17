@@ -107,6 +107,7 @@ Windows below are the Phase 3 defaults; each is wired through the new
 | Table | Window | Prune column | Function | Cascade | Archive? | Rationale |
 |-------|--------|--------------|----------|---------|----------|-----------|
 | `universe_feature_snapshots` | 14d + drop always-empty `raw` column via new migration | `ts` | `prune_universe_feature_snapshots` (existing, `:4455`; window shortened) | none | hard delete | Lens-B expBounds floor. Write-guardrail #7 (change-suppression) holds this under 30 MiB steady. |
+| `perp_structure_shadow_outcomes` | 30d | `entry_ts` | `prune_perp_structure_shadow_outcomes` | parent `perp_structure_snapshots` retained after child prune | hard delete | Observation-only 1h/4h/24h validation; 30d covers the required 14d review window. |
 | `universe_snapshots` | 30d | `created_at` | `prune_universe_snapshots` (NEW) | cascade `universe_members` | hard delete | Universe membership changes slowly; write-guardrail #17 suppresses ~90 % of writes. |
 | `universe_members` | 30d (cascade of parent) | via parent | `prune_universe_members` (NEW) | none | hard delete | FK to `universe_snapshots`; must delete before parent. |
 | `universe_scanner_runs` | 30d | `created_at` | `prune_universe_scanner_runs` (NEW) | none | hard delete | Aligns with parent-cohort granularity. |

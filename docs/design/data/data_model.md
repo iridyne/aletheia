@@ -112,7 +112,8 @@ apply a treatment. The ledger grants no risk, execution, credential, or live aut
 | `funding_rate_snapshots` | Perpetual funding rates (multi-venue via **exchange** tag) | symbol, exchange, funding_rate, next_funding_time; `exchange="hyperliquid"` / `"hyperliquid_predicted"` are cross-venue feeds **excluded from the primary per-symbol read** (see `latest_funding_rate(exchange=...)`) |
 | `open_interest_snapshots` | Open interest data (multi-venue via **exchange** tag) | symbol, exchange, open_interest, oi_change_pct, **long_short_ratio** (Round 2 Step 1 — Binance globalLongShortAccountRatio); Hyperliquid writes cross-venue OI here, excluded from the primary per-symbol read |
 | `liquidation_events` | Large liquidation events | symbol, side, quantity, price |
-| `perp_structure_snapshots` | Observation-only perp positioning map | symbol, venue, source, as_of_time, data_quality, poc, value_area_low/high, liquidation walls, concentration, `structure_bias`, `composite_z`, `structure_rank`, `universe_size`, `dimension_scores_json`, `risk_context_json`; consumed by market_observer advisory prompt block, System Operator context, and doctor freshness only |
+| `perp_structure_snapshots` | Observation-only perp positioning map | symbol, venue, source, source_ref/source_hash, as_of_time, reference_price, data_quality, structure fields; consumed by advisory context and doctor only |
+| `perp_structure_shadow_outcomes` | Fixed-horizon validation of owner aggregate structure bias; no decision authority | snapshot_id, symbol, venue, market_type=perp, direction, 1h/4h/24h horizon, entry/exit price, directional return, status, policy_epoch_id, source_hash |
 | `macro_snapshots` | Macro economic indicators | indicator, value, source; **fng_value / fng_classification** (Round 2 Step 2 — Alt.me Fear & Greed) + **top_movers_summary** (Round 2 Step 3 — CoinGecko top movers, pre-formatted string folded into LLM macro block) |
 | `coingecko_top_snapshots` (Round 2 Step 3) | Top-N coins by market cap pulled every Phase B tick | coin_id, symbol, price_usd, market_cap_usd, market_cap_rank, volume_24h_usd, price_change_1h_pct, price_change_24h_pct, price_change_7d_pct, observed_at |
 | `onchain_snapshots` (datasrc overhaul) | DefiLlama on-chain regime (zero-key); folded into the LLM macro block | source, metric_type (`stablecoin_mcap` / `chain_tvl` / `dex_volume`), total_usd, change_24h_pct, top_entries (JSON), raw_summary (JSON), observed_at |
@@ -160,7 +161,7 @@ and spec `AR-S08`.
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `universe_registry` | All known tradeable assets | symbol, exchange, asset_class, metadata (JSON) |
-| `universe_feature_snapshots` | Per-instrument feature vectors; identity is `asset_id → universe_registry` (not a denormalized symbol column) | asset_id, ts, rsi, bb_width, vol_ratio, taker_buy_ratio |
+| `universe_feature_snapshots` | Per-instrument feature vectors; identity is `asset_id → universe_registry` | asset_id, ts, 15m RSI/ATR/return/range-in-ATR, 1h RSI/ATR/returns, 4h RSI/ATR/BB width/volume ratio, bb_squeeze, derivatives fields |
 | `universe_scanner_runs` | Scanner execution log | scanner_name, symbols_scanned, signals_emitted |
 | `universe_snapshots` | Universe composition snapshots | snapshot_id, created_at |
 | `universe_members` | Assets in a universe snapshot | snapshot_id, symbol, market_type, rank, score, scanner_direction |
@@ -244,7 +245,7 @@ production trading state and cannot authorize a parameter change.
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
-| `pi_decisions` | Structured System Operator decisions | action, symbol, direction, **market_type**, conviction, reasoning, opportunity_id, **signal_source**, proposal_id, **proposal_status**, **proposal_reason**, learning_manifest_json, debate trace fields |
+| `pi_decisions` | Structured System Operator decisions | action, instrument, conviction, reasoning, causal IDs/status, learning_manifest_json, **evidence_manifest_json** (actual technical/HL/Position X source identities), debate trace fields |
 | `operator_evaluation_events` | Append-only non-trading observations when no candidate can be evaluated | event_kind, trigger, pending counts/oldest time, compact queue/data-health JSON, policy_epoch_id, dedup_key |
 
 > `operator_evaluation_events` is intentionally not a `PiDecision`: a no-pending heartbeat has no
@@ -382,6 +383,7 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 | `funding_rate_snapshots` | max(7d, 2 × max_open_position_hold_hours) | `prune_funding_rate_snapshots` |
 | `open_interest_snapshots` | 7d (was 30d) | `prune_open_interest_snapshots` |
 | `perp_structure_snapshots` | 30d | existing |
+| `perp_structure_shadow_outcomes` | 30d; pruned before parent snapshots | `prune_perp_structure_shadow_outcomes` |
 | `universe_feature_snapshots` | 14d (was 30d); `raw` column dropped via migration | `prune_universe_feature_snapshots` |
 | `ohlcv_backfill_state` | 90d since last update | existing |
 | `macro_snapshots` | 90d | existing |

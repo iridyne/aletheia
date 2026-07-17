@@ -7,6 +7,12 @@ run_all_scanners picks the best-scoring family for each asset.
 
 from __future__ import annotations
 
+from aletheia.universe.funding_units import (
+    CROWDED_FUNDING_RATE,
+    ELEVATED_FUNDING_RATE,
+    MILD_FUNDING_RATE,
+)
+
 
 def score_momentum(feat: dict) -> tuple[float, list[str], str | None]:
     """Score trend continuation: relative strength + volume confirmation.
@@ -111,10 +117,10 @@ def score_momentum(feat: dict) -> tuple[float, list[str], str | None]:
 
     # === Funding conflict (penalty) ===
     if funding is not None and direction is not None:
-        if direction == "long" and funding > 0.01:
+        if direction == "long" and funding > CROWDED_FUNDING_RATE:
             score -= 15.0
             reasons.append("funding crowded long")
-        elif direction == "short" and funding < -0.01:
+        elif direction == "short" and funding < -CROWDED_FUNDING_RATE:
             score -= 15.0
             reasons.append("funding crowded short")
 
@@ -196,10 +202,10 @@ def score_mean_reversion(feat: dict) -> tuple[float, list[str], str | None]:
 
     # === Funding confirms crowding (reversion more likely) ===
     if funding is not None and direction is not None:
-        if direction == "short" and funding > 0.005:
+        if direction == "short" and funding > ELEVATED_FUNDING_RATE:
             score += 15.0
             reasons.append("crowded longs (funding)")
-        elif direction == "long" and funding < -0.005:
+        elif direction == "long" and funding < -ELEVATED_FUNDING_RATE:
             score += 15.0
             reasons.append("crowded shorts (funding)")
 
@@ -301,15 +307,15 @@ def score_derivatives(feat: dict) -> tuple[float, list[str], str | None]:
 
     # Extreme funding rate
     if funding is not None:
-        if abs(funding) > 0.01:
+        if abs(funding) > CROWDED_FUNDING_RATE:
             score += 40.0
             direction = "long" if funding < 0 else "short"
             reasons.append(f"funding {funding*100:.3f}% extreme")
-        elif abs(funding) > 0.005:
+        elif abs(funding) > ELEVATED_FUNDING_RATE:
             score += 25.0
             direction = "long" if funding < 0 else "short"
             reasons.append(f"funding {funding*100:.3f}% elevated")
-        elif abs(funding) > 0.002:
+        elif abs(funding) > MILD_FUNDING_RATE:
             score += 10.0
             if funding < 0:
                 direction = "long"
@@ -503,9 +509,9 @@ def score_short_bias(feat: dict) -> tuple[float, list[str], str | None]:
     # Negative funding means shorts pay longs, so deeply negative funding is the
     # crowded-short/squeeze-risk state. Positive funding means longs are paying
     # and can support an already-valid short thesis; it never creates one alone.
-    if funding is not None and funding < -0.01:
+    if funding is not None and funding < -CROWDED_FUNDING_RATE:
         return 0.0, [], None
-    if funding is not None and funding > 0.005:
+    if funding is not None and funding > ELEVATED_FUNDING_RATE:
         score += 10.0
         reasons.append(f"funding {funding:.3f} (longs paying)")
 
@@ -543,6 +549,27 @@ def run_all_scanners(feat: dict) -> dict:
     else:
         best_family = max(results, key=lambda k: results[k][0])
         best_score, best_reasons, best_dir = results[best_family]
+
+    # VergeX-derived entry discipline: a candidate is not actionable when the
+    # current 15m candle already travelled more than 1.5 ATR in the proposed
+    # direction. The underlying family score remains in all_scores for shadow
+    # analysis, while the emitted candidate is directionless and cannot be chased.
+    range_atr = feat.get("last_candle_range_atr_15m")
+    ret_15m = feat.get("return_15m")
+    chase_aligned = (
+        best_dir == "long" and ret_15m is not None and ret_15m > 0
+    ) or (
+        best_dir == "short" and ret_15m is not None and ret_15m < 0
+    )
+    if (
+        best_dir is not None
+        and range_atr is not None
+        and float(range_atr) > 1.5
+        and chase_aligned
+    ):
+        best_score = 0.0
+        best_reasons = [*best_reasons, "15m candle >1.5 ATR; no chase"]
+        best_dir = None
 
     # Derivatives proxy: fired when funding_rate and oi_delta are both None —
     # RSI fallback produces a weaker signal that shouldn't trigger high-conf paths.

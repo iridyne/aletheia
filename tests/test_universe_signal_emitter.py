@@ -89,7 +89,7 @@ class TestInferDirection:
         assert _infer_direction("derivatives", _feat(funding_rate=0.01)) == "short"
 
     def test_derivatives_neutral_funding_fallback_4h(self):
-        assert _infer_direction("derivatives", _feat(funding_rate=0.001, return_4h=3.0)) == "long"
+        assert _infer_direction("derivatives", _feat(funding_rate=0.00001, return_4h=3.0)) == "long"
 
     def test_derivatives_no_data(self):
         assert _infer_direction("derivatives", _feat()) is None

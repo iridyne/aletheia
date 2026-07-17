@@ -754,9 +754,11 @@ def test_filter_evidence_cleanup_is_wired_and_analytics_only():
         "filter_candidate_outcomes",
     } <= set(repo._PRUNABLE)
     source = inspect.getsource(scheduler._run_cleanup)
-    assert "prune_filter_decision_batches(30)" in source
-    assert "prune_filter_decisions(90)" in source
-    assert "prune_filter_candidate_outcomes(90)" in source
+    assert "prune_filter_decision_batches(r.filter_decision_batches_days)" in source
+    assert "prune_filter_decisions(" in source
+    assert "r.filter_decisions_days" in source
+    assert "prune_filter_candidate_outcomes(" in source
+    assert "r.filter_candidate_outcomes_days" in source
 
 
 @spec_claim(

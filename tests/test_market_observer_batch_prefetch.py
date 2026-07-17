@@ -153,6 +153,30 @@ def test_batch_funding_rates_excludes_other_exchanges(tmp_path, monkeypatch):
     assert "BTC" not in result
 
 
+def test_batch_open_interest_returns_latest_hyperliquid_row(tmp_path, monkeypatch):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.storage.repositories import batch_open_interest
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.executemany(
+        "INSERT INTO open_interest_snapshots "
+        "(id, symbol, exchange, open_interest_usd, oi_change_1h_pct, observed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("hl-old", "BTC", "hyperliquid", 1_000.0, 1.0, "2026-07-17T08:00:00Z"),
+            ("hl-new", "BTC", "hyperliquid", 2_000.0, 2.0, "2026-07-17T09:00:00Z"),
+            ("okx-new", "BTC", "okx", 9_000.0, 9.0, "2026-07-17T10:00:00Z"),
+        ],
+    )
+    db.commit()
+
+    result = batch_open_interest(["BTC", "ETH"], "hyperliquid")
+    assert result["BTC"]["id"] == "hl-new"
+    assert "ETH" not in result
+    assert batch_open_interest([], "hyperliquid") == {}
+
+
 # ---------------------------------------------------------------------------
 # batch_news
 # ---------------------------------------------------------------------------
