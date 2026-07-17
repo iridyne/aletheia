@@ -1,4 +1,4 @@
-"""Focused regressions for B9-analytics batch (#124, #158).
+"""Focused regressions for analytics windowing and grouping defects.
 
 - #124: /api/analytics/equity-curve applied `ORDER BY closed_at ASC LIMIT ?`,
         so under full_cumulative on an account with more closes than `limit`
@@ -11,6 +11,9 @@
         close_reason returned None instead of "unknown". The unknown bucket's
         avg_pnl_pct then summed zero rows and divided by a nonzero count,
         returning ~0. Extracted to a real `_reason_of` helper.
+- Overview funnel routes compared ISO ``T`` timestamps directly with SQLite's
+        space-separated ``datetime('now', ...)`` result. Rows before the real
+        cutoff on the same calendar date were therefore counted as recent.
 """
 
 from __future__ import annotations
@@ -189,3 +192,113 @@ def test_by_exit_reason_named_buckets_still_work():
     assert stops["avg_pnl_pct"] < 0  # loss row
     assert tps["trade_count"] == 1
     assert tps["avg_pnl_pct"] > 0  # win row
+
+
+# ---------------------------------------------------------------------------
+# Overview analytics — ISO timestamps respect the real rolling cutoff
+# ---------------------------------------------------------------------------
+
+
+def _overview_window_fixture_times() -> tuple[int, str, str]:
+    """Choose a cutoff near noon and an older ISO row on the same date."""
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    hours = now.hour - 12 if now.hour >= 12 else now.hour + 12
+    if hours == 0:
+        hours = 24
+    cutoff = now - timedelta(hours=hours)
+    old = cutoff.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    recent = (now - timedelta(minutes=5)).isoformat()
+    assert old < cutoff.isoformat() < recent
+    return hours, old, recent
+
+
+def _insert_overview_decision(
+    db, *, row_id: str, action: str, created_at: str,
+    signal_source: str = "market_observer",
+) -> None:
+    db.execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, market_type, action, conviction, reasoning, "
+        "opportunity_id, signal_source, created_at) "
+        "VALUES (?, 'BTC/USDT', 'long', 'spot', ?, 0, 'window test', ?, ?, ?)",
+        (row_id, action, f"opp-{row_id}", signal_source, created_at),
+    )
+
+
+def test_overview_operator_decisions_excludes_old_iso_row_on_cutoff_date(
+    tmp_path, monkeypatch,
+):
+    from datetime import datetime, timezone
+
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.server.routes.analytics import get_operator_decisions
+    from aletheia.storage.sqlite import get_db
+
+    hours, old, recent = _overview_window_fixture_times()
+    db = get_db()
+    _insert_overview_decision(db, row_id="old-skip", action="skip", created_at=old)
+    _insert_overview_decision(db, row_id="recent-skip", action="skip", created_at=recent)
+    newest_space = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    _insert_overview_decision(
+        db, row_id="newest-space-skip", action="skip", created_at=newest_space,
+    )
+    _insert_overview_decision(
+        db, row_id="cascade-skip", action="skip", created_at=newest_space,
+        signal_source="system_cascade",
+    )
+
+    result = get_operator_decisions(hours=hours, limit=50)
+
+    assert result["counts"]["operator_skip"] == 2
+    assert [item["decision_id"] for item in result["items"]] == [
+        "newest-space-skip", "recent-skip",
+    ]
+
+
+def test_overview_funnels_share_the_same_parsed_iso_window(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.server.routes.analytics import (
+        get_opportunity_funnel,
+        get_pipeline_funnel,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    hours, old, recent = _overview_window_fixture_times()
+    db = get_db()
+    for suffix, created_at in (("old", old), ("recent", recent)):
+        db.execute(
+            "INSERT INTO opportunities "
+            "(id, symbol, market, direction_bias, confidence, created_at, status) "
+            "VALUES (?, 'BTC/USDT', 'spot', 'long', 'medium_confidence', ?, 'reviewed')",
+            (f"opp-{suffix}", created_at),
+        )
+        _insert_overview_decision(
+            db, row_id=f"pending-{suffix}", action="signal_pending", created_at=created_at,
+        )
+        _insert_overview_decision(
+            db, row_id=f"skip-{suffix}", action="skip", created_at=created_at,
+        )
+        db.execute(
+            "INSERT INTO trade_proposals "
+            "(id, opportunity_id, symbol, market_type, direction, order_type, "
+            "execution_mode, status, created_at) "
+            "VALUES (?, ?, 'BTC/USDT', 'spot', 'long', 'market', "
+            "'paper_internal', 'pending', ?)",
+            (f"proposal-{suffix}", f"opp-{suffix}", created_at),
+        )
+    _insert_overview_decision(
+        db, row_id="cascade-recent", action="skip", created_at=recent,
+        signal_source="system_cascade",
+    )
+
+    pipeline = get_pipeline_funnel(hours=hours)
+    opportunity = get_opportunity_funnel(hours=hours)
+
+    assert pipeline["opportunities"] == 1
+    assert pipeline["signal_pending"] == 1
+    assert pipeline["pi_decisions"]["skip"] == 1
+    assert opportunity["emitted_count"] == 1
+    assert opportunity["reviewed_count"] == 1
+    assert opportunity["proposed_count"] == 1

@@ -60,9 +60,16 @@ def _add_candidate(
         evaluated_at=now.isoformat(),
     ))
     horizons = ("15m", "1h", "4h", "24h") if complete else ("15m",)
+    horizon_offsets = {
+        "15m": timedelta(minutes=15),
+        "1h": timedelta(hours=1),
+        "4h": timedelta(hours=4),
+        "24h": timedelta(hours=24),
+    }
     rows = []
     for horizon in horizons:
         is_pending = pending or net is None
+        due_at = now + horizon_offsets[horizon]
         rows.append(FilterCandidateOutcome(
             id=f"outcome-{key}-{horizon}",
             outcome_candidate_key=key,
@@ -73,8 +80,8 @@ def _add_candidate(
             horizon=horizon,
             entry_price_usd=100.0,
             entry_ts=now.isoformat(),
-            due_at=(now - timedelta(minutes=1)).isoformat(),
-            settled_at=None if is_pending else now.isoformat(),
+            due_at=due_at.isoformat(),
+            settled_at=None if is_pending else due_at.isoformat(),
             net_return_pct=None if is_pending else net,
             status="pending" if is_pending else "settled",
         ))
@@ -171,7 +178,7 @@ def test_negative_complete_skip_cohort_is_protective_not_a_bypass(tmp_path, monk
     for index in range(5):
         _add_candidate(
             key=f"pi_decision:protective-{index}", action="rejected", net=-1.0,
-            now=now - timedelta(minutes=index),
+            now=now - timedelta(hours=25, minutes=index),
         )
 
     report = diagnose_skip_halt(now=now)
@@ -188,11 +195,11 @@ def test_positive_skip_cohort_with_comparable_pass_is_overrestriction_suspect(tm
     for index in range(5):
         _add_candidate(
             key=f"pi_decision:skip-positive-{index}", action="rejected", net=1.0,
-            now=now - timedelta(minutes=index),
+            now=now - timedelta(hours=25, minutes=index),
         )
         _add_candidate(
             key=f"pi_decision:pass-flat-{index}", action="passed", net=0.0,
-            now=now - timedelta(minutes=index),
+            now=now - timedelta(hours=25, minutes=index),
         )
 
     report = diagnose_skip_halt(now=now)
@@ -210,7 +217,7 @@ def test_repeated_complete_skips_without_comparable_pass_are_liveness_incident(t
     for index in range(5):
         _add_candidate(
             key=f"pi_decision:liveness-{index}", action="rejected", net=1.0,
-            now=now - timedelta(minutes=index),
+            now=now - timedelta(hours=25, minutes=index),
         )
 
     report = diagnose_skip_halt(now=now)
@@ -254,3 +261,63 @@ def test_explicit_policy_epoch_excludes_pre_epoch_candidates(tmp_path, monkeypat
     assert report.policy_epoch_id == epoch_id
     assert report.counts["candidate_skips"] == 1
     assert report.finding == "awaiting_outcomes"
+
+
+def test_recent_unsettled_skips_do_not_block_a_mature_protective_cohort(
+    tmp_path, monkeypatch,
+):
+    """New work may be pending while the preceding bounded cohort is judged."""
+    _setup(tmp_path, monkeypatch)
+    from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
+
+    now = datetime.now(timezone.utc)
+    for index in range(5):
+        _add_candidate(
+            key=f"pi_decision:mature-protective-{index}",
+            action="rejected",
+            net=-1.0,
+            now=now - timedelta(hours=25, minutes=index),
+        )
+    _add_candidate(
+        key="pi_decision:recent-unsettled",
+        action="rejected",
+        net=None,
+        now=now - timedelta(minutes=5),
+        pending=True,
+    )
+
+    report = diagnose_skip_halt(now=now)
+
+    assert report.finding == "protective_skip_observed"
+    assert report.counts["candidate_skips"] == 1
+    assert report.counts["mature_candidate_skips"] == 5
+    assert report.counts["unsettled_candidate_skips"] == 0
+
+
+def test_administrative_cascade_skips_are_not_operator_effectiveness_candidates(
+    tmp_path, monkeypatch,
+):
+    """Lifecycle cleanup records must not masquerade as model skip decisions."""
+    _setup(tmp_path, monkeypatch)
+    from aletheia.analytics.skip_diagnosis import diagnose_skip_halt
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+
+    now = datetime.now(timezone.utc)
+    insert_pi_decision(PiDecision(
+        id="cascade-expired",
+        action="skip",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        opportunity_id="expired-opportunity",
+        signal_source="system_cascade",
+        reasoning="cascade_expired: administrative cleanup",
+        created_at=now.isoformat(),
+    ))
+
+    report = diagnose_skip_halt(now=now)
+
+    assert report.finding == "not_applicable"
+    assert report.counts["candidate_skips"] == 0
+    assert report.counts["administrative_skips_excluded"] == 1

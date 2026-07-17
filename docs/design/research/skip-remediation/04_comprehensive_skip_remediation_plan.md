@@ -2,6 +2,9 @@
 
 > 状态：**B1 已部署；B1.1 已获 owner 授权，作为独立 policy epoch 实施。后续 B2+ 仍须独立治理决定。**
 > 建立日期：2026-07-15
+> 2026-07-18 运行复核：A 类窗口修复与 `skip-halt-v2` 成熟 cohort 设计见
+> [06_runtime_skip_audit_2026-07-18.md](06_runtime_skip_audit_2026-07-18.md)；direct model skip
+> 行为仍冻结，等待该文定义的下一单变量 B treatment 入口。
 > 适用范围：System Operator（PI）候选级 `skip` 与其输入、证据、恢复诊断。
 > 非范围：universe generation / 选币行为、Risk、Execution、交易所、Live、额度、凭据。
 
@@ -367,6 +370,11 @@ eligible pending flow > 0
 AND terminal candidate skip ratio / proposal drought crosses a versioned observation threshold
 AND a bounded diagnosis window is complete
 ```
+
+`skip-halt-v2` 对“窗口完整”作如下可执行解释：最近窗口只负责当前流量及证据完整性，效果
+cohort 必须整体向前平移一个 primary horizon。以 24h window / 24h outcome 为例，当前时点
+`T` 的效果 cohort 是 `[T-48h, T-24h)`；`[T-24h, T]` 的新 skip 继续显示，但不会令前一
+cohort 永久停在 `awaiting_outcomes`。
 
 随后只能输出以下状态之一：
 

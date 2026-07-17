@@ -82,6 +82,12 @@ skip、`operator_evaluation_events` 的 no-candidate heartbeat、pending 与 pro
 `recording_incident`、`protective_skip_observed`、`overrestriction_suspect`、
 `operator_liveness_incident` 或 `diagnosis_unavailable`。后两种 suspect/liveness 输出至多推荐
 不可执行 replay/shadow 草案；它们不是 Proposal、Risk 或配置 mutation 的权限。
+`skip-halt-v2` 将窗口明确分成两层：最近 24h candidate 用于立即检查 identity/trace/四个 seed
+完整性和当前流量；效果判断只使用其前一段、已经跨过 24h primary horizon 的固定 cohort。
+最近尚未成熟的 skip 必须显示为 `immature_candidate_skips`，但不得阻塞成熟 cohort 得出
+protective/suspect finding；成熟 cohort 自身仍有 overdue outcome 时才返回 `awaiting_outcomes`。
+`signal_source=system_cascade` 的生命周期清理行不是 Operator 对候选的模型判断，必须单独报告为
+administrative exclusion，不得进入 candidate skip、trace/seed 缺口或效果 cohort。
 
 生产者在拒绝输入时，该原因是唯一解释事实：Observer、Universe emitter、Divergence scanner
 若无法写入终态记录，必须返回可重试错误，不能以“零 Opportunity、零原因”的成功结束。
