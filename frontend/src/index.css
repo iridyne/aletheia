@@ -110,7 +110,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   display: flex; flex-direction: column; padding: 0;
 }
 .content { margin-left: 240px; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
-.main { flex: 1; padding: var(--space-4) var(--space-5); background: var(--bg-2); overflow-y: auto; }
+.main { flex: 1; padding: var(--space-4) var(--space-5); background: var(--bg-2); overflow-y: auto; overflow-x: hidden; }
 /* Collapse sidebar on narrow viewports (L1); hamburger toggle handled in App.tsx */
 .hamburger { display: none !important; }
 @media (max-width: 700px) {
@@ -565,10 +565,18 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 
 .settings-shell {
-  display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  gap: var(--space-6);
+  display: flex;
   align-items: start;
+  width: 100%;
+  min-width: 0;
+  /* clip horizontal paint without creating a scroll container that breaks sticky nav */
+  overflow-x: clip;
+}
+
+.settings-shell,
+.settings-shell * {
+  min-width: 0;
+  max-width: 100%;
 }
 .settings-nav {
   position: sticky; top: calc(var(--header-height) + var(--space-4));
@@ -577,9 +585,48 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   background: rgba(20,26,33,0.72);
   border: 1px solid var(--border);
   border-radius: var(--r);
+  width: var(--settings-nav-width);
+  flex: 0 0 var(--settings-nav-width);
+  min-width: 0;
+  max-height: calc(100vh - var(--header-height) - (2 * var(--space-4)));
+  overflow-y: auto;
 }
+.settings-nav-header {
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: 32px; padding: 0 var(--space-1) var(--space-1);
+  border-bottom: 1px solid var(--border);
+}
+.settings-nav-heading {
+  color: var(--muted); font-size: var(--fs-xs); font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase;
+}
+.settings-nav-toggle {
+  width: 28px; height: 28px; padding: 0; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.settings-nav-toggle:hover { background: var(--surface-2); color: var(--text); filter: none; }
+.settings-nav-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-nav-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.settings-nav.is-collapsed { align-items: center; overflow: visible; }
+.settings-nav.is-collapsed .settings-nav-header { width: 100%; justify-content: center; padding-bottom: var(--space-1); }
+.settings-nav.is-collapsed .settings-nav-heading,
+.settings-nav.is-collapsed .settings-nav-copy { display: none; }
+.settings-nav.is-collapsed .settings-nav-item { width: 36px; min-height: 36px; padding: 0; align-items: center; justify-content: center; }
+.settings-nav.is-collapsed .settings-nav-icon { width: 18px; height: 18px; margin: 0; }
+.settings-nav-resize-handle {
+  width: 8px;
+  flex: 0 0 8px;
+  cursor: col-resize;
+  position: relative;
+  touch-action: none;
+}
+.settings-nav-resize-handle::after { content: ''; position: absolute; top: var(--space-2); bottom: var(--space-2); left: 3px; width: 1px; background: var(--border); transition: background 120ms; }
+.settings-nav-resize-handle:hover::after { background: var(--accent); }
+.settings-shell.is-collapsed .settings-nav-resize-handle { display: none; }
 .settings-nav-item {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  position: relative; display: flex; align-items: flex-start; gap: var(--space-2);
   width: 100%; padding: var(--space-3);
   background: transparent; color: var(--muted);
   border: 1px solid transparent; border-radius: var(--r-sm);
@@ -593,16 +640,75 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 .settings-nav-label { font-size: 0.84rem; font-weight: 700; }
 .settings-nav-desc { font-size: 0.72rem; color: var(--muted); line-height: 1.35; font-weight: 400; }
-.settings-panel { min-width: 0; max-width: 1180px; }
+.settings-nav-icon { width: 18px; height: 18px; margin-top: 1px; flex: 0 0 18px; color: var(--muted); }
+.settings-nav-icon svg { display: block; width: 100%; height: 100%; }
+.settings-nav-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.settings-nav-item.active .settings-nav-icon { color: var(--accent); }
+.settings-panel { 
+  flex: 1 1 0;
+  width: 100%;
+  max-width: 1180px;
+  min-width: 0;
+  /* Secondary navigation is an inset surface, not a docked app sidebar. */
+  margin-inline-start: var(--space-5);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.settings-panel table {
+  width: 100%;
+  max-width: 100%;
+  table-layout: fixed;
+}
+
+.settings-panel th,
+.settings-panel td {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.settings-field-label,
+.settings-row-label,
+.settings-row-hint,
+.settings-section-desc,
+.settings-nav-label,
+.settings-nav-desc {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.settings-shell .flex-1 {
+  min-width: 0;
+}
+
+.settings-panel .mini-table {
+  width: 100%;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+}
 @media (max-width: 900px) {
-  .settings-shell { grid-template-columns: 1fr; gap: var(--space-4); }
+  .settings-shell { flex-direction: column; gap: var(--space-4); }
+  .settings-nav-resize-handle { display: none; }
   .settings-nav {
-    position: static; overflow-x: auto; flex-direction: row;
+    position: static;
+    width: 100%; max-height: none;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    overflow-y: hidden;
     scrollbar-width: thin;
-    scroll-snap-type: x mandatory;
     -webkit-overflow-scrolling: touch;
   }
-  .settings-nav-item { min-width: 190px; scroll-snap-align: start; }
+  .settings-panel { flex-basis: auto; max-width: 100%; margin-inline-start: 0; }
+  .settings-nav-header { display: none; }
+  .settings-nav-item { width: auto; min-width: max-content; padding: var(--space-2) var(--space-3); }
+  .settings-nav-desc { display: none; }
+  .settings-nav-copy { display: block; }
 }
 
 /* Section: display-font header + accent-dim left bar + sealing rule. */
@@ -620,13 +726,32 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 /* Row: label ↔ right-aligned controls. Desktop rows avoid accidental wrapping;
    mobile is the only place where controls stack below labels. */
 .settings-row {
-  display: grid; grid-template-columns: minmax(220px, 0.42fr) minmax(320px, 0.58fr);
-  gap: var(--space-5); align-items: center; padding: var(--space-3) 0;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.38fr) minmax(0, 0.62fr);
+  gap: var(--space-5);
+  align-items: start;
+  padding: var(--space-3) 0;
+  min-width: 0;
 }
-.settings-row-label { font-size: 0.82rem; font-weight: 500; color: var(--text); }
+.settings-row-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .settings-row-label.danger { color: var(--red); }
 .settings-row-hint { font-size: 0.73rem; color: #8fa0ae; margin-top: var(--space-1); line-height: 1.4; }
-.settings-row-control { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); flex-wrap: nowrap; min-width: 0; }
+.settings-row-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+}
+.settings-row-control > * { min-width: 0; max-width: 100%; }
 @media (max-width: 900px) {
   .settings-row { grid-template-columns: 1fr; gap: var(--space-2); align-items: start; }
   .settings-row-control { justify-content: flex-start; flex-wrap: wrap; }

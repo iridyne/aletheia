@@ -51,6 +51,46 @@ const TAB_ALIASES: Record<string, Tab> = {
   infrastructure: 'runtime',
 }
 
+const SETTINGS_NAV_KEY = 'aletheia.settings.navLayout.v1'
+const SETTINGS_NAV_DEFAULT = 248
+const SETTINGS_NAV_MIN = 216
+const SETTINGS_NAV_MAX = 320
+const SETTINGS_NAV_COLLAPSED = 52
+
+type SettingsNavState = {
+  width: number
+  collapsed: boolean
+}
+
+function clampSettingsNavWidth(value: number): number {
+  if (!Number.isFinite(value)) return SETTINGS_NAV_DEFAULT
+  return Math.min(SETTINGS_NAV_MAX, Math.max(SETTINGS_NAV_MIN, Math.round(value)))
+}
+
+function clampSettingsNavResize(value: number): number {
+  return clampSettingsNavWidth(value)
+}
+
+function SettingsNavIcon({ tab }: { tab: Tab }) {
+  const props = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  switch (tab) {
+    case 'agent':
+      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><circle cx="12" cy="12" r="3" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" /></svg>
+    case 'execution':
+      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><path d="M5 12h13M14 7l5 5-5 5M5 6v12" /></svg>
+    case 'risk':
+      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><path d="M12 3 20 6v5c0 5-3.4 8.4-8 10-4.6-1.6-8-5-8-10V6l8-3Z" /><path d="m9 12 2 2 4-4" /></svg>
+    case 'health':
+      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><path d="M3 12h4l2-5 4 10 2-5h6" /></svg>
+    case 'runtime':
+      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><path d="M4 7h16M4 17h16M8 4v6M16 14v6" /></svg>
+    case 'signals':
+      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><path d="M3 17 8 12l4 3 7-8" /><path d="M17 7h2v2" /></svg>
+    case 'advanced':
+      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.1 2.1-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-3v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1-2.1-2.1.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H5.2v-3h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.1-2.1.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h3v.2a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.1 2.1-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v3h-.2a1.7 1.7 0 0 0-1.6 1Z" /></svg>
+  }
+}
+
 /**
  * Inline-search index — fuzzy-find a Section across all 6 tabs.
  *
@@ -149,6 +189,10 @@ export default function Settings() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
+  const [navWidth, setNavWidth] = useState(SETTINGS_NAV_DEFAULT)
+  const [isNavCollapsed, setIsNavCollapsed] = useState(false)
+  const navExpandedWidthRef = useRef(SETTINGS_NAV_DEFAULT)
+  const navDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const [tab, setTab] = useState<Tab>(() => {
     return parseTab(searchParams.get('tab')) ?? 'agent'
   })
@@ -156,6 +200,74 @@ export default function Settings() {
   const registerDirty = (id: string, isDirty: boolean) => {
     if (isDirty) dirtyRef.current.add(id)
     else dirtyRef.current.delete(id)
+  }
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(SETTINGS_NAV_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as SettingsNavState
+      if (typeof parsed.width === 'number') {
+        if (parsed.collapsed) {
+          setIsNavCollapsed(true)
+          setNavWidth(SETTINGS_NAV_COLLAPSED)
+          navExpandedWidthRef.current = clampSettingsNavWidth(parsed.width)
+        } else {
+          const width = clampSettingsNavWidth(parsed.width)
+          setIsNavCollapsed(false)
+          setNavWidth(width)
+          navExpandedWidthRef.current = width
+        }
+      }
+      if (typeof parsed.collapsed === 'boolean' && typeof parsed.width !== 'number') {
+        setIsNavCollapsed(parsed.collapsed)
+      }
+    } catch {
+      // ignore stale/corrupt localStorage data
+    }
+  }, [])
+
+  useEffect(() => {
+    window.localStorage.setItem(SETTINGS_NAV_KEY, JSON.stringify({
+      width: isNavCollapsed ? navExpandedWidthRef.current : navWidth,
+      collapsed: isNavCollapsed,
+    }))
+  }, [navWidth, isNavCollapsed])
+
+  const toggleNav = () => {
+    if (isNavCollapsed) {
+      setIsNavCollapsed(false)
+      setNavWidth(clampSettingsNavWidth(navExpandedWidthRef.current))
+      return
+    }
+    navExpandedWidthRef.current = navWidth
+    setIsNavCollapsed(true)
+    setNavWidth(SETTINGS_NAV_COLLAPSED)
+  }
+
+  const onResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    if (isNavCollapsed) return
+    navDragRef.current = { startX: e.clientX, startWidth: navWidth }
+    const moveHandler = (ev: PointerEvent) => {
+      if (!navDragRef.current) return
+      const next = navDragRef.current.startWidth + (ev.clientX - navDragRef.current.startX)
+      const clamped = clampSettingsNavResize(next)
+      navExpandedWidthRef.current = clamped
+      setNavWidth(clamped)
+    }
+    const stopHandler = () => {
+      navDragRef.current = null
+      document.body.style.userSelect = ''
+      window.removeEventListener('pointermove', moveHandler)
+      window.removeEventListener('pointerup', stopHandler)
+      window.removeEventListener('pointercancel', stopHandler)
+    }
+    document.body.style.userSelect = 'none'
+    window.addEventListener('pointermove', moveHandler)
+    window.addEventListener('pointerup', stopHandler)
+    window.addEventListener('pointercancel', stopHandler)
   }
 
   useEffect(() => {
@@ -211,15 +323,47 @@ export default function Settings() {
         role="Operate · Configure AI agent behaviour, exchange connections, risk limits, and system infrastructure. Secrets are write-only and never displayed."
       />
 
-      <div className="settings-shell" onFocus={handleNumericFocus}>
-        <aside className="settings-nav" aria-label="Settings sections">
+      <div
+        className={`settings-shell ${isNavCollapsed ? 'is-collapsed' : ''}`}
+        style={{ '--settings-nav-width': `${navWidth}px` } as React.CSSProperties}
+        onFocus={handleNumericFocus}
+      >
+        <aside className={`settings-nav ${isNavCollapsed ? 'is-collapsed' : ''}`} aria-label="Settings sections">
+          <div className="settings-nav-header">
+            <span className="settings-nav-heading">Settings</span>
+            <button
+              type="button"
+              className="settings-nav-toggle"
+              aria-label={isNavCollapsed ? 'Expand Settings navigation' : 'Collapse Settings navigation'}
+              aria-expanded={!isNavCollapsed}
+              title={isNavCollapsed ? 'Expand Settings navigation' : 'Collapse Settings navigation'}
+              onClick={toggleNav}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d={isNavCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'} /></svg>
+            </button>
+          </div>
           {TABS.map(t => (
-            <button key={t.id} className={`settings-nav-item ${tab === t.id ? 'active' : ''}`} onClick={() => selectTab(t.id)}>
-              <span className="settings-nav-label">{t.label}</span>
-              <span className="settings-nav-desc">{t.description}</span>
+            <button
+              key={t.id}
+              className={`settings-nav-item ${tab === t.id ? 'active' : ''}`}
+              aria-label={t.label}
+              aria-current={tab === t.id ? 'page' : undefined}
+              title={isNavCollapsed ? `${t.label}: ${t.description}` : undefined}
+              onClick={() => selectTab(t.id)}
+            >
+              <span className="settings-nav-icon"><SettingsNavIcon tab={t.id} /></span>
+              <span className="settings-nav-copy">
+                <span className="settings-nav-label">{t.label}</span>
+                <span className="settings-nav-desc">{t.description}</span>
+              </span>
             </button>
           ))}
         </aside>
+        <div
+          className="settings-nav-resize-handle"
+          aria-hidden="true"
+          onPointerDown={onResizePointerDown}
+        />
         <div className="settings-panel">
           <SettingsSearch onPick={selectTab} />
           {tab === 'agent'     && <AgentModelsTab        status={status} settings={settings} qc={qc} />}
