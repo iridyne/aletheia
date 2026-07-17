@@ -98,6 +98,44 @@ def test_report_severity_partitions():
     assert [c.name for c in r.warns] == ["b"]
 
 
+def test_git_hook_probe_reports_manual_lifecycle_when_legacy_hooks_are_absent(monkeypatch):
+    from aletheia.gateway import git_hooks
+
+    monkeypatch.setattr(
+        git_hooks,
+        "git_hooks_status",
+        lambda: {"error": None, "installed": [], "missing": ["post-merge"], "foreign": []},
+    )
+    report = dx.Report()
+
+    dx._probe_git_hooks(report)
+
+    assert [(c.severity, c.detail) for c in report.checks] == [
+        ("ok", "automatic restart hooks disabled; lifecycle is manual")
+    ]
+
+
+def test_git_hook_probe_warns_only_for_legacy_managed_hooks(monkeypatch):
+    from aletheia.gateway import git_hooks
+
+    monkeypatch.setattr(
+        git_hooks,
+        "git_hooks_status",
+        lambda: {
+            "error": None,
+            "installed": ["post-merge"],
+            "missing": [],
+            "foreign": ["post-checkout"],
+        },
+    )
+    report = dx.Report()
+
+    dx._probe_git_hooks(report)
+
+    assert [c.severity for c in report.checks] == ["warn", "info"]
+    assert "doctor --fix" in report.checks[0].fix_hint
+
+
 def test_db_capacity_large_compact_database_is_informational():
     severity, label, hint = dx._classify_db_capacity(
         db_mb=584,

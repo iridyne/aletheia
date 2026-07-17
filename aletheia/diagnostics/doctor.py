@@ -542,7 +542,7 @@ def _probe_gateway_restart_history(report: Report) -> None:
     severity: Severity = "warn" if total >= 10 or (critical_seen and not recovered) else "info"
     fix_hint = ""
     if total >= 10:
-        fix_hint = "high restart volume — check git hook churn, frontdoor port loss, and supervisor errors"
+        fix_hint = "high restart volume — check explicit restarts, frontdoor port loss, and supervisor errors"
     elif critical_seen and not recovered:
         fix_hint = f"spawn/give-up event seen — inspect {_log_hint_for_check('process.gateway')}"
     recovered_text = "; historical failure recovered, current gateway healthy" if recovered else ""
@@ -2087,25 +2087,28 @@ def _probe_webui_static(report: Report) -> None:
 
 
 def _probe_git_hooks(report: Report) -> None:
-    """Auto-restart git hooks — installed → a merge/pull/rebase respawns the gateway
-    on fresh code with no manual restart (closes the code_updated_pending_restart gap).
-    Pure read; `apply_fixes()` / gateway startup do the install."""
+    """Report whether legacy implicit-restart hooks still need removal."""
     from aletheia.gateway.git_hooks import git_hooks_status
     st = git_hooks_status()
     if st["error"]:
         report.add("git.hooks", "info", st["error"])  # tarball deploy / not a repo
         return
-    missing, foreign = st["missing"], st["foreign"]
-    if not missing and not foreign:
-        report.add("git.hooks", "ok", f"auto-restart hooks installed ({', '.join(st['installed'])})")
-        return
+    installed, foreign = st["installed"], st["foreign"]
+    if installed:
+        report.add(
+            "git.hooks",
+            "warn",
+            f"legacy auto-restart hooks installed: {', '.join(installed)}",
+            fix_hint="Run: aletheia doctor --fix  (removes only Aletheia-managed hooks)",
+        )
     if foreign:
-        report.add("git.hooks", "warn",
-                   f"foreign hook(s) present, not managed: {', '.join(foreign)}",
-                   fix_hint="Inspect .git/hooks; auto-restart will skip these to avoid clobbering")
-    if missing:
-        report.add("git.hooks", "warn", f"auto-restart hooks missing: {', '.join(missing)}",
-                   fix_hint="Run: aletheia doctor --fix  (or just restart the gateway — it self-installs)")
+        report.add(
+            "git.hooks",
+            "info",
+            f"foreign hook(s) present and left untouched: {', '.join(foreign)}",
+        )
+    if not installed and not foreign:
+        report.add("git.hooks", "ok", "automatic restart hooks disabled; lifecycle is manual")
 
 
 # --- content-quality probes (Phase 2: AI-native bug discovery) ---------------
@@ -3153,10 +3156,9 @@ def apply_fixes() -> list[str]:
     from aletheia.gateway.pidfile import is_running
     from aletheia.gateway.lifecycle import do_start
 
-    # Wire the auto-restart git hooks (idempotent; independent of gateway state, so
-    # do it before the running-check early return).
-    from aletheia.gateway.git_hooks import ensure_git_hooks
-    actions.extend(ensure_git_hooks())
+    # Remove legacy implicit-restart hooks before the running-check early return.
+    from aletheia.gateway.git_hooks import remove_managed_git_hooks
+    actions.extend(remove_managed_git_hooks())
 
     if is_running():
         actions.append("gateway already running — nothing to start")

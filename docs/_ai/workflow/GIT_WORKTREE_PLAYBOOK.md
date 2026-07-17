@@ -3,7 +3,7 @@
 > 沉淀自 2026-06-28 一次惨痛合并:本项目 git 工作区长期高强度竞争,合并因并发抢占 + 后台工具故障反复失败。
 
 ## 1. 为什么总在竞争
-多写者同抢 master:多 AI 会话/后台 job;自动 git hook(post-merge 触发 restart);Task Scheduler 看门狗每 5 分钟;gateway lifecycle。实测 master HEAD 数十秒连跳多值, commit 被冲成悬空, worktree 分支被 reset。
+多写者同抢 master:多 AI 会话/后台 job;Task Scheduler/launchd 生命周期;gateway lifecycle。实测 master HEAD 数十秒连跳多值, commit 被冲成悬空, worktree 分支被 reset。Git 操作不再自动重启 gateway；部署新代码后由 owner 显式执行 `gateway restart`。
 
 ## 2. 铁律:非平凡改动一律用 Worktree 隔离
 - 任何写文件任务 → 先开 worktree(EnterWorktree 或 git worktree add)。

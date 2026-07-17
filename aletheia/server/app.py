@@ -321,15 +321,15 @@ async def lifespan(app: FastAPI):
     if background_services_enabled:
         from aletheia.agent_runtime.build_info import record_boot_commit
         record_boot_commit()
-        # Ensure the auto-restart git hooks are wired so a future merge/pull/rebase
-        # respawns this process on fresh code with zero manual steps. Idempotent,
-        # best-effort — a hook-install hiccup must never block startup.
+        # Migrate legacy checkouts away from implicit git-triggered restarts.
+        # Lifecycle is owner-controlled; cleanup is idempotent and never touches
+        # foreign hooks.
         try:
-            from aletheia.gateway.git_hooks import ensure_git_hooks
-            for action in ensure_git_hooks(port=cfg.app.dashboard_port):
+            from aletheia.gateway.git_hooks import remove_managed_git_hooks
+            for action in remove_managed_git_hooks():
                 logger.info("git-hook: %s", action)
         except Exception as e:
-            logger.warning("git-hook install skipped (non-fatal): %s", e)
+            logger.warning("git-hook cleanup skipped (non-fatal): %s", e)
     logger.info("Aletheia Trading OS v%s starting", __version__)
     logger.info("Dashboard: http://%s:%d", cfg.app.bind_host, runtime_context["port"] or cfg.app.dashboard_port)
     # Migrate keyring secrets to the encrypted file store so that CLI / service

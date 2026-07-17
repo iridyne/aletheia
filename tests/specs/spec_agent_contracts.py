@@ -226,6 +226,21 @@ def test_gateway_session_service_has_safe_macos_launchd_contract():
 
 @spec_claim(
     SpecClaim(
+        "AC-S12", "agent_contracts", "§1 OS session service", "L2c",
+        "Git operations never restart the gateway implicitly; legacy standalone "
+        "Aletheia hooks are cleanup-only and foreign hooks are preserved.",
+        status="implemented",
+    ),
+)
+def test_gateway_lifecycle_is_not_driven_by_git_hooks():
+    from aletheia.gateway import git_hooks
+
+    assert not hasattr(git_hooks, "ensure_git_hooks")
+    assert callable(git_hooks.remove_managed_git_hooks)
+
+
+@spec_claim(
+    SpecClaim(
         "AC-B01", "agent_contracts", "§3 catch-all isolation", "L2a",
         "Every _run_* job wrapper in scheduler.py contains a try/except block — "
         "an unhandled exception cannot propagate out of a scheduled job",

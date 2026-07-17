@@ -641,7 +641,8 @@ def test_macos_enable_bootstrap_failure_is_honest_and_audited(tmp_path, monkeypa
 
     assert result["ok"] is False
     assert result["enabled"] is False
-    assert result["installed"] is True
+    assert result["installed"] is False
+    assert not autostart._launchd_plist_path().exists()
     assert result["reason"] == "launchctl_error"
     assert any(
         event.get("event_type") == "autostart_enable_failed"
