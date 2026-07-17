@@ -12,6 +12,16 @@ _local = threading.local()
 _connection_generation = 0
 _injected_db_path: Path | None = None
 
+# Process-level write serialization lock.  Every write transaction acquires this
+# before issuing BEGIN so that only one connection can hold the SQLite writer slot
+# at a time.  Contention is resolved in Python-land instead of inside SQLite's
+# busy_timeout loop, which means "database is locked" can never be raised by normal
+# application code.  Timeout is set slightly above busy_timeout (30 s) as a last
+# resort; if it fires it means a write transaction was held open across I/O — a bug
+# in the caller, not a concurrency problem.
+_WRITE_LOCK = threading.Lock()
+_WRITE_LOCK_TIMEOUT_S = 32.0
+
 
 def db_path() -> Path:
     return get_data_dir() / "app.db"

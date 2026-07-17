@@ -28,7 +28,7 @@
 |------|------|--------|----------|
 | Append-only Event Log | `EventStore.append/append_many`(`storage/event_store.py:33-43`)，`get_event_store()`，机器级 JSONL | reconciliation / lessons / skills / policies | ✅ 实现且被消费 |
 | Artifact Store | `ArtifactStore`(`storage/artifact_store.py:20`)，`get_artifact_store()` | lessons / skills / policies / operator | ✅ 实现且被消费 |
-| Metadata DB | SQLite(WAL + threading.local + was_in_tx 三柱，见 CLAUDE.md) | 全系统 | ✅ |
+| Metadata DB | SQLite（四柱：`_WRITE_LOCK` Python 级写序列化 + WAL + threading.local + was_in_tx，见 AGENTS.md） | 全系统 | ✅ |
 | ps_* stores | `LessonStore`/`SkillStore`(`learning/`)、`PolicyVersion`(`policies/store.py`) | lessons:✅(LessonStore→System Operator prompt，见 knowledge_contract §6.A1)；skills:✅ draft producer(lesson_reviewer→SkillStore, no auto-activate)；policies:⚠️ | 🟡 |
 | Persistence API | `/api/persistence/*`(`server/routes/persistence.py`，已注册 `app.py:477`) | 手工/CLI | ✅ 路由在 |
 | Leader Lock | `gateway/locks.py:acquire(lock_name, owner_id)` | ⚠️ 多设备并发写防护，runtime 调用点待确认 | 🟡 |

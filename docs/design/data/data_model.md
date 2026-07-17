@@ -9,8 +9,9 @@
 
 ## 1. Architecture Overview
 
-- **Engine**: SQLite 3, WAL mode, `busy_timeout=30000ms` (30s), `synchronous=NORMAL`, `wal_autocheckpoint=1000`, `isolation_level=None` (true autocommit, no implicit BEGIN) — `storage/sqlite.py:32-44`
+- **Engine**: SQLite 3, WAL mode, `busy_timeout=30000ms` (30s, fallback only), `synchronous=NORMAL`, `wal_autocheckpoint=1000`, `isolation_level=None` (true autocommit, no implicit BEGIN) — `storage/sqlite.py:32-44`
 - **Concurrency**: one connection per thread via `threading.local`; scheduler capped at `max_workers=3`
+- **Write serialization**: `_WRITE_LOCK = threading.Lock()` in `sqlite.py` — acquired by `transaction()` before every `BEGIN`, released after `COMMIT`/`ROLLBACK`. Serializes all write transactions at the Python level; `database is locked` cannot occur in normal operation. Timeout = 32s (slightly above `busy_timeout`) to surface any transaction held open across I/O as a `write_lock_timeout` error.
 - **Transaction safety**: `was_in_tx = db.in_transaction` captured BEFORE every write; commit only `if not was_in_tx`
 - **Migrations**: additive-only (new tables, new columns with defaults); never DROP/RENAME in production
 - **ID format**: 12-char hex string — `uuid4().hex[:12]` (48-bit), via `new_id()` in `storage/models.py:8`. NOT a full 36-char UUID4. Collision risk is negligible at this scale (P≈2e-7 at 10⁴ rows, ≈1e-3 at 10⁶); the short form keeps IDs readable in logs/audit. (CR-DM-01: doc corrected to match code 2026-06-23 — code is the convention, full-UUID4 migration deemed unjustified.)
@@ -467,11 +468,12 @@ at the tail. Full `VACUUM` runs only in the one-shot backfill with the gateway s
 
 ## 9. Concurrency Recovery Protocol
 
-> Three pillars (see [CLAUDE.md SQLite rule](../../../CLAUDE.md)). Recovery specifics:
+> Four pillars (see [AGENTS.md SQLite rule](../../../AGENTS.md)). Recovery specifics:
 
-- **No explicit retry loop** for `database is locked` — relies on `busy_timeout=30000` (SQLite auto-retries 30s).
-- **Transaction-leak cleanup**: scheduler calls `rollback_if_in_transaction()` before/after each job (`sqlite.py:56-69`, `scheduler.py:125-134`) — prevents a daemon thread from permanently holding the WAL writer lock (the historical `database is locked` root cause; see [db-lock memory](../../记忆 aletheia-db-lock-root-cause)).
+- **Write serialization via `_WRITE_LOCK`** (`sqlite.py`): `transaction()` acquires a process-wide `threading.Lock` before every `BEGIN` and releases it after `COMMIT`/`ROLLBACK`. All writer threads queue in Python — SQLite's `busy_timeout` is never reached under normal operation. Timeout 32s surfaces any transaction held open across I/O as a `write_lock_timeout` `OperationalError`.
+- **Transaction-leak cleanup**: scheduler calls `rollback_if_in_transaction()` before/after each job (`sqlite.py:56-69`, `scheduler.py:125-134`) — prevents a daemon thread from permanently holding the WAL writer lock.
 - **`isolation_level=None`** is the structural fix: no implicit BEGIN means a failed DML does not leave the thread `in_transaction=True`.
+- **Invariant**: never open a `with transaction():` block that spans an `await` or any network/I/O call — this would hold `_WRITE_LOCK` across I/O and starve all other writers.
 
 ## 10. Outcome Integrity Additive Schema（OI-S01 implemented）
 
