@@ -427,52 +427,6 @@ def _probe_process(report: Report) -> None:
         except Exception:
             pass
 
-    # Autostart watchdog: query the live OS service manager, never a persisted flag.
-    # enabled=None means the OS query itself failed (unknown).
-    try:
-        from aletheia.gateway.autostart import status as autostart_status, WATCHDOG_INTERVAL
-        a = autostart_status()
-        raw_interval = a.get("interval") or WATCHDOG_INTERVAL
-        interval_desc = (
-            raw_interval.replace("PT", "").replace("M", "-min")
-            if str(raw_interval).startswith("PT") else str(raw_interval)
-        )
-        manager = a.get("platform") or "task_scheduler"
-        if not a.get("supported"):
-            report.add("process.autostart", "info", f"not supported ({a.get('reason')})")
-        elif a.get("enabled") is True:
-            if a.get("config_valid") is False:
-                report.add(
-                    "process.autostart", "warn",
-                    f"watchdog loaded via {manager} but registration points at stale code/path",
-                    "run `aletheia gateway enable-autostart` to reinstall the current definition",
-                )
-            elif a.get("primed") is not True:
-                last_run = a.get("last_run_time") or "unknown"
-                last_result = a.get("last_result") or "unknown"
-                report.add("process.autostart", "warn",
-                           f"watchdog registered but successful run is not verified "
-                           f"(last_run={last_run}, last_result={last_result})",
-                           "run `aletheia gateway enable-autostart` to reinstall and re-prime")
-            else:
-                detail = f"watchdog registered via {manager} (login + {interval_desc} repetition)"
-                if a.get("last_run_time"):
-                    detail += f", last_run={a.get('last_run_time')}"
-                elif a.get("runs") is not None:
-                    detail += f", runs={a.get('runs')}, last_result={a.get('last_result') or 'unknown'}"
-                report.add("process.autostart", "ok", detail)
-        elif a.get("enabled") is False:
-            report.add("process.autostart", "warn",
-                       "watchdog NOT registered — a dead supervisor won't be resurrected",
-                       "`aletheia gateway enable-autostart` (or start the gateway — it auto-registers)")
-        else:
-            report.add("process.autostart", "warn",
-                       f"watchdog state unknown ({a.get('reason')})",
-                       "run `aletheia gateway enable-autostart` or check OS service-manager access")
-    except Exception:
-        pass
-
-
 def _probe_frontdoor_process(report: Report, host: str, port: int) -> None:
     """Probe the stable front-door layer when present.
 

@@ -2,8 +2,6 @@
 
 import logging
 import platform
-import signal
-import subprocess
 import sys
 from pathlib import Path
 
@@ -15,7 +13,7 @@ from aletheia.config.loader import bootstrap, load_config, save_config, get_data
 from aletheia.gateway.pidfile import (
     is_running, read_pid, write_pid, clear_pid, pid_path,
     kill_pid_tree, port_in_use, wait_port_free, find_gateway_orphans,
-    find_port_holders, _resolve_real_python,
+    find_port_holders,
 )
 from aletheia.gateway.browser import open_browser
 from aletheia.gateway.logs import tail_all_logs, log_path
@@ -41,13 +39,12 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         _notify_gateway_problem(
             "Aletheia Gateway preflight failed",
             "; ".join(f"{c.name}: {c.message}" for c in preflight_result.failures()),
-            source="watchdog",
+            source="gateway_lifecycle",
         )
     assert_preflight_or_exit(preflight_result)  # exits on failure
 
     if is_running():
         _echo_stdout_safe(f"Gateway already running (PID {read_pid()}).")
-        _write_watchdog_tick("already_running")
         raise typer.Exit(0)
 
     # Detect abnormal termination: pid file exists (was running) but process is dead.
@@ -56,15 +53,14 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
     if _stale_pid is not None:
         _notify_gateway_problem(
             "Gateway abnormal termination detected",
-            f"Previous process (PID {_stale_pid}) died unexpectedly. Watchdog restarting.",
-            source="watchdog",
+            f"Previous process (PID {_stale_pid}) ended unexpectedly. Starting a new gateway.",
+            source="gateway_lifecycle",
         )
 
     # Port guard: if the port stays held throughout a short grace window with no
     # tracked gateway, attempt to auto-clean our own orphans before giving up.
     # This self-heals the common case where the supervisor died but the inner
-    # uvicorn survived and holds the port — the PT5M watchdog would otherwise
-    # reject every 5 minutes, flashing a console window each time on Win11.
+    # uvicorn survived and holds the port, preventing a later explicit start.
     if not wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=3.0):
         orphans = find_gateway_orphans()
         if orphans:
@@ -97,17 +93,26 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         _run_server(cfg)
     else:
         _echo_stdout_safe(f"Starting Aletheia gateway on http://{cfg.app.bind_host}:{cfg.app.dashboard_port} (background)...")
-        proc = _spawn_background(no_browser)
-        # Verify the detached gateway actually came up. Without this, Popen returns
-        # exit 0 the instant it forks — even when the supervisor immediately dies —
-        # so the PT2M watchdog records LastResult=0x0 ("success") on every tick
-        # while the gateway stays dead (the "False confidence" zombie: a dead
-        # gateway with green-looking schtasks history). Verifying turns the
-        # watchdog's success signal honest: a non-zero Exit here means the tick
-        # genuinely failed and the next tick will retry from a clean state.
-        _verify_started(proc, cfg)
-        _write_watchdog_tick("started")
-        _auto_register_watchdog(cfg)
+        from aletheia.gateway import managed_service
+        managed = managed_service.start(no_browser=no_browser)
+        if not managed.get("ok"):
+            reason = managed.get("reason", "service_start_failed")
+            detail = managed.get("detail")
+            message = f"Gateway service manager failed to start the gateway: {reason}"
+            if detail:
+                message += f" — {detail}"
+            _echo_safe(message)
+            raise typer.Exit(1)
+        # Registration is not success: require the managed gateway to serve both
+        # its readiness endpoint and Web UI before reporting a successful start.
+        try:
+            _verify_started(cfg)
+        except typer.Exit:
+            # A manager definition that failed readiness must not survive as a
+            # misleading registered service. The regular failed-start cleanup
+            # already terminates any partial gateway process tree.
+            managed_service.stop()
+            raise
         _auto_start_tunnel(cfg)
 
 
@@ -144,19 +149,15 @@ def _verify_api_ready_accessible(cfg) -> bool:
         return False
 
 
-_REPLACED_LAUNCHER_EXIT_CODES = {-signal.SIGTERM}
-
-
-def _verify_started(proc, cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -> None:
-    """Block until the detached gateway is confirmed up, or raise typer.Exit(1).
+def _verify_started(cfg, *, timeout: float = 60.0, poll_interval: float = 0.3) -> None:
+    """Block until the managed gateway is confirmed up, or raise typer.Exit(1).
 
     Four outcomes:
-      - proc exits before the gateway is up  → spawn died immediately; capture why.
       - pid file written + port listening     → confirmed up; verify WebUI accessible.
       - timeout with neither                   → never came up; capture why.
       - WebUI returns 404                      → static files missing (should be caught by preflight).
 
-    Timeout budget: this only has to cover the supervisor + inner-uvicorn process
+    Timeout budget: this only has to cover the manager-owned supervisor + inner-uvicorn process
     startup up to the port BIND — run_migrations + init_tool_registry + init_scheduler,
     then uvicorn opens the socket. The LLM provider probe (up to _PROBE_TIMEOUT_SEC
     PER provider) used to run inline BEFORE the bind and routinely blew past this
@@ -165,7 +166,7 @@ def _verify_started(proc, cfg, *, timeout: float = 60.0, poll_interval: float = 
     so the port binds promptly. 60s is a generous margin on slow-start hosts
     (cold migrations, cold filesystem cache, Windows Defender scan of a fresh
     process) — earlier 15s tripped `gateway_spawn_failed` on a healthy-but-slow
-    boot and the watchdog then killed the gateway it was supposed to protect.
+    boot and the lifecycle command then cleaned up a healthy-but-slow gateway.
     Do NOT couple this to the LLM probe budget — they are independent again.
 
     On failure, surface the tail of errors.log (the inner uvicorn's stderr sink)
@@ -174,16 +175,6 @@ def _verify_started(proc, cfg, *, timeout: float = 60.0, poll_interval: float = 
     import time
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        # The detached launcher process exiting non-zero before the gateway is up
-        # means the supervisor failed to take hold (import error, instant crash).
-        if proc is not None and proc.poll() is not None and proc.returncode != 0:
-            if proc.returncode not in _REPLACED_LAUNCHER_EXIT_CODES:
-                _fail_spawn(f"launcher exited with code {proc.returncode} before gateway came up")
-            # A git-hook restart and the OS watchdog can overlap. A newer restart
-            # deliberately sends SIGTERM to this launcher before its replacement
-            # binds the port. Keep waiting for that replacement; timeout still
-            # records a real failure if no healthy gateway takes over.
-            proc = None
         if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
             if not _verify_api_ready_accessible(cfg):
                 time.sleep(poll_interval)
@@ -210,8 +201,8 @@ def _verify_started(proc, cfg, *, timeout: float = 60.0, poll_interval: float = 
 def _stop_failed_gateway(cfg) -> None:
     """Stop a just-started gateway that failed spawn verification.
 
-    If we leave an API-only process running, the watchdog sees "already running"
-    and never retries, while users get a broken dashboard. Kill only the tracked
+    If we leave an API-only process running, a later explicit start sees it as
+    already running while users get a broken dashboard. Kill only the tracked
     Aletheia gateway tree, then clear the pid after the port is free.
     """
     try:
@@ -238,7 +229,7 @@ def _fail_spawn(reason: str) -> None:
     try:
         from aletheia.files.jsonl import write_audit
         write_audit({
-            "actor": "system", "source": "watchdog", "event_type": "gateway_spawn_failed",
+            "actor": "system", "source": "gateway_lifecycle", "event_type": "gateway_spawn_failed",
             "entity_type": "gateway", "entity_id": "gateway",
             "message": f"Gateway spawn failed: {reason}",
         })
@@ -248,7 +239,7 @@ def _fail_spawn(reason: str) -> None:
     _notify_gateway_problem(
         "Aletheia Gateway failed to start",
         reason,
-        source="watchdog",
+        source="gateway_lifecycle",
         error_log=True,
         audit=False,
     )
@@ -258,39 +249,6 @@ def _fail_spawn(reason: str) -> None:
         msg += f"\n--- errors.log (tail) ---\n{tail}"
     _echo_safe(msg)
     raise typer.Exit(1)
-
-
-def _write_watchdog_tick(action: str) -> None:
-    """Record a watchdog tick for diagnostics. Best-effort, never raises."""
-    try:
-        from aletheia.gateway.autostart import write_watchdog_tick
-        write_watchdog_tick(action)
-    except Exception:
-        pass
-
-
-def _auto_register_watchdog(cfg) -> None:
-    """Auto-register the autostart watchdog after a successful start.
-
-    Controlled by `runtime.autostart_on_start` (default True). This makes the
-    watchdog opt-out instead of opt-in — users no longer need to run
-    `enable-autostart` separately after `gateway start`.
-    """
-    if not getattr(cfg.runtime, "autostart_on_start", True):
-        return
-    try:
-        from aletheia.gateway import autostart
-        if not autostart.is_supported_platform():
-            return
-        # Skip if already registered (avoid re-register on every watchdog tick).
-        current = autostart.status()
-        if current.get("enabled") and current.get("config_valid") is not False:
-            return
-        result = autostart.enable(source="auto")
-        if result.get("ok"):
-            _echo_stdout_safe("Autostart watchdog registered automatically.")
-    except Exception:
-        pass  # auto-register is best-effort; never block gateway start
 
 
 def _run_server(cfg) -> None:
@@ -310,45 +268,6 @@ def _run_server(cfg) -> None:
     )
 
 
-def _spawn_background(no_browser: bool):
-    """Spawn a detached background process running the gateway. Returns the Popen.
-
-    The returned handle lets the caller verify the launcher didn't die instantly
-    (see _verify_started). It is the launcher process, not the supervisor — the
-    supervisor writes its own pid file, which is what is_running() checks.
-    """
-    import os
-    script = Path(__file__).resolve().parent.parent / "_gateway_runner.py"
-    real_python, env_patch = _resolve_real_python()
-    args = [real_python, str(script)]
-    if no_browser:
-        args.append("--no-browser")
-
-    if platform.system() == "Windows":
-        CREATE_NEW_PROCESS_GROUP = 0x00000200
-        DETACHED_PROCESS = 0x00000008
-        CREATE_NO_WINDOW = 0x08000000
-        popen_kwargs: dict = {
-            "creationflags": CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW,
-            "stdout": subprocess.DEVNULL,
-            "stderr": subprocess.DEVNULL,
-        }
-        if env_patch:
-            env = os.environ.copy()
-            env.update(env_patch)
-            popen_kwargs["env"] = env
-        proc = subprocess.Popen(args, **popen_kwargs)
-    else:
-        proc = subprocess.Popen(
-            args,
-            start_new_session=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    _echo_stdout_safe("Gateway started in background.")
-    return proc
-
-
 def do_stop() -> None:
     """Stop the gateway: tree-kill the supervisor (+ its uvicorn child), clean any
     orphaned uvicorn processes we previously spawned, and wait for the port to free.
@@ -357,6 +276,15 @@ def do_stop() -> None:
     inner uvicorn, which kept holding the port and made the next start crash-loop.
     """
     _auto_stop_tunnel()
+
+    # Ask the operating-system owner to stop and unregister the on-demand
+    # service before retaining the historical PID/orphan cleanup as a safety
+    # net for legacy launches or manager-specific child-process residue.
+    try:
+        from aletheia.gateway import managed_service
+        managed_service.stop()
+    except Exception:
+        pass
 
     cfg = load_config()
     port = cfg.app.dashboard_port
@@ -388,7 +316,7 @@ def do_stop() -> None:
         return
 
     # Wait for the port to actually release BEFORE clearing the pidfile, so a
-    # concurrent watchdog/start in the kill window still sees a tracked gateway
+    # concurrent start in the kill window still sees a tracked gateway
     # rather than "untracked but port held" → false-orphan misdiagnosis.
     freed = wait_port_free(port, host, timeout=5.0)
 
@@ -420,10 +348,9 @@ def do_stop() -> None:
 def _auto_deregister_watchdog() -> None:
     """Disable the OS autostart watchdog after a stop so the user's intent is honored.
 
-    The LaunchAgent / Task Scheduler job runs `gateway start` on a 60s interval;
-    leaving it active after a user-initiated stop would silently resurrect the
-    gateway within a minute. Re-registration happens automatically on the next
-    `gateway start` (see _auto_register_watchdog), so this is safe to call here.
+    The legacy LaunchAgent / Task Scheduler watchdog can otherwise resurrect the
+    gateway after an explicit stop. It is deliberately not re-registered by a
+    subsequent `gateway start`.
     """
     try:
         from aletheia.gateway import autostart
@@ -466,17 +393,18 @@ def do_status() -> None:
     typer.echo(f"Exchange: {exchange_label}")
     typer.echo(f"Live state: {cfg.live.state}")
     typer.echo(f"Permission: {cfg.agent.permission_mode}")
-    from aletheia.gateway.autostart import status as autostart_status
-    a = autostart_status()
-    if not a.get("supported"):
-        autostart_label = "not supported"
-    elif a.get("enabled") is True:
-        autostart_label = "enabled"
-    elif a.get("enabled") is False:
-        autostart_label = "disabled"
-    else:
-        autostart_label = f"unknown ({a.get('reason', 'error')})"
-    typer.echo(f"Autostart: {autostart_label}")
+    try:
+        from aletheia.gateway import managed_service
+        service = managed_service.status()
+        if service.get("managed") is True:
+            lifecycle_label = f"managed ({service.get('platform')})"
+        elif service.get("managed") is False:
+            lifecycle_label = "not registered"
+        else:
+            lifecycle_label = f"unknown ({service.get('reason', 'error')})"
+        typer.echo(f"Lifecycle: {lifecycle_label}")
+    except Exception:
+        typer.echo("Lifecycle: unknown (manager query failed)")
 
     try:
         from aletheia.gateway.tunnel import tunnel_status as _ts
@@ -545,7 +473,7 @@ def _echo_stdout_safe(msg: str) -> None:
 
     Under pythonw/detached mode, writing to stdout with no console handle can
     trigger Win11 console race-allocation. In headless mode we log instead.
-    This guards the watchdog's "already running" path which fires every 5 min.
+    This guards a managed service's "already running" status path.
     """
     if _is_headless():
         import logging
@@ -555,13 +483,13 @@ def _echo_stdout_safe(msg: str) -> None:
 
 
 def _audit_orphan_cleanup(orphan_pids: list[int]) -> None:
-    """Best-effort audit of watchdog self-healing orphan cleanup."""
+    """Best-effort audit of lifecycle orphan cleanup."""
     try:
         from aletheia.files.jsonl import write_audit
         write_audit({
-            "actor": "system", "source": "watchdog", "event_type": "orphan_cleanup",
+            "actor": "system", "source": "gateway_lifecycle", "event_type": "orphan_cleanup",
             "entity_type": "gateway", "entity_id": "gateway",
-            "message": f"Watchdog auto-cleaned {len(orphan_pids)} orphan(s): {orphan_pids}",
+            "message": f"Lifecycle cleaned {len(orphan_pids)} orphan(s): {orphan_pids}",
         })
     except Exception:
         pass

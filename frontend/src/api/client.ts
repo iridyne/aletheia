@@ -469,7 +469,6 @@ export const api = {
     scheduler_enabled: boolean
     git_enabled: boolean
     auto_reload: boolean
-    autostart_on_start: boolean
     runtime_continuity_enabled: boolean
     runtime_continuity_lock_ttl_sec: number
     runtime_continuity_shadow_port_offset: number
@@ -526,20 +525,6 @@ export const api = {
     applied: boolean; reason?: string; old_commit?: string; new_commit?: string
     deps_reinstalled?: boolean; restart_required?: boolean; message?: string
   }>('/update/apply'),
-
-  // Autostart + watchdog (Windows Task Scheduler / macOS launchd)
-  getAutostartStatus: () => fetchJson<{
-    supported: boolean; enabled: boolean | null; task_name?: string
-    platform?: string; installed?: boolean; config_valid?: boolean | null
-    primed?: boolean | null; runs?: number; last_result?: string
-    trigger?: string; interval?: string; reason?: string | null; detail?: string
-  }>('/gateway/autostart'),
-  setAutostart: (enabled: boolean) => post<{
-    supported: boolean; enabled: boolean | null; ok?: boolean
-    platform?: string; installed?: boolean; config_valid?: boolean | null
-    primed?: boolean | null; runs?: number; last_result?: string
-    reason?: string | null; detail?: string
-  }>('/gateway/autostart', { enabled }),
 
   // Data
   getAgentRuns: () => fetchJson<any[]>('/agent-runs'),

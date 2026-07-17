@@ -54,7 +54,7 @@ export default function BackendConnectionGuard() {
   useEffect(() => {
     if (disconnected) {
       notifyBrowser('aletheia-backend-disconnected', 'Aletheia backend unreachable',
-        'The dashboard cannot reach /api/ready. The watchdog may be restarting the gateway.', lastNotified)
+        'The dashboard cannot reach /api/ready. Check gateway status or start it explicitly.', lastNotified)
     }
   }, [disconnected])
 

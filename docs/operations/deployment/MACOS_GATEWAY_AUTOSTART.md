@@ -1,4 +1,8 @@
-# macOS Gateway Autostart
+# Historical macOS gateway watchdog
+
+> Current builds no longer expose or install this watchdog. It remains documented
+> only to identify registrations created by older versions; `gateway stop` removes
+> it before stopping the new on-demand session service.
 
 ## Architecture
 
@@ -28,23 +32,15 @@ allows the detached supervisor to remain alive after the check process exits.
 - The plist is validated, written atomically, mode 0644, then loaded with
   `launchctl bootstrap gui/<uid>` and primed with `launchctl kickstart`.
 
-## Commands
-
-```bash
-uv run aletheia gateway enable-autostart
-uv run aletheia gateway status
-uv run aletheia doctor
-uv run aletheia gateway disable-autostart
-```
-
-`gateway start` also installs the watchdog automatically when
-`runtime.autostart_on_start=true`.
+For the normal explicit start/stop lifecycle, use
+[Gateway session service](GATEWAY_SESSION_SERVICE.md). Do not recreate this
+periodic job.
 
 ## Honest States
 
 - `enabled=true`: `launchctl print gui/<uid>/<label>` confirms the job is loaded.
-- `installed=true, enabled=false, reason=not_loaded`: plist exists but launchd is
-  not supervising it; reinstall with `enable-autostart`.
+- `installed=true, enabled=false, reason=not_loaded`: an old plist exists but
+  launchd is not supervising it; it can be removed safely.
 - `config_valid=false`: loaded/file definition points at a stale interpreter or
   project path; reinstall after moving the checkout or rebuilding `.venv`.
 - `primed=false`: launchd has not completed a successful check yet.
@@ -55,15 +51,8 @@ The periodic process normally reports `state = not running`: that means the
 short check exited, not that autostart is broken. `runs > 0` and last exit code 0
 are the successful periodic-job evidence.
 
-## Verification
+## Migration
 
-After installation:
-
-1. Confirm `doctor` reports `process.autostart` as `ok` via launchd.
-2. Stop only the gateway using `uv run aletheia gateway stop`.
-3. Wait at most 90 seconds and confirm the gateway returns on `:8787`.
-4. Confirm `gateway status` and `doctor` still report live disabled unless a human
-   explicitly changed it.
-
-Disabling autostart intentionally prevents step 3; it does not stop an already
-running gateway.
+Run `uv run aletheia gateway stop` once to unregister the old watchdog, then use
+`gateway start` for an on-demand session. The gateway will not return after a
+stop unless an operator explicitly starts it.

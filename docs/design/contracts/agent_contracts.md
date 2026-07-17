@@ -63,13 +63,17 @@ Learning does not erase or delay outcome truth. The evaluator never changes stag
 the lifecycle controller is a separate gated consumer. Successful/failed/skipped runs and reviewer
 backlog health are persisted in `learning_job_health`.
 
-### OS Watchdog Contract
+### OS Session-service Contract
 
-- Windows: per-user Task Scheduler entry, logon trigger plus 1-minute repetition.
-- macOS: per-user LaunchAgent `com.aletheia.trading-os.gateway`, `RunAtLoad` plus 60-second `StartInterval`.
-- Both invoke the same idempotent `gateway start --no-browser`; neither bypasses live, risk, permission, or credential gates.
-- The macOS plist uses an absolute venv interpreter and project working directory, stores no environment variables/secrets, and uses `AbandonProcessGroup` so the detached supervisor survives the short watchdog command.
-- `status()` queries the live OS service manager. A plist file without a loaded job, a loaded job with stale paths, and an unreadable state are distinct results.
+- `gateway start` creates an on-demand user service on the current platform:
+  launchd on macOS, a systemd user transient service on Linux, or an on-demand
+  Task Scheduler task on Windows.
+- The service runs the foreground gateway runner and has no login trigger,
+  interval, `KeepAlive`, or `Restart` policy. It neither bypasses live, risk,
+  permission, nor credential gates.
+- `gateway stop` stops and removes that service. `status()` queries the live OS
+  service manager and distinguishes an absent registration from an unreadable
+  manager state.
 
 ---
 

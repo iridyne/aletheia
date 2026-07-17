@@ -9,7 +9,7 @@ Use this directory for procedural instructions: running the gateway, local devel
 |---|---|
 | `runbooks/` | Daily operations and SOPs |
 | `development/` | Local setup, tests, worktree preview, pytest optimization |
-| `deployment/` | Gateway lifecycle, autostart, release/deployment notes |
+| `deployment/` | [Gateway session service](deployment/GATEWAY_SESSION_SERVICE.md), legacy autostart, release/deployment notes |
 | `recovery/` | Data reload and outcome-history remediation |
 | `architecture/` | Stability target architecture for operations |
 | `records/` | Dated operational recovery records |

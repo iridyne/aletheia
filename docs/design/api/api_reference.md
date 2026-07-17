@@ -39,7 +39,7 @@ These endpoints cross a [trust boundary](../../governance/policies/trust_and_cha
 | `POST /settings/exchange-credentials` (+ binance/okx) | write-only; GET never returns raw secret | trust §6.3 secrets |
 | `POST /settings/permission-mode` · `/risk` | writes audit; cannot grant `FORBIDDEN_INTENTS` | [live_unlock_contract §6](../contracts/live_unlock_contract.md) |
 | `POST /proposals/{id}/approve-paper` · `/reject` | must preserve original proposal ID (no duplicate row); paper approval accepts only a `pending` proposal whose stored mode is already `paper_internal` and never rewrites exchange intent; isolated preview API returns `403 preview_execution_blocked` before mutation | [execution_contract §1](../contracts/execution_contract.md) |
-| `POST /gateway/autostart` · `/gateway/restart` · `/update/apply` · `/update/rollback` | May control machine-level gateway/code state only outside preview mode; preview returns a stable `403` before side effects | [Development preview](../../operations/development/DEVELOPMENT_PREVIEW.md) |
+| `POST /gateway/restart` · `/update/apply` · `/update/rollback` | May control machine-level gateway/code state only outside preview mode; preview returns a stable `403` before side effects | [Development preview](../../operations/development/DEVELOPMENT_PREVIEW.md) |
 
 ---
 
@@ -541,8 +541,6 @@ reconciled.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/gateway/autostart` | Live Windows Task Scheduler / macOS launchd watchdog state |
-| POST | `/gateway/autostart` | Human-triggered watchdog install/remove |
 | POST | `/gateway/restart` | Restart gateway processes |
 
 ---

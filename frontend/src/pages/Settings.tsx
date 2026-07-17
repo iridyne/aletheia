@@ -41,7 +41,7 @@ const TABS: { id: Tab; label: string; description: string }[] = [
   { id: 'execution', label: 'Execution',           description: 'Exchange, credentials, live state, and paper fills' },
   { id: 'risk',      label: 'Risk & Universe',     description: 'Risk limits, tradable symbols, and universe board' },
   { id: 'health',    label: 'Health & Alerts',     description: 'Self-heal, startup gates, and notifications' },
-  { id: 'runtime',   label: 'Runtime & System',    description: 'App shell, updates, autostart, retention, and network' },
+  { id: 'runtime',   label: 'Runtime & System',    description: 'App shell, updates, retention, and network' },
   { id: 'signals',   label: 'Signals',             description: 'Market data sources, news feeds, macro signals, and observed assets' },
   { id: 'advanced',  label: 'Advanced',            description: 'Read-only configuration coverage and diagnostics' },
 ]
@@ -3238,7 +3238,7 @@ function SignalsTab({ settings, qc, onDirty }: any) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RUNTIME & SYSTEM TAB — display, app, retention, updates, autostart, network
+// RUNTIME & SYSTEM TAB — display, app, retention, updates, network
 // ─────────────────────────────────────────────────────────────────────────────
 
 function RuntimeSystemTab({ settings, qc, onDirty }: any) {
@@ -3264,10 +3264,6 @@ function RuntimeSystemTab({ settings, qc, onDirty }: any) {
 
       <Section title="Software Updates" description="On-demand self-upgrade via git pull. Never runs automatically.">
         <UpdateCard settings={settings} qc={qc} />
-      </Section>
-
-      <Section title="Autostart" description="Start the gateway automatically when you log in to Windows.">
-        <AutostartCard qc={qc} />
       </Section>
 
       <Section title="Network Proxy" description="Route all outbound traffic (exchange, market data, news, LLM) through a managed proxy. Set the protocol/host/port, and enable Enforce to require the proxy (fail-closed) so a proxy outage never leaks your real IP.">
@@ -3369,9 +3365,6 @@ function AppRows({ settings, qc }: any) {
           safeRuntimeMut({ auto_reload: v })
         }} disabled={runtimeMut.isPending} />
       </Row>
-      <Row label="Enable autostart on gateway start" hint="When enabled, gateway start registers the Windows Task Scheduler or macOS launchd watchdog.">
-        <Toggle checked={runtime.autostart_on_start !== false} onChange={v => safeRuntimeMut({ autostart_on_start: v })} disabled={runtimeMut.isPending} />
-      </Row>
       <Row label="Runtime continuity" hint="Experimental: enables shadow gateway staging for zero-disruption upgrades. When off, updates use legacy restart.">
         <Toggle checked={!!runtime.runtime_continuity_enabled} onChange={v => safeRuntimeMut({ runtime_continuity_enabled: v })} disabled={runtimeMut.isPending} />
       </Row>
@@ -3401,7 +3394,7 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'learning.paper_influence_enabled', 'learning.paper_influence_paths',
     'learning.auto_refreeze', 'learning.evaluation_interval_minutes',
     'learning.paper_active_allocation_pct',
-    'runtime.scheduler_enabled', 'runtime.git_enabled', 'runtime.auto_reload', 'runtime.autostart_on_start',
+    'runtime.scheduler_enabled', 'runtime.git_enabled', 'runtime.auto_reload',
     'runtime.runtime_continuity_enabled', 'runtime.runtime_continuity_lock_ttl_sec', 'runtime.runtime_continuity_shadow_port_offset',
     'app.auto_open_browser',
     'exchange.mode', 'exchange.enabled_markets.spot', 'exchange.enabled_markets.usdt_futures', 'exchange.paper_execution_mode',
@@ -3951,54 +3944,6 @@ function UpdateCard({ settings, qc }: any) {
         <button className="secondary" onClick={() => cfgMut.mutate()} disabled={cfgMut.isPending}>{cfgMut.isPending ? 'Saving…' : 'Save config'}</button>
       </div>
       <SaveMsg msg={cfgMsg} />
-    </div>
-  )
-}
-
-// ─── Autostart ───
-
-function AutostartCard({ qc }: any) {
-  const { data, isLoading } = useQuery({ queryKey: ['autostart'], queryFn: api.getAutostartStatus })
-  const [msg, setMsg] = useState('')
-  const mut = useMutation({
-    mutationFn: (enabled: boolean) => api.setAutostart(enabled),
-    onSuccess: (r) => {
-      setMsg(r.ok === false ? `Failed: ${r.reason}${r.detail ? ` — ${r.detail}` : ''}` : r.enabled ? 'Enabled.' : 'Disabled.')
-      qc.invalidateQueries({ queryKey: ['autostart'] })
-    },
-  })
-
-  const supported = data?.supported
-  const enabled = data?.enabled
-  const needsAttention = enabled === true && (data?.config_valid === false || data?.primed !== true)
-
-  let badge = <span className="badge">checking…</span>
-  if (!isLoading && data) {
-    if (!supported) badge = <span className="badge badge-yellow">Not Available</span>
-    else if (needsAttention) badge = <span className="badge badge-yellow">Needs Attention</span>
-    else if (enabled === true) badge = <span className="badge badge-green">Enabled</span>
-    else if (enabled === false) badge = <span className="badge badge-muted">Disabled</span>
-    else badge = <span className="badge badge-red">Unknown</span>
-  }
-
-  return (
-    <div className="card mb-0">
-      <div className="flex items-center gap-3 flex-wrap">
-        {badge}
-        {supported === false ? (
-          <span className="hint m-0">Not available{data?.reason ? ` (${data.reason})` : ''}. Supports Windows Task Scheduler and macOS launchd.</span>
-        ) : (
-          <>
-            {enabled === true && <button className="secondary" onClick={() => mut.mutate(false)} disabled={mut.isPending}>Disable</button>}
-            {enabled === false && <button onClick={() => mut.mutate(true)} disabled={mut.isPending}>Enable</button>}
-            {enabled === null && <span className="hint" style={{ color: 'var(--yellow)', margin: 0 }}>Could not read task state{data?.reason ? ` (${data.reason})` : ''}</span>}
-            {needsAttention && <span className="hint m-0">Loaded but not verified{data?.reason ? ` (${data.reason})` : ''}{data?.last_result ? `, last result ${data.last_result}` : ''}.</span>}
-            <button className="secondary" onClick={() => qc.invalidateQueries({ queryKey: ['autostart'] })}>Re-check</button>
-          </>
-        )}
-        {msg && <span className="hint m-0">{msg}</span>}
-      </div>
-      <p className="hint mt-2">Starts the gateway on login and checks it every 1 min. Runs the same gated start; live trading stays disabled.</p>
     </div>
   )
 }

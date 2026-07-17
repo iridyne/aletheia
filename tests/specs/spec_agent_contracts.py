@@ -205,24 +205,22 @@ def test_scheduler_job_ids_unique():
 
 @spec_claim(
     SpecClaim(
-        "AC-S11", "agent_contracts", "§1 OS watchdog", "L2c",
-        "Gateway autostart supports Windows Task Scheduler and macOS launchd; the "
-        "macOS user agent runs the same gated start every 60 seconds without "
-        "KeepAlive or credential-bearing environment variables.",
+        "AC-S11", "agent_contracts", "§1 OS session service", "L2c",
+        "Gateway start uses an on-demand OS user service; the macOS definition "
+        "runs the foreground runner without KeepAlive, login scheduling, or "
+        "credential-bearing environment variables.",
         status="implemented",
     ),
 )
-def test_gateway_autostart_has_safe_macos_launchd_contract():
-    from aletheia.gateway import autostart
+def test_gateway_session_service_has_safe_macos_launchd_contract():
+    from aletheia.gateway import managed_service
 
-    payload = autostart._build_launchd_plist()
-    assert payload["StartInterval"] == 60
-    assert payload["RunAtLoad"] is True
-    assert payload["AbandonProcessGroup"] is True
-    assert payload["ProgramArguments"][-3:] == [
-        "gateway", "start", "--no-browser",
-    ]
+    payload = managed_service._build_macos_plist(no_browser=True)
+    assert payload["ProgramArguments"][-2].endswith("_gateway_runner.py")
+    assert payload["ProgramArguments"][-1] == "--no-browser"
     assert "KeepAlive" not in payload
+    assert "RunAtLoad" not in payload
+    assert "StartInterval" not in payload
     assert "EnvironmentVariables" not in payload
 
 
