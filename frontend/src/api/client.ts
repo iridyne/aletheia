@@ -585,7 +585,7 @@ export const api = {
     post<{ updated: Record<string, any> }>('/settings/app', body),
   updatePiDaemonConfig: (body: Partial<{ enabled: boolean; debounce_sec: number; cooldown_sec: number; heartbeat_sec: number }>) =>
     post<{ updated: Record<string, any> }>('/settings/pi_daemon', body),
-  updateSerenityConfig: (body: Partial<{ auto_promote: boolean; min_score_for_pi: number }>) =>
+  updateSerenityConfig: (body: Partial<{ enabled: boolean; auto_promote: boolean; min_score_for_pi: number; stop_loss_pct: number; max_hold_days: number }>) =>
     post<{ updated: Record<string, any> }>('/settings/serenity', body),
   updateControllerConfig: (body: Partial<{ shadow_enabled: boolean; observe_interval_hours: number; min_samples_gate: number; max_step: number }>) =>
     post<{ updated: Record<string, any> }>('/settings/controller', body),

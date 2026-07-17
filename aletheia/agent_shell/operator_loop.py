@@ -808,6 +808,10 @@ _ICT_RESEARCH_BRIEF = (
 
 
 def _action_trigger_strategy_research(action: OperatorAction) -> dict:
+    from aletheia.config.loader import load_config as _load_config
+    if not _load_config().serenity.enabled:
+        return {"action": "trigger_strategy_research", "status": "skipped",
+                "reason": "serenity disabled"}
     if _count_actions_today("trigger_strategy_research") >= _MAX_RESEARCH_TRIGGERS_PER_DAY:
         return {"action": "trigger_strategy_research", "status": "rate_limited",
                 "reason": f"already triggered {_MAX_RESEARCH_TRIGGERS_PER_DAY}x today"}

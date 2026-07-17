@@ -998,6 +998,7 @@ class SerenityConfig(BaseModel):
     (PI remains sole trade-decision maker). auto_promote is default OFF;
     manual-only promotion preserves the human-curator workflow.
     """
+    enabled: bool = False
     auto_promote: bool = False
     min_score_for_pi: int = 72
     # Phase 4 — long-horizon holding parameters. Wider than the short-term defaults

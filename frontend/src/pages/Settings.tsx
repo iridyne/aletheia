@@ -524,6 +524,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
   const piDaemon = (settings?.pi_daemon ?? {}) as any
   const piDaemonEnabled = piDaemon.enabled !== false
   const serenity = (settings?.serenity ?? {}) as any
+  const serenityEnabled = !!serenity.enabled
   const serenityAutoPromote = !!serenity.auto_promote
   const serenityMinScore = Number(serenity.min_score_for_pi ?? 72)
   const serenityStopLossPct = Number(serenity.stop_loss_pct ?? 8.0)
@@ -828,6 +829,16 @@ function AgentModelsTab({ status, settings, qc }: any) {
         title="Serenity Research"
         description="Long-horizon industrial-chain analyst lens. Promoting a theme enqueues its opportunities into the System Operator evaluation queue (the System Operator remains sole trade-decision maker)."
       >
+        <Row
+          label="Serenity Lens enabled"
+          hint="Master switch. When OFF, the scheduler skips all Serenity research runs (evidence collection, theme clustering, opportunity generation). Existing data is preserved."
+        >
+          <Toggle
+            checked={serenityEnabled}
+            onChange={v => serenityMut.mutate({ enabled: v })}
+            disabled={serenityMut.isPending}
+          />
+        </Row>
         <Row
           label="Auto-promote candidate themes"
           hint="When ON, research_worker auto-promotes themes that produce a 'candidate_position' bucket opportunity (score ≥ min below, 0 fail gates). When OFF, promotion is manual-only."

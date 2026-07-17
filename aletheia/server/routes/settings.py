@@ -578,6 +578,7 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
 # ---------------------------------------------------------------------------
 
 class SerenityConfigUpdate(SettingsRequest):
+    enabled: Optional[bool] = None
     auto_promote: Optional[bool] = None
     min_score_for_pi: Optional[int] = None
     stop_loss_pct: Optional[float] = None

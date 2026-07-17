@@ -691,7 +691,7 @@ def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
 
 def _run_serenity_startup_catchup() -> None:
     cfg = load_config()
-    if cfg.runtime.paused:
+    if cfg.runtime.paused or not cfg.serenity.enabled:
         return
     try:
         result = _enqueue_serenity_research_if_due()
@@ -1382,12 +1382,15 @@ def _run_dreaming_agent():
     # Step 1: Serenity research pipeline (evidence collection, theme clustering, opps).
     # The durable CST batch key makes the daily cron and startup catch-up converge
     # on one attempt instead of duplicating research after every gateway restart.
-    try:
-        result = _enqueue_serenity_research_if_due()
-        logger.info("dreaming_agent: Serenity research %s", result["status"])
-    except Exception as e:
-        logger.warning("dreaming_agent: serenity research enqueue failed: %s", e)
-        _record_job_failure("dreaming_daily", str(e))
+    if cfg.serenity.enabled:
+        try:
+            result = _enqueue_serenity_research_if_due()
+            logger.info("dreaming_agent: Serenity research %s", result["status"])
+        except Exception as e:
+            logger.warning("dreaming_agent: serenity research enqueue failed: %s", e)
+            _record_job_failure("dreaming_daily", str(e))
+    else:
+        logger.debug("dreaming_agent: Serenity research skipped (disabled)")
 
     # Step 2: Lesson extraction — mines actionable lessons from recent trade case studies
     # and writes them to ps_lessons (proposed). lesson_reviewer at 03:00 then reviews
