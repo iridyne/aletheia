@@ -22,12 +22,11 @@ import { useDecimals, setDecimals, fmtNum, DECIMAL_BOUNDS, humanize, humanizeBoo
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full']
-const ALL_PROVIDERS = ['openai_compatible', 'anthropic_compatible', 'anthropic_native', 'openai_native', 'claude_cli', 'codex_cli'] as const
+const ALL_PROVIDERS = ['openai_compatible', 'anthropic_native', 'openai_native', 'claude_cli', 'codex_cli'] as const
 const HTTP_PROVIDERS = new Set(['openai_compatible', 'anthropic_compatible', 'anthropic_native', 'openai_native'])
 const NATIVE_PROVIDERS = new Set(['anthropic_native', 'openai_native'])
 const PROVIDER_LABELS: Record<string, string> = {
-  openai_compatible: 'OpenAI Compatible',
-  anthropic_compatible: 'Anthropic Compatible',
+  openai_compatible: 'API',
   anthropic_native: 'Claude OAuth (Experimental)',
   openai_native: 'OpenAI OAuth (Experimental)',
   codex_cli: 'Codex CLI',
@@ -3984,21 +3983,46 @@ function ModelProviderCard({ qc }: any) {
         <span>Deep (decisions): <span style={{ color: 'var(--text)' }}>{deepName || routingFallback}</span></span>
         <span>Fast (research): <span style={{ color: 'var(--text)' }}>{fastName || routingFallback}</span></span>
       </div>
-      {ALL_PROVIDERS.map(p => (
+      {ALL_PROVIDERS.map(p => {
+        // The 'openai_compatible' card is the merged API card: it manages both
+        // openai_compatible and anthropic_compatible backend slots.
+        const anthroConfig = p === 'openai_compatible' ? data.providers?.anthropic_compatible : undefined
+
+        // Pick health from whichever backend is currently active for the merged card.
+        let cardHealth: any
+        if (p === 'openai_compatible') {
+          const oCfg = data.providers?.openai_compatible
+          const aCfg = data.providers?.anthropic_compatible
+          const oH = (health as any[]).find(x => x.provider === 'openai_compatible')
+          const aH = (health as any[]).find(x => x.provider === 'anthropic_compatible')
+          const anthroActive = (aCfg?.base_url || aCfg?.api_key?.configured) && !(oCfg?.base_url || oCfg?.api_key?.configured)
+          cardHealth = anthroActive ? aH : oH
+        } else {
+          cardHealth = (health as any[]).find(x => x.provider === p)
+        }
+
+        // Routing badges: either backend slot may carry the role for the merged card.
+        const cardIsDefault = p === data.default_provider || (p === 'openai_compatible' && data.default_provider === 'anthropic_compatible')
+        const cardIsDeep = p === deepName || (p === 'openai_compatible' && deepName === 'anthropic_compatible')
+        const cardIsFast = p === fastName || (p === 'openai_compatible' && fastName === 'anthropic_compatible')
+
+        return (
         <ProviderCard
           key={p}
           name={p}
           config={data.providers?.[p]}
-          health={(health as any[]).find(x => x.provider === p)}
+          anthroConfig={anthroConfig}
+          health={cardHealth}
           allHealth={health as any[]}
-          isDefault={p === data.default_provider}
-          isDeep={p === deepName}
-          isFast={p === fastName}
+          isDefault={cardIsDefault}
+          isDeep={cardIsDeep}
+          isFast={cardIsFast}
           isExpanded={expanded === p}
           onToggle={() => setExpanded(expanded === p ? null : p)}
           qc={qc}
         />
-      ))}
+        )
+      })}
     </div>
   )
 }
@@ -4022,17 +4046,24 @@ function ModelPingButton({ configured }: { configured: boolean }) {
   )
 }
 
-function ProviderCard({ name, config, health, allHealth, isDefault, isDeep, isFast, isExpanded, onToggle, qc }: {
-  name: string; config: any; health: any; allHealth: any[]; isDefault: boolean; isDeep: boolean; isFast: boolean
+function ProviderCard({ name, config, anthroConfig, health, allHealth, isDefault, isDeep, isFast, isExpanded, onToggle, qc }: {
+  name: string; config: any; anthroConfig?: any; health: any; allHealth: any[]; isDefault: boolean; isDeep: boolean; isFast: boolean
   isExpanded: boolean; onToggle: () => void; qc: any
 }) {
   const isHTTP = HTTP_PROVIDERS.has(name)
   const isOAuth = OAUTH_PROVIDERS.has(name)
   const isCLI = !isHTTP
-  const enabled = config?.enabled === true
+  // Merged API card: enabled if either backend slot is active.
+  const enabled = name === 'openai_compatible'
+    ? (config?.enabled === true || anthroConfig?.enabled === true)
+    : config?.enabled === true
 
+  // Toggle the backend slot that is actually active.
+  const effectiveToggleProvider = (name === 'openai_compatible' && anthroConfig?.enabled === true && config?.enabled !== true)
+    ? 'anthropic_compatible'
+    : name
   const toggleEnabled = useMutation({
-    mutationFn: (next: boolean) => api.setModelProvider({ provider: name, enabled: next }),
+    mutationFn: (next: boolean) => api.setModelProvider({ provider: effectiveToggleProvider, enabled: next }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model'] })
       qc.invalidateQueries({ queryKey: ['model-health'] })
@@ -4043,7 +4074,7 @@ function ProviderCard({ name, config, health, allHealth, isDefault, isDeep, isFa
   // Status resolution
   let statusColor: string = 'var(--muted)'
   let statusText = 'not configured'
-  const keyConfigured = isHTTP && config?.api_key?.configured
+  const keyConfigured = isHTTP && (config?.api_key?.configured || (name === 'openai_compatible' && anthroConfig?.api_key?.configured))
   const oauthConfigured = isOAuth && config?.oauth?.configured
   const hasCredential = keyConfigured || oauthConfigured
   if (!enabled) { statusColor = 'var(--muted)'; statusText = 'disabled' }
@@ -4055,11 +4086,12 @@ function ProviderCard({ name, config, health, allHealth, isDefault, isDeep, isFa
   else if (health && !health.available) { statusColor = 'var(--red)'; statusText = health.error || 'unreachable' }
   else if (hasCredential && !health) { statusColor = 'var(--yellow)'; statusText = 'checking…' }
 
-  // Summary line
+  // Summary line — prefer the configured slot for base_url / model / key display.
+  const displayConfig = (name === 'openai_compatible' && !config?.base_url && anthroConfig?.base_url) ? anthroConfig : config
   const details: string[] = []
-  if (isHTTP && !NATIVE_PROVIDERS.has(name) && config?.base_url) details.push(config.base_url)
-  if (config?.model && config.model !== 'default') details.push(`model: ${config.model}`)
-  if (isHTTP && config?.api_key?.configured) details.push(`key: ··${config.api_key.last4}`)
+  if (isHTTP && !NATIVE_PROVIDERS.has(name) && displayConfig?.base_url) details.push(displayConfig.base_url)
+  if (displayConfig?.model && displayConfig.model !== 'default') details.push(`model: ${displayConfig.model}`)
+  if (isHTTP && displayConfig?.api_key?.configured) details.push(`key: ··${displayConfig.api_key.last4}`)
   if (isCLI && health?.model) details.push(`model: ${health.model}`)
 
   return (
@@ -4143,7 +4175,7 @@ function ProviderCard({ name, config, health, allHealth, isDefault, isDeep, isFa
           ) : name === 'anthropic_native' ? (
             <ClaudeOAuthPanel config={config} health={health} qc={qc} />
           ) : isHTTP ? (
-            <HTTPProviderForm name={name} config={config} isDefault={isDefault} isDeep={isDeep} isFast={isFast} qc={qc} />
+            <HTTPProviderForm name={name} config={config} anthroConfig={anthroConfig} isDefault={isDefault} isDeep={isDeep} isFast={isFast} qc={qc} />
           ) : name === 'codex_cli' ? (
             <CodexCLIPanel config={config} health={health} qc={qc} />
           ) : (
@@ -4164,29 +4196,60 @@ const TIER_COLORS: Record<string, string> = {
   reasoning: 'var(--blue)',
 }
 
-function HTTPProviderForm({ name, config, isDefault, isDeep, isFast, qc }: {
-  name: string; config: any; isDefault: boolean; isDeep: boolean; isFast: boolean; qc: any
+function HTTPProviderForm({ name, config, anthroConfig, isDefault, isDeep, isFast, qc }: {
+  name: string; config: any; anthroConfig?: any; isDefault: boolean; isDeep: boolean; isFast: boolean; qc: any
 }) {
-  const [baseUrl, setBaseUrl] = useState(() => config?.base_url || '')
-  const [model, setModel] = useState(() => config?.model || '')
-  const [protocol, setProtocol] = useState(() => config?.protocol || 'chat_completions')
-  const [authScheme, setAuthScheme] = useState(() => config?.auth_scheme || 'x-api-key')
+  const isNative = NATIVE_PROVIDERS.has(name)
+
+  // For the merged API card (name === 'openai_compatible'), determine which backend
+  // slot is currently active so we can pre-fill the form correctly.
+  const anthroIsActive = name === 'openai_compatible' &&
+    !!(anthroConfig?.base_url || anthroConfig?.api_key?.configured) &&
+    !(config?.base_url || config?.api_key?.configured)
+  const activeConfig = anthroIsActive ? anthroConfig : config
+
+  const [protocol, setProtocol] = useState<string>(() => {
+    if (anthroIsActive) return 'anthropic_messages'
+    return activeConfig?.protocol || 'chat_completions'
+  })
+  const [baseUrl, setBaseUrl] = useState(() => activeConfig?.base_url || '')
+  const [model, setModel] = useState(() => activeConfig?.model || '')
+  const [authScheme, setAuthScheme] = useState(() => anthroConfig?.auth_scheme || 'x-api-key')
   const [apiKey, setApiKey] = useState('')
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [detectedModels, setDetectedModels] = useState<{ slug: string; display_name: string; tier?: string; context_window?: number }[] | null>(null)
   const [modelFocused, setModelFocused] = useState(false)
   const [modelEditing, setModelEditing] = useState(false)
 
-  const isNative = NATIVE_PROVIDERS.has(name)
-  const isAnthropic = name === 'anthropic_compatible'
-  const isOpenAI = name === 'openai_compatible'
+  // Derived: which backend provider does the current protocol map to?
+  const isAnthropicMode = protocol === 'anthropic_messages'
+  const backendProvider = isAnthropicMode ? 'anthropic_compatible' : (name === 'openai_compatible' ? 'openai_compatible' : name)
+
+  // When the user switches protocol, load the corresponding config slot's values.
+  const handleProtocolChange = (newProtocol: string) => {
+    setProtocol(newProtocol)
+    setResult(null)
+    setDetectedModels(null)
+    if (name === 'openai_compatible') {
+      if (newProtocol === 'anthropic_messages') {
+        if (anthroConfig?.base_url) setBaseUrl(anthroConfig.base_url)
+        if (anthroConfig?.model) setModel(anthroConfig.model)
+      } else {
+        if (config?.base_url) setBaseUrl(config.base_url)
+        if (config?.model) setModel(config.model)
+      }
+    }
+  }
+
+  // For API key badge: show the key hint from the active slot.
+  const activeApiKey = isAnthropicMode ? anthroConfig?.api_key : config?.api_key
 
   const detectMut = useMutation({
     mutationFn: async () => {
-      const body: any = { provider: name }
+      const body: any = { provider: backendProvider }
       if (!isNative) body.base_url = baseUrl || undefined
       if (apiKey) body.api_key = apiKey
-      if (isAnthropic) body.auth_scheme = authScheme
+      if (isAnthropicMode) body.auth_scheme = authScheme
       return api.detectModels(body)
     },
     onSuccess: (data) => {
@@ -4200,7 +4263,8 @@ function HTTPProviderForm({ name, config, isDefault, isDeep, isFast, qc }: {
 
   // Auto-detect models on mount when API key is already configured
   useEffect(() => {
-    if (config?.api_key?.configured) detectMut.mutate()
+    const keyConfigured = isAnthropicMode ? anthroConfig?.api_key?.configured : config?.api_key?.configured
+    if (keyConfigured) detectMut.mutate()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -4208,27 +4272,27 @@ function HTTPProviderForm({ name, config, isDefault, isDeep, isFast, qc }: {
     mutationFn: async () => {
       setResult(null)
       const testBody: any = {
-        provider: name,
+        provider: backendProvider,
         model: model || undefined,
         api_key: apiKey || undefined,
         probe: true,
       }
       if (!isNative) testBody.base_url = baseUrl || undefined
-      if (isOpenAI) testBody.protocol = protocol
-      if (isAnthropic) testBody.auth_scheme = authScheme
+      if (isAnthropicMode) testBody.auth_scheme = authScheme
+      else testBody.protocol = protocol
 
       const test = await api.testModelCandidate(testBody)
       if (!test.available) throw new Error(test.error || 'provider unreachable')
 
       const saveBody: any = {
-        provider: name,
+        provider: backendProvider,
         enabled: true,
         ...(model ? { model } : {}),
         ...(apiKey ? { api_key: apiKey } : {}),
       }
       if (!isNative && baseUrl) saveBody.base_url = baseUrl
-      if (isOpenAI) saveBody.protocol = protocol
-      if (isAnthropic) saveBody.auth_scheme = authScheme
+      if (isAnthropicMode) saveBody.auth_scheme = authScheme
+      else saveBody.protocol = protocol
 
       await api.setModelProvider(saveBody)
       return test
@@ -4244,15 +4308,15 @@ function HTTPProviderForm({ name, config, isDefault, isDeep, isFast, qc }: {
   })
 
   const setDefault = useMutation({
-    mutationFn: () => api.setModelProvider({ provider: name, enabled: true, default: true }),
+    mutationFn: () => api.setModelProvider({ provider: backendProvider, enabled: true, default: true }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
   })
 
   const setRoutingRole = useMutation({
     mutationFn: (role: string) => {
-      if (role === 'default') return api.setModelProvider({ provider: name, enabled: true, default: true })
-      if (role === 'deep') return api.setModelProvider({ provider: name, enabled: true, set_as_deep: true })
-      return api.setModelProvider({ provider: name, enabled: true, set_as_fast: true })
+      if (role === 'default') return api.setModelProvider({ provider: backendProvider, enabled: true, default: true })
+      if (role === 'deep') return api.setModelProvider({ provider: backendProvider, enabled: true, set_as_deep: true })
+      return api.setModelProvider({ provider: backendProvider, enabled: true, set_as_fast: true })
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
   })
@@ -4325,16 +4389,17 @@ function HTTPProviderForm({ name, config, isDefault, isDeep, isFast, qc }: {
           </div>
         )}
       </label>
-      {isOpenAI && (
+      {!isNative && (
         <label>
           Protocol
-          <select value={protocol} onChange={e => { setProtocol(e.target.value); setResult(null) }}>
-            <option value="chat_completions">chat_completions</option>
-            <option value="responses">responses</option>
+          <select value={protocol} onChange={e => handleProtocolChange(e.target.value)}>
+            <option value="chat_completions">OpenAI – Chat Completions</option>
+            <option value="responses">OpenAI – Responses</option>
+            <option value="anthropic_messages">Anthropic Messages</option>
           </select>
         </label>
       )}
-      {isAnthropic && (
+      {isAnthropicMode && !isNative && (
         <label>
           Auth Scheme
           <select value={authScheme} onChange={e => { setAuthScheme(e.target.value); setResult(null); setDetectedModels(null) }}>
@@ -4343,13 +4408,13 @@ function HTTPProviderForm({ name, config, isDefault, isDeep, isFast, qc }: {
           </select>
         </label>
       )}
-      {!isOpenAI && !isAnthropic && !isNative && <div />}
+      {!isAnthropicMode && !isNative && <div />}
 
       {/* Row 3: API Key — full width */}
       <label className="col-full">
         API Key
-        {config?.api_key?.configured && <span className="badge badge-green" style={{ marginLeft: '0.4rem', fontSize: '0.62rem' }}>··{config.api_key.last4}</span>}
-        <input type="password" value={apiKey} placeholder={config?.api_key?.configured ? '•••••• (leave blank to keep)' : 'paste key'} onChange={e => { setApiKey(e.target.value); setResult(null) }} />
+        {activeApiKey?.configured && <span className="badge badge-green" style={{ marginLeft: '0.4rem', fontSize: '0.62rem' }}>··{activeApiKey.last4}</span>}
+        <input type="password" value={apiKey} placeholder={activeApiKey?.configured ? '•••••• (leave blank to keep)' : 'paste key'} onChange={e => { setApiKey(e.target.value); setResult(null) }} />
       </label>
 
       {/* Row 4: Actions — full width */}
