@@ -20,6 +20,16 @@ on:
       - "pyproject.toml"
       - "uv.lock"
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the signed runtime feed and installer to GitHub Pages
+        type: boolean
+        required: true
+        default: false
+
+env:
+  ALETHEIA_UPDATE_SITE_BASE_URL: https://iridite.github.io/aletheia
+  ALETHEIA_UPDATE_FEED_URL: https://iridite.github.io/aletheia/update-feed.json
 
 permissions:
   contents: read
@@ -31,7 +41,7 @@ concurrency:
 jobs:
   contracts:
     name: Packaged runtime contracts
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && fromJSON('["self-hosted","macOS","ARM64","aletheia-release"]') || 'ubuntu-24.04' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -50,12 +60,13 @@ jobs:
             tests/test_packaged_update_activation.py \
             tests/test_packaged_update_recovery.py \
             tests/test_packaged_update_routes.py \
+            tests/test_packaged_release_workflow.py \
             tests/test_macos_packaged_app.py \
             -q --tb=short
 
   macos-package:
     name: macOS arm64 self-contained CLI and tray app
-    runs-on: macos-15
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && fromJSON('["self-hosted","macOS","ARM64","aletheia-release"]') || 'macos-15' }}
     timeout-minutes: 60
     steps:
       - name: Check out exact source
@@ -106,6 +117,7 @@ jobs:
             tests/test_packaged_update_activation.py \
             tests/test_packaged_update_recovery.py \
             tests/test_packaged_update_routes.py \
+            tests/test_packaged_release_workflow.py \
             tests/test_macos_packaged_app.py \
             tests/test_release_data_dir.py \
             -q --tb=short
@@ -125,6 +137,41 @@ jobs:
           echo "core=$core" >> "$GITHUB_OUTPUT"
           echo "payload_dir=$PWD/build/pyinstaller/dist/aletheia-core" >> "$GITHUB_OUTPUT"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare signed release feed and installed trust root
+        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        shell: bash
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY_PEM: ${{ secrets.ALETHEIA_UPDATE_SIGNING_PRIVATE_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
+            echo "Signed releases may only be published from master." >&2
+            exit 1
+          fi
+          if [[ -z "$UPDATE_SIGNING_PRIVATE_KEY_PEM" ]]; then
+            echo "Repository secret ALETHEIA_UPDATE_SIGNING_PRIVATE_KEY_PEM is required." >&2
+            exit 1
+          fi
+          umask 077
+          private_key="$RUNNER_TEMP/update-signing-private-key.pem"
+          public_key="$RUNNER_TEMP/update-public-key.pem"
+          feed_url_file="$RUNNER_TEMP/update-feed-url.txt"
+          feed="$RUNNER_TEMP/update-feed.json"
+          printf '%s' "$UPDATE_SIGNING_PRIVATE_KEY_PEM" > "$private_key"
+          printf '%s\n' "$ALETHEIA_UPDATE_FEED_URL" > "$feed_url_file"
+          archive="${{ steps.payload.outputs.archive }}"
+          artifact_url="$ALETHEIA_UPDATE_SITE_BASE_URL/$(basename "$archive")"
+          uv run python scripts/release/sign_update_feed.py \
+            --archive "$archive" \
+            --artifact-url "$artifact_url" \
+            --private-key "$private_key" \
+            --public-key-output "$public_key" \
+            --output "$feed"
+          test -s "$public_key"
+          test -s "$feed"
+          chmod 600 "$private_key"
+          chmod 644 "$public_key" "$feed_url_file" "$feed"
 
       - name: Prove core CLI works without uv or system Python in command path
         shell: bash
@@ -228,10 +275,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv run python scripts/release/build_macos_app.py \
-            --payload-dir "${{ steps.payload.outputs.payload_dir }}" \
-            --host-bin-dir "$PWD/native/aletheia-host/target/release" \
+          args=(
+            --payload-dir "${{ steps.payload.outputs.payload_dir }}"
+            --host-bin-dir "$PWD/native/aletheia-host/target/release"
             --output-dir "$PWD/dist/macos-app"
+          )
+          if [[ -s "$RUNNER_TEMP/update-public-key.pem" && -s "$RUNNER_TEMP/update-feed-url.txt" ]]; then
+            args+=(
+              --public-key "$RUNNER_TEMP/update-public-key.pem"
+              --feed-url-file "$RUNNER_TEMP/update-feed-url.txt"
+            )
+          fi
+          uv run python scripts/release/build_macos_app.py "${args[@]}"
           test -x "$PWD/dist/macos-app/Aletheia.app/Contents/MacOS/aletheia-tray"
           test -x "$PWD/dist/macos-app/Aletheia.app/Contents/MacOS/aletheia"
 
@@ -250,6 +305,10 @@ jobs:
           mkdir -p "$ALETHEIA_DATA_DIR"
           "$app/Contents/MacOS/aletheia" __host status | tee "$RUNNER_TEMP/app-host-status.json"
           test -f "$ALETHEIA_HOST_ROOT/current.json"
+          if [[ -s "$RUNNER_TEMP/update-public-key.pem" ]]; then
+            cmp "$RUNNER_TEMP/update-public-key.pem" "$ALETHEIA_HOST_ROOT/update-public-key.pem"
+            cmp "$RUNNER_TEMP/update-feed-url.txt" "$ALETHEIA_HOST_ROOT/update-feed-url.txt"
+          fi
           "$app/Contents/MacOS/aletheia" version
           "$app/Contents/MacOS/ato" doctor --help >/dev/null
           "$app/Contents/MacOS/aletheia-tray" --smoke-test
@@ -290,6 +349,35 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Stage signed GitHub Pages release site
+        if: github.event_name == 'workflow_dispatch' && inputs.publish && steps.app_smoke.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          site="$PWD/dist/update-site"
+          rm -rf "$site"
+          mkdir -p "$site"
+          archive="${{ steps.payload.outputs.archive }}"
+          app_archive="$(find "$PWD/dist/macos-app" -maxdepth 1 -name 'Aletheia-*-darwin-arm64.zip' -print -quit)"
+          test -f "$archive"
+          test -f "$archive.sha256"
+          test -f "$app_archive"
+          test -f "$app_archive.sha256"
+          cp "$RUNNER_TEMP/update-feed.json" "$site/update-feed.json"
+          cp "$RUNNER_TEMP/update-public-key.pem" "$site/update-public-key.pem"
+          cp "$archive" "$archive.sha256" "$site/"
+          cp "$app_archive" "$app_archive.sha256" "$site/"
+          cp "$PWD/dist/macos-app/macos-app-report.json" "$site/"
+          touch "$site/.nojekyll"
+          uv run python -c 'import json, pathlib; envelope=json.loads(pathlib.Path("dist/update-site/update-feed.json").read_text()); assert envelope["schema_version"] == 1 and envelope["signed_payload"] and envelope["signature"]'
+          find "$site" -maxdepth 1 -type f -print
+
+      - name: Upload signed release site for GitHub Pages
+        if: github.event_name == 'workflow_dispatch' && inputs.publish && steps.app_smoke.outcome == 'success'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/update-site
+
       - name: Require packaged gateway, host, and app smoke
         if: always()
         shell: bash
@@ -297,3 +385,24 @@ jobs:
           test "${{ steps.gateway_smoke.outcome }}" = "success"
           test "${{ steps.host_smoke.outcome }}" = "success"
           test "${{ steps.app_smoke.outcome }}" = "success"
+
+  publish-pages:
+    name: Publish signed runtime feed
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: [contracts, macos-package]
+    runs-on: [self-hosted, macOS, ARM64, aletheia-release]
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages release endpoint
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Publish immutable runtime and signed feed
+        id: deployment
+        uses: actions/deploy-pages@v4

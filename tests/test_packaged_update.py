@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 import hashlib
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 import os
@@ -9,6 +11,7 @@ from pathlib import Path
 import stat
 import sys
 import tarfile
+import threading
 import time
 
 import pytest
@@ -100,6 +103,26 @@ def _archive_and_feed(tmp_path: Path, *, release_id: str = "0.5.1+abc123"):
     return result, feed_path, public_path
 
 
+@contextmanager
+def _http_origin(root: Path):
+    class QuietHandler(SimpleHTTPRequestHandler):
+        def log_message(self, _format, *_args):
+            pass
+
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        lambda *args, **kwargs: QuietHandler(*args, directory=str(root), **kwargs),
+    )
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        worker.join(timeout=5)
+        server.server_close()
+
+
 def _configure_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, feed: Path, public_key: Path):
     host = tmp_path / "host"
     data = tmp_path / "data"
@@ -134,6 +157,89 @@ def test_signed_feed_accepts_exact_payload_and_rejects_tampering(monkeypatch, tm
     tampered = packaged_commands.check_for_update()
     assert tampered["ok"] is False
     assert tampered["reason"] == "update_feed_signature_invalid"
+
+
+def test_signer_exports_the_public_key_matching_the_feed(tmp_path):
+    builder = _builder()
+    signer = _signer()
+    payload = _fake_payload(tmp_path / "payload")
+    archive = builder.package_existing_payload(
+        payload,
+        tmp_path / "dist",
+        git_sha="abc123" + "0" * 34,
+        version="0.5.1",
+        target=packaged.platform_id(),
+    ).archive
+    private_path, expected_public = _key_pair(tmp_path)
+    exported_public = tmp_path / "published-public.pem"
+
+    envelope = signer.signed_feed(
+        archive=archive,
+        artifact_url="https://updates.example.test/runtime.tar.gz",
+        private_key_path=private_path,
+        public_key_output=exported_public,
+        published_at="2026-07-16T00:00:00Z",
+    )
+
+    assert exported_public.read_bytes() == expected_public.read_bytes()
+    signed_payload = envelope["signed_payload"].encode("utf-8")
+    signature = base64.b64decode(envelope["signature"])
+    public_key = serialization.load_pem_public_key(exported_public.read_bytes())
+    public_key.verify(signature, signed_payload)
+
+
+def test_http_feed_downloads_and_installs_verified_runtime(monkeypatch, tmp_path):
+    builder = _builder()
+    signer = _signer()
+    payload = _fake_payload(tmp_path / "payload")
+    result = builder.package_existing_payload(
+        payload,
+        tmp_path / "site",
+        git_sha="abc123" + "0" * 34,
+        version="0.5.1",
+        target=packaged.platform_id(),
+    )
+    private_path, public_path = _key_pair(tmp_path)
+
+    with _http_origin(tmp_path / "site") as origin:
+        envelope = signer.signed_feed(
+            archive=result.archive,
+            artifact_url=f"{origin}/{result.archive.name}",
+            private_key_path=private_path,
+            release_id="0.5.1+httpfeed",
+            published_at="2026-07-16T00:00:00Z",
+        )
+        feed = tmp_path / "site" / "update-feed.json"
+        feed.write_text(json.dumps(envelope), encoding="utf-8")
+        host, _ = _configure_host(monkeypatch, tmp_path, feed, public_path)
+        monkeypatch.setenv("ALETHEIA_UPDATE_FEED_URL", f"{origin}/update-feed.json")
+
+        backup = tmp_path / "pre-update.tar.gz"
+        backup.write_bytes(b"verified-backup")
+
+        class FakeBackupService:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def create_backup(self, *, label: str):
+                assert label.startswith("pre_update_")
+                return backup
+
+        monkeypatch.setattr(packaged, "BackupService", FakeBackupService)
+        monkeypatch.setattr(
+            packaged,
+            "_preflight_candidate",
+            lambda candidate_root, **_kwargs: candidate_root,
+        )
+
+        staged = packaged_commands.stage_update_blocking()
+
+    assert staged["ok"] is True
+    assert staged["state"]["phase"] == "ready_to_switch"
+    installed = host / "releases" / "0.5.1+httpfeed"
+    assert (installed / "release-manifest.json").is_file()
+    request = json.loads((host / "update-request.json").read_text(encoding="utf-8"))
+    assert request["candidate_release"] == "0.5.1+httpfeed"
 
 
 def test_safe_facade_rejects_validly_signed_path_like_release_id(monkeypatch, tmp_path):
