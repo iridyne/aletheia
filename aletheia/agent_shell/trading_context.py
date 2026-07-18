@@ -333,28 +333,83 @@ def _build_pending_signal_queue(
         for row in rows
     ]
     unique = _dedupe_pending_identity(pending, limit=len(pending)) if pending else []
-    # Candidate-specific neutral defers must not hold the visible queue head.
-    # Move actively deferred carriers behind fresh work; changed candidate facts
-    # can still reopen immediately because command-side suppression also checks
-    # the material fingerprint, not merely this scheduling hint.
+    # Candidate-specific neutral defers must not hold the visible queue head,
+    # BUT a deferred carrier whose material features have refreshed since the
+    # defer is exactly the case the reopen path exists to catch — demoting it
+    # then also hides it below the top-N visible slice.
+    #
+    # Phase A (2026-07-19) — refined demotion:
+    #   * "stale defer" (deferred AND no fresher feature snapshot since defer)
+    #       → still demoted to the tail as before.
+    #   * "refreshed defer" (deferred AND a newer universe_feature_snapshot
+    #       exists for the symbol since the last defer event) → kept in its
+    #       oldest-first position so it interleaves with fresh work.
+    #
+    # A refreshed-defer keeps its position because Python's list.sort is stable
+    # and the input `unique` is already oldest-first; a key returning False for
+    # (fresh, refreshed-defer) and True for stale-defer only moves stale rows
+    # to the tail. Command-side fingerprint check (commands.py) then decides
+    # whether the LLM is actually invoked — this is a visibility/ordering fix,
+    # not an authority change.
     try:
         now_iso = datetime.now(timezone.utc).isoformat()
-        # Match any operator_decision_deferred_* kind so the low-conviction /
-        # debate-not-confirmed defers (Phase C, 2026-07-18) also demote their
-        # carriers behind fresh work. Without the LIKE, a low_conviction defer
-        # left its carrier at the head of the queue and reappeared every wake.
         deferred_rows = db.execute(
-            "SELECT json_extract(queue_snapshot_json, '$.opportunity_id') AS opportunity_id "
+            "SELECT json_extract(queue_snapshot_json, '$.opportunity_id') "
+            "         AS opportunity_id, "
+            "       MAX(created_at) AS deferred_at "
             "FROM operator_evaluation_events "
             "WHERE event_kind LIKE 'operator_decision_deferred_%' "
-            "AND json_extract(queue_snapshot_json, '$.defer_until') > ?",
+            "AND json_extract(queue_snapshot_json, '$.defer_until') > ? "
+            "GROUP BY json_extract(queue_snapshot_json, '$.opportunity_id')",
             (now_iso,),
         ).fetchall()
-        deferred_ids = {
-            str(row["opportunity_id"]) for row in deferred_rows if row["opportunity_id"]
-        }
-        if deferred_ids:
-            unique.sort(key=lambda row: row.get("opportunity_id") in deferred_ids)
+        deferred_at_by_id: dict[str, str] = {}
+        for row in deferred_rows:
+            opp_id = row["opportunity_id"]
+            if not opp_id:
+                continue
+            deferred_at_by_id[str(opp_id)] = str(row["deferred_at"] or "")
+
+        latest_feature_ts_by_symbol: dict[str, str] = {}
+        if deferred_at_by_id:
+            symbols_needing_check = {
+                str(row.get("symbol") or "")
+                for row in unique
+                if str(row.get("opportunity_id") or "") in deferred_at_by_id
+                and row.get("symbol")
+            }
+            if symbols_needing_check:
+                placeholders = ",".join("?" for _ in symbols_needing_check)
+                feature_rows = db.execute(
+                    f"SELECT r.symbol AS symbol, MAX(f.ts) AS latest_ts "
+                    f"FROM universe_registry r "
+                    f"JOIN universe_feature_snapshots f ON f.asset_id = r.id "
+                    f"WHERE r.symbol IN ({placeholders}) "
+                    f"GROUP BY r.symbol",
+                    tuple(symbols_needing_check),
+                ).fetchall()
+                for row in feature_rows:
+                    if row["symbol"] and row["latest_ts"]:
+                        latest_feature_ts_by_symbol[str(row["symbol"])] = str(
+                            row["latest_ts"]
+                        )
+
+        def _is_stale_defer(row: dict[str, Any]) -> bool:
+            opp_id = str(row.get("opportunity_id") or "")
+            deferred_at = deferred_at_by_id.get(opp_id)
+            if not deferred_at:
+                return False  # not deferred → not stale, keep at head
+            symbol = str(row.get("symbol") or "")
+            latest_ts = latest_feature_ts_by_symbol.get(symbol)
+            if not latest_ts:
+                # No feature snapshot on record → conservative: still demote so
+                # a genuinely stuck defer never holds the head. When features
+                # do land, next call will re-classify as refreshed.
+                return True
+            return latest_ts <= deferred_at
+
+        if deferred_at_by_id:
+            unique.sort(key=_is_stale_defer)
     except Exception:
         # Scheduling remains oldest-first if legacy schema/data cannot expose the
         # optional defer hint; command-side fact validation is still authoritative.

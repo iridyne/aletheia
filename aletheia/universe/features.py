@@ -834,6 +834,29 @@ async def collect_features(
                     exc,
                 )
 
+        # Phase A (2026-07-19) — fingerprint-refresh wake.
+        # `skip_policy.candidate_feature_refresh_wakes_operator=True` (skip_policy.py:44)
+        # declares that feature refreshes must reopen deferred Operator evaluations,
+        # but the previous implementation only fired ONE wake at the end of the
+        # universe_refresh cycle (universe/service.py). Under a full defer queue
+        # this stranded reopens for up to 10 minutes. Wake pi_daemon per-batch so
+        # a fresh feature_snapshot_id lands in the fingerprint within seconds,
+        # not tens of minutes. Only wake when at least one deferred carrier is
+        # currently live for a symbol that this batch touched — otherwise the
+        # wake is guaranteed useless and only costs daemon debounce cycles.
+        committed_asset_ids = {
+            snap.asset_id
+            for snap in pending_snapshots
+            if snap.id not in failed_snapshot_ids and snap.asset_id
+        }
+        if committed_asset_ids:
+            try:
+                _wake_pi_daemon_for_refreshed_defers(committed_asset_ids)
+            except Exception:
+                logger.debug(
+                    "feature_snapshot pi_daemon wake failed", exc_info=True
+                )
+
         for result in gathered:
             if result is not None and not isinstance(result, BaseException):
                 if result.get("feature_snapshot_id") not in failed_snapshot_ids:
@@ -844,3 +867,41 @@ async def collect_features(
 
     logger.info("Features collected for %d / %d assets", len(results), len(assets))
     return results
+
+
+def _wake_pi_daemon_for_refreshed_defers(asset_ids: set[str]) -> None:
+    """Wake pi_daemon iff a deferred carrier depends on one of these assets.
+
+    A carrier is "depending on this batch" when it has (a) a live
+    ``pi_decisions.action='signal_pending'`` row for a symbol registered under
+    one of ``asset_ids`` in ``universe_registry`` AND (b) an active
+    ``operator_evaluation_events`` defer with ``defer_until > now``. The join
+    checks both in a single query and short-circuits at LIMIT 1. Without this
+    guard the daemon wakes on every universe_refresh even when nothing is
+    deferred — that is safe (2 s debounce + 45 s cooldown absorb noise) but
+    it defeats the whole point of the wake, which is to notice defers.
+    """
+    from aletheia.storage.sqlite import get_db
+
+    if not asset_ids:
+        return
+    placeholders = ",".join("?" for _ in asset_ids)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    row = get_db().execute(
+        "SELECT 1 FROM operator_evaluation_events e "
+        "JOIN pi_decisions p "
+        "  ON json_extract(e.queue_snapshot_json, '$.opportunity_id')"
+        "     = p.opportunity_id "
+        "JOIN universe_registry r ON r.symbol = p.symbol "
+        "WHERE e.event_kind LIKE 'operator_decision_deferred_%' "
+        "AND json_extract(e.queue_snapshot_json, '$.defer_until') > ? "
+        "AND p.action = 'signal_pending' "
+        f"AND r.id IN ({placeholders}) "
+        "LIMIT 1",
+        (now_iso, *asset_ids),
+    ).fetchone()
+    if row is None:
+        return
+    from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+
+    notify_pi_daemon(source="feature_snapshot_committed")

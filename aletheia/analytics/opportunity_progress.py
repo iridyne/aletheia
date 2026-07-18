@@ -508,6 +508,40 @@ def build_current_entry_status(
     ranker_counts = _ranker_counts(all_ranker_candidates, open_opportunities)
     primary_ranker = all_ranker_candidates[0] if all_ranker_candidates else None
 
+    # Layer-1 observability: pull active-defer reason-class breakdown, oldest
+    # age, defer_rate, and the (currently static) queue capacity from the shared
+    # pipeline_progress aggregator so the counts block, the Blotter tooltip,
+    # and doctor attribution all agree on one taxonomy. Best-effort — the
+    # counts block still renders if the aggregator raises.
+    _defer_breakdown: dict[str, Any] = {
+        "market_quiet_defers": 0,
+        "candidate_specific_defers": 0,
+        "defer_rate": 0.0,
+        "oldest_defer_age_seconds": None,
+        "queue_capacity": None,
+    }
+    try:
+        from aletheia.diagnostics.pipeline_progress import summarize as _pp_summarize
+        from aletheia.agents.paper_trader import (
+            _PENDING_SIGNAL_QUEUE_CAPACITY as _QUEUE_CAP,
+        )
+
+        _snap = _pp_summarize(hours=12)
+        _op = _snap.get("operator") or {}
+        _defer_breakdown["market_quiet_defers"] = int(
+            _op.get("operator_defer_market_quiet") or 0
+        )
+        _defer_breakdown["candidate_specific_defers"] = int(
+            _op.get("operator_defer_candidate_specific") or 0
+        )
+        _defer_breakdown["defer_rate"] = float(_op.get("defer_rate") or 0.0)
+        _defer_breakdown["oldest_defer_age_seconds"] = _op.get(
+            "oldest_active_defer_age_seconds"
+        )
+        _defer_breakdown["queue_capacity"] = int(_QUEUE_CAP)
+    except Exception:
+        pass
+
     if open_positions > 0:
         state, primary_stage = "position_open", "position"
         headline = f"{open_positions} position{'s are' if open_positions != 1 else ' is'} open."
@@ -623,6 +657,11 @@ def build_current_entry_status(
                 terminal_breakdown.get("snapshot_superseded") or 0
             ),
             "ttl_expired": int(terminal_breakdown.get("ttl_expired") or 0),
+            "market_quiet_defers": _defer_breakdown["market_quiet_defers"],
+            "candidate_specific_defers": _defer_breakdown["candidate_specific_defers"],
+            "defer_rate": _defer_breakdown["defer_rate"],
+            "oldest_defer_age_seconds": _defer_breakdown["oldest_defer_age_seconds"],
+            "queue_capacity": _defer_breakdown["queue_capacity"],
         },
         "ranker": {
             "delivery_epoch": _RANKER_DELIVERY_EPOCH,

@@ -1399,12 +1399,29 @@ def _probe_profit_loop(report: Report) -> None:
                             self_protecting = True
                             break
 
+            # Defer breakdown — market_quiet vs candidate_specific + oldest age +
+            # 12h defer_rate. Populated by pipeline_progress._active_defer_stats
+            # over live rows (defer_until > now); best-effort so an older running
+            # gateway with no active defers renders defer×N unmodified.
+            mq = int(operator.get("operator_defer_market_quiet") or 0)
+            cs = int(operator.get("operator_defer_candidate_specific") or 0)
+            defer_rate = float(operator.get("defer_rate") or 0.0)
+            oldest_seconds = operator.get("oldest_active_defer_age_seconds")
+            if defer > 0 and (mq or cs or oldest_seconds is not None):
+                age_min = (
+                    int(oldest_seconds // 60) if isinstance(oldest_seconds, int) else None
+                )
+                age_part = f",age={age_min}m" if age_min is not None else ""
+                rate_part = f",rate={int(round(defer_rate * 100))}%"
+                defer_suffix = f"/defer×{defer}(mq={mq}/cs={cs}{age_part}{rate_part})"
+            else:
+                defer_suffix = f"/defer×{defer}"
             attribution = (
                 f" — epoch commit={commit_short} policy={epoch_short}"
                 f"; operator (12h) direct_skip×{direct_skip}"
                 f"/conviction_gate×{conviction_skip}"
                 f"/debate_reject×{debate_reject}"
-                f"/defer×{defer}"
+                f"{defer_suffix}"
                 f"/direction_brake×{direction_brake}"
                 f"/trade_intent×{trade_intent}"
             )

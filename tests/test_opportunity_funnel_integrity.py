@@ -732,6 +732,16 @@ def test_opportunity_funnel_explains_current_operator_defer(tmp_path, monkeypatc
         "active_setups": 2,
         "superseded_generations": 0,
         "ttl_expired": 0,
+        # Layer-1 observability fields (see aletheia.analytics.defer_classifier
+        # and aletheia.diagnostics.pipeline_progress._active_defer_stats). The
+        # fixture inserts a single live candidate_specific defer with a 60s
+        # oldest age and no other operator events, so defer_rate=1.0 and
+        # queue_capacity mirrors paper_trader._PENDING_SIGNAL_QUEUE_CAPACITY=5.
+        "market_quiet_defers": 0,
+        "candidate_specific_defers": 1,
+        "defer_rate": 1.0,
+        "oldest_defer_age_seconds": 60,
+        "queue_capacity": 5,
     }
     candidates = {row["symbol"]: row for row in current["candidates"]}
     assert set(candidates) == {"NEAR/USDT", "SYN/USDT"}

@@ -211,6 +211,98 @@ def _defer_events(
     return {str(r[0] or "unknown"): int(r[1] or 0) for r in rows}
 
 
+def _active_defer_stats(
+    db, policy_epoch_id: str | None, now_iso: str
+) -> dict[str, Any]:
+    """Reason-class breakdown + oldest-age over LIVE defers (defer_until > now).
+
+    Distinct from ``_defer_events`` which counts every defer event in the 12h
+    window regardless of expiry. This queries the same ``operator_evaluation_events``
+    table but restricts to events whose defer window has not elapsed — i.e., the
+    carriers that are actually occupying queue slots RIGHT NOW.
+
+    Uses ``defer_reason`` persisted in ``queue_snapshot_json`` (written by
+    ``commands.py:1858``), routed through ``analytics.defer_classifier`` so the
+    taxonomy is authoritative in one place. Distinct-by-opportunity_id so a
+    carrier that has been re-deferred multiple times counts once.
+    """
+    try:
+        from aletheia.analytics.defer_classifier import classify_defer_reason
+    except Exception:
+        return {
+            "market_quiet": 0,
+            "candidate_specific": 0,
+            "unknown": 0,
+            "oldest_active_defer_age_seconds": None,
+        }
+
+    conditions = [
+        "event_kind LIKE 'operator_decision_deferred_%'",
+        "json_valid(queue_snapshot_json)",
+        "json_extract(queue_snapshot_json, '$.defer_until') > ?",
+    ]
+    params: list[Any] = [now_iso]
+    if policy_epoch_id:
+        conditions.append("policy_epoch_id = ?")
+        params.append(policy_epoch_id)
+    where = " AND ".join(conditions)
+
+    # One row per opportunity_id — the newest defer event wins (created_at
+    # descending). Prevents a carrier that has been re-deferred N times from
+    # inflating either the ratio buckets or the oldest-age computation.
+    query = (
+        "SELECT opportunity_id, defer_reason, min_created_at FROM ("
+        "  SELECT "
+        "    COALESCE(json_extract(queue_snapshot_json, '$.opportunity_id'),"
+        "             CAST(id AS TEXT)) AS opportunity_id, "
+        "    json_extract(queue_snapshot_json, '$.defer_reason') AS defer_reason, "
+        "    MIN(created_at) OVER (PARTITION BY "
+        "      COALESCE(json_extract(queue_snapshot_json, '$.opportunity_id'),"
+        "               CAST(id AS TEXT))"
+        "    ) AS min_created_at, "
+        "    ROW_NUMBER() OVER (PARTITION BY "
+        "      COALESCE(json_extract(queue_snapshot_json, '$.opportunity_id'),"
+        "               CAST(id AS TEXT)) "
+        "      ORDER BY created_at DESC "
+        "    ) AS rn "
+        "  FROM operator_evaluation_events "
+        f"  WHERE {where}"
+        ") WHERE rn = 1"
+    )
+    rows = db.execute(query, tuple(params)).fetchall()
+
+    buckets = {"market_quiet": 0, "candidate_specific": 0, "unknown": 0}
+    oldest_iso: str | None = None
+    for row in rows:
+        cls = classify_defer_reason(row[1])
+        buckets[cls] += 1
+        created_at = row[2]
+        if created_at and (oldest_iso is None or str(created_at) < oldest_iso):
+            oldest_iso = str(created_at)
+
+    oldest_age_seconds: int | None = None
+    if oldest_iso:
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+
+            parsed = _dt.fromisoformat(oldest_iso.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=_tz.utc)
+            now_parsed = _dt.fromisoformat(now_iso.replace("Z", "+00:00"))
+            if now_parsed.tzinfo is None:
+                now_parsed = now_parsed.replace(tzinfo=_tz.utc)
+            oldest_age_seconds = max(int((now_parsed - parsed).total_seconds()), 0)
+        except (TypeError, ValueError):
+            oldest_age_seconds = None
+
+    return {
+        "market_quiet": buckets["market_quiet"],
+        "candidate_specific": buckets["candidate_specific"],
+        "unknown": buckets["unknown"],
+        "oldest_active_defer_age_seconds": oldest_age_seconds,
+    }
+
+
 def _proposal_stats(db, commit: str | None, since_iso: str) -> dict[str, Any]:
     """Newest proposal and per-window trade count under the current commit.
 
@@ -294,6 +386,39 @@ def summarize(
         defer_events = {}
     operator["operator_defer"] = sum(
         v for k, v in defer_events.items() if k.startswith("operator_decision_deferred_")
+    )
+    try:
+        active_defer = _active_defer_stats(db, policy_epoch_id, now.isoformat())
+    except Exception as exc:
+        logger.warning("opportunity_progress.active_defer failed: %s", exc)
+        active_defer = {
+            "market_quiet": 0,
+            "candidate_specific": 0,
+            "unknown": 0,
+            "oldest_active_defer_age_seconds": None,
+        }
+    operator["operator_defer_market_quiet"] = int(active_defer["market_quiet"])
+    operator["operator_defer_candidate_specific"] = int(
+        active_defer["candidate_specific"]
+    )
+    operator["operator_defer_unknown"] = int(active_defer["unknown"])
+    # defer_rate = 12h defers / (12h defers + trade intents + all skip variants).
+    # Denominator floors at 1 so an empty window renders 0.0 rather than NaN.
+    total_skip_variants = int(operator.get("direct_model_skip") or 0) \
+        + int(operator.get("conviction_gate_skip") or 0) \
+        + int(operator.get("debate_not_confirmed") or 0) \
+        + int(operator.get("direction_brake") or 0)
+    defer_denom = max(
+        int(operator["operator_defer"])
+        + int(operator.get("operator_trade_intent") or 0)
+        + total_skip_variants,
+        1,
+    )
+    operator["defer_rate"] = round(
+        float(operator["operator_defer"]) / float(defer_denom), 4
+    )
+    operator["oldest_active_defer_age_seconds"] = (
+        active_defer["oldest_active_defer_age_seconds"]
     )
     try:
         proposals = _proposal_stats(db, producer_commit, since_iso)
