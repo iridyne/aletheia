@@ -23,8 +23,9 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
     ),
     SpecClaim(
         "LE-L04", "learning_evolution", "§7.1 trial admission", "L2c",
-        "Shadow measurement never auto-promotes into paper authority; shadow to paper_10 requires "
-        "a separate explicit, durable, idempotent trial-admission action.", status="implemented",
+        "Shadow measurement never auto-promotes into paper authority, and caller-provided actor "
+        "text cannot cross the unavailable authenticated-owner admission boundary.",
+        status="implemented",
     ),
     SpecClaim(
         "LE-L05", "learning_evolution", "§7.1 current paper lifecycle", "L2c",

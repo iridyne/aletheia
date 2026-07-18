@@ -8,8 +8,9 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 @spec_claim(
     SpecClaim(
         "LE-V01", "learning_evolution", "§7 contribution decision", "L2b",
-        "The only runtime verdict path evaluates prospective universe-family calibration exposures "
-        "against exact settled cost-aware outcomes and preserves treatment/control cohort boundaries.",
+        "The only runtime verdict path evaluates full-arm filter candidate outcomes by exact key, "
+        "uses selected-universe outcomes only as a non-duplicating mirror or fallback, and counts "
+        "complete assignment clusters rather than survivor candidates.",
         status="implemented",
     ),
     SpecClaim(
@@ -35,3 +36,4 @@ def test_read_only_verdict_runtime_surface_exists():
     assert callable(evaluate_experiment)
     assert callable(inspect_experiment)
     assert "authority_applied" in {field.name for field in fields(CohortSample)}
+    assert "assignment_unit_key" in {field.name for field in fields(CohortSample)}

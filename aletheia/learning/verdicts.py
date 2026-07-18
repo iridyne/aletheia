@@ -14,7 +14,7 @@ from typing import Any
 from aletheia.learning.cohorts import ContributionCohort, CohortSample
 
 
-METRIC_VERSION = "universe_family_calibration_net_return_v1"
+METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v2"
 BOOTSTRAP_SEED = 20260712
 BOOTSTRAP_RESAMPLES = 2000
 _PRACTICAL_NEUTRAL_DELTA_PCT = 0.10
@@ -135,6 +135,20 @@ def _harm_metrics(
         breached.append("loss_rate_increase")
     if mae_p95_worsening is not None and mae_p95_worsening > gates["max_mae_p95_worsening_pct"]:
         breached.append("mae_p95_worsening")
+    outcome_sources = Counter(
+        source
+        for sample in cohort.samples
+        for source in sample.member_outcome_sources
+    )
+    allocation_selection_sources = Counter(
+        source
+        for sample in cohort.samples
+        for source in sample.member_allocation_selection_sources
+    )
+    allocation_total_member_n = sum(sample.member_count for sample in cohort.samples)
+    allocation_selected_member_n = sum(
+        sample.selected_member_count for sample in cohort.samples
+    )
     return {
         "metric_version": METRIC_VERSION,
         "stage": cohort.experiment.stage,
@@ -145,8 +159,24 @@ def _harm_metrics(
         "outcome_contract_version": cohort.key.outcome_contract_version,
         "code_commit": cohort.key.code_commit or None,
         "raw_exposure_n": cohort.raw_exposure_n,
+        "unique_assignment_unit_n": len(cohort.samples),
+        "cluster_member_n": sum(sample.member_count for sample in cohort.samples),
         "duplicate_exposure_n": cohort.duplicate_exposure_n,
         "duplicate_outcome_n": cohort.duplicate_outcome_n,
+        "mirrored_universe_row_n": cohort.mirrored_universe_row_n,
+        "outcome_source_member_counts": dict(sorted(outcome_sources.items())),
+        "allocation_selection_source_member_counts": dict(
+            sorted(allocation_selection_sources.items())
+        ),
+        "evidence_conflict_fingerprints": sorted(
+            cohort.evidence_conflict_fingerprints
+        ),
+        "allocation_selected_member_n": allocation_selected_member_n,
+        "allocation_total_member_n": allocation_total_member_n,
+        "allocation_selection_rate": (
+            allocation_selected_member_n / allocation_total_member_n
+            if allocation_total_member_n else None
+        ),
         "exclusion_reasons": dict(sorted(cohort.exclusion_reasons.items())),
         "invalid_reasons": dict(sorted(cohort.invalid_reasons.items())),
         "authority_applied_treatment_n": sum(

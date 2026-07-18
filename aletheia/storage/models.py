@@ -222,6 +222,7 @@ class FilterCandidateOutcome(BaseModel):
     scanner_family: str | None = None
     regime_tag: str | None = None
     horizon: str
+    allocation_selected: bool | None = None
     entry_price_usd: float
     entry_spread_bps: float | None = None
     funding_rate_at_entry: float | None = None

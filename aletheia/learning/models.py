@@ -68,6 +68,7 @@ class LearningExposure(BaseModel):
     consumer_stage: str
     path_id: str
     overlap_group: str
+    assignment_unit_key: str | None = None
     candidate_key: str | None = None
     opportunity_id: str | None = None
     proposal_id: str | None = None
@@ -144,6 +145,8 @@ class LearningJobHealth(BaseModel):
     consecutive_failures: int = 0
     status: str = "unknown"
     last_error: str | None = None
+    last_failed_at: str | None = None
+    last_failure_reason: str | None = None
     updated_at: str = Field(default_factory=_now)
 
 

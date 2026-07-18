@@ -861,6 +861,7 @@ def build_candidate_outcomes(
     entry_spread_bps: float | None,
     funding_rate_at_entry: float | None,
     entry_ts: str,
+    allocation_selected: bool | None = None,
 ) -> list[FilterCandidateOutcome]:
     """Build a fixed-horizon outcome matrix without touching SQLite."""
 
@@ -880,6 +881,7 @@ def build_candidate_outcomes(
             scanner_family=scanner_family,
             regime_tag=regime_tag,
             horizon=horizon,
+            allocation_selected=allocation_selected,
             entry_price_usd=entry_price_usd,
             entry_spread_bps=entry_spread_bps,
             funding_rate_at_entry=funding_rate_at_entry,

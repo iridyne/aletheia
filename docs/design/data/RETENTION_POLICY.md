@@ -3,7 +3,7 @@
 > Authoritative retention contract for the local SQLite (`~/.aletheia/app.db`),
 > secondary SQLite (`~/.aletheia/tasks.db`), and filesystem artefact trees under
 > `~/.aletheia/`.
-> Last updated: 2026-07-17 (Phase 3 workflow synthesis; user Phase 2 decisions locked).
+> Last updated: 2026-07-18 (A1 active-exposure retention anchor).
 > Source: `/tmp/RETENTION_SPEC.md` + `/tmp/RETENTION_SYNTHESIS.json` (workflow output).
 
 Two hard rules govern every retention decision here:
@@ -108,17 +108,18 @@ Windows below are the Phase 3 defaults; each is wired through the new
 |-------|--------|--------------|----------|---------|----------|-----------|
 | `universe_feature_snapshots` | 14d + drop always-empty `raw` column via new migration | `ts` | `prune_universe_feature_snapshots` (existing, `:4455`; window shortened) | none | hard delete | Lens-B expBounds floor. Write-guardrail #7 (change-suppression) holds this under 30 MiB steady. |
 | `perp_structure_shadow_outcomes` | 30d | `entry_ts` | `prune_perp_structure_shadow_outcomes` | parent `perp_structure_snapshots` retained after child prune | hard delete | Observation-only 1h/4h/24h validation; 30d covers the required 14d review window. |
-| `universe_snapshots` | 30d | `created_at` | `prune_universe_snapshots` (NEW) | cascade `universe_members` | hard delete | Universe membership changes slowly; write-guardrail #17 suppresses ~90 % of writes. |
-| `universe_members` | 30d (cascade of parent) | via parent | `prune_universe_members` (NEW) | none | hard delete | FK to `universe_snapshots`; must delete before parent. |
+| `universe_snapshots` | 30d + protected-outcome guard | `created_at` | `prune_universe_snapshots` (NEW) | cascade `universe_members` | hard delete | A snapshot/member remains while an active experiment retains a referenced selected-member fallback outcome; otherwise write-guardrail #17 keeps volume bounded. |
+| `universe_members` | 30d + protected-outcome guard | via parent | `prune_universe_members` (NEW) | none | hard delete | FK parents cannot be deleted while guarded fallback evidence still references the member. |
 | `universe_scanner_runs` | 30d | `created_at` | `prune_universe_scanner_runs` (NEW) | none | hard delete | Aligns with parent-cohort granularity. |
+| `universe_forward_outcomes` | 30d **+ clean_window_cutoff guard** | `entry_ts` | `prune_universe_forward_outcomes` | none | hard delete | Selected-member legacy fallback remains reproducible while an active open Learning experiment may still cite it. |
 | `alpha_control_observations` | 60d | `entry_ts` | `prune_alpha_control_observations` (NEW) | none | hard delete | Matches alpha_attribution default 30d reader window + 7d horizon + settlement lag + margin. Sample cadence reduced 6× (write-guardrail #16). |
 
 ### 3.4 Filter evidence
 
 | Table | Window | Prune column | Function | Cascade | Archive? | Rationale |
 |-------|--------|--------------|----------|---------|----------|-----------|
-| `filter_candidate_outcomes` | 30d **+ clean_window_cutoff guard** | `entry_ts` | `prune_filter_candidate_outcomes` (existing, `:2996`; window shortened + new `min_experiment_started_at` argument) | none | hard delete | Effective cutoff = `min(now-30d, min_open_experiment_started_at)` computed from `SELECT MIN(started_at) FROM learning_experiments WHERE ended_at IS NULL`. Any row still needed by an open experiment is kept. |
-| `filter_decisions` | 45d **+ clean_window_cutoff guard** | `evaluated_at` | `prune_filter_decisions` (existing, `:2992`; window shortened + new guard argument) | none | hard delete | Preserves `filter_shadow_experiments._production_version_changed` detection over multi-week collecting windows. Write-guardrail #6 (batch scanner_weights_quota) is the primary size lever. |
+| `filter_candidate_outcomes` | 30d **+ clean_window_cutoff guard** | `entry_ts` | `prune_filter_candidate_outcomes` (existing, `:2996`; `min_experiment_started_at` compatibility argument now receives an exposure timestamp) | none | hard delete | Effective cutoff = `min(now-30d, earliest durable exposure of active open experiments)`. Unexposed `registered` rows are ignored because no observation window exists. |
+| `filter_decisions` | 45d **+ clean_window_cutoff guard** | `evaluated_at` | `prune_filter_decisions` (existing, `:2992`; same active-exposure guard) | none | hard delete | Preserves evidence back to the earliest durable exposure of an active open Learning experiment. Unexposed registrations do not hold telemetry indefinitely. Write-guardrail #6 remains the primary size lever. |
 | `filter_decision_batches` | 30d | `evaluated_at` | `prune_filter_decision_batches` (existing, `:2988`; window unchanged) | none | hard delete | Contract-mandated at 30d (`docs/design/contracts/filter_evidence_contract.md:259`). Write-guardrail #18 (content-hash dedup + 5-into-1 tradability coalesce) supplies savings. |
 | `controller_recommendations` | 30d + skip insufficient×insufficient rows | `created_at` | `prune_controller_recommendations` (NEW) | none | hard delete | 91 % of rows are pure telemetry noise; write-guardrail #3 stops them at write. Aligns with sibling `filter_decision_batches`. |
 | `filter_shadow_experiments` | 90d (exempt `status='collecting'`) | `created_at` | `prune_filter_shadow_experiments` (NEW) | cascade `filter_shadow_evaluations` first (FK has no ON DELETE CASCADE) | archive metadata | Preventive; both existing rows invalidated 2026-07-14. |
@@ -240,13 +241,13 @@ match `/tmp/RETENTION_SPEC.md#user-confirmed-decisions-phase-2`.
 
 | # | Question | Decision |
 |---|----------|----------|
-| 1 | Filter tables safety (`filter_candidate_outcomes` + `filter_decisions`) | **A** — implement 30d/45d TODAY with clean_window_cutoff guard. Effective cutoff = `min(now-Nd, min_open_experiment_started_at)`. |
+| 1 | Filter tables safety (`filter_candidate_outcomes` + `filter_decisions`) | **A** — 30d/45d with clean_window_cutoff guard. Effective cutoff = `min(now-Nd, MIN(exposed_at) for active open experiments)`. Unexposed registrations are ignored. |
 | 2 | `content.context` write-fix coordination | Cross-repo coordinated. Python-side (`aletheia/server/routes/operator.py:512-524` + `aletheia/agent_shell/operator_store.py`) ships in this workflow. TypeScript peer (`operator-shell/src/operator_loop.ts:1023`) documented as TODO in §9 for the external repo but NOT implemented here. |
 | 3 | `auto_vacuum` mode | **INCREMENTAL**. One-time `PRAGMA auto_vacuum=INCREMENTAL` in the backfill (takes effect after VACUUM), then rely on `PRAGMA incremental_vacuum(1000)` in `_run_cleanup`. |
 | 4 | `agent_shell_messages` retention shape | **Type-tiered**. `message_type='context'`: 3d. All other message_types: 14d. |
 | 5 | Backup rotation | **`keep_recent=7`** (count-based). |
 | 6 | `filter_shadow_evaluations` schema | **Keep append-only.** No UPSERT-latest schema change. |
-| 7 | `universe_snapshots` + `universe_members` + `universe_scanner_runs` | **30d retention.** No known learning consumer JOINs `universe_members` to `filter_candidate_outcomes`. |
+| 7 | `universe_snapshots` + `universe_members` + `universe_scanner_runs` | **30d retention plus selected-member fallback guard.** Parent pruning preserves rows still referenced by a guarded `universe_forward_outcomes` observation. |
 | 8 | `learning_policy_epochs` hash | **Drop `code_commit` from `effective_values`.** `learning_exposures.code_commit` still recorded separately, so replay authority is preserved. |
 | 9 | Retro-strip `content.context` | **Yes.** One-shot UPDATE strips `content.context` from surviving <3d rows inside the backfill script. Saves ~8 MiB immediately. |
 | 10 | Legacy source tree removal | **NOT part of this workflow.** Schedule a `CronCreate` job for 2026-08-16. See §11. |
@@ -386,7 +387,8 @@ The script:
    `~/.aletheia/backups/data_retention_archive_YYYYMMDD/<table>.jsonl.gz`
    BEFORE delete when the table is on the archive-list. Filter-family
    tables call the new `prune_filter_*` variants with the
-   `min_open_experiment_started_at` argument.
+   `min_open_experiment_started_at` compatibility argument populated from the earliest exposure of
+   active open experiments. Registered experiments with no exposure are ignored.
 3. After all DB deletes: `PRAGMA wal_checkpoint(TRUNCATE)`;
    `PRAGMA integrity_check`; `PRAGMA auto_vacuum=INCREMENTAL`; `VACUUM`;
    `PRAGMA journal_size_limit=67108864`; `PRAGMA optimize`. Repeats

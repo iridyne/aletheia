@@ -3,7 +3,7 @@
 > Complete index of Aletheia Trading OS data layer.
 > ~95 SQLite table declarations, 59 Pydantic models, WAL mode, additive-only migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
-> Last updated: 2026-07-14
+> Last updated: 2026-07-18
 
 ---
 
@@ -97,17 +97,30 @@ from the Operator working set unless a `submitting` claim requires crash recover
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `learning_hypotheses` | Canonical scoped Learning hypothesis | hypothesis_id, fingerprint, path_id, scope/action JSON, status, version |
-| `learning_experiments` | One isolated shadow or paper stage | experiment_id, hypothesis_id, parent experiment, activation verdict, stage generation, assignment salt, allocation, status |
-| `learning_exposures` | Immutable record of one actual/control influence; ranker score components and persona sizing store baseline/proposed/actual values here | dedup_key, assignment, entity ids, before/after/manifest, outcome_candidate_key, experiment stage, policy epoch |
-| `learning_contribution_verdicts` | Append-only measured verdict window | stage, unique arm counts, delta/interval, harm metrics, measurement verdict |
+| `learning_experiments` | One isolated shadow or paper stage; a `registered` experiment's first exposure atomically/idempotently activates it and anchors `started_at` to earliest durable `exposed_at` | experiment_id, hypothesis_id, parent experiment, activation verdict, stage generation, assignment salt, allocation, status, started_at |
+| `learning_exposures` | Immutable record of one actual/control influence; `assignment_unit_key` persists the randomized cluster independently from member candidate identity | dedup_key, assignment, assignment_unit_key, entity ids, before/after/manifest, outcome_candidate_key, experiment stage, policy epoch |
+| `learning_contribution_verdicts` | Append-only measured verdict window; `created_at` is evaluation time while window fields are observation bounds, and prior metric versions remain history | stage, unique cluster-arm counts, delta/interval, harm metrics, metric_version, measurement verdict, created_at |
 | `learning_lifecycle_events` | Durable transition or blocked-promotion audit record | event_id, dedup key, experiment/successor/verdict ids, from/to stage, action, reason, policy epoch |
-| `learning_job_health` | Durable expected-run/backlog health | schedule, watermarks, failures, status |
+| `learning_job_health` | Durable expected-run/backlog health; current error may clear on recovery while last failure identity persists | schedule, watermarks, consecutive_failures, status, last_error, last_failed_at, last_failure_reason |
 | `learning_policy_epochs` | Non-sensitive effective-policy attribution boundary | effective-values hash/JSON, affected paths, safety flag, interval |
 
 These tables were additive/observational in Phase 1. Current universe, factor, ranker, and sizing
 consumers now write refrozen prospective exposures; only an active, stage-isolated paper
 experiment with enough linked cost-aware outcomes and separately validated lifecycle authority may
 apply a treatment. The ledger grants no risk, execution, credential, or live authority.
+
+For current universe contribution measurement, `filter_candidate_outcomes` is the canonical
+full-arm source. `universe_forward_outcomes` is a selected-member legacy mirror/fallback; matching
+copies are deduplicated and economic disagreement fails closed. Exact-key reads are batched. One
+complete persisted `assignment_unit_key` cluster contributes one intent-to-treat allocation-utility
+observation: selected members contribute net return, dropped members contribute zero, and worst
+selected-member MAE is retained. `allocation_selected` is immutable and nullable only for legacy or
+non-allocation outcomes. Incomplete clusters contribute no survivor sample. Legacy exposures without
+an assignment unit remain permanent and auditable but are excluded, never inferred.
+
+The current metric version is
+`universe_family_calibration_cluster_allocation_utility_v2`. A metric-version change appends new
+verdicts; it does not rewrite or delete older verdict history.
 
 ### D. Market Data Collection (11 tables)
 
@@ -173,7 +186,7 @@ and spec `AR-S08`.
 | `universe_scanner_runs` | Scanner execution log | scanner_name, symbols_scanned, signals_emitted |
 | `universe_snapshots` | Universe composition snapshots | snapshot_id, created_at |
 | `universe_members` | Assets in a universe snapshot | snapshot_id, symbol, market_type, rank, score, scanner_direction |
-| `universe_forward_outcomes` | Fixed-horizon Opportunity economics | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross_return_pct, directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, min_tradable_edge_pct, mfe_pct, mae_pct, settlement_price_source, cost_model_version |
+| `universe_forward_outcomes` | Fixed-horizon selected-Universe-member economics; legacy mirror/fallback for contribution measurement, not the canonical full-arm source | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross_return_pct, directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, min_tradable_edge_pct, mfe_pct, mae_pct, settlement_price_source, cost_model_version |
 | `universe_policies` | Universe selection rules | policy_name, filters (JSON), priority |
 
 ### G-bis. Opportunity Filter Evidence (6 tables)
@@ -182,13 +195,14 @@ and spec `AR-S08`.
 |-------|---------|-------------|
 | `filter_decisions` | Immutable per-candidate pass/reject facts for directional and low-volume gates | candidate_key, filter_name, decision, reason_code, parameter_snapshot, filter_version, outcome_candidate_key, evaluated_at |
 | `filter_decision_batches` | Complete compressed facts for high-volume directionless ticker/tradability gates | run_id, filter_name, candidate_count, pass/reject/not-applicable/error counts, zlib-base64 lossless field/row-matrix candidate_facts, filter_version |
-| `filter_candidate_outcomes` | Shared exact-instrument fixed-horizon net result for a candidate seen by multiple gates | outcome_candidate_key, venue, symbol, market_type, direction, horizon, gross/directional/cost/net/MFE/MAE, status |
+| `filter_candidate_outcomes` | Canonical full-arm exact-instrument fixed-horizon net result, including selected and dropped Learning candidates | outcome_candidate_key, venue, symbol, market_type, direction, horizon, allocation_selected, gross/directional/cost/net/MFE/MAE, status |
 | `controller_recommendations` | Append-only observational filter findings; legacy action fields remain conservative | filter/stage/version/cohort dimensions, pass/reject counts, shrunk net means, evidence_verdict, status |
 | `filter_shadow_experiments` | Immutable prospective plans for replay-ready monotonic threshold candidates | experiment_key, fixed scope/version, control/treatment parameters, started_at, evidence gates, status, production_mutation_allowed=0 |
 | `filter_shadow_evaluations` | Append-only evidence snapshots for a prospective plan | experiment_id, disposition, control/treatment samples and coverage, net means, edge delta |
 
 Business writers only append these rows. Daily retention removes expired analytical rows
-(30d for compressed batches; 90d for per-candidate decisions/outcomes). This retention
+(30d for compressed batches, 45d for decisions, and 30d for candidate outcomes, with the
+active-experiment exposure guard described in §7). This retention
 does not apply to authoritative proposals, RiskDecision, orders, fills, positions, or audit records.
 Controller recommendations and the small experiment/evaluation records are retained
 as the audit history for why a threshold was or was not advanced; they are not
@@ -396,13 +410,14 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 | `ohlcv_backfill_state` | 90d since last update | existing |
 | `macro_snapshots` | 90d | existing |
 | `coingecko_top_snapshots` | 3d (was 14d); `coingecko_top_n` default 50 (was 100) | `prune_coingecko_top_snapshots` |
-| `universe_forward_outcomes` | 30d | existing |
-| `universe_snapshots` / `universe_members` / `universe_scanner_runs` | 30d | `prune_universe_snapshots` (cascade) / `prune_universe_scanner_runs` (new) |
+| `universe_forward_outcomes` | 30d + earliest-exposure guard for active open experiments | `prune_universe_forward_outcomes` |
+| `universe_snapshots` / `universe_members` | 30d + protected fallback-outcome guard | `prune_universe_snapshots` (cascade) |
+| `universe_scanner_runs` | 30d | `prune_universe_scanner_runs` |
 | `market_ohlcv` | 1m=2d / 5m=7d / 15m=30d / 1h=90d / 4h=180d / 1d=730d + hard drop `exchange='legacy_unknown'` | `prune_market_ohlcv` (new) |
 | `market_regimes` | 60d + skip-if-unchanged dedup | `prune_market_regimes` (new) |
 | `filter_decision_batches` | 30d (contract) | `prune_filter_decision_batches` |
-| `filter_decisions` | 45d (was 90d) + clean_window_cutoff guard | `prune_filter_decisions` |
-| `filter_candidate_outcomes` | 30d (was 90d) + clean_window_cutoff guard | `prune_filter_candidate_outcomes` |
+| `filter_decisions` | 45d (was 90d) + earliest-exposure guard for active open experiments | `prune_filter_decisions` |
+| `filter_candidate_outcomes` | 30d (was 90d) + earliest-exposure guard for active open experiments | `prune_filter_candidate_outcomes` |
 | `controller_recommendations` | 30d + skip insufficient×insufficient rows | `prune_controller_recommendations` (new) |
 | `filter_shadow_experiments` / `filter_shadow_evaluations` | 90d completed / cascade child; `status='collecting'` exempt | `prune_filter_shadow_experiments` (new, cascade) |
 | `alpha_control_observations` | 60d + 6× cadence reduction | `prune_alpha_control_observations` (new) |
@@ -432,6 +447,10 @@ Measured Learning Ledger (7): `learning_experiments` · `learning_exposures` ·
 > **Invariant**: the causal record chain (§2) + the learning ledger (§C-bis) are permanent.
 > Any new prune target MUST be added to `_PRUNABLE` explicitly and MUST NOT include a
 > trust-bearing table. Enforced by `tests/test_architecture_fitness.py`.
+
+The filter-family retention guard anchors to `MIN(learning_exposures.exposed_at)` across active,
+open experiments. A merely `registered` experiment with no exposure does not retain telemetry,
+because it has no observation window yet.
 
 ### 7.3 JSONL rotation
 

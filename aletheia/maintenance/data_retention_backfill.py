@@ -97,17 +97,18 @@ def _cutoff_ms(days: int) -> int:
     return int((datetime.now(timezone.utc).timestamp() - days * 86400) * 1000)
 
 
-def _select_min_open_experiment_started_at(db: sqlite3.Connection) -> str | None:
-    """Return the earliest ``started_at`` of an open learning_experiments row.
+def _select_min_open_experiment_exposure_at(db: sqlite3.Connection) -> str | None:
+    """Return the earliest exposure of an active open Learning experiment.
 
     The filter-family prune functions must respect this: the clean_window_cutoff
-    guard keeps every candidate/decision row a still-open experiment could still
-    look at. Returns ``None`` when no open experiment exists (i.e. the guard is
-    a no-op and the plain window applies).
+    guard keeps every candidate/decision row an exposed experiment could still
+    look at. Unexposed registrations do not retain telemetry indefinitely.
     """
     try:
         row = db.execute(
-            "SELECT MIN(started_at) FROM learning_experiments WHERE ended_at IS NULL"
+            "SELECT MIN(x.exposed_at) FROM learning_experiments e "
+            "JOIN learning_exposures x ON x.experiment_id=e.experiment_id "
+            "WHERE e.ended_at IS NULL AND e.status='active'"
         ).fetchone()
     except sqlite3.OperationalError:
         return None
@@ -287,7 +288,7 @@ def _build_plan(args: argparse.Namespace) -> BackfillPlan:
             prune_fn="prune_filter_candidate_outcomes",
             kwargs_factory=lambda a, db: {
                 "days": a.filter_candidate_outcomes_days,
-                "min_experiment_started_at": _select_min_open_experiment_started_at(db),
+                "min_experiment_started_at": _select_min_open_experiment_exposure_at(db),
             },
             predicate_sql="entry_ts < ?",
             predicate_params_factory=_basic_params("filter_candidate_outcomes_days"),
@@ -298,7 +299,7 @@ def _build_plan(args: argparse.Namespace) -> BackfillPlan:
             prune_fn="prune_filter_decisions",
             kwargs_factory=lambda a, db: {
                 "days": a.filter_decisions_days,
-                "min_experiment_started_at": _select_min_open_experiment_started_at(db),
+                "min_experiment_started_at": _select_min_open_experiment_exposure_at(db),
             },
             predicate_sql="evaluated_at < ?",
             predicate_params_factory=_basic_params("filter_decisions_days"),

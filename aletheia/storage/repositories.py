@@ -3313,18 +3313,15 @@ def prune_filter_decision_batches(days: int = 30) -> int:
     return _delete_old_rows("filter_decision_batches", days)
 
 
-def _min_open_experiment_started_at() -> str | None:
-    """Return MIN(started_at) among currently-open learning_experiments (ended_at IS NULL).
-
-    Used by the clean_window_cutoff guard for filter_decisions +
-    filter_candidate_outcomes: if any open experiment started earlier than the
-    default retention cutoff, we must keep evidence rows back to that point.
-    Returns None when the table is missing (fresh install) or no open row exists.
-    """
+def min_open_experiment_exposure_at() -> str | None:
+    """Return the earliest durable exposure of an active open experiment."""
     db = get_db()
     try:
         row = db.execute(
-            "SELECT MIN(started_at) AS m FROM learning_experiments WHERE ended_at IS NULL"
+            "SELECT MIN(x.exposed_at) AS m "
+            "FROM learning_experiments e JOIN learning_exposures x "
+            "ON x.experiment_id=e.experiment_id "
+            "WHERE e.ended_at IS NULL AND e.status='active'"
         ).fetchone()
     except Exception:
         return None
@@ -3342,8 +3339,18 @@ def _effective_cutoff(
     default = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     if not min_experiment_started_at:
         return default
-    # Both ISO-8601; string comparison is date-safe for our formats.
-    return min(default, min_experiment_started_at)
+    try:
+        experiment = datetime.fromisoformat(
+            min_experiment_started_at.replace("Z", "+00:00")
+        )
+        if experiment.tzinfo is None:
+            experiment = experiment.replace(tzinfo=timezone.utc)
+        return min(
+            datetime.fromisoformat(default),
+            experiment.astimezone(timezone.utc),
+        ).isoformat()
+    except (AttributeError, TypeError, ValueError):
+        return default
 
 
 def prune_filter_decisions(
@@ -3357,7 +3364,7 @@ def prune_filter_decisions(
     the paired-cohort read stays reproducible.
     """
     if min_experiment_started_at is None:
-        min_experiment_started_at = _min_open_experiment_started_at()
+        min_experiment_started_at = min_open_experiment_exposure_at()
     cutoff = _effective_cutoff(days, min_experiment_started_at)
     return _delete_by_rowid_batches("filter_decisions", "evaluated_at < ?", (cutoff,))
 
@@ -3373,7 +3380,7 @@ def prune_filter_candidate_outcomes(
     the OLDER of ``now - days`` and the earliest open-experiment start.
     """
     if min_experiment_started_at is None:
-        min_experiment_started_at = _min_open_experiment_started_at()
+        min_experiment_started_at = min_open_experiment_exposure_at()
     cutoff = _effective_cutoff(days, min_experiment_started_at)
     return _delete_by_rowid_batches(
         "filter_candidate_outcomes", "entry_ts < ?", (cutoff,)
@@ -5326,14 +5333,14 @@ def prune_universe_feature_snapshots(days: int = 14) -> int:
     )
 
 
-def prune_universe_forward_outcomes(days: int = 30) -> int:
-    """Prune forward-return outcome labels older than `days` (by entry_ts).
-
-    Analytics/telemetry — NOT a causal-chain table. Rows reference universe
-    snapshots that are themselves pruned at 30d, so older outcomes are orphaned
-    anyway; 30d keeps the retention windows aligned. (DB-SIZE / B-sweep gap #1.)
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+def prune_universe_forward_outcomes(
+    days: int = 30,
+    min_experiment_started_at: str | None = None,
+) -> int:
+    """Prune selected-member outcomes without deleting open-experiment fallback evidence."""
+    if min_experiment_started_at is None:
+        min_experiment_started_at = min_open_experiment_exposure_at()
+    cutoff = _effective_cutoff(days, min_experiment_started_at)
     return _delete_by_rowid_batches(
         "universe_forward_outcomes",
         "entry_ts < ?",
@@ -5641,40 +5648,61 @@ def prune_filter_shadow_experiments(days: int = 90) -> int:
     return len(exp_ids)
 
 
-def prune_universe_members(days: int = 30) -> int:
+def prune_universe_members(
+    days: int = 30,
+    min_experiment_started_at: str | None = None,
+) -> int:
     """Prune universe_members whose parent snapshot is older than ``days``.
 
     Exposed for the _PRUNABLE whitelist. ``prune_universe_snapshots`` calls
     this first inside a single transaction.
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    if min_experiment_started_at is None:
+        min_experiment_started_at = min_open_experiment_exposure_at()
+    outcome_cutoff = _effective_cutoff(days, min_experiment_started_at)
     db = get_db()
     was_in_tx = db.in_transaction
     cur = db.execute(
         "DELETE FROM universe_members WHERE snapshot_id IN ("
         "  SELECT id FROM universe_snapshots WHERE created_at < ?"
+        ") AND NOT EXISTS ("
+        "  SELECT 1 FROM universe_forward_outcomes o "
+        "  WHERE o.member_id=universe_members.id AND o.entry_ts>=?"
         ")",
-        (cutoff,),
+        (cutoff, outcome_cutoff),
     )
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0
 
 
-def prune_universe_snapshots(days: int = 30) -> int:
+def prune_universe_snapshots(
+    days: int = 30,
+    min_experiment_started_at: str | None = None,
+) -> int:
     """Prune universe_snapshots older than ``days`` + cascade-delete universe_members.
 
     FK universe_members.snapshot_id has no ON DELETE CASCADE; children must be
     removed first in the same transaction. universe_forward_outcomes references
-    universe_members and is pruned separately at its own 30d cadence.
+    universe_members. Snapshots with fallback outcomes protected by an active
+    experiment remain until those outcomes leave their guarded window.
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    if min_experiment_started_at is None:
+        min_experiment_started_at = min_open_experiment_exposure_at()
+    outcome_cutoff = _effective_cutoff(days, min_experiment_started_at)
     db = get_db()
     snap_ids = [
         row[0]
         for row in db.execute(
-            "SELECT id FROM universe_snapshots WHERE created_at < ?",
-            (cutoff,),
+            "SELECT s.id FROM universe_snapshots s WHERE s.created_at < ? "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM universe_members m "
+            "  JOIN universe_forward_outcomes o ON o.member_id=m.id "
+            "  WHERE m.snapshot_id=s.id AND o.entry_ts>=?"
+            ")",
+            (cutoff, outcome_cutoff),
         ).fetchall()
     ]
     if not snap_ids:

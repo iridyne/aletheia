@@ -23,6 +23,7 @@ from aletheia.learning.ledger import (
     linked_settled_exposure_counts,
 )
 from aletheia.learning.models import LearningExperiment
+from aletheia.learning.experiments import _code_fingerprint
 from aletheia.learning.verdicts import METRIC_VERSION
 
 
@@ -96,20 +97,71 @@ def resolve_learning_authority(
         return blocked("hypothesis_not_found")
     if str(hypothesis.get("path_id") or "") != path_id:
         return blocked("hypothesis_path_mismatch")
-    # A harmful current-stage result must fail closed even when an older
-    # activation record is malformed or a controller has not run yet.
-    current = get_latest_measurement_verdict(experiment.experiment_id)
-    if current is not None and str(current.get("verdict") or "") in {"negative", "invalid"}:
-        return blocked(f"current_measurement_{current['verdict']}", current)
     if path_id not in SUPPORTED_PATH_IDS:
         return _legacy_authority_adapter(experiment, current_policy_epoch, blocked)
     expected_horizon = str(hypothesis.get("target_horizon") or "")
     if not expected_horizon:
         return blocked("hypothesis_horizon_missing")
+    current_code_commit = _code_fingerprint()
+    if not experiment.activation_verdict_id:
+        if current_code_commit is not None:
+            measurement = get_latest_measurement_verdict(
+                experiment.experiment_id,
+                policy_epoch=current_policy_epoch,
+                stage=experiment.stage,
+                hypothesis_id=experiment.hypothesis_id,
+                target_horizon=expected_horizon,
+                outcome_contract_version="v1",
+                metric_version=METRIC_VERSION,
+                code_commit=current_code_commit,
+            )
+            if (
+                measurement is not None
+                and measurement_identity_reason(
+                    measurement,
+                    experiment.stage,
+                    current_policy_epoch,
+                    expected_horizon=expected_horizon,
+                    expected_code_commit=current_code_commit,
+                    expected_hypothesis_id=experiment.hypothesis_id,
+                ) is None
+                and str(measurement.get("verdict") or "") in {"negative", "invalid"}
+            ):
+                return blocked(
+                    f"current_measurement_{measurement['verdict']}", measurement,
+                )
+        return _legacy_authority_adapter(experiment, current_policy_epoch, blocked)
+    if current_code_commit is None:
+        return blocked("code_commit_unavailable")
+    current = get_latest_measurement_verdict(
+        experiment.experiment_id,
+        policy_epoch=current_policy_epoch,
+        stage=experiment.stage,
+        hypothesis_id=experiment.hypothesis_id,
+        target_horizon=expected_horizon,
+        outcome_contract_version="v1",
+        metric_version=METRIC_VERSION,
+        code_commit=current_code_commit,
+    )
+    if current is None:
+        current = get_latest_measurement_verdict(experiment.experiment_id)
+    if current is not None:
+        identity_reason = measurement_identity_reason(
+            current,
+            experiment.stage,
+            current_policy_epoch,
+            expected_horizon=expected_horizon,
+            expected_code_commit=current_code_commit,
+            expected_hypothesis_id=experiment.hypothesis_id,
+        )
+        if identity_reason:
+            return blocked(identity_reason, current)
+    # A harmful current-stage result must fail closed even when an older
+    # activation record is malformed or a controller has not run yet.
+    if current is not None and str(current.get("verdict") or "") in {"negative", "invalid"}:
+        return blocked(f"current_measurement_{current['verdict']}", current)
     if current is not None and str(current.get("hypothesis_id") or "") != experiment.hypothesis_id:
         return blocked("measurement_hypothesis_mismatch", current)
-    if not experiment.activation_verdict_id:
-        return _legacy_authority_adapter(experiment, current_policy_epoch, blocked)
     activation = get_record("learning_contribution_verdicts", experiment.activation_verdict_id)
     trial_admission = None
     if experiment.stage == "paper_10":
@@ -148,6 +200,8 @@ def resolve_learning_authority(
         activation_reason = measurement_identity_reason(
             activation, predecessor_stage, current_policy_epoch,
             expected_horizon=expected_horizon,
+            expected_code_commit=current_code_commit,
+            expected_hypothesis_id=experiment.hypothesis_id,
         )
         return blocked(activation_reason) if activation_reason else AuthorityDecision(
             True,
@@ -158,6 +212,8 @@ def resolve_learning_authority(
     verdict = str(current.get("verdict") or "")
     identity_reason = measurement_identity_reason(
         current, experiment.stage, current_policy_epoch, expected_horizon=expected_horizon,
+        expected_code_commit=current_code_commit,
+        expected_hypothesis_id=experiment.hypothesis_id,
     )
     if identity_reason:
         return blocked(identity_reason, current)
@@ -202,6 +258,8 @@ def measurement_identity_reason(
     current_policy_epoch: str,
     *,
     expected_horizon: str | None,
+    expected_code_commit: str | None = None,
+    expected_hypothesis_id: str | None = None,
 ) -> str | None:
     try:
         metrics = json.loads(verdict.get("harm_metrics_json") or "{}")
@@ -211,6 +269,11 @@ def measurement_identity_reason(
         return "measurement_metadata_invalid"
     if str(verdict.get("stage") or "") != str(expected_stage):
         return "stage_mismatch"
+    if (
+        expected_hypothesis_id is not None
+        and str(verdict.get("hypothesis_id") or "") != expected_hypothesis_id
+    ):
+        return "measurement_hypothesis_mismatch"
     policy_epoch = verdict.get("policy_epoch") or metrics.get("policy_epoch")
     if str(policy_epoch or "") != str(current_policy_epoch or ""):
         return "stale_policy_epoch"
@@ -225,6 +288,10 @@ def measurement_identity_reason(
     metric_version = verdict.get("metric_version") or metrics.get("metric_version")
     if str(metric_version or "") != METRIC_VERSION:
         return "metric_version_mismatch"
+    if expected_code_commit is None:
+        return "code_commit_unavailable"
+    if str(verdict.get("code_commit") or "") != expected_code_commit:
+        return "code_commit_mismatch"
     if bool(metrics.get("breached")):
         return "harm_gate_breached"
     return None

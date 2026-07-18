@@ -615,7 +615,9 @@ def _seed_filter_candidate_outcome(*, key: str, entry_ts: str) -> None:
     db.commit()
 
 
-def _seed_open_experiment(*, experiment_id: str, started_at: str) -> None:
+def _seed_open_experiment(
+    *, experiment_id: str, started_at: str, status: str = "active",
+) -> None:
     """Insert a still-running learning_experiments row (ended_at IS NULL)."""
     db = get_db()
     hyp_id = f"hyp-{experiment_id}"
@@ -633,9 +635,37 @@ def _seed_open_experiment(*, experiment_id: str, started_at: str) -> None:
         "(experiment_id, hypothesis_id, stage, assignment_salt, allocation_pct, "
         " min_samples_per_arm, min_market_days, primary_metric, status, "
         " started_at, ended_at, created_at) "
-        "VALUES (?, ?, 'active', 'salt', 0.5, 30, 30, 'ret', 'registered', "
+        "VALUES (?, ?, 'shadow', 'salt', 0.5, 30, 30, 'ret', ?, "
         "        ?, NULL, datetime('now'))",
-        (experiment_id, hyp_id, started_at),
+        (experiment_id, hyp_id, status, started_at),
+    )
+    db.commit()
+
+
+def _seed_experiment_exposure(
+    *, experiment_id: str, exposed_at: str, suffix: str = "seed",
+) -> None:
+    db = get_db()
+    hypothesis_id = db.execute(
+        "SELECT hypothesis_id FROM learning_experiments WHERE experiment_id=?",
+        (experiment_id,),
+    ).fetchone()[0]
+    db.execute(
+        "INSERT INTO learning_exposures "
+        "(exposure_id, dedup_key, experiment_id, hypothesis_id, assignment, consumer, "
+        "consumer_stage, path_id, overlap_group, candidate_key, outcome_candidate_key, "
+        "outcome_source, outcome_contract_version, concurrent_policy_epoch, exposed_at) "
+        "VALUES (?, ?, ?, ?, 'control', 'test', 'score', 'p', 'g', ?, ?, "
+        "'fixed_horizon_candidate', 'v1', 'epoch-retention', ?)",
+        (
+            f"exposure-{experiment_id}-{suffix}",
+            f"dedup-{experiment_id}-{suffix}",
+            experiment_id,
+            hypothesis_id,
+            f"candidate-{experiment_id}-{suffix}",
+            f"candidate-{experiment_id}-{suffix}:1h",
+            exposed_at,
+        ),
     )
     db.commit()
 
@@ -662,6 +692,7 @@ def test_prune_filter_candidate_outcomes_clean_window_cutoff():
     _seed_filter_candidate_outcome(key="k-100d", entry_ts=_iso(100))
     _seed_filter_candidate_outcome(key="k-60d", entry_ts=_iso(60))
     _seed_open_experiment(experiment_id="exp-open", started_at=_iso(120))
+    _seed_experiment_exposure(experiment_id="exp-open", exposed_at=_iso(120))
 
     deleted2 = prune_filter_candidate_outcomes(days=30)
     assert deleted2 == 0, (
@@ -676,6 +707,37 @@ def test_prune_filter_candidate_outcomes_clean_window_cutoff():
         ).fetchall()
     }
     assert remaining == {"k-100d", "k-60d", "k-10d"}
+
+
+def test_retention_anchor_is_earliest_active_exposure_and_ignores_unexposed_registration():
+    from aletheia.storage.repositories import prune_filter_candidate_outcomes
+
+    _seed_filter_candidate_outcome(key="k-100d", entry_ts=_iso(100))
+    _seed_filter_candidate_outcome(key="k-60d", entry_ts=_iso(60))
+    _seed_filter_candidate_outcome(key="k-10d", entry_ts=_iso(10))
+    _seed_open_experiment(
+        experiment_id="exp-unexposed-registered",
+        started_at=_iso(200),
+        status="registered",
+    )
+    _seed_open_experiment(
+        experiment_id="exp-active",
+        started_at=_iso(5),
+        status="active",
+    )
+    _seed_experiment_exposure(experiment_id="exp-active", exposed_at=_iso(70))
+    _seed_experiment_exposure(
+        experiment_id="exp-active", exposed_at=_iso(40), suffix="later",
+    )
+
+    assert prune_filter_candidate_outcomes(days=30) == 1
+    remaining = {
+        row[0]
+        for row in get_db().execute(
+            "SELECT outcome_candidate_key FROM filter_candidate_outcomes"
+        ).fetchall()
+    }
+    assert remaining == {"k-60d", "k-10d"}
 
 
 def test_prune_filter_decisions_clean_window_cutoff():
@@ -702,6 +764,7 @@ def test_prune_filter_decisions_clean_window_cutoff():
 
     # With an open experiment old enough to hold everything, nothing is pruned.
     _seed_open_experiment(experiment_id="exp-hold", started_at=_iso(120))
+    _seed_experiment_exposure(experiment_id="exp-hold", exposed_at=_iso(120))
     assert prune_filter_decisions(days=45) == 0
 
     # End the experiment and retry — the 45d cutoff drops the two >45d rows.

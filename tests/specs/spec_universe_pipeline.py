@@ -145,10 +145,11 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
         "aletheia.analytics.causal_controls.record_universe_control_cohort",
         lambda **_kwargs: None,
     )
+    experiment_outcome_registrations = []
     monkeypatch.setattr(
         service,
         "_register_experiment_candidate_outcomes",
-        lambda *_args, **_kwargs: 0,
+        lambda *_args, **_kwargs: experiment_outcome_registrations.append(True),
     )
     monkeypatch.setattr(
         "aletheia.agent_runtime.scheduler.get_latest_volume_ranking", lambda: None
@@ -187,6 +188,7 @@ def _assert_emission_failure_cannot_publish_partial_universe_refresh(
     assert failed_run["snapshot_id"] != previous.id
     assert failure_code in failed_run["errors"]
     assert db.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
+    assert experiment_outcome_registrations == []
 
 
 @spec_claim(

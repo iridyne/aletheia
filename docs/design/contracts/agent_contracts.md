@@ -3,7 +3,7 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-07-18 (Opportunity generation/carrier continuity)
+> Last updated: 2026-07-18 (Opportunity carrier continuity and A1 Learning measurement integrity)
 
 ---
 
@@ -48,11 +48,11 @@
 | 34 | outcome_hook_replay | 1min | io | Replay durable eligible-close feedback jobs; revalidate the closed Position and retry incomplete shadow/Serenity delivery |
 | 35 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
 | 36 | outcome_settler | 10min | io | Settle outstanding prediction / universe forward outcomes |
-| 37 | learning_contribution_evaluator | interval `learning.evaluation_interval_minutes` (default 60) | io | Measure only: append deterministic contribution verdicts and evaluator health even when autonomous Learning is off or runtime is paused |
+| 37 | learning_contribution_evaluator | interval `learning.evaluation_interval_minutes` (default 60) | io | Sole scheduled contribution evaluator. Measure only: append deterministic cluster-based contribution verdicts and evaluator health even when autonomous Learning is off or runtime is paused |
 | 38 | learning_lifecycle_controller | interval `learning.evaluation_interval_minutes` (default 60) | io | Apply at most one default-closed paper lifecycle action per current experiment; requires autonomous Learning, no pause/integrity incident, lifecycle automation, paper influence, and path allowlist |
 | 39 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
 | 40 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
-| 41 | learning_measurement_startup_catchup | once, 3min after gateway boot | io | Re-run only the current missing contribution-measurement window; independent of autonomous Learning and paper influence |
+| 41 | learning_measurement_startup_catchup | once, 2min after gateway boot | io | Before the first regular evaluator interval, re-run only the current missing contribution-measurement window through `learning_contribution_evaluator`; independent of autonomous Learning and paper influence |
 
 Learning behavior jobs (rows 10–15, 26, 30–31, 38 and the Learning behavior catch-up) share
 `agent.autonomous_learning` as one backend gate. When disabled, no automatic producer,
@@ -61,7 +61,10 @@ reviewer, promoter, controller, or learned rollout runs. Measurement-only
 `learning_contribution_evaluator` continue so disabling
 Learning does not erase or delay outcome truth. The evaluator never changes stages or authority;
 the lifecycle controller is a separate gated consumer. Successful/failed/skipped runs and reviewer
-backlog health are persisted in `learning_job_health`.
+backlog health are persisted in `learning_job_health`. There is no scheduled
+`learning_verdict_runner`; any historical health row under that id remains audit history only.
+After recovery, `status` may be healthy and `last_error` clears, while `last_failed_at` and
+`last_failure_reason` preserve the most recent failure.
 
 ### OS Session-service Contract
 
@@ -307,6 +310,22 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 - **LLM**: No (pure statistical computation)
 - **Outputs**: Calibration scores (ECE by bucket), grade (excellent/good/fair/poor)
 - **Side effects**: Updates calibration cache; exposed via /analytics/confidence-calibration
+
+#### learning_contribution_evaluator
+
+- **Trigger**: one recurring interval at `learning.evaluation_interval_minutes` (default 60);
+  startup catch-up is a one-shot caller of this same evaluator before the first interval
+- **Inputs**: prospective `universe_family_calibration` exposures plus exact-key settled outcomes
+- **Statistical unit**: persisted `assignment_unit_key` cluster; complete-cluster allocation utility
+  averages selected-member net return with zero utility for dropped members, and uses worst selected
+  MAE; incomplete or legacy unit-less clusters are excluded
+- **Outcome precedence**: `filter_candidate_outcomes` is canonical full-arm truth;
+  `universe_forward_outcomes` is a selected-member mirror/fallback and disagreement fails closed
+- **Outputs**: append-only verdicts under
+  `universe_family_calibration_cluster_allocation_utility_v2`; old metric verdicts remain history
+- **Time semantics**: verdict `created_at` is evaluation time; window fields are observation bounds
+- **Authority**: measurement only; cannot change experiment stage, multiplier, paper authority,
+  Risk, Execution, exchange, or live state
 
 ---
 

@@ -1,7 +1,7 @@
 # Learning Subsystem Contract
 
 > Contract level: L2. This file is normative for the Learning subsystem.
-> Last aligned: 2026-07-14 per-path paper authority and causal settlement.
+> Last aligned: 2026-07-18 A1 contribution-measurement integrity.
 > Reference intent: [Product Direction §3](../../product/definition/DIRECTION.md#3-learning-is-an-evidence-pipeline-not-a-page).
 > Target extension: `learning_evolution_contract.md` defines the measured
 > self-improvement lifecycle and tracks each implemented/remaining claim.
@@ -51,7 +51,7 @@ results can influence a later trading judgment, even when it lives outside `alet
 | Role | Current implementation | Current authority |
 | --- | --- | --- |
 | Outcome joins | `analytics/trade_attribution.py`, `trade_path.py` | read-only realized-trade joins |
-| Candidate counterfactuals | `analytics/shadow_trades.py`, `filter_evidence.py`, `universe/filter_outcome_recorder.py` | settle skipped/blocked candidate outcomes |
+| Candidate counterfactuals | `analytics/shadow_trades.py`, `filter_evidence.py`, `universe/filter_outcome_recorder.py` | `filter_candidate_outcomes` is the canonical full-arm fixed-horizon source; `universe_forward_outcomes` is a selected-member legacy mirror/fallback, and economic disagreement fails closed |
 | Outcome economics | `learning/outcomes.py`, `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | shared fail-closed cost/quality contract governs factor, universe, reviewer, ranker and sizing exposure authority; observer, Operator and automatic Risk-lesson boolean treatments use the same immutable exposure ledger and only link to real fixed-horizon candidate outcomes |
 | Universe family calibration | `universe/allocator.py::get_family_multipliers`, `learning/experiments.py`, `universe/service.py` | 50-sample retrospective cohorts may propose a bounded 0.9/1.1 shadow treatment; actual paper influence requires stable prospective arms, linked net outcomes, minimum time, and a positive verdict; fallback is 1.0 |
 | Structured cases | `analytics/trade_case_builder.py` | deterministic high-confidence cases and guard candidates |
@@ -84,9 +84,28 @@ loop contributes positively. Current behavior has these contract-relevant limita
   behaviorally neutral until sufficient prospective treatment/control outcomes exist;
 - factor identity is standardized as `factor_key` through producer, ranker, Operator context and
   prompt rendering, with immutable before/after exposure records;
-- the first contribution evaluator now measures only prospective
-  `universe_family_calibration` exposure cohorts against exact settled, cost-aware fixed-horizon
-  outcomes. It persists positive/neutral/negative/insufficient/invalid measurement verdicts but
+- the only scheduled contribution evaluator measures prospective
+  `universe_family_calibration` exposures through bounded exact-key reads. It uses
+  `filter_candidate_outcomes` as the canonical full-arm source and
+  `universe_forward_outcomes` only as a selected-member legacy mirror/fallback; conflicting
+  economic copies invalidate the observation instead of choosing one;
+- universe assignment is stable-randomized at the persisted `assignment_unit_key` cluster, not
+  independently per surviving member. One complete cluster contributes one observation using
+  intent-to-treat allocation utility: selected members contribute net return and dropped members
+  contribute zero, with worst selected-member MAE. The immutable `allocation_selected` fact is
+  required. Incomplete clusters contribute no survivor-only sample, and legacy exposures without a
+  stored assignment unit remain auditable but excluded;
+- contribution metric version
+  `universe_family_calibration_cluster_allocation_utility_v2` applies only to new verdicts. Earlier
+  metric verdict rows remain immutable history. A verdict's `created_at` is evaluation time, while
+  `window_start` and `window_end` remain observation bounds;
+- lifecycle, authority, and owner-facing progress consume only the exact current hypothesis, stage,
+  policy epoch, horizon, outcome contract, metric version, and running-build cohort. Mismatched
+  harmful history can explain a hold but cannot refreeze or invalidate the current experiment;
+- experiment registration is not an observation start. The first durable exposure atomically and
+  idempotently changes an open experiment from `registered` to `active`, and `started_at` is always
+  repaired to the earliest durable exposure;
+- the evaluator persists positive/neutral/negative/insufficient/invalid measurement verdicts but
   does not emit the authority adapter's `promote`/`refreeze` values, so the multiplier remains
   refrozen at its static baseline;
 - automatic lesson `block_*` suggestions are rewritten as non-blocking `shadow-only` guard
@@ -115,6 +134,10 @@ loop contributes positively. Current behavior has these contract-relevant limita
   candidate identity and the exact Opportunity 4h outcome key; a mixed queue returns the static
   prompt without creating an unlinked exposure. Candidate-context contract changes are included in
   the Operator Learning policy epoch so pre-change and post-change contribution evidence cannot pool.
+- the scheduled lifecycle controller cannot admit a shadow experiment to `paper_10`; it can only
+  recommend a future authenticated owner admission. No authenticated owner mutation route exists
+  yet, so `admit_shadow_trial` fails closed even when passed the string `owner`. Lifecycle automation
+  and paper influence remain off by default.
 
 The target lifecycle, registry, prospective experiments, overlap handling, and automatic fallback
 are normative in `learning_evolution_contract.md`. Phase 0 measurement claims are tracked below;

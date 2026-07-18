@@ -218,8 +218,20 @@ Required exposure fields:
 - code commit, policy version, and experiment id;
 - eventual outcome key and settlement status.
 
-Assignment must be stable under retries. It uses a hash of experiment id and canonical
-candidate key, never wall-clock randomness. Safety gates apply identically to both arms.
+Assignment must be stable under retries. It uses a hash of experiment id and a canonical
+assignment-unit key, never wall-clock randomness. Safety gates apply identically to both arms.
+For `universe_family_calibration`, the randomization unit is the persisted
+`assignment_unit_key` cluster (the scoring cohort plus family, direction, and market type), so all
+members of that cluster receive the same arm. The candidate key still identifies each exact member
+outcome; it is not the statistical assignment unit.
+
+The current universe evaluator requires every persisted member of a cluster to resolve cleanly.
+One complete cluster is one intent-to-treat sample: selected members contribute net return, dropped
+members contribute zero utility, and its MAE is the worst selected-member MAE. If any expected
+member is missing or ineligible, the entire cluster is excluded so selected survivors cannot become
+a biased sample. Legacy exposures with no persisted `assignment_unit_key` remain queryable for audit
+but are excluded and are never inferred from time, symbol, candidate adjacency, or selected Universe
+membership.
 
 Controls by path:
 
@@ -275,9 +287,21 @@ of evidence is never positive. A positive verdict expires unless continuously re
 
 Current runtime scope: the contribution evaluator is measurement-only and accepts only
 prospective `universe_family_calibration` exposures. It isolates experiment, policy epoch,
-horizon, and outcome-contract version; links only the exact registered candidate outcome; and
-persists deterministic confidence, harm, and exclusion details. Its `positive` result is not an
-authority promotion signal, so it cannot enable a treatment or alter a multiplier.
+horizon, and outcome-contract version and resolves outcomes with bounded, batched exact-key reads.
+`filter_candidate_outcomes` is the canonical full-arm source because it includes selected and
+dropped candidates plus the immutable allocator-selection result. One complete assignment cluster
+uses intent-to-treat allocation utility: selected members contribute their net return and dropped
+members contribute zero. `universe_forward_outcomes` is the selected-member legacy mirror/fallback:
+an identical mirror is not counted twice, absence of a canonical row may use the legacy selected
+row, and any economic or selection disagreement fails closed. It persists deterministic confidence,
+harm, source provenance, and exclusion details. Its `positive` result is not an authority promotion
+signal, so it cannot enable a treatment or alter a multiplier.
+
+The evaluator uses metric version
+`universe_family_calibration_cluster_allocation_utility_v2`. Existing verdicts under older metric
+versions remain append-only history and cannot satisfy a current metric-identity gate. Verdict
+`created_at` records evaluation time; `window_start` and `window_end` continue to bound the
+observations used.
 
 The evaluator also reads `authority_applied` from each exposure manifest. A treatment assignment
 that stayed on its baseline is a shadow observation, not an intervention. When every treatment
@@ -301,13 +325,17 @@ rewrites a measurement verdict into `promote` or any other authority word. For t
 
 Stages are isolated experiments, not a mutable allocation counter:
 `shadow` → `paper_10` → `paper_25` → `paper_50` → `paper_active`.
-The automatic lifecycle controller never moves `shadow` to `paper_10`. That boundary requires a
-separate explicit trial-admission action tied to the current complete
-`insufficient_data/no_actual_intervention` shadow measurement, caller identity, reason, policy
-epoch, and all default-closed paper gates. The admission closes the shadow predecessor and creates
-one `paper_10` successor with a fresh assignment salt. Later paper-stage promotions also close the
-predecessor, create one successor, and require fresh evidence before another promotion. Paper
-treatment is capped at 90%; the final-stage default is 80%, leaving a permanent control holdout.
+The automatic lifecycle controller never moves `shadow` to `paper_10`. It may only report
+`recommended_lifecycle_action=admit_trial`. The target boundary requires a separate authenticated
+owner action tied to the current complete `insufficient_data/no_actual_intervention` shadow
+measurement, authenticated principal, reason, policy epoch, and all default-closed paper gates.
+No authenticated owner mutation route currently exists: `admit_shadow_trial` always holds with
+`authenticated_owner_admission_unavailable`, and a caller-provided `"owner"` string grants no
+authority. A future implementation must close the shadow predecessor and create one `paper_10`
+successor with a fresh assignment salt. Later paper-stage promotions also close the predecessor,
+create one successor, and require fresh evidence before another promotion. Paper treatment is
+capped at 90%; the final-stage default is 80%, leaving a permanent control holdout. Lifecycle
+automation and paper influence remain disabled by default.
 
 Before any paper influence is used, the authority check binds the requested path and successor to
 the same hypothesis and its closed predecessor, then requires the activation verdict to belong to
@@ -320,6 +348,11 @@ Every applied transition has one durable, deduplicated lifecycle event with the 
 stage change, reason, effective policy epoch, and successor identity. The event and experiment
 state change commit together; the JSONL audit is appended after that durable commit. Repeating a
 job after restart therefore returns the existing transition instead of creating a second successor.
+
+An experiment may exist as `registered` before it has observations. Inserting the first durable
+exposure and activating the open experiment commit atomically and idempotently. `started_at` is the
+minimum persisted `exposed_at` for that experiment, including when an earlier exposure is replayed
+or a legacy partial insert is repaired; an unexposed registration does not start an evidence window.
 
 Measurement remains schedulable even while autonomous behavior is off or paused. The separate
 lifecycle controller is allowed to change paper state only when reconciliation integrity is clear,
@@ -452,6 +485,13 @@ Every Learning job has a durable expected-run record, idempotency key, last succ
 next due time, input watermark, output counts, and failure reason.
 
 - Restart catch-up runs at most once for the missing schedule window.
+- Contribution measurement has one recurring scheduler job,
+  `learning_contribution_evaluator`. `learning_measurement_startup_catchup` runs before its first
+  regular interval and invokes that same evaluator only when the current window is missing; there
+  is no second scheduled verdict runner. Historical `learning_verdict_runner` health rows remain
+  retained operational history and do not imply a registered job.
+- Current status may recover to healthy and clear `last_error`, but `last_failed_at` and
+  `last_failure_reason` retain the most recent failure across recovery.
 - A direct scheduled extractor is recorded even when it bypasses the agent orchestrator.
 - Backlog age and count are health signals; a healthy producer with a stalled reviewer is unhealthy.
 - `autonomous_learning=false` prevents all autonomous Learning producers/reviewers/promoters,
@@ -514,13 +554,14 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — deterministic policy epochs now persist and stratify universe, factor, ranker, sizing, and Operator prompt-bundle exposures; other prompt-content policy changes remain |
 | LE-B22 | L2b | factor producer, Operator context, ranker trace, and exposure use the same stable `factor_key` identity | implemented |
 | LE-B23 | L2b | retrying one exposure dedup key stores one immutable influence record | implemented |
-| LE-V01 | L2b | universe calibration verdict runtime uses exact, prospective, cost-aware treatment/control cohorts | implemented — measurement-only evaluator |
+| LE-B26 | L2b | full-arm universe outcomes persist exact-key allocator selection and complete persisted assignment clusters, not selected survivors, are the statistical samples | implemented |
+| LE-V01 | L2b | the only runtime verdict path reads canonical full-arm filter outcomes by exact key, calculates cluster intent-to-treat allocation utility, uses selected-member Universe rows only as mirror/fallback, and fails closed on disagreement | implemented — measurement-only evaluator; no empirical positive-contribution claim |
 | LE-V02 | L2c | deterministic verdict storage cannot alter Learning authority or experiment lifecycle | implemented — evaluator writes only its idempotent measurement record |
 | LE-V03 | L2c | shadow assignments with no actually applied treatment cannot produce a causal positive/negative verdict | implemented — exposure manifests feed cohort samples and return `insufficient_data/no_actual_intervention` |
 | LE-L01 | L2b | measurement verdicts map to distinct lifecycle actions without changing their vocabulary | implemented |
 | LE-L02 | L2c | stage transitions are transactional, idempotent, isolated, and default-closed for paper influence | implemented |
 | LE-L03 | L2c | measurement and lifecycle control use separate restart-safe single-instance schedules | implemented |
-| LE-L04 | L2c | shadow cannot auto-promote; `paper_10` requires a separate explicit durable trial admission | implemented |
+| LE-L04 | L2c | shadow cannot auto-promote; the scheduled controller only recommends admission and no caller-provided actor string can cross the unavailable authenticated-owner boundary | implemented |
 | LE-L05 | L2c | paper authority binds approved evidence to its same-hypothesis closed predecessor and declared horizon | implemented |
 | LE-C01 | L2c | no promotion without unique samples, time span, and outcome links | implemented |
 | LE-C02 | L2c | negative/unsafe holdout automatically demotes or refreezes | implemented |

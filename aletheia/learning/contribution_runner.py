@@ -1,8 +1,7 @@
 """Persist and inspect read-only Learning contribution verdicts.
 
-This module is deliberately not a scheduler job and does not call any Learning
-authority or trading consumer.  Its sole mutation is an idempotent append to the
-existing measurement ledger.
+This module does not call any Learning authority or trading consumer. Its sole
+mutation is an idempotent append to the existing measurement ledger.
 """
 
 from __future__ import annotations
@@ -23,12 +22,7 @@ from aletheia.storage.sqlite import get_db
 
 
 def run_verdict_cycle() -> dict:
-    """Evaluate all active experiments that have enough settled data.
-
-    Called by the ``learning_verdict_runner`` scheduler job every 6h.
-    Returns a summary dict with counts of experiments evaluated, verdicts
-    written, and experiments skipped.
-    """
+    """Manual compatibility helper for evaluating all open experiments."""
     db = get_db()
     rows = db.execute(
         "SELECT experiment_id FROM learning_experiments WHERE ended_at IS NULL",
@@ -130,7 +124,7 @@ def _build_verdict(
         harm_metrics_json=json.dumps(metrics, sort_keys=True, separators=(",", ":")),
         verdict=evaluation.verdict,
         reason=evaluation.reason,
-        created_at=window_end,
+        created_at=datetime.now(timezone.utc).isoformat(),
         policy_epoch=cohort.key.policy_epoch,
         target_horizon=cohort.key.horizon,
         outcome_contract_version=cohort.key.outcome_contract_version,
@@ -151,8 +145,19 @@ def _cohort_fingerprint(cohort: ContributionCohort, evaluation: VerdictEvaluatio
         },
         "samples": [
             {
+                "assignment_unit_key": sample.assignment_unit_key,
                 "candidate_key": sample.candidate_key,
                 "outcome_candidate_key": sample.outcome_candidate_key,
+                "outcome_source": sample.outcome_source,
+                "member_outcome_candidate_keys": sample.member_outcome_candidate_keys,
+                "member_outcome_sources": sample.member_outcome_sources,
+                "member_count": sample.member_count,
+                "selected_member_count": sample.selected_member_count,
+                "allocation_selected": sample.allocation_selected,
+                "allocation_selection_source": sample.allocation_selection_source,
+                "member_allocation_selection_sources": (
+                    sample.member_allocation_selection_sources
+                ),
                 "assignment": sample.assignment,
                 "net_return_pct": sample.net_return_pct,
                 "mae_pct": sample.mae_pct,
@@ -166,6 +171,10 @@ def _cohort_fingerprint(cohort: ContributionCohort, evaluation: VerdictEvaluatio
         "invalid": dict(sorted(cohort.invalid_reasons.items())),
         "duplicate_exposure_n": cohort.duplicate_exposure_n,
         "duplicate_outcome_n": cohort.duplicate_outcome_n,
+        "mirrored_universe_row_n": cohort.mirrored_universe_row_n,
+        "evidence_conflict_fingerprints": sorted(
+            cohort.evidence_conflict_fingerprints
+        ),
         "minimum_samples": cohort.experiment.min_samples_per_arm,
         "minimum_market_days": cohort.experiment.min_market_days,
         "effect_threshold": cohort.hypothesis.effect_threshold,

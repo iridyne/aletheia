@@ -64,6 +64,7 @@ def _exposure(
     outcome_key: str | None = None,
     authority_applied: bool | None = None,
     code_commit: str | None = "test-commit",
+    assignment_unit_key: str | None = None,
 ):
     from aletheia.learning.ledger import insert_exposure
     from aletheia.learning.models import LearningExposure
@@ -79,6 +80,7 @@ def _exposure(
         path_id=hypothesis.path_id,
         overlap_group="universe",
         candidate_key=candidate,
+        assignment_unit_key=assignment_unit_key or candidate,
         outcome_candidate_key=outcome_key if outcome_key is not None else candidate,
         outcome_source="fixed_horizon_candidate",
         outcome_contract_version=contract,
@@ -140,10 +142,284 @@ def _outcome(
     )
 
 
+def _filter_outcome(
+    candidate: str,
+    *,
+    horizon: str = "4h",
+    net: float | None = 0.0,
+    mae: float | None = -0.1,
+    entry_at: str | None = None,
+    status: str = "settled",
+    cost_model_version: str | None = "cost-v1",
+    allocation_selected: bool | None = True,
+    suffix: str = "",
+):
+    from aletheia.storage.sqlite import get_db
+
+    entry = entry_at or _iso(minutes=1)
+    entry_dt = datetime.fromisoformat(entry.replace("Z", "+00:00"))
+    due = (entry_dt + timedelta(hours=4)).isoformat()
+    settled = (entry_dt + timedelta(hours=4, minutes=1)).isoformat()
+    get_db().execute(
+        "INSERT INTO filter_candidate_outcomes "
+        "(id, outcome_candidate_key, venue, symbol, market_type, scanner_family, direction, "
+        "horizon, allocation_selected, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
+        "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, mae_pct, "
+        "cost_model_version, status) "
+        "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'momentum', 'long', ?, ?, 100, ?, ?, ?, ?, "
+        "0.1, 0.1, 0.0, ?, ?, ?)",
+        (
+            f"filter-outcome-{candidate}-{horizon}-{suffix or 'primary'}",
+            candidate,
+            horizon,
+            allocation_selected,
+            entry,
+            due,
+            settled,
+            net,
+            mae,
+            cost_model_version,
+            status,
+        ),
+    )
+
+
+def _filter_outcome_matrix(
+    candidate: str,
+    *,
+    target_net: float,
+    allocation_selected: bool = True,
+):
+    for horizon in ("15m", "1h", "4h", "24h"):
+        _filter_outcome(
+            candidate,
+            horizon=horizon,
+            net=target_net if horizon == "4h" else 99.0,
+            allocation_selected=allocation_selected,
+        )
+
+
 def _run(experiment_id: str):
     from aletheia.learning.contribution_runner import evaluate_experiment
 
     return evaluate_experiment(experiment_id)
+
+
+def test_full_arm_filter_outcomes_are_primary_and_universe_mirror_is_not_double_counted():
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="full-arm-treatment", assignment="treatment",
+        outcome_key="full-arm-treatment:4h",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="mirrored-treatment", assignment="treatment",
+        outcome_key="mirrored-treatment:4h",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="selected-control", assignment="control",
+        outcome_key="selected-control:4h",
+    )
+    _filter_outcome("full-arm-treatment", net=1.4)
+    _filter_outcome("mirrored-treatment", net=0.6)
+    _outcome("mirrored-treatment:4h", net=0.6)
+    _outcome("selected-control:4h", net=0.2)
+    _filter_outcome("same-symbol-unrelated-candidate", net=99.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    from aletheia.learning.cohorts import build_experiment_cohorts
+    cohort = build_experiment_cohorts(experiment.experiment_id)[0]
+
+    assert (verdict.unique_treatment_n, verdict.unique_control_n) == (2, 1)
+    assert verdict.observed == pytest.approx(1.0)
+    assert verdict.baseline == pytest.approx(0.2)
+    assert verdict.delta == pytest.approx(0.8)
+    assert {sample.outcome_candidate_key for sample in cohort.samples} == {
+        "full-arm-treatment:4h", "mirrored-treatment:4h", "selected-control:4h",
+    }
+    metrics = json.loads(verdict.harm_metrics_json)
+    assert metrics["outcome_source_member_counts"] == {
+        "filter_candidate_outcomes": 2,
+        "universe_forward_outcomes_legacy_fallback": 1,
+    }
+    assert metrics["mirrored_universe_row_n"] == 1
+
+
+def test_full_arm_metric_measures_allocation_utility_not_exogenous_candidate_mean():
+    hypothesis, experiment = _experiment()
+    for candidate, assignment, unit, net, selected in (
+        ("selected-treatment", "treatment", "treatment-run", 2.0, True),
+        ("dropped-treatment", "treatment", "treatment-run", -8.0, False),
+        ("selected-control", "control", "control-run", 0.5, True),
+        ("dropped-control", "control", "control-run", 5.0, False),
+    ):
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment=assignment,
+            outcome_key=f"{candidate}:4h",
+            assignment_unit_key=unit,
+        )
+        _filter_outcome(candidate, net=net, allocation_selected=selected)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.observed == pytest.approx(1.0)
+    assert verdict.baseline == pytest.approx(0.25)
+    assert verdict.delta == pytest.approx(0.75)
+    assert metrics["allocation_selected_member_n"] == 2
+    assert metrics["allocation_total_member_n"] == 4
+
+
+def test_normal_sibling_horizons_do_not_create_wrong_horizon_evidence():
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="matrix-treatment", assignment="treatment",
+        outcome_key="matrix-treatment:4h",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="matrix-control", assignment="control",
+        outcome_key="matrix-control:4h",
+    )
+    _filter_outcome_matrix("matrix-treatment", target_net=1.0)
+    _filter_outcome_matrix("matrix-control", target_net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.delta == pytest.approx(1.0)
+    assert "wrong_horizon" not in metrics["exclusion_reasons"]
+
+
+def test_canonical_and_selected_mirror_economic_disagreement_fails_closed():
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="conflict", assignment="treatment",
+        outcome_key="conflict:4h",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="clean", assignment="control",
+        outcome_key="clean:4h",
+    )
+    _filter_outcome("conflict", net=1.0)
+    _outcome("conflict:4h", net=-1.0)
+    _filter_outcome("clean", net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+
+    assert verdict.verdict == "invalid"
+    assert json.loads(verdict.harm_metrics_json)["invalid_reasons"] == {
+        "conflicting_mirrored_outcome": 1,
+    }
+    assert len(json.loads(verdict.harm_metrics_json)["evidence_conflict_fingerprints"]) == 1
+
+
+def test_mirror_inferred_selection_and_explicit_selection_have_distinct_provenance():
+    hypothesis, experiment = _experiment()
+    for candidate, assignment, net in (
+        ("legacy-treatment", "treatment", 1.0),
+        ("legacy-control", "control", 0.0),
+    ):
+        _exposure(
+            experiment,
+            hypothesis,
+            candidate=candidate,
+            assignment=assignment,
+            outcome_key=f"{candidate}:4h",
+        )
+        _filter_outcome(candidate, net=net, allocation_selected=None)
+        _outcome(f"{candidate}:4h", net=net)
+
+    inferred = _run(experiment.experiment_id)[0]
+    inferred_metrics = json.loads(inferred.harm_metrics_json)
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET allocation_selected=1 "
+        "WHERE outcome_candidate_key IN ('legacy-treatment', 'legacy-control')"
+    )
+    db.commit()
+    explicit = _run(experiment.experiment_id)[0]
+    explicit_metrics = json.loads(explicit.harm_metrics_json)
+
+    assert inferred.verdict_id != explicit.verdict_id
+    assert inferred_metrics["allocation_selection_source_member_counts"] == {
+        "universe_forward_outcomes_mirror_inference": 2,
+    }
+    assert explicit_metrics["allocation_selection_source_member_counts"] == {
+        "filter_candidate_outcomes": 2,
+    }
+
+
+def test_fallback_and_later_canonical_outcome_create_distinct_verdict_history():
+    hypothesis, experiment = _experiment()
+    for candidate, assignment, net in (
+        ("fallback-treatment", "treatment", 1.0),
+        ("fallback-control", "control", 0.0),
+    ):
+        _exposure(experiment, hypothesis, candidate=candidate, assignment=assignment)
+        _outcome(candidate, net=net)
+
+    fallback = _run(experiment.experiment_id)[0]
+    for candidate, net in (("fallback-treatment", 1.0), ("fallback-control", 0.0)):
+        _filter_outcome(candidate, net=net, allocation_selected=True)
+    canonical = _run(experiment.experiment_id)[0]
+
+    assert fallback.verdict_id != canonical.verdict_id
+    assert json.loads(fallback.harm_metrics_json)["outcome_source_member_counts"] == {
+        "universe_forward_outcomes_legacy_fallback": 2,
+    }
+    assert json.loads(canonical.harm_metrics_json)["outcome_source_member_counts"] == {
+        "filter_candidate_outcomes": 2,
+    }
+
+
+def test_changed_conflicting_evidence_creates_a_distinct_invalid_verdict():
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="changing-conflict", assignment="treatment",
+        outcome_key="changing-conflict:4h",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="changing-clean", assignment="control",
+        outcome_key="changing-clean:4h",
+    )
+    _filter_outcome("changing-conflict", net=1.0)
+    _outcome("changing-conflict:4h", net=-1.0)
+    _filter_outcome("changing-clean", net=0.0)
+    first = _run(experiment.experiment_id)[0]
+
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    db.execute(
+        "UPDATE universe_forward_outcomes SET net_return_pct=-2.0 "
+        "WHERE outcome_candidate_key='changing-conflict:4h'"
+    )
+    db.commit()
+    second = _run(experiment.experiment_id)[0]
+
+    assert first.verdict == second.verdict == "invalid"
+    assert first.verdict_id != second.verdict_id
+
+
+@pytest.mark.parametrize("conflicting_nets", [(1.0, -2.0), (-2.0, 1.0)])
+def test_conflicting_universe_fallback_duplicates_fail_closed_in_any_insertion_order(
+    conflicting_nets,
+):
+    hypothesis, experiment = _experiment()
+    _exposure(experiment, hypothesis, candidate="ambiguous", assignment="treatment")
+    _exposure(experiment, hypothesis, candidate="clean-control", assignment="control")
+    for index, net in enumerate(conflicting_nets):
+        _outcome("ambiguous", net=net, suffix=str(index))
+    _outcome("clean-control", net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "invalid"
+    assert metrics["invalid_reasons"] == {"ambiguous_duplicate_outcome": 1}
+    assert verdict.unique_treatment_n == 0
 
 
 def test_groups_treatment_and_control_and_reports_cost_aware_means():
@@ -221,6 +497,49 @@ def test_duplicate_exposure_and_identical_outcome_rows_count_once():
     assert (verdict.unique_treatment_n, verdict.unique_control_n) == (1, 1)
     assert metrics["duplicate_exposure_n"] == 1
     assert metrics["duplicate_outcome_n"] == 1
+
+
+def test_assignment_cluster_counts_as_one_statistical_unit():
+    hypothesis, experiment = _experiment()
+    for candidate, assignment, unit, net in (
+        ("cluster-t-1", "treatment", "cluster-treatment", 1.0),
+        ("cluster-t-2", "treatment", "cluster-treatment", 3.0),
+        ("cluster-c-1", "control", "cluster-control", 0.2),
+        ("cluster-c-2", "control", "cluster-control", 0.4),
+    ):
+        _exposure(
+            experiment, hypothesis, candidate=candidate, assignment=assignment,
+            assignment_unit_key=unit,
+        )
+        _outcome(candidate, net=net)
+
+    verdict = _run(experiment.experiment_id)[0]
+
+    assert (verdict.unique_treatment_n, verdict.unique_control_n) == (1, 1)
+    assert verdict.observed == pytest.approx(2.0)
+    assert verdict.baseline == pytest.approx(0.3)
+
+
+def test_incomplete_assignment_cluster_cannot_become_a_survivor_only_sample():
+    hypothesis, experiment = _experiment()
+    for candidate, assignment, unit in (
+        ("missing-t-1", "treatment", "cluster-treatment"),
+        ("missing-t-2", "treatment", "cluster-treatment"),
+        ("complete-c-1", "control", "cluster-control"),
+        ("complete-c-2", "control", "cluster-control"),
+    ):
+        _exposure(
+            experiment, hypothesis, candidate=candidate, assignment=assignment,
+            assignment_unit_key=unit,
+        )
+    _outcome("missing-t-1", net=4.0)
+    _outcome("complete-c-1", net=0.1)
+    _outcome("complete-c-2", net=0.2)
+
+    verdict = _run(experiment.experiment_id)[0]
+
+    assert verdict.verdict == "insufficient_data"
+    assert (verdict.unique_treatment_n, verdict.unique_control_n) == (0, 1)
 
 
 def test_incomplete_cost_model_makes_cohort_invalid():
@@ -531,6 +850,37 @@ def test_same_inputs_are_idempotent_and_inspection_is_read_only():
     inspection = inspect_experiment(experiment.experiment_id)
     assert inspection["experiment"]["experiment_id"] == experiment.experiment_id
     assert len(inspection["cohorts"]) == len(inspection["verdicts"]) == 1
+
+
+def test_verdict_created_at_is_evaluation_time_not_observation_window_end():
+    hypothesis, experiment = _experiment()
+    _exposure(experiment, hypothesis, candidate="clock-treatment", assignment="treatment")
+    _exposure(experiment, hypothesis, candidate="clock-control", assignment="control")
+    _outcome("clock-treatment", net=1.0)
+    _outcome("clock-control", net=0.0)
+
+    before = datetime.now(timezone.utc)
+    verdict = _run(experiment.experiment_id)[0]
+    after = datetime.now(timezone.utc)
+    created_at = datetime.fromisoformat(verdict.created_at.replace("Z", "+00:00"))
+    window_end = datetime.fromisoformat(verdict.window_end.replace("Z", "+00:00"))
+
+    assert before <= created_at <= after
+    assert created_at > window_end
+
+
+def test_excluded_cohort_verdict_created_at_is_not_unix_epoch():
+    hypothesis, experiment = _experiment()
+    _exposure(experiment, hypothesis, candidate="excluded", assignment="treatment")
+    _outcome("excluded", net=1.0, entry_at=_iso(minutes=-1))
+
+    before = datetime.now(timezone.utc)
+    verdict = _run(experiment.experiment_id)[0]
+    after = datetime.now(timezone.utc)
+    created_at = datetime.fromisoformat(verdict.created_at.replace("Z", "+00:00"))
+
+    assert verdict.verdict == "invalid"
+    assert before <= created_at <= after
 
 
 def test_measurement_verdict_never_authorizes_or_changes_learning_lifecycle():

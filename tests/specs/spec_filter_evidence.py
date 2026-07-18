@@ -41,7 +41,7 @@ def test_filter_candidate_outcome_has_net_economics():
 
     required = {
         "outcome_candidate_key", "venue", "symbol", "market_type", "direction",
-        "scanner_family", "horizon", "entry_price_usd", "entry_spread_bps",
+        "scanner_family", "horizon", "allocation_selected", "entry_price_usd", "entry_spread_bps",
         "funding_rate_at_entry", "entry_ts", "due_at", "gross_return_pct",
         "directional_return_pct", "estimated_fee_pct",
         "estimated_spread_slippage_pct", "estimated_funding_pct",

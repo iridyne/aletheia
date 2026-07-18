@@ -60,9 +60,12 @@ def test_scheduler_registers_separate_single_instance_learning_jobs(monkeypatch)
     scheduler._scheduler = None
     started = scheduler.init_scheduler()
     try:
+        job_ids = [job.id for job in started.get_jobs()]
         evaluator = started.get_job("learning_contribution_evaluator")
         controller = started.get_job("learning_lifecycle_controller")
         assert evaluator is not None and controller is not None
+        assert job_ids.count("learning_contribution_evaluator") == 1
+        assert "learning_verdict_runner" not in job_ids
         assert evaluator.max_instances == controller.max_instances == 1
         assert evaluator.coalesce is True and controller.coalesce is True
     finally:

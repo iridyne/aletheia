@@ -185,6 +185,7 @@ def apply_numeric_treatment(
         target_horizon=target_horizon, consumer=consumer,
     )
     assignment = stable_assignment(experiment, assignment_key or candidate_key)
+    assignment_unit_key = assignment_key or candidate_key
     policy_epoch = _policy_epoch(path_id)
     from aletheia.learning.authority import resolve_learning_authority
     authority = resolve_learning_authority(path_id, experiment, policy_epoch)
@@ -202,6 +203,7 @@ def apply_numeric_treatment(
         consumer_stage=f"{consumer_stage}:{stage}" if consumer_stage else stage,
         path_id=path_id,
         overlap_group=get_learning_path(path_id).overlap_group,
+        assignment_unit_key=assignment_unit_key,
         candidate_key=candidate_key,
         opportunity_id=opportunity_id,
         before_json=json.dumps({"value": float(baseline)}, sort_keys=True),

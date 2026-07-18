@@ -22,6 +22,16 @@
 > manifest, observer advisory memory has its own Opportunity-linked manifest, reflection
 > is causal-id-only, and automatic block suggestions route to non-blocking guard shadow
 > candidates instead of pretending to be Risk Engine lessons.
+> A1 truth-repair delivery (2026-07-18): current universe contribution measurement is now
+> full-arm, exact-key, and cluster-randomized. Canonical filter outcomes, selected-member legacy
+> fallback/mirror checks, complete-cluster aggregation, experiment activation timestamps, verdict
+> clocks/versioning, default-closed authenticated-owner admission boundary, single evaluator scheduling, durable failure
+> history, and active-exposure retention anchors are aligned in code and contract. This is a
+> measurement-integrity delivery, not evidence of empirical positive contribution.
+> Remaining A2: owner-facing observability for cluster membership/exclusions, source fallback or
+> disagreement, metric-version history, evaluator catch-up/last-failure state, and explicit trial
+> admission recommendations. A2 remains read-only and adds no admission control. UI completion is
+> not claimed; paper influence and lifecycle automation remain off by default.
 
 ## 1. Outcome And Non-Negotiable Standard
 
@@ -256,6 +266,11 @@ ended_at TEXT
 created_at TEXT NOT NULL
 ```
 
+Current activation semantics: ordinary hypothesis experiment registration leaves the experiment
+`registered` with no evidence start. The first durable exposure atomically/idempotently changes an
+open registered experiment to `active`, and `started_at` is maintained as the earliest persisted
+exposure time. Unexposed registrations are not inferred to have observation windows.
+
 #### `learning_exposures`
 
 ```sql
@@ -268,6 +283,7 @@ consumer TEXT NOT NULL
 consumer_stage TEXT NOT NULL
 path_id TEXT NOT NULL
 overlap_group TEXT NOT NULL
+assignment_unit_key TEXT
 candidate_key TEXT
 opportunity_id TEXT
 proposal_id TEXT
@@ -307,6 +323,13 @@ reason TEXT NOT NULL
 created_at TEXT NOT NULL
 ```
 
+For `universe_family_calibration`, `assignment_unit_key` is the persisted randomization cluster.
+Member candidate/outcome keys remain exact causal identities, while one complete cluster is one
+intent-to-treat allocation-utility sample: selected members contribute net return, dropped members
+contribute zero, and worst selected-member MAE is retained. The allocator selection fact is
+persisted before evaluation. Incomplete clusters and auditable legacy exposures lacking this field
+are excluded rather than inferred or reduced to survivors.
+
 #### `learning_job_health`
 
 ```sql
@@ -322,8 +345,13 @@ oldest_backlog_at TEXT
 consecutive_failures INTEGER NOT NULL DEFAULT 0
 status TEXT NOT NULL
 last_error TEXT
+last_failed_at TEXT
+last_failure_reason TEXT
 updated_at TEXT NOT NULL
 ```
+
+Recovery clears current `last_error` and resets consecutive failures, but preserves
+`last_failed_at` and `last_failure_reason` as the most recent durable failure.
 
 #### `learning_policy_epochs`
 
@@ -463,6 +491,13 @@ Source precedence:
 4. legacy gross-only movement is explanatory, never positive-contribution evidence;
 5. symbol-only, unresolved, contaminated, missing-direction, stale-price, or incomplete derivative
    funding data returns `unavailable`, never zero-cost/neutral/win.
+
+For the implemented universe contribution evaluator, this general precedence is concretized as:
+
+1. batch-read exact keys from `filter_candidate_outcomes`, the canonical full-arm source;
+2. treat `universe_forward_outcomes` as a selected-member legacy mirror/fallback only;
+3. do not double-count agreeing copies and fail closed on economic disagreement;
+4. never let an incomplete assignment cluster become a selected-survivor sample.
 
 Every evidence record stores resolver version, source, horizon, quality, and exclusion reason.
 `factor_feedback`, reasoning/calibration/memo builders, persona sizing, guards, and contribution
@@ -816,6 +851,16 @@ candidate-linked prospective exposures and restore their static baselines withou
 Automatic lesson blocks route to non-blocking guard shadow candidates. Full blocked-candidate
 settlement and the aggregate promotion/demotion evaluator remain later work.
 
+A1 integrity update (2026-07-18): universe contribution evaluation now covers selected and dropped
+full arms from canonical `filter_candidate_outcomes`, uses bounded exact-key reads, checks the
+selected-member `universe_forward_outcomes` mirror/fallback, and counts complete persisted
+assignment clusters rather than members. Each cluster measures allocation utility, not the
+exogenous mean return of every candidate: selected members contribute net return and dropped
+members contribute zero. Metric version
+`universe_family_calibration_cluster_allocation_utility_v2` starts a new append-only verdict history;
+old verdicts remain audit history. This does not establish a positive empirical result or enable
+paper.
+
 Goal: prove the already-active low-risk feedback paths.
 
 Changes:
@@ -928,6 +973,12 @@ Implementation mapping:
 | Phase 5 | `spec_persona_sizing.py`, `spec_learning_experiments.py` | LE-B10, LE-C02/03/07 |
 | Phase 6 | `spec_skill_store.py`, `spec_learning_evolution.py` | LE-C02/05/07 |
 | Lifecycle runtime | `spec_learning_lifecycle.py`, `test_learning_lifecycle.py`, `test_learning_lifecycle_scheduler.py` | LE-L01/02/03/04 |
+| A1 contribution integrity | `spec_learning_authority.py`, `spec_learning_verdict_runtime.py`, `spec_learning_ledger.py`, `spec_learning_continuity.py` | LE-B26, refined LE-V01, refined LE-L04 |
+
+A2 observability remains: surface canonical-versus-fallback outcome use, cluster member and
+exclusion counts, metric-version history, current and last-failure scheduler health, catch-up state,
+and the read-only owner-admission recommendation without implying effectiveness. Admission mutation
+remains separately scoped. No Learning UI completion is recorded by A1.
 
 SDD sequence for every new claim:
 

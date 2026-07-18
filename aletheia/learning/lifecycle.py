@@ -29,6 +29,8 @@ from aletheia.learning.models import (
     LearningHypothesis,
     LearningLifecycleEvent,
 )
+from aletheia.learning.experiments import _code_fingerprint
+from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
 
@@ -89,7 +91,23 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     hypothesis = LearningHypothesis(**hypothesis_row)
     if hypothesis.path_id not in SUPPORTED_PATH_IDS:
         return LifecycleResult("hold", "hold", "unsupported_learning_path", experiment_id)
-    verdict = get_latest_measurement_verdict(experiment.experiment_id)
+    current_code_commit = _code_fingerprint()
+    if current_code_commit is None:
+        return LifecycleResult(
+            "hold", "hold", "code_commit_unavailable", experiment_id,
+        )
+    verdict = get_latest_measurement_verdict(
+        experiment.experiment_id,
+        policy_epoch=current_policy_epoch,
+        stage=experiment.stage,
+        hypothesis_id=hypothesis.hypothesis_id,
+        target_horizon=hypothesis.target_horizon,
+        outcome_contract_version="v1",
+        metric_version=METRIC_VERSION,
+        code_commit=current_code_commit,
+    )
+    if verdict is None:
+        verdict = get_latest_measurement_verdict(experiment.experiment_id)
     if verdict is None:
         return LifecycleResult("hold", "hold", "no_current_stage_measurement", experiment_id)
     measurement = str(verdict.get("verdict") or "")
@@ -99,24 +117,22 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     identity_reason = measurement_identity_reason(
         verdict, experiment.stage, current_policy_epoch,
         expected_horizon=hypothesis.target_horizon,
+        expected_code_commit=current_code_commit,
+        expected_hypothesis_id=hypothesis.hypothesis_id,
     )
-    if identity_reason and measurement not in {"negative", "invalid"}:
+    if identity_reason:
         return LifecycleResult("hold", recommended, identity_reason, experiment_id, verdict_id=verdict["verdict_id"])
 
-    # A shadow experiment with sufficient observations but no actual intervention is
-    # ready for paper_10 trial admission.  Auto-admit when lifecycle_automation_enabled;
-    # admit_shadow_trial() enforces all remaining gates (sample count, promotion gate).
+    # A no-intervention shadow can only recommend a separate owner action. The
+    # scheduled controller must never cross the shadow -> paper authority boundary.
     if (
         experiment.stage == "shadow"
         and measurement == "insufficient_data"
         and str(verdict.get("reason") or "") == "no_actual_intervention"
     ):
-        return admit_shadow_trial(
-            experiment_id,
-            verdict_id=str(verdict["verdict_id"]),
-            current_policy_epoch=current_policy_epoch,
-            admitted_by="learning_lifecycle_controller",
-            reason="automatic_shadow_admission",
+        return LifecycleResult(
+            "hold", "admit_trial", "shadow_requires_explicit_trial_admission",
+            experiment_id, verdict_id=str(verdict["verdict_id"]),
         )
 
     if recommended == "hold":
@@ -147,106 +163,14 @@ def admit_shadow_trial(
     admitted_by: str,
     reason: str,
 ) -> LifecycleResult:
-    """Explicitly admit a measured shadow cohort into a bounded paper_10 trial.
-
-    This seam is never called by the lifecycle scheduler. It requires a complete
-    no-intervention shadow measurement and the same default-closed paper gates used
-    by later lifecycle promotions.
-    """
-    experiment_row = get_record("learning_experiments", experiment_id)
-    if experiment_row is None:
-        return LifecycleResult("hold", "admit_trial", "experiment_not_found", experiment_id)
-    experiment = LearningExperiment(**experiment_row)
-    hypothesis_row = get_record("learning_hypotheses", experiment.hypothesis_id)
-    if hypothesis_row is None:
-        return LifecycleResult("hold", "admit_trial", "hypothesis_not_found", experiment_id)
-    hypothesis = LearningHypothesis(**hypothesis_row)
-    verdict = get_record("learning_contribution_verdicts", verdict_id)
-    if verdict is None or str(verdict.get("experiment_id")) != experiment_id:
-        return LifecycleResult("hold", "admit_trial", "trial_measurement_not_found", experiment_id)
-    dedup_key = f"{verdict_id}:shadow:admit_trial"
-    existing = get_lifecycle_event_by_dedup_key(dedup_key)
-    if existing is not None:
-        return LifecycleResult(
-            "admit_trial", "admit_trial", "already_admitted", experiment_id,
-            existing.get("successor_experiment_id"), verdict_id,
-        )
-    if experiment.stage != "shadow" or experiment.status != "active" or experiment.ended_at is not None:
-        return LifecycleResult("hold", "admit_trial", "experiment_not_active_shadow", experiment_id, verdict_id=verdict_id)
-    latest = get_latest_measurement_verdict(experiment_id)
-    if latest is None or str(latest.get("verdict_id")) != verdict_id:
-        return LifecycleResult("hold", "admit_trial", "trial_measurement_not_current", experiment_id, verdict_id=verdict_id)
-    if verdict.get("verdict") != "insufficient_data" or verdict.get("reason") != "no_actual_intervention":
-        return LifecycleResult("hold", "admit_trial", "shadow_not_trial_ready", experiment_id, verdict_id=verdict_id)
-    identity_reason = measurement_identity_reason(
-        verdict,
-        "shadow",
-        current_policy_epoch,
-        expected_horizon=hypothesis.target_horizon,
-    )
-    if identity_reason:
-        return LifecycleResult("hold", "admit_trial", identity_reason, experiment_id, verdict_id=verdict_id)
-    if min(
-        int(verdict.get("unique_treatment_n") or 0),
-        int(verdict.get("unique_control_n") or 0),
-    ) < experiment.min_samples_per_arm:
-        return LifecycleResult("hold", "admit_trial", "trial_samples_insufficient", experiment_id, verdict_id=verdict_id)
-    gate_reason = _promotion_gate_reason(hypothesis.path_id)
-    if gate_reason is not None:
-        return LifecycleResult("hold", "admit_trial", gate_reason, experiment_id, verdict_id=verdict_id)
-    actor = admitted_by.strip()
-    admission_reason = reason.strip()
-    if not actor or not admission_reason:
-        return LifecycleResult("hold", "admit_trial", "admission_identity_required", experiment_id, verdict_id=verdict_id)
-
-    now = _now()
-    successor = LearningExperiment(
-        hypothesis_id=experiment.hypothesis_id,
-        stage="paper_10",
-        assignment_salt=_fresh_salt(),
-        allocation_pct=STAGE_ALLOCATION["paper_10"],
-        min_samples_per_arm=experiment.min_samples_per_arm,
-        min_market_days=experiment.min_market_days,
-        primary_metric=experiment.primary_metric,
-        promotion_gate_json=experiment.promotion_gate_json,
-        harm_gate_json=experiment.harm_gate_json,
-        status="active",
-        parent_experiment_id=experiment.experiment_id,
-        activation_verdict_id=verdict_id,
-        stage_generation=int(experiment.stage_generation) + 1,
-        started_at=now,
-    )
-    event = LearningLifecycleEvent(
-        dedup_key=dedup_key,
-        hypothesis_id=hypothesis.hypothesis_id,
-        experiment_id=experiment.experiment_id,
-        successor_experiment_id=successor.experiment_id,
-        verdict_id=verdict_id,
-        from_stage="shadow",
-        to_stage="paper_10",
-        action="admit_trial",
-        reason=f"admitted_by={actor}; reason={admission_reason}",
-        policy_epoch=current_policy_epoch,
-        created_at=now,
-    )
-    with transaction():
-        if not insert_lifecycle_event(event):
-            existing = get_lifecycle_event_by_dedup_key(dedup_key)
-            return LifecycleResult(
-                "admit_trial", "admit_trial", "already_admitted", experiment_id,
-                (existing or {}).get("successor_experiment_id"), verdict_id,
-            )
-        db = get_db()
-        db.execute(
-            "UPDATE learning_experiments SET status='closed', ended_at=? "
-            "WHERE experiment_id=? AND ended_at IS NULL",
-            (now, experiment.experiment_id),
-        )
-        insert_experiment(successor)
-    _write_lifecycle_audit(event)
+    """Remain fail closed until a real authenticated owner mutation route exists."""
+    del current_policy_epoch, admitted_by, reason
     return LifecycleResult(
-        "admit_trial", "admit_trial", "admitted_to_paper_10", experiment_id,
-        successor.experiment_id, verdict_id,
+        "hold",
+        "admit_trial",
+        "authenticated_owner_admission_unavailable",
+        experiment_id,
+        verdict_id=verdict_id,
     )
 
 
@@ -412,7 +336,26 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         return {"experiment_id": experiment_id, "status": "not_found"}
     experiment = LearningExperiment(**experiment_row)
     hypothesis = LearningHypothesis(**get_record("learning_hypotheses", experiment.hypothesis_id))
-    verdict = get_latest_measurement_verdict(experiment_id)
+    current_code_commit = _code_fingerprint()
+    verdict = get_latest_measurement_verdict(
+        experiment_id,
+        policy_epoch=current_policy_epoch,
+        stage=experiment.stage,
+        hypothesis_id=hypothesis.hypothesis_id,
+        target_horizon=hypothesis.target_horizon,
+        outcome_contract_version="v1",
+        metric_version=METRIC_VERSION,
+        code_commit=current_code_commit,
+    )
+    if verdict is not None and measurement_identity_reason(
+        verdict,
+        experiment.stage,
+        current_policy_epoch,
+        expected_horizon=hypothesis.target_horizon,
+        expected_code_commit=current_code_commit,
+        expected_hypothesis_id=hypothesis.hypothesis_id,
+    ):
+        verdict = None
     recommended = "hold"
     if verdict is not None and str(verdict.get("verdict")) in MEASUREMENT_VERDICTS:
         recommended = measurement_to_lifecycle_action(str(verdict["verdict"]))
@@ -427,7 +370,14 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
     authority = resolve_learning_authority(hypothesis.path_id, experiment, current_policy_epoch)
     from aletheia.learning.cohorts import build_experiment_cohorts
     from aletheia.learning.control import get_learning_job_health
-    cohorts = build_experiment_cohorts(experiment.experiment_id)
+    cohorts = [] if current_code_commit is None else [
+        cohort
+        for cohort in build_experiment_cohorts(experiment.experiment_id)
+        if cohort.key.policy_epoch == current_policy_epoch
+        and cohort.key.horizon == hypothesis.target_horizon
+        and cohort.key.outcome_contract_version == "v1"
+        and cohort.key.code_commit == current_code_commit
+    ]
     evaluator_health = get_learning_job_health("learning_contribution_evaluator")
     return {
         "path_id": hypothesis.path_id,
