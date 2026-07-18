@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQueries } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { fmtNum, fmtSigned, fmtTimestamp, isoToEpochSeconds, useDecimals } from '../lib/format'
+import { fmtNum, fmtSigned, fmtTimestamp, isoToEpochSeconds } from '../lib/format'
 
 /**
  * MarketTicker — Bloomberg-flavored top-bar ticker.
@@ -49,7 +49,6 @@ function fmtClock(d: Date, utc: boolean): string {
 }
 
 export default function MarketTicker() {
-  useDecimals()
   const [now, setNow] = useState(() => new Date())
 
   useEffect(() => {

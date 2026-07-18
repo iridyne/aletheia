@@ -4,7 +4,7 @@ import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
 import { Card, CardHeader, Button, StatusText, Meter } from '../components/ui'
 import type { StatusTone } from '../components/ui'
-import { fmtSigned, fmtNum, useDecimals, humanize, fmtSymbol } from '../lib/format'
+import { fmtSigned, fmtNum, humanize, fmtSymbol } from '../lib/format'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 import { deriveMasterState } from '../lib/systemState'
 
@@ -74,7 +74,6 @@ export default function RiskControls() {
     onError: (e: any) => setSchedErr(errMsg(e)),
   })
 
-  useDecimals() // re-render when the display-decimals setting changes
   const s = (status ?? {}) as any
   const killed = !!killSwitch?.active
   const paused = !!s.paused

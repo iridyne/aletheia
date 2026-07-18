@@ -12,7 +12,7 @@ import PageHeader from '../components/PageHeader'
 import Tabs from '../components/Tabs'
 import ThesisText from '../components/ThesisText'
 import { Badge, Button, Card, TableWrap } from '../components/ui'
-import { fmtNum, fmtSigned, useDecimals, humanize, fmtTimestamp, fmtSymbol, exchangeOf, marketBadgeTone, isPerpMarket } from '../lib/format'
+import { fmtNum, fmtSigned, humanize, fmtTimestamp, fmtSymbol, exchangeOf, marketBadgeTone, isPerpMarket } from '../lib/format'
 import TradeAnalyticsPanel from '../charts/TradeAnalyticsPanel'
 const TradeInsightsPanel = lazy(() => import('../charts/TradeInsightsPanel'))
 
@@ -100,7 +100,6 @@ export default function TradesPositions() {
   const { data: orders = [] } = useQuery({ queryKey: ['trades'], queryFn: api.getTrades })
   const { data: reconciliation } = useQuery({ queryKey: ['positions-reconciliation'], queryFn: api.getPositionsReconciliation })
   const [sel, setSel] = useState<Selection>(null)
-  useDecimals() // re-render tables when the display-decimals setting changes
 
   const allPos = positions as Position[]
   const open = allPos.filter(p => p.status === 'open')
@@ -406,9 +405,9 @@ function PositionDetail({ position }: { position: Position }) {
       </DrawerSection>
       {(position.entry_fee != null || position.exit_fee != null || position.slippage_cost != null) && (
         <DrawerSection label="Costs">
-          <DrawerField label="Entry Fee" value={position.entry_fee != null ? `-${position.entry_fee.toFixed(4)}` : null} mono />
-          <DrawerField label="Exit Fee" value={position.exit_fee != null ? `-${position.exit_fee.toFixed(4)}` : null} mono />
-          <DrawerField label="Slippage (est.)" value={position.slippage_cost != null ? `-${position.slippage_cost.toFixed(4)}` : null} mono />
+          <DrawerField label="Entry Fee" value={position.entry_fee != null ? `-${fmtNum(position.entry_fee)}` : null} mono />
+          <DrawerField label="Exit Fee" value={position.exit_fee != null ? `-${fmtNum(position.exit_fee)}` : null} mono />
+          <DrawerField label="Slippage (est.)" value={position.slippage_cost != null ? `-${fmtNum(position.slippage_cost)}` : null} mono />
         </DrawerSection>
       )}
       {position.decision_reasoning && (

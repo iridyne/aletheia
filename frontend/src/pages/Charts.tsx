@@ -8,7 +8,7 @@ import PageHeader from '../components/PageHeader'
 import Tabs from '../components/Tabs'
 import type { TabDef } from '../components/Tabs'
 import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
-import { fmtNum, fmtSigned, fmtDelta, fmtTimestamp, useDecimals, fmtSymbol } from '../lib/format'
+import { fmtNum, fmtSigned, fmtDelta, fmtTimestamp, fmtSymbol } from '../lib/format'
 import type { PredictionMarket } from '../types'
 
 const FALLBACK_SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
@@ -373,7 +373,6 @@ export default function Charts() {
   const [symbol, setSymbol] = useState(initialSymbol)
   const [marketType, setMarketType] = useState(initialMarketType)
   const [activeTab, setActiveTab] = useState('signals')
-  useDecimals()
   // Keep the URL in sync when the user picks a different symbol — deep links
   // stay copy-pasteable and the browser back button behaves.
   useEffect(() => {
