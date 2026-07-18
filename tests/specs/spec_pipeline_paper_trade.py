@@ -531,8 +531,8 @@ def test_paper_trader_marks_ttl_rejection_expired(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "PL-PT-09", "pipeline_paper_trade", "§2 pending signal expiry", "L2b",
-        "A queued opportunity with no final decision becomes expired after the pending "
-        "evaluation window, instead of remaining queued forever.",
+        "A legacy queued opportunity with no source valid_until or final decision becomes "
+        "expired after the compatibility pending window instead of remaining queued forever.",
         status="implemented",
     ),
 )
@@ -541,7 +541,10 @@ def test_stale_queued_opportunity_becomes_expired(tmp_path, monkeypatch):
 
     conn = _setup_db(tmp_path, monkeypatch)
     opp_id = _insert_opportunity(conn, symbol="BTC/USDT", confidence_score=90)
-    conn.execute("UPDATE opportunities SET status='queued' WHERE id=?", (opp_id,))
+    conn.execute(
+        "UPDATE opportunities SET status='queued',valid_until=NULL WHERE id=?",
+        (opp_id,),
+    )
     conn.commit()
 
     from aletheia.storage.models import PiDecision
@@ -673,6 +676,9 @@ def test_ttl_expiry_savepoint_is_atomic_inside_caller_transaction(
             ),
         )
     else:
+        conn.execute(
+            "UPDATE opportunities SET valid_until=NULL WHERE id=?", (opp_id,)
+        )
         from aletheia.storage.models import PiDecision
         from aletheia.storage.repositories import insert_pi_decision
 

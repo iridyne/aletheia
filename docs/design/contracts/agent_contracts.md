@@ -149,6 +149,12 @@ backlog health are persisted in `learning_job_health`.
   queued at once. Overflow remains `open` and is retried; stale carriers are
   pruned only after source expiry/review and never while proposal submission is
   recovering.
+- **Carrier continuity**: Universe snapshot supersede expires only still-open
+  analytical generations. Once `signal_pending` commits, the queued source remains
+  Operator authority until its own `valid_until` or a terminal decision. A fixed
+  30-minute queue age is legacy fallback only. New generations of the same
+  symbol/direction/scanner-family record `active_operator_carrier` instead of
+  creating another pending carrier.
 - **TTL soft filter** (`paper_trader_ranker._ttl_soft_penalty_factor`): a carrier
   past its `valid_until` is no longer hard-rejected. Its `trade_score` is
   multiplied by `0.5 ** (expired_sec / family_ttl_sec)` — half-life = family
@@ -198,6 +204,9 @@ backlog health are persisted in `learning_job_health`.
   PiDecision and AgentRun facts. They never invoke `paper_trader_ranker`. The
   process-local wake state is diagnostic only and is labelled unavailable when
   the scheduler is outside the serving process.
+- **Lifecycle accounting**: the funnel reports unique setups separately from
+  per-snapshot generated rows and splits `universe_snapshot_superseded` from true
+  `ttl_expired`; raw `status='expired'` is never sufficient to claim TTL expiry.
 - **Key invariant**: Never calls LLM; never executes orders directly; never submits proposals (signal collector only)
 - **Learning authority**: factor history and raw case/memo scores are diagnostic proposals only. Each ranker component has a separate candidate-linked exposure; score/filter influence stays at the static baseline unless a durable prospective treatment/control verdict has enough linked net outcomes. Control candidates retain the same venue, eligibility, static-risk-flag, learned-guard, and downstream Risk Engine checks.
 

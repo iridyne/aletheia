@@ -13,6 +13,7 @@ from typing import Any
 
 
 _RANKER_DELIVERY_EPOCH = "opportunity_ranker_delivery/v2"
+_CARRIER_CONTINUITY_EPOCH = "opportunity_carrier_continuity/v1"
 _RANKER_CANDIDATE_LIMIT = 8
 _SIGNAL_COOLDOWN_MINUTES = 30
 
@@ -149,6 +150,14 @@ def _ranker_reason(filter_name: str | None) -> tuple[str, str, str, str]:
             "The same instrument and direction entered the Operator queue within the "
             "30 minute signal cooldown.",
             "cooldown_expiry",
+        )
+    if name == "active_operator_carrier":
+        return (
+            "ranker_carrier_active",
+            "ranker_selection",
+            "The same instrument, direction, and scanner setup already has an active "
+            "Operator queue carrier; this snapshot generation was not enqueued again.",
+            "operator_carrier_terminal_or_source_refresh",
         )
     if name == "signal_queue_capacity":
         return (
@@ -434,6 +443,7 @@ def _ranker_counts(candidates: list[dict[str, Any]], total: int) -> dict[str, in
             "ranker_cooldown",
             "ranker_backpressure",
             "ranker_batch_limit",
+            "ranker_carrier_active",
         )
     )
     return {
@@ -442,6 +452,7 @@ def _ranker_counts(candidates: list[dict[str, Any]], total: int) -> dict[str, in
         "cooldown": states.count("ranker_cooldown"),
         "backpressure": states.count("ranker_backpressure"),
         "batch_limit": states.count("ranker_batch_limit"),
+        "carrier_active": states.count("ranker_carrier_active"),
         "other_wait": max(total - accounted, 0),
     }
 
@@ -453,8 +464,10 @@ def build_current_entry_status(
     window_hours: int,
     emitted_count: int,
     open_opportunities: int,
-    expired_count: int,
     proposed_count: int,
+    setup_count: int,
+    active_setup_count: int,
+    terminal_breakdown: dict[str, int],
 ) -> dict[str, Any]:
     """Build one read-only answer to where entry work is and why it stopped."""
     window_start = (now - timedelta(hours=max(1, int(window_hours)))).isoformat()
@@ -529,9 +542,24 @@ def build_current_entry_status(
         state, primary_stage = "no_active_candidate", "opportunity_lifecycle"
         headline = "No active entry candidate remains from the selected window."
         reason_code = "window_candidates_terminal"
+        superseded = int(terminal_breakdown.get("snapshot_superseded") or 0)
+        ttl_expired = int(terminal_breakdown.get("ttl_expired") or 0)
+        other_expired = int(terminal_breakdown.get("other_expired") or 0)
+        operator_terminal = sum(
+            int(terminal_breakdown.get(key) or 0)
+            for key in ("operator_trade", "operator_skip", "operator_watch")
+        )
+        deterministic_review = int(
+            terminal_breakdown.get("deterministic_review") or 0
+        )
+        other_reviewed = int(terminal_breakdown.get("other_reviewed") or 0)
         reason = (
-            f"{expired_count} of {emitted_count} opportunities expired or were invalidated; "
-            "none produced a Proposal."
+            f"{emitted_count} generated rows represented {setup_count} unique setups: "
+            f"{superseded} snapshot generations were superseded, {ttl_expired} reached "
+            f"their market TTL, {operator_terminal} received a terminal Operator action, "
+            f"{deterministic_review} ended at a deterministic filter, and "
+            f"{other_expired + other_reviewed} have another or unavailable terminal "
+            "reason; none produced a Proposal."
         )
         next_trigger = "new_opportunity"
     else:
@@ -547,8 +575,8 @@ def build_current_entry_status(
     )
     ranker_state = "passed" if queued_total else "waiting" if open_opportunities else "idle"
     pipeline = [
-        {"stage": "observer", "label": "Observer", "state": "active" if emitted_count else "idle", "count": emitted_count},
-        {"stage": "ranker", "label": "Ranker", "state": ranker_state, "count": open_opportunities + queued_total},
+        {"stage": "observer", "label": "Observer", "state": "active" if emitted_count else "idle", "count": setup_count},
+        {"stage": "ranker", "label": "Ranker", "state": ranker_state, "count": active_setup_count},
         {"stage": "operator", "label": "Operator", "state": operator_state, "count": queued_total},
         {"stage": "proposal", "label": "Proposal", "state": proposal_state, "count": pending_proposals},
         {"stage": "risk", "label": "Risk", "state": "reached" if open_positions else "not_reached" if not proposed_count else "not_available", "count": None},
@@ -563,7 +591,9 @@ def build_current_entry_status(
         "next_trigger": next_trigger,
         "as_of": now.isoformat(),
         "policy_epoch_id": (
-            latest_deferred.get("policy_epoch_id") if latest_deferred else _RANKER_DELIVERY_EPOCH
+            latest_deferred.get("policy_epoch_id")
+            if latest_deferred
+            else _CARRIER_CONTINUITY_EPOCH
         ),
         "counts": {
             "open_positions": open_positions,
@@ -571,9 +601,17 @@ def build_current_entry_status(
             "queued_candidates": queued_total,
             "deferred_candidates": len(deferred),
             "pending_proposals": pending_proposals,
+            "discovered_generations": emitted_count,
+            "unique_setups": setup_count,
+            "active_setups": active_setup_count,
+            "superseded_generations": int(
+                terminal_breakdown.get("snapshot_superseded") or 0
+            ),
+            "ttl_expired": int(terminal_breakdown.get("ttl_expired") or 0),
         },
         "ranker": {
             "delivery_epoch": _RANKER_DELIVERY_EPOCH,
+            "carrier_epoch": _CARRIER_CONTINUITY_EPOCH,
             "counts": ranker_counts,
             "displayed_candidates": len(ranker_candidates),
             "undisplayed_candidates": max(

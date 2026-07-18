@@ -332,7 +332,7 @@ function EntryStatusCard({ data }: { data?: FunnelData }) {
     ? 'Current state'
     : current.state === 'human_approval_required'
       ? 'Current action'
-      : 'Current blocker'
+      : 'Current limiting stage'
 
   return (
     <Card className={`entry-status-card entry-status-${tone}`}>
@@ -375,6 +375,7 @@ function EntryStatusCard({ data }: { data?: FunnelData }) {
           open {current.ranker.counts.open} · pending {current.ranker.counts.not_evaluated}
           {' · '}cooldown {current.ranker.counts.cooldown}
           {' · '}backpressure {current.ranker.counts.backpressure}
+          {' · '}active carrier {current.ranker.counts.carrier_active}
         </span>
         <span>
           {current.ranker.last_run
@@ -427,7 +428,12 @@ function EntryStatusCard({ data }: { data?: FunnelData }) {
 
       <div className="entry-status-foot">
         <span>Next trigger · {humanize(current.next_trigger)}</span>
-        <span>Last 1h · {data.emitted_count} discovered · {data.expired_count} expired · {data.proposed_count} proposed</span>
+        <span>
+          Last 1h · {data.setup_count} setups / {data.emitted_count} generations
+          {' · '}{data.terminal_breakdown.snapshot_superseded} superseded
+          {' · '}{data.terminal_breakdown.ttl_expired} TTL expired
+          {' · '}{data.proposed_count} proposed
+        </span>
       </div>
     </Card>
   )
@@ -860,12 +866,20 @@ function OpportunityFunnelCard() {
           <span>Last {data.window_hours} h</span>
           <span className="text-xs text-muted">cumulative</span>
         </div>
-        <FunnelBar label="Discovered" count={data.emitted_count} denom={data.emitted_count} tone="muted" />
+        <FunnelBar label="Unique setups" count={data.setup_count} denom={data.setup_count} tone="muted"
+          hint={`${data.emitted_count} snapshot generations`} />
         <FunnelBar label="Awaiting ranker" count={data.still_open_count} denom={data.emitted_count} tone="muted" />
         <FunnelBar label="Queued for Operator" count={data.queued_count} denom={data.emitted_count} tone="accent" />
         <FunnelBar label="Reviewed" count={data.reviewed_count} denom={data.emitted_count} tone="muted"
           hint="terminal operator review" />
-        <FunnelBar label="Expired / invalidated" count={data.expired_count} denom={data.emitted_count} tone="red" />
+        <FunnelBar label="Superseded generations" count={data.terminal_breakdown.snapshot_superseded}
+          denom={data.emitted_count} tone="muted" hint="normal Universe refresh" />
+        <FunnelBar label="True TTL expired" count={data.terminal_breakdown.ttl_expired}
+          denom={data.emitted_count} tone="red" />
+        {data.terminal_breakdown.other_expired > 0 && (
+          <FunnelBar label="Other expired" count={data.terminal_breakdown.other_expired}
+            denom={data.emitted_count} tone="red" />
+        )}
         <FunnelBar label="Proposed" count={data.proposed_count} denom={data.emitted_count}
           tone={data.proposed_count > 0 ? 'green' : 'muted'} hint="same emitted cohort" />
         {proposalConversionPct != null && (

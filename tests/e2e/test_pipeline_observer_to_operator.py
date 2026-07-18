@@ -22,7 +22,11 @@ async def test_observer_ranker_pending_operator_skip_keeps_one_causal_identity(
     from aletheia.agents.paper_trader import run_paper_trader
     from aletheia.config.loader import load_config, save_config
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import MarketSnapshot
+    from aletheia.storage.models import (
+        MarketSnapshot,
+        UniverseAsset,
+        UniverseFeatureSnapshot,
+    )
 
     # Keep configuration/audit files local to this test while the e2e fixture
     # provides the temporary, migrated SQLite connection.
@@ -204,6 +208,26 @@ async def test_observer_ranker_pending_operator_skip_keeps_one_causal_identity(
     assert workset_batch["candidate_count"] == 1
     assert workset_batch["passed_count"] == 1
 
+    # Operator judgment requires a fresh exact-instrument technical snapshot;
+    # a market price row alone is execution price authority, not technical
+    # context authority.
+    repo.upsert_universe_asset(UniverseAsset(
+        id="observer-operator-asset",
+        venue="fixture",
+        market_type="spot",
+        symbol="BTC/USDT",
+    ))
+    repo.insert_universe_feature_snapshots_batch([UniverseFeatureSnapshot(
+        id="observer-operator-feature",
+        asset_id="observer-operator-asset",
+        ts=datetime.now(timezone.utc).isoformat(),
+        rsi_14=68.0,
+        return_1h=3.2,
+        return_4h=4.0,
+        return_24h=6.0,
+        data_freshness_sec=0,
+    )])
+
     async def deterministic_operator_skip(*_args, **_kwargs):
         return (
             {
@@ -238,7 +262,7 @@ async def test_observer_ranker_pending_operator_skip_keeps_one_causal_identity(
     from aletheia.agent_shell.trading_context import _build_pending_signal_queue
 
     operator_result = await evaluate_trading_opportunity({})
-    assert operator_result["action"] == "skip"
+    assert operator_result["action"] == "skip", operator_result
     assert operator_result["proposal_status"] == "not_applicable"
     assert operator_result["opportunity_id"] == opportunity["id"]
     assert operator_result["signal_source"] == "market_observer"

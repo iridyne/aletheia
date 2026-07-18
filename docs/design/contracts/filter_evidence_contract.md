@@ -137,7 +137,7 @@ Ranker 层的 `family_ttl` 关卡走**软过滤**语义：`valid_until` 到期�
 `UniverseService.refresh` 的 change-suppression 分支（fingerprint 未变且
 `_SNAPSHOT_HEARTBEAT_SEC` 未到）在复用旧 snapshot 时，必须调用
 `repositories.refresh_active_snapshot_ttls` **前滑**该 snapshot 的
-`universe_members.expires_at` 和其 open `opportunities.valid_until`（
+`universe_members.expires_at` 和其 open/queued `opportunities.valid_until`（
 `WHERE expires_at < new_expires`，只前滑不回退）。这是把 "reuse snapshot"
 真正做成 no-op 的必要一步：没有这条前滑，第一次分配后 30–60 分钟内 fingerprint
 稳定的家族全部会在 Ranker 扫时集体 `ttl_expired`，与"依然被推荐"这个复用
@@ -148,11 +148,12 @@ scanner family/direction、execution eligibility、family TTL、risk flags 与�
 只允许排除不会改变这些语义的 ranking score 抖动。任一字段变化必须发布新 snapshot，
 不得前滑旧方向、旧资格或旧 outcome seed 的 TTL。
 
-snapshot 被 supersede 时，其 `open` 与 `queued` Opportunity 都必须在同一事务中转为
-`expired` 并写 `universe_snapshot_status / universe_snapshot_superseded`。已有
-`reviewed/expired` 终态不得改写。证据失败时整个 cascade 回滚；重复运行不得生成重复事实。
-对应的 market-observer `signal_pending` carrier 可保留作历史，但来源已 `expired` 且没有
-`proposal_status=submitting` 恢复 claim 时，Operator 工作集必须立即排除它。
+snapshot 被 supersede 时，只将仍为 `open` 的分析代次在同一事务中转为 `expired` 并写
+`universe_snapshot_status / universe_snapshot_superseded`。已有 `queued` 是已认领的耐久
+Operator carrier：保留原 snapshot/member 作为因果来源，由 Opportunity `valid_until` 决定
+后续权限；`reviewed/expired` 终态同样不得改写。证据失败时整个 open cascade 回滚，重复运行
+不得生成重复事实。Overview/API 必须把这类 superseded generation 与真正 `ttl_expired` 分开，
+不得把所有 `status=expired` 解释为 TTL。
 
 业务写入只允许 INSERT，不回写历史判断。幂等键至少包含
 `candidate_key + filter_name + decision + filter_version`，重试不制造重复证据，
@@ -281,20 +282,21 @@ shadow treatment 各自达到 20 个完整净结果和 70% 覆盖后才判定；
 
 ## 7. 批次选择的特别规则
 
-`open_position -> cooldown -> batch_limit` 是三个不同关卡，不得先截取 Top-3 再检查前两关。否则 Top-1 被冷却拒绝后，Top-4 永远没有补位机会，候选供给会被静默浪费。
+`open_position -> active_operator_carrier -> cooldown -> batch_limit` 是不同关卡，不得先截取 Top-3 再检查前置关卡。否则 Top-1 被占用/冷却拒绝后，Top-4 永远没有补位机会，候选供给会被静默浪费。
 
 正确顺序：
 
 1. 按分数从高到低遍历；
 2. 同一 `opportunity_id` 已有最终 Operator 决策则记 `operator_already_evaluated=rejected`，不重复入队；
 3. 已持仓则记 `open_position_duplicate=rejected`，继续看下一个；
-4. 冷却中则记 `signal_cooldown=rejected`，继续看下一个；
-5. 未满 limit 则放行；已满后其余候选记 `signal_batch_limit=rejected`。
+4. 同 `symbol + direction + scanner_family` 已有未完成 queued carrier，则记 `active_operator_carrier=rejected`，继续看下一个；它表示复用既有工作载体，不得伪装成 30min cooldown，并沿用既有 symbol-level spot/perp 排他规则；
+5. 冷却中则记 `signal_cooldown=rejected`，继续看下一个；
+6. 未满 limit 则放行；已满后其余候选记 `signal_batch_limit=rejected`。
 
 生产端 admission 还受一个独立的 unresolved queue capacity（当前 5）约束。容量在
 open-position/cooldown 后、单轮 batch limit 前检查；满载候选写
 `signal_queue_capacity=rejected` 并保持 Opportunity `open`，让后续轮次重试，不得提前
-`queued` 后等待 30 分钟超时。旧 market-observer pending carrier 只可在来源已经
+`queued` 后等待兼容性超时。旧 market-observer pending carrier 只可在来源已经
 `reviewed/expired` 且不存在 `proposal_status=submitting` 恢复 claim 时删除；queued、Serenity
 或 submitting carrier 必须保留。
 

@@ -480,17 +480,30 @@ export const api = {
   getOpportunityFunnel: (hours = 24) => fetchJson<{
     window_hours: number
     emitted_count: number
+    setup_count: number
+    active_setup_count: number
+    setup_identity_basis: 'symbol+market+direction+scanner_family'
     reviewed_count: number
     still_open_count: number
     queued_count: number
     expired_count: number
+    terminal_breakdown: {
+      snapshot_superseded: number
+      ttl_expired: number
+      other_expired: number
+      operator_trade: number
+      operator_skip: number
+      operator_watch: number
+      deterministic_review: number
+      other_reviewed: number
+    }
     proposed_count: number
     cohort_basis: 'opportunities_emitted_in_window'
     current: {
       state: 'position_open' | 'human_approval_required' | 'operator_deferred' |
         'operator_queued' | 'ranker_pending' | 'ranker_cooldown' |
         'ranker_backpressure' | 'ranker_batch_limit' | 'ranker_position_duplicate' |
-        'ranker_duplicate' | 'ranker_already_evaluated' | 'ranker_filter_wait' |
+        'ranker_carrier_active' | 'ranker_duplicate' | 'ranker_already_evaluated' | 'ranker_filter_wait' |
         'ranker_evidence_unavailable' | 'no_active_candidate' | 'no_candidates'
       headline: string
       primary_stage: string
@@ -505,15 +518,22 @@ export const api = {
         queued_candidates: number
         deferred_candidates: number
         pending_proposals: number
+        discovered_generations: number
+        unique_setups: number
+        active_setups: number
+        superseded_generations: number
+        ttl_expired: number
       }
       ranker: {
         delivery_epoch: string
+        carrier_epoch: string
         counts: {
           open: number
           not_evaluated: number
           cooldown: number
           backpressure: number
           batch_limit: number
+          carrier_active: number
           other_wait: number
         }
         displayed_candidates: number
@@ -549,7 +569,7 @@ export const api = {
         confidence_score: number | null
         status: 'queued' | 'deferred' | 'ranker_pending' | 'ranker_cooldown' |
           'ranker_backpressure' | 'ranker_batch_limit' | 'ranker_position_duplicate' |
-          'ranker_duplicate' | 'ranker_already_evaluated' | 'ranker_filter_wait' |
+          'ranker_carrier_active' | 'ranker_duplicate' | 'ranker_already_evaluated' | 'ranker_filter_wait' |
           'ranker_evidence_unavailable'
         stage: string
         reason_code: string | null

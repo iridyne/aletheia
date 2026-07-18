@@ -287,19 +287,21 @@ def _build_pending_signal_queue(
     unresolved = (
         "p.action = 'signal_pending' "
         "AND (COALESCE(p.signal_source, 'market_observer') = 'serenity' "
-        "     OR p.created_at >= ? "
-        f"     OR EXISTS ({submitting_final})) "
-        "AND (COALESCE(p.signal_source, 'market_observer') = 'serenity' "
-        "     OR o.id IS NULL "
-        "     OR o.status != 'expired' "
-        f"     OR EXISTS ({submitting_final})) "
+        f"     OR EXISTS ({submitting_final}) "
+        "     OR (COALESCE(p.signal_source, 'market_observer') = 'market_observer' "
+        "         AND ((o.status='queued' "
+        "               AND datetime(o.valid_until) IS NOT NULL "
+        "               AND datetime(o.valid_until)>datetime('now')) "
+        "              OR ((o.id IS NULL OR (o.status='queued' "
+        "                                      AND datetime(o.valid_until) IS NULL)) "
+        "                  AND datetime(p.created_at)>=datetime(?))))) "
         "AND (p.opportunity_id IS NULL OR NOT EXISTS ("
         f"  {terminal_final}"
         "))"
     )
     rows = db.execute(
         "SELECT p.symbol, p.direction, p.market_type, p.reasoning, p.created_at, "
-        "p.opportunity_id, p.signal_source, o.universe_member_id, "
+        "p.opportunity_id, p.signal_source, o.universe_member_id, o.valid_until, "
         "(SELECT um.snapshot_id FROM universe_members um "
         " WHERE um.id=o.universe_member_id) AS universe_snapshot_id, "
         "COALESCE(o.scanner_family, (SELECT st.scanner_family FROM shadow_trades st "
@@ -324,6 +326,7 @@ def _build_pending_signal_queue(
             "signal_source": row["signal_source"] or "market_observer",
             "universe_member_id": row["universe_member_id"],
             "universe_snapshot_id": row["universe_snapshot_id"],
+            "valid_until": row["valid_until"],
             "scanner_family": row["scanner_family"],
             "trade_score": row["trade_score"],
         }
@@ -360,15 +363,24 @@ def _build_pending_signal_queue(
     visible = unique[:visible_limit]
     expired = db.execute(
         "SELECT COUNT(*) AS n, MIN(p.created_at) AS oldest_at "
-        "FROM pi_decisions p WHERE p.action = 'signal_pending' AND p.created_at < ? "
+        "FROM pi_decisions p LEFT JOIN opportunities o ON o.id=p.opportunity_id "
+        "WHERE p.action = 'signal_pending' "
         "AND COALESCE(p.signal_source, 'market_observer') = 'market_observer' "
         "AND NOT EXISTS ("
         + submitting_final
         + ") "
         "AND (p.opportunity_id IS NULL OR NOT EXISTS ("
         + terminal_final
-        + "))",
-        (cutoff,),
+        + ")) AND ("
+        " (o.id IS NULL AND datetime(p.created_at)<datetime(?)) "
+        " OR (o.status='queued' AND ("
+        "      (datetime(o.valid_until) IS NOT NULL "
+        "       AND datetime(o.valid_until)<=datetime('now')) "
+        "      OR (datetime(o.valid_until) IS NULL "
+        "          AND datetime(p.created_at)<datetime(?))"
+        " )) OR (o.id IS NOT NULL AND o.status!='queued')"
+        ")",
+        (cutoff, cutoff),
     ).fetchone()
     queue = {
         "read_status": "complete",
@@ -377,6 +389,7 @@ def _build_pending_signal_queue(
         "overflow_count": max(len(unique) - len(visible), 0),
         "oldest_at": unique[0]["at"] if unique else None,
         "max_age_minutes": max_age_minutes,
+        "age_basis": "opportunity_valid_until_with_legacy_pending_fallback",
         "expired_unconsumed_rows": int(expired["n"] or 0),
         "oldest_expired_at": expired["oldest_at"],
     }

@@ -631,7 +631,12 @@ def list_pending_pi_decisions_for_opportunity(
 
 
 def count_unresolved_signal_pending(max_age_minutes: int = 30) -> int:
-    """Count distinct queued market-observer candidates still needing a final action."""
+    """Count queued market candidates that remain inside their source lifetime.
+
+    ``Opportunity.valid_until`` is authoritative for current rows. The fixed
+    queue age remains only as a compatibility fallback for historical rows that
+    did not persist a parseable source deadline.
+    """
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
     row = get_db().execute(
         "SELECT COUNT(DISTINCT pending.opportunity_id) "
@@ -640,7 +645,10 @@ def count_unresolved_signal_pending(max_age_minutes: int = 30) -> int:
         "WHERE pending.action='signal_pending' "
         "AND COALESCE(pending.signal_source, 'market_observer')='market_observer' "
         "AND source.status='queued' "
-        "AND datetime(pending.created_at)>=datetime(?) "
+        "AND ((datetime(source.valid_until) IS NOT NULL "
+        "      AND datetime(source.valid_until)>datetime('now')) "
+        " OR (datetime(source.valid_until) IS NULL "
+        "      AND datetime(pending.created_at)>=datetime(?))) "
         "AND NOT EXISTS ("
         " SELECT 1 FROM pi_decisions final "
         " WHERE final.opportunity_id=pending.opportunity_id "
@@ -779,33 +787,79 @@ def expire_queued_opportunity_with_ttl_evidence(
 
 
 def expire_stale_queued_opportunities(max_age_minutes: int = 30) -> int:
-    """Expire stale pending work together with one durable rejection fact."""
+    """Expire queued work at its source deadline with a legacy age fallback.
+
+    Queue insertion time is not a second, shorter market-validity clock. New
+    rows therefore live until ``Opportunity.valid_until``. Only a missing or
+    unparsable historical deadline falls back to ``max_age_minutes``.
+    """
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(minutes=max_age_minutes)).isoformat()
     with transaction(immediate=True):
         rows = get_db().execute(
-            "SELECT * FROM opportunities WHERE status='queued' "
+            "SELECT opportunities.*, ("
+            "  SELECT MIN(p.created_at) FROM pi_decisions p "
+            "  WHERE p.action='signal_pending' "
+            "    AND p.opportunity_id=opportunities.id "
+            "    AND COALESCE(p.signal_source, 'market_observer')='market_observer'"
+            ") AS pending_created_at FROM opportunities WHERE status='queued' "
             "AND EXISTS ("
             "  SELECT 1 FROM pi_decisions p "
             "  WHERE p.action='signal_pending' "
             "    AND p.opportunity_id=opportunities.id "
             "    AND COALESCE(p.signal_source, 'market_observer')='market_observer' "
-            "    AND datetime(p.created_at) < datetime(?)"
             ") AND NOT EXISTS ("
             "  SELECT 1 FROM pi_decisions f "
             "  WHERE f.action!='signal_pending' "
             "    AND f.opportunity_id=opportunities.id "
             "    AND COALESCE(f.signal_source, 'market_observer')='market_observer'"
+            ") AND ("
+            "  (datetime(valid_until) IS NOT NULL "
+            "   AND datetime(valid_until)<=datetime(?)) "
+            "  OR (datetime(valid_until) IS NULL AND EXISTS ("
+            "    SELECT 1 FROM pi_decisions legacy "
+            "    WHERE legacy.action='signal_pending' "
+            "      AND legacy.opportunity_id=opportunities.id "
+            "      AND COALESCE(legacy.signal_source, 'market_observer')="
+            "          'market_observer' "
+            "      AND datetime(legacy.created_at)<datetime(?)"
+            "  ))"
             ")",
-            (cutoff,),
+            (now.isoformat(), cutoff),
         ).fetchall()
-        return _expire_opportunity_rows_with_ttl_evidence(
-            rows,
-            source_status="queued",
-            evaluated_at=now.isoformat(),
-            reason_detail="pending System Operator evaluation window elapsed",
-            parameters={"max_age_minutes": max_age_minutes},
-        )
+        expired = 0
+        for raw in rows:
+            row = dict(raw)
+            valid_until = row.get("valid_until")
+            if valid_until and get_db().execute(
+                "SELECT datetime(?) IS NOT NULL", (valid_until,)
+            ).fetchone()[0]:
+                reason_detail = (
+                    "source Opportunity valid_until elapsed while awaiting "
+                    "System Operator evaluation"
+                )
+                parameters = {
+                    "expiry_basis": "valid_until",
+                    "valid_until": str(valid_until),
+                }
+            else:
+                reason_detail = (
+                    "legacy pending System Operator evaluation window elapsed "
+                    "without a parseable Opportunity valid_until"
+                )
+                parameters = {
+                    "expiry_basis": "pending_created_at_legacy_fallback",
+                    "pending_created_at": row.get("pending_created_at"),
+                    "max_age_minutes": max_age_minutes,
+                }
+            expired += _expire_opportunity_rows_with_ttl_evidence(
+                [row],
+                source_status="queued",
+                evaluated_at=now.isoformat(),
+                reason_detail=reason_detail,
+                parameters=parameters,
+            )
+        return expired
 
 
 # --- Capital Events ---
@@ -3886,12 +3940,14 @@ def get_active_universe_snapshot(market_type: str = "crypto") -> dict | None:
 
 
 def expire_opportunities_from_superseded_snapshots(market_type: str = "crypto") -> int:
-    """Expire open/queued children of superseded snapshots with durable evidence.
+    """Expire unclaimed generations from superseded snapshots with evidence.
 
-    ``queued`` is included because an already-enqueued carrier is not permission
-    to outlive the snapshot that supplied its thesis. Reviewed/expired terminal
-    rows are preserved. A SAVEPOINT makes the lifecycle CAS and append-only fact
-    all-or-nothing even when this helper joins Universe publication's transaction.
+    An ``open`` row is a per-snapshot analytical generation and ends when that
+    snapshot is superseded. A ``queued`` row is already a durable Operator work
+    carrier: its origin ids remain immutable, but its own ``valid_until`` decides
+    freshness. Reviewed/expired rows are preserved. A SAVEPOINT makes the
+    lifecycle CAS and append-only fact all-or-nothing even when this helper joins
+    Universe publication's transaction.
     """
     db = get_db()
     evaluated_at = datetime.now(timezone.utc).isoformat()
@@ -3899,7 +3955,7 @@ def expire_opportunities_from_superseded_snapshots(market_type: str = "crypto") 
         rows = db.execute(
             "SELECT o.* FROM opportunities o "
             "JOIN universe_snapshots s ON s.id=o.universe_snapshot_id "
-            "WHERE o.status IN ('open','queued') "
+            "WHERE o.status='open' "
             "AND s.market_type=? AND s.status='superseded' "
             "ORDER BY o.created_at, o.rowid",
             (market_type,),
@@ -4006,7 +4062,7 @@ def list_universe_members(snapshot_id: str, limit: int = 50) -> list[dict]:
 
 def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> tuple[int, int]:
     """Slide expires_at forward on every member of a reused snapshot, and mirror
-    onto linked open opportunities' valid_until.
+    onto linked open or queued opportunities' valid_until.
 
     Used by universe refresh's change-suppression branch (service._atomic_universe_publication
     is skipped when the allocation fingerprint is unchanged). Without this slide,
@@ -4015,9 +4071,9 @@ def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> tuple[int, 
     then hard-rejects every carrier with skip_reason=ttl_expired.
 
     Only slides forward (`WHERE expires_at < new_expires_at`) so a legitimate
-    longer expiry set elsewhere is never shortened. Opportunities are only
-    touched while their status is 'open'; expired/reviewed/queued rows are left
-    terminal.
+    longer expiry set elsewhere is never shortened. Queued rows are included
+    because reuse of the same active source snapshot is explicit revalidation;
+    expired/reviewed rows remain terminal.
 
     Returns (members_updated, opportunities_updated).
     """
@@ -4050,7 +4106,7 @@ def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> tuple[int, 
                 n_members += cur_m.rowcount
             cur_o = db.execute(
                 "UPDATE opportunities SET valid_until = ? "
-                "WHERE universe_member_id = ? AND status = 'open' "
+                "WHERE universe_member_id = ? AND status IN ('open','queued') "
                 "AND (valid_until IS NULL OR valid_until < ?)",
                 (new_expires, m["id"], new_expires),
             )
@@ -5818,13 +5874,13 @@ def prune_market_ohlcv(
 
 
 def expire_stale_opportunities(ttl_hours: int = 48) -> int:
-    """Mark open opportunities older than ttl_hours as 'expired'.
+    """Apply the global retention ceiling to still-open Opportunities.
 
-    Also expires any opportunity whose valid_until has passed, regardless of
-    age — IB-24-13: short-TTL families (e.g. momentum 30 min) were piling up
-    as 'open' for 48h before the age cutoff fired.
-
-    Traded/reviewed opportunities are not affected.
+    ``valid_until`` is intentionally not a hard transition here. The Ranker's
+    family-TTL gate owns the documented soft-decay window and terminalizes a
+    candidate only at its hard cap with exact filter evidence. A daily cleanup
+    must not race that policy by converting every just-expired generation into
+    a hard rejection. Traded/reviewed/queued opportunities are not affected.
     """
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
@@ -5832,15 +5888,18 @@ def expire_stale_opportunities(ttl_hours: int = 48) -> int:
     with transaction(immediate=True):
         rows = get_db().execute(
             "SELECT * FROM opportunities WHERE status='open' "
-            "AND (created_at < ? OR (valid_until IS NOT NULL AND valid_until < ?))",
-            (cutoff, now_iso),
+            "AND datetime(created_at)<datetime(?)",
+            (cutoff,),
         ).fetchall()
         return _expire_opportunity_rows_with_ttl_evidence(
             rows,
             source_status="open",
             evaluated_at=now_iso,
-            reason_detail="Opportunity validity window elapsed before queueing",
-            parameters={"ttl_hours": ttl_hours},
+            reason_detail="global open Opportunity retention window elapsed",
+            parameters={
+                "expiry_basis": "created_at_global_retention",
+                "ttl_hours": ttl_hours,
+            },
         )
 
 

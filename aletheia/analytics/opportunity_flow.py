@@ -583,7 +583,7 @@ def _build_record(db, opp: dict[str, Any], context: dict[str, Any]) -> dict[str,
     ]
 
     member = _universe_member(db, opp.get("universe_member_id"))
-    events.extend(_pre_trade_observations(opp, member, direction))
+    events.extend(_pre_trade_observations(db, opp, member, direction))
 
     decisions = _decisions_for_opportunity(db, opp_id)
     for decision in decisions:
@@ -737,7 +737,10 @@ def _universe_member(db, member_id: Any) -> dict[str, Any] | None:
 
 
 def _pre_trade_observations(
-    opp: dict[str, Any], member: dict[str, Any] | None, direction: str | None
+    db,
+    opp: dict[str, Any],
+    member: dict[str, Any] | None,
+    direction: str | None,
 ) -> list[dict[str, Any]]:
     """Return observed expiry plus clearly-labelled, non-final eligibility facts.
 
@@ -746,11 +749,52 @@ def _pre_trade_observations(
     """
     events: list[dict[str, Any]] = []
     if str(opp.get("status") or "").lower() == "expired":
-        events.append(_event(
-            "ttl_expired", "dropped", opp.get("valid_until") or opp.get("created_at"),
-            "Opportunity status was persisted as expired.",
-            {"valid_until": opp.get("valid_until")},
-        ))
+        terminal_fact = None
+        if _table_exists(db, "filter_decisions"):
+            row = db.execute(
+                "SELECT filter_name,reason_code,reason_detail,evaluated_at "
+                "FROM filter_decisions WHERE candidate_key=? "
+                "AND decision IN ('rejected','error') "
+                "ORDER BY datetime(evaluated_at) DESC,rowid DESC LIMIT 1",
+                (f"opportunity:{opp.get('id')}",),
+            ).fetchone()
+            terminal_fact = dict(row) if row else None
+        reason_code = str((terminal_fact or {}).get("reason_code") or "")
+        if reason_code == "universe_snapshot_superseded":
+            events.append(_event(
+                "snapshot_superseded",
+                "superseded",
+                (terminal_fact or {}).get("evaluated_at") or opp.get("created_at"),
+                (terminal_fact or {}).get("reason_detail")
+                or "The parent Universe snapshot was superseded.",
+                {
+                    "reason_code": reason_code,
+                    "universe_snapshot_id": opp.get("universe_snapshot_id"),
+                },
+            ))
+        elif reason_code == "ttl_expired":
+            events.append(_event(
+                "ttl_expired",
+                "dropped",
+                (terminal_fact or {}).get("evaluated_at")
+                or opp.get("valid_until")
+                or opp.get("created_at"),
+                (terminal_fact or {}).get("reason_detail")
+                or "Opportunity validity deadline elapsed.",
+                {"valid_until": opp.get("valid_until"), "reason_code": reason_code},
+            ))
+        else:
+            events.append(_event(
+                "lifecycle_expired",
+                "dropped",
+                (terminal_fact or {}).get("evaluated_at") or opp.get("created_at"),
+                (terminal_fact or {}).get("reason_detail")
+                or "Opportunity is expired, but its terminal reason is unavailable.",
+                {
+                    "valid_until": opp.get("valid_until"),
+                    "reason_code": reason_code or "terminal_reason_unavailable",
+                },
+            ))
     if not direction:
         events.append(_event(
             "eligibility_inferred", "inferred", opp.get("created_at"),
@@ -974,9 +1018,11 @@ def _final_result(events: list[dict[str, Any]]) -> tuple[str, str, str]:
         ("venue_unsupported", "dropped"),
         ("debate_downgraded", "dropped"),
         ("operator_skip", "dropped"),
+        ("snapshot_superseded", "superseded"),
+        ("ttl_expired", "dropped"),
+        ("lifecycle_expired", "dropped"),
         ("signal_pending", "pending"),
         ("guard_blocked", "dropped"),
-        ("ttl_expired", "dropped"),
         ("ranker_excluded", "dropped"),
     ]
     for stage, state in priority:
@@ -991,7 +1037,9 @@ def _causal_stage_order(stage: Any) -> int:
     order = {
         "created": 0,
         "eligibility_inferred": 1,
+        "snapshot_superseded": 2,
         "ttl_expired": 2,
+        "lifecycle_expired": 2,
         "signal_pending": 3,
         "operator_trade_intent": 4,
         "operator_skip": 4,

@@ -573,7 +573,9 @@ class UniverseService:
                     "prev_age=%.0fs, prev=%s)",
                     prev_age_sec, prev_snapshot_id,
                 )
-                # Slide member and opportunity expiries forward. Without this,
+                # Slide member plus linked open/queued opportunity expiries. A
+                # queued row is revalidated only because this exact source
+                # snapshot remains active and semantically unchanged. Without this,
                 # a stable-allocation window longer than the family TTL causes
                 # every carrier to be ttl_expired on the next ranker scan even
                 # though we just re-confirmed the same working set is valid.
@@ -604,7 +606,7 @@ class UniverseService:
                         notify_paper_trader(source="universe_refresh_ttl_slide")
                     except Exception as _e:
                         logger.debug("paper_trader nudge skipped (non-fatal): %s", _e)
-                # Even on reuse, sweep any orphan opportunities left over from
+                # Even on reuse, sweep unclaimed open generations left over from
                 # earlier snapshots that became superseded before the cascade
                 # existed. Idempotent — a no-op once the pool is clean.
                 try:
@@ -612,7 +614,7 @@ class UniverseService:
                     if cascaded:
                         logger.info(
                             "Universe refresh (suppressed): cascaded expiry — %d orphan "
-                            "opportunity(s) from superseded snapshots marked expired",
+                            "open generation(s) from superseded snapshots marked expired",
                             cascaded,
                         )
                 except Exception as _e:
@@ -754,8 +756,10 @@ class UniverseService:
                     short_enabled=cfg.regime.short_enabled,
                 )
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
-                # Cascade: cancel open opportunities whose parent snapshot just
-                # became superseded. Before the soft-TTL filter these expired
+                # Cascade: end only unclaimed open analytical generations whose
+                # parent snapshot just became superseded. Queued Operator carriers
+                # retain their origin ids and live by Opportunity.valid_until.
+                # Before the soft-TTL filter open generations expired
                 # naturally at the family-TTL cliff; now they need explicit
                 # cleanup or the pool grows unboundedly (see
                 # repositories.expire_opportunities_from_superseded_snapshots).
@@ -763,7 +767,7 @@ class UniverseService:
                     cascaded = repo.expire_opportunities_from_superseded_snapshots(market_type)
                     if cascaded:
                         logger.info(
-                            "Universe refresh: cascaded expiry — %d orphan opportunity(s) "
+                            "Universe refresh: cascaded expiry — %d open generation(s) "
                             "from superseded snapshots marked expired",
                             cascaded,
                         )

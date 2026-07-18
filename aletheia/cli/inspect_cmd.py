@@ -363,11 +363,20 @@ def entry_status(
     typer.echo(f"stage: {current.get('primary_stage') or 'unknown'}")
     typer.echo(f"headline: {current.get('headline') or 'not available'}")
     typer.echo(
-        "blocker: "
+        "limiting reason: "
         f"{current.get('reason_code') or 'none'} — "
         f"{current.get('reason') or 'not available'}"
     )
     typer.echo(f"next trigger: {current.get('next_trigger') or 'not available'}")
+
+    counts = current.get("counts") or {}
+    typer.echo(
+        "last window: "
+        f"setups={counts.get('unique_setups', 'not available')} "
+        f"generations={counts.get('discovered_generations', 'not available')} "
+        f"superseded={counts.get('superseded_generations', 'not available')} "
+        f"ttl_expired={counts.get('ttl_expired', 'not available')}"
+    )
 
     ranker = current.get("ranker") or {}
     last_run = ranker.get("last_run") or {}

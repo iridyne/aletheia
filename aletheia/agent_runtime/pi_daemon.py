@@ -241,20 +241,9 @@ def _has_pending_signal_work() -> bool:
     or alter any candidate and it excludes expired or already-finalized sources.
     """
     try:
-        from aletheia.storage.sqlite import get_db
+        from aletheia.storage.repositories import count_unresolved_signal_pending
 
-        row = get_db().execute(
-            "SELECT 1 FROM pi_decisions pending "
-            "JOIN opportunities source ON source.id = pending.opportunity_id "
-            "WHERE pending.action = 'signal_pending' "
-            "AND source.status = 'queued' "
-            "AND NOT EXISTS ("
-            " SELECT 1 FROM pi_decisions final "
-            " WHERE final.opportunity_id = pending.opportunity_id "
-            " AND final.action IN ('skip', 'watch', 'trade')"
-            ") LIMIT 1"
-        ).fetchone()
-        return row is not None
+        return count_unresolved_signal_pending() > 0
     except Exception as exc:
         logger.debug("pi_daemon: startup pending probe unavailable: %s", exc)
         return False

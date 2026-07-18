@@ -45,15 +45,17 @@ def _insert_opportunity(
     status: str,
     snapshot_id: str | None = None,
     created_at: str | None = None,
+    valid_until: str | None = None,
 ) -> None:
     conn.execute(
         "INSERT INTO opportunities "
         "(id,symbol,market,direction_bias,confidence,status,asset_class,scanner_family,"
-        "universe_snapshot_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "universe_snapshot_id,created_at,valid_until) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (
             opportunity_id, f"{opportunity_id}/USDT", "spot", "long", "high",
             status, "crypto", "momentum", snapshot_id,
             created_at or datetime.now(timezone.utc).isoformat(),
+            valid_until,
         ),
     )
 
@@ -67,7 +69,9 @@ def _insert_pending(conn, decision_id: str, opportunity_id: str, created_at: str
     )
 
 
-def test_superseded_cascade_expires_open_and_queued_with_atomic_evidence(tmp_path, monkeypatch):
+def test_superseded_cascade_expires_only_unclaimed_generations_with_atomic_evidence(
+    tmp_path, monkeypatch
+):
     conn = _setup_db(tmp_path, monkeypatch)
     _insert_snapshot(conn, "old", "superseded")
     _insert_snapshot(conn, "active", "active")
@@ -82,12 +86,12 @@ def test_superseded_cascade_expires_open_and_queued_with_atomic_evidence(tmp_pat
 
     from aletheia.storage import repositories as repo
 
-    assert repo.expire_opportunities_from_superseded_snapshots("crypto") == 2
+    assert repo.expire_opportunities_from_superseded_snapshots("crypto") == 1
     assert repo.expire_opportunities_from_superseded_snapshots("crypto") == 0
     statuses = dict(conn.execute("SELECT id,status FROM opportunities"))
     assert statuses == {
         "open-old": "expired",
-        "queued-old": "expired",
+        "queued-old": "queued",
         "reviewed-old": "reviewed",
         "open-active": "open",
     }
@@ -97,14 +101,22 @@ def test_superseded_cascade_expires_open_and_queued_with_atomic_evidence(tmp_pat
     ).fetchall()
     assert [tuple(row) for row in evidence] == [
         ("open-old", "rejected", "universe_snapshot_superseded"),
-        ("queued-old", "rejected", "universe_snapshot_superseded"),
     ]
 
 
-def test_superseded_queued_carrier_is_immediately_hidden_from_operator(tmp_path, monkeypatch):
+def test_superseded_queued_carrier_remains_visible_until_its_own_valid_until(
+    tmp_path, monkeypatch
+):
     conn = _setup_db(tmp_path, monkeypatch)
     _insert_snapshot(conn, "old", "superseded")
-    _insert_opportunity(conn, "queued-old", status="queued", snapshot_id="old")
+    valid_until = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    _insert_opportunity(
+        conn,
+        "queued-old",
+        status="queued",
+        snapshot_id="old",
+        valid_until=valid_until,
+    )
     _insert_pending(
         conn,
         "pending-old",
@@ -119,10 +131,11 @@ def test_superseded_queued_carrier_is_immediately_hidden_from_operator(tmp_path,
     before, _ = _build_pending_signal_queue()
     assert [row["opportunity_id"] for row in before] == ["queued-old"]
 
-    assert repo.expire_opportunities_from_superseded_snapshots("crypto") == 1
+    assert repo.expire_opportunities_from_superseded_snapshots("crypto") == 0
     visible, queue = _build_pending_signal_queue()
-    assert visible == []
-    assert queue["unresolved_total"] == 0
+    assert [row["opportunity_id"] for row in visible] == ["queued-old"]
+    assert visible[0]["valid_until"] == valid_until
+    assert queue["unresolved_total"] == 1
 
 
 def test_superseded_cascade_rolls_back_status_when_evidence_fails(tmp_path, monkeypatch):
@@ -144,6 +157,296 @@ def test_superseded_cascade_rolls_back_status_when_evidence_fails(tmp_path, monk
     assert dict(conn.execute("SELECT id,status FROM opportunities")) == {
         "open-old": "open", "queued-old": "queued",
     }
+
+
+def test_reused_active_snapshot_revalidates_linked_queued_carrier(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    old_expiry = (now + timedelta(minutes=5)).isoformat()
+    _insert_snapshot(conn, "active", "active")
+    conn.execute(
+        "INSERT INTO universe_registry (id,venue,market_type,symbol) "
+        "VALUES ('asset','binance','spot','BTC/USDT')"
+    )
+    conn.execute(
+        "INSERT INTO universe_members "
+        "(id,snapshot_id,asset_id,symbol,rank,total_score,ttl_sec,expires_at) "
+        "VALUES ('member','active','asset','BTC/USDT',1,50,3600,?)",
+        (old_expiry,),
+    )
+    _insert_opportunity(
+        conn,
+        "queued-revalidated",
+        status="queued",
+        snapshot_id="active",
+        valid_until=old_expiry,
+    )
+    conn.execute(
+        "UPDATE opportunities SET universe_member_id='member' "
+        "WHERE id='queued-revalidated'"
+    )
+    conn.commit()
+
+    from aletheia.storage.repositories import refresh_active_snapshot_ttls
+
+    members_updated, opportunities_updated = refresh_active_snapshot_ttls(
+        "active", now
+    )
+    expected = (now + timedelta(hours=1)).isoformat()
+    assert (members_updated, opportunities_updated) == (1, 1)
+    assert conn.execute(
+        "SELECT valid_until FROM opportunities WHERE id='queued-revalidated'"
+    ).fetchone()[0] == expected
+
+
+def test_queued_market_carrier_uses_opportunity_valid_until_not_fixed_30_minutes(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    old = (now - timedelta(minutes=45)).isoformat()
+    valid_until = (now + timedelta(hours=2)).isoformat()
+    _insert_opportunity(
+        conn,
+        "long-lived",
+        status="queued",
+        created_at=old,
+        valid_until=valid_until,
+    )
+    _insert_pending(conn, "pending-long-lived", "long-lived", old)
+    conn.commit()
+
+    from aletheia.agent_shell.trading_context import _build_pending_signal_queue
+    from aletheia.storage import repositories as repo
+
+    assert repo.count_unresolved_signal_pending(max_age_minutes=30) == 1
+    assert repo.expire_stale_queued_opportunities(max_age_minutes=30) == 0
+    visible, queue = _build_pending_signal_queue(max_age_minutes=30)
+    assert [row["opportunity_id"] for row in visible] == ["long-lived"]
+    assert visible[0]["valid_until"] == valid_until
+    assert queue["unresolved_total"] == 1
+    assert queue["expired_unconsumed_rows"] == 0
+
+
+def test_queued_market_carrier_expires_at_valid_until_with_truthful_evidence(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    pending_at = (now - timedelta(minutes=10)).isoformat()
+    valid_until = (now - timedelta(seconds=1)).isoformat()
+    _insert_opportunity(
+        conn,
+        "ttl-ended",
+        status="queued",
+        created_at=pending_at,
+        valid_until=valid_until,
+    )
+    _insert_pending(conn, "pending-ttl-ended", "ttl-ended", pending_at)
+    conn.commit()
+
+    from aletheia.storage import repositories as repo
+
+    assert repo.expire_stale_queued_opportunities(max_age_minutes=30) == 1
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id='ttl-ended'"
+    ).fetchone()[0] == "expired"
+    fact = conn.execute(
+        "SELECT reason_code,parameter_snapshot FROM filter_decisions "
+        "WHERE opportunity_id='ttl-ended' AND filter_name='opportunity_ttl'"
+    ).fetchone()
+    assert fact["reason_code"] == "ttl_expired"
+    parameters = json.loads(fact["parameter_snapshot"])
+    assert parameters["expiry_basis"] == "valid_until"
+    assert parameters["valid_until"] == valid_until
+
+
+def test_open_generation_past_valid_until_remains_for_ranker_soft_ttl_window(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    _insert_opportunity(
+        conn,
+        "soft-ttl",
+        status="open",
+        created_at=(now - timedelta(minutes=20)).isoformat(),
+        valid_until=(now - timedelta(minutes=1)).isoformat(),
+    )
+    conn.commit()
+
+    from aletheia.storage.repositories import expire_stale_opportunities
+
+    assert expire_stale_opportunities(ttl_hours=48) == 0
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id='soft-ttl'"
+    ).fetchone()[0] == "open"
+
+
+def test_queued_market_carrier_without_valid_until_keeps_30_minute_legacy_fallback(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    old = (datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat()
+    _insert_opportunity(conn, "legacy", status="queued", created_at=old)
+    _insert_pending(conn, "pending-legacy", "legacy", old)
+    conn.commit()
+
+    from aletheia.storage import repositories as repo
+
+    assert repo.expire_stale_queued_opportunities(max_age_minutes=30) == 1
+    fact = conn.execute(
+        "SELECT parameter_snapshot FROM filter_decisions "
+        "WHERE opportunity_id='legacy' AND filter_name='opportunity_ttl'"
+    ).fetchone()
+    assert json.loads(fact["parameter_snapshot"])["expiry_basis"] == (
+        "pending_created_at_legacy_fallback"
+    )
+
+
+def test_active_queued_setup_blocks_duplicate_signal_after_cooldown_window(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    old = (now - timedelta(minutes=45)).isoformat()
+    _insert_opportunity(
+        conn,
+        "active-carrier",
+        status="queued",
+        created_at=old,
+        valid_until=(now + timedelta(hours=2)).isoformat(),
+    )
+    conn.execute(
+        "UPDATE opportunities SET symbol='BTC/USDT',direction_bias='short' WHERE id=?",
+        ("active-carrier",),
+    )
+    conn.execute(
+        "INSERT INTO pi_decisions "
+        "(id,created_at,symbol,direction,market_type,action,opportunity_id,signal_source) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "pending-active-carrier",
+            old,
+            "BTC/USDT",
+            "short",
+            "spot",
+            "signal_pending",
+            "active-carrier",
+            "market_observer",
+        ),
+    )
+    conn.commit()
+
+    from aletheia.agents.paper_trader import (
+        _active_signal_setups,
+        _plan_signal_batch,
+    )
+
+    active = _active_signal_setups()
+    assert ("BTC/USDT", "short", "momentum") in active
+    plan = _plan_signal_batch(
+        [
+            {
+                "opportunity_id": "new-generation",
+                "symbol": "BTC/USDT",
+                "direction": "short",
+                "scanner_family": "momentum",
+            }
+        ],
+        open_symbols=set(),
+        recent_signal_pairs=set(),
+        active_signal_setups=active,
+    )
+    assert plan.selected == []
+    assert plan.decisions["new-generation"] == (
+        "active_operator_carrier",
+        "rejected",
+    )
+
+
+def test_old_carrier_with_future_valid_until_passes_preflight_and_atomic_claim(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    old = (now - timedelta(minutes=45)).isoformat()
+    _insert_opportunity(
+        conn,
+        "claimable",
+        status="queued",
+        created_at=old,
+        valid_until=(now + timedelta(hours=2)).isoformat(),
+    )
+    conn.execute(
+        "UPDATE opportunities SET symbol='BTC/USDT',market='spot',"
+        "direction_bias='long' WHERE id='claimable'"
+    )
+    _insert_pending(conn, "pending-claimable", "claimable", old)
+    conn.commit()
+
+    from aletheia.agent_shell.commands import _pending_carrier_authority_failure
+    from aletheia.agent_shell.reflection import _pending_claim_authority_failure
+
+    decision = SimpleNamespace(
+        opportunity_id="claimable",
+        signal_source="market_observer",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        filter_trace=[],
+    )
+    assert _pending_carrier_authority_failure(decision) is None
+    assert _pending_claim_authority_failure(decision) is None
+
+
+def test_operator_defer_deadline_is_capped_by_carrier_valid_until(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    valid_until = (now + timedelta(minutes=20)).isoformat()
+
+    from aletheia.agent_shell import commands
+
+    monkeypatch.setattr(
+        commands,
+        "_deferred_context_dedup_key",
+        lambda *_args, **_kwargs: ("fixed-dedup", now.isoformat()),
+    )
+
+    event = commands._record_deferred_context_observation(
+        {
+            "layer2": {
+                "pending_queue": {
+                    "unresolved_total": 1,
+                    "visible_count": 1,
+                    "overflow_count": 0,
+                    "oldest_at": datetime.now(timezone.utc).isoformat(),
+                },
+                "pending_signals": [
+                    {"opportunity_id": "defer-capped", "valid_until": valid_until}
+                ],
+            }
+        },
+        context_fingerprint="fingerprint",
+        opportunity_id="defer-capped",
+        policy_epoch_id="test-epoch",
+        trigger="signal",
+        reason="candidate_technical_snapshot_unavailable",
+        window_minutes=120,
+    )
+
+    snapshot = json.loads(event["queue_snapshot_json"])
+    assert snapshot["defer_until"] == valid_until
+    assert snapshot["defer_deadline_basis"] == "opportunity_valid_until"
+    assert conn.execute(
+        "SELECT COUNT(*) FROM operator_evaluation_events WHERE id=?", (event["id"],)
+    ).fetchone()[0] == 1
 
 
 def test_expired_opportunity_cannot_transition_to_reviewed(tmp_path, monkeypatch):
@@ -248,9 +551,116 @@ def test_opportunity_funnel_uses_iso_safe_causal_cohort_and_marks_stale_snapshot
     assert data["queued_count"] == 1
     assert data["reviewed_count"] == 1
     assert data["expired_count"] == 1
+    assert data["setup_count"] == 4
+    assert data["active_setup_count"] == 2
+    assert data["terminal_breakdown"] == {
+        "snapshot_superseded": 0,
+        "ttl_expired": 0,
+        "other_expired": 1,
+        "operator_trade": 0,
+        "operator_skip": 0,
+        "operator_watch": 0,
+        "deterministic_review": 0,
+        "other_reviewed": 1,
+    }
     assert data["proposed_count"] == 1
     assert data["snapshot"]["freshness"] == "stale"
     assert data["snapshot"]["age_sec"] >= 19 * 60
+
+
+def test_opportunity_funnel_separates_generations_setups_and_terminal_exits(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    created_at = (now - timedelta(minutes=10)).isoformat()
+    for oid, status in (
+        ("btc-superseded", "expired"),
+        ("btc-ttl", "expired"),
+        ("btc-active", "open"),
+        ("eth-skip", "reviewed"),
+    ):
+        _insert_opportunity(conn, oid, status=status, created_at=created_at)
+    for oid in ("btc-superseded", "btc-ttl", "btc-active"):
+        conn.execute(
+            "UPDATE opportunities SET symbol='BTC/USDT',market='usdt_futures',"
+            "direction_bias='short' WHERE id=?",
+            (oid,),
+        )
+    conn.execute(
+        "UPDATE opportunities SET symbol='ETH/USDT',market='usdt_futures',"
+        "direction_bias='long' WHERE id='eth-skip'"
+    )
+    for oid, filter_name, reason_code in (
+        (
+            "btc-superseded",
+            "universe_snapshot_status",
+            "universe_snapshot_superseded",
+        ),
+        ("btc-ttl", "opportunity_ttl", "ttl_expired"),
+    ):
+        conn.execute(
+            "INSERT INTO filter_decisions "
+            "(id,dedup_key,candidate_key,candidate_kind,opportunity_id,symbol,"
+            "market_type,direction,filter_name,stage,sequence_no,decision,reason_code,"
+            "input_snapshot,parameter_snapshot,filter_version,evaluated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                f"fact-{oid}",
+                f"fact-key-{oid}",
+                f"opportunity:{oid}",
+                "opportunity",
+                oid,
+                "BTC/USDT",
+                "usdt_futures",
+                "short",
+                filter_name,
+                "opportunity_lifecycle",
+                0,
+                "rejected",
+                reason_code,
+                "{}",
+                "{}",
+                "test-v1",
+                created_at,
+            ),
+        )
+    conn.execute(
+        "INSERT INTO pi_decisions "
+        "(id,created_at,symbol,direction,market_type,action,opportunity_id,signal_source) "
+        "VALUES ('eth-final-skip',?,'ETH/USDT','long','usdt_futures','skip',"
+        "'eth-skip','market_observer')",
+        (created_at,),
+    )
+    conn.commit()
+
+    from aletheia.server.routes.analytics import get_opportunity_funnel
+
+    data = get_opportunity_funnel(hours=1)
+    assert data["emitted_count"] == 4
+    assert data["setup_count"] == 2
+    assert data["active_setup_count"] == 1
+    assert data["expired_count"] == 2
+    assert data["terminal_breakdown"] == {
+        "snapshot_superseded": 1,
+        "ttl_expired": 1,
+        "other_expired": 0,
+        "operator_trade": 0,
+        "operator_skip": 1,
+        "operator_watch": 0,
+        "deterministic_review": 0,
+        "other_reviewed": 0,
+    }
+    assert data["current"]["counts"]["discovered_generations"] == 4
+    assert data["current"]["counts"]["unique_setups"] == 2
+    assert data["current"]["counts"]["superseded_generations"] == 1
+    assert data["current"]["counts"]["ttl_expired"] == 1
+    assert data["current"]["policy_epoch_id"] == (
+        "opportunity_carrier_continuity/v1"
+    )
+    assert data["current"]["ranker"]["carrier_epoch"] == (
+        "opportunity_carrier_continuity/v1"
+    )
 
 
 def test_opportunity_funnel_explains_current_operator_defer(tmp_path, monkeypatch):
@@ -314,6 +724,11 @@ def test_opportunity_funnel_explains_current_operator_defer(tmp_path, monkeypatc
         "queued_candidates": 2,
         "deferred_candidates": 1,
         "pending_proposals": 0,
+        "discovered_generations": 2,
+        "unique_setups": 2,
+        "active_setups": 2,
+        "superseded_generations": 0,
+        "ttl_expired": 0,
     }
     candidates = {row["symbol"]: row for row in current["candidates"]}
     assert set(candidates) == {"NEAR/USDT", "SYN/USDT"}
@@ -431,6 +846,7 @@ def test_opportunity_funnel_explains_ranker_cooldown_from_durable_filter_facts(
         "cooldown": 1,
         "backpressure": 0,
         "batch_limit": 0,
+        "carrier_active": 0,
         "other_wait": 0,
     }
     candidate = current["candidates"][0]
