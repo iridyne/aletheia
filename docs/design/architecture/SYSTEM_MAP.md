@@ -2,7 +2,7 @@
 
 > 一页俯瞰系统所有活动部件、数据流向、管道状态。
 > 断管道标记: ✅ 闭环 | ⚠️ 窄消费（仅API/CLI） | ❌ 断裂（写入无消费）
-> Last synced with code: 2026-07-18 (Opportunity generation/carrier lifecycle)
+> Last synced with code/design: 2026-07-19 (Learning Contribution Observability target)
 
 ---
 
@@ -30,7 +30,7 @@
 | `outcome_settler` | 10min | 更新 universe_forward_outcomes + filter_candidate_outcomes；同步新 shadow 净结果 | 净收益校准、filter controller、alpha attribution、doctor | ✅ |
 | `outcome_hook_replay` | 1min | outcome_hook_jobs 状态、shadow_trades 结果、serenity_post_mortems | 合格平仓后反馈；每次重读 Position，缺价或部分失败留待重试 | ✅ |
 | `learning_contribution_evaluator` | `learning.evaluation_interval_minutes`（默认60min） | learning_contribution_verdicts, learning_job_health | paper lifecycle read model、operator inspection | ✅ 只测量：即使自主学习关闭或系统暂停也可运行；不改阶段、不启用影响 |
-| `learning_measurement_startup_catchup` | gateway 启动后3min一次 | learning_job_health 当前小时水位 | contribution evaluator | ✅ 只补当前缺失测量窗口，已完成则 no-op |
+| `learning_measurement_startup_catchup` | gateway 启动后2min一次 | learning_job_health 当前小时水位 | contribution evaluator | ✅ 只补当前缺失测量窗口，已完成则 no-op |
 | `cleanup` | cron 03:17 | 删除超保留期的分析/遥测行；filter batch 30d、decision/outcome 90d | SQLite 稳定性 + `data_pruned` audit | ✅，不触碰交易因果表 |
 | `ohlcv_nightly_backfill` | cron(可配) | market_ohlcv | (历史 OHLCV 存储;backtest 消费者随引擎删除 Position C) | ✅ |
 | `ohlcv_active_backfill` | 5–60min(可配，默认10min) | market_ohlcv + ohlcv_backfill_state | 活动 Universe 指标、结果结算、doctor；单轮1–10个精确 instrument/timeframe，失败退避 | ✅，不阻塞 universe_refresh |
@@ -103,6 +103,7 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 | ranker case/memo Learning | trade_case_study + latest trading_memo | paper_trader_ranker score | ✅ 原始历史分只作候选；无合格前瞻对照结论时实际增量固定为 0，并记录独立路径证据 |
 | persona sizing Learning | clean realized regime cohort + causal opportunity outcome | trading/sizing → System Operator proposal rationale | ✅ 同时记录静态/学习建议/实际金额；无因果键、无授权或记录故障均回到静态金额 |
 | ps_skills (SkillStore) | lesson_reviewer(applied lesson→draft skill), persistence API | persistence API / manual review | ✅ draft producer 已接入;不会自动 activate(见 knowledge_contract §6.A2) |
+| measured Learning ledger / `lco-v1` | evaluator/lifecycle 写 7 个永久 Learning 表；canonical full-arm filter outcomes + selected-member Universe mirror/fallback | 当前仅内部 inspection/doctor；目标 `/api/analytics/learning-contribution` + `/api/learning/*` + Learning workbench | ❌ owner projection 尚未实现；目标只读、有界、缓存，不运行 evaluator/lifecycle，不提供 admission mutation，不改 Paper/Risk/Execution/Live |
 
 ---
 
@@ -128,11 +129,11 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 | 级别 | 问题 | 影响 |
 |------|------|------|
 | A1 | ~~ps_lessons↔FTS 脱钩~~ → **已澄清为有意双轨** | 经验经 LessonStore→System Operator prompt→risk 影响决策;不入 FTS 是设计选择(knowledge_contract §6.A1) |
-| A2 | ~~ps_skills 无生产者~~ | 已修: lesson_reviewer 产 draft skill;人工审核后才可 activate |
+| Historical A2 (Knowledge gap) | ~~ps_skills 无生产者~~ | 已修: lesson_reviewer 产 draft skill;人工审核后才可 activate；与 `learning_contribution_observability` 无关 |
 | A3 | liquidation_events 不进风控 | 清算数据采集浪费 |
 | B1 | detect_contradictions() | 已有保守 support-vs-block 检测；UI 只呈现"需复核"数量，不自动裁决 |
 | B2 | serenity 4表 → promote→PiDecision **已闭环** | 原始4表仍不进 FTS,但 promote 路径已建(spec_serenity_promote) |
 | C1 | 6个analytics端点无前端UI | 已有能力不可达 |
 | C2 | Regime/Guard Config 无前端控制(MarketAwareExits 已部分接入) | regime/guard 只能手编 yaml |
 
-> A1/A2/B1 现状(双轨已澄清 / draft skill producer 已接入 / contradiction 保守检测已实现)详见 [knowledge_contract.md §6](../contracts/knowledge_contract.md)。C1/A3 记录于 [BACKEND_ISSUES.md](../../issues/domain/BACKEND_ISSUES.md)。**Last reviewed 2026-07-03**(本表 §四/§五/§六 已对齐当前代码与契约)。
+> Historical A1/A2/B1 现状(双轨已澄清 / draft skill producer 已接入 / contradiction 保守检测已实现)详见 [knowledge_contract.md §6](../contracts/knowledge_contract.md)。这里的 historical A2 不是新的 Learning Contribution Observability feature。C1/A3 记录于 [BACKEND_ISSUES.md](../../issues/domain/BACKEND_ISSUES.md)。**Last reviewed 2026-07-19**。

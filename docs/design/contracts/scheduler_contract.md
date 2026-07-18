@@ -116,6 +116,24 @@ not otherwise re-audited here.
 - Job recovery clears current `last_error` and resets consecutive failures, but preserves durable
   `last_failed_at` and `last_failure_reason` for the most recent failure.
 
+#### Owner-facing projection (target, no scheduling change)
+
+Learning Contribution Observability adds no job, trigger, timeout or executor. Its target
+`GET /api/learning/health` read model combines three facts without conflating them:
+
+1. APScheduler registration and next-run state;
+2. durable `learning_job_health` current/recovery history;
+3. evaluator watermark versus the current measurement window.
+
+The projection must preserve `null` for unrecorded `last_expected_at` and output counts. It derives
+catch-up due/current from the evaluator watermark; it does not invent a durable health row for the
+one-shot catch-up job. A recovered current `healthy` state does not erase the durable most recent
+failure. Historical `learning_verdict_runner` rows remain explicitly unregistered history.
+
+The full target response and bounded/cache rules are in
+[`learning_observability_contract.md`](learning_observability_contract.md) §6.6-7 (`LCO-B04`,
+`LCO-C03`).
+
 **timeout 列说明**：`—` 表示该 job 没有在 `_ASYNC_JOB_TIMEOUT_SEC` 中声明超时，直接调用 `_guarded()` 包装，不经过 `_run_async_with_timeout` / `_run_sync_with_timeout` 的时间盒逻辑。
 
 ---

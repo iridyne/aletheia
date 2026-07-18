@@ -243,7 +243,12 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 **前向链接**: `docs/issues/archive/audits/PIPELINE_GAPS.md §A1`
 
-### A2. ps_skills 有 draft 生产者（不自动启用）
+### Historical A2. ps_skills 有 draft 生产者（不自动启用）
+
+> Naming note (2026-07-19): `A2` here is the archived `PIPELINE_GAPS` identifier for the
+> historical skill-producer gap. It is unrelated to the current
+> `learning_contribution_observability` feature; current normative documents do not use bare A2 as
+> that feature's durable name.
 
 **现状**: `aletheia/learning/skills.py` 的 SkillStore 有完整的 create/activate/deprecate 生命周期；`lesson_reviewer` 在 lesson 被应用到 policy version 后，会通过 `SkillStore.create_from_lesson()` 生成一个 `status="draft"` 的长期技能候选。
 

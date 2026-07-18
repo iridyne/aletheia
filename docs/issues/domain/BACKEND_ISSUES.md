@@ -13,9 +13,21 @@
 > - 🟠 让数据失真或学习失效（promotion gate 错算 / KB 类型混淆 / PnL 不可信）
 > - 🟡 dead code / cosmetic / future-violation tripwire
 >
-> **最后更新**：2026-07-17 · 维护者：Aletheia Dev
+> **最后更新**：2026-07-19 · 维护者：Aletheia Dev
 > **来源**：6 个并行 subagent 审计（agents+runtime / risk+execution / storage+knowledge /
 > server+config / lifecycle+gateway / model+telegram+update+cli）+ 早期对照表
+
+---
+
+## 0e. Learning Contribution Observability（2026-07-19）
+
+| ID | 状态 | 问题 | 当前安全边界 / 下一步 |
+|---|---|---|---|
+| LCO-BE-01 | 🟠 open | A1 已持久化 aggregate cluster/source/metric/lifecycle/job-health 事实和 exact exposure/outcome identities，但当前没有 bounded、cached、typed 的 owner-facing contribution API；部分细节需在单 experiment detail 中有界重建，persisted mirror count 也不能冒充 proven agreement | 以 `learning_observability_contract.md` 的 `lco-v1` 为唯一目标。GET 不得运行 evaluator/lifecycle/admission/config mutation；summary 读 persisted verdict，仅单 experiment detail 可有界重建 cohort。`LCO-S01/02`、`LCO-B01..05`、`LCO-C01/03/04/06` 目前 strict-xfail/missing |
+
+这不是新测量逻辑、schema、scheduler job 或 admission 授权。不得用
+`/analytics/alpha-attribution`、portfolio PnL 或 knowledge counts 代替 prospective contribution
+verdict。实施分 `LCO-BE1/BE2`，需要 direct `:8788` 冷/热延迟和无写副作用证明。
 
 ---
 

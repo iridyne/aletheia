@@ -13,9 +13,21 @@
 > - 🟠 字段缺失 / 设计方向偏差（§23.x 列出但前端没做、TradingView §4.5 借鉴未到位）
 > - 🟡 工程基础（类型断言、列表组件、内联 style、详情路由模式）
 >
-> **最后更新**：2026-06-30 · 维护者：Aletheia Dev
+> **最后更新**：2026-07-19 · 维护者：Aletheia Dev
 > **来源**：规格 §23（13 子节）+ §2/§4/§13/§15/§29 + trust §3 + 全前端代码静态对照
 >
+
+---
+
+## 0b. Learning Contribution Observability（2026-07-19）
+
+| ID | 状态 | 问题 | 当前安全边界 / 下一步 |
+|---|---|---|---|
+| LCO-FE-01 | 🔴 open | 当前 `/learning` 把 portfolio PnL 和 knowledge funnel/activity 放在 Reports，却不展示 A1 measured verdict、complete-cluster samples、source conflict、metric history、catch-up/recovery 或 read-only recommendation；多数 query failure 还会退化成 `[]`/`0`/`Never` | 按 `learning_observability_contract.md` 建 Contribution/Experiments/Operations，不从 counts/PnL 推断 effective。Loading、genuine empty、unavailable、stale、partial 必须分开；`admit_trial` 无按钮且 `mutation_available=false`。依赖 LCO-BE-01；`LCO-C02/C04/C05` 当前 strict-xfail/missing |
+
+现有 Dreaming/Knowledge taxonomy 和人工 lesson/guard actions 保留，但与只读 contribution panels
+视觉、语义分离。现有 `/analytics/learning-funnel` 必须标为 "Activity, not measured
+contribution"；portfolio PnL 必须标为 context，不得回答 "Learning caused improvement"。
 
 ---
 

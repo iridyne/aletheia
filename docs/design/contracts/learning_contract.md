@@ -1,10 +1,12 @@
 # Learning Subsystem Contract
 
 > Contract level: L2. This file is normative for the Learning subsystem.
-> Last aligned: 2026-07-18 A1 contribution-measurement integrity.
+> Last aligned: 2026-07-19 A1 contribution-measurement integrity and the
+> target Learning Contribution Observability handoff.
 > Reference intent: [Product Direction §3](../../product/definition/DIRECTION.md#3-learning-is-an-evidence-pipeline-not-a-page).
-> Target extension: `learning_evolution_contract.md` defines the measured
-> self-improvement lifecycle and tracks each implemented/remaining claim.
+> Target extensions: `learning_evolution_contract.md` defines the measured
+> self-improvement lifecycle; `learning_observability_contract.md` defines its
+> owner-facing, read-only projection. Each tracks implemented and missing claims.
 
 Learning is not a dashboard-only feature. Its product role is to turn market
 observations, trade decisions, closed trades, reviews, and later corrections into
@@ -71,7 +73,7 @@ results can influence a later trading judgment, even when it lives outside `alet
 | Persona learning | `trading/persona.py`, `persona_rollout.py`, `sizing_policy.py`, `trading/sizing.py` | clean realized history proposes a bounded notional; static, learned and actual values are recorded and actual stays static without prospective authority; risk caps remain downstream and unchanged |
 | Exit diagnostics | `analytics/exit_policy_advisor.py` | read-only advice only; no automatic mutation |
 | Filter diagnostics | `analytics/filter_registry.py`, `filter_replay.py`, `filter_controller.py`, `filter_shadow_experiments.py` | shadow recommendations/observe-only experiments; no production mutation |
-| Contribution/health | alpha, memo, guard impact/effectiveness, learning-funnel analytics, doctor, scheduler | reporting and operational control with different evidence coverage |
+| Contribution/health | measured Learning ledger/evaluator plus alpha, memo, guard impact/effectiveness, learning-funnel analytics, doctor and scheduler | A1 contribution facts exist internally; current public Learning surfaces remain activity/diagnostic reports, and the `lco-v1` owner projection is missing |
 | Supporting audits | trade insights/stats, family scorecard, opportunity flow, debate impact, thesis lineage, go-live scorecard | read models/gates; some are outcome sources or concurrent controls, not Learning treatments |
 | Operator control loop | `agent_shell/operator_loop.py` | may tighten confidence, size/risk cap, stop or scanner settings under its own safety contract; loosening requires higher authority |
 
@@ -138,6 +140,9 @@ loop contributes positively. Current behavior has these contract-relevant limita
   recommend a future authenticated owner admission. No authenticated owner mutation route exists
   yet, so `admit_shadow_trial` fails closed even when passed the string `owner`. Lifecycle automation
   and paper influence remain off by default.
+- the measured ledger, cohort inspection, lifecycle inspection and durable job health are not yet
+  exposed through a dedicated public Learning contribution API. The existing Learning UI and
+  `/analytics/learning-funnel` remain activity-oriented; they cannot establish contribution.
 
 The target lifecycle, registry, prospective experiments, overlap handling, and automatic fallback
 are normative in `learning_evolution_contract.md`. Phase 0 measurement claims are tracked below;
@@ -413,6 +418,8 @@ Ranker enforcement keeps two authority classes separate:
 The Learning UI is expected to surface real backend state, not invented healthy
 states.
 
+### 8.1 Current shipped surface
+
 Current Learning UI surfaces:
 
 - Knowledge base item types
@@ -426,6 +433,28 @@ Current Learning UI surfaces:
   `advisory_skill` is currently `consumer_unwired` and cannot be saved through Settings.
 
 API endpoints are indexed in `docs/design/api/api_reference.md`.
+
+The current surface does **not** expose the measured A1 cluster, provenance, metric-history,
+current-cohort identity, evaluator recovery, catch-up, or lifecycle-recommendation facts. Portfolio
+PnL, knowledge counts and `/analytics/learning-funnel` are activity/context only. A request failure
+must not be rendered as a genuine empty list or zero.
+
+### 8.2 Target owner projection
+
+The canonical target is
+[`learning_observability_contract.md`](learning_observability_contract.md), feature id
+`learning_contribution_observability`, projection schema `lco-v1`. It defines:
+
+- current versus historical measurement identity;
+- complete-cluster membership, selected/dropped members, exclusions and invalid reasons;
+- canonical/fallback/mirror/disagreement provenance;
+- current and durable-last-failure evaluator state plus measurement catch-up;
+- read-only lifecycle recommendations with `mutation_available=false`;
+- bounded cached GET endpoints and an honest responsive Learning workbench.
+
+That contract adds no admission mutation, paper influence, lifecycle automation, schema, config,
+scheduler job, Risk, Execution, exchange or live authority. Its `LCO-*` claims remain `missing`
+until implementation tests turn them GREEN.
 
 ---
 
@@ -463,6 +492,16 @@ Primary executable claims:
 - `tests/specs/spec_opportunity_outcomes.py`
 - `tests/specs/spec_persona_sizing.py`
 - `tests/specs/spec_pi_decision_chain.py`
+- `tests/specs/spec_learning_registry.py`
+- `tests/specs/spec_learning_attribution.py`
+- `tests/specs/spec_learning_ledger.py`
+- `tests/specs/spec_learning_contribution.py`
+- `tests/specs/spec_learning_authority.py`
+- `tests/specs/spec_learning_lifecycle.py`
+- `tests/specs/spec_learning_continuity.py`
+- `tests/specs/spec_learning_verdict_runtime.py`
+- `tests/specs/spec_learning_final_consumers.py`
+- `tests/specs/spec_learning_observability.py` (`LCO-*`, target/missing)
 - `tests/e2e/test_pipeline_feedback_loop.py`
 - `tests/e2e/test_pipeline_guard_promotion.py`
 
@@ -478,7 +517,8 @@ Important tripwires:
   change-control review.
 
 These current claims remain valid regression coverage. They must not be represented as proof of
-the target `LE-*` positive-contribution claims or of profitability.
+the target `LE-*` positive-contribution claims, the missing `LCO-*` owner projection, or
+profitability.
 
 ## 11. Outcome Integrity Handoff
 

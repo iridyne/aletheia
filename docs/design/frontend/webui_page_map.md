@@ -12,7 +12,8 @@
 3. trading cockpit → Positions, Paper Trades, Charts
 4. agent transparency → Agent Runs, Opportunities
 5. strategy lifecycle → Strategy Lifecycle
-6. dreaming / learning → Dreaming, Knowledge Base, Reports
+6. dreaming / learning → Learning workbench (target: Contribution, Experiments, Dreaming,
+   Knowledge Base, Operations)
 (+ ops, cross-role) → Settings, Risk & Controls
 (+ out-of-spec) → News Intel
 
@@ -70,6 +71,25 @@ Performance metrics (drawdown/win-rate from promotion gates) may live as a Repor
 Strategy Lifecycle (decide at build). Ref: OpenAlice memory surface / Hermes skills+memory /
 Sophia narrative memory.
 
+**2026-07-19 target extension — Learning Contribution Observability:** the current three-tab merge
+is shipped, but Reports remains activity/context-oriented and cannot answer whether Learning caused
+improvement. The canonical target keeps `/learning` and moves to five tabs:
+
+1. Contribution (default measured `lco-v1` projection)
+2. Experiments
+3. Dreaming
+4. Knowledge Base
+5. Operations
+
+Contribution follows the Blotter density pattern: five independent status tokens, full-width path
+ledger, 7/5 current-cohort/read-only-recommendation band, append-only verdict history, and a bounded
+detail drawer. Operations separates evaluator health, catch-up and durable last failure. Existing
+knowledge taxonomy and actions remain under Knowledge; they do not appear as contribution authority.
+Legacy `/dreaming`, `/knowledge` and `/reports` must select a deliberate tab rather than all opening
+Dreaming. Full API/UI, responsive and error-state contract:
+[`learning_observability_contract.md`](../contracts/learning_observability_contract.md). Status:
+designed, not implemented (`LCO-*` missing).
+
 ### Strategy Lifecycle (/strategies) — KEEP ✅ (standalone)
 Role: lifecycle (§23.11). Distinct pipeline view (draft→…→live_limited) with promotion gates.
 Ref: Hummingbot strategy management.
@@ -100,7 +120,7 @@ feed. Lives under OPERATE (or a "Lab/Future" affordance), off the primary tradin
 OBSERVE   Cockpit · Markets (Charts)
 DECIDE    Blotter (Approval Desk + Overview decision cards) · Agent Activity
 EXECUTE   Trades & Positions (Positions + Paper Trades)   ← causal-chain inspector
-EVOLVE    Strategy Lifecycle · Learning (Dreaming + KB + Reports)
+EVOLVE    Strategy Lifecycle · Learning (Contribution + Experiments + Dreaming + KB + Operations target)
 OPERATE   Risk & Controls · Settings · News (labeled)
 ```
 

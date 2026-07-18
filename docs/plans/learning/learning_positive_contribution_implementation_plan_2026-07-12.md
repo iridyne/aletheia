@@ -28,10 +28,13 @@
 > clocks/versioning, default-closed authenticated-owner admission boundary, single evaluator scheduling, durable failure
 > history, and active-exposure retention anchors are aligned in code and contract. This is a
 > measurement-integrity delivery, not evidence of empirical positive contribution.
-> Remaining A2: owner-facing observability for cluster membership/exclusions, source fallback or
-> disagreement, metric-version history, evaluator catch-up/last-failure state, and explicit trial
-> admission recommendations. A2 remains read-only and adds no admission control. UI completion is
-> not claimed; paper influence and lifecycle automation remain off by default.
+> Remaining **Learning Contribution Observability** (historical sequencing alias: Learning A2):
+> owner-facing cluster membership/exclusions, source fallback/disagreement, metric-version history,
+> evaluator catch-up/last-failure state, and explicit trial-admission recommendations. The canonical
+> design is `docs/design/contracts/learning_observability_contract.md`, feature id
+> `learning_contribution_observability`, schema `lco-v1`, claims `LCO-*`. It remains read-only and
+> adds no admission control. UI completion is not claimed; paper influence and lifecycle automation
+> remain off by default.
 
 ## 1. Outcome And Non-Negotiable Standard
 
@@ -695,8 +698,10 @@ delta >= +0.10 percentage points net
 no-trade/supply loss within configured budget
 ```
 
-The exact defaults live in config and the normative contract/spec; UI changes accompany
-config additions.
+The implemented experiment rows and metric code retain the exact gates/version used for each
+verdict. Future schema-configurable gate changes must update the normative contract/spec and add a
+Settings control in the same batch; this example is not a claim that every value is currently a
+config field.
 
 ### 8.3 Verdict Semantics
 
@@ -706,73 +711,49 @@ config additions.
 - `insufficient_data`: no behavioral conclusion; remain shadow/static.
 - `invalid`: attribution, contamination, or metric contract violated; refreeze and repair data.
 
-## 9. API And UI Design
+## 9. Learning Contribution Observability Delivery
 
-### 9.1 Read APIs
+This phase is fully specified in
+[`learning_observability_contract.md`](../../design/contracts/learning_observability_contract.md).
+The contract owns endpoint schemas, list/detail bounds, cache and event-loop rules, Learning page
+information architecture, responsive states, failure semantics, implementation slices, and the
+`LCO-*` acceptance matrix. This plan owns only ordering and delivery status.
 
-Proposed endpoints:
+Delivery order:
 
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /api/analytics/learning-contribution` | verdict by path/hypothesis, unique samples, controls, harm metrics |
-| `GET /api/learning/hypotheses` | lifecycle and scope, paginated |
-| `GET /api/learning/experiments` | active/completed experiment state |
-| `GET /api/learning/health` | expected jobs, last success, backlog, refreeze reason |
-| `GET /api/learning/exposures/{entity_id}` | why a candidate/decision/size changed |
-| `GET /api/learning/paths` | declared paths, authority ceiling, overlap group, fallback, health |
+1. `LCO-BE1`: cached summary, paths and health GET projections;
+2. `LCO-BE2`: bounded hypothesis/experiment/exposure and cluster detail;
+3. `LCO-FE1`: Contribution and Operations tabs with honest state handling;
+4. `LCO-FE2`: Experiments tab, correct legacy deep links and adjacent activity-panel honesty.
 
-Endpoints use a 30–60 second cached read model. Aggregation runs in a sync worker or scheduled
-materializer, never as unbounded SQLite/Markdown work in an async handler.
+Authority change: none. There are no Learning Contribution Observability mutation APIs. In
+particular, `admit_trial` is recommendation-only with `mutation_available=false`; authenticated
+owner admission remains a separate change-controlled design.
 
-### 9.2 Mutation APIs
-
-Only lifecycle review operations:
-
-- approve/reject a proposal for shadow evaluation;
-- manual refreeze/demote/archive;
-- approve advisory skill activation;
-- never bypass evidence gates or live/risk controls.
-
-All mutations write audit events and use optimistic status transitions.
-
-### 9.3 Learning UI
-
-Replace count-first health with five panels:
-
-1. Contribution by path: verdict, net delta, interval, unique treatment/control.
-2. Active experiments: scope, horizon, stage, progress, harm status.
-3. Hypothesis lifecycle: proposed/shadow/paper/active/demoted.
-4. Operational health: last expected/successful run, backlog age, refreeze reason.
-5. Decision trace: exact learned influences for a selected candidate/trade.
-6. Data integrity: outcome contract version, causal coverage, exclusions, unresolved and overlap
-   rates; component contribution is shown as `not identifiable` when appropriate.
-
-Words such as “effective” or “improving” render only for a measured positive verdict.
+No schema, config, data source, scheduler job or retention change is planned. Summary/list reads use
+persisted verdict facts; only one explicit experiment detail may reconstruct bounded cohort
+membership. Endpoints use a 30-second process-local monotonic TTL and sync worker execution, with
+direct `:8788` cold/warm measurement and `Server-Timing` evidence.
 
 ## 10. Configuration
 
-Proposed `LearningConfig` fields:
+Current `LearningConfig` fields:
 
 ```yaml
 learning:
-  enabled: true
-  experiments_enabled: false
+  contribution_evaluation_enabled: true
+  lifecycle_automation_enabled: false
   paper_influence_enabled: false
-  min_samples_ranker_per_arm: 50
-  min_samples_guard_shadow: 30
-  min_samples_prompt_per_arm: 50
-  min_samples_sizing_bucket: 30
-  min_market_days: 7
-  min_net_delta_pct: 0.10
-  bootstrap_resamples: 2000
-  max_total_ranker_delta: 20
-  max_supply_reduction_pct: 30
+  paper_influence_paths: []
   auto_refreeze: true
+  evaluation_interval_minutes: 60
+  paper_active_allocation_pct: 0.80
 ```
 
-Implementation must either migrate `agent.autonomous_learning` to this effective config or
-derive one canonical gate without breaking compatibility. Every new schema field receives a
-Settings control in the same batch. Hard risk parameters are not Learning config.
+Behavior-changing Learning jobs also obey the existing `agent.autonomous_learning` gate as defined
+in the contracts; measurement remains available independently. Learning Contribution Observability
+adds no config field. Any future field receives a Settings control in the same batch. Hard risk
+parameters are not Learning config.
 
 ## 11. Phased Implementation
 
@@ -785,8 +766,9 @@ Goal: make existing reports honest before changing behavior.
 
 Delivery status: measurement-integrity batch A implemented. Path registry, evidence classes,
 shared fail-closed outcome adapter, unique/overlap aggregation, Learning-alpha deduplication,
-blocked-guard outcomes, and pure policy-epoch semantics are present. Consumer-wide outcome
-migration, durable epoch persistence, and UI contribution rendering remain before Phase 0 is closed.
+blocked-guard outcomes, durable policy epochs, and A1 full-arm cluster measurement are present.
+Some consumer-wide outcome/prompt-policy migrations and the `lco-v1` API/UI contribution surface
+remain before the target program is closed.
 
 Changes:
 
@@ -817,7 +799,8 @@ Changes:
 - typed models and fingerprint logic;
 - backfill existing lessons/guards/memos/factor statuses to non-active hypothesis states;
 - update data model/retention/export/import documentation;
-- add hypothesis/exposure read APIs.
+- preserve the durable identity required by later hypothesis/exposure reads; public read APIs are
+  now owned by the separate Learning Contribution Observability (`LCO-BE1/BE2`) delivery.
 
 Authority change: none.
 
@@ -966,19 +949,21 @@ Implementation mapping:
 | Batch | Spec files | Claims |
 | --- | --- | --- |
 | Phase 0 | `spec_learning_registry.py`, `spec_learning_contribution.py`, existing outcome/operator specs | LE-S04, LE-B02/09/16/17/18/21, LE-C06/10/11/13 |
-| Phase 1 | `spec_learning_evolution.py`, `spec_data_model.py` | LE-S01/02, LE-B01, LE-C05 |
-| Phase 2 | `spec_learning_evolution.py`, `spec_agent_contracts.py` | LE-S03, LE-B03/04/11/12, LE-C01 |
-| Phase 3 | `spec_learning_experiments.py`, `spec_factor_feedback.py`, `spec_filter_evidence.py`, `spec_lesson_guards.py`, `spec_universe_pipeline.py` | LE-B05/06/08/09/13/19/20/22, LE-C02/03/04/05/08/12 |
-| Phase 4 | `spec_pi_decision_chain.py`, `spec_insight_feedback_loop.py`, `spec_learning_experiments.py` | LE-B07/14/15, LE-C04/07/09/10 |
-| Phase 5 | `spec_persona_sizing.py`, `spec_learning_experiments.py` | LE-B10, LE-C02/03/07 |
-| Phase 6 | `spec_skill_store.py`, `spec_learning_evolution.py` | LE-C02/05/07 |
+| Phase 1 | `spec_learning_ledger.py`, `spec_data_model.py` | LE-S01/02, LE-B01, LE-C05 |
+| Phase 2 | `spec_learning_continuity.py`, `spec_agent_contracts.py` | LE-S03, LE-B03/04/11/12, LE-C01 |
+| Phase 3 | `spec_learning_authority.py`, `spec_learning_contribution.py`, `spec_factor_feedback.py`, `spec_filter_evidence.py`, `spec_lesson_guards.py`, `spec_universe_pipeline.py` | LE-B05/06/08/09/13/19/20/22/24/25/27/28, LE-C02/03/04/05/08/12/15 |
+| Phase 4 | `spec_pi_decision_chain.py`, `spec_insight_feedback_loop.py`, `spec_learning_attribution.py`, `spec_learning_final_consumers.py` | LE-B07/14/15, LE-C04/07/09/10/16/17 |
+| Phase 5 | `spec_persona_sizing.py`, `spec_learning_authority.py` | LE-B10, LE-C02/03/07 |
+| Phase 6 | `spec_skill_store.py`, `spec_learning_registry.py` | LE-C02/05/07 |
 | Lifecycle runtime | `spec_learning_lifecycle.py`, `test_learning_lifecycle.py`, `test_learning_lifecycle_scheduler.py` | LE-L01/02/03/04 |
 | A1 contribution integrity | `spec_learning_authority.py`, `spec_learning_verdict_runtime.py`, `spec_learning_ledger.py`, `spec_learning_continuity.py` | LE-B26, refined LE-V01, refined LE-L04 |
+| Learning Contribution Observability | `spec_learning_observability.py` | LCO-S01/02, LCO-B01..05, LCO-C01..06 (all missing) |
 
-A2 observability remains: surface canonical-versus-fallback outcome use, cluster member and
-exclusion counts, metric-version history, current and last-failure scheduler health, catch-up state,
-and the read-only owner-admission recommendation without implying effectiveness. Admission mutation
-remains separately scoped. No Learning UI completion is recorded by A1.
+Learning Contribution Observability remains unimplemented. Its canonical contract surfaces
+canonical/fallback/mirror/conflict outcome use, cluster member and exclusion counts, metric-version
+history, current and durable-last-failure scheduler health, catch-up state, and the read-only
+owner-admission recommendation without implying effectiveness. Admission mutation remains separately
+scoped. No Learning UI completion is recorded by A1.
 
 SDD sequence for every new claim:
 
@@ -1028,6 +1013,9 @@ New test module family: `tests/e2e/test_learning_evolution_*.py`.
 | E2E-LE-29 | universe calibration lifecycle | neutral/treatment family score persists; positive paper gate promotes; negative holdout restores `1.0` |
 | E2E-LE-30 | concurrent config change | operator tightening starts new policy epoch and pauses/stratifies affected Learning verdict |
 | E2E-LE-31 | safety control coexistence | Learning control never withholds kill/risk/operator safety tightening and never claims its benefit |
+| E2E-LCO-01 | owner projection read | all seven Learning ledger tables remain unchanged; no evaluator/lifecycle/admission/config call |
+| E2E-LCO-02 | provenance and history | canonical/fallback/mirror/conflict and current/historical metric identities render distinctly |
+| E2E-LCO-03 | recovery and UI honesty | current healthy plus durable failure/catch-up state; failed fetch never becomes zero/empty/effective |
 
 Test design rules:
 
@@ -1046,11 +1034,19 @@ Test design rules:
 Per phase, narrow tests first. Final pre-merge evidence:
 
 ```bash
-uv run pytest tests/specs/spec_learning_evolution.py \
+uv run pytest tests/specs/spec_learning_registry.py \
+  tests/specs/spec_learning_attribution.py \
+  tests/specs/spec_learning_ledger.py \
   tests/specs/spec_learning_contribution.py \
-  tests/specs/spec_learning_experiments.py -q
+  tests/specs/spec_learning_authority.py \
+  tests/specs/spec_learning_lifecycle.py \
+  tests/specs/spec_learning_continuity.py \
+  tests/specs/spec_learning_verdict_runtime.py \
+  tests/specs/spec_learning_final_consumers.py \
+  tests/specs/spec_learning_observability.py -q
 
-uv run pytest tests/e2e/test_learning_evolution_*.py -q
+# Run each implemented LCO E2E file explicitly as its slice lands; the target
+# scenarios in §13 do not yet exist and must not be presented as passing files.
 
 uv run pytest tests/specs/spec_filter_evidence.py \
   tests/specs/spec_factor_feedback.py \
@@ -1116,8 +1112,9 @@ The migration away from direct lesson hard blocks may touch `risk/engine.py`; th
 
 The entire program is complete only when evidence proves every item:
 
-- normative claims LE-S01 through LE-C11, including every intermediate LE-B claim, are GREEN;
-- all 31 E2E scenarios pass against persisted state;
+- every `LE-*` claim listed in `learning_evolution_contract.md §12` and every `LCO-*` claim in
+  `learning_observability_contract.md §11` is GREEN;
+- all 31 Learning-evolution scenarios and 3 LCO scenarios in §13 pass against persisted state;
 - universe calibration, observer, factor filter, ranker, prompt bundle, guard, sizing, and skill paths each have an
   observable baseline fallback;
 - every audited Learning-adjacent path has a registry entry and undeclared behavioral use fails;
