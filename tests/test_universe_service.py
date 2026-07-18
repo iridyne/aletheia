@@ -227,6 +227,19 @@ def test_fallback_static_universe(svc, disabled_cfg):
     assert symbols == ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
 
 
+def test_feature_refresh_nudges_operator_daemon(monkeypatch):
+    from aletheia.universe.service import _notify_operator_feature_refresh
+
+    calls = []
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
+        lambda *, source: calls.append(source) or True,
+    )
+
+    assert _notify_operator_feature_refresh("universe_feature_refresh_test") is True
+    assert calls == ["universe_feature_refresh_test"]
+
+
 @pytest.mark.asyncio
 async def test_refresh_returns_none_on_failure(svc):
     mock_cfg = MagicMock()

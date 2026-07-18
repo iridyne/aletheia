@@ -33,13 +33,15 @@ def _authority_manifest(path_id: str, candidate_key: str, decision) -> dict[str,
     }
 
 
-def _unavailable_authority(path_id: str, candidate_key: str) -> dict[str, Any]:
+def _unavailable_authority(
+    path_id: str, candidate_key: str, *, reason: str = "authority_adapter_error",
+) -> dict[str, Any]:
     return {
         "path_id": path_id,
         "candidate_key": candidate_key,
         "assignment": "unavailable",
         "applied": False,
-        "reason": "authority_adapter_error",
+        "reason": reason,
         "hypothesis_id": None,
         "experiment_id": None,
         "exposure_id": None,
@@ -98,6 +100,14 @@ def operator_learning_candidate_key(ctx: dict[str, Any]) -> str:
             "market_type": row.get("market_type"),
             "at": row.get("at") or row.get("created_at"),
         })
+    if len(pending) == 1 and pending[0].get("opportunity_id"):
+        identity = {
+            key: pending[0].get(key)
+            for key in (
+                "opportunity_id", "signal_source", "symbol", "direction", "market_type"
+            )
+        }
+        return f"operator_candidate:{_fingerprint(identity)}"
     queue = layer2.get("pending_queue") or {}
     identity = {
         "pending": pending,
@@ -120,6 +130,22 @@ def authorize_operator_learning_context(ctx: dict[str, Any]) -> dict[str, Any]:
     market_observer_sources = {
         str(row.get("signal_source") or "market_observer") for row in pending
     }
+    exact_market_candidate = (
+        len(pending) == 1
+        and len(opportunity_ids) == 1
+        and market_observer_sources == {"market_observer"}
+    )
+    if not exact_market_candidate:
+        gated = gate_operator_learning_context(ctx, enabled=False)
+        manifest = build_operator_learning_manifest(gated)
+        manifest["proposed_bundle_id"] = proposed_manifest["bundle_id"]
+        manifest["authority"] = _unavailable_authority(
+            "operator_learning_bundle",
+            candidate_key,
+            reason="exact_candidate_scope_required",
+        )
+        gated["learning_manifest"] = manifest
+        return gated
     outcome_candidate_key = (
         f"opportunity:{opportunity_id}:4h"
         if opportunity_id and market_observer_sources == {"market_observer"}

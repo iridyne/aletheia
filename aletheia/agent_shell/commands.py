@@ -1816,7 +1816,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     execution_mode = _configured_paper_execution_mode()
 
     # Build three-layer enriched context
-    ctx = build_enriched_trading_context()
+    # Learning authority must be assigned only after the visible queue has been
+    # scoped to one durable carrier. Authorizing the mixed queue creates an
+    # unlinked exposure with no candidate outcome key.
+    ctx = build_enriched_trading_context(authorize_learning=False)
     from aletheia.agent_shell.skip_policy import (
         ensure_skip_remediation_policy_epoch,
         skip_policy_context,
@@ -1910,6 +1913,46 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             "pending_queue_remaining": int((queue or {}).get("unresolved_total") or 0),
             "pending_queue": queue,
         }
+
+    # Missing exact candidate technical facts are retryable data unavailability,
+    # not a reason to ask the model for a judgment over '?' values. The material
+    # fingerprint includes the exact feature snapshot id, so a later feature
+    # publication reopens evaluation immediately without consuming the carrier.
+    from aletheia.agent_shell.decision_facts import candidate_context_unavailable_reason
+
+    unavailable_reason = (
+        candidate_context_unavailable_reason(
+            ctx, opportunity_id=selected_opportunity_id,
+        )
+        if selected_opportunity_id else None
+    )
+    if unavailable_reason:
+        event = _record_deferred_context_observation(
+            ctx,
+            context_fingerprint=context_fingerprint,
+            opportunity_id=selected_opportunity_id,
+            policy_epoch_id=policy_epoch_id,
+            trigger=str(params.get("_trigger") or "manual"),
+            reason=unavailable_reason,
+            window_minutes=defer_window_minutes,
+        )
+        return {
+            "action": "evaluation_deferred",
+            "observation_status": "candidate_context_unavailable",
+            "operator_evaluation_event_id": event["id"],
+            "policy_epoch_id": policy_epoch_id,
+            "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
+            "context_fingerprint": context_fingerprint,
+            "opportunity_id": selected_opportunity_id,
+            "model_invoked": False,
+            "defer_reason": unavailable_reason,
+            "pending_queue_remaining": int((queue or {}).get("unresolved_total") or 0),
+            "pending_queue": queue,
+        }
+
+    from aletheia.learning.prompt_bundles import authorize_operator_learning_context
+
+    ctx = authorize_operator_learning_context(ctx)
 
     # Run System Operator decision loop
     try:

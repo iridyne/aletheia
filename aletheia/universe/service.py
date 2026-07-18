@@ -67,6 +67,17 @@ def _record_publication_duration(started: float) -> None:
         )
 
 
+def _notify_operator_feature_refresh(source: str) -> bool:
+    """Wake the decision daemon after candidate feature facts are refreshed."""
+    try:
+        from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+
+        return bool(notify_pi_daemon(source=source))
+    except Exception as exc:
+        logger.debug("PI feature-refresh nudge skipped (non-fatal): %s", exc)
+        return False
+
+
 @contextmanager
 def _atomic_universe_publication():
     """Publish snapshot, members and emitted Opportunities as one unit.
@@ -622,6 +633,9 @@ class UniverseService:
                     "Universe refresh complete (change-suppressed): reused snapshot=%s",
                     prev_snapshot_id,
                 )
+                _notify_operator_feature_refresh(
+                    "universe_feature_refresh_reused_snapshot"
+                )
                 return prev_snapshot_id
 
             snap = UniverseSnapshot(
@@ -793,6 +807,7 @@ class UniverseService:
                 notify_paper_trader(source="universe_refresh_new_snapshot")
             except Exception as _e:
                 logger.debug("paper_trader nudge skipped (non-fatal): %s", _e)
+            _notify_operator_feature_refresh("universe_feature_refresh_new_snapshot")
             logger.info(
                 "Universe refresh complete: %d scanned → %d filtered → %d selected (snapshot=%s)",
                 len(assets), len(scored), len(allocated), snap.id,

@@ -188,7 +188,7 @@ backlog health are persisted in `learning_job_health`.
 
 - **Trigger**: Event-driven daemon (debounce 8s, cooldown 60s, heartbeat 5min)
 - **Inputs**: 
-  - Layer 1: market context (opportunities, factor_feedback, regime, positions), plus exact-instrument candidate technical snapshots (15m/1h/4h) and freshness-qualified Hyperliquid funding/OI evidence
+  - Layer 1: market context (opportunities, factor_feedback, regime, positions), plus exact-instrument candidate technical snapshots (15m/1h/4h) and freshness-qualified Hyperliquid funding/OI evidence. The pending candidate is hydrated by `asset_id` independently of the bounded global feature display, including its queued/reviewed source Opportunity context.
   - Layer 2: strategy context (ranker candidates, pending signals, universe features)
   - Layer 3: reflection (previous decisions, outcomes, Serenity research). Each
     Serenity opportunity surfaces `id`/`score`/`bucket`/`evidence_count`/`key_evidence`
@@ -203,13 +203,15 @@ backlog health are persisted in `learning_job_health`.
 - **Learning attribution**: reflection, memo, reasoning, calibration, trade cases, and structured
   lessons are one `operator_learning_bundle`. It is injected only for an exact allowlisted,
   authoritative treatment assignment; control/default/error leaves every learned component absent.
-  The stable pending-queue candidate, assignment, hypothesis/experiment and exposure id are
-  persisted on `pi_decisions.learning_manifest_json`. A single normal pending Opportunity links to
-  its real fixed-horizon outcome; mixed/Serenity queues remain honestly unlinked. Opportunity and
-  Proposal columns remain the causal anchors, and the observer bundle stays a separate upstream unit.
+  Authorization occurs after the context is scoped to exactly one market-observer carrier. The
+  stable candidate key, assignment, hypothesis/experiment and exposure id are persisted on
+  `pi_decisions.learning_manifest_json`, and the exposure links to that Opportunity's real 4h
+  fixed-horizon outcome. Mixed/Serenity queues fail closed without emitting an unattributed
+  exposure. Opportunity and Proposal columns remain the causal anchors, and the observer bundle
+  stays a separate upstream unit.
 - **Actions**: active entry decision only `trade` / `skip`. The separate portfolio review exposes only `hold` / `close_one` for an explicit Position.
 - **Unsupported legacy outputs**: `close` / `reduce` / `watch` / `scale_in` / `flip` on the entry surface are normalized to an evidenced `skip` and never execute. `reduce_exposure` on portfolio review is treated as `hold`, never as a silent full close.
-- **Availability semantics**: missing assessment, a required debate side, a fresh exact local-paper mark, or complete entry reasons is retryable unavailability; no final PiDecision is written and no pending signal is consumed.
+- **Availability semantics**: missing/incomplete/stale exact candidate technical context is detected before model inference; missing assessment, a required debate side, a fresh exact local-paper mark, or complete entry reasons is also retryable unavailability. No final PiDecision is written and no pending signal is consumed. A newly persisted exact feature snapshot changes the candidate fingerprint and Universe refresh immediately nudges the daemon to retry.
 - **Position X authority**: owner aggregate imports and their 1h/4h/24h outcomes are observation-only. No automatic source is claimed; a minimum 14-day shadow window is required before human review and the evidence never changes Risk/Execution authority.
 - **Safety**: Never executes orders directly. A complete `trade` prepares one immutable Proposal for the Gateway; `close_one` uses the central close router with an exact fresh mark.
 

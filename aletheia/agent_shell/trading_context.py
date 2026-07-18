@@ -54,6 +54,7 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
                 item.get("market_type") or item.get("market")
             ),
             "scanner_family": item.get("scanner_family"),
+            "asset_id": item.get("asset_id"),
             "rank_priority": _score(item.get("trade_score")),
             "reasoning": " ".join(str(item.get("reasoning") or "").split()).lower(),
             "b2": {
@@ -96,6 +97,8 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
         features.append({
             "symbol": identity[0],
             "market_type": identity[1],
+            "asset_id": feature.get("asset_id"),
+            "feature_snapshot_id": feature.get("feature_snapshot_id"),
             **{
                 field: (
                     _score(feature.get(field))
@@ -112,7 +115,7 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
         str(item.get("scanner_family") or ""),
     )
     projection = {
-        "version": "operator-decision-context-v2",
+        "version": "operator-decision-context-v3",
         "skip_policy_epoch_id": ctx.get("skip_policy_epoch_id"),
         "wake_context": ctx.get("wake_context"),
         "regime": layer1.get("regime") or layer1.get("market_regime"),
@@ -150,8 +153,11 @@ def scope_operator_context_to_candidate(
 
     symbol = selected.get("symbol")
     market_type = _normalize_market_type(selected.get("market_type"))
+    asset_id = selected.get("asset_id")
 
     def _same_instrument(row: dict[str, Any]) -> bool:
+        if asset_id:
+            return row.get("asset_id") == asset_id
         return (
             row.get("symbol") == symbol
             and _normalize_market_type(row.get("market_type") or row.get("market"))
@@ -172,6 +178,8 @@ def scope_operator_context_to_candidate(
         "symbol": symbol,
         "direction": selected.get("direction"),
         "market_type": selected.get("market_type"),
+        "asset_id": asset_id,
+        "venue": selected.get("venue"),
     }
 
     layer1["features"] = [
@@ -444,17 +452,27 @@ def _record_candidate_supply_snapshot(layer: dict[str, Any]) -> None:
         snapshot["event_status"] = "not_persisted"
 
 
-def build_enriched_trading_context() -> dict[str, Any]:
+def build_enriched_trading_context(*, authorize_learning: bool = True) -> dict[str, Any]:
     """Build the three-layer context for System Operator trading decisions.
 
     Returns a dict with keys: layer1, layer2, layer3, each containing
     pre-formatted data ready for prompt injection.
     """
+    layer1 = _build_layer1_snapshot()
+    layer2 = _build_layer2_short_term()
+    try:
+        _hydrate_pending_candidate_context(layer1, layer2)
+    except Exception as exc:
+        # Command-side availability preserves the carrier and records a typed
+        # defer instead of letting a candidate read failure crash the loop.
+        logger.warning("pending candidate context hydration unavailable: %s", exc)
     ctx = {
-        "layer1": _build_layer1_snapshot(),
-        "layer2": _build_layer2_short_term(),
+        "layer1": layer1,
+        "layer2": layer2,
         "layer3": _build_layer3_wisdom(),
     }
+    if not authorize_learning:
+        return ctx
     from aletheia.learning.prompt_bundles import authorize_operator_learning_context
     return authorize_operator_learning_context(ctx)
 
@@ -615,6 +633,70 @@ def _feature_identity_key(venue: object, market_type: object, symbol: object) ->
     return f"{venue or 'unknown'}|{_normalize_market_type(market_type)}|{symbol or ''}"
 
 
+def _json_list(value: Any) -> list:
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(value or "[]")
+        return parsed if isinstance(parsed, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+def _feature_context_row(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Project one persisted feature row into the Operator context schema."""
+    from aletheia.data.price_feed import get_cached_price_with_meta
+
+    sym = snapshot.get("symbol", "")
+    try:
+        price_meta = get_cached_price_with_meta(sym)
+    except Exception:
+        price_meta = None
+    fr = snapshot.get("funding_rate")
+    oi_delta = snapshot.get("oi_delta_1h")
+    crowding_signal = (
+        fr is not None and oi_delta is not None
+        and abs(fr) > 0.0005 and abs(oi_delta) > 5
+    )
+    return {
+        "asset_id": snapshot.get("asset_id"),
+        "feature_snapshot_id": snapshot.get("id"),
+        "feature_ts": snapshot.get("ts"),
+        "data_freshness_sec": snapshot.get("data_freshness_sec"),
+        "venue": snapshot.get("venue"),
+        "symbol": sym,
+        "market_type": _normalize_market_type(snapshot.get("market_type")),
+        "price": price_meta.get("price") if price_meta else None,
+        "price_source": price_meta.get("provider") if price_meta else None,
+        "rsi_14": snapshot.get("rsi_14"),
+        "rsi_15m": snapshot.get("rsi_15m"),
+        "atr_15m_pct": snapshot.get("atr_15m_pct"),
+        "return_15m": snapshot.get("return_15m"),
+        "last_candle_range_atr_15m": snapshot.get("last_candle_range_atr_15m"),
+        "atr_pct": snapshot.get("atr_pct"),
+        "return_1h": snapshot.get("return_1h"),
+        "return_4h": snapshot.get("return_4h"),
+        "return_24h": snapshot.get("return_24h"),
+        "funding_rate": fr,
+        "oi_delta_1h": oi_delta,
+        "btc_beta": snapshot.get("btc_beta"),
+        "volume_24h": snapshot.get("quote_volume_24h"),
+        "taker_buy_ratio": snapshot.get("taker_buy_ratio"),
+        "vol_ratio": snapshot.get("vol_ratio"),
+        "relative_strength_24h": snapshot.get("relative_strength_24h"),
+        "oi_price_divergence": snapshot.get("oi_price_divergence"),
+        "rsi_4h": snapshot.get("rsi_4h"),
+        "atr_4h_pct": snapshot.get("atr_4h_pct"),
+        "bb_width_4h": snapshot.get("bb_width_4h"),
+        "vol_ratio_4h": snapshot.get("vol_ratio_4h"),
+        "bb_squeeze": (
+            bool(snapshot.get("bb_squeeze"))
+            if snapshot.get("bb_squeeze") is not None else None
+        ),
+        "crowding_signal": crowding_signal,
+    }
+
+
 def _candidate_feature(
     feature_index: dict[str, dict], *, symbol: object, market_type: object,
     asset_id: object = None,
@@ -631,6 +713,108 @@ def _candidate_feature(
         if row.get("symbol") == symbol and row.get("market_type") == normalized
     ]
     return matches[0] if len(matches) == 1 else None
+
+
+def _hydrate_pending_candidate_context(
+    layer1: dict[str, Any], layer2: dict[str, Any],
+) -> None:
+    """Attach exact persisted facts for every visible durable pending carrier.
+
+    The general Layer 1 feature list is a bounded presentation slice. It must
+    never be used as the authority lookup for the candidate being judged: one
+    universe refresh commonly writes hundreds of same-timestamp feature rows,
+    so a global LIMIT can omit every queued instrument.
+    """
+    from aletheia.storage import repositories as repo
+
+    feature_index = layer1.setdefault("feature_index", {})
+    display_features = layer1.setdefault("features", [])
+    opportunities = layer1.setdefault("opportunities", [])
+    opportunity_ids = {str(row.get("id")) for row in opportunities if row.get("id")}
+
+    pending = layer2.get("pending_signals") or []
+    for candidate in pending:
+        if (candidate.get("signal_source") or "market_observer") != "market_observer":
+            continue
+        opportunity_id = candidate.get("opportunity_id")
+        opportunity = repo.get_opportunity(opportunity_id) if opportunity_id else None
+        member_id = (
+            candidate.get("universe_member_id")
+            or (opportunity or {}).get("universe_member_id")
+        )
+        member = repo.get_universe_member(member_id) if member_id else None
+        asset_id = (member or {}).get("asset_id")
+        asset = repo.get_universe_asset(asset_id) if asset_id else None
+
+        candidate.update({
+            "universe_member_id": member_id,
+            "universe_snapshot_id": (
+                candidate.get("universe_snapshot_id")
+                or (opportunity or {}).get("universe_snapshot_id")
+                or (member or {}).get("snapshot_id")
+            ),
+            "asset_id": asset_id,
+            "venue": (asset or {}).get("venue"),
+            "execution_eligible": (
+                bool(member.get("execution_eligible")) if member is not None
+                else (opportunity or {}).get("execution_eligible")
+            ),
+            "risk_flags": _json_list((member or {}).get("risk_flags")),
+        })
+        for row in layer2.get("executable_candidates") or []:
+            if row.get("opportunity_id") == opportunity_id:
+                for field in (
+                    "universe_member_id", "universe_snapshot_id", "asset_id",
+                    "venue", "execution_eligible", "risk_flags",
+                ):
+                    row[field] = candidate.get(field)
+
+        feature = None
+        if asset_id and asset:
+            snapshot = repo.get_latest_feature_snapshot(asset_id)
+            if snapshot:
+                feature = _feature_context_row({**snapshot, **{
+                    "symbol": asset.get("symbol"),
+                    "market_type": asset.get("market_type"),
+                    "venue": asset.get("venue"),
+                }})
+                feature_key = _feature_identity_key(
+                    feature.get("venue"), feature.get("market_type"), feature.get("symbol")
+                )
+                feature_index[feature_key] = feature
+                replaced = False
+                for index, row in enumerate(display_features):
+                    if row.get("asset_id") == asset_id:
+                        display_features[index] = feature
+                        replaced = True
+                        break
+                if not replaced:
+                    display_features.append(feature)
+
+        # Queued opportunities were historically absent because the general
+        # presentation query read only status='open'. Preserve the exact source
+        # thesis and observations for the selected carrier even after admission.
+        if opportunity and str(opportunity_id) not in opportunity_ids:
+            opportunities.append({
+                "id": opportunity.get("id"),
+                "linked_strategy_id": opportunity.get("linked_strategy_id"),
+                "symbol": opportunity.get("symbol"),
+                "market": opportunity.get("market"),
+                "direction_bias": opportunity.get("direction_bias"),
+                "confidence": opportunity.get("confidence"),
+                "confidence_score": opportunity.get("confidence_score"),
+                "scanner_family": opportunity.get("scanner_family"),
+                "family_edge": None,
+                "thesis": (opportunity.get("thesis") or "")[:220],
+                "key_observations": _top_observations(
+                    opportunity.get("key_observations")
+                ),
+                "technical_context": feature,
+                "structure_context": build_position_x_agent_context(
+                    repo.latest_perp_structure(opportunity.get("symbol"))
+                ),
+            })
+            opportunity_ids.add(str(opportunity_id))
 
 
 def _build_layer1_snapshot() -> dict[str, Any]:
@@ -786,9 +970,9 @@ def _build_layer1_snapshot() -> dict[str, Any]:
     except Exception:
         layer["regime"] = None
 
-    # Technical features (latest snapshot per symbol, top 10)
+    # Technical features (bounded market presentation slice). Exact pending
+    # candidates are hydrated separately after Layer 2 is built.
     try:
-        from aletheia.data.price_feed import get_cached_price_with_meta
         from aletheia.storage.repositories import list_universe_feature_snapshots
         snaps = list_universe_feature_snapshots(limit=50)
         seen: set[tuple[str, str, str]] = set()
@@ -804,47 +988,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
             if identity in seen:
                 continue
             seen.add(identity)
-            price_meta = get_cached_price_with_meta(sym)
-            fr = s.get("funding_rate")
-            oi_delta = s.get("oi_delta_1h")
-            crowding_signal = (
-                fr is not None and oi_delta is not None
-                and abs(fr) > 0.0005 and abs(oi_delta) > 5
-            )
-            feature = {
-                "asset_id": s.get("asset_id"),
-                "feature_snapshot_id": s.get("id"),
-                "feature_ts": s.get("ts"),
-                "data_freshness_sec": s.get("data_freshness_sec"),
-                "venue": s.get("venue"),
-                "symbol": sym,
-                "market_type": _normalize_market_type(s.get("market_type")),
-                "price": price_meta.get("price") if price_meta else None,
-                "price_source": price_meta.get("provider") if price_meta else None,
-                "rsi_14": s.get("rsi_14"),
-                "rsi_15m": s.get("rsi_15m"),
-                "atr_15m_pct": s.get("atr_15m_pct"),
-                "return_15m": s.get("return_15m"),
-                "last_candle_range_atr_15m": s.get("last_candle_range_atr_15m"),
-                "atr_pct": s.get("atr_pct"),
-                "return_1h": s.get("return_1h"),
-                "return_4h": s.get("return_4h"),
-                "return_24h": s.get("return_24h"),
-                "funding_rate": fr,
-                "oi_delta_1h": oi_delta,
-                "btc_beta": s.get("btc_beta"),
-                "volume_24h": s.get("quote_volume_24h"),
-                "taker_buy_ratio": s.get("taker_buy_ratio"),
-                "vol_ratio": s.get("vol_ratio"),
-                "relative_strength_24h": s.get("relative_strength_24h"),
-                "oi_price_divergence": s.get("oi_price_divergence"),
-                "rsi_4h": s.get("rsi_4h"),
-                "atr_4h_pct": s.get("atr_4h_pct"),
-                "bb_width_4h": s.get("bb_width_4h"),
-                "vol_ratio_4h": s.get("vol_ratio_4h"),
-                "bb_squeeze": bool(s.get("bb_squeeze")) if s.get("bb_squeeze") is not None else None,
-                "crowding_signal": crowding_signal,
-            }
+            feature = _feature_context_row(s)
             feature_index[_feature_identity_key(*identity)] = feature
             if len(features) < 10:
                 features.append(feature)
