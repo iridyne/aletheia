@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import MetricTile from './MetricTile'
-import { fmtNum, fmtSigned, useDecimals } from '../lib/format'
+import { fmtNum, fmtSigned } from '../lib/format'
 
 export default function AccountSnapshot() {
   const navigate = useNavigate()
@@ -10,7 +10,6 @@ export default function AccountSnapshot() {
   const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
   const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
 
-  useDecimals() // re-render when the display-decimals setting changes
   const openPositions = (positions as any[]).filter(p => p.status === 'open')
   const pendingProposals = (proposals as any[]).filter(p => p.status === 'pending')
 

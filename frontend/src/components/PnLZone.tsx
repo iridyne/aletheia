@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import MetricTile from './MetricTile'
 import AccountEquityChart from '../charts/AccountEquityChart'
-import { fmtNum, fmtSigned, fmtDelta, fmtSymbol, useDecimals } from '../lib/format'
+import { fmtNum, fmtSigned, fmtDelta, fmtSymbol } from '../lib/format'
 
 // Palette for pie slices — cycles if more than 6 coins (rare)
 const SLICE_COLORS = ['#00e5ff', '#7c3aed', '#f59e0b', '#10b981', '#f43f5e', '#3b82f6']
@@ -212,7 +212,6 @@ export default function PnLZone() {
   const exchangeMode = String((status as any)?.exchange_mode || 'demo')
   const isLocalPaper = (status as any)?.execution_target === 'local_paper'
 
-  useDecimals()
   const toneOf = (n: number | null) => (n == null ? 'muted' : n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral')
 
   const p = portfolio as any

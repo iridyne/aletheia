@@ -1,15 +1,35 @@
-import { useSyncExternalStore } from 'react'
-
 /**
- * Global display settings + number formatting.
+ * Global display formatting.
  *
- * Owner rule (2026-06-07): every number that has no integer-only requirement is shown with
- * a fixed number of decimals (default 2) — so 0 renders "0.00", 8 renders "8.00". The
- * decimal count is a user-adjustable setting (Settings → Display), persisted to localStorage.
+ * fmtNum picks the shape automatically from the value's magnitude:
  *
- * Counts (positions, runs, items) keep their integer rendering — pass {decimals: 0} or use
- * the raw value for those; this module is for monetary / continuous values.
+ *   |v| ≥ 1                    → thousands-separated, 2 fraction digits ("12,345.67", "1.00")
+ *   0 < |v| < 1, leading 0s <3 → 4 significant digits, expanded ("0.5000", "0.0123", "0.001234")
+ *   leading 0s ≥ 3             → subscript-zero notation ("0.0₃1234", "0.0₅3527")
+ *   0                          → "0.00"
+ *   NaN / null / ""            → "—" (or opts.dash)
+ *
+ * Subscript characters are Unicode U+2080–U+2089 (₀-₉). Multi-digit runs of
+ * zeros use multi-character subscripts ("0.0₁₉1000" for 1e-20). This matches the
+ * convention used by OKX / DEX Screener / CoinGecko / CoinMarketCap so extreme-
+ * small memecoin prices ($0.0000000027) stay legible without falsely rendering
+ * as "0.00".
+ *
+ * There is no user-configurable "decimal places" setting — the rule above IS the
+ * setting. `fmtPct` keeps its own toFixed logic since percentages rarely need
+ * subscript treatment.
  */
+
+const SUBSCRIPT_DIGITS = '₀₁₂₃₄₅₆₇₈₉'
+const SIG_DIGITS = 4
+const SUBSCRIPT_THRESHOLD = 3
+
+function subscriptOf(n: number): string {
+  return String(n)
+    .split('')
+    .map(d => SUBSCRIPT_DIGITS[Number(d)] ?? d)
+    .join('')
+}
 
 /**
  * Strip HTML tags and decode entities from text fields that may come from RSS feeds.
@@ -29,72 +49,52 @@ export function stripHtml(text: string | null | undefined): string {
     .trim()
 }
 
-const DECIMALS_KEY = 'aletheia.display.decimals'
-const DEFAULT_DECIMALS = 2
-const MIN_DECIMALS = 0
-const MAX_DECIMALS = 8
-
-function clampDecimals(n: number): number {
-  if (!Number.isFinite(n)) return DEFAULT_DECIMALS
-  return Math.min(MAX_DECIMALS, Math.max(MIN_DECIMALS, Math.round(n)))
-}
-
-function readDecimals(): number {
-  try {
-    const raw = localStorage.getItem(DECIMALS_KEY)
-    if (raw == null) return DEFAULT_DECIMALS
-    return clampDecimals(Number(raw))
-  } catch {
-    return DEFAULT_DECIMALS
-  }
-}
-
-// --- tiny external store so every component re-renders when the setting changes ---
-const listeners = new Set<() => void>()
-function emit() { listeners.forEach(l => l()) }
-
-export function getDecimals(): number {
-  return readDecimals()
-}
-
-export function setDecimals(n: number): void {
-  const v = clampDecimals(n)
-  try { localStorage.setItem(DECIMALS_KEY, String(v)) } catch { /* ignore */ }
-  emit()
-}
-
-function subscribe(cb: () => void): () => void {
-  listeners.add(cb)
-  return () => listeners.delete(cb)
-}
-
-/** React hook — current decimal places, reactive to changes from the Settings page. */
-export function useDecimals(): number {
-  return useSyncExternalStore(subscribe, getDecimals, () => DEFAULT_DECIMALS)
-}
-
-export const DECIMAL_BOUNDS = { min: MIN_DECIMALS, max: MAX_DECIMALS, default: DEFAULT_DECIMALS }
-
 /**
- * Format a numeric value with the configured fixed decimals (thousands-separated).
- * Returns the `dash` placeholder for null/undefined/NaN. Fixed decimals means 0 -> "0.00".
+ * Format a numeric value per the magnitude-adaptive rule described in the module header.
+ * Returns the `dash` placeholder for null/undefined/NaN.
  */
 export function fmtNum(
   value: number | string | null | undefined,
-  opts?: { decimals?: number; dash?: string },
+  opts?: { dash?: string },
 ): string {
   const dash = opts?.dash ?? '—'
   if (value == null || value === '') return dash
   const n = Number(value)
   if (!Number.isFinite(n)) return dash
-  const d = opts?.decimals ?? getDecimals()
-  return n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })
+
+  if (n === 0) return '0.00'
+
+  const abs = Math.abs(n)
+
+  if (abs >= 1) {
+    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+
+  // 0 < abs < 1 — compute leading-zero count via toExponential.
+  // toExponential(SIG_DIGITS - 1) → "3.527e-6" for 0.0000035 (4 sig figs).
+  const [mantissaStr, expPartStr] = abs.toExponential(SIG_DIGITS - 1).split('e')
+  const exp = Number.parseInt(expPartStr, 10)
+
+  // Rounding up can push a sub-1 value to ≥1 (e.g. 0.99999 → 1.000e+0). Route to Case A.
+  if (exp >= 0) {
+    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+
+  const sign = n < 0 ? '-' : ''
+  const leadingZeros = -exp - 1
+  const mantissaDigits = mantissaStr.replace('.', '')
+
+  if (leadingZeros < SUBSCRIPT_THRESHOLD) {
+    return sign + abs.toFixed(leadingZeros + SIG_DIGITS)
+  }
+
+  return `${sign}0.0${subscriptOf(leadingZeros)}${mantissaDigits}`
 }
 
-/** Same as fmtNum but with an explicit +/- sign for non-negative values (PnL deltas). */
+/** Same as fmtNum but with an explicit + sign for non-negative values (PnL deltas). */
 export function fmtSigned(
   value: number | string | null | undefined,
-  opts?: { decimals?: number; dash?: string },
+  opts?: { dash?: string },
 ): string {
   const dash = opts?.dash ?? '—'
   if (value == null || value === '') return dash
@@ -107,7 +107,7 @@ export function fmtSigned(
  * Format a 0-1 ratio (e.g. `0.83`) OR an already-scaled percent (e.g. `83`) as `83%`.
  * Auto-detects by magnitude (|v| ≤ 1 ⇒ ratio, ×100; |v| > 1 ⇒ already %). Returns dash
  * for null/NaN. Decimals default to 0 (terminal density); pass `{decimals: 1}` for
- * finer micro-values.
+ * finer micro-values. Percentages don't participate in subscript-zero notation.
  */
 export function fmtPct(
   value: number | string | null | undefined,
@@ -125,7 +125,7 @@ export function fmtPct(
 /** fmtSigned with ▲/▼ direction arrow prepended (WCAG 1.4.1 — not color-only). */
 export function fmtDelta(
   value: number | string | null | undefined,
-  opts?: { decimals?: number; dash?: string },
+  opts?: { dash?: string },
 ): string {
   const dash = opts?.dash ?? '—'
   if (value == null || value === '') return dash

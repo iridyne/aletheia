@@ -15,7 +15,7 @@ import {
   type BoolField,
   type NumField,
 } from '../components/ui'
-import { useDecimals, setDecimals, fmtNum, DECIMAL_BOUNDS, humanize, humanizeBool } from '../lib/format'
+import { fmtNum, humanize, humanizeBool } from '../lib/format'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -128,7 +128,7 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   { title: 'Telegram',                 tab: 'health', alt: ['bot', 'chat id', 'notification'] },
   { title: 'Webhook',                  tab: 'health', alt: ['slack', 'discord', 'n8n', 'hmac'] },
   // Runtime & System
-  { title: 'Display & App',            tab: 'runtime', alt: ['decimals', 'theme', 'dashboard', 'shell', 'auto open browser', 'pnl mode'] },
+  { title: 'App',                      tab: 'runtime', alt: ['theme', 'dashboard', 'shell', 'auto open browser', 'pnl mode'] },
   { title: 'Data & Retention',         tab: 'runtime', alt: ['backfill', 'ohlcv storage', 'backtest', 'prune', 'cleanup', 'telemetry'] },
   { title: 'Software Updates',         tab: 'runtime', alt: ['git pull', 'upgrade', 'self-update'] },
   // Signals
@@ -3256,8 +3256,7 @@ function SignalsTab({ settings, qc, onDirty }: any) {
 function RuntimeSystemTab({ settings, qc, onDirty }: any) {
   return (
     <div>
-      <Section title="Display & App" description="Visual formatting and dashboard process settings.">
-        <DisplayRow />
+      <Section title="App" description="Dashboard process settings.">
         <AppRows settings={settings} qc={qc} />
       </Section>
 
@@ -3296,20 +3295,6 @@ function AdvancedTab({ settings }: { settings: any }) {
         <ConfigCoverageCard settings={settings} />
       </Section>
     </div>
-  )
-}
-
-function DisplayRow() {
-  const decimals = useDecimals()
-  return (
-    <Row label="Decimal places" hint="Applied to all monetary and continuous values. Applies immediately.">
-      <input
-        type="number" min={DECIMAL_BOUNDS.min} max={DECIMAL_BOUNDS.max} value={decimals}
-        onChange={e => setDecimals(Number(e.target.value))}
-        className="decimals-input" style={{ width: '70px' }}
-      />
-      <span className="hint mono m-0">e.g. {fmtNum(1234.5, { decimals })} · {fmtNum(0, { decimals })}</span>
-    </Row>
   )
 }
 
