@@ -1366,18 +1366,24 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .pred-card-change { font-size: 0.72rem; }
 .pred-card-vol { font-size: 0.68rem; margin-left: auto; }
 
-/* ---------- Command Center Heartbeat Zone ---------- */
+/* ---------- Command Center Heartbeat Zone ----------
+   Grid-based (not flex) so at every breakpoint the cards' intrinsic
+   heights are honoured — the previous `flex: 1 1 0` on cards inside a
+   `flex-direction: column` parent squashed all three cards to share
+   the parent's (unconstrained → sometimes 0px) content height, which
+   is why the reported 803px viewport rendered the zone as a 143px
+   strip with all three cards vertically clipped. Aligned with the
+   canonical lg=1024 breakpoint (ui_design_system.md §3.x). */
 .cc-heartbeat-zone {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-4);
   margin-bottom: var(--space-4);
 }
-@media (max-width: 1300px) {
-  .cc-heartbeat-zone { flex-direction: column; }
+@media (max-width: 1023px) {
+  .cc-heartbeat-zone { grid-template-columns: 1fr; }
 }
 .cc-heartbeat-card {
-  flex: 1 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -1388,10 +1394,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: var(--text-sm);
+  font-size: var(--fs-sm);
 }
 .cc-heartbeat-hero {
-  font-size: var(--text-lg);
+  font-size: var(--fs-lg);
   font-weight: 600;
   margin-left: auto;
 }
@@ -1411,7 +1417,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .cc-pnl-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--text-sm);
+  font-size: var(--fs-sm);
 }
 .cc-pnl-table td {
   padding: 2px 0;
@@ -1430,7 +1436,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   gap: 2px;
 }
 .cc-thesis-sym {
-  color: var(--color-muted);
+  color: var(--muted);
 }
 .cc-thesis-body {
   display: -webkit-box;
@@ -1446,7 +1452,8 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.95fr);
   gap: var(--space-4);
 }
-@media (max-width: 1100px) {
+/* Canonical lg breakpoint (ui_design_system.md §3.x) — was 1100. */
+@media (max-width: 1023px) {
   .command-center-layout { grid-template-columns: 1fr; }
 }
 .command-center-main {
