@@ -2084,7 +2084,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   display: grid; grid-template-columns: 1.1fr 2.4fr; gap: var(--space-3);
   margin-bottom: var(--space-3); align-items: stretch;
 }
-@media (max-width: 900px) { .pnl-cluster { grid-template-columns: 1fr; } }
+@media (max-width: 1023px) { .pnl-cluster { grid-template-columns: 1fr; } }
 .pnl-hero {
   margin-bottom: 0; display: flex; flex-direction: column; justify-content: flex-start;
   position: relative; min-width: 0; overflow: visible;
@@ -2145,11 +2145,22 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
      values like "not yet verifiable". Switch to 2 cols at the same 900px breakpoint. */
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3);
 }
-@media (max-width: 900px) { .pnl-tiles { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 767px) { .pnl-tiles { grid-template-columns: repeat(2, 1fr); } }
 /* Single-line so the Exposure tile's holdings summary ("ETH 25% · AAVE 18% · …")
    stays the same height as the peer tiles; full text on hover via title attr. */
 .metric-context { font-size: 0.68rem; color: var(--muted); margin-top: var(--space-1);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* < sm: release the nowrap so the phone viewport can wrap to two lines instead
+   of hiding half the string behind ellipsis. */
+@media (max-width: 639px) {
+  .metric-context {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    text-overflow: initial;
+  }
+}
 .card.clickable { cursor: pointer; transition: border-color 0.12s, background 0.12s, transform 60ms; }
 .card.clickable:hover { border-color: var(--border-2); background: var(--surface-2); }
 .card.clickable:active { transform: scale(0.995); }
@@ -2175,38 +2186,33 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .seg-btn.active { background: var(--accent-dim); color: var(--text); }
 .seg-btn + .seg-btn { border-left: 1px solid var(--border-2); }
 
-/* ---------- Cockpit main: feed (main) + right rail ---------- */
+/* ---------- Cockpit main: feed (main) + right rail ----------
+   Canonical "main + rail" responsive layout — mirrors shadcn / Tailwind
+   dashboard-01 grid at `lg`. Below lg the rail stacks under main as a
+   single flex column (NO CSS multicol masonry — see
+   docs/design/frontend/ui_design_system.md §3.x for the rationale:
+   collapsibles reshuffle siblings between columns and reading order
+   goes Z-shaped). See that section for the canonical breakpoint scale
+   this rule participates in. */
 .cockpit-main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(300px, 26vw, 420px);
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 26vw, 380px);
   gap: var(--space-3);
   align-items: start;
 }
 .cockpit-rail { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .cockpit-rail .card { margin-bottom: 0; }
-@media (max-width: 1100px) {
+@media (max-width: 1023px) {
   .cockpit-main { grid-template-columns: 1fr; }
-  /* Masonry-style fill: cards flow top-to-bottom per column with no mid-column gaps.
-     CSS columns instead of grid so short cards don't leave holes in the row. */
-  .cockpit-rail {
-    display: block;
-    column-count: 2;
-    column-gap: var(--space-3);
-  }
-  .cockpit-rail > * {
-    break-inside: avoid;
-    margin-bottom: var(--space-3);
-  }
-  .cockpit-rail .card { margin-bottom: var(--space-3); }
-}
-@media (max-width: 700px) {
-  .cockpit-rail { column-count: 1; }
+  /* .cockpit-rail already flex-column above; nothing to override. */
 }
 
 /* Right-rail cards keep independent overflow protection for unusually long approval,
    risk, or status content. They stay naturally top-aligned and no longer determine the
-   Agent Activity height. */
-.rail-card { display: flex; flex-direction: column; overflow: hidden; }
+   Agent Activity height. min-width guards against future 2-col rail layouts that
+   would otherwise crush the collapsible status-board table below its cell-column
+   minima. */
+.rail-card { display: flex; flex-direction: column; overflow: hidden; min-width: 260px; }
 .rail-card > :not(h3):not(.flex) { min-height: 0; }
 .decision-history-panel { max-height: 520px; overflow-y: auto; }
 .decision-history-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
@@ -2846,7 +2852,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   font-family: var(--mono);
 }
 .ov-blotter-strip:hover .ov-blotter-arrow { color: var(--accent); }
-@media (max-width: 900px) {
+@media (max-width: 767px) {
   .ov-blotter-strip { flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
   .ov-blotter-arrow { margin-left: 0; }
 }

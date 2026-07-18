@@ -27,16 +27,24 @@ def test_overview_agent_feed_uses_remaining_viewport_height() -> None:
 
 
 def test_overview_rail_uses_canonical_responsive_breakpoints() -> None:
+    """The Cockpit main+rail follows the canonical `lg` breakpoint (1024px)
+    documented in ui_design_system.md §3.x. Below that the rail stacks as a
+    single flex column — NO CSS multicol / masonry (that anti-pattern is
+    explicitly banned because collapsibles reshuffle siblings between
+    columns and reading order goes Z-shaped)."""
     css = (ROOT / "frontend/src/index.css").read_text(encoding="utf-8")
     cockpit_css = css.split(
-        "/* ---------- Cockpit main: feed (main) + right rail ---------- */", 1
-    )[1].split("/* Go-Live Scorecard", 1)[0]
+        "/* ---------- Cockpit main: feed (main) + right rail ----------", 1
+    )[1].split("/* Right-rail cards", 1)[0]
 
-    assert "grid-template-columns: minmax(0, 1fr) clamp(300px, 26vw, 420px)" in cockpit_css
-    assert "@media (max-width: 1100px)" in cockpit_css
-    assert "column-count: 2" in cockpit_css
-    assert "@media (max-width: 700px)" in cockpit_css
-    assert ".cockpit-rail { column-count: 1; }" in cockpit_css
+    # Main+rail grid uses the shadcn-style shrink-guard main column + clamped rail.
+    assert "grid-template-columns: minmax(0, 1fr) clamp(300px, 26vw, 380px)" in cockpit_css
+    # Canonical lg breakpoint (Tailwind alignment: sm 640 / md 768 / lg 1024 / xl 1280).
+    assert "@media (max-width: 1023px)" in cockpit_css
+    assert ".cockpit-main { grid-template-columns: 1fr; }" in cockpit_css
+    # Anti-pattern guards: no multicol masonry anywhere in the block.
+    assert "column-count" not in cockpit_css, "column-count masonry is banned for card grids"
+    # The AgentFeed viewport-follow behaviour is unchanged.
     assert ".agent-feed-viewport" in css
     assert ".agent-feed-viewport .feed-list-scroll" in css
     assert "overflow-y: auto" in css

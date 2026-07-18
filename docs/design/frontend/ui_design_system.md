@@ -211,6 +211,76 @@ card
 
 搭配列表 `max-height: 380px; overflow-y: auto` 防超长卡片失控。**禁止 Masonry**（Pinterest 砖墙）— 阅读顺序变 Z 字形，密度型 UI 大忌。
 
+### 响应式布局蓝本（Overview 参考）
+
+Overview 是全站"main + auxiliary column"布局的**规范样板**。新页面凡是要做类似结构，参考 `pages/Overview.tsx` + `.cockpit-main` / `.cockpit-rail`，不要另发明。
+
+**断点尺度（canonical，与 Tailwind 对齐）**
+
+| Name | Value | 触发的布局变化 |
+|------|-------|----------------|
+| `sm` | 640px | 手机 vs 平板边界；PnL tiles 4 → 2；`.metric-context` 释放 nowrap 换两行 |
+| `md` | 768px | Blotter summary strip `flex-wrap: wrap`；PnL tiles 单行密度上限 |
+| `lg` | 1024px | **`main + rail` 分栏的唯一门槛**；小于此值一律纵向堆叠 |
+| `xl` | 1280px | 舒适宽屏；rail 上限展开到 380px 的 `clamp()` 极值 |
+
+**全站禁止再引入 700 / 900 / 1100 等自定义阈值**。个别历史遗留会随维护逐步收敛到上表；新代码走 sm/md/lg/xl 无例外。（例外：卡片自身跨断点行为不同 → 用**容器查询** `container-type: inline-size` + `@container`，见本节末段。）
+
+**"Main + rail" 主布局 canonical CSS**
+
+```css
+.cockpit-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 26vw, 380px);
+  gap: var(--space-3);
+  align-items: start;
+}
+.cockpit-rail { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+@media (max-width: 1023px) {
+  .cockpit-main { grid-template-columns: 1fr; }
+  /* rail 已经是 flex column，无需再改；DOM 顺序 = 阅读顺序 = 堆叠顺序。 */
+}
+```
+
+关键约束：
+- 主列**必须** `minmax(0, 1fr)` —— 缺了它，rail 里长表格/长 ticker 会把主列推出 grid，rail 消失屏幕外（shadcn 官方 footgun 榜首）。
+- rail 用 `clamp(300px, 26vw, 380px)`：既不让 rail 在 xl 屏膨胀到不成比例，也不在临界 lg 处崩塌。
+- rail 从始至终是 `flex column`，**不要**在窄屏切成 `column-count` 或 `grid`。
+
+**反模式（禁止）**
+
+1. **`column-count` / CSS multicol 做卡片网格** —— 破坏 DOM 阅读顺序，任一可折叠卡片一展开就把兄弟卡片挤到另一列（Aletheia System 卡真实翻车过）。用 `flex` / `grid` 代替。
+2. **固定宽度 rail 而 main 未加 `minmax(0, 1fr)`** —— 长内容会把 rail 推出屏幕。
+3. **rail 塌陷后再横向切成 grid** —— Bloomberg mobile / TradingView / IBKR 三方一致做法是**纵向堆叠**（`flex column`），不是横排。只有当 rail 卡是同质 + 无可折叠区 + ≤200px 高时才允许 `repeat(auto-fit, minmax(320px, 1fr))`。
+4. **主壳（page-level）用 `md` 断点做主/rail 拆分** —— 主列在 `md` 只剩 ~380px，图表不可读。**主壳只在 `lg` 分栏。**
+
+**grid vs flex 决策表**
+
+| 用途 | 选择 | 理由 |
+|------|------|------|
+| 卡片矩阵、tiles、明确二维 | `grid` | `grid-template-columns` 显式，`minmax(0, 1fr)` 防溢出 |
+| 主壳 main + rail | `grid` | 两列宽度差异大，`grid` 精确控制 |
+| rail 内部堆叠 | `flex-direction: column` | 一维列表，`grid: 1fr` 是浪费 |
+| Strip / toolbar / 行内元素 | `flex` | 天然对齐 + `margin-left: auto` 语义清晰 |
+| 断点内响应式列数 | `grid` + `@media` | 明确列数变化优于 `auto-fit` 突变 |
+
+**容器查询（Container Queries）**
+
+当组件在不同父容器下要有不同行为时（例：同一 tile 组件出现在主列宽 700px 的 wide 布局里，也出现在 rail 宽 340px 的塌陷布局里），优先使用容器查询而非全局媒体查询——组件对**自己的宽度**响应，不依赖 viewport：
+
+```css
+.some-tile { container-type: inline-size; }
+@container (max-width: 300px) { .some-tile .label { font-size: 0.7rem; } }
+```
+
+Overview 当前没有此需求，但作为下一批 tile 组件的默认写法记录在此。
+
+**验收标准**
+
+- 在 640 / 768 / 1024 / 1280 四个宽度截图，每张都要"看起来是设计好的"，不是"能读"。
+- 断点前后 1px 拖动窗口，不能出现闪烁、跳列、内容抖动。
+- rail 卡任一 collapsible 展开时，兄弟卡片位置**不移动**（column-count masonry 会移动 → 禁止的直接检验点）。
+
 ---
 
 ## 4. 组件模式
