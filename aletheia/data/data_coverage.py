@@ -59,7 +59,7 @@ DOMAIN_DEFINITIONS = (
     ),
     DomainDefinition(
         "long_short_ratio", "Long/short ratio", "open_interest_snapshots", "observed_at",
-        "symbol", "exchange", 15 * 60,
+        "symbol", "exchange", 15 * 60, idle_when_old=True,
         where_sql=f"({_PRIMARY_DERIVATIVE_WHERE}) AND long_short_ratio IS NOT NULL",
         where_params=_SECONDARY_DERIVATIVE_SOURCES,
     ),
@@ -73,7 +73,7 @@ DOMAIN_DEFINITIONS = (
     ),
     DomainDefinition(
         "onchain", "On-chain", "onchain_snapshots", "observed_at",
-        None, "source", 30 * 60,
+        None, "source", 30 * 60, idle_when_old=True,
     ),
     DomainDefinition(
         "ohlcv", "OHLCV", "market_ohlcv", "ts",

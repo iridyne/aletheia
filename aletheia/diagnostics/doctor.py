@@ -706,7 +706,7 @@ def _probe_collector_health(report: Report) -> None:
 
     problem_rows = [
         row for row in domains if row.get("degraded") or row.get("last_status") in {
-            "failed", "timed_out", "skipped_budget"
+            "failed", "timed_out"
         }
     ]
     inactive = [

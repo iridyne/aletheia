@@ -21,7 +21,7 @@ COLLECTOR_CADENCE_SEC: dict[str, int] = {
     "defillama": 600,
 }
 
-_PROBLEM_STATUSES = {"failed", "timed_out", "skipped_budget"}
+_PROBLEM_STATUSES = {"failed", "timed_out"}
 _COMPLETED_STATUSES = {"success", "partial", "empty"}
 _ATTEMPTED_STATUSES = _COMPLETED_STATUSES | {"failed", "timed_out", "not_configured"}
 _VALID_STATUSES = _ATTEMPTED_STATUSES | {"skipped_budget", "disabled"}

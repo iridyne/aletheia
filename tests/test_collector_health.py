@@ -43,7 +43,7 @@ def test_three_consecutive_collector_problems_emit_one_operator_warning(
     clear_infra_events()
     for tick in (1, 6, 11):
         collector_health.record_collector_status(
-            "defillama", "skipped_budget", tick=tick
+            "defillama", "failed", tick=tick
         )
 
     rows = collector_health.get_collector_health_report()["domains"]
@@ -57,6 +57,22 @@ def test_three_consecutive_collector_problems_emit_one_operator_warning(
     assert len(warnings) == 1
     assert warnings[0]["entity_id"] == "defillama"
     assert "3 consecutive" in warnings[0]["message"]
+
+
+def test_skipped_budget_does_not_count_toward_consecutive_problems(collector_db):
+    from aletheia.data.collector_health import (
+        get_collector_health_report,
+        record_collector_status,
+    )
+
+    for tick in (1, 6, 11):
+        record_collector_status("defillama", "skipped_budget", tick=tick)
+
+    rows = get_collector_health_report()["domains"]
+    row = next(item for item in rows if item["domain"] == "defillama")
+    assert row["consecutive_problems"] == 0
+    assert row["degraded"] is False
+    assert row["budget_skips"] == 3
 
 
 def test_success_resets_consecutive_problem_counter(collector_db):
