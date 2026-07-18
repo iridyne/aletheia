@@ -596,7 +596,7 @@ def test_doctor_separates_confirmed_direct_and_trade_gated_skip_paths(
 
 @spec_claim(
     SpecClaim(
-        "FE-S16", _CONTRACT, "§3 terminal System Operator evidence", "L2b",
+        "FE-S20", _CONTRACT, "§3 terminal System Operator evidence manifest", "L2b",
         "Doctor keeps pre-remediation evidence gaps in raw counts but evaluates the "
         "active Skip-remediation epoch independently, without changing a decision.",
     )

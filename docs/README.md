@@ -26,7 +26,7 @@ This directory is organized for AI agents first: read the smallest routing file,
 
 | Task | Read first | Then narrow to |
 |---|---|---|
-| New agent session | `_ai/README.md` | `_ai/session/`, `_ai/workflow/` |
+| New agent session | `../AGENTS.md` | choose the narrow task lane below; external orchestrator owns session/worktree state |
 | Product direction or scope | `product/README.md` | `product/definition/`, `product/gates/`, `product/experiments/` |
 | Architecture or subsystem behavior | `design/README.md` | `design/contracts/`, `design/architecture/`, `design/data/` |
 | API or schema work | `design/README.md` | `design/api/`, `design/data/`, `design/contracts/` |
@@ -43,7 +43,7 @@ This directory is organized for AI agents first: read the smallest routing file,
 
 | Directory | Agent purpose | Write policy |
 |---|---|---|
-| `_ai/` | Agent workflow, handoff, decisions, session context | Update only when maintaining agent-facing context |
+| `_ai/` | Reusable workflow lessons plus legacy agent-produced context | Do not create current task, handoff, lease, or external-orchestrator state here |
 | `product/` | Product identity, scope, metrics, experiment rules | Durable product decisions only |
 | `governance/` | Safety, trust boundaries, protocols | Rare; requires high confidence |
 | `design/` | System contracts and architecture | Update with executable specs when contract changes |

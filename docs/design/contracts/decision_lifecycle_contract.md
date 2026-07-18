@@ -5,7 +5,7 @@
 > 其他契约**竖切**单个子系统(风控/执行/agent/知识);本契约负责它们之间的交接。
 > **不重复**子系统细节 —— 指向已有契约。
 > **基线**:代码为底(file:line);冲突时文档为准。
-> Last updated: 2026-07-18 (v1.5:低置信度/debate 未确认 non-terminal defer,判词旁路禁止) · 维护者:Aletheia Dev · 上游:`docs/research/audits/PLATFORM_DOC_DESIGN_REVIEW_2026-06-30.md`
+> Last updated: 2026-07-18 (v1.6:分析 generation / 耐久 Operator carrier 分离，统一 validity 与 typed exits) · 维护者:Aletheia Dev · 研究证据:`docs/research/audits/OPPORTUNITY_END_TO_END_LIFECYCLE_AUDIT_2026-07-18.md`
 
 ---
 
@@ -35,6 +35,11 @@
 筛选旁路    Observer/Ranker/System Operator/Risk → filter_decisions
             → filter_candidate_outcomes（共享四个固定 horizon）→ 只读分层对照
 ```
+
+这里的 Opportunity 不是单一队列表：producer 每个 snapshot 可产生一个 `open` analysis
+generation；只有 Ranker 原子写入 `signal_pending` 后，它才成为 `queued` durable carrier。
+前者服务分析换代和反事实，后者服务 Operator 工作连续性。两者不得共享 snapshot supersede
+终止权或固定 30 分钟队列时钟。
 
 > 固定持有期反事实结果遵循 `docs/design/contracts/opportunity_outcome_contract.md`。历史 gross-only 行、
 > 永续缺 funding、方向未知或过晚 ticker 只能用于解释，不得进入自动学习。
@@ -138,7 +143,7 @@ skip 仅作 legacy audit，不能由新逻辑继续产生。持仓动作不属�
 不得留下 reviewed + submitting 但零 Proposal。升级前遗留的该类孤儿 claim 只能在 pending 载体和
 symbol/direction/market_type/action/opportunity/source 身份全部匹配时补写一次 Proposal；原 claim 的
 conviction 仍是耐久审计事实，但重启后同一身份被重新打成 89/90 不得阻塞恢复或改写原评分。
-Direct skip 在 `system_operator_skip_remediation/b1.4` 下必须经过一次有界、blind 反事实确认；确认后仍只有
+Direct skip 在 `system_operator_skip_remediation/b1.5` 下必须经过一次有界、blind 反事实确认；确认后仍只有
 `adverse_candidate_evidence + typed reason + concrete evidence`，且每个 reason 都由确定性 validator 解析到
 同一候选的 typed fact refs，才可终结。B2 `insufficient_evidence`、中性 50/50 regime、可选 OI 缺失、
 rank ordering、账户权益或单笔近期亏损都没有 adverse authority。两次输出仍是信息不足或无效时，
@@ -255,6 +260,12 @@ Opportunity 最终动作只认 pending 权限，因此精确 Serenity pending �
 | `DL-S48` | L2b | debate 后 conviction<55 → 抛 `DecisionUnavailable(reason='debate_not_confirmed', stage='operator_debate_gate')`；零 final PiDecision，opportunity 仍 queued |
 | `DL-S49` | L2b | 低置信度 defer 事件用 `event_kind='operator_decision_deferred_low_conviction'`；dedup_key 按 event_kind 分裂，`operator_decision_deferred_unchanged_context` 不与之冲突 |
 | `DL-S50` | L2b | 判词旁路禁止(DL-INV-24)：即便模型 reasoning 里出现 SIDEWAYS/one loss/equity 词条，低于阈值的结果仍是 defer 而非伪装成 direct adverse skip |
+| `DL-S51` | L2b | Layer 1 技术快照经 asset identity 解析，不把不同 instrument 压成空 symbol |
+| `DL-S52` | L2b | snapshot supersede 只原子终结 open generations 并写唯一 evidence；queued carrier 保持可见，证据失败回滚 |
+| `DL-S53` | L2b | queued market carrier 以 Opportunity `valid_until` 为权威；30min 仅是无可解析 deadline 的 legacy fallback，preflight/claim 使用同一语义 |
+| `DL-S54` | L2b | 同 symbol+direction+scanner_family 的 active queued carrier 在 30min 后仍阻止重复 enqueue，并记录 `active_operator_carrier` 而非 cooldown |
+| `DL-S55` | L2b | Operator defer 的写入和历史 read projection 均以 carrier `valid_until` 为上限，不承诺 expiry 后 retry |
+| `DL-S56` | L2b | global retention 不在刚过 `valid_until` 时终结 open generation；Ranker family soft/hard TTL 保持唯一决策权 |
 | `DL-S37` | L2b | 模型评估期间 `valid_until` 过期时，Proposal preflight 原子写 expired 与唯一 TTL 拒绝事实，零 Proposal |
 | `DL-S38` | L2b | preflight 后、最终 claim 前 `valid_until` 过期时，claim 原子写 expired 与唯一 TTL 拒绝事实，零最终决定/Proposal |
 | `DL-S39` | L2b | claim 内 TTL 证据写失败通过保存点回滚，Opportunity 保持 queued 且零最终决定/Proposal |
@@ -263,5 +274,15 @@ Opportunity 最终动作只认 pending 权限，因此精确 Serenity pending �
 | `DL-C01` | L2c | `_MIN_CONVICTION_TO_TRADE == 55`(改阈值即爆红,强制同步本契约) |
 | `DL-C02` | L2c | Proposal 前置不可用返回稳定 typed reason；确定性方向拒绝仍是明确 skip |
 
-`tests/specs/spec_decision_lifecycle.py`。验证:`uv run pytest tests/specs/spec_decision_lifecycle.py -q`。
-筛选证据的结构、行为和跨操作规则在 `tests/specs/spec_filter_evidence.py`。
+跨契约的 owner-facing/typed-exit 锁：
+
+| claim | 契约 | 锁定 |
+|---|---|---|
+| `FE-S21` | `filter_evidence_contract` | Trace 只从 typed terminal fact 区分 snapshot supersede、true TTL 与 unknown lifecycle expiry；终态压过历史 pending |
+| `API-S09` | `api_reference` | Funnel 同时返回 generations、unique setups、active setups 与 evidence-backed terminal breakdown；Overview/CLI 共用 current projection |
+
+可执行入口：`tests/specs/spec_decision_lifecycle.py`、
+`tests/specs/spec_opportunity_lifecycle_continuity.py`、
+`tests/specs/spec_operator_low_conviction_defer.py`、
+`tests/specs/spec_filter_evidence.py`、`tests/specs/spec_api_reference.py`。
+验证：`uv run pytest tests/test_spec_conformance.py tests/specs/spec_opportunity_lifecycle_continuity.py -q`。

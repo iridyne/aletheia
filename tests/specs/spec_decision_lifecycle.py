@@ -1444,7 +1444,7 @@ def test_old_position_beyond_layer1_display_is_counted_without_fake_entry_action
 
 @spec_claim(
     SpecClaim(
-        "DL-S43", "decision_lifecycle_contract", "§2.2b Layer 1 technical feature identity", "L2b",
+        "DL-S51", "decision_lifecycle_contract", "§2.2b Layer 1 technical feature identity", "L2b",
         "System Operator Layer 1 resolves feature snapshots through their registry asset identity, "
         "so distinct instruments are not collapsed into one blank-symbol feature.",
         status="implemented",

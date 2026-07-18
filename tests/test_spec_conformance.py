@@ -47,6 +47,7 @@ def _import_all_specs():
         # market_type propagation, composite feature keying.
         spec_universe_pipeline,
         spec_pipeline_paper_trade,
+        spec_filter_evidence,
         spec_pipeline_position_manager,
         spec_pipeline_operator_loop,
         spec_pipeline_profit_loop,
@@ -149,6 +150,12 @@ def _import_all_specs():
         # → TradingDecision → TradeProposal spine. Governs the SEAMS between subsystems
         # (carrier field semantics) that per-subsystem contracts don't cover. 2026-06-30.
         spec_decision_lifecycle,
+        # Opportunity lifecycle continuity (2026-07-18): executable cross-contract
+        # claims for generation/carrier identity, validity clocks, typed exits and
+        # the owner-facing funnel projection. Keep the low-conviction companion in
+        # the matrix too; direct collection alone is not durable SDD registration.
+        spec_opportunity_lifecycle_continuity,
+        spec_operator_low_conviction_defer,
         # Persistence/Recovery contract (PR-*): event/artifact stores + deterministic
         # client_order_id + recovery FSM class. Code-ahead-of-wiring domain — PR-C01 is a
         # self-correcting tripwire marking the FSM-not-wired-into-startup gap. Not REQUIRED

@@ -2,7 +2,7 @@
 
 > **用途**：以**功能域**为切口索引全部文档——与 [README](../README.md)（按契约对象）、[SYSTEM_MAP](../architecture/SYSTEM_MAP.md)（按模块/管道）、[DOC_SYSTEM_PLAN](../../product/documentation/DOC_SYSTEM_PLAN.md)（按金字塔层 L0–L4）互补，是第四种导航视角。
 > **状态标记**：✅金标准 / 🟡契约(部分实现) / 🔄in-flight / ⏳planned / ⛔open-gap / 📦process-artifact。状态已并入 [REMAINING_WORK_2026-06-30](../../status/snapshots/REMAINING_WORK_2026-06-30.md) 的对账结论。
-> Last built: 2026-06-30
+> Last synced for D2/D10/D12: 2026-07-18. Other domain status remains point-in-time and must be verified against its contract and `aletheia doctor`.
 
 ---
 
@@ -11,13 +11,13 @@
 | # | 功能域 | 一句话 | 契约成熟度 |
 |---|--------|--------|-----------|
 | D1 | 数据采集与处理 | 行情/衍生品/链上/宏观 → 快照表 → 上下文 | ✅ 齐全 |
-| D2 | 开仓决策链 | opportunity → PI 定夺 → proposal | ✅ 齐全(本会话补脊柱契约) |
+| D2 | 开仓决策链 | Opportunity generation → durable carrier → System Operator → Proposal | ✅ 契约与可执行 claims 对齐 |
 | D3 | 平仓与持仓管理 | stop/TP/trailing/max-hold/退出 | ✅ 齐全(本会话补 §10) |
 | D4 | 风控与执行（信任边界） | 20 关风控 + Gateway 唯一通路 + 审计链 | ✅✅ 最强 |
 | D5 | 策略生命周期 | 策略池 → 晋级门 → 退役 | 🟡 有契约，**核心执行缺口(2A)** |
 | D6 | 知识·学习·自进化 | lesson/guard/memo → 反哺决策 | 🟡 有契约，闭环大部分活 |
 | D7 | 系统监管 / Operator | MAPE-K 控制面 + 命令注册表 | 🟡 概念契约，TS 实现领先文档 |
-| D8 | 持久化·同步·恢复 | 重启不丢单/仓/经验 | ⛔ **无 L2 契约**，上层未接通 |
+| D8 | 持久化·同步·恢复 | 重启不丢单/仓/经验 | 🟡 有 L2 契约，恢复 FSM 尚未接 runtime |
 | D9 | 运行时与稳定性 | 调度/自愈/连通性/Provider | ✅ scheduler 契约，余为 ops/plan |
 | D10 | 前端·Command Center·配置 | Web UI 唯一入口 + Config↔UI | ✅ 设计系统契约，有诚实债 |
 | D11 | 子系统观察者 | Serenity / xStocks / 预测市场 | 🟡 契约，Serenity 已大量实现 |
@@ -37,12 +37,13 @@
 
 ## D2 · 开仓决策链
 
-**Scope**：`market_observer`(LLM→Opportunity) → `paper_trader_ranker`(确定性打分) → `signal_pending` → `pi_daemon` → 3 层 Context → `trading_decision`(LLM 定夺，conviction≥55) → proposal。
+**Scope**：producer 生成 snapshot-scoped `open Opportunity` → `paper_trader_ranker` 确定性打分/过滤 → 原子认领为 `queued Opportunity + signal_pending` 耐久载体 → `pi_daemon` → 3 层 Context → `trading_decision`（System Operator 唯一定夺）→ Proposal。`open` generation 与 `queued` carrier 是不同生命周期身份。
 
-- **L2 契约**：[`decision_lifecycle_contract`](../contracts/decision_lifecycle_contract.md) ✅**(本会话新建——横切脊柱 seam + 中间载体字段)** · [`agent_contracts`](../contracts/agent_contracts.md) ✅(market_observer/paper_trader/PI 行) · [`PI_OPERATOR_DESIGN_DECISIONS`](../operator/PI_OPERATOR_DESIGN_DECISIONS.md) 🟡
-- **Spec**：`spec_decision_lifecycle`(5,新) · `spec_pi_decision_chain` · `spec_pipeline_paper_trade` · `spec_pipeline_entry_enrichment` · `spec_agent_contracts`(8)
+- **L2 契约**：[`decision_lifecycle_contract`](../contracts/decision_lifecycle_contract.md) ✅（横切脊柱、载体与出口权威） · [`filter_evidence_contract`](../contracts/filter_evidence_contract.md) ✅（逐关事实与 typed terminal reason） · [`agent_contracts`](../contracts/agent_contracts.md) ✅（producer/Ranker/Operator 责任） · [`api_reference`](../api/api_reference.md) ✅（owner-facing projection） · [`PI_OPERATOR_DESIGN_DECISIONS`](../operator/PI_OPERATOR_DESIGN_DECISIONS.md) 🟡
+- **Spec**：`spec_decision_lifecycle` · `spec_opportunity_lifecycle_continuity` · `spec_operator_low_conviction_defer` · `spec_filter_evidence` · `spec_pipeline_paper_trade` · `spec_pi_decision_chain` · `spec_api_reference`。全部由 `test_spec_conformance` 注册；不再维护易漂移的手工 claim 数量。
 - **L3 计划**：`pi_agent_sole_decision_maker`(Phase 4a 已落地) · `pi_agent_context_enhancement`
-- **当前状态**：决策权 = PI LLM(已确认)；脊柱本会话前无单一契约、现已补。无遗留大缺口。
+- **研究证据**：[`OPPORTUNITY_END_TO_END_LIFECYCLE_AUDIT_2026-07-18`](../../research/audits/OPPORTUNITY_END_TO_END_LIFECYCLE_AUDIT_2026-07-18.md) 解释旧 snapshot-coupled carrier 根因；研究报告不覆盖上述 L2 契约。
+- **当前状态**：决策权 = System Operator LLM；Ranker 无 LLM。Universe supersede 只结束未认领 `open` generation；`queued` carrier 由自身 `valid_until`/Operator 终局结束。Overview/API/CLI 分开报告 generation、unique setup、snapshot supersede 与 true TTL。
 
 ## D3 · 平仓与持仓管理
 
@@ -95,7 +96,7 @@
 
 **Scope**：`gateway/`(state_machine/state_store/locks/session/reconciliation/recovery) + `storage/`(event_store/artifact_store) + `agents/checkpoints` + `sync/` + `backup/` + `policies/`。
 
-- **L2 契约**：⛔ **无专门 L2 契约**(部分被 `audit_chain_contract`/`execution_contract §6` 覆盖；这是一个文档缺口)
+- **L2 契约**：[`persistence_recovery_contract`](../contracts/persistence_recovery_contract.md) 🟡（底层构件已实现；恢复 FSM 未接 runtime） · `audit_chain_contract` / `execution_contract §6` 覆盖相邻信任边界
 - **L3 计划**：[`Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN`](../../plans/engineering/Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN.md)(18 模块代码完成)
 - **当前状态**：⛔ 底层(SQLite/JSONL/reconcile)实际在跑，但上层协调(RECOVERY_MODE 状态机/SAFE_FREEZE 禁开仓/Checkpoint 跨机迁移/Policy versioning)**未接进 gateway**，需显式授权。"文档比代码雄心大"。
 
@@ -117,7 +118,7 @@
 - **design 过程产物**📦：`overview_redesign` · `webui_page_map` · `webui_backend_handoff`
 - **L3 计划**：`frontend_ui_redesign_plan`
 - **issue**：`FRONTEND_ISSUES` · `P3_UI_GAPS` · `_ai/UX_AUDIT_FULLAPP` · `_ai/UX_AUDIT_LESSONS`
-- **当前状态**：⚠️ UI 诚实性债(硬编码色/text slice 截断/timer/WebSocket viz 等，P3d) · ⛔ RegimeConfig/GuardConfig 前端覆盖 0%(Config↔UI 破口)；MarketAwareExits 已 5/9。
+- **当前状态**：Overview 的 “Why no position now” 已与 `/analytics/opportunity-funnel.current` 共用只读投影，显示当前 limiting stage、候选 retry/expiry 与 generation/setup/terminal breakdown。其他 UI 诚实性债和 Config↔UI 缺口仍按 `FRONTEND_ISSUES` 单独核验。
 
 ## D11 · 子系统观察者
 
@@ -133,21 +134,21 @@
 
 **Scope**：愿景/红线/度量/SDD 方法/金字塔/协作流程——统领其余 11 域。
 
-- **L0–L1**：[`product/VISION`](../../product/definition/VISION.md) · `PRD` · `METRICS` · `PHASE_GATES` · `DOC_SYSTEM_PLAN`(5 层归属) · `EXPERIMENT_{PROTOCOL,MVP_GATE,BACKLOG}`
-- **L4 状态**：[`status/ROADMAP`](../../status/roadmap/ROADMAP.md) · `WORLD_MAP`(架构愿景) · `PIPELINE_STATUS` · `REMAINING_WORK_2026-06-30`(本会话)
-- **方法/导航**：[`README`](../README.md)(契约索引) · [`SDD_METHODOLOGY`](SDD_METHODOLOGY.md) · [`SYSTEM_MAP`](../architecture/SYSTEM_MAP.md) · **本文(域索引)**
+- **L0–L1**：[`product/VISION`](../../product/definition/VISION.md) · `PRD` · `METRICS` · `PHASE_GATES` · `EXPERIMENT_{PROTOCOL,MVP_GATE,BACKLOG}`；`DOC_SYSTEM_PLAN` 是已执行迁移计划，不是当前状态页
+- **L4 状态**：[`status/ROADMAP`](../../status/roadmap/ROADMAP.md) · `WORLD_MAP`(架构愿景) · `PIPELINE_STATUS` · `REMAINING_WORK_2026-06-30`；均为 point-in-time evidence
+- **方法/导航**：[`docs/README`](../../README.md)(总入口) · [`design/README`](../README.md)(契约索引) · [`SDD_METHODOLOGY`](SDD_METHODOLOGY.md) · [`SYSTEM_MAP`](../architecture/SYSTEM_MAP.md) · **本文(域索引)**
 - **治理**：[governance/`trust_and_change_control`](../../governance/policies/trust_and_change_control.md) · `implementation_guide`
-- **协作过程**📦：`_ai/`(DECISIONS/AI_HANDOFF/CURRENT_TASK/DEVLOG/CONVENTIONS/DEV_PROTOCOL/AI_WORKFLOW/PROJECT_CONTEXT/DEBUG_AUDIT_PLAYBOOK/GIT_WORKTREE_PLAYBOOK)
+- **协作过程**📦：外部开发编排器持有当前 session/task/handoff/worktree 状态；仓库 `_ai/workflow/` 仅保留可复用 playbook，`_ai/session/` 等旧记录只作历史证据
 - **参考系**：`references/`(north_star/competitors_and_papers/agent_framework_research/FRAMEWORK_MODULE_MAP/INDEX/prism_extraction/openalice_prism_review)
 - **issue 总账**：`issues/`(README/BACKEND/FRONTEND/HUMAN_ISSUES/LOW_VALUE_TESTS/FIX_PLAN/MASTER_FIX_LEDGER/_RAW_SWEEP_LEDGER + archive/)
-- **当前状态**：金字塔结构强(L0–L4+Spec-as-Code)。⛔ **元缺口=ledger 只进不出**导致状态失真(REMAINING_WORK §0/§5)；本会话已部分对账。
+- **当前状态**：权威链统一为 `AGENTS → governance/product → design contract → tests/specs → conformance`；运行事实独立由 `doctor`/日志/DB 提供，计划、issue、audit 和旧 agent ledger 不得覆盖当前契约或运行事实。
 
 ---
 
 ## 跨域观察（从这张地图看出的结构性事实）
 
-1. **契约覆盖不均**：交易核心(D2/D3/D4)金标准齐全；**D8 持久化无 L2 契约、D5 有契约但核心执行(2A)缺失**——这两处是"文档形态"上最该补的。
+1. **契约覆盖不均**：交易核心(D2/D3/D4)金标准齐全；D8 已有部分实现契约但恢复 FSM 未接 runtime，D5 有 legacy 契约但无生产晋级路径。两者都是“契约存在、能力未闭环”，不能再误报成“没有文档”。
 2. **文档↔代码方向倒挂的两类**：D7(TS operator 代码领先文档) 与 D11(Serenity 代码领先文档/plan)——都是"代码做了文档没追"，与 D12 的 ledger-lag 同源。
-3. **跨域 seam 已补**：本会话的 `decision_lifecycle_contract` 是唯一横切 D1→D2→D3→D4 的契约，补上了此前"按域竖切、接缝无人管"的结构空白。
+3. **跨域 seam 已补**：`decision_lifecycle_contract` 是横切 D1→D2→D3→D4 的权威契约；Opportunity carrier continuity 由其中 DL-INV-25 与对应可执行 claims 锁定。
 4. **每个域的"真相源"**：状态看 `aletheia doctor` + conformance matrix；意图看本域 L2 契约；历史看 issues ledger(**不可当当前状态读**)。
 </content>

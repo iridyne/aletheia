@@ -2,7 +2,7 @@
 
 > 一页俯瞰系统所有活动部件、数据流向、管道状态。
 > 断管道标记: ✅ 闭环 | ⚠️ 窄消费（仅API/CLI） | ❌ 断裂（写入无消费）
-> Last synced with code: 2026-07-13
+> Last synced with code: 2026-07-18 (Opportunity generation/carrier lifecycle)
 
 ---
 
@@ -26,7 +26,7 @@
 | `data_collector_context` | 10min | liquidation_events, macro_snapshots, volume ranking, cross-venue OI, CoinGecko/Hyperliquid/DefiLlama context | market_observer + universe/service | ⚠️ 独立 55s 时间盒；与主所 CCXT 串行，不让慢上下文继承核心预算 |
 | `exchange_sync` | 5min | positions(sync), portfolio_snapshots(side-effect) | risk_engine(exposure), position_manager, UI | ✅ |
 | `portfolio_snapshot` | 10min | portfolio_snapshots | risk_engine(drawdown scale), UI, Telegram | ✅ |
-| `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes，Learning treatment/control exposures，filter_decision_batches/filter_decisions/filter_candidate_outcomes | paper_trader_ranker、System Operator exact-candidate hydration/family edge、filter controller、risk live-evidence、doctor、guard candidate；特征刷新同时 nudge Operator 重新处理因技术事实缺失而 defer 的 carrier | ✅ 全局 feature display 有界但不截断精确候选；历史 family 校准只提 shadow 假设；无真实前瞻两组结果时保持 1.0 中性倍率 |
+| `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes，snapshot-scoped open Opportunities，Learning treatment/control exposures，filter_decision_batches/filter_decisions/filter_candidate_outcomes | paper_trader_ranker、System Operator exact-candidate hydration/family edge、filter controller、risk live-evidence、doctor、guard candidate；特征刷新同时 nudge Operator 重新处理因技术事实缺失而 defer 的 carrier | ✅ 新 snapshot supersede 只终结未认领 open generations；queued Operator carrier 保留原因果 id 并按自身 valid_until 继续 |
 | `outcome_settler` | 10min | 更新 universe_forward_outcomes + filter_candidate_outcomes；同步新 shadow 净结果 | 净收益校准、filter controller、alpha attribution、doctor | ✅ |
 | `outcome_hook_replay` | 1min | outcome_hook_jobs 状态、shadow_trades 结果、serenity_post_mortems | 合格平仓后反馈；每次重读 Position，缺价或部分失败留待重试 | ✅ |
 | `learning_contribution_evaluator` | `learning.evaluation_interval_minutes`（默认60min） | learning_contribution_verdicts, learning_job_health | paper lifecycle read model、operator inspection | ✅ 只测量：即使自主学习关闭或系统暂停也可运行；不改阶段、不启用影响 |
@@ -44,7 +44,7 @@
 | Job ID | 频率 | 输入数据 | 输出数据 | 下游 | 管道 |
 |--------|------|---------|---------|------|------|
 | `market_observer` | 15min | market_snapshots + context_builder(微结构) + advisory bundle | opportunities（metadata 含 observer Learning manifest）, knowledge_items(research) | paper_trader_ranker | ✅ observer bundle 与下游 Operator bundle 分开归因 |
-| `paper_trader` | 3min fallback + on-demand | opportunities + PiDecision + guards | 最多 5 个 unresolved `signal_pending` → System Operator → trade_proposals → risk_engine → orders → fills | ✅ 新 Opportunity/config/Guard/queue-slot/Universe 事实提交后合并唤醒；`AgentRun.trigger_type` 保存来源；队列满时 Opportunity 保持 open 重试 |
+| `paper_trader` | 3min fallback + on-demand | open Opportunity generations + PiDecision + guards | 每轮最多 3 个新 `signal_pending`，全局最多 5 个 unresolved queued carriers；随后由 System Operator 决定是否形成 Proposal | ✅ 新 Opportunity/config/Guard/queue-slot/Universe 事实提交后合并唤醒；active carrier 与 30min cooldown 分开；队列满时 generation 保持 open 重试 |
 | `pi_trading_decision` | ~15min | market context + one Learning bundle（reflection/memo/reasoning/calibration/cases/lessons） | PiDecision（含 opportunity/proposal 因果 id + learning_manifest_json） | paper_trader(消费 decision) | ✅ |
 | `position_manager` | 5min | open positions + market prices + exit_rules | close proposals / TP-SL updates | ✅ |
 | `position_reconcile` | 5min | exchange positions vs local | reconciliation_reports | ✅ |
@@ -67,6 +67,18 @@
 `agent.autonomous_learning` 控制；结果结算、shadow 结果核验和 contribution measurement
 不受该开关影响。生命周期控制仍同时要求未暂停、无完整性事故、已启用生命周期与纸面影响，
 并且路径在白名单中。
+
+### Opportunity 生命周期身份
+
+| 身份 | 含义 | 权威出口 |
+|---|---|---|
+| `open Opportunity` | 一次 Universe/Observer snapshot 的分析 generation，可继续被 Ranker 处理 | snapshot supersede、Ranker hard TTL/global retention、确定性永久拒绝，或原子认领为 queued |
+| `queued Opportunity + signal_pending` | 已通过 Ranker admission 的耐久 Operator carrier；来源 snapshot/member id 保持不可变归因 | Opportunity `valid_until`、System Operator terminal decision，或原子 Proposal claim |
+| `reviewed/expired` | 终态，不得倒退 | 必须由 PiDecision 或 typed filter evidence 解释；raw `expired` 不能直接等同 TTL |
+
+Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_count` 是 generations，
+`setup_count` 是 `symbol + market + direction + scanner_family` 唯一 setup，
+`terminal_breakdown` 区分 snapshot supersede、true TTL、Operator 与 deterministic exits。
 
 ---
 

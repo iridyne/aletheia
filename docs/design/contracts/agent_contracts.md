@@ -3,7 +3,7 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-07-13 (durable Outcome hook replay)
+> Last updated: 2026-07-18 (Opportunity generation/carrier continuity)
 
 ---
 
@@ -90,8 +90,9 @@ backlog health are persisted in `learning_job_health`.
 - **Inputs**: market_snapshots (recent), config.market_data.observed_symbols, universe features
 - **LLM**: Yes (analysis of market conditions)
 - **Outputs**: opportunities table (symbol, direction, confidence, key_observations JSON)
-- **Side effects**: Writes to `opportunities` table; triggers the PI daemon and an
-  on-demand Ranker wake only after the Opportunity/evidence transaction commits.
+- **Side effects**: Writes to `opportunities` table and requests an on-demand Ranker
+  wake only after the Opportunity/evidence transaction commits. It does not wake the
+  trading daemon directly; only Ranker admission plus committed `signal_pending` does.
 - **Error behavior**: Degrades to basic technical-only signals when LLM unavailable
 - **Prompt contract** (2026-07-01, spec UP-08): the per-symbol LLM prompt names the `scanner_family` that surfaced the symbol so the read VALIDATES that family rather than doing a generic scan (MO-4).
 - **Guard advisory contract** (spec UP-07, 断口F): guard advisory is built PER-SYMBOL inside `_analyze_symbol` with `{symbol, scanner_family, asset_class}` via `router.build_guard_advisory()` — NOT run-level with a symbol list (which never matched any guard). The run-level memory_block carries only symbol-agnostic lessons.
@@ -149,7 +150,7 @@ backlog health are persisted in `learning_job_health`.
   queued at once. Overflow remains `open` and is retried; stale carriers are
   pruned only after source expiry/review and never while proposal submission is
   recovering.
-- **Carrier continuity**: Universe snapshot supersede expires only still-open
+- **Carrier continuity** (`DL-INV-25`, `DL-S52..54`): Universe snapshot supersede expires only still-open
   analytical generations. Once `signal_pending` commits, the queued source remains
   Operator authority until its own `valid_until` or a terminal decision. A fixed
   30-minute queue age is legacy fallback only. New generations of the same
@@ -204,7 +205,7 @@ backlog health are persisted in `learning_job_health`.
   PiDecision and AgentRun facts. They never invoke `paper_trader_ranker`. The
   process-local wake state is diagnostic only and is labelled unavailable when
   the scheduler is outside the serving process.
-- **Lifecycle accounting**: the funnel reports unique setups separately from
+- **Lifecycle accounting** (`FE-S21`, `API-S09`): the funnel reports unique setups separately from
   per-snapshot generated rows and splits `universe_snapshot_superseded` from true
   `ttl_expired`; raw `status='expired'` is never sufficient to claim TTL expiry.
 - **Key invariant**: Never calls LLM; never executes orders directly; never submits proposals (signal collector only)

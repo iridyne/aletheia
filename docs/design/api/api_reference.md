@@ -2,7 +2,7 @@
 
 > Complete endpoint index for Aletheia Trading OS backend (FastAPI on :8788, proxied via :8787).
 > All endpoints prefixed with `/api/` unless noted. Auth: none (local-only by design).
-> Last updated: 2026-07-14 (trade-chain economic completeness)
+> Last updated: 2026-07-18 (Opportunity lifecycle projection semantics)
 
 ---
 
@@ -150,6 +150,23 @@ the same two completeness columns; it writes an empty realized-PnL cell rather t
 | GET | `/analytics/shadow-trades` | Shadow trade comparison data |
 | GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |
 | GET | `/analytics/learning-funnel` | Learning write/consume visibility, lesson status counts, conservative contradiction count |
+
+### Opportunity lifecycle projection semantics (`API-S09`)
+
+`/analytics/opportunity-funnel` 的字段语义不是可互换的计数：
+
+- `emitted_count` 是窗口内 per-snapshot generations；`setup_count` 按
+  `symbol + market + direction + scanner_family` 去重；`active_setup_count` 只统计仍为
+  `open/queued` 的 setup。
+- `expired_count` 仅是兼容性状态总数。原因必须读 `terminal_breakdown`，其中
+  `snapshot_superseded`、`ttl_expired`、Operator trade/skip/watch、deterministic review
+  和 unknown legacy remainder 分开。
+- `current` 是 Overview 与 `aletheia inspect entry-status` 的共同只读 projection；它不得
+  重跑 Ranker，也不得把 unchanged equity 推断成 pipeline failure。
+- candidate 的有效 defer/retry deadline 不得晚于其 Opportunity `valid_until`，包括修复前
+  已落库的 legacy defer observation。
+- `/analytics/opportunity-trace/{id}` 的 terminal reason 来自 append-only typed evidence；
+  历史 `signal_pending` 不能覆盖后来的 snapshot supersede/TTL 终态。
 
 ### Analytics outcome-integrity responses（OI-C04, implemented）
 
