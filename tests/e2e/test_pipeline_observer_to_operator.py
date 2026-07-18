@@ -8,10 +8,10 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_observer_ranker_pending_operator_skip_keeps_one_causal_identity(
+async def test_observer_ranker_pending_operator_defer_keeps_one_causal_identity(
     e2e_db, monkeypatch, tmp_path
 ):
-    """A real observed market read is queued and consumed exactly once.
+    """A real observed market read is queued and deferred without losing identity.
 
     Only the network market-data boundary and the two LLM answers are fixed.
     Opportunity creation, ranking, selection, pending persistence, Operator
@@ -228,13 +228,13 @@ async def test_observer_ranker_pending_operator_skip_keeps_one_causal_identity(
         data_freshness_sec=0,
     )])
 
-    async def deterministic_operator_skip(*_args, **_kwargs):
+    async def deterministic_operator_defer(*_args, **_kwargs):
         return (
             {
-                    # The model expresses trade intent, then the real conviction
-                    # gate produces the terminal skip. Direct model skips are
-                    # covered separately by candidate-fact validation specs.
-                    "action": "trade",
+                # The model expresses trade intent, then the real conviction
+                # gate produces a non-terminal defer. Direct model skips are
+                # covered separately by candidate-fact validation specs.
+                "action": "trade",
                 "symbol": "BTC/USDT",
                 "direction": "long",
                 "market_type": "spot",
@@ -251,7 +251,7 @@ async def test_observer_ranker_pending_operator_skip_keeps_one_causal_identity(
         )
 
     monkeypatch.setattr(
-        "aletheia.agents.helpers.llm_structured", deterministic_operator_skip
+        "aletheia.agents.helpers.llm_structured", deterministic_operator_defer
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.reflection._REFLECTION_FILE",
@@ -262,27 +262,33 @@ async def test_observer_ranker_pending_operator_skip_keeps_one_causal_identity(
     from aletheia.agent_shell.trading_context import _build_pending_signal_queue
 
     operator_result = await evaluate_trading_opportunity({})
-    assert operator_result["action"] == "skip", operator_result
-    assert operator_result["proposal_status"] == "not_applicable"
+    assert operator_result["action"] == "evaluation_deferred", operator_result
+    assert operator_result["defer_reason"] == "operator_low_conviction"
+    assert operator_result["defer_stage"] == "operator_conviction_gate"
     assert operator_result["opportunity_id"] == opportunity["id"]
-    assert operator_result["signal_source"] == "market_observer"
-    assert operator_result["pending_queue_remaining"] == 0
+    assert operator_result["operator_evaluation_event_id"]
 
     finals = e2e_db.execute(
         "SELECT * FROM pi_decisions WHERE action!='signal_pending' ORDER BY rowid"
     ).fetchall()
-    assert len(finals) == 1
-    final = dict(finals[0])
-    assert final["action"] == "skip"
-    assert {field: final[field] for field in expected_identity} == expected_identity
-    assert final["proposal_status"] == "not_applicable"
+    assert finals == []
 
-    reviewed = repo.get_opportunity(opportunity["id"])
-    assert reviewed is not None
-    assert reviewed["status"] == "reviewed"
+    queued = repo.get_opportunity(opportunity["id"])
+    assert queued is not None
+    assert queued["status"] == "queued"
     visible_pending, queue = _build_pending_signal_queue(limit=10)
-    assert visible_pending == []
-    assert queue["unresolved_total"] == 0
+    assert len(visible_pending) == 1
+    assert {
+        field: visible_pending[0][field] for field in expected_identity
+    } == expected_identity
+    assert queue["unresolved_total"] == 1
+    event = e2e_db.execute(
+        "SELECT event_kind,queue_snapshot_json FROM operator_evaluation_events "
+        "WHERE id=?",
+        (operator_result["operator_evaluation_event_id"],),
+    ).fetchone()
+    assert event is not None
+    assert event["event_kind"] == "operator_decision_deferred_low_conviction"
     assert e2e_db.execute(
         "SELECT COUNT(*) FROM trade_proposals"
     ).fetchone()[0] == 0
