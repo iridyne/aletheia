@@ -2147,9 +2147,16 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 @media (max-width: 767px) { .pnl-tiles { grid-template-columns: repeat(2, 1fr); } }
 /* Single-line so the Exposure tile's holdings summary ("ETH 25% · AAVE 18% · …")
-   stays the same height as the peer tiles; full text on hover via title attr. */
-.metric-context { font-size: 0.68rem; color: var(--muted); margin-top: var(--space-1);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+   stays the same height as the peer tiles; full text on hover via title attr.
+   align-self:stretch fills the metric-tile's cross-axis width (parent uses
+   align-items:flex-start which otherwise shrinks children to content width);
+   max-width:100% + min-width:0 guarantees text-overflow:ellipsis has a hard
+   right edge to clip against inside a narrow grid track. */
+.metric-context {
+  font-size: 0.68rem; color: var(--muted); margin-top: var(--space-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  align-self: stretch; max-width: 100%; min-width: 0;
+}
 /* < sm: release the nowrap so the phone viewport can wrap to two lines instead
    of hiding half the string behind ellipsis. */
 @media (max-width: 639px) {
@@ -3239,6 +3246,12 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   margin-bottom: 0; padding: var(--space-2) var(--space-3); min-height: 68px;
   overflow: visible; position: relative;
   display: flex; flex-direction: column; align-items: flex-start;
+  /* min-width:0 lets the parent grid's minmax(0, 1fr) tracks actually
+     shrink us — without it, the tile's intrinsic content width (a long
+     metric-context line, or a wide mono metric-value) pushes the whole
+     grid past the container. Grid+flex footgun (shadcn dashboard
+     migration guides call it out explicitly). */
+  min-width: 0;
 }
 /* When .metric-tile is rendered as <button> (clickable variant), reset the global
    button defaults (cyan accent fill, bold sans, scale-on-active) — the tile must
