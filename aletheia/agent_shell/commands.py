@@ -1572,6 +1572,7 @@ def _pending_carrier_authority_failure(decision) -> str | None:
     )
 
     existing = None
+    source_valid_until = None
     with transaction(immediate=True):
         existing = find_final_pi_decision_for_opportunity(
             opportunity_id, signal_source
@@ -1585,11 +1586,11 @@ def _pending_carrier_authority_failure(decision) -> str | None:
                     if source_status == "expired"
                     else "pending_source_not_queued"
                 )
-            valid_until = source.get("valid_until")
-            if valid_until:
+            source_valid_until = source.get("valid_until")
+            if source_valid_until:
                 try:
                     expires_at = datetime.fromisoformat(
-                        str(valid_until).replace("Z", "+00:00")
+                        str(source_valid_until).replace("Z", "+00:00")
                     )
                     if expires_at.tzinfo is None:
                         expires_at = expires_at.replace(tzinfo=timezone.utc)
@@ -1606,13 +1607,17 @@ def _pending_carrier_authority_failure(decision) -> str | None:
                         ),
                         parameters={
                             "expiry_basis": "valid_until",
-                            "valid_until": str(valid_until),
+                            "valid_until": str(source_valid_until),
                             "authority_check": "operator_preflight",
                         },
                     )
                     return "pending_source_expired"
 
     if existing is not None:
+        return None
+    if source_valid_until:
+        # The source deadline is the canonical clock. The pending-row age below
+        # exists only for historical Opportunities that have no valid_until.
         return None
     try:
         from aletheia.agent_shell.trading_context import _PENDING_SIGNAL_MAX_AGE_MINUTES
@@ -1781,8 +1786,9 @@ def _existing_deferred_context_observation(
         f"SELECT * FROM operator_evaluation_events "
         f"WHERE dedup_key IN ({placeholders}) "
         f"AND event_kind LIKE 'operator_decision_deferred_%' "
+        "AND json_extract(queue_snapshot_json, '$.defer_until')>? "
         "ORDER BY created_at DESC LIMIT 1",
-        tuple(keys),
+        (*keys, datetime.now(timezone.utc).isoformat()),
     ).fetchone()
     return dict(row) if row is not None else None
 
@@ -1815,14 +1821,40 @@ def _record_deferred_context_observation(
         window_minutes=window_minutes,
         event_kind=event_kind,
     )
-    defer_until = (
+    defer_deadline = (
         datetime.fromisoformat(window_start) + timedelta(minutes=max(window_minutes, 1))
-    ).isoformat()
+    )
+    defer_deadline_basis = "unchanged_context_window"
+    selected = next(
+        (
+            row
+            for row in (ctx.get("layer2") or {}).get("pending_signals") or []
+            if str(row.get("opportunity_id") or "") == opportunity_id
+        ),
+        None,
+    )
+    source_valid_until = (selected or {}).get("valid_until")
+    if source_valid_until:
+        try:
+            source_deadline = datetime.fromisoformat(
+                str(source_valid_until).replace("Z", "+00:00")
+            )
+            if source_deadline.tzinfo is None:
+                source_deadline = source_deadline.replace(tzinfo=timezone.utc)
+            if source_deadline < defer_deadline:
+                defer_deadline = source_deadline
+                defer_deadline_basis = "opportunity_valid_until"
+        except (TypeError, ValueError):
+            # Source-expiry validation owns malformed deadlines and fails closed;
+            # the observation remains truthful about the window it could parse.
+            pass
+    defer_until = defer_deadline.isoformat()
     snapshot = {
         "context_fingerprint": context_fingerprint,
         "opportunity_id": opportunity_id,
         "observation_window_start": window_start,
         "defer_until": defer_until,
+        "defer_deadline_basis": defer_deadline_basis,
         "defer_reason": reason,
         "event_kind": event_kind,
         "unresolved_total": int(queue.get("unresolved_total") or 0),

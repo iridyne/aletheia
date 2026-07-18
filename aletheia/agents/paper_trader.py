@@ -140,17 +140,48 @@ def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
 
 
 def _recent_signal_pairs(window_minutes: int = _RECENT_SIGNAL_COOLDOWN_MINUTES) -> set[tuple[str, str]]:
-    """Pairs recently handed to the System Operator via signal_pending."""
+    """Pairs handed to the System Operator inside the fixed cooldown window."""
     try:
         from aletheia.storage.sqlite import get_db
         cutoff = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).isoformat()
         rows = get_db().execute(
             "SELECT symbol, direction FROM pi_decisions "
-            "WHERE action='signal_pending' AND created_at >= ? "
+            "WHERE action='signal_pending' AND datetime(created_at)>=datetime(?) "
             "AND symbol IS NOT NULL AND direction IS NOT NULL",
             (cutoff,),
         ).fetchall()
         return {(r["symbol"], r["direction"]) for r in rows}
+    except Exception:
+        return set()
+
+
+def _active_signal_setups() -> set[tuple[str, str, str]]:
+    """Setup identities already owned by a live Operator queue carrier."""
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        rows = get_db().execute(
+            "SELECT DISTINCT p.symbol,p.direction,COALESCE(o.scanner_family,'') "
+            "FROM pi_decisions p JOIN opportunities o ON o.id=p.opportunity_id "
+            "WHERE p.action='signal_pending' "
+            "AND COALESCE(p.signal_source, 'market_observer')='market_observer' "
+            "AND o.status='queued' "
+            "AND datetime(o.valid_until) IS NOT NULL "
+            "AND datetime(o.valid_until)>datetime('now') "
+            "AND NOT EXISTS ("
+            " SELECT 1 FROM pi_decisions final "
+            " WHERE final.opportunity_id=p.opportunity_id "
+            " AND COALESCE(final.signal_source, 'market_observer')="
+            "     COALESCE(p.signal_source, 'market_observer') "
+            " AND final.action!='signal_pending' "
+            " AND COALESCE(final.proposal_status, '')!='submitting'"
+            ")"
+        ).fetchall()
+        return {
+            (str(row[0]), str(row[1]), str(row[2] or ""))
+            for row in rows
+            if row[0] and row[1]
+        }
     except Exception:
         return set()
 
@@ -207,6 +238,7 @@ def _plan_signal_batch(
     *,
     open_symbols: set[str],
     recent_signal_pairs: set[tuple[str, str]],
+    active_signal_setups: set[tuple[str, str, str]] | None = None,
     operator_evaluated_opportunity_ids: set[str] | None = None,
     limit: int = 3,
     available_queue_slots: int | None = None,
@@ -216,6 +248,7 @@ def _plan_signal_batch(
     decisions: dict[str, tuple[str, str]] = {}
     seen_symbols: set[str] = set()
     evaluated_ids = operator_evaluated_opportunity_ids or set()
+    active_setups = active_signal_setups or set()
     for candidate in candidates:
         opp_id = str(candidate.get("opportunity_id") or "")
         symbol = candidate.get("symbol")
@@ -231,6 +264,13 @@ def _plan_signal_batch(
         seen_symbols.add(symbol)
         if symbol in open_symbols:
             decisions[opp_id] = ("open_position_duplicate", "rejected")
+            continue
+        if (
+            symbol,
+            direction,
+            str(candidate.get("scanner_family") or ""),
+        ) in active_setups:
+            decisions[opp_id] = ("active_operator_carrier", "rejected")
             continue
         if (symbol, direction) in recent_signal_pairs:
             decisions[opp_id] = ("signal_cooldown", "rejected")
@@ -281,6 +321,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # Snapshot of currently open symbols — used to skip redundant signal writes.
     open_symbols: set[str] = {p["symbol"] for p in list_all_open_positions()}
     recent_signal_pairs = _recent_signal_pairs()
+    active_signal_setups = _active_signal_setups()
     # Position C (2026-07-02): Path A (RuleSet-driven signals) was removed with the
     # strategy rules engine. The paper trader is now purely opportunity-driven: it
     # ranks market_observer opportunities and writes the top ones as signal_pending
@@ -381,6 +422,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         eligible,
         open_symbols=open_symbols,
         recent_signal_pairs=recent_signal_pairs,
+        active_signal_setups=active_signal_setups,
         operator_evaluated_opportunity_ids=_operator_evaluated_opportunity_ids(),
         limit=3,
         available_queue_slots=available_queue_slots,
@@ -413,6 +455,11 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         elif filter_name == "signal_cooldown":
             outputs.append(
                 f"skip_recent_signal:{candidate.get('symbol')}:{candidate.get('direction')}"
+            )
+        elif filter_name == "active_operator_carrier":
+            outputs.append(
+                f"reuse_active_carrier:{candidate.get('symbol')}:"
+                f"{candidate.get('direction')}:{candidate.get('scanner_family')}"
             )
         elif filter_name == "operator_already_evaluated":
             from aletheia.storage.sqlite import get_db

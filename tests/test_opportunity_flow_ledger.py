@@ -362,6 +362,46 @@ def test_opportunity_flow_does_not_invent_ranker_rejection_without_ranker_eviden
     assert inferred and inferred[0]["status"] == "inferred"
 
 
+def test_opportunity_flow_does_not_mislabel_snapshot_supersede_as_ttl_expiry():
+    from aletheia.analytics.opportunity_flow import trace_opportunity_flow
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, opp_id="opp-snapshot-superseded")
+    db.execute(
+        "UPDATE opportunities SET status='expired',valid_until=datetime('now','+2 hours') "
+        "WHERE id='opp-snapshot-superseded'"
+    )
+    db.execute(
+        "INSERT INTO filter_decisions "
+        "(id,dedup_key,candidate_key,candidate_kind,opportunity_id,symbol,market_type,"
+        "direction,filter_name,stage,sequence_no,decision,reason_code,reason_detail,"
+        "input_snapshot,parameter_snapshot,filter_version,evaluated_at) "
+        "VALUES ('snapshot-terminal','snapshot-terminal-key',"
+        "'opportunity:opp-snapshot-superseded','opportunity',"
+        "'opp-snapshot-superseded','BTC/USDT','usdt_futures','long',"
+        "'universe_snapshot_status','opportunity_lifecycle',0,'rejected',"
+        "'universe_snapshot_superseded','parent snapshot replaced','{}','{}',"
+        "'universe_snapshot_status:v1',datetime('now'))"
+    )
+    _insert_decision(
+        db,
+        idx=99,
+        opp_id="opp-snapshot-superseded",
+        action="signal_pending",
+        reasoning="queued before the parent snapshot was superseded",
+        debate_ran=False,
+    )
+    db.commit()
+
+    trace = trace_opportunity_flow("opp-snapshot-superseded")
+
+    assert trace["final_state"] == "superseded"
+    assert trace["final_stage"] == "snapshot_superseded"
+    assert "parent snapshot replaced" in trace["final_reason"]
+    assert not any(event["stage"] == "ttl_expired" for event in trace["timeline"])
+
+
 def test_opportunity_flow_counterfactual_uses_opportunity_snapshot_not_latest_member_result():
     from aletheia.analytics.opportunity_flow import trace_opportunity_flow
     from aletheia.storage.sqlite import get_db

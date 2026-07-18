@@ -161,7 +161,11 @@ def _pending_claim_authority_failure(pi_dec) -> str | None:
     ):
         return "pending_identity_mismatch"
 
-    if signal_source == "market_observer":
+    # Current market carriers are governed by the source Opportunity deadline
+    # checked above. Queue age is only a compatibility guard for legacy rows
+    # without valid_until; applying both clocks makes a 4-hour source expire at
+    # 30 minutes and prevents the Operator defer window from ever completing.
+    if signal_source == "market_observer" and not valid_until:
         try:
             created_at = datetime.fromisoformat(
                 str(pending.get("created_at") or "").replace("Z", "+00:00")
@@ -180,7 +184,7 @@ def _pending_claim_authority_failure(pi_dec) -> str | None:
                     "atomic Proposal claim"
                 ),
                 parameters={
-                    "expiry_basis": "pending_created_at",
+                    "expiry_basis": "pending_created_at_legacy_fallback",
                     "pending_created_at": str(pending.get("created_at") or ""),
                     "max_age_minutes": 30,
                     "authority_check": "operator_claim",

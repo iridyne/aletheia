@@ -917,6 +917,7 @@ def test_persisted_ranker_and_selection_gates_are_registered():
         "open_position_duplicate",
         "signal_cooldown",
         "signal_batch_limit",
+        "active_operator_carrier",
     }
     specs = {name: filter_by_name(name) for name in names}
 

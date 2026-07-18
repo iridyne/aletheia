@@ -537,8 +537,10 @@ def get_opportunity_funnel(hours: int = 24):
     """Market Observer → Operator funnel: exposes WHY opportunities don't reach the operator.
 
     Causal cohort counts (window):
-      - emitted_count: opportunities.created_at in window
+      - emitted_count: per-snapshot Opportunity generations created in window
+      - setup_count: unique symbol/market/direction/scanner-family setups
       - open/queued/reviewed/expired: exact stored status within that cohort
+      - terminal_breakdown: evidence-backed supersede/TTL/Operator/filter exits
       - proposed_count: distinct cohort Opportunities linked to any Proposal by now
 
     Point-in-time snapshot (latest candidate_supply_snapshot event, written by
@@ -555,8 +557,7 @@ def get_opportunity_funnel(hours: int = 24):
       - family_ttl_sec: per-scanner-family TTL from allocator._FAMILY_TTL — the UI
         needs this to render "ttl was N min" without a second round trip.
       - universe_snapshot_age_sec: how long since the active universe snapshot was
-        written. Combined with valid_until, this exposes the change-suppression
-        interaction with TTL that drives the "everything ttl_expired" pattern.
+        written; generation churn is not presented as market TTL failure.
 
     Read-only. Consumes existing telemetry — never invokes the ranker/operator.
     """
@@ -594,6 +595,23 @@ def get_opportunity_funnel(hours: int = 24):
         f"SELECT COUNT(*) FROM opportunities WHERE {cohort_where} AND status='expired'",
         cohort_params,
     )
+    setup_count = _count(
+        "SELECT COUNT(*) FROM ("
+        " SELECT 1 FROM opportunities WHERE " + cohort_where + " "
+        " GROUP BY symbol,market,COALESCE(direction_bias,''),"
+        "COALESCE(scanner_family,'')"
+        ")",
+        cohort_params,
+    )
+    active_setup_count = _count(
+        "SELECT COUNT(*) FROM ("
+        " SELECT 1 FROM opportunities WHERE " + cohort_where + " "
+        " AND status IN ('open','queued') "
+        " GROUP BY symbol,market,COALESCE(direction_bias,''),"
+        "COALESCE(scanner_family,'')"
+        ")",
+        cohort_params,
+    )
     proposed = _count(
         "SELECT COUNT(DISTINCT tp.opportunity_id) FROM trade_proposals tp "
         "JOIN opportunities o ON o.id=tp.opportunity_id "
@@ -602,6 +620,53 @@ def get_opportunity_funnel(hours: int = 24):
         "AND julianday(tp.created_at)<=julianday(?)",
         (window_start, window_end, window_end),
     )
+
+    terminal_breakdown = {
+        "snapshot_superseded": 0,
+        "ttl_expired": 0,
+        "other_expired": 0,
+        "operator_trade": 0,
+        "operator_skip": 0,
+        "operator_watch": 0,
+        "deterministic_review": 0,
+        "other_reviewed": 0,
+    }
+    expired_rows = db.execute(
+        "SELECT CASE "
+        " WHEN EXISTS (SELECT 1 FROM filter_decisions fd "
+        "              WHERE fd.candidate_key='opportunity:' || o.id "
+        "              AND fd.reason_code='universe_snapshot_superseded') "
+        " THEN 'snapshot_superseded' "
+        " WHEN EXISTS (SELECT 1 FROM filter_decisions fd "
+        "              WHERE fd.candidate_key='opportunity:' || o.id "
+        "              AND fd.reason_code='ttl_expired') "
+        " THEN 'ttl_expired' ELSE 'other_expired' END AS terminal_reason, "
+        "COUNT(*) AS n FROM opportunities o WHERE " + cohort_where + " "
+        "AND o.status='expired' GROUP BY terminal_reason",
+        cohort_params,
+    ).fetchall()
+    for row in expired_rows:
+        terminal_breakdown[str(row["terminal_reason"])] = int(row["n"] or 0)
+
+    reviewed_rows = db.execute(
+        "SELECT CASE "
+        " WHEN EXISTS (SELECT 1 FROM pi_decisions p WHERE p.opportunity_id=o.id "
+        "              AND p.action IN ('trade','scale_in','flip')) "
+        " THEN 'operator_trade' "
+        " WHEN EXISTS (SELECT 1 FROM pi_decisions p WHERE p.opportunity_id=o.id "
+        "              AND p.action='skip') THEN 'operator_skip' "
+        " WHEN EXISTS (SELECT 1 FROM pi_decisions p WHERE p.opportunity_id=o.id "
+        "              AND p.action='watch') THEN 'operator_watch' "
+        " WHEN EXISTS (SELECT 1 FROM filter_decisions fd "
+        "              WHERE fd.candidate_key='opportunity:' || o.id "
+        "              AND fd.decision IN ('rejected','error')) "
+        " THEN 'deterministic_review' ELSE 'other_reviewed' END AS terminal_reason, "
+        "COUNT(*) AS n FROM opportunities o WHERE " + cohort_where + " "
+        "AND o.status='reviewed' GROUP BY terminal_reason",
+        cohort_params,
+    ).fetchall()
+    for row in reviewed_rows:
+        terminal_breakdown[str(row["terminal_reason"])] = int(row["n"] or 0)
 
     # Latest ranker-view snapshot (what the operator saw on its last eval)
     snapshot: dict = {}
@@ -641,8 +706,7 @@ def get_opportunity_funnel(hours: int = 24):
                 except ValueError:
                     ex["expired_seconds"] = None
 
-    # Universe snapshot age — critical to interpret the ttl_expired pattern,
-    # because the reuse_previous_snapshot short-circuit skips valid_until refresh.
+    # Universe snapshot age is generation context, not a queued-carrier deadline.
     snapshot_age_sec = None
     try:
         srow = db.execute(
@@ -690,17 +754,23 @@ def get_opportunity_funnel(hours: int = 24):
         window_hours=hours_i,
         emitted_count=emitted,
         open_opportunities=still_open,
-        expired_count=expired,
         proposed_count=proposed,
+        setup_count=setup_count,
+        active_setup_count=active_setup_count,
+        terminal_breakdown=terminal_breakdown,
     )
 
     return {
         "window_hours": hours_i,
         "emitted_count": emitted,
+        "setup_count": setup_count,
+        "active_setup_count": active_setup_count,
+        "setup_identity_basis": "symbol+market+direction+scanner_family",
         "reviewed_count": reviewed,
         "still_open_count": still_open,
         "queued_count": queued,
         "expired_count": expired,
+        "terminal_breakdown": terminal_breakdown,
         "proposed_count": proposed,
         "cohort_basis": "opportunities_emitted_in_window",
         "current": current,

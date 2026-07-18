@@ -58,9 +58,9 @@
 | `direction_bias` | `str \| None` | `long` / `short` / `neutral`。跳2 `paper_trader_ranker` 直接读它定方向。 |
 | `confidence` | `str` | **分类**置信度,默认 `speculative`(同 `VALID_CONFIDENCES`)。**不是**数值。 |
 | `confidence_score` | `int \| None` | **数值**置信度(0–100),跳2 打分用。与 `confidence`(分类)是两个字段,勿混。 |
-| `status` | `str` | 状态机:`open`(可被排序消费)→ `queued`(已写入待处理信号)→ `reviewed`(Operator 最终决定已落库);Filter 的永久拒绝也可从 `open` 直接进入 `reviewed`,TTL/待处理窗口超时则进入 `expired`。跳2 以 oldest-first 有界批次查询 `open` 工作集；top-N 只限制执行候选，不能截掉本批已扫描到的永久拒绝。永久拒绝或 TTL 终态与其原因事实同事务提交，证据失败则保持原状态可重试。 |
+| `status` | `str` | 状态机:`open`(每个 snapshot 的可排序分析代次)→ `queued`(已认领为耐久 Operator 载体)→ `reviewed`(Operator 最终决定已落库);Filter 的永久拒绝也可从 `open` 直接进入 `reviewed`。父 snapshot supersede 只终结仍为 `open` 的代次；`queued` 由自身 `valid_until`、Operator 终局或 Proposal claim 终结。跳2 以 oldest-first 有界批次查询 `open` 工作集；top-N 只限制执行候选，不能截掉本批已扫描到的永久拒绝。永久拒绝或 TTL 终态与其原因事实同事务提交，证据失败则保持原状态可重试。 |
 | `scanner_family` | `str \| None` | 来源扫描器族,跳5 透传进归因链(风控 #16 部门集中度解析用)。 |
-| `valid_until` | `str \| None` | 机会自身的失效时间。即使关联 Universe member 缺失,跳2 仍须按此字段拒绝过期机会。 |
+| `valid_until` | `str \| None` | 机会自身的权威市场失效时间。`open` 在此后进入 Ranker 的 family soft-TTL 衰减，直到硬顶才终结；`queued` 到此时间立即失去 Proposal 权限。只有缺失/不可解析该字段的历史 queued 载体才使用 pending `created_at + 30min` 兜底。 |
 
 ### 2.2 TradingDecision (`agent_shell/trading_decision.py:56`,dataclass)
 
@@ -115,8 +115,10 @@ queued/reviewed 来源 Opportunity 也必须携带 thesis、observations 与技�
 `trading_context._build_pending_signal_queue` 读回尚无同 `signal_source + opportunity_id`
 最终决定的行,先按 `signal_source + symbol + direction + market_type` 去重,再按最早到达顺序向 PI 暴露 5 条。
 `pending_queue` 同时返回真实未完成总数、可见数、overflow、最老时间和已超时未消费数。
-**不变量**:市场扫描信号的 TTL 由 `created_at >= cutoff` 控制;超过 30 分钟仍无最终决定的 market opportunity
-转为 `expired`,不再永久停在 queued。Serenity 是长周期来源,在没有对应过期状态迁移前不得套用这条 30 分钟截断。
+**不变量**:市场扫描信号进入 queued 后由来源 Opportunity 的 `valid_until` 单一控制；pending
+`created_at + 30min` 只用于没有可解析 `valid_until` 的历史兼容行。不得同时套用两套时钟，否则
+30min 会截断 1–4h 家族载体，也令 120min Operator defer 永远无法完成。Serenity 是长周期来源，
+不得套用 market compatibility fallback。
 Operator 的 Proposal preflight 与最终原子 claim 都必须重查 Opportunity 自身 `valid_until`；两处中先观察到
 过期的一处通过同一个仓储 CAS，把 `queued→expired` 与唯一一条
 `opportunity_ttl / ttl_expired` 事实放在同一保存点中。证据失败时保持 `queued`，且不得写最终 PiDecision
@@ -141,7 +143,8 @@ Direct skip 在 `system_operator_skip_remediation/b1.4` 下必须经过一次有
 同一候选的 typed fact refs，才可终结。B2 `insufficient_evidence`、中性 50/50 regime、可选 OI 缺失、
 rank ordering、账户权益或单笔近期亏损都没有 adverse authority。两次输出仍是信息不足或无效时，
 写 `operator_evaluation_events(event_kind=operator_decision_deferred_unchanged_context)` 并保持 pending；
-同一 policy epoch、同一候选的物质上下文 fingerprint 在 120 分钟窗口内未变化时不再调用模型，
+同一 policy epoch、同一候选的物质上下文 fingerprint 在 120 分钟窗口内未变化时不再调用模型；
+每条 defer 的显示/调度截止时间取该窗口与 Opportunity `valid_until` 的较早者，
 但不得阻塞同批下一候选。每次模型调用只能暴露一个 pending carrier 及其技术/Opportunity/B2 证据，
 不得暴露 analysis-only preview 或另一 pending 候选作为判词依据。fingerprint 排除
 Opportunity id/时间戳等载体 churn，但包含 instrument、方向、scanner thesis、rank priority、B2 状态、
@@ -212,6 +215,7 @@ Opportunity 最终动作只认 pending 权限，因此精确 Serenity pending �
 - **DL-INV-22 候选技术事实不被展示窗口截断**:全局特征展示上限不得决定精确 pending 候选是否有技术事实；必须按 `asset_id` 定向补齐，缺失/不完整/过期则在推理前 defer。
 - **DL-INV-23 新事实立即重开**:新精确 feature snapshot 必须改变候选 material fingerprint 并唤醒 Operator；不得让已有 neutral defer 吞掉新事实直到固定 heartbeat。
 - **DL-INV-24 判词旁路禁止**(2026-07-18 · policy_epoch `system_operator_skip_remediation` v1.5):SIDEWAYS/中性 50/50 regime、neutral funding、单笔近期结果、账户 equity、可选遥测缺失(如 OI delta)、Ranker rank_priority 数值等既不得作为 direct skip 授权(DL-INV-21 已锁),也不得通过 debate/conviction gate 通道降低 candidate conviction。conviction 只能来自候选特定证据(技术结构、funding/OI 信号、catalyst context);上述维度只能出现在 `bear_case` / `risk_factors` 作为顾虑,不能进入决定开仓与否的数值。违反本项在诊断里表现为 `direct_skip_not_confirmed` 或 `operator_low_conviction / debate_not_confirmed` 的诡异重复,均按 defer 处理。
+- **DL-INV-25 分析代次与工作载体分离**:Universe snapshot supersede 只能终结 `open` 分析代次；已写 `signal_pending` 的 `queued` 载体保留不可变的来源 snapshot/member id，并以自身 `valid_until` 继续到 Operator 终局。同 `symbol + direction + scanner_family` 已有活跃载体时，新代次记录 `active_operator_carrier`，不得重复入队；这里沿用既有 symbol-level spot/perp 排他规则。
 
 ---
 

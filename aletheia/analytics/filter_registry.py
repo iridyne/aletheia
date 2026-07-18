@@ -334,6 +334,14 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
              "of queueing work that cannot fit the Operator's visible recovery window.",
     ),
     _report_only_gate(
+        name="active_operator_carrier",
+        stage="paper_trader_selection",
+        reason_codes=("active_operator_carrier",),
+        current_value="one unresolved carrier per symbol/direction/scanner-family setup",
+        note="A newer snapshot generation remains analysis evidence but cannot create a "
+             "second queue carrier while the same setup is already awaiting Operator.",
+    ),
+    _report_only_gate(
         name="proposal_identity",
         stage="proposal_submission",
         reason_codes=("invalid_action", "missing_symbol", "missing_direction"),

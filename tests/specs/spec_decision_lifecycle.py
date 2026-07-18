@@ -3778,7 +3778,8 @@ def test_failed_proposal_submission_keeps_structured_reason():
     SpecClaim(
         "DL-S23", "decision_lifecycle_contract", "§2.3 atomic pending authority", "L2b",
         "A new Proposal claim rechecks the exact signal_pending identity and its market "
-        "queue age under the same writer transaction; a stale or mismatched carrier cannot "
+        "source valid_until (or legacy queue-age fallback) under the same writer transaction; "
+        "a stale or mismatched carrier cannot "
         "authorize a final PiDecision or TradeProposal.",
         status="implemented",
     ),

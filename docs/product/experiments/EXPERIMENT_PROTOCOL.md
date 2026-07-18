@@ -21,6 +21,22 @@
 > coarse-fingerprint data. The other fixes in the batch are A-class
 > state/evidence/time-window/UI honesty repairs.
 
+> **2026-07-18 Opportunity carrier continuity epoch**:
+> `opportunity_carrier_continuity/v1` closes the earlier snapshot-coupled carrier
+> window. Universe supersede now terminalizes only unclaimed `open` generations;
+> a queued Operator carrier remains authoritative until its Opportunity
+> `valid_until`, with pending-age 30 minutes retained only for legacy rows that
+> lack a parseable deadline. Reused active snapshots may slide queued validity,
+> Operator defer is capped by source validity, and a live
+> symbol/direction/scanner-family carrier suppresses duplicate enqueue under the
+> explicit `active_operator_carrier` fact. The Ranker soft-TTL window is no longer
+> preempted by daily cleanup. Funnel/trace reporting separates unique setups,
+> snapshot generations, supersede, and true TTL expiry. This changes carrier
+> delivery duration and therefore starts a fresh B-class observation window;
+> Ranker scores/thresholds, conviction, sizing, Risk, Execution, Exchange and Live
+> are unchanged. Do not pool proposal-rate, Operator-latency, or defer-resolution
+> observations with pre-v1 data.
+
 > **2026-07-18 Ranker delivery visibility epoch**:
 > `opportunity_ranker_delivery/v2` closes the narrower Universe-only wake window.
 > Committed Opportunities, eligibility-affecting settings, active Guard changes,
