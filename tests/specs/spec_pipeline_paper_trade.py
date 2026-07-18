@@ -1009,7 +1009,7 @@ def test_paper_position_take_profit_exactly_matches_approved_proposal(
 
 @spec_claim(
     SpecClaim(
-        "PL-PT-13",
+        "PL-PT-19",
         "pipeline_paper_trade",
         "§2 permanent rejection atomicity",
         "L2b",
@@ -1068,7 +1068,7 @@ def test_permanent_skip_state_rolls_back_without_rejection_fact(tmp_path, monkey
 
 @spec_claim(
     SpecClaim(
-        "PL-PT-14",
+        "PL-PT-20",
         "pipeline_paper_trade",
         "§2 bounded permanent-rejection workset",
         "L2b",

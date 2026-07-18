@@ -18,8 +18,13 @@
 
 ## Per-page verdicts
 
-### Cockpit (/) — KEEP ✅
-Role: control room. Already redesigned (PnL zone + agent feed + right rail). Ref: Bloomberg PORT.
+### Cockpit / Overview (/) — KEEP ✅
+Role: control room. PnL/account truth remains primary, and “Why no position now” uses the
+read-only `/analytics/opportunity-funnel.current` projection rather than inferring health from
+unchanged equity. It shows the current limiting stage, next trigger, per-candidate retry/expiry,
+and separates unique setups from per-snapshot generations. Snapshot supersede, true TTL,
+Operator terminal actions and deterministic reviews are separate exit classes; raw `expired`
+is never presented as “all candidates timed out”. Ref: Bloomberg PORT + UI honesty policy.
 
 ### Proposals (/proposals) — SUPERSEDED 2026-07-18 → /blotter 🗑️
 Role: approval desk — the single human-in-loop control point (§15.3, §29 live unlock is human;

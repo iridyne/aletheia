@@ -28,6 +28,7 @@ This is the main implementation authority after governance and product scope. Re
 | Live unlock or permission surfaces | `contracts/live_unlock_contract.md` |
 | API route behavior | `api/api_reference.md` |
 | SQLite tables or persistence semantics | `data/data_model.md` and `contracts/persistence_recovery_contract.md` |
+| Opportunity → Ranker → Operator → Proposal lifecycle | `contracts/decision_lifecycle_contract.md`, then `contracts/filter_evidence_contract.md` and `api/api_reference.md` |
 | Learning or knowledge behavior | `contracts/learning_contract.md`, `contracts/learning_evolution_contract.md`, `contracts/knowledge_contract.md` |
 | Scheduler behavior | `contracts/scheduler_contract.md` |
 | Frontend structure | `frontend/ui_design_system.md`, `frontend/webui_page_map.md` |

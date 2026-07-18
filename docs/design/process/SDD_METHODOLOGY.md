@@ -19,15 +19,17 @@ SDD 通过**前置精确 spec** 消除 ambiguity tax（模糊性导致的幻觉+
 ```
 Phase           产出物                     本项目对应                    检查点
 ─────────────────────────────────────────────────────────────────────────────
-1. Constitution 不变的项目宪法             CLAUDE.md + AGENTS.md         团队对齐
+1. Constitution 不变的项目宪法             AGENTS.md                     团队对齐
 2. Specify      需求/验收标准              docs/design/*_contract.md     产品审核
-3. Clarify      消歧记录(边缘/错误/空态)   docs/design/specs/ 审计产物   开发者验证
+3. Clarify      消歧记录(边缘/错误/空态)   docs/research/audits/ + issue  开发者验证
 4. Plan         技术蓝图                   docs/plans/*.md               架构审核
-5. Tasks        原子任务分解(1-4h/PR)      docs/_ai/session/CURRENT_TASK.md      依赖+范围审核
+5. Tasks        原子任务分解(1-4h/PR)      外部开发编排器                 依赖+范围审核
 6. Implement    AI 生成 + 人验证           代码 + tests/specs/ claims    双重验证后 commit
 ```
 
-**关键规则**: 实现阶段发现需要改动 → 先改 spec → 再改代码。永远不反过来。
+**关键规则**: 计划中的行为变更先明确契约与验收，再改代码；故障修复按
+`回归测试 → 最小实现 → 契约/claim 同步` 在同一变更中闭环。若发现代码已领先文档，
+将其视为 drift，必须核对当前权威意图后补齐，而不是把历史实现自动写成新规则。
 
 ---
 
@@ -37,12 +39,12 @@ Phase           产出物                     本项目对应                   
 |------|--------|-----------|
 | Spec as Truth | spec 是活契约+可执行蓝图 | `docs/design/` + `tests/specs/` |
 | Upfront Clarity | 业务规则/边缘/非功能需求前置 | risk_engine_contract 16关 |
-| Persistent Context | spec 跨会话持久 | AI_HANDOFF + DECISIONS + CLAUDE.md |
+| Persistent Context | spec 跨会话持久 | Git-tracked contract + decision doc + PR |
 | Test-Driven Guardrails | 从 spec 派生测试 | `@spec_claim` → pytest |
 | System Integration | 集成点写进 spec | agent_contracts + data_layer |
 | Living Specs | spec 随反馈迭代 | "文档为准代码追文档" |
-| Structured Organization | constitution 保证一致性 | CLAUDE.md 全局约定 |
-| Systematic Decomposition | 大功能拆原子 | tasks.md / CURRENT_TASK |
+| Structured Organization | constitution 保证一致性 | 根 `AGENTS.md` + topic-specific guide |
+| Systematic Decomposition | 大功能拆原子 | `docs/plans/` + 外部开发编排器 |
 | Human Orchestration | 人=编排+审核 | checkpoint 制度 |
 | Explicitness | 高具体性驱动安全 | FORBIDDEN_INTENTS, RESTRICTED_TOOLS |
 | Executable Intent | spec 可被 AI 直接执行 | SpecClaim decorator → conformance matrix |
@@ -58,7 +60,8 @@ Phase           产出物                     本项目对应                   
 | 适用 | 原型/探索/小 hack | 信任关键系统/复杂项目 |
 | 风险 | 幻觉/上下文丢失/脆弱 | 前置投入大 |
 
-**本项目立场**: 信任边界（risk/execution/live）必须 SDD；周边工具代码可适度 vibe coding。
+**本项目立场**: 信任边界（risk/execution/live）必须 SDD；交易决策链、持久状态和
+owner-facing honesty 同样必须有可执行 claim。周边工具可以轻量设计，但不能绕过回归验证。
 
 ---
 
@@ -77,10 +80,15 @@ docs/design/*_contract.md     ← 人类可读 spec（source of truth）
         ↓ 提取 claims
 tests/specs/spec_*.py         ← 可执行 spec（@spec_claim decorator）
         ↓ pytest 运行
-Conformance Matrix            ← claim_id → test → pass/fail 追踪
+Conformance Matrix            ← claim_id → test → status 追踪
         ↓ 失败 = drift
-BACKEND_ISSUES.md             ← 记录偏差，代码追文档修复
+docs/issues/                  ← 仅在偏差未当场修复时登记，不把历史 ledger 当当前真相
 ```
+
+普通 `tests/test_*.py` 回归并不自动成为 SDD。契约行为必须在 `tests/specs/` 中有
+唯一 `claim_id`，并由 `tests/test_spec_conformance.py` 显式导入；否则测试即使绿色，
+Conformance Matrix 仍看不到该契约。历史实现先于 spec 时，应把它作为一次明确的
+alignment repair：对齐当前权威契约、补 claim、证明主线行为，而不是改写历史计划。
 
 ---
 
@@ -175,9 +183,9 @@ frontdoor `:8787` → backend `:8788` 的两层结构，至少要先区分三类
 
 | Phase | Checkpoint 形式 | 通过标准 |
 |-------|----------------|---------|
-| Constitution | CLAUDE.md PR review | 无矛盾/无过时条目 |
+| Constitution | `AGENTS.md` / 治理文档 review | 无矛盾/无过时条目 |
 | Specify | 契约文档 diff review | 所有断言可验证 |
 | Clarify | 检查清单全勾 | 无"TODO"/"TBD" |
-| Plan | DECISIONS.md 追加 | 替代方案已评估 |
-| Tasks | CURRENT_TASK.md | 每条 1-4h、有验收标准 |
-| Implement | `uv run pytest tests/specs/ -q` 全绿 | + conformance matrix 无新 gap |
+| Plan | `docs/plans/` diff review | 替代方案、边界与验收已明确；耐久决策进入对应 design/decision 文档 |
+| Tasks | 外部开发编排器 | 每条 1-4h、有验收标准；不在仓库内维护 task lease/state |
+| Implement | focused specs + `tests/test_spec_conformance.py` | claim 唯一、已注册、无新 gap；完整 specs 的既有基线失败单独对照 |

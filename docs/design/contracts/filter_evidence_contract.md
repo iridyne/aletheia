@@ -3,6 +3,7 @@
 > 状态：Stage E 证据基础已实施；交易行为调参仍关闭。
 > 目标：让每个筛选关卡的放行、拒绝和后续净结果可被真实比较，而不是用整个策略族的总收益猜测某个关卡应该放宽还是收紧。
 > 不变边界：本契约不自动改参数、不改风控上限、不启用实盘、不绕过 Execution Gateway。
+> Last updated: 2026-07-18 (Opportunity typed terminal evidence + carrier continuity)
 
 ## 1. 为什么不能只记“最后被拒绝”
 
@@ -71,7 +72,7 @@ process telemetry，不得伪造为 FilterDecision。
 对有精确 `signal_pending` 身份的终局 System Operator `skip`，PiDecision、其本轮
 `filter_trace` 与可识别候选的固定 horizon outcome seed 必须在同一 SQLite 提交边界中写入。
 direct model `skip` 不能因未进入 debate/conviction 分支而缺少 `operator_action_assessment`。
-在 `system_operator_skip_remediation/b1.3` 中，该 assessment 只有经过一次有界 blind 反事实确认，且
+在 `system_operator_skip_remediation/b1.5` 中，该 assessment 只有经过一次有界 blind 反事实确认，且
 `skip_kind=adverse_candidate_evidence`、typed adverse reason 与候选特定 evidence 均非空时才可
 成为 terminal reject；每一个 reason 还必须由确定性 validator 绑定到同一候选的 fact refs，并随
 PiDecision evidence manifest 持久化。manifest 至少包含 Opportunity/Universe member/snapshot/feature id、
@@ -349,6 +350,8 @@ Ranker 的 `limit=50` 只限制进入打分/入队选择的执行短名单，不
 14. 已完成：direct skip 一次有界反事实确认、neutral/invalid defer、120 分钟物质上下文去重，以及完整 operator rationale 持久化；不改 55、Risk、Execution 或 Ranker 门。
 15. 已完成：b1.3 单候选上下文、确定性 adverse fact validation、候选级 defer rotation、真实 B2 fingerprint、unknown 数值格式和 operator-candidate-v2 evidence manifest；不改 55、Ranker 权重、Risk、Execution、Exchange 或 Live。
 16. 已完成：Overview/CLI 共用 durable Opportunity progress 投影，区分未评估、冷却、队列背压、批次上限与其他真实 Ranker blocker，并公开 on-demand wake 来源/结果；诊断不重跑 Ranker。
+17. 已完成（`DL-S52..56`）：snapshot supersede 只终结 open analysis generations；queued carrier 由自身 `valid_until` 继续，active carrier 去重与 cooldown 分开留痕，global cleanup 不抢占 Ranker soft-TTL。
+18. 已完成（`FE-S21` / `API-S09`）：Opportunity Trace 和 Funnel 从 typed terminal facts 区分 snapshot supersede、true TTL、Operator/deterministic review 与 unknown legacy remainder；raw `expired` 不再充当原因。
 
 ## 10. 诊断时间窗口与 sizing 口径
 
