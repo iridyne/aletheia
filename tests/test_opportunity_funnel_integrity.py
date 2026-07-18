@@ -253,6 +253,105 @@ def test_opportunity_funnel_uses_iso_safe_causal_cohort_and_marks_stale_snapshot
     assert data["snapshot"]["age_sec"] >= 19 * 60
 
 
+def test_opportunity_funnel_explains_current_operator_defer(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    queued_at = (now - timedelta(minutes=2)).isoformat()
+    valid_until = (now + timedelta(minutes=28)).isoformat()
+    defer_until = (now + timedelta(minutes=8)).isoformat()
+
+    for oid, symbol, direction in (
+        ("near", "NEAR/USDT", "short"),
+        ("syn", "SYN/USDT", "long"),
+    ):
+        _insert_opportunity(conn, oid, status="queued", created_at=queued_at)
+        conn.execute(
+            "UPDATE opportunities SET symbol=?, direction_bias=?, confidence_score=48, "
+            "valid_until=? WHERE id=?",
+            (symbol, direction, valid_until, oid),
+        )
+        conn.execute(
+            "INSERT INTO pi_decisions "
+            "(id,created_at,symbol,direction,market_type,action,opportunity_id,signal_source) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (f"pending-{oid}", queued_at, symbol, direction, "usdt_futures",
+             "signal_pending", oid, "market_observer"),
+        )
+
+    event_at = (now - timedelta(minutes=1)).isoformat()
+    conn.execute(
+        "INSERT INTO operator_evaluation_events "
+        "(id,dedup_key,event_kind,trigger,pending_unresolved_total,pending_visible_count,"
+        "pending_oldest_created_at,queue_snapshot_json,data_health_json,policy_epoch_id,created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "defer-near", "defer-near-key",
+            "operator_decision_deferred_unchanged_context", "signal", 2, 2,
+            queued_at,
+            json.dumps({
+                "opportunity_id": "near",
+                "defer_reason": "candidate_technical_snapshot_unavailable",
+                "defer_until": defer_until,
+            }),
+            "{}", "epoch-current", event_at,
+        ),
+    )
+    conn.commit()
+
+    from aletheia.server.routes.analytics import get_opportunity_funnel
+
+    data = get_opportunity_funnel(hours=1)
+    current = data["current"]
+
+    assert current["state"] == "operator_deferred"
+    assert current["primary_stage"] == "system_operator"
+    assert current["reason_code"] == "candidate_technical_snapshot_unavailable"
+    assert current["next_trigger"] == "feature_refresh"
+    assert current["policy_epoch_id"] == "epoch-current"
+    assert current["counts"] == {
+        "open_positions": 0,
+        "open_opportunities": 0,
+        "queued_candidates": 2,
+        "deferred_candidates": 1,
+        "pending_proposals": 0,
+    }
+    candidates = {row["symbol"]: row for row in current["candidates"]}
+    assert set(candidates) == {"NEAR/USDT", "SYN/USDT"}
+    assert candidates["NEAR/USDT"]["status"] == "deferred"
+    assert candidates["NEAR/USDT"]["reason_code"] == (
+        "candidate_technical_snapshot_unavailable"
+    )
+    assert candidates["NEAR/USDT"]["expires_in_sec"] > 0
+    assert candidates["SYN/USDT"]["status"] == "queued"
+    assert [row["state"] for row in current["pipeline"]] == [
+        "active", "passed", "waiting", "not_reached", "not_reached", "not_reached",
+    ]
+
+
+def test_opportunity_funnel_marks_completed_entry_stages_for_existing_position(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    conn.execute(
+        "INSERT INTO positions "
+        "(id,symbol,market_type,direction,quantity,entry_price,execution_mode,status) "
+        "VALUES ('position-1','BTC/USDT','usdt_futures','long',1,100,"
+        "'paper_internal','open')"
+    )
+    conn.commit()
+
+    from aletheia.server.routes.analytics import get_opportunity_funnel
+
+    current = get_opportunity_funnel(hours=1)["current"]
+
+    assert current["state"] == "position_open"
+    assert current["counts"]["open_positions"] == 1
+    stages = {row["stage"]: row["state"] for row in current["pipeline"]}
+    assert stages["proposal"] == "reached"
+    assert stages["risk"] == "reached"
+    assert stages["execution"] == "position_open"
+
+
 def test_operator_decisions_classifies_unknown_uses_rejection_time_and_counts_full_window(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     now = datetime.now(timezone.utc)

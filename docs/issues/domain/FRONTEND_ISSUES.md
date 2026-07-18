@@ -157,6 +157,11 @@
   - 影响：作为 dashboard 入口，"一眼看清最近 24h 系统/账户状态"目标未达
   - 最小修复：PnL 30 天 sparkline + 最近 5 次 agent run 时间线 + Today PnL 用大字号
 
+- ✅ **Overview 已补齐“当前为什么无仓位”的一小时优先读模型（2026-07-18）**
+  - 顶部 `Why no position now` 使用后端同一读快照明确显示当前 blocker、queued/deferred 候选、到期倒计时、下一触发源及 Proposal/Risk/Execution 是否到达。
+  - Funnel 默认最近 1h，4h/24h 仅作手动历史切换；当前状态与累计 cohort 分开，不再用 24h 终态掩盖实时等待。
+  - `Approval Desk` 收窄为 `Human Approval`：空状态明确表示“不需要人工批准”，Operator defer 和自动队列状态在顶部独立展示；终态决定移入 `Decision History`。
+
 ### 2.2 §4.5 TradingView 借鉴"图与决策视觉连接"单向断
 
 - 🟠 **Charts 上的 trade marker 不可点击**
