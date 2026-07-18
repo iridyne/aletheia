@@ -10,7 +10,7 @@ import CollectorHealthDetails from '../components/CollectorHealthDetails'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import { Badge, Button, Card, CardHeader, StatusText } from '../components/ui'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
-import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
+import { humanize, fmtTimestamp, fmtAge, fmtSymbol } from '../lib/format'
 
 /**
  * Cockpit / Overview (OVERVIEW_REDESIGN.md Decision 3).
@@ -340,7 +340,7 @@ function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
             {pendingProposals.slice(0, 4).map((p: any) => (
               <li key={p.id}>
                 <span><span className="mono">{fmtSymbol(p.symbol, p.market_type)}</span> {humanize(p.direction)}</span>
-                <span className="ts mono">{fmtTimestamp(p.created_at)}</span>
+                <span className="ts mono" title={fmtTimestamp(p.created_at)}>{fmtAge(p.created_at)}</span>
               </li>
             ))}
           </ul>
@@ -353,6 +353,22 @@ function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
       {/* Recent decisions — collapsible history of terminal operator outcomes */}
       {decisions && (
         <>
+          {historyTotal > 0 && items[0] && (() => {
+            const last = items[0]
+            const lastTrade = items.find(it => it.outcome === 'trade')
+            const tone = OUTCOME_TONE[last.outcome] || 'muted'
+            return (
+              <div className="desk-pulse">
+                <span className={`decisions-count decisions-count-${tone}`}>{OUTCOME_ICON[last.outcome]}</span>
+                <span> {OUTCOME_LABEL[last.outcome]} · {fmtAge(last.decided_at)}</span>
+                {last.outcome !== 'trade' && (
+                  lastTrade
+                    ? <span> · <span className="decisions-count-green">✓</span> trade {fmtAge(lastTrade.decided_at)}</span>
+                    : <span className="decisions-count-muted"> · no trades 24h</span>
+                )}
+              </div>
+            )
+          })()}
           <table className="status-board decisions-toggle">
             <tbody>
               <tr
@@ -393,7 +409,7 @@ function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
                         <span className="mono">{fmtSymbol(it.symbol || '', it.market_type || undefined)}</span>
                         {it.direction && <span className="text-xs"> {humanize(it.direction)}</span>}
                         <span className="text-xs text-muted"> · {OUTCOME_LABEL[it.outcome] || it.outcome}</span>
-                        <span className="ts mono text-xs">{fmtTimestamp(it.decided_at)}</span>
+                        <span className="ts mono text-xs" title={fmtTimestamp(it.decided_at)}>{fmtAge(it.decided_at)}</span>
                       </div>
                       {it.one_line_reason && (
                         <div className="decisions-reason text-xs">{it.one_line_reason}</div>

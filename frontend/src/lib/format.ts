@@ -303,3 +303,15 @@ export function fmtTimestamp(
   }
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
+
+/** Relative age: "just now", "5m ago", "2h ago"; falls back to fmtTimestamp beyond 24h. */
+export function fmtAge(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const ms = new Date(normalizeIso(iso)).getTime()
+  if (Number.isNaN(ms)) return '—'
+  const diffSec = Math.floor((Date.now() - ms) / 1000)
+  if (diffSec < 60) return 'just now'
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`
+  return fmtTimestamp(iso)
+}
