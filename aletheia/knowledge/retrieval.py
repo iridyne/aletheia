@@ -136,20 +136,18 @@ def reindex_all() -> int:
             for row in list_knowledge_items(limit=100000, status="active"):
                 if row.get("confidence") not in _ALLOWED_CONFIDENCE:
                     continue
-                body = _read_body(row.get("file_path"))
+                # DB content is authoritative when populated — Phase E1 writers
+                # dual-write so migrations/backup/rename cannot break the index.
+                # Disk body is a fallback for legacy rows and for hand-authored
+                # Markdown recovered via scan-recovery-sources.
+                db_content = row.get("content") or ""
+                body = db_content if db_content.strip() else _read_body(row.get("file_path"))
                 if not body.strip():
-                    # Fallback: some item types (e.g. operator_assessment) store
-                    # their content in the DB `content` column rather than a disk
-                    # file. Use that as the index body when file_path is absent.
-                    db_content = row.get("content") or ""
-                    if db_content.strip():
-                        body = db_content
-                    else:
-                        # Root Cause B: disk file deleted + no DB content.
-                        # Indexing a blank body produces an invisible FTS row
-                        # (BM25 returns nothing for zero tokens) — skip instead.
-                        skipped_empty += 1
-                        continue
+                    # Root Cause B: neither DB content nor disk file. Indexing a
+                    # blank body would create an invisible FTS row (BM25 returns
+                    # nothing for zero tokens) — skip instead.
+                    skipped_empty += 1
+                    continue
                 item = KnowledgeItem(**{k: row[k] for k in row if k in KnowledgeItem.model_fields})
                 # Extract outcome from frontmatter for structured ranker scoring.
                 outcome = ""

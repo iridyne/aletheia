@@ -126,7 +126,7 @@ class _FixtureCCXTProvider:
 
 
 @pytest.mark.asyncio
-async def test_real_universe_refresh_reaches_one_operator_skip(
+async def test_real_universe_refresh_reaches_one_operator_defer(
     e2e_db, monkeypatch, tmp_path
 ):
     import aletheia.config.loader as config_loader
@@ -180,9 +180,11 @@ async def test_real_universe_refresh_reaches_one_operator_skip(
     )
 
     async def fixed_operator_response(*_args, **_kwargs):
-        # The model proposes an entry, while the real conviction gate converts
-        # it to a terminal skip. This gives the Operator an actual persisted gate
-        # trace without entering Proposal/Risk/Execution.
+        # The model proposes an entry with a sub-threshold conviction. Since
+        # Phase C (2026-07-18) the real conviction gate raises
+        # DecisionUnavailable('operator_low_conviction') instead of terminally
+        # skipping, so this end-to-end walkthrough exercises the non-terminal
+        # defer path all the way to persisted trace + evaluation_deferred result.
         return ({
             "action": "trade",
             "symbol": "SOL/USDT",
@@ -241,11 +243,14 @@ async def test_real_universe_refresh_reaches_one_operator_skip(
     assert repo.get_opportunity(opportunity["id"])["status"] == "queued"
 
     result = await evaluate_trading_opportunity({})
-    assert result["action"] == "skip"
-    assert result["proposal_status"] == "not_applicable"
-    assert result["proposal_reason"] == "action_not_trade"
+    # Phase C (2026-07-18): sub-threshold conviction is a non-terminal defer,
+    # not a skip. The pending carrier stays queued, no final PiDecision is
+    # written, and material_context_change reopens evaluation on the next wake.
+    assert result["action"] == "evaluation_deferred"
+    assert result["defer_reason"] == "operator_low_conviction"
+    assert result["defer_stage"] == "operator_conviction_gate"
     assert result["opportunity_id"] == opportunity["id"]
-    assert result["pending_queue_remaining"] == 0
+    assert result["operator_evaluation_event_id"]
 
     decision_rows = e2e_db.execute(
         "SELECT action,symbol,direction,market_type,opportunity_id,signal_source,"
@@ -253,28 +258,35 @@ async def test_real_universe_refresh_reaches_one_operator_skip(
         "ORDER BY CASE WHEN action='signal_pending' THEN 0 ELSE 1 END, rowid",
         (opportunity["id"],),
     ).fetchall()
-    assert len(decision_rows) == 2
-    assert [row["action"] for row in decision_rows] == ["signal_pending", "skip"]
+    # Only the original signal_pending row — a defer does NOT synthesize a final
+    # PiDecision (DL-INV-2 v1.5).
+    assert len(decision_rows) == 1
+    assert decision_rows[0]["action"] == "signal_pending"
     identity_fields = (
         "symbol", "direction", "market_type", "opportunity_id", "signal_source"
     )
-    assert {
-        tuple(row[field] for field in identity_fields) for row in decision_rows
-    } == {(
+    assert tuple(decision_rows[0][field] for field in identity_fields) == (
         opportunity["symbol"],
         opportunity["direction_bias"],
         opportunity["market"],
         opportunity["id"],
         "market_observer",
-    )}
-    assert decision_rows[1]["proposal_id"] is None
-    assert decision_rows[1]["proposal_status"] == "not_applicable"
-    assert repo.get_opportunity(opportunity["id"])["status"] == "reviewed"
+    )
+    # Opportunity NOT consumed as reviewed — it stays queued for re-evaluation.
+    assert repo.get_opportunity(opportunity["id"])["status"] == "queued"
     assert e2e_db.execute("SELECT COUNT(*) FROM trade_proposals").fetchone()[0] == 0
 
+    # The defer event is persisted with the new event_kind.
+    defer_event = e2e_db.execute(
+        "SELECT event_kind FROM operator_evaluation_events WHERE id=?",
+        (result["operator_evaluation_event_id"],),
+    ).fetchone()
+    assert defer_event is not None
+    assert defer_event["event_kind"] == "operator_decision_deferred_low_conviction"
+
+    # The pending queue still exposes the carrier (it remains unresolved).
     visible_pending, queue = _build_pending_signal_queue(limit=10)
-    assert visible_pending == []
-    assert queue["unresolved_total"] == 0
+    assert queue["unresolved_total"] == 1
     assert queue["expired_unconsumed_rows"] == 0
 
     evidence = e2e_db.execute(
@@ -298,11 +310,12 @@ async def test_real_universe_refresh_reaches_one_operator_skip(
     assert (
         "signal_enqueue", "paper_trader_enqueue", "passed", "signal_enqueued"
     ) in evidence_keys
+    # Phase C reason_code: operator_low_conviction (was conviction_below_minimum).
     assert (
         "operator_conviction_gate",
         "system_operator",
         "rejected",
-        "conviction_below_minimum",
+        "operator_low_conviction",
     ) in evidence_keys
 
     # Every per-candidate fact, from emitter to Operator, retains the same source

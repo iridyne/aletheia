@@ -2245,7 +2245,10 @@ def test_direct_skip_b14_rotates_a_distinct_policy_epoch(tmp_path, monkeypatch):
 
     assert row["epoch_kind"] == "system_operator_skip_remediation"
     assert values == skip_policy_context()
-    assert values["version"] == "b1.4"
+    # b1.5 (2026-07-18) supersedes b1.4 by adding the non-terminal
+    # low-conviction / debate-not-confirmed defer semantics; every b1.4 field
+    # below is preserved (b1.5 is a superset), so those assertions still hold.
+    assert values["version"] == "b1.5"
     assert values["direct_skip_confirmation_required"] is True
     assert values["insufficient_evidence_terminal_skip"] is False
     assert values["deterministic_adverse_fact_validation"] is True
@@ -2254,6 +2257,11 @@ def test_direct_skip_b14_rotates_a_distinct_policy_epoch(tmp_path, monkeypatch):
     assert values["candidate_targeted_feature_hydration"] is True
     assert values["missing_candidate_technical_context_model_invocation"] is False
     assert values["candidate_scoped_learning_exposure"] is True
+    # b1.5 additions
+    assert values["min_conviction_terminal_skip"] is False
+    assert values["debate_not_confirmed_terminal_skip"] is False
+    assert values["conviction_derived_from_candidate_specific_evidence_only"] is True
+    assert values["conviction_bypass_reasons_forbidden"] is True
 
 
 def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(

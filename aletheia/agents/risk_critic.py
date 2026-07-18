@@ -53,10 +53,18 @@ async def run_risk_critic(permission_mode: str = "Observe", run_id: str | None =
         errors.append(err)
         return {"outputs": outputs, "errors": errors}
 
-    # Promote to high_confidence (the retrieval quality gate) only when the LLM
-    # produced the critique AND there was real activity to critique; otherwise the
-    # note is vacuous and stays medium so it can't enter the experience loop.
-    confidence = "high_confidence" if (proposals or decisions) else "medium_confidence"
+    # risk_critic writes are always medium_confidence — never entering the FTS
+    # retrieval pool that feeds trading decisions. Reason (2026-07-18, follow-up
+    # to the Phase C proposal-flow / FTS cleanup): the input is aggregate stats
+    # ("Recent proposals: N; risk decisions: M") and the output is a macro
+    # observation, not candidate-specific evidence a future trade decision could
+    # apply. The prior gate ("promote when there are any proposals or decisions")
+    # produced 39 vacuous "1 proposal reviewed, 1 approved (100%)" stubs at
+    # high_confidence, polluting the experience loop. Real trading lessons
+    # travel through `trade_case_study` (factor_key/holding_hours/pnl) instead;
+    # this agent stays advisory. Kept as medium_confidence so the audit trail
+    # exists but retrieve_lessons() cannot serve it to a decision prompt.
+    confidence = "medium_confidence"
     item = create_research_note("Risk Lesson", content, confidence=confidence,
                                 metadata={"source": "risk_critic", "subtype": "risk_lesson"})
     if item:

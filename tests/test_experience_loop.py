@@ -270,7 +270,16 @@ async def test_post_trade_reviewer_keeps_fallback_lessons_medium(tmp_path, monke
     reset_db()
 
 
-async def test_risk_critic_promotes_substantive_lessons(tmp_path, monkeypatch):
+async def test_risk_critic_writes_medium_confidence_only(tmp_path, monkeypatch):
+    """risk_critic macro observations never enter the retrieval pool.
+
+    Updated 2026-07-18: prior gate promoted the note to ``high_confidence`` when
+    ANY proposal existed, which produced 39 vacuous "1/1 approved (100%)" stubs
+    in production before this cleanup. Aggregate risk stats are advisory, not
+    candidate-specific evidence — the audit row is kept as medium_confidence so
+    ``retrieve_lessons`` (which gates on high_confidence) cannot serve it to a
+    trading decision. Real trading lessons travel through ``trade_case_study``.
+    """
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
@@ -286,6 +295,14 @@ async def test_risk_critic_promotes_substantive_lessons(tmp_path, monkeypatch):
     result = await run_agent("risk_critic", trigger_type="manual")
     assert result["status"] in ("completed", "completed_with_errors")
     items = repo.list_knowledge_items(item_type="research_note")
-    assert items and all(i["confidence"] == "high_confidence" for i in items)
-    assert len(retrieve_lessons("position sizing risk drawdown", item_types=["research_note"], k=5)) >= 1
+    # Row exists (audit trail preserved) but medium_confidence, not retrieval-eligible.
+    assert items, "risk_critic must still record an auditable research_note"
+    assert all(i["confidence"] == "medium_confidence" for i in items), (
+        "risk_critic macro observations must never be high_confidence — that gate "
+        "produced audit-stub pollution before 2026-07-18"
+    )
+    # High-confidence retrieval finds nothing (the quality gate protects the pool).
+    assert retrieve_lessons(
+        "position sizing risk drawdown", item_types=["research_note"], k=5
+    ) == []
     reset_db()

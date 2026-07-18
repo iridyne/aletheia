@@ -165,18 +165,15 @@ def downgrade_unindexable_high_confidence_items(*, dry_run: bool = False) -> dic
         "WHERE status='active' AND confidence='high_confidence'"
     ).fetchall()
 
+    from aletheia.knowledge.retrieval import _read_body
+
     matched_ids: list[str] = []
     by_type: dict[str, int] = {}
     for row in rows:
-        body = ""
-        file_path = row["file_path"]
-        if file_path:
-            try:
-                path = Path(file_path)
-                if path.exists():
-                    body = path.read_text(encoding="utf-8", errors="replace")
-            except Exception:
-                body = ""
+        # Reuse retrieval._read_body so the Windows/POSIX legacy path migration
+        # logic is applied — otherwise rows that could still be recovered via
+        # scan-recovery-sources would be silently downgraded.
+        body = _read_body(row["file_path"])
         if body.strip() or str(row["content"] or "").strip():
             continue
         matched_ids.append(row["id"])
@@ -221,6 +218,59 @@ def downgrade_unindexable_high_confidence_items(*, dry_run: bool = False) -> dic
         "dry_run": False,
     }
     logger.info("downgrade_unindexable_high_confidence_items: %s", summary)
+    return summary
+
+
+def backfill_content_from_disk(*, dry_run: bool = False) -> dict:
+    """Copy Markdown bodies from disk into ``knowledge_items.content``.
+
+    Complements Phase E1's dual-write writers: pre-existing rows still have an
+    empty ``content`` column but readable ``file_path``. This backfill closes
+    that gap so a subsequent runtime move / disk cleanup cannot break FTS.
+    Idempotent, additive — never truncates or hard-deletes.
+    """
+    from aletheia.storage.sqlite import get_db
+    from aletheia.knowledge.retrieval import _read_body, reindex_all
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, file_path FROM knowledge_items "
+        "WHERE status='active' AND COALESCE(TRIM(content), '') = '' "
+        "AND file_path IS NOT NULL AND TRIM(file_path) != ''"
+    ).fetchall()
+
+    to_update: list[tuple[str, str]] = []
+    for row in rows:
+        body = _read_body(row["file_path"])
+        if not body.strip():
+            continue
+        to_update.append((row["id"], body))
+
+    if dry_run or not to_update:
+        return {
+            "matched": len(to_update),
+            "backfilled": 0,
+            "reindexed": None,
+            "dry_run": dry_run,
+        }
+
+    was_in_tx = db.in_transaction
+    for item_id, body in to_update:
+        db.execute(
+            "UPDATE knowledge_items SET content=?, updated_at=? WHERE id=?",
+            (body, datetime.now(timezone.utc).isoformat(), item_id),
+        )
+    if not was_in_tx:
+        db.commit()
+
+    reindexed = reindex_all()
+    summary = {
+        "matched": len(to_update),
+        "backfilled": len(to_update),
+        "reindexed": reindexed,
+        "dry_run": False,
+    }
+    logger.info("backfill_content_from_disk: %s", summary)
     return summary
 
 

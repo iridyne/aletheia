@@ -253,7 +253,14 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
     FilterSpec(
         name="operator_conviction_gate",
         stage="operator_skip",
-        drop_reason_codes=("conviction_below_minimum",),
+        # Phase C (2026-07-18): filter_trace now writes ``operator_low_conviction``
+        # (non-terminal defer), replacing the legacy ``conviction_below_minimum``
+        # terminal skip code. Both are listed so historical rows and current rows
+        # both classify. Same story for ``debate_downgrade`` — the legacy code
+        # was ``debate_below_min_conviction`` and the current one is
+        # ``debate_not_confirmed``; only ``operator_conviction_gate`` binds to
+        # this FilterSpec.
+        drop_reason_codes=("operator_low_conviction", "conviction_below_minimum"),
         config_path="",
         hardcoded_at="aletheia/agent_shell/trading_decision.py "
                      "(_MIN_CONVICTION_TO_TRADE)",

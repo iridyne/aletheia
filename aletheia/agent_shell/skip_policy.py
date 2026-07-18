@@ -7,7 +7,7 @@ from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_e
 
 _EPOCH_KIND = "system_operator_skip_remediation"
 _EFFECTIVE_VALUES = {
-    "version": "b1.4",
+    "version": "b1.5",
     "aggregate_signal_health_candidate_veto": False,
     "zero_pending_heartbeat_trading_evaluation": False,
     "aggregate_signal_health_config_tightening": False,
@@ -42,6 +42,19 @@ _EFFECTIVE_VALUES = {
     "candidate_feature_snapshot_reopens_evaluation": True,
     "candidate_scoped_learning_exposure": True,
     "candidate_feature_refresh_wakes_operator": True,
+    # B1.5 (2026-07-18): a below-threshold conviction is no longer a terminal
+    # candidate skip via either channel. It is evaluation unavailable; the
+    # caller preserves the pending carrier and waits for a material context
+    # change. This closes the indirect judge-word bypass where SIDEWAYS /
+    # account equity / tiny-sample recent performance / neutral funding /
+    # missing optional telemetry depressed conviction just enough to consume
+    # the pending signal via the debate or conviction-gate channel.
+    # min_conviction remains 55 (DL-INV-2 / DL-C01) and debate range [40,80];
+    # only the *action* on a sub-threshold outcome changes from skip to defer.
+    "min_conviction_terminal_skip": False,
+    "debate_not_confirmed_terminal_skip": False,
+    "conviction_derived_from_candidate_specific_evidence_only": True,
+    "conviction_bypass_reasons_forbidden": True,
 }
 _AFFECTED_PATHS = (
     "system_operator_candidate_context",
@@ -56,6 +69,10 @@ _AFFECTED_PATHS = (
     "operator_candidate_context_availability",
     "operator_candidate_learning_attribution",
     "universe_feature_refresh_operator_wake",
+    # B1.5 additions
+    "operator_low_conviction_defer_semantics",
+    "operator_debate_not_confirmed_defer_semantics",
+    "operator_conviction_bypass_reason_ban",
 )
 
 

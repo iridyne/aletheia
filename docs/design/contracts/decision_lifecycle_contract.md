@@ -5,7 +5,7 @@
 > 其他契约**竖切**单个子系统(风控/执行/agent/知识);本契约负责它们之间的交接。
 > **不重复**子系统细节 —— 指向已有契约。
 > **基线**:代码为底(file:line);冲突时文档为准。
-> Last updated: 2026-07-18 · 维护者:Aletheia Dev · 上游:`docs/research/audits/PLATFORM_DOC_DESIGN_REVIEW_2026-06-30.md`
+> Last updated: 2026-07-18 (v1.5:低置信度/debate 未确认 non-terminal defer,判词旁路禁止) · 维护者:Aletheia Dev · 上游:`docs/research/audits/PLATFORM_DOC_DESIGN_REVIEW_2026-06-30.md`
 
 ---
 
@@ -22,7 +22,9 @@
 跳4 组装    commands.py:evaluate_trading_opportunity → build_enriched_trading_context (3层Context)
 跳5 定夺    trading_decision.py:evaluate → LLM → TradingDecision  ★唯一开仓决策权★
             direct skip → 一次有界反事实确认；只有候选特定 adverse evidence 才可终结
-            conviction∈[40,80] 触发 bull/bear debate;conviction < 55 强制 action='skip'
+            conviction∈[40,80] 触发 bull/bear debate;conviction<55(初始或 debate 后)是
+            非终态 defer(DL-INV-2 v1.5)——抛 typed DecisionUnavailable，保留 pending
+            载体，由 material fingerprint 变化重新开放评估。
 跳6 提案    prepare_decision_as_proposal → 方向/取价门留下结构化结果 → guard chain(advisory)
             → 最终 PiDecision + immutable TradeProposal 同一短事务提交 → gateway.execute_existing_proposal
 跳7 风控    risk/engine.py:evaluate_proposal —— 唯一硬门(20关,见 risk_engine_contract)
@@ -67,7 +69,7 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 | 字段 | 类型 | 语义 |
 |------|------|------|
 | `action` | `str`(必填) | 活跃入场面只允许 `trade` / `skip`。缺失或返回 `close` / `reduce` / `scale_in` / `flip` / `watch` 是 `DecisionUnavailable(operator_output_validation)`，不得归一成终态 `skip`、绑定身份或消费 pending。 |
-| `conviction` | `int`(必填) | 0–100。缺失、非整数或越界是评估不可用；合法值低于 55 时才由既有 conviction gate 强制 `skip`。 |
+| `conviction` | `int`(必填) | 0–100。缺失、非整数或越界是评估不可用；合法值低于 55(初始或 debate 后)是**非终态 defer** (DL-INV-2 v1.5)——`DecisionUnavailable('operator_low_conviction' 或 'debate_not_confirmed')`，pending 载体保留待 material fingerprint 变化重新开放；不合成 final `skip`。 |
 | `reasoning` | `str`(必填) | 决策理由(人类可读)。权威 PiDecision 保存全文；短 reflection/UI 可独立截断。 |
 | `skip_kind` | `str \| None` | 仅 direct skip 使用：`adverse_candidate_evidence` 或 `insufficient_evidence`。后者是中性未知，不得终结候选。 |
 | `adverse_reason_codes` / `adverse_evidence` | `list[str]` | terminal direct skip 必须至少各有一项允许的 typed reason 与候选特定事实；rank priority 或证据不足不能冒充 adverse reason。 |
@@ -187,7 +189,7 @@ Opportunity 最终动作只认 pending 权限，因此精确 Serenity pending �
 ## 4. 不变量
 
 - **DL-INV-1 单一开仓决策权**:`trading_decision.evaluate`(LLM)是唯一开仓决策者;`paper_trader` 只收集信号(Phase 4a,System Operator 是唯一 proposal 提交者),不直接提交 proposal。
-- **DL-INV-2 conviction 门**:`conviction < 55` 必 skip(`_MIN_CONVICTION_TO_TRADE`)。改此阈值须同步本契约 + DL-C01。
+- **DL-INV-2 conviction 门**:`conviction < 55`(`_MIN_CONVICTION_TO_TRADE`)不得成为最终 `skip`。它是评估不可用:抛稳定 typed `DecisionUnavailable`,保留 pending 载体,写 `operator_evaluation_events(event_kind=operator_decision_deferred_low_conviction)`,由 material fingerprint 变化(新技术快照/regime tag/catalyst)重新开放评估。改此阈值须同步本契约 + DL-C01;`_DEBATE_RANGE` 与 debate 权重公式同理不得静默变更。
 - **DL-INV-3 guard advisory**:跳6 的 guard chain 只写 `decision_meta['guards']`,**不硬拦**;唯一硬门是风控引擎(见 `execution_contract` guard 澄清段 + spec PI-S02)。
 - **DL-INV-4 归因继承**:`_attach_opportunity_context` 必须按 `signal_source` 把 opportunity_id/strategy_id/scanner_family 回填到 decision,否则学习闭环断链(LEARNING_LOOP_AUDIT §R0)。
 - **DL-INV-5 instrument 取价**:跳6 必须先确定最终 `market_type` 和 price venue。`paper_internal` 只接受配置行情 venue 的同 symbol、同物理 `spot/perp` mark：内存不超过 90 秒，SQLite 精确回退不超过 120 秒；不得跨 venue/market 或用旧 snapshot 建 Proposal。
@@ -209,6 +211,7 @@ Opportunity 最终动作只认 pending 权限，因此精确 Serenity pending �
 - **DL-INV-21 direct skip 非对称否决禁止**:direct skip 必须经一次有界 blind 反事实确认，且每个 adverse reason 必须绑定同一候选的机器事实；`insufficient_evidence`、rank ordering、账户权益、单笔近期结果、可选数据缺失或无效输出不得成为终态。二次仍无效时只写候选级去重 observation 并保留 pending、轮转下一候选，绝不自动改成 trade。
 - **DL-INV-22 候选技术事实不被展示窗口截断**:全局特征展示上限不得决定精确 pending 候选是否有技术事实；必须按 `asset_id` 定向补齐，缺失/不完整/过期则在推理前 defer。
 - **DL-INV-23 新事实立即重开**:新精确 feature snapshot 必须改变候选 material fingerprint 并唤醒 Operator；不得让已有 neutral defer 吞掉新事实直到固定 heartbeat。
+- **DL-INV-24 判词旁路禁止**(2026-07-18 · policy_epoch `system_operator_skip_remediation` v1.5):SIDEWAYS/中性 50/50 regime、neutral funding、单笔近期结果、账户 equity、可选遥测缺失(如 OI delta)、Ranker rank_priority 数值等既不得作为 direct skip 授权(DL-INV-21 已锁),也不得通过 debate/conviction gate 通道降低 candidate conviction。conviction 只能来自候选特定证据(技术结构、funding/OI 信号、catalyst context);上述维度只能出现在 `bear_case` / `risk_factors` 作为顾虑,不能进入决定开仓与否的数值。违反本项在诊断里表现为 `direct_skip_not_confirmed` 或 `operator_low_conviction / debate_not_confirmed` 的诡异重复,均按 defer 处理。
 
 ---
 
@@ -244,6 +247,10 @@ Opportunity 最终动作只认 pending 权限，因此精确 Serenity pending �
 | `DL-S44` | L2b | direct skip 一次有界 blind 确认及逐 reason 事实验证；中性事实 defer；候选级去重与队列轮转 |
 | `DL-S45` | L2b | 精确 pending 候选即使落在全局特征展示上限之外，仍按 asset_id 补齐技术快照与来源 Opportunity 上下文 |
 | `DL-S46` | L2b | 精确技术上下文缺失/不完整/过期时模型调用前 typed defer；新快照改变指纹并重新开放评估 |
+| `DL-S47` | L2b | 初始 conviction<55 未触发 debate → 抛 `DecisionUnavailable(reason='operator_low_conviction', stage='operator_conviction_gate')`；零 final PiDecision，opportunity 仍 queued |
+| `DL-S48` | L2b | debate 后 conviction<55 → 抛 `DecisionUnavailable(reason='debate_not_confirmed', stage='operator_debate_gate')`；零 final PiDecision，opportunity 仍 queued |
+| `DL-S49` | L2b | 低置信度 defer 事件用 `event_kind='operator_decision_deferred_low_conviction'`；dedup_key 按 event_kind 分裂，`operator_decision_deferred_unchanged_context` 不与之冲突 |
+| `DL-S50` | L2b | 判词旁路禁止(DL-INV-24)：即便模型 reasoning 里出现 SIDEWAYS/one loss/equity 词条，低于阈值的结果仍是 defer 而非伪装成 direct adverse skip |
 | `DL-S37` | L2b | 模型评估期间 `valid_until` 过期时，Proposal preflight 原子写 expired 与唯一 TTL 拒绝事实，零 Proposal |
 | `DL-S38` | L2b | preflight 后、最终 claim 前 `valid_until` 过期时，claim 原子写 expired 与唯一 TTL 拒绝事实，零最终决定/Proposal |
 | `DL-S39` | L2b | claim 内 TTL 证据写失败通过保存点回滚，Opportunity 保持 queued 且零最终决定/Proposal |

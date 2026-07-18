@@ -359,3 +359,55 @@ def on_outcomes_settled(batch_size: int):
 - **Stage 2**: Strategy lifecycle + Optuna trigger（Level 1 actions）
 - **Stage 3**: Capital allocation + scanner tuning（Level 1 + 2）
 - **Stage 4**: Risk adaptation（Level 2, 需授权开放）
+
+---
+
+## 问题 N：低置信度语义（2026-07-18，policy_epoch `system_operator_skip_remediation` v1.5）
+
+### 触发情景
+
+commit `11d435cd` 上出现的候选（TRUMP/USDT 2026-07-18 08:48Z）暴露判词旁路的迁移：
+
+1. 模型返回 `action=trade`；
+2. 初始 `conviction=52`；
+3. bull/bear debate 返回 `bull=42 / bear=72`；
+4. `advantage = 42 − 72 = −30`；`adjusted = 52 + (−30) × 0.3 = 43`；
+5. 既有代码在 `43 < 55` 时把 `action` 改为终态 `skip` 并把 Opportunity 消费为 `reviewed`。
+
+同一路径下模型的 reasoning 混入 "SIDEWAYS 50/50 / 单笔 7 天 0% WR / account equity $398 / neutral funding"
+等因素——它们没有作为 `adverse_candidate_evidence` 直接授权 skip（那条路已被 v1.4 的 direct-skip 事实验证锁住），
+但**足以拉低 conviction**，然后由 debate/conviction gate 完成同样的终态 skip 副作用。
+
+### 设计决策：低置信度 / debate 未确认 = 非终态 defer
+
+- `_MIN_CONVICTION_TO_TRADE = 55`、`_DEBATE_RANGE = [40, 80]`、debate 权重 `0.3` **均保持不变**。
+- 落到阈值以下的两种情形改为抛 `DecisionUnavailable`：
+  - `stage="operator_conviction_gate"`, `reason="operator_low_conviction"`（未触发 debate）
+  - `stage="operator_debate_gate"`,   `reason="debate_not_confirmed"`（debate 后仍低于 55）
+- `commands.evaluate_trading_opportunity` 复用 v1.4 的 defer 处理路径:
+  - **不写最终 PiDecision**；
+  - **不改 Opportunity 状态**（保持 `queued`）；
+  - 写 `operator_evaluation_events(event_kind='operator_decision_deferred_low_conviction')`,
+    dedup_key 按 `event_kind` 分裂，防止与 `operator_decision_deferred_unchanged_context` 相互吞掉。
+- material fingerprint（DL-INV-23）在新技术快照/新 regime tag/catalyst 到达时改变,自动重新开放同一候选。
+
+### 判词旁路禁止（DL-INV-24）
+
+Prompt 与 spec 明确禁止把下列因素用于降低 candidate conviction：SIDEWAYS/中性 50/50 regime、
+neutral funding、单笔近期结果、账户 equity、可选遥测缺失（如 OI delta）、Ranker rank_priority 数值。
+它们只能出现在 `bear_case` / `risk_factors` 作为顾虑，不能进入决定开仓与否的数值。
+
+### 显式不做的事
+
+- 不调低 `_MIN_CONVICTION_TO_TRADE`；不缩小 `_DEBATE_RANGE`；不改 debate 权重。
+- 不改 Risk/Execution/Bitget 客户端。
+- 不把这个 defer 变成"defer 后自动升级为 trade"——升级需要 material fingerprint 变化重新走 LLM。
+
+### 参考
+
+- 代码：`aletheia/agent_shell/trading_decision.py:499-`（debate gate）与 `:548-`（conviction gate）；
+  `aletheia/agent_shell/commands.py:1957-` 的 `_DEFERRED_STAGES`；
+  `aletheia/agent_shell/skip_policy.py` 版本升级到 `b1.5`。
+- 契约：`docs/design/contracts/decision_lifecycle_contract.md` DL-INV-2 / DL-INV-24 与 DL-S47..50。
+- Spec：`tests/specs/spec_operator_low_conviction_defer.py`。
+

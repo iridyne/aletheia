@@ -1354,56 +1354,68 @@ def _probe_profit_loop(report: Report) -> None:
                        f"but no proposals yet (first opp {_fmt_age(oldest_opp)} ago)")
             return
     if opp_age < 60 and (prop_age is None or prop_age > PROPOSAL_STALL_MIN):
-        # Inspect recent PI-decision action mix to attribute the stall.
+        # Attribute the stall using the shared opportunity-progress aggregator
+        # so old-commit skips can never be blamed on the currently-running code.
+        # Six-bucket classification: direct_model_skip / conviction_gate_skip /
+        # debate_not_confirmed / operator_defer / context_unavailable / ranker_cooldown.
         attribution = ""
         self_protecting = False
-        skip_count = 0
         try:
-            rows = db.execute(
-                "SELECT action, COUNT(*) c FROM pi_decisions "
-                "WHERE COALESCE(signal_source, 'market_observer') != 'system_cascade' "
-                "AND julianday(created_at) >= julianday('now','-12 hours') "
-                "GROUP BY action"
-            ).fetchall()
-            mix = {r[0]: r[1] for r in rows}
-            skips = mix.get("skip", 0)
-            trades = mix.get("trade", 0) + mix.get("scale_in", 0) + mix.get("flip", 0)
-            skip_count = skips
-            if skips > 0:
-                # Check if System Operator is deliberately self-protecting (distress pattern).
-                # Don't require trades==0: stale trades (>PROPOSAL_STALL_MIN ago) count as
-                # pipeline stalled even if they appear in the 12h window.
+            from aletheia.diagnostics.pipeline_progress import summarize as _op_summarize
+            snapshot = _op_summarize(hours=12)
+            operator = snapshot.get("operator") or {}
+            epoch = snapshot.get("epoch") or {}
+            commit_short = (epoch.get("producer_commit") or "unknown")[:7]
+            epoch_short = (epoch.get("policy_epoch_id") or "none")[:12]
+            direct_skip = int(operator.get("direct_model_skip") or 0)
+            conviction_skip = int(operator.get("conviction_gate_skip") or 0)
+            debate_reject = int(operator.get("debate_not_confirmed") or 0)
+            defer = int(operator.get("operator_defer") or 0)
+            trade_intent = int(operator.get("operator_trade_intent") or 0)
+            direction_brake = int(operator.get("direction_brake") or 0)
+            total_skip = direct_skip + conviction_skip + debate_reject
+
+            # Optional distress bypass — only meaningful against the current
+            # epoch's direct model skips, so read reasons scoped to the current
+            # producer_commit rather than the raw 12h window.
+            commit_full = epoch.get("producer_commit")
+            if total_skip > 0 and commit_full:
                 reason_rows = db.execute(
-                    "SELECT reasoning FROM pi_decisions WHERE action='skip' "
+                    "SELECT reasoning FROM pi_decisions "
+                    "WHERE action='skip' AND producer_commit = ? "
                     "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
                     "AND julianday(created_at) >= julianday('now','-12 hours') "
-                    "ORDER BY julianday(created_at) DESC LIMIT 10"
+                    "ORDER BY julianday(created_at) DESC LIMIT 10",
+                    (commit_full,),
                 ).fetchall()
                 distress_kws = ("structural distress", "acute distress", "systematic distress")
                 for r in reason_rows:
                     if any(k in (r[0] or "").lower() for k in distress_kws):
                         self_protecting = True
                         break
-                # bypass_distress_gate=True: stats suppressed — LLM skip is a
-                # deliberate real-market decision, not a stale-WR hallucination.
-                # Treat as self-protecting when bypass is active.
                 if not self_protecting and cfg.agent.bypass_distress_gate:
                     for r in reason_rows:
                         if "suppressed" in (r[0] or "").lower():
                             self_protecting = True
                             break
-                if not self_protecting:
-                    attribution = (f" — System Operator returned skip×{skips}/trade×{trades} in 12h "
-                                   f"(check trading_context balance + regime inputs)")
+
+            attribution = (
+                f" — epoch commit={commit_short} policy={epoch_short}"
+                f"; operator (12h) direct_skip×{direct_skip}"
+                f"/conviction_gate×{conviction_skip}"
+                f"/debate_reject×{debate_reject}"
+                f"/defer×{defer}"
+                f"/direction_brake×{direction_brake}"
+                f"/trade_intent×{trade_intent}"
+            )
         except Exception:
             pass
         prop_desc = "none ever" if prop_age is None else _fmt_age(prop_age)
         if self_protecting:
             bypass_note = " (bypass_distress_gate active — deliberate skip)" if cfg.agent.bypass_distress_gate else ""
             report.add("loop.profit", "info",
-                       f"System Operator self-protecting{bypass_note}: opportunities fresh ({_fmt_age(opp_age)}), "
-                       f"skip×{skip_count}/trade×0 in 12h (distress pattern); "
-                       f"newest proposal {prop_desc}",
+                       f"System Operator self-protecting{bypass_note}: opportunities fresh ({_fmt_age(opp_age)});"
+                       f" newest proposal {prop_desc}{attribution}",
                        "deliberate protective behavior — not a pipeline failure; "
                        "System Operator sees adverse trading_context (low WR / recent SL streak)")
         else:
@@ -1479,7 +1491,7 @@ def _probe_skip_halt(report: Report) -> None:
         ).fetchone()[0]
         deferred_context_events = db.execute(
             """SELECT COUNT(*) FROM operator_evaluation_events
-               WHERE event_kind = 'operator_decision_deferred_unchanged_context'
+               WHERE event_kind LIKE 'operator_decision_deferred_%'
                  AND julianday(created_at) >= julianday(?)""",
             (cutoff,),
         ).fetchone()[0]
@@ -2620,7 +2632,16 @@ def _probe_config_consistency(report: Report) -> None:
 
 
 def _probe_fts_coverage(report: Report) -> None:
-    """Check FTS5 index coverage vs eligible knowledge items."""
+    """Check FTS5 index coverage vs *rebuildable* eligible knowledge items.
+
+    Coverage denominator must be items whose body is still recoverable — either
+    the DB ``content`` column is populated, or the ``file_path`` still resolves
+    to a readable Markdown file via ``retrieval._read_body`` (which handles the
+    Windows/POSIX legacy-path migration). Rows whose body is unreachable are
+    audit stubs, not learnable material, and are reported separately as
+    ``knowledge.unindexable_high_confidence`` so users don't misread lost bodies
+    as "the reindex job hasn't finished".
+    """
     from aletheia.storage.sqlite import get_db
     db = get_db()
     row = db.execute(
@@ -2630,22 +2651,75 @@ def _probe_fts_coverage(report: Report) -> None:
         report.add("fts.coverage", "warn", "knowledge_fts table missing — experience loop disabled",
                    "run: uv run aletheia knowledge reindex")
         return
-    eligible = db.execute(
-        "SELECT COUNT(*) FROM knowledge_items WHERE confidence='high_confidence' AND (status='active' OR status IS NULL)"
-    ).fetchone()[0]
+    try:
+        from aletheia.knowledge.retrieval import _read_body
+    except Exception:
+        _read_body = None  # type: ignore[assignment]
+
+    active_rows = db.execute(
+        "SELECT file_path, content FROM knowledge_items "
+        "WHERE confidence='high_confidence' AND (status='active' OR status IS NULL)"
+    ).fetchall()
+    total_active = len(active_rows)
+    rebuildable = 0
+    unindexable = 0
+    for r in active_rows:
+        has_db_body = bool((r["content"] or "").strip())
+        has_disk_body = False
+        if not has_db_body and _read_body is not None:
+            try:
+                has_disk_body = bool((_read_body(r["file_path"]) or "").strip())
+            except Exception:
+                has_disk_body = False
+        if has_db_body or has_disk_body:
+            rebuildable += 1
+        else:
+            unindexable += 1
+
     indexed = db.execute("SELECT COUNT(*) FROM knowledge_fts").fetchone()[0]
-    if eligible == 0:
+
+    # Separate signal for the unrecoverable stubs so recovery/downgrade work
+    # is visible without contaminating coverage severity.
+    if unindexable > 0:
+        report.add(
+            "knowledge.unindexable_high_confidence",
+            "warn",
+            f"{unindexable} of {total_active} high-confidence rows have no reachable body "
+            f"(DB content empty and file_path unreadable)",
+            "run: uv run aletheia knowledge scan-recovery-sources; "
+            "then: uv run aletheia knowledge downgrade-unindexable-high-confidence",
+        )
+    else:
+        report.add(
+            "knowledge.unindexable_high_confidence",
+            "ok",
+            "all high-confidence bodies reachable",
+        )
+
+    if total_active == 0:
+        # No high-confidence rows exist yet. Legacy behavior: green.
         report.add("fts.coverage", "ok", "no eligible items yet")
         return
-    pct = indexed / eligible
-    detail = f"{indexed}/{eligible} indexed ({pct:.0%})"
+    if rebuildable == 0:
+        report.add(
+            "fts.coverage",
+            "warn",
+            f"{indexed}/{rebuildable} rebuildable indexed (no reachable bodies)",
+            "recover bodies before reindex — see knowledge.unindexable_high_confidence",
+        )
+        return
+
+    pct = indexed / rebuildable
+    detail = f"{indexed}/{rebuildable} rebuildable indexed ({pct:.0%})"
     if pct >= 0.8:
         report.add("fts.coverage", "ok", detail)
     elif pct >= 0.5:
         report.add("fts.coverage", "warn", detail, "restart gateway to trigger reindex")
     else:
-        report.add("fts.coverage", "blocker", detail,
-                   "experience loop severely degraded — restart gateway or run: uv run aletheia knowledge reindex")
+        report.add(
+            "fts.coverage", "blocker", detail,
+            "experience loop severely degraded — restart gateway or run: uv run aletheia knowledge reindex",
+        )
 
 
 def _probe_ohlcv_coverage(report: Report) -> None:

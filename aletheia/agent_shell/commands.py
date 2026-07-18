@@ -1710,14 +1710,21 @@ def _deferred_context_dedup_key(
     opportunity_id: str,
     policy_epoch_id: str,
     window_minutes: int,
+    event_kind: str = "operator_decision_deferred_unchanged_context",
 ) -> tuple[str, str]:
-    """Return a stable key for one bounded unchanged-context suppression window."""
+    """Return a stable key for one bounded defer suppression window.
+
+    ``event_kind`` is part of the hash so that ``operator_decision_deferred_low_conviction``
+    and ``operator_decision_deferred_unchanged_context`` cannot collide on the
+    same (fingerprint, opportunity, epoch, window) tuple. Without this, the
+    second event would be dropped by ``INSERT OR IGNORE`` on ``dedup_key``.
+    """
     now = datetime.now(timezone.utc)
     window_seconds = max(int(window_minutes), 1) * 60
     window_epoch = int(now.timestamp()) // window_seconds * window_seconds
     window_start = datetime.fromtimestamp(window_epoch, timezone.utc).isoformat()
     payload = {
-        "event_kind": "operator_decision_deferred_unchanged_context",
+        "event_kind": event_kind,
         "context_fingerprint": context_fingerprint,
         "opportunity_id": opportunity_id,
         "policy_epoch_id": policy_epoch_id,
@@ -1738,18 +1745,44 @@ def _existing_deferred_context_observation(
     policy_epoch_id: str,
     window_minutes: int,
 ) -> dict | None:
+    """Return the most recent defer event in this fingerprint window, any kind.
+
+    Callers use this to skip re-invoking the model when the candidate has
+    already been deferred inside the current 120-min material window. Since
+    Phase C (2026-07-18) introduced ``operator_decision_deferred_low_conviction``
+    alongside the legacy ``operator_decision_deferred_unchanged_context``, this
+    query MUST match every ``operator_decision_deferred_*`` event_kind — otherwise
+    a low-conviction defer fails to suppress the next LLM call, and the pending
+    carrier gets re-evaluated repeatedly under the same unchanged context.
+
+    Since the dedup_key is now event_kind-scoped (see ``_deferred_context_dedup_key``),
+    every kind gets its own key and we query without filtering by dedup_key alone.
+    We look up any defer event tied to this (fingerprint, opportunity, epoch) tuple
+    inside the window by recomputing every plausible key.
+    """
     from aletheia.storage.sqlite import get_db
 
-    dedup_key, _window_start = _deferred_context_dedup_key(
-        context_fingerprint,
-        opportunity_id=opportunity_id,
-        policy_epoch_id=policy_epoch_id,
-        window_minutes=window_minutes,
+    known_kinds = (
+        "operator_decision_deferred_unchanged_context",
+        "operator_decision_deferred_low_conviction",
     )
+    keys = []
+    for kind in known_kinds:
+        dk, _ = _deferred_context_dedup_key(
+            context_fingerprint,
+            opportunity_id=opportunity_id,
+            policy_epoch_id=policy_epoch_id,
+            window_minutes=window_minutes,
+            event_kind=kind,
+        )
+        keys.append(dk)
+    placeholders = ",".join("?" for _ in keys)
     row = get_db().execute(
-        "SELECT * FROM operator_evaluation_events WHERE dedup_key=? "
-        "AND event_kind='operator_decision_deferred_unchanged_context'",
-        (dedup_key,),
+        f"SELECT * FROM operator_evaluation_events "
+        f"WHERE dedup_key IN ({placeholders}) "
+        f"AND event_kind LIKE 'operator_decision_deferred_%' "
+        "ORDER BY created_at DESC LIMIT 1",
+        tuple(keys),
     ).fetchone()
     return dict(row) if row is not None else None
 
@@ -1763,8 +1796,14 @@ def _record_deferred_context_observation(
     trigger: str,
     reason: str,
     window_minutes: int,
+    event_kind: str = "operator_decision_deferred_unchanged_context",
 ) -> dict:
-    """Persist a non-terminal defer fact without consuming a queue carrier."""
+    """Persist a non-terminal defer fact without consuming a queue carrier.
+
+    ``event_kind`` selects the observation type so diagnostic aggregations can
+    distinguish the several defer causes (unchanged context, low conviction,
+    debate-not-confirmed, missing candidate technical facts).
+    """
     from aletheia.storage.models import OperatorEvaluationEvent
     from aletheia.storage.repositories import record_operator_evaluation_event
 
@@ -1774,6 +1813,7 @@ def _record_deferred_context_observation(
         opportunity_id=opportunity_id,
         policy_epoch_id=policy_epoch_id,
         window_minutes=window_minutes,
+        event_kind=event_kind,
     )
     defer_until = (
         datetime.fromisoformat(window_start) + timedelta(minutes=max(window_minutes, 1))
@@ -1784,6 +1824,7 @@ def _record_deferred_context_observation(
         "observation_window_start": window_start,
         "defer_until": defer_until,
         "defer_reason": reason,
+        "event_kind": event_kind,
         "unresolved_total": int(queue.get("unresolved_total") or 0),
         "visible_count": int(queue.get("visible_count") or 0),
         "overflow_count": int(queue.get("overflow_count") or 0),
@@ -1791,7 +1832,7 @@ def _record_deferred_context_observation(
     }
     return record_operator_evaluation_event(OperatorEvaluationEvent(
         dedup_key=dedup_key,
-        event_kind="operator_decision_deferred_unchanged_context",
+        event_kind=event_kind,
         trigger=str(trigger or "manual"),
         pending_unresolved_total=snapshot["unresolved_total"],
         pending_visible_count=snapshot["visible_count"],
@@ -1875,6 +1916,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     )
     selected_opportunity_id = None
     context_fingerprint = None
+    selected_candidate: dict | None = None
     deferred_candidates: list[dict] = []
     for candidate in (ctx.get("layer2") or {}).get("pending_signals") or []:
         opportunity_id = str(candidate.get("opportunity_id") or "")
@@ -1892,6 +1934,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             ctx = candidate_ctx
             selected_opportunity_id = opportunity_id
             context_fingerprint = candidate_fingerprint
+            selected_candidate = candidate
             break
         deferred_candidates.append({
             "opportunity_id": opportunity_id,
@@ -1954,11 +1997,32 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
 
     ctx = authorize_operator_learning_context(ctx)
 
-    # Run System Operator decision loop
+    # Run System Operator decision loop.
+    # ``DecisionUnavailable`` from selected stages is a non-terminal defer, not a
+    # skip: the pending carrier stays queued and the same candidate is
+    # re-evaluated on the next material_change wake. Two additional stages are
+    # recognised here (Phase C, DL-S47/DL-S48):
+    #   * ``operator_conviction_gate`` — initial conviction<55 without debate
+    #   * ``operator_debate_gate``    — conviction<55 after bull/bear debate
+    _DEFERRED_STAGES = {
+        "operator_skip_validation",
+        "operator_conviction_gate",
+        "operator_debate_gate",
+    }
+    _STAGE_TO_OBSERVATION_STATUS = {
+        "operator_skip_validation": "invalid_or_neutral_direct_skip",
+        "operator_conviction_gate": "operator_low_conviction",
+        "operator_debate_gate": "debate_not_confirmed",
+    }
+    _STAGE_TO_EVENT_KIND = {
+        "operator_skip_validation": "operator_decision_deferred_unchanged_context",
+        "operator_conviction_gate": "operator_decision_deferred_low_conviction",
+        "operator_debate_gate": "operator_decision_deferred_low_conviction",
+    }
     try:
         decision = await _evaluate(ctx)
     except DecisionUnavailable as exc:
-        if exc.stage != "operator_skip_validation":
+        if exc.stage not in _DEFERRED_STAGES:
             raise
         event = _record_deferred_context_observation(
             ctx,
@@ -1968,10 +2032,47 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             trigger=str(params.get("_trigger") or "manual"),
             reason=exc.reason,
             window_minutes=defer_window_minutes,
+            event_kind=_STAGE_TO_EVENT_KIND[exc.stage],
         )
+        # DL-INV-7: filter facts must be persisted at the moment they happen.
+        # Phase C defers previously left ``operator_conviction_gate`` /
+        # ``debate_downgrade`` records only on the in-flight decision object,
+        # which vanished when we raised DecisionUnavailable — so filter_decisions
+        # never recorded them and diagnostic six-bucket aggregation undercounted
+        # every non-terminal defer as zero. Persist here using the same
+        # candidate_key (``opportunity:<id>``) as the ranker/emitter trace so
+        # the full journey is queryable end-to-end.
+        if exc.filter_trace and selected_candidate:
+            try:
+                from aletheia.analytics.filter_evidence import (
+                    record_candidate_filter_trace,
+                )
+                record_candidate_filter_trace(
+                    {
+                        "opportunity_id": selected_opportunity_id,
+                        "symbol": selected_candidate.get("symbol"),
+                        "market_type": selected_candidate.get("market_type"),
+                        "direction": selected_candidate.get("direction"),
+                        "universe_snapshot_id": selected_candidate.get(
+                            "universe_snapshot_id"
+                        ),
+                        "universe_member_id": selected_candidate.get(
+                            "universe_member_id"
+                        ),
+                        "scanner_family": selected_candidate.get("scanner_family"),
+                        "filter_trace": exc.filter_trace,
+                    },
+                    raise_on_error=False,
+                )
+            except Exception:
+                logger.warning(
+                    "defer filter_trace persistence failed for %s",
+                    selected_opportunity_id,
+                    exc_info=True,
+                )
         return {
             "action": "evaluation_deferred",
-            "observation_status": "invalid_or_neutral_direct_skip",
+            "observation_status": _STAGE_TO_OBSERVATION_STATUS[exc.stage],
             "operator_evaluation_event_id": event["id"],
             "policy_epoch_id": policy_epoch_id,
             "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
@@ -1979,6 +2080,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             "opportunity_id": selected_opportunity_id,
             "model_invoked": True,
             "defer_reason": exc.reason,
+            "defer_stage": exc.stage,
             "pending_queue_remaining": int((queue or {}).get("unresolved_total") or 0),
             "pending_queue": queue,
         }

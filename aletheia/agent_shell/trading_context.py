@@ -336,10 +336,14 @@ def _build_pending_signal_queue(
     # the material fingerprint, not merely this scheduling hint.
     try:
         now_iso = datetime.now(timezone.utc).isoformat()
+        # Match any operator_decision_deferred_* kind so the low-conviction /
+        # debate-not-confirmed defers (Phase C, 2026-07-18) also demote their
+        # carriers behind fresh work. Without the LIKE, a low_conviction defer
+        # left its carrier at the head of the queue and reappeared every wake.
         deferred_rows = db.execute(
             "SELECT json_extract(queue_snapshot_json, '$.opportunity_id') AS opportunity_id "
             "FROM operator_evaluation_events "
-            "WHERE event_kind='operator_decision_deferred_unchanged_context' "
+            "WHERE event_kind LIKE 'operator_decision_deferred_%' "
             "AND json_extract(queue_snapshot_json, '$.defer_until') > ?",
             (now_iso,),
         ).fetchall()

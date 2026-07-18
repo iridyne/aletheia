@@ -84,11 +84,24 @@ class DecisionUnavailable(RuntimeError):
 
     Callers must not turn this into a durable skip or trade claim.  The pending
     queue identity remains available so the daemon can retry after its cooldown.
+
+    ``filter_trace`` optionally carries the in-progress evaluation trace so the
+    caller can persist gate-level ``filter_decisions`` rows (DL-INV-7: filter
+    facts must be recorded when they happen). Without this, non-terminal defers
+    (Phase C conviction / debate gates) never leave a filter_decisions audit
+    row and diagnostic aggregations undercount them.
     """
 
-    def __init__(self, reason: str, *, stage: str = "operator_evaluation") -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        stage: str = "operator_evaluation",
+        filter_trace: list[dict] | None = None,
+    ) -> None:
         self.reason = reason
         self.stage = stage
+        self.filter_trace: list[dict] = list(filter_trace) if filter_trace else []
         super().__init__(reason)
 
 
@@ -496,20 +509,20 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
         adjusted = int(round(initial_conviction + advantage * 0.3))
         decision.conviction = max(0, min(100, adjusted))
         decision.debate_adjustment = decision.conviction - initial_conviction
-        if decision.conviction < _MIN_CONVICTION_TO_TRADE:
-            decision.action = "skip"
-            decision.reasoning += (
-                f" [debate adjusted conviction {initial_conviction}→{decision.conviction} "
-                f"(bull {debate.bull_confidence} vs bear {debate.bear_confidence}, "
-                f"dir={decision.direction}) → skip]"
-            )
+        below_minimum = decision.conviction < _MIN_CONVICTION_TO_TRADE
+        # Emit the audit trace BEFORE raising, so the trace exists even though
+        # this raise turns the decision into a non-terminal defer (DL-S48).
+        # Historical bucketing still reads ``debate_below_min_conviction`` so
+        # cohorts remain queryable across policy_epoch changes; the new
+        # ``debate_not_confirmed`` alias is what the aggregator maps to the
+        # ``debate_not_confirmed`` bucket (see pipeline_progress.py).
         decision.filter_trace.append({
             "filter_name": "debate_downgrade",
             "stage": "system_operator_debate",
-            "decision": "rejected" if decision.action == "skip" else "passed",
+            "decision": "rejected" if below_minimum else "passed",
             "reason_code": (
-                "debate_below_min_conviction"
-                if decision.action == "skip"
+                "debate_not_confirmed"
+                if below_minimum
                 else "debate_at_or_above_min_conviction"
             ),
             "inputs": {
@@ -524,6 +537,19 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
                 "adjustment_weight": 0.3,
             },
         })
+        if below_minimum:
+            # DL-INV-2 (Phase C, 2026-07-18): a below-threshold conviction after
+            # debate is no longer a terminal candidate skip. It is evaluation
+            # unavailable — the caller preserves the pending carrier and waits
+            # for a material context change (new feature snapshot, regime tag
+            # flip, catalyst) to reopen the same candidate. This closes the
+            # indirect bypass where SIDEWAYS/equity/tiny-sample reasoning
+            # depressed conviction just enough to skip via the debate channel.
+            raise DecisionUnavailable(
+                "debate_not_confirmed",
+                stage="operator_debate_gate",
+                filter_trace=list(decision.filter_trace),
+            )
 
     # Compute sizing for the single executable entry action.
     if decision.action in trade_actions and decision.conviction >= _MIN_CONVICTION_TO_TRADE:
@@ -546,15 +572,24 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
             sizing_trace=decision.sizing_trace,
         )
     elif trade_intent:
+        # Initial conviction < 55 without a debate range trigger (or debate did
+        # not raise). Same rationale as debate_not_confirmed above (DL-S47):
+        # the candidate remains queued and a new material fingerprint reopens
+        # evaluation. The trace preserves ``operator_low_conviction`` so
+        # diagnostic aggregations can distinguish it from debate-driven defers.
         decision.filter_trace.append({
             "filter_name": "operator_conviction_gate",
             "stage": "system_operator",
             "decision": "rejected",
-            "reason_code": "conviction_below_minimum",
+            "reason_code": "operator_low_conviction",
             "inputs": {"conviction": decision.conviction},
             "parameters": {"minimum_conviction": _MIN_CONVICTION_TO_TRADE},
         })
-        decision.action = "skip"
+        raise DecisionUnavailable(
+            "operator_low_conviction",
+            stage="operator_conviction_gate",
+            filter_trace=list(decision.filter_trace),
+        )
 
     return decision
 
@@ -1883,6 +1918,12 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "adverse evidence. Oversold RSI is opposing/rebound risk for a short, not short confirmation.",
         "- Account equity affects downstream sizing, not candidate quality. A tiny recent "
         "performance sample (especially one trade) cannot authorize a candidate skip.",
+        "- Conviction bypass rule: never lower conviction using account equity, "
+        "tiny-sample recent trades (especially one loss), a neutral 50/50 or SIDEWAYS "
+        "regime tag, missing optional telemetry, or Ranker rank ordering. Conviction "
+        "must be derived from candidate-specific evidence only — technical structure, "
+        "funding/OI signals, catalyst context. Those factors belong in bear_case or "
+        "risk_factors as caveats, not in the number that decides the trade.",
         "- For skip, set skip_kind. A terminal adverse skip must use "
         "adverse_candidate_evidence and include at least one allowed adverse_reason_code "
         "plus concrete candidate-specific adverse_evidence. Use insufficient_evidence "
@@ -1890,7 +1931,6 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "the candidate.",
         "- What is the dominant market narrative right now? Is it already priced in?",
         "- Am I seeing confluence (multiple signals aligning) or conflict?",
-        "- Given my recent 7-day performance, should I be more or less aggressive?",
         "- Is there an asymmetric risk/reward setup I'm missing?",
         "- Do the lessons or guard candidates warn against this specific setup?",
         "- What would make me change my mind about this trade?",

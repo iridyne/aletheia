@@ -91,6 +91,9 @@ def create_research_note(title: str, content: str, confidence: str = "medium_con
         item_type="research_note",
         title=title,
         file_path=str(path),
+        # Dual-write body to DB so a lost/moved Markdown file cannot break the
+        # experience-loop index. Disk file remains a readable artifact.
+        content=content,
         confidence=confidence,
         content_hash=ch,
     )
@@ -119,6 +122,7 @@ def create_dreaming_log(title: str, content: str) -> KnowledgeItem | None:
         item_type="dreaming_log",
         title=title,
         file_path=str(path),
+        content=content,  # dual-write for FTS resilience (see create_research_note)
         confidence="high_confidence",
         content_hash=ch,
     )
@@ -140,6 +144,7 @@ def create_daily_review(title: str, content: str) -> KnowledgeItem | None:
         item_type="daily_review",
         title=title,
         file_path=str(path),
+        content=content,  # dual-write for FTS resilience
         confidence="high_confidence",
     )
     try:
@@ -174,6 +179,7 @@ def create_post_trade_review(
         item_type="post_trade_review",
         title=title,
         file_path=str(path),
+        content=content,  # dual-write for FTS resilience
         strategy_id=strategy_id,
         confidence=confidence,
         content_hash=ch,
@@ -194,6 +200,7 @@ def create_strategy_memory(strategy_id: str, title: str, content: str) -> Knowle
         item_type="strategy_memory",
         title=title,
         file_path=str(path),
+        content=content,  # dual-write for FTS resilience
         confidence="high_confidence",
     )
     try:
@@ -230,6 +237,7 @@ def create_trade_case_study(
         item_type="trade_case_study",
         title=title,
         file_path=str(path),
+        content=content,  # dual-write for FTS resilience
         strategy_id=strategy_id,
         confidence=confidence,
         content_hash=ch,
@@ -258,6 +266,7 @@ def create_trading_guard(
         item_type="trading_guard",
         title=title,
         file_path=str(path),
+        content=content,  # dual-write for FTS resilience
         confidence=confidence,
     )
     try:

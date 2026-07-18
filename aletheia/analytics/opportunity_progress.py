@@ -84,6 +84,22 @@ def _entry_wait_reason(reason_code: str | None) -> tuple[str, str]:
             "candidate-specific adverse evidence; waiting for new facts.",
             "material_context_change",
         )
+    # Phase C (2026-07-18): non-terminal conviction/debate defers. Owner-facing
+    # text tells the user this is a healthy pause — the candidate stays queued
+    # and material fingerprint changes reopen evaluation.
+    if code == "operator_low_conviction":
+        return (
+            "The Operator considered a trade but conviction was below the minimum; "
+            "waiting for material context to change (new feature snapshot, "
+            "regime tag, or catalyst).",
+            "material_context_change",
+        )
+    if code == "debate_not_confirmed":
+        return (
+            "The Operator considered a trade but the bull/bear debate could not "
+            "confirm the direction; waiting for material context to change.",
+            "material_context_change",
+        )
     return (
         "The candidate is waiting for the next Operator evaluation.",
         "operator_evaluation",
@@ -360,9 +376,15 @@ def _operator_candidates(db, *, now: datetime) -> tuple[list[dict[str, Any]], di
         ).fetchone() if opportunity_id else None
         payload = _parse_json_object(event["queue_snapshot_json"]) if event else {}
         defer_until = payload.get("defer_until")
+        # Any operator_decision_deferred_* kind counts as an active defer for the
+        # owner-facing "waiting on X" tag. Phase C added
+        # ``operator_decision_deferred_low_conviction`` — omitting it here made the
+        # UI silently show "nothing happening" while the candidate was actually
+        # deferred behind a conviction gate.
+        event_kind = str(event["event_kind"]) if event else ""
         active_defer = bool(
             event
-            and event["event_kind"] == "operator_decision_deferred_unchanged_context"
+            and event_kind.startswith("operator_decision_deferred_")
             and (_iso_seconds_until(defer_until, now) or 0) > 0
         )
         reason_code = str(payload.get("defer_reason") or "") if active_defer else None
@@ -562,4 +584,21 @@ def build_current_entry_status(
         },
         "candidates": candidates,
         "pipeline": pipeline,
+        "epoch_summary": _epoch_summary_snapshot(),
     }
+
+
+def _epoch_summary_snapshot() -> dict[str, Any]:
+    """Six-bucket operator attribution for the current epoch (Overview/CLI/doctor).
+
+    Delegates to ``diagnostics.pipeline_progress.summarize`` so all three surfaces
+    agree on how skips/defers are classified and never blend old-commit rows into
+    the current-code stall picture. Best-effort — returns an empty payload on
+    failure so the Overview response never breaks on diagnostic issues.
+    """
+    try:
+        from aletheia.diagnostics.pipeline_progress import summarize
+
+        return summarize(hours=12)
+    except Exception:
+        return {}
