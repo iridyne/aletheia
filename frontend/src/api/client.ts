@@ -486,6 +486,50 @@ export const api = {
     expired_count: number
     proposed_count: number
     cohort_basis: 'opportunities_emitted_in_window'
+    current: {
+      state: 'position_open' | 'human_approval_required' | 'operator_deferred' |
+        'operator_queued' | 'ranker_waiting' | 'no_active_candidate' | 'no_candidates'
+      headline: string
+      primary_stage: string
+      reason_code: string
+      reason: string
+      next_trigger: string
+      as_of: string
+      policy_epoch_id: string | null
+      counts: {
+        open_positions: number
+        open_opportunities: number
+        queued_candidates: number
+        deferred_candidates: number
+        pending_proposals: number
+      }
+      candidates: Array<{
+        opportunity_id: string | null
+        symbol: string | null
+        direction: string | null
+        market_type: string | null
+        scanner_family: string | null
+        trade_score: number | null
+        confidence_score: number | null
+        status: 'queued' | 'deferred'
+        reason_code: string | null
+        reason: string
+        next_trigger: string
+        queued_at: string | null
+        valid_until: string | null
+        expires_in_sec: number | null
+        defer_until: string | null
+        latest_event_at: string | null
+        policy_epoch_id: string | null
+      }>
+      pipeline: Array<{
+        stage: string
+        label: string
+        state: 'active' | 'idle' | 'passed' | 'working' | 'waiting' |
+          'action_required' | 'reached' | 'not_reached' | 'not_available' | 'position_open'
+        count: number | null
+      }>
+    }
     snapshot: {
       executable_count: number
       excluded_by_reason: Array<{

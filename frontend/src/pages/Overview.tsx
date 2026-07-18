@@ -41,6 +41,11 @@ export default function Overview() {
   const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
   const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
   const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
+  const { data: entryFunnel } = useQuery({
+    queryKey: ['opportunity-funnel', 1],
+    queryFn: () => api.getOpportunityFunnel(1),
+    refetchInterval: 30000,
+  })
   const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 30000 })
   const { data: collectorHealth } = useQuery({
@@ -104,17 +109,23 @@ export default function Overview() {
       {/* Anchor 1 — PnL / account zone (full width) */}
       <PnLZone />
 
+      {/* Anchor 1.5 — the direct answer to why account value has not moved */}
+      <EntryStatusCard data={entryFunnel} />
+
       {/* Anchor 2 — agent feed (main) + right rail */}
       <div className="cockpit-main">
         <AgentFeed />
 
         <div className="cockpit-rail">
-          {/* Approval Desk — the human-in-loop control point + recent decisions history */}
-          <ApprovalDeskCard pendingProposals={pendingProposals} />
+          {/* Human Approval — visible action queue only; automated waits live above */}
+          <HumanApprovalCard pendingProposals={pendingProposals} />
 
 
           {/* Funnel — the counterpart to the Approval Desk: why nothing (or few) reached it */}
           <OpportunityFunnelCard />
+
+          {/* Terminal outcomes are history, not the current human action queue. */}
+          <DecisionHistoryCard />
 
           {/* Risk state */}
           <Card className="rail-card risk-panel">
@@ -272,15 +283,98 @@ export default function Overview() {
   )
 }
 
-// ── Approval Desk Card (pending + recent decisions history) ─────────────────
-// The Approval Desk's "action queue" role stays intact at the top; a folded
-// Recent decisions section beneath it records every terminal outcome for the
-// same instrument stream — trade / operator_skip / user_reject / auto_reject —
-// with the operator's own reasoning as the one-line summary. Clicking a row
-// opens the full lifecycle trace drawer (emit → filter_trace → pi_decision →
-// risk_decision → proposal → order → close). This closes the loop on "why
-// didn't this reach me?" once a candidate crosses INTO the operator stage —
-// the Funnel card covers everything BEFORE that boundary.
+// ── Current entry status ─────────────────────────────────────────────────────
+
+function fmtCountdown(seconds: number | null): string {
+  if (seconds == null) return 'expiry unavailable'
+  if (seconds <= 0) return 'expired'
+  const minutes = Math.ceil(seconds / 60)
+  return minutes < 60 ? `expires in ${minutes}m` : `expires in ${Math.ceil(minutes / 60)}h`
+}
+
+function entryTone(state: string): 'green' | 'yellow' | 'red' | 'muted' {
+  if (state === 'position_open') return 'green'
+  if (state === 'human_approval_required' || state === 'operator_deferred' || state === 'operator_queued') return 'yellow'
+  if (state === 'no_active_candidate') return 'red'
+  return 'muted'
+}
+
+function EntryStatusCard({ data }: { data?: FunnelData }) {
+  if (!data) return null
+  const current = data.current
+  const tone = entryTone(current.state)
+  const statusLabel = current.state === 'position_open'
+    ? 'Current state'
+    : current.state === 'human_approval_required'
+      ? 'Current action'
+      : 'Current blocker'
+
+  return (
+    <Card className={`entry-status-card entry-status-${tone}`}>
+      <div className="entry-status-head">
+        <div>
+          <div className="entry-status-kicker">Why no position now</div>
+          <h3>{current.headline}</h3>
+        </div>
+        <div className="entry-status-freshness mono" title={fmtTimestamp(current.as_of)}>
+          updated {fmtAge(current.as_of)}
+        </div>
+      </div>
+
+      <div className="entry-status-reason">
+        <span className={`entry-status-dot entry-status-dot-${tone}`} />
+        <div>
+          <span className="entry-status-label">{statusLabel} · {humanize(current.primary_stage)}</span>
+          <p>{current.reason}</p>
+        </div>
+      </div>
+
+      <div className="entry-pipeline" aria-label="Current entry pipeline">
+        {current.pipeline.map((step, index) => (
+          <div className="entry-pipeline-step-wrap" key={step.stage}>
+            <div className={`entry-pipeline-step entry-pipeline-step-${step.state}`}>
+              <span className="entry-pipeline-label">{step.label}</span>
+              <span className="entry-pipeline-value mono">
+                {step.count != null ? step.count : humanize(step.state)}
+              </span>
+              <span className="entry-pipeline-state">{humanize(step.state)}</span>
+            </div>
+            {index < current.pipeline.length - 1 && <span className="entry-pipeline-arrow">→</span>}
+          </div>
+        ))}
+      </div>
+
+      {current.candidates.length > 0 && (
+        <div className="entry-candidates">
+          {current.candidates.map(candidate => (
+            <div className="entry-candidate" key={candidate.opportunity_id || candidate.symbol || ''}>
+              <div className="entry-candidate-head">
+                <span>
+                  <span className="mono">{fmtSymbol(candidate.symbol || '', candidate.market_type || undefined)}</span>
+                  {candidate.direction && <span> · {humanize(candidate.direction)}</span>}
+                </span>
+                <span className={`entry-candidate-status entry-candidate-status-${candidate.status}`}>
+                  {candidate.status === 'deferred' ? 'waiting for facts' : 'queued'}
+                </span>
+              </div>
+              <div className="entry-candidate-detail">
+                <span>{candidate.reason}</span>
+                <span className="mono">{fmtCountdown(candidate.expires_in_sec)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="entry-status-foot">
+        <span>Next trigger · {humanize(current.next_trigger)}</span>
+        <span>Last 1h · {data.emitted_count} discovered · {data.expired_count} expired · {data.proposed_count} proposed</span>
+      </div>
+    </Card>
+  )
+}
+
+// ── Human Approval + terminal decision history ──────────────────────────────
 
 const OUTCOME_LABEL: Record<string, string> = {
   trade: 'trade',
@@ -309,33 +403,37 @@ const OUTCOME_TONE: Record<string, 'green' | 'yellow' | 'red' | 'muted'> = {
   reject_unknown: 'yellow',
 }
 
-function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
+const FUNNEL_WINDOWS = [1, 4, 24]
+
+function WindowSelector({ value, onChange }: { value: number; onChange: (hours: number) => void }) {
+  return (
+    <div className="window-selector" aria-label="Analytics window">
+      {FUNNEL_WINDOWS.map(hours => (
+        <button
+          key={hours}
+          type="button"
+          className={`window-selector-btn${value === hours ? ' active' : ''}`}
+          onClick={() => onChange(hours)}
+        >
+          {hours}h
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function HumanApprovalCard({ pendingProposals }: { pendingProposals: any[] }) {
   const navigate = useNavigate()
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const [selectedOppId, setSelectedOppId] = useState<string | null>(null)
-  const historyRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (historyOpen) requestAnimationFrame(() =>
-      historyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
-  }, [historyOpen])
-
-  const { data: decisions } = useQuery({
-    queryKey: ['operator-decisions'],
-    queryFn: () => api.getOperatorDecisions(24, 20),
-    refetchInterval: 60000,
-  })
-
-  const counts = decisions?.counts
-  const items = decisions?.items || []
-  const historyTotal = decisions?.total_count || 0
 
   return (
-    <Card className="rail-card desk-panel">
-      <CardHeader title="Approval Desk" />
+    <Card className="rail-card human-approval-panel">
+      <CardHeader title="Human Approval" />
       {pendingProposals.length > 0 ? (
         <>
-          <Badge tone="yellow">{pendingProposals.length}</Badge>
+          <div className="human-approval-required">
+            <Badge tone="yellow">{pendingProposals.length}</Badge>
+            <span>Proposal{pendingProposals.length === 1 ? '' : 's'} waiting for you</span>
+          </div>
           <ul className="approval-list">
             {pendingProposals.slice(0, 4).map((p: any) => (
               <li key={p.id}>
@@ -347,10 +445,45 @@ function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
           <Button className="btn-control mt-3" onClick={() => navigate('/proposals')}>Review →</Button>
         </>
       ) : (
-        <p className="text-muted text-sm">No pending actions</p>
+        <div className="human-approval-clear">
+          <span className="human-approval-mark">✓</span>
+          <div>
+            <strong>No human approval required</strong>
+            <p>Automated candidates and waits are shown in the entry status above.</p>
+          </div>
+        </div>
       )}
+    </Card>
+  )
+}
 
-      {/* Recent decisions — collapsible history of terminal operator outcomes */}
+function DecisionHistoryCard() {
+  const [hours, setHours] = useState(1)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [selectedOppId, setSelectedOppId] = useState<string | null>(null)
+  const historyRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (historyOpen) requestAnimationFrame(() =>
+      historyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+  }, [historyOpen])
+
+  const { data: decisions } = useQuery({
+    queryKey: ['operator-decisions', hours],
+    queryFn: () => api.getOperatorDecisions(hours, 20),
+    refetchInterval: 60000,
+  })
+
+  const counts = decisions?.counts
+  const items = decisions?.items || []
+  const historyTotal = decisions?.total_count || 0
+
+  return (
+    <Card className="rail-card decision-history-panel">
+      <div className="decision-history-head">
+        <h3>Decision History</h3>
+        <WindowSelector value={hours} onChange={setHours} />
+      </div>
       {decisions && (
         <>
           {historyTotal > 0 && items[0] && (() => {
@@ -364,7 +497,7 @@ function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
                 {last.outcome !== 'trade' && (
                   lastTrade
                     ? <span> · <span className="decisions-count-green">✓</span> trade {fmtAge(lastTrade.decided_at)}</span>
-                    : <span className="decisions-count-muted"> · no trades 24h</span>
+                    : <span className="decisions-count-muted"> · no trades {hours}h</span>
                 )}
               </div>
             )
@@ -380,7 +513,7 @@ function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
                   <span className="status-value text-xs">
                     {historyTotal > 0
                       ? <RecentCountsInline counts={counts!} />
-                      : <span className="text-muted">no decisions in 24h</span>}
+                      : <span className="text-muted">no terminal decisions in {hours}h</span>}
                   </span>
                   <span className="status-row-chevron">{historyOpen ? '▾' : '▸'}</span>
                 </td>
@@ -391,7 +524,9 @@ function ApprovalDeskCard({ pendingProposals }: { pendingProposals: any[] }) {
             <div className="decisions-panel">
               <div className="decisions-title">Last {decisions.window_hours}h · {items.length} shown</div>
               {items.length === 0 && (
-                <p className="text-muted text-sm mb-0">No operator decisions yet.</p>
+                <p className="text-muted text-sm mb-0">
+                  No terminal Operator decisions. Deferred candidates remain visible above.
+                </p>
               )}
               {items.map((it) => {
                 const tone = OUTCOME_TONE[it.outcome] || 'muted'
@@ -550,10 +685,24 @@ function fmtDurMin(sec: number): string {
 type FunnelData = ReturnType<typeof api.getOpportunityFunnel> extends Promise<infer R> ? R : never
 
 function buildDiagnosis(data: FunnelData): { text: string; tone: 'green' | 'yellow' | 'red' | 'muted' } {
+  const current = data.current
   const snap = data.snapshot
   const excluded = snap.excluded_by_reason || []
   const rejectedTotal = excluded.reduce((s, r) => s + (r.count || 0), 0)
   const executable = snap.executable_count
+
+  if (current.state === 'position_open') {
+    return { text: current.headline, tone: 'green' }
+  }
+  if (current.state === 'human_approval_required' || current.state === 'operator_deferred' || current.state === 'operator_queued') {
+    return { text: current.headline, tone: 'yellow' }
+  }
+  if (current.state === 'ranker_waiting') {
+    return { text: current.headline, tone: 'yellow' }
+  }
+  if (current.state === 'no_active_candidate') {
+    return { text: current.reason, tone: 'red' }
+  }
 
   if (data.snapshot.freshness === 'missing') {
     return { text: 'No operator eval yet in this session. Snapshot appears after the first candidate refresh.', tone: 'muted' }
@@ -602,10 +751,11 @@ function FunnelBar({ label, count, denom, hint, tone = 'muted' }: {
 
 function OpportunityFunnelCard() {
   const navigate = useNavigate()
+  const [hours, setHours] = useState(1)
   const [openReason, setOpenReason] = useState<string | null>(null)
   const { data } = useQuery({
-    queryKey: ['opportunity-funnel'],
-    queryFn: () => api.getOpportunityFunnel(24),
+    queryKey: ['opportunity-funnel', hours],
+    queryFn: () => api.getOpportunityFunnel(hours),
     refetchInterval: 30000,
   })
   if (!data) return null
@@ -632,8 +782,11 @@ function OpportunityFunnelCard() {
   return (
     <Card className="rail-card funnel-panel">
       <div className="funnel-head">
-        <h3>Funnel</h3>
-        <span className="text-xs text-muted">Market Observer → Operator</span>
+        <div>
+          <h3>Funnel</h3>
+          <span className="text-xs text-muted">Market Observer → Operator</span>
+        </div>
+        <WindowSelector value={hours} onChange={setHours} />
       </div>
 
       {/* Section 1: Diagnosis */}

@@ -54,6 +54,21 @@ def test_opportunity_funnel_labels_cohort_and_snapshot_without_false_health() ->
     assert "Healthy:" not in overview
 
 
+def test_overview_leads_with_current_no_position_reason_and_one_hour_funnel() -> None:
+    overview = (ROOT / "frontend/src/pages/Overview.tsx").read_text(encoding="utf-8")
+    client = (ROOT / "frontend/src/api/client.ts").read_text(encoding="utf-8")
+
+    assert "Why no position now" in overview
+    assert "current.state" in overview
+    assert "Current blocker" in overview
+    assert "Human Approval" in overview
+    assert "No human approval required" in overview
+    assert "No pending actions" not in overview
+    assert "const FUNNEL_WINDOWS = [1, 4, 24]" in overview
+    assert "getOpportunityFunnel(1)" in overview
+    assert "current:" in client
+
+
 def test_approval_desk_surfaces_unattributed_rejections() -> None:
     overview = (ROOT / "frontend/src/pages/Overview.tsx").read_text(encoding="utf-8")
     client = (ROOT / "frontend/src/api/client.ts").read_text(encoding="utf-8")
