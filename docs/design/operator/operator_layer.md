@@ -31,6 +31,12 @@
 > +----------------------------------------------------------------------+
 > ```
 >
+> `GET /api/operator/status` 因此返回两个独立事实：顶层 `status` 只属于
+> `status_scope=operator_shell`；`trading_daemon` 单独报告 (3) 的 configured、running、
+> evaluating、wake_pending 与 scheduler fallback。daemon 未运行但 scheduler 正常时，
+> `trading_daemon.state=scheduled_fallback`，不得把 shell 的 online/offline 当成交易决策
+> liveness，也不得把 fallback 展示成 event-driven daemon 正常运行。
+>
 > **单一真相源铁律**: operator 行为权威记录统一落 Python SQLite 表; (1) 只编排+执行,
 > 不许留独立真相: 内存态须有 Python 回写路径且重启可重建
 > (spec spec_operator_single_source.py + spec_operator_contract_parity.py 守)。

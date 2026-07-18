@@ -109,6 +109,60 @@ def _dump_json(value, fallback="[]"):
     return json.dumps(value)
 
 
+def _agent_run_output_events(run: dict) -> list[dict]:
+    """Classify Paper Trader output strings without rewriting their raw record."""
+    if run.get("agent_name") != "paper_trader":
+        return []
+    outputs = _to_json(run.get("outputs_created"), [])
+    if not isinstance(outputs, list):
+        return []
+
+    classifications = {
+        "skip": ("ranker_filter", None, True),
+        "skip_recent_signal": ("signal_cooldown", "signal_cooldown", True),
+        "reuse_active_carrier": ("carrier_reuse", "active_operator_carrier", True),
+        "backpressure": ("queue_wait", "signal_queue_capacity", True),
+        "signals_pending": ("signal_enqueue", "signal_enqueued", False),
+        "skip_existing_position": ("existing_position", "open_position_duplicate", True),
+        "skip_already_evaluated": (
+            "already_evaluated",
+            "operator_already_evaluated",
+            False,
+        ),
+        "skip_stale_plan": ("stale_plan", "opportunity_not_open", False),
+    }
+    events: list[dict] = []
+    for raw in outputs:
+        if not isinstance(raw, str):
+            continue
+        parts = raw.split(":")
+        prefix = parts[0]
+        classification = classifications.get(prefix)
+        if classification is None:
+            continue
+        event_class, reason_code, retryable = classification
+        if prefix == "skip" and len(parts) >= 3:
+            reason_code = parts[2]
+        events.append(
+            {
+                "raw_output": raw,
+                "event_class": event_class,
+                "reason_code": reason_code,
+                "retryable": retryable,
+                "is_operator_decision": False,
+            }
+        )
+    return events
+
+
+def _with_agent_run_output_events(run: dict | None):
+    if run is None:
+        return None
+    payload = dict(run)
+    payload["output_events"] = _agent_run_output_events(payload)
+    return payload
+
+
 PIPELINE_STAGE_ORDER = [
     "research",
     "validation",
@@ -219,13 +273,13 @@ def _build_research_cycle_payload(opportunity: dict) -> dict:
 @router.get("/agent-runs")
 def get_agent_runs():
     _ensure_db()
-    return repo.list_agent_runs()
+    return [_with_agent_run_output_events(run) for run in repo.list_agent_runs()]
 
 
 @router.get("/agent-runs/{run_id}")
 def get_agent_run(run_id: str):
     _ensure_db()
-    return repo.get_agent_run(run_id)
+    return _with_agent_run_output_events(repo.get_agent_run(run_id))
 
 
 @router.get("/agent-runs/{run_id}/tool-calls")

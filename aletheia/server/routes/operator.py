@@ -91,6 +91,47 @@ def _operator_status_defaults() -> dict[str, Any]:
     }
 
 
+def _trading_daemon_status() -> dict[str, Any]:
+    """Report trading-decision liveness separately from Operator shell liveness."""
+    from aletheia.agent_runtime.pi_daemon import daemon_status
+    from aletheia.agent_runtime.scheduler import status_snapshot
+
+    cfg = load_config()
+    daemon = daemon_status()
+    scheduler = status_snapshot()
+    configured = bool(cfg.pi_daemon.enabled)
+    running = bool(daemon.get("running"))
+    fallback_available = bool(scheduler.get("running"))
+    if running:
+        state = "event_driven"
+    elif fallback_available:
+        state = "scheduled_fallback"
+    elif configured:
+        state = "unavailable"
+    else:
+        state = "disabled"
+    return {
+        "configured": configured,
+        "running": running,
+        "evaluating": bool(daemon.get("lock_held")),
+        "wake_pending": bool(daemon.get("event_set")),
+        "fallback_available": fallback_available,
+        "state": state,
+    }
+
+
+def _operator_status_payload() -> dict[str, Any]:
+    heartbeat = get_latest_heartbeat()
+    status = (
+        _operator_status_defaults()
+        if heartbeat is None
+        else _apply_stale_status(heartbeat)
+    )
+    status["status_scope"] = "operator_shell"
+    status["trading_daemon"] = _trading_daemon_status()
+    return status
+
+
 def _apply_stale_status(heartbeat: dict[str, Any]) -> dict[str, Any]:
     cfg = load_config()
     seen_at = _parse_ts(heartbeat.get("last_seen_at"))
@@ -716,10 +757,9 @@ async def _preview_operator_command(req: OperatorCommandPreviewRequest) -> dict[
 
 @router.get("/status")
 async def operator_status():
-    heartbeat = get_latest_heartbeat()
-    if heartbeat is None:
-        return _operator_status_defaults()
-    return _apply_stale_status(heartbeat)
+    # Heartbeat/config reads are synchronous; keep them off the event loop on this
+    # frequently-polled endpoint.
+    return await asyncio.to_thread(_operator_status_payload)
 
 
 @router.post("/branches")
