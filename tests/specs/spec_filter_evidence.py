@@ -532,10 +532,66 @@ def test_doctor_surfaces_skip_halt_evidence_gaps_read_only(tmp_path, monkeypatch
     assert "raw_24h_candidate_skips=1" in check.detail
     assert "raw_24h_missing_trace=1" in check.detail
     assert "raw_24h_missing_outcome_seed=1" in check.detail
+    assert "raw_24h_direct_model_skips=0" in check.detail
+    assert "raw_24h_trade_intent_gated_skips=0" in check.detail
+    assert "raw_24h_confirmed_adverse_skips=0" in check.detail
     assert "unscoped_heartbeat_skips=1" in check.detail
     assert "no_evaluable_candidate_events=0" in check.detail
+    assert "deferred_unchanged_context_events=0" in check.detail
     assert "finding=recording_incident" in check.detail
     assert "does not change PI, config, Risk, or execution" in check.fix_hint
+
+
+def test_doctor_separates_confirmed_direct_and_trade_gated_skip_paths(
+    tmp_path, monkeypatch
+):
+    import json
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.diagnostics import doctor
+    from aletheia.storage.models import FilterDecision, PiDecision
+    from aletheia.storage.repositories import insert_filter_decision, insert_pi_decision
+
+    for decision_id, reason_code, attempts in (
+        ("confirmed-direct-skip", "operator_model_skip", 1),
+        ("trade-gated-skip", "operator_model_trade", 0),
+    ):
+        insert_pi_decision(PiDecision(
+            id=decision_id,
+            action="skip",
+            symbol="BTC/USDT",
+            direction="long",
+            market_type="spot",
+            opportunity_id=f"opp-{decision_id}",
+            signal_source="market_observer",
+        ))
+        insert_filter_decision(FilterDecision(
+            dedup_key=f"trace-{decision_id}",
+            candidate_key=f"pi_decision:{decision_id}",
+            candidate_kind="pi_decision",
+            opportunity_id=f"opp-{decision_id}",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            filter_name="operator_action_assessment",
+            stage="system_operator",
+            decision="rejected",
+            reason_code=reason_code,
+            input_snapshot=json.dumps({"confirmation_attempts": attempts}),
+            filter_version="test",
+        ))
+
+    report = doctor.Report()
+    doctor._probe_skip_halt(report)
+    detail = next(
+        check.detail for check in report.checks if check.name == "loop.skip_halt"
+    )
+
+    assert "raw_24h_direct_model_skips=1" in detail
+    assert "raw_24h_trade_intent_gated_skips=1" in detail
+    assert "raw_24h_confirmed_adverse_skips=1" in detail
 
 
 @spec_claim(
@@ -960,3 +1016,88 @@ def test_filter_evidence_health_respects_settler_cadence():
     source = inspect.getsource(_probe_filter_evidence)
     assert "awaiting_cadence" in source
     assert "stale_overdue" in source
+
+
+@spec_claim(
+    SpecClaim(
+        "FE-S16", _CONTRACT, "§3 terminal System Operator evidence", "L2b",
+        "A terminal skip preserves its complete rationale and structured supporting, "
+        "opposing, risk, and adverse evidence in the durable PiDecision evidence manifest.",
+        status="implemented",
+    ),
+)
+def test_terminal_skip_preserves_complete_structured_rationale():
+    import json
+
+    from aletheia.agent_shell.reflection import _build_pi_decision
+
+    reasoning = "candidate-specific adverse thesis " + ("x" * 900)
+    result = {
+        "action": "skip",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "market_type": "spot",
+        "conviction": 30,
+        "reasoning": reasoning,
+        "skip_kind": "adverse_candidate_evidence",
+        "adverse_reason_codes": ["regime_mismatch"],
+        "adverse_evidence": ["1h range rejection remained intact"],
+        "supporting_signals": ["15m momentum turned positive"],
+        "opposing_signals": ["1h structure rejected the breakout"],
+        "risk_factors": ["range whipsaw"],
+        "evidence_manifest": {
+            "operator_rationale": {
+                "skip_kind": "adverse_candidate_evidence",
+                "adverse_reason_codes": ["regime_mismatch"],
+                "adverse_evidence": ["1h range rejection remained intact"],
+                "supporting_signals": ["15m momentum turned positive"],
+                "opposing_signals": ["1h structure rejected the breakout"],
+                "risk_factors": ["range whipsaw"],
+            }
+        },
+    }
+
+    decision = _build_pi_decision(result)
+    manifest = json.loads(decision.evidence_manifest_json)
+
+    assert decision.reasoning == reasoning
+    assert manifest["operator_rationale"]["skip_kind"] == "adverse_candidate_evidence"
+    assert manifest["operator_rationale"]["supporting_signals"] == [
+        "15m momentum turned positive"
+    ]
+
+
+def test_decision_evidence_builder_carries_operator_rationale(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.trading_context import build_decision_evidence_manifest
+    from aletheia.agent_shell.trading_decision import TradingDecision
+
+    decision = TradingDecision(
+        action="skip",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+        conviction=30,
+        reasoning="confirmed candidate-specific conflict",
+        skip_kind="adverse_candidate_evidence",
+        adverse_reason_codes=["signal_conflict"],
+        adverse_evidence=["15m and 1h directions conflict"],
+        supporting_signals=["15m momentum"],
+        opposing_signals=["1h rejection"],
+        risk_factors=["whipsaw"],
+    )
+
+    rationale = build_decision_evidence_manifest(
+        {"layer1": {"feature_index": {}}}, decision
+    )["operator_rationale"]
+
+    assert rationale == {
+        "skip_kind": "adverse_candidate_evidence",
+        "adverse_reason_codes": ["signal_conflict"],
+        "adverse_evidence": ["15m and 1h directions conflict"],
+        "supporting_signals": ["15m momentum"],
+        "opposing_signals": ["1h rejection"],
+        "risk_factors": ["whipsaw"],
+    }

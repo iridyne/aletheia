@@ -234,7 +234,9 @@ def _build_pi_decision(decision_result: dict):
         market_type=record["market_type"],
         action=record["action"] or "skip",
         conviction=record.get("conviction") or 0,
-        reasoning=record.get("reasoning") or "",
+        # The rotating reflection pointer is intentionally concise, but the
+        # authoritative database row must preserve the complete rationale.
+        reasoning=decision_result.get("reasoning") or "",
         proposal_id=record.get("proposal_id"),
         proposal_status=record.get("proposal_status"),
         proposal_reason=record.get("proposal_reason"),

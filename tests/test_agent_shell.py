@@ -695,6 +695,8 @@ async def test_direct_model_skip_records_operator_action_trace(tmp_path, monkeyp
         "inputs": {
             "model_action": "skip",
             "initial_conviction": 31,
+            "confirmation_attempts": 0,
+            "initial_model_action": "skip",
         },
         "parameters": {"schema_actions": ["trade", "skip"]},
     }

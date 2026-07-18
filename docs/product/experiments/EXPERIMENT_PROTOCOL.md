@@ -21,6 +21,17 @@
 > coarse-fingerprint data. The other fixes in the batch are A-class
 > state/evidence/time-window/UI honesty repairs.
 
+> **2026-07-18 Direct-skip semantics epoch**:
+> `system_operator_skip_remediation/b1.2` closes the prior b1.1 observation window.
+> The sole decision treatment is a bounded counterfactual confirmation before a direct
+> model skip may become terminal: only typed, candidate-specific adverse evidence can
+> confirm it; `insufficient_evidence`, rank priority, or malformed output defers without
+> consuming the pending carrier. A 120-minute material-context fingerprint suppresses
+> unchanged retries, and complete rationale persistence is an A-class audit correction.
+> Conviction 55, existing trade debate math, Ranker selection, sizing, Risk, Execution,
+> Exchange, and Live remain unchanged. Compare new direct-skip/proposal/queue/outcome
+> metrics only within b1.2; b1.1 is baseline, never a pooled cohort.
+
 ---
 
 ## 核心赌注

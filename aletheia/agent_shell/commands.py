@@ -1704,6 +1704,95 @@ def _record_no_evaluable_candidate_observation(
     ))
 
 
+def _deferred_context_dedup_key(
+    context_fingerprint: str,
+    *,
+    policy_epoch_id: str,
+    window_minutes: int,
+) -> tuple[str, str]:
+    """Return a stable key for one bounded unchanged-context suppression window."""
+    now = datetime.now(timezone.utc)
+    window_seconds = max(int(window_minutes), 1) * 60
+    window_epoch = int(now.timestamp()) // window_seconds * window_seconds
+    window_start = datetime.fromtimestamp(window_epoch, timezone.utc).isoformat()
+    payload = {
+        "event_kind": "operator_decision_deferred_unchanged_context",
+        "context_fingerprint": context_fingerprint,
+        "policy_epoch_id": policy_epoch_id,
+        "window_start": window_start,
+    }
+    return (
+        hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+        window_start,
+    )
+
+
+def _existing_deferred_context_observation(
+    context_fingerprint: str,
+    *,
+    policy_epoch_id: str,
+    window_minutes: int,
+) -> dict | None:
+    from aletheia.storage.sqlite import get_db
+
+    dedup_key, _window_start = _deferred_context_dedup_key(
+        context_fingerprint,
+        policy_epoch_id=policy_epoch_id,
+        window_minutes=window_minutes,
+    )
+    row = get_db().execute(
+        "SELECT * FROM operator_evaluation_events WHERE dedup_key=? "
+        "AND event_kind='operator_decision_deferred_unchanged_context'",
+        (dedup_key,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def _record_deferred_context_observation(
+    ctx: dict,
+    *,
+    context_fingerprint: str,
+    policy_epoch_id: str,
+    trigger: str,
+    reason: str,
+    window_minutes: int,
+) -> dict:
+    """Persist a non-terminal defer fact without consuming a queue carrier."""
+    from aletheia.storage.models import OperatorEvaluationEvent
+    from aletheia.storage.repositories import record_operator_evaluation_event
+
+    queue = (ctx.get("layer2") or {}).get("pending_queue") or {}
+    dedup_key, window_start = _deferred_context_dedup_key(
+        context_fingerprint,
+        policy_epoch_id=policy_epoch_id,
+        window_minutes=window_minutes,
+    )
+    snapshot = {
+        "context_fingerprint": context_fingerprint,
+        "observation_window_start": window_start,
+        "defer_reason": reason,
+        "unresolved_total": int(queue.get("unresolved_total") or 0),
+        "visible_count": int(queue.get("visible_count") or 0),
+        "overflow_count": int(queue.get("overflow_count") or 0),
+        "oldest_at": queue.get("oldest_at"),
+    }
+    return record_operator_evaluation_event(OperatorEvaluationEvent(
+        dedup_key=dedup_key,
+        event_kind="operator_decision_deferred_unchanged_context",
+        trigger=str(trigger or "manual"),
+        pending_unresolved_total=snapshot["unresolved_total"],
+        pending_visible_count=snapshot["visible_count"],
+        pending_oldest_created_at=snapshot["oldest_at"],
+        queue_snapshot_json=json.dumps(
+            snapshot, sort_keys=True, separators=(",", ":")
+        ),
+        data_health_json="{}",
+        policy_epoch_id=policy_epoch_id,
+    ))
+
+
 async def evaluate_trading_opportunity(params: dict) -> dict:
     """System Operator evaluates market state and submits a paper proposal if conviction >= 55."""
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
@@ -1717,7 +1806,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
 
     # Build three-layer enriched context
     ctx = build_enriched_trading_context()
-    from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
+    from aletheia.agent_shell.skip_policy import (
+        ensure_skip_remediation_policy_epoch,
+        skip_policy_context,
+    )
     from aletheia.agent_shell.b2_evidence_policy import (
         attach_b2_candidate_evidence,
         ensure_b2_candidate_evidence_policy_epoch,
@@ -1728,6 +1820,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     b2_policy_epoch_id = ensure_b2_candidate_evidence_policy_epoch()
     vergex_policy_epoch_id = ensure_vergex_utilization_policy_epoch()
     ctx["skip_policy_epoch_id"] = policy_epoch_id
+    ctx["skip_policy"] = skip_policy_context()
     ctx["vergex_policy_epoch_id"] = vergex_policy_epoch_id
     attach_b2_candidate_evidence(ctx, policy_epoch_id=b2_policy_epoch_id)
 
@@ -1753,14 +1846,63 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         }
 
     # Wake context (exit-intent plan M1.5): when the daemon woke us for specific
-    # positions (coalesced + rate-limited WakeEvents), carry the batches into the
-    # decision context so the decision layer (M5) can surface "why you were woken"
-    # to the Operator. No-op for the legacy generic wake (params without batches).
+    # positions, carry it before fingerprinting so a distinct wake cannot be
+    # hidden behind an earlier entry-candidate defer observation.
     if isinstance(ctx, dict) and isinstance(params, dict) and params.get("wake_batches"):
         ctx["wake_context"] = params
 
+    from aletheia.agent_shell.trading_context import (
+        operator_decision_context_fingerprint,
+    )
+
+    context_fingerprint = operator_decision_context_fingerprint(ctx)
+    defer_window_minutes = int(
+        ctx["skip_policy"].get("unchanged_context_defer_window_minutes") or 120
+    )
+    existing_defer = _existing_deferred_context_observation(
+        context_fingerprint,
+        policy_epoch_id=policy_epoch_id,
+        window_minutes=defer_window_minutes,
+    )
+    if existing_defer is not None:
+        return {
+            "action": "evaluation_deferred",
+            "observation_status": "unchanged_context",
+            "operator_evaluation_event_id": existing_defer["id"],
+            "policy_epoch_id": policy_epoch_id,
+            "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
+            "context_fingerprint": context_fingerprint,
+            "model_invoked": False,
+            "pending_queue_remaining": int((queue or {}).get("unresolved_total") or 0),
+            "pending_queue": queue,
+        }
+
     # Run System Operator decision loop
-    decision = await _evaluate(ctx)
+    try:
+        decision = await _evaluate(ctx)
+    except DecisionUnavailable as exc:
+        if exc.stage != "operator_skip_validation":
+            raise
+        event = _record_deferred_context_observation(
+            ctx,
+            context_fingerprint=context_fingerprint,
+            policy_epoch_id=policy_epoch_id,
+            trigger=str(params.get("_trigger") or "manual"),
+            reason=exc.reason,
+            window_minutes=defer_window_minutes,
+        )
+        return {
+            "action": "evaluation_deferred",
+            "observation_status": "invalid_or_neutral_direct_skip",
+            "operator_evaluation_event_id": event["id"],
+            "policy_epoch_id": policy_epoch_id,
+            "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
+            "context_fingerprint": context_fingerprint,
+            "model_invoked": True,
+            "defer_reason": exc.reason,
+            "pending_queue_remaining": int((queue or {}).get("unresolved_total") or 0),
+            "pending_queue": queue,
+        }
 
     trade_like = decision.action == "trade"
     rejected_missing_pending_carrier = False
@@ -1807,7 +1949,9 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "symbol": decision.symbol,
         "direction": decision.direction,
         "conviction": decision.conviction,
-        "reasoning": decision.reasoning[:300],
+        # PiDecision.reasoning is TEXT and is the durable audit record. Display
+        # surfaces may truncate independently; persistence must not.
+        "reasoning": decision.reasoning,
         "debate_ran": decision.debate_ran,
         "debate_initial_conviction": decision.debate_initial_conviction,
         "debate_bull": decision.debate_bull_confidence,
@@ -1823,6 +1967,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "key_assumptions": decision.key_assumptions,
         "supporting_signals": decision.supporting_signals,
         "opposing_signals": decision.opposing_signals,
+        "risk_factors": decision.risk_factors,
+        "skip_kind": decision.skip_kind,
+        "adverse_reason_codes": decision.adverse_reason_codes,
+        "adverse_evidence": decision.adverse_evidence,
         "market_type": decision.market_type,
         "scanner_family": decision.scanner_family,
         "position_size_usdt": decision.position_size_usdt,

@@ -209,45 +209,21 @@ def test_reviewed_opportunity_roundtrips_through_market_pending_signal(tmp_path,
     assert decision.market_type == "usdt_futures"
 
 
-def test_unsupported_close_is_skip_and_does_not_bind_an_open_position():
+def test_unsupported_close_is_retryable_and_does_not_bind_an_open_position():
     """The entry Operator cannot disguise an unimplemented close as a real action."""
     from aletheia.agent_shell.trading_decision import (
-        _attach_opportunity_context,
+        DecisionUnavailable,
         _parse_decision,
     )
 
-    ctx = {
-        "layer1": {
-            "positions": [
-                {
-                    "symbol": "NEAR/USDT",
-                    "direction": "short",
-                    "opportunity_id": "opp-near-short",
-                    "strategy_id": "strat-near",
-                    "trade_school": "short_term",
-                }
-            ],
-            "opportunities": [],
-        },
-        "layer2": {},
-        "layer3": {},
-    }
-    decision = _parse_decision({
-        "action": "close",
-        "symbol": None,
-        "direction": None,
-        "conviction": 72,
-        "reasoning": "NEAR/USDT short is underwater and thesis failed",
-    })
-
-    _attach_opportunity_context(decision, ctx)
-
-    assert decision.action == "skip"
-    assert "unsupported_action:close" in decision.reasoning
-    assert decision.symbol is None
-    assert decision.direction is None
-    assert decision.opportunity_id is None
-    assert decision.strategy_id is None
+    with pytest.raises(DecisionUnavailable, match="unsupported_action:close"):
+        _parse_decision({
+            "action": "close",
+            "symbol": None,
+            "direction": None,
+            "conviction": 72,
+            "reasoning": "NEAR/USDT short is underwater and thesis failed",
+        })
 
 
 def test_entry_decision_does_not_guess_identity_from_open_positions():

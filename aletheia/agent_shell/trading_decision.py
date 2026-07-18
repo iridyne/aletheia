@@ -68,6 +68,16 @@ _BIAS_BRAKE_MIN_PROPOSALS = 20
 _BIAS_BRAKE_MAX_DIRECTION_PCT = 0.90
 _BIAS_BRAKE_BYPASS_CONVICTION = 85
 
+_ADVERSE_SKIP_REASON_CODES = {
+    "signal_conflict",
+    "regime_mismatch",
+    "adverse_price_structure",
+    "liquidity_or_execution_quality",
+    "negative_same_cohort_outcomes",
+    "invalid_risk_reward",
+    "candidate_data_integrity",
+}
+
 
 class DecisionUnavailable(RuntimeError):
     """A transient Operator input/preflight dependency is not authoritative yet.
@@ -126,6 +136,12 @@ class TradingDecision:
     risk_factors: list[str] = field(default_factory=list)
     supporting_signals: list[str] = field(default_factory=list)
     opposing_signals: list[str] = field(default_factory=list)
+    # A direct skip is terminal only when it names candidate-specific adverse
+    # evidence.  ``insufficient_evidence`` is intentionally neutral and cannot
+    # consume a pending Opportunity by itself.
+    skip_kind: str | None = None
+    adverse_reason_codes: list[str] = field(default_factory=list)
+    adverse_evidence: list[str] = field(default_factory=list)
     position_size_usdt: float | None = None
     stop_price: float | None = None
     take_profit: float | None = None
@@ -243,6 +259,15 @@ _DECISION_SCHEMA = {
         "risk_factors": {"type": "array", "items": {"type": "string"}},
         "supporting_signals": {"type": "array", "items": {"type": "string"}},
         "opposing_signals": {"type": "array", "items": {"type": "string"}},
+        "skip_kind": {
+            "type": "string",
+            "enum": ["adverse_candidate_evidence", "insufficient_evidence"],
+        },
+        "adverse_reason_codes": {
+            "type": "array",
+            "items": {"type": "string", "enum": sorted(_ADVERSE_SKIP_REASON_CODES)},
+        },
+        "adverse_evidence": {"type": "array", "items": {"type": "string"}},
         # P1: structured assumption list — at most 3, kept concise
         "key_assumptions": {"type": "array", "items": {"type": "string"}},
     },
@@ -285,10 +310,72 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     if decision_raw is None:
         raise DecisionUnavailable("llm_assessment_unavailable")
 
-    decision = _parse_decision(decision_raw)
+    confirmation_attempts = 0
+    initial_action = str(decision_raw.get("action") or "").strip().lower() or None
+    try:
+        decision = _parse_decision(decision_raw)
+    except DecisionUnavailable as exc:
+        # A malformed response is not a business decision. Give the model one
+        # bounded correction opportunity, then preserve the pending carrier.
+        confirmation_attempts = 1
+        corrected = await _reassess_direct_skip(
+            trading_context, decision_raw, exc.reason
+        )
+        try:
+            decision = _parse_decision(corrected or {})
+        except DecisionUnavailable as corrected_exc:
+            raise DecisionUnavailable(
+                f"operator_output_not_repaired:{corrected_exc.reason}",
+                stage="operator_skip_validation",
+            ) from corrected_exc
     # R0: match the pick back to its source opportunity (id + scanner_family)
     # before any return path, so skip records carry attribution.
     _attach_opportunity_context(decision, trading_context)
+
+    initial_skip_kind = decision.skip_kind
+    skip_confirmation_required = (
+        _direct_skip_confirmation_required(trading_context)
+        and not _has_submitting_final(decision)
+    )
+    if (
+        decision.action == "skip"
+        and skip_confirmation_required
+        and confirmation_attempts == 0
+    ):
+        validation_reason = (
+            _direct_skip_validation_reason(decision)
+            or "counterfactual_confirmation_required"
+        )
+        initial_opportunity_id = decision.opportunity_id
+        confirmation_attempts = 1
+        confirmed_raw = await _reassess_direct_skip(
+            trading_context, decision_raw, validation_reason
+        )
+        try:
+            decision = _parse_decision(confirmed_raw or {})
+        except DecisionUnavailable as exc:
+            raise DecisionUnavailable(
+                f"direct_skip_not_confirmed:{exc.reason}",
+                stage="operator_skip_validation",
+            ) from exc
+        _attach_opportunity_context(decision, trading_context)
+        if (
+            decision.action == "skip"
+            and initial_opportunity_id
+            and decision.opportunity_id != initial_opportunity_id
+        ):
+            raise DecisionUnavailable(
+                "direct_skip_not_confirmed:candidate_changed",
+                stage="operator_skip_validation",
+            )
+
+    if decision.action == "skip" and skip_confirmation_required:
+        invalid_skip_reason = _direct_skip_validation_reason(decision)
+        if invalid_skip_reason:
+            raise DecisionUnavailable(
+                f"direct_skip_not_confirmed:{invalid_skip_reason}",
+                stage="operator_skip_validation",
+            )
 
     trade_actions = ("trade",)
     trade_intent = decision.action in trade_actions
@@ -300,7 +387,16 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     assessment_inputs = {
         "model_action": decision.action,
         "initial_conviction": decision.conviction,
+        "confirmation_attempts": confirmation_attempts,
     }
+    if initial_action:
+        assessment_inputs["initial_model_action"] = initial_action
+    if initial_skip_kind:
+        assessment_inputs["initial_skip_kind"] = initial_skip_kind
+    if decision.skip_kind:
+        assessment_inputs["skip_kind"] = decision.skip_kind
+    if decision.adverse_reason_codes:
+        assessment_inputs["adverse_reason_codes"] = decision.adverse_reason_codes
     if trading_context.get("skip_policy_epoch_id"):
         assessment_inputs["policy_epoch_id"] = trading_context["skip_policy_epoch_id"]
     b2_evidence = _b2_evidence_for_decision(decision, trading_context)
@@ -310,6 +406,9 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
         "filter_name": "operator_action_assessment",
         "stage": "system_operator",
         "decision": "passed" if trade_intent else "rejected",
+        # Keep the stable terminal-path reason code so existing B2/diagnostic
+        # cohorts remain queryable; confirmation semantics are versioned in the
+        # policy epoch and explicit inputs below.
         "reason_code": "operator_model_trade" if trade_intent else "operator_model_skip",
         "inputs": assessment_inputs,
         "parameters": {"schema_actions": ["trade", "skip"]},
@@ -982,6 +1081,100 @@ async def _assess_opportunity(ctx: dict) -> dict | None:
     return result
 
 
+async def _reassess_direct_skip(
+    ctx: dict,
+    initial_raw: dict,
+    validation_reason: str,
+) -> dict | None:
+    """Run the single bounded correction/counterfactual pass for a direct skip.
+
+    This is deliberately not an instruction to trade. The reviewer may confirm
+    a skip, but only with typed candidate-specific adverse evidence, or may
+    return a normal trade decision which still faces debate, conviction, and
+    every downstream Risk/Execution guard.
+    """
+    from aletheia.agents.helpers import llm_structured
+    from aletheia.model_provider.router import get_provider_for_tier
+
+    system = (
+        "You are the independent counterfactual reviewer for a paper-trading "
+        "decision. Challenge the prior answer once. Do not force a trade. A skip "
+        "is valid only for candidate-specific adverse evidence; missing history, "
+        "insufficient matured outcomes, or a rank-order score alone is neutral. "
+        "Return one complete JSON decision matching the schema."
+    )
+    initial = json.dumps(initial_raw, sort_keys=True, default=str)
+    user = (
+        f"Validation issue: {validation_reason}\n"
+        f"Prior answer: {initial}\n\n"
+        f"{_build_assessment_prompt(ctx)}\n\n"
+        "Reassess the same pending candidate. Confirm skip only with skip_kind="
+        "adverse_candidate_evidence, at least one allowed adverse_reason_code, "
+        "and at least one concrete adverse_evidence item. Otherwise return a "
+        "complete trade decision if warranted; if evidence is merely insufficient, "
+        "return skip_kind=insufficient_evidence so the caller can defer honestly."
+    )
+    schema_text = _json_schema_hint(_DECISION_SCHEMA)
+    result, err = await llm_structured(
+        system,
+        f"{user}\n\nReturn JSON: {schema_text}",
+        schema=_DummySchema(_DECISION_SCHEMA),
+        provider=get_provider_for_tier("deep"),
+    )
+    if err or result is None:
+        raise DecisionUnavailable(
+            "direct_skip_reassessment_unavailable",
+            stage="operator_skip_validation",
+        )
+    return result
+
+
+def _direct_skip_confirmation_required(ctx: dict) -> bool:
+    policy = ctx.get("skip_policy") or {}
+    return bool(policy.get("direct_skip_confirmation_required"))
+
+
+def _has_submitting_final(decision: TradingDecision) -> bool:
+    """A stored submission owns recovery; a fresh skip cannot supersede it."""
+    if not decision.opportunity_id:
+        return False
+    try:
+        from aletheia.storage.repositories import find_final_pi_decision_for_opportunity
+
+        existing = find_final_pi_decision_for_opportunity(
+            decision.opportunity_id,
+            decision.signal_source or "market_observer",
+        )
+    except Exception:
+        return False
+    return bool(existing and existing.get("proposal_status") == "submitting")
+
+
+def _direct_skip_validation_reason(decision: TradingDecision) -> str | None:
+    """Return why a candidate-scoped direct skip is not terminally authoritative."""
+    if not decision.opportunity_id:
+        return "missing_candidate_identity"
+    if decision.skip_kind != "adverse_candidate_evidence":
+        return "neutral_or_missing_skip_kind"
+    codes = [
+        str(code).strip()
+        for code in decision.adverse_reason_codes
+        if str(code).strip()
+    ]
+    if not codes:
+        return "missing_adverse_reason_code"
+    if any(code not in _ADVERSE_SKIP_REASON_CODES for code in codes):
+        return "unsupported_adverse_reason_code"
+    evidence = [
+        str(item).strip()
+        for item in decision.adverse_evidence
+        if str(item).strip()
+    ]
+    if not evidence:
+        return "missing_candidate_adverse_evidence"
+    return None
+
+
 async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateResult | None:
     """Run Bull/Bear adversarial debate for a symbol."""
     import asyncio
@@ -1542,11 +1735,14 @@ def _build_assessment_prompt(ctx: dict) -> str:
     )
     if ranker:
         ranker_lines = "\n".join(
-            f"  {c['symbol']} {c.get('direction', '?')} score={c.get('trade_score', '?')}"
+            f"  {c['symbol']} {c.get('direction', '?')} "
+            f"rank_priority={c.get('trade_score', '?')}"
             for c in ranker[:6]
         )
         parts += [
             "## Executable Candidates (ranked picks backed by durable pending carriers)",
+            "rank_priority is an ordering value among already-eligible candidates; it is "
+            "not a probability, conviction, or hidden execution threshold.",
             ranker_lines,
             "",
         ]
@@ -1648,6 +1844,15 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "shown in Pending Signals / Executable Candidates.",
         "- Analysis-only Ranker Preview rows are not queued and must never be selected "
         "for execution. If no durable pending signal is suitable, skip.",
+        "- A rank_priority value only orders candidates that already passed upstream "
+        "eligibility. Never reject a candidate merely because that value looks low.",
+        "- Insufficient matured outcomes or missing historical evidence is neutral. It "
+        "cannot by itself justify a terminal skip.",
+        "- For skip, set skip_kind. A terminal adverse skip must use "
+        "adverse_candidate_evidence and include at least one allowed adverse_reason_code "
+        "plus concrete candidate-specific adverse_evidence. Use insufficient_evidence "
+        "when history is merely unavailable; the caller will defer rather than consume "
+        "the candidate.",
         "- What is the dominant market narrative right now? Is it already priced in?",
         "- Am I seeing confluence (multiple signals aligning) or conflict?",
         "- Given my recent 7-day performance, should I be more or less aggressive?",
@@ -1675,6 +1880,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "conviction (0-100), market_type (spot/usdt_futures), leverage (integer ≥1), "
         "reasoning, bear_case (required: strongest concrete reason this decision can fail), "
         "risk_factors, supporting_signals, opposing_signals, "
+        "skip_kind, adverse_reason_codes, adverse_evidence, "
         "key_assumptions (array of ≤3 short strings: critical premises this decision rests on).",
         "",
         "For every trade action, also return parameter_rationale with five "
@@ -1862,13 +2068,28 @@ def _parse_decision(raw: dict) -> TradingDecision:
         except (TypeError, ValueError):
             return None
 
-    def _int(v, default=0):
-        # #12: guard against non-integer LLM conviction (e.g. "high", "8.5", null-ish).
-        # A garbled conviction falls back to 0, which is below the gate and safely skips.
+    def _conviction(v):
+        # Invalid model output is evaluation unavailability. Normalizing it to
+        # zero used to manufacture a terminal skip and consume a real candidate.
+        if isinstance(v, bool) or v is None:
+            raise DecisionUnavailable(
+                "invalid_conviction", stage="operator_output_validation"
+            )
         try:
-            return int(float(v)) if v is not None else default
-        except (TypeError, ValueError):
-            return default
+            parsed = int(v)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise DecisionUnavailable(
+                "invalid_conviction", stage="operator_output_validation"
+            ) from exc
+        if isinstance(v, float) and not v.is_integer():
+            raise DecisionUnavailable(
+                "invalid_conviction", stage="operator_output_validation"
+            )
+        if not 0 <= parsed <= 100:
+            raise DecisionUnavailable(
+                "invalid_conviction", stage="operator_output_validation"
+            )
+        return parsed
 
     raw_parameter_rationale = raw.get("parameter_rationale")
     parameter_rationale: dict[str, str] = {}
@@ -1878,13 +2099,26 @@ def _parse_decision(raw: dict) -> TradingDecision:
             if isinstance(value, str) and value.strip():
                 parameter_rationale[key] = value.strip()[:600]
 
-    raw_action = str(raw.get("action") or "skip").strip().lower()
-    supported_action = raw_action in {"trade", "skip"}
+    if not raw.get("action"):
+        raise DecisionUnavailable(
+            "missing_action", stage="operator_output_validation"
+        )
+    raw_action = str(raw.get("action")).strip().lower()
+    if raw_action not in {"trade", "skip"}:
+        raise DecisionUnavailable(
+            f"unsupported_action:{raw_action}", stage="operator_output_validation"
+        )
+    raw_codes = raw.get("adverse_reason_codes")
+    adverse_reason_codes = raw_codes if isinstance(raw_codes, list) else []
+    raw_adverse_evidence = raw.get("adverse_evidence")
+    adverse_evidence = (
+        raw_adverse_evidence if isinstance(raw_adverse_evidence, list) else []
+    )
     decision = TradingDecision(
-        action=raw_action if supported_action else "skip",
+        action=raw_action,
         symbol=raw.get("symbol"),
         direction=raw.get("direction"),
-        conviction=_int(raw.get("conviction", 0)),
+        conviction=_conviction(raw.get("conviction")),
         reasoning=raw.get("reasoning", ""),
         bear_case=str(raw.get("bear_case") or "")[:500],
         market_type=mt,
@@ -1897,22 +2131,13 @@ def _parse_decision(raw: dict) -> TradingDecision:
         risk_factors=raw.get("risk_factors", []),
         supporting_signals=raw.get("supporting_signals", []),
         opposing_signals=raw.get("opposing_signals", []),
+        skip_kind=raw.get("skip_kind"),
+        adverse_reason_codes=adverse_reason_codes,
+        adverse_evidence=adverse_evidence,
         key_assumptions=key_assumptions,
         parameter_rationale=parameter_rationale,
         parameter_rationale_required=True,
     )
-    if not supported_action:
-        decision.reasoning = (
-            f"{decision.reasoning} [unsupported_action:{raw_action}; normalized to skip]"
-        ).strip()
-        decision.filter_trace.append({
-            "filter_name": "operator_action_support",
-            "stage": "system_operator",
-            "decision": "rejected",
-            "reason_code": "unsupported_action",
-            "inputs": {"raw_action": raw_action},
-            "parameters": {"supported_actions": ["trade", "skip"]},
-        })
     return decision
 
 

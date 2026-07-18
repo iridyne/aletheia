@@ -1,6 +1,6 @@
 """Focused regressions for decision-chain fixes (batch B4).
 
-#12  non-integer LLM conviction must not crash _parse_decision.
+#12  non-integer LLM conviction is retryable model-output unavailability.
 #152 attribution must not be severed by a conflicting same-symbol Layer-1 opp
      when a matching-direction ranker candidate exists.
 #21/#102 serenity opportunities store the instrument under "market_type" — the
@@ -16,6 +16,7 @@ import math
 import pytest
 
 from aletheia.agent_shell.trading_decision import (
+    DecisionUnavailable,
     TradingDecision,
     _parse_decision,
     _attach_opportunity_context,
@@ -47,12 +48,13 @@ def _seed_promoted_serenity_opportunity(
     ))
 
 
-def test_parse_decision_guards_non_integer_conviction():
+def test_parse_decision_rejects_non_integer_conviction_without_terminalizing():
     base = {"action": "trade", "symbol": "BTC/USDT", "direction": "long", "reasoning": ""}
-    assert _parse_decision({**base, "conviction": "high"}).conviction == 0     # non-numeric → 0 (safe skip)
-    assert _parse_decision({**base, "conviction": "8.5"}).conviction == 8      # float-string → int
-    assert _parse_decision({**base, "conviction": 7}).conviction == 7          # plain int preserved
-    assert _parse_decision({**base, "conviction": None}).conviction == 0       # null → 0
+    for invalid in ("high", "8.5", None, 101, -1):
+        with pytest.raises(DecisionUnavailable, match="invalid_conviction"):
+            _parse_decision({**base, "conviction": invalid})
+    assert _parse_decision({**base, "conviction": 7}).conviction == 7
+    assert _parse_decision({**base, "conviction": 8.0}).conviction == 8
 
 
 def test_assessment_prompt_handles_none_equity():
