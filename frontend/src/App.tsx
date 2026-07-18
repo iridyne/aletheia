@@ -29,6 +29,7 @@ import CollectorHealthDetails from './components/CollectorHealthDetails'
 import type { InfraEvent } from './types'
 import { deriveMasterState, getOperatorDisplayStatus } from './lib/systemState'
 import { devPreviewLabel } from './dev-preview'
+import { useRealtimeUpdates } from './lib/useRealtimeUpdates'
 
 export type NavItem = { to: string; label: string }
 export type NavGroup = { group: string; items: NavItem[] }
@@ -528,6 +529,8 @@ export default function App() {
 
   const toggle = (g: string) => setCollapsed(c => ({ ...c, [g]: !c[g] }))
   const previewLabel = devPreviewLabel()
+
+  useRealtimeUpdates()
 
   return (
     <div className="layout">
