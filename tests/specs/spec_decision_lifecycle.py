@@ -210,6 +210,7 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeyp
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
+    from aletheia.agent_shell import b2_evidence_policy
     from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
     from aletheia.storage.repositories import (
         insert_market_snapshot,
@@ -252,8 +253,8 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeyp
             "reasoning": "candidate evaluated but not selected",
             "market_type": opportunity.market,
             "skip_kind": "adverse_candidate_evidence",
-            "adverse_reason_codes": ["signal_conflict"],
-            "adverse_evidence": ["candidate momentum conflicts with 1h structure"],
+            "adverse_reason_codes": ["negative_same_cohort_outcomes"],
+            "adverse_evidence": ["qualified same-epoch cohort has negative shrunk net return"],
         }
 
     async def confirm_pending_candidate(_context, _initial, _reason):
@@ -265,6 +266,16 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeyp
     monkeypatch.setattr(trading_decision, "_assess_opportunity", assess_pending_candidate)
     monkeypatch.setattr(
         trading_decision, "_reassess_direct_skip", confirm_pending_candidate
+    )
+    def attach_qualified_negative(ctx, *, policy_epoch_id):
+        ctx["layer2"]["pending_signals"][0]["b2_evidence"] = {
+            "status": "qualified_negative", "n_total": 30, "n_net": 25,
+            "outcome_coverage": 0.8333, "avg_net_pct": -0.5,
+            "shrunk_avg_net_pct": -0.28, "directional_verdict": "negative",
+            "policy_epoch_id": policy_epoch_id,
+        }
+    monkeypatch.setattr(
+        b2_evidence_policy, "attach_b2_candidate_evidence", attach_qualified_negative
     )
     monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
 
@@ -804,7 +815,13 @@ def test_llm_unavailable_keeps_oldest_pending_signal_retryable(tmp_path, monkeyp
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
         lambda: {
-            "layer1": {"data_health": {"signal_status": "healthy", "ohlcv_ready": True}},
+            "layer1": {
+                "data_health": {"signal_status": "healthy", "ohlcv_ready": True},
+                "feature_index": {"perp:ETH/USDT": {
+                    "symbol": "ETH/USDT", "market_type": "perp",
+                    "return_4h": 2.0, "return_24h": 3.0,
+                }},
+            },
             "layer2": {
                 "pending_signals": [{
                     "symbol": "ETH/USDT", "direction": "short",
@@ -1611,8 +1628,8 @@ def test_invalid_active_operator_output_is_retryable(payload, reason):
     SpecClaim(
         "DL-S44", "decision_lifecycle_contract", "§2.3 direct-skip confirmation", "L2b",
         "A direct model skip becomes terminal only after one bounded counterfactual "
-        "confirmation names candidate-specific adverse evidence; insufficient evidence and "
-        "rank ordering alone are neutral.",
+        "confirmation and deterministic validation bind every reason to selected-candidate "
+        "facts; insufficient evidence and rank ordering alone are neutral.",
         status="implemented",
     ),
 )
@@ -1652,7 +1669,10 @@ def test_direct_skip_requires_one_structured_adverse_confirmation(monkeypatch):
 
     decision = asyncio.run(trading_decision.evaluate_trading_opportunity({
         "skip_policy": {"direct_skip_confirmation_required": True},
-        "layer1": {},
+        "layer1": {"regime": {
+            "state": "bearish", "confidence": 0.80,
+            "long_bias": 0.20, "short_bias": 0.80,
+        }},
         "layer2": {"pending_signals": [{
             "symbol": "BTC/USDT",
             "direction": "long",
@@ -1666,6 +1686,13 @@ def test_direct_skip_requires_one_structured_adverse_confirmation(monkeypatch):
     assert decision.action == "skip"
     assert decision.skip_kind == "adverse_candidate_evidence"
     assert decision.adverse_reason_codes == ["regime_mismatch"]
+    assert decision.validated_adverse_claims == [{
+        "reason_code": "regime_mismatch",
+        "fact_refs": ["regime.state", "regime.confidence", "regime.long_bias"],
+    }]
+    assert decision.model_reasoning == "independent challenge confirms the range mismatch"
+    assert decision.reasoning.startswith("Deterministic selected-candidate facts support terminal skip:")
+    assert "range mismatch" not in decision.reasoning
     assert decision.filter_trace[0]["reason_code"] == "operator_model_skip"
     assert decision.filter_trace[0]["inputs"]["confirmation_attempts"] == 1
 
@@ -1759,6 +1786,201 @@ def test_operator_context_fingerprint_ignores_carrier_churn_but_tracks_material_
     assert score_changed != first
 
 
+def test_operator_context_fingerprint_tracks_real_b2_schema_fields():
+    from aletheia.agent_shell.trading_context import operator_decision_context_fingerprint
+
+    def context(*, n_net=25, coverage=0.64, shrunk=0.95, verdict=None):
+        return {
+            "skip_policy_epoch_id": "epoch-direct-skip-v3",
+            "layer1": {"regime": {"state": "sideways", "long_bias": 0.5, "short_bias": 0.5}},
+            "layer2": {"pending_signals": [{
+                "opportunity_id": "carrier-churn-is-ignored",
+                "symbol": "TIA/USDT", "direction": "short",
+                "market_type": "usdt_futures", "trade_score": 45.35,
+                "b2_evidence": {
+                    "status": "insufficient_evidence", "n_total": 39,
+                    "n_net": n_net, "outcome_coverage": coverage,
+                    "avg_net_pct": 1.71, "shrunk_avg_net_pct": shrunk,
+                    "directional_verdict": verdict,
+                },
+            }]},
+        }
+
+    baseline = operator_decision_context_fingerprint(context())
+    assert operator_decision_context_fingerprint(context(n_net=26)) != baseline
+    assert operator_decision_context_fingerprint(context(coverage=0.70)) != baseline
+    assert operator_decision_context_fingerprint(context(shrunk=-0.20, verdict="negative")) != baseline
+
+
+def test_tia_like_neutral_facts_cannot_be_relabelled_as_adverse(monkeypatch):
+    import asyncio
+
+    from aletheia.agent_shell import trading_decision
+
+    neutral = {
+        "action": "skip", "symbol": "TIA/USDT", "direction": "short",
+        "market_type": "usdt_futures", "conviction": 20,
+        "reasoning": "same-epoch evidence is not mature", "bear_case": "price can rebound",
+        "skip_kind": "insufficient_evidence", "adverse_reason_codes": [],
+        "adverse_evidence": [],
+    }
+    relabelled = {
+        **neutral,
+        "reasoning": "low rank, missing OI, one recent loss and small equity argue against entry",
+        "skip_kind": "adverse_candidate_evidence",
+        "adverse_reason_codes": [
+            "negative_same_cohort_outcomes", "regime_mismatch", "candidate_data_integrity",
+        ],
+        "adverse_evidence": [
+            "B2 has only 25/39 settled rows", "regime is balanced 50/50", "OI delta is missing",
+        ],
+    }
+
+    async def assess(_ctx):
+        return neutral
+
+    async def confirm(_ctx, _initial, _reason):
+        return relabelled
+
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
+    monkeypatch.setattr(trading_decision, "_reassess_direct_skip", confirm)
+
+    ctx = {
+        "skip_policy": {"direct_skip_confirmation_required": True},
+        "layer1": {
+            "balance": {"equity_usdt": 398.0},
+            "regime": {"state": "sideways", "confidence": 0.56, "long_bias": 0.5, "short_bias": 0.5},
+            "feature_index": {"perp:TIA/USDT": {
+                "symbol": "TIA/USDT", "market_type": "perp", "rsi_14": 30.88,
+                "rsi_4h": 31.69, "return_1h": 0.19, "return_4h": -2.33,
+                "return_24h": -2.87, "oi_delta_1h": None,
+            }},
+        },
+        "layer2": {
+            "outcome_stats": {"total_trades": 1, "wins": 0, "losses": 1, "total_pnl": -2.06},
+            "pending_signals": [{
+                "opportunity_id": "opp-tia-neutral", "signal_source": "market_observer",
+                "symbol": "TIA/USDT", "direction": "short", "market_type": "usdt_futures",
+                "trade_score": 45.35, "scanner_family": "momentum",
+                "b2_evidence": {
+                    "status": "insufficient_evidence", "n_total": 39, "n_net": 25,
+                    "outcome_coverage": 0.641, "avg_net_pct": 1.710086,
+                    "shrunk_avg_net_pct": 0.950048, "directional_verdict": None,
+                },
+            }],
+        },
+        "layer3": {},
+    }
+
+    with pytest.raises(trading_decision.DecisionUnavailable, match="unverified_adverse_reason"):
+        asyncio.run(trading_decision.evaluate_trading_opportunity(ctx))
+
+
+def test_qualified_negative_b2_remains_a_valid_adjacent_terminal_skip(monkeypatch):
+    import asyncio
+
+    from aletheia.agent_shell import trading_decision
+
+    adverse = {
+        "action": "skip", "symbol": "TIA/USDT", "direction": "short",
+        "market_type": "usdt_futures", "conviction": 25,
+        "reasoning": "qualified same-epoch cohort is negative", "bear_case": "cohort may recover",
+        "skip_kind": "adverse_candidate_evidence",
+        "adverse_reason_codes": ["negative_same_cohort_outcomes"],
+        "adverse_evidence": ["qualified B2 shrunk net return is -0.35%"],
+    }
+
+    async def assess(_ctx):
+        return adverse
+
+    async def confirm(_ctx, _initial, _reason):
+        return adverse
+
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
+    monkeypatch.setattr(trading_decision, "_reassess_direct_skip", confirm)
+    monkeypatch.setattr(trading_decision, "_proposal_bias_brake_reason", lambda _decision: None)
+
+    decision = asyncio.run(trading_decision.evaluate_trading_opportunity({
+        "skip_policy": {"direct_skip_confirmation_required": True},
+        "layer1": {},
+        "layer2": {"pending_signals": [{
+            "opportunity_id": "opp-qualified-negative", "signal_source": "market_observer",
+            "symbol": "TIA/USDT", "direction": "short", "market_type": "usdt_futures",
+            "b2_evidence": {
+                "status": "qualified_negative", "n_total": 30, "n_net": 25,
+                "outcome_coverage": 0.8333, "avg_net_pct": -0.63,
+                "shrunk_avg_net_pct": -0.35, "directional_verdict": "negative",
+            },
+        }]},
+        "layer3": {},
+    }))
+
+    assert decision.action == "skip"
+    assert decision.validated_adverse_claims == [{
+        "reason_code": "negative_same_cohort_outcomes",
+        "fact_refs": [
+            "b2.status", "b2.n_net", "b2.outcome_coverage",
+            "b2.shrunk_avg_net_pct", "b2.directional_verdict",
+        ],
+    }]
+    assert "b2.status=\"qualified_negative\"" in decision.reasoning
+    assert "rank" not in decision.reasoning.lower()
+    assert "equity" not in decision.reasoning.lower()
+
+
+def test_missing_returns_are_not_rendered_as_zero():
+    from aletheia.agent_shell.trading_decision import _fmt_feature_line
+
+    missing = _fmt_feature_line({"symbol": "TIA/USDT", "market_type": "perp", "rsi_14": 31})
+    exact_zero = _fmt_feature_line({
+        "symbol": "TIA/USDT", "market_type": "perp", "rsi_14": 31,
+        "return_1h": 0.0, "return_4h": 0.0, "return_24h": 0.0,
+    })
+
+    assert "1h=? 4h=? 24h=?" in missing
+    assert "1h=+0.0% 4h=+0.0% 24h=+0.0%" in exact_zero
+
+
+def test_operator_model_context_contains_exactly_one_candidate():
+    from aletheia.agent_shell.trading_context import scope_operator_context_to_candidate
+    from aletheia.agent_shell.trading_decision import _build_assessment_prompt
+
+    ctx = {
+        "layer1": {
+            "features": [
+                {"symbol": "TIA/USDT", "market_type": "perp", "rsi_14": 31},
+                {"symbol": "EWY/USDT", "market_type": "perp", "rsi_14": 55},
+            ],
+            "opportunities": [
+                {"id": "opp-tia", "symbol": "TIA/USDT", "market": "perp", "thesis": "tia thesis"},
+                {"id": "opp-ewy", "symbol": "EWY/USDT", "market": "perp", "thesis": "ewy thesis"},
+            ],
+        },
+        "layer2": {
+            "pending_signals": [
+                {"opportunity_id": "opp-tia", "symbol": "TIA/USDT", "direction": "short", "market_type": "usdt_futures"},
+                {"opportunity_id": "opp-ewy", "symbol": "EWY/USDT", "direction": "short", "market_type": "usdt_futures"},
+            ],
+            "executable_candidates": [
+                {"opportunity_id": "opp-tia", "symbol": "TIA/USDT", "direction": "short", "market_type": "usdt_futures", "trade_score": 45.35},
+                {"opportunity_id": "opp-ewy", "symbol": "EWY/USDT", "direction": "short", "market_type": "usdt_futures", "trade_score": 45.22},
+            ],
+            "analysis_only_candidates": [
+                {"opportunity_id": "preview-bonk", "symbol": "1000BONK/USDT", "direction": "long", "market_type": "usdt_futures"},
+            ],
+        },
+        "layer3": {},
+    }
+
+    scoped = scope_operator_context_to_candidate(ctx, "opp-tia")
+    prompt = _build_assessment_prompt(scoped)
+
+    assert [row["opportunity_id"] for row in scoped["layer2"]["pending_signals"]] == ["opp-tia"]
+    assert "TIA/USDT" in prompt
+    assert "EWY/USDT" not in prompt
+    assert "1000BONK/USDT" not in prompt
+
+
 def test_rank_priority_is_presented_as_ordering_not_a_veto_threshold():
     from aletheia.agent_shell.trading_decision import _build_assessment_prompt
 
@@ -1778,7 +2000,7 @@ def test_rank_priority_is_presented_as_ordering_not_a_veto_threshold():
     assert "score=51" not in executable
 
 
-def test_direct_skip_b12_rotates_a_distinct_policy_epoch(tmp_path, monkeypatch):
+def test_direct_skip_b13_rotates_a_distinct_policy_epoch(tmp_path, monkeypatch):
     import json
 
     from tests.test_entry_logic import setup_env
@@ -1800,12 +2022,15 @@ def test_direct_skip_b12_rotates_a_distinct_policy_epoch(tmp_path, monkeypatch):
 
     assert row["epoch_kind"] == "system_operator_skip_remediation"
     assert values == skip_policy_context()
-    assert values["version"] == "b1.2"
+    assert values["version"] == "b1.3"
     assert values["direct_skip_confirmation_required"] is True
     assert values["insufficient_evidence_terminal_skip"] is False
+    assert values["deterministic_adverse_fact_validation"] is True
+    assert values["single_candidate_model_context"] is True
+    assert values["candidate_specific_defer"] is True
 
 
-def test_neutral_skip_defer_preserves_pending_and_suppresses_unchanged_retry(
+def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(
     tmp_path, monkeypatch
 ):
     import asyncio
@@ -1813,9 +2038,11 @@ def test_neutral_skip_defer_preserves_pending_and_suppresses_unchanged_retry(
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_shell import commands, trading_decision
-    from aletheia.storage.models import Opportunity, PiDecision
-    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.agent_shell import b2_evidence_policy, commands, trading_decision
+    from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
+    from aletheia.storage.repositories import (
+        insert_market_snapshot, insert_opportunity, insert_pi_decision,
+    )
     from aletheia.storage.sqlite import get_db
 
     opportunity = Opportunity(
@@ -1835,6 +2062,10 @@ def test_neutral_skip_defer_preserves_pending_and_suppresses_unchanged_retry(
         symbol=opportunity.symbol,
         direction="long",
         market_type="spot",
+    ))
+    insert_market_snapshot(MarketSnapshot(
+        id="snapshot-neutral-to-negative", symbol=opportunity.symbol,
+        market_type="spot", exchange="test", price=100.0,
     ))
     context = {
         "layer1": {"data_health": {"ohlcv_ready": True}},
@@ -1875,15 +2106,40 @@ def test_neutral_skip_defer_preserves_pending_and_suppresses_unchanged_retry(
         "adverse_reason_codes": [],
         "adverse_evidence": [],
     }
+    adverse = {
+        **neutral,
+        "reasoning": "qualified same-epoch cohort is negative",
+        "skip_kind": "adverse_candidate_evidence",
+        "adverse_reason_codes": ["negative_same_cohort_outcomes"],
+        "adverse_evidence": ["qualified B2 shrunk net return is -0.35%"],
+    }
+    evidence_state = {"qualified": False}
     calls = {"assess": 0, "confirm": 0}
 
     async def assess(_ctx):
         calls["assess"] += 1
-        return neutral
+        return adverse if evidence_state["qualified"] else neutral
 
     async def confirm(_ctx, _initial, _reason):
         calls["confirm"] += 1
-        return neutral
+        return adverse if evidence_state["qualified"] else neutral
+
+    def attach_evidence(ctx, *, policy_epoch_id):
+        ctx["layer2"]["pending_signals"][0]["b2_evidence"] = (
+            {
+                "status": "qualified_negative", "n_total": 30, "n_net": 25,
+                "outcome_coverage": 0.8333, "avg_net_pct": -0.63,
+                "shrunk_avg_net_pct": -0.35, "directional_verdict": "negative",
+                "policy_epoch_id": policy_epoch_id,
+            }
+            if evidence_state["qualified"]
+            else {
+                "status": "insufficient_evidence", "n_total": 39, "n_net": 25,
+                "outcome_coverage": 0.641, "avg_net_pct": 1.71,
+                "shrunk_avg_net_pct": 0.95, "directional_verdict": None,
+                "policy_epoch_id": policy_epoch_id,
+            }
+        )
 
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
@@ -1891,23 +2147,104 @@ def test_neutral_skip_defer_preserves_pending_and_suppresses_unchanged_retry(
     )
     monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
     monkeypatch.setattr(trading_decision, "_reassess_direct_skip", confirm)
+    monkeypatch.setattr(b2_evidence_policy, "attach_b2_candidate_evidence", attach_evidence)
 
     first = asyncio.run(commands.evaluate_trading_opportunity({}))
     second = asyncio.run(commands.evaluate_trading_opportunity({}))
+    evidence_state["qualified"] = True
+    third = asyncio.run(commands.evaluate_trading_opportunity({}))
 
     assert first["action"] == "evaluation_deferred"
     assert first["model_invoked"] is True
     assert second["action"] == "evaluation_deferred"
     assert second["model_invoked"] is False
     assert first["operator_evaluation_event_id"] == second["operator_evaluation_event_id"]
-    assert calls == {"assess": 1, "confirm": 1}
+    assert third["action"] == "skip"
+    assert third["validated_adverse_claims"][0]["reason_code"] == "negative_same_cohort_outcomes"
+    assert third["pending_queue_remaining"] == 0
+    assert calls == {"assess": 2, "confirm": 2}
     assert get_db().execute(
         "SELECT COUNT(*) FROM pi_decisions WHERE opportunity_id=? AND action='skip'",
         (opportunity.id,),
-    ).fetchone()[0] == 0
+    ).fetchone()[0] == 1
     assert get_db().execute(
         "SELECT status FROM opportunities WHERE id=?", (opportunity.id,)
-    ).fetchone()[0] == "queued"
+    ).fetchone()[0] == "reviewed"
+
+
+def test_candidate_specific_defer_rotates_to_next_visible_candidate(tmp_path, monkeypatch):
+    import asyncio
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell import commands, trading_decision
+    from aletheia.agent_shell.trading_context import _build_pending_signal_queue
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+
+    pending = [
+        {"opportunity_id": "opp-a", "signal_source": "market_observer", "symbol": "AAA/USDT", "direction": "long", "market_type": "spot", "trade_score": 51.0},
+        {"opportunity_id": "opp-b", "signal_source": "market_observer", "symbol": "BBB/USDT", "direction": "long", "market_type": "spot", "trade_score": 52.0},
+    ]
+    context = {
+        "layer1": {"data_health": {"ohlcv_ready": True}},
+        "layer2": {
+            "pending_signals": pending,
+            "executable_candidates": [dict(row) for row in pending],
+            "pending_queue": {"unresolved_total": 2, "visible_count": 2, "overflow_count": 0},
+        },
+        "layer3": {},
+    }
+    selected: list[str] = []
+    for row in pending:
+        insert_opportunity(Opportunity(
+            id=row["opportunity_id"], symbol=row["symbol"], market="spot",
+            direction_bias="long", status="queued", scanner_family="momentum",
+        ))
+        insert_pi_decision(PiDecision(
+            id=f"pending-{row['opportunity_id']}", action="signal_pending",
+            opportunity_id=row["opportunity_id"], signal_source="market_observer",
+            symbol=row["symbol"], direction="long", market_type="spot",
+        ))
+
+    async def assess(ctx):
+        candidate = ctx["layer2"]["pending_signals"][0]
+        selected.append(candidate["opportunity_id"])
+        return {
+            "action": "skip", "symbol": candidate["symbol"], "direction": "long",
+            "market_type": "spot", "conviction": 20, "reasoning": "not mature",
+            "bear_case": "setup may fail", "skip_kind": "insufficient_evidence",
+            "adverse_reason_codes": [], "adverse_evidence": [],
+        }
+
+    async def confirm(ctx, _initial, _reason):
+        candidate = ctx["layer2"]["pending_signals"][0]
+        return {
+            "action": "skip", "symbol": candidate["symbol"], "direction": "long",
+            "market_type": "spot", "conviction": 20, "reasoning": "still not mature",
+            "bear_case": "setup may fail", "skip_kind": "insufficient_evidence",
+            "adverse_reason_codes": [], "adverse_evidence": [],
+        }
+
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.build_enriched_trading_context", lambda: context
+    )
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
+    monkeypatch.setattr(trading_decision, "_reassess_direct_skip", confirm)
+
+    first = asyncio.run(commands.evaluate_trading_opportunity({}))
+    rotated, _queue = _build_pending_signal_queue(limit=2)
+    second = asyncio.run(commands.evaluate_trading_opportunity({}))
+    third = asyncio.run(commands.evaluate_trading_opportunity({}))
+
+    assert first["opportunity_id"] == "opp-a"
+    assert [row["opportunity_id"] for row in rotated] == ["opp-b", "opp-a"]
+    assert second["opportunity_id"] == "opp-b"
+    assert third["observation_status"] == "all_visible_candidates_unchanged"
+    assert third["model_invoked"] is False
+    assert third["deferred_opportunity_ids"] == ["opp-a", "opp-b"]
+    assert selected == ["opp-a", "opp-b"]
 
 
 @pytest.mark.parametrize("action", ["trade", "scale_in", "flip"])
@@ -2768,7 +3105,7 @@ def test_submitting_recovery_uses_stored_proposal_after_skip_and_mode_change(
     }
 
 
-def test_missing_market_cannot_guess_between_two_complete_pending_carriers(
+def test_single_candidate_scope_can_infer_market_from_selected_complete_carrier(
     tmp_path, monkeypatch
 ):
     """Inference is allowed only for one compatible carrier, never by row order."""
@@ -2852,6 +3189,10 @@ def test_missing_market_cannot_guess_between_two_complete_pending_carriers(
 
     monkeypatch.setattr(trading_decision, "_assess_opportunity", omit_market)
     monkeypatch.setattr(gateway, "_execute_proposal", store_without_executing)
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda *_args, **_kwargs: 100.0,
+    )
     monkeypatch.setattr(reflection, "_REFLECTION_FILE", tmp_path / "pi_reflection.json")
 
     result = asyncio.run(commands.evaluate_trading_opportunity({}))
@@ -2860,11 +3201,12 @@ def test_missing_market_cannot_guess_between_two_complete_pending_carriers(
         "SELECT COUNT(*) FROM trade_proposals WHERE opportunity_id IN (?, ?)",
         tuple(opportunity_ids),
     ).fetchone()[0]
-    assert proposal_count == 0, result
-    assert result["proposal_reason"] == "pending_identity_ambiguous"
-    assert result["operator_decision_persisted"] is False
+    assert proposal_count == 1, result
+    assert result["action"] == "trade"
+    assert result["opportunity_id"] == "ambiguous-btc-spot"
+    assert result["market_type"] == "spot"
     assert [get_opportunity(oid)["status"] for oid in opportunity_ids] == [
-        "queued", "queued"
+        "reviewed", "queued"
     ]
 
 

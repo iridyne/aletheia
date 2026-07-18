@@ -207,7 +207,10 @@ async def test_observer_ranker_pending_operator_skip_keeps_one_causal_identity(
     async def deterministic_operator_skip(*_args, **_kwargs):
         return (
             {
-                "action": "skip",
+                    # The model expresses trade intent, then the real conviction
+                    # gate produces the terminal skip. Direct model skips are
+                    # covered separately by candidate-fact validation specs.
+                    "action": "trade",
                 "symbol": "BTC/USDT",
                 "direction": "long",
                 "market_type": "spot",

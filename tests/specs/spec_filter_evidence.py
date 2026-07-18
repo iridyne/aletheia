@@ -1073,6 +1073,15 @@ def test_decision_evidence_builder_carries_operator_rationale(tmp_path, monkeypa
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_shell.trading_context import build_decision_evidence_manifest
     from aletheia.agent_shell.trading_decision import TradingDecision
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import insert_opportunity
+
+    insert_opportunity(Opportunity(
+        id="opp-manifest-v2", symbol="BTC/USDT", market="spot",
+        direction_bias="long", status="queued", scanner_family="momentum",
+        universe_snapshot_id="universe-snapshot-1",
+        universe_member_id="universe-member-1",
+    ))
 
     decision = TradingDecision(
         action="skip",
@@ -1087,17 +1096,57 @@ def test_decision_evidence_builder_carries_operator_rationale(tmp_path, monkeypa
         supporting_signals=["15m momentum"],
         opposing_signals=["1h rejection"],
         risk_factors=["whipsaw"],
+        opportunity_id="opp-manifest-v2",
+        scanner_family="momentum",
+        validated_adverse_claims=[{
+            "reason_code": "signal_conflict",
+            "fact_refs": ["technical.return_1h", "technical.return_4h"],
+        }],
     )
 
-    rationale = build_decision_evidence_manifest(
-        {"layer1": {"feature_index": {}}}, decision
-    )["operator_rationale"]
+    manifest = build_decision_evidence_manifest({
+        "skip_policy_epoch_id": "skip-b1.3",
+        "layer1": {
+            "regime": {"state": "bearish", "confidence": 0.8, "long_bias": 0.2, "short_bias": 0.8},
+            "feature_index": {"spot:BTC/USDT": {
+                "feature_snapshot_id": "feature-1", "feature_ts": "2026-07-18T01:00:00Z",
+                "data_freshness_sec": 42, "symbol": "BTC/USDT", "market_type": "spot",
+            }},
+        },
+        "layer2": {
+            "outcome_stats": {"total_trades": 1, "wins": 0, "losses": 1, "total_pnl": -2.06},
+            "pending_signals": [{
+                "opportunity_id": "opp-manifest-v2", "symbol": "BTC/USDT",
+                "direction": "long", "market_type": "spot", "trade_score": 51,
+                "scanner_family": "momentum", "b2_evidence": {
+                    "status": "insufficient_evidence", "n_total": 8, "n_net": 0,
+                    "outcome_coverage": 0.0, "avg_net_pct": None,
+                    "shrunk_avg_net_pct": None, "directional_verdict": None,
+                },
+            }],
+        },
+    }, decision)
+    rationale = manifest["operator_rationale"]
 
     assert rationale == {
+        "model_reasoning": None,
         "skip_kind": "adverse_candidate_evidence",
         "adverse_reason_codes": ["signal_conflict"],
         "adverse_evidence": ["15m and 1h directions conflict"],
         "supporting_signals": ["15m momentum"],
         "opposing_signals": ["1h rejection"],
         "risk_factors": ["whipsaw"],
+        "validated_adverse_claims": [{
+            "reason_code": "signal_conflict",
+            "fact_refs": ["technical.return_1h", "technical.return_4h"],
+        }],
     }
+    assert manifest["decision_evidence_version"] == "operator-candidate-v2"
+    assert manifest["source_chain"]["opportunity_id"] == "opp-manifest-v2"
+    assert manifest["source_chain"]["universe_snapshot_id"] == "universe-snapshot-1"
+    assert manifest["source_chain"]["universe_member_id"] == "universe-member-1"
+    assert manifest["technical_snapshot"]["data_freshness_sec"] == 42
+    assert manifest["candidate_selection"]["rank_priority_semantics"] == "ordering_only"
+    assert manifest["b2_candidate_evidence"]["n_total"] == 8
+    assert manifest["market_regime"]["state"] == "bearish"
+    assert manifest["recent_performance"]["total_trades"] == 1

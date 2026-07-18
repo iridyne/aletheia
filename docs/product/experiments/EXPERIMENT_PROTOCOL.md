@@ -32,6 +32,18 @@
 > Exchange, and Live remain unchanged. Compare new direct-skip/proposal/queue/outcome
 > metrics only within b1.2; b1.1 is baseline, never a pooled cohort.
 
+> **2026-07-18 Candidate-fact judgment epoch**:
+> `system_operator_skip_remediation/b1.3` closes b1.2. Each model call now sees
+> exactly one durable carrier; every terminal adverse reason is validated against
+> a typed candidate fact bundle, and the generated fact references are persisted.
+> Neutral retries are suppressed per candidate rather than per whole queue, so the
+> next visible carrier can proceed. The B2 fingerprint uses the actual b2 schema,
+> missing numeric observations remain unknown, and the evidence manifest records
+> source-chain ids, freshness, B2, regime, sample size, and validated claims.
+> Conviction thresholds, Ranker weights, sizing, Risk, Execution, Exchange, and Live
+> are unchanged. Compare b1.3 outcomes only inside its new policy epoch; b1.2 is the
+> baseline and must not be pooled.
+
 ---
 
 ## 核心赌注

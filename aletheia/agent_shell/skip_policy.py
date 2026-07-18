@@ -7,7 +7,7 @@ from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_e
 
 _EPOCH_KIND = "system_operator_skip_remediation"
 _EFFECTIVE_VALUES = {
-    "version": "b1.2",
+    "version": "b1.3",
     "aggregate_signal_health_candidate_veto": False,
     "zero_pending_heartbeat_trading_evaluation": False,
     "aggregate_signal_health_config_tightening": False,
@@ -26,6 +26,14 @@ _EFFECTIVE_VALUES = {
     "insufficient_evidence_terminal_skip": False,
     "rank_priority_is_terminal_veto": False,
     "unchanged_context_defer_window_minutes": 120,
+    # B1.3: terminal language is subordinate to deterministic selected-candidate
+    # facts. One carrier is shown per call and neutral retries rotate by carrier.
+    "deterministic_adverse_fact_validation": True,
+    "single_candidate_model_context": True,
+    "candidate_specific_defer": True,
+    "blind_direct_skip_counterfactual": True,
+    "missing_numeric_values_are_unknown": True,
+    "decision_evidence_manifest": "operator-candidate-v2",
 }
 _AFFECTED_PATHS = (
     "system_operator_candidate_context",
@@ -33,11 +41,14 @@ _AFFECTED_PATHS = (
     "operator_loop_aggregate_signal_diagnosis",
     "paper_ranker_confidence_gate",
     "operator_loop_candidate_supply_recovery",
+    "operator_direct_skip_fact_validation",
+    "operator_candidate_specific_defer",
+    "operator_decision_evidence_manifest",
 )
 
 
 def ensure_skip_remediation_policy_epoch() -> str:
-    """Return the durable B1.2 policy epoch, rotating only if policy changes."""
+    """Return the durable B1.3 policy epoch, rotating only if policy changes."""
     epoch = build_policy_epoch(
         _EPOCH_KIND,
         _EFFECTIVE_VALUES,

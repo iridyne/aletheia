@@ -142,6 +142,12 @@ class TradingDecision:
     skip_kind: str | None = None
     adverse_reason_codes: list[str] = field(default_factory=list)
     adverse_evidence: list[str] = field(default_factory=list)
+    # Deterministic validator output. The model cannot populate this authority:
+    # each terminal adverse code must resolve to exact selected-candidate facts.
+    validated_adverse_claims: list[dict] = field(default_factory=list)
+    # Original model prose is retained for audit, but terminal direct-skip
+    # reasoning is replaced by deterministic fact rendering.
+    model_reasoning: str | None = None
     position_size_usdt: float | None = None
     stop_price: float | None = None
     take_profit: float | None = None
@@ -343,7 +349,7 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
         and confirmation_attempts == 0
     ):
         validation_reason = (
-            _direct_skip_validation_reason(decision)
+            _direct_skip_validation_reason(decision, trading_context)
             or "counterfactual_confirmation_required"
         )
         initial_opportunity_id = decision.opportunity_id
@@ -370,12 +376,18 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
             )
 
     if decision.action == "skip" and skip_confirmation_required:
-        invalid_skip_reason = _direct_skip_validation_reason(decision)
+        invalid_skip_reason = _direct_skip_validation_reason(decision, trading_context)
         if invalid_skip_reason:
             raise DecisionUnavailable(
                 f"direct_skip_not_confirmed:{invalid_skip_reason}",
                 stage="operator_skip_validation",
             )
+        from aletheia.agent_shell.decision_facts import render_validated_adverse_judgment
+
+        decision.model_reasoning = decision.reasoning
+        decision.reasoning, decision.adverse_evidence = render_validated_adverse_judgment(
+            decision, trading_context
+        )
 
     trade_actions = ("trade",)
     trade_intent = decision.action in trade_actions
@@ -397,6 +409,8 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
         assessment_inputs["skip_kind"] = decision.skip_kind
     if decision.adverse_reason_codes:
         assessment_inputs["adverse_reason_codes"] = decision.adverse_reason_codes
+    if decision.validated_adverse_claims:
+        assessment_inputs["validated_adverse_claims"] = decision.validated_adverse_claims
     if trading_context.get("skip_policy_epoch_id"):
         assessment_inputs["policy_epoch_id"] = trading_context["skip_policy_epoch_id"]
     b2_evidence = _b2_evidence_for_decision(decision, trading_context)
@@ -1103,11 +1117,16 @@ async def _reassess_direct_skip(
         "insufficient matured outcomes, or a rank-order score alone is neutral. "
         "Return one complete JSON decision matching the schema."
     )
-    initial = json.dumps(initial_raw, sort_keys=True, default=str)
-    user = (
+    # A direct-skip challenge is blind to the first model's prose. Showing the
+    # same provider its own answer made relabelling look like independent proof.
+    # Malformed-output repair still receives the exact syntax issue and payload.
+    is_direct_skip = str(initial_raw.get("action") or "").lower() == "skip"
+    repair_context = "" if is_direct_skip else (
         f"Validation issue: {validation_reason}\n"
-        f"Prior answer: {initial}\n\n"
-        f"{_build_assessment_prompt(ctx)}\n\n"
+        f"Malformed prior payload: {json.dumps(initial_raw, sort_keys=True, default=str)}\n\n"
+    )
+    user = (
+        f"{repair_context}{_build_assessment_prompt(ctx)}\n\n"
         "Reassess the same pending candidate. Confirm skip only with skip_kind="
         "adverse_candidate_evidence, at least one allowed adverse_reason_code, "
         "and at least one concrete adverse_evidence item. Otherwise return a "
@@ -1150,7 +1169,9 @@ def _has_submitting_final(decision: TradingDecision) -> bool:
     return bool(existing and existing.get("proposal_status") == "submitting")
 
 
-def _direct_skip_validation_reason(decision: TradingDecision) -> str | None:
+def _direct_skip_validation_reason(
+    decision: TradingDecision, ctx: dict | None = None
+) -> str | None:
     """Return why a candidate-scoped direct skip is not terminally authoritative."""
     if not decision.opportunity_id:
         return "missing_candidate_identity"
@@ -1172,6 +1193,14 @@ def _direct_skip_validation_reason(decision: TradingDecision) -> str | None:
     ]
     if not evidence:
         return "missing_candidate_adverse_evidence"
+    if ctx is not None:
+        from aletheia.agent_shell.decision_facts import validate_adverse_claims
+
+        claims, invalid_reason = validate_adverse_claims(decision, ctx)
+        if invalid_reason:
+            decision.validated_adverse_claims = []
+            return invalid_reason
+        decision.validated_adverse_claims = claims
     return None
 
 
@@ -1369,9 +1398,9 @@ def _fmt_feature_line(f: dict) -> str:
     rsi15 = f.get("rsi_15m")
     rsi4h = f.get("rsi_4h")
     atr = f.get("atr_pct")
-    r1 = f.get("return_1h") or 0.0
-    r4 = f.get("return_4h") or 0.0
-    r24 = f.get("return_24h") or 0.0
+    r1 = f.get("return_1h")
+    r4 = f.get("return_4h")
+    r24 = f.get("return_24h")
     fr_str = _fmt_funding(f.get("funding_rate"))
     oi = f.get("oi_delta_1h")
     rs = f.get("relative_strength_24h")
@@ -1387,7 +1416,9 @@ def _fmt_feature_line(f: dict) -> str:
     base = (
         f"  {sym} [{f.get('market_type', '?')}]: RSI15m={rsi15 if rsi15 is not None else '?'} "
         f"RSI1h={rsi_s} RSI4h={rsi4h if rsi4h is not None else '?'} ATR1h={atr_s}% "
-        f"1h={r1:+.1f}% 4h={r4:+.1f}% 24h={r24:+.1f}% "
+        f"1h={f'{r1:+.1f}%' if r1 is not None else '?'} "
+        f"4h={f'{r4:+.1f}%' if r4 is not None else '?'} "
+        f"24h={f'{r24:+.1f}%' if r24 is not None else '?'} "
         f"FR={fr_str} OI_Δ={oi if oi is not None else '?'}"
     )
     extras = []
@@ -1790,7 +1821,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
         parts += [
             "## ⚡ Pending Signals (awaiting your decision)",
             "These signals were collected by the scanner pipeline. You are the sole decision maker —",
-            "make exactly one trade or skip decision for the oldest suitable visible signal.",
+            "make exactly one trade or skip decision for the single selected durable carrier.",
             queue_line,
             pending_lines, "",
         ]
@@ -1848,6 +1879,10 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "eligibility. Never reject a candidate merely because that value looks low.",
         "- Insufficient matured outcomes or missing historical evidence is neutral. It "
         "cannot by itself justify a terminal skip.",
+        "- Missing optional telemetry (for example OI delta) is unknown, not zero and not "
+        "adverse evidence. Oversold RSI is opposing/rebound risk for a short, not short confirmation.",
+        "- Account equity affects downstream sizing, not candidate quality. A tiny recent "
+        "performance sample (especially one trade) cannot authorize a candidate skip.",
         "- For skip, set skip_kind. A terminal adverse skip must use "
         "adverse_candidate_evidence and include at least one allowed adverse_reason_code "
         "plus concrete candidate-specific adverse_evidence. Use insufficient_evidence "

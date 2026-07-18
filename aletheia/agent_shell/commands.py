@@ -1707,6 +1707,7 @@ def _record_no_evaluable_candidate_observation(
 def _deferred_context_dedup_key(
     context_fingerprint: str,
     *,
+    opportunity_id: str,
     policy_epoch_id: str,
     window_minutes: int,
 ) -> tuple[str, str]:
@@ -1718,6 +1719,7 @@ def _deferred_context_dedup_key(
     payload = {
         "event_kind": "operator_decision_deferred_unchanged_context",
         "context_fingerprint": context_fingerprint,
+        "opportunity_id": opportunity_id,
         "policy_epoch_id": policy_epoch_id,
         "window_start": window_start,
     }
@@ -1732,6 +1734,7 @@ def _deferred_context_dedup_key(
 def _existing_deferred_context_observation(
     context_fingerprint: str,
     *,
+    opportunity_id: str,
     policy_epoch_id: str,
     window_minutes: int,
 ) -> dict | None:
@@ -1739,6 +1742,7 @@ def _existing_deferred_context_observation(
 
     dedup_key, _window_start = _deferred_context_dedup_key(
         context_fingerprint,
+        opportunity_id=opportunity_id,
         policy_epoch_id=policy_epoch_id,
         window_minutes=window_minutes,
     )
@@ -1754,6 +1758,7 @@ def _record_deferred_context_observation(
     ctx: dict,
     *,
     context_fingerprint: str,
+    opportunity_id: str,
     policy_epoch_id: str,
     trigger: str,
     reason: str,
@@ -1766,12 +1771,18 @@ def _record_deferred_context_observation(
     queue = (ctx.get("layer2") or {}).get("pending_queue") or {}
     dedup_key, window_start = _deferred_context_dedup_key(
         context_fingerprint,
+        opportunity_id=opportunity_id,
         policy_epoch_id=policy_epoch_id,
         window_minutes=window_minutes,
     )
+    defer_until = (
+        datetime.fromisoformat(window_start) + timedelta(minutes=max(window_minutes, 1))
+    ).isoformat()
     snapshot = {
         "context_fingerprint": context_fingerprint,
+        "opportunity_id": opportunity_id,
         "observation_window_start": window_start,
+        "defer_until": defer_until,
         "defer_reason": reason,
         "unresolved_total": int(queue.get("unresolved_total") or 0),
         "visible_count": int(queue.get("visible_count") or 0),
@@ -1853,26 +1864,49 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
 
     from aletheia.agent_shell.trading_context import (
         operator_decision_context_fingerprint,
+        scope_operator_context_to_candidate,
     )
 
-    context_fingerprint = operator_decision_context_fingerprint(ctx)
     defer_window_minutes = int(
         ctx["skip_policy"].get("unchanged_context_defer_window_minutes") or 120
     )
-    existing_defer = _existing_deferred_context_observation(
-        context_fingerprint,
-        policy_epoch_id=policy_epoch_id,
-        window_minutes=defer_window_minutes,
-    )
-    if existing_defer is not None:
+    selected_opportunity_id = None
+    context_fingerprint = None
+    deferred_candidates: list[dict] = []
+    for candidate in (ctx.get("layer2") or {}).get("pending_signals") or []:
+        opportunity_id = str(candidate.get("opportunity_id") or "")
+        if not opportunity_id:
+            continue
+        candidate_ctx = scope_operator_context_to_candidate(ctx, opportunity_id)
+        candidate_fingerprint = operator_decision_context_fingerprint(candidate_ctx)
+        existing_defer = _existing_deferred_context_observation(
+            candidate_fingerprint,
+            opportunity_id=opportunity_id,
+            policy_epoch_id=policy_epoch_id,
+            window_minutes=defer_window_minutes,
+        )
+        if existing_defer is None:
+            ctx = candidate_ctx
+            selected_opportunity_id = opportunity_id
+            context_fingerprint = candidate_fingerprint
+            break
+        deferred_candidates.append({
+            "opportunity_id": opportunity_id,
+            "context_fingerprint": candidate_fingerprint,
+            "event": existing_defer,
+        })
+
+    if selected_opportunity_id is None and deferred_candidates:
+        existing_defer = deferred_candidates[0]["event"]
         return {
             "action": "evaluation_deferred",
-            "observation_status": "unchanged_context",
+            "observation_status": "all_visible_candidates_unchanged",
             "operator_evaluation_event_id": existing_defer["id"],
             "policy_epoch_id": policy_epoch_id,
             "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
-            "context_fingerprint": context_fingerprint,
+            "context_fingerprint": deferred_candidates[0]["context_fingerprint"],
             "model_invoked": False,
+            "deferred_opportunity_ids": [row["opportunity_id"] for row in deferred_candidates],
             "pending_queue_remaining": int((queue or {}).get("unresolved_total") or 0),
             "pending_queue": queue,
         }
@@ -1886,6 +1920,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         event = _record_deferred_context_observation(
             ctx,
             context_fingerprint=context_fingerprint,
+            opportunity_id=selected_opportunity_id,
             policy_epoch_id=policy_epoch_id,
             trigger=str(params.get("_trigger") or "manual"),
             reason=exc.reason,
@@ -1898,6 +1933,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             "policy_epoch_id": policy_epoch_id,
             "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
             "context_fingerprint": context_fingerprint,
+            "opportunity_id": selected_opportunity_id,
             "model_invoked": True,
             "defer_reason": exc.reason,
             "pending_queue_remaining": int((queue or {}).get("unresolved_total") or 0),
@@ -1971,6 +2007,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "skip_kind": decision.skip_kind,
         "adverse_reason_codes": decision.adverse_reason_codes,
         "adverse_evidence": decision.adverse_evidence,
+        "validated_adverse_claims": decision.validated_adverse_claims,
         "market_type": decision.market_type,
         "scanner_family": decision.scanner_family,
         "position_size_usdt": decision.position_size_usdt,
