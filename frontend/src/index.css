@@ -2183,6 +2183,78 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .seg-btn + .seg-btn { border-left: 1px solid var(--border-2); }
 
 /* ---------- Cockpit main: feed (main) + right rail ---------- */
+.entry-status-card {
+  margin-bottom: var(--space-3);
+  border-left: 3px solid var(--border-2);
+}
+.entry-status-green  { border-left-color: var(--green); }
+.entry-status-yellow { border-left-color: var(--yellow); }
+.entry-status-red    { border-left-color: var(--red); }
+.entry-status-muted  { border-left-color: var(--faint); }
+.entry-status-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--space-3); margin-bottom: var(--space-3);
+}
+.entry-status-head h3 { margin: 2px 0 0; font-size: var(--fs-lg); }
+.entry-status-kicker {
+  color: var(--muted); font-size: var(--fs-2xs); font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase;
+}
+.entry-status-freshness { color: var(--faint); font-size: var(--fs-2xs); white-space: nowrap; }
+.entry-status-reason {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); margin-bottom: var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg-2);
+}
+.entry-status-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+.entry-status-dot-green  { background: var(--green); }
+.entry-status-dot-yellow { background: var(--yellow); }
+.entry-status-dot-red    { background: var(--red); }
+.entry-status-dot-muted  { background: var(--faint); }
+.entry-status-label { color: var(--text); font-size: var(--fs-xs); font-weight: 600; }
+.entry-status-reason p { color: var(--muted); font-size: var(--fs-sm); margin: 2px 0 0; }
+.entry-pipeline {
+  display: flex; align-items: stretch; gap: 4px; overflow-x: auto;
+  padding-bottom: 2px; margin-bottom: var(--space-3);
+}
+.entry-pipeline-step-wrap { display: flex; align-items: center; flex: 1 0 112px; min-width: 0; }
+.entry-pipeline-step {
+  display: flex; flex-direction: column; gap: 2px; flex: 1;
+  min-height: 62px; padding: var(--space-2);
+  border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface);
+}
+.entry-pipeline-step-waiting,
+.entry-pipeline-step-working { border-color: rgba(245,185,66,0.45); background: rgba(245,185,66,0.05); }
+.entry-pipeline-step-action_required { border-color: var(--yellow); background: rgba(245,185,66,0.08); }
+.entry-pipeline-step-position_open { border-color: var(--green); background: rgba(70,180,120,0.06); }
+.entry-pipeline-step-not_reached { opacity: 0.52; }
+.entry-pipeline-label { color: var(--muted); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.08em; }
+.entry-pipeline-value { color: var(--text); font-size: var(--fs-md); line-height: 1.1; }
+.entry-pipeline-state { color: var(--faint); font-size: var(--fs-2xs); }
+.entry-pipeline-arrow { color: var(--faint); padding: 0 2px; }
+.entry-candidates {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: var(--space-2); margin-bottom: var(--space-3);
+}
+.entry-candidate { padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--r-sm); }
+.entry-candidate-head,
+.entry-candidate-detail { display: flex; justify-content: space-between; gap: var(--space-2); }
+.entry-candidate-head { color: var(--text); font-size: var(--fs-sm); }
+.entry-candidate-detail { color: var(--muted); font-size: var(--fs-xs); margin-top: 4px; }
+.entry-candidate-detail > :first-child { min-width: 0; }
+.entry-candidate-detail .mono { flex-shrink: 0; }
+.entry-candidate-status {
+  padding: 1px 6px; border-radius: 999px; white-space: nowrap;
+  font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.05em;
+}
+.entry-candidate-status-deferred { color: var(--yellow); background: rgba(245,185,66,0.08); }
+.entry-candidate-status-queued { color: var(--accent); background: var(--accent-dim); }
+.entry-status-foot {
+  display: flex; justify-content: space-between; gap: var(--space-3);
+  padding-top: var(--space-2); border-top: 1px solid var(--border);
+  color: var(--faint); font-size: var(--fs-2xs);
+}
+
 .cockpit-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(300px, 26vw, 420px);
@@ -2215,9 +2287,29 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
    Agent Activity height. */
 .rail-card { display: flex; flex-direction: column; overflow: hidden; }
 .rail-card > :not(h3):not(.flex) { min-height: 0; }
-.desk-panel   { max-height: 640px; overflow-y: auto; }
+.human-approval-panel { max-height: 320px; }
+.human-approval-required { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.human-approval-clear { display: flex; align-items: flex-start; gap: var(--space-2); }
+.human-approval-clear strong { color: var(--text); font-size: var(--fs-sm); }
+.human-approval-clear p { color: var(--muted); font-size: var(--fs-xs); margin: 2px 0 0; }
+.human-approval-mark { color: var(--green); font-family: var(--mono); font-weight: 700; }
+.decision-history-panel { max-height: 520px; overflow-y: auto; }
+.decision-history-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.decision-history-head h3 { margin: 0; }
+.window-selector {
+  display: inline-flex; align-items: center; border: 1px solid var(--border);
+  border-radius: var(--r-sm); overflow: hidden; flex-shrink: 0;
+}
+.window-selector-btn {
+  appearance: none; border: 0; border-right: 1px solid var(--border);
+  padding: 3px 7px; background: transparent; color: var(--muted);
+  font: 600 var(--fs-2xs) var(--mono); cursor: pointer;
+}
+.window-selector-btn:last-child { border-right: 0; }
+.window-selector-btn:hover { background: var(--surface-2); color: var(--text); }
+.window-selector-btn.active { background: var(--accent-dim); color: var(--accent); }
 
-/* Recent decisions — collapsible history inside the Approval Desk */
+/* Recent terminal decisions — separate from the Human Approval action queue */
 .rail-card > p.text-muted { flex-shrink: 0; margin-bottom: var(--space-2); }
 .desk-pulse {
   margin-top: var(--space-3);
@@ -2307,13 +2399,22 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 /* Funnel — Market Observer → Operator flow visualization
  *
  * Structure: head + diagnosis banner + N sections + footer.
- * Section = title + rows. Rows are either bars (24h) or reason lines (snapshot).
+ * Section = title + rows. Rows are either selected-window cohort bars or
+ * point-in-time snapshot reason lines.
  */
 .funnel-head {
-  display: flex; align-items: baseline; justify-content: space-between;
+  display: flex; align-items: flex-start; justify-content: space-between;
   gap: var(--space-2); margin-bottom: var(--space-2);
 }
 .funnel-head h3 { margin: 0; }
+
+@media (max-width: 700px) {
+  .entry-status-head,
+  .entry-status-foot,
+  .entry-candidate-head,
+  .entry-candidate-detail { align-items: flex-start; flex-direction: column; }
+  .entry-status-freshness { white-space: normal; }
+}
 
 .funnel-diagnosis {
   display: flex; align-items: flex-start; gap: var(--space-2);
