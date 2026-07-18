@@ -17,6 +17,7 @@ Design choices:
 """
 
 import json
+import logging
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -36,6 +37,8 @@ from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
+
+logger = logging.getLogger("aletheia.agents.prediction_observer")
 
 
 class PredictionMarketRead(BaseModel):
@@ -360,6 +363,15 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
             metadata=_build_market_metadata(market, markets_scanned=len(markets)),
         )
         insert_opportunity(opp)
+        try:
+            from aletheia.agent_runtime.scheduler import notify_paper_trader
+
+            notify_paper_trader(source="prediction_observer_opportunity")
+        except Exception:
+            logger.debug(
+                "Failed to notify Ranker after prediction Opportunity commit",
+                exc_info=True,
+            )
         log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
         outputs.append(f"opportunity:{opp.id}")
         opps_created += 1

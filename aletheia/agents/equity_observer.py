@@ -436,6 +436,12 @@ async def _analyze_equity(
         metadata=json.dumps(meta),
     )
     insert_opportunity(opp)
+    try:
+        from aletheia.agent_runtime.scheduler import notify_paper_trader
+
+        notify_paper_trader(source="equity_observer_opportunity")
+    except Exception:
+        logger.debug("Failed to notify Ranker after equity Opportunity commit", exc_info=True)
     log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
     return opp.id, llm_error
 

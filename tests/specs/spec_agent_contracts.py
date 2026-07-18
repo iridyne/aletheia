@@ -495,3 +495,32 @@ def test_paper_traders_no_model_provider_imports():
         assert bad == [], (
             f"{fname} must not import model_provider (rule-based agent, not LLM-driven): {bad}"
         )
+
+
+@spec_claim(
+    SpecClaim(
+        "AC-S13", "agent_contracts", "§3 paper_trader trigger", "L2a",
+        "Every committed Ranker work source has an on-demand wake and the scheduled fallback remains.",
+        status="implemented",
+    ),
+)
+def test_paper_trader_on_demand_sources_and_fallback_are_wired():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent.parent
+    expected = {
+        "aletheia/agents/market_observer.py": "market_observer_opportunity",
+        "aletheia/agents/equity_observer.py": "equity_observer_opportunity",
+        "aletheia/agents/prediction_observer.py": "prediction_observer_opportunity",
+        "aletheia/agents/divergence_scanner.py": "divergence_scanner_opportunity",
+        "aletheia/server/routes/settings.py": "ranker_config_changed",
+        "aletheia/analytics/guard_promotion.py": "guard_set_changed",
+        "aletheia/agent_shell/commands.py": "operator_queue_slot_released",
+    }
+    for relative, source in expected.items():
+        assert source in (root / relative).read_text(encoding="utf-8")
+
+    scheduler = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    assert '_guarded("paper_trader", _run_paper_trader)' in scheduler
+    assert '"interval", minutes=3, id="paper_trader"' in scheduler
+    assert "on_demand:" in scheduler

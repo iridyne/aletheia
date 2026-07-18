@@ -159,6 +159,8 @@
 
 - ✅ **Overview 已补齐“当前为什么无仓位”的一小时优先读模型（2026-07-18）**
   - 顶部 `Why no position now` 使用后端同一读快照明确显示当前 blocker、queued/deferred 候选、到期倒计时、下一触发源及 Proposal/Risk/Execution 是否到达。
+  - Ranker 等待不再笼统显示为 `ranker_waiting`：现在区分尚未评估、signal cooldown、Operator queue capacity、batch limit 与具体 deterministic filter；展示 passed filter 数、retry 倒计时、最近 Ranker trigger/result 和待处理 wake 来源。
+  - CLI `uv run aletheia inspect entry-status --hours 1 [--json]` 使用相同事实投影；`inspect candidates` 明确只是 current-policy preview。
   - Funnel 默认最近 1h，4h/24h 仅作手动历史切换；当前状态与累计 cohort 分开，不再用 24h 终态掩盖实时等待。
   - `Approval Desk` 收窄为 `Human Approval`：空状态明确表示“不需要人工批准”，Operator defer 和自动队列状态在顶部独立展示；终态决定移入 `Decision History`。
 

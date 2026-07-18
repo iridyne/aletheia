@@ -352,6 +352,169 @@ def test_opportunity_funnel_marks_completed_entry_stages_for_existing_position(
     assert stages["execution"] == "position_open"
 
 
+def test_opportunity_funnel_explains_ranker_cooldown_from_durable_filter_facts(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    created_at = (now - timedelta(minutes=2)).isoformat()
+    ranked_at = (now - timedelta(minutes=1)).isoformat()
+    prior_signal_at = (now - timedelta(minutes=20)).isoformat()
+    valid_until = (now + timedelta(minutes=28)).isoformat()
+    _insert_opportunity(conn, "cooldown", status="open", created_at=created_at)
+    conn.execute(
+        "UPDATE opportunities SET symbol='NEAR/USDT',direction_bias='short',"
+        "confidence_score=48,valid_until=?,last_ranked_at=? WHERE id='cooldown'",
+        (valid_until, ranked_at),
+    )
+    conn.execute(
+        "INSERT INTO pi_decisions "
+        "(id,created_at,symbol,direction,market_type,action,opportunity_id,signal_source) "
+        "VALUES ('prior-signal',?,'NEAR/USDT','short','usdt_futures','signal_pending',"
+        "'older-opportunity','market_observer')",
+        (prior_signal_at,),
+    )
+    conn.execute(
+        "INSERT INTO pi_decisions "
+        "(id,created_at,symbol,direction,market_type,action,opportunity_id,signal_source) "
+        "VALUES ('prior-final',?,'NEAR/USDT','short','usdt_futures','skip',"
+        "'older-opportunity','market_observer')",
+        ((now - timedelta(minutes=19)).isoformat(),),
+    )
+    filter_names = [
+        "execution_eligibility",
+        "direction_present",
+        "ranker_confidence_gate",
+        "universe_execution_eligibility",
+        "family_ttl",
+        "factor_hard_block",
+        "guard_candidate_block",
+    ]
+    for sequence, filter_name in enumerate(filter_names, start=1):
+        conn.execute(
+            "INSERT INTO filter_decisions "
+            "(id,dedup_key,candidate_key,candidate_kind,run_id,opportunity_id,symbol,"
+            "market_type,direction,filter_name,stage,sequence_no,decision,reason_code,"
+            "input_snapshot,parameter_snapshot,filter_version,evaluated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                f"pass-{sequence}", f"pass-key-{sequence}", "opportunity:cooldown",
+                "opportunity", "ranker-pass-run", "cooldown", "NEAR/USDT",
+                "usdt_futures", "short", filter_name, "paper_ranker", sequence,
+                "passed", f"{filter_name}_passed", "{}", "{}", "ranker-v1", ranked_at,
+            ),
+        )
+    conn.execute(
+        "INSERT INTO filter_decisions "
+        "(id,dedup_key,candidate_key,candidate_kind,run_id,opportunity_id,symbol,"
+        "market_type,direction,filter_name,stage,sequence_no,decision,reason_code,"
+        "input_snapshot,parameter_snapshot,filter_version,evaluated_at) "
+        "VALUES ('cooldown-filter','cooldown-filter-key','opportunity:cooldown',"
+        "'opportunity','ranker-run','cooldown','NEAR/USDT','usdt_futures','short',"
+        "'signal_cooldown','paper_trader_selection',1,'rejected','signal_cooldown',"
+        "'{}','{\"cooldown_minutes\":30}','ranker-v1',?)",
+        (ranked_at,),
+    )
+    conn.commit()
+
+    from aletheia.server.routes.analytics import get_opportunity_funnel
+
+    current = get_opportunity_funnel(hours=1)["current"]
+
+    assert current["state"] == "ranker_cooldown"
+    assert current["primary_stage"] == "ranker_selection"
+    assert current["reason_code"] == "signal_cooldown"
+    assert current["next_trigger"] == "cooldown_expiry"
+    assert current["ranker"]["counts"] == {
+        "open": 1,
+        "not_evaluated": 0,
+        "cooldown": 1,
+        "backpressure": 0,
+        "batch_limit": 0,
+        "other_wait": 0,
+    }
+    candidate = current["candidates"][0]
+    assert candidate["status"] == "ranker_cooldown"
+    assert candidate["stage"] == "ranker_selection"
+    assert candidate["blocking_filter"] == "signal_cooldown"
+    assert candidate["passed_filter_count"] == 7
+    assert candidate["latest_ranker_run_id"] == "ranker-run"
+    assert candidate["retry_at"] is not None
+    assert 8 * 60 < candidate["retry_in_sec"] < 12 * 60
+
+
+def test_opportunity_funnel_distinguishes_not_yet_ranked_open_opportunity(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    created_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+    _insert_opportunity(conn, "fresh", status="open", created_at=created_at)
+    conn.commit()
+
+    from aletheia.server.routes.analytics import get_opportunity_funnel
+
+    current = get_opportunity_funnel(hours=1)["current"]
+
+    assert current["state"] == "ranker_pending"
+    assert current["reason_code"] == "ranker_not_yet_evaluated"
+    assert current["next_trigger"] == "ranker_wake"
+    assert current["candidates"][0]["status"] == "ranker_pending"
+    assert current["candidates"][0]["blocking_filter"] is None
+
+
+@pytest.mark.parametrize(
+    ("blocking_filter", "expected_state", "expected_trigger"),
+    [
+        ("signal_queue_capacity", "ranker_backpressure", "operator_queue_slot"),
+        ("signal_batch_limit", "ranker_batch_limit", "next_ranker_run"),
+        ("guard_candidate_block", "ranker_filter_wait", "ranker_fact_change"),
+    ],
+)
+def test_opportunity_funnel_preserves_adjacent_ranker_blockers(
+    tmp_path,
+    monkeypatch,
+    blocking_filter,
+    expected_state,
+    expected_trigger,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    created_at = (now - timedelta(minutes=2)).isoformat()
+    ranked_at = (now - timedelta(minutes=1)).isoformat()
+    _insert_opportunity(conn, "adjacent", status="open", created_at=created_at)
+    conn.execute(
+        "UPDATE opportunities SET last_ranked_at=? WHERE id='adjacent'",
+        (ranked_at,),
+    )
+    conn.execute(
+        "INSERT INTO filter_decisions "
+        "(id,dedup_key,candidate_key,candidate_kind,run_id,opportunity_id,symbol,"
+        "market_type,direction,filter_name,stage,sequence_no,decision,reason_code,"
+        "input_snapshot,parameter_snapshot,filter_version,evaluated_at) "
+        "VALUES ('adjacent-filter','adjacent-key','opportunity:adjacent','opportunity',"
+        "'ranker-adjacent','adjacent','BTC/USDT','spot','long',?,?,1,'rejected',?,"
+        "'{}','{}','ranker-v1',?)",
+        (
+            blocking_filter,
+            "paper_trader_selection"
+            if blocking_filter.startswith("signal_")
+            else "paper_ranker",
+            blocking_filter,
+            ranked_at,
+        ),
+    )
+    conn.commit()
+
+    from aletheia.server.routes.analytics import get_opportunity_funnel
+
+    current = get_opportunity_funnel(hours=1)["current"]
+
+    assert current["state"] == expected_state
+    assert current["reason_code"] == blocking_filter
+    assert current["next_trigger"] == expected_trigger
+    assert current["candidates"][0]["blocking_filter"] == blocking_filter
+
+
 def test_operator_decisions_classifies_unknown_uses_rejection_time_and_counts_full_window(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     now = datetime.now(timezone.utc)

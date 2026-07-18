@@ -292,9 +292,34 @@ function fmtCountdown(seconds: number | null): string {
   return minutes < 60 ? `expires in ${minutes}m` : `expires in ${Math.ceil(minutes / 60)}h`
 }
 
+function fmtRetry(seconds: number | null): string | null {
+  if (seconds == null) return null
+  if (seconds <= 0) return 'retry due now'
+  const minutes = Math.ceil(seconds / 60)
+  return minutes < 60 ? `retry in ${minutes}m` : `retry in ${Math.ceil(minutes / 60)}h`
+}
+
+function candidateStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    deferred: 'waiting for facts',
+    queued: 'operator queue',
+    ranker_pending: 'Ranker pending',
+    ranker_cooldown: 'signal cooldown',
+    ranker_backpressure: 'queue full',
+    ranker_batch_limit: 'batch limit',
+    ranker_position_duplicate: 'position exists',
+    ranker_duplicate: 'duplicate symbol',
+    ranker_already_evaluated: 'already evaluated',
+    ranker_filter_wait: 'filter blocked',
+    ranker_evidence_unavailable: 'evidence unavailable',
+  }
+  return labels[status] || humanize(status)
+}
+
 function entryTone(state: string): 'green' | 'yellow' | 'red' | 'muted' {
   if (state === 'position_open') return 'green'
   if (state === 'human_approval_required' || state === 'operator_deferred' || state === 'operator_queued') return 'yellow'
+  if (state.startsWith('ranker_')) return 'yellow'
   if (state === 'no_active_candidate') return 'red'
   return 'muted'
 }
@@ -344,6 +369,27 @@ function EntryStatusCard({ data }: { data?: FunnelData }) {
         ))}
       </div>
 
+      <div className="entry-ranker-evidence">
+        <strong>Ranker evidence</strong>
+        <span>
+          open {current.ranker.counts.open} · pending {current.ranker.counts.not_evaluated}
+          {' · '}cooldown {current.ranker.counts.cooldown}
+          {' · '}backpressure {current.ranker.counts.backpressure}
+        </span>
+        <span>
+          {current.ranker.last_run
+            ? `last run ${current.ranker.last_run.status} · ${humanize(current.ranker.last_run.trigger_type)}`
+            : 'no durable Ranker run in history'}
+        </span>
+        <span>
+          {current.ranker.wake.pending
+            ? `wake pending · ${current.ranker.wake.pending_sources.map(source => humanize(source)).join(', ')}`
+            : current.ranker.wake.scheduler_active
+              ? 'on-demand listener ready · 3m safety heartbeat retained'
+              : 'scheduler unavailable · no in-process wake pending'}
+        </span>
+      </div>
+
       {current.candidates.length > 0 && (
         <div className="entry-candidates">
           {current.candidates.map(candidate => (
@@ -354,12 +400,25 @@ function EntryStatusCard({ data }: { data?: FunnelData }) {
                   {candidate.direction && <span> · {humanize(candidate.direction)}</span>}
                 </span>
                 <span className={`entry-candidate-status entry-candidate-status-${candidate.status}`}>
-                  {candidate.status === 'deferred' ? 'waiting for facts' : 'queued'}
+                  {candidateStatusLabel(candidate.status)}
                 </span>
               </div>
               <div className="entry-candidate-detail">
                 <span>{candidate.reason}</span>
-                <span className="mono">{fmtCountdown(candidate.expires_in_sec)}</span>
+                <span className="mono">
+                  {fmtRetry(candidate.retry_in_sec) || fmtCountdown(candidate.expires_in_sec)}
+                </span>
+              </div>
+              <div className="entry-candidate-evidence">
+                <span>Stage · {humanize(candidate.stage)}</span>
+                <span>
+                  {candidate.passed_filter_count != null
+                    ? `${candidate.passed_filter_count} Ranker filters passed`
+                    : 'Ranker pass count not applicable'}
+                </span>
+                <span>
+                  Blocker · {humanize(candidate.blocking_filter || candidate.reason_code || 'none')}
+                </span>
               </div>
             </div>
           ))}
@@ -697,7 +756,7 @@ function buildDiagnosis(data: FunnelData): { text: string; tone: 'green' | 'yell
   if (current.state === 'human_approval_required' || current.state === 'operator_deferred' || current.state === 'operator_queued') {
     return { text: current.headline, tone: 'yellow' }
   }
-  if (current.state === 'ranker_waiting') {
+  if (current.state.startsWith('ranker_')) {
     return { text: current.headline, tone: 'yellow' }
   }
   if (current.state === 'no_active_candidate') {

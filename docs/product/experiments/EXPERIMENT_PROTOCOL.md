@@ -21,6 +21,18 @@
 > coarse-fingerprint data. The other fixes in the batch are A-class
 > state/evidence/time-window/UI honesty repairs.
 
+> **2026-07-18 Ranker delivery visibility epoch**:
+> `opportunity_ranker_delivery/v2` closes the narrower Universe-only wake window.
+> Committed Opportunities, eligibility-affecting settings, active Guard changes,
+> and released Operator queue slots now coalesce into an immediate Ranker wake;
+> the three-minute scheduled run remains the safety fallback. Each dispatched run
+> persists its coalesced source list in `AgentRun.trigger_type`, while Overview and
+> `inspect entry-status` read the same durable filter/lifecycle facts instead of
+> re-running Ranker. This B-class change affects delivery timing only; Ranker
+> filters, weights, thresholds, queue capacity, Risk, Execution, Exchange and Live
+> are unchanged. Do not pool v2 latency/conversion observations with the earlier
+> delivery window.
+
 > **2026-07-18 Direct-skip semantics epoch**:
 > `system_operator_skip_remediation/b1.2` closes the prior b1.1 observation window.
 > The sole decision treatment is a bounded counterfactual confirmation before a direct

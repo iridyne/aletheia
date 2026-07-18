@@ -69,6 +69,16 @@ def test_overview_leads_with_current_no_position_reason_and_one_hour_funnel() ->
     assert "current:" in client
 
 
+def test_overview_exposes_ranker_filter_stage_and_retry_reason() -> None:
+    overview = (ROOT / "frontend/src/pages/Overview.tsx").read_text(encoding="utf-8")
+
+    assert "ranker_cooldown" in overview
+    assert "blocking_filter" in overview
+    assert "passed_filter_count" in overview
+    assert "retry_in_sec" in overview
+    assert "Ranker evidence" in overview
+
+
 def test_approval_desk_surfaces_unattributed_rejections() -> None:
     overview = (ROOT / "frontend/src/pages/Overview.tsx").read_text(encoding="utf-8")
     client = (ROOT / "frontend/src/api/client.ts").read_text(encoding="utf-8")

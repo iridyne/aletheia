@@ -15,7 +15,7 @@
 | 2 | market_observer | 15min | observer | Scan for trading opportunities |
 | 3 | equity_observer | cron 工作日 14-21UTC /30min | agents | xStocks/equity market scan (replaces stock_observer) |
 | 4 | prediction_observer | 30min | agents | Prediction market scan |
-| 5 | paper_trader | 3min + on-demand | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a). Cadence tightened from 5min so momentum (30min TTL) and mean_reversion (60min TTL) carriers get enough review passes before the family window elapses. Additionally `scheduler.notify_paper_trader(source)` pulls the next fire time forward to now — called by `UniverseService.refresh` after a new snapshot is published or after change-suppression's TTL slide makes previously-expired opportunities eligible. Debounced 3s; APScheduler `max_instances=1` handles overlap. |
+| 5 | paper_trader | 3min + on-demand | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a). `scheduler.notify_paper_trader(source)` coalesces committed Opportunity, eligibility-config, Guard-set, Universe refresh/TTL-slide, and Operator queue-slot-release events into an immediate run. The source list is persisted in `AgentRun.trigger_type`; 3min remains the safety fallback. |
 | 6 | pi_trading_decision | ~15min (configurable) | agents | System Operator heartbeat (daemon fallback) |
 | 7 | position_manager | 5min | io | Manage open positions (trailing stop, exit) |
 | 8 | tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
@@ -90,7 +90,8 @@ backlog health are persisted in `learning_job_health`.
 - **Inputs**: market_snapshots (recent), config.market_data.observed_symbols, universe features
 - **LLM**: Yes (analysis of market conditions)
 - **Outputs**: opportunities table (symbol, direction, confidence, key_observations JSON)
-- **Side effects**: Writes to `opportunities` table; triggers PI daemon wake via `notify_pi_daemon()`
+- **Side effects**: Writes to `opportunities` table; triggers the PI daemon and an
+  on-demand Ranker wake only after the Opportunity/evidence transaction commits.
 - **Error behavior**: Degrades to basic technical-only signals when LLM unavailable
 - **Prompt contract** (2026-07-01, spec UP-08): the per-symbol LLM prompt names the `scanner_family` that surfaced the symbol so the read VALIDATES that family rather than doing a generic scan (MO-4).
 - **Guard advisory contract** (spec UP-07, 断口F): guard advisory is built PER-SYMBOL inside `_analyze_symbol` with `{symbol, scanner_family, asset_class}` via `router.build_guard_advisory()` — NOT run-level with a symbol list (which never matched any guard). The run-level memory_block carries only symbol-agnostic lessons.
@@ -111,7 +112,9 @@ backlog health are persisted in `learning_job_health`.
 - **Inputs**: yfinance daily bars + Bitget xStocks real-time price cross-validation
 - **LLM**: Yes
 - **Outputs**: opportunities table (equity-linked symbols)
-- **Side effects**: Same as market_observer but for equity-linked tokens
+- **Side effects**: Same as market_observer but for equity-linked tokens; the
+  committed observation-only Opportunity wakes Ranker so its terminal exclusion
+  is not delayed.
 - **Condition**: config.market_data.observed_equities non-empty
 
 #### stock_observer (removed 2026-06-17 — superseded by equity_observer)
@@ -121,8 +124,10 @@ backlog health are persisted in `learning_job_health`.
 - **Trigger**: scheduler every 30min
 - **Inputs**: prediction market APIs (Polymarket/Kalshi), existing prediction_markets table
 - **LLM**: No (structured data parsing)
-- **Outputs**: prediction_runs, prediction_markets, prediction_probability_snapshots
-- **Side effects**: Chains divergence_scanner on completion
+- **Outputs**: prediction_runs, prediction_markets, prediction_probability_snapshots,
+  and observation-only prediction Opportunities
+- **Side effects**: Chains divergence_scanner on completion and wakes Ranker after
+  each committed Opportunity so its exclusion is terminalized promptly.
 
 #### divergence_scanner (chained from prediction_observer)
 
@@ -130,7 +135,7 @@ backlog health are persisted in `learning_job_health`.
 - **Inputs**: prediction market prices vs spot prices
 - **LLM**: No
 - **Outputs**: divergence alerts → opportunities table
-- **Side effects**: None
+- **Side effects**: A newly committed tradeable divergence Opportunity wakes Ranker.
 
 #### paper_trader_ranker (internal to paper_trader)
 
@@ -176,11 +181,23 @@ backlog health are persisted in `learning_job_health`.
 
 #### paper_trader (refactored: signal collector)
 
-- **Trigger**: scheduler every 3min + on-demand nudge via `scheduler.notify_paper_trader(source)` from producers (universe refresh, TTL slide). Debounced 3s. APScheduler `max_instances=1` handles overlap so a nudge during an in-flight run is a no-op. Escalation path to a wider notify surface (Tier 2) or a full event-driven daemon (Tier 3) is documented in `docs/plans/trading-pipeline/ranker_on_demand_upgrade_plan_2026-07-17.md` — do not upgrade without meeting the observation gates listed there.
+- **Trigger**: scheduler every 3min plus a debounced on-demand nudge via
+  `scheduler.notify_paper_trader(source)`. Sources are Universe snapshot/TTL-slide,
+  Market/Equity/Prediction/Divergence Opportunity commit, Ranker eligibility config
+  save, active Guard-set mutation, and Operator queue-slot release. Bursts within 3s
+  produce one scheduler modification but retain all sources. Notifications arriving
+  during a run arm one follow-up run. `AgentRun.trigger_type` is
+  `on_demand:<sorted_sources>` for dispatched wakes and `scheduled` for the fallback.
+  Tier 3 daemon remains deferred in the upgrade plan.
 - **Inputs**: opportunities, universe features, System Operator decisions
 - **LLM**: No (pure rule evaluation)
 - **Outputs**: signal_pending PiDecisions (Phase 4a: System Operator is the **sole** proposal submitter — paper_trader no longer creates proposals directly)
 - **Side effects**: Writes signal_pending decisions for System Operator consumption. RuleSet exit auto-close was removed with the rules engine; paper_trader must not close positions directly.
+- **Inspection contract**: `/analytics/opportunity-funnel.current` and
+  `aletheia inspect entry-status` read durable Opportunity, filter-decision,
+  PiDecision and AgentRun facts. They never invoke `paper_trader_ranker`. The
+  process-local wake state is diagnostic only and is labelled unavailable when
+  the scheduler is outside the serving process.
 - **Key invariant**: Never calls LLM; never executes orders directly; never submits proposals (signal collector only)
 - **Learning authority**: factor history and raw case/memo scores are diagnostic proposals only. Each ranker component has a separate candidate-linked exposure; score/filter influence stays at the static baseline unless a durable prospective treatment/control verdict has enough linked net outcomes. Control candidates retain the same venue, eligibility, static-risk-flag, learned-guard, and downstream Risk Engine checks.
 

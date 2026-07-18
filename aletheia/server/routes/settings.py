@@ -17,6 +17,18 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 VALID_PERMISSION_MODES = {"Observe", "Paper", "Full"}
 
 
+def _notify_ranker_config_change() -> None:
+    """Wake Ranker after a committed config mutation that changes eligibility."""
+    try:
+        from aletheia.agent_runtime.scheduler import notify_paper_trader
+
+        notify_paper_trader(source="ranker_config_changed")
+    except Exception:
+        # Config persistence is authoritative; wake telemetry is best-effort and
+        # the three-minute Ranker heartbeat remains the fallback.
+        pass
+
+
 # --- Inline-secret redaction ---------------------------------------------------
 # Secrets must never leave the backend via a GET response, an echoed POST body,
 # or an audit record. `config.yaml` can hold credential-bearing fields (a proxy
@@ -393,6 +405,8 @@ async def set_exchange_markets(req: ExchangeMarketsRequest):
                  "entity_type": "exchange_config", "before": old,
                  "after": cfg.exchange.model_dump(mode="json"),
                  "message": "exchange config updated"})
+    if old != cfg.exchange.model_dump(mode="json"):
+        _notify_ranker_config_change()
     return {**cfg.exchange.model_dump(mode="json"), "exchange_alignment": alignment.to_dict()}
 
 
@@ -448,6 +462,8 @@ async def set_primary_exchange(req: PrimaryExchangeRequest):
         "before": old, "after": after,
         "message": f"Primary exchange set to {eid}",
     })
+    if old != after:
+        _notify_ranker_config_change()
     return {"exchange_id": eid, **after}
 
 
@@ -770,6 +786,8 @@ async def update_regime_config(req: RegimeConfigUpdate):
                  "entity_type": "regime_config", "before": old,
                  "after": cfg.regime.model_dump(mode="json"),
                  "message": f"Regime config updated: {list(updates.keys())}"})
+    if updates:
+        _notify_ranker_config_change()
     return {"updated": updates}
 
 
@@ -794,6 +812,8 @@ async def update_guard_config(req: GuardConfigUpdate):
                  "entity_type": "guard_config", "before": old,
                  "after": cfg.guard.model_dump(mode="json"),
                  "message": f"Guard config updated: {list(updates.keys())}"})
+    if updates:
+        _notify_ranker_config_change()
     return {"updated": updates}
 
 
@@ -1023,6 +1043,8 @@ async def set_permission_mode(req: PermissionModeRequest):
     write_audit({"actor": "human", "source": "dashboard", "event_type": "permission_changed",
                  "entity_type": "permission_mode", "before": {"mode": old}, "after": {"mode": req.mode},
                  "message": f"Permission mode {old} -> {req.mode}"})
+    if old != req.mode:
+        _notify_ranker_config_change()
     return {"old": old, "new": req.mode}
 
 
@@ -1189,6 +1211,8 @@ async def update_tradable_symbols(req: SymbolsUpdate):
                  "entity_type": "symbols", "before": old,
                  "after": {"mode": req.mode, "symbols": normalized},
                  "message": f"Symbol filter updated: mode={req.mode}"})
+    if old != {"mode": req.mode, "symbols": normalized}:
+        _notify_ranker_config_change()
     return {"mode": req.mode, "symbols": normalized}
 
 
@@ -1306,6 +1330,8 @@ async def update_trading_config(req: TradingConfigUpdate):
                  "entity_type": "trading_config", "before": old,
                  "after": cfg.trading.model_dump(mode="json"),
                  "message": f"Trading config updated: {list(updates.keys())}"})
+    if "min_confidence_to_trade" in updates:
+        _notify_ranker_config_change()
     return {"updated": updates, "trading": cfg.trading.model_dump(mode="json")}
 
 
@@ -1520,6 +1546,8 @@ async def update_universe_config(req: UniverseConfigUpdate):
                  "entity_type": "universe_config", "before": old,
                  "after": cfg.universe.model_dump(mode="json"),
                  "message": f"Universe config updated: {list(updates.keys())}"})
+    if updates:
+        _notify_ranker_config_change()
     return {"updated": updates, "rescheduled": rescheduled, "universe": cfg.universe.model_dump(mode="json")}
 
 

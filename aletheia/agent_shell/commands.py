@@ -2356,6 +2356,16 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
 
     _attach_pending_queue_state(result)
 
+    # A terminal Operator decision releases one admission slot. Wake Ranker
+    # after the durable decision is settled so backpressured Opportunities do
+    # not wait for the three-minute safety heartbeat.
+    try:
+        from aletheia.agent_runtime.scheduler import notify_paper_trader
+
+        notify_paper_trader(source="operator_queue_slot_released")
+    except Exception:
+        logger.debug("Failed to notify Ranker after queue-slot release", exc_info=True)
+
     return result
 
 

@@ -7,6 +7,7 @@ from functools import partial
 import logging
 import queue
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable
 from zoneinfo import ZoneInfo
@@ -1172,9 +1173,102 @@ def get_pause_state() -> dict:
     return {"scheduler_active": True, "mode": "running"}
 
 
-_LAST_PAPER_TRADER_NUDGE_MONO: float = 0.0
 _PAPER_TRADER_NUDGE_DEBOUNCE_SEC = 3.0
 _PAPER_TRADER_NUDGE_DELAY_SEC = 0.5
+_PAPER_TRADER_WAKE_STATE: dict[str, object] = {
+    "last_nudge_mono": 0.0,
+    "last_requested_at": None,
+    "pending_sources": set(),
+    "burst_count": 0,
+    "last_dispatched_at": None,
+    "last_completed_at": None,
+    "last_result": None,
+}
+
+
+def _reset_paper_trader_wake_state_for_tests() -> None:
+    """Reset bounded process-local wake telemetry without touching scheduler state."""
+    with _SCHEDULER_JOB_LOCK:
+        _PAPER_TRADER_WAKE_STATE.update({
+            "last_nudge_mono": 0.0,
+            "last_requested_at": None,
+            "pending_sources": set(),
+            "burst_count": 0,
+            "last_dispatched_at": None,
+            "last_completed_at": None,
+            "last_result": None,
+        })
+
+
+def _paper_trader_job_next_run_at() -> str | None:
+    if _scheduler is None or not _scheduler.running:
+        return None
+    try:
+        job = _scheduler.get_job("paper_trader")
+        value = getattr(job, "next_run_time", None) if job else None
+        return value.isoformat() if value else None
+    except Exception:
+        return None
+
+
+def paper_trader_wake_status() -> dict[str, object]:
+    """Return sanitized Ranker wake state for Overview/CLI diagnostics."""
+    with _SCHEDULER_JOB_LOCK:
+        sources = sorted(str(value) for value in _PAPER_TRADER_WAKE_STATE["pending_sources"])
+        return {
+            "scheduler_active": bool(_scheduler is not None and _scheduler.running),
+            "pending": bool(sources),
+            "pending_sources": sources,
+            "burst_count": int(_PAPER_TRADER_WAKE_STATE["burst_count"]),
+            "last_requested_at": _PAPER_TRADER_WAKE_STATE["last_requested_at"],
+            "last_dispatched_at": _PAPER_TRADER_WAKE_STATE["last_dispatched_at"],
+            "last_completed_at": _PAPER_TRADER_WAKE_STATE["last_completed_at"],
+            "last_result": _PAPER_TRADER_WAKE_STATE["last_result"],
+            "next_run_at": _paper_trader_job_next_run_at(),
+        }
+
+
+def _consume_paper_trader_wake() -> list[str]:
+    with _SCHEDULER_JOB_LOCK:
+        sources = sorted(str(value) for value in _PAPER_TRADER_WAKE_STATE["pending_sources"])
+        _PAPER_TRADER_WAKE_STATE["pending_sources"] = set()
+        if sources:
+            _PAPER_TRADER_WAKE_STATE["last_dispatched_at"] = datetime.now(timezone.utc).isoformat()
+        return sources
+
+
+def _record_paper_trader_wake_result(result: object, *, error: str | None = None) -> None:
+    summary: dict[str, object]
+    if isinstance(result, dict):
+        summary = {
+            "run_id": result.get("run_id"),
+            "status": result.get("status"),
+            "outputs": list(result.get("outputs") or [])[:20],
+            "errors": list(result.get("errors") or [])[:10],
+        }
+    else:
+        summary = {"run_id": None, "status": "failed" if error else "unknown", "outputs": [], "errors": []}
+    if error:
+        summary["errors"] = [error]
+    with _SCHEDULER_JOB_LOCK:
+        _PAPER_TRADER_WAKE_STATE["last_completed_at"] = datetime.now(timezone.utc).isoformat()
+        _PAPER_TRADER_WAKE_STATE["last_result"] = summary
+
+
+def _arm_paper_trader_job() -> bool:
+    if _scheduler is None or not _scheduler.running:
+        return False
+    try:
+        job = _scheduler.get_job("paper_trader")
+        if job is None:
+            return False
+        _scheduler.modify_job(
+            "paper_trader",
+            next_run_time=datetime.now() + timedelta(seconds=_PAPER_TRADER_NUDGE_DELAY_SEC),
+        )
+        return True
+    except Exception:
+        return False
 
 
 def notify_paper_trader(source: str = "unknown") -> bool:
@@ -1196,32 +1290,31 @@ def notify_paper_trader(source: str = "unknown") -> bool:
     Returns True if a modify was issued, False otherwise. The boolean is
     diagnostic; the caller should not treat False as a failure.
     """
-    global _LAST_PAPER_TRADER_NUDGE_MONO
-    import time as _time
-
     if _scheduler is None or not _scheduler.running:
         return False
-    now_mono = _time.monotonic()
+    now_mono = time.monotonic()
     with _SCHEDULER_JOB_LOCK:
-        if now_mono - _LAST_PAPER_TRADER_NUDGE_MONO < _PAPER_TRADER_NUDGE_DEBOUNCE_SEC:
-            return False
         try:
             job = _scheduler.get_job("paper_trader")
         except Exception:
             return False
         if job is None:
             return False
-        try:
-            _scheduler.modify_job(
-                "paper_trader",
-                next_run_time=datetime.now() + timedelta(seconds=_PAPER_TRADER_NUDGE_DELAY_SEC),
-            )
-            _LAST_PAPER_TRADER_NUDGE_MONO = now_mono
-            logger.debug("paper_trader: nudged forward (source=%s)", source)
-            return True
-        except Exception as exc:
-            logger.debug("paper_trader: nudge failed (source=%s): %s", source, exc)
+        pending_sources = _PAPER_TRADER_WAKE_STATE["pending_sources"]
+        assert isinstance(pending_sources, set)
+        pending_sources.add(str(source or "unknown")[:120])
+        _PAPER_TRADER_WAKE_STATE["burst_count"] = int(
+            _PAPER_TRADER_WAKE_STATE["burst_count"]
+        ) + 1
+        _PAPER_TRADER_WAKE_STATE["last_requested_at"] = datetime.now(timezone.utc).isoformat()
+        last_nudge = float(_PAPER_TRADER_WAKE_STATE["last_nudge_mono"])
+        if now_mono - last_nudge < _PAPER_TRADER_NUDGE_DEBOUNCE_SEC:
             return False
+        if not _arm_paper_trader_job():
+            return False
+        _PAPER_TRADER_WAKE_STATE["last_nudge_mono"] = now_mono
+        logger.debug("paper_trader: nudged forward (source=%s)", source)
+        return True
 
 
 def reschedule_universe_refresh(interval_min: int) -> bool:
@@ -1548,17 +1641,38 @@ def _run_paper_trader():
         return
     if cfg.agent.permission_mode not in ("Paper", "Full"):
         return
+    wake_sources = _consume_paper_trader_wake()
+    trigger_type = (
+        f"on_demand:{','.join(wake_sources)}"[:240]
+        if wake_sources
+        else "scheduled"
+    )
+    result = None
     try:
-        _run_async_with_timeout("paper_trader", _async_run("paper_trader"))
+        result = _run_async_with_timeout(
+            "paper_trader",
+            _async_run("paper_trader", trigger_type=trigger_type),
+        )
+        _record_paper_trader_wake_result(result)
     except TimeoutError:
         logger.warning(
             "paper_trader job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["paper_trader"],
         )
+        _record_paper_trader_wake_result(result, error="timeout")
         _record_job_failure("paper_trader", "timeout")
     except Exception as e:
         logger.warning("paper_trader job failed: %s", e)
+        _record_paper_trader_wake_result(result, error=type(e).__name__)
         _record_job_failure("paper_trader", str(e))
+    finally:
+        # Notifications arriving while a run is in flight are not lost.  The
+        # current run cannot see facts committed after its snapshot, so re-arm
+        # one coalesced follow-up instead of waiting for the 3-minute heartbeat.
+        if paper_trader_wake_status()["pending"]:
+            with _SCHEDULER_JOB_LOCK:
+                _PAPER_TRADER_WAKE_STATE["last_nudge_mono"] = 0.0
+                _arm_paper_trader_job()
 
 
 def _run_pi_trading_decision():
@@ -2760,9 +2874,9 @@ async def _async_universe_refresh():
         raise
 
 
-async def _async_run(agent_name: str):
+async def _async_run(agent_name: str, *, trigger_type: str = "scheduled"):
     from aletheia.agent_runtime.orchestrator import run_agent
-    result = await run_agent(agent_name, trigger_type="scheduled")
+    result = await run_agent(agent_name, trigger_type=trigger_type)
     if isinstance(result, dict) and (
         result.get("status") == "completed_with_errors"
         or bool(result.get("errors"))

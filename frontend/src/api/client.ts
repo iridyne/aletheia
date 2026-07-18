@@ -488,7 +488,10 @@ export const api = {
     cohort_basis: 'opportunities_emitted_in_window'
     current: {
       state: 'position_open' | 'human_approval_required' | 'operator_deferred' |
-        'operator_queued' | 'ranker_waiting' | 'no_active_candidate' | 'no_candidates'
+        'operator_queued' | 'ranker_pending' | 'ranker_cooldown' |
+        'ranker_backpressure' | 'ranker_batch_limit' | 'ranker_position_duplicate' |
+        'ranker_duplicate' | 'ranker_already_evaluated' | 'ranker_filter_wait' |
+        'ranker_evidence_unavailable' | 'no_active_candidate' | 'no_candidates'
       headline: string
       primary_stage: string
       reason_code: string
@@ -503,6 +506,39 @@ export const api = {
         deferred_candidates: number
         pending_proposals: number
       }
+      ranker: {
+        delivery_epoch: string
+        counts: {
+          open: number
+          not_evaluated: number
+          cooldown: number
+          backpressure: number
+          batch_limit: number
+          other_wait: number
+        }
+        displayed_candidates: number
+        undisplayed_candidates: number
+        last_run: {
+          run_id: string
+          trigger_type: string
+          started_at: string
+          ended_at: string | null
+          status: string
+          outputs: unknown[]
+          errors: unknown[]
+        } | null
+        wake: {
+          scheduler_active: boolean
+          pending: boolean
+          pending_sources: string[]
+          burst_count?: number
+          last_requested_at?: string | null
+          last_dispatched_at?: string | null
+          last_completed_at?: string | null
+          last_result?: Record<string, unknown> | null
+          next_run_at: string | null
+        }
+      }
       candidates: Array<{
         opportunity_id: string | null
         symbol: string | null
@@ -511,7 +547,11 @@ export const api = {
         scanner_family: string | null
         trade_score: number | null
         confidence_score: number | null
-        status: 'queued' | 'deferred'
+        status: 'queued' | 'deferred' | 'ranker_pending' | 'ranker_cooldown' |
+          'ranker_backpressure' | 'ranker_batch_limit' | 'ranker_position_duplicate' |
+          'ranker_duplicate' | 'ranker_already_evaluated' | 'ranker_filter_wait' |
+          'ranker_evidence_unavailable'
+        stage: string
         reason_code: string | null
         reason: string
         next_trigger: string
@@ -521,6 +561,12 @@ export const api = {
         defer_until: string | null
         latest_event_at: string | null
         policy_epoch_id: string | null
+        blocking_filter: string | null
+        passed_filters: string[]
+        passed_filter_count: number | null
+        latest_ranker_run_id: string | null
+        retry_at: string | null
+        retry_in_sec: number | null
       }>
       pipeline: Array<{
         stage: string

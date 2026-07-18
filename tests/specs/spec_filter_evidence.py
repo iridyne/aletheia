@@ -1150,3 +1150,23 @@ def test_decision_evidence_builder_carries_operator_rationale(tmp_path, monkeypa
     assert manifest["b2_candidate_evidence"]["n_total"] == 8
     assert manifest["market_regime"]["state"] == "bearish"
     assert manifest["recent_performance"]["total_trades"] == 1
+
+
+@spec_claim(
+    SpecClaim(
+        "FE-S19", _CONTRACT, "§3 current progress projection", "L2a",
+        "Overview and CLI derive current Ranker progress from durable facts without re-running Ranker.",
+        status="implemented",
+    )
+)
+def test_opportunity_progress_read_model_does_not_import_ranker_preview():
+    from pathlib import Path
+
+    source = (
+        Path(__file__).parent.parent.parent
+        / "aletheia/analytics/opportunity_progress.py"
+    ).read_text(encoding="utf-8")
+    assert "paper_trader_ranker" not in source
+    assert "build_paper_candidates" not in source
+    assert "filter_decisions" in source
+    assert "FROM agent_runs" in source
