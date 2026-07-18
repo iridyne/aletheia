@@ -16,6 +16,14 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
+def _bypass_candidate_technical_preflight(monkeypatch) -> None:
+    """Keep older seam tests focused on the downstream boundary they exercise."""
+    monkeypatch.setattr(
+        "aletheia.agent_shell.decision_facts.candidate_context_unavailable_reason",
+        lambda *_args, **_kwargs: None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # L2a — Structural claims (carriers + their fields)
 # ---------------------------------------------------------------------------
@@ -209,6 +217,7 @@ def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeyp
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
     from aletheia.agent_shell import b2_evidence_policy
     from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
@@ -423,7 +432,7 @@ def test_existing_final_decision_blocks_duplicate_proposal(tmp_path, monkeypatch
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
-        lambda: {
+        lambda **_kwargs: {
             "layer1": {
                 "data_health": {"signal_status": "healthy", "ohlcv_ready": True}
             },
@@ -525,7 +534,7 @@ def test_submission_exception_keeps_pending_source_retryable(tmp_path, monkeypat
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
-        lambda: {
+        lambda **_kwargs: {
             "layer1": {
                 "data_health": {"signal_status": "healthy", "ohlcv_ready": True}
             }
@@ -642,7 +651,7 @@ def test_concurrent_duplicate_wake_submits_one_proposal(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
-        lambda: {
+        lambda **_kwargs: {
             "layer1": {"data_health": {"signal_status": "healthy", "ohlcv_ready": True}},
             "layer2": {"pending_queue": {"unresolved_total": 1}},
         },
@@ -741,7 +750,7 @@ def test_final_claim_failure_prevents_proposal_side_effect(tmp_path, monkeypatch
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
-        lambda: {"layer1": {"data_health": {"signal_status": "healthy", "ohlcv_ready": True}}},
+        lambda **_kwargs: {"layer1": {"data_health": {"signal_status": "healthy", "ohlcv_ready": True}}},
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_decision.evaluate_trading_opportunity",
@@ -775,6 +784,7 @@ def test_llm_unavailable_keeps_oldest_pending_signal_retryable(tmp_path, monkeyp
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
     from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
     from aletheia.storage.repositories import (
@@ -814,7 +824,7 @@ def test_llm_unavailable_keeps_oldest_pending_signal_retryable(tmp_path, monkeyp
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
-        lambda: {
+        lambda **_kwargs: {
             "layer1": {
                 "data_health": {"signal_status": "healthy", "ohlcv_ready": True},
                 "feature_index": {"perp:ETH/USDT": {
@@ -964,6 +974,7 @@ def test_proposal_preflight_unavailable_does_not_claim_pending_source(
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import commands, trading_decision
     from aletheia.storage.models import Opportunity, PiDecision
     from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
@@ -1005,7 +1016,7 @@ def test_proposal_preflight_unavailable_does_not_claim_pending_source(
     monkeypatch.setattr(trading_decision, "_assess_opportunity", trade)
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
-        lambda: {
+        lambda **_kwargs: {
             "layer1": {"data_health": {"signal_status": "healthy", "ohlcv_ready": True}},
             "layer2": {
                 "pending_signals": [{
@@ -1480,6 +1491,218 @@ def test_layer1_features_resolve_snapshot_asset_identity(tmp_path, monkeypatch):
         "BTC/USDT": ("perp", 100.0, 61.0),
         "ETH/USDT": ("perp", 200.0, 39.0),
     }
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S45", "decision_lifecycle_contract", "§2.2b candidate-targeted technical context", "L2b",
+        "Every durable pending carrier receives its exact latest universe feature snapshot even "
+        "when that snapshot falls outside the global Layer 1 presentation slice.",
+        status="implemented",
+    ),
+)
+def test_pending_candidate_feature_beyond_global_limit_is_hydrated(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.data.price_feed as price_feed
+    from aletheia.agent_shell.decision_facts import candidate_fact_bundle
+    from aletheia.agent_shell.trading_context import build_enriched_trading_context
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import (
+        insert_opportunity,
+        insert_pi_decision,
+        list_universe_feature_snapshots,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    db.execute(
+        "INSERT INTO universe_registry (id, venue, market_type, symbol) VALUES (?, ?, ?, ?)",
+        ("asset-target", "binance", "perp", "TARGET/USDT"),
+    )
+    db.execute(
+        "INSERT INTO universe_feature_snapshots "
+        "(id, asset_id, ts, rsi_14, return_1h, return_4h, data_freshness_sec) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("feature-target", "asset-target", now, 62.0, 0.8, 2.1, 30),
+    )
+    for index in range(60):
+        asset_id = f"asset-decoy-{index:02d}"
+        db.execute(
+            "INSERT INTO universe_registry (id, venue, market_type, symbol) VALUES (?, ?, ?, ?)",
+            (asset_id, "binance", "perp", f"D{index:02d}/USDT"),
+        )
+        db.execute(
+            "INSERT INTO universe_feature_snapshots "
+            "(id, asset_id, ts, rsi_14, data_freshness_sec) VALUES (?, ?, ?, ?, ?)",
+            (f"feature-decoy-{index:02d}", asset_id, now, 50.0, 30),
+        )
+    db.execute(
+        "INSERT INTO universe_members "
+        "(id, snapshot_id, asset_id, symbol, market_type, scanner_family, "
+        "rank, total_score, expires_at, execution_eligible, risk_flags) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "member-target", "snapshot-target", "asset-target", "TARGET/USDT",
+            "perp", "momentum", 1, 80.0, now, 1, "[]",
+        ),
+    )
+    db.commit()
+
+    opportunity = Opportunity(
+        id="opp-target-beyond-50",
+        symbol="TARGET/USDT",
+        market="perp",
+        direction_bias="long",
+        confidence="medium",
+        confidence_score=55,
+        source_agent="market_observer",
+        status="queued",
+        scanner_family="momentum",
+        execution_eligible=True,
+        universe_member_id="member-target",
+        universe_snapshot_id="snapshot-target",
+        thesis="Target-specific technical evidence must reach the Operator.",
+    )
+    insert_opportunity(opportunity)
+    insert_pi_decision(PiDecision(
+        id="pending-target-beyond-50",
+        action="signal_pending",
+        opportunity_id=opportunity.id,
+        signal_source="market_observer",
+        symbol=opportunity.symbol,
+        direction="long",
+        market_type="perp",
+    ))
+    monkeypatch.setattr(
+        price_feed,
+        "get_cached_price_with_meta",
+        lambda _symbol: {"price": 101.0, "provider": "test"},
+    )
+    monkeypatch.setattr(
+        "aletheia.agents.paper_trader_ranker.build_paper_candidates", lambda limit=30: [],
+    )
+
+    assert not any(
+        row["id"] == "feature-target"
+        for row in list_universe_feature_snapshots(limit=50)
+    )
+    context = build_enriched_trading_context(authorize_learning=False)
+    facts = candidate_fact_bundle(context, opportunity_id=opportunity.id)
+
+    assert facts["technical"]["feature_snapshot_id"] == "feature-target"
+    assert facts["technical"]["rsi_14"] == 62.0
+    assert facts["candidate"]["execution_eligible"] is True
+    assert [row["id"] for row in context["layer1"]["opportunities"]] == [opportunity.id]
+    assert context["layer1"]["opportunities"][0]["technical_context"]["feature_snapshot_id"] == "feature-target"
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S46", "decision_lifecycle_contract", "§2.2b candidate context availability", "L2b",
+        "A missing exact candidate technical snapshot is retryable unavailability: the model is "
+        "not invoked, the carrier is retained, and a later exact snapshot changes the material "
+        "fingerprint so evaluation can resume.",
+        status="implemented",
+    ),
+)
+def test_missing_candidate_technical_context_defers_before_model_and_reopens_on_data(
+    tmp_path, monkeypatch,
+):
+    import asyncio
+    from datetime import datetime, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell import b2_evidence_policy, commands, trading_decision
+
+    candidate = {
+        "opportunity_id": "opp-technical-preflight",
+        "signal_source": "market_observer",
+        "symbol": "TECH/USDT",
+        "direction": "long",
+        "market_type": "perp",
+        "scanner_family": "momentum",
+        "trade_score": 55.0,
+        "asset_id": "asset-technical-preflight",
+    }
+    context = {
+        "layer1": {
+            "data_health": {"ohlcv_ready": True},
+            "feature_index": {},
+            "features": [],
+            "opportunities": [],
+        },
+        "layer2": {
+            "pending_signals": [candidate],
+            "executable_candidates": [dict(candidate)],
+            "pending_queue": {
+                "read_status": "complete", "unresolved_total": 1,
+                "visible_count": 1, "overflow_count": 0,
+            },
+        },
+        "layer3": {},
+    }
+    calls = {"assess": 0, "confirm": 0}
+
+    async def assess(_ctx):
+        calls["assess"] += 1
+        return {
+            "action": "skip", "symbol": "TECH/USDT", "direction": "long",
+            "market_type": "perp", "conviction": 25,
+            "reasoning": "Evidence remains neutral.", "bear_case": "Setup may fail.",
+            "skip_kind": "insufficient_evidence", "adverse_reason_codes": [],
+            "adverse_evidence": [],
+        }
+
+    async def confirm(_ctx, _initial, _reason):
+        calls["confirm"] += 1
+        return await assess(_ctx)
+
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.build_enriched_trading_context",
+        lambda **_kwargs: context,
+    )
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
+    monkeypatch.setattr(trading_decision, "_reassess_direct_skip", confirm)
+    monkeypatch.setattr(
+        b2_evidence_policy, "attach_b2_candidate_evidence", lambda *_args, **_kwargs: None,
+    )
+
+    missing = asyncio.run(commands.evaluate_trading_opportunity({}))
+    assert missing["action"] == "evaluation_deferred"
+    assert missing["observation_status"] == "candidate_context_unavailable"
+    assert missing["defer_reason"] == "candidate_technical_snapshot_unavailable"
+    assert missing["model_invoked"] is False
+    assert calls == {"assess": 0, "confirm": 0}
+
+    feature = {
+        "asset_id": candidate["asset_id"],
+        "feature_snapshot_id": "feature-technical-preflight",
+        "feature_ts": datetime.now(timezone.utc).isoformat(),
+        "data_freshness_sec": 20,
+        "venue": "binance",
+        "symbol": candidate["symbol"],
+        "market_type": candidate["market_type"],
+        "price": 100.0,
+        "rsi_14": 54.0,
+        "return_1h": 0.2,
+        "return_4h": 0.6,
+    }
+    context["layer1"]["feature_index"] = {
+        "binance|perp|TECH/USDT": feature,
+    }
+    context["layer1"]["features"] = [feature]
+
+    with_data = asyncio.run(commands.evaluate_trading_opportunity({}))
+    assert with_data["action"] == "evaluation_deferred"
+    assert with_data["model_invoked"] is True
+    assert calls == {"assess": 2, "confirm": 1}
 
 
 @spec_claim(
@@ -2000,7 +2223,7 @@ def test_rank_priority_is_presented_as_ordering_not_a_veto_threshold():
     assert "score=51" not in executable
 
 
-def test_direct_skip_b13_rotates_a_distinct_policy_epoch(tmp_path, monkeypatch):
+def test_direct_skip_b14_rotates_a_distinct_policy_epoch(tmp_path, monkeypatch):
     import json
 
     from tests.test_entry_logic import setup_env
@@ -2022,12 +2245,15 @@ def test_direct_skip_b13_rotates_a_distinct_policy_epoch(tmp_path, monkeypatch):
 
     assert row["epoch_kind"] == "system_operator_skip_remediation"
     assert values == skip_policy_context()
-    assert values["version"] == "b1.3"
+    assert values["version"] == "b1.4"
     assert values["direct_skip_confirmation_required"] is True
     assert values["insufficient_evidence_terminal_skip"] is False
     assert values["deterministic_adverse_fact_validation"] is True
     assert values["single_candidate_model_context"] is True
     assert values["candidate_specific_defer"] is True
+    assert values["candidate_targeted_feature_hydration"] is True
+    assert values["missing_candidate_technical_context_model_invocation"] is False
+    assert values["candidate_scoped_learning_exposure"] is True
 
 
 def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(
@@ -2038,6 +2264,7 @@ def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import b2_evidence_policy, commands, trading_decision
     from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
     from aletheia.storage.repositories import (
@@ -2143,7 +2370,7 @@ def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(
 
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
-        lambda: context,
+        lambda **_kwargs: context,
     )
     monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
     monkeypatch.setattr(trading_decision, "_reassess_direct_skip", confirm)
@@ -2178,6 +2405,7 @@ def test_candidate_specific_defer_rotates_to_next_visible_candidate(tmp_path, mo
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import commands, trading_decision
     from aletheia.agent_shell.trading_context import _build_pending_signal_queue
     from aletheia.storage.models import Opportunity, PiDecision
@@ -2228,7 +2456,7 @@ def test_candidate_specific_defer_rotates_to_next_visible_candidate(tmp_path, mo
         }
 
     monkeypatch.setattr(
-        "aletheia.agent_shell.trading_context.build_enriched_trading_context", lambda: context
+        "aletheia.agent_shell.trading_context.build_enriched_trading_context", lambda **_kwargs: context
     )
     monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
     monkeypatch.setattr(trading_decision, "_reassess_direct_skip", confirm)
@@ -2377,6 +2605,7 @@ def test_submitting_claim_without_proposal_resumes_submission(tmp_path, monkeypa
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
     from aletheia.config.loader import load_config, save_config
     from aletheia.execution import gateway
@@ -2615,6 +2844,7 @@ def test_queued_opportunity_expiry_is_rechecked_before_proposal(
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
     from aletheia.config.loader import load_config, save_config
     from aletheia.execution import gateway
@@ -2741,6 +2971,7 @@ def test_claim_rechecks_source_after_early_authority_check(
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
     from aletheia.config.loader import load_config, save_config
     from aletheia.execution import gateway
@@ -2982,6 +3213,7 @@ def test_submitting_recovery_uses_stored_proposal_after_skip_and_mode_change(
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
     from aletheia.config.loader import load_config, save_config
     from aletheia.execution import gateway
@@ -3114,6 +3346,7 @@ def test_single_candidate_scope_can_infer_market_from_selected_complete_carrier(
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
     from aletheia.config.loader import load_config, save_config
     from aletheia.execution import gateway
@@ -3770,6 +4003,7 @@ def test_submitting_claim_skip_retry_is_recovery_deferred(tmp_path, monkeypatch)
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
     from aletheia.config.loader import load_config, save_config
     from aletheia.storage.models import Opportunity, PiDecision
@@ -4100,6 +4334,7 @@ def test_claim_rejects_pending_conflict_inserted_after_context(
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    _bypass_candidate_technical_preflight(monkeypatch)
     from aletheia.agent_shell import commands, reflection, trading_decision
     from aletheia.config.loader import load_config, save_config
     from aletheia.execution import gateway

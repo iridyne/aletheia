@@ -111,6 +111,10 @@ loop contributes positively. Current behavior has these contract-relevant limita
   new policy epoch and a from-zero observation window before owner enablement; old-window evidence
   cannot authorize the new behavior. Safety tightening must never be withheld merely to make a
   cleaner experiment.
+- Operator prompt-bundle exposure is created only after single-candidate scoping. It uses a stable
+  candidate identity and the exact Opportunity 4h outcome key; a mixed queue returns the static
+  prompt without creating an unlinked exposure. Candidate-context contract changes are included in
+  the Operator Learning policy epoch so pre-change and post-change contribution evidence cannot pool.
 
 The target lifecycle, registry, prospective experiments, overlap handling, and automatic fallback
 are normative in `learning_evolution_contract.md`. Phase 0 measurement claims are tracked below;

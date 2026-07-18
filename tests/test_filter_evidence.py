@@ -648,7 +648,7 @@ def test_operator_command_surfaces_proposal_submission_reason(monkeypatch):
     )
     monkeypatch.setattr(
         "aletheia.agent_shell.trading_context.build_enriched_trading_context",
-        lambda: {
+        lambda **_kwargs: {
             "layer1": {
                 "data_health": {"signal_status": "healthy", "ohlcv_ready": True}
             }

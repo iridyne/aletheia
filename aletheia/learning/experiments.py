@@ -148,6 +148,14 @@ def _policy_epoch(path_id: str) -> str:
                 "max_spread_bps": u.max_spread_bps,
                 "min_depth_10bps_usd": u.min_depth_10bps_usd,
             }
+        if path_id == "operator_learning_bundle":
+            # Prompt-bundle contribution cannot pool observations across a
+            # change in the candidate facts/decision-context contract. The
+            # producing commit remains separate provenance; these effective
+            # semantics rotate the actual Learning policy cohort.
+            from aletheia.agent_shell.skip_policy import skip_policy_context
+
+            values["operator_decision_context"] = skip_policy_context()
     except Exception:
         values = {"config": "unavailable"}
     from aletheia.learning.policy_epochs import persist_policy_epoch

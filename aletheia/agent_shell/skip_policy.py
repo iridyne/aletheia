@@ -7,7 +7,7 @@ from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_e
 
 _EPOCH_KIND = "system_operator_skip_remediation"
 _EFFECTIVE_VALUES = {
-    "version": "b1.3",
+    "version": "b1.4",
     "aggregate_signal_health_candidate_veto": False,
     "zero_pending_heartbeat_trading_evaluation": False,
     "aggregate_signal_health_config_tightening": False,
@@ -34,6 +34,14 @@ _EFFECTIVE_VALUES = {
     "blind_direct_skip_counterfactual": True,
     "missing_numeric_values_are_unknown": True,
     "decision_evidence_manifest": "operator-candidate-v2",
+    # B1.4: exact technical delivery and Learning attribution happen at the
+    # same durable carrier scope. Missing technical facts defer before inference;
+    # a new exact feature snapshot changes the fingerprint and reopens the call.
+    "candidate_targeted_feature_hydration": True,
+    "missing_candidate_technical_context_model_invocation": False,
+    "candidate_feature_snapshot_reopens_evaluation": True,
+    "candidate_scoped_learning_exposure": True,
+    "candidate_feature_refresh_wakes_operator": True,
 }
 _AFFECTED_PATHS = (
     "system_operator_candidate_context",
@@ -44,11 +52,15 @@ _AFFECTED_PATHS = (
     "operator_direct_skip_fact_validation",
     "operator_candidate_specific_defer",
     "operator_decision_evidence_manifest",
+    "operator_candidate_targeted_feature_context",
+    "operator_candidate_context_availability",
+    "operator_candidate_learning_attribution",
+    "universe_feature_refresh_operator_wake",
 )
 
 
 def ensure_skip_remediation_policy_epoch() -> str:
-    """Return the durable B1.3 policy epoch, rotating only if policy changes."""
+    """Return the durable B1.4 policy epoch, rotating only if policy changes."""
     epoch = build_policy_epoch(
         _EPOCH_KIND,
         _EFFECTIVE_VALUES,

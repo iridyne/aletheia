@@ -393,6 +393,10 @@ later controller run persists the lifecycle state.
 - Prompt context contains lesson ids, versions, scope, confidence, age, and evidence count.
 - The persisted decision records the exact prompt learning manifest.
 - Treatment/control changes only Learning context, not market/risk inputs.
+- Treatment/control authorization occurs only after the active context is scoped to one exact
+  market-observer pending carrier. Its candidate key excludes timestamps and unrelated queue churn,
+  and its exposure links to `opportunity:<id>:4h`; mixed or Serenity-only queues fail closed without
+  an unattributed exposure.
 - The Operator may disagree; disagreement is recorded and becomes evidence, not an error.
 - Reflection must resolve by causal decision/opportunity/proposal/position ids and time bounds.
   Symbol-only position matching or latest-price movement is explanatory text, not eligible evidence.
@@ -507,7 +511,7 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B18 | L2b | exit-policy advisor remains read-only with no settings or position-management consumer | implemented |
 | LE-B19 | L2b | automatic `block_*` recommendations enter guard shadow evaluation, not Risk Engine via category coercion | implemented |
 | LE-B20 | L2b | universe family calibration records clean prospective neutral/treatment exposures before score influence | implemented |
-| LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — deterministic policy epochs now persist and stratify universe, factor, ranker, and sizing exposures; prompt-bundle treatment exposure remains |
+| LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — deterministic policy epochs now persist and stratify universe, factor, ranker, sizing, and Operator prompt-bundle exposures; other prompt-content policy changes remain |
 | LE-B22 | L2b | factor producer, Operator context, ranker trace, and exposure use the same stable `factor_key` identity | implemented |
 | LE-B23 | L2b | retrying one exposure dedup key stores one immutable influence record | implemented |
 | LE-V01 | L2b | universe calibration verdict runtime uses exact, prospective, cost-aware treatment/control cohorts | implemented — measurement-only evaluator |

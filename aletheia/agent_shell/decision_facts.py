@@ -8,8 +8,12 @@ that bundle.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 import json
+
+
+_CANDIDATE_TECHNICAL_MAX_AGE_SEC = 7200
 
 
 def _market_type(value: Any) -> str | None:
@@ -38,15 +42,56 @@ def _selected_candidate(ctx: dict[str, Any], opportunity_id: str | None = None) 
 def _selected_feature(ctx: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     symbol = candidate.get("symbol")
     market = _market_type(candidate.get("market_type") or candidate.get("market"))
+    asset_id = candidate.get("asset_id")
     layer1 = ctx.get("layer1") or {}
     features = list((layer1.get("feature_index") or {}).values())
     features.extend(layer1.get("features") or [])
+    if asset_id:
+        exact = [feature for feature in features if feature.get("asset_id") == asset_id]
+        if exact:
+            return exact[0]
     for feature in features:
         if feature.get("symbol") != symbol:
             continue
         if _market_type(feature.get("market_type")) == market:
             return feature
     return {}
+
+
+def candidate_context_unavailable_reason(
+    ctx: dict[str, Any], *, opportunity_id: str | None = None,
+) -> str | None:
+    """Return a retryable reason when exact candidate technical facts are unusable."""
+    candidate = _selected_candidate(ctx, opportunity_id)
+    feature = _selected_feature(ctx, candidate)
+    if not feature.get("feature_snapshot_id") or not feature.get("feature_ts"):
+        return "candidate_technical_snapshot_unavailable"
+
+    core_values = (
+        feature.get("rsi_15m"), feature.get("rsi_14"), feature.get("rsi_4h"),
+        feature.get("return_15m"), feature.get("return_1h"),
+        feature.get("return_4h"), feature.get("return_24h"),
+    )
+    if not any(_number(value) is not None for value in core_values):
+        return "candidate_technical_snapshot_incomplete"
+
+    source_age = _number(feature.get("data_freshness_sec"))
+    try:
+        observed = datetime.fromisoformat(
+            str(feature.get("feature_ts")).replace("Z", "+00:00")
+        )
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=timezone.utc)
+        row_age = max(
+            0.0,
+            (datetime.now(timezone.utc) - observed.astimezone(timezone.utc)).total_seconds(),
+        )
+    except (TypeError, ValueError):
+        return "candidate_technical_snapshot_unavailable"
+    effective_age = row_age + max(source_age or 0.0, 0.0)
+    if effective_age > _CANDIDATE_TECHNICAL_MAX_AGE_SEC:
+        return "candidate_technical_snapshot_stale"
+    return None
 
 
 def candidate_fact_bundle(

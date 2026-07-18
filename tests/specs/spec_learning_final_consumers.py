@@ -141,6 +141,16 @@ def test_prompt_bundles_use_exact_paper_authority(monkeypatch):
         default_off["learning_manifest"]["authority"]["exposure_id"],
     )
     assert operator_exposure["outcome_candidate_key"] == "opportunity:opp-authority:4h"
+    operator_epoch = get_db().execute(
+        "SELECT effective_values_json FROM learning_policy_epochs WHERE epoch_id=?",
+        (operator_exposure["concurrent_policy_epoch"],),
+    ).fetchone()
+    assert operator_epoch is not None
+    operator_policy = json.loads(operator_epoch["effective_values_json"])
+    assert operator_policy["operator_decision_context"]["version"] == "b1.4"
+    assert operator_policy["operator_decision_context"][
+        "candidate_feature_refresh_wakes_operator"
+    ] is True
     operator_outcome = get_db().execute(
         "SELECT id FROM filter_candidate_outcomes "
         "WHERE outcome_candidate_key='opportunity:opp-authority' AND horizon='4h'",
@@ -190,7 +200,7 @@ def test_prompt_bundles_use_exact_paper_authority(monkeypatch):
         "experiment_id": "exp-operator",
         "exposure_id": "exposure-control",
     }
-    assert calls[0]["candidate_key"].startswith("operator_queue:")
+    assert calls[0]["candidate_key"].startswith("operator_candidate:")
     assert calls[0]["outcome_candidate_key"] == "opportunity:opp-authority:4h"
     observer_control = prompt_bundles.authorize_observer_learning_bundle(
         "learned observer memo", "learned symbol guard",
@@ -237,6 +247,101 @@ def test_prompt_bundles_use_exact_paper_authority(monkeypatch):
         universe_snapshot_id="snapshot-1", universe_member_id="member-1",
     )
     assert member_retry == member_first
+
+
+def test_operator_learning_authorization_occurs_after_single_candidate_scope(
+    tmp_path, monkeypatch,
+):
+    import asyncio
+    from datetime import datetime, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell import b2_evidence_policy, commands, trading_decision
+    from aletheia.learning.experiments import InfluenceDecision
+
+    pending = [
+        {
+            "opportunity_id": "opp-learning-a", "signal_source": "market_observer",
+            "symbol": "AAA/USDT", "direction": "long", "market_type": "perp",
+            "scanner_family": "momentum", "trade_score": 56.0, "asset_id": "asset-a",
+        },
+        {
+            "opportunity_id": "opp-learning-b", "signal_source": "market_observer",
+            "symbol": "BBB/USDT", "direction": "short", "market_type": "perp",
+            "scanner_family": "derivatives", "trade_score": 55.0, "asset_id": "asset-b",
+        },
+    ]
+    now = datetime.now(timezone.utc).isoformat()
+    features = {
+        f"binance|perp|{row['symbol']}": {
+            "asset_id": row["asset_id"], "feature_snapshot_id": f"feature-{index}",
+            "feature_ts": now, "data_freshness_sec": 15, "venue": "binance",
+            "symbol": row["symbol"], "market_type": "perp", "price": 100.0,
+            "rsi_14": 55.0, "return_1h": 0.2, "return_4h": 0.5,
+        }
+        for index, row in enumerate(pending)
+    }
+    context = {
+        "layer1": {
+            "data_health": {"ohlcv_ready": True}, "feature_index": features,
+            "features": list(features.values()), "opportunities": [],
+        },
+        "layer2": {
+            "reflection": "candidate-linked reflection",
+            "trading_memo": {"summary": "candidate-linked memo"},
+            "reasoning_feedback": None,
+            "calibration_feedback": None,
+            "pending_signals": pending,
+            "executable_candidates": [dict(row) for row in pending],
+            "pending_queue": {
+                "read_status": "complete", "unresolved_total": 2,
+                "visible_count": 2, "overflow_count": 0,
+            },
+        },
+        "layer3": {"lessons": [], "ps_lessons": [], "guard_candidates": []},
+    }
+    calls = []
+
+    def control(**kwargs):
+        calls.append(kwargs)
+        return InfluenceDecision(
+            value=0.0, applied=False, assignment="control", reason="baseline:authorized",
+            hypothesis_id="hyp-operator", experiment_id="exp-operator",
+            exposure_id="exposure-candidate-a",
+        )
+
+    async def assess(ctx):
+        candidate = ctx["layer2"]["pending_signals"][0]
+        return {
+            "action": "skip", "symbol": candidate["symbol"], "direction": candidate["direction"],
+            "market_type": "perp", "conviction": 25, "reasoning": "neutral",
+            "bear_case": "uncertain", "skip_kind": "insufficient_evidence",
+            "adverse_reason_codes": [], "adverse_evidence": [],
+        }
+
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_context.build_enriched_trading_context",
+        lambda **_kwargs: context,
+    )
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_boolean_treatment", control,
+    )
+    monkeypatch.setattr(trading_decision, "_assess_opportunity", assess)
+    monkeypatch.setattr(trading_decision, "_reassess_direct_skip", lambda *_args, **_kwargs: assess(_args[0]))
+    monkeypatch.setattr(
+        b2_evidence_policy, "attach_b2_candidate_evidence", lambda *_args, **_kwargs: None,
+    )
+
+    result = asyncio.run(commands.evaluate_trading_opportunity({}))
+
+    assert result["action"] == "evaluation_deferred"
+    assert result["opportunity_id"] == "opp-learning-a"
+    assert len(calls) == 1
+    assert calls[0]["candidate_key"].startswith("operator_candidate:")
+    assert calls[0]["opportunity_id"] == "opp-learning-a"
+    assert calls[0]["outcome_candidate_key"] == "opportunity:opp-learning-a:4h"
 
 
 @spec_claim(

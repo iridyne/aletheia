@@ -136,9 +136,9 @@ def test_ranker_candidate_context_backfills_opportunity_id():
 def test_reviewed_opportunity_roundtrips_through_market_pending_signal(tmp_path, monkeypatch):
     """A consumed opportunity remains attributable through its signal_pending carrier.
 
-    paper_trader intentionally marks the source row reviewed after enqueueing it, so
-    Layer 1 and the ranker no longer expose that row.  The queued PiDecision must be
-    sufficient for the System Operator to recover the original attribution fields.
+    paper_trader intentionally marks the source row reviewed after enqueueing it. The
+    general open-opportunity slice no longer selects that row, but candidate-targeted
+    hydration must restore its exact thesis/observations for the pending carrier.
     """
     setup_env(tmp_path, monkeypatch)
 
@@ -184,7 +184,7 @@ def test_reviewed_opportunity_roundtrips_through_market_pending_signal(tmp_path,
     from aletheia.agent_shell.trading_decision import TradingDecision, _attach_opportunity_context
 
     ctx = build_enriched_trading_context()
-    assert all(row.get("id") != opp.id for row in ctx["layer1"]["opportunities"])
+    assert any(row.get("id") == opp.id for row in ctx["layer1"]["opportunities"])
     assert any(row.get("id") == competing.id for row in ctx["layer1"]["opportunities"])
     pending = next(
         row for row in ctx["layer2"]["pending_signals"]

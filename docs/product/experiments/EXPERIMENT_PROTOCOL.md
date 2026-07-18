@@ -44,6 +44,20 @@
 > are unchanged. Compare b1.3 outcomes only inside its new policy epoch; b1.2 is the
 > baseline and must not be pooled.
 
+> **2026-07-18 Candidate-context delivery epoch**:
+> `system_operator_skip_remediation/b1.4` closes b1.3. The exact pending candidate
+> is hydrated by `asset_id` independently of the bounded global feature display;
+> missing, incomplete, or stale exact technical context defers before any model
+> invocation, and a newly persisted exact feature snapshot changes the material
+> fingerprint and immediately wakes/reopens Operator evaluation. Operator Learning
+> authorization now occurs only after the context is scoped to one market-observer
+> carrier, using a stable candidate key and the exact Opportunity 4h outcome link;
+> mixed queues no longer emit an unattributed exposure. Ranker weights, conviction
+> thresholds, sizing, Risk, Execution, Exchange, and Live are unchanged. Compare
+> b1.4 candidate decisions and Learning contribution only inside their new policy
+> epochs; b1.3 and unlinked prompt-bundle observations are historical baselines and
+> must not be pooled.
+
 ---
 
 ## 核心赌注
