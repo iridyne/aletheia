@@ -1219,9 +1219,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 /* symbol strip — compact horizontal scrollable selector */
 .symbol-strip {
   display: flex; gap: var(--space-1); overflow-x: auto; padding-bottom: var(--space-2);
-  margin-bottom: var(--space-3); scrollbar-width: thin;
+  margin-bottom: var(--space-3); scrollbar-width: thin; scrollbar-color: var(--border) transparent;
 }
 .symbol-strip::-webkit-scrollbar { height: 3px; }
+.symbol-strip::-webkit-scrollbar-track { background: transparent; }
 .symbol-strip::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 .symbol-chip {
   display: flex; align-items: center; gap: var(--space-1);

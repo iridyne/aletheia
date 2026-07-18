@@ -4166,6 +4166,7 @@ function ProviderCard({ name, config, anthroConfig, health, allHealth, broker, i
   broker?: any;
   isExpanded: boolean; onToggle: () => void; qc: any
 }) {
+  const [showInferenceLimits, setShowInferenceLimits] = useState(false)
   const isHTTP = HTTP_PROVIDERS.has(name)
   const isOAuth = OAUTH_PROVIDERS.has(name)
   const isCLI = !isHTTP
@@ -4297,12 +4298,29 @@ function ProviderCard({ name, config, anthroConfig, health, allHealth, broker, i
           ) : (
             <ClaudeCLIPanel config={config} health={health} isDefault={isDefault} qc={qc} />
           )}
-          <InferenceLimitsForm
-            name={effectiveToggleProvider}
-            config={effectiveToggleProvider === 'anthropic_compatible' ? anthroConfig : config}
-            metrics={broker?.providers?.[effectiveToggleProvider]?.metrics}
-            qc={qc}
-          />
+          <div style={{ marginTop: '0.75rem', borderTop: '1px solid var(--border)', paddingTop: '0.5rem' }}>
+            <button
+              className="secondary"
+              style={{ fontSize: '0.75rem', width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              onClick={() => setShowInferenceLimits(v => !v)}
+            >
+              <span style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>{showInferenceLimits ? '▾' : '▸'}</span>
+              Inference admission
+              {!showInferenceLimits && broker?.providers?.[effectiveToggleProvider]?.metrics && (
+                <span className="hint mono" style={{ marginLeft: 'auto', fontSize: '0.7rem' }}>
+                  active {broker.providers[effectiveToggleProvider].metrics.active ?? 0}
+                </span>
+              )}
+            </button>
+            {showInferenceLimits && (
+              <InferenceLimitsForm
+                name={effectiveToggleProvider}
+                config={effectiveToggleProvider === 'anthropic_compatible' ? anthroConfig : config}
+                metrics={broker?.providers?.[effectiveToggleProvider]?.metrics}
+                qc={qc}
+              />
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -4335,15 +4353,12 @@ function InferenceLimitsForm({ name, config, metrics, qc }: {
   })
 
   return (
-    <div style={{ marginTop: '0.9rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
-      <div className="flex items-center gap-2 mb-2">
-        <strong style={{ fontSize: '0.78rem' }}>Inference admission</strong>
-        {metrics && (
-          <span className="hint mono" style={{ marginLeft: 'auto' }}>
-            active {metrics.active ?? 0} · queued {metrics.queued ?? 0} · wait avg {Math.round(metrics.queue_wait_avg_ms ?? 0)}ms
-          </span>
-        )}
-      </div>
+    <div style={{ marginTop: '0.75rem' }}>
+      {metrics && (
+        <div className="hint mono" style={{ marginBottom: '0.5rem', fontSize: '0.72rem' }}>
+          active {metrics.active ?? 0} · queued {metrics.queued ?? 0} · wait avg {Math.round(metrics.queue_wait_avg_ms ?? 0)}ms
+        </div>
+      )}
       <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         <label>Max concurrency<input type="number" min={1} max={16} value={maxConcurrency} onChange={e => setMaxConcurrency(Number(e.target.value))} /></label>
         <label>Requests/min<input type="number" min={0} max={10000} value={rpm} onChange={e => setRpm(Number(e.target.value))} /></label>
@@ -4590,8 +4605,7 @@ function HTTPProviderForm({ name, config, anthroConfig, isDefault, isDeep, isFas
       {/* Row 3: API Key — full width */}
       <label className="col-full">
         API Key
-        {activeApiKey?.configured && <span className="badge badge-green" style={{ marginLeft: '0.4rem', fontSize: '0.62rem' }}>··{activeApiKey.last4}</span>}
-        <input type="password" value={apiKey} placeholder={activeApiKey?.configured ? '•••••• (leave blank to keep)' : 'paste key'} onChange={e => { setApiKey(e.target.value); setResult(null) }} />
+        <input type="password" value={apiKey} placeholder={activeApiKey?.configured ? `•••••• configured (ends ··${activeApiKey.last4})` : 'paste key'} onChange={e => { setApiKey(e.target.value); setResult(null) }} />
       </label>
 
       {/* Row 4: Actions — full width */}
@@ -4599,7 +4613,7 @@ function HTTPProviderForm({ name, config, anthroConfig, isDefault, isDeep, isFas
         <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
           {verifyAndSave.isPending ? 'Verifying…' : 'Verify & Save'}
         </button>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: 'var(--muted)', margin: 0 }}>
+        <label style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: 'var(--muted)', margin: 0 }}>
           Routing role
           <select
             value={currentRole}
