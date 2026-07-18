@@ -7,10 +7,9 @@ import SetupBanner from '../components/SetupBanner'
 import PnLZone from '../components/PnLZone'
 import AgentFeed from '../components/AgentFeed'
 import CollectorHealthDetails from '../components/CollectorHealthDetails'
-import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
-import { Badge, Button, Card, CardHeader, StatusText } from '../components/ui'
+import { Button, Card, StatusText } from '../components/ui'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
-import { humanize, fmtTimestamp, fmtAge, fmtSymbol } from '../lib/format'
+import { humanize, fmtTimestamp } from '../lib/format'
 
 /**
  * Cockpit / Overview (OVERVIEW_REDESIGN.md Decision 3).
@@ -40,12 +39,6 @@ export default function Overview() {
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
   const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
-  const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
-  const { data: entryFunnel } = useQuery({
-    queryKey: ['opportunity-funnel', 1],
-    queryFn: () => api.getOpportunityFunnel(1),
-    refetchInterval: 30000,
-  })
   const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 30000 })
   const { data: collectorHealth } = useQuery({
@@ -86,7 +79,6 @@ export default function Overview() {
   const running = !!s.gateway_running
   const paused = !!s.paused
   const killed = !!killSwitch?.active
-  const pendingProposals = (proposals as any[]).filter(p => p.status === 'pending')
 
   // Risk
   const riskState = String(riskStatus?.status || 'not_available')
@@ -109,24 +101,19 @@ export default function Overview() {
       {/* Anchor 1 — PnL / account zone (full width) */}
       <PnLZone />
 
-      {/* Anchor 1.5 — the direct answer to why account value has not moved */}
-      <EntryStatusCard data={entryFunnel} />
+      {/* Anchor 1.5 — Blotter summary strip. The four decision-flow cards
+          (EntryStatusCard / HumanApprovalCard / OpportunityFunnelCard /
+          DecisionHistoryCard) migrated to /blotter as of 2026-07-18; this
+          strip preserves at-a-glance visibility of the pipeline state
+          without hosting the full workflow.  See
+          docs/design/frontend/blotter_design.md. */}
+      <BlotterSummaryStrip />
 
       {/* Anchor 2 — agent feed (main) + right rail */}
       <div className="cockpit-main">
         <AgentFeed />
 
         <div className="cockpit-rail">
-          {/* Human Approval — visible action queue only; automated waits live above */}
-          <HumanApprovalCard pendingProposals={pendingProposals} />
-
-
-          {/* Funnel — the counterpart to the Approval Desk: why nothing (or few) reached it */}
-          <OpportunityFunnelCard />
-
-          {/* Terminal outcomes are history, not the current human action queue. */}
-          <DecisionHistoryCard />
-
           {/* Risk state */}
           <Card className="rail-card risk-panel">
             <div className="risk-head">
@@ -283,713 +270,98 @@ export default function Overview() {
   )
 }
 
-// ── Current entry status ─────────────────────────────────────────────────────
+// ── Blotter summary strip ────────────────────────────────────────────────────
+// Owner-approved 2026-07-18: the four decision-flow cards
+// (EntryStatusCard / HumanApprovalCard / OpportunityFunnelCard /
+// DecisionHistoryCard) plus their helpers, tone tables, and reason
+// dictionaries all migrated to /blotter. Only this shortcut strip remains
+// on the Overview so at-a-glance visibility of the pipeline is preserved.
+// See docs/design/frontend/blotter_design.md.
 
-function fmtCountdown(seconds: number | null): string {
-  if (seconds == null) return 'expiry unavailable'
-  if (seconds <= 0) return 'expired'
-  const minutes = Math.ceil(seconds / 60)
-  return minutes < 60 ? `expires in ${minutes}m` : `expires in ${Math.ceil(minutes / 60)}h`
-}
-
-function fmtRetry(seconds: number | null): string | null {
-  if (seconds == null) return null
-  if (seconds <= 0) return 'retry due now'
-  const minutes = Math.ceil(seconds / 60)
-  return minutes < 60 ? `retry in ${minutes}m` : `retry in ${Math.ceil(minutes / 60)}h`
-}
-
-function candidateStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    deferred: 'waiting for facts',
-    queued: 'operator queue',
-    ranker_pending: 'Ranker pending',
-    ranker_cooldown: 'signal cooldown',
-    ranker_backpressure: 'queue full',
-    ranker_batch_limit: 'batch limit',
-    ranker_position_duplicate: 'position exists',
-    ranker_duplicate: 'duplicate symbol',
-    ranker_already_evaluated: 'already evaluated',
-    ranker_filter_wait: 'filter blocked',
-    ranker_evidence_unavailable: 'evidence unavailable',
-  }
-  return labels[status] || humanize(status)
-}
-
-function entryTone(state: string): 'green' | 'yellow' | 'red' | 'muted' {
-  if (state === 'position_open') return 'green'
-  if (state === 'human_approval_required' || state === 'operator_deferred' || state === 'operator_queued') return 'yellow'
-  if (state.startsWith('ranker_')) return 'yellow'
-  if (state === 'no_active_candidate') return 'red'
-  return 'muted'
-}
-
-function EntryStatusCard({ data }: { data?: FunnelData }) {
-  if (!data) return null
-  const current = data.current
-  const tone = entryTone(current.state)
-  const statusLabel = current.state === 'position_open'
-    ? 'Current state'
-    : current.state === 'human_approval_required'
-      ? 'Current action'
-      : 'Current limiting stage'
-
-  return (
-    <Card className={`entry-status-card entry-status-${tone}`}>
-      <div className="entry-status-head">
-        <div>
-          <div className="entry-status-kicker">Why no position now</div>
-          <h3>{current.headline}</h3>
-        </div>
-        <div className="entry-status-freshness mono" title={fmtTimestamp(current.as_of)}>
-          updated {fmtAge(current.as_of)}
-        </div>
-      </div>
-
-      <div className="entry-status-reason">
-        <span className={`entry-status-dot entry-status-dot-${tone}`} />
-        <div>
-          <span className="entry-status-label">{statusLabel} · {humanize(current.primary_stage)}</span>
-          <p>{current.reason}</p>
-        </div>
-      </div>
-
-      <div className="entry-pipeline" aria-label="Current entry pipeline">
-        {current.pipeline.map((step, index) => (
-          <div className="entry-pipeline-step-wrap" key={step.stage}>
-            <div className={`entry-pipeline-step entry-pipeline-step-${step.state}`}>
-              <span className="entry-pipeline-label">{step.label}</span>
-              <span className="entry-pipeline-value mono">
-                {step.count != null ? step.count : humanize(step.state)}
-              </span>
-              <span className="entry-pipeline-state">{humanize(step.state)}</span>
-            </div>
-            {index < current.pipeline.length - 1 && <span className="entry-pipeline-arrow">→</span>}
-          </div>
-        ))}
-      </div>
-
-      <div className="entry-ranker-evidence">
-        <strong>Ranker evidence</strong>
-        <span>
-          open {current.ranker.counts.open} · pending {current.ranker.counts.not_evaluated}
-          {' · '}cooldown {current.ranker.counts.cooldown}
-          {' · '}backpressure {current.ranker.counts.backpressure}
-          {' · '}active carrier {current.ranker.counts.carrier_active}
-        </span>
-        <span>
-          {current.ranker.last_run
-            ? `last run ${current.ranker.last_run.status} · ${humanize(current.ranker.last_run.trigger_type)}`
-            : 'no durable Ranker run in history'}
-        </span>
-        <span>
-          {current.ranker.wake.pending
-            ? `wake pending · ${current.ranker.wake.pending_sources.map(source => humanize(source)).join(', ')}`
-            : current.ranker.wake.scheduler_active
-              ? 'on-demand listener ready · 3m safety heartbeat retained'
-              : 'scheduler unavailable · no in-process wake pending'}
-        </span>
-      </div>
-
-      {current.candidates.length > 0 && (
-        <div className="entry-candidates">
-          {current.candidates.map(candidate => (
-            <div className="entry-candidate" key={candidate.opportunity_id || candidate.symbol || ''}>
-              <div className="entry-candidate-head">
-                <span>
-                  <span className="mono">{fmtSymbol(candidate.symbol || '', candidate.market_type || undefined)}</span>
-                  {candidate.direction && <span> · {humanize(candidate.direction)}</span>}
-                </span>
-                <span className={`entry-candidate-status entry-candidate-status-${candidate.status}`}>
-                  {candidateStatusLabel(candidate.status)}
-                </span>
-              </div>
-              <div className="entry-candidate-detail">
-                <span>{candidate.reason}</span>
-                <span className="mono">
-                  {fmtRetry(candidate.retry_in_sec) || fmtCountdown(candidate.expires_in_sec)}
-                </span>
-              </div>
-              <div className="entry-candidate-evidence">
-                <span>Stage · {humanize(candidate.stage)}</span>
-                <span>
-                  {candidate.passed_filter_count != null
-                    ? `${candidate.passed_filter_count} Ranker filters passed`
-                    : 'Ranker pass count not applicable'}
-                </span>
-                <span>
-                  Blocker · {humanize(candidate.blocking_filter || candidate.reason_code || 'none')}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="entry-status-foot">
-        <span>Next trigger · {humanize(current.next_trigger)}</span>
-        <span>
-          Last 1h · {data.setup_count} setups / {data.emitted_count} generations
-          {' · '}{data.terminal_breakdown.snapshot_superseded} superseded
-          {' · '}{data.terminal_breakdown.ttl_expired} TTL expired
-          {' · '}{data.proposed_count} proposed
-        </span>
-      </div>
-    </Card>
-  )
-}
-
-// ── Human Approval + terminal decision history ──────────────────────────────
-
-const OUTCOME_LABEL: Record<string, string> = {
-  trade: 'trade',
-  operator_skip: 'operator skip',
-  operator_watch: 'operator watch',
-  user_reject: 'you rejected',
-  auto_reject: 'auto rejected',
-  reject_unknown: 'Reject attribution unavailable',
-}
-
-const OUTCOME_ICON: Record<string, string> = {
-  trade: '✓',
-  operator_skip: '✗',
-  operator_watch: '◔',
-  user_reject: '⊘',
-  auto_reject: '⊗',
-  reject_unknown: '?',
-}
-
-const OUTCOME_TONE: Record<string, 'green' | 'yellow' | 'red' | 'muted'> = {
-  trade: 'green',
-  operator_skip: 'muted',
-  operator_watch: 'yellow',
-  user_reject: 'red',
-  auto_reject: 'red',
-  reject_unknown: 'yellow',
-}
-
-const FUNNEL_WINDOWS = [1, 4, 24]
-
-function WindowSelector({ value, onChange }: { value: number; onChange: (hours: number) => void }) {
-  return (
-    <div className="window-selector" aria-label="Analytics window">
-      {FUNNEL_WINDOWS.map(hours => (
-        <button
-          key={hours}
-          type="button"
-          className={`window-selector-btn${value === hours ? ' active' : ''}`}
-          onClick={() => onChange(hours)}
-        >
-          {hours}h
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function HumanApprovalCard({ pendingProposals }: { pendingProposals: any[] }) {
+function BlotterSummaryStrip() {
   const navigate = useNavigate()
-
-  return (
-    <Card className="rail-card human-approval-panel">
-      <CardHeader title="Human Approval" />
-      {pendingProposals.length > 0 ? (
-        <>
-          <div className="human-approval-required">
-            <Badge tone="yellow">{pendingProposals.length}</Badge>
-            <span>Proposal{pendingProposals.length === 1 ? '' : 's'} waiting for you</span>
-          </div>
-          <ul className="approval-list">
-            {pendingProposals.slice(0, 4).map((p: any) => (
-              <li key={p.id}>
-                <span><span className="mono">{fmtSymbol(p.symbol, p.market_type)}</span> {humanize(p.direction)}</span>
-                <span className="ts mono" title={fmtTimestamp(p.created_at)}>{fmtAge(p.created_at)}</span>
-              </li>
-            ))}
-          </ul>
-          <Button className="btn-control mt-3" onClick={() => navigate('/proposals')}>Review →</Button>
-        </>
-      ) : (
-        <div className="human-approval-clear">
-          <span className="human-approval-mark">✓</span>
-          <div>
-            <strong>No human approval required</strong>
-            <p>Automated candidates and waits are shown in the entry status above.</p>
-          </div>
-        </div>
-      )}
-    </Card>
-  )
-}
-
-function DecisionHistoryCard() {
-  const [hours, setHours] = useState(1)
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const [selectedOppId, setSelectedOppId] = useState<string | null>(null)
-  const historyRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (historyOpen) requestAnimationFrame(() =>
-      historyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
-  }, [historyOpen])
-
-  const { data: decisions } = useQuery({
-    queryKey: ['operator-decisions', hours],
-    queryFn: () => api.getOperatorDecisions(hours, 20),
-    refetchInterval: 60000,
-  })
-
-  const counts = decisions?.counts
-  const items = decisions?.items || []
-  const historyTotal = decisions?.total_count || 0
-
-  return (
-    <Card className="rail-card decision-history-panel">
-      <div className="decision-history-head">
-        <h3>Decision History</h3>
-        <WindowSelector value={hours} onChange={setHours} />
-      </div>
-      {decisions && (
-        <>
-          {historyTotal > 0 && items[0] && (() => {
-            const last = items[0]
-            const lastTrade = items.find(it => it.outcome === 'trade')
-            const tone = OUTCOME_TONE[last.outcome] || 'muted'
-            return (
-              <div className="desk-pulse">
-                <span className={`decisions-count decisions-count-${tone}`}>{OUTCOME_ICON[last.outcome]}</span>
-                <span> {OUTCOME_LABEL[last.outcome]} · {fmtAge(last.decided_at)}</span>
-                {last.outcome !== 'trade' && (
-                  lastTrade
-                    ? <span> · <span className="decisions-count-green">✓</span> trade {fmtAge(lastTrade.decided_at)}</span>
-                    : <span className="decisions-count-muted"> · no trades {hours}h</span>
-                )}
-              </div>
-            )
-          })()}
-          <table className="status-board decisions-toggle">
-            <tbody>
-              <tr
-                className={`status-row status-row-clickable`}
-                onClick={() => setHistoryOpen(x => !x)}
-              >
-                <th>Recent</th>
-                <td className="status-cell">
-                  <span className="status-value text-xs">
-                    {historyTotal > 0
-                      ? <RecentCountsInline counts={counts!} />
-                      : <span className="text-muted">no terminal decisions in {hours}h</span>}
-                  </span>
-                  <span className="status-row-chevron">{historyOpen ? '▾' : '▸'}</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <CollapsibleSection ref={historyRef} open={historyOpen}>
-            <div className="decisions-panel">
-              <div className="decisions-title">Last {decisions.window_hours}h · {items.length} shown</div>
-              {items.length === 0 && (
-                <p className="text-muted text-sm mb-0">
-                  No terminal Operator decisions. Deferred candidates remain visible above.
-                </p>
-              )}
-              {items.map((it) => {
-                const tone = OUTCOME_TONE[it.outcome] || 'muted'
-                return (
-                  <button
-                    key={`${it.decision_id || it.proposal_id || it.opportunity_id}-${it.decided_at}`}
-                    type="button"
-                    className={`decisions-row decisions-row-${tone}`}
-                    onClick={() => it.opportunity_id && setSelectedOppId(it.opportunity_id)}
-                    disabled={!it.opportunity_id}
-                  >
-                    <span className={`decisions-icon decisions-icon-${tone}`}>{OUTCOME_ICON[it.outcome] || '·'}</span>
-                    <div className="decisions-body">
-                      <div className="decisions-head">
-                        <span className="mono">{fmtSymbol(it.symbol || '', it.market_type || undefined)}</span>
-                        {it.direction && <span className="text-xs"> {humanize(it.direction)}</span>}
-                        <span className="text-xs text-muted"> · {OUTCOME_LABEL[it.outcome] || it.outcome}</span>
-                        <span className="ts mono text-xs" title={fmtTimestamp(it.decided_at)}>{fmtAge(it.decided_at)}</span>
-                      </div>
-                      {it.one_line_reason && (
-                        <div className="decisions-reason text-xs">{it.one_line_reason}</div>
-                      )}
-                    </div>
-                    {it.opportunity_id && <span className="decisions-chev">▸</span>}
-                  </button>
-                )
-              })}
-            </div>
-          </CollapsibleSection>
-        </>
-      )}
-
-      <DecisionTraceDrawer
-        opportunityId={selectedOppId}
-        onClose={() => setSelectedOppId(null)}
-      />
-    </Card>
-  )
-}
-
-function RecentCountsInline({ counts }: { counts: {
-  trade: number; operator_skip: number; operator_watch: number
-  user_reject: number; auto_reject: number; reject_unknown: number
-} }) {
-  return (
-    <span className="decisions-counts">
-      {counts.trade > 0 && <span className="decisions-count decisions-count-green">✓ {counts.trade}</span>}
-      {counts.operator_skip > 0 && <span className="decisions-count decisions-count-muted">✗ {counts.operator_skip}</span>}
-      {counts.user_reject > 0 && <span className="decisions-count decisions-count-red">⊘ {counts.user_reject}</span>}
-      {counts.auto_reject > 0 && <span className="decisions-count decisions-count-red">⊗ {counts.auto_reject}</span>}
-      {counts.reject_unknown > 0 && <span className="decisions-count decisions-count-yellow">? {counts.reject_unknown}</span>}
-      {counts.operator_watch > 0 && <span className="decisions-count decisions-count-yellow">◔ {counts.operator_watch}</span>}
-    </span>
-  )
-}
-
-function DecisionTraceDrawer({ opportunityId, onClose }: {
-  opportunityId: string | null; onClose: () => void
-}) {
-  const { data } = useQuery({
-    queryKey: ['opportunity-trace', opportunityId],
-    queryFn: () => api.getOpportunityTrace(opportunityId!),
-    enabled: !!opportunityId,
-  })
-  const title = data?.symbol
-    ? `${fmtSymbol(data.symbol, data.market || undefined)}  ·  ${humanize(data.direction || '')}`
-    : 'Decision trace'
-  return (
-    <DetailDrawer open={!!opportunityId} onClose={onClose} title={title}>
-      {!data && opportunityId && <p className="text-muted text-sm">Loading trace…</p>}
-      {data && data.found === false && (
-        <p className="text-muted text-sm">{data.final_reason || 'Opportunity trace not found.'}</p>
-      )}
-      {data && data.found !== false && (
-        <>
-          <DrawerSection label="Summary">
-            <DrawerField label="Final state" value={data.final_state || '—'} />
-            <DrawerField label="Final stage" value={data.final_stage || '—'} />
-            <DrawerField label="Final reason" value={data.final_reason || '—'} />
-            <DrawerField label="Scanner family" value={data.scanner_family || '—'} />
-            <DrawerField label="Emitted at" value={data.created_at ? fmtTimestamp(data.created_at) : '—'} />
-          </DrawerSection>
-          {data.timeline && data.timeline.length > 0 && (
-            <DrawerSection label={`Timeline (${data.timeline.length})`}>
-              <ul className="trace-timeline">
-                {data.timeline.map((ev, i) => (
-                  <li key={i} className="trace-event">
-                    <span className="trace-event-ts mono text-xs">{fmtTimestamp(ev.at)}</span>
-                    {ev.stage && <span className="trace-event-stage text-xs">{ev.stage}</span>}
-                    {(ev.summary || ev.reason) && (
-                      <div className="trace-event-summary">{ev.summary || ev.reason}</div>
-                    )}
-                    {ev.details && Object.keys(ev.details).length > 0 && (
-                      <pre className="trace-event-details">{JSON.stringify(ev.details, null, 2)}</pre>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </DrawerSection>
-          )}
-        </>
-      )}
-    </DetailDrawer>
-  )
-}
-
-// ── Opportunity Funnel Card ──────────────────────────────────────────────────
-// Answers "why didn't we open a position?" in three sections:
-//   1. Top diagnosis headline — one sentence, honestly derived from counts
-//   2. 24h cumulative funnel — Discovered / Reviewed / Passed / Proposed, bar-lengths
-//      show ratio to Discovered
-//   3. Working-set snapshot (now) — accepted vs rejected, then rejection reasons
-//      with dot/hollow-dot for count>0/=0, TTL examples annotated with
-//      "expired X min ago · ttl was N min"
-// Footer surfaces min_confidence_to_trade (clickable) + universe snapshot age.
-//
-// Time-scale honesty: cumulative counts explicitly labeled "last N h"; snapshot
-// counts explicitly labeled "now". No fabricated causal join.
-const REASON_LABEL: Record<string, string> = {
-  confidence_below: 'confidence below threshold',
-  guard_blocked: 'guard blocked',
-  ttl_expired: 'signal TTL expired',
-  unsupported_demo_symbol: 'demo venue unsupported',
-  universe_not_eligible: 'not in universe',
-  neutral_bias: 'no directional bias',
-  factor_hard_blocked: 'factor blocked',
-  execution_eligible_false: 'execution disabled',
-}
-
-// Reasons we always show a row for (even when count=0), so the reader can see
-// "not this one" as an affirmative signal, not a silent omission.
-const ALWAYS_SHOWN_REASONS = ['confidence_below', 'ttl_expired', 'guard_blocked']
-
-const REASON_SUBTITLE: Record<string, string> = {
-  ttl_expired: 'family window elapsed before ranker scan',
-  confidence_below: 'ranker confidence gate rejected',
-  guard_blocked: 'active guard suppressed entry',
-  unsupported_demo_symbol: 'demo venue does not list this pair',
-  universe_not_eligible: 'universe member marked ineligible',
-  neutral_bias: 'scanner did not pick a side',
-  execution_eligible_false: 'no live price at emit time',
-}
-
-function fmtReason(reason: string): string {
-  return REASON_LABEL[reason] || reason.replace(/_/g, ' ')
-}
-
-function fmtDurMin(sec: number): string {
-  const m = Math.floor(sec / 60)
-  if (m < 60) return `${m} min`
-  const h = Math.floor(m / 60)
-  const mm = m % 60
-  return mm ? `${h}h ${mm}m` : `${h}h`
-}
-
-type FunnelData = ReturnType<typeof api.getOpportunityFunnel> extends Promise<infer R> ? R : never
-
-function buildDiagnosis(data: FunnelData): { text: string; tone: 'green' | 'yellow' | 'red' | 'muted' } {
-  const current = data.current
-  const snap = data.snapshot
-  const excluded = snap.excluded_by_reason || []
-  const rejectedTotal = excluded.reduce((s, r) => s + (r.count || 0), 0)
-  const executable = snap.executable_count
-
-  if (current.state === 'position_open') {
-    return { text: current.headline, tone: 'green' }
-  }
-  if (current.state === 'human_approval_required' || current.state === 'operator_deferred' || current.state === 'operator_queued') {
-    return { text: current.headline, tone: 'yellow' }
-  }
-  if (current.state.startsWith('ranker_')) {
-    return { text: current.headline, tone: 'yellow' }
-  }
-  if (current.state === 'no_active_candidate') {
-    return { text: current.reason, tone: 'red' }
-  }
-
-  if (data.snapshot.freshness === 'missing') {
-    return { text: 'No operator eval yet in this session. Snapshot appears after the first candidate refresh.', tone: 'muted' }
-  }
-  if (data.snapshot.freshness === 'unavailable') {
-    return { text: 'Operator snapshot time is not available; current supply cannot be verified.', tone: 'yellow' }
-  }
-  if (data.snapshot.freshness === 'stale') {
-    const age = data.snapshot.age_sec != null ? ` (${fmtDurMin(data.snapshot.age_sec)} old)` : ''
-    return { text: `Snapshot stale${age}; current candidate supply is not verified.`, tone: 'yellow' }
-  }
-  if (executable === 0 && rejectedTotal === 0) {
-    return { text: `Idle: no candidates in ranker view (${data.still_open_count} awaiting review).`, tone: 'muted' }
-  }
-  if (executable === 0 && snap.main_reason === 'ttl_expired') {
-    return { text: `Idle: all ${rejectedTotal} open signals expired before review.`, tone: 'red' }
-  }
-  if (executable === 0 && snap.main_reason === 'confidence_below') {
-    return { text: `Idle: confidence gate rejected all ${rejectedTotal} candidates (threshold=${data.config.min_confidence_to_trade}).`, tone: 'red' }
-  }
-  if (executable === 0 && snap.main_reason) {
-    return { text: `Idle: ${fmtReason(snap.main_reason)} blocked all ${rejectedTotal} candidates.`, tone: 'red' }
-  }
-  if (snap.below_floor) {
-    return { text: `Low supply: ${executable} executable candidate${executable === 1 ? '' : 's'} (floor ${snap.floor}).`, tone: 'yellow' }
-  }
-  return { text: `Current snapshot: ${executable} executable candidate${executable === 1 ? '' : 's'} in ranker view.`, tone: 'green' }
-}
-
-function FunnelBar({ label, count, denom, hint, tone = 'muted' }: {
-  label: string; count: number; denom: number; hint?: string
-  tone?: 'green' | 'yellow' | 'red' | 'muted' | 'accent'
-}) {
-  const pct = denom > 0 ? Math.max(0, Math.min(100, (count / denom) * 100)) : 0
-  return (
-    <div className="funnel-bar-row">
-      <span className="funnel-bar-label">{label}</span>
-      <span className="funnel-bar-count mono">{count}</span>
-      <div className="funnel-bar-track" aria-hidden>
-        <div className={`funnel-bar-fill funnel-bar-fill-${tone}`} style={{ width: `${pct}%` }} />
-      </div>
-      {hint && <span className="funnel-bar-hint text-xs text-muted">{hint}</span>}
-    </div>
-  )
-}
-
-function OpportunityFunnelCard() {
-  const navigate = useNavigate()
-  const [hours, setHours] = useState(1)
-  const [openReason, setOpenReason] = useState<string | null>(null)
-  const { data } = useQuery({
-    queryKey: ['opportunity-funnel', hours],
-    queryFn: () => api.getOpportunityFunnel(hours),
+  const qc = useQueryClient()
+  // Match the Blotter page's cache keys + staleTime so the Overview→Blotter
+  // transition is warm: react-query returns cached data instantly and only
+  // background-refreshes if past staleTime. Uses the fast /current-snapshot
+  // endpoint (perf item 1) — the summary strip only needs `current.*`.
+  const { data: funnel } = useQuery({
+    queryKey: ['opportunity-funnel-snapshot', 24],
+    queryFn: () => api.getOpportunityFunnelCurrentSnapshot(24),
     refetchInterval: 30000,
+    staleTime: 20000,
   })
-  if (!data) return null
+  const { data: proposals = [] } = useQuery({
+    queryKey: ['proposals'],
+    queryFn: api.getProposals,
+    staleTime: 10000,
+  })
+  const { data: decisions } = useQuery({
+    queryKey: ['operator-decisions', 24],
+    queryFn: () => api.getOperatorDecisions(24, 200),
+    refetchInterval: 60000,
+    staleTime: 20000,
+  })
 
-  const snap = data.snapshot
-  const excluded = snap.excluded_by_reason || []
-  const rejectedTotal = excluded.reduce((s, r) => s + (r.count || 0), 0)
-  const executable = snap.executable_count
-  const hasSnapshot = snap.freshness === 'fresh'
+  // Perf item 4: hover on the strip preloads whatever Blotter would fetch
+  // that this component isn't already fetching. `funnel`, `proposals`,
+  // `operator-decisions` all share exact queryKey + queryFn with the Blotter
+  // page, so their caches carry over. react-query's prefetchQuery honours the
+  // shared staleTime — if data is fresh, prefetch is a no-op. Fires on
+  // pointer AND keyboard focus so the tab-order path is equally warm.
+  const prefetchBlotter = () => {
+    qc.prefetchQuery({
+      queryKey: ['opportunity-funnel-snapshot', 24],
+      queryFn: () => api.getOpportunityFunnelCurrentSnapshot(24),
+      staleTime: 20000,
+    })
+    qc.prefetchQuery({
+      queryKey: ['operator-decisions', 24],
+      queryFn: () => api.getOperatorDecisions(24, 200),
+      staleTime: 20000,
+    })
+    qc.prefetchQuery({
+      queryKey: ['proposals'],
+      queryFn: api.getProposals,
+      staleTime: 10000,
+    })
+  }
 
-  const diag = buildDiagnosis(data)
+  const staged = funnel?.current?.counts?.open_opportunities ?? 0
+  const awaiting = (proposals as any[]).filter((p: any) => p.status === 'pending').length
+  const filledToday = decisions?.counts?.trade ?? 0
+  const c = decisions?.counts
+  const rejected24h = c
+    ? (c.operator_skip ?? 0) + (c.user_reject ?? 0) + (c.auto_reject ?? 0) + (c.reject_unknown ?? 0)
+    : 0
 
-  // Merge always-shown reasons with any others that appeared this snapshot
-  const excludedByReason = new Map(excluded.map(r => [r.reason, r]))
-  const reasonRows = [
-    ...ALWAYS_SHOWN_REASONS.map(k => excludedByReason.get(k) || { reason: k, count: 0, examples: [] }),
-    ...excluded.filter(r => !ALWAYS_SHOWN_REASONS.includes(r.reason)),
-  ]
-
-  const proposalConversionPct = data.emitted_count > 0
-    ? (data.proposed_count / data.emitted_count) * 100
-    : null
-
+  const openBlotter = () => navigate('/blotter')
   return (
-    <Card className="rail-card funnel-panel">
-      <div className="funnel-head">
-        <div>
-          <h3>Funnel</h3>
-          <span className="text-xs text-muted">Market Observer → Operator</span>
-        </div>
-        <WindowSelector value={hours} onChange={setHours} />
-      </div>
-
-      {/* Section 1: Diagnosis */}
-      <div className={`funnel-diagnosis funnel-diag-${diag.tone}`}>
-        <span className={`funnel-diag-dot funnel-diag-dot-${diag.tone}`} />
-        <span className="funnel-diag-text">{diag.text}</span>
-      </div>
-
-      {/* Section 2: 24h cumulative funnel */}
-      <div className="funnel-section">
-        <div className="funnel-section-title">
-          <span>Last {data.window_hours} h</span>
-          <span className="text-xs text-muted">cumulative</span>
-        </div>
-        <FunnelBar label="Unique setups" count={data.setup_count} denom={data.setup_count} tone="muted"
-          hint={`${data.emitted_count} snapshot generations`} />
-        <FunnelBar label="Awaiting ranker" count={data.still_open_count} denom={data.emitted_count} tone="muted" />
-        <FunnelBar label="Queued for Operator" count={data.queued_count} denom={data.emitted_count} tone="accent" />
-        <FunnelBar label="Reviewed" count={data.reviewed_count} denom={data.emitted_count} tone="muted"
-          hint="terminal operator review" />
-        <FunnelBar label="Superseded generations" count={data.terminal_breakdown.snapshot_superseded}
-          denom={data.emitted_count} tone="muted" hint="normal Universe refresh" />
-        <FunnelBar label="True TTL expired" count={data.terminal_breakdown.ttl_expired}
-          denom={data.emitted_count} tone="red" />
-        {data.terminal_breakdown.other_expired > 0 && (
-          <FunnelBar label="Other expired" count={data.terminal_breakdown.other_expired}
-            denom={data.emitted_count} tone="red" />
-        )}
-        <FunnelBar label="Proposed" count={data.proposed_count} denom={data.emitted_count}
-          tone={data.proposed_count > 0 ? 'green' : 'muted'} hint="same emitted cohort" />
-        {proposalConversionPct != null && (
-          <div className="funnel-accept-rate">
-            <span className="funnel-bar-label">proposal conversion</span>
-            <span className="mono">{proposalConversionPct.toFixed(1)}%</span>
-          </div>
-        )}
-      </div>
-
-      {/* Section 3: Working set now */}
-      {hasSnapshot && (
-        <div className="funnel-section">
-          <div className="funnel-section-title">
-            <span>Working set (fresh snapshot)</span>
-            <span className="text-xs text-muted">{executable + rejectedTotal} in ranker view</span>
-          </div>
-          <div className="funnel-workingset">
-            <span className="funnel-ws-item">
-              <span className="funnel-ws-mark funnel-ws-accepted">✓</span>
-              accepted <span className="mono">{executable}</span>
-            </span>
-            <span className="funnel-ws-item">
-              <span className="funnel-ws-mark funnel-ws-rejected">✗</span>
-              rejected <span className="mono">{rejectedTotal}</span>
-            </span>
-          </div>
-
-          {(rejectedTotal > 0 || reasonRows.some(r => r.count > 0)) && (
-            <div className="funnel-reasons">
-              <div className="funnel-reasons-title text-xs text-muted">Rejection reasons</div>
-              {reasonRows.map((row) => {
-                const isMain = row.reason === snap.main_reason && row.count > 0
-                const hasCount = (row.count || 0) > 0
-                const isOpen = openReason === row.reason
-                const canExpand = hasCount && (row.examples?.length || 0) > 0
-                return (
-                  <div key={row.reason} className="funnel-reason">
-                    <div
-                      className={`funnel-reason-head${canExpand ? ' status-row-clickable' : ''}`}
-                      onClick={canExpand ? () => setOpenReason(isOpen ? null : row.reason) : undefined}
-                    >
-                      <span className={`funnel-reason-dot${hasCount ? (isMain ? ' funnel-reason-dot-main' : ' funnel-reason-dot-active') : ' funnel-reason-dot-empty'}`}>
-                        {hasCount ? '●' : '○'}
-                      </span>
-                      <span className={`funnel-reason-name${hasCount ? '' : ' funnel-reason-name-muted'}`}>
-                        {fmtReason(row.reason)}
-                      </span>
-                      <span className={`funnel-reason-count mono${hasCount ? '' : ' funnel-reason-count-muted'}`}>{row.count}</span>
-                      <span className="status-row-chevron">{canExpand ? (isOpen ? '▾' : '▸') : ''}</span>
-                    </div>
-                    {isOpen && (
-                      <>
-                        {REASON_SUBTITLE[row.reason] && (
-                          <div className="funnel-reason-subtitle">{REASON_SUBTITLE[row.reason]}</div>
-                        )}
-                        {row.examples && row.examples.length > 0 && (
-                          <ul className="funnel-examples">
-                            {row.examples.slice(0, 4).map((ex, i) => {
-                              const familyTtl = ex.scanner_family
-                                ? data.family_ttl_sec[ex.scanner_family]
-                                : undefined
-                              return (
-                                <li key={i}>
-                                  <div className="funnel-example-head">
-                                    <span className="mono">{fmtSymbol(ex.symbol || '', undefined)}</span>
-                                    {ex.direction && <span className="text-xs"> {ex.direction}</span>}
-                                    {ex.scanner_family && <span className="text-xs text-muted"> · {ex.scanner_family}</span>}
-                                  </div>
-                                  {row.reason === 'ttl_expired' && ex.expired_seconds != null && (
-                                    <div className="funnel-example-hint">
-                                      expired {fmtDurMin(ex.expired_seconds)} ago
-                                      {familyTtl != null && ` · ttl was ${fmtDurMin(familyTtl)}`}
-                                    </div>
-                                  )}
-                                </li>
-                              )
-                            })}
-                          </ul>
-                        )}
-                      </>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Footer — thresholds & context */}
-      <div className="funnel-footer">
-        <div className="funnel-footer-row">
-          <span className="text-xs text-muted">Confidence threshold</span>
-          <button
-            type="button"
-            className="funnel-link mono"
-            onClick={() => navigate('/settings?tab=trading')}
-          >
-            {data.config.min_confidence_to_trade}  ⚙
-          </button>
-        </div>
-        {data.universe_snapshot_age_sec != null && (
-          <div className="funnel-footer-row">
-            <span className="text-xs text-muted">universe snapshot age</span>
-            <span className="mono text-xs">{fmtDurMin(data.universe_snapshot_age_sec)}</span>
-          </div>
-        )}
-      </div>
-    </Card>
+    <div
+      className="ov-blotter-strip"
+      role="link"
+      tabIndex={0}
+      onClick={openBlotter}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBlotter() } }}
+      onMouseEnter={prefetchBlotter}
+      onFocus={prefetchBlotter}
+      title="Open Blotter — every candidate, sign-off, and terminal outcome"
+    >
+      <span className="ov-blotter-label">Blotter</span>
+      <span className="ov-blotter-item">
+        Staged <b className="mono">{staged}</b>
+      </span>
+      <span className="ov-blotter-item">
+        Awaiting <b className={`mono ${awaiting > 0 ? 'ov-blotter-yellow' : ''}`}>{awaiting}</b>
+      </span>
+      <span className="ov-blotter-item">
+        Filled today <b className={`mono ${filledToday > 0 ? 'ov-blotter-green' : ''}`}>{filledToday}</b>
+      </span>
+      <span className="ov-blotter-item">
+        Rejected 24h <b className={`mono ${rejected24h > 0 ? 'ov-blotter-red' : ''}`}>{rejected24h}</b>
+      </span>
+      <span className="ov-blotter-arrow">→</span>
+    </div>
   )
 }
 

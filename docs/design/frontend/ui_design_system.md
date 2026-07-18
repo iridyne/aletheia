@@ -297,6 +297,28 @@ card
 
 `<ConnectionStatus label="..." state="green|red|yellow|muted" text="..." />` — 圆点 + 等宽状态文字。用于凭证/连接卡片顶部。
 
+### Blotter primitives (`.bl-*`) — 交易台账工作站专用
+
+引入自 2026-07-18 Blotter 迁移（`pages/Blotter.tsx`；参考 Bloomberg EMSX + IBKR TWS）。这套 primitives 只在决策工作站上下文使用，不应扩散到其他页面。CSS 定义在 `frontend/src/index.css`（`bl-token-strip` 段起）。
+
+| Class | 用途 | 关键 tokens |
+|---|---|---|
+| `.bl-token-strip` | 顶部 5 列状态计数条，`grid-template-columns: repeat(5, 1fr)`。窄屏（<1100px）3 列，<640px 2 列 | `--space-2` gap |
+| `.bl-token` + `.bl-token-{muted\|accent\|green\|yellow\|red}` | 单个状态方块。大写小 label + 大号 tabular-nums 数字。tone 只染数字，不染整块 —— 保持扫视稳定 | `--r`, 1.5rem count |
+| `.bl-mid-band` | 中段两栏 `grid-template-columns: 7fr 5fr`，`<1100px` 折叠单列 | — |
+| `.bl-panel` + `.bl-panel-ledger` (`margin-bottom` 单独设) | 面板容器，等同 `.rail-card` 视觉重量 | `--surface` |
+| `.bl-panel-head` | 面板头部：`h3` + 副标题；`border-bottom` 分隔 | 0.9rem h3 |
+| `.bl-side` + `.bl-side-{l\|s}` (span 包裹) | L/S 方向 chip。**必须**放在 `<td class="bl-cell-side">` 内的 `<span>` 里，不要直接给 td 加 `.bl-side`（会破坏 table-cell 布局） | mono, 0.72rem |
+| `.bl-cand-table` | Candidates 表格，行高 ~28px、cell padding 6/10 | — |
+| `.bl-gate` + `.bl-gate-{ok\|block}` | Pre-trade check chip。PASS 用紧凑绿 chip；block 用红色正文（无 badge） + `.bl-gate-tip` hover popover | mono 0.7rem (ok) / sans 0.78rem (block) |
+| `.bl-signoff-list` / `.bl-signoff-row` (+ `-traceable`) | Awaiting Sign-off 每行 3 行布局：symbol/meta/actions。整行 click → `DecisionTraceDrawer` | `--surface-2` |
+| `.bl-toolbar` + `.bl-facet` / `.bl-side-btn` / `.bl-time-btn` / `.bl-reset-btn` | Ledger toolbar：Search / 6 outcome facet chips / L-S 切换 / 1h-6h-24h-7D 切换 / Reset | uppercase label 0.66rem |
+| `.bl-outcome-{green\|yellow\|red\|muted}` | Ledger 行 outcome chip。tone 语义: green=Filled, red=UserReject/AutoReject, yellow=Watch/RejectUnknown, muted=OpSkip | — |
+| `.bl-cand-skeleton{-row,-diag,-footer}` | 冷启动 shimmer 骨架屏。`@keyframes bl-shimmer` + `prefers-reduced-motion` 保护 | — |
+| `.ov-blotter-strip` | Overview 上的 1 行 Blotter 摘要（不在 Blotter 页面内，故用 `.ov-` 前缀）。`onMouseEnter` 触发 Blotter queryKey prefetch | — |
+
+**反模式**：不要给同一 tone 用完整方块底色（会让扫视疲劳）——只染数字/文字/边框。
+
 ---
 
 ## 5. 规则 & 反模式
@@ -382,6 +404,8 @@ card
 | Confirm | `useConfirm()`（非原生 `window.confirm()`） |
 | Toast | `useToast()`（非 `console.error()`） |
 | Tab | `<Tabs>`（非手写 tab bar） |
+| Blotter 决策工作站 | `.bl-*` 类族（见 §4 Blotter primitives），不要重造 status token 条 / faceted filter chip / candidate 表 |
+| Blotter 行点击 → trace | `<DecisionTraceDrawer opportunityId=… />`（`components/DecisionTraceDrawer.tsx`，Overview + Blotter 共用） |
 
 不要用 `.toFixed(0)` / 裸 `e.symbol` / 裸 `e.source` / 手写 lens-tabs — 每一项都违反一条铁律。
 

@@ -42,47 +42,87 @@ def test_overview_rail_uses_canonical_responsive_breakpoints() -> None:
     assert "overflow-y: auto" in css
 
 
-def test_opportunity_funnel_labels_cohort_and_snapshot_without_false_health() -> None:
+# --- Blotter migration (2026-07-18) ---------------------------------------
+# The four Overview decision-flow cards (EntryStatusCard / HumanApprovalCard /
+# OpportunityFunnelCard / DecisionHistoryCard) plus the standalone
+# /proposals Approval Desk have all merged into `pages/Blotter.tsx`. The
+# tests below assert the honesty invariants moved with them.
+#
+# See docs/design/frontend/blotter_design.md for the design rationale and
+# docs/design/frontend/webui_page_map.md build step 7 for the migration
+# history.
+
+def test_blotter_labels_every_terminal_outcome_without_false_health() -> None:
+    blotter = (ROOT / "frontend/src/pages/Blotter.tsx").read_text(encoding="utf-8")
+
+    # Every terminal outcome is a first-class row in the Candidate Ledger —
+    # no outcome hidden behind a "successful trades only" default view.
+    # (Root cause fix for the "only trades are visible" report — see
+    # blotter_design.md #root-cause-only-trades-are-visible.)
+    for outcome in ("trade", "operator_skip", "operator_watch",
+                    "user_reject", "auto_reject", "reject_unknown"):
+        assert outcome in blotter, f"{outcome} missing from Blotter Candidate Ledger"
+
+    # Bloomberg-style short labels, mixed case (not shouty uppercase).
+    for label in ("Filled", "Op Skip", "Watch", "User Reject", "Auto Reject", "Reject (?)"):
+        assert label in blotter, f"{label} outcome label missing"
+
+    # Honesty tokens the old test guarded still hold: no fake "Healthy" chip
+    # and no "Passed gates" label pretending the ranker is a health signal.
+    assert '"Healthy"' not in blotter
+    assert '"Passed gates"' not in blotter
+
+
+def test_blotter_replaces_overview_decision_cards() -> None:
     overview = (ROOT / "frontend/src/pages/Overview.tsx").read_text(encoding="utf-8")
-
-    assert "snapshot.freshness" in overview
-    assert "Snapshot stale" in overview
-    assert 'label="Queued for Operator"' in overview
-    assert 'label="Expired / invalidated"' in overview
-    assert "proposal conversion" in overview
-    assert 'label="Passed gates"' not in overview
-    assert "Healthy:" not in overview
-
-
-def test_overview_leads_with_current_no_position_reason_and_one_hour_funnel() -> None:
-    overview = (ROOT / "frontend/src/pages/Overview.tsx").read_text(encoding="utf-8")
+    blotter = (ROOT / "frontend/src/pages/Blotter.tsx").read_text(encoding="utf-8")
     client = (ROOT / "frontend/src/api/client.ts").read_text(encoding="utf-8")
 
-    assert "Why no position now" in overview
-    assert "current.state" in overview
-    assert "Current blocker" in overview
-    assert "Human Approval" in overview
-    assert "No human approval required" in overview
-    assert "No pending actions" not in overview
-    assert "const FUNNEL_WINDOWS = [1, 4, 24]" in overview
-    assert "getOpportunityFunnel(1)" in overview
-    assert "current:" in client
+    # Overview no longer renders or defines any of the four migrated cards —
+    # it only keeps a 1-row summary strip pointing at /blotter. We check for
+    # actual JSX/function usage (`<Card` or `function Card`) rather than raw
+    # substring — the migration comment legitimately mentions them by name.
+    for gone in ("EntryStatusCard", "HumanApprovalCard",
+                 "OpportunityFunnelCard", "DecisionHistoryCard"):
+        assert f"<{gone}" not in overview, f"{gone} JSX still rendered in Overview.tsx"
+        assert f"function {gone}" not in overview, f"{gone} still defined in Overview.tsx"
+    assert "FUNNEL_WINDOWS" not in overview
+    # "Why no position now" was the consumer-fintech phrase we replaced —
+    # ensure the raw string isn't rendered anymore (a comment reference is
+    # OK if wrapped in a code fence, so we grep only for JSX-level uses).
+    assert 'kicker">Why no position now' not in overview
+    assert '>Why no position now<' not in overview
+    assert "BlotterSummaryStrip" in overview
+    assert 'navigate(\'/blotter\')' in overview or '"/blotter"' in overview
+
+    # Blotter now hosts the pipeline diagnosis + human approval queue.
+    assert "current.state" in blotter or "current?.state" in blotter
+    assert "Awaiting Sign-off" in blotter
+    assert "Candidate Ledger" in blotter
+
+    # Client uses the fast /current-snapshot endpoint (perf item 1).
+    assert "getOpportunityFunnelCurrentSnapshot" in client
+    assert "opportunity-funnel/current-snapshot" in client
 
 
-def test_overview_exposes_ranker_filter_stage_and_retry_reason() -> None:
-    overview = (ROOT / "frontend/src/pages/Overview.tsx").read_text(encoding="utf-8")
+def test_blotter_exposes_ranker_filter_stage_and_retry_reason() -> None:
+    """Diagnostic honesty: candidate rows still carry the durable blocker,
+    passed-filter count, and retry time so the operator sees WHY a candidate
+    is stuck, not just THAT it's stuck. Migrated from EntryStatusCard 2026-07-18."""
+    blotter = (ROOT / "frontend/src/pages/Blotter.tsx").read_text(encoding="utf-8")
 
-    assert "ranker_cooldown" in overview
-    assert "blocking_filter" in overview
-    assert "passed_filter_count" in overview
-    assert "retry_in_sec" in overview
-    assert "Ranker evidence" in overview
+    assert "ranker_cooldown" in blotter
+    assert "blocking_filter" in blotter
+    assert "passed_filter_count" in blotter
+    assert "retry_in_sec" in blotter
 
 
-def test_approval_desk_surfaces_unattributed_rejections() -> None:
-    overview = (ROOT / "frontend/src/pages/Overview.tsx").read_text(encoding="utf-8")
+def test_blotter_surfaces_unattributed_rejections() -> None:
+    blotter = (ROOT / "frontend/src/pages/Blotter.tsx").read_text(encoding="utf-8")
     client = (ROOT / "frontend/src/api/client.ts").read_text(encoding="utf-8")
 
-    assert "reject_unknown" in overview
-    assert "Reject attribution unavailable" in overview
+    # reject_unknown remains an outcome-first-class citizen in both surface
+    # and API contract — no silent classification into user/auto rejects.
+    assert "reject_unknown" in blotter
+    assert "Reject (?)" in blotter  # Blotter's short label for the bucket
     assert "reject_unknown" in client

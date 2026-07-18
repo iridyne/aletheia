@@ -44,7 +44,7 @@ export default function CommandPalette() {
     { id: 'nav-news', label: 'Go to News Intel', group: 'Navigation', action: () => navigate('/news') },
     { id: 'nav-serenity-lens', label: 'Go to Serenity Lens', group: 'Navigation', keywords: 'research lens chokepoint opportunities', action: () => navigate('/serenity-lens') },
     { id: 'nav-prediction', label: 'Go to Prediction Markets', group: 'Navigation', keywords: 'prediction polymarket probability events', action: () => navigate('/prediction-markets') },
-    { id: 'nav-proposals', label: 'Go to Approval Desk', group: 'Navigation', keywords: 'proposals approve', action: () => navigate('/proposals') },
+    { id: 'nav-blotter', label: 'Go to Blotter', group: 'Navigation', keywords: 'blotter proposals approve sign-off candidates history', action: () => navigate('/blotter') },
     { id: 'nav-agent-activity', label: 'Go to Agent Activity', group: 'Navigation', keywords: 'agent runs opportunities transparency', action: () => navigate('/agent-activity') },
     // #125 fix: /universe was reachable via the NAV bar but missing from the
     // command palette — an operator using the keyboard shortcut couldn't

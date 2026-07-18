@@ -1904,13 +1904,6 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 
 
-.approval-list { list-style: none; margin: var(--space-2) 0 0; padding: 0; }
-.approval-list li {
-  display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2);
-  padding: var(--space-1) 0; font-size: 0.8rem; border-bottom: 1px solid var(--border);
-}
-.approval-list li:last-child { border-bottom: none; }
-.approval-list .ts { color: var(--faint); font-size: 0.7rem; font-family: var(--mono); }
 
 /* Risk State card — header row + structured violation list (UI_DESIGN_SYSTEM §3).
    Each violation renders as a severity dot + human label + compact mono detail,
@@ -2183,99 +2176,6 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .seg-btn + .seg-btn { border-left: 1px solid var(--border-2); }
 
 /* ---------- Cockpit main: feed (main) + right rail ---------- */
-.entry-status-card {
-  margin-bottom: var(--space-3);
-  border-left: 3px solid var(--border-2);
-}
-.entry-status-green  { border-left-color: var(--green); }
-.entry-status-yellow { border-left-color: var(--yellow); }
-.entry-status-red    { border-left-color: var(--red); }
-.entry-status-muted  { border-left-color: var(--faint); }
-.entry-status-head {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: var(--space-3); margin-bottom: var(--space-3);
-}
-.entry-status-head h3 { margin: 2px 0 0; font-size: var(--fs-lg); }
-.entry-status-kicker {
-  color: var(--muted); font-size: var(--fs-2xs); font-weight: 700;
-  letter-spacing: 0.12em; text-transform: uppercase;
-}
-.entry-status-freshness { color: var(--faint); font-size: var(--fs-2xs); white-space: nowrap; }
-.entry-status-reason {
-  display: flex; align-items: flex-start; gap: var(--space-2);
-  padding: var(--space-2) var(--space-3); margin-bottom: var(--space-3);
-  border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg-2);
-}
-.entry-status-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
-.entry-status-dot-green  { background: var(--green); }
-.entry-status-dot-yellow { background: var(--yellow); }
-.entry-status-dot-red    { background: var(--red); }
-.entry-status-dot-muted  { background: var(--faint); }
-.entry-status-label { color: var(--text); font-size: var(--fs-xs); font-weight: 600; }
-.entry-status-reason p { color: var(--muted); font-size: var(--fs-sm); margin: 2px 0 0; }
-.entry-pipeline {
-  display: flex; align-items: stretch; gap: 4px; overflow-x: auto;
-  padding-bottom: 2px; margin-bottom: var(--space-3);
-}
-.entry-pipeline-step-wrap { display: flex; align-items: center; flex: 1 0 112px; min-width: 0; }
-.entry-pipeline-step {
-  display: flex; flex-direction: column; gap: 2px; flex: 1;
-  min-height: 62px; padding: var(--space-2);
-  border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface);
-}
-.entry-pipeline-step-waiting,
-.entry-pipeline-step-working { border-color: rgba(245,185,66,0.45); background: rgba(245,185,66,0.05); }
-.entry-pipeline-step-action_required { border-color: var(--yellow); background: rgba(245,185,66,0.08); }
-.entry-pipeline-step-position_open { border-color: var(--green); background: rgba(70,180,120,0.06); }
-.entry-pipeline-step-not_reached { opacity: 0.52; }
-.entry-pipeline-label { color: var(--muted); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.08em; }
-.entry-pipeline-value { color: var(--text); font-size: var(--fs-md); line-height: 1.1; }
-.entry-pipeline-state { color: var(--faint); font-size: var(--fs-2xs); }
-.entry-pipeline-arrow { color: var(--faint); padding: 0 2px; }
-.entry-candidates {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: var(--space-2); margin-bottom: var(--space-3);
-}
-.entry-candidate { padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--r-sm); }
-.entry-candidate-head,
-.entry-candidate-detail { display: flex; justify-content: space-between; gap: var(--space-2); }
-.entry-candidate-head { color: var(--text); font-size: var(--fs-sm); }
-.entry-candidate-detail { color: var(--muted); font-size: var(--fs-xs); margin-top: 4px; }
-.entry-candidate-detail > :first-child { min-width: 0; }
-.entry-candidate-detail .mono { flex-shrink: 0; }
-.entry-ranker-evidence {
-  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
-  margin-top: var(--space-2); padding: var(--space-2);
-  border: 1px solid var(--border); border-radius: var(--r-sm);
-  color: var(--muted); font-size: var(--fs-xs); background: var(--surface-2);
-}
-.entry-ranker-evidence strong { color: var(--text); }
-.entry-ranker-evidence span + span { border-left: 1px solid var(--border); padding-left: var(--space-2); }
-.entry-candidate-evidence {
-  display: flex; flex-wrap: wrap; gap: var(--space-2);
-  margin-top: 4px; color: var(--faint); font-size: var(--fs-2xs);
-}
-.entry-candidate-evidence span + span { border-left: 1px solid var(--border); padding-left: var(--space-2); }
-.entry-candidate-status {
-  padding: 1px 6px; border-radius: 999px; white-space: nowrap;
-  font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.05em;
-}
-.entry-candidate-status-deferred { color: var(--yellow); background: rgba(245,185,66,0.08); }
-.entry-candidate-status-queued { color: var(--accent); background: var(--accent-dim); }
-.entry-candidate-status-ranker_pending,
-.entry-candidate-status-ranker_cooldown,
-.entry-candidate-status-ranker_backpressure,
-.entry-candidate-status-ranker_batch_limit,
-.entry-candidate-status-ranker_filter_wait,
-.entry-candidate-status-ranker_evidence_unavailable {
-  color: var(--yellow); background: rgba(245,185,66,0.08);
-}
-.entry-status-foot {
-  display: flex; justify-content: space-between; gap: var(--space-3);
-  padding-top: var(--space-2); border-top: 1px solid var(--border);
-  color: var(--faint); font-size: var(--fs-2xs);
-}
-
 .cockpit-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(300px, 26vw, 420px);
@@ -2308,12 +2208,6 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
    Agent Activity height. */
 .rail-card { display: flex; flex-direction: column; overflow: hidden; }
 .rail-card > :not(h3):not(.flex) { min-height: 0; }
-.human-approval-panel { max-height: 320px; }
-.human-approval-required { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
-.human-approval-clear { display: flex; align-items: flex-start; gap: var(--space-2); }
-.human-approval-clear strong { color: var(--text); font-size: var(--fs-sm); }
-.human-approval-clear p { color: var(--muted); font-size: var(--fs-xs); margin: 2px 0 0; }
-.human-approval-mark { color: var(--green); font-family: var(--mono); font-weight: 700; }
 .decision-history-panel { max-height: 520px; overflow-y: auto; }
 .decision-history-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .decision-history-head h3 { margin: 0; }
@@ -2332,12 +2226,6 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 
 /* Recent terminal decisions — separate from the Human Approval action queue */
 .rail-card > p.text-muted { flex-shrink: 0; margin-bottom: var(--space-2); }
-.desk-pulse {
-  margin-top: var(--space-3);
-  font-size: var(--fs-2xs);
-  font-family: var(--mono);
-  color: var(--muted);
-}
 .decisions-toggle { margin-top: var(--space-2); }
 .decisions-panel {
   padding: var(--space-2) 0 0;
@@ -2415,7 +2303,6 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 
 .risk-panel   { max-height: 320px; }
 .system-panel { }
-.funnel-panel { max-height: 640px; overflow-y: auto; }
 
 /* Funnel — Market Observer → Operator flow visualization
  *
@@ -2423,136 +2310,20 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
  * Section = title + rows. Rows are either selected-window cohort bars or
  * point-in-time snapshot reason lines.
  */
-.funnel-head {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: var(--space-2); margin-bottom: var(--space-2);
-}
-.funnel-head h3 { margin: 0; }
 
 @media (max-width: 700px) {
-  .entry-status-head,
-  .entry-status-foot,
-  .entry-candidate-head,
-  .entry-candidate-detail { align-items: flex-start; flex-direction: column; }
-  .entry-status-freshness { white-space: normal; }
 }
 
-.funnel-diagnosis {
-  display: flex; align-items: flex-start; gap: var(--space-2);
-  padding: var(--space-2); margin-bottom: var(--space-2);
-  border-radius: var(--r-sm); border: 1px solid var(--border);
-  font-size: var(--fs-sm); line-height: 1.4;
-}
-.funnel-diag-red    { background: rgba(232,90,90,0.06); border-color: rgba(232,90,90,0.25); }
-.funnel-diag-yellow { background: rgba(245,185,66,0.06); border-color: rgba(245,185,66,0.25); }
-.funnel-diag-green  { background: rgba(70,180,120,0.06); border-color: rgba(70,180,120,0.22); }
-.funnel-diag-muted  { background: var(--bg-2); }
-.funnel-diag-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; }
-.funnel-diag-dot-red    { background: var(--red); }
-.funnel-diag-dot-yellow { background: var(--yellow); }
-.funnel-diag-dot-green  { background: var(--green); }
-.funnel-diag-dot-muted  { background: var(--faint); }
-.funnel-diag-text { color: var(--text); }
 
-.funnel-section {
-  padding: var(--space-2) 0;
-  border-top: 1px solid var(--border);
-}
-.funnel-section-title {
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: var(--space-2); margin-bottom: var(--space-2);
-  font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.1em;
-  text-transform: uppercase; color: var(--muted);
-}
 
 /* 24h cumulative funnel bars */
-.funnel-bar-row {
-  display: grid;
-  grid-template-columns: 5.5rem 3rem 1fr auto;
-  align-items: center; gap: var(--space-2);
-  font-size: var(--fs-sm); padding: 2px 0;
-}
-.funnel-bar-label { color: var(--text); }
-.funnel-bar-count { color: var(--text); font-weight: 500; text-align: right; }
-.funnel-bar-track {
-  height: 4px; background: var(--border); border-radius: 2px; overflow: hidden;
-}
-.funnel-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
-.funnel-bar-fill-muted  { background: var(--faint); opacity: 0.6; }
-.funnel-bar-fill-green  { background: var(--green); }
-.funnel-bar-fill-yellow { background: var(--yellow); }
-.funnel-bar-fill-red    { background: var(--red); }
-.funnel-bar-fill-accent { background: var(--accent); }
-.funnel-bar-hint { grid-column: 4; padding-left: var(--space-1); }
 
-.funnel-accept-rate {
-  display: flex; justify-content: space-between; align-items: baseline;
-  padding: var(--space-2) 0 0; margin-top: 2px;
-  border-top: 1px dashed var(--border);
-  font-size: var(--fs-sm); color: var(--text);
-}
 
 /* Working-set snapshot row */
-.funnel-workingset {
-  display: flex; gap: var(--space-3);
-  padding: var(--space-1) 0 var(--space-2);
-  font-size: var(--fs-sm);
-}
-.funnel-ws-item { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text); }
-.funnel-ws-mark { font-family: var(--mono); font-weight: 700; }
-.funnel-ws-accepted { color: var(--green); }
-.funnel-ws-rejected { color: var(--yellow); }
 
 /* Rejection reasons */
-.funnel-reasons { display: flex; flex-direction: column; gap: 2px; }
-.funnel-reasons-title { margin-bottom: 4px; }
-.funnel-reason {
-  border-radius: 3px;
-}
-.funnel-reason-head {
-  display: grid;
-  grid-template-columns: 1.2rem 1fr auto 1rem;
-  align-items: center; gap: var(--space-2);
-  font-size: var(--fs-sm); padding: 3px 4px;
-}
-.funnel-reason-dot { font-size: 0.7rem; line-height: 1; }
-.funnel-reason-dot-main   { color: var(--red); }
-.funnel-reason-dot-active { color: var(--yellow); }
-.funnel-reason-dot-empty  { color: var(--faint); }
-.funnel-reason-name { color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.funnel-reason-name-muted { color: var(--muted); }
-.funnel-reason-count { color: var(--text); font-weight: 500; }
-.funnel-reason-count-muted { color: var(--faint); }
-.funnel-reason-subtitle {
-  padding: 2px 0 4px 22px; font-size: var(--fs-2xs); color: var(--muted); font-style: italic;
-}
-.funnel-examples {
-  list-style: none; margin: 2px 0 4px; padding: 0 0 0 22px;
-  display: flex; flex-direction: column; gap: 3px;
-  font-size: var(--fs-2xs);
-}
-.funnel-examples li {
-  padding: 3px var(--space-2); border-left: 2px solid var(--border);
-  background: var(--bg-2); border-radius: 0 3px 3px 0;
-}
-.funnel-example-head { color: var(--text); }
-.funnel-example-hint { color: var(--muted); margin-top: 1px; }
 
 /* Footer */
-.funnel-footer {
-  padding-top: var(--space-2); margin-top: var(--space-2);
-  border-top: 1px solid var(--border);
-  display: flex; flex-direction: column; gap: 3px;
-}
-.funnel-footer-row {
-  display: flex; justify-content: space-between; align-items: baseline;
-}
-.funnel-link {
-  background: none; border: none; padding: 0; color: var(--accent);
-  cursor: pointer; font-family: var(--mono); font-size: var(--fs-sm);
-  text-decoration: underline; text-underline-offset: 2px;
-}
-.funnel-link:hover { color: var(--text); }
 
 /* Go-Live Scorecard — Overview.tsx GoLiveScoreCard EXCLUSIVE namespace.
    Any new component that wants this style should rename to its own prefix; a second
@@ -2646,51 +2417,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .feed-meta { font-size: 0.68rem; color: var(--faint); }
 .feed-thesis { font-size: 0.82rem; line-height: 1.6; white-space: pre-wrap; }
 
-/* ---------- Approval Desk ---------- */
-.desk-queue-header {
-  display: flex; align-items: center; gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-.desk-queue-header h3 {
-  font-family: var(--display); font-size: 1rem; font-weight: 600; color: var(--text);
-  text-transform: none; letter-spacing: 0; margin: 0;
-}
-.desk-queue {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: var(--space-3); margin-bottom: var(--space-4);
-}
-.desk-history-title {
-  font-family: var(--display); font-size: 0.95rem; font-weight: 600; color: var(--muted);
-  margin-bottom: var(--space-3);
-}
 
 /* pending decision card — everything visible without a click */
-.proposal-card {
-  margin-bottom: 0; display: flex; flex-direction: column; gap: var(--space-3);
-  border-left: 3px solid var(--yellow);
-}
-.proposal-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
-.proposal-symbol { font-size: 1rem; font-weight: 600; }
-.dir-tag {
-  font-family: var(--mono); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em;
-  padding: 0.1rem 0.4rem; border-radius: 3px;
-}
-.dir-tag.dir-long { color: var(--green); background: rgba(46,230,168,0.16); }
-.dir-tag.dir-short { color: var(--red); background: rgba(255,93,108,0.16); }
 
-.proposal-params {
-  display: flex; flex-wrap: wrap; gap: var(--space-4); font-size: 0.78rem; color: var(--muted);
-  padding: var(--space-2) 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
-}
-.proposal-params b { color: var(--text); font-weight: 600; }
 
-.proposal-rationale {
-  display: flex; flex-wrap: wrap; gap: var(--space-2); font-size: 0.8rem; line-height: 1.5; color: var(--text);
-}
-.proposal-rationale-label {
-  font-size: 0.6rem; font-weight: 700; color: var(--accent); letter-spacing: 0.08em;
-  padding-top: 2px; flex-shrink: 0;
-}
 .conviction-meter {
   display: flex; align-items: center; gap: var(--space-2); width: 100%; margin-bottom: var(--space-1);
 }
@@ -2713,20 +2443,521 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .decision-signal-list li { margin-bottom: 0.3em; color: var(--green); }
 .decision-signal-list.opposing li { color: var(--red); }
 
-.proposal-risk {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2);
-  font-size: 0.76rem; padding: var(--space-2) var(--space-3); border-radius: var(--r-sm);
-}
-.proposal-risk.ok { background: rgba(46,230,168,0.10); color: var(--green); }
-.proposal-risk.block { background: rgba(255,93,108,0.10); color: var(--red); }
-.proposal-risk.none { background: var(--surface-2); color: var(--muted); }
-.proposal-risk.loading { background: var(--surface-2); color: var(--faint); }
-.proposal-risk-verdict { font-weight: 600; }
-.proposal-risk-violations { color: var(--red); font-family: var(--mono); font-size: 0.72rem; }
-.proposal-risk-msg { color: var(--muted); }
 
-.proposal-card-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-.proposal-violations-list { padding-left: 1rem; font-size: 0.78rem; color: var(--red); margin-top: var(--space-1); }
+
+/* ---------- Blotter (docs/design/frontend/blotter_design.md) -------------
+   Bloomberg EMSX "state as token, not sentence" — five fixed columns above a
+   two-panel Candidates + Awaiting-Sign-off band, above a full-width Order
+   History table. Class prefix .bl- to avoid collision with the pre-existing
+   .blotter-* classes used by the Trades & Positions page.                     */
+
+.bl-token-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.bl-token {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: border-color 0.15s;
+}
+.bl-token-label {
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bl-token-count {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+/* Tone variants — accent the count (not the whole box) so scanning stays fast. */
+.bl-token-muted   .bl-token-count { color: var(--muted); }
+.bl-token-accent  { border-color: rgba(34,211,238,0.35); }
+.bl-token-accent  .bl-token-count { color: var(--accent); }
+.bl-token-green   { border-color: rgba(46,230,168,0.35); }
+.bl-token-green   .bl-token-count { color: var(--green); }
+.bl-token-yellow  { border-color: rgba(255,193,7,0.35); }
+.bl-token-yellow  .bl-token-count { color: var(--yellow); }
+.bl-token-red     { border-color: rgba(255,93,108,0.35); }
+.bl-token-red     .bl-token-count { color: var(--red); }
+
+/* Middle band — 7/12 candidates + 5/12 sign-off. Collapses to single column
+   under 1100 px so both panels retain readable width on the operator's laptop. */
+.bl-mid-band {
+  display: grid;
+  grid-template-columns: 7fr 5fr;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .bl-mid-band { grid-template-columns: 1fr; }
+  .bl-token-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .bl-token-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.bl-mid-candidates,
+.bl-mid-signoff { min-width: 0; }
+
+/* Panel container — same visual weight as .rail-card but flush to the mid-band grid. */
+.bl-panel {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+/* Ledger sits full-width above the middle band; needs its own bottom breathing
+   room since it isn't a grid cell of .bl-mid-band. */
+.bl-panel-ledger { margin-bottom: var(--space-4); }
+.bl-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.bl-panel-head h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+/* Placeholder cards for batch-1 stubs. Removed as each batch replaces them. */
+.bl-placeholder {
+  border: 1px dashed var(--border);
+  border-radius: var(--r);
+  padding: var(--space-3);
+  background: transparent;
+}
+.bl-placeholder p { margin: 0 0 var(--space-2); line-height: 1.55; }
+.bl-placeholder p:last-child { margin-bottom: 0; }
+.bl-placeholder code {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 1px 4px;
+  background: var(--surface-2);
+  border-radius: 3px;
+}
+
+.bl-link {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(34,211,238,0.45);
+}
+.bl-link:hover { border-bottom-color: var(--accent); }
+
+/* Diagnosis strip — one-line, not a banner sentence. */
+.bl-diagnosis {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 6px 10px; margin-bottom: var(--space-2);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border-left: 3px solid var(--faint);
+}
+.bl-diagnosis-green  { border-left-color: var(--green); }
+.bl-diagnosis-yellow { border-left-color: var(--yellow); }
+.bl-diagnosis-red    { border-left-color: var(--red); }
+.bl-diagnosis-muted  { border-left-color: var(--faint); }
+.bl-diagnosis-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; align-self: center;
+}
+.bl-diagnosis-dot-green  { background: var(--green); }
+.bl-diagnosis-dot-yellow { background: var(--yellow); }
+.bl-diagnosis-dot-red    { background: var(--red); }
+.bl-diagnosis-dot-muted  { background: var(--faint); }
+.bl-diagnosis-text {
+  font-size: 0.8rem; color: var(--text); line-height: 1.4; min-width: 0;
+}
+
+/* Candidates table — Bloomberg-density row height, mono numerics. */
+.bl-cand-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: var(--space-2);
+  table-layout: auto;
+}
+.bl-cand-table thead th {
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.bl-cand-table tbody td {
+  padding: 6px 8px;
+  font-size: 0.78rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.bl-cand-table tbody tr:last-child td { border-bottom: none; }
+.bl-cand-table tbody tr:hover { background: var(--surface-2); }
+
+/* Side column — cell centered so the chip sits mid-line, not top-left. */
+.bl-cell-side { text-align: center; width: 4ch; }
+
+/* Side chip — L (green) / S (red) / — (muted). Wrapped in a <span> inside the
+   cell so table-cell layout is preserved (see Blotter.tsx comment). */
+.bl-side {
+  display: inline-block;
+  min-width: 2ch;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+  border: 1px solid transparent;
+  line-height: 1.4;
+}
+.bl-side-l { color: var(--green);  background: rgba(46,230,168,0.08); border-color: rgba(46,230,168,0.25); }
+.bl-side-s { color: var(--red);    background: rgba(255,93,108,0.08); border-color: rgba(255,93,108,0.25); }
+.bl-side-— { color: var(--muted); }
+
+/* Candidate status chip. */
+.bl-cand-status {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  color: var(--muted);
+  background: transparent;
+}
+.bl-cand-status-deferred          { color: var(--yellow); }
+.bl-cand-status-queued            { color: var(--accent); }
+.bl-cand-status-ranker_pending    { color: var(--accent); }
+.bl-cand-status-ranker_cooldown   { color: var(--yellow); }
+.bl-cand-status-ranker_backpressure,
+.bl-cand-status-ranker_batch_limit,
+.bl-cand-status-ranker_filter_wait,
+.bl-cand-status-ranker_evidence_unavailable { color: var(--red); }
+
+/* Gate cell — inline element with hover popover for the full pre-trade trace.
+   PASS gets a compact green badge (short, glanceable). Block state is rendered
+   as red body text with no badge chrome — reason strings can be long and clumsy
+   inside a badge (user feedback 2026-07-18). */
+.bl-gate {
+  position: relative;
+  display: inline-block;
+  cursor: help;
+  max-width: 260px;
+}
+.bl-gate-ok .bl-gate-label {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--green);
+  background: rgba(46,230,168,0.08);
+  border: 1px solid rgba(46,230,168,0.25);
+}
+.bl-gate-block .bl-gate-label {
+  display: inline;
+  color: var(--red);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+.bl-gate-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 240px; max-width: 340px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 0.1s ease-out;
+  z-index: 30;
+  white-space: normal;
+}
+.bl-gate-tip > div { margin-bottom: 3px; }
+.bl-gate-tip > div:last-child { margin-bottom: 0; }
+.bl-gate-tip strong { color: var(--muted); font-weight: 600; }
+.bl-gate-tip-reason { color: var(--muted); font-style: italic; padding-top: 4px; border-top: 1px solid var(--border); }
+.bl-gate:hover .bl-gate-tip,
+.bl-gate:focus-within .bl-gate-tip { opacity: 1; visibility: visible; }
+
+/* Ranker footer under the candidates table. */
+.bl-cand-footer {
+  display: flex; flex-wrap: wrap; gap: 4px 6px;
+  color: var(--faint);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
+}
+.bl-cand-footer-sep { color: var(--muted); }
+
+/* Loading skeleton for the Candidates panel. Shape mirrors the real content
+   (one diagnosis strip + 4 rows + a footer) so the reader doesn't perceive a
+   layout jump when data arrives. */
+.bl-cand-skeleton { display: flex; flex-direction: column; gap: 6px; }
+.bl-cand-skeleton-diag,
+.bl-cand-skeleton-row,
+.bl-cand-skeleton-footer {
+  background: linear-gradient(90deg,
+    var(--surface-2) 0%,
+    color-mix(in oklab, var(--surface-2), var(--muted) 12%) 50%,
+    var(--surface-2) 100%);
+  background-size: 200% 100%;
+  animation: bl-shimmer 1.4s linear infinite;
+  border-radius: var(--r-sm);
+}
+.bl-cand-skeleton-diag   { height: 28px; margin-bottom: 4px; }
+.bl-cand-skeleton-row    { height: 28px; }
+.bl-cand-skeleton-footer { height: 18px; margin-top: 6px; width: 60%; }
+@keyframes bl-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bl-cand-skeleton-diag,
+  .bl-cand-skeleton-row,
+  .bl-cand-skeleton-footer { animation: none; }
+}
+
+/* Awaiting Sign-off panel. */
+.bl-signoff-list {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.bl-signoff-row {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  display: flex; flex-direction: column; gap: 4px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.bl-signoff-row-traceable {
+  cursor: pointer;
+}
+.bl-signoff-row-traceable:hover,
+.bl-signoff-row-traceable:focus {
+  border-color: var(--accent-dim);
+  background: var(--surface);
+  outline: none;
+}
+.bl-signoff-head {
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap;
+}
+.bl-signoff-sym { font-weight: 600; }
+.bl-signoff-conv {
+  color: var(--accent);
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(34,211,238,0.25);
+  background: rgba(34,211,238,0.06);
+}
+.bl-signoff-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+.bl-signoff-actions {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 2px;
+}
+.bl-signoff-detail {
+  margin-left: auto;
+  background: transparent; border: none; color: var(--muted);
+  font-size: 0.75rem; cursor: pointer; padding: 0;
+}
+.bl-signoff-detail:hover { color: var(--accent); }
+.bl-signoff-err {
+  color: var(--red); font-size: 0.75rem; font-family: var(--mono);
+  padding-top: 4px; border-top: 1px dashed rgba(255,93,108,0.3);
+}
+
+/* ---------- Overview → Blotter shortcut strip (Batch 5) ---------- */
+.ov-blotter-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 10px 14px;
+  margin: var(--space-3) 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.ov-blotter-strip:hover,
+.ov-blotter-strip:focus {
+  border-color: var(--accent-dim);
+  background: var(--surface-2);
+  outline: none;
+}
+.ov-blotter-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.ov-blotter-item {
+  font-size: 0.78rem;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+.ov-blotter-item b {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.ov-blotter-yellow { color: var(--yellow) !important; }
+.ov-blotter-green  { color: var(--green)  !important; }
+.ov-blotter-red    { color: var(--red)    !important; }
+.ov-blotter-arrow {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 1rem;
+  font-family: var(--mono);
+}
+.ov-blotter-strip:hover .ov-blotter-arrow { color: var(--accent); }
+@media (max-width: 900px) {
+  .ov-blotter-strip { flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+  .ov-blotter-arrow { margin-left: 0; }
+}
+
+/* ---------- Order History toolbar (Batch 3) ---------- */
+.bl-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  margin-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.bl-toolbar-search {
+  flex: 0 1 240px;
+  min-width: 160px;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+}
+.bl-toolbar-search:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+.bl-toolbar-facets,
+.bl-toolbar-side,
+.bl-toolbar-time { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+
+/* Faceted outcome chip. All six outcomes visible; count comes from the full
+   window response, not the filtered set, so a filter can't lie about totals. */
+.bl-facet {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-family: var(--sans);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s, background 0.1s;
+}
+.bl-facet:hover { color: var(--text); border-color: var(--muted); }
+.bl-facet-count {
+  font-size: 0.7rem;
+  padding: 0 4px;
+  color: var(--faint);
+  border-radius: 3px;
+  background: var(--surface-2);
+}
+.bl-facet.active .bl-facet-count { background: rgba(255,255,255,0.08); color: inherit; }
+.bl-facet-green.active  { color: var(--green);  background: rgba(46,230,168,0.10);  border-color: rgba(46,230,168,0.35); }
+.bl-facet-yellow.active { color: var(--yellow); background: rgba(255,193,7,0.10);   border-color: rgba(255,193,7,0.35); }
+.bl-facet-red.active    { color: var(--red);    background: rgba(255,93,108,0.10);  border-color: rgba(255,93,108,0.35); }
+.bl-facet-muted.active  { color: var(--text);   background: var(--surface-2);       border-color: var(--muted); }
+
+/* Compact segmented toggles for Side (All / L / S) and Time window (1h / 6h / 24h / 7D). */
+.bl-side-btn,
+.bl-time-btn {
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-family: var(--sans);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  min-width: 34px;
+  transition: color 0.1s, border-color 0.1s, background 0.1s;
+}
+.bl-side-btn:hover,
+.bl-time-btn:hover { color: var(--text); border-color: var(--muted); }
+.bl-side-btn.active,
+.bl-time-btn.active {
+  color: var(--accent);
+  background: rgba(34,211,238,0.08);
+  border-color: rgba(34,211,238,0.35);
+}
+
+.bl-reset-btn {
+  margin-left: auto;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.bl-reset-btn:hover { color: var(--red); }
+
+/* Outcome cell chip inside the DataTable — same tone palette as the facet
+   chips, but always rendered "active" (they represent the row's own outcome). */
+.bl-outcome {
+  display: inline-block;
+  padding: 1px 8px;
+  font-size: 0.72rem;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.bl-outcome-green  { color: var(--green);  background: rgba(46,230,168,0.08);  border-color: rgba(46,230,168,0.25); }
+.bl-outcome-yellow { color: var(--yellow); background: rgba(255,193,7,0.08);   border-color: rgba(255,193,7,0.25); }
+.bl-outcome-red    { color: var(--red);    background: rgba(255,93,108,0.08);  border-color: rgba(255,93,108,0.25); }
+.bl-outcome-muted  { color: var(--muted);  background: var(--surface-2);       border-color: var(--border); }
 
 /* ---------- Trades & Positions blotter ---------- */
 .blotter-section-head {

@@ -163,6 +163,7 @@
   - CLI `uv run aletheia inspect entry-status --hours 1 [--json]` 使用相同事实投影；`inspect candidates` 明确只是 current-policy preview。
   - Funnel 默认最近 1h，4h/24h 仅作手动历史切换；当前状态与累计 cohort 分开，不再用 24h 终态掩盖实时等待。
   - `Approval Desk` 收窄为 `Human Approval`：空状态明确表示“不需要人工批准”，Operator defer 和自动队列状态在顶部独立展示；终态决定移入 `Decision History`。
+  - **2026-07-18 后续**：`EntryStatusCard` / `HumanApprovalCard` / `OpportunityFunnelCard` / `DecisionHistoryCard` 与原 `/proposals` Approval Desk 全部合并进新的 `/blotter` 工作站（`pages/Blotter.tsx`）。Overview 保留一行 `BlotterSummaryStrip` 摘要条 + 到 `/blotter` 的 hover 预取链接。详见 `docs/design/frontend/blotter_design.md`。
 
 ### 2.2 §4.5 TradingView 借鉴"图与决策视觉连接"单向断
 

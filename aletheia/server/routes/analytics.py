@@ -1,9 +1,11 @@
 """Read-only analytics API routes."""
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
+from threading import RLock
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -532,94 +534,226 @@ def get_pipeline_funnel(hours: int = 24):
     }
 
 
-@router.get("/opportunity-funnel")
-def get_opportunity_funnel(hours: int = 24):
-    """Market Observer → Operator funnel: exposes WHY opportunities don't reach the operator.
+# ─────────────────────────────────────────────────────────────────────────────
+# Funnel endpoint helpers (extracted so /opportunity-funnel and the faster
+# /opportunity-funnel/current-snapshot child route reuse the same base query
+# set — see docs/design/frontend/blotter_design.md#performance-backlog).
+# ─────────────────────────────────────────────────────────────────────────────
 
-    Causal cohort counts (window):
-      - emitted_count: per-snapshot Opportunity generations created in window
-      - setup_count: unique symbol/market/direction/scanner-family setups
-      - open/queued/reviewed/expired: exact stored status within that cohort
-      - terminal_breakdown: evidence-backed supersede/TTL/Operator/filter exits
-      - proposed_count: distinct cohort Opportunities linked to any Proposal by now
+# Perf item 2: process-local TTL cache for the current-snapshot payload.
+# Serves back-to-back mounts + the frontend's 30s polling from a single
+# compute. Deliberately short (5s) so operator state visible in the UI is
+# never more than that many seconds stale — the frontend already applies its
+# own 20s staleTime on top, so tightening the server side buys nothing.
+#
+# Keyed on window_hours alone: the underlying inputs (opportunities table,
+# positions table, ranker runs, candidate-supply snapshot) can only shift
+# ~1-2s apart from each other in normal operation, and a 5s ceiling means
+# the operator sees at most one ranker cycle's lag.
 
-    Point-in-time snapshot (latest candidate_supply_snapshot event, written by
-    trading_context every operator eval):
-      - executable_count: candidates that survived the ranker gates AND have a
-        matching pending signal (= "accepted" in the working set)
-      - excluded_by_reason: bucketed skip reasons (confidence_below, guard_blocked,
-        ttl_expired, ...) with a few example candidates. Each example carries
-        opportunity_id + valid_until so the UI can render "expired X min ago".
-      - main_reason / below_floor: what the operator loop reads to decide whether
-        confidence recovery should fire.
+_current_snapshot_cache: dict[int, tuple[float, dict]] = {}
+_current_snapshot_cache_lock = RLock()
+_CURRENT_SNAPSHOT_CACHE_TTL_SEC = 5.0
 
-    Auxiliary state:
-      - family_ttl_sec: per-scanner-family TTL from allocator._FAMILY_TTL — the UI
-        needs this to render "ttl was N min" without a second round trip.
-      - universe_snapshot_age_sec: how long since the active universe snapshot was
-        written; generation churn is not presented as market TTL failure.
 
-    Read-only. Consumes existing telemetry — never invokes the ranker/operator.
+# Perf item 5: Server-Timing helpers. Emit a machine-parseable phase-timing
+# header on the slow analytics endpoints so future regressions can be
+# attributed to a specific stage (SQL cohort vs. build_current_entry_status
+# vs. snapshot payload parse) instead of guessed.
+
+def _now_ms() -> float:
+    return time.perf_counter() * 1000.0
+
+
+class _PhaseTimer:
+    """Context manager that measures wall-clock ms into a shared dict."""
+    def __init__(self, phases: dict[str, float], name: str) -> None:
+        self.phases = phases
+        self.name = name
+        self._t0 = 0.0
+
+    def __enter__(self):
+        self._t0 = _now_ms()
+        return self
+
+    def __exit__(self, *_exc):
+        self.phases[self.name] = self.phases.get(self.name, 0.0) + (_now_ms() - self._t0)
+        return False
+
+
+def _format_server_timing(phases: dict[str, float]) -> str:
+    """RFC-8673 Server-Timing header value: `phase;dur=NNN.N, phase2;dur=...`."""
+    return ", ".join(f"{k};dur={v:.1f}" for k, v in phases.items())
+
+
+def _compute_current_snapshot_payload(
+    db, hours: int, phases: dict[str, float] | None = None,
+) -> dict:
+    """Non-cached version of the /current-snapshot response body.
+
+    Isolated as a helper so both the cached endpoint route and the full
+    /opportunity-funnel endpoint can call the underlying compute without
+    also going through the cache lookup — the full endpoint always needs
+    the freshly computed inputs alongside its own extra queries.
+
+    Optional `phases` dict receives `cohort` and `build_current` timings
+    for Server-Timing emission.
     """
-    from aletheia.storage.sqlite import get_db
     from aletheia.config.loader import load_config
     from aletheia.universe.allocator import _FAMILY_TTL
+    from aletheia.analytics.opportunity_progress import build_current_entry_status
 
-    db = get_db()
+    if phases is not None:
+        with _PhaseTimer(phases, "cohort"):
+            inp = _funnel_cohort_inputs(db, hours)
+        with _PhaseTimer(phases, "build_current"):
+            current = build_current_entry_status(
+                db,
+                now=inp["now"],
+                window_hours=inp["hours_i"],
+                emitted_count=inp["emitted_count"],
+                open_opportunities=inp["still_open"],
+                proposed_count=inp["proposed_count"],
+                setup_count=inp["setup_count"],
+                active_setup_count=inp["active_setup_count"],
+                terminal_breakdown=inp["terminal_breakdown"],
+            )
+    else:
+        inp = _funnel_cohort_inputs(db, hours)
+        current = build_current_entry_status(
+            db,
+            now=inp["now"],
+            window_hours=inp["hours_i"],
+            emitted_count=inp["emitted_count"],
+            open_opportunities=inp["still_open"],
+            proposed_count=inp["proposed_count"],
+            setup_count=inp["setup_count"],
+            active_setup_count=inp["active_setup_count"],
+            terminal_breakdown=inp["terminal_breakdown"],
+        )
+    cfg = load_config()
+    return {
+        "window_hours": inp["hours_i"],
+        "current": current,
+        "config": {
+            "min_confidence_to_trade": getattr(cfg.trading, "min_confidence_to_trade", "medium"),
+        },
+        "family_ttl_sec": dict(_FAMILY_TTL),
+    }
+
+
+def _cached_current_snapshot(
+    db, hours: int, phases: dict[str, float] | None = None,
+) -> dict:
+    """TTL-cached wrapper around _compute_current_snapshot_payload.
+
+    Cache lookup + write are guarded by a re-entrant lock; the compute itself
+    runs OUTSIDE the lock so concurrent misses don't block on each other's
+    SQL. Two racing misses will each recompute (mild waste), but subsequent
+    reads inside the same 5s window all hit cache.
+
+    Optional `phases` dict receives a `cache_hit` or `compute` timing entry
+    for Server-Timing emission.
+    """
+    now_mono = time.monotonic()
+    with _current_snapshot_cache_lock:
+        cached = _current_snapshot_cache.get(hours)
+        if cached is not None:
+            cached_at, payload = cached
+            if now_mono - cached_at < _CURRENT_SNAPSHOT_CACHE_TTL_SEC:
+                if phases is not None:
+                    phases["cache_hit"] = 0.0
+                return payload
+
+    # Cache miss: propagate the phases dict so the compute internals surface
+    # in Server-Timing as `cohort;dur=... build_current;dur=...`.
+    payload = _compute_current_snapshot_payload(db, hours, phases=phases)
+    with _current_snapshot_cache_lock:
+        _current_snapshot_cache[hours] = (time.monotonic(), payload)
+    return payload
+
+
+def _funnel_cohort_inputs(db, hours: int) -> dict:
+    """Compute the inputs `build_current_entry_status` requires, plus the
+    window bounds so callers can extend with additional stats.
+
+    Returns a dict with:
+      - hours_i, window_start, window_end, now
+      - emitted_count, still_open, queued, reviewed, expired, proposed_count
+      - setup_count, active_setup_count
+      - terminal_breakdown
+
+    Perf item 3: the six status-count SELECTs (emitted, still_open, queued,
+    reviewed, expired) previously ran as separate `SELECT COUNT(*)` queries
+    over the same cohort; they now share one `SUM(CASE WHEN ...)` scan.
+    Same trick collapses setup_count + active_setup_count into one grouped
+    aggregate. Net: 7 SQL round-trips → 2 for the count group. The full
+    endpoint still uses queued/reviewed/expired; the fast /current-snapshot
+    endpoint keeps them in the payload but doesn't render them (payload
+    remains small).
+    """
     hours_i, window_start = _rolling_cutoff(hours)
     now = datetime.now(timezone.utc)
     window_end = now.isoformat()
-
-    def _count(sql: str, params: tuple = ()) -> int:
-        return int(db.execute(sql, params).fetchone()[0])
 
     cohort_where = (
         "julianday(created_at)>=julianday(?) "
         "AND julianday(created_at)<=julianday(?)"
     )
     cohort_params = (window_start, window_end)
-    emitted = _count(f"SELECT COUNT(*) FROM opportunities WHERE {cohort_where}", cohort_params)
-    still_open = _count(
-        f"SELECT COUNT(*) FROM opportunities WHERE {cohort_where} AND status='open'",
+
+    # Query 1 of 2 for the cohort — one scan, five aggregates.
+    status_row = db.execute(
+        f"""
+        SELECT
+          COUNT(*)                                             AS emitted,
+          SUM(CASE WHEN status='open'     THEN 1 ELSE 0 END)   AS still_open,
+          SUM(CASE WHEN status='queued'   THEN 1 ELSE 0 END)   AS queued,
+          SUM(CASE WHEN status='reviewed' THEN 1 ELSE 0 END)   AS reviewed,
+          SUM(CASE WHEN status='expired'  THEN 1 ELSE 0 END)   AS expired
+        FROM opportunities
+        WHERE {cohort_where}
+        """,
         cohort_params,
-    )
-    queued = _count(
-        f"SELECT COUNT(*) FROM opportunities WHERE {cohort_where} AND status='queued'",
+    ).fetchone()
+    emitted     = int(status_row["emitted"]    or 0)
+    still_open  = int(status_row["still_open"] or 0)
+    queued      = int(status_row["queued"]     or 0)
+    reviewed    = int(status_row["reviewed"]   or 0)
+    expired     = int(status_row["expired"]    or 0)
+
+    # Query 2 of 2 for the cohort — one scan, two setup aggregates.
+    # The setup identity string uses SQLite's char(1) as a separator so no
+    # legitimate symbol/family value can collide across boundaries.
+    setup_row = db.execute(
+        f"""
+        SELECT
+          COUNT(DISTINCT
+            symbol || char(1) || market || char(1)
+            || COALESCE(direction_bias,'') || char(1)
+            || COALESCE(scanner_family,'')
+          ) AS setup_count,
+          COUNT(DISTINCT CASE WHEN status IN ('open','queued') THEN
+            symbol || char(1) || market || char(1)
+            || COALESCE(direction_bias,'') || char(1)
+            || COALESCE(scanner_family,'')
+          END) AS active_setup_count
+        FROM opportunities
+        WHERE {cohort_where}
+        """,
         cohort_params,
-    )
-    reviewed = _count(
-        f"SELECT COUNT(*) FROM opportunities WHERE {cohort_where} AND status='reviewed'",
-        cohort_params,
-    )
-    expired = _count(
-        f"SELECT COUNT(*) FROM opportunities WHERE {cohort_where} AND status='expired'",
-        cohort_params,
-    )
-    setup_count = _count(
-        "SELECT COUNT(*) FROM ("
-        " SELECT 1 FROM opportunities WHERE " + cohort_where + " "
-        " GROUP BY symbol,market,COALESCE(direction_bias,''),"
-        "COALESCE(scanner_family,'')"
-        ")",
-        cohort_params,
-    )
-    active_setup_count = _count(
-        "SELECT COUNT(*) FROM ("
-        " SELECT 1 FROM opportunities WHERE " + cohort_where + " "
-        " AND status IN ('open','queued') "
-        " GROUP BY symbol,market,COALESCE(direction_bias,''),"
-        "COALESCE(scanner_family,'')"
-        ")",
-        cohort_params,
-    )
-    proposed = _count(
+    ).fetchone()
+    setup_count        = int(setup_row["setup_count"]        or 0)
+    active_setup_count = int(setup_row["active_setup_count"] or 0)
+
+    proposed = int(db.execute(
         "SELECT COUNT(DISTINCT tp.opportunity_id) FROM trade_proposals tp "
         "JOIN opportunities o ON o.id=tp.opportunity_id "
         "WHERE julianday(o.created_at)>=julianday(?) "
         "AND julianday(o.created_at)<=julianday(?) "
         "AND julianday(tp.created_at)<=julianday(?)",
         (window_start, window_end, window_end),
-    )
+    ).fetchone()[0] or 0)
 
     terminal_breakdown = {
         "snapshot_superseded": 0,
@@ -668,25 +802,135 @@ def get_opportunity_funnel(hours: int = 24):
     for row in reviewed_rows:
         terminal_breakdown[str(row["terminal_reason"])] = int(row["n"] or 0)
 
+    return {
+        "hours_i": hours_i,
+        "window_start": window_start,
+        "window_end": window_end,
+        "now": now,
+        "emitted_count": emitted,
+        "still_open": still_open,
+        "queued": queued,
+        "reviewed": reviewed,
+        "expired": expired,
+        "proposed_count": proposed,
+        "setup_count": setup_count,
+        "active_setup_count": active_setup_count,
+        "terminal_breakdown": terminal_breakdown,
+    }
+
+
+@router.get("/opportunity-funnel/current-snapshot")
+def get_opportunity_funnel_current_snapshot(hours: int = 24, response: Response = None):
+    """Fast subset of /opportunity-funnel — just enough for the Blotter's
+    Candidates panel and status-token strip to render.
+
+    Skips the queued/reviewed/expired cohort counts, the candidate-supply
+    snapshot payload parsing, and the universe-snapshot lookup that the
+    full endpoint carries. Roughly 6 SQL + `build_current_entry_status`
+    (which does another handful of small SQLs internally) versus ~15+ SQL
+    for the full endpoint.
+
+    Backed by a 5s process-local TTL cache (`_cached_current_snapshot`), so
+    back-to-back mounts and the frontend's 30s poll share one compute.
+
+    Emits `Server-Timing` with either `cache_hit;dur=0.0` or
+    `cohort;dur=... build_current;dur=...` — see perf item 5.
+
+    Response shape:
+      - window_hours: echoed
+      - current: build_current_entry_status(...) — the important payload
+      - config: { min_confidence_to_trade }
+      - family_ttl_sec: dict from allocator._FAMILY_TTL
+    """
+    from aletheia.storage.sqlite import get_db
+    phases: dict[str, float] = {}
+    with _PhaseTimer(phases, "total"):
+        payload = _cached_current_snapshot(get_db(), hours, phases=phases)
+    if response is not None:
+        response.headers["Server-Timing"] = _format_server_timing(phases)
+    return payload
+
+
+@router.get("/opportunity-funnel")
+def get_opportunity_funnel(hours: int = 24, response: Response = None):
+    """Market Observer → Operator funnel: exposes WHY opportunities don't reach the operator.
+
+    Causal cohort counts (window):
+      - emitted_count: per-snapshot Opportunity generations created in window
+      - setup_count: unique symbol/market/direction/scanner-family setups
+      - open/queued/reviewed/expired: exact stored status within that cohort
+      - terminal_breakdown: evidence-backed supersede/TTL/Operator/filter exits
+      - proposed_count: distinct cohort Opportunities linked to any Proposal by now
+
+    Point-in-time snapshot (latest candidate_supply_snapshot event, written by
+    trading_context every operator eval):
+      - executable_count: candidates that survived the ranker gates AND have a
+        matching pending signal (= "accepted" in the working set)
+      - excluded_by_reason: bucketed skip reasons (confidence_below, guard_blocked,
+        ttl_expired, ...) with a few example candidates. Each example carries
+        opportunity_id + valid_until so the UI can render "expired X min ago".
+      - main_reason / below_floor: what the operator loop reads to decide whether
+        confidence recovery should fire.
+
+    Auxiliary state:
+      - family_ttl_sec: per-scanner-family TTL from allocator._FAMILY_TTL — the UI
+        needs this to render "ttl was N min" without a second round trip.
+      - universe_snapshot_age_sec: how long since the active universe snapshot was
+        written; generation churn is not presented as market TTL failure.
+
+    Read-only. Consumes existing telemetry — never invokes the ranker/operator.
+
+    For the compact "just enough to render current pipeline state" version see
+    /opportunity-funnel/current-snapshot — it skips the extras below.
+    """
+    from aletheia.storage.sqlite import get_db
+    from aletheia.config.loader import load_config
+    from aletheia.universe.allocator import _FAMILY_TTL
+
+    db = get_db()
+    phases: dict[str, float] = {}
+    total_timer = _PhaseTimer(phases, "total")
+    total_timer.__enter__()
+
+    # Shared inputs: base counts + terminal_breakdown + window bounds.
+    with _PhaseTimer(phases, "cohort"):
+        inp = _funnel_cohort_inputs(db, hours)
+    hours_i = inp["hours_i"]
+    window_end = inp["window_end"]
+    now = inp["now"]
+    emitted = inp["emitted_count"]
+    still_open = inp["still_open"]
+    proposed = inp["proposed_count"]
+    setup_count = inp["setup_count"]
+    active_setup_count = inp["active_setup_count"]
+    terminal_breakdown = inp["terminal_breakdown"]
+
+    # queued / reviewed / expired now come from the consolidated
+    # _funnel_cohort_inputs() scan (perf item 3), so no extra queries here.
+    queued = inp["queued"]
+    reviewed = inp["reviewed"]
+    expired = inp["expired"]
+
     # Latest ranker-view snapshot (what the operator saw on its last eval)
     snapshot: dict = {}
     snapshot_read_failed = False
-    try:
-        row = db.execute(
-            "SELECT payload, created_at FROM agent_shell_events "
-            "WHERE event_type = 'candidate_supply_snapshot' "
-            "ORDER BY created_at DESC, rowid DESC LIMIT 1"
-        ).fetchone()
-        if row:
-            import json as _json
-            try:
-                snapshot = _json.loads(row["payload"]) or {}
-            except (TypeError, ValueError):
-                snapshot = {}
-            snapshot["snapshot_at"] = row["created_at"]
-    except Exception:
-        snapshot = {}
-        snapshot_read_failed = True
+    with _PhaseTimer(phases, "snapshot"):
+        try:
+            row = db.execute(
+                "SELECT payload, created_at FROM agent_shell_events "
+                "WHERE event_type = 'candidate_supply_snapshot' "
+                "ORDER BY created_at DESC, rowid DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                import json as _json
+                try:
+                    snapshot = _json.loads(row["payload"]) or {}
+                except (TypeError, ValueError):
+                    snapshot = {}
+                snapshot["snapshot_at"] = row["created_at"]
+        except Exception:
+            snapshot = {}
+            snapshot_read_failed = True
 
     executable_count = int(snapshot.get("executable_count") or 0)
     excluded_by_reason = list(snapshot.get("excluded_candidates_summary") or [])
@@ -708,21 +952,22 @@ def get_opportunity_funnel(hours: int = 24):
 
     # Universe snapshot age is generation context, not a queued-carrier deadline.
     snapshot_age_sec = None
-    try:
-        srow = db.execute(
-            "SELECT created_at FROM universe_snapshots "
-            "WHERE market_type='crypto' AND status='active' "
-            "AND (expires_at IS NULL OR datetime(expires_at)>datetime(?)) "
-            "ORDER BY created_at DESC LIMIT 1",
-            (window_end,),
-        ).fetchone()
-        if srow and srow["created_at"]:
-            parsed = datetime.fromisoformat(str(srow["created_at"]).replace("Z", "+00:00"))
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            snapshot_age_sec = int((now - parsed).total_seconds())
-    except Exception:
-        snapshot_age_sec = None
+    with _PhaseTimer(phases, "universe"):
+        try:
+            srow = db.execute(
+                "SELECT created_at FROM universe_snapshots "
+                "WHERE market_type='crypto' AND status='active' "
+                "AND (expires_at IS NULL OR datetime(expires_at)>datetime(?)) "
+                "ORDER BY created_at DESC LIMIT 1",
+                (window_end,),
+            ).fetchone()
+            if srow and srow["created_at"]:
+                parsed = datetime.fromisoformat(str(srow["created_at"]).replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                snapshot_age_sec = int((now - parsed).total_seconds())
+        except Exception:
+            snapshot_age_sec = None
 
     candidate_snapshot_age_sec = None
     candidate_snapshot_freshness = "unavailable" if snapshot_read_failed else "missing"
@@ -748,17 +993,22 @@ def get_opportunity_funnel(hours: int = 24):
     min_confidence = getattr(cfg.trading, "min_confidence_to_trade", "medium")
     from aletheia.analytics.opportunity_progress import build_current_entry_status
 
-    current = build_current_entry_status(
-        db,
-        now=now,
-        window_hours=hours_i,
-        emitted_count=emitted,
-        open_opportunities=still_open,
-        proposed_count=proposed,
-        setup_count=setup_count,
-        active_setup_count=active_setup_count,
-        terminal_breakdown=terminal_breakdown,
-    )
+    with _PhaseTimer(phases, "build_current"):
+        current = build_current_entry_status(
+            db,
+            now=now,
+            window_hours=hours_i,
+            emitted_count=emitted,
+            open_opportunities=still_open,
+            proposed_count=proposed,
+            setup_count=setup_count,
+            active_setup_count=active_setup_count,
+            terminal_breakdown=terminal_breakdown,
+        )
+    # Close the total timer + attach the Server-Timing header before returning.
+    total_timer.__exit__(None, None, None)
+    if response is not None:
+        response.headers["Server-Timing"] = _format_server_timing(phases)
 
     return {
         "window_hours": hours_i,
@@ -794,13 +1044,24 @@ def get_opportunity_funnel(hours: int = 24):
     }
 
 
+_VALID_OUTCOMES: frozenset[str] = frozenset({
+    "trade", "operator_skip", "operator_watch",
+    "user_reject", "auto_reject", "reject_unknown",
+})
+
+
 @router.get("/operator-decisions")
-def get_operator_decisions(hours: int = 24, limit: int = 50):
+def get_operator_decisions(
+    hours: int = 24,
+    limit: int = 50,
+    outcome: str | None = None,
+    symbol: str | None = None,
+):
     """Recent operator decisions — the "final-stage" companion to the Funnel card.
 
-    Merges three sources into one time-ordered list so the Approval Desk can
-    surface not only pending / accepted proposals but also every kind of
-    rejection that happened after a candidate reached the operator:
+    Merges three sources into one time-ordered list so the Blotter can surface
+    not only pending / accepted proposals but also every kind of rejection that
+    happened after a candidate reached the operator:
 
     - `operator_skip`: pi_decisions.action = 'skip' — the LLM operator saw an
       executable candidate and decided not to trade (reason in `reasoning`).
@@ -818,6 +1079,19 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
     full window before the display list is truncated, and a rejection supersedes the
     earlier trade-intent row for the same Proposal/Opportunity.
 
+    Query parameters:
+
+    - `hours` (default 24) — rolling window in hours.
+    - `limit` (default 50, capped at 200) — maximum items returned AFTER the
+      optional outcome/symbol filter is applied.
+    - `outcome` (comma-separated, optional) — restrict `items` to these outcomes.
+      Invalid values are silently dropped; a non-empty parameter whose values
+      are all invalid returns zero items (honest to the request). `counts` and
+      `total_count` remain over the FULL window so a filter never lies about
+      totals — the Blotter's facet-chip counts rely on this invariant.
+    - `symbol` (optional) — restrict `items` to a single symbol, canonicalized
+      via `to_canonical` (so 'btc/usdt', 'BTC-USDT', 'BTCUSDT' all match).
+
     All decisions are keyed by `opportunity_id` where available so the UI can
     request the full lifecycle trace via /analytics/opportunity-trace/{id}.
 
@@ -830,6 +1104,29 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
     hours_i, window_start = _rolling_cutoff(hours)
     limit_i = max(1, min(int(limit or 50), 200))
     window_end = datetime.now(timezone.utc).isoformat()
+
+    # Parse optional filters up-front so they're validated once and reused
+    # for every item comparison below.
+    outcome_filter: set[str] | None = None
+    if outcome is not None:
+        parsed = {s.strip() for s in outcome.split(",") if s.strip()}
+        # Keep only the recognized outcomes. If the caller passed a non-empty
+        # value that yielded no valid outcomes, we still enter the filtered
+        # branch (returning zero rows) rather than silently ignoring the
+        # request — this is honest to the intent.
+        outcome_filter = parsed & _VALID_OUTCOMES
+        if parsed and not outcome_filter:
+            # Sentinel: an outcome nobody matches so `all(x != sentinel)`.
+            outcome_filter = {"__no_match__"}
+
+    target_symbol: str | None = None
+    if symbol:
+        raw = symbol.strip()
+        if raw:
+            try:
+                target_symbol = to_canonical(raw)
+            except Exception:
+                target_symbol = raw
 
     pi_items: list[dict] = []
     reject_items: list[dict] = []
@@ -952,7 +1249,29 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
         if oc in counts:
             counts[oc] += 1
 
-    items = all_items[:limit_i]
+    # Apply optional outcome / symbol filters AFTER the full-window counts
+    # so `counts` stays honest (facet chips on the Blotter show unfiltered
+    # totals). The rejection-supersedes-trade merge above (see line ~929)
+    # already ran, so filtering here doesn't reintroduce hidden duplicates.
+    has_filter = outcome_filter is not None or target_symbol is not None
+    if has_filter:
+        def _matches(item: dict) -> bool:
+            if outcome_filter is not None and item.get("outcome") not in outcome_filter:
+                return False
+            if target_symbol is not None:
+                raw = item.get("symbol") or ""
+                try:
+                    canon = to_canonical(raw) if raw else raw
+                except Exception:
+                    canon = raw
+                if canon != target_symbol:
+                    return False
+            return True
+        filtered_all = [it for it in all_items if _matches(it)]
+    else:
+        filtered_all = all_items
+
+    items = filtered_all[:limit_i]
     for item in items:
         item.pop("_sort_instant", None)
 
@@ -968,7 +1287,12 @@ def get_operator_decisions(hours: int = 24, limit: int = 50):
     return {
         "window_hours": hours_i,
         "limit": limit_i,
+        # total_count remains the FULL-window count so downstream UIs can
+        # distinguish "matched" from "total available".
         "total_count": len(all_items),
+        # matched_count = rows the filter matched (before truncation to limit).
+        # Equals total_count when no filter is applied.
+        "matched_count": len(filtered_all),
         "counts": counts,
         "items": items,
     }

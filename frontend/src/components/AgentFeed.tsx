@@ -5,7 +5,7 @@ import { api } from '../api/client'
 import type { AgentRun, Opportunity, TradeProposal } from '../types'
 import { DetailDrawer, DrawerSection, DrawerField } from './DetailDrawer'
 import ThesisText from './ThesisText'
-import { ProposalRationaleDetail } from '../pages/Proposals'
+import { ProposalRationaleDetail } from './ProposalRationaleDetail'
 import { fmtSymbol } from '../lib/format'
 
 /**
@@ -342,7 +342,7 @@ function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClos
               : <p className="feed-thesis">No rationale recorded.</p>}
           </DrawerSection>
           <div className="flex gap-2 mt-3">
-            <button className="btn-control" onClick={() => { onClose(); navigate('/proposals') }}>Review in Proposals →</button>
+            <button className="btn-control" onClick={() => { onClose(); navigate('/blotter') }}>Review in Blotter →</button>
           </div>
         </>
       )}

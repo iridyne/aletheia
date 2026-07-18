@@ -34,13 +34,35 @@ def test_sidebar_uses_trading_desk_ia_with_global_entries():
     assert "{ to: '/universe', label: 'Universe Board' }" in research.group(0)
     assert "{ to: '/serenity-lens', label: 'Serenity Lens' }" in research.group(0)
     assert "{ to: '/news', label: 'News Intel' }" in research.group(0)
-    assert "{ to: '/proposals', label: 'Approval Desk' }" in decision.group(0)
+    # 2026-07-18 Blotter migration: the Decide row now points at /blotter.
+    # The old '/proposals → Approval Desk' entry has been retired and its
+    # route rewired to `<Navigate to="/blotter" replace />` for legacy
+    # bookmarks (verified by test_proposals_route_redirects_to_blotter below).
+    assert "{ to: '/blotter', label: 'Blotter' }" in decision.group(0)
+    assert "Approval Desk" not in decision.group(0)
     assert "{ to: '/trades', label: 'Trades & Positions' }" in portfolio.group(0)
     assert "{ to: '/risk', label: 'Risk & Controls' }" in portfolio.group(0)
     assert "group: 'Learning'" not in nav_text
     assert "group: 'Settings'" not in nav_text
     assert "Strategy Lifecycle" not in nav_text
     assert "/strategies" not in nav_text
+
+
+def test_proposals_route_redirects_to_blotter():
+    """`/proposals` was retired 2026-07-18 in favour of /blotter. Any lingering
+    external bookmark or in-app navigate() call to /proposals must still
+    resolve; the route stays wired as a Navigate redirect."""
+    app = _read("App.tsx")
+    # Redirect is present.
+    assert re.search(
+        r"<Route\s+path=\"/proposals\"\s+element=\{<Navigate\s+to=\"/blotter\"\s+replace\s*/>\}",
+        app,
+    ), "Expected `<Route path=\"/proposals\" element={<Navigate to=\"/blotter\" replace />}` in App.tsx"
+    # `Proposals` component import must be gone (file deleted).
+    assert "from './pages/Proposals'" not in app
+    # The Blotter route + component import exist.
+    assert "import Blotter from './pages/Blotter'" in app
+    assert "<Route path=\"/blotter\" element={<Blotter />}" in app
 
 
 def test_frontend_has_no_links_to_removed_strategy_lifecycle_or_old_serenity_path():

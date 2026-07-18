@@ -195,7 +195,7 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
       <CausalNode stage="Strategy" state={strategyId ? 'present' : 'empty'} facts={<span className="mono">{strategyId}</span>} />
 
       {proposalId
-        ? <CausalNode stage="Proposal" state="present" facts={<><div className="mono cc-id">{proposalId}</div>{proposal ? <div>{proposal.direction?.toUpperCase()} {fmtSymbol(proposal.symbol, proposal.market_type)} · {proposal.execution_mode}{rationaleText && <div className="cc-why">{rationaleText}</div>}</div> : <div className="text-muted text-sm">(detail not in recent list)</div>}</>} onOpen={() => navigate('/proposals')} />
+        ? <CausalNode stage="Proposal" state="present" facts={<><div className="mono cc-id">{proposalId}</div>{proposal ? <div>{proposal.direction?.toUpperCase()} {fmtSymbol(proposal.symbol, proposal.market_type)} · {proposal.execution_mode}{rationaleText && <div className="cc-why">{rationaleText}</div>}</div> : <div className="text-muted text-sm">(detail not in recent list)</div>}</>} onOpen={() => navigate('/blotter')} />
         : <CausalNode stage="Proposal" state="empty" />}
 
       {proposal

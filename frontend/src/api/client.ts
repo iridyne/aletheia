@@ -418,34 +418,52 @@ export const api = {
   // Recent operator decisions — final-stage companion to the funnel.
   // Merges pi_decisions (trade/skip/watch/flip/scale_in) with rejected
   // trade_proposals (user vs auto reject distinguished via audit_events).
-  getOperatorDecisions: (hours = 24, limit = 50) => fetchJson<{
-    window_hours: number
-    limit: number
-    counts: {
-      trade: number
-      operator_skip: number
-      operator_watch: number
-      user_reject: number
-      auto_reject: number
-      reject_unknown: number
+  //
+  // Optional `outcome` / `symbol` filters are applied server-side AFTER the
+  // full-window counts are computed — so counts and total_count never lie
+  // about totals even when items is filtered. matched_count reports how many
+  // rows matched the filter before truncation to limit.
+  getOperatorDecisions: (
+    hours = 24,
+    limit = 50,
+    opts: { outcome?: string | string[]; symbol?: string } = {},
+  ) => {
+    const params = new URLSearchParams({ hours: String(hours), limit: String(limit) })
+    if (opts.outcome) {
+      const value = Array.isArray(opts.outcome) ? opts.outcome.join(',') : opts.outcome
+      if (value) params.set('outcome', value)
     }
-    total_count: number
-    items: Array<{
-      opportunity_id: string | null
-      proposal_id: string | null
-      decision_id: string | null
-      symbol: string | null
-      direction: string | null
-      market_type: string | null
-      decided_at: string
-      outcome: 'trade' | 'operator_skip' | 'operator_watch' | 'user_reject' | 'auto_reject' | 'reject_unknown'
-      action: string
-      conviction: number | null
-      one_line_reason: string | null
-      rejected_actor?: string | null
-      rejected_source?: string | null
-    }>
-  }>(`/analytics/operator-decisions?hours=${hours}&limit=${limit}`),
+    if (opts.symbol) params.set('symbol', opts.symbol)
+    return fetchJson<{
+      window_hours: number
+      limit: number
+      counts: {
+        trade: number
+        operator_skip: number
+        operator_watch: number
+        user_reject: number
+        auto_reject: number
+        reject_unknown: number
+      }
+      total_count: number
+      matched_count: number
+      items: Array<{
+        opportunity_id: string | null
+        proposal_id: string | null
+        decision_id: string | null
+        symbol: string | null
+        direction: string | null
+        market_type: string | null
+        decided_at: string
+        outcome: 'trade' | 'operator_skip' | 'operator_watch' | 'user_reject' | 'auto_reject' | 'reject_unknown'
+        action: string
+        conviction: number | null
+        one_line_reason: string | null
+        rejected_actor?: string | null
+        rejected_source?: string | null
+      }>
+    }>(`/analytics/operator-decisions?${params.toString()}`)
+  },
 
   // Full lifecycle trace for one opportunity — powers the decision drawer.
   getOpportunityTrace: (opportunityId: string) =>
@@ -476,7 +494,10 @@ export const api = {
     }>(`/analytics/opportunity-trace/${encodeURIComponent(opportunityId)}`),
 
   // Market Observer → Operator funnel. Surfaces WHY opportunities don't reach
-  // the operator (e.g. confidence gate, TTL expiry) — counterpart to Approval Desk.
+  // the operator (e.g. confidence gate, TTL expiry) — counterpart to the
+  // Blotter (formerly Approval Desk). Full-window response; see the compact
+  // /current-snapshot sibling for a faster subset when only `current.*` is
+  // needed.
   getOpportunityFunnel: (hours = 24) => fetchJson<{
     window_hours: number
     emitted_count: number
@@ -625,6 +646,24 @@ export const api = {
     family_ttl_sec: Record<string, number>
     universe_snapshot_age_sec: number | null
   }>(`/analytics/opportunity-funnel?hours=${hours}`),
+
+  // Fast subset of getOpportunityFunnel — returns just `current` + config +
+  // family_ttl_sec. Used by the Blotter's Candidates panel, status-token
+  // strip, and Overview's shortcut strip. See
+  // docs/design/frontend/blotter_design.md#performance-backlog for why this
+  // split exists.
+  getOpportunityFunnelCurrentSnapshot: (hours = 24) =>
+    fetchJson<{
+      window_hours: number
+      // Same shape as getOpportunityFunnel().current — inlined for the
+      // fast endpoint's compact response. Fields not enumerated here (the
+      // rich candidate/ranker sub-shape) are inherited from the full type
+      // via structural typing at call sites.
+      current: Awaited<ReturnType<typeof api.getOpportunityFunnel>>['current']
+      config: { min_confidence_to_trade: string }
+      family_ttl_sec: Record<string, number>
+    }>(`/analytics/opportunity-funnel/current-snapshot?hours=${hours}`),
+
   getLearningFunnel: () => fetchJson<{
     knowledge_items_by_type: Array<{ item_type: string; count: number }>
     pi_actual_visibility: { layer3_lesson_hits: number; layer3_guards_available: number; note: string }

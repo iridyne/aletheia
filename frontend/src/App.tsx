@@ -1,11 +1,11 @@
-import { Routes, Route, NavLink } from 'react-router-dom'
+import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from './api/client'
 import Overview from './pages/Overview'
 import AgentActivity from './pages/AgentActivity'
 import Learning from './pages/Learning'
-import Proposals from './pages/Proposals'
+import Blotter from './pages/Blotter'
 import TradesPositions from './pages/TradesPositions'
 import Charts from './pages/Charts'
 import Settings from './pages/Settings'
@@ -60,7 +60,10 @@ export const NAV: NavGroup[] = [
   {
     group: 'Decision',
     items: [
-      { to: '/proposals', label: 'Approval Desk' },
+      // Blotter (BLOTTER_DESIGN.md) merges the four Overview decision cards +
+      // the legacy /proposals page into one sell-side-style workstation. The
+      // /proposals route is preserved below as a legacy redirect target.
+      { to: '/blotter', label: 'Blotter' },
       { to: '/agent-activity', label: 'Agent Activity' },
     ],
   },
@@ -583,7 +586,14 @@ export default function App() {
             <Route path="/dreaming" element={<Learning />} />
             <Route path="/knowledge" element={<Learning />} />
             <Route path="/reports" element={<Learning />} />
-            <Route path="/proposals" element={<Proposals />} />
+            <Route path="/blotter" element={<Blotter />} />
+            {/* /proposals fully replaced by /blotter (2026-07-18). Legacy
+                external links, bookmarks, and any lingering in-app navigate()
+                calls redirect transparently. The old pages/Proposals.tsx has
+                been deleted; its only outward-facing export
+                (ProposalRationaleDetail) moved to
+                components/ProposalRationaleDetail.tsx. */}
+            <Route path="/proposals" element={<Navigate to="/blotter" replace />} />
             <Route path="/trades" element={<TradesPositions />} />
             {/* Legacy paths kept as redirects so existing cross-links/bookmarks resolve. */}
             <Route path="/paper-trades" element={<TradesPositions />} />

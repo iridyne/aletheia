@@ -79,7 +79,7 @@ export default function AccountSnapshot() {
         label="Pending Proposals"
         value={pendingProposals.length}
         tone={pendingProposals.length > 0 ? 'neutral' : 'muted'}
-        onClick={() => navigate('/proposals')}
+        onClick={() => navigate('/blotter')}
       />
     </div>
   )

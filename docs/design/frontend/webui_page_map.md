@@ -8,7 +8,7 @@
 
 ## §23.1 six roles → which pages serve them
 1. control room → Cockpit
-2. approval desk → Proposals
+2. approval desk → Blotter (2026-07-18; was Proposals)
 3. trading cockpit → Positions, Paper Trades, Charts
 4. agent transparency → Agent Runs, Opportunities
 5. strategy lifecycle → Strategy Lifecycle
@@ -21,11 +21,26 @@
 ### Cockpit (/) — KEEP ✅
 Role: control room. Already redesigned (PnL zone + agent feed + right rail). Ref: Bloomberg PORT.
 
-### Proposals (/proposals) — ELEVATE to "Approval Desk" ⬆️ (standalone)
-Role: approval desk — the SINGLE human-in-loop control point (§15.3, §29 live unlock is human;
-trust §3.4 approve must preserve proposal ID + explicit confirm). Must not be merged or diluted
-to a plain list. Should read like a desk: each proposal shows risk_decision, rationale, linked
-opportunity/strategy, and the approve/reject action with confirmation. Ref: trust §3.4.
+### Proposals (/proposals) — SUPERSEDED 2026-07-18 → /blotter 🗑️
+Role: approval desk — the single human-in-loop control point (§15.3, §29 live unlock is human;
+trust §3.4 approve must preserve proposal ID + explicit confirm). ELEVATED for two months
+(2026-06-07 → 2026-07-18) as a standalone Approval Desk page (`pages/Proposals.tsx`), then
+merged into the Blotter workstation below. The `/proposals` route now redirects to
+`/blotter`; `pages/Proposals.tsx` has been deleted. The `ProposalRationaleDetail`
+component moved to `components/ProposalRationaleDetail.tsx` so AgentFeed's drawer keeps
+rendering it. See "Blotter (/blotter)" below and `blotter_design.md` for the merger.
+
+### Blotter (/blotter) — NEW 2026-07-18 (standalone) ✨
+Role: sell-side EMS-style workstation absorbing the former Approval Desk **plus** the four
+decision-flow cards that had accumulated on the Overview right rail (EntryStatusCard,
+HumanApprovalCard, OpportunityFunnelCard, DecisionHistoryCard). Three regions in one page:
+five uppercase status-token strip at top; full-width Candidate Ledger (every terminal
+outcome as a sibling row, filterable by outcome/side/time window) middle; Candidates
+(7/12) + Awaiting Sign-off (5/12) band at bottom. Retains the trust §3.4 approve/reject
+semantics — inline in the Sign-off panel with confirmation dialogs. Ref: Bloomberg EMSX
+blotter + IBKR TWS + shadcn/TanStack Data Table. Design language: buy-side vocabulary
+(Blotter / Candidates / Sign-off / Ledger) chosen over consumer-fintech phrasing. See
+`blotter_design.md` for the full spec + V2 backlog + performance write-up.
 
 ### Positions (/positions) + Paper Trades (/paper-trades) — MERGE → "Trades & Positions" 🔗
 Two ends of ONE causal chain: orders/fills (Paper Trades, §23.9) → positions (§23.10). Natural
@@ -78,11 +93,14 @@ feed. Lives under OPERATE (or a "Lab/Future" affordance), off the primary tradin
 
 ```
 OBSERVE   Cockpit · Markets (Charts)
-DECIDE    Approval Desk (Proposals) · Agent Activity (Agent Runs + Opportunities)
+DECIDE    Blotter (Approval Desk + Overview decision cards) · Agent Activity
 EXECUTE   Trades & Positions (Positions + Paper Trades)   ← causal-chain inspector
 EVOLVE    Strategy Lifecycle · Learning (Dreaming + KB + Reports)
 OPERATE   Risk & Controls · Settings · News (labeled)
 ```
+
+Historical Decide row (2026-06-07 → 2026-07-18):
+`DECIDE  Approval Desk (Proposals) · Agent Activity (Agent Runs + Opportunities)`
 
 Net merges: Positions+PaperTrades (2→1), AgentRuns+Opportunities (2→1), Dreaming+KB+Reports (3→1).
 Could go further to ~7 (e.g. fold Charts into Trades, Risk into Settings) but not recommended —
@@ -156,3 +174,37 @@ files (Positions, PaperTrades, AgentRuns, Opportunities, Dreaming, KnowledgeBase
 CausalChain, Tabs, PageHeader. All frontend-only; backend gaps documented for the backend
 agent (position→proposal FK, GET /api/agent-runs/{id}/steps). Remaining = polish/iteration
 on real data once backend fills the parked gaps.
+
+7. ✅ DONE (2026-07-18) Blotter workstation — new `pages/Blotter.tsx`. Merges the former
+   Approval Desk (`pages/Proposals.tsx`, now deleted) with the four decision-flow cards
+   that had accumulated on the Cockpit right rail (EntryStatusCard, HumanApprovalCard,
+   OpportunityFunnelCard, DecisionHistoryCard). Three regions: five-column uppercase
+   status-token strip → full-width **Candidate Ledger** (Bloomberg blotter — every
+   terminal outcome as a sibling row; six-facet outcome filter with server-side push-down,
+   client-side side/search filters) → **Candidates** (7/12) + **Awaiting Sign-off** (5/12)
+   band with inline Approve/Reject actions and click-to-open trace drawer. Overview keeps
+   a 1-row Blotter summary strip (Staged / Awaiting / Filled today / Rejected 24h) with
+   `onMouseEnter` prefetching all three Blotter queryKeys. New shared component
+   `components/DecisionTraceDrawer.tsx` (extracted from Overview).
+
+   Vocabulary switched from consumer-fintech to sell-side EMS: "Why no position now" →
+   *Pre-trade Checks*; "Human Approval" → *Awaiting Sign-off*; "Funnel" → *Candidates*;
+   "Decision History" → *Candidate Ledger*; "Working set" → *Staged*. Full rationale +
+   V2 backlog in `blotter_design.md`.
+
+   Backend perf sweep (same day): new `GET /analytics/opportunity-funnel/current-snapshot`
+   returns just `{current, config, family_ttl_sec}` with a 5s process-local TTL cache
+   (`analytics.py:_cached_current_snapshot`). Cohort SQL consolidated from 7 counts →
+   2 aggregates (`SUM(CASE WHEN status=…)` + `COUNT(DISTINCT CASE WHEN status IN…)`).
+   Both funnel endpoints emit `Server-Timing` (cohort/build_current/snapshot/universe/total)
+   so future regressions can be attributed by phase in Chrome DevTools Network. See
+   `blotter_design.md#performance-backlog` — all 7 items shipped.
+
+   Nav update: Decide row now reads `Blotter · Agent Activity`. `/proposals` route
+   preserved as `<Navigate to="/blotter" replace />` for legacy bookmarks. `pages/
+   Proposals.tsx` deleted; its `ProposalRationaleDetail` export moved to
+   `components/ProposalRationaleDetail.tsx` (still consumed by AgentFeed's drawer).
+   241 lines of orphaned CSS (`.entry-*`, `.human-approval-*`, `.funnel-*`,
+   `.approval-list`, `.desk-*`, `.proposal-*`, `.dir-*`) purged from `index.css`. All
+   related docs synced (webui_page_map / overview_redesign / api_reference /
+   ui_design_system). tsc+build green; unit tests updated.
