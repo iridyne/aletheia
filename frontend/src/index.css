@@ -2026,8 +2026,23 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .status-row-clickable:hover th,
 .status-row-clickable:hover td { background: var(--surface-raised); }
 .status-row-chevron {
-  font-size: 0.7rem; color: var(--faint); flex-shrink: 0; margin-left: auto; padding-left: 4px;
+  /* Sized to visually match .status-value (0.78rem) so the affordance
+     doesn't look like a stray typo next to it. Slightly less faint
+     than --faint (which vanishes on the surface-2 hover state); still
+     dimmer than the row's mono value so the value stays the focus. */
+  font-size: 0.78rem;
+  color: var(--muted);
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 4px;
+  line-height: 1;
+  /* Fixed glyph box so the three characters (→ ▶ ▼) land in the same
+     right-edge column across rows even though they have different
+     intrinsic widths in the sans-serif font. */
+  min-width: 12px;
+  text-align: center;
 }
+.status-row-clickable:hover .status-row-chevron { color: var(--text); }
 
 /* CollapsibleSection uses inline styles — no CSS class needed. */
 .chd-panel {

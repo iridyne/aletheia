@@ -443,8 +443,12 @@ function StatusRow({
         <span className={`status-light light-${light}`} />
         <span className="status-value" title={title}>{value}</span>
         {onClick && (
-          <span className="status-row-chevron">
-            {externalLink ? '→' : (expanded ? '▾' : '▸')}
+          <span className="status-row-chevron" aria-hidden="true">
+            {/* Large triangles (U+25B6 / U+25BC) instead of the "small
+                triangle" variants (▸ ▾, U+25B8 / U+25BE) so the expand
+                affordance carries the same visual weight as the external
+                nav arrow → in a proportional font. */}
+            {externalLink ? '→' : (expanded ? '▼' : '▶')}
           </span>
         )}
       </td>

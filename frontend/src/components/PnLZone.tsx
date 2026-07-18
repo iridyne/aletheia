@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import MetricTile from './MetricTile'
 import AccountEquityChart from '../charts/AccountEquityChart'
-import { fmtNum, fmtSigned, fmtDelta, fmtSymbol } from '../lib/format'
+import { fmtNum, fmtSigned, fmtSymbol } from '../lib/format'
 
 // Palette for pie slices — cycles if more than 6 coins (rare)
 const SLICE_COLORS = ['#00e5ff', '#7c3aed', '#f59e0b', '#10b981', '#f43f5e', '#3b82f6']
@@ -252,7 +252,7 @@ export default function PnLZone() {
   const realizedContext = realNum != null
     ? 'all-time'
     : historicalNum != null
-      ? `${historicalCount} legacy closes reconciled: ${fmtDelta(historicalNum)}${historicalUnavailable ? ` · ${historicalUnavailable} still unavailable` : ''}`
+      ? `${historicalCount} legacy closes reconciled: ${fmtSigned(historicalNum)}${historicalUnavailable ? ` · ${historicalUnavailable} still unavailable` : ''}`
     : realizedUnavailableCount > 0
       ? `${realizedUnavailableCount} closes need verification`
       : 'realized economics unavailable'
@@ -306,28 +306,32 @@ export default function PnLZone() {
           )}
         </div>
 
-        {/* Context tiles — hover shows per-symbol breakdown, click navigates */}
+        {/* Context tiles — hover shows per-symbol breakdown, click navigates.
+            fmtSigned (not fmtDelta) — the leading +/- sign is already a
+            non-color secondary channel per WCAG 1.4.1; the ▲/▼ triangle
+            on top would be redundant double-encoding on these three PnL
+            values. Colour still carries green/red for glance readers. */}
         <div className="pnl-tiles">
           <HoverTile
             label="Today PnL"
-            value={todayNum == null ? 'not available' : fmtDelta(todayNum)}
+            value={todayNum == null ? 'not available' : fmtSigned(todayNum)}
             tone={toneOf(todayNum)}
             context={todayNum == null
               ? todayComplete ? 'no data' : 'funding or close economics unavailable'
-              : dayPct != null ? `${fmtDelta(dayPct)}% of managed` : undefined}
+              : dayPct != null ? `${fmtSigned(dayPct)}% of managed` : undefined}
             onClick={() => navigate('/trades?tab=blotter')}
             tooltip={todayPnlBySymbol}
           />
           <HoverTile
             label="Unrealized"
-            value={fmtDelta(unrealNum)}
+            value={fmtSigned(unrealNum)}
             tone={toneOf(unrealNum)}
             onClick={() => navigate('/trades?tab=blotter')}
             tooltip={unrealBySymbol}
           />
           <MetricTile
             label="Realized"
-            value={realNum == null ? 'not yet verifiable' : fmtDelta(realNum)}
+            value={realNum == null ? 'not yet verifiable' : fmtSigned(realNum)}
             tone={toneOf(realNum)}
             context={realizedContext}
             onClick={() => navigate('/trades?tab=analytics')}
