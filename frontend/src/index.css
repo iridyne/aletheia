@@ -86,6 +86,19 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+html {
+  /* Firefox: thin dark scrollbars everywhere — matches the webkit
+     ::-webkit-scrollbar rule further down. Without this, Firefox
+     falls back to the OS's light-mode scrollbar on any element
+     without an explicit scrollbar-color, notably horizontal
+     overflow at the document level. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-2) transparent;
+  /* Tell the UA to render its remaining native chrome (form control
+     accents, focus rings on default styling paths) with dark defaults. */
+  color-scheme: dark;
+}
+
 body {
   font-family: var(--sans);
   background: var(--bg);
@@ -615,6 +628,43 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .settings-nav.is-collapsed .settings-nav-copy { display: none; }
 .settings-nav.is-collapsed .settings-nav-item { width: 36px; min-height: 36px; padding: 0; align-items: center; justify-content: center; }
 .settings-nav.is-collapsed .settings-nav-icon { width: 18px; height: 18px; margin: 0; }
+
+/* Below the canonical lg breakpoint (ui_design_system.md §3.x), cap the
+   nav width regardless of the persisted --settings-nav-width. A user who
+   dragged the resize handle wide on a big monitor should not have that
+   preference eat the whole content area on a narrower window. Resize
+   handle is hidden here — it's a wide-screen affordance only. */
+@media (max-width: 1023px) {
+  .settings-nav {
+    width: 220px !important;
+    flex-basis: 220px !important;
+  }
+  .settings-nav-resize-handle { display: none; }
+}
+
+/* Below md the panel needs the whole content area. Force icon-only mode
+   even if the operator's persisted preference is expanded. The manual
+   collapse toggle in the nav header still works to switch back to full
+   labels on wider windows. */
+@media (max-width: 767px) {
+  .settings-nav {
+    width: 52px !important;
+    flex-basis: 52px !important;
+    align-items: center;
+    overflow: visible;
+  }
+  .settings-nav .settings-nav-heading,
+  .settings-nav .settings-nav-copy { display: none; }
+  .settings-nav .settings-nav-item {
+    width: 36px; min-height: 36px; padding: 0;
+    align-items: center; justify-content: center;
+  }
+  .settings-nav .settings-nav-icon { width: 18px; height: 18px; margin: 0; }
+  .settings-nav-header { width: 100%; justify-content: center; padding-bottom: var(--space-1); }
+  /* The panel already has margin-inline-start: --space-5; tighten it so
+     the ~750px content area isn't dominated by a big gutter. */
+  .settings-panel { margin-inline-start: var(--space-3); }
+}
 .settings-nav-resize-handle {
   width: 8px;
   flex: 0 0 8px;
