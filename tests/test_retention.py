@@ -69,9 +69,7 @@ def test_prune_market_snapshots(tmp_path, monkeypatch):
 
 
 def test_prune_universe_forward_outcomes(tmp_path, monkeypatch):
-    """Forward-return labels are analytics (not causal-chain) and reference
-    snapshots pruned at 30d, so old rows are orphaned. Guards DB-SIZE gap #1:
-    the table had no prune path and grew unbounded."""
+    """Unreferenced labels prune at 30d; active-experiment fallbacks are guarded."""
     conn = setup_env(tmp_path, monkeypatch)
     cols = ("(id, member_id, snapshot_id, symbol, horizon, "
             "entry_price_usd, entry_ts, due_at, status)")
@@ -83,6 +81,85 @@ def test_prune_universe_forward_outcomes(tmp_path, monkeypatch):
     assert repo.prune_universe_forward_outcomes(days=30) == 1
     remaining = {r["id"] for r in conn.execute("SELECT id FROM universe_forward_outcomes").fetchall()}
     assert remaining == {"n"}, "prune must drop only outcomes older than the window"
+
+
+def test_prune_universe_forward_outcomes_keeps_open_experiment_fallback(tmp_path, monkeypatch):
+    conn = setup_env(tmp_path, monkeypatch)
+    from aletheia.learning.ledger import insert_experiment, insert_exposure, insert_hypothesis
+    from aletheia.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
+
+    hypothesis = LearningHypothesis(
+        hypothesis_id="retention-hypothesis",
+        fingerprint="retention-hypothesis",
+        cohort_id="test",
+        path_id="universe_family_calibration",
+        overlap_group="universe",
+        source_type="test",
+        scope_json="{}",
+        action_json="{}",
+        consumer="universe_allocator",
+        target_horizon="4h",
+    )
+    experiment = LearningExperiment(
+        experiment_id="retention-experiment",
+        hypothesis_id=hypothesis.hypothesis_id,
+        assignment_salt="test",
+    )
+    assert insert_hypothesis(hypothesis)
+    assert insert_experiment(experiment)
+    assert insert_exposure(LearningExposure(
+        dedup_key="retention-exposure",
+        experiment_id=experiment.experiment_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        assignment="control",
+        consumer="universe_allocator",
+        consumer_stage="opportunity_score",
+        path_id=hypothesis.path_id,
+        overlap_group="universe",
+        assignment_unit_key="run-1",
+        candidate_key="candidate-1",
+        outcome_candidate_key="candidate-1:4h",
+        outcome_source="fixed_horizon_candidate",
+        concurrent_policy_epoch="epoch-a",
+        exposed_at=_old(70),
+    ))
+    conn.execute(
+        "INSERT INTO universe_registry (id, venue, symbol, market_type) VALUES (?,?,?,?)",
+        ("asset-1", "test", "BTC/USDT", "perp"),
+    )
+    conn.execute(
+        "INSERT INTO universe_snapshots (id, created_at, market_type, status) "
+        "VALUES (?,?,?,?)",
+        ("s1", _old(60), "crypto", "expired"),
+    )
+    conn.execute(
+        "INSERT INTO universe_members "
+        "(id, snapshot_id, asset_id, symbol, rank, total_score, expires_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        ("m1", "s1", "asset-1", "BTC/USDT", 1, 1.0, _old(59)),
+    )
+    columns = (
+        "(id, member_id, snapshot_id, symbol, horizon, outcome_candidate_key, "
+        "entry_price_usd, entry_ts, due_at, status)"
+    )
+    conn.execute(
+        f"INSERT INTO universe_forward_outcomes {columns} VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            "fallback", "m1", "s1", "BTC/USDT", "4h", "candidate-1:4h",
+            1.0, _old(60), _old(59), "settled",
+        ),
+    )
+    conn.commit()
+
+    assert repo.prune_universe_forward_outcomes(days=30) == 0
+    assert repo.prune_universe_members(days=30) == 0
+    assert repo.prune_universe_snapshots(days=30) == 0
+    assert conn.execute(
+        "SELECT 1 FROM universe_forward_outcomes WHERE id='fallback'"
+    ).fetchone() is not None
+    assert conn.execute(
+        "SELECT 1 FROM universe_snapshots WHERE id='s1'"
+    ).fetchone() is not None
 
 
 def test_prune_filter_evidence_keeps_recent_rows(tmp_path, monkeypatch):

@@ -283,7 +283,13 @@ def _should_sample_alpha_control(now: datetime) -> bool:
     return (now - parsed).total_seconds() >= _ALPHA_CONTROL_SAMPLE_SEC
 
 
-def _register_experiment_candidate_outcomes(scored: list[dict], cfg, *, entry_ts: str) -> list:
+def _register_experiment_candidate_outcomes(
+    scored: list[dict],
+    cfg,
+    *,
+    entry_ts: str,
+    allocated: list[dict] | None = None,
+) -> int:
     """P0-3: settle the FULL experiment arms, not just the survivors.
 
     A Universe Learning exposure is created for every calibrated candidate during
@@ -296,13 +302,20 @@ def _register_experiment_candidate_outcomes(scored: list[dict], cfg, *, entry_ts
 
     Register an exposure-aligned fixed-horizon candidate outcome for EVERY exposed
     candidate (treatment or control, selected or dropped), keyed by the exposure's
-    ``candidate_key``. linked_settled_exposure_counts joins the filter_candidate_outcomes
+    ``candidate_key``. Persist the final allocator-selection fact on each horizon so
+    contribution evaluates intent-to-treat allocation utility without discarding the
+    dropped denominator. ``linked_settled_exposure_counts`` joins the filter outcome
     branch as ``outcome_candidate_key || ':' || horizon``, which equals the exposure's
-    ``outcome_candidate_key`` (``candidate_key:horizon``) — so both arms settle in full.
+    ``outcome_candidate_key`` (``candidate_key:horizon``).
     """
     from aletheia.analytics.filter_evidence import build_candidate_outcomes
 
     default_venue = getattr(getattr(cfg, "market_data", None), "ccxt_exchange", None)
+    selected_keys = {
+        str(item["learning_candidate_key"])
+        for item in (scored if allocated is None else allocated)
+        if item.get("learning_candidate_key")
+    }
     outcomes = []
     for item in scored:
         key = item.get("learning_candidate_key")
@@ -329,6 +342,7 @@ def _register_experiment_candidate_outcomes(scored: list[dict], cfg, *, entry_ts
                     entry_spread_bps=item.get("spread_bps"),
                     funding_rate_at_entry=item.get("funding_rate"),
                     entry_ts=entry_ts,
+                    allocation_selected=str(key) in selected_keys,
                 )
             )
         except Exception:
@@ -336,7 +350,13 @@ def _register_experiment_candidate_outcomes(scored: list[dict], cfg, *, entry_ts
                 "experiment candidate outcome registration skipped for %s",
                 item.get("symbol"), exc_info=True,
             )
-    return outcomes
+    if not outcomes:
+        return 0
+    try:
+        return repo.insert_filter_candidate_outcomes_batch(outcomes)
+    except Exception:
+        logger.debug("experiment candidate outcome persistence skipped", exc_info=True)
+        return 0
 
 
 class UniverseService:
@@ -547,6 +567,7 @@ class UniverseService:
             )
 
             now = datetime.now(timezone.utc)
+            entry_ts = now.isoformat()
             snapshot_ttl_sec = int(cfg.universe.snapshot_ttl_hours * 3600)
             expires_at = (now + timedelta(seconds=snapshot_ttl_sec)).isoformat()
             regime_tag_for_fp = current_regime.state if current_regime else None
@@ -620,6 +641,17 @@ class UniverseService:
                 except Exception as _e:
                     logger.warning(
                         "Universe refresh (suppressed): cascade expiry failed (non-fatal): %s", _e,
+                    )
+                inserted_experiment_outcomes = _register_experiment_candidate_outcomes(
+                    pre_scored,
+                    cfg,
+                    entry_ts=entry_ts,
+                    allocated=allocated,
+                )
+                if inserted_experiment_outcomes:
+                    logger.info(
+                        "Registered %d experiment candidate outcome row(s) across full arms",
+                        inserted_experiment_outcomes,
                     )
                 # Advance the scanner run pointer to the reused snapshot, then
                 # short-circuit the publication block: no new members to insert,
@@ -708,15 +740,7 @@ class UniverseService:
                     "learning_exposure_id": item.get("learning_exposure_id"),
                     "expires_at": member_expires,
                 })
-            entry_ts = now.isoformat()
             pending_outcomes = build_pending(inserted_members, entry_ts=entry_ts)
-            try:
-                experiment_outcomes = _register_experiment_candidate_outcomes(
-                    scored, cfg, entry_ts=entry_ts,
-                ) or []
-            except Exception as e:
-                experiment_outcomes = []
-                logger.debug("experiment candidate outcome build skipped: %s", e)
             sample_alpha_control = _should_sample_alpha_control(now)
             # Do not expose the new active snapshot before every selected member
             # and its Opportunity handoff are durable. Superseding the previous
@@ -730,22 +754,6 @@ class UniverseService:
                     repo.insert_forward_outcomes_batch(pending_outcomes)
                 except Exception as e:
                     logger.warning("Forward outcome registration failed (non-fatal): %s", e)
-
-                # P0-3: settle the full treatment/control arms (every exposed candidate),
-                # not only the allocator's survivors, so the contribution verdict is not
-                # corrupted by post-treatment selection bias.
-                try:
-                    inserted_experiment_outcomes = (
-                        repo.insert_filter_candidate_outcomes_batch(experiment_outcomes)
-                    )
-                    if inserted_experiment_outcomes:
-                        logger.info(
-                            "Registered %d experiment candidate outcome row(s) "
-                            "across full arms",
-                            inserted_experiment_outcomes,
-                        )
-                except Exception as e:
-                    logger.debug("experiment candidate outcome registration skipped: %s", e)
 
                 # The emitter already converts auditable per-member insert failures
                 # into terminal evidence. Any exception that escapes the function is
@@ -775,6 +783,20 @@ class UniverseService:
                     logger.warning(
                         "Universe refresh: cascade expiry failed (non-fatal): %s", _e,
                     )
+
+            # Selection is evidence only after the snapshot and Opportunity handoff
+            # commit. A failed publication must not look like an applied paper arm.
+            inserted_experiment_outcomes = _register_experiment_candidate_outcomes(
+                pre_scored,
+                cfg,
+                entry_ts=entry_ts,
+                allocated=allocated,
+            )
+            if inserted_experiment_outcomes:
+                logger.info(
+                    "Registered %d experiment candidate outcome row(s) across full arms",
+                    inserted_experiment_outcomes,
+                )
 
             # Alpha-control observations are analytics telemetry, not part of
             # snapshot/Opportunity authority. Persist them after the atomic

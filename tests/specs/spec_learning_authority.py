@@ -370,37 +370,75 @@ def test_operator_factor_context_uses_factor_key(monkeypatch):
 
 @spec_claim(SpecClaim(
     "LE-B26", "learning_evolution", "§9.8 universe selection bias", "L2b",
-    "Every exposed universe candidate (treatment or control, selected or dropped) gets an "
-    "exposure-aligned settled outcome, so contribution compares full arms, not survivors.",
+    "Every pre-scored universe candidate (treatment or control, selected or dropped) gets a "
+    "persisted exposure-aligned outcome, and complete candidate clusters are the statistical "
+    "assignment units, so contribution compares full arms rather than survivors.",
     status="implemented",
 ))
 def test_dropped_experiment_candidates_settle_into_both_arms():
     from aletheia.universe.service import _register_experiment_candidate_outcomes
-    from aletheia.learning.models import LearningExposure
-    from aletheia.learning.ledger import insert_exposure, linked_settled_exposure_counts
+    from aletheia.learning.contribution_runner import evaluate_experiment
+    from aletheia.learning.models import (
+        LearningExperiment,
+        LearningExposure,
+        LearningHypothesis,
+    )
+    from aletheia.learning.ledger import (
+        insert_experiment,
+        insert_exposure,
+        insert_hypothesis,
+    )
     from aletheia.storage.sqlite import get_db
 
     epoch, exp = "epoch-p03", "exp-p03"
     ck_t = "universe:featT:momentum:long:perp"
     ck_c = "universe:featC:momentum:long:perp"
+    hypothesis = LearningHypothesis(
+        hypothesis_id="h-p03",
+        fingerprint="fp-p03",
+        cohort_id="universe-full-arm",
+        path_id="universe_family_calibration",
+        overlap_group="universe",
+        source_type="filter_candidate_outcomes:clean_net:v1",
+        scope_json='{"family":"momentum","direction":"long","market_type":"perp"}',
+        action_json='{"type":"opportunity_multiplier","multiplier":1.1}',
+        consumer="universe_allocator",
+        target_horizon="4h",
+    )
+    experiment = LearningExperiment(
+        experiment_id=exp,
+        hypothesis_id=hypothesis.hypothesis_id,
+        assignment_salt="salt-p03",
+        min_samples_per_arm=1,
+        min_market_days=0,
+        status="active",
+        started_at=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+    )
+    assert insert_hypothesis(hypothesis)
+    assert insert_experiment(experiment)
     for ck, arm in ((ck_t, "treatment"), (ck_c, "control")):
-        insert_exposure(LearningExposure(
+        assert insert_exposure(LearningExposure(
             dedup_key=f"{exp}:{ck}:paper_10:{epoch}",
             experiment_id=exp, hypothesis_id="h-p03", assignment=arm,
             consumer="universe_allocator", consumer_stage="opportunity_score:paper_10",
             path_id="universe_family_calibration", overlap_group="universe",
+            assignment_unit_key=ck,
             candidate_key=ck, outcome_candidate_key=f"{ck}:4h",
             outcome_source="fixed_horizon_candidate", concurrent_policy_epoch=epoch,
+            experiment_stage="shadow",
+            code_commit="test-commit",
         ))
 
-    # Neither candidate became a Universe member — both were "dropped" by allocation.
-    # Full-arm registration must still create a settleable, exposure-aligned outcome.
     now = datetime.now(timezone.utc).isoformat()
     scored = [
         {"learning_candidate_key": ck_t, "symbol": "SOL/USDT", "venue": "okx",
-         "market_type": "perp", "scanner_direction": "long", "last_price": 100.0},
+         "market_type": "perp", "scanner_family": "momentum",
+         "scanner_direction": "long", "last_price": 100.0,
+         "allocation_status": "selected"},
         {"learning_candidate_key": ck_c, "symbol": "SOL/USDT", "venue": "okx",
-         "market_type": "perp", "scanner_direction": "long", "last_price": 100.0},
+         "market_type": "perp", "scanner_family": "momentum",
+         "scanner_direction": "long", "last_price": 100.0,
+         "allocation_status": "dropped"},
     ]
 
     class _MD:
@@ -409,27 +447,41 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
     class _Cfg:
         market_data = _MD()
 
-    assert _register_experiment_candidate_outcomes(scored, _Cfg(), entry_ts=now) >= 2
-
-    # Before settlement neither arm is backed yet.
-    assert linked_settled_exposure_counts(exp, policy_epoch=epoch) == {"control": 0, "treatment": 0}
-
-    # Settle the 4h outcome for BOTH candidates (what the settlement job does).
+    _register_experiment_candidate_outcomes(
+        scored,
+        _Cfg(),
+        entry_ts=now,
+        allocated=[scored[0]],
+    )
     db = get_db()
+    registered = db.execute(
+        "SELECT outcome_candidate_key, horizon, allocation_selected "
+        "FROM filter_candidate_outcomes "
+        "ORDER BY outcome_candidate_key, horizon"
+    ).fetchall()
+    assert len(registered) == 8
+    assert {row[0] for row in registered} == {ck_t, ck_c}
+    assert {row[1] for row in registered} == {"15m", "1h", "4h", "24h"}
+    assert {
+        row[0]: bool(row[2]) for row in registered if row[1] == "4h"
+    } == {ck_t: True, ck_c: False}
+
     was = db.in_transaction
     db.execute(
         "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.3, "
-        "cost_model_version='test-v1', settled_at=? "
+        "estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1, "
+        "estimated_funding_pct=0.0, mae_pct=-0.1, cost_model_version='test-v1', settled_at=? "
         "WHERE outcome_candidate_key IN (?, ?) AND horizon='4h'",
         (now, ck_t, ck_c),
     )
     if not was:
         db.commit()
 
-    counts = linked_settled_exposure_counts(exp, policy_epoch=epoch)
-    assert counts["treatment"] >= 1
-    # The DROPPED control candidate is counted — the arm is no longer selection-biased.
-    assert counts["control"] >= 1
+    verdict = evaluate_experiment(exp)[0]
+    assert verdict.unique_treatment_n == 1
+    assert verdict.unique_control_n == 1
+    assert verdict.observed == 0.3
+    assert verdict.baseline == 0.0
 
 
 @spec_claim(SpecClaim(

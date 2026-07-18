@@ -71,11 +71,15 @@ def _experiment(*, stage: str = "shadow", allocation: float = 0.5, status: str =
 def _measurement(
     hypothesis, experiment, verdict: str, *, stage: str | None = None,
     epoch: str = "epoch-a", horizon: str = "4h", contract: str = "v1",
-    metric: str = "universe_family_calibration_net_return_v1",
+    metric: str | None = None,
     reason: str = "test measurement",
+    code_commit: str | None = "test-build",
 ):
     from aletheia.learning.ledger import insert_record
     from aletheia.learning.models import LearningContributionVerdict
+    from aletheia.learning.verdicts import METRIC_VERSION
+
+    metric = metric or METRIC_VERSION
 
     identifier = f"verdict-{experiment.experiment_id}-{verdict}-{epoch}-{horizon}-{contract}"
     record = LearningContributionVerdict(
@@ -106,6 +110,7 @@ def _measurement(
         target_horizon=horizon,
         outcome_contract_version=contract,
         metric_version=metric,
+        code_commit=code_commit,
     )
     assert insert_record("learning_contribution_verdicts", record)
     return record
@@ -119,6 +124,8 @@ def _configure(monkeypatch, cfg):
     monkeypatch.setattr(lifecycle, "load_config", lambda: cfg)
     monkeypatch.setattr(authority, "global_learning_refreeze_reason", lambda: None)
     monkeypatch.setattr(lifecycle, "global_learning_refreeze_reason", lambda: None)
+    monkeypatch.setattr(authority, "_code_fingerprint", lambda: "test-build")
+    monkeypatch.setattr(lifecycle, "_code_fingerprint", lambda: "test-build")
 
 
 @pytest.mark.parametrize(
@@ -175,7 +182,291 @@ def test_shadow_positive_never_auto_promotes_to_paper(monkeypatch):
     assert verdict.verdict == "positive"
 
 
-def test_explicit_shadow_trial_admission_creates_one_paper_10_successor(monkeypatch):
+def test_shadow_no_intervention_only_recommends_owner_trial_with_all_gates_enabled(monkeypatch):
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "insufficient_data",
+        reason="no_actual_intervention",
+    )
+    _configure(monkeypatch, _settings(
+        automation=True, paper=True, paths=[hypothesis.path_id],
+    ))
+    from aletheia.learning.lifecycle import process_lifecycle
+    from aletheia.learning.ledger import get_record
+    from aletheia.storage.sqlite import get_db
+
+    result = process_lifecycle(
+        experiment.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+
+    assert result.action == "hold"
+    assert result.recommended_action == "admit_trial"
+    assert result.successor_experiment_id is None
+    assert result.verdict_id == verdict.verdict_id
+    assert get_record("learning_experiments", experiment.experiment_id)["status"] == "active"
+    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
+    assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 1
+
+
+def test_lifecycle_ignores_newer_stale_epoch_negative_measurement(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    current = _measurement(hypothesis, experiment, "positive", epoch="epoch-a")
+    stale = _measurement(hypothesis, experiment, "negative", epoch="epoch-old")
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET created_at=? WHERE verdict_id=?",
+        (_iso(10), stale.verdict_id),
+    )
+    db.commit()
+    _configure(monkeypatch, _settings())
+    from aletheia.learning.lifecycle import process_lifecycle
+
+    result = process_lifecycle(
+        experiment.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+
+    assert result.verdict_id == current.verdict_id
+    assert result.action == "hold"
+    assert result.recommended_action == "promote_stage"
+
+
+def test_lifecycle_does_not_consume_a_verdict_from_an_older_build(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    stale = _measurement(
+        hypothesis,
+        experiment,
+        "negative",
+        code_commit="old-build",
+    )
+    from aletheia.learning.ledger import insert_exposure
+    from aletheia.learning.models import LearningExposure
+    assert insert_exposure(LearningExposure(
+        dedup_key="current-build-exposure",
+        experiment_id=experiment.experiment_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        assignment="control",
+        consumer="universe_allocator",
+        consumer_stage="opportunity_score:paper_10",
+        path_id=hypothesis.path_id,
+        overlap_group="universe",
+        assignment_unit_key="run-current",
+        candidate_key="current-candidate",
+        outcome_candidate_key="current-candidate:4h",
+        outcome_source="fixed_horizon_candidate",
+        experiment_stage="paper_10",
+        code_commit="current-build",
+        concurrent_policy_epoch="epoch-a",
+    ))
+    _configure(monkeypatch, _settings())
+    from aletheia.learning.lifecycle import process_lifecycle
+
+    result = process_lifecycle(
+        experiment.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+
+    assert result.verdict_id == stale.verdict_id
+    assert result.action == "hold"
+    assert result.reason == "code_commit_mismatch"
+
+
+def test_lifecycle_holds_when_running_build_identity_is_unavailable(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    _measurement(hypothesis, experiment, "negative")
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    import aletheia.learning.lifecycle as lifecycle
+    from aletheia.learning.ledger import insert_exposure
+    from aletheia.learning.models import LearningExposure
+    assert insert_exposure(LearningExposure(
+        dedup_key="old-build-lifecycle-exposure",
+        experiment_id=experiment.experiment_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        assignment="control",
+        consumer="universe_allocator",
+        consumer_stage="opportunity_score:paper_10",
+        path_id=hypothesis.path_id,
+        overlap_group="universe",
+        assignment_unit_key="old-run",
+        candidate_key="old-candidate",
+        outcome_candidate_key="old-candidate:4h",
+        outcome_source="fixed_horizon_candidate",
+        experiment_stage="paper_10",
+        code_commit="persisted-old-build",
+        concurrent_policy_epoch="epoch-a",
+    ))
+    monkeypatch.setattr(lifecycle, "_code_fingerprint", lambda: None)
+
+    result = lifecycle.process_lifecycle(
+        experiment.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+
+    assert result.action == "hold"
+    assert result.reason == "code_commit_unavailable"
+
+
+def test_lifecycle_uses_current_contract_verdict_not_newer_mismatched_row(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    current = _measurement(hypothesis, experiment, "positive", contract="v1")
+    stale = _measurement(hypothesis, experiment, "negative", contract="v2")
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET created_at=? WHERE verdict_id=?",
+        (_iso(10), stale.verdict_id),
+    )
+    db.commit()
+    _configure(monkeypatch, _settings())
+    from aletheia.learning.lifecycle import process_lifecycle
+
+    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+
+    assert result.verdict_id == current.verdict_id
+    assert result.action == "hold"
+    assert result.recommended_action == "promote_stage"
+
+
+def test_wrong_hypothesis_negative_measurement_cannot_invalidate_experiment(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    foreign_hypothesis, _ = _experiment(allocation=0.6)
+    verdict = _measurement(foreign_hypothesis, experiment, "negative")
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    from aletheia.learning.lifecycle import process_lifecycle
+    from aletheia.learning.ledger import get_record
+
+    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+
+    assert result.verdict_id == verdict.verdict_id
+    assert result.action == "hold"
+    assert result.reason == "measurement_hypothesis_mismatch"
+    assert get_record("learning_experiments", experiment.experiment_id)["status"] == "active"
+
+
+def test_fresh_successor_rejects_activation_verdict_from_previous_build(monkeypatch):
+    hypothesis, _experiment_row, _activation, successor = _promoted_successor(
+        monkeypatch,
+        activation_code_commit="old-build",
+    )
+    import aletheia.learning.authority as authority
+    monkeypatch.setattr(authority, "_code_fingerprint", lambda: "current-build")
+
+    decision = authority.resolve_learning_authority(
+        hypothesis.path_id,
+        successor,
+        "epoch-a",
+    )
+
+    assert decision.authorized is False
+    assert decision.reason == "code_commit_mismatch"
+
+
+def test_fresh_successor_stays_on_baseline_without_running_build_identity(monkeypatch):
+    hypothesis, _experiment_row, _activation, successor = _promoted_successor(monkeypatch)
+    import aletheia.learning.authority as authority
+    from aletheia.learning.ledger import insert_exposure
+    from aletheia.learning.models import LearningExposure
+    assert insert_exposure(LearningExposure(
+        dedup_key="old-build-authority-exposure",
+        experiment_id=successor.experiment_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        assignment="control",
+        consumer="universe_allocator",
+        consumer_stage="opportunity_score:paper_10",
+        path_id=hypothesis.path_id,
+        overlap_group="universe",
+        assignment_unit_key="old-authority-run",
+        candidate_key="old-authority-candidate",
+        outcome_candidate_key="old-authority-candidate:4h",
+        outcome_source="fixed_horizon_candidate",
+        experiment_stage="paper_10",
+        code_commit="persisted-old-build",
+        concurrent_policy_epoch="epoch-a",
+    ))
+    monkeypatch.setattr(authority, "_code_fingerprint", lambda: None)
+
+    decision = authority.resolve_learning_authority(
+        hypothesis.path_id,
+        successor,
+        "epoch-a",
+    )
+
+    assert decision.authorized is False
+    assert decision.reason == "code_commit_unavailable"
+
+
+def test_lifecycle_selects_current_build_before_ordering_observation_windows(monkeypatch):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    old = _measurement(
+        hypothesis,
+        experiment,
+        "positive",
+        code_commit="old-build",
+    )
+    current = _measurement(
+        hypothesis,
+        experiment,
+        "invalid",
+        code_commit="test-build",
+    )
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET window_start=?, window_end=? "
+        "WHERE verdict_id=?",
+        ("1970-01-01T00:00:00+00:00", "1970-01-01T00:00:00+00:00", current.verdict_id),
+    )
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET window_end=? WHERE verdict_id=?",
+        (_iso(20), old.verdict_id),
+    )
+    db.commit()
+    _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
+    from aletheia.learning.lifecycle import process_lifecycle
+
+    result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
+
+    assert result.verdict_id == current.verdict_id
+    assert result.action == "invalidate"
+
+
+@pytest.mark.parametrize("actor", ["learning_lifecycle_controller", "scheduler"])
+def test_non_owner_identity_cannot_admit_shadow_trial(monkeypatch, actor):
+    hypothesis, experiment = _experiment()
+    verdict = _measurement(
+        hypothesis,
+        experiment,
+        "insufficient_data",
+        reason="no_actual_intervention",
+    )
+    _configure(monkeypatch, _settings(
+        automation=True, paper=True, paths=[hypothesis.path_id],
+    ))
+    from aletheia.learning.lifecycle import admit_shadow_trial
+    from aletheia.learning.ledger import get_record
+    from aletheia.storage.sqlite import get_db
+
+    result = admit_shadow_trial(
+        experiment.experiment_id,
+        verdict_id=verdict.verdict_id,
+        current_policy_epoch="epoch-a",
+        admitted_by=actor,
+        reason="automated admission attempt",
+    )
+
+    assert result.action == "hold"
+    assert result.reason == "authenticated_owner_admission_unavailable"
+    assert result.successor_experiment_id is None
+    assert get_record("learning_experiments", experiment.experiment_id)["status"] == "active"
+    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
+    assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 1
+
+
+def test_owner_string_cannot_replace_an_authenticated_admission_boundary(monkeypatch):
     hypothesis, experiment = _experiment()
     verdict = _measurement(
         hypothesis,
@@ -184,10 +475,8 @@ def test_explicit_shadow_trial_admission_creates_one_paper_10_successor(monkeypa
         reason="no_actual_intervention",
     )
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
-    from aletheia.learning.authority import resolve_learning_authority
     from aletheia.learning.lifecycle import admit_shadow_trial
     from aletheia.learning.ledger import get_record
-    from aletheia.learning.models import LearningExperiment
     from aletheia.storage.sqlite import get_db
 
     first = admit_shadow_trial(
@@ -204,29 +493,14 @@ def test_explicit_shadow_trial_admission_creates_one_paper_10_successor(monkeypa
         admitted_by="owner",
         reason="retry after response loss",
     )
+    assert first.action == second.action == "hold"
+    assert first.reason == second.reason == "authenticated_owner_admission_unavailable"
+    assert first.successor_experiment_id is None
     predecessor = get_record("learning_experiments", experiment.experiment_id)
-    successor_row = get_record("learning_experiments", first.successor_experiment_id)
-    successor = LearningExperiment(**successor_row)
-    event = get_db().execute(
-        "SELECT * FROM learning_lifecycle_events WHERE action='admit_trial'"
-    ).fetchone()
-
-    assert first.action == "admit_trial"
-    assert second.successor_experiment_id == first.successor_experiment_id
-    assert predecessor["status"] == "closed"
-    assert predecessor["ended_at"] is not None
-    assert successor.stage == "paper_10"
-    assert successor.parent_experiment_id == experiment.experiment_id
-    assert successor.activation_verdict_id == verdict.verdict_id
-    assert successor.assignment_salt != experiment.assignment_salt
-    assert successor.stage_generation == 1
-    assert event["dedup_key"] == f"{verdict.verdict_id}:shadow:admit_trial"
-    assert event["from_stage"] == "shadow"
-    assert event["to_stage"] == "paper_10"
-    assert "admitted_by=owner" in event["reason"]
-    assert resolve_learning_authority(
-        hypothesis.path_id, successor, "epoch-a",
-    ).authorized is True
+    assert predecessor["status"] == "active"
+    assert predecessor["ended_at"] is None
+    assert get_db().execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0] == 0
+    assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 1
 
 
 def test_successor_needs_its_own_measurement_before_it_can_promote_again(monkeypatch):
@@ -310,29 +584,51 @@ def test_empty_allowlist_and_default_config_always_resolve_to_baseline(monkeypat
     assert decision.reason == "path_not_allowlisted"
 
 
-def _promoted_successor(monkeypatch):
-    # Shadow can no longer auto-promote (LE-L04); a bounded paper_10 successor is
-    # created only through an explicit shadow-trial admission. Build the happy-path
-    # successor the same way, so each identity-gate test mutates exactly one field.
+def _promoted_successor(monkeypatch, *, activation_code_commit: str = "test-build"):
+    # Seed the post-authentication state directly. The production module has no
+    # authenticated owner mutation route yet and therefore cannot create it.
     hypothesis, experiment = _experiment()
     activation = _measurement(
         hypothesis, experiment, "insufficient_data", reason="no_actual_intervention",
+        code_commit=activation_code_commit,
     )
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
-    from aletheia.learning.ledger import get_record
-    from aletheia.learning.lifecycle import admit_shadow_trial
-    from aletheia.learning.models import LearningExperiment
+    from aletheia.learning.ledger import insert_experiment, insert_lifecycle_event
+    from aletheia.learning.models import LearningExperiment, LearningLifecycleEvent
+    from aletheia.storage.sqlite import get_db
 
-    result = admit_shadow_trial(
-        experiment.experiment_id,
-        verdict_id=activation.verdict_id,
-        current_policy_epoch="epoch-a",
-        admitted_by="owner",
-        reason="begin bounded paper trial",
+    successor = LearningExperiment(
+        hypothesis_id=hypothesis.hypothesis_id,
+        stage="paper_10",
+        assignment_salt="seeded-successor-salt",
+        allocation_pct=0.1,
+        status="active",
+        parent_experiment_id=experiment.experiment_id,
+        activation_verdict_id=activation.verdict_id,
+        stage_generation=1,
+        started_at=_iso(1),
     )
-    return hypothesis, experiment, activation, LearningExperiment(**get_record(
-        "learning_experiments", result.successor_experiment_id,
-    ))
+    event = LearningLifecycleEvent(
+        dedup_key=f"{activation.verdict_id}:shadow:admit_trial",
+        hypothesis_id=hypothesis.hypothesis_id,
+        experiment_id=experiment.experiment_id,
+        successor_experiment_id=successor.experiment_id,
+        verdict_id=activation.verdict_id,
+        from_stage="shadow",
+        to_stage="paper_10",
+        action="admit_trial",
+        reason="authenticated owner fixture",
+        policy_epoch="epoch-a",
+    )
+    db = get_db()
+    db.execute(
+        "UPDATE learning_experiments SET status='closed', ended_at=? WHERE experiment_id=?",
+        (_iso(1), experiment.experiment_id),
+    )
+    db.commit()
+    assert insert_experiment(successor)
+    assert insert_lifecycle_event(event)
+    return hypothesis, experiment, activation, successor
 
 
 def test_authority_rejects_activation_with_wrong_declared_horizon(monkeypatch):
@@ -592,6 +888,48 @@ def test_read_only_inspection_reports_lifecycle_recommendation_and_authority(mon
     assert inspection["readiness"]["ready_for_paper_influence"] is False
     assert inspection["treatment_control_progress"]["required_per_arm"] == experiment.min_samples_per_arm
     assert "next_evaluation_at" in inspection
+
+
+def test_read_only_inspection_does_not_report_stale_epoch_verdict_as_current(monkeypatch):
+    hypothesis, experiment = _experiment()
+    current = _measurement(hypothesis, experiment, "positive", epoch="epoch-a")
+    stale = _measurement(hypothesis, experiment, "negative", epoch="epoch-old")
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    db.execute(
+        "UPDATE learning_contribution_verdicts SET created_at=? WHERE verdict_id=?",
+        (_iso(10), stale.verdict_id),
+    )
+    db.commit()
+    _configure(monkeypatch, _settings())
+    from aletheia.learning.lifecycle import inspect_learning_experiment
+
+    inspection = inspect_learning_experiment(
+        experiment.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+
+    assert inspection["latest_measurement_verdict"] == current.verdict
+    assert inspection["recommended_lifecycle_action"] == "admit_trial"
+
+
+def test_read_only_inspection_reports_no_progress_without_running_build_identity(monkeypatch):
+    hypothesis, experiment = _experiment()
+    _measurement(hypothesis, experiment, "positive")
+    _configure(monkeypatch, _settings())
+    import aletheia.learning.lifecycle as lifecycle
+    monkeypatch.setattr(lifecycle, "_code_fingerprint", lambda: None)
+
+    inspection = lifecycle.inspect_learning_experiment(
+        experiment.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+
+    assert inspection["latest_measurement_verdict"] is None
+    assert inspection["authority_enabled"] is False
+    assert inspection["treatment_control_progress"]["treatment"] == 0
+    assert inspection["treatment_control_progress"]["control"] == 0
+    assert inspection["treatment_control_progress"]["cohorts"] == []
 
 
 @pytest.mark.real_db

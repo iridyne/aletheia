@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
 
 
@@ -58,7 +59,24 @@ def insert_experiment(record) -> bool:
 
 
 def insert_exposure(record) -> bool:
-    return insert_record("learning_exposures", record, ignore_duplicates=True)
+    """Insert an exposure and activate its experiment in one transaction."""
+    with transaction():
+        inserted = insert_record("learning_exposures", record, ignore_duplicates=True)
+        db = get_db()
+        db.execute(
+            "UPDATE learning_experiments SET "
+            "status=CASE WHEN status='registered' THEN 'active' ELSE status END, "
+            "started_at=(SELECT MIN(exposed_at) FROM learning_exposures "
+            "WHERE experiment_id=?) "
+            "WHERE experiment_id=? AND ended_at IS NULL "
+            "AND EXISTS (SELECT 1 FROM learning_exposures WHERE experiment_id=?)",
+            (
+                record.experiment_id,
+                record.experiment_id,
+                record.experiment_id,
+            ),
+        )
+    return inserted
 
 
 def insert_lifecycle_event(record) -> bool:
@@ -141,13 +159,39 @@ def get_latest_verdict_for_cohort(
     return dict(row) if row else None
 
 
-def get_latest_measurement_verdict(experiment_id: str) -> dict | None:
-    """Return the newest AT-01 measurement verdict, never a legacy authority row."""
+def get_latest_measurement_verdict(
+    experiment_id: str,
+    *,
+    policy_epoch: str | None = None,
+    stage: str | None = None,
+    hypothesis_id: str | None = None,
+    target_horizon: str | None = None,
+    outcome_contract_version: str | None = None,
+    metric_version: str | None = None,
+    code_commit: str | None = None,
+) -> dict | None:
+    """Return the newest exact-cohort measurement, never a legacy authority row."""
+    clauses = [
+        "experiment_id=?",
+        "verdict IN ('positive', 'neutral', 'negative', 'insufficient_data', 'invalid')",
+    ]
+    params: list[str] = [experiment_id]
+    for column, value in (
+        ("policy_epoch", policy_epoch),
+        ("stage", stage),
+        ("hypothesis_id", hypothesis_id),
+        ("target_horizon", target_horizon),
+        ("outcome_contract_version", outcome_contract_version),
+        ("metric_version", metric_version),
+        ("code_commit", code_commit),
+    ):
+        if value is not None:
+            clauses.append(f"{column}=?")
+            params.append(value)
     row = get_db().execute(
-        "SELECT * FROM learning_contribution_verdicts WHERE experiment_id=? "
-        "AND verdict IN ('positive', 'neutral', 'negative', 'insufficient_data', 'invalid') "
-        "ORDER BY created_at DESC, verdict_id DESC LIMIT 1",
-        (experiment_id,),
+        "SELECT * FROM learning_contribution_verdicts WHERE " + " AND ".join(clauses) + " "
+        "ORDER BY datetime(window_end) DESC, datetime(created_at) DESC, verdict_id DESC LIMIT 1",
+        tuple(params),
     ).fetchone()
     return dict(row) if row else None
 

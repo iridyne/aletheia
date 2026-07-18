@@ -92,7 +92,6 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "paper_funding_settler": 60.0,
     "learning_contribution_evaluator": 60.0,
     "learning_lifecycle_controller": 60.0,
-    "learning_verdict_runner": 120.0,
     # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
     # asyncio.run() internally. Without a bound, a stuck exchange session can
     # block the scheduler pool for the full IOCP drain (~255s on Windows) and
@@ -985,11 +984,11 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("learning_contribution_evaluator", _run_learning_contribution_evaluator),
         "interval", minutes=_learning_interval, id="learning_contribution_evaluator",
         misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
-        next_run_time=datetime.now() + timedelta(minutes=2),
+        next_run_time=datetime.now() + timedelta(minutes=_learning_interval),
     )
     _scheduler.add_job(
         _guarded("learning_measurement_startup_catchup", _run_measurement_startup_catchup),
-        "date", run_date=datetime.now() + timedelta(minutes=3),
+        "date", run_date=datetime.now() + timedelta(minutes=2),
         id="learning_measurement_startup_catchup", misfire_grace_time=None, executor="io",
     )
     _scheduler.add_job(
@@ -997,12 +996,6 @@ def init_scheduler() -> BackgroundScheduler | None:
         "interval", minutes=_learning_interval, id="learning_lifecycle_controller",
         misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
         next_run_time=datetime.now() + timedelta(minutes=4),
-    )
-    _scheduler.add_job(
-        _guarded("learning_verdict_runner", _run_learning_verdict_runner),
-        "interval", hours=6, id="learning_verdict_runner",
-        misfire_grace_time=600, max_instances=1, coalesce=True, executor="io",
-        next_run_time=datetime.now() + timedelta(hours=6),
     )
     # Core collector lane: primary-venue orderbook/funding/OI every two minutes.
     # Cross-venue and macro context has a separate job below so it cannot inherit
@@ -2143,7 +2136,7 @@ def _run_cleanup():
         # their own function before agent_shell_tasks fires. See
         # repositories.prune_agent_shell_sessions for the cascade impl.
         # ------------------------------------------------------------------
-        min_open_exp_at = _min_open_experiment_started_at()
+        min_open_exp_at = repo.min_open_experiment_exposure_at()
         counts = {
             "run_steps": repo.prune_run_steps(r.agent_run_steps_days),
             "tool_calls": repo.prune_tool_calls(r.tool_calls_days),
@@ -2164,7 +2157,9 @@ def _run_cleanup():
             "prediction_probability_snapshots": repo.prune_prediction_probability_snapshots(90),
             "universe_feature_snapshots": repo.prune_universe_feature_snapshots(r.universe_feature_snapshots_days),
             "ohlcv_backfill_state": repo.prune_ohlcv_backfill_state(90),
-            "universe_forward_outcomes": repo.prune_universe_forward_outcomes(30),
+            "universe_forward_outcomes": repo.prune_universe_forward_outcomes(
+                30, min_experiment_started_at=min_open_exp_at,
+            ),
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
             "filter_decision_batches": repo.prune_filter_decision_batches(r.filter_decision_batches_days),
@@ -2204,7 +2199,10 @@ def _run_cleanup():
             # Universe: scanner_runs first (child rows), then snapshots which
             # cascade-deletes universe_members inside its own transaction.
             "universe_scanner_runs": repo.prune_universe_scanner_runs(r.universe_scanner_runs_days),
-            "universe_snapshots": repo.prune_universe_snapshots(r.universe_snapshots_days),
+            "universe_snapshots": repo.prune_universe_snapshots(
+                r.universe_snapshots_days,
+                min_experiment_started_at=min_open_exp_at,
+            ),
             # Operator-shell telemetry (DB-SIZE-1): heartbeats are the dominant
             # bloat — pure liveness, read latest-row-only, so a short window.
             # Children BEFORE parents (agent_shell_sessions) — see FK cascade
@@ -2266,25 +2264,6 @@ def _run_cleanup():
     except Exception as e:
         logger.warning("cleanup job failed: %s", e)
         _record_job_failure("cleanup", str(e))
-
-
-def _min_open_experiment_started_at() -> str | None:
-    """Oldest `started_at` among open learning experiments — used as the
-    filter-family `clean_window_cutoff` so filter rows any open experiment
-    might still cite are preserved even when older than the retention
-    window. None means no open experiments (or query failed) — the prune
-    functions then fall back to the pure days-based cutoff."""
-    try:
-        from aletheia.storage.sqlite import get_db
-        row = get_db().execute(
-            "SELECT MIN(started_at) FROM learning_experiments WHERE ended_at IS NULL"
-        ).fetchone()
-        if not row:
-            return None
-        val = row[0]
-        return val if isinstance(val, str) and val else None
-    except Exception:
-        return None
 
 
 def _prune_news(cfg) -> int:
@@ -2575,15 +2554,6 @@ def _run_learning_lifecycle_controller():
     except Exception as e:
         logger.warning("learning_lifecycle_controller failed: %s", e)
         _record_job_failure("learning_lifecycle_controller", str(e))
-
-
-def _run_learning_verdict_runner():
-    try:
-        from aletheia.learning.contribution_runner import run_verdict_cycle
-        return _run_sync_with_timeout("learning_verdict_runner", run_verdict_cycle)
-    except Exception as e:
-        logger.warning("learning_verdict_runner failed: %s", e)
-        _record_job_failure("learning_verdict_runner", str(e))
 
 
 def _run_measurement_startup_catchup():

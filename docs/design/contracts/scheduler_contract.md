@@ -96,6 +96,26 @@ _EXECUTOR_WORKERS = {
 
 **注**：`ohlcv_nightly_backfill`（#27）仅当 `cfg.historical_data.nightly_backfill_enabled` 为真时注册（`scheduler.py:456`）。无论该开关状态，总 `add_job` 调用数为 30，其中条件分支使实际运行时 job 数为 29 或 30，均满足 AC-S08 ≥28 的下限。
 
+### 3.1 Learning contribution scheduling (A1 alignment)
+
+This subsection corrects only the Learning contribution lane; the older broad registry above is
+not otherwise re-audited here.
+
+- `learning_contribution_evaluator` is the sole recurring contribution evaluator. It runs at
+  `learning.evaluation_interval_minutes` (minimum 15, default 60), with `max_instances=1`,
+  `coalesce=True`, the `io` executor, and a 60-second timeout.
+- `learning_measurement_startup_catchup` is a one-shot at boot plus two minutes. The first regular
+  evaluator run is delayed by a full evaluation interval, so catch-up checks and, only when due,
+  invokes the same evaluator before regular cadence begins.
+- `learning_verdict_runner` is not registered and has no timeout entry. Existing
+  `learning_job_health` rows with that historical id are retained as history, not deleted or
+  interpreted as an active schedule.
+- Measurement remains essential under layered pause and independent of autonomous Learning.
+  `learning_lifecycle_controller` is separate and default-closed; it cannot cross
+  `shadow -> paper_10`, and may only recommend explicit owner admission.
+- Job recovery clears current `last_error` and resets consecutive failures, but preserves durable
+  `last_failed_at` and `last_failure_reason` for the most recent failure.
+
 **timeout 列说明**：`—` 表示该 job 没有在 `_ASYNC_JOB_TIMEOUT_SEC` 中声明超时，直接调用 `_guarded()` 包装，不经过 `_run_async_with_timeout` / `_run_sync_with_timeout` 的时间盒逻辑。
 
 ---

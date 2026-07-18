@@ -132,6 +132,8 @@ def test_reviewer_backlog_and_failure_are_durable(monkeypatch):
     assert failed.status == "failed"
     assert failed.consecutive_failures == 1
     assert failed.last_error == "review provider unavailable"
+    assert failed.last_failed_at == clock["now"].isoformat()
+    assert failed.last_failure_reason == "review provider unavailable"
     assert failed.input_watermark == "lesson_reviewer:2026-07-12"
     assert control.daily_catchup_due("lesson_reviewer")
     assert control.promotion_refreeze_reason() == "reviewer_failed"
@@ -143,4 +145,7 @@ def test_reviewer_backlog_and_failure_are_durable(monkeypatch):
     if not was_in_tx:
         db.commit()
     control.record_learning_job_success("lesson_reviewer")
+    recovered = control.get_learning_job_health("lesson_reviewer")
+    assert recovered.last_failed_at == failed.last_failed_at
+    assert recovered.last_failure_reason == failed.last_failure_reason
     assert control.promotion_refreeze_reason() == "reviewer_backlog_stale"

@@ -332,6 +332,7 @@ CREATE TABLE IF NOT EXISTS filter_candidate_outcomes (
     scanner_family TEXT,
     regime_tag TEXT,
     horizon TEXT NOT NULL,
+    allocation_selected INTEGER,
     entry_price_usd REAL NOT NULL,
     entry_spread_bps REAL,
     funding_rate_at_entry REAL,
@@ -1294,6 +1295,8 @@ CREATE INDEX IF NOT EXISTS idx_forward_outcomes_member
     ON universe_forward_outcomes (member_id);
 CREATE INDEX IF NOT EXISTS idx_forward_outcomes_family_horizon
     ON universe_forward_outcomes (scanner_family, horizon);
+CREATE INDEX IF NOT EXISTS idx_forward_outcomes_candidate_horizon
+    ON universe_forward_outcomes (outcome_candidate_key, horizon);
 
 CREATE TABLE IF NOT EXISTS universe_policies (
     id TEXT PRIMARY KEY,
@@ -1729,7 +1732,11 @@ _ADDITIVE_COLUMNS = [
     ("activation_verdict_id", "learning_experiments", "TEXT"),
     ("stage_generation", "learning_experiments", "INTEGER NOT NULL DEFAULT 0"),
     ("experiment_stage", "learning_exposures", "TEXT"),
+    ("assignment_unit_key", "learning_exposures", "TEXT"),
+    ("allocation_selected", "filter_candidate_outcomes", "INTEGER"),
     ("stage", "learning_contribution_verdicts", "TEXT"),
+    ("last_failed_at", "learning_job_health", "TEXT"),
+    ("last_failure_reason", "learning_job_health", "TEXT"),
     ("leverage", "trade_proposals", "INTEGER"),
     ("market_type", "orderbook_snapshots", "TEXT NOT NULL DEFAULT 'unknown'"),
     # A13: link signal_pending pi_decisions back to their source opportunity
@@ -2163,6 +2170,14 @@ WHERE last_ranked_at IS NOT NULL
   AND COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity');
 """
 
+_LEARNING_ADDITIVE_INDEX_DDL = """
+CREATE INDEX IF NOT EXISTS idx_learning_exposures_assignment_unit
+ON learning_exposures(
+    experiment_id, concurrent_policy_epoch, experiment_stage,
+    assignment, assignment_unit_key
+);
+"""
+
 
 def _ensure_columns(db) -> None:
     import sqlite3
@@ -2182,6 +2197,21 @@ def _ensure_columns(db) -> None:
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e).lower():
                 raise
+
+
+def _repair_learning_experiment_activation(db) -> None:
+    """Align legacy open experiments with their earliest durable exposure."""
+    db.execute(
+        "UPDATE learning_experiments SET "
+        "status=CASE WHEN status='registered' THEN 'active' ELSE status END, "
+        "started_at=("
+        "SELECT MIN(exposed_at) FROM learning_exposures x "
+        "WHERE x.experiment_id=learning_experiments.experiment_id"
+        ") "
+        "WHERE ended_at IS NULL "
+        "AND EXISTS (SELECT 1 FROM learning_exposures x "
+        "WHERE x.experiment_id=learning_experiments.experiment_id)"
+    )
 
 
 def _ensure_outcome_integrity_schema(db) -> None:
@@ -2887,6 +2917,7 @@ CREATE TABLE IF NOT EXISTS learning_exposures (
     consumer_stage TEXT NOT NULL,
     path_id TEXT NOT NULL,
     overlap_group TEXT NOT NULL,
+    assignment_unit_key TEXT,
     candidate_key TEXT,
     opportunity_id TEXT,
     proposal_id TEXT,
@@ -2962,6 +2993,8 @@ CREATE TABLE IF NOT EXISTS learning_job_health (
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL,
     last_error TEXT,
+    last_failed_at TEXT,
+    last_failure_reason TEXT,
     updated_at TEXT NOT NULL
 );
 
@@ -3118,6 +3151,8 @@ def _run_all_ddl(db) -> None:
     db.executescript(_FILTER_SHADOW_EXPERIMENTS_DDL)
     db.executescript(_LEARNING_LEDGER_DDL)
     _ensure_columns(db)
+    db.executescript(_LEARNING_ADDITIVE_INDEX_DDL)
+    _repair_learning_experiment_activation(db)
     db.executescript(_OPPORTUNITY_ROTATION_INDEX_DDL)
     _backfill_entry_risk_reservations(db)
     _ensure_outcome_integrity_schema(db)
