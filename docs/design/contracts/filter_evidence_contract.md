@@ -61,6 +61,13 @@ Opportunity 主链上的“过滤”实际包含四种不同问题：
 关闭时必须写 `not_applicable`，配置或运行异常必须写 `error`，不得把“未评估”冒充为
 `passed/guard_not_blocking`。
 
+Overview 的当前 entry 状态和 `aletheia inspect entry-status` 必须直接投影这些已提交事实：
+open Opportunity 没有本 epoch Ranker 事实时显示 `ranker_pending`；有 selection reject 时显示
+真实 `blocking_filter/reason_code`、此前 passed filter 数、`run_id` 与可计算的 retry 时间。
+诊断面不得调用 `build_paper_candidates` 重跑当前策略再冒充历史判定；`inspect candidates`
+只能标为 current-policy preview。Ranker wake 来源/结果来自 `AgentRun.trigger_type` 和有界
+process telemetry，不得伪造为 FilterDecision。
+
 对有精确 `signal_pending` 身份的终局 System Operator `skip`，PiDecision、其本轮
 `filter_trace` 与可识别候选的固定 horizon outcome seed 必须在同一 SQLite 提交边界中写入。
 direct model `skip` 不能因未进入 debate/conviction 分支而缺少 `operator_action_assessment`。
@@ -339,6 +346,7 @@ Ranker 的 `limit=50` 只限制进入打分/入队选择的执行短名单，不
 13. 已完成：Universe emitter 与 Market Observer 新建 Opportunity 时同步原子写入 `opportunity_emitted`；Observer pre-filter 不再被误当成生产成功证明。
 14. 已完成：direct skip 一次有界反事实确认、neutral/invalid defer、120 分钟物质上下文去重，以及完整 operator rationale 持久化；不改 55、Risk、Execution 或 Ranker 门。
 15. 已完成：b1.3 单候选上下文、确定性 adverse fact validation、候选级 defer rotation、真实 B2 fingerprint、unknown 数值格式和 operator-candidate-v2 evidence manifest；不改 55、Ranker 权重、Risk、Execution、Exchange 或 Live。
+16. 已完成：Overview/CLI 共用 durable Opportunity progress 投影，区分未评估、冷却、队列背压、批次上限与其他真实 Ranker blocker，并公开 on-demand wake 来源/结果；诊断不重跑 Ranker。
 
 ## 10. 诊断时间窗口与 sizing 口径
 

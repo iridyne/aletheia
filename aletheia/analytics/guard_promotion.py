@@ -18,6 +18,16 @@ from aletheia.knowledge.guards import load_trading_guards, guard_origin
 logger = logging.getLogger("aletheia.analytics.guard_promotion")
 
 
+def _notify_ranker_guard_change() -> None:
+    """Wake Ranker after a committed guard-set mutation; never fail the mutation."""
+    try:
+        from aletheia.agent_runtime.scheduler import notify_paper_trader
+
+        notify_paper_trader(source="guard_set_changed")
+    except Exception:
+        logger.debug("Failed to notify Ranker after guard-set change", exc_info=True)
+
+
 def run_promotion_check() -> dict:
     """Check candidate guards for promotion eligibility.
 
@@ -172,6 +182,7 @@ def promote_guard_candidate_to_active(
                     reason=reason,
                     source_path=str(path),
                 )
+                _notify_ranker_guard_change()
                 return True
             except Exception as e:
                 logger.warning("Failed to promote guard %s: %s", guard_id, e)
@@ -256,6 +267,7 @@ def _update_guard_status(guard_id: str, new_status: str) -> bool:
                     target.write_text(content, encoding="utf-8")
                     path.unlink()
 
+                _notify_ranker_guard_change()
                 return True
             except Exception as e:
                 logger.warning("Failed to update guard %s: %s", guard_id, e)
@@ -370,6 +382,9 @@ def downgrade_learned_guards_to_shadow(*, dry_run: bool = True) -> dict:
             except Exception as e:
                 logger.warning("Failed to downgrade guard at %s: %s", path, e)
                 continue
+
+    if changed and not dry_run:
+        _notify_ranker_guard_change()
 
     return {
         "dry_run": dry_run,

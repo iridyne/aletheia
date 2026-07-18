@@ -1,6 +1,7 @@
 # Paper Trader Ranker — On-demand 升级计划（档 2 / 档 3）
 
-> 来源：2026-07-17 会话讨论；档 1 已在提交 `216d57b3` 落地
+> 来源：2026-07-17 会话讨论；档 1 已在提交 `216d57b3` 落地；档 2 于
+> 2026-07-18 以 `opportunity_ranker_delivery/v2` 落地，进入独立观察窗
 > 原则：先测量档 1 效果，再决定是否升档；不为未观察到的问题做架构改动
 > 不变边界：SQLite writer 竞争 ≤ 3；不绕过 Execution Gateway；不新增未审计的写入者
 
@@ -38,6 +39,12 @@ Overview 页面的 Funnel 卡观察 24-48h，同时满足以下条件即认定�
 ---
 
 ## 档 2：扩大 notify 触发面 + 独立 debounce 状态机
+
+**状态：已实施。** 实际触发面覆盖四类 Opportunity producer、Universe
+snapshot/TTL slide、影响 Ranker eligibility 的 settings、active Guard set 变化和
+Operator queue slot release。`WakeState` 暴露 coalesced sources、burst count、最近
+dispatch/completion/result；每次实际运行的来源同时写入 durable
+`AgentRun.trigger_type=on_demand:<sources>`。3min fallback 未变。
 
 ### 目标
 

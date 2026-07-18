@@ -329,7 +329,7 @@ def candidates(
     limit: int = typer.Option(20, "--limit", "-n"),
     json_output: bool = typer.Option(False, "--json"),
 ):
-    """Show paper trader ranker evaluation -- diagnose why no trades are opening."""
+    """Recompute a Ranker preview (not historical evidence)."""
     from aletheia.agents.paper_trader_ranker import build_paper_candidates
     all_candidates = build_paper_candidates(limit=50)
     display_keys = [
@@ -344,6 +344,59 @@ def candidates(
         entry = {k: c.get(k) for k in display_keys}
         result.append(entry)
     _output(result[:limit], json_output)
+
+
+@inspect_app.command("entry-status")
+def entry_status(
+    hours: int = typer.Option(1, "--hours", "-h", help="Recent Opportunity window"),
+    json_output: bool = typer.Option(False, "--json", help="Output raw JSON"),
+):
+    """Show the exact current entry stage from durable lifecycle/filter facts."""
+    from aletheia.server.routes.analytics import get_opportunity_funnel
+
+    current = get_opportunity_funnel(hours=max(1, int(hours))).get("current") or {}
+    if json_output:
+        _output(current, True)
+        return
+
+    typer.echo(f"state: {current.get('state') or 'unknown'}")
+    typer.echo(f"stage: {current.get('primary_stage') or 'unknown'}")
+    typer.echo(f"headline: {current.get('headline') or 'not available'}")
+    typer.echo(
+        "blocker: "
+        f"{current.get('reason_code') or 'none'} — "
+        f"{current.get('reason') or 'not available'}"
+    )
+    typer.echo(f"next trigger: {current.get('next_trigger') or 'not available'}")
+
+    ranker = current.get("ranker") or {}
+    last_run = ranker.get("last_run") or {}
+    wake = ranker.get("wake") or {}
+    typer.echo(
+        "ranker: "
+        f"last={last_run.get('status') or 'not available'} "
+        f"trigger={last_run.get('trigger_type') or 'not available'} "
+        f"wake_pending={bool(wake.get('pending'))}"
+    )
+    if wake.get("pending_sources"):
+        typer.echo(f"wake sources: {', '.join(wake['pending_sources'])}")
+
+    candidates = current.get("candidates") or []
+    if not candidates:
+        typer.echo("candidates: none")
+        return
+    typer.echo("candidates:")
+    for candidate in candidates:
+        retry_in = candidate.get("retry_in_sec")
+        retry_text = f" retry_in={retry_in}s" if retry_in is not None else ""
+        passed = candidate.get("passed_filter_count")
+        passed_text = f" passed={passed}" if passed is not None else ""
+        typer.echo(
+            f"  {candidate.get('symbol')} {candidate.get('direction')} "
+            f"stage={candidate.get('stage')} status={candidate.get('status')} "
+            f"blocker={candidate.get('blocking_filter') or candidate.get('reason_code')}"
+            f"{passed_text}{retry_text}"
+        )
 
 
 # ---------------------------------------------------------------------------

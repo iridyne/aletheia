@@ -1109,6 +1109,12 @@ async def _analyze_symbol(
         error_code = f"{_RETRYABLE_EMISSION_ERROR_PREFIX}{symbol}"
         logger.error("%s (%s)", error_code, type(exc).__name__)
         return None, error_code
+    try:
+        from aletheia.agent_runtime.scheduler import notify_paper_trader
+
+        notify_paper_trader(source="market_observer_opportunity")
+    except Exception:
+        logger.debug("Failed to notify Ranker after Opportunity commit", exc_info=True)
     log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
     _total_duration = _time.monotonic() - _t_start
     _step_times["total"] = _total_duration
