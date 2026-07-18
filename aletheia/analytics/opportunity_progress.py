@@ -55,6 +55,20 @@ def _iso_seconds_until(value: object, now: datetime) -> int | None:
     return int((parsed - now).total_seconds()) if parsed else None
 
 
+def _earlier_deadline(first: object, second: object) -> object:
+    """Return the original value for the earlier parseable deadline.
+
+    Old defer observations predate the carrier-TTL cap and can therefore carry
+    a window deadline beyond the Opportunity's own ``valid_until``.  Read models
+    must not repeat that obsolete promise even though the write path is fixed.
+    """
+    first_dt = _parse_iso(first)
+    second_dt = _parse_iso(second)
+    if first_dt and second_dt:
+        return first if first_dt <= second_dt else second
+    return first if first_dt else second
+
+
 def _entry_wait_reason(reason_code: str | None) -> tuple[str, str]:
     """Return owner-facing reason and next trigger for a durable Operator wait."""
     code = str(reason_code or "")
@@ -384,13 +398,15 @@ def _operator_candidates(db, *, now: datetime) -> tuple[list[dict[str, Any]], di
             (opportunity_id, item.get("at")),
         ).fetchone() if opportunity_id else None
         payload = _parse_json_object(event["queue_snapshot_json"]) if event else {}
-        defer_until = payload.get("defer_until")
+        recorded_defer_until = payload.get("defer_until")
         # Any operator_decision_deferred_* kind counts as an active defer for the
         # owner-facing "waiting on X" tag. Phase C added
         # ``operator_decision_deferred_low_conviction`` — omitting it here made the
         # UI silently show "nothing happening" while the candidate was actually
         # deferred behind a conviction gate.
         event_kind = str(event["event_kind"]) if event else ""
+        valid_until = opportunity["valid_until"] if opportunity else None
+        defer_until = _earlier_deadline(recorded_defer_until, valid_until)
         active_defer = bool(
             event
             and event_kind.startswith("operator_decision_deferred_")
@@ -398,7 +414,6 @@ def _operator_candidates(db, *, now: datetime) -> tuple[list[dict[str, Any]], di
         )
         reason_code = str(payload.get("defer_reason") or "") if active_defer else None
         reason, next_trigger = _entry_wait_reason(reason_code)
-        valid_until = opportunity["valid_until"] if opportunity else None
         candidates.append({
             "opportunity_id": opportunity_id,
             "symbol": item.get("symbol"),

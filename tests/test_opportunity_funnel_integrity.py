@@ -668,7 +668,10 @@ def test_opportunity_funnel_explains_current_operator_defer(tmp_path, monkeypatc
     now = datetime.now(timezone.utc)
     queued_at = (now - timedelta(minutes=2)).isoformat()
     valid_until = (now + timedelta(minutes=28)).isoformat()
-    defer_until = (now + timedelta(minutes=8)).isoformat()
+    # This represents a pre-fix observation whose nominal 120-minute defer
+    # outlives the source carrier. The read model must report the authoritative
+    # Opportunity deadline rather than promising a retry after expiry.
+    defer_until = (now + timedelta(minutes=40)).isoformat()
 
     for oid, symbol, direction in (
         ("near", "NEAR/USDT", "short"),
@@ -737,6 +740,9 @@ def test_opportunity_funnel_explains_current_operator_defer(tmp_path, monkeypatc
         "candidate_technical_snapshot_unavailable"
     )
     assert candidates["NEAR/USDT"]["expires_in_sec"] > 0
+    assert candidates["NEAR/USDT"]["defer_until"] == valid_until
+    assert candidates["NEAR/USDT"]["retry_at"] == valid_until
+    assert 0 < candidates["NEAR/USDT"]["retry_in_sec"] <= 28 * 60
     assert candidates["SYN/USDT"]["status"] == "queued"
     assert [row["state"] for row in current["pipeline"]] == [
         "active", "passed", "waiting", "not_reached", "not_reached", "not_reached",
