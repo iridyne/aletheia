@@ -40,11 +40,20 @@ class MacroCollector:
     domain = "macro"
 
     async def collect(self, symbols: list[str]) -> dict[str, Any]:
-        """Collect macro indicators. symbols param unused (global data)."""
+        """Collect macro indicators. symbols param unused (global data).
+
+        Note: MacroSnapshot.top_movers_summary is NOT populated here.
+        The scheduler injects it from CoinGeckoTopCollector.movers_summary
+        before persisting the snapshot in the Phase B tick.
+        """
         now = datetime.now(timezone.utc).isoformat()
         errors: list[str] = []
 
-        fred_key = os.environ.get("FRED_API_KEY")
+        try:
+            from aletheia.config.secrets import get_secret
+            fred_key = get_secret("fred_api_key") or os.environ.get("FRED_API_KEY")
+        except Exception:
+            fred_key = os.environ.get("FRED_API_KEY")
         fng_enabled = False
         try:
             from aletheia.config.loader import load_config

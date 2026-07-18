@@ -167,11 +167,14 @@ async def _fetch_open_interest(
                 oi_usd = float(oi_usd)
                 oi_coin_val = None
 
-            # Compute 1h change against last stored value
+            # Compute 1h change against last stored value for the same source.
+            # Must pass exchange="coinalyze" so the lookup stays within Coinalyze
+            # rows; without it _latest_deriv_where(None) excludes cross-venue tags
+            # and returns the primary-exchange row, mixing heterogeneous OI pools.
             oi_change_1h_pct: float | None = None
             try:
                 from aletheia.storage.repositories import latest_open_interest
-                prev = latest_open_interest(canonical)
+                prev = latest_open_interest(canonical, exchange="coinalyze")
                 if prev and prev.get("open_interest_usd") and oi_usd:
                     prev_oi = float(prev["open_interest_usd"])
                     if prev_oi > 0:
