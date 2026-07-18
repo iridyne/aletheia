@@ -2,7 +2,7 @@
 
 > **用途**：以**功能域**为切口索引全部文档——与 [README](../README.md)（按契约对象）、[SYSTEM_MAP](../architecture/SYSTEM_MAP.md)（按模块/管道）、[DOC_SYSTEM_PLAN](../../product/documentation/DOC_SYSTEM_PLAN.md)（按金字塔层 L0–L4）互补，是第四种导航视角。
 > **状态标记**：✅金标准 / 🟡契约(部分实现) / 🔄in-flight / ⏳planned / ⛔open-gap / 📦process-artifact。状态已并入 [REMAINING_WORK_2026-06-30](../../status/snapshots/REMAINING_WORK_2026-06-30.md) 的对账结论。
-> Last synced for D2/D10/D12: 2026-07-18. Other domain status remains point-in-time and must be verified against its contract and `aletheia doctor`.
+> Last synced for D2/D6/D10/D12: 2026-07-19. Other domain status remains point-in-time and must be verified against its contract and `aletheia doctor`.
 
 ---
 
@@ -15,7 +15,7 @@
 | D3 | 平仓与持仓管理 | stop/TP/trailing/max-hold/退出 | ✅ 齐全(本会话补 §10) |
 | D4 | 风控与执行（信任边界） | 20 关风控 + Gateway 唯一通路 + 审计链 | ✅✅ 最强 |
 | D5 | 策略生命周期 | 策略池 → 晋级门 → 退役 | 🟡 有契约，**核心执行缺口(2A)** |
-| D6 | 知识·学习·自进化 | lesson/guard/memo → 反哺决策 | 🟡 有契约，闭环大部分活 |
+| D6 | 知识·学习·自进化 | outcome → hypothesis/exposure/verdict + lesson/guard/memo → 反哺决策 | 🟡 A1 测量事实已落地，owner observability 待实现 |
 | D7 | 系统监管 / Operator | MAPE-K 控制面 + 命令注册表 | 🟡 概念契约，TS 实现领先文档 |
 | D8 | 持久化·同步·恢复 | 重启不丢单/仓/经验 | 🟡 有 L2 契约，恢复 FSM 尚未接 runtime |
 | D9 | 运行时与稳定性 | 调度/自愈/连通性/Provider | ✅ scheduler 契约，余为 ops/plan |
@@ -73,13 +73,29 @@
 
 ## D6 · 知识·学习·自进化
 
-**Scope**：`knowledge/`(manager/retrieval/guards/router/FTS5) + `learning/`(lessons/skills) + `analytics`(insight_synthesizer/memo_effectiveness/reasoning_feedback/confidence_calibration) + 自进化 guard_candidate→trading_guard。
+**Scope**：`knowledge/` artifact/retrieval/guard paths + measured `learning/` registry,
+hypothesis/experiment/exposure/verdict/lifecycle/health paths + canonical candidate outcomes +
+observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
 
-- **L2 契约**：[`knowledge_contract`](../contracts/knowledge_contract.md) ✅(item_type 枚举/FTS/双轨/§6 当前 Learning 管线状态)
-- **Spec**：`spec_learning_pipeline` · `spec_lesson_guards` · `spec_insight_feedback_loop`(Module J 可推翻进化)
-- **L3 计划**：`self_evolution_plan`(Tier1/2/2.5✅done，Tier3⏳2026-08-17 gated) · `insight_feedback_loop` · `round2_negative_feedback_loop_closure`✅已合并(`dd559a7`)
-- **issue**：`LEARNING_LOOP_AUDIT`
-- **当前状态**：核心闭环活(Module J memo 自评→推翻→喂下一份)；ps_lessons 双轨=有意设计(§6.A1)；ps_skills 已由 lesson_reviewer 产 draft 候选(不自动启用)；contradiction 已有保守 support-vs-block 检测，UI 只提示需复核数量。
+- **L2 契约**：[`learning_contract`](../contracts/learning_contract.md) ✅ current behavior ·
+  [`learning_evolution_contract`](../contracts/learning_evolution_contract.md) 🟡 full measured
+  lifecycle target · [`learning_observability_contract`](../contracts/learning_observability_contract.md)
+  ⛔ `lco-v1` target not implemented · [`knowledge_contract`](../contracts/knowledge_contract.md) ✅
+  artifact taxonomy/FTS/two-store paths.
+- **Spec**：`spec_learning_{registry,attribution,ledger,contribution,authority,lifecycle,continuity,verdict_runtime,final_consumers}`
+  + `spec_learning_pipeline` + adjacent lesson/guard/factor/outcome specs. Owner projection is
+  `spec_learning_observability` (`LCO-*`, strict xfail/missing). The direct conformance matrix must
+  import this complete family; do not rely on incidental collection order.
+- **L3 plan**：[`learning_positive_contribution_implementation_plan_2026-07-12`](../../plans/learning/learning_positive_contribution_implementation_plan_2026-07-12.md)
+  is the delivery sequence; `self_evolution_plan` and older repair plans are historical/adjacent,
+  not authority over the L2 contracts.
+- **Issue**：`LCO-BE-01` / `LCO-FE-01` are the current owner-projection gaps; older
+  `LEARNING_LOOP_AUDIT` remains historical evidence.
+- **Current state**：A1 has permanent ledger, full-arm exact-key complete-cluster measurement,
+  append-only metric history, lifecycle recommendation, one evaluator + catch-up and durable
+  failure identity. Public UI/API still shows artifacts/activity rather than those measured facts.
+  `paper_influence_enabled` and lifecycle automation remain default-off; authenticated owner trial
+  admission remains unavailable.
 
 ## D7 · 系统监管 / Operator
 
@@ -118,7 +134,7 @@
 - **design 过程产物**📦：`overview_redesign` · `webui_page_map` · `webui_backend_handoff`
 - **L3 计划**：`frontend_ui_redesign_plan`
 - **issue**：`FRONTEND_ISSUES` · `P3_UI_GAPS` · `_ai/UX_AUDIT_FULLAPP` · `_ai/UX_AUDIT_LESSONS`
-- **当前状态**：Overview 的 “Why no position now” 已与 `/analytics/opportunity-funnel.current` 共用只读投影，显示当前 limiting stage、候选 retry/expiry 与 generation/setup/terminal breakdown。其他 UI 诚实性债和 Config↔UI 缺口仍按 `FRONTEND_ISSUES` 单独核验。
+- **当前状态**：Overview 的 “Why no position now” 已与 `/analytics/opportunity-funnel.current` 共用只读投影。Learning Contribution Observability 已完成 L2 设计但 `LCO-*` 仍 missing；当前 Learning Reports 不能被描述为 measured contribution。其他 UI 诚实性债和 Config↔UI 缺口仍按 `FRONTEND_ISSUES` 单独核验。
 
 ## D11 · 子系统观察者
 

@@ -2,7 +2,7 @@
 
 > Complete endpoint index for Aletheia Trading OS backend (FastAPI on :8788, proxied via :8787).
 > All endpoints prefixed with `/api/` unless noted. Auth: none (local-only by design).
-> Last updated: 2026-07-18 (Opportunity lifecycle projection semantics)
+> Last updated: 2026-07-19 (Learning Contribution Observability target contract)
 
 ---
 
@@ -151,6 +151,29 @@ the same two completeness columns; it writes an empty realized-PnL cell rather t
 | GET | `/analytics/shadow-trades` | Shadow trade comparison data |
 | GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |
 | GET | `/analytics/learning-funnel` | Learning write/consume visibility, lesson status counts, conservative contradiction count |
+
+### Learning Contribution Observability target (not implemented)
+
+The following routes are the approved **target contract**, not current endpoint claims. They must
+not be presented in UI, OpenAPI expectations, or owner instructions until `LCO-S01` is GREEN and
+the route implementation is merged. Field-level schema, bounds, cache behavior and honesty rules
+are normative in
+[`learning_observability_contract.md`](../contracts/learning_observability_contract.md).
+
+| Method | Target path | Purpose |
+|---|---|---|
+| GET | `/analytics/learning-contribution` | Bounded `lco-v1` contribution summary by path/current experiment |
+| GET | `/learning/paths` | Declared consumer/settings/measurement capability, authority ceiling and fallback |
+| GET | `/learning/hypotheses` | Paginated scoped hypothesis ledger |
+| GET | `/learning/experiments` | Paginated current/historical experiment and lifecycle summary |
+| GET | `/learning/experiments/{experiment_id}` | One bounded cluster, verdict and lifecycle drill-down |
+| GET | `/learning/health` | Effective switches, evaluator continuity, durable failure and catch-up state |
+| GET | `/learning/exposures/{entity_id}` | Bounded indexed influence explanation for an explicit entity type |
+
+All are GET-only, cached read projections. They run no evaluator or lifecycle action and expose no
+trial-admission mutation. The existing `/analytics/learning-funnel` remains activity-oriented and
+`/analytics/alpha-attribution` remains an adjacent diagnostic; neither is the prospective
+contribution verdict.
 
 ### Opportunity lifecycle projection semantics (`API-S09`)
 

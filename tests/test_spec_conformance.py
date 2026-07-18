@@ -32,6 +32,20 @@ def _import_all_specs():
         # this matrix or explicit file paths. pyproject now includes spec_*.py in
         # python_files, so tests/specs/ is directly collectible too.
         spec_learning_pipeline,
+        # Modern measured-Learning contract family. Import explicitly so direct
+        # conformance runs do not depend on pytest collection order.
+        spec_learning_registry,
+        spec_learning_attribution,
+        spec_learning_ledger,
+        spec_learning_contribution,
+        spec_learning_authority,
+        spec_learning_lifecycle,
+        spec_learning_continuity,
+        spec_learning_verdict_runtime,
+        spec_learning_final_consumers,
+        # Owner-facing lco-v1 target. All LCO-* claims remain strict-xfail/missing
+        # until the read-only backend/frontend projection is implemented.
+        spec_learning_observability,
         spec_strategy_pool,
         spec_futures_leverage,
         # End-to-end pipeline specs (PL-* claims). Registered so the conformance
@@ -212,6 +226,8 @@ REQUIRED_CONTRACTS = [
     "operator_layer",
     "audit_chain_contract",
     "decision_lifecycle_contract",
+    "learning_evolution",
+    "learning_observability",
     # subsystem observer claims register under "agent_contracts" by design —
     # equity_observer / prediction_observer are agents, not a separate contract.
 ]
@@ -284,7 +300,10 @@ class TestConformanceStructure:
         # confirmation, broker-neutral verified exit, and verified/admin accounting
         # split, behavior consumers, and authoritative Risk loss. Three OI
         # reporting/history claims remain missing.
-        MAX_MISSING = 5
+        # 2026-07-19: Learning Contribution Observability adds thirteen deliberate
+        # strict-xfail LCO-* target claims. This records the design gap; it does
+        # not represent the API/UI as implemented.
+        MAX_MISSING = 18
         # #153: 5 self-heal specs moved to partial (OL-C08, OL-S13, SH-S01, SH-C02, SH-B03).
         # TASK-2026-022 adds six explicitly bounded Learning-evolution claims whose
         # Phase-0 cores are implemented but whose consumer-wide persistence/UI/

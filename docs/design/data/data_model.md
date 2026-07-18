@@ -118,6 +118,23 @@ selected-member MAE is retained. `allocation_selected` is immutable and nullable
 non-allocation outcomes. Incomplete clusters contribute no survivor sample. Legacy exposures without
 an assignment unit remain permanent and auditable but are excluded, never inferred.
 
+### C-ter. Learning Contribution Observability derived model (target)
+
+`lco-v1` is a typed, cached read projection over the seven tables above plus the Learning registry,
+sanitized scheduler registration, canonical `filter_candidate_outcomes`, and selected-member
+`universe_forward_outcomes` mirror/fallback. Its normative schema is
+[`learning_observability_contract.md`](../contracts/learning_observability_contract.md).
+
+It is **not** a table or materialized runtime fact. The initial design adds no DDL, no config field,
+no data source, no retention rule and no migration. Summary/list reads consume persisted verdict and
+health facts; only a single requested experiment detail may reconstruct bounded exact-key cluster
+membership. If direct backend measurements later justify an index or materialized projection, that
+must be a separate additive data-model batch with focused specs and this section updated first.
+
+Projection output never rewrites or normalizes stored history in place. Old metric, policy epoch,
+stage, horizon, outcome-contract and code-build verdicts remain append-only historical rows and are
+classified as non-current by the read model.
+
 The current metric version is
 `universe_family_calibration_cluster_allocation_utility_v2`. A metric-version change appends new
 verdicts; it does not rewrite or delete older verdict history.

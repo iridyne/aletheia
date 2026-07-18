@@ -85,6 +85,29 @@
 
 ## 3. 布局模式
 
+### Learning Contribution Observability (target)
+
+The `/learning` target uses the same dense terminal language as Blotter rather than a marketing
+dashboard:
+
+```text
+five independent status tokens
+full-width contribution-by-path ledger
+current cohort (7/12) | read-only recommendation (5/12)
+full-width append-only verdict history
+bounded DetailDrawer drill-down
+```
+
+Desktop keeps the 7/5 band; 700-1100px stacks it; below 700px status tokens become two columns,
+top tabs scroll horizontally, toolbars wrap and the drawer becomes full width. Use shared `Tabs`,
+`DataTable`, `DetailDrawer`, `Card`, `Badge`, `StatusText` and `Meter`; do not fork equivalents.
+
+Every query has distinct loading, genuine-empty, unavailable, stale and partial states. A failed
+request must not default to `[]`, `0`, `Never`, or a healthy token. Activity panels carry the label
+"Activity, not measured contribution"; portfolio PnL carries "Portfolio context, not Learning
+attribution". Full information architecture and response semantics are normative in
+[`learning_observability_contract.md`](../contracts/learning_observability_contract.md) §8.
+
 ### Settings Shell — Section + Row
 
 Settings 页面采用两层嵌套布局：
