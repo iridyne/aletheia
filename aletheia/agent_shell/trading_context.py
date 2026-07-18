@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from copy import deepcopy
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -57,9 +58,12 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
             "reasoning": " ".join(str(item.get("reasoning") or "").split()).lower(),
             "b2": {
                 "status": b2.get("status"),
-                "sample_size": b2.get("sample_size"),
-                "avg_net_return_pct": _score(b2.get("avg_net_return_pct")),
-                "positive_rate": _score(b2.get("positive_rate")),
+                "n_total": b2.get("n_total"),
+                "n_net": b2.get("n_net"),
+                "outcome_coverage": _score(b2.get("outcome_coverage")),
+                "avg_net_pct": _score(b2.get("avg_net_pct")),
+                "shrunk_avg_net_pct": _score(b2.get("shrunk_avg_net_pct")),
+                "directional_verdict": b2.get("directional_verdict"),
             },
         }
 
@@ -108,7 +112,7 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
         str(item.get("scanner_family") or ""),
     )
     projection = {
-        "version": "operator-decision-context-v1",
+        "version": "operator-decision-context-v2",
         "skip_policy_epoch_id": ctx.get("skip_policy_epoch_id"),
         "wake_context": ctx.get("wake_context"),
         "regime": layer1.get("regime") or layer1.get("market_regime"),
@@ -120,6 +124,71 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
         projection, sort_keys=True, separators=(",", ":"), default=str
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def scope_operator_context_to_candidate(
+    ctx: dict[str, Any], opportunity_id: str
+) -> dict[str, Any]:
+    """Return a one-carrier model context without cross-candidate evidence.
+
+    Queue metadata remains global for scheduling/audit, but every candidate row,
+    technical row, and open-opportunity thesis shown to the model belongs to the
+    selected durable carrier.
+    """
+    scoped = deepcopy(ctx)
+    layer1 = scoped.get("layer1") or {}
+    layer2 = scoped.get("layer2") or {}
+    selected = next(
+        (
+            row for row in (layer2.get("pending_signals") or [])
+            if row.get("opportunity_id") == opportunity_id
+        ),
+        None,
+    )
+    if selected is None:
+        raise ValueError(f"pending_candidate_not_found:{opportunity_id}")
+
+    symbol = selected.get("symbol")
+    market_type = _normalize_market_type(selected.get("market_type"))
+
+    def _same_instrument(row: dict[str, Any]) -> bool:
+        return (
+            row.get("symbol") == symbol
+            and _normalize_market_type(row.get("market_type") or row.get("market"))
+            == market_type
+        )
+
+    layer2["pending_signals"] = [selected]
+    layer2["executable_candidates"] = [
+        row for row in (layer2.get("executable_candidates") or [])
+        if row.get("opportunity_id") == opportunity_id
+    ]
+    layer2["analysis_only_candidates"] = []
+    layer2["ranker_candidates"] = []
+    layer2["excluded_candidates_summary"] = []
+    layer2["selected_candidate"] = {
+        "opportunity_id": opportunity_id,
+        "signal_source": selected.get("signal_source") or "market_observer",
+        "symbol": symbol,
+        "direction": selected.get("direction"),
+        "market_type": selected.get("market_type"),
+    }
+
+    layer1["features"] = [
+        row for row in (layer1.get("features") or []) if _same_instrument(row)
+    ]
+    layer1["feature_index"] = {
+        key: row
+        for key, row in (layer1.get("feature_index") or {}).items()
+        if _same_instrument(row)
+    }
+    layer1["opportunities"] = [
+        row for row in (layer1.get("opportunities") or [])
+        if row.get("id") == opportunity_id
+    ]
+    scoped["layer1"] = layer1
+    scoped["layer2"] = layer2
+    return scoped
 
 
 def _dedupe_symbol_direction(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
@@ -222,7 +291,9 @@ def _build_pending_signal_queue(
     )
     rows = db.execute(
         "SELECT p.symbol, p.direction, p.market_type, p.reasoning, p.created_at, "
-        "p.opportunity_id, p.signal_source, "
+        "p.opportunity_id, p.signal_source, o.universe_member_id, "
+        "(SELECT um.snapshot_id FROM universe_members um "
+        " WHERE um.id=o.universe_member_id) AS universe_snapshot_id, "
         "COALESCE(o.scanner_family, (SELECT st.scanner_family FROM shadow_trades st "
         " WHERE st.opportunity_id=p.opportunity_id AND st.was_selected=1 "
         " ORDER BY datetime(st.created_at) DESC, st.rowid DESC LIMIT 1)) AS scanner_family, "
@@ -243,12 +314,36 @@ def _build_pending_signal_queue(
             "at": row["created_at"],
             "opportunity_id": row["opportunity_id"],
             "signal_source": row["signal_source"] or "market_observer",
+            "universe_member_id": row["universe_member_id"],
+            "universe_snapshot_id": row["universe_snapshot_id"],
             "scanner_family": row["scanner_family"],
             "trade_score": row["trade_score"],
         }
         for row in rows
     ]
     unique = _dedupe_pending_identity(pending, limit=len(pending)) if pending else []
+    # Candidate-specific neutral defers must not hold the visible queue head.
+    # Move actively deferred carriers behind fresh work; changed candidate facts
+    # can still reopen immediately because command-side suppression also checks
+    # the material fingerprint, not merely this scheduling hint.
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        deferred_rows = db.execute(
+            "SELECT json_extract(queue_snapshot_json, '$.opportunity_id') AS opportunity_id "
+            "FROM operator_evaluation_events "
+            "WHERE event_kind='operator_decision_deferred_unchanged_context' "
+            "AND json_extract(queue_snapshot_json, '$.defer_until') > ?",
+            (now_iso,),
+        ).fetchall()
+        deferred_ids = {
+            str(row["opportunity_id"]) for row in deferred_rows if row["opportunity_id"]
+        }
+        if deferred_ids:
+            unique.sort(key=lambda row: row.get("opportunity_id") in deferred_ids)
+    except Exception:
+        # Scheduling remains oldest-first if legacy schema/data cannot expose the
+        # optional defer hint; command-side fact validation is still authoritative.
+        pass
     visible_limit = max(int(limit), 0)
     visible = unique[:visible_limit]
     expired = db.execute(
@@ -366,6 +461,7 @@ def build_enriched_trading_context() -> dict[str, Any]:
 
 def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str, Any]:
     """Build a compact manifest of exact evidence available to one decision."""
+    from aletheia.agent_shell.decision_facts import candidate_fact_bundle
     from aletheia.data.collectors.vergex_structure import structure_source_status
     from aletheia.data.freshness import fresh_row
     from aletheia.storage import repositories as repo
@@ -399,10 +495,30 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
     )
     structure = fresh_row(structure, "perp_structure")
     source_status = structure_source_status()
+    facts = candidate_fact_bundle(ctx, opportunity_id=opportunity_id)
+
+    def _json_list(value: Any) -> list:
+        if isinstance(value, list):
+            return value
+        try:
+            parsed = json.loads(value or "[]")
+            return parsed if isinstance(parsed, list) else []
+        except (TypeError, ValueError):
+            return []
 
     return {
         "version": "vergex-utilization-v1",
+        "decision_evidence_version": "operator-candidate-v2",
         "policy_epoch_id": ctx.get("vergex_policy_epoch_id"),
+        "skip_policy_epoch_id": ctx.get("skip_policy_epoch_id"),
+        "source_chain": {
+            "opportunity_id": opportunity_id,
+            "universe_snapshot_id": (
+                opportunity.get("universe_snapshot_id") if opportunity else None
+            ) or (member.get("snapshot_id") if member else None),
+            "universe_member_id": opportunity.get("universe_member_id") if opportunity else None,
+            "feature_snapshot_id": feature.get("feature_snapshot_id") if feature else None,
+        },
         "instrument": {
             "venue": venue,
             "symbol": symbol,
@@ -411,8 +527,24 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
         "technical_snapshot": ({
             "id": feature.get("feature_snapshot_id"),
             "observed_at": feature.get("feature_ts"),
+            "data_freshness_sec": feature.get("data_freshness_sec"),
             "timeframes": ["15m", "1h", "4h"],
         } if feature else {"status": "unavailable"}),
+        "candidate_selection": {
+            "rank_priority": facts["candidate"].get("rank_priority"),
+            "rank_priority_semantics": "ordering_only",
+            "scanner_family": facts["candidate"].get("scanner_family"),
+            "execution_eligible": (
+                member.get("execution_eligible") if member else facts["candidate"].get("execution_eligible")
+            ),
+            "universe_rank": member.get("rank") if member else None,
+            "universe_total_score": member.get("total_score") if member else None,
+            "risk_flags": _json_list(member.get("risk_flags")) if member else [],
+        },
+        "b2_candidate_evidence": facts["b2"],
+        "market_regime": facts["regime"],
+        "recent_performance": facts["recent_performance"],
+        "account_context": facts["account"],
         "hyperliquid": {
             "funding_id": funding.get("id") if funding else None,
             "funding_observed_at": funding.get("observed_at") if funding else None,
@@ -429,6 +561,7 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
             "mode": source_status["mode"],
         }),
         "operator_rationale": {
+            "model_reasoning": getattr(decision, "model_reasoning", None),
             "skip_kind": getattr(decision, "skip_kind", None),
             "adverse_reason_codes": list(
                 getattr(decision, "adverse_reason_codes", None) or []
@@ -443,6 +576,9 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
                 getattr(decision, "opposing_signals", None) or []
             ),
             "risk_factors": list(getattr(decision, "risk_factors", None) or []),
+            "validated_adverse_claims": list(
+                getattr(decision, "validated_adverse_claims", None) or []
+            ),
         },
     }
 
@@ -679,6 +815,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "asset_id": s.get("asset_id"),
                 "feature_snapshot_id": s.get("id"),
                 "feature_ts": s.get("ts"),
+                "data_freshness_sec": s.get("data_freshness_sec"),
                 "venue": s.get("venue"),
                 "symbol": sym,
                 "market_type": _normalize_market_type(s.get("market_type")),

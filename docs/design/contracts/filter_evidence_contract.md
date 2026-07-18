@@ -64,11 +64,15 @@ Opportunity 主链上的“过滤”实际包含四种不同问题：
 对有精确 `signal_pending` 身份的终局 System Operator `skip`，PiDecision、其本轮
 `filter_trace` 与可识别候选的固定 horizon outcome seed 必须在同一 SQLite 提交边界中写入。
 direct model `skip` 不能因未进入 debate/conviction 分支而缺少 `operator_action_assessment`。
-在 `system_operator_skip_remediation/b1.2` 中，该 assessment 只有经过一次有界反事实确认，且
+在 `system_operator_skip_remediation/b1.3` 中，该 assessment 只有经过一次有界 blind 反事实确认，且
 `skip_kind=adverse_candidate_evidence`、typed adverse reason 与候选特定 evidence 均非空时才可
-成为 terminal reject。`insufficient_evidence`、rank priority 单值、unsupported action 或 malformed
+成为 terminal reject；每一个 reason 还必须由确定性 validator 绑定到同一候选的 fact refs，并随
+PiDecision evidence manifest 持久化。manifest 至少包含 Opportunity/Universe member/snapshot/feature id、
+feature freshness、B2 完整摘要、regime、近期绩效样本量、rank 的 ordering-only 语义和 validated claims。
+`insufficient_evidence`、rank priority 单值、账户权益、单笔近期结果、可选 telemetry 缺失、unsupported action 或 malformed
 conviction 都不是拒绝事实；二次仍无效时只写去重的
-`operator_decision_deferred_unchanged_context` observation，保持 pending 且不生成 outcome cohort。
+`operator_decision_deferred_unchanged_context` observation，保持 pending 且不生成 outcome cohort。defer key
+必须包含候选 id 与物质 fingerprint；一个候选 defer 后，同批下一候选仍可评估。
 任一必需 evidence 写入失败时，整个 final claim 回滚，pending 保持可重试；不得留下 `reviewed`
 Opportunity 或无证据的 skip。若决策时没有完整方向、市场、venue 或精确入场价，可保留非收益诊断，
 但禁止伪造 outcome 或事后补入场价。对于有精确 queued Opportunity 身份的 skip，若
@@ -80,7 +84,7 @@ entry timestamp）；trace 必须标注 `queued_candidate_fixed`。不完整或�
 `doctor` 必须只读报告近期 candidate skip 的 action-trace 覆盖、四个 outcome seed 覆盖、legacy 无 target
 skip、`operator_evaluation_events` 的 no-candidate heartbeat/unchanged-context defer、pending 与 proposal 计数。若存在活跃的
 `system_operator_skip_remediation` policy epoch，raw 24h 计数必须与该 epoch 的诊断计数同时展示：
-raw 路径还必须分列 direct model skip、trade-intent 后门控 skip、经过 b1.2 确认的 adverse skip；
+raw 路径还必须分列 direct model skip、trade-intent 后门控 skip、经过当前 epoch 确认的 adverse skip；
 重载前的缺口仍可审计，但不得污染当前 epoch 的 finding。无 target 记录
 不得混入 candidate effectiveness cohort；coverage 缺失是 `recording_incident` 的诊断输入，不授予自动
 放行、自动调参或执行权限。新 zero-pending heartbeat 只能写 observation event，不能再写无 target skip。
@@ -334,6 +338,7 @@ Ranker 的 `limit=50` 只限制进入打分/入队选择的执行短名单，不
 12. 已完成：Ranker 白名单漏项与黑名单命中不再静默 `return None`；拒绝事实与终态原子提交，且独立有界拒绝工作集不会被 top-N 执行上限截掉。
 13. 已完成：Universe emitter 与 Market Observer 新建 Opportunity 时同步原子写入 `opportunity_emitted`；Observer pre-filter 不再被误当成生产成功证明。
 14. 已完成：direct skip 一次有界反事实确认、neutral/invalid defer、120 分钟物质上下文去重，以及完整 operator rationale 持久化；不改 55、Risk、Execution 或 Ranker 门。
+15. 已完成：b1.3 单候选上下文、确定性 adverse fact validation、候选级 defer rotation、真实 B2 fingerprint、unknown 数值格式和 operator-candidate-v2 evidence manifest；不改 55、Ranker 权重、Risk、Execution、Exchange 或 Live。
 
 ## 10. 诊断时间窗口与 sizing 口径
 

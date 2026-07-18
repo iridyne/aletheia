@@ -71,6 +71,8 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 | `reasoning` | `str`(必填) | 决策理由(人类可读)。权威 PiDecision 保存全文；短 reflection/UI 可独立截断。 |
 | `skip_kind` | `str \| None` | 仅 direct skip 使用：`adverse_candidate_evidence` 或 `insufficient_evidence`。后者是中性未知，不得终结候选。 |
 | `adverse_reason_codes` / `adverse_evidence` | `list[str]` | terminal direct skip 必须至少各有一项允许的 typed reason 与候选特定事实；rank priority 或证据不足不能冒充 adverse reason。 |
+| `validated_adverse_claims` | `list[dict]` | 仅由确定性 validator 生成；逐项保存 `reason_code + fact_refs`。模型文本不能写入或替代该权限。 |
+| `model_reasoning` | `str \| None` | direct skip 的原始模型文本，仅作审计；权威 `reasoning/adverse_evidence` 由 validated fact refs 重建，避免错误判词进入最终状态。 |
 | `market_type` | `str \| None` | PI 显式选;省略时继承 `opportunity.market`,再省则"空头→usdt_futures/其余→spot"兜底。 |
 | `opportunity_id` / `strategy_id` / `scanner_family` | `str \| None` | R0 归因,由 `_attach_opportunity_context` 回填(`trading_decision.py:909`)。 |
 | `signal_source` | `str` | 机会来源,默认 `market_observer`;`serenity` 表示解析 `serenity_opportunities.id`(`:85`)。值域 = {`market_observer`,`serenity`}。 |
@@ -125,12 +127,17 @@ skip 仅作 legacy audit，不能由新逻辑继续产生。持仓动作不属�
 不得留下 reviewed + submitting 但零 Proposal。升级前遗留的该类孤儿 claim 只能在 pending 载体和
 symbol/direction/market_type/action/opportunity/source 身份全部匹配时补写一次 Proposal；原 claim 的
 conviction 仍是耐久审计事实，但重启后同一身份被重新打成 89/90 不得阻塞恢复或改写原评分。
-Direct skip 在 `system_operator_skip_remediation/b1.2` 下必须经过一次有界反事实确认；确认后仍只有
-`adverse_candidate_evidence + typed reason + concrete evidence` 可终结。两次输出仍是信息不足或无效时，
+Direct skip 在 `system_operator_skip_remediation/b1.3` 下必须经过一次有界、blind 反事实确认；确认后仍只有
+`adverse_candidate_evidence + typed reason + concrete evidence`，且每个 reason 都由确定性 validator 解析到
+同一候选的 typed fact refs，才可终结。B2 `insufficient_evidence`、中性 50/50 regime、可选 OI 缺失、
+rank ordering、账户权益或单笔近期亏损都没有 adverse authority。两次输出仍是信息不足或无效时，
 写 `operator_evaluation_events(event_kind=operator_decision_deferred_unchanged_context)` 并保持 pending；
-同一 policy epoch 的物质上下文 fingerprint 在 120 分钟窗口内未变化时不再调用模型。fingerprint 排除
+同一 policy epoch、同一候选的物质上下文 fingerprint 在 120 分钟窗口内未变化时不再调用模型，
+但不得阻塞同批下一候选。每次模型调用只能暴露一个 pending carrier 及其技术/Opportunity/B2 证据，
+不得暴露 analysis-only preview 或另一 pending 候选作为判词依据。fingerprint 排除
 Opportunity id/时间戳等载体 churn，但包含 instrument、方向、scanner thesis、rank priority、B2 状态、
-候选技术特征与 market regime；这些字段变化会重新开放评估。已存在 `proposal_status=submitting` 的 claim 始终优先恢复，
+实际 B2 `n_total/n_net/coverage/avg/shrunk/verdict`、候选技术特征与 market regime；这些字段变化会重新开放评估。
+缺失技术数值显示为 unknown，不得转写为 0。已存在 `proposal_status=submitting` 的 claim 始终优先恢复，
 不得被新确认门阻断或覆盖。
 `PiDecision` 自身保存 `symbol / direction / market_type / opportunity_id / signal_source`;
 `_attach_opportunity_context` 必须把 `pending_signals` 中 `market_observer` 与 `serenity` 两类载体
@@ -192,7 +199,7 @@ Opportunity 最终动作只认 pending 权限，因此精确 Serenity pending �
 - **DL-INV-18 pending 是 Opportunity 最终身份权限**:open Opportunity、ranker 候选和 heartbeat 不是终结或开仓授权；`skip/trade` 只可绑定精确且未过期的 pending 身份。零 pending heartbeat 不得把 open 改为 reviewed；缺失/不支持的模型动作是评估不可用，不能借 Opportunity 或 Position 身份制造终态。
 - **DL-INV-19 中断可恢复**:新提交不得产生“最终 claim 存在但 Proposal 不存在”的崩溃窗口;历史孤儿 submitting 行只能在完整交易身份匹配时补写一次 Proposal并继续；conviction 等非身份审计值沿用原 claim，不以新模型评分相等为恢复条件。
 - **DL-INV-20 入场与持仓动作分面**:入场 Operator 只暴露 `trade/skip`；portfolio review 只暴露 `hold/close_one` 并以明确 Position 为对象。`reduce_exposure`、`scale_in`、`flip` 等标签没有执行实现时不得出现在 schema/prompt，也不得映射为其他真实副作用。
-- **DL-INV-21 direct skip 非对称否决禁止**:direct skip 必须经一次有界反事实确认并提供候选特定 adverse evidence；`insufficient_evidence`、rank ordering 或无效输出不得成为终态。二次仍无效时只写去重 observation 并保留 pending，绝不自动改成 trade。
+- **DL-INV-21 direct skip 非对称否决禁止**:direct skip 必须经一次有界 blind 反事实确认，且每个 adverse reason 必须绑定同一候选的机器事实；`insufficient_evidence`、rank ordering、账户权益、单笔近期结果、可选数据缺失或无效输出不得成为终态。二次仍无效时只写候选级去重 observation 并保留 pending、轮转下一候选，绝不自动改成 trade。
 
 ---
 
@@ -225,7 +232,7 @@ Opportunity 最终动作只认 pending 权限，因此精确 Serenity pending �
 | `DL-S35` | L2b | 零 pending heartbeat 的终态结果不绑定或退休 Layer1/ranker Opportunity；claim 事务内再次核验载体 |
 | `DL-S36` | L2b | 遗留 close/reduce 在上下文绑定前成为评估不可用，不借用 Opportunity/Position 身份 |
 | `DL-S43` | L2b | 缺失/不支持 action 或 malformed conviction 不合成终态 skip |
-| `DL-S44` | L2b | direct skip 一次有界确认；信息不足/rank ordering 中性；上下文不变重试去重 |
+| `DL-S44` | L2b | direct skip 一次有界 blind 确认及逐 reason 事实验证；中性事实 defer；候选级去重与队列轮转 |
 | `DL-S37` | L2b | 模型评估期间 `valid_until` 过期时，Proposal preflight 原子写 expired 与唯一 TTL 拒绝事实，零 Proposal |
 | `DL-S38` | L2b | preflight 后、最终 claim 前 `valid_until` 过期时，claim 原子写 expired 与唯一 TTL 拒绝事实，零最终决定/Proposal |
 | `DL-S39` | L2b | claim 内 TTL 证据写失败通过保存点回滚，Opportunity 保持 queued 且零最终决定/Proposal |
