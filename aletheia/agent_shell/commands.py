@@ -1862,7 +1862,7 @@ def _record_deferred_context_observation(
         "overflow_count": int(queue.get("overflow_count") or 0),
         "oldest_at": queue.get("oldest_at"),
     }
-    return record_operator_evaluation_event(OperatorEvaluationEvent(
+    event_row = record_operator_evaluation_event(OperatorEvaluationEvent(
         dedup_key=dedup_key,
         event_kind=event_kind,
         trigger=str(trigger or "manual"),
@@ -1875,6 +1875,32 @@ def _record_deferred_context_observation(
         data_health_json="{}",
         policy_epoch_id=policy_epoch_id,
     ))
+    # Layer-1 observability: the defer path was silent until this log line.
+    # Payload fields are read-only and every one already exists in `snapshot`
+    # or `selected`; no new state is introduced. reason_class is derived by
+    # aletheia.analytics.defer_classifier so the log, pipeline_progress
+    # aggregation, and Blotter tooltip all share one taxonomy.
+    try:
+        from aletheia.analytics.defer_classifier import classify_defer_reason
+
+        reason_class = classify_defer_reason(reason)
+    except Exception:
+        reason_class = "unknown"
+    logger.info(
+        "operator_defer",
+        extra={
+            "event_kind": event_kind,
+            "defer_reason": reason,
+            "reason_class": reason_class,
+            "opportunity_id": opportunity_id,
+            "symbol": (selected or {}).get("symbol"),
+            "direction": (selected or {}).get("direction"),
+            "defer_until": defer_until,
+            "defer_deadline_basis": defer_deadline_basis,
+            "policy_epoch_id": policy_epoch_id,
+        },
+    )
+    return event_row
 
 
 async def evaluate_trading_opportunity(params: dict) -> dict:

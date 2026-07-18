@@ -544,6 +544,15 @@ export const api = {
         active_setups: number
         superseded_generations: number
         ttl_expired: number
+        // Layer-1 observability: reason-class breakdown over LIVE defers
+        // (defer_until > now), 12h defer_rate, oldest live-defer age in
+        // seconds, and the (currently static) queue capacity from
+        // paper_trader._PENDING_SIGNAL_QUEUE_CAPACITY.
+        market_quiet_defers: number
+        candidate_specific_defers: number
+        defer_rate: number
+        oldest_defer_age_seconds: number | null
+        queue_capacity: number | null
       }
       ranker: {
         delivery_epoch: string

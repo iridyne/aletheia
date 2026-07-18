@@ -202,6 +202,35 @@ function CandidatesPanel() {
   const candidates = current.candidates || []
   const ranker = current.ranker
 
+  // Layer-1 observability tooltip: when the diagnosis is defer-flavoured,
+  // surface the reason-class breakdown + oldest live-defer age + 12h rate on
+  // hover. The counts come straight from
+  // /opportunity-funnel/current-snapshot's `counts` block (backed by
+  // pipeline_progress._active_defer_stats). Rendered as a native `title` so
+  // there is no new UI state — the yellow chip already exists.
+  const c = current.counts
+  const showDeferTip =
+    (current.counts.deferred_candidates > 0 ||
+      current.counts.market_quiet_defers > 0 ||
+      current.counts.candidate_specific_defers > 0)
+  const oldestMin =
+    c.oldest_defer_age_seconds != null
+      ? Math.round(c.oldest_defer_age_seconds / 60)
+      : null
+  const deferTipLines = showDeferTip
+    ? [
+        `Live defers · market-quiet ${c.market_quiet_defers}`
+          + ` / candidate-specific ${c.candidate_specific_defers}`,
+        oldestMin != null ? `Oldest live defer · ${oldestMin}m ago` : null,
+        `12h defer rate · ${(c.defer_rate * 100).toFixed(0)}%`,
+        c.queue_capacity != null
+          ? `Queue capacity · ${current.counts.queued_candidates}/${c.queue_capacity}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : ''
+
   return (
     <Card className="bl-panel bl-panel-candidates">
       <div className="bl-panel-head">
@@ -212,7 +241,10 @@ function CandidatesPanel() {
       </div>
 
       {/* Diagnosis line — a single row, not a banner sentence. Dot + reason. */}
-      <div className={`bl-diagnosis bl-diagnosis-${tone}`}>
+      <div
+        className={`bl-diagnosis bl-diagnosis-${tone}`}
+        title={showDeferTip ? deferTipLines : undefined}
+      >
         <span className={`bl-diagnosis-dot bl-diagnosis-dot-${tone}`} />
         <span className="bl-diagnosis-text">{current.reason || current.headline}</span>
       </div>
