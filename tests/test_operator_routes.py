@@ -43,7 +43,14 @@ async def client(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_operator_status_defaults_when_no_heartbeat(client):
-    resp = await client.get("/api/operator/status")
+    with patch(
+        "aletheia.agent_runtime.pi_daemon.daemon_status",
+        return_value={"running": True, "event_set": False, "lock_held": False},
+    ), patch(
+        "aletheia.agent_runtime.scheduler.status_snapshot",
+        return_value={"running": True, "state": "running", "job_count": 41},
+    ):
+        resp = await client.get("/api/operator/status")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -55,6 +62,16 @@ async def test_operator_status_defaults_when_no_heartbeat(client):
     assert data["active_branch_id"] is None
     assert data["active_branch_kind"] is None
     assert data["active_branch_title"] is None
+    # Shell liveness and trading-decision liveness are independent facts.
+    assert data["status_scope"] == "operator_shell"
+    assert data["trading_daemon"] == {
+        "configured": True,
+        "running": True,
+        "evaluating": False,
+        "wake_pending": False,
+        "fallback_available": True,
+        "state": "event_driven",
+    }
 
 
 @pytest.mark.anyio
@@ -116,7 +133,14 @@ async def test_operator_internal_heartbeat_roundtrip(client):
 
     assert resp.status_code == 200
 
-    status = await client.get("/api/operator/status")
+    with patch(
+        "aletheia.agent_runtime.pi_daemon.daemon_status",
+        return_value={"running": False, "event_set": False, "lock_held": False},
+    ), patch(
+        "aletheia.agent_runtime.scheduler.status_snapshot",
+        return_value={"running": True, "state": "running", "job_count": 41},
+    ):
+        status = await client.get("/api/operator/status")
     data = status.json()
     assert data["status"] == "online"
     assert data["current_intent"] == "monitoring system state"
@@ -124,6 +148,8 @@ async def test_operator_internal_heartbeat_roundtrip(client):
     assert data["active_branch_id"] == "strategy-session-1"
     assert data["active_branch_kind"] == "strategy_session"
     assert data["active_branch_title"] == "Momentum A Review"
+    assert data["trading_daemon"]["state"] == "scheduled_fallback"
+    assert data["trading_daemon"]["running"] is False
 
 
 @pytest.mark.anyio

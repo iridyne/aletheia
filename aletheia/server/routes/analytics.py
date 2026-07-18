@@ -3,11 +3,21 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timedelta, timezone
+import json
 from threading import RLock
 
 from fastapi import APIRouter, Response
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+
+_DECISION_COUNT_KEYS = (
+    "trade",
+    "operator_skip",
+    "operator_watch",
+    "user_reject",
+    "auto_reject",
+    "reject_unknown",
+)
 
 
 def _rolling_cutoff(hours: int) -> tuple[int, str]:
@@ -15,6 +25,108 @@ def _rolling_cutoff(hours: int) -> tuple[int, str]:
     hours_i = max(1, int(hours or 24))
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_i)
     return hours_i, cutoff.isoformat()
+
+
+def _decision_policy_context(db) -> tuple[dict | None, list[dict]]:
+    rows = [
+        dict(row)
+        for row in db.execute(
+            "SELECT epoch_id, started_at, ended_at FROM learning_policy_epochs "
+            "WHERE epoch_kind='system_operator_skip_remediation' "
+            "ORDER BY julianday(started_at) DESC, rowid DESC"
+        )
+    ]
+    current = next((row for row in rows if not row.get("ended_at")), None)
+    return current or (rows[0] if rows else None), rows
+
+
+def _analytics_instant(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _policy_for_instant(epochs: list[dict], instant: str | None) -> str | None:
+    decision_instant = _analytics_instant(instant)
+    if decision_instant is None:
+        return None
+    for epoch in epochs:
+        started_at = _analytics_instant(epoch.get("started_at"))
+        ended_at = _analytics_instant(epoch.get("ended_at"))
+        if started_at and decision_instant >= started_at and (
+            ended_at is None or decision_instant <= ended_at
+        ):
+            return str(epoch["epoch_id"])
+    return None
+
+
+def _decision_attribution(
+    *,
+    decided_at: str | None,
+    evidence_manifest_json: str | None,
+    runtime_session_id: str | None,
+    runtime_id: str | None,
+    producer_commit: str | None,
+    current_policy_id: str | None,
+    epochs: list[dict],
+    current_runtime_session_id: str | None,
+) -> dict:
+    manifest: dict = {}
+    if evidence_manifest_json:
+        try:
+            parsed = json.loads(evidence_manifest_json)
+            if isinstance(parsed, dict):
+                manifest = parsed
+        except (TypeError, ValueError):
+            pass
+    policy_epoch_id = manifest.get("skip_policy_epoch_id")
+    if policy_epoch_id:
+        policy_epoch_id = str(policy_epoch_id)
+    policy_basis = "decision_manifest" if policy_epoch_id else "epoch_time_window"
+    if not policy_epoch_id:
+        policy_epoch_id = _policy_for_instant(epochs, decided_at)
+    if not policy_epoch_id:
+        policy_basis = "unavailable"
+    policy_relation = (
+        "current"
+        if policy_epoch_id and policy_epoch_id == current_policy_id
+        else "historical"
+        if policy_epoch_id
+        else "unavailable"
+    )
+    runtime_relation = (
+        "current_session"
+        if runtime_session_id and runtime_session_id == current_runtime_session_id
+        else "historical_runtime"
+        if runtime_session_id
+        else "unavailable"
+    )
+    return {
+        "policy_epoch_id": policy_epoch_id,
+        "policy_basis": policy_basis,
+        "policy_relation": policy_relation,
+        "runtime_session_id": runtime_session_id,
+        "runtime_id": runtime_id,
+        "producer_commit": producer_commit,
+        "runtime_relation": runtime_relation,
+    }
+
+
+def _decision_counts(items: list[dict], policy_relation: str) -> dict[str, int]:
+    counts = {key: 0 for key in _DECISION_COUNT_KEYS}
+    for item in items:
+        if item.get("attribution", {}).get("policy_relation") != policy_relation:
+            continue
+        outcome = item.get("outcome")
+        if outcome in counts:
+            counts[outcome] += 1
+    return counts
 
 
 @router.get("/exit-policy-advice")
@@ -1104,6 +1216,14 @@ def get_operator_decisions(
     hours_i, window_start = _rolling_cutoff(hours)
     limit_i = max(1, min(int(limit or 50), 200))
     window_end = datetime.now(timezone.utc).isoformat()
+    current_policy, policy_epochs = _decision_policy_context(db)
+    current_policy_id = (
+        str(current_policy["epoch_id"]) if current_policy is not None else None
+    )
+    from aletheia.agent_runtime.runtime_session import current_session
+
+    active_runtime = current_session() or {}
+    current_runtime_session_id = active_runtime.get("session_id")
 
     # Parse optional filters up-front so they're validated once and reused
     # for every item comparison below.
@@ -1134,15 +1254,19 @@ def get_operator_decisions(
     # pi_decisions — operator trade / skip
     rows = list(db.execute(
         "SELECT id, created_at, symbol, direction, market_type, action, "
-        "conviction, reasoning, opportunity_id, proposal_id, "
+        "p.conviction, p.reasoning, p.opportunity_id, p.proposal_id, "
+        "p.evidence_manifest_json, p.runtime_session_id, "
+        "COALESCE(p.producer_commit, rs.boot_commit) AS producer_commit, "
+        "rs.runtime_id AS attributed_runtime_id, "
         "julianday(created_at) AS sort_instant "
-        "FROM pi_decisions "
-        "WHERE action IN ('trade','skip','flip','scale_in','watch') "
-        "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
-        "AND julianday(created_at)>=julianday(?) "
-        "AND julianday(created_at)<=julianday(?) "
-        "AND (symbol IS NOT NULL AND symbol != '') "
-        "ORDER BY julianday(created_at) DESC, rowid DESC",
+        "FROM pi_decisions p "
+        "LEFT JOIN runtime_sessions rs ON rs.session_id=p.runtime_session_id "
+        "WHERE p.action IN ('trade','skip','flip','scale_in','watch') "
+        "AND COALESCE(p.signal_source, 'market_observer') != 'system_cascade' "
+        "AND julianday(p.created_at)>=julianday(?) "
+        "AND julianday(p.created_at)<=julianday(?) "
+        "AND (p.symbol IS NOT NULL AND p.symbol != '') "
+        "ORDER BY julianday(p.created_at) DESC, p.rowid DESC",
         (window_start, window_end),
     ))
     for r in rows:
@@ -1165,6 +1289,16 @@ def get_operator_decisions(
             "action": act,
             "conviction": r["conviction"],
             "one_line_reason": _first_line(r["reasoning"], 140),
+            "attribution": _decision_attribution(
+                decided_at=r["created_at"],
+                evidence_manifest_json=r["evidence_manifest_json"],
+                runtime_session_id=r["runtime_session_id"],
+                runtime_id=r["attributed_runtime_id"],
+                producer_commit=r["producer_commit"],
+                current_policy_id=current_policy_id,
+                epochs=policy_epochs,
+                current_runtime_session_id=current_runtime_session_id,
+            ),
             "_sort_instant": float(r["sort_instant"] or 0),
         })
 
@@ -1172,9 +1306,12 @@ def get_operator_decisions(
     rows = list(db.execute(
         "SELECT tp.id AS proposal_id, tp.opportunity_id, tp.created_at, "
         "tp.symbol, tp.direction, tp.market_type, ae.actor, ae.source, ae.message, "
+        "tp.runtime_session_id, COALESCE(tp.producer_commit, rs.boot_commit) "
+        "AS producer_commit, rs.runtime_id AS attributed_runtime_id, "
         "ae.timestamp AS rejected_at, "
         "julianday(COALESCE(ae.timestamp,tp.created_at)) AS sort_instant "
         "FROM trade_proposals tp "
+        "LEFT JOIN runtime_sessions rs ON rs.session_id=tp.runtime_session_id "
         "LEFT JOIN audit_events ae ON ae.rowid=("
         " SELECT candidate.rowid FROM audit_events candidate "
         " WHERE candidate.entity_id=tp.id "
@@ -1216,6 +1353,16 @@ def get_operator_decisions(
             "rejected_actor": actor or None,
             "rejected_source": source or None,
             "time_basis": "rejected_at" if r["rejected_at"] else "proposal_created_fallback",
+            "attribution": _decision_attribution(
+                decided_at=r["rejected_at"] or r["created_at"],
+                evidence_manifest_json=None,
+                runtime_session_id=r["runtime_session_id"],
+                runtime_id=r["attributed_runtime_id"],
+                producer_commit=r["producer_commit"],
+                current_policy_id=current_policy_id,
+                epochs=policy_epochs,
+                current_runtime_session_id=current_runtime_session_id,
+            ),
             "_sort_instant": float(r["sort_instant"] or 0),
         })
 
@@ -1294,6 +1441,14 @@ def get_operator_decisions(
         # Equals total_count when no filter is applied.
         "matched_count": len(filtered_all),
         "counts": counts,
+        "current_context": {
+            "policy_epoch_id": current_policy_id,
+            "runtime_session_id": current_runtime_session_id,
+            "runtime_id": active_runtime.get("runtime_id"),
+            "producer_commit": active_runtime.get("boot_commit"),
+        },
+        "current_policy_counts": _decision_counts(all_items, "current"),
+        "historical_policy_counts": _decision_counts(all_items, "historical"),
         "items": items,
     }
 

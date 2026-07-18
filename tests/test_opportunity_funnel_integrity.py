@@ -991,3 +991,124 @@ def test_operator_decisions_classifies_unknown_uses_rejection_time_and_counts_fu
     assert data["total_count"] == 5
     assert "trade-intent" not in {item.get("decision_id") for item in data["items"]}
     assert data["counts"]["user_reject"] == 1  # old proposal, recent rejection audit
+
+
+def test_operator_decisions_preserve_history_with_policy_and_runtime_attribution(
+    tmp_path, monkeypatch
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    old_start = (now - timedelta(minutes=55)).isoformat()
+    old_end = (now - timedelta(minutes=25)).isoformat()
+    current_start = (now - timedelta(minutes=20)).isoformat()
+    old_decided = (now - timedelta(minutes=40)).isoformat()
+    current_decided = (now - timedelta(minutes=5)).isoformat()
+
+    for epoch_id, started_at, ended_at in (
+        ("policy-old", old_start, old_end),
+        ("policy-current", current_start, None),
+    ):
+        conn.execute(
+            "INSERT INTO learning_policy_epochs "
+            "(epoch_id,epoch_kind,effective_values_hash,effective_values_json,"
+            "affected_path_ids_json,started_at,ended_at,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                epoch_id,
+                "system_operator_skip_remediation",
+                f"hash-{epoch_id}",
+                "{}",
+                "[]",
+                started_at,
+                ended_at,
+                started_at,
+            ),
+        )
+    for session_id, runtime_id, commit, started_at, ended_at in (
+        ("session-current", "runtime-local-current", "commit-current", current_start, None),
+        ("session-old", "runtime-old", "commit-old", old_start, old_end),
+    ):
+        conn.execute(
+            "INSERT INTO runtime_sessions "
+            "(session_id,runtime_id,boot_commit,started_at,ended_at,shutdown_clean) "
+            "VALUES (?,?,?,?,?,?)",
+            (session_id, runtime_id, commit, started_at, ended_at, int(bool(ended_at))),
+        )
+    for opportunity_id, created_at in (
+        ("current-opp", current_decided),
+        ("old-opp", old_decided),
+    ):
+        _insert_opportunity(
+            conn,
+            opportunity_id,
+            status="reviewed",
+            created_at=created_at,
+        )
+    conn.execute(
+        "INSERT INTO pi_decisions "
+        "(id,created_at,symbol,direction,market_type,action,opportunity_id,"
+        "signal_source,evidence_manifest_json,runtime_session_id,producer_commit) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "decision-current",
+            current_decided,
+            "BTC/USDT",
+            "long",
+            "usdt_futures",
+            "trade",
+            "current-opp",
+            "market_observer",
+            json.dumps({"skip_policy_epoch_id": "policy-current"}),
+            "session-current",
+            "commit-current",
+        ),
+    )
+    # No manifest on this legacy row: attribution must use the durable epoch window.
+    conn.execute(
+        "INSERT INTO pi_decisions "
+        "(id,created_at,symbol,direction,market_type,action,opportunity_id,"
+        "signal_source,runtime_session_id,producer_commit) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            "decision-old",
+            old_decided,
+            "ETH/USDT",
+            "short",
+            "usdt_futures",
+            "skip",
+            "old-opp",
+            "market_observer",
+            "session-old",
+            "commit-old",
+        ),
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.runtime_session.current_session",
+        lambda: {
+            "session_id": "session-current",
+            "runtime_id": "runtime-local-current",
+            "boot_commit": "commit-current",
+        },
+    )
+
+    from aletheia.server.routes.analytics import get_operator_decisions
+
+    data = get_operator_decisions(hours=1, limit=20)
+    items = {item["decision_id"]: item for item in data["items"]}
+    assert items["decision-current"]["attribution"] == {
+        "policy_epoch_id": "policy-current",
+        "policy_basis": "decision_manifest",
+        "policy_relation": "current",
+        "runtime_session_id": "session-current",
+        "runtime_id": "runtime-local-current",
+        "producer_commit": "commit-current",
+        "runtime_relation": "current_session",
+    }
+    assert items["decision-old"]["attribution"]["policy_epoch_id"] == "policy-old"
+    assert items["decision-old"]["attribution"]["policy_basis"] == "epoch_time_window"
+    assert items["decision-old"]["attribution"]["policy_relation"] == "historical"
+    assert items["decision-old"]["attribution"]["runtime_relation"] == "historical_runtime"
+    assert data["current_context"]["policy_epoch_id"] == "policy-current"
+    assert data["current_policy_counts"]["trade"] == 1
+    assert data["historical_policy_counts"]["operator_skip"] == 1

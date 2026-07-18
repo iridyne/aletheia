@@ -71,13 +71,15 @@ def _current_epoch(db) -> dict[str, str | None]:
     epoch_row = db.execute(
         "SELECT epoch_id, epoch_kind, started_at "
         "FROM learning_policy_epochs "
-        "WHERE ended_at IS NULL OR ended_at = '' "
+        "WHERE epoch_kind = 'system_operator_skip_remediation' "
+        "AND (ended_at IS NULL OR ended_at = '') "
         "ORDER BY started_at DESC LIMIT 1"
     ).fetchone()
     if epoch_row is None:
         epoch_row = db.execute(
             "SELECT epoch_id, epoch_kind, started_at "
             "FROM learning_policy_epochs "
+            "WHERE epoch_kind = 'system_operator_skip_remediation' "
             "ORDER BY started_at DESC LIMIT 1"
         ).fetchone()
     return {
@@ -126,7 +128,12 @@ def _pending_stats(db, commit: str | None) -> dict[str, Any]:
     }
 
 
-def _operator_buckets(db, commit: str | None, since_iso: str) -> dict[str, int]:
+def _operator_buckets(
+    db,
+    commit: str | None,
+    policy_epoch_id: str | None,
+    since_iso: str,
+) -> dict[str, int]:
     """Six-bucket operator classification from filter_decisions + evaluation events."""
     buckets = {
         "direct_model_skip": 0,
@@ -139,21 +146,23 @@ def _operator_buckets(db, commit: str | None, since_iso: str) -> dict[str, int]:
         "operator_trade_intent": 0,
     }
 
+    conditions = ["evaluated_at >= ?", "stage LIKE 'system_operator%'"]
+    params: list[Any] = [since_iso]
     if commit:
-        rows = db.execute(
-            "SELECT reason_code, decision, COUNT(*) FROM filter_decisions "
-            "WHERE code_commit = ? AND evaluated_at >= ? "
-            "AND stage LIKE 'system_operator%' "
-            "GROUP BY reason_code, decision",
-            (commit, since_iso),
-        ).fetchall()
-    else:
-        rows = db.execute(
-            "SELECT reason_code, decision, COUNT(*) FROM filter_decisions "
-            "WHERE evaluated_at >= ? AND stage LIKE 'system_operator%' "
-            "GROUP BY reason_code, decision",
-            (since_iso,),
-        ).fetchall()
+        conditions.append("code_commit = ?")
+        params.append(commit)
+    if policy_epoch_id:
+        conditions.append(
+            "CASE WHEN json_valid(input_snapshot) "
+            "THEN json_extract(input_snapshot, '$.policy_epoch_id') END = ?"
+        )
+        params.append(policy_epoch_id)
+    rows = db.execute(
+        "SELECT reason_code, decision, COUNT(*) FROM filter_decisions WHERE "
+        + " AND ".join(conditions)
+        + " GROUP BY reason_code, decision",
+        tuple(params),
+    ).fetchall()
     for reason_code, decision, count in rows:
         code = str(reason_code or "")
         bucket = _OPERATOR_SKIP_REASON_TO_BUCKET.get(code)
@@ -205,15 +214,16 @@ def _defer_events(
 def _proposal_stats(db, commit: str | None, since_iso: str) -> dict[str, Any]:
     """Newest proposal and per-window trade count under the current commit.
 
-    ``trade_proposals`` stores its own ``commit_hash``; when it is empty (older
-    rows) we fall back to joining through ``opportunities.producer_commit``.
+    ``trade_proposals.producer_commit`` is authoritative. Older rows without it
+    fall back to their linked Opportunity; ``commit_hash`` is a content hash.
     """
     if commit:
         row = db.execute(
             "SELECT MAX(tp.created_at), COUNT(*) FROM trade_proposals tp "
             "LEFT JOIN opportunities o ON o.id = tp.opportunity_id "
             "WHERE tp.created_at >= ? "
-            "AND (tp.commit_hash = ? OR (tp.commit_hash IS NULL AND o.producer_commit = ?))",
+            "AND (tp.producer_commit = ? OR "
+            "(tp.producer_commit IS NULL AND o.producer_commit = ?))",
             (since_iso, commit, commit),
         ).fetchone()
     else:
@@ -271,7 +281,9 @@ def summarize(
         logger.warning("opportunity_progress.signal_pending failed: %s", exc)
         signal_pending = {"count": 0, "oldest_created_at": None}
     try:
-        operator = _operator_buckets(db, producer_commit, since_iso)
+        operator = _operator_buckets(
+            db, producer_commit, policy_epoch_id, since_iso
+        )
     except Exception as exc:
         logger.warning("opportunity_progress.operator failed: %s", exc)
         operator = {}
