@@ -249,28 +249,106 @@ def authoritative_account_realized_loss(execution_mode: str) -> AccountLossSnaps
     )
 
 
+def _inline_reconcile_orphans(orphaned_ids: set, row_by_id: dict) -> None:
+    """Write missing position_closed entries for positions whose realized_pnl is already set.
+
+    Called when _paper_ledger_snapshot finds positions with realized_pnl in the
+    positions table but no corresponding entry in paper_account_events.  This
+    auto-repairs the gap inline — during the daily-loss check itself — instead of
+    waiting for the next paper_funding_settler run.
+
+    Root cause: realized_pnl was written to positions (e.g. a DB repair) without
+    calling settle_position_closed().  Prevention: always go through the normal
+    close path or explicitly call settle_position_closed() after any direct write.
+    """
+    from aletheia.portfolio.paper_account import settle_position_closed
+    from aletheia.files.jsonl import write_audit, write_error
+
+    for position_id in sorted(orphaned_ids):
+        row = row_by_id.get(position_id)
+        if row is None:
+            continue
+        realized_pnl = row.get("realized_pnl")
+        if realized_pnl is None:
+            continue
+        sym = str(row.get("symbol") or "?")
+        try:
+            settle_position_closed(position_id, float(realized_pnl))
+            msg = (
+                f"PAPER_LEDGER_INLINE_RECONCILE: wrote missing position_closed entry "
+                f"for {sym} position {position_id} (realized_pnl={realized_pnl}). "
+                f"Cause: positions.realized_pnl was set without calling "
+                f"settle_position_closed(). Always use the normal close path or call "
+                f"settle_position_closed() after any direct DB write."
+            )
+            logger.warning(msg)
+            write_audit({
+                "actor": "system",
+                "source": "account_loss",
+                "event_type": "paper_ledger_inline_reconcile",
+                "entity_type": "position",
+                "entity_id": position_id,
+                "message": msg,
+            })
+            write_error({"source": "account_loss", "message": msg})
+        except Exception as exc:
+            logger.warning(
+                "Inline reconcile failed for %s position %s: %s", sym, position_id, exc,
+            )
+
+
 def _paper_ledger_snapshot(rows: list[dict], today_start: str) -> AccountLossSnapshot:
     from aletheia.storage.sqlite import get_db
 
+    db = get_db()
+    _ledger_query = (
+        "SELECT position_id, amount_usdt FROM paper_account_events "
+        "WHERE action = 'position_closed' "
+        "AND datetime(created_at) >= datetime(?) "
+        "ORDER BY datetime(created_at) ASC, rowid ASC"
+    )
+
+    def _read_ledger():
+        return db.execute(_ledger_query, (today_start,)).fetchall()
+
+    def _build_actual(lrows):
+        result: dict[str, list[float]] = {}
+        for lr in lrows:
+            pid = str(lr["position_id"] or "")
+            result.setdefault(pid, []).append(float(lr["amount_usdt"]))
+        return result
+
     try:
-        ledger_rows = get_db().execute(
-            "SELECT position_id, amount_usdt FROM paper_account_events "
-            "WHERE action = 'position_closed' "
-            "AND datetime(created_at) >= datetime(?) "
-            "ORDER BY datetime(created_at) ASC, rowid ASC",
-            (today_start,),
-        ).fetchall()
+        ledger_rows = _read_ledger()
     except Exception:
         return _unavailable("paper_ledger_read_failed", event_count=len(rows))
 
     expected = {str(row["id"]): float(row["realized_pnl"]) for row in rows}
-    actual: dict[str, list[float]] = {}
-    for ledger_row in ledger_rows:
-        position_id = str(ledger_row["position_id"] or "")
-        actual.setdefault(position_id, []).append(float(ledger_row["amount_usdt"]))
+    actual = _build_actual(ledger_rows)
 
     if set(actual) != set(expected):
-        return _unavailable("paper_ledger_mismatch", event_count=len(rows))
+        orphaned = set(expected) - set(actual)  # realized_pnl set, ledger entry missing
+        phantom = set(actual) - set(expected)   # ledger entry exists, no matching position
+
+        if phantom:
+            # Ledger has entries we cannot explain — genuinely anomalous, block.
+            return _unavailable("paper_ledger_mismatch", event_count=len(rows))
+
+        if orphaned:
+            # Auto-repair: write the missing ledger entries right now, then recheck.
+            # This eliminates the window between the orphan being created and the
+            # next paper_funding_settler run.
+            row_by_id = {str(r["id"]): r for r in rows}
+            _inline_reconcile_orphans(orphaned, row_by_id)
+            try:
+                ledger_rows = _read_ledger()
+            except Exception:
+                return _unavailable("paper_ledger_read_failed", event_count=len(rows))
+            actual = _build_actual(ledger_rows)
+            if set(actual) != set(expected):
+                # Reconciliation didn't fully close the gap — block as before.
+                return _unavailable("paper_ledger_mismatch", event_count=len(rows))
+
     for position_id, amount in expected.items():
         ledger_amounts = actual.get(position_id, [])
         if len(ledger_amounts) != 1 or abs(ledger_amounts[0] - amount) > 1e-8:

@@ -243,3 +243,76 @@ def test_null_realized_pnl_combined_with_settled_returns_sum():
     assert snapshot.source == "paper_account_ledger_partial_estimate"
     # settled contribution = -3.0; conservative contribution = 0.0 (gain capped)
     assert abs(snapshot.realized_pnl_usdt - (-3.0)) < 1e-6
+
+
+def _orphaned_paper_close(position_id: str, realized_pnl: float) -> None:
+    """Insert a closed paper_internal position with realized_pnl set but NO ledger entry.
+
+    Simulates the condition produced by a direct DB repair (writing realized_pnl to
+    positions without going through settle_position_closed).
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    closed_at = datetime.now(timezone.utc).isoformat()
+    repo.insert_position(Position(
+        id=position_id,
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="short",
+        quantity=0.1,
+        entry_price=100.0,
+        current_price=100.0 - realized_pnl / 0.1,
+        execution_mode="paper_internal",
+        status="closed",
+        realized_pnl=realized_pnl,
+        funding_cost=0.0,
+        funding_source="local_simulation",
+        close_reason="max_hold",
+        close_category="neutral",
+        entry_fee=0.001,
+        exit_fee=0.001,
+        exit_price_source="exchange",
+        exit_fill_verified=True,
+        outcome_eligible=True,
+        outcome_exclusion_reason="",
+        outcome_semantics_version="oi-v1",
+        closed_at=closed_at,
+    ))
+    # Deliberately omit settle_position_closed() to simulate the orphan condition.
+
+
+def test_orphaned_ledger_entry_is_inline_reconciled_and_does_not_block():
+    """An orphaned position (realized_pnl set, no ledger entry) is auto-fixed inline.
+
+    The daily-loss check must not block paper trades when the only mismatch is a
+    missing position_closed event that can be deterministically reconstructed from
+    positions.realized_pnl.
+    """
+    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+    from aletheia.portfolio.paper_account import ensure_paper_account
+    from aletheia.storage import repositories as repo
+
+    ensure_paper_account()
+    _orphaned_paper_close("orphan-1", -5.0)
+
+    # Verify the orphan state: position exists with realized_pnl, no ledger entry.
+    db = repo.get_db()
+    ledger_before = db.execute(
+        "SELECT COUNT(*) FROM paper_account_events "
+        "WHERE action='position_closed' AND position_id='orphan-1'"
+    ).fetchone()[0]
+    assert ledger_before == 0, "Test setup error: ledger entry should be absent"
+
+    snapshot = authoritative_account_realized_loss("paper_internal")
+
+    # After the call, the ledger entry must have been written inline.
+    ledger_after = db.execute(
+        "SELECT COUNT(*) FROM paper_account_events "
+        "WHERE action='position_closed' AND position_id='orphan-1'"
+    ).fetchone()[0]
+    assert ledger_after == 1, "Inline reconcile should have written the ledger entry"
+
+    assert snapshot.available is True, f"Expected available, got: {snapshot.reason}"
+    assert snapshot.source == "paper_account_ledger"
+    assert abs(snapshot.realized_pnl_usdt - (-5.0)) < 1e-6
