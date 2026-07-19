@@ -30,7 +30,7 @@ _HORIZONS = {
     "24h": timedelta(hours=24),
 }
 _VALID_DIRECTIONS = {"long", "short"}
-_VALID_DECISIONS = {"passed", "rejected", "not_applicable", "error"}
+_VALID_DECISIONS = {"passed", "passed_with_penalty", "rejected", "not_applicable", "error"}
 _DROP_SNAPSHOT_VALUE = object()
 _SENSITIVE_KEY_PARTS = {
     "api_key", "authorization", "credential", "password", "prompt",

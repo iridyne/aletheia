@@ -736,27 +736,57 @@ def _persist_filter_evidence(
                                 "parameters": parameters,
                             }],
                         )
-                record_filter_decision_batch(
-                    run_id=run_id,
-                    candidate_kind="opportunity",
-                    filter_name="paper_trader_workset",
-                    stage="paper_trader_evaluation",
-                    candidate_facts=batch_facts,
-                    parameters={
-                        "scan_limit": 250,
-                        "selection_limit": 3,
-                        "rotation": "balanced_never_seen_and_oldest_retry",
-                    },
-                    evaluated_at=evaluated_at,
-                    raise_on_error=True,
-                )
-                mark_opportunities_ranked(
-                    [
-                        str(candidate.get("opportunity_id") or "")
-                        for candidate in candidates
-                    ],
-                    evaluated_at,
-                )
+                batch_already_recorded = False
+                try:
+                    record_filter_decision_batch(
+                        run_id=run_id,
+                        candidate_kind="opportunity",
+                        filter_name="paper_trader_workset",
+                        stage="paper_trader_evaluation",
+                        candidate_facts=batch_facts,
+                        parameters={
+                            "scan_limit": 250,
+                            "selection_limit": 3,
+                            "rotation": "balanced_never_seen_and_oldest_retry",
+                        },
+                        evaluated_at=evaluated_at,
+                        raise_on_error=True,
+                    )
+                except RuntimeError as exc:
+                    if str(exc) == "filter_evidence_batch_not_inserted":
+                        # Batch dedup_key = hash(run_id|...) — same run_id means
+                        # this evaluation was already committed by a prior call.
+                        # Individual records also exist (INSERT OR IGNORE). Treat
+                        # as idempotent success rather than aborting the SAVEPOINT.
+                        logger.warning(
+                            "paper trader filter batch already recorded run_id=%s "
+                            "— idempotent skip",
+                            run_id,
+                        )
+                        batch_already_recorded = True
+                    else:
+                        raise
+                if not batch_already_recorded:
+                    try:
+                        mark_opportunities_ranked(
+                            [
+                                str(candidate.get("opportunity_id") or "")
+                                for candidate in candidates
+                            ],
+                            evaluated_at,
+                        )
+                    except RuntimeError as exc:
+                        if str(exc).startswith("ranked_opportunity_set_changed:"):
+                            # Rotation cursor advance is best-effort; evidence
+                            # records are already written. Partial advance means
+                            # some opportunities will be re-presented next run.
+                            logger.warning(
+                                "paper trader ranked cursor partial: %s "
+                                "— evidence committed without full rotation advance",
+                                exc,
+                            )
+                        else:
+                            raise
             except Exception:
                 db.execute("ROLLBACK TO SAVEPOINT paper_filter_evidence")
                 db.execute("RELEASE SAVEPOINT paper_filter_evidence")
