@@ -551,6 +551,30 @@ class TestP3FlowContextBlock:
         result = _get_flow_context_block()
         assert result == ""
 
+    def test_flow_block_is_coinalyze_only_and_preserves_unavailable_delta(self):
+        from aletheia.agents.research_worker import _get_flow_context_block
+        from aletheia.storage.sqlite import get_db
+
+        db = get_db()
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        db.executemany(
+            "INSERT INTO open_interest_snapshots "
+            "(id, symbol, exchange, open_interest_usd, oi_change_1h_pct, observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                ("oi-coinalyze", "BTC/USDT", "coinalyze", 100_000_000, None, now),
+                ("oi-foreign", "DOGE/USDT", "hyperliquid", 900_000_000, 9.0, now),
+            ],
+        )
+        db.commit()
+
+        result = _get_flow_context_block()
+
+        assert "BTC/USDT" in result
+        assert "Delta1h=unavailable" in result
+        assert "DOGE/USDT" not in result
+        assert "Delta1h=0.0%" not in result
+
     def test_equity_context_block_references_yfinance(self):
         """_get_equity_context_block has yfinance injection logic (import path test).
 

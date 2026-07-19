@@ -162,6 +162,141 @@ async def test_reviewer_reviews_each_eligible_position_window_once(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_reviewer_receives_complete_exact_proposal_decision_context(monkeypatch):
+    from aletheia.agents import post_trade_reviewer
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.sqlite import get_db
+
+    position_id = _seed_position("eligible", position_id="review-exact-proposal")
+    position = repo.get_position(position_id)
+    proposal_id = position["proposal_id"]
+    long_reason = "complete reviewer reason " + ("z" * 900)
+    get_db().execute(
+        "UPDATE trade_proposals SET agent_rationale=? WHERE id=?",
+        ("complete proposal rationale", proposal_id),
+    )
+    repo.insert_pi_decision(PiDecision(
+        id="review-exact-pi",
+        action="trade",
+        proposal_id=proposal_id,
+        opportunity_id=position["opportunity_id"],
+        symbol=position["symbol"],
+        direction=position["direction"],
+        market_type=position["market_type"],
+        reasoning=long_reason,
+        bear_case="complete reviewer bear case",
+        key_assumptions='["reviewer assumption"]',
+        evidence_manifest_json='{"version":"evidence-v1","ids":["ev-review"]}',
+        learning_manifest_json='{"version":"learning-v1","ids":["learn-review"]}',
+    ))
+    prompts = []
+
+    async def fake_llm(*args, **kwargs):
+        prompts.append(kwargs["user"])
+        return ("Review based only on complete persisted context.", None)
+
+    monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *_: True)
+    monkeypatch.setattr(post_trade_reviewer, "llm_complete", fake_llm)
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], []))
+
+    await post_trade_reviewer.run_post_trade_reviewer(permission_mode="Observe")
+
+    [prompt] = prompts
+    assert long_reason in prompt
+    assert "complete reviewer bear case" in prompt
+    assert "reviewer assumption" in prompt
+    assert "complete proposal rationale" in prompt
+    assert "ev-review" in prompt
+    assert "learn-review" in prompt
+
+
+@pytest.mark.anyio
+async def test_reviewer_budget_omits_whole_positions_without_truncating_selected(
+    monkeypatch,
+):
+    from aletheia.agents import post_trade_reviewer
+    from aletheia.storage.models import PiDecision
+
+    oversized_id = _seed_position(
+        "eligible", position_id="review-budget-oversized", strategy_id="strategy-budget"
+    )
+    selected_id = _seed_position(
+        "eligible", position_id="review-budget-selected", strategy_id="strategy-budget"
+    )
+    oversized = repo.get_position(oversized_id)
+    selected = repo.get_position(selected_id)
+    complete_entry_summary = (
+        "ENTRY-CONTEXT-START " + ("context " * 80) + "ENTRY-CONTEXT-END"
+    )
+    from aletheia.storage.sqlite import get_db
+    get_db().execute(
+        "UPDATE positions SET entry_market_summary=? WHERE id=?",
+        (complete_entry_summary, selected_id),
+    )
+    repo.insert_pi_decision(PiDecision(
+        id="review-budget-pi-oversized",
+        action="trade",
+        proposal_id=oversized["proposal_id"],
+        opportunity_id=oversized["opportunity_id"],
+        symbol=oversized["symbol"],
+        direction=oversized["direction"],
+        market_type=oversized["market_type"],
+        reasoning="OVERSIZED-START " + ("x" * 5000) + " OVERSIZED-END",
+    ))
+    complete_selected_reason = (
+        "SELECTED-COMPLETE-START " + ("y" * 300) + " SELECTED-COMPLETE-END"
+    )
+    repo.insert_pi_decision(PiDecision(
+        id="review-budget-pi-selected",
+        action="trade",
+        proposal_id=selected["proposal_id"],
+        opportunity_id=selected["opportunity_id"],
+        symbol=selected["symbol"],
+        direction=selected["direction"],
+        market_type=selected["market_type"],
+        reasoning=complete_selected_reason,
+    ))
+    monkeypatch.setattr(post_trade_reviewer, "_REVIEW_INPUT_BUDGET_CHARS", 2000)
+    prompts = []
+
+    async def fake_llm(*args, **kwargs):
+        prompts.append(kwargs["user"])
+        return (
+            f"Bounded review {len(prompts)} based on complete selected records and "
+            "their exact persisted decision evidence, without inventing omitted facts.",
+            None,
+        )
+
+    monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *_: True)
+    monkeypatch.setattr(post_trade_reviewer, "llm_complete", fake_llm)
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], []))
+
+    await post_trade_reviewer.run_post_trade_reviewer(permission_mode="Observe")
+
+    [prompt] = prompts
+    assert complete_selected_reason in prompt
+    assert "SELECTED-COMPLETE-END" in prompt
+    assert complete_entry_summary in prompt
+    assert "ENTRY-CONTEXT-END" in prompt
+    assert "OVERSIZED-START" not in prompt
+    assert "OVERSIZED-END" not in prompt
+    assert "Omitted complete position records: 1" in prompt
+    assert len(prompt) <= post_trade_reviewer._REVIEW_INPUT_BUDGET_CHARS
+    [first_review] = repo.list_knowledge_items(item_type="post_trade_review")
+    assert f"position:{selected_id}" in first_review["tags"]
+    assert f"position:{oversized_id}" not in first_review["tags"]
+
+    monkeypatch.setattr(post_trade_reviewer, "_REVIEW_INPUT_BUDGET_CHARS", 10_000)
+    await post_trade_reviewer.run_post_trade_reviewer(permission_mode="Observe")
+
+    assert len(prompts) == 2
+    assert "OVERSIZED-START" in prompts[1]
+    assert "OVERSIZED-END" in prompts[1]
+    reviews = repo.list_knowledge_items(item_type="post_trade_review")
+    assert any(f"position:{oversized_id}" in review["tags"] for review in reviews)
+
+
+@pytest.mark.anyio
 async def test_reviewer_gives_each_strategy_a_fair_outcome_window(monkeypatch):
     from aletheia.agents import post_trade_reviewer
 

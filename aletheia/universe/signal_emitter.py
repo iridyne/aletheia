@@ -27,6 +27,7 @@ from aletheia.trading.instruments import instrument_market_to_db_market
 from aletheia.analytics.factor_feedback import lookup_factor_signal
 from aletheia.analytics.filter_evidence import atomic_opportunity_evidence
 from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
+from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 
 logger = logging.getLogger("aletheia.universe.signal_emitter")
 
@@ -42,6 +43,34 @@ _HIGH_CONF_THRESHOLD = 60.0
 # Regime bias threshold: if the direction's bias < this value, skip signal
 # unless score compensates (higher score can override weak regime alignment).
 _REGIME_BIAS_THRESHOLD = 0.30
+_OPPORTUNITY_EVIDENCE_VERSION = "opportunity-information-integrity-v1"
+
+
+def _trigger_evidence_manifest(
+    *, member: dict, feature: dict, snapshot_id: str, direction: str,
+) -> dict:
+    """Capture the bounded scanner trigger before any Observer enrichment."""
+    reasons = [str(reason)[:160] for reason in (feature.get("reasons") or [])[:5]]
+    return {
+        "version": _OPPORTUNITY_EVIDENCE_VERSION,
+        "policy_epoch": POLICY_EPOCH_LABEL,
+        "t0": {
+            "status": "available",
+            "trigger_type": "universe_scanner",
+            "universe_snapshot_id": snapshot_id,
+            "universe_member_id": member.get("id"),
+            "feature_snapshot_id": feature.get("feature_snapshot_id"),
+            "symbol": member.get("symbol"),
+            "market_type": member.get("market_type"),
+            "scanner_family": member.get("scanner_family"),
+            "direction": direction,
+            "total_score": member.get("total_score"),
+            "entry_price_usd": member.get("entry_price_usd"),
+            "valid_until": member.get("expires_at"),
+            "reasons": reasons,
+        },
+        "t1": {"status": "unavailable"},
+    }
 
 
 class EmissionEvidenceError(RuntimeError):
@@ -152,6 +181,11 @@ def emit_deterministic_opportunities(
     Returns:
         Number of opportunities created.
     """
+    from aletheia.learning.opportunity_information_policy import (
+        ensure_opportunity_information_policy_epoch,
+    )
+
+    ensure_opportunity_information_policy_epoch()
     # Key by (symbol, market_type): the same symbol can appear as both spot and
     # perp in one refresh. Keying by symbol alone let one overwrite the other, so
     # an emitted opportunity could inherit funding/direction from the wrong market.
@@ -335,6 +369,13 @@ def emit_deterministic_opportunities(
             )
             continue
 
+        # Feature retention may reuse a <30-minute row during ordinary refreshes.
+        # A newly emitted Opportunity is a new evidence boundary, so its T0 must
+        # reference the exact calculation that selected this member.
+        from aletheia.universe.features import persist_feature_snapshot_for_emission
+
+        persist_feature_snapshot_for_emission(feat)
+
         confidence = "high" if total_score >= _HIGH_CONF_THRESHOLD else "medium"
         # Proxy derivatives signals (RSI fallback, no funding/OI data) are weaker —
         # cap at medium to avoid triggering strategy_designer high-conf events.
@@ -368,6 +409,12 @@ def emit_deterministic_opportunities(
             metadata=json.dumps({
                 "learning_candidate_key": m.get("learning_candidate_key"),
                 "learning_exposure_id": m.get("learning_exposure_id"),
+                "evidence_manifest": _trigger_evidence_manifest(
+                    member=m,
+                    feature=feat,
+                    snapshot_id=snapshot_id,
+                    direction=direction,
+                ),
             }, sort_keys=True),
             execution_eligible=_exec_eligible,
             universe_snapshot_id=snapshot_id,

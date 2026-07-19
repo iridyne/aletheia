@@ -1142,7 +1142,7 @@ def test_decision_evidence_builder_carries_operator_rationale(tmp_path, monkeypa
             "fact_refs": ["technical.return_1h", "technical.return_4h"],
         }],
     }
-    assert manifest["decision_evidence_version"] == "operator-candidate-v2"
+    assert manifest["decision_evidence_version"] == "operator-candidate-v3"
     assert manifest["source_chain"]["opportunity_id"] == "opp-manifest-v2"
     assert manifest["source_chain"]["universe_snapshot_id"] == "universe-snapshot-1"
     assert manifest["source_chain"]["universe_member_id"] == "universe-member-1"

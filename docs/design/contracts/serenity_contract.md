@@ -141,12 +141,25 @@ Serenity pick 必须可追溯到来源,防止 opportunity_id 静默 None(历史�
 - `PiDecision.signal_source` 默认 `'market_observer'`,additive 迁移保证旧库有列 (SA-S01/S03)。
 - `_attach_opportunity_context` 回填规则: 仅匹配 Serenity → `opportunity_id=serenity_id` + `signal_source='serenity'`(无 silent None,SA-I01);**同时匹配 market_observer 与 Serenity 时 market_observer 优先**(SA-I02)。
 - pending_signal 按 symbol+direction 直配优先于可能被 limit=5 截断的 layer3(SA-I03/S05);`record_decision` 持久化 `signal_source` 到 `pi_decisions`(SA-C01)。
+- exact Serenity pending carrier 必须按 `opportunity_id` 独立 hydrate thesis、score、
+  assessed tier、researchability 与 evidence IDs；全局 active top-five 只是展示窗口，
+  不能决定待判断候选是否拥有研究事实。证据身份进入 material fingerprint，补证后
+  必须重新开放 defer 判断。
 
 ---
 
 ## §7 晋升链 promote → PI 队列 (Option A, owner 定 2026-06-27)
 
-**不再写死 draft StrategyRecord**(与 Position C 呼应)。`promote_serenity_theme`(routes/data.py)函数体**不含** `StrategyRecord` / `state='draft'`(SP-S02);改为向 PI 队列写 `signal_pending` 的 `PiDecision`(`signal_source='serenity'`,`action_intent=pi_evaluate`)并 `notify_pi_daemon`(SP-S03)。整链端到端: promote 一个主题 → 每个活跃 opportunity 翻 `pi_evaluate` + 写 signal_pending PiDecision + 主题标 `promoted`,重复 promote 返回 400(SP-B01/B02)。
+**不再写死 draft StrategyRecord**(与 Position C 呼应)。`promote_serenity_theme`(routes/data.py)函数体**不含** `StrategyRecord` / `state='draft'`(SP-S02);改为向 PI 队列写 `signal_pending` 的 `PiDecision`(`signal_source='serenity'`,`action_intent=pi_evaluate`)并 `notify_pi_daemon`(SP-S03)。自动晋升只认达到门槛的 child；同 theme 仍有 active child 未持有 exact carrier 时 theme 保持 active，后续研究/补证可重试完整 active sibling 集且不得重复 carrier。所有 active child 都有 carrier 后才标 `promoted`。新增 evidence 与 active sibling 的 assessed tier/researchability 重评必须在同一短事务；终态 sibling 不改写。
+
+自动晋升的当前 score、risk gates 与 threshold 必须在创建 carrier 的同一
+`BEGIN IMMEDIATE` 内重验；手工晋升不应用 score 门槛。一个 exact、唯一的 final
+`trade`/`skip` 与 pending carrier 同样构成已决载体，即使 transient pending 已被
+retention 删除也不得重新入队。晋升计数和 wake 只统计本次新建 carrier；幂等重试为 0。
+
+System Operator 的 exact terminal Serenity `skip` 与 final PiDecision/filter evidence
+同事务推进 source `active→reviewed`，避免已消费 carrier 继续显示 active。`trade` 不在
+该处终结，仍由真实持仓关闭路径推进 `traded_closed`。
 
 **D5 自动晋升开关**: `SerenityConfig.auto_promote` 默认 **False**,`min_score_for_pi ∈ [0,100]`;经 `/api/settings/serenity` 暴露 + bounds-check(SP-S01/S04/B03),`api_reference.md` 登记该路由(SP-S05)。auto_promote 打开时 research_worker 用 `score_serenity_opportunity` 打分后自动入队,审计标签 `'serenity_auto_promote'`(SP-S06)。
 

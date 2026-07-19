@@ -227,7 +227,9 @@ def test_debate_uses_candidate_market_type_not_same_symbol_other_instrument():
     assert "RSI=30.0" not in prompt
 
 
-def test_runtime_manifest_names_exact_fresh_rows(tmp_path, monkeypatch):
+def test_runtime_manifest_does_not_reconstruct_missing_history_from_latest_rows(
+    tmp_path, monkeypatch,
+):
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -265,9 +267,11 @@ def test_runtime_manifest_names_exact_fresh_rows(tmp_path, monkeypatch):
     )
 
     assert manifest["technical_snapshot"]["id"] == "feat-1"
-    assert manifest["hyperliquid"]["funding_id"] == "hl-fr"
-    assert manifest["hyperliquid"]["open_interest_id"] == "hl-oi"
-    assert manifest["position_x"]["status"] == "not_configured"
+    assert manifest["hyperliquid"]["funding_id"] is None
+    assert manifest["hyperliquid"]["open_interest_id"] is None
+    assert manifest["opportunity_t0"] == {"status": "unavailable"}
+    assert manifest["opportunity_t1"] == {"status": "unavailable"}
+    assert manifest["position_x"]["status"] == "unavailable"
 
 
 def test_owner_aggregate_import_seeds_observation_only_shadow_outcomes(tmp_path, monkeypatch):

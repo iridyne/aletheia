@@ -216,3 +216,84 @@ def test_realized_pnl_pct_calculation():
     row = rows[0]
     # pnl_pct = 5.0 / (50000 * 0.01) * 100 = 1.0%
     assert row["realized_pnl_pct"] == 1.0
+
+
+def test_attribution_uses_exact_proposal_decision_and_preserves_complete_context():
+    """P1-06: no symbol/time guess and no truncation of persisted rationale."""
+    long_reason = "complete PiDecision reason " + ("r" * 900)
+    proposal_reason = "complete Proposal rationale " + ("p" * 700)
+    fake_position = {
+        "id": "pos-exact", "symbol": "BTC/USDT", "market_type": "spot",
+        "direction": "long", "execution_mode": "paper_internal",
+        "strategy_id": None, "opportunity_id": "opp-exact",
+        "proposal_id": "prop-exact", "order_id": "ord-exact",
+        "entry_price": "100", "current_price": "102", "quantity": "1",
+        "realized_pnl": "2", "status": "closed",
+    }
+    proposal = {
+        "id": "prop-exact", "opportunity_id": "opp-exact",
+        "symbol": "BTC/USDT", "direction": "long", "market_type": "spot",
+        "agent_rationale": proposal_reason,
+    }
+    decision = {
+        "id": "pi-exact", "proposal_id": "prop-exact",
+        "opportunity_id": "opp-exact", "symbol": "BTC/USDT",
+        "direction": "long", "market_type": "spot", "reasoning": long_reason,
+        "bear_case": "complete bear case", "key_assumptions": '["assumption one"]',
+        "evidence_manifest_json": '{"version":"evidence-v1","sources":["e1"]}',
+        "learning_manifest_json": '{"version":"learning-v1","exposure_id":"x1"}',
+    }
+
+    with patch("aletheia.analytics.trade_attribution.eligible_strategy_outcomes", return_value=[fake_position]), \
+            patch("aletheia.analytics.trade_attribution.repo") as mock_repo:
+        mock_repo.get_trade_proposal.return_value = proposal
+        mock_repo.get_order.return_value = {
+            "id": "ord-exact", "proposal_id": "prop-exact", "risk_decision_id": None,
+        }
+        mock_repo.get_opportunity.return_value = {
+            "id": "opp-exact", "source_agent": "market_observer",
+            "scanner_family": "momentum", "status": "reviewed",
+        }
+        mock_repo.get_pi_decision_for_proposal.return_value = decision
+
+        [row] = build_trade_attribution_rows(limit=10)
+
+    mock_repo.get_pi_decision_for_proposal.assert_called_once_with("prop-exact")
+    assert row["pi_decision_reasoning"] == long_reason
+    assert row["pi_decision_bear_case"] == "complete bear case"
+    assert row["pi_decision_assumptions"] == ["assumption one"]
+    assert row["proposal_agent_rationale"] == proposal_reason
+    assert row["decision_evidence_manifest"]["sources"] == ["e1"]
+    assert row["decision_learning_manifest"]["exposure_id"] == "x1"
+
+
+def test_attribution_labels_legacy_decision_context_not_recorded():
+    fake_position = {
+        "id": "pos-legacy", "symbol": "ETH/USDT", "market_type": "spot",
+        "direction": "short", "execution_mode": "paper_internal",
+        "strategy_id": None, "opportunity_id": "opp-legacy",
+        "proposal_id": "prop-legacy", "order_id": "ord-legacy",
+        "entry_price": "100", "current_price": "99", "quantity": "1",
+        "realized_pnl": "1", "status": "closed",
+    }
+    with patch("aletheia.analytics.trade_attribution.eligible_strategy_outcomes", return_value=[fake_position]), \
+            patch("aletheia.analytics.trade_attribution.repo") as mock_repo:
+        mock_repo.get_trade_proposal.return_value = {
+            "id": "prop-legacy", "opportunity_id": "opp-legacy", "agent_rationale": None,
+        }
+        mock_repo.get_order.return_value = {
+            "id": "ord-legacy", "proposal_id": "prop-legacy", "risk_decision_id": None,
+        }
+        mock_repo.get_opportunity.return_value = {
+            "id": "opp-legacy", "source_agent": "market_observer", "status": "reviewed",
+        }
+        mock_repo.get_pi_decision_for_proposal.return_value = None
+
+        [row] = build_trade_attribution_rows(limit=10)
+
+    for field in (
+        "pi_decision_reasoning", "pi_decision_bear_case", "pi_decision_assumptions",
+        "proposal_agent_rationale", "decision_evidence_manifest",
+        "decision_learning_manifest",
+    ):
+        assert row[field] == "not recorded"

@@ -9,6 +9,7 @@ opportunity.
 import asyncio
 import json
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -73,6 +74,7 @@ class _SymbolPrefetch:
     funding_rate_val: float | None
     open_interest_val: float | None
     oi_delta_val: float | None
+    rendered_sources: dict[str, list[dict]] = field(default_factory=dict)
     failed: bool = False   # True if exchange context fetch raised
 
 
@@ -278,59 +280,55 @@ def _infer_scanner_family(rationale: str, observations: list[str]) -> str | None
 
 _PREFILTER_RSI_DEVIATION = 12.0
 _PREFILTER_ATR_PCT = 0.8
-_PREFILTER_KEYWORDS = (
-    "breakout", "breakdown", "oversold", "overbought", "squeeze",
-    "divergence", "spike",
-)
 
 
-def _evaluate_pre_filter(context_str: str) -> dict:
-    """Return the exact point-in-time evidence behind the Observer pre-filter."""
-    import re
-
+def _evaluate_pre_filter(context_debug: dict) -> dict:
+    """Evaluate only structured 1h indicators returned by build_market_context."""
     rsi_value: float | None = None
     atr_pct: float | None = None
     matched_rules: list[str] = []
 
-    rsi_match = re.search(r'RSI[^|]*\|[^|]*\|[^|]*?(\d+\.?\d*)', context_str, re.IGNORECASE)
-    if rsi_match:
+    symbols = context_debug.get("symbols") if isinstance(context_debug, dict) else None
+    symbol_debug = next(iter(symbols.values()), {}) if isinstance(symbols, dict) else {}
+    one_hour = symbol_debug.get("1h") if isinstance(symbol_debug, dict) else None
+    if isinstance(one_hour, dict):
         try:
-            rsi_value = float(rsi_match.group(1))
-            if abs(rsi_value - 50) > _PREFILTER_RSI_DEVIATION:
+            raw_rsi = one_hour.get("rsi_14")
+            rsi_value = float(raw_rsi) if raw_rsi is not None else None
+            if rsi_value is not None and not math.isfinite(rsi_value):
+                rsi_value = None
+            if (
+                rsi_value is not None
+                and abs(rsi_value - 50) > _PREFILTER_RSI_DEVIATION
+            ):
                 matched_rules.append("rsi_deviation")
-        except ValueError:
+        except (TypeError, ValueError):
             rsi_value = None
-
-    atr_match = re.search(r'ATR[^|]*\|[^|]*?(\d+\.?\d+)%', context_str, re.IGNORECASE)
-    if atr_match:
         try:
-            atr_pct = float(atr_match.group(1))
-            if atr_pct > _PREFILTER_ATR_PCT:
+            raw_atr_pct = one_hour.get("atr_pct")
+            atr_pct = float(raw_atr_pct) if raw_atr_pct is not None else None
+            if atr_pct is not None and not math.isfinite(atr_pct):
+                atr_pct = None
+            if atr_pct is not None and atr_pct > _PREFILTER_ATR_PCT:
                 matched_rules.append("atr_pct")
-        except ValueError:
+        except (TypeError, ValueError):
             atr_pct = None
-
-    context_lower = context_str.lower()
-    keyword_hits = [kw for kw in _PREFILTER_KEYWORDS if kw in context_lower]
-    if keyword_hits:
-        matched_rules.append("keyword")
 
     return {
         "passed": bool(matched_rules),
         "rsi": rsi_value,
         "atr_pct": atr_pct,
-        "keyword_hits": keyword_hits,
+        "keyword_hits": [],
         "matched_rules": matched_rules,
     }
 
 
-def _has_sufficient_signal(context_str: str) -> bool:
-    """Deterministic pre-filter: returns True if the context contains actionable signals.
+def _has_sufficient_signal(context_debug: dict) -> bool:
+    """Return whether structured 1h RSI or ATR% crosses its signal threshold.
 
-    Checks RSI deviation from 50, ATR%, and momentum keywords.
     Used to skip the LLM call for calm markets (P1-7 — saves wall-clock budget).
     """
-    return bool(_evaluate_pre_filter(context_str)["passed"])
+    return bool(_evaluate_pre_filter(context_debug)["passed"])
 
 
 def _signal_score(pf: dict) -> float:
@@ -340,8 +338,6 @@ def _signal_score(pf: dict) -> float:
         scores.append(abs(pf["rsi"] - 50) / _PREFILTER_RSI_DEVIATION)
     if pf.get("atr_pct") is not None:
         scores.append(pf["atr_pct"] / _PREFILTER_ATR_PCT)
-    if pf.get("keyword_hits"):
-        scores.append(1.0)
     return max(scores, default=0.0)
 
 
@@ -354,6 +350,15 @@ def _prediction_market_signal_lines(
     cutoff_iso: str,
     limit: int = 3,
 ) -> list[str]:
+    lines, _sources = _prediction_market_signal_context(symbol, cutoff_iso, limit)
+    return lines
+
+
+def _prediction_market_signal_context(
+    symbol: str,
+    cutoff_iso: str,
+    limit: int = 3,
+) -> tuple[list[str], list[dict]]:
     """Return fresh prediction-market lines for a symbol.
 
     Prediction markets are observation-only catalysts. Stale rows are worse than
@@ -392,6 +397,7 @@ def _prediction_market_signal_lines(
     )
 
     lines: list[str] = []
+    sources: list[dict] = []
     for r in pred_rows:
         q = (r.get("question") or "")[:80]
         yes = (r.get("yes_probability") or 0) * 100
@@ -402,7 +408,143 @@ def _prediction_market_signal_lines(
             f"- {q}: YES={yes:.0f}% (Delta24h {delta:+.1f}pp, "
             f"vol=${vol:,.0f}, updated={updated})"
         )
-    return lines
+        sources.append({
+            "id": r.get("id"),
+            "updated_at": r.get("updated_at"),
+            "event_id": r.get("event_id"),
+        })
+    return lines, sources
+
+
+_T1_SOURCE_KINDS = (
+    "news", "macro", "onchain", "prediction", "hyperliquid", "position_x",
+)
+
+
+def _empty_rendered_sources() -> dict[str, list[dict]]:
+    return {kind: [] for kind in _T1_SOURCE_KINDS}
+
+
+def _bounded_rendered_sources(sources: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    limits = {
+        "news": 3,
+        "macro": 1,
+        "onchain": 3,
+        "prediction": 3,
+        "hyperliquid": 3,
+        "position_x": 1,
+    }
+    bounded: dict[str, list[dict]] = {}
+    for kind in _T1_SOURCE_KINDS:
+        bounded[kind] = []
+        for item in (sources.get(kind) or [])[:limits[kind]]:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            bounded[kind].append({
+                key: value[:200] if isinstance(value, str) else value
+                for key, value in item.items()
+                if value is not None
+            })
+    return bounded
+
+
+def _bounded_t0(value: dict) -> dict:
+    allowed = (
+        "status", "trigger_type", "run_id", "universe_snapshot_id",
+        "universe_member_id", "feature_snapshot_id", "pre_filter_evidence_id",
+        "symbol", "market_type", "scanner_family", "direction", "valid_until",
+        "total_score", "entry_price_usd", "rsi", "atr_pct",
+    )
+    bounded = {
+        key: item[:160] if isinstance(item, str) else item
+        for key in allowed
+        if (item := value.get(key)) is not None
+    }
+    for key in ("reasons", "matched_rules"):
+        if isinstance(value.get(key), list):
+            bounded[key] = [str(item)[:160] for item in value[key][:5]]
+    return bounded
+
+
+def _macro_source_identity(macro: dict | None) -> dict | None:
+    observed_at = (macro or {}).get("observed_at")
+    if not observed_at:
+        return None
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT id, observed_at FROM macro_snapshots WHERE observed_at = ? "
+            "ORDER BY rowid DESC LIMIT 1",
+            (observed_at,),
+        ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def _rendered_onchain_sources(rows: list[dict]) -> list[dict]:
+    fields = {
+        "stablecoin_mcap": "total_usd",
+        "chain_tvl": "total_usd",
+        "dex_volume": "total_usd",
+    }
+    newest: dict[str, dict] = {}
+    for row in rows:
+        metric_type = row.get("metric_type")
+        if metric_type in fields:
+            newest.setdefault(metric_type, row)
+    return [
+        {
+            "id": row.get("id"),
+            "metric_type": metric_type,
+            "observed_at": row.get("observed_at"),
+            "source": row.get("source"),
+        }
+        for metric_type, row in newest.items()
+        if row.get(fields[metric_type]) is not None
+    ]
+
+
+def _opportunity_evidence_manifest(
+    *,
+    metadata: dict,
+    rendered_sources: dict[str, list[dict]],
+    run_id: str | None,
+    universe_snapshot_id: str | None,
+    universe_member_id: str | None,
+    scanner_family: str | None,
+    pre_filter: dict,
+    pre_filter_evidence_id: str | None = None,
+) -> dict:
+    from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
+
+    existing = metadata.get("evidence_manifest")
+    existing_t0 = existing.get("t0") if isinstance(existing, dict) else None
+    t0 = _bounded_t0(existing_t0) if (
+        isinstance(existing_t0, dict)
+        and existing.get("version") == "opportunity-information-integrity-v1"
+    ) else {
+        "status": "available",
+        "trigger_type": "observer_pre_filter",
+        "run_id": run_id,
+        "pre_filter_evidence_id": pre_filter_evidence_id,
+        "universe_snapshot_id": universe_snapshot_id,
+        "universe_member_id": universe_member_id,
+        "scanner_family": scanner_family,
+        "matched_rules": [str(rule)[:80] for rule in (pre_filter.get("matched_rules") or [])[:4]],
+        "rsi": pre_filter.get("rsi"),
+        "atr_pct": pre_filter.get("atr_pct"),
+    }
+    return {
+        "version": "opportunity-information-integrity-v1",
+        "policy_epoch": POLICY_EPOCH_LABEL,
+        "t0": t0,
+        "t1": {
+            "status": "available",
+            "sources": _bounded_rendered_sources(rendered_sources),
+        },
+    }
 
 
 def _batch_prefetch_db(symbols: list[str]) -> _DbCache:
@@ -464,7 +606,9 @@ async def _prefetch_symbol(
     funding_rate_val: float | None = None
     open_interest_val: float | None = None
     oi_delta_val: float | None = None
+    rendered_sources = _empty_rendered_sources()
     try:
+        enrichment_sources = _empty_rendered_sources()
         from aletheia.data.context_builder import (
             build_market_context_from_db, render_enriched_context_md,
         )
@@ -486,17 +630,31 @@ async def _prefetch_symbol(
             MacroSnapshot(**enriched_snapshot.macro)
             if enriched_snapshot.macro else None
         )
+        macro_source = _macro_source_identity(enriched_snapshot.macro)
+        if macro is not None and macro_source:
+            enrichment_sources["macro"].append(macro_source)
+        enrichment_sources["onchain"] = _rendered_onchain_sources(
+            db_cache.onchain_rows
+        )
         lv = leverage.get(symbol)
         if lv:
             funding_rate_val = lv.funding_rate
             open_interest_val = lv.open_interest_usd
             oi_delta_val = lv.oi_delta_1h_pct
 
-        # Cross-venue funding from batch cache (avoids 2 per-symbol DB round-trips)
-        hl_fr = _fresh_row(db_cache.funding_hl.get(symbol), "cross_venue_funding")
-        hl_pred = _fresh_row(db_cache.funding_hl_pred.get(symbol), "cross_venue_funding")
-        hl_oi = _fresh_row(
-            db_cache.open_interest_hl.get(symbol), "cross_venue_open_interest"
+        is_derivatives_market = market_type in {"perp", "swap", "futures", "usdt_futures"}
+        # Cross-venue perp evidence is never attached to a spot instrument.
+        hl_fr = (
+            _fresh_row(db_cache.funding_hl.get(symbol), "cross_venue_funding")
+            if is_derivatives_market else None
+        )
+        hl_pred = (
+            _fresh_row(db_cache.funding_hl_pred.get(symbol), "cross_venue_funding")
+            if is_derivatives_market else None
+        )
+        hl_oi = (
+            _fresh_row(db_cache.open_interest_hl.get(symbol), "cross_venue_open_interest")
+            if is_derivatives_market else None
         )
         xvenue_funding: dict = {}
         if hl_fr or hl_pred or hl_oi:
@@ -512,10 +670,44 @@ async def _prefetch_symbol(
                     hl_fr.get("observed_at") if hl_fr else None
                 ),
             }
+        if hl_fr and hl_fr.get("funding_rate_annualized") is not None:
+            enrichment_sources["hyperliquid"].append({
+                "id": hl_fr.get("id"),
+                "kind": "funding",
+                "observed_at": hl_fr.get("observed_at"),
+                "exchange": hl_fr.get("exchange"),
+            })
+        if (
+            hl_pred
+            and hl_pred.get("funding_rate_annualized") is not None
+            and hl_fr
+            and hl_fr.get("funding_rate_annualized") is not None
+        ):
+            enrichment_sources["hyperliquid"].append({
+                "id": hl_pred.get("id"),
+                "kind": "predicted_funding",
+                "observed_at": hl_pred.get("observed_at"),
+                "exchange": hl_pred.get("exchange"),
+            })
+        if hl_oi and hl_oi.get("open_interest_usd") is not None:
+            enrichment_sources["hyperliquid"].append({
+                "id": hl_oi.get("id"),
+                "kind": "open_interest",
+                "observed_at": hl_oi.get("observed_at"),
+                "exchange": hl_oi.get("exchange"),
+            })
 
         # Perp structure from batch cache
-        ps = db_cache.perp_structures.get(symbol)
+        ps = db_cache.perp_structures.get(symbol) if is_derivatives_market else None
         perp_structure = {symbol: ps} if _is_perp_structure_fresh(ps) else {}
+        if perp_structure:
+            enrichment_sources["position_x"].append({
+                "id": ps.get("id"),
+                "source": ps.get("source"),
+                "source_ref": ps.get("source_ref"),
+                "source_hash": ps.get("source_hash"),
+                "as_of_time": ps.get("as_of_time"),
+            })
 
         enriched = render_enriched_context_md(
             [symbol], tradability, leverage, macro,
@@ -525,15 +717,20 @@ async def _prefetch_symbol(
         )
         if enriched:
             context = context + "\n\n" + enriched
+            for kind in ("macro", "onchain", "hyperliquid", "position_x"):
+                rendered_sources[kind] = enrichment_sources[kind]
     except Exception as _e:
         logger.debug("[MO prefetch] %s: enriched context skipped: %s", symbol, _e)
 
     # Phase C: prediction market signals (per-symbol query, fast)
     if prediction_context_enabled and prediction_context_cutoff:
         try:
-            pred_lines = _prediction_market_signal_lines(symbol, prediction_context_cutoff)
+            pred_lines, prediction_sources = _prediction_market_signal_context(
+                symbol, prediction_context_cutoff
+            )
             if pred_lines:
                 context += "\n\n## Prediction Market Signals\n" + "\n".join(pred_lines)
+                rendered_sources["prediction"] = prediction_sources
         except Exception:
             pass
 
@@ -545,9 +742,17 @@ async def _prefetch_symbol(
             for r in news_rows
         ]
         context += "\n\n## Recent News\n" + "\n".join(news_lines)
+        rendered_sources["news"] = [
+            {
+                "id": row.get("id"),
+                "published_at": row.get("published_at"),
+                "source": row.get("source"),
+            }
+            for row in news_rows
+        ]
 
     # Phase E: pre-filter scoring
-    pf = _evaluate_pre_filter(context)
+    pf = _evaluate_pre_filter(ctx_debug)
     score = _signal_score(pf)
     logger.debug("[MO prefetch] %s: done in %.1fs, signal_score=%.2f, passed=%s",
                  symbol, _time.monotonic() - _t_start, score, pf["passed"])
@@ -560,6 +765,7 @@ async def _prefetch_symbol(
         funding_rate_val=funding_rate_val,
         open_interest_val=open_interest_val,
         oi_delta_val=oi_delta_val,
+        rendered_sources=_bounded_rendered_sources(rendered_sources),
         failed=False,
     )
 
@@ -605,15 +811,18 @@ async def _analyze_symbol(
     funding_rate_val: float | None = None
     open_interest_val: float | None = None
     oi_delta_val: float | None = None
+    rendered_sources = _empty_rendered_sources()
 
     if _prefetched is not None:
         # Fast path: context already built by _prefetch_symbol.
         if _prefetched.failed:
             return None, f"market_context_fallback:{symbol}:prefetch_failed"
         context = _prefetched.context_str
+        ctx_debug = _prefetched.debug
         funding_rate_val = _prefetched.funding_rate_val
         open_interest_val = _prefetched.open_interest_val
         oi_delta_val = _prefetched.oi_delta_val
+        rendered_sources = _prefetched.rendered_sources
         log_tool(run_id, "build_market_context", "observe", True,
                  output=f"{symbol} prefetched=True fallback={_prefetched.debug.get('fallback')}")
     else:
@@ -647,6 +856,7 @@ async def _analyze_symbol(
         # Append enriched microstructure/derivatives/macro context if available.
         _t0 = _time.monotonic()
         try:
+            enrichment_sources = _empty_rendered_sources()
             from aletheia.data.context_builder import (
                 build_market_context_from_db,
                 render_enriched_context_md,
@@ -660,7 +870,10 @@ async def _analyze_symbol(
             enriched_snapshot = build_market_context_from_db(
                 [symbol], exchange=venue or "", market_type=market_type,
             )
-            ps = repo.latest_perp_structure(symbol)
+            is_derivatives_market = market_type in {
+                "perp", "swap", "futures", "usdt_futures",
+            }
+            ps = repo.latest_perp_structure(symbol) if is_derivatives_market else None
             tradability = {
                 sym: TradabilityScore(**row)
                 for sym, row in enriched_snapshot.tradability.items()
@@ -673,6 +886,9 @@ async def _analyze_symbol(
                 MacroSnapshot(**enriched_snapshot.macro)
                 if enriched_snapshot.macro else None
             )
+            macro_source = _macro_source_identity(enriched_snapshot.macro)
+            if macro is not None and macro_source:
+                enrichment_sources["macro"].append(macro_source)
 
             # Only freshness-qualified derivatives are copied into Opportunity rows.
             lv = leverage.get(symbol)
@@ -685,22 +901,32 @@ async def _analyze_symbol(
             onchain_rows = fresh_rows(
                 repo.latest_onchain_snapshots(limit=3), "onchain",
             )
+            enrichment_sources["onchain"] = _rendered_onchain_sources(onchain_rows)
 
             # Cross-venue funding: route the Hyperliquid feed (otherwise orphan) into
             # the decision context as a basis/sentiment-divergence signal vs the
             # primary venue. Compared annualized (HL 1h vs primary 8h interval).
             xvenue_funding: dict = {}
-            hl_fr = fresh_row(
-                repo.latest_funding_rate(symbol, exchange="hyperliquid"),
-                "cross_venue_funding",
+            hl_fr = (
+                fresh_row(
+                    repo.latest_funding_rate(symbol, exchange="hyperliquid"),
+                    "cross_venue_funding",
+                )
+                if is_derivatives_market else None
             )
-            hl_pred = fresh_row(
-                repo.latest_funding_rate(symbol, exchange="hyperliquid_predicted"),
-                "cross_venue_funding",
+            hl_pred = (
+                fresh_row(
+                    repo.latest_funding_rate(symbol, exchange="hyperliquid_predicted"),
+                    "cross_venue_funding",
+                )
+                if is_derivatives_market else None
             )
-            hl_oi = fresh_row(
-                repo.latest_open_interest(symbol, exchange="hyperliquid"),
-                "cross_venue_open_interest",
+            hl_oi = (
+                fresh_row(
+                    repo.latest_open_interest(symbol, exchange="hyperliquid"),
+                    "cross_venue_open_interest",
+                )
+                if is_derivatives_market else None
             )
             if hl_fr or hl_pred or hl_oi:
                 xvenue_funding[symbol] = {
@@ -715,11 +941,42 @@ async def _analyze_symbol(
                         hl_fr.get("observed_at") if hl_fr else None
                     ),
                 }
+            if hl_fr and hl_fr.get("funding_rate_annualized") is not None:
+                enrichment_sources["hyperliquid"].append({
+                    "id": hl_fr.get("id"), "kind": "funding",
+                    "observed_at": hl_fr.get("observed_at"),
+                    "exchange": hl_fr.get("exchange"),
+                })
+            if (
+                hl_pred
+                and hl_pred.get("funding_rate_annualized") is not None
+                and hl_fr
+                and hl_fr.get("funding_rate_annualized") is not None
+            ):
+                enrichment_sources["hyperliquid"].append({
+                    "id": hl_pred.get("id"), "kind": "predicted_funding",
+                    "observed_at": hl_pred.get("observed_at"),
+                    "exchange": hl_pred.get("exchange"),
+                })
+            if hl_oi and hl_oi.get("open_interest_usd") is not None:
+                enrichment_sources["hyperliquid"].append({
+                    "id": hl_oi.get("id"), "kind": "open_interest",
+                    "observed_at": hl_oi.get("observed_at"),
+                    "exchange": hl_oi.get("exchange"),
+                })
 
             # Position X / perp-structure evidence stays advisory-only: we pass the
             # freshest compact row into render_enriched_context_md(), which handles
             # old-style perp structure plus the newer Position X compression.
             perp_structure = {symbol: ps} if _is_perp_structure_fresh(ps) else {}
+            if perp_structure:
+                enrichment_sources["position_x"].append({
+                    "id": ps.get("id"),
+                    "source": ps.get("source"),
+                    "source_ref": ps.get("source_ref"),
+                    "source_hash": ps.get("source_hash"),
+                    "as_of_time": ps.get("as_of_time"),
+                })
 
             enriched = render_enriched_context_md(
                 [symbol], tradability, leverage, macro,
@@ -729,6 +986,8 @@ async def _analyze_symbol(
             )
             if enriched:
                 context = context + "\n\n" + enriched
+                for kind in ("macro", "onchain", "hyperliquid", "position_x"):
+                    rendered_sources[kind] = enrichment_sources[kind]
             _step_times["enriched_context"] = _time.monotonic() - _t0
             logger.debug("[MO] %s (%s): enriched context done in %.1fs",
                          symbol, market_type, _step_times["enriched_context"])
@@ -741,37 +1000,47 @@ async def _analyze_symbol(
         # Append fresh prediction market signals relevant to this symbol.
         if prediction_context_enabled and prediction_context_cutoff:
             try:
-                pred_lines = _prediction_market_signal_lines(symbol, prediction_context_cutoff)
+                pred_lines, prediction_sources = _prediction_market_signal_context(
+                    symbol, prediction_context_cutoff
+                )
                 if pred_lines:
                     context += "\n\n## Prediction Market Signals\n" + "\n".join(pred_lines)
+                    rendered_sources["prediction"] = prediction_sources
             except Exception:
                 pass
 
         # Append recent news headlines for this symbol
         try:
-            from aletheia.storage.sqlite import get_db
             from datetime import datetime as _dt, timedelta as _td, timezone as _tz
-            news_db = get_db()
+            from aletheia.storage import repositories as repo
+
             # MO-12: only headlines from the last 48h. Without this, week-old news
             # surfaced as the "latest 3" and the LLM treated it as current context.
             news_cutoff = (_dt.now(_tz.utc) - _td(hours=48)).isoformat()
-            news_rows = news_db.execute(
-                "SELECT title, source, published_at FROM news_items "
-                "WHERE symbols_mentioned LIKE ? AND published_at > ? "
-                "ORDER BY published_at DESC LIMIT 3",
-                (f"%{symbol.split('/')[0]}%", news_cutoff),
-            ).fetchall()
+            news_rows = repo.batch_news([symbol], news_cutoff).get(symbol, [])
             if news_rows:
-                news_lines = [f"- [{r[2][:10]}] {r[0]} ({r[1]})" for r in news_rows]
+                news_lines = [
+                    f"- [{r.get('published_at', '')[:10]}] {r.get('title', '')} "
+                    f"({r.get('source', '')})"
+                    for r in news_rows
+                ]
                 context += "\n\n## Recent News\n" + "\n".join(news_lines)
+                rendered_sources["news"] = [
+                    {
+                        "id": row.get("id"),
+                        "published_at": row.get("published_at"),
+                        "source": row.get("source"),
+                    }
+                    for row in news_rows
+                ]
         except Exception:
             pass
 
     # P1-7: deterministic pre-filter — skip LLM for symbols with no actionable signal.
     # MO-14: force_full is passed in (computed once per run). load_config() has no
     # cache, so calling it per-symbol was a file read + YAML parse every iteration.
-    pre_filter = _evaluate_pre_filter(context)
-    pre_filter_passed = _has_sufficient_signal(context)
+    pre_filter = _evaluate_pre_filter(ctx_debug)
+    pre_filter_passed = _has_sufficient_signal(ctx_debug)
     try:
         from aletheia.analytics.filter_evidence import record_observer_pre_filter_evidence
 
@@ -808,7 +1077,6 @@ async def _analyze_symbol(
             parameters={
                 "rsi_deviation": _PREFILTER_RSI_DEVIATION,
                 "atr_pct": _PREFILTER_ATR_PCT,
-                "keywords": list(_PREFILTER_KEYWORDS),
             },
             entry_price_usd=member_entry_price_usd,
             entry_spread_bps=member_spread_bps,
@@ -995,13 +1263,25 @@ async def _analyze_symbol(
             )
             return existing["id"], llm_error
         updates: dict = {"thesis": thesis}
-        if learning_manifest:
-            try:
-                existing_meta = json.loads(existing.get("metadata") or "{}")
-            except (TypeError, ValueError):
+        try:
+            existing_meta = json.loads(existing.get("metadata") or "{}")
+            if not isinstance(existing_meta, dict):
                 existing_meta = {}
+        except (TypeError, ValueError):
+            existing_meta = {}
+        if learning_manifest:
             existing_meta["learning_manifest"] = learning_manifest
-            updates["metadata"] = json.dumps(existing_meta, sort_keys=True)
+        existing_meta["evidence_manifest"] = _opportunity_evidence_manifest(
+            metadata=existing_meta,
+            rendered_sources=rendered_sources,
+            run_id=run_id,
+            universe_snapshot_id=universe_snapshot_id,
+            universe_member_id=universe_member_id,
+            scanner_family=scanner_family,
+            pre_filter=pre_filter,
+            pre_filter_evidence_id=evidence_id,
+        )
+        updates["metadata"] = json.dumps(existing_meta, sort_keys=True)
         if funding_rate_val is not None:
             updates["funding_rate"] = funding_rate_val
         if open_interest_val is not None:
@@ -1056,6 +1336,19 @@ async def _analyze_symbol(
     # so the sideways regime tax can fire on non-universe opportunities.
     effective_scanner_family = scanner_family or _infer_scanner_family(rationale, observations)
 
+    opportunity_metadata = {}
+    if learning_manifest:
+        opportunity_metadata["learning_manifest"] = learning_manifest
+    opportunity_metadata["evidence_manifest"] = _opportunity_evidence_manifest(
+        metadata=opportunity_metadata,
+        rendered_sources=rendered_sources,
+        run_id=run_id,
+        universe_snapshot_id=universe_snapshot_id,
+        universe_member_id=universe_member_id,
+        scanner_family=effective_scanner_family,
+        pre_filter=pre_filter,
+        pre_filter_evidence_id=evidence_id,
+    )
     opp = Opportunity(
         symbol=symbol,
         market=instrument_market_to_db_market(market_type),
@@ -1066,8 +1359,7 @@ async def _analyze_symbol(
         source_agent="market_observer",
         linked_strategy_id=linked_strategy_id,
         asset_class=asset_class,
-        metadata=json.dumps({"learning_manifest": learning_manifest}, sort_keys=True)
-        if learning_manifest else "{}",
+        metadata=json.dumps(opportunity_metadata, sort_keys=True),
         universe_snapshot_id=universe_snapshot_id,
         universe_member_id=universe_member_id,
         scanner_family=effective_scanner_family,
@@ -1128,6 +1420,11 @@ async def _analyze_symbol(
 @register_agent("market_observer")
 async def run_market_observer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Observe market state and create one Opportunity per symbol."""
+    from aletheia.learning.opportunity_information_policy import (
+        ensure_opportunity_information_policy_epoch,
+    )
+
+    ensure_opportunity_information_policy_epoch()
     _run_start = _monotonic()
     # One run-level deadline covers setup, batch reads, parallel prefetch, and the
     # serial LLM loop.  The 40-second difference to the scheduler timeout is kept

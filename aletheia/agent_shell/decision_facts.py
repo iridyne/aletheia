@@ -63,6 +63,13 @@ def candidate_context_unavailable_reason(
 ) -> str | None:
     """Return a retryable reason when exact candidate technical facts are unusable."""
     candidate = _selected_candidate(ctx, opportunity_id)
+    if (candidate.get("signal_source") or "market_observer") == "serenity":
+        serenity_status = candidate.get("serenity_context_status")
+        if serenity_status != "available":
+            return (
+                candidate.get("serenity_context_unavailable_reason")
+                or "serenity_context_unavailable"
+            )
     feature = _selected_feature(ctx, candidate)
     if not feature.get("feature_snapshot_id") or not feature.get("feature_ts"):
         return "candidate_technical_snapshot_unavailable"

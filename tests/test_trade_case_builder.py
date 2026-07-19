@@ -103,6 +103,34 @@ class TestRenderCaseBody:
         assert "PnL: -2.50%" in body
         assert "Hold: 12.5h" in body
 
+    def test_preserves_complete_decision_and_manifest_context(self):
+        long_reason = "decision reason " + ("x" * 900)
+        row = _make_row()
+        row.update({
+            "decision_context_status": "available",
+            "pi_decision_reasoning": long_reason,
+            "pi_decision_bear_case": "full bear case",
+            "pi_decision_assumptions": ["assumption one"],
+            "proposal_agent_rationale": "full proposal rationale",
+            "decision_evidence_manifest": {"version": "evidence-v1", "ids": ["e1"]},
+            "decision_learning_manifest": {"version": "learning-v1", "ids": ["l1"]},
+        })
+
+        body = _render_case_body(_build_case_from_row(row))
+
+        assert long_reason in body
+        assert "Context status: available" in body
+        assert "full bear case" in body
+        assert "assumption one" in body
+        assert "full proposal rationale" in body
+        assert '"e1"' in body
+        assert '"l1"' in body
+
+    def test_legacy_decision_context_is_explicitly_not_recorded(self):
+        body = _render_case_body(_build_case_from_row(_make_row()))
+        assert "PiDecision reasoning: not recorded" in body
+        assert "Evidence manifest: not recorded" in body
+
 
 class TestBuildTags:
     def test_basic_tags(self):

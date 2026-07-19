@@ -567,6 +567,23 @@ def list_pi_decisions(limit: int = 20) -> list[dict]:
     return _select_all("pi_decisions", order="created_at DESC", limit=limit)
 
 
+def get_pi_decision_for_proposal(proposal_id: str) -> dict | None:
+    """Return the unique final PiDecision linked to one exact Proposal id."""
+    if not proposal_id:
+        return None
+    rows = get_db().execute(
+        "SELECT * FROM pi_decisions WHERE proposal_id=? "
+        "AND action!='signal_pending' ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 2",
+        (proposal_id,),
+    ).fetchall()
+    if len(rows) > 1:
+        return {
+            "_integrity_error": "ambiguous_integrity_error",
+            "proposal_id": proposal_id,
+        }
+    return dict(rows[0]) if rows else None
+
+
 def find_final_pi_decision_for_opportunity(
     opportunity_id: str,
     signal_source: str = "market_observer",
@@ -595,6 +612,55 @@ def find_final_pi_decision_for_opportunity(
         params,
     ).fetchone()
     return dict(row) if row else None
+
+
+def classify_final_pi_decision_for_opportunity(
+    opportunity_id: str,
+    signal_source: str,
+    *,
+    symbol: str,
+    direction: str,
+    market_type: str,
+    action: str | None = None,
+) -> dict:
+    """Classify one source's final rows without letting ambiguity consume it."""
+    if not opportunity_id:
+        return {"status": "none", "decision": None}
+    if action:
+        action_clause = "AND action=?"
+        params = (opportunity_id, signal_source or "market_observer", action)
+    else:
+        action_clause = "AND action NOT IN ('signal_pending', 'close', 'reduce')"
+        params = (opportunity_id, signal_source or "market_observer")
+    rows = get_db().execute(
+        "SELECT * FROM pi_decisions WHERE opportunity_id=? "
+        "AND COALESCE(signal_source, 'market_observer')=? "
+        f"{action_clause} ORDER BY datetime(created_at) ASC, rowid ASC",
+        params,
+    ).fetchall()
+    if not rows:
+        return {"status": "none", "decision": None}
+    if len(rows) != 1:
+        return {
+            "status": "integrity_unavailable",
+            "reason": "ambiguous_final_decisions",
+            "decision": None,
+        }
+    decision = dict(rows[0])
+    if any(
+        decision.get(field) != expected
+        for field, expected in (
+            ("symbol", symbol),
+            ("direction", direction),
+            ("market_type", market_type),
+        )
+    ):
+        return {
+            "status": "integrity_unavailable",
+            "reason": "conflicting_final_identity",
+            "decision": None,
+        }
+    return {"status": "exact", "decision": decision}
 
 
 def find_pending_pi_decision_for_opportunity(
@@ -2197,6 +2263,9 @@ def update_serenity_theme(theme_id: str, **kwargs) -> None:
 def enqueue_serenity_theme_for_pi(
     theme_id: str,
     opportunity_ids: list[str],
+    *,
+    min_score_for_pi: float | None = None,
+    new_carriers_only: bool = False,
 ) -> list[str]:
     """Atomically hand one exact Serenity opportunity set to the PI queue.
 
@@ -2232,6 +2301,29 @@ def enqueue_serenity_theme_for_pi(
             )
         return pending
 
+    def exact_final_decision(
+        opportunity_id: str,
+        opportunity: dict,
+    ) -> dict | None:
+        classification = classify_final_pi_decision_for_opportunity(
+            opportunity_id,
+            "serenity",
+            symbol=opportunity.get("symbol"),
+            direction=opportunity.get("direction"),
+            market_type=opportunity.get("market_type"),
+        )
+        if classification["status"] == "integrity_unavailable":
+            raise ValueError(
+                "Serenity final decision integrity unavailable: "
+                f"{opportunity_id}:{classification['reason']}"
+            )
+        final = classification.get("decision")
+        if final is None:
+            return None
+        if final.get("action") not in {"trade", "skip"}:
+            return None
+        return final
+
     with transaction(immediate=True):
         theme = get_serenity_theme(theme_id)
         if theme is None:
@@ -2255,28 +2347,40 @@ def enqueue_serenity_theme_for_pi(
                 + ",".join(missing)
             )
 
-        existing_pending_ids = [
-            opportunity_id
-            for opportunity_id in ordered_ids
-            if exact_pending_carrier(opportunity_id, by_id[opportunity_id]) is not None
-        ]
         theme_status = str(theme.get("status") or "")
-        if theme_status == "promoted":
-            if existing_pending_ids == ordered_ids:
-                return ordered_ids
-            raise ValueError(
-                "promoted Serenity theme cannot acquire additional PI carriers"
-            )
-        if theme_status != "active":
+        if theme_status not in {"active", "promoted"}:
             raise ValueError(
                 f"Serenity theme status does not allow PI handoff: {theme_status}"
             )
 
+        if min_score_for_pi is not None:
+            from aletheia.trading.serenity_scoring import score_serenity_opportunity
+
+            qualified_ids = []
+            for opportunity_id in ordered_ids:
+                opportunity = by_id[opportunity_id]
+                evidence = list_serenity_evidence(
+                    theme_id=opportunity["theme_id"], limit=200
+                )
+                gates = list_serenity_risk_gates(
+                    opportunity_id=opportunity_id, limit=200
+                )
+                score = score_serenity_opportunity(
+                    opportunity,
+                    evidence=evidence,
+                    risk_gates=gates,
+                )["score"]
+                if score >= min_score_for_pi:
+                    qualified_ids.append(opportunity_id)
+            ordered_ids = qualified_ids
+
         now = datetime.now(timezone.utc).isoformat()
+        new_carrier_ids: list[str] = []
         for opportunity_id in ordered_ids:
             opportunity = by_id[opportunity_id]
             pending = exact_pending_carrier(opportunity_id, opportunity)
-            if pending is None:
+            final = exact_final_decision(opportunity_id, opportunity)
+            if pending is None and final is None:
                 insert_pi_decision(PiDecision(
                     symbol=opportunity.get("symbol"),
                     direction=opportunity.get("direction"),
@@ -2291,6 +2395,7 @@ def enqueue_serenity_theme_for_pi(
                     signal_source="serenity",
                     debate_ran=False,
                 ))
+                new_carrier_ids.append(opportunity_id)
             update_serenity_opportunity(
                 opportunity_id,
                 action_intent="pi_evaluate",
@@ -2300,22 +2405,67 @@ def enqueue_serenity_theme_for_pi(
         durable_ids = [
             opportunity_id
             for opportunity_id in ordered_ids
-            if exact_pending_carrier(opportunity_id, by_id[opportunity_id]) is not None
+            if (
+                exact_pending_carrier(opportunity_id, by_id[opportunity_id]) is not None
+                or exact_final_decision(opportunity_id, by_id[opportunity_id]) is not None
+            )
         ]
         if durable_ids != ordered_ids:
             raise RuntimeError("Serenity PI handoff is missing a durable pending carrier")
 
+        active_rows = get_db().execute(
+            "SELECT * FROM serenity_opportunities WHERE theme_id=? AND status='active'",
+            (theme_id,),
+        ).fetchall()
+        all_active_have_carriers = all(
+            (
+                exact_pending_carrier(row["id"], dict(row)) is not None
+                or exact_final_decision(row["id"], dict(row)) is not None
+            )
+            for row in active_rows
+        )
         update_serenity_theme(
             theme_id,
-            status="promoted",
-            promoted_at=now,
+            status="promoted" if all_active_have_carriers else "active",
+            promoted_at=now if all_active_have_carriers else None,
             updated_at=now,
         )
-        return durable_ids
+        return new_carrier_ids if new_carriers_only else durable_ids
 
 
-def insert_serenity_evidence(e: SerenityEvidence) -> None:
-    _insert("serenity_evidence", e.model_dump())
+def insert_serenity_evidence(e: SerenityEvidence) -> list[str]:
+    from aletheia.trading.serenity_evidence import (
+        assess_opportunity_tier,
+        assess_researchability,
+    )
+
+    with transaction(immediate=True, savepoint=True):
+        _insert("serenity_evidence", e.model_dump())
+        evidence = list_serenity_evidence(theme_id=e.theme_id, limit=1000)
+        assessed_tier, assessed_by = assess_opportunity_tier({}, evidence)
+        researchability_grade, _ = assess_researchability(evidence)
+        now = datetime.now(timezone.utc).isoformat()
+        get_db().execute(
+            "UPDATE serenity_opportunities SET assessed_tier=?, assessed_by=?, "
+            "researchability_grade=?, updated_at=? "
+            "WHERE theme_id=? AND status='active'",
+            (
+                assessed_tier,
+                assessed_by,
+                researchability_grade,
+                now,
+                e.theme_id,
+            ),
+        )
+        active_ids = [
+            str(row["id"])
+            for row in get_db().execute(
+                "SELECT id FROM serenity_opportunities "
+                "WHERE theme_id=? AND status='active' ORDER BY rowid ASC",
+                (e.theme_id,),
+            ).fetchall()
+        ]
+    return active_ids
 
 
 def list_serenity_evidence(theme_id: str | None = None, limit: int = 100) -> list[dict]:
@@ -2364,6 +2514,16 @@ def list_serenity_opportunities(
 
 def update_serenity_opportunity(opp_id: str, **kwargs) -> None:
     _update("serenity_opportunities", opp_id, kwargs)
+
+
+def transition_serenity_opportunity_to_reviewed(opportunity_id: str) -> bool:
+    """Terminalize one exact active Serenity source without touching trade state."""
+    result = get_db().execute(
+        "UPDATE serenity_opportunities SET status='reviewed', updated_at=? "
+        "WHERE id=? AND status='active'",
+        (datetime.now(timezone.utc).isoformat(), opportunity_id),
+    )
+    return result.rowcount == 1
 
 
 def insert_serenity_risk_gate(g: SerenityRiskGate) -> None:
@@ -4915,6 +5075,7 @@ def open_interest_near(
     *,
     target_age_min: float = 60.0,
     band_min: tuple[float, float] = (45.0, 75.0),
+    reference_at: str | datetime | None = None,
 ) -> dict | None:
     """Return the OI snapshot for ``symbol`` on ``exchange`` observed closest to
     ``target_age_min`` minutes ago, restricted to the ``band_min`` age window.
@@ -4924,14 +5085,26 @@ def open_interest_near(
     snapshot — a 2-min delta almost never clears the scanner's 1h-calibrated
     thresholds, so the derivatives family scored ~0 in steady state.
 
-    ``exchange`` is REQUIRED and matched exactly. The open_interest_snapshots
+    ``reference_at`` defaults to wall-clock now; collectors pass their own
+    observation time so replayed rows use the same window. ``exchange`` is
+    REQUIRED and matched exactly. The open_interest_snapshots
     table is multi-venue with heterogeneous units (e.g. OKX stores contracts,
     Hyperliquid stores USD), so a venue-blind neighbour lookup mixes units and
     fabricates ±100%–2500% deltas. Returns None when no snapshot falls in the
     band (e.g. after a collector gap) — the caller MUST treat a missing
     neighbour as "no delta", never fall back to a stale or foreign-venue row.
     """
-    now = datetime.now(timezone.utc)
+    if reference_at is None:
+        now = datetime.now(timezone.utc)
+    elif isinstance(reference_at, datetime):
+        now = reference_at
+    else:
+        try:
+            now = datetime.fromisoformat(str(reference_at).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     lo, hi = band_min
     oldest = (now - timedelta(minutes=hi)).isoformat()
     newest = (now - timedelta(minutes=lo)).isoformat()
@@ -5111,22 +5284,37 @@ def batch_news(
     since_iso: str,
     limit_per_symbol: int = 3,
 ) -> dict[str, list[dict]]:
-    """Return {symbol: [rows]} for news_items. Fetches recent rows once, groups in Python."""
+    """Return exact, analyzed, relevant news grouped by requested symbol.
+
+    Historical ``symbols_mentioned`` values are hints only. Every row is
+    revalidated against article text so old substring false positives cannot
+    re-enter Observer context.
+    """
     if not symbols:
         return {}
+    from aletheia.data.news_entities import news_matches_symbol
+
     db = get_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
     rows = db.execute(
-        "SELECT title, source, published_at, symbols_mentioned FROM news_items "
-        "WHERE published_at > ? ORDER BY published_at DESC LIMIT 500",
-        (since_iso,),
+        "SELECT id, title, source, summary, content, published_at, symbols_mentioned, "
+        "relevance_score, analyzed_at FROM news_items "
+        "WHERE status = 'analyzed' AND relevance_score >= 0.6 "
+        "AND datetime(published_at) > datetime(?) "
+        "AND datetime(published_at) <= datetime(?) "
+        "ORDER BY published_at DESC LIMIT 500",
+        (since_iso, now_iso),
     ).fetchall()
-    syms_lower = [s.split("/")[0].lower() for s in symbols]
     result: dict[str, list] = {s: [] for s in symbols}
     for row in rows:
-        mentioned = (dict(row).get("symbols_mentioned") or "").lower()
-        for sym, sl in zip(symbols, syms_lower):
-            if sl in mentioned and len(result[sym]) < limit_per_symbol:
-                result[sym].append(dict(row))
+        item = dict(row)
+        for sym in symbols:
+            if len(result[sym]) >= limit_per_symbol:
+                continue
+            if news_matches_symbol(
+                sym, item.get("title"), item.get("summary"), item.get("content")
+            ):
+                result[sym].append(item)
     return result
 
 
@@ -5140,6 +5328,55 @@ def insert_macro_snapshot(data: dict) -> None:
 def latest_macro_snapshot() -> dict | None:
     rows = _select_all("macro_snapshots", order="observed_at DESC", limit=1)
     return rows[0] if rows else None
+
+
+def macro_snapshot_near(
+    reference_at: str | datetime,
+    *,
+    target_age_days: float = 7.0,
+    tolerance_hours: float = 12.0,
+) -> dict | None:
+    """Return the valid market-cap row nearest the requested historical age."""
+    if isinstance(reference_at, datetime):
+        reference = reference_at
+    else:
+        try:
+            reference = datetime.fromisoformat(
+                str(reference_at).replace("Z", "+00:00")
+            )
+        except (TypeError, ValueError):
+            return None
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+
+    target = reference - timedelta(days=target_age_days)
+    oldest = (target - timedelta(hours=tolerance_hours)).isoformat()
+    newest = (target + timedelta(hours=tolerance_hours)).isoformat()
+    rows = _select_all(
+        "macro_snapshots",
+        where=(
+            "total_market_cap_usd IS NOT NULL AND total_market_cap_usd > 0 "
+            "AND observed_at BETWEEN ? AND ?"
+        ),
+        params=(oldest, newest),
+        order="observed_at DESC",
+        limit=64,
+    )
+    if not rows:
+        return None
+
+    def _gap(row: dict) -> float:
+        try:
+            observed = datetime.fromisoformat(
+                str(row.get("observed_at")).replace("Z", "+00:00")
+            )
+        except (TypeError, ValueError):
+            return float("inf")
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=timezone.utc)
+        return abs((observed - target).total_seconds())
+
+    return min(rows, key=_gap)
 
 
 # ---------------------------------------------------------------------------

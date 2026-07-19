@@ -9,6 +9,8 @@ No new external API calls. Reuses:
 from __future__ import annotations
 
 import logging
+import math
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger("aletheia.regime.collector")
@@ -20,11 +22,20 @@ async def collect_regime_inputs() -> dict[str, Any]:
     Returns a kwargs dict suitable for `detect_regime(**result)`.
     Never raises — returns partial data on any failure.
     """
+    from aletheia.learning.opportunity_information_policy import (
+        ensure_opportunity_information_policy_epoch,
+    )
+
+    ensure_opportunity_information_policy_epoch()
     inputs: dict[str, Any] = {}
 
-    # 1. BTC daily closes (for MA200 + momentum)
+    btc_candles = []
+    # 1. Completed BTC daily candles (for MA200 + momentum + true range)
     try:
-        inputs["btc_closes_1d"] = await _fetch_btc_daily_closes()
+        btc_candles = await _fetch_btc_daily_candles()
+        closes = [float(c.close) for c in btc_candles]
+        if closes and all(math.isfinite(close) and close > 0 for close in closes):
+            inputs["btc_closes_1d"] = closes
     except Exception as e:
         logger.debug("BTC daily closes unavailable: %s", e)
 
@@ -54,7 +65,7 @@ async def collect_regime_inputs() -> dict[str, Any]:
 
     # 5. ATR expansion (7d vs 30d)
     try:
-        atr_7, atr_30 = _compute_btc_atr_ratio(inputs.get("btc_closes_1d"))
+        atr_7, atr_30 = _compute_btc_atr_ratio(btc_candles)
         if atr_7 is not None:
             inputs["atr_7d"] = atr_7
         if atr_30 is not None:
@@ -65,8 +76,8 @@ async def collect_regime_inputs() -> dict[str, Any]:
     return inputs
 
 
-async def _fetch_btc_daily_closes() -> list[float]:
-    """Fetch BTC/USDT 1d OHLCV — need 200+ bars for MA200."""
+async def _fetch_btc_daily_candles() -> list:
+    """Fetch completed BTC/USDT 1d OHLCV — need 200+ bars for MA200."""
     from aletheia.data.ccxt_provider import get_market_data_provider
 
     provider = get_market_data_provider()
@@ -74,39 +85,57 @@ async def _fetch_btc_daily_closes() -> list[float]:
         candles = await provider.get_ohlcv("BTC/USDT", timeframe="1d", limit=220)
         if not candles:
             return []
-        candles = sorted(candles, key=lambda c: c.timestamp)
-        return [c.close for c in candles]
+        return _completed_daily_candles(candles)
     finally:
         await provider.close()
 
 
 def _get_latest_vix() -> float | None:
     """Read VIX from latest macro snapshot in DB."""
+    from aletheia.data.freshness import fresh_row
     from aletheia.storage.repositories import latest_macro_snapshot
 
-    macro = latest_macro_snapshot()
-    if macro and macro.get("vix_close"):
-        return float(macro["vix_close"])
+    macro = fresh_row(latest_macro_snapshot(), "macro")
+    if macro and macro.get("vix_close") is not None:
+        try:
+            value = float(macro["vix_close"])
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) and value >= 0 else None
     return None
 
 
 def _get_avg_funding_rate() -> float | None:
-    """Compute average funding rate from latest universe feature snapshots."""
+    """Average each current derivative instrument's latest fresh funding row."""
+    from aletheia.data.freshness import fresh_row
     from aletheia.storage.repositories import list_universe_feature_snapshots
 
     try:
-        features = list_universe_feature_snapshots(limit=50)
+        features = list_universe_feature_snapshots(limit=1000)
     except Exception:
         return None
 
     rates = []
+    seen_assets: set[str] = set()
     for f in features:
+        asset_id = str(f.get("asset_id") or "")
+        if not asset_id or asset_id in seen_assets:
+            continue
+        seen_assets.add(asset_id)
+        if str(f.get("market_type") or "").lower() not in {
+            "perp", "swap", "futures", "usdt_futures",
+        }:
+            continue
+        if fresh_row(f, "funding", timestamp_field="ts") is None:
+            continue
         fr = f.get("funding_rate")
         if fr is not None:
             try:
-                rates.append(float(fr))
+                parsed = float(fr)
             except (ValueError, TypeError):
                 continue
+            if math.isfinite(parsed):
+                rates.append(parsed)
 
     if not rates:
         return None
@@ -114,47 +143,80 @@ def _get_avg_funding_rate() -> float | None:
 
 
 def _get_market_cap_change_7d() -> float | None:
-    """Read 7-day market cap change from macro snapshots.
+    """Compute market-cap change from latest and real seven-day baseline rows."""
+    from aletheia.data.freshness import fresh_row
+    from aletheia.storage.repositories import latest_macro_snapshot, macro_snapshot_near
 
-    We approximate by comparing the latest vs 7-day-old snapshot.
-    """
-    from aletheia.storage.repositories import latest_macro_snapshot
-
-    macro = latest_macro_snapshot()
+    macro = fresh_row(latest_macro_snapshot(), "macro")
     if not macro:
         return None
+    latest_cap = macro.get("total_market_cap_usd")
+    observed_at = macro.get("observed_at")
+    if latest_cap is None or not observed_at:
+        return None
+    baseline = macro_snapshot_near(observed_at, target_age_days=7.0)
+    if not baseline or baseline.get("total_market_cap_usd") is None:
+        return None
+    try:
+        latest_value = float(latest_cap)
+        baseline_value = float(baseline["total_market_cap_usd"])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(latest_value) or not math.isfinite(baseline_value):
+        return None
+    if latest_value <= 0 or baseline_value <= 0:
+        return None
+    return round((latest_value - baseline_value) / baseline_value * 100, 3)
 
-    # The macro collector stores 24h change; for 7d we use what's available
-    change_24h = macro.get("total_market_cap_change_24h_pct")
-    if change_24h is not None:
-        # Rough approximation: 7d ≈ 24h * sqrt(7) for volatility,
-        # but for trend we just use 24h as a proxy (better than nothing)
-        return float(change_24h)
-    return None
+
+_DAY_MS = 86_400_000
+
+
+def _completed_daily_candles(candles: list, *, now_ms: int | None = None) -> list:
+    """Return oldest-first daily bars whose full UTC interval has elapsed."""
+    if now_ms is None:
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    return sorted(
+        [c for c in candles if int(c.timestamp) + _DAY_MS <= now_ms],
+        key=lambda c: c.timestamp,
+    )
 
 
 def _compute_btc_atr_ratio(
-    closes: list[float] | None,
+    candles: list | None,
+    *,
+    now_ms: int | None = None,
 ) -> tuple[float | None, float | None]:
-    """Compute 7-day and 30-day ATR as % of price from daily closes.
-
-    Simplified: uses close-to-close range as ATR proxy (no high/low available
-    in this code path without extra fetch). Good enough for regime detection.
-    """
-    if not closes or len(closes) < 31:
+    """Compute 7-day and 30-day true-range averages from completed daily bars."""
+    if not candles:
+        return None, None
+    completed = _completed_daily_candles(candles, now_ms=now_ms)
+    if len(completed) < 31:
         return None, None
 
-    def _avg_range(prices: list[float]) -> float:
-        if len(prices) < 2:
-            return 0.0
-        ranges = [abs(prices[i] - prices[i - 1]) for i in range(1, len(prices))]
-        return sum(ranges) / len(ranges)
+    for candle in completed:
+        try:
+            values = (float(candle.high), float(candle.low), float(candle.close))
+        except (TypeError, ValueError):
+            return None, None
+        if not all(math.isfinite(value) for value in values):
+            return None, None
 
-    current = closes[-1]
-    if current <= 0:
+    true_ranges = []
+    for previous, current_candle in zip(completed, completed[1:]):
+        true_ranges.append(max(
+            float(current_candle.high) - float(current_candle.low),
+            abs(float(current_candle.high) - float(previous.close)),
+            abs(float(current_candle.low) - float(previous.close)),
+        ))
+
+    current = float(completed[-1].close)
+    if not math.isfinite(current) or current <= 0:
         return None, None
 
-    atr_7 = _avg_range(closes[-8:]) / current * 100
-    atr_30 = _avg_range(closes[-31:]) / current * 100
+    atr_7 = sum(true_ranges[-7:]) / 7 / current * 100
+    atr_30 = sum(true_ranges[-30:]) / 30 / current * 100
 
+    if not math.isfinite(atr_7) or not math.isfinite(atr_30):
+        return None, None
     return round(atr_7, 3), round(atr_30, 3)

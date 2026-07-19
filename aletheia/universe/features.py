@@ -107,6 +107,17 @@ def _persist_feature_snapshot(snap: "UniverseFeatureSnapshot") -> None:
     """
     repo.insert_universe_feature_snapshot(snap)
 
+
+def persist_feature_snapshot_for_emission(feature: dict) -> str | None:
+    """Make a suppressed calculation durable before it becomes T0 evidence."""
+    snap = feature.get("_computed_feature_snapshot")
+    if not isinstance(snap, UniverseFeatureSnapshot):
+        return feature.get("feature_snapshot_id")
+    if feature.get("feature_snapshot_id") != snap.id:
+        _persist_feature_snapshot(snap)
+        feature["feature_snapshot_id"] = snap.id
+    return snap.id
+
 _OHLCV_CONCURRENCY = 10
 _OHLCV_TIMEOUT = 12.0
 _OHLCV_1H_LIMIT = 168  # 7 days of 1h candles
@@ -116,6 +127,11 @@ _TICKER_CHUNK_SIZE = 100
 # 1h move; fetch it lazily for movers above this |return_1h| % to keep the scan
 # cheap (the taker endpoint is a per-symbol call with no batch form).
 _TAKER_FETCH_THRESHOLD = 3.0
+_DERIVATIVES_MARKET_TYPES = frozenset({"perp", "swap", "futures", "usdt_futures"})
+
+
+def _is_derivatives_market(market_type: object) -> bool:
+    return str(market_type or "").lower() in _DERIVATIVES_MARKET_TYPES
 
 
 def _pct_return(closes: list[float], bars: int) -> float | None:
@@ -205,6 +221,8 @@ def _load_fresh_enrichment_rows(
         "orderbook",
         now=now,
     )
+    if not _is_derivatives_market(market_type):
+        return ob_row, None, None
     deriv_exchange = venue or None
     fr_row = fresh_row(
         repo.latest_funding_rate(symbol, exchange=deriv_exchange),
@@ -300,7 +318,7 @@ def _evaluate_ticker_prefilters(
             ))
             continue
 
-        is_perp = asset.get("market_type", "spot") == "perp"
+        is_perp = _is_derivatives_market(asset.get("market_type"))
         ccxt_symbol = to_ccxt_perp(symbol) if is_perp else symbol
         ticker = tickers.get(ccxt_symbol)
         if ticker is None:
@@ -401,7 +419,7 @@ async def _fetch_single_feature(
     """Fetch OHLCV + enrich for a single asset. Returns feature dict or None."""
     symbol = asset.get("symbol", "")
     asset_id = asset.get("id", "")
-    is_perp = asset.get("market_type", "spot") == "perp"
+    is_perp = _is_derivatives_market(asset.get("market_type"))
 
     ccxt_sym = to_ccxt_perp(symbol) if is_perp else symbol
 
@@ -691,6 +709,7 @@ async def _fetch_single_feature(
         vol_ratio_4h=vol_ratio_4h,
         bb_squeeze=bb_squeeze,
     )
+    feat["_computed_feature_snapshot"] = snap
     feat["feature_snapshot_id"] = snap.id
 
     # Phase 3 retention: change-suppression. Skip near-duplicate writes; force
@@ -748,8 +767,8 @@ async def collect_features(
         await exchange.load_markets()
 
         # --- Phase A: batch ticker fetch (spot + perp) ---
-        spot_assets = [a for a in assets if a.get("market_type", "spot") != "perp"]
-        perp_assets = [a for a in assets if a.get("market_type", "spot") == "perp"]
+        spot_assets = [a for a in assets if not _is_derivatives_market(a.get("market_type"))]
+        perp_assets = [a for a in assets if _is_derivatives_market(a.get("market_type"))]
 
         spot_symbols = list(dict.fromkeys(a["symbol"] for a in spot_assets if a.get("symbol")))
         perp_symbols = list(dict.fromkeys(to_ccxt_perp(a["symbol"]) for a in perp_assets if a.get("symbol")))

@@ -2214,6 +2214,27 @@ def _repair_learning_experiment_activation(db) -> None:
     )
 
 
+def _repair_terminal_serenity_skips(db) -> None:
+    """Idempotently align active Serenity sources with exact historical final skips."""
+    db.execute(
+        "UPDATE serenity_opportunities SET status='reviewed' "
+        "WHERE status='active' AND ("
+        " SELECT COUNT(*) FROM pi_decisions final "
+        " WHERE final.opportunity_id=serenity_opportunities.id "
+        " AND COALESCE(final.signal_source, 'market_observer')='serenity' "
+        " AND final.action NOT IN ('signal_pending', 'close', 'reduce')"
+        ")=1 AND EXISTS ("
+        " SELECT 1 FROM pi_decisions decision "
+        " WHERE decision.opportunity_id=serenity_opportunities.id "
+        " AND COALESCE(decision.signal_source, 'market_observer')='serenity' "
+        " AND decision.action='skip' "
+        " AND decision.symbol=serenity_opportunities.symbol "
+        " AND decision.direction=serenity_opportunities.direction "
+        " AND decision.market_type=serenity_opportunities.market_type"
+        ")"
+    )
+
+
 def _ensure_outcome_integrity_schema(db) -> None:
     """Atomically add closure evidence fields and durable observation tables."""
     import sqlite3
@@ -3153,6 +3174,7 @@ def _run_all_ddl(db) -> None:
     _ensure_columns(db)
     db.executescript(_LEARNING_ADDITIVE_INDEX_DDL)
     _repair_learning_experiment_activation(db)
+    _repair_terminal_serenity_skips(db)
     db.executescript(_OPPORTUNITY_ROTATION_INDEX_DDL)
     _backfill_entry_risk_reservations(db)
     _ensure_outcome_integrity_schema(db)

@@ -191,28 +191,31 @@ def test_batch_news_returns_per_symbol_with_limit(tmp_path, monkeypatch):
     # Insert 4 BTC articles (limit_per_symbol=3 → only 3 returned)
     for i in range(4):
         db.execute(
-            "INSERT INTO news_items (id, title, source, published_at, symbols_mentioned) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO news_items "
+            "(id, title, source, published_at, symbols_mentioned, status, relevance_score) "
+            "VALUES (?, ?, ?, ?, ?, 'analyzed', 0.8)",
             (f"n-btc-{i}", f"BTC news {i}", "coindesk",
              f"2026-07-14T{10+i:02d}:00:00", "BTC,ETH"),
         )
     # One ETH article
     db.execute(
-        "INSERT INTO news_items (id, title, source, published_at, symbols_mentioned) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO news_items "
+        "(id, title, source, published_at, symbols_mentioned, status, relevance_score) "
+        "VALUES (?, ?, ?, ?, ?, 'analyzed', 0.8)",
         ("n-eth", "ETH update", "decrypt", "2026-07-14T15:00:00", "ETH"),
     )
     # One old article outside the window (should be excluded)
     db.execute(
-        "INSERT INTO news_items (id, title, source, published_at, symbols_mentioned) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO news_items "
+        "(id, title, source, published_at, symbols_mentioned, status, relevance_score) "
+        "VALUES (?, ?, ?, ?, ?, 'analyzed', 0.8)",
         ("n-old", "Old BTC news", "coindesk", "2026-07-10T00:00:00", "BTC"),
     )
 
     result = batch_news(["BTC", "ETH", "SOL"], since)
 
     assert len(result["BTC"]) == 3        # capped at limit_per_symbol=3
-    assert len(result["ETH"]) == 3        # 4 BTC+ETH articles match ETH too; capped at 3
+    assert len(result["ETH"]) == 1        # stored tags cannot override exact title entities
     assert len(result["SOL"]) == 0
     # Old article is excluded
     old_titles = [r["title"] for r in result["BTC"]]
@@ -226,8 +229,7 @@ def test_batch_news_empty_input(tmp_path, monkeypatch):
     assert batch_news([], "2026-07-13T00:00:00") == {}
 
 
-def test_batch_news_consistent_with_individual_query(tmp_path, monkeypatch):
-    """batch_news([sym], since)[sym] must match the inline SQL query from _analyze_symbol."""
+def test_batch_news_returns_exact_ids_in_newest_first_order(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import batch_news
@@ -236,22 +238,15 @@ def test_batch_news_consistent_with_individual_query(tmp_path, monkeypatch):
     since = "2026-07-13T00:00:00"
     for i in range(5):
         db.execute(
-            "INSERT INTO news_items (id, title, source, published_at, symbols_mentioned) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO news_items "
+            "(id, title, source, published_at, symbols_mentioned, status, relevance_score) "
+            "VALUES (?, ?, ?, ?, ?, 'analyzed', 0.8)",
             (f"n-sol-{i}", f"SOL title {i}", "theblock",
              f"2026-07-14T{10+i:02d}:00:00", "SOL"),
         )
 
     batch_result = batch_news(["SOL"], since)
 
-    # Replicate the original inline query used in _analyze_symbol
-    individual_rows = db.execute(
-        "SELECT title, source, published_at FROM news_items "
-        "WHERE symbols_mentioned LIKE ? AND published_at > ? "
-        "ORDER BY published_at DESC LIMIT 3",
-        ("%SOL%", since),
-    ).fetchall()
-
-    individual_titles = [r[0] for r in individual_rows]
-    batch_titles = [r["title"] for r in batch_result["SOL"]]
-    assert batch_titles == individual_titles
+    assert [row["id"] for row in batch_result["SOL"]] == [
+        "n-sol-4", "n-sol-3", "n-sol-2",
+    ]

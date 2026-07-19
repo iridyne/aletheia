@@ -439,11 +439,17 @@ _RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
 )
 def test_research_worker_auto_promote_block_exists():
     src = _RESEARCH_WORKER.read_text(encoding="utf-8")
+    repo_src = (
+        _ROOT / "aletheia" / "storage" / "repositories.py"
+    ).read_text(encoding="utf-8")
     assert "auto_promote" in src, (
         "research_worker.py has no auto_promote reference — the D5 switch is dead"
     )
-    assert "score_serenity_opportunity" in src, (
-        "research_worker does not call the scorer — can't gate on min_score_for_pi"
+    assert "min_score_for_pi=cfg.serenity.min_score_for_pi" in src, (
+        "research_worker does not pass the configured score gate into the atomic handoff"
+    )
+    assert "score_serenity_opportunity" in repo_src, (
+        "atomic Serenity handoff does not re-score current evidence and gates"
     )
     assert "enqueue_serenity_theme_for_pi" in src, (
         "research_worker does not use the atomic PI handoff — auto-promote can "

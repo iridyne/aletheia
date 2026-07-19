@@ -183,11 +183,17 @@ def score_serenity_opportunity(
       opportunities from reaching research_priority bucket.
     """
     # D2 (2026-06-27): gate evidence weight on the INDEPENDENTLY assessed tier, not
-    # the generator's self-grade. `assessed_tier` is set by the deterministic evaluator
-    # (aletheia/trading/serenity_evidence.py) at insert time; NULL (legacy/unassessed)
-    # floors to "speculative". `evidence_tier` is kept only as the advisory proposal.
+    # the generator's self-grade. Legacy evidence may predate assessed_tier; assess
+    # those records now rather than silently flooring valid primary evidence.
     proposed_tier = _normalize_text(opportunity.get("evidence_tier"), "speculative")
-    evidence_tier = _normalize_text(opportunity.get("assessed_tier"), "speculative")
+    if opportunity.get("assessed_tier"):
+        evidence_tier = _normalize_text(
+            opportunity.get("assessed_tier"), "speculative"
+        )
+    else:
+        from aletheia.trading.serenity_evidence import assess_opportunity_tier
+
+        evidence_tier = assess_opportunity_tier({}, evidence)[0]
     stage = _normalize_stage_for_score(opportunity.get("stage"), "research")
     average_mode = _normalize_text(opportunity.get("average_mode"), "none")
 

@@ -28,6 +28,55 @@ logger = logging.getLogger("aletheia.agent_shell.trading_context")
 
 _PENDING_SIGNAL_VISIBLE_LIMIT = 5
 _PENDING_SIGNAL_MAX_AGE_MINUTES = 30
+_SERENITY_THESIS_DISPLAY_CHARS = 1200
+_SERENITY_KEY_EVIDENCE_DISPLAY_CHARS = 2000
+
+
+def _bounded_serenity_display(value: Any, limit: int) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + " ... [display bounded; full fact persisted]"
+
+
+def _serenity_evidence_display(
+    evidence: list[dict[str, Any]],
+) -> tuple[str, list[str]]:
+    """Render complete evidence references and return only identities shown."""
+    rendered: list[str] = []
+    rendered_ids: list[str] = []
+    for item in evidence:
+        reference = str(
+            item.get("source_ref") or item.get("url") or item.get("title") or ""
+        ).strip()
+        if not reference:
+            continue
+        candidate = "; ".join([*rendered, reference])
+        if len(candidate) <= _SERENITY_KEY_EVIDENCE_DISPLAY_CHARS:
+            rendered.append(reference)
+            if item.get("id"):
+                rendered_ids.append(str(item["id"]))
+            continue
+        if not rendered:
+            rendered.append(
+                _bounded_serenity_display(
+                    reference, _SERENITY_KEY_EVIDENCE_DISPLAY_CHARS
+                )
+            )
+            if item.get("id"):
+                rendered_ids.append(str(item["id"]))
+        break
+    return "; ".join(rendered), rendered_ids
+
+
+def _position_x_context_for_instrument(
+    row: dict[str, Any] | None,
+    market_type: Any,
+) -> dict[str, Any] | None:
+    """Position X is derivatives structure and must never decorate spot."""
+    if _normalize_market_type(market_type) != "perp":
+        return None
+    return build_position_x_agent_context(row)
 
 
 def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
@@ -122,6 +171,25 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
         "pending": sorted(pending, key=key),
         "executable": sorted(executable, key=key),
         "features": sorted(features, key=key),
+        "serenity": sorted(
+            [
+                {
+                    "symbol": item.get("symbol"),
+                    "direction": item.get("direction"),
+                    "market_type": _normalize_market_type(item.get("market_type")),
+                    "thesis": " ".join(str(item.get("thesis") or "").split()),
+                    "assessed_tier": item.get("assessed_tier"),
+                    "researchability_grade": item.get("researchability_grade"),
+                    "score": _score(item.get("score")),
+                    "bucket": item.get("bucket"),
+                    "evidence_ids": sorted(item.get("evidence_ids") or []),
+                    "hydration_status": item.get("hydration_status"),
+                    "unavailable_reason": item.get("unavailable_reason"),
+                }
+                for item in ((ctx.get("layer3") or {}).get("serenity_opportunities") or [])
+            ],
+            key=key,
+        ),
     }
     encoded = json.dumps(
         projection, sort_keys=True, separators=(",", ":"), default=str
@@ -194,8 +262,14 @@ def scope_operator_context_to_candidate(
         row for row in (layer1.get("opportunities") or [])
         if row.get("id") == opportunity_id
     ]
+    layer3 = scoped.get("layer3") or {}
+    layer3["serenity_opportunities"] = [
+        row for row in (layer3.get("serenity_opportunities") or [])
+        if row.get("id") == opportunity_id
+    ]
     scoped["layer1"] = layer1
     scoped["layer2"] = layer2
+    scoped["layer3"] = layer3
     return scoped
 
 
@@ -268,21 +342,36 @@ def _build_pending_signal_queue(
     # its exact carrier visible so a wake after process death can recover the
     # already-stored Proposal. Once any non-submitting final exists, the carrier
     # is terminally consumed and disappears from the queue.
+    unique_entry_final = (
+        "(SELECT COUNT(*) FROM pi_decisions all_f "
+        " WHERE all_f.opportunity_id=p.opportunity_id "
+        " AND COALESCE(all_f.signal_source, 'market_observer')="
+        "     COALESCE(p.signal_source, 'market_observer') "
+        " AND all_f.action NOT IN ('signal_pending', 'close', 'reduce'))=1"
+    )
+    exact_final_identity = (
+        "f.symbol IS p.symbol AND f.direction IS p.direction "
+        "AND f.market_type IS p.market_type"
+    )
     submitting_final = (
         "SELECT 1 FROM pi_decisions f "
-        "WHERE f.action != 'signal_pending' "
+        "WHERE f.action NOT IN ('signal_pending', 'close', 'reduce') "
         "  AND f.opportunity_id = p.opportunity_id "
         "  AND COALESCE(f.signal_source, 'market_observer') = "
         "      COALESCE(p.signal_source, 'market_observer') "
-        "  AND f.proposal_status = 'submitting'"
+        f"  AND {exact_final_identity} "
+        "  AND f.proposal_status = 'submitting' "
+        f"  AND {unique_entry_final}"
     )
     terminal_final = (
         "SELECT 1 FROM pi_decisions f "
-        "WHERE f.action != 'signal_pending' "
+        "WHERE f.action NOT IN ('signal_pending', 'close', 'reduce') "
         "  AND f.opportunity_id = p.opportunity_id "
         "  AND COALESCE(f.signal_source, 'market_observer') = "
         "      COALESCE(p.signal_source, 'market_observer') "
-        "  AND COALESCE(f.proposal_status, '') != 'submitting'"
+        f"  AND {exact_final_identity} "
+        "  AND COALESCE(f.proposal_status, '') != 'submitting' "
+        f"  AND {unique_entry_final}"
     )
     unresolved = (
         "p.action = 'signal_pending' "
@@ -332,6 +421,21 @@ def _build_pending_signal_queue(
         }
         for row in rows
     ]
+    from aletheia.storage.repositories import (
+        classify_final_pi_decision_for_opportunity,
+    )
+
+    for item in pending:
+        classification = classify_final_pi_decision_for_opportunity(
+            item.get("opportunity_id"),
+            item.get("signal_source") or "market_observer",
+            symbol=item.get("symbol"),
+            direction=item.get("direction"),
+            market_type=item.get("market_type"),
+        )
+        if classification["status"] == "integrity_unavailable":
+            item["final_integrity_status"] = "unavailable"
+            item["final_integrity_reason"] = classification["reason"]
     unique = _dedupe_pending_identity(pending, limit=len(pending)) if pending else []
     # Candidate-specific neutral defers must not hold the visible queue head,
     # BUT a deferred carrier whose material features have refreshed since the
@@ -538,10 +642,15 @@ def build_enriched_trading_context(*, authorize_learning: bool = True) -> dict[s
         # Command-side availability preserves the carrier and records a typed
         # defer instead of letting a candidate read failure crash the loop.
         logger.warning("pending candidate context hydration unavailable: %s", exc)
+    layer3 = _build_layer3_wisdom()
+    try:
+        _hydrate_pending_serenity_context(layer2, layer3)
+    except Exception as exc:
+        logger.warning("pending Serenity context hydration unavailable: %s", exc)
     ctx = {
         "layer1": layer1,
         "layer2": layer2,
-        "layer3": _build_layer3_wisdom(),
+        "layer3": layer3,
     }
     if not authorize_learning:
         return ctx
@@ -552,14 +661,43 @@ def build_enriched_trading_context(*, authorize_learning: bool = True) -> dict[s
 def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str, Any]:
     """Build a compact manifest of exact evidence available to one decision."""
     from aletheia.agent_shell.decision_facts import candidate_fact_bundle
-    from aletheia.data.collectors.vergex_structure import structure_source_status
-    from aletheia.data.freshness import fresh_row
     from aletheia.storage import repositories as repo
+    from aletheia.learning.opportunity_information_policy import (
+        POLICY_EPOCH_LABEL,
+        ensure_opportunity_information_policy_epoch,
+    )
+
+    information_epoch_id = ctx.get("information_policy_epoch_id")
+    if not information_epoch_id:
+        try:
+            information_epoch_id = ensure_opportunity_information_policy_epoch()
+        except Exception:
+            information_epoch_id = None
 
     symbol = getattr(decision, "symbol", None)
     market_type = _normalize_market_type(getattr(decision, "market_type", None))
     opportunity_id = getattr(decision, "opportunity_id", None)
-    opportunity = repo.get_opportunity(opportunity_id) if opportunity_id else None
+    signal_source = getattr(decision, "signal_source", None)
+    if not signal_source:
+        selected_pending = next(
+            (
+                row for row in ((ctx.get("layer2") or {}).get("pending_signals") or [])
+                if row.get("opportunity_id") == opportunity_id
+            ),
+            None,
+        )
+        signal_source = (
+            selected_pending.get("signal_source")
+            if isinstance(selected_pending, dict) else None
+        ) or "market_observer"
+    opportunity = (
+        repo.get_opportunity(opportunity_id)
+        if opportunity_id and signal_source == "market_observer" else None
+    )
+    serenity_opportunity = (
+        repo.get_serenity_opportunity(opportunity_id)
+        if opportunity_id and signal_source == "serenity" else None
+    )
     member = (
         repo.get_universe_member(opportunity.get("universe_member_id"))
         if opportunity and opportunity.get("universe_member_id") else None
@@ -571,21 +709,150 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
         asset_id=member.get("asset_id") if member else None,
     )
     venue = feature.get("venue") if feature else None
-
-    funding = fresh_row(
-        repo.latest_funding_rate(symbol, exchange="hyperliquid") if symbol else None,
-        "cross_venue_funding",
-    )
-    open_interest = fresh_row(
-        repo.latest_open_interest(symbol, exchange="hyperliquid") if symbol else None,
-        "cross_venue_open_interest",
-    )
-    structure = (
-        repo.latest_perp_structure(symbol) if symbol and market_type == "perp" else None
-    )
-    structure = fresh_row(structure, "perp_structure")
-    source_status = structure_source_status()
     facts = candidate_fact_bundle(ctx, opportunity_id=opportunity_id)
+
+    unavailable = {"status": "unavailable"}
+    serenity_context = next(
+        (
+            row for row in ((ctx.get("layer3") or {}).get("serenity_opportunities") or [])
+            if row.get("id") == opportunity_id
+        ),
+        None,
+    )
+    rendered_evidence_rows: list[dict[str, Any]] = []
+    if signal_source == "serenity":
+        opportunity_t0 = ({
+            "status": "available",
+            "trigger_type": "serenity_research",
+            "opportunity_id": serenity_opportunity.get("id"),
+            "theme_id": serenity_opportunity.get("theme_id"),
+            "symbol": serenity_opportunity.get("symbol"),
+            "direction": serenity_opportunity.get("direction"),
+            "market_type": serenity_opportunity.get("market_type"),
+            "assessed_tier": serenity_opportunity.get("assessed_tier"),
+            "researchability_grade": serenity_opportunity.get("researchability_grade"),
+        } if serenity_opportunity else unavailable)
+        evidence_by_id = {
+            row.get("id"): row
+            for row in repo.list_serenity_evidence(
+                theme_id=serenity_opportunity.get("theme_id"), limit=200,
+            )
+            if row.get("id")
+        } if serenity_opportunity else {}
+        if isinstance(serenity_context, dict):
+            context_evidence = serenity_context.get("evidence") or []
+            context_ids = [
+                str(item)
+                for item in (serenity_context.get("rendered_evidence_ids") or [])
+                if item
+            ]
+            context_by_id = {
+                str(item.get("id")): item
+                for item in context_evidence
+                if isinstance(item, dict) and item.get("id")
+            }
+            for evidence_id in context_ids:
+                stored = evidence_by_id.get(evidence_id)
+                if stored is None:
+                    continue
+                rendered = context_by_id.get(evidence_id) or stored
+                rendered_evidence_rows.append({
+                    key: rendered.get(key)
+                    for key in ("id", "source", "source_ref", "title")
+                    if rendered.get(key) is not None
+                })
+        opportunity_t1 = ({
+            "status": "available",
+            "sources": {"serenity_evidence": rendered_evidence_rows},
+        } if serenity_context is not None else unavailable)
+    else:
+        opportunity_evidence = _opportunity_evidence_from_metadata(
+            opportunity.get("metadata") if opportunity else None
+        )
+        opportunity_t0 = (
+            opportunity_evidence.get("t0")
+            if opportunity_evidence and isinstance(opportunity_evidence.get("t0"), dict)
+            else unavailable
+        )
+        opportunity_t1 = (
+            opportunity_evidence.get("t1")
+            if opportunity_evidence and isinstance(opportunity_evidence.get("t1"), dict)
+            else unavailable
+        )
+
+    rendered_opportunity = next(
+        (
+            row for row in ((ctx.get("layer1") or {}).get("opportunities") or [])
+            if row.get("id") == opportunity_id
+        ),
+        None,
+    )
+    rendered_evidence = (
+        rendered_opportunity.get("evidence_manifest")
+        if isinstance(rendered_opportunity, dict) else None
+    )
+    rendered_t1 = (
+        rendered_evidence.get("t1")
+        if isinstance(rendered_evidence, dict)
+        and isinstance(rendered_evidence.get("t1"), dict)
+        else None
+    )
+    rendered_sources = (
+        rendered_t1.get("sources")
+        if isinstance(rendered_t1, dict) and isinstance(rendered_t1.get("sources"), dict)
+        else {}
+    )
+    structure_context = (
+        rendered_opportunity.get("structure_context")
+        if isinstance(rendered_opportunity, dict) else None
+    )
+    operator_position_x = (
+        structure_context.get("source_identity")
+        if isinstance(structure_context, dict)
+        and structure_context.get("status") == "ok"
+        and isinstance(structure_context.get("source_identity"), dict)
+        else None
+    )
+    rendered_position_x: list[dict[str, Any]] = []
+
+    def add_position_x_identity(
+        row: dict[str, Any], *, entity_type: str, market_key: str
+    ) -> None:
+        if _normalize_market_type(row.get(market_key)) != "perp":
+            return
+        context = row.get("structure_context")
+        identity = (
+            context.get("source_identity")
+            if isinstance(context, dict) and context.get("status") == "ok"
+            else None
+        )
+        if not isinstance(identity, dict):
+            return
+        rendered_position_x.append({
+            **identity,
+            "entity_type": entity_type,
+            "entity_id": row.get("id"),
+            "symbol": row.get("symbol"),
+            "market_type": _normalize_market_type(row.get(market_key)),
+        })
+
+    for position in ((ctx.get("layer1") or {}).get("positions") or [])[:5]:
+        add_position_x_identity(
+            position, entity_type="position", market_key="market_type"
+        )
+    for rendered in ((ctx.get("layer1") or {}).get("opportunities") or [])[:8]:
+        add_position_x_identity(
+            rendered, entity_type="opportunity", market_key="market"
+        )
+
+    position_x_manifest = (
+        {
+            "status": "available_observation_only",
+            "rendered_source_identities": rendered_position_x,
+        }
+        if rendered_position_x
+        else {"status": "unavailable"}
+    )
 
     def _json_list(value: Any) -> list:
         if isinstance(value, list):
@@ -598,16 +865,25 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
 
     return {
         "version": "vergex-utilization-v1",
-        "decision_evidence_version": "operator-candidate-v2",
+        "decision_evidence_version": "operator-candidate-v3",
+        "information_policy_epoch": {
+            "label": POLICY_EPOCH_LABEL,
+            "durable_id": information_epoch_id,
+            "status": "available" if information_epoch_id else "not_persisted",
+        },
         "policy_epoch_id": ctx.get("vergex_policy_epoch_id"),
         "skip_policy_epoch_id": ctx.get("skip_policy_epoch_id"),
         "source_chain": {
             "opportunity_id": opportunity_id,
+            "signal_source": signal_source,
             "universe_snapshot_id": (
                 opportunity.get("universe_snapshot_id") if opportunity else None
             ) or (member.get("snapshot_id") if member else None),
             "universe_member_id": opportunity.get("universe_member_id") if opportunity else None,
             "feature_snapshot_id": feature.get("feature_snapshot_id") if feature else None,
+            "serenity_theme_id": (
+                serenity_opportunity.get("theme_id") if serenity_opportunity else None
+            ),
         },
         "instrument": {
             "venue": venue,
@@ -620,6 +896,27 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
             "data_freshness_sec": feature.get("data_freshness_sec"),
             "timeframes": ["15m", "1h", "4h"],
         } if feature else {"status": "unavailable"}),
+        "opportunity_t0": opportunity_t0,
+        "opportunity_t1": opportunity_t1,
+        "system_operator_t1": ({
+            "status": "available",
+            "technical_snapshot_id": feature.get("feature_snapshot_id") if feature else None,
+            "position_x": position_x_manifest,
+            "opportunity_context": (
+                {
+                    "status": "via_observer_summary",
+                    "evidence_version": rendered_evidence.get("version"),
+                }
+                if isinstance(rendered_evidence, dict)
+                else {
+                    "status": "direct_serenity_research",
+                    "evidence_count": len(rendered_evidence_rows),
+                }
+                if signal_source == "serenity" and serenity_context is not None
+                else {"status": "unavailable"}
+            ),
+        } if feature or operator_position_x or rendered_opportunity or serenity_context
+        else {"status": "unavailable"}),
         "candidate_selection": {
             "rank_priority": facts["candidate"].get("rank_priority"),
             "rank_priority_semantics": "ordering_only",
@@ -635,21 +932,15 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
         "market_regime": facts["regime"],
         "recent_performance": facts["recent_performance"],
         "account_context": facts["account"],
-        "hyperliquid": {
-            "funding_id": funding.get("id") if funding else None,
-            "funding_observed_at": funding.get("observed_at") if funding else None,
-            "open_interest_id": open_interest.get("id") if open_interest else None,
-            "open_interest_observed_at": open_interest.get("observed_at") if open_interest else None,
-        },
-        "position_x": ({
-            "status": "available_observation_only",
-            "snapshot_id": structure.get("id"),
-            "source": structure.get("source"),
-            "as_of_time": structure.get("as_of_time"),
-        } if structure else {
-            "status": "not_configured" if not source_status["automatic_source_configured"] else "unavailable",
-            "mode": source_status["mode"],
+        "hyperliquid": ({
+            "status": "not_directly_rendered",
+            "via": "opportunity_t1",
+        } if rendered_sources.get("hyperliquid") else {
+            "status": "unavailable",
+            "funding_id": None,
+            "open_interest_id": None,
         }),
+        "position_x": position_x_manifest,
         "operator_rationale": {
             "model_reasoning": getattr(decision, "model_reasoning", None),
             "skip_kind": getattr(decision, "skip_kind", None),
@@ -713,6 +1004,21 @@ def _json_list(value: Any) -> list:
         return parsed if isinstance(parsed, list) else []
     except (TypeError, ValueError):
         return []
+
+
+def _opportunity_evidence_from_metadata(value: Any) -> dict | None:
+    try:
+        metadata = json.loads(value or "{}") if isinstance(value, str) else value
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    manifest = metadata.get("evidence_manifest")
+    if not isinstance(manifest, dict):
+        return None
+    if manifest.get("version") != "opportunity-information-integrity-v1":
+        return None
+    return manifest
 
 
 def _feature_context_row(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -881,12 +1187,145 @@ def _hydrate_pending_candidate_context(
                 "key_observations": _top_observations(
                     opportunity.get("key_observations")
                 ),
+                "evidence_manifest": (
+                    _opportunity_evidence_from_metadata(opportunity.get("metadata"))
+                    or {"status": "unavailable"}
+                ),
                 "technical_context": feature,
-                "structure_context": build_position_x_agent_context(
-                    repo.latest_perp_structure(opportunity.get("symbol"))
+                "structure_context": _position_x_context_for_instrument(
+                    repo.latest_perp_structure(opportunity.get("symbol")),
+                    opportunity.get("market"),
                 ),
             })
             opportunity_ids.add(str(opportunity_id))
+
+
+def _serenity_context_row(opportunity: dict[str, Any]) -> dict[str, Any]:
+    """Project one exact Serenity source with its own theme evidence."""
+    from aletheia.storage import repositories as repo
+    from aletheia.trading.serenity_scoring import score_serenity_opportunity
+
+    evidence = repo.list_serenity_evidence(
+        theme_id=opportunity.get("theme_id"), limit=200
+    )
+    gates = repo.list_serenity_risk_gates(
+        opportunity_id=opportunity.get("id"), limit=200
+    )
+    score = score_serenity_opportunity(
+        opportunity, evidence=evidence, risk_gates=gates
+    )
+    evidence_rows = [
+        {
+            "id": item.get("id"),
+            "source": item.get("source"),
+            "source_ref": item.get("source_ref"),
+            "url": item.get("url"),
+            "title": item.get("title"),
+            "assessed_tier": item.get("assessed_tier"),
+            "supports": bool(item.get("supports")),
+            "agent_lens": item.get("agent_lens"),
+        }
+        for item in evidence
+    ]
+    references = [
+        str(item.get("source_ref") or item.get("url") or item.get("title") or "").strip()
+        for item in evidence
+        if item.get("source_ref") or item.get("url") or item.get("title")
+    ]
+    try:
+        verdict = json.loads(opportunity.get("verdict_json") or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        verdict = {}
+    asset_class = opportunity.get("asset_class") or "crypto"
+    thesis = opportunity.get("thesis") or ""
+    key_evidence = "; ".join(references)
+    key_evidence_display, rendered_evidence_ids = _serenity_evidence_display(evidence)
+    return {
+        "id": opportunity.get("id"),
+        "symbol": opportunity.get("symbol"),
+        "direction": opportunity.get("direction"),
+        "thesis": thesis,
+        "thesis_display": _bounded_serenity_display(
+            thesis, _SERENITY_THESIS_DISPLAY_CHARS
+        ),
+        "confidence_score": opportunity.get("confidence_score"),
+        "assessed_tier": opportunity.get("assessed_tier") or "unassessed",
+        "evidence_tier": opportunity.get("evidence_tier"),
+        "score": score.get("score"),
+        "bucket": score.get("bucket"),
+        "evidence_count": score.get("evidence_count", 0),
+        "evidence_ids": [item["id"] for item in evidence_rows if item.get("id")],
+        "rendered_evidence_ids": rendered_evidence_ids,
+        "evidence": evidence_rows,
+        "key_evidence": key_evidence,
+        "key_evidence_display": key_evidence_display,
+        "verdict": verdict,
+        "researchability_grade": opportunity.get("researchability_grade") or "C",
+        "asset_class": asset_class,
+        "market_type": opportunity.get("market_type") or "spot",
+        "execution_eligible": asset_class != "equity",
+        "hydration_status": "available",
+    }
+
+
+def _hydrate_pending_serenity_context(
+    layer2: dict[str, Any], layer3: dict[str, Any]
+) -> None:
+    """Ensure every visible Serenity carrier has its exact research projection."""
+    from aletheia.storage import repositories as repo
+
+    rows = layer3.setdefault("serenity_opportunities", [])
+    by_id = {str(row.get("id")): index for index, row in enumerate(rows)}
+
+    def mark_unavailable(pending: dict[str, Any], reason: str) -> None:
+        opportunity_id = str(pending.get("opportunity_id") or "")
+        pending["serenity_context_status"] = "unavailable"
+        pending["serenity_context_unavailable_reason"] = reason
+        projected = {
+            "id": opportunity_id,
+            "symbol": pending.get("symbol"),
+            "direction": pending.get("direction"),
+            "market_type": pending.get("market_type"),
+            "thesis": "",
+            "thesis_display": "",
+            "key_evidence": "",
+            "key_evidence_display": "",
+            "evidence_ids": [],
+            "rendered_evidence_ids": [],
+            "evidence": [],
+            "hydration_status": "unavailable",
+            "unavailable_reason": reason,
+        }
+        if opportunity_id in by_id:
+            rows[by_id[opportunity_id]] = projected
+        else:
+            by_id[opportunity_id] = len(rows)
+            rows.append(projected)
+
+    for pending in layer2.get("pending_signals") or []:
+        if (pending.get("signal_source") or "market_observer") != "serenity":
+            continue
+        opportunity_id = str(pending.get("opportunity_id") or "")
+        try:
+            opportunity = repo.get_serenity_opportunity(opportunity_id)
+        except Exception:
+            mark_unavailable(pending, "serenity_context_hydration_failed")
+            continue
+        if opportunity is None:
+            mark_unavailable(pending, "serenity_opportunity_missing")
+            continue
+        try:
+            projected = _serenity_context_row(opportunity)
+        except Exception:
+            mark_unavailable(pending, "serenity_context_hydration_failed")
+            continue
+        pending["serenity_context_status"] = "available"
+        pending.pop("serenity_context_unavailable_reason", None)
+        if opportunity_id in by_id:
+            rows[by_id[opportunity_id]] = projected
+        else:
+            by_id[opportunity_id] = len(rows)
+            rows.append(projected)
 
 
 def _build_layer1_snapshot() -> dict[str, Any]:
@@ -952,7 +1391,9 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 # Futures telemetry for the leverage/margin context + near-liquidation alerts.
                 "leverage": p.get("leverage"),
                 "liquidation_price": p.get("liquidation_price"),
-                "structure_context": build_position_x_agent_context(latest_perp_structure(p.get("symbol"))),
+                "structure_context": _position_x_context_for_instrument(
+                    latest_perp_structure(p.get("symbol")), p.get("market_type")
+                ),
             }
             for p in display_open_pos
         ]
@@ -1150,8 +1591,14 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 # here; the PI was previously blind to it (only the truncated thesis
                 # surfaced). Expose the top observations so the decision can cite them.
                 "key_observations": _top_observations(o.get("key_observations")),
+                "evidence_manifest": (
+                    _opportunity_evidence_from_metadata(o.get("metadata"))
+                    or {"status": "unavailable"}
+                ),
                 "technical_context": _opportunity_feature(o),
-                "structure_context": build_position_x_agent_context(latest_perp_structure(o.get("symbol"))),
+                "structure_context": _position_x_context_for_instrument(
+                    latest_perp_structure(o.get("symbol")), o.get("market")
+                ),
             }
             for o in opps
         ]
@@ -1616,76 +2063,23 @@ def _build_layer3_wisdom() -> dict[str, Any]:
 
     # Serenity research opportunities (most recent active, for System Operator consumption)
     try:
-        from aletheia.storage.repositories import (
-            list_serenity_evidence,
-            list_serenity_opportunities,
-            list_serenity_risk_gates,
-        )
-        from aletheia.trading.serenity_scoring import score_serenity_opportunity
+        from aletheia.storage.repositories import list_serenity_opportunities
 
         opps = list_serenity_opportunities(status="active", limit=10)
         serenity_opps: list[dict] = []
         for o in opps[:5]:
-            # Phase 2: compute the deterministic score/bucket the same way the
-            # Serenity scorer does, so the PI weighs a research pick on a transparent
-            # scale rather than a bare thesis. Evidence/gates are best-effort: a scoring
-            # failure must not blank out the whole opportunity for the PI.
-            score: dict = {}
-            key_evidence = ""
             try:
-                evidence = list_serenity_evidence(theme_id=o.get("theme_id"), limit=200)
-                gates = list_serenity_risk_gates(opportunity_id=o.get("id"), limit=200)
-                score = score_serenity_opportunity(o, evidence=evidence, risk_gates=gates)
-                # Summarise the strongest supporting evidence's external reference so the
-                # PI can see WHAT grounds the thesis, not just that evidence exists.
-                refs = [
-                    (e.get("source_ref") or e.get("url") or e.get("title") or "").strip()
-                    for e in evidence
-                    if e and (e.get("source_ref") or e.get("url") or e.get("title"))
-                ]
-                key_evidence = "; ".join(refs[:2])[:200]
+                serenity_opps.append(_serenity_context_row(o))
             except Exception:
-                pass
-            # S4: parse verdict_json for PI consumption (forced verdict).
-            try:
-                import json as _json
-                verdict = _json.loads(o.get("verdict_json") or "{}")
-            except Exception:
-                verdict = {}
-            _asset_class = o.get("asset_class") or "crypto"
-            _market_type = o.get("market_type") or "spot"
-            # EQ-R (2026-07-01): pure-observation equity tokens (equity_observer)
-            # are NOT execution candidates. Serenity-produced "equity_tradeable"
-            # stock tokens ARE eligible — they passed the research pipeline.
-            _execution_eligible = (_asset_class not in ("equity",))
-            serenity_opps.append({
-                # Phase 2: attribution anchor — without the id the PI's pick can never be
-                # linked back to serenity_opportunities (signal_source='serenity').
-                "id": o.get("id"),
-                "symbol": o.get("symbol"),
-                "direction": o.get("direction"),
-                "thesis": (o.get("thesis") or "")[:200],
-                "confidence_score": o.get("confidence_score"),
-                # D2: PI must judge on the INDEPENDENTLY assessed tier, not the generator's
-                # self-grade. `assessed_tier` NULL (legacy/unassessed) → "unassessed" so PI
-                # treats it as ungraded rather than trusting an inflated proposal.
-                "assessed_tier": o.get("assessed_tier") or "unassessed",
-                "evidence_tier": o.get("evidence_tier"),  # generator's self-grade (advisory)
-                "score": score.get("score"),
-                "bucket": score.get("bucket"),
-                "evidence_count": score.get("evidence_count", 0),
-                "key_evidence": key_evidence,
-                # S4: forced verdict (AI Berkshire integration) — recommendation +
-                # explicit bull/bear cases + key_assumption + invalidation condition.
-                "verdict": verdict,
-                # S2: researchability grade (A/B/C) — informs PI of data quality.
-                "researchability_grade": o.get("researchability_grade") or "C",
-                # EQ-R: instrument classification for execution routing and display.
-                # execution_eligible=False means PI treats this as research context only.
-                "asset_class": _asset_class,
-                "market_type": _market_type,
-                "execution_eligible": _execution_eligible,
-            })
+                serenity_opps.append({
+                    "id": o.get("id"),
+                    "symbol": o.get("symbol"),
+                    "direction": o.get("direction"),
+                    "thesis": o.get("thesis") or "",
+                    "assessed_tier": o.get("assessed_tier") or "unassessed",
+                    "evidence_ids": [],
+                    "evidence": [],
+                })
         layer["serenity_opportunities"] = serenity_opps
     except Exception:
         layer["serenity_opportunities"] = []

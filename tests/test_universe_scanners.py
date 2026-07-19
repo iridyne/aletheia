@@ -10,6 +10,7 @@ from aletheia.universe.scanners import (
 def _base_feat(**overrides):
     feat = {
         "return_1h": 0.0,
+        "market_type": "perp",
         "return_4h": 0.0,
         "return_24h": 0.0,
         "rsi_14": 50.0,
@@ -204,6 +205,29 @@ def test_derivatives_no_data():
     score, _, direction = score_derivatives(feat)
     assert score == 0
     assert direction is None
+
+
+def test_derivatives_scanner_skips_spot_even_with_contaminated_fields():
+    feat = _base_feat(
+        market_type="spot",
+        funding_rate=0.02,
+        oi_delta_1h=25.0,
+        return_1h=2.0,
+    )
+
+    assert score_derivatives(feat) == (0.0, [], None)
+
+
+@pytest.mark.parametrize("market_type", [None, "", "margin", "option", "unknown"])
+def test_derivatives_scanner_requires_explicit_market_type(market_type):
+    feat = _base_feat(
+        market_type=market_type,
+        funding_rate=0.02,
+        oi_delta_1h=25.0,
+        return_1h=2.0,
+    )
+
+    assert score_derivatives(feat) == (0.0, [], None)
 
 
 def test_derivatives_oi_surge_sets_direction_without_funding():

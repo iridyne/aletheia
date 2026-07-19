@@ -333,31 +333,34 @@ def build_market_context_from_db(
                 volume_24h_usd=vol,
             )
 
-        # Derivatives → LeverageState
-        deriv_exchange = exchange or None
-        fr = fresh_row(
-            repo.latest_funding_rate(sym, exchange=deriv_exchange),
-            "funding",
-            now=now,
-        )
-        oi = fresh_row(
-            repo.latest_open_interest(sym, exchange=deriv_exchange),
-            "open_interest",
-            now=now,
-        )
-        liqs = repo.recent_liquidations(sym, hours=1)
-        liq_total = sum(l.get("quantity_usd", 0) for l in liqs)
-
-        if fr or oi or liq_total > 0:
-            leverage_states[sym] = compute_leverage_state(
-                symbol=sym,
-                funding_rate=fr.get("funding_rate") if fr else None,
-                funding_annualized=fr.get("funding_rate_annualized") if fr else None,
-                open_interest_usd=oi.get("open_interest_usd") if oi else None,
-                oi_delta_1h_pct=oi.get("oi_change_1h_pct") if oi else None,
-                long_short_ratio=oi.get("long_short_ratio") if oi else None,
-                liquidation_1h_usd=liq_total if liq_total > 0 else None,
+        # Derivatives → LeverageState. Only an explicit derivatives identity may
+        # consume perp funding, OI, liquidation, or positioning evidence.
+        normalized_market_type = str(market_type or "").lower()
+        if normalized_market_type in {"perp", "swap", "futures", "usdt_futures"}:
+            deriv_exchange = exchange or None
+            fr = fresh_row(
+                repo.latest_funding_rate(sym, exchange=deriv_exchange),
+                "funding",
+                now=now,
             )
+            oi = fresh_row(
+                repo.latest_open_interest(sym, exchange=deriv_exchange),
+                "open_interest",
+                now=now,
+            )
+            liqs = repo.recent_liquidations(sym, hours=1)
+            liq_total = sum(l.get("quantity_usd", 0) for l in liqs)
+
+            if fr or oi or liq_total > 0:
+                leverage_states[sym] = compute_leverage_state(
+                    symbol=sym,
+                    funding_rate=fr.get("funding_rate") if fr else None,
+                    funding_annualized=fr.get("funding_rate_annualized") if fr else None,
+                    open_interest_usd=oi.get("open_interest_usd") if oi else None,
+                    oi_delta_1h_pct=oi.get("oi_change_1h_pct") if oi else None,
+                    long_short_ratio=oi.get("long_short_ratio") if oi else None,
+                    liquidation_1h_usd=liq_total if liq_total > 0 else None,
+                )
 
     # Macro
     macro_row = repo.latest_macro_snapshot()

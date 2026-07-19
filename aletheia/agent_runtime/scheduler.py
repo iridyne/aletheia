@@ -86,6 +86,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "reasoning_feedback": 60.0,
     "connectivity_monitor": 15.0,
     "news_fetch": 120.0,
+    "news_analyze": 105.0,
     "lesson_reviewer": 300.0,
     "shadow_resolver": 60.0,
     "outcome_settler": 120.0,
@@ -108,6 +109,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
 _TIMEOUT_WORKER_CAPACITY = 16
 _SYNC_TIMEOUT_WORKERS = 1
 _timeout_metrics_lock = threading.Lock()
+_timeout_workers_lock = threading.Lock()
 _timeout_metrics: dict[str, int] = {
     "async_submitted": 0,
     "async_completed": 0,
@@ -137,6 +139,8 @@ def scheduler_timeout_metrics_snapshot() -> dict[str, object]:
             "async_worker_running": worker.running,
             "async_pending": worker.pending,
             "async_capacity": _TIMEOUT_WORKER_CAPACITY,
+            "news_analyzer_worker_running": _news_analyzer_timeout_worker.running,
+            "news_analyzer_pending": _news_analyzer_timeout_worker.pending,
             "sync_pending": _sync_timeout_worker.pending,
             "sync_workers": _SYNC_TIMEOUT_WORKERS,
             # Kept for compatibility with health/reporting consumers.  The new
@@ -150,12 +154,15 @@ def scheduler_timeout_metrics_snapshot() -> dict[str, object]:
 class _PersistentAsyncTimeoutWorker:
     """One persistent event loop with bounded cross-thread admission."""
 
-    def __init__(self) -> None:
+    def __init__(self, thread_name: str = "aletheia-scheduler-async") -> None:
         self._lock = threading.Lock()
         self._started = threading.Event()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pending = 0
+        self._thread_name = thread_name
+        self._closed = False
+        self._stopping = False
 
     @property
     def running(self) -> bool:
@@ -166,28 +173,55 @@ class _PersistentAsyncTimeoutWorker:
         with self._lock:
             return self._pending
 
+    @property
+    def closed(self) -> bool:
+        with self._lock:
+            return self._closed
+
+    @property
+    def stopping(self) -> bool:
+        with self._lock:
+            return self._stopping
+
+    @property
+    def thread_alive(self) -> bool:
+        with self._lock:
+            return bool(self._thread and self._thread.is_alive())
+
     def _start(self) -> asyncio.AbstractEventLoop:
         with self._lock:
-            if self.running:
-                assert self._loop is not None
-                return self._loop
-            self._started.clear()
-            self._thread = threading.Thread(
-                target=self._thread_main,
-                name="aletheia-scheduler-async",
-                daemon=True,
-            )
-            self._thread.start()
+            if self._closed:
+                raise RuntimeError("scheduler async timeout worker is closed")
+            if self._stopping:
+                raise RuntimeError("scheduler async timeout worker is stopping")
+            if self._thread is None or not self._thread.is_alive():
+                self._started.clear()
+                self._thread = threading.Thread(
+                    target=self._thread_main,
+                    name=self._thread_name,
+                    daemon=True,
+                )
+                self._thread.start()
         if not self._started.wait(timeout=5):
             raise RuntimeError("scheduler async worker did not start")
-        assert self._loop is not None
-        return self._loop
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("scheduler async timeout worker is closed")
+            if self._stopping:
+                raise RuntimeError("scheduler async timeout worker is stopping")
+            if self._loop is None or self._thread is None or not self._thread.is_alive():
+                raise RuntimeError("scheduler async worker stopped during startup")
+            return self._loop
 
     def _thread_main(self) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        self._loop = loop
+        with self._lock:
+            self._loop = loop
+            should_stop = self._stopping
         self._started.set()
+        if should_stop:
+            loop.call_soon(loop.stop)
         try:
             loop.run_forever()
         finally:
@@ -198,11 +232,23 @@ class _PersistentAsyncTimeoutWorker:
                 loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
-            self._loop = None
+            with self._lock:
+                self._loop = None
+                self._stopping = False
 
     def submit(self, coroutine) -> concurrent.futures.Future:
-        loop = self._start()
+        try:
+            loop = self._start()
+        except BaseException:
+            if asyncio.iscoroutine(coroutine):
+                coroutine.close()
+            raise
         with self._lock:
+            if self._closed or self._stopping:
+                if asyncio.iscoroutine(coroutine):
+                    coroutine.close()
+                state = "stopping" if self._stopping else "closed"
+                raise RuntimeError(f"scheduler async timeout worker is {state}")
             if self._pending >= _TIMEOUT_WORKER_CAPACITY:
                 if asyncio.iscoroutine(coroutine):
                     coroutine.close()
@@ -225,18 +271,60 @@ class _PersistentAsyncTimeoutWorker:
         return future
 
     def close(self) -> None:
-        loop = self._loop
-        thread = self._thread
-        if loop is None or thread is None:
+        with self._lock:
+            self._closed = True
+            self._stopping = True
+            loop = self._loop
+            thread = self._thread
+        if thread is None:
+            with self._lock:
+                self._stopping = False
             return
+        if loop is None and thread.is_alive():
+            self._started.wait(timeout=5)
+            with self._lock:
+                loop = self._loop
         try:
-            loop.call_soon_threadsafe(loop.stop)
+            if loop is not None:
+                loop.call_soon_threadsafe(loop.stop)
         except RuntimeError:
-            return
+            pass
         thread.join(timeout=5)
+        with self._lock:
+            if not thread.is_alive():
+                self._stopping = False
 
 
 _async_timeout_worker = _PersistentAsyncTimeoutWorker()
+_news_analyzer_timeout_worker = _PersistentAsyncTimeoutWorker(
+    "aletheia-news-analyzer-async"
+)
+
+
+def _ensure_timeout_workers_ready() -> None:
+    """Replace closed workers; never submit into a loop already draining stop."""
+    global _async_timeout_worker, _news_analyzer_timeout_worker
+
+    with _timeout_workers_lock:
+        if _async_timeout_worker.closed:
+            if _async_timeout_worker.stopping or _async_timeout_worker.thread_alive:
+                raise RuntimeError(
+                    "scheduler async timeout worker shutdown incomplete; "
+                    "refusing unsafe replacement"
+                )
+            _async_timeout_worker = _PersistentAsyncTimeoutWorker()
+        if _news_analyzer_timeout_worker.closed:
+            if (
+                _news_analyzer_timeout_worker.stopping
+                or _news_analyzer_timeout_worker.thread_alive
+            ):
+                raise RuntimeError(
+                    "news analyzer timeout worker shutdown incomplete; "
+                    "refusing unsafe replacement"
+                )
+            _news_analyzer_timeout_worker = _PersistentAsyncTimeoutWorker(
+                "aletheia-news-analyzer-async"
+            )
 
 
 class _PersistentSyncTimeoutWorker:
@@ -510,16 +598,17 @@ def _ensure_agent_run_ended(job_id: str, target_status: str) -> None:
 def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object:
     """Run an async job with a hard wall-clock bound.
 
-    Every invocation is admitted to one persistent process-owned event loop.
-    Timeout cancellation therefore does not tear down an event loop or create a
-    disposable thread.  If the loop is blocked by non-cooperative synchronous
-    work, pending admission remains bounded and later calls fail closed.
+    Every invocation is admitted to a fixed process-owned event loop. News
+    analysis has one isolated loop because a synchronous provider can otherwise
+    block RSS and all other async jobs. Timeout cancellation never creates a
+    disposable thread; pending admission remains bounded.
 
     Critical: DB cleanup (rollback + close) happens INSIDE the event loop via a
     wrapper coroutine's finally block so timeout cancellation cannot leave the
     worker's thread-local SQLite connection holding a write transaction.
     """
     timeout = _ASYNC_JOB_TIMEOUT_SEC[job_id]
+    _ensure_timeout_workers_ready()
 
     async def _guarded_coro():
         from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
@@ -532,8 +621,13 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
             rollback_if_in_transaction()
             close_db()
 
+    worker = (
+        _news_analyzer_timeout_worker
+        if job_id == "news_analyze"
+        else _async_timeout_worker
+    )
     try:
-        future = _async_timeout_worker.submit(_guarded_coro())
+        future = worker.submit(_guarded_coro())
     except RuntimeError:
         if asyncio.iscoroutine(awaitable):
             awaitable.close()
@@ -763,6 +857,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     if not cfg.runtime.scheduler_enabled:
         logger.info("Scheduler disabled by config; not starting.")
         return None
+    _ensure_timeout_workers_ready()
 
     # Keep each pool small for SQLite, but split queues by job class:
     # - io: short read/write infrastructure jobs (market data, health, sync)
@@ -926,6 +1021,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         minutes=cfg.news.fetch_interval_minutes, id="news_fetch",
         misfire_grace_time=120, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=30),
+    )
+    _scheduler.add_job(
+        _guarded("news_analyze", _run_news_analyze), "interval",
+        minutes=5, id="news_analyze",
+        misfire_grace_time=120, executor="agents",
+        next_run_time=datetime.now() + timedelta(seconds=90),
     )
     # US equity observer — runs every 30 min Mon–Fri during US market hours
     # (14:30–21:00 UTC = 09:30–16:00 Eastern). Unified agent: yfinance daily bars
@@ -1091,6 +1192,7 @@ def stop_scheduler() -> None:
         _scheduler.shutdown(wait=False)
         _scheduler = None
     _async_timeout_worker.close()
+    _news_analyzer_timeout_worker.close()
 
 
 def pause_scheduler(layered: bool | None = None) -> None:
@@ -2378,6 +2480,29 @@ def _run_news_fetch():
 async def _async_news_fetch():
     from aletheia.data.news_collector import fetch_news_feeds
     await fetch_news_feeds()
+
+
+def _run_news_analyze():
+    cfg = load_config()
+    if not cfg.news.enabled or cfg.runtime.paused:
+        return
+    try:
+        _run_async_with_timeout("news_analyze", _async_news_analyze())
+    except TimeoutError:
+        logger.warning(
+            "news_analyze timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["news_analyze"],
+        )
+        _record_job_failure("news_analyze", "timeout")
+    except Exception as e:
+        logger.warning("news_analyze failed: %s", e)
+        _record_job_failure("news_analyze", str(e))
+
+
+async def _async_news_analyze():
+    from aletheia.data.news_analyzer import analyze_pending_news
+
+    await analyze_pending_news(batch_size=3)
 
 
 def _run_persona_rollout():

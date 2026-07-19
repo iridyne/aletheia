@@ -1911,6 +1911,11 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         evaluate_trading_opportunity as _evaluate,
         prepare_decision_as_proposal,
     )
+    from aletheia.learning.opportunity_information_policy import (
+        ensure_opportunity_information_policy_epoch,
+    )
+
+    information_policy_epoch_id = ensure_opportunity_information_policy_epoch()
     params = params or {}
     execution_mode = _configured_paper_execution_mode()
 
@@ -1935,6 +1940,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     ctx["skip_policy_epoch_id"] = policy_epoch_id
     ctx["skip_policy"] = skip_policy_context()
     ctx["vergex_policy_epoch_id"] = vergex_policy_epoch_id
+    ctx["information_policy_epoch_id"] = information_policy_epoch_id
     attach_b2_candidate_evidence(ctx, policy_epoch_id=b2_policy_epoch_id)
 
     # A zero-pending heartbeat is an operator observation, not a trade decision.
@@ -1954,6 +1960,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             "operator_evaluation_event_id": event["id"],
             "policy_epoch_id": policy_epoch_id,
             "b2_evidence_policy_epoch_id": b2_policy_epoch_id,
+            "information_policy_epoch_id": information_policy_epoch_id,
             "pending_queue_remaining": 0,
             "pending_queue": queue,
         }

@@ -10,6 +10,8 @@ Called by the scheduler immediately after prediction_observer completes.
 import hashlib
 import json
 import logging
+import math
+import re
 from datetime import datetime, timezone, timedelta
 
 from aletheia.agents import register_agent
@@ -17,6 +19,7 @@ from aletheia.agents.helpers import log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.data.ccxt_provider import get_market_data_provider
 from aletheia.data.symbols import MARKET_SPOT
+from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     find_divergence_opportunity_by_source_version,
@@ -53,15 +56,34 @@ _KEYWORD_SYMBOL_MAP: dict[str, str] = {
     "matic": "POL/USDT",
 }
 
-# Broad crypto keywords that map to BTC as a proxy
-_BROAD_CRYPTO_KEYWORDS = {"crypto", "cryptocurrency", "digital asset", "defi"}
-
 # Thresholds
 _MIN_PROB_CHANGE = 0.10       # |Δ24h| must exceed 10pp
 _MIN_VOLUME_USD = 50_000.0    # market must have >$50k volume
 _MAX_PRICE_MOVE = 3.0         # if price already moved >3%, no divergence
 _MAX_CONFIDENCE_SCORE = 70    # cap — prediction markets are noisy
 _MIN_CONFIDENCE_SCORE = 40
+_PREDICTION_POLARITY_VERSION = "polarity-v1"
+
+_POSITIVE_POLARITY_PATTERNS = (
+    r"\b(?:rise|rally|surge|climb|gain)\b",
+    r"\b(?:above|exceed|reach|hit)\b",
+    r"\bbreak(?!\s+(?:below|under))\b",
+)
+_NEGATIVE_POLARITY_PATTERNS = (
+    r"\b(?:fall|drop|decline|crash|plunge)\b",
+    r"\b(?:below|under)\b",
+)
+_AMBIGUOUS_POLARITY_PATTERNS = (
+    r"\b(?:not|never|without)\b",
+    r"\b(?:won't|cannot|can't|isn't|aren't|doesn't|didn't)\b",
+    r"\b(?:fail|fails|failed|failing|failure)\s+to\b",
+    r"\b(?:avoid|avoids|avoided|avoiding)\b",
+)
+_PRICE_THRESHOLD_PATTERN = re.compile(
+    r"\b(?:above|exceed|reach|hit|break|below|under)\s+"
+    r"(?:a\s+price\s+of\s+)?\$?\d[\d,]*(?:\.\d+)?\s*[kmbt]?\b",
+    re.IGNORECASE,
+)
 
 
 class _DivergenceEvidenceError(RuntimeError):
@@ -74,13 +96,14 @@ def _source_version(row: dict, symbol: str, market: str) -> str:
         "prediction_market_id": row.get("id"),
         "prediction_external_market_id": row.get("external_market_id"),
         "prediction_updated_at": row.get("updated_at"),
+        "prediction_polarity_version": _PREDICTION_POLARITY_VERSION,
         "symbol": symbol,
         "market": market,
     }
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    return f"prediction_divergence:{digest}"
+    return f"prediction_divergence:{_PREDICTION_POLARITY_VERSION}:{digest}"
 
 
 def _prediction_candidate_key(row: dict) -> str:
@@ -133,6 +156,11 @@ def _record_divergence_decision(
                 "prediction_market_id": row.get("id"),
                 "prediction_external_market_id": row.get("external_market_id"),
                 "prediction_updated_at": row.get("updated_at"),
+                "prediction_question": row.get("question"),
+                "prediction_polarity": _prediction_polarity(
+                    str(row.get("question") or "")
+                ),
+                "prediction_polarity_version": _PREDICTION_POLARITY_VERSION,
                 "probability_change_24h": row.get("probability_change_24h"),
                 "volume_24h": row.get("volume_24h"),
                 "liquidity": row.get("liquidity"),
@@ -142,6 +170,7 @@ def _record_divergence_decision(
                 "min_probability_change": _MIN_PROB_CHANGE,
                 "min_volume_usd": _MIN_VOLUME_USD,
                 "max_price_move": _MAX_PRICE_MOVE,
+                "prediction_polarity_version": _PREDICTION_POLARITY_VERSION,
             },
             raise_on_error=True,
         )
@@ -170,16 +199,31 @@ def _source_valid_until(updated_at: str) -> str | None:
 
 
 def _map_question_to_symbol(question: str) -> str | None:
-    """Extract the most specific tradeable symbol from a Polymarket question."""
-    q = question.lower()
-    # Check specific coins first (longer keywords first for priority)
-    for keyword, symbol in sorted(_KEYWORD_SYMBOL_MAP.items(), key=lambda x: -len(x[0])):
-        if keyword in q:
-            return symbol
-    # Broad crypto → BTC proxy
-    if any(kw in q for kw in _BROAD_CRYPTO_KEYWORDS):
-        return "BTC/USDT"
-    return None
+    """Return one exactly named asset; proxy, substring, and multi-asset reads fail."""
+    matches = {
+        symbol
+        for keyword, symbol in _KEYWORD_SYMBOL_MAP.items()
+        if re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(keyword)}(?![A-Za-z0-9])",
+            question,
+            re.IGNORECASE,
+        )
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _prediction_polarity(question: str) -> int | None:
+    """Map YES-probability movement to asset-price polarity, or fail closed."""
+    normalized = question.lower()
+    if _PRICE_THRESHOLD_PATTERN.search(normalized) is None:
+        return None
+    if any(re.search(pattern, normalized) for pattern in _AMBIGUOUS_POLARITY_PATTERNS):
+        return None
+    positive = any(re.search(pattern, normalized) for pattern in _POSITIVE_POLARITY_PATTERNS)
+    negative = any(re.search(pattern, normalized) for pattern in _NEGATIVE_POLARITY_PATTERNS)
+    if positive == negative:
+        return None
+    return 1 if positive else -1
 
 
 def _compute_divergence_score(
@@ -192,6 +236,10 @@ def _compute_divergence_score(
 
     Higher when: probability moved a lot + price didn't + market is liquid.
     """
+    if not all(math.isfinite(value) for value in (
+        prob_change, price_change_pct, volume_usd, liquidity,
+    )):
+        raise ValueError("divergence evidence must be finite")
     # Base: proportional to probability magnitude
     base = min(40, int(abs(prob_change) * 200))  # 10pp=20, 20pp=40
 
@@ -217,6 +265,11 @@ async def run_divergence_scanner(
     **kwargs,
 ) -> dict:
     """Scan recent prediction markets for crypto price divergences."""
+    from aletheia.learning.opportunity_information_policy import (
+        ensure_opportunity_information_policy_epoch,
+    )
+
+    ensure_opportunity_information_policy_epoch()
     outputs: list[str] = []
     errors: list[str] = []
 
@@ -254,15 +307,38 @@ async def run_divergence_scanner(
 
     for row in rows:
         question = row.get("question", "")
-        prob_change = float(row.get("probability_change_24h", 0))
-        volume = float(row.get("volume_24h", 0))
-        liquidity = float(row.get("liquidity", 0))
-        yes_prob = float(row.get("yes_probability", 0))
-
-        direction = "long" if prob_change > 0 else "short"
+        symbol = _map_question_to_symbol(question)
+        try:
+            prob_change = float(row.get("probability_change_24h"))
+            volume = float(row.get("volume_24h"))
+            liquidity = float(row.get("liquidity"))
+            yes_prob = float(row.get("yes_probability"))
+        except (TypeError, ValueError):
+            prob_change = volume = liquidity = yes_prob = math.nan
+        if not all(math.isfinite(value) for value in (
+            prob_change, volume, liquidity, yes_prob,
+        )):
+            reason = "invalid_numeric_evidence"
+            evidence_error = _record_divergence_decision(
+                row=row,
+                run_id=run_id,
+                symbol=symbol,
+                market_type=MARKET_SPOT,
+                direction=None,
+                decision="rejected",
+                reason_code=reason,
+            )
+            if evidence_error:
+                errors.append(evidence_error)
+            else:
+                outputs.append(f"skip:{symbol or '[unmapped]'}:{reason}")
+            continue
 
         # Map to tradeable symbol
-        symbol = _map_question_to_symbol(question)
+        polarity = _prediction_polarity(question)
+        direction = None
+        if polarity is not None:
+            direction = "long" if prob_change * polarity > 0 else "short"
         if not symbol:
             evidence_error = _record_divergence_decision(
                 row=row,
@@ -279,6 +355,23 @@ async def run_divergence_scanner(
                 outputs.append(
                     f"skip:{_prediction_candidate_key(row)}:symbol_unmapped"
                 )
+            continue
+
+        if polarity is None:
+            reason = "prediction_polarity_ambiguous"
+            evidence_error = _record_divergence_decision(
+                row=row,
+                run_id=run_id,
+                symbol=symbol,
+                market_type=MARKET_SPOT,
+                direction=None,
+                decision="rejected",
+                reason_code=reason,
+            )
+            if evidence_error:
+                errors.append(evidence_error)
+            else:
+                outputs.append(f"skip:{symbol}:{reason}")
             continue
 
         # Direction comes from the prediction fact. The current producer fetches
@@ -371,7 +464,32 @@ async def run_divergence_scanner(
             logger.warning("ticker fetch failed for %s: %s", symbol, type(e).__name__)
             continue
 
-        price_change_pct = abs(ticker.change_pct_24h)
+        try:
+            last_price = float(ticker.last_price)
+            ticker_volume = float(ticker.volume_24h)
+            ticker_change_pct = float(ticker.change_pct_24h)
+        except (TypeError, ValueError):
+            last_price = ticker_volume = ticker_change_pct = math.nan
+        if not all(math.isfinite(value) for value in (
+            last_price, ticker_volume, ticker_change_pct,
+        )) or last_price <= 0 or ticker_volume < 0:
+            reason = "invalid_numeric_evidence"
+            evidence_error = _record_divergence_decision(
+                row=row,
+                run_id=run_id,
+                symbol=symbol,
+                market_type=db_market,
+                direction=direction,
+                decision="rejected",
+                reason_code=reason,
+            )
+            if evidence_error:
+                errors.append(evidence_error)
+            else:
+                outputs.append(f"skip:{symbol}:{reason}")
+            continue
+
+        price_change_pct = abs(ticker_change_pct)
 
         # Divergence check: probability moved significantly but price didn't follow
         if price_change_pct > _MAX_PRICE_MOVE:
@@ -384,7 +502,7 @@ async def run_divergence_scanner(
                 direction=direction,
                 decision="rejected",
                 reason_code=reason,
-                price_change_pct=ticker.change_pct_24h,
+                price_change_pct=ticker_change_pct,
             )
             if evidence_error:
                 errors.append(evidence_error)
@@ -392,14 +510,16 @@ async def run_divergence_scanner(
                 outputs.append(f"skip:{symbol}:{reason}")
             continue
 
-        score = _compute_divergence_score(prob_change, ticker.change_pct_24h, volume, liquidity)
+        score = _compute_divergence_score(
+            prob_change, ticker_change_pct, volume, liquidity,
+        )
 
         confidence = "medium" if score >= 55 else "speculative"
 
         thesis = (
             f"Polymarket divergence: '{question[:80]}' YES prob "
             f"{yes_prob*100:.0f}% (Δ24h {prob_change*100:+.1f}pp, vol ${volume:,.0f}) "
-            f"but {symbol} only moved {ticker.change_pct_24h:+.1f}% — market hasn't priced in."
+            f"but {symbol} only moved {ticker_change_pct:+.1f}% — market hasn't priced in."
         )
 
         if not is_tool_permitted("create_opportunity", permission_mode):
@@ -412,7 +532,7 @@ async def run_divergence_scanner(
                 direction=direction,
                 decision="error",
                 reason_code=reason,
-                price_change_pct=ticker.change_pct_24h,
+                price_change_pct=ticker_change_pct,
             )
             if evidence_error:
                 errors.append(evidence_error)
@@ -440,14 +560,40 @@ async def run_divergence_scanner(
                 "prediction_market_id": row.get("id"),
                 "prediction_external_market_id": row.get("external_market_id"),
                 "prediction_updated_at": row.get("updated_at"),
+                "prediction_polarity": polarity,
+                "prediction_polarity_version": _PREDICTION_POLARITY_VERSION,
                 "instrument_market": instrument_market,
                 "prediction_question": question[:120],
                 "yes_probability": yes_prob,
                 "prob_change_24h": prob_change,
                 "prediction_volume_usd": volume,
                 "prediction_liquidity": liquidity,
-                "crypto_price_change_pct": ticker.change_pct_24h,
-                "crypto_last_price": ticker.last_price,
+                "crypto_price_change_pct": ticker_change_pct,
+                "crypto_last_price": last_price,
+                "evidence_manifest": {
+                    "version": "opportunity-information-integrity-v1",
+                    "policy_epoch": POLICY_EPOCH_LABEL,
+                    "t0": {
+                        "status": "available",
+                        "trigger_type": "prediction_divergence",
+                        "run_id": run_id,
+                        "source_version": source_version,
+                        "prediction_market_id": row.get("id"),
+                        "prediction_external_market_id": row.get("external_market_id"),
+                        "prediction_updated_at": row.get("updated_at"),
+                        "prediction_polarity": polarity,
+                        "prediction_polarity_version": _PREDICTION_POLARITY_VERSION,
+                        "prediction_question": question[:160],
+                        "symbol": symbol,
+                        "market_type": instrument_market,
+                        "direction": direction,
+                        "yes_probability": yes_prob,
+                        "probability_change_24h": prob_change,
+                        "crypto_last_price": last_price,
+                        "crypto_price_change_24h_pct": ticker_change_pct,
+                    },
+                    "t1": {"status": "unavailable"},
+                },
             }),
         )
         try:
@@ -478,7 +624,7 @@ async def run_divergence_scanner(
                             decision="passed",
                             reason_code="opportunity_emitted",
                             opportunity_id=opp.id,
-                            price_change_pct=ticker.change_pct_24h,
+                            price_change_pct=ticker_change_pct,
                         )
                         if evidence_error:
                             raise _DivergenceEvidenceError(evidence_error)
@@ -500,7 +646,7 @@ async def run_divergence_scanner(
                 decision="error",
                 reason_code="opportunity_insert_failed",
                 opportunity_id=opp.id,
-                price_change_pct=ticker.change_pct_24h,
+                price_change_pct=ticker_change_pct,
             )
             if evidence_error:
                 errors.append(evidence_error)
@@ -520,7 +666,7 @@ async def run_divergence_scanner(
                 decision="passed",
                 reason_code="existing_opportunity_reused",
                 opportunity_id=owner.get("id"),
-                price_change_pct=ticker.change_pct_24h,
+                price_change_pct=ticker_change_pct,
             )
             if evidence_error:
                 errors.append(evidence_error)

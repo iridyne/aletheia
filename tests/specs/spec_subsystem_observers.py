@@ -267,14 +267,20 @@ def test_observer_has_pre_filter_function():
         "OBS-PRE-FILTER-LOGIC", "agent_contracts",
         "§market_observer pre_filter_signal_detection",
         "L2b",
-        "_has_sufficient_signal: RSI>12 偏离返回 True；平静市场返回 False。",
+        "_has_sufficient_signal 只读 build_market_context debug 中 structured 1h RSI/ATR%；"
+        "RSI>12 偏离返回 True，平静市场返回 False。",
         status="implemented",
     ),
 )
 def test_pre_filter_signal_detection():
     import aletheia.agents.market_observer as mo
-    assert mo._has_sufficient_signal("| RSI | 1h | 72.3 | rising |") is True
-    assert mo._has_sufficient_signal("| RSI | 1h | 51.2 | flat |") is False
+    assert mo._has_sufficient_signal({
+        "symbols": {"BTC/USDT": {"1h": {"rsi_14": 72.3, "atr_pct": 0.2}}},
+    }) is True
+    assert mo._has_sufficient_signal({
+        "symbols": {"BTC/USDT": {"1h": {"rsi_14": 51.2, "atr_pct": 0.2}}},
+        "markdown": "breakout spike overbought",
+    }) is False
 
 
 @spec_claim(
@@ -297,3 +303,36 @@ def test_pre_filter_rejection_returns_without_error():
     assert "return None, None" in reject_branch, (
         "正常前置拒绝必须返回无错误结果，不能把 no_sufficient_signal 当成运行故障"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "OBS-NEWS-ENTITY", "agent_contracts", "§market_observer news context", "L2b",
+        "News association requires an exact ticker or asset name; substrings do not match.",
+        status="implemented",
+    ),
+)
+def test_news_entity_matching_is_exact():
+    from aletheia.data.news_entities import match_crypto_entities
+
+    assert match_crypto_entities("Bitcoin and SOL move") == ["BTC/USDT", "SOL/USDT"]
+    assert match_crypto_entities("solution adoption in Canada") == []
+
+
+@spec_claim(
+    SpecClaim(
+        "OBS-NEWS-ANALYZER", "agent_contracts", "§scheduler news analysis", "L2a",
+        "News analysis is a separate small-batch timeout job and RSS fetch never calls it.",
+        status="implemented",
+    ),
+)
+def test_news_analysis_is_separate_from_rss_scheduler_job():
+    import inspect
+
+    from aletheia.agent_runtime import scheduler
+
+    assert scheduler._ASYNC_JOB_TIMEOUT_SEC["news_analyze"] <= 120
+    assert "analyze_pending_news(batch_size=3)" in inspect.getsource(
+        scheduler._async_news_analyze
+    )
+    assert "analyze_pending_news" not in inspect.getsource(scheduler._async_news_fetch)
