@@ -1,4 +1,3 @@
-
 # design/ - System Contracts And Architecture
 
 This is the main implementation authority after governance and product scope. Read the narrow folder first; do not scan all design files.
@@ -8,13 +7,13 @@ This is the main implementation authority after governance and product scope. Re
 | Folder | Use |
 |---|---|
 | `contracts/` | Gold-standard behavioral contracts: risk, execution, learning, scheduler, audit, persistence |
+| `decisions/` | Durable architectural decisions: why long-lived choices were made and how they evolved |
 | `data/` | Data model, data utilization, market data observability, collectors, source alignment |
 | `api/` | API reference and API compatibility rules |
 | `architecture/` | System map and architecture guides |
 | `operator/` | System Operator and PI Operator design |
 | `frontend/` | Web UI information architecture and design system |
 | `market-systems/` | Equity, prediction market, freshness, filters, and market-related subsystem designs |
-| `process/` | SDD methodology and document atlas |
 | `research/` | Design research that has not become a contract |
 | `history/` | Frozen historical operator specs and crosswalks |
 | `subsystems/` | Smaller subsystem designs without a larger folder yet |
@@ -23,6 +22,7 @@ This is the main implementation authority after governance and product scope. Re
 
 | If changing... | Read first |
 |---|---|
+| Long-lived architecture direction or previous design choice | `decisions/` then affected `contracts/` |
 | Risk checks, kill switch, sizing | `contracts/risk_engine_contract.md` + `../governance/policies/trust_and_change_control.md` |
 | Order path, paper/live execution, position closure | `contracts/execution_contract.md` |
 | Live unlock or permission surfaces | `contracts/live_unlock_contract.md` |
@@ -35,4 +35,4 @@ This is the main implementation authority after governance and product scope. Re
 
 ## Agent Rule
 
-Contracts describe what the system should do. If code and contract differ, file or update an issue unless the task explicitly asks to revise the contract.
+Contracts describe what the system should do. Decisions describe why the system chose its current direction. If code and contract differ, file or update an issue unless the task explicitly asks to revise the contract.
