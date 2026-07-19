@@ -6229,15 +6229,52 @@ def resolve_shadow_trade_if_pending(
     exit_price: float,
     pnl_pct: float,
     resolved_at: str,
+    economics: dict | None = None,
+    settlement_price_source: str | None = None,
+    settlement_lag_sec: float | None = None,
 ) -> bool:
-    """Resolve one shadow row once, leaving an already-resolved row untouched."""
+    """Resolve one shadow row once, leaving an already-resolved row untouched.
+
+    When ``economics`` is provided (dict returned by
+    ``aletheia.universe.outcome_economics.estimate_outcome_economics``), the
+    cost-model fields are populated in the same UPDATE. Rows resolved without
+    ``economics`` remain compatible with the historic minimal-writer contract:
+    only ``exit_price``, ``pnl_pct``, ``resolved_at`` change.
+    """
     db = get_db()
     was_in_tx = db.in_transaction
-    cursor = db.execute(
-        "UPDATE shadow_trades SET exit_price = ?, pnl_pct = ?, resolved_at = ? "
-        "WHERE id = ? AND resolved_at IS NULL",
-        (exit_price, pnl_pct, resolved_at, shadow_id),
-    )
+    if not economics:
+        cursor = db.execute(
+            "UPDATE shadow_trades SET exit_price = ?, pnl_pct = ?, resolved_at = ? "
+            "WHERE id = ? AND resolved_at IS NULL",
+            (exit_price, pnl_pct, resolved_at, shadow_id),
+        )
+    else:
+        cursor = db.execute(
+            "UPDATE shadow_trades SET "
+            " exit_price = ?, pnl_pct = ?, "
+            " gross_return_pct = ?, net_pnl_pct = ?, "
+            " estimated_fee_pct = ?, estimated_spread_slippage_pct = ?, "
+            " estimated_funding_pct = ?, min_tradable_edge_pct = ?, "
+            " settlement_price_source = ?, settlement_lag_sec = ?, "
+            " cost_model_version = ?, resolved_at = ? "
+            "WHERE id = ? AND resolved_at IS NULL",
+            (
+                exit_price,
+                pnl_pct,
+                economics.get("gross_return_pct"),
+                economics.get("net_return_pct"),
+                economics.get("estimated_fee_pct"),
+                economics.get("estimated_spread_slippage_pct"),
+                economics.get("estimated_funding_pct"),
+                economics.get("min_tradable_edge_pct"),
+                settlement_price_source,
+                settlement_lag_sec,
+                economics.get("cost_model_version"),
+                resolved_at,
+                shadow_id,
+            ),
+        )
     if not was_in_tx:
         db.commit()
     return cursor.rowcount == 1
