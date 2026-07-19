@@ -253,6 +253,7 @@ Overview 是全站"main + auxiliary column"布局的**规范样板**。新页面
 2. **固定宽度 rail 而 main 未加 `minmax(0, 1fr)`** —— 长内容会把 rail 推出屏幕。
 3. **rail 塌陷后再横向切成 grid** —— Bloomberg mobile / TradingView / IBKR 三方一致做法是**纵向堆叠**（`flex column`），不是横排。只有当 rail 卡是同质 + 无可折叠区 + ≤200px 高时才允许 `repeat(auto-fit, minmax(320px, 1fr))`。
 4. **主壳（page-level）用 `md` 断点做主/rail 拆分** —— 主列在 `md` 只剩 ~380px，图表不可读。**主壳只在 `lg` 分栏。**
+5. **`flex: 1 1 0` 在 column-flex 容器里做子行高** —— `flex-basis: 0` 把高度预算压到 0，子内容溢出/被裁剪。Command Center heartbeat zone 真实翻车：三张 zone 卡被压到 143px 条带。**修法：改用 `display: grid; grid-template-columns: repeat(N, minmax(0, 1fr))`**，grid 子项保留 intrinsic height。
 
 **grid vs flex 决策表**
 
@@ -423,6 +424,7 @@ Overview 当前没有此需求，但作为下一批 tile 组件的默认写法�
 | 冗余类型 | 示例 | 判断标准 |
 |----------|------|---------|
 | 双重编码 | 绿点 + 文字 "active" | 去掉文字色盲用户无法理解 → 保留；否则去掉重复通道 |
+| 方向双重编码 | `▲+12.5` / `▼-3.2`（符号 + 三角） | `+`/`-` 已表达方向；`▲▼` 是重复通道，且违反 WCAG 1.4.1 非颜色辅助通道独立性。**去掉三角，保留 `±` 号。** |
 | 标签回声 | Section "Open Positions" + badge "3 open" | 去掉 "open" 信息仍完整 → 只显示数字 |
 | 控件 + 状态复述 | Switch + badge "ON" | Switch 视觉即状态 → 永远不加状态 badge |
 | 区域内重复 | source bar 已有数据来源，chart controls 又重复 | 同 viewport 内同一信息出现两次 → 保留信息层级更高的 |
@@ -431,6 +433,40 @@ Overview 当前没有此需求，但作为下一批 tile 组件的默认写法�
 **保留双通道的合理场景：** 数据表格 StatusBadge（每个 cell 必须独立可读）、Dashboard 圆点 + 内容值（圆点给快扫，文字给详情）、严肃操作确认区（冗余是刻意的摩擦）。
 
 审计 checklist：①同区域是否有两个元素传达完全相同的事实？②去掉其中一个，用户能否 <2s 内获取信息？③保留的那个对色盲/低视力用户仍可达？
+
+### 表格内容策略：横向滚动 > 单元格换行
+
+**`DataTable` 的 `noWrap` 默认值是 `true`（全局）。** 不需要显式传 prop；仅当某列确实是段落文本且折行可读性更高时，才显式传 `noWrap={false}` opt-out。
+
+**为什么 nowrap + 横向滚动是默认正确答案：**
+
+| 场景 | 换行（旧默认） | nowrap + 横滚（新默认） |
+|------|--------------|----------------------|
+| 移动端 9 列数据表 | 行高膨胀 3-5 倍，视觉噪音极大 | 左右滑，每行一个高度，整洁 |
+| 宽屏 3 列表 | 文字撑满，但空白列 | 列缩到 natural width，浪费感可接受 |
+| 数字/日期/代码列 | 换行破坏对齐感 | 单行，自然对齐 |
+| 自由文本描述列 | 折行可读 | 横滚可读，但稍难 → 这类表 opt-out |
+
+**实现机制**（`DataTable.tsx`）：
+```tsx
+// 默认即 nowrap
+<div className={noWrap ? 'table-wrap table-wrap-nowrap' : 'table-wrap'}>
+```
+```css
+.table-wrap { overflow-x: auto; min-width: 0; }
+.table-wrap-nowrap th,
+.table-wrap-nowrap td { white-space: nowrap; }
+```
+
+**scrollbar 暗色主题：**
+```css
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-2) transparent;
+  color-scheme: dark;   /* 让浏览器原生 scrollbar 跟随暗色主题 */
+}
+```
+缺少 `color-scheme: dark` 时，浏览器默认渲染浅色滚动条，在暗色 UI 里突兀（charts 水平滚动条真实翻车过）。
 
 ### 错误 & 反馈处理
 
@@ -475,6 +511,36 @@ Overview 当前没有此需求，但作为下一批 tile 组件的默认写法�
 
 优先级（严重性降序）：!gatewayRunning → OFFLINE red → killed → HALTED red → riskState=blocked → BLOCKED red → operator=offline → OFFLINE red → operator=stale → STALE yellow → paused → PAUSED yellow → riskState=warning → CAUTION yellow → riskState=healthy → OPERATIONAL green → default → STANDBY blue。
 
+### Unicode 符号视觉等宽
+
+行内 chevron / arrow 类 Unicode 符号有"小号变体"和"全号变体"，大小差距肉眼明显，**同一行内混用会导致视觉不整齐**。
+
+| ❌ 小号（勿用于 UI 主元素） | ✓ 全号 |
+|--------------------------|--------|
+| `▸` U+25B8 SMALL RIGHT-POINTING TRIANGLE | `▶` U+25B6 |
+| `▾` U+25BE SMALL DOWN-POINTING TRIANGLE | `▼` U+25BC |
+| `›` U+203A SINGLE RIGHT-POINTING ANGLE QUOTATION MARK | `→` U+2192 |
+
+**规则：** chevron / expand indicator 选 `▶`/`▼`；action arrow 选 `→`；同一行里的符号高度应一致。小号变体（25B8/25BE）只用于角标、下标等刻意降调的场景。
+
+### Settings 敏感字段展示
+
+API key 等凭证字段**禁止用 badge 标注"已配置"**（颜色 badge 像状态，不像值，且会与其他 badge 争抢视线）。
+
+**正确做法：** 用 `<input type="password" placeholder="•••••• configured (ends ··xxxx)" readOnly />` 展示掩码占位符，末 4 位帮助用户核对版本。未配置时 placeholder 为 "Not configured"。
+
+```tsx
+// CORRECT
+<input
+  type="password"
+  readOnly
+  value=""
+  placeholder={apiKey ? `•••••• configured (ends ··${apiKey.slice(-4)})` : 'Not configured'}
+/>
+```
+
+长表单（如 Inference Admission 参数组）用 `collapsible` 折叠——`useState(false)` toggle，点击标题展开，默认收起，防止界面在未配置该功能时暴露一堆空字段。
+
 ### Symbol 显示竞态
 
 `fmtSymbol(sym, marketType)` 在 `marketType` 为 undefined 时保留 canonical 斜杠。若 `marketTypeBySymbol`（来自 positions query）尚未加载，exposure 列表会短暂显示错误形式。
@@ -487,7 +553,8 @@ Overview 当前没有此需求，但作为下一批 tile 组件的默认写法�
 
 | 需求 | Primitive |
 |------|-----------|
-| 数字 | `fmtNum` / `fmtSigned` / `fmtPct` |
+| 数字（一般） | `fmtNum` / `fmtSigned` / `fmtPct` |
+| 数字（空间受限 tile，~7 字符预算） | `fmtCompact` / `fmtCompactSigned`（SI 后缀 k/M/B/T，sub-1 三位有效数字，下标零压缩）；**不要**在 tile 上用 `toLocaleString` 千分位 |
 | 时间戳 | `fmtTimestamp` |
 | Symbol | `fmtSymbol(sym, marketType)` |
 | snake_case enum | `humanize()` |
@@ -598,7 +665,7 @@ UI 改动 commit 前必须过完：
 - [ ] **多 viewport**: 至少 3 个尺寸（主流笔记本 / 窄屏 / 移动）无错位无溢出
 - [ ] **computed style**: 涉及 var/tone 的元素，用 `getComputedStyle()` 抽样确认颜色/字体非默认回退
 - [ ] **fmtSymbol**: 新 symbol 渲染都走 `fmtSymbol(sym, market_type)`
-- [ ] **fmt 数字**: 新百分数/金额走 `fmtPct` / `fmtNum` / `fmtSigned`，不用 `.toFixed()`
+- [ ] **fmt 数字**: 新百分数/金额走 `fmtPct` / `fmtNum` / `fmtSigned`，不用 `.toFixed()`；空间受限 tile（≤~8 字符宽）走 `fmtCompact` / `fmtCompactSigned`，不用千分位格式
 - [ ] **humanize enum**: 新 snake_case 值显示走 `humanize()`
 - [ ] **status badge**: 新 status 渲染走 `<StatusBadge>` 或 `<StatusText>`，不自造色映射
 - [ ] **onError**: 新 `useMutation` 有 onError（信任路径 inline / 辅助路径 toast）
@@ -626,6 +693,7 @@ UI 改动 commit 前必须过完：
 | `.card-head-space{margin-bottom:0}` (重复定义) | 被 @2120 完整定义覆盖 | UI review |
 | `.signals-row-long/short` + `td` 修饰 | 旧 Signals tab 行着色 | UI review |
 | `.exchange-tiles`, `.exchange-tile*`（7 行） | 交易所 tile 卡片（改为 select 下拉） | 3b9ffff |
+| `.entry-*`, `.human-approval-*`, `.funnel-*`, `.approval-list`, `.desk-*`, `.proposal-*`, `.dir-*`（~241 行） | Overview 决策卡 → 迁移至 Blotter | Blotter migration |
 
 ---
 
@@ -647,6 +715,7 @@ UI 改动 commit 前必须过完：
 | 2026-06-26 | (多次) | UI 重构：风险控制 / Learning / Overview / 多页一致性 |
 | 2026-06-29 | bcdcebd | Settings 搜索框从 shell 外移入 panel 内 |
 | 2026-06-29 | 3b9ffff | Universe Board Toggle 加 Row 标签；Exchange Connection tile→select；删 exchange-tile* CSS |
+| 2026-07-18 | (多次) | Blotter 工作站：Overview 决策卡迁移 + Proposals 合并；`fmtCompact` PnL tile 格式化；响应式布局精修（cockpit-rail 禁 column-count → grid/flex）；Settings API key 掩码 + 折叠；cc-heartbeat-zone flex→grid 修复坍塌；全局暗色 scrollbar（color-scheme:dark）；全站表格 `noWrap` 默认开启 |
 
 ---
 
