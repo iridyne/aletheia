@@ -258,6 +258,11 @@ def _run_server(cfg) -> None:
     project_root = Path(__file__).resolve().parent.parent.parent
     aletheia_dir = str(project_root / "aletheia")
     os.environ.setdefault("ALETHEIA_DEV_RELOAD", "1")
+    # dashboard_static/ is the vite build output dir — it sits inside aletheia/
+    # but must be excluded from the file watcher. A `npm run build` writes
+    # ~400 files there in < 2s; without this exclusion every build triggers a
+    # reload storm that kills running workers and can take down the master process.
+    static_dir = str(project_root / "aletheia" / "dashboard_static")
     uvicorn.run(
         "aletheia.server.app:app",
         host=cfg.app.bind_host,
@@ -265,6 +270,7 @@ def _run_server(cfg) -> None:
         log_level="debug",
         reload=True,
         reload_dirs=[aletheia_dir],
+        reload_excludes=[static_dir],
     )
 
 
