@@ -25,15 +25,34 @@ from aletheia.storage.sqlite import get_db
 SUPPORTED_PATH_ID = "universe_family_calibration"
 # Consumer wiring is not causal measurement support. A path enters this set only
 # after its exact outcome and statistical-unit contracts are executable.
-# P2: operator_learning_bundle uses the same fixed_horizon_candidate outcome
-# contract (opportunity:{id}:{horizon}) and boolean-treatment exposure path as
-# universe_family_calibration, so the existing cohort builder handles it without
-# modification.  Known measurement bias: serenity_opportunities appears in both
-# arms (GAP-02, Phase 4); this produces a conservative underestimate of the
-# bundle effect rather than a false positive.
+#
+# Outcome contract families:
+#   A — universe_forward_outcomes (universe-keyed, {learning_key}:{horizon}):
+#       universe_family_calibration, observer_advisory_bundle, ranker_factor_filter
+#   B — filter_candidate_outcomes + universe_forward_outcomes mirror (family-keyed,
+#       resolved via _filter_base_key strip of :{horizon}):
+#       operator_learning_bundle, ranker_case_score, ranker_memo_score
+#
+# observer_advisory_bundle: candidate_key = observer-run key; outcome_candidate_key
+#   = u_member.learning_candidate_key:4h — resolves via universe_forward_outcomes.
+# operator_learning_bundle: uses the fixed_horizon_candidate outcome contract
+#   (opportunity:{id}:{horizon}) and the boolean-treatment exposure path (same as
+#   universe_family_calibration), so the existing cohort builder handles it without
+#   modification. Known measurement bias: serenity_opportunities appears in both
+#   arms (GAP-02, Phase 4); this produces a conservative underestimate of the
+#   bundle effect rather than a false positive.
+# ranker_case_score/memo_score: outcome_candidate_key = {learning_candidate_key}:4h
+#   (family-anchored, only truthy after opportunity metadata carries the key — see
+#   market_observer._analyze_symbol) — resolves via filter_candidate_outcomes (with
+#   allocation_selected populated by universe/service._register_experiment_candidate_outcomes)
+#   or via universe_forward_outcomes fallback.
 SUPPORTED_PATH_IDS = frozenset({
     SUPPORTED_PATH_ID,
     "operator_learning_bundle",
+    "observer_advisory_bundle",
+    "ranker_case_score",
+    "ranker_memo_score",
+    "ranker_factor_filter",
 })
 
 
