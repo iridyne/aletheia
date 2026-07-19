@@ -4727,7 +4727,10 @@ _FUNDING_DEDUP_FIELDS = (
     "next_funding_time",
     "mark_price",
 )
-_FUNDING_HEARTBEAT_FLOOR_MINUTES = 60
+_FUNDING_HEARTBEAT_FLOOR_MINUTES = 10
+# Must be strictly less than local_funding._MAX_OBSERVATION_GAP (15 min) minus the
+# collection interval (2 min), so a stable-rate symbol always has at least one
+# snapshot inside the settlement verification window even when the rate never changes.
 
 
 def insert_funding_rate_snapshot(data: dict) -> None:
@@ -4737,8 +4740,14 @@ def insert_funding_rate_snapshot(data: dict) -> None:
     the same funding_rate / annualized / next_funding_time / mark_price AND
     its ``observed_at`` is younger than ``_FUNDING_HEARTBEAT_FLOOR_MINUTES``
     minutes ago, the insert is skipped. This is idempotent — collectors that
-    poll on a 2-minute cadence stop writing 30× duplicate rows per hour while
-    still emitting one heartbeat row per hour so freshness probes stay green.
+    poll on a 2-minute cadence stop writing 5× duplicate rows per 10-minute
+    window while still emitting one heartbeat row every ~10 minutes so both
+    freshness probes and settlement-window checks stay green.
+
+    Settlement guard: if ``next_funding_time`` is within the heartbeat floor
+    window from now, the dedup is bypassed and the row is always written.
+    This guarantees a snapshot exists inside local_funding's observation gap
+    even when the funding rate has been stable for an extended period.
     """
     from aletheia.storage.models import new_id
     if "id" not in data:
@@ -4746,31 +4755,47 @@ def insert_funding_rate_snapshot(data: dict) -> None:
     symbol = data.get("symbol")
     exchange = data.get("exchange")
     if symbol and exchange is not None:
-        db = get_db()
-        row = db.execute(
-            "SELECT funding_rate, funding_rate_annualized, next_funding_time, "
-            "mark_price, observed_at "
-            "FROM funding_rate_snapshots "
-            "WHERE symbol = ? AND exchange = ? "
-            "ORDER BY observed_at DESC LIMIT 1",
-            (symbol, exchange),
-        ).fetchone()
-        if row is not None:
-            latest = dict(row)
-            same = all(
-                data.get(field) == latest.get(field)
-                for field in _FUNDING_DEDUP_FIELDS
-            )
-            if same and latest.get("observed_at"):
-                try:
-                    prev_ts = datetime.fromisoformat(latest["observed_at"])
-                    if prev_ts.tzinfo is None:
-                        prev_ts = prev_ts.replace(tzinfo=timezone.utc)
-                    age = datetime.now(timezone.utc) - prev_ts
-                    if age < timedelta(minutes=_FUNDING_HEARTBEAT_FLOOR_MINUTES):
-                        return
-                except (TypeError, ValueError):
-                    pass
+        # Settlement guard: always write when settlement is imminent so that
+        # local_funding._verify_funding_settlements can find a snapshot within
+        # its _MAX_OBSERVATION_GAP window.
+        settlement_imminent = False
+        nft_raw = data.get("next_funding_time")
+        if nft_raw:
+            try:
+                nft = datetime.fromisoformat(str(nft_raw))
+                if nft.tzinfo is None:
+                    nft = nft.replace(tzinfo=timezone.utc)
+                time_to_settlement = nft - datetime.now(timezone.utc)
+                if timedelta(0) <= time_to_settlement <= timedelta(minutes=_FUNDING_HEARTBEAT_FLOOR_MINUTES):
+                    settlement_imminent = True
+            except (TypeError, ValueError):
+                pass
+        if not settlement_imminent:
+            db = get_db()
+            row = db.execute(
+                "SELECT funding_rate, funding_rate_annualized, next_funding_time, "
+                "mark_price, observed_at "
+                "FROM funding_rate_snapshots "
+                "WHERE symbol = ? AND exchange = ? "
+                "ORDER BY observed_at DESC LIMIT 1",
+                (symbol, exchange),
+            ).fetchone()
+            if row is not None:
+                latest = dict(row)
+                same = all(
+                    data.get(field) == latest.get(field)
+                    for field in _FUNDING_DEDUP_FIELDS
+                )
+                if same and latest.get("observed_at"):
+                    try:
+                        prev_ts = datetime.fromisoformat(latest["observed_at"])
+                        if prev_ts.tzinfo is None:
+                            prev_ts = prev_ts.replace(tzinfo=timezone.utc)
+                        age = datetime.now(timezone.utc) - prev_ts
+                        if age < timedelta(minutes=_FUNDING_HEARTBEAT_FLOOR_MINUTES):
+                            return
+                    except (TypeError, ValueError):
+                        pass
     _insert("funding_rate_snapshots", data)
 
 

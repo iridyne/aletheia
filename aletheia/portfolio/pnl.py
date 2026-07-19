@@ -968,8 +968,13 @@ def _realized_economics_value(row: dict) -> float | None:
     return pnl if abs(pnl - expected) <= tolerance else None
 
 
-def _complete_realized_total(rows: list[dict]) -> tuple[float | None, int]:
-    """Sum net economics only when every included close is reproducible."""
+def _complete_realized_total(rows: list[dict]) -> tuple[float, int]:
+    """Sum net economics of all reproducible closes; count the unverifiable ones.
+
+    Always returns a partial sum over verified closes so callers can display
+    a value even when some positions lack funding data.  The unavailable count
+    tells the caller (and the UI) how many closes were excluded.
+    """
     total = 0.0
     unavailable = 0
     for row in rows:
@@ -978,7 +983,7 @@ def _complete_realized_total(rows: list[dict]) -> tuple[float | None, int]:
             unavailable += 1
             continue
         total += value
-    return (None, unavailable) if unavailable else (round(total, 8), 0)
+    return (round(total, 8), unavailable)
 
 
 def position_realized_pnl_view(row: dict) -> dict:
@@ -1062,13 +1067,14 @@ def today_pnl_by_symbol(
     grouped: dict[str, list[dict]] = {}
     for row in _closed_today(execution_mode):
         grouped.setdefault(str(row.get("symbol") or "?"), []).append(row)
-    return {
-        symbol: (
-            None if total is None else round(total, 4)
-        )
-        for symbol, rows in grouped.items()
-        for total, _ in [_complete_realized_total(rows)]
-    }
+    result: dict[str, float | None] = {}
+    for symbol, rows in grouped.items():
+        total, unavailable = _complete_realized_total(rows)
+        # Return None when ALL closes for this symbol are unavailable so the
+        # tooltip can show '—' rather than a misleading 0.00.  The portfolio
+        # aggregate uses the partial sum instead (with a completeness flag).
+        result[symbol] = None if unavailable == len(rows) else round(total, 4)
+    return result
 
 
 def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = False) -> dict:
@@ -1115,11 +1121,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
     final_unrealized = total_unrealized
     final_positions_count = len(positions)
     final_exposure = exposure
-    final_today_pnl = (
-        total_unrealized + total_today_realized
-        if total_today_realized is not None
-        else None
-    )
+    final_today_pnl = total_unrealized + total_today_realized
     # The headline must be an account value, never the locally-managed notional.
     # In local paper mode the append-only cash ledger plus freshly marked open
     # PnL is the only trustworthy source.  If old unsettled closes make that
@@ -1179,11 +1181,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
                     exc_upnl = cached.get("total_unrealized_pnl")
                 if exc_upnl is not None:
                     final_unrealized = float(exc_upnl)
-                    final_today_pnl = (
-                        float(exc_upnl) + total_today_realized
-                        if total_today_realized is not None
-                        else None
-                    )
+                    final_today_pnl = float(exc_upnl) + total_today_realized
 
                 exc_positions = cached.get("positions") or []
                 if exc_positions:
@@ -1222,11 +1220,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
                     uta_upnl = unified.get("total_unrealized_pnl")
                     if uta_upnl is not None:
                         final_unrealized = float(uta_upnl)
-                        final_today_pnl = (
-                            float(uta_upnl) + total_today_realized
-                            if total_today_realized is not None
-                            else None
-                        )
+                        final_today_pnl = float(uta_upnl) + total_today_realized
                     if uta_count:
                         final_positions_count = uta_count
         except Exception:
@@ -1240,14 +1234,12 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         "position_notional_usdt": round(total_notional, 4),
         "unrealized_pnl": round(final_unrealized, 4),
         "realized_pnl": (
-            round(total_realized, 4) if total_realized is not None else None
+            round(total_realized, 4)
         ),
-        "realized_pnl_complete": total_realized is not None,
+        "realized_pnl_complete": realized_unavailable_count == 0,
         "realized_pnl_unavailable_count": realized_unavailable_count,
-        "all_realized_pnl": (
-            round(all_realized, 4) if all_realized is not None else None
-        ),
-        "all_realized_pnl_complete": all_realized is not None,
+        "all_realized_pnl": round(all_realized, 4),
+        "all_realized_pnl_complete": all_realized_unavailable_count == 0,
         "all_realized_pnl_unavailable_count": all_realized_unavailable_count,
         # Historical reconstruction is explicitly separate from strict verified
         # realized PnL.  It cannot affect Risk, Learning, equity snapshots, or
@@ -1267,20 +1259,14 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         # currently persist — parked as a Serenity-adjacent improvement).
         # Kept as-is for API back-compat; UI callers are expected to
         # transition to today_realized_pnl for the honest "Today" number.
-        "today_pnl": (
-            round(final_today_pnl, 4) if final_today_pnl is not None else None
-        ),
+        "today_pnl": round(final_today_pnl, 4),
         "positions_count": final_positions_count,
         "exposure_by_symbol": {k: round(v, 4) for k, v in final_exposure.items()},
         "unrealized_by_symbol": {p["symbol"]: round(p["unrealized_pnl"], 4) for p in positions if p.get("unrealized_pnl")},
         "today_pnl_by_symbol": today_pnl_by_symbol(execution_mode),
         "positions": positions,
-        "today_realized_pnl": (
-            round(total_today_realized, 4)
-            if total_today_realized is not None
-            else None
-        ),
-        "today_realized_pnl_complete": total_today_realized is not None,
+        "today_realized_pnl": round(total_today_realized, 4),
+        "today_realized_pnl_complete": today_realized_unavailable_count == 0,
         "today_realized_pnl_unavailable_count": (
             today_realized_unavailable_count
         ),

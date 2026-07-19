@@ -2902,6 +2902,9 @@ def _record_collector_health(
 
 def _run_data_collectors():
     """Collect primary-venue orderbook, funding, and OI on a two-minute tick."""
+    import os as _os
+    if _os.environ.get("ALETHEIA_COLLECTOR_PROCESS"):
+        return  # managed by the standalone collector subprocess spawned by _gateway_runner
     global _DC_TICK
     cfg = load_config()
     # This is an _ESSENTIAL_JOBS member under layered pause. Trading pause blocks
@@ -2934,6 +2937,9 @@ def _run_data_collectors():
 
 def _run_data_collector_context():
     """Collect cross-venue and macro context on its own bounded ten-minute lane."""
+    import os as _os
+    if _os.environ.get("ALETHEIA_COLLECTOR_PROCESS"):
+        return  # managed by the standalone collector subprocess spawned by _gateway_runner
     global _DC_CONTEXT_TICK
     cfg = load_config()
     _DC_CONTEXT_TICK += 1

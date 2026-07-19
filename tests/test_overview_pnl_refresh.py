@@ -22,8 +22,10 @@ def test_overview_explains_unavailable_realized_pnl() -> None:
     """An honest unavailable result is actionable, never an unexplained dash."""
     pnl_zone = (ROOT / "frontend/src/components/PnLZone.tsx").read_text(encoding="utf-8")
 
-    assert "not yet verifiable" in pnl_zone
-    assert "closes need verification" in pnl_zone
+    # Method B: partial sums shown with a completeness warning rather than blocking
+    # the display entirely.  "unverified" is the user-visible flag for incomplete closes.
+    assert "unverified" in pnl_zone
+    assert "funding or close economics unavailable" in pnl_zone
 
 
 def test_overview_curve_distinguishes_live_mark_from_verified_realized() -> None:

@@ -821,8 +821,10 @@ def test_paper_close_failure_rolls_back_all_state_and_side_effects(
         "§3 unknown futures funding containment",
         "L2c",
         "A local-paper futures Position may close its execution lifecycle without "
-        "funding evidence, but cannot publish a numeric realized PnL, settle cash, "
-        "or become an eligible Outcome by implicitly treating unknown funding as zero.",
+        "funding evidence, but cannot settle cash or become an eligible Outcome by "
+        "implicitly treating unknown funding as zero.  The portfolio shows a partial "
+        "sum (with complete=False and unavailable_count>0) rather than blocking the "
+        "entire display.",
             status="implemented",
     )
 )
@@ -947,13 +949,15 @@ def test_unknown_paper_perp_funding_closes_without_zero_equivalent_cash_settleme
     assert account["equity_usdt"] is None
 
     portfolio = compute_portfolio(execution_mode="paper_internal")
-    assert portfolio["realized_pnl"] is None
+    # Method B: partial sums shown with complete=False; no complete closes → 0.0
+    assert portfolio["realized_pnl"] == pytest.approx(0.0)
     assert portfolio["realized_pnl_complete"] is False
     assert portfolio["realized_pnl_unavailable_count"] == 1
-    assert portfolio["today_realized_pnl"] is None
+    assert portfolio["today_realized_pnl"] == pytest.approx(0.0)
     assert portfolio["today_realized_pnl_complete"] is False
     assert portfolio["today_realized_pnl_unavailable_count"] == 1
-    assert portfolio["today_pnl"] is None
+    assert portfolio["today_pnl"] == pytest.approx(0.0)
+    # Per-symbol: still None when ALL closes for that symbol are unavailable
     assert portfolio["today_pnl_by_symbol"][proposal.symbol] is None
 
 
@@ -1034,13 +1038,14 @@ def test_legacy_numeric_paper_perp_close_with_unknown_funding_stays_unavailable(
     assert account["equity_usdt"] is None
 
     portfolio = compute_portfolio(execution_mode="paper_internal")
-    assert portfolio["realized_pnl"] is None
+    # Method B: partial sums shown; no complete closes → 0.0
+    assert portfolio["realized_pnl"] == pytest.approx(0.0)
     assert portfolio["realized_pnl_complete"] is False
     assert portfolio["realized_pnl_unavailable_count"] == 1
-    assert portfolio["today_realized_pnl"] is None
+    assert portfolio["today_realized_pnl"] == pytest.approx(0.0)
     assert portfolio["today_realized_pnl_complete"] is False
     assert portfolio["today_realized_pnl_unavailable_count"] == 1
-    assert portfolio["today_pnl"] is None
+    assert portfolio["today_pnl"] == pytest.approx(0.0)
     assert portfolio["today_pnl_by_symbol"][position.symbol] is None
 
 
@@ -1104,7 +1109,8 @@ def test_old_incomplete_close_beyond_ten_thousand_rows_still_freezes_account(
     assert account["equity_usdt"] is None
 
     portfolio = compute_portfolio(execution_mode="paper_internal")
-    assert portfolio["realized_pnl"] is None
+    # Method B: 10,000 complete closes (0.0 each) + 1 unavailable → partial sum = 0.0
+    assert portfolio["realized_pnl"] == pytest.approx(0.0)
     assert portfolio["realized_pnl_complete"] is False
     assert portfolio["realized_pnl_unavailable_count"] == 1
 

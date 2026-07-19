@@ -249,13 +249,14 @@ export default function PnLZone() {
   const historicalNum = p?.all_historical_reconciled_pnl == null ? null : Number(p.all_historical_reconciled_pnl)
   const historicalCount = Number(p?.all_historical_reconciled_count ?? 0)
   const historicalUnavailable = Number(p?.all_historical_reconciliation_unavailable_count ?? 0)
-  const realizedContext = realNum != null
-    ? 'all-time'
-    : historicalNum != null
-      ? `${historicalCount} legacy closes reconciled: ${fmtSigned(historicalNum)}${historicalUnavailable ? ` · ${historicalUnavailable} still unavailable` : ''}`
-    : realizedUnavailableCount > 0
-      ? `${realizedUnavailableCount} closes need verification`
-      : 'realized economics unavailable'
+  const realComplete = p?.all_realized_pnl_complete !== false
+  const realizedContext = realizedUnavailableCount > 0
+    ? `partial · ${realizedUnavailableCount} close${realizedUnavailableCount === 1 ? '' : 's'} unverified`
+    : realNum != null
+      ? 'all-time'
+      : historicalNum != null
+        ? `${historicalCount} legacy closes reconciled: ${fmtSigned(historicalNum)}${historicalUnavailable ? ` · ${historicalUnavailable} still unavailable` : ''}`
+        : 'realized economics unavailable'
 
   const exposure = (p?.exposure_by_symbol || {}) as Record<string, number>
   const exposureTotal = Object.values(exposure).reduce((a, b) => a + Number(b || 0), 0)
@@ -318,7 +319,9 @@ export default function PnLZone() {
             tone={toneOf(todayNum)}
             context={todayNum == null
               ? todayComplete ? 'no data' : 'funding or close economics unavailable'
-              : dayPct != null ? `${fmtSigned(dayPct)}% of managed` : undefined}
+              : !todayComplete
+                ? dayPct != null ? `${fmtSigned(dayPct)}% · some closes unverified` : 'some closes unverified'
+                : dayPct != null ? `${fmtSigned(dayPct)}% of managed` : undefined}
             onClick={() => navigate('/trades?tab=blotter')}
             tooltip={todayPnlBySymbol}
           />
@@ -331,7 +334,7 @@ export default function PnLZone() {
           />
           <MetricTile
             label="Realized"
-            value={realNum == null ? 'not yet verifiable' : fmtSigned(realNum)}
+            value={fmtSigned(realNum)}
             tone={toneOf(realNum)}
             context={realizedContext}
             onClick={() => navigate('/trades?tab=analytics')}

@@ -185,7 +185,7 @@ def _ensure_frontdoor_running(cfg, backend_port: int, proc: subprocess.Popen | N
     return new_proc
 
 
-def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None = None) -> int:
+def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None = None, collector_holder: list | None = None) -> int:
     """Spawn the inner uvicorn server as a child process; return its exit code.
 
     frontdoor_holder is a 1-element mutable list owned by run_supervised holding
@@ -264,6 +264,17 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
                         cfg, runtime_context["port"], frontdoor_proc
                     )
 
+            if collector_holder is not None and collector_holder[0] is not None:
+                cp = collector_holder[0]
+                if cp.poll() is not None:
+                    # Collector exited — respawn immediately (independent of the backend).
+                    _record_collector_restart(getattr(cp, "pid", 0))
+                    try:
+                        kill_pid_tree(cp.pid)
+                    except Exception:
+                        pass
+                    collector_holder[0] = _spawn_collector_process(cfg)
+
             now = time.monotonic()
             if port_in_use(runtime_context["port"], runtime_context["host"]):
                 saw_listening_port = True
@@ -329,6 +340,46 @@ def _stop_vite_watch(proc: subprocess.Popen | None) -> None:
             pass
 
 
+def _spawn_collector_process(cfg) -> subprocess.Popen:
+    """Spawn the data-collector as an independent child process."""
+    log_path = get_data_dir() / "logs" / "collector-errors.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    from aletheia.gateway.logs import rotate_if_needed
+    rotate_if_needed(log_path)
+    real_python, env_patch = _resolve_real_python()
+    env = os.environ.copy()
+    env.update(env_patch)
+    # The supervisor sets ALETHEIA_COLLECTOR_PROCESS=1 on its own env so uvicorn
+    # inherits it and skips those APScheduler jobs.  The collector process itself
+    # must NOT see this flag — it is the one doing the actual work.
+    env.pop("ALETHEIA_COLLECTOR_PROCESS", None)
+    cmd = [real_python, "-m", "aletheia.data.collector_runner"]
+    popen_kwargs: dict = {
+        "stdout": subprocess.DEVNULL,
+        "cwd": str(Path(__file__).resolve().parent.parent),
+        "env": env,
+    }
+    if platform.system() == "Windows":
+        popen_kwargs["creationflags"] = CREATE_NO_WINDOW
+    with log_path.open("a", encoding="utf-8") as log_file:
+        popen_kwargs["stderr"] = log_file
+        return subprocess.Popen(cmd, **popen_kwargs)
+
+
+def _record_collector_restart(pid: int) -> None:
+    try:
+        from aletheia.files.jsonl import write_audit, write_error
+        msg = f"Data-collector subprocess (pid {pid}) exited; supervisor is restarting it"
+        write_audit({
+            "actor": "system", "source": "gateway",
+            "event_type": "collector_subprocess_restart",
+            "entity_type": "collector", "entity_id": str(pid), "message": msg,
+        })
+        write_error({"source": "gateway_supervisor", "message": msg})
+    except Exception:
+        pass
+
+
 def run_supervised(spawn_fn=None) -> dict:
     """Supervise the inner server. Respawns on abnormal exit with backoff.
 
@@ -342,8 +393,13 @@ def run_supervised(spawn_fn=None) -> dict:
     # 1-element mutable holder so _spawn_server can restart the frontdoor in place
     # (writing the new Popen back) without killing the backend. See _spawn_server.
     frontdoor_holder: list = [None]
+    collector_holder: list = [None]
     if spawn_fn is None:
-        spawn_fn = lambda: _spawn_server(cfg, port=backend_port, frontdoor_holder=frontdoor_holder)
+        spawn_fn = lambda: _spawn_server(
+            cfg, port=backend_port,
+            frontdoor_holder=frontdoor_holder,
+            collector_holder=collector_holder,
+        )
     from aletheia.gateway.operator_shell import OperatorShellMonitor
     operator_monitor = OperatorShellMonitor(cfg)
     operator_monitor.start()
@@ -358,10 +414,14 @@ def run_supervised(spawn_fn=None) -> dict:
     restart_times: list[float] = []
     try:
         if frontdoor_enabled:
+            # Tell the uvicorn child to skip APScheduler's data-collector jobs —
+            # this process owns the collection cadence via collector_holder.
+            os.environ["ALETHEIA_COLLECTOR_PROCESS"] = "1"
             _cleanup_before_spawn(cfg)
             _cleanup_backend_before_spawn(cfg, backend_port)
             _publish_frontdoor_route(cfg, backend_port=backend_port, reason="supervisor_start")
             frontdoor_holder[0] = _ensure_frontdoor_running(cfg, backend_port, frontdoor_holder[0])
+            collector_holder[0] = _spawn_collector_process(cfg)
         while True:
             code: int | None = None
             try:
@@ -399,6 +459,12 @@ def run_supervised(spawn_fn=None) -> dict:
         if fp is not None:
             try:
                 kill_pid_tree(fp.pid)
+            except Exception:
+                pass
+        cp = collector_holder[0]
+        if cp is not None:
+            try:
+                kill_pid_tree(cp.pid)
             except Exception:
                 pass
         operator_monitor.stop()
