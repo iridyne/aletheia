@@ -3050,6 +3050,13 @@ def _probe_filter_evidence(report: Report) -> None:
 def _probe_serenity_pipeline(report: Report) -> None:
     """Serenity freshness is based on successful completion, not mere attempts."""
     try:
+        from aletheia.config.loader import load_config as _lcfg
+        if not getattr(_lcfg().serenity, "enabled", True):
+            report.add("data.serenity_pipeline", "info", "Serenity research pipeline disabled in settings")
+            return
+    except Exception:
+        pass
+    try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         successful = db.execute(

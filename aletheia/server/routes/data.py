@@ -1557,6 +1557,16 @@ def get_serenity_status():
     else:
         engine_status = "idle"
 
+    # If the pipeline has been disabled in settings, override the derived status
+    # (which would otherwise be "error" from the last failed run) to "disabled".
+    # An actively-running job is shown as "running" regardless — it needs to finish.
+    try:
+        from aletheia.config.loader import load_config as _load_cfg
+        if not getattr(_load_cfg().serenity, "enabled", True) and engine_status != "running":
+            engine_status = "disabled"
+    except Exception:
+        pass
+
     def _run_summary(r):
         if not r:
             return None

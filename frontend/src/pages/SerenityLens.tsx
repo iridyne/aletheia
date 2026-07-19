@@ -33,6 +33,7 @@ function parseVerdict(raw: string | null | undefined): Record<string, unknown> {
 
 const ENGINE_STATUS_TONE: Record<string, StatusTone> = {
   idle: 'muted',
+  disabled: 'muted',
   healthy: 'green',
   running: 'yellow',
   rate_limited: 'yellow',
