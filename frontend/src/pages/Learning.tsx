@@ -10,7 +10,7 @@ import PnLChart from '../charts/PnLChart'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, CardHeader, Meter, StatusText } from '../components/ui'
 import type { StatusTone } from '../components/ui'
-import { fmtNum, fmtSigned, humanize, fmtTimestamp } from '../lib/format'
+import { fmtNum, humanize, fmtTimestamp } from '../lib/format'
 
 /**
  * Learning — the memory & evolution surface (Evolve · §23.5/23.6, three sources MERGED).
@@ -470,6 +470,8 @@ function ReportsTab() {
 
       <LearningFunnelPanel />
 
+      <FilterControllerPersistentCard />
+
       <div className="learn-grid">
         <Card>
           <CardHeader title="Daily reviews" />
@@ -485,6 +487,106 @@ function ReportsTab() {
         </Card>
       </div>
     </>
+  )
+}
+
+/**
+ * Persistent filter controller signals — cells whose overrestrictive_suspect
+ * verdict has held across N+ consecutive runs. This is an OBSERVATIONAL
+ * diagnostic for human review, not a Learning A/B hypothesis. filter_controller
+ * signals live in a different action space than any live learning path
+ * (see PR #145 for the boundary reasoning). Any config change flagged here
+ * must be applied through the normal change-control channel.
+ */
+function FilterControllerPersistentCard() {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['filter-controller'],
+    queryFn: api.getFilterController,
+    staleTime: 60_000,
+  })
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader title="Filter controller — persistent signals" />
+        <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
+      </Card>
+    )
+  }
+  if (isError || !data) {
+    return (
+      <Card>
+        <CardHeader title="Filter controller — persistent signals" />
+        <p className="text-muted text-sm">Signal source unavailable.</p>
+      </Card>
+    )
+  }
+
+  const persistent = data.persistent_recommendations || []
+  const cfg = data.persistent_config || { min_consecutive_runs: 3, max_runs_lookback: 10 }
+  const meta = `>= ${cfg.min_consecutive_runs} of last ${cfg.max_runs_lookback} runs`
+
+  return (
+    <Card>
+      <CardHeader
+        title="Filter controller — persistent signals"
+        meta={meta}
+      />
+      <p className="text-muted text-sm" style={{ marginTop: 0, marginBottom: 8 }}>
+        Cells whose observational verdict has held across multiple consecutive
+        controller runs. Human-review signal only — no live learning path
+        consumes this. Any parameter change requires the normal change-control path.
+      </p>
+      {persistent.length === 0 ? (
+        <p className="text-muted text-sm">
+          No persistent overrestrictive_suspect signals — every cell in the recent
+          runs held, was single-run only, or was insufficient_data.
+        </p>
+      ) : (
+        <ul className="learn-items">
+          {persistent.map(p => {
+            const cellParts = [
+              p.direction || '—',
+              p.market_type || '—',
+              p.horizon || '—',
+            ].join(' · ')
+            const signal = p.latest_error_signal
+            const signalTone: StatusTone =
+              signal == null ? 'muted' : Math.abs(signal) >= 0.15 ? 'yellow' : 'blue'
+            return (
+              <li key={p.latest_run_id + p.filter_name + p.scanner_family} className="learn-item">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span className="learn-item-title">
+                      {p.filter_name} · {p.scanner_family}
+                    </span>
+                    <Badge tone="yellow">
+                      streak {p.consecutive_suspect_runs}/{p.runs_analyzed}
+                    </Badge>
+                    {signal != null && (
+                      <StatusText tone={signalTone}>
+                        signal {signal >= 0 ? '+' : ''}{signal.toFixed(4)}
+                      </StatusText>
+                    )}
+                  </div>
+                  <span className="learn-item-meta mono" style={{ fontSize: 12 }}>
+                    {cellParts}
+                    {p.filter_version ? ` · v=${p.filter_version}` : ''}
+                    {' · last '}
+                    {fmtTimestamp(p.last_suspect_at)}
+                  </span>
+                  {p.latest_reasoning && (
+                    <span className="text-muted text-sm" style={{ marginTop: 2 }}>
+                      {p.latest_reasoning}
+                    </span>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </Card>
   )
 }
 
