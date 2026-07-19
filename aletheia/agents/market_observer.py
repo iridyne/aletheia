@@ -1337,6 +1337,8 @@ async def _analyze_symbol(
     effective_scanner_family = scanner_family or _infer_scanner_family(rationale, observations)
 
     opportunity_metadata = {}
+    if learning_outcome_candidate_key:
+        opportunity_metadata["learning_candidate_key"] = learning_outcome_candidate_key
     if learning_manifest:
         opportunity_metadata["learning_manifest"] = learning_manifest
     opportunity_metadata["evidence_manifest"] = _opportunity_evidence_manifest(
