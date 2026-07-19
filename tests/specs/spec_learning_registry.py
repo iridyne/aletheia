@@ -61,6 +61,19 @@ def test_learning_behavior_paths_are_declared_with_safe_fallbacks():
     assert by_id["ranker_learned_guard"].settings_supported is True
     assert by_id["advisory_skill"].consumer_wired is False
     assert by_id["advisory_skill"].settings_supported is False
+    # filter_parameter_tune is a skeleton placeholder — declared so future PRs can
+    # incrementally land the outcome contract, override table, consumer wiring, and
+    # auto-hypothesis generator against a stable named path. Every safety gate is
+    # off in this declaration: no consumer reads overrides, cohorts.SUPPORTED_PATH_IDS
+    # rejects any accidental exposures (is_learning_treatment=False), Settings does
+    # not surface it. See docs/plans/learning/filter_parameter_tune_design.md.
+    assert "filter_parameter_tune" in by_id
+    fpt = by_id["filter_parameter_tune"]
+    assert fpt.is_learning_treatment is False
+    assert fpt.consumer_wired is False
+    assert fpt.settings_supported is False
+    assert fpt.allowed_effects == ("filter_parameter",)
+    assert fpt.overlap_group == "filter_parameter"
     assert supported_paper_influence_path_ids() == {
         "universe_family_calibration",
         "observer_advisory_bundle",

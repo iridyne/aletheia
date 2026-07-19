@@ -102,6 +102,30 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         "audit facts", "no blocking effect",
         is_learning_treatment=False, settings_supported=False,
     ),
+    # ─── Skeleton placeholder — see docs/plans/learning/filter_parameter_tune_design.md
+    #
+    # filter_parameter_tune: the future home for prospective A/B experiments that
+    # would loosen a filter parameter (e.g. family_ttl_sec, ranker_confidence_gate)
+    # based on filter_controller's persistent overrestrictive_suspect signals.
+    #
+    # Explicitly NOT WIRED in this declaration:
+    #   consumer_wired=False        → no filter reads its overrides at check time
+    #   is_learning_treatment=False → cohorts.py::SUPPORTED_PATH_IDS gate rejects
+    #                                 any accidental exposure attempts
+    #   settings_supported=False    → not exposed in the Settings paper-influence UI
+    #
+    # This entry exists so the inventory reflects the design intent and future
+    # PRs can land the missing pieces (outcome contract, override table,
+    # consumer wiring, auto-hypothesis generator, safety envelope) incrementally
+    # against a stable named path. See the design doc for the full architecture
+    # and what a landing sequence for actual wiring must cover.
+    LearningPath(
+        "filter_parameter_tune", "persistent filter controller signals", "filter parameter override",
+        "bounded paper filter-parameter override (not yet wired)",
+        ("filter_parameter",), "filter_parameter",
+        "aggregate fixed-horizon filter-cell outcome", "static filter parameter",
+        is_learning_treatment=False, consumer_wired=False, settings_supported=False,
+    ),
 )
 
 
