@@ -175,7 +175,7 @@ export default function AgentFeed() {
     }
   }, [])
 
-  const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000 })
+  const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000, staleTime: 8000 })
   const { data: opportunities = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities, staleTime: 30000 })
   const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals, staleTime: 30000 })
 

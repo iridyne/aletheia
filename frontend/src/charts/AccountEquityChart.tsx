@@ -16,7 +16,8 @@ export default function AccountEquityChart({ days }: Props) {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['account-equity-history', days],
     queryFn: () => api.getAccountEquityHistory(days),
-    refetchInterval: 10_000,
+    refetchInterval: 60_000,
+    staleTime: 58_000,
   })
   const rows = (data?.points ?? [])
     .map(point => {

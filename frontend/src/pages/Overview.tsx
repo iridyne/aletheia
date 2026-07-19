@@ -70,6 +70,7 @@ export default function Overview() {
     queryKey: ['exchange-test', exchangeName, exchangeMode],
     queryFn: () => testExchangeConnection(exchangeMode),
     refetchInterval: 15000,
+    staleTime: 14000,
     enabled: usesExternalExchange,
   })
   const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
