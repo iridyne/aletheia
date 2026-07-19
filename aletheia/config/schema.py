@@ -1028,6 +1028,15 @@ class ControllerConfig(BaseModel):
     # Max fractional step a bounded auto-tune (Phase 2) may move a param in one cycle.
     # Unused in Phase 1 (recorded for forward-compat and UI display).
     max_step: float = 0.10
+    # Cross-run stability signal: a (filter, cell) key must sustain
+    # evidence_verdict='overrestrictive_suspect' across this many consecutive most-
+    # recent runs before it is surfaced as a persistent (human-review) recommendation.
+    # Single-run suspects are noise-prone; the stability filter is what makes the
+    # observational signal actionable enough for operator attention.
+    persistent_min_consecutive_runs: int = 3
+    # Ceiling on how many recent runs the stability analyzer examines. A cell that
+    # does not appear in one of the last N runs (implicit absence) breaks its streak.
+    persistent_max_runs_lookback: int = 10
 
 
 class LearningConfig(BaseModel):
