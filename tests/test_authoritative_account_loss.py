@@ -154,3 +154,92 @@ def test_genuine_authoritative_loss_keeps_existing_threshold_and_trip(monkeypatc
     result = evaluate_proposal(proposal)
     assert any(value.startswith("max_daily_loss_exceeded:-10.0") for value in result.violations)
     assert is_active() is True
+
+
+def _pending_paper_close(
+    position_id: str,
+    *,
+    entry_price: float = 100.0,
+    exit_price: float = 102.0,
+    quantity: float = 0.1,
+    direction: str = "short",
+    entry_fee: float = 0.001,
+    exit_fee: float = 0.001,
+) -> None:
+    """Insert a closed paper_internal usdt_futures position with realized_pnl=NULL.
+
+    Simulates a position where the funding-computation step has not yet run
+    (e.g. a collection gap caused settle_unsettled_paper_closes to skip it).
+    No paper_account_events entry is written — that is the invariant being tested.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    closed_at = datetime.now(timezone.utc).isoformat()
+    repo.insert_position(Position(
+        id=position_id,
+        symbol="ETH/USDT",
+        market_type="usdt_futures",
+        direction=direction,
+        quantity=quantity,
+        entry_price=entry_price,
+        current_price=exit_price,
+        execution_mode="paper_internal",
+        status="closed",
+        realized_pnl=None,     # funding not computed yet
+        funding_cost=None,
+        funding_source="unavailable",
+        close_reason="max_hold",
+        close_category="neutral",
+        entry_fee=entry_fee,
+        exit_fee=exit_fee,
+        exit_price_source="exchange",
+        exit_fill_verified=True,
+        outcome_eligible=False,
+        outcome_exclusion_reason="missing_event_observation",
+        outcome_semantics_version="oi-v1",
+        closed_at=closed_at,
+    ))
+
+
+def test_null_realized_pnl_uses_conservative_estimate_not_blocking():
+    """paper_internal closes with realized_pnl=NULL use a conservative estimate.
+
+    The risk engine must not be blocked by unresolved funding computation; instead
+    the daily-loss check proceeds with gross−fees (funding=0, gains capped at 0).
+    """
+    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+
+    # Short that lost money (price went up) — gross loss estimate is negative.
+    # exit=102, entry=100, qty=0.1 → gross = (100-102)*0.1 = -0.2
+    # fees = 0.001+0.001 = 0.002 → estimate = min(0, -0.2-0.002) = -0.202
+    _pending_paper_close("pending-1", entry_price=100.0, exit_price=102.0,
+                         quantity=0.1, direction="short")
+
+    snapshot = authoritative_account_realized_loss("paper_internal")
+    assert snapshot.available is True, f"Expected available, got: {snapshot.reason}"
+    assert snapshot.source == "paper_account_ledger_partial_estimate"
+    assert snapshot.reason == "available_with_conservative_estimates"
+    assert snapshot.realized_pnl_usdt is not None
+    assert snapshot.realized_pnl_usdt < 0.0  # conservative estimate is a loss
+    assert abs(snapshot.realized_pnl_usdt - (-0.202)) < 1e-6
+
+
+def test_null_realized_pnl_combined_with_settled_returns_sum():
+    """A mix of settled and pending closes produces a combined conservative total."""
+    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+    from aletheia.portfolio.paper_account import ensure_paper_account
+
+    ensure_paper_account()
+    # Settled close: -3.0 verified via the normal close path + ledger entry
+    _closed_position("settled-mix", -3.0)
+    # Pending close: short that gained (price dropped) → gross gain capped at 0
+    # exit=95, entry=100, qty=0.1 → gross = (100-95)*0.1 = +0.5 → capped to 0
+    _pending_paper_close("pending-mix", entry_price=100.0, exit_price=95.0,
+                         quantity=0.1, direction="short")
+
+    snapshot = authoritative_account_realized_loss("paper_internal")
+    assert snapshot.available is True
+    assert snapshot.source == "paper_account_ledger_partial_estimate"
+    # settled contribution = -3.0; conservative contribution = 0.0 (gain capped)
+    assert abs(snapshot.realized_pnl_usdt - (-3.0)) < 1e-6

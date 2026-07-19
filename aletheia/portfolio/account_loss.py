@@ -3,14 +3,58 @@
 This read model is deliberately separate from strategy-performance analytics. A
 closed lifecycle row is not account truth unless its exit economics are verified;
 local paper results must additionally reconcile to the append-only cash ledger.
+
+## Paper-ledger sync invariant
+Two tables must stay in sync for every paper_internal close:
+
+  positions.realized_pnl          — set by the normal close path (pnl.py) or
+                                     settle_unsettled_paper_closes() after backfill
+  paper_account_events.action=position_closed — written by settle_position_closed()
+
+If the two fall out of sync (e.g. realized_pnl written by a direct DB repair without
+calling settle_position_closed), the next daily-loss check sees paper_ledger_mismatch
+and blocks all paper trades for the rest of the UTC day.
+
+### How to diagnose
+  # Find positions with realized_pnl set but no ledger entry:
+  SELECT id, symbol, realized_pnl FROM positions
+  WHERE status='closed' AND execution_mode='paper_internal'
+    AND realized_pnl IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM paper_account_events pae
+                    WHERE pae.action='position_closed' AND pae.position_id=positions.id);
+
+  # Find ledger entries with no matching position:
+  SELECT pae.position_id, pae.amount_usdt FROM paper_account_events pae
+  WHERE pae.action='position_closed'
+    AND NOT EXISTS (SELECT 1 FROM positions p WHERE p.id=pae.position_id);
+
+### How to fix
+Call settle_unsettled_paper_closes() — its second pass auto-reconciles orphaned
+positions (realized_pnl set, no ledger entry). It runs as part of the paper_funding_settler
+scheduled job; to trigger immediately, call it directly from a Python shell.
+
+For same-day positions with realized_pnl=NULL (funding not yet computed), this module
+uses a conservative gross-minus-fees estimate (funding=0, gains capped at 0) rather than
+blocking trades. The PAPER_PNL_CONSERVATIVE_ESTIMATE warning signals this state; it
+self-resolves once paper_funding_settler backfills and settles the position.
+
+### How to prevent
+  - Always write realized_pnl via the normal close path (pnl.settle_position_closed).
+  - Never write directly to positions.realized_pnl without a corresponding
+    settle_position_closed() call.
+  - DB repair scripts must call settle_position_closed(position_id, realized_pnl)
+    AFTER updating positions.realized_pnl.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from aletheia.analytics.outcome_integrity import assess_position_closure, raw_account_events
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -23,11 +67,89 @@ class AccountLossSnapshot:
     event_count: int
 
 
+def _conservative_pnl_estimate(row: dict) -> float:
+    """Gross PnL minus fees with funding treated as zero.
+
+    Used when a paper_internal position's realized_pnl is still NULL (funding
+    computation incomplete).  Gains are capped at 0 because unknown funding can
+    flip a small gross gain into a net loss; losses are kept as-is because actual
+    funding (paid) makes them no better.  Returns 0.0 on any error — the estimate
+    must never raise.
+    """
+    try:
+        entry = float(row["entry_price"])
+        exit_p = float(row["current_price"])
+        qty = float(row["quantity"])
+        direction = str(row.get("direction") or "").lower()
+        entry_fee = float(row.get("entry_fee") or 0)
+        exit_fee = float(row.get("exit_fee") or 0)
+        if direction in {"long", "buy"}:
+            gross = (exit_p - entry) * qty
+        elif direction in {"short", "sell"}:
+            gross = (entry - exit_p) * qty
+        else:
+            return 0.0
+        return round(min(0.0, gross - entry_fee - exit_fee), 8)
+    except Exception:
+        return 0.0
+
+
+def _emit_unverifiable_pnl_alert(pending_rows: list[dict]) -> None:
+    """Emit a prominent warning when paper positions have unverifiable realized_pnl.
+
+    Logs at WARNING level (visible in the system log) and writes to both the infra
+    event bus and errors.log so downstream AI agents and on-call humans can detect
+    and investigate the anomaly.
+    """
+    ids = ", ".join(str(r.get("id", "?")) for r in pending_rows[:5])
+    if len(pending_rows) > 5:
+        ids += f" … and {len(pending_rows) - 5} more"
+    symbols = ", ".join(dict.fromkeys(str(r.get("symbol", "?")) for r in pending_rows))
+    msg = (
+        f"PAPER_PNL_CONSERVATIVE_ESTIMATE: {len(pending_rows)} paper_internal "
+        f"position(s) closed today with realized_pnl=NULL (funding computation "
+        f"incomplete). Using gross−fees, funding=0 as conservative daily-loss "
+        f"estimate. Symbols: {symbols}. Position IDs: {ids}. "
+        f"Auto-recovery: paper_funding_settler retries when funding_rate_snapshots "
+        f"are available. Manual fix: run settle_unsettled_paper_closes() or call "
+        f"settle_position_closed(position_id, realized_pnl) directly."
+    )
+    logger.warning(msg)
+    try:
+        from aletheia.infra.events import emit_infra_event
+        emit_infra_event(
+            severity="warning",
+            source="account_loss",
+            code="paper_pnl_conservative_estimate",
+            message=msg,
+            action=(
+                "paper_funding_settler retries automatically. To force recovery: "
+                "check funding_rate_snapshots for collection gaps, then run "
+                "settle_unsettled_paper_closes(). See account_loss.py module docstring "
+                "for the full diagnosis and repair procedure."
+            ),
+            dedupe_sec=300,
+        )
+    except Exception:
+        pass
+    try:
+        from aletheia.files.jsonl import write_error
+        write_error({"source": "account_loss", "message": msg})
+    except Exception:
+        pass
+
+
 def authoritative_account_realized_loss(execution_mode: str) -> AccountLossSnapshot:
     """Return today's exact signed result, or explicit unavailability.
 
-    An unknown close never becomes zero and never becomes a fabricated loss. Risk
-    decides how an unavailable snapshot affects proposal approval.
+    For paper_internal positions, an unknown close is never silently treated as
+    zero loss. When funding economics are still pending (realized_pnl=NULL), a
+    conservative gross-minus-fees estimate (funding=0, gains capped at 0) is used
+    rather than blocking all trades. A prominent warning is emitted so AI agents
+    and humans can detect and investigate the anomaly.
+
+    For all other modes an unknown close blocks the check — Risk decides how that
+    affects proposal approval.
     """
 
     today_start = f"{datetime.now(timezone.utc).date().isoformat()}T00:00:00+00:00"
@@ -58,25 +180,59 @@ def authoritative_account_realized_loss(execution_mode: str) -> AccountLossSnaps
             event_count=exact_event_count,
         )
 
+    settled_rows: list[dict] = []
+    pending_rows: list[dict] = []  # paper_internal only: realized_pnl IS NULL
+
     for row in rows:
         assessment = assess_position_closure(row)
         if not assessment.eligible:
             # Block on: truly unclassifiable closes (legacy_unverified_close),
             # administrative/maintenance closes (not real trade economics),
-            # and any ineligible close without a recorded realized_pnl.
+            # and any ineligible close without a recorded realized_pnl (non-paper).
             # Structured-but-ineligible closes with computable realized_pnl
             # (e.g. unverified_exit_fill from demo mode) pass through to the sum.
             if (
                 assessment.reason == "legacy_unverified_close"
                 or assessment.category in {"administrative", "maintenance"}
-                or row.get("realized_pnl") is None
             ):
                 return _unavailable(assessment.reason, event_count=len(rows))
+            if row.get("realized_pnl") is None:
+                if execution_mode == "paper_internal":
+                    # Funding not yet computed: use conservative estimate, don't block.
+                    pending_rows.append(row)
+                    continue
+                return _unavailable(assessment.reason, event_count=len(rows))
+        if row.get("realized_pnl") is None and execution_mode == "paper_internal":
+            # Eligible position still awaiting funding settlement — conservative path.
+            pending_rows.append(row)
+        else:
+            settled_rows.append(row)
+
+    if pending_rows:
+        _emit_unverifiable_pnl_alert(pending_rows)
+
+    conservative_sum = round(sum(_conservative_pnl_estimate(r) for r in pending_rows), 8)
 
     if execution_mode == "paper_internal":
-        return _paper_ledger_snapshot(rows, today_start)
+        # _paper_ledger_snapshot only sees settled rows; pending rows have no ledger
+        # entry yet (settle_position_closed is only called after realized_pnl is set),
+        # so their absence from both expected and actual never triggers a mismatch.
+        snapshot = _paper_ledger_snapshot(settled_rows, today_start)
+        if not snapshot.available:
+            return snapshot
+        if not pending_rows:
+            return snapshot  # clean path — preserve original source/reason labels
+        total = round((snapshot.realized_pnl_usdt or 0.0) + conservative_sum, 8)
+        return AccountLossSnapshot(
+            available=True,
+            realized_pnl_usdt=total,
+            loss_usdt=round(max(0.0, -total), 8),
+            source="paper_account_ledger_partial_estimate",
+            reason="available_with_conservative_estimates",
+            event_count=len(rows),
+        )
 
-    realized = round(sum(float(row["realized_pnl"]) for row in rows), 8)
+    realized = round(sum(float(row["realized_pnl"]) for row in settled_rows), 8) + conservative_sum
     # Add realized PnL from PARTIAL reductions today (exit-intent R1 Stage 2). Full
     # closes are already summed above from the verified closed-position read; partial
     # reductions leave the position OPEN so they never appear there — they live only in

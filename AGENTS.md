@@ -82,6 +82,18 @@ before changing one; this list must stay aligned with the machine-readable polic
   [the async performance checklist](docs/_ai/workflow/ASYNC_PERFORMANCE_LESSONS.md)
   before adding or changing a hot endpoint; measure new endpoints directly on
   backend port `8788`.
+- **Paper-ledger two-table invariant**: every `paper_internal` close must write to
+  BOTH `positions.realized_pnl` (set by the close path) AND
+  `paper_account_events` (written by `settle_position_closed()`). Breaking this
+  sync causes `paper_ledger_mismatch` in the next daily-loss check, blocking all
+  paper trades for the rest of the UTC day. The `PAPER_PNL_CONSERVATIVE_ESTIMATE`
+  warning in the system log signals that positions have `realized_pnl=NULL`; the
+  risk engine continues with a conservative gross-minus-fees estimate rather than
+  blocking. **Never write `positions.realized_pnl` directly** (e.g. a DB repair
+  script) without also calling `settle_position_closed(position_id, realized_pnl)`.
+  See `aletheia/portfolio/account_loss.py` module docstring for the full diagnosis
+  and manual recovery procedure. Auto-recovery: `settle_unsettled_paper_closes()`
+  reconciles both the `NULL` funding case and the orphaned-ledger case.
 
 ## Honest product behavior
 
