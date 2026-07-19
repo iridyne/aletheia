@@ -1,116 +1,197 @@
-# Evolution (EVO) Module — Design Overview
+# Learning Module — Architecture Overview
 
-> L3 计划层 — 描述 Strategy / Serenity Lens / Learning 三模块如何协作构成 evolution 系统。
-> 本文档是设计概览,非 L2 契约。子系统级契约见:
-> - docs/design/contracts/promotion_gates_contract.md (Strategy lifecycle — ⚠️ LEGACY Position C)
-> - docs/design/contracts/learning_contract.md (Learning subsystem — 🟡 新建 2026-07-02)
-> - Serenity specs: 	ests/specs/spec_serenity_*.py (9 个) — 统一 L2 契约见 docs/design/contracts/serenity_contract.md (🟡 新建 2026-07-02)
-> Created: 2026-07-02
+> Reflects code state as of 2026-07-19, including in-flight PRs #143 / #145 / #146 / #147 / #148.
+> Upstream contract: `docs/design/contracts/learning_evolution_contract.md` (L2 target).
+> Boundary doctrine: `docs/design/subsystems/causal_counterfactual_research_guidance.md` (L2/L3/L4 evidence ladder).
+> Historical audit: `docs/issues/audits/LEARNING_MODULE_SDD_VS_REALITY_AUDIT_2026-07-19.md`.
 
 ---
 
-## 1. 什么是 EVO 模块
+## 1. Core role
 
-EVO 是 Aletheia Trading OS 的"进化"子系统,由三个协作模块组成:
+Learning is Aletheia's **closed-loop behavior verification system**. It does not produce
+trading decisions. Its single job is to answer:
 
-`
-   ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-   │  Strategy        │     │  Serenity Lens   │     │  Learning        │
-   │  (strategy_       │     │  (serenity_       │     │  (learning/       │
-   │   lifecycle.py)   │     │   evidence.py +   │     │   lessons.py +    │
-   │                   │     │   serenity_        │     │   skills.py)      │
-   │  策略生命周期状态机 │     │   scoring.py)      │     │  经验存储 + 权限   │
-   │  晋级门            │     │  证据质量评估      │     │  技能学习          │
-   └────────┬──────────┘     └────────┬──────────┘     └────────┬──────────┘
-            │                         │                         │
-            └─────────────────────────┴─────────────────────────┘
-                                      │
-                           ┌──────────▼──────────┐
-                           │  PI Agent            │
-                           │  (决策中枢)           │
-                           │  Trading Decision    │
-                           └─────────────────────┘
-`
+> "Did injecting this experience actually improve trading outcomes?"
 
-## 2. 模块职责
+Every attempt to influence a downstream module (LLM prompt, ranker score, risk
+constraint, universe multiplier, sizing baseline) MUST first pass a bounded A/B
+experiment that produces a positive contribution verdict. Before the verdict lands,
+every consumer receives the static baseline (empty string, zero delta, unchanged value).
 
-### 2.1 Strategy (letheia/trading/strategy_lifecycle.py)
+## 2. Inputs — three material streams
 
-- **策略生命周期**: draft → ... → live_limited 前向状态机
-- **晋级门**: 7 个定量阈值 (14天/30笔/正期望/回撤/连亏/风险/复盘)
-- **PI 审批**: paper_running 晋级需 System Operator 推荐
-- **状态**: ⚠️ LEGACY (Position C 2026-07-02) — 规则引擎删除后无活晋级路径
+| Source | Data produced | Producer |
+|---|---|---|
+| Trade outcomes | Fixed-horizon net-of-cost returns per candidate/opportunity | `filter_candidate_outcomes` + `universe_forward_outcomes` (settlers) |
+| Knowledge artifacts | `trade_case_study`, `research_note`, `dreaming_log`, `trading_guard` | `dreaming_agent` → `knowledge_items` (FTS) |
+| Structured lessons | `ps_lessons` + `ps_policy_versions` | `lesson_reviewer` |
+| **Shadow trades (2026-07-19+)** | Cost-aware counterfactual returns for unselected candidates | `resolve_shadow_trades_for_position` (Path 1) + `resolve_stale_shadows` (Path 2), both now enriched with `estimate_outcome_economics` per PR #147 |
 
-### 2.2 Serenity Lens (letheia/trading/serenity_evidence.py + serenity_scoring.py)
+## 3. Outputs — 10 injection paths
 
-- **D2 生成者/评估者分离**: LLM 提案 → 确定性评估器独立判定
-- **来源天花板**: 方法论/LLM/预测市场 → speculative 硬顶
-- **研究能力分级**: A/B/C 三级,C 级封顶 40 分
-- **评分卡**: 证据(28) + 阶段(26) + 均值(12) + 置信(20) - 风险罚分
-- **加密-only 符号过滤**: 防止 LLM  hallucination 进入 PI 交易上下文
+| Path id | Consumer | Effect | Wired? | Current stage |
+|---|---|---|---|---|
+| `universe_family_calibration` | universe allocator | score multiplier | ✅ | shadow — 18k+ exposures, verdict layer active |
+| `observer_advisory_bundle` | market_observer LLM | advisory prompt block | ✅ | shadow — 135+ exposures, verdict-eligible per P2 |
+| `operator_learning_bundle` | System Operator LLM | Layer2/Layer3 prompt bundle | ✅ | shadow — 739+ exposures, `exact_candidate_scope` gate |
+| `ranker_case_score` | paper ranker | score delta | ✅ | shadow — writes exposures as of P1 (PR #143) |
+| `ranker_memo_score` | paper ranker | score delta | ✅ | shadow — same |
+| `ranker_factor_filter` | paper ranker | filter/score | ✅ | shadow — factor-key scoped only |
+| `ranker_learned_guard` | ranker / guards | candidate block | ✅ | shadow — 210+ exposures |
+| `risk_lesson_constraint` | Risk Engine | proposal reject | ⚠️ | AI lessons gated; owner/manual/human rules bypass |
+| `persona_sizing` | paper sizing policy | base notional | ✅ | shadow — sparse |
+| **`filter_parameter_tune`** *(new, PR #148)* | *(none yet)* | filter parameter override | ❌ skeleton | not wired — see design doc |
 
-### 2.3 Learning (letheia/learning/lessons.py + skills.py)
+**Read-only paths** (`is_learning_treatment=False`, listed for completeness):
+`advisory_skill`, `exit_policy_advice`, `filter_ttl_shadow`, `operator_safety_control`, `trust_guard_observability`, `filter_parameter_tune` (skeleton).
 
-- **LessonStore**: 经验教训 CRUD + 状态机 + 守卫时间戳
-- **SkillStore**: 技能学习 CRUD + FORBIDDEN_LAYERS 权限强制
-- **消费路径**: Layer3 wisdom → PI prompt (ADVISORY only)
-- **状态**: LessonStore 活,SkillStore 预留空壳
+**Today's live effect on trading**: zero. All authorized paths remain in `shadow`, so
+`applied=False` on every exposure and every downstream consumer sees the static baseline.
 
-## 3. 数据流
+## 4. Internal structure — 4 layers
 
-`
-Market Data → Market Observer → Opportunities
-                                      │
-                                      ▼
-                        Serenity Lens (4-lens research)
-                                      │
-                                      ▼
-                        SerenityOpportunity (assessed_tier)
-                                      │
-                                      ▼
-                        PI Agent Trading Decision
-                              ┌───────┴───────┐
-                              │               │
-                        Strategy           Learning
-                        (lifecycle)        (Layer3 wisdom)
-                              │               │
-                              └───────┬───────┘
-                                      │
-                                      ▼
-                        Risk Engine → Execution Gateway → Bitget
-                                      │
-                                      ▼
-                        Position → Fill → PnL
-                                      │
-                                      ▼
-                        post_trade_reviewer → trade_case_study
-                                      │
-                                      ↓
-                        dreaming_agent → LessonStore (ps_lessons)
-`
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  A — Production (knowledge accumulation)                              │
+│                                                                       │
+│  dreaming_agent ───→ knowledge_items                                  │
+│                       (trade_case_study / research_note /             │
+│                        dreaming_log / trading_guard)                  │
+│  lesson_reviewer ──→ ps_lessons + ps_policy_versions                  │
+│  paper_trader     ──→ shadow_trades (top-N counterfactuals)           │
+│                        cost-aware since PR #147                       │
+└─────────────────────────────┬────────────────────────────────────────┘
+                              │
+┌─────────────────────────────▼────────────────────────────────────────┐
+│  B — Experiment gating (A/B assignment layer)                         │
+│                                                                       │
+│  apply_boolean_treatment / apply_numeric_treatment                    │
+│    ├── stable_assignment: deterministic arm from candidate_key        │
+│    ├── resolve_learning_authority: check stage (shadow / paper_10+)   │
+│    ├── record exposure → learning_exposures                           │
+│    └── InfluenceDecision(value, applied, assignment, reason)          │
+│           applied=True  → treatment arm, injection authorized         │
+│           applied=False → baseline (shadow OR control arm)            │
+│                                                                       │
+│  P1 fix (PR #143): opportunity.metadata now carries                   │
+│    learning_candidate_key so ranker paths record exposures            │
+└─────────────────────────────┬────────────────────────────────────────┘
+                              │
+┌─────────────────────────────▼────────────────────────────────────────┐
+│  C — Evaluation (verdict production)                                  │
+│                                                                       │
+│  learning_contribution_evaluator (scheduled)                          │
+│    └── build_experiment_cohorts (filtered by SUPPORTED_PATH_IDS)      │
+│          ├── join exposures ↔ outcomes via _load_exact_outcomes       │
+│          │     filter_candidate_outcomes (family key + horizon)       │
+│          │     universe_forward_outcomes (family key + horizon)       │
+│          └── produce contribution_verdict                             │
+│                {positive, insufficient_data, invalid}                 │
+│                                                                       │
+│  P2 fix (PR #143): SUPPORTED_PATH_IDS now covers 6 paths              │
+│    (universe_family_calibration, operator_learning_bundle,            │
+│     observer_advisory_bundle, ranker_case_score, ranker_memo_score,   │
+│     ranker_factor_filter)                                             │
+└─────────────────────────────┬────────────────────────────────────────┘
+                              │
+┌─────────────────────────────▼────────────────────────────────────────┐
+│  D — Lifecycle (stage progression / refreeze)                         │
+│                                                                       │
+│  learning_lifecycle_controller (scheduled)                            │
+│                                                                       │
+│  shadow → paper_10 → paper_25 → paper_50 → paper_active               │
+│                ↑                                     │                │
+│                └── negative verdict → refreeze ─────┘                │
+│                                                                       │
+│  shadow→paper_10 is HARD MANUAL — admit_shadow_trial is fail-closed   │
+│  stub. Auto-promotion within paper_10+ requires config allowlist.     │
+└──────────────────────────────────────────────────────────────────────┘
+```
 
-## 4. 信任不变量
+## 5. Observational surface (2026-07-19)
 
-1. **所有订单必须通过 Execution Gateway** — 无 agent→exchange 直连
-2. **Learning 不能修改风险/执行** — FORBIDDEN_LAYERS 硬编码
-3. **Serenity 不能自评** — D2 独立评估器,生成者 self-grade 仅作 advisory
-4. **策略晋级必须人工** — live_limited 需 first_live_confirmation + permission
-5. **知识不能硬删除** — delete_item() 永远 raise PermissionError
+**`filter_controller` — cross-run stability signals** (PR #145 + PR #146):
 
-## 5. 已知限制 (Position C 后果)
+`compute_persistent_recommendations` walks the last N runs of `controller_recommendations`,
+returns cells whose `evidence_verdict='overrestrictive_suspect'` has held across
+`min_consecutive_runs` consecutive runs (default: ≥3 of last 10). Surfaced via:
 
-- 策略生命周期是 LEGACY — 无活创建/晋级路径
-- SkillStore 是空壳 — 无生产者
-- DEFAULT_PROMOTION_GATES 硬编码 — 不可配置
-- Serenity 评分权重硬编码 — 不可调
+- `GET /analytics/filter-controller` — new `persistent_recommendations` + `persistent_config` fields
+- CLI: `ato opportunity audit --view controller`
+- Frontend: Learning → Reports tab card
 
-## 6. 修复历史 (2026-07-02)
+**Deliberately NOT auto-generating Learning hypotheses**: `filter_controller`'s signal
+lives in a `(filter_name, scanner_family, direction, market_type, horizon)` space that
+NO existing learning-treatment path can consume (the natural home would be a filter
+parameter mutation; every current path either rejects candidates, scores them, or
+injects prompt text). The path shape for this — `filter_parameter_tune` — is declared
+as a skeleton by PR #148 with `consumer_wired=False, is_learning_treatment=False` until
+the outcome contract, override table, and consumer wiring land as separate PRs.
 
-| 修复 | 类型 | 状态 |
-|------|------|------|
-| PG-B06 失效 spec claim | P0 | ✅ 已修 (REMOVED marker) |
-| max_drawdown or 1.0 fallback | P0 | ✅ 已修 (改用 starting_capital_usdt) |
-| Learning L2 契约 | P1 | ✅ 已建 (learning_contract.md) |
-| DM-S19/S20/S21 data_model spec | P1 | ✅ 已补 (3 claims) |
-| LessonStore/SkillStore CRUD 测试 | P1 | ✅ 已补 (17 tests) |
-| ps_lessons DDL 统一 | P2 | ✅ 已修 (guard 列移入 CREATE TABLE) |
+## 6. Safety invariants
+
+| Constraint | Location |
+|---|---|
+| All orders route via Execution Gateway | `aletheia/agent_runtime/permissions.py` |
+| `FORBIDDEN_LAYERS` = risk_limits/execution_gateway/credentials/live_mode/order_submission | `aletheia/learning/skills.py` |
+| Experiments cannot lower existing safety controls | `learning_evolution_contract.md §2` |
+| `_curated_learning_context` forced to baseline within `dry_run_until` window | `agent_shell/trading_context.py` (GAP-15) |
+| Harm gate can only tighten authority | `learning/authority.py` (GAP-14) |
+| Negative-verdict refreeze independent of `lifecycle_automation_disabled` | `learning/lifecycle.py` (GAP-07) |
+| filter_parameter_tune fail-closed by construction | `learning/registry.py` (PR #148) |
+| Shadow-trade cost economics computed with same helper as filter_candidate_outcomes | PR #147 |
+
+## 7. Current blockers
+
+1. **Shadow lock (root cause)** — no experiment has reached `paper_10`. Path forward:
+   `POST /api/settings/learning/experiments/{id}/admit-trial` → paper_10 → accumulate
+   50 samples/arm × positive verdict → auto-promote.
+2. **admit_shadow_trial stub** — `authenticated_owner_admission_unavailable`. Real
+   authenticated owner-mutation route not yet built. Blocks all paths from paper_10+.
+3. **exact_market_candidate scope** for `operator_learning_bundle` — multi-signal
+   operator queues gate the bundle to disabled. Working as designed for experiment
+   purity; may need broader-scope variant if data volume proves insufficient.
+
+## 8. Repair history
+
+| Batch | Contents | Date |
+|---|---|---|
+| G1–G4 contribution gap repair | timestamp bug / epoch churn / hardcoded path / shadow deadlock | 2026-07-19 |
+| GAP-01–GAP-20 SDD-vs-reality repair | 20 gaps (GAP-13 architectural deferral) | 2026-07-19 |
+| P1 wiring (PR #143) | market_observer writes `learning_candidate_key` to opportunity metadata | 2026-07-19 |
+| P2 supported paths (PR #143) | `SUPPORTED_PATH_IDS` expanded 1 → 6 | 2026-07-19 |
+| Persistent controller signals (PR #145) | Cross-run stability analyzer, HTTP/CLI surface | 2026-07-19 |
+| Persistent signals UI (PR #146) | Learning → Reports card | 2026-07-19 |
+| Shadow trade cost enrichment (PR #147) | Path 1 + Path 2 populate cost model fields | 2026-07-19 |
+| filter_parameter_tune skeleton (PR #148) | Path declared + design doc; no consumer wiring | 2026-07-19 |
+
+Full detail: `docs/issues/audits/LEARNING_MODULE_SDD_VS_REALITY_AUDIT_2026-07-19.md`.
+
+## 9. Design boundary (observational ↔ prospective)
+
+`docs/design/subsystems/causal_counterfactual_research_guidance.md` defines the
+5-level evidence ladder:
+
+```
+L0 integrity → L1 fixed-horizon outcome → L2 descriptive diagnostic
+   → L3 bounded replay → L4 prospective experiment → L5 human governance
+```
+
+`filter_controller` produces L2 diagnostics. Learning A/B experiments live at L4.
+The persistent-recommendation signal added by PR #145 is L2 output presented for
+L5 (human) review — not a fast-lane into L4 auto-execution. This boundary is why
+`filter_parameter_tune` remains a skeleton rather than auto-consuming
+`filter_controller` output: automatic L2 → L4 promotion is a governance decision,
+not a technical convenience.
+
+## 10. Anticipated near-term work
+
+1. **PR #146 land** → operators start monitoring persistent signals in the UI
+2. **PR #147 land** → reflection.py + guard_effectiveness begin producing
+   cost-aware signals from resolved shadow trades
+3. **PR #148 land + follow-ups** — see `docs/plans/learning/filter_parameter_tune_design.md`
+   for the 8-stage sequence before `filter_parameter_tune` becomes consumer-wired
+4. **admit_shadow_trial real implementation** — the manual admission surface must
+   exist before any shadow experiment can advance to paper_10. Outside Learning's
+   scope; requires an authenticated owner-mutation route
