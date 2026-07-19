@@ -88,7 +88,9 @@ def test_learning_settings_uses_registry_backed_path_checkboxes():
     section = settings[start:end]
     assert 'type="checkbox"' in section
     assert "learning_path_options" in settings
-    assert "Not connected" in section
+    # Status is rendered tri-value (supported / consumer_unwired / authority_unwired)
+    assert "Consumer unwired" in section
+    assert "Authority unwired" in section
     assert ".split(',')" not in section
     assert "consumer_unwired" in client
 

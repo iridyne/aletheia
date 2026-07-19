@@ -174,6 +174,123 @@ def admit_shadow_trial(
     )
 
 
+def _execute_trial_admission(
+    experiment_id: str,
+    *,
+    verdict_id: str,
+    current_policy_epoch: str,
+    admitted_by: str,
+    reason: str,
+) -> LifecycleResult:
+    """Shadow-to-paper_10 transition callable only from the authenticated HTTP route.
+
+    admit_shadow_trial() remains fail-closed for all other callers (spec LE-L04).
+    """
+    del reason  # reserved for audit log; not used in gate logic
+    experiment_row = get_record("learning_experiments", experiment_id)
+    if experiment_row is None:
+        return LifecycleResult("hold", "admit_trial", "experiment_not_found", experiment_id, verdict_id=verdict_id)
+    experiment = LearningExperiment(**experiment_row)
+    if experiment.stage != "shadow":
+        return LifecycleResult("hold", "admit_trial", "experiment_not_shadow_stage", experiment_id, verdict_id=verdict_id)
+    if experiment.status != "active":
+        return LifecycleResult("hold", "admit_trial", "experiment_not_active", experiment_id, verdict_id=verdict_id)
+
+    hypothesis_row = get_record("learning_hypotheses", experiment.hypothesis_id)
+    if hypothesis_row is None:
+        return LifecycleResult("hold", "admit_trial", "hypothesis_not_found", experiment_id, verdict_id=verdict_id)
+    hypothesis = LearningHypothesis(**hypothesis_row)
+    if hypothesis.path_id not in SUPPORTED_PATH_IDS:
+        return LifecycleResult("hold", "admit_trial", "unsupported_learning_path", experiment_id, verdict_id=verdict_id)
+
+    gate_reason = _safety_action_gate_reason()
+    if gate_reason is not None:
+        return LifecycleResult("hold", "admit_trial", gate_reason, experiment_id, verdict_id=verdict_id)
+
+    current_code_commit = _code_fingerprint()
+    if current_code_commit is None:
+        return LifecycleResult("hold", "admit_trial", "code_commit_unavailable", experiment_id, verdict_id=verdict_id)
+
+    verdict = get_latest_measurement_verdict(
+        experiment_id,
+        policy_epoch=current_policy_epoch,
+        stage="shadow",
+        hypothesis_id=hypothesis.hypothesis_id,
+        target_horizon=hypothesis.target_horizon,
+        outcome_contract_version="v1",
+        metric_version=METRIC_VERSION,
+        code_commit=current_code_commit,
+    )
+    if verdict is None or str(verdict.get("verdict_id") or "") != verdict_id:
+        return LifecycleResult("hold", "admit_trial", "verdict_not_found_or_mismatch", experiment_id, verdict_id=verdict_id)
+    if str(verdict.get("verdict") or "") != "insufficient_data":
+        return LifecycleResult("hold", "admit_trial", "verdict_not_insufficient_data", experiment_id, verdict_id=verdict_id)
+    if str(verdict.get("reason") or "") != "no_actual_intervention":
+        return LifecycleResult("hold", "admit_trial", "verdict_not_no_actual_intervention", experiment_id, verdict_id=verdict_id)
+
+    identity_reason = measurement_identity_reason(
+        verdict, "shadow", current_policy_epoch,
+        expected_horizon=hypothesis.target_horizon,
+        expected_code_commit=current_code_commit,
+        expected_hypothesis_id=hypothesis.hypothesis_id,
+    )
+    if identity_reason:
+        return LifecycleResult("hold", "admit_trial", identity_reason, experiment_id, verdict_id=verdict_id)
+
+    allocation = _stage_allocation("paper_10")
+    now = _now()
+    successor = LearningExperiment(
+        hypothesis_id=experiment.hypothesis_id,
+        stage="paper_10",
+        assignment_salt=_fresh_salt(),
+        allocation_pct=allocation,
+        min_samples_per_arm=experiment.min_samples_per_arm,
+        min_market_days=experiment.min_market_days,
+        primary_metric=experiment.primary_metric,
+        promotion_gate_json=experiment.promotion_gate_json,
+        harm_gate_json=experiment.harm_gate_json,
+        status="active",
+        parent_experiment_id=experiment.experiment_id,
+        activation_verdict_id=verdict_id,
+        stage_generation=int(experiment.stage_generation) + 1,
+        started_at=now,
+    )
+    admitted_reason = f"owner_admitted:{admitted_by[:40]}"
+    dedup_key = f"{verdict_id}:shadow:admit_trial"
+    event = LearningLifecycleEvent(
+        dedup_key=dedup_key,
+        hypothesis_id=hypothesis.hypothesis_id,
+        experiment_id=experiment.experiment_id,
+        successor_experiment_id=successor.experiment_id,
+        verdict_id=verdict_id,
+        from_stage="shadow",
+        to_stage="paper_10",
+        action="admit_trial",
+        reason=admitted_reason,
+        policy_epoch=current_policy_epoch,
+        created_at=now,
+    )
+    with transaction():
+        if not insert_lifecycle_event(event):
+            existing = get_lifecycle_event_by_dedup_key(dedup_key)
+            return LifecycleResult(
+                "admit_trial", "admit_trial", "already_transitioned", experiment.experiment_id,
+                (existing or {}).get("successor_experiment_id"), verdict_id,
+            )
+        db = get_db()
+        db.execute(
+            "UPDATE learning_experiments SET status='closed', ended_at=? "
+            "WHERE experiment_id=? AND ended_at IS NULL",
+            (now, experiment.experiment_id),
+        )
+        insert_experiment(successor)
+    _write_lifecycle_audit(event)
+    return LifecycleResult(
+        "admit_trial", "admit_trial", admitted_reason,
+        experiment.experiment_id, successor.experiment_id, verdict_id,
+    )
+
+
 def _promotion_gate_reason(path_id: str) -> str | None:
     try:
         if global_learning_refreeze_reason() is not None:
@@ -356,7 +473,10 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
     if experiment_row is None:
         return {"experiment_id": experiment_id, "status": "not_found"}
     experiment = LearningExperiment(**experiment_row)
-    hypothesis = LearningHypothesis(**get_record("learning_hypotheses", experiment.hypothesis_id))
+    hypothesis_row = get_record("learning_hypotheses", experiment.hypothesis_id)
+    if hypothesis_row is None:
+        return {"experiment_id": experiment_id, "status": "orphaned_hypothesis"}
+    hypothesis = LearningHypothesis(**hypothesis_row)
     current_code_commit = _code_fingerprint()
     verdict = get_latest_measurement_verdict(
         experiment_id,
