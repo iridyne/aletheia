@@ -75,7 +75,6 @@ _ADVERSE_SKIP_REASON_CODES = {
     "liquidity_or_execution_quality",
     "negative_same_cohort_outcomes",
     "invalid_risk_reward",
-    "candidate_data_integrity",
 }
 
 
@@ -1156,7 +1155,15 @@ async def _reassess_direct_skip(
     # same provider its own answer made relabelling look like independent proof.
     # Malformed-output repair still receives the exact syntax issue and payload.
     is_direct_skip = str(initial_raw.get("action") or "").lower() == "skip"
-    repair_context = "" if is_direct_skip else (
+    repair_context = (
+        # For a confirmed direct skip, pass only the gate-level rejection fact — not
+        # the first model's prose — to preserve independent counterfactual review while
+        # giving the reviewer a concrete signal to choose a different path.
+        f"Gate rejection: {validation_reason} — the required numeric threshold was not "
+        f"met by the data in the current context. Verify the exact threshold before "
+        f"re-using this code, or use skip_kind=insufficient_evidence if evidence is "
+        f"merely absent or below the required floor.\n\n"
+    ) if is_direct_skip else (
         f"Validation issue: {validation_reason}\n"
         f"Malformed prior payload: {json.dumps(initial_raw, sort_keys=True, default=str)}\n\n"
     )
@@ -1943,6 +1950,24 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "plus concrete candidate-specific adverse_evidence. Use insufficient_evidence "
         "when history is merely unavailable; the caller will defer rather than consume "
         "the candidate.",
+        "  Each adverse_reason_code has a HARD numeric gate — use it only if the data "
+        "shown in this context actually satisfies the exact predicate:\n"
+        "  adverse_price_structure → return_4h ≤ -1.0% AND return_24h ≤ -2.0% (long) "
+        "or return_4h ≥ +1.0% AND return_24h ≥ +2.0% (short)\n"
+        "  signal_conflict → return_1h ≤ -0.5% AND return_4h ≤ -1.0% (long) "
+        "or return_1h ≥ +0.5% AND return_4h ≥ +1.0% (short)\n"
+        "  regime_mismatch → regime.state is bearish/bear/downtrend for a long entry "
+        "(or bullish/bull/uptrend for a short) AND regime.confidence ≥ 0.55\n"
+        "  negative_same_cohort_outcomes → b2.status=qualified_negative AND "
+        "b2.directional_verdict=negative AND b2.shrunk_avg_net_pct < 0\n"
+        "  liquidity_or_execution_quality → candidate.execution_eligible=False OR "
+        "candidate.risk_flags is non-empty\n"
+        "  invalid_risk_reward → reward/risk < 1.0 given your stop_price and "
+        "take_profit vs entry price\n"
+        "  A claim that does not satisfy its predicate is rejected by the validation gate "
+        "and the candidate is deferred, not consumed. Missing optional fields such as "
+        "oi_delta_1h or funding_rate are unknown, not adverse — use "
+        "skip_kind=insufficient_evidence for data quality concerns.",
         "- What is the dominant market narrative right now? Is it already priced in?",
         "- Am I seeing confluence (multiple signals aligning) or conflict?",
         "- Is there an asymmetric risk/reward setup I'm missing?",
