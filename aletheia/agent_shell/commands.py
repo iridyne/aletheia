@@ -2061,6 +2061,8 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     from aletheia.learning.prompt_bundles import authorize_operator_learning_context
 
     ctx = authorize_operator_learning_context(ctx)
+    if context_fingerprint is not None:
+        context_fingerprint = operator_decision_context_fingerprint(ctx)
 
     # Run System Operator decision loop.
     # ``DecisionUnavailable`` from selected stages is a non-terminal defer, not a

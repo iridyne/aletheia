@@ -3152,6 +3152,16 @@ def _backfill_entry_risk_reservations(db) -> None:
         """
     )
 
+def _clear_learning_verdict_runner_zombie(db) -> None:
+    """Remove the stale 'learning_verdict_runner' health record (GAP-16).
+
+    This job_id existed in an earlier deployment and is not registered in
+    AUTONOMOUS_LEARNING_JOBS; its status='failed'/last_succeeded_at=NULL entry
+    is misleading noise that never gets updated. Idempotent.
+    """
+    db.execute("DELETE FROM learning_job_health WHERE job_id = 'learning_verdict_runner'")
+
+
 def _run_all_ddl(db) -> None:
     """Execute every DDL statement against db (used for both real and blueprint DBs)."""
     db.executescript(SCHEMA_SQL)
@@ -3186,6 +3196,7 @@ def _run_all_ddl(db) -> None:
     _ensure_knowledge_fts_outcome_column(db)
     _ensure_knowledge_fts(db)
     db.executescript(_CORE_INDEXES_SQL)
+    _clear_learning_verdict_runner_zombie(db)
     db.commit()
 
 

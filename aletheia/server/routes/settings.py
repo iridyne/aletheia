@@ -738,6 +738,65 @@ async def update_learning_config(req: LearningConfigUpdate):
     return {"updated": updates, "learning": cfg.learning.model_dump(mode="json")}
 
 
+@router.get("/learning/experiments")
+async def list_learning_experiments(limit: int = 100):
+    """List all learning experiments with lightweight summary (path, stage, status)."""
+    from aletheia.storage.sqlite import get_db
+    rows = get_db().execute(
+        "SELECT e.experiment_id, e.hypothesis_id, e.stage, e.status, "
+        "e.allocation_pct, e.min_samples_per_arm, e.activation_verdict_id, e.created_at, "
+        "h.path_id, h.target_horizon "
+        "FROM learning_experiments e "
+        "LEFT JOIN learning_hypotheses h ON e.hypothesis_id = h.hypothesis_id "
+        "ORDER BY datetime(e.created_at) DESC LIMIT ?",
+        (min(limit, 200),),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@router.get("/learning/experiments/{experiment_id}")
+async def get_learning_experiment(experiment_id: str):
+    """Read-only lifecycle/operator view for one experiment."""
+    from aletheia.learning.lifecycle import inspect_learning_experiment
+    from aletheia.learning.experiments import _policy_epoch
+    from aletheia.learning.ledger import get_record
+    row = get_record("learning_experiments", experiment_id)
+    if row is None:
+        raise HTTPException(404, f"experiment not found: {experiment_id}")
+    hypothesis_row = get_record("learning_hypotheses", str(row.get("hypothesis_id") or ""))
+    path_id = str((hypothesis_row or {}).get("path_id") or "")
+    current_policy_epoch = _policy_epoch(path_id) if path_id else ""
+    return inspect_learning_experiment(experiment_id, current_policy_epoch=current_policy_epoch)
+
+
+class AdmitTrialRequest(SettingsRequest):
+    verdict_id: str
+    policy_epoch: str
+    reason: str
+
+
+@router.post("/learning/experiments/{experiment_id}/admit-trial")
+async def admit_learning_trial(experiment_id: str, req: AdmitTrialRequest):
+    """Admit a shadow experiment to paper_10 trial. Change-management boundary."""
+    from aletheia.learning.lifecycle import _execute_trial_admission
+    result = _execute_trial_admission(
+        experiment_id,
+        verdict_id=req.verdict_id,
+        current_policy_epoch=req.policy_epoch,
+        admitted_by="authenticated_dashboard_operator",
+        reason=req.reason[:200],
+    )
+    if result.action == "hold":
+        raise HTTPException(409, {"action": result.action, "reason": result.reason})
+    return {
+        "action": result.action,
+        "reason": result.reason,
+        "experiment_id": result.experiment_id,
+        "successor_experiment_id": result.successor_experiment_id,
+        "verdict_id": result.verdict_id,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Operator config
 # ---------------------------------------------------------------------------

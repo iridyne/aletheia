@@ -2098,7 +2098,8 @@ def _build_layer3_wisdom() -> dict[str, Any]:
         # wider set, drop expired, then cap at 5 (matches the previous surface size).
         _applied = LessonStore().list_all(status="applied", limit=20)
         ps = [l for l in _applied
-              if not (getattr(l, "expires_at", None) and _now_iso > l.expires_at)][:5]
+              if not (getattr(l, "expires_at", None) and _now_iso > l.expires_at)
+              and not (getattr(l, "dry_run_until", None) and _now_iso < l.dry_run_until)][:5]
         layer["ps_lessons"] = [
             {"summary": l.summary, "severity": l.severity, "category": l.category}
             for l in ps
