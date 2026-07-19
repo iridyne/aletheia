@@ -137,6 +137,67 @@ def _parse_entry_dt(created_at: str) -> datetime | None:
     return dt
 
 
+def _compute_shadow_economics(
+    *,
+    row: dict,
+    exit_price: float,
+    hold_seconds: float,
+) -> dict | None:
+    """Compute cost-aware economics for a shadow_trade being resolved.
+
+    Wraps ``estimate_outcome_economics`` with config-loaded fee/spread/slip
+    defaults so every resolver (event-driven Path 1 and periodic Path 2)
+    populates the same cost-model shape as filter_candidate_outcomes settlement.
+    Returns None if the required entry-side fields are missing or invalid —
+    the caller then falls back to the historic minimal-writer path (pnl_pct
+    only), preserving observability without spuriously populating economics.
+
+    net_return_pct may still be None inside the returned dict when funding
+    data is unavailable for a perp row; this is intentional (`assess_candidate_outcome`
+    fails closed on `net_economics_unavailable`, which is the correct signal).
+    """
+    try:
+        from aletheia.universe.outcome_economics import estimate_outcome_economics
+        from aletheia.config.loader import load_config
+    except Exception:
+        return None
+    try:
+        entry = float(row.get("entry_price"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(entry) or entry <= 0:
+        return None
+    direction = str(row.get("direction") or "").lower()
+    if direction not in {"long", "short"}:
+        return None
+    try:
+        cfg = load_config()
+    except Exception:
+        return None
+    market_type = str(row.get("market_type") or "spot").lower()
+    entry_spread = row.get("entry_spread_bps")
+    funding_rate = row.get("funding_rate_at_entry")
+    try:
+        return estimate_outcome_economics(
+            entry_price=entry,
+            exit_price=float(exit_price),
+            direction=direction,
+            market_type=market_type,
+            hold_seconds=max(0.0, float(hold_seconds or 0.0)),
+            entry_spread_bps=float(entry_spread) if entry_spread is not None else None,
+            fallback_spread_bps=float(getattr(cfg.universe, "max_spread_bps", 0.0) or 0.0),
+            funding_rate_at_entry=(
+                float(funding_rate) if funding_rate is not None else None
+            ),
+            execution_fee_pct=float(getattr(cfg.trading, "execution_fee_pct", 0.0) or 0.0),
+            slippage_bps=float(getattr(cfg.trading, "slippage_bps", 0.0) or 0.0),
+            price_quality_ok=True,
+        )
+    except Exception as exc:
+        logger.debug("shadow economics unavailable for %s: %s", row.get("id"), exc)
+        return None
+
+
 def resolve_stale_shadows(
     min_age_hours: int = 25,
     horizon_hours: int = 24,
@@ -157,13 +218,15 @@ def resolve_stale_shadows(
     Returns a counts dict: {resolved, skipped_no_ohlcv, skipped_bad_entry, scanned}.
     With dry_run=True, computes everything but writes nothing.
     """
-    from aletheia.storage.repositories import _update
+    from aletheia.storage.repositories import resolve_shadow_trade_if_pending
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
     cutoff_iso = (datetime.now(timezone.utc) - timedelta(hours=min_age_hours)).isoformat()
     rows = db.execute(
-        "SELECT id, symbol, direction, entry_price, created_at FROM shadow_trades "
+        "SELECT id, symbol, direction, entry_price, entry_spread_bps, "
+        " funding_rate_at_entry, market_type, created_at "
+        "FROM shadow_trades "
         "WHERE resolved_at IS NULL AND exit_price IS NULL "
         "AND outcome_candidate_key IS NULL "
         "AND created_at < ? ORDER BY created_at ASC LIMIT ?",
@@ -197,13 +260,26 @@ def resolve_stale_shadows(
         else:
             pnl_pct = round((entry_f - exit_price) / entry_f * 100, 3)
 
+        # Fixed horizon = horizon_hours (job default 24h). Fill the same
+        # cost-aware economics shape as the filter_candidate_outcomes settler so
+        # downstream consumers (reflection, alpha_attribution, learning verdict)
+        # can trust net_pnl_pct + cost_model_version consistently across paths.
+        hold_seconds = float(horizon_hours) * 3600.0
+        economics = _compute_shadow_economics(
+            row=dict(row), exit_price=exit_price, hold_seconds=hold_seconds,
+        )
+
         if not dry_run:
             try:
-                _update("shadow_trades", row["id"], {
-                    "exit_price": exit_price,
-                    "pnl_pct": pnl_pct,
-                    "resolved_at": now_iso,
-                })
+                resolve_shadow_trade_if_pending(
+                    row["id"],
+                    exit_price=exit_price,
+                    pnl_pct=pnl_pct,
+                    resolved_at=now_iso,
+                    economics=economics,
+                    settlement_price_source="stale_forward_ohlcv" if economics else None,
+                    settlement_lag_sec=hold_seconds if economics else None,
+                )
             except Exception as exc:
                 logger.warning("stale shadow resolve failed for %s: %s", row["id"], exc)
                 continue
@@ -455,6 +531,8 @@ def resolve_shadow_trades_for_position(position: dict) -> int:
         limit=50,
     )
 
+    event_dt = _parse_entry_dt(event_time)
+
     updated = 0
     for row in batch_rows:
         row_id = str(row.get("id") or "")
@@ -468,12 +546,25 @@ def resolve_shadow_trades_for_position(position: dict) -> int:
         else:
             pnl_pct = round((entry - exit_price) / entry * 100, 3)
 
+        # Cost-model economics. Hold seconds = event_time - created_at (the shadow
+        # is conceptually held for the same wall-clock window as the parent Position).
+        entry_dt = _parse_entry_dt(str(row.get("created_at") or ""))
+        hold_seconds = 0.0
+        if entry_dt is not None and event_dt is not None:
+            hold_seconds = max(0.0, (event_dt - entry_dt).total_seconds())
+        economics = _compute_shadow_economics(
+            row=row, exit_price=exit_price, hold_seconds=hold_seconds,
+        )
+
         try:
             if resolve_shadow_trade_if_pending(
                 row["id"],
                 exit_price=exit_price,
                 pnl_pct=pnl_pct,
                 resolved_at=event_time,
+                economics=economics,
+                settlement_price_source="position_close" if economics else None,
+                settlement_lag_sec=hold_seconds if economics else None,
             ):
                 updated += 1
         except Exception as exc:
