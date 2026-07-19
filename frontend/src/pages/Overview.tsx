@@ -36,20 +36,22 @@ export default function Overview() {
   useEffect(() => {
     if (modeExpanded) requestAnimationFrame(() => modeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
   }, [modeExpanded])
-  const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
-  const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
-  const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
-  const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
-  const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 30000 })
+  const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, staleTime: 8000 })
+  const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch, staleTime: 30000, refetchInterval: 30000 })
+  const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000, staleTime: 14000 })
+  const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig, staleTime: 60000, refetchInterval: 60000 })
+  const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 30000, staleTime: 28000 })
   const { data: collectorHealth } = useQuery({
     queryKey: ['collector-health'],
     queryFn: api.getCollectorHealth,
     refetchInterval: 30000,
+    staleTime: 28000,
   })
   const { data: dataCoverage } = useQuery({
     queryKey: ['market-data-coverage'],
     queryFn: api.getDataCoverage,
     refetchInterval: 30000,
+    staleTime: 28000,
   })
   const exchangeMode = String((status as any)?.exchange_mode || '')
   const usesExternalExchange = !!(status as any)?.uses_external_exchange
@@ -73,9 +75,7 @@ export default function Overview() {
   const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
   const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
 
-  if (!status) return <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
-
-  const s = status as any
+  const s = (status as any) ?? {}
   const running = !!s.gateway_running
   const paused = !!s.paused
   const killed = !!killSwitch?.active
@@ -153,6 +153,9 @@ export default function Overview() {
 
           {/* System / connections — tabular status board (old-school console feel) */}
           <Card className="rail-card system-panel">
+            {!status ? (
+              <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
+            ) : (<>
             <div className="flex items-center justify-between mb-2">
               <h3>System</h3>
               <div className="flex gap-2">
@@ -260,6 +263,7 @@ export default function Overview() {
             <CollapsibleSection ref={modeRef} open={modeExpanded}>
               <ModeDetail s={s} paused={paused} killed={killed} liveState={liveState} riskState={riskState} />
             </CollapsibleSection>
+            </>)}
           </Card>
 
           {/* Go-Live Scorecard */}
@@ -298,7 +302,7 @@ function BlotterSummaryStrip() {
   })
   const { data: decisions } = useQuery({
     queryKey: ['operator-decisions', 24],
-    queryFn: () => api.getOperatorDecisions(24, 200),
+    queryFn: () => api.getOperatorDecisions(24, 50),
     refetchInterval: 60000,
     staleTime: 20000,
   })
@@ -317,7 +321,7 @@ function BlotterSummaryStrip() {
     })
     qc.prefetchQuery({
       queryKey: ['operator-decisions', 24],
-      queryFn: () => api.getOperatorDecisions(24, 200),
+      queryFn: () => api.getOperatorDecisions(24, 50),
       staleTime: 20000,
     })
     qc.prefetchQuery({
