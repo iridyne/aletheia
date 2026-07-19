@@ -29,7 +29,13 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,   // avoid bursts when user alt-tabs
       // No global refetchInterval — real-time queries set their own interval
       // (e.g. StatusBar queries set refetchInterval:10000 explicitly).
-      retry: 1,
+      retry: (failureCount, error) => {
+        // Never retry a request that was aborted — either we timed it out
+        // (fetchJson 15s cap) or React Query cancelled it. Retrying an aborted
+        // request would double the loading-bar wait time for no benefit.
+        if (error instanceof DOMException && error.name === 'AbortError') return false
+        return failureCount < 1
+      },
     },
   },
 })

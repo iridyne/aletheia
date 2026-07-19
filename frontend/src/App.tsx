@@ -211,7 +211,11 @@ function StatusBar() {
           if (r.ok) {
             if (pollRef.current) clearInterval(pollRef.current)
             setRestarting(false)
-            qc.invalidateQueries()
+            // Brief pause so the backend finishes loading heavy subsystems
+            // (APScheduler, DB pool, etc.) before we fire all active queries.
+            // Without this, the first request burst hits a warming backend and
+            // the loading bar can stay stuck until the 15s fetch timeout fires.
+            setTimeout(() => qc.invalidateQueries(), 1500)
           }
         } catch { /* still down */ }
       }, 2000)

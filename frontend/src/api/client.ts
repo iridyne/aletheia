@@ -53,13 +53,38 @@ export function extractApiError(status: number, body: string): string {
   return body || `${status} error`
 }
 
+// Hard cap on every API request. Prevents the top loading bar from staying
+// stuck for minutes when the backend is slow to respond after a restart.
+const _FETCH_TIMEOUT_MS = 15_000
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (!res.ok) throw new Error(extractApiError(res.status, await res.text()))
-  return res.json()
+  const timeoutCtrl = new AbortController()
+  const timer = setTimeout(() => timeoutCtrl.abort(), _FETCH_TIMEOUT_MS)
+
+  // Combine our timeout signal with any signal the caller already provided
+  // (e.g. React Query's per-query cancellation signal threaded via init.signal).
+  // Aborting either source aborts the request.
+  const callerSignal = init?.signal
+  if (callerSignal) {
+    if (callerSignal.aborted) {
+      clearTimeout(timer)
+      timeoutCtrl.abort()
+    } else {
+      callerSignal.addEventListener('abort', () => timeoutCtrl.abort(), { once: true })
+    }
+  }
+
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...init,
+      signal: timeoutCtrl.signal,
+    })
+    if (!res.ok) throw new Error(extractApiError(res.status, await res.text()))
+    return res.json()
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function post<T>(path: string, body?: unknown): Promise<T> {
