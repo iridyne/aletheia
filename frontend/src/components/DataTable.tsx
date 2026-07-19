@@ -38,7 +38,7 @@ function loadVisibility(tableId?: string): VisibilityState {
 
 export function DataTable<T>({
   data, columns, onRowClick, pageSize = 25, emptyMessage = 'No data.',
-  columnToggle = false, tableId, noWrap = false,
+  columnToggle = false, tableId, noWrap = true,
 }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([])
   const [globalFilter, setGlobalFilter] = useState('')
