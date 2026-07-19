@@ -491,6 +491,10 @@ def build_current_entry_status(
         db, now=now, window_start=window_start
     )
     ranker_candidates = all_ranker_candidates[:_RANKER_CANDIDATE_LIMIT]
+    for c in operator_candidates:
+        c["source"] = "operator_queue"
+    for c in ranker_candidates:
+        c["source"] = "ranker_preview"
     candidates = operator_candidates + ranker_candidates
     open_positions = int(db.execute(
         "SELECT COUNT(*) FROM positions WHERE status='open'"

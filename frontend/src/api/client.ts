@@ -642,6 +642,7 @@ export const api = {
         latest_ranker_run_id: string | null
         retry_at: string | null
         retry_in_sec: number | null
+        source: string | null
       }>
       pipeline: Array<{
         stage: string

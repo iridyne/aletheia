@@ -2730,6 +2730,17 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   color: var(--muted);
   background: transparent;
 }
+.bl-cand-source-tag {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0px 4px;
+  border-radius: 3px;
+  font-size: 0.6rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  vertical-align: middle;
+  opacity: 0.6;
+}
 .bl-cand-status-deferred          { color: var(--yellow); }
 .bl-cand-status-queued            { color: var(--accent); }
 .bl-cand-status-ranker_pending    { color: var(--accent); }

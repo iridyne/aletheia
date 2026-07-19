@@ -272,7 +272,12 @@ function CandidatesPanel() {
               const gateOk = !blocker
               return (
                 <tr key={c.opportunity_id || `${c.symbol}-${i}`}>
-                  <td className="mono">{fmtSymbol(c.symbol || '', c.market_type || undefined)}</td>
+                  <td className="mono">
+                    {fmtSymbol(c.symbol || '', c.market_type || undefined)}
+                    {c.source === 'ranker_preview' && (
+                      <span className="bl-cand-source-tag">preview</span>
+                    )}
+                  </td>
                   <td className="bl-cell-side">
                     <span className={`bl-side bl-side-${sideChip(c.direction).toLowerCase()}`}>{sideChip(c.direction)}</span>
                   </td>
