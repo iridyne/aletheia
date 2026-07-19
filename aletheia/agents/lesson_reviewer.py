@@ -337,43 +337,57 @@ async def run_lesson_reviewer(
         else:
             deferred += 1
 
-    # ── Step C: apply — fold this run's accepted lessons into one policy version ──
-    if newly_accepted:
+    # ── Step C: apply — fold accepted lessons (this run + any stuck from prior runs) ──
+    # GAP-04: a prior create_version failure leaves lessons stuck in 'accepted'; pick
+    # them up here so a transient DB error doesn't permanently orphan a batch.
+    stuck_accepted = [
+        l.lesson_id for l in store.list_all(status="accepted", limit=100)
+        if l.lesson_id not in set(newly_accepted)
+    ]
+    if stuck_accepted:
+        outputs.append(f"retrying_stuck_accepted:{len(stuck_accepted)}")
+    all_to_apply = newly_accepted + stuck_accepted
+    if all_to_apply:
         try:
             policy_store = PolicyStore()
-            skill_store = None
             pv = policy_store.create_version(
                 policy_type="lesson_policy",
                 policy={
-                    "accepted_lesson_ids": newly_accepted,
+                    "accepted_lesson_ids": all_to_apply,
                     "reviewed_at": datetime.now(timezone.utc).isoformat(),
                     "basis": "settled outcomes, last 30d, 24h horizon",
                 },
                 created_by="lesson_reviewer",
             )
-            for lid in newly_accepted:
-                store.mark_applied(lid, pv.policy_version_id)
-                try:
-                    from aletheia.learning.skills import SkillStore
-
-                    if skill_store is None:
-                        skill_store = SkillStore()
-                    lesson = store.get(lid)
-                    if lesson:
-                        skill = skill_store.create_from_lesson(
-                            lesson,
-                            policy_version_id=pv.policy_version_id,
-                        )
-                        if skill:
-                            outputs.append(f"draft_skill:{skill.skill_id}")
-                            log_tool(run_id, "create_draft_skill", "observe", True, output=skill.skill_id)
-                except Exception as e:
-                    errors.append(f"skill_create_failed:{lid}:{e}")
-            outputs.append(f"policy_version:{pv.policy_version_id}:{len(newly_accepted)}_applied")
+            outputs.append(f"policy_version:{pv.policy_version_id}:{len(all_to_apply)}_applied")
             log_tool(run_id, "apply_lessons_to_policy", "observe", True,
-                     output=f"{pv.policy_version_id}:{len(newly_accepted)}")
+                     output=f"{pv.policy_version_id}:{len(all_to_apply)}")
         except Exception as e:
-            errors.append(f"policy_apply_failed:{e}")
+            errors.append(f"policy_version_create_failed:{e}")
+            pv = None
+        if pv is not None:
+            skill_store = None
+            for lid in all_to_apply:
+                try:
+                    store.mark_applied(lid, pv.policy_version_id)
+                    try:
+                        from aletheia.learning.skills import SkillStore
+
+                        if skill_store is None:
+                            skill_store = SkillStore()
+                        lesson = store.get(lid)
+                        if lesson:
+                            skill = skill_store.create_from_lesson(
+                                lesson,
+                                policy_version_id=pv.policy_version_id,
+                            )
+                            if skill:
+                                outputs.append(f"draft_skill:{skill.skill_id}")
+                                log_tool(run_id, "create_draft_skill", "observe", True, output=skill.skill_id)
+                    except Exception as e:
+                        errors.append(f"skill_create_failed:{lid}:{e}")
+                except Exception as e:
+                    errors.append(f"mark_applied_failed:{lid}:{e}")
 
     remaining = max(0, backlog - len(batch))
     logger.info(

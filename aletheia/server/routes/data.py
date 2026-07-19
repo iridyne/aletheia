@@ -2,12 +2,15 @@
 
 import json
 import logging
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
 
-from aletheia.config.loader import is_preview_mode
+from aletheia.config.loader import is_preview_mode, load_config
+from aletheia.portfolio.pnl import compute_portfolio
 from aletheia.storage.sqlite import get_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
@@ -51,6 +54,13 @@ VALID_KNOWLEDGE_TYPES = {
     "trading_guard",
     "trading_memo",
 }
+
+# --- In-process result caches (avoids re-computing expensive aggregations on every poll) ---
+_portfolio_cache_lock = threading.Lock()
+_portfolio_cache: "tuple[float, dict] | None" = None
+
+_equity_history_cache_lock = threading.Lock()
+_equity_history_cache: "dict[tuple, tuple[float, dict]]" = {}
 
 
 def _ensure_db():
@@ -371,8 +381,8 @@ def start_agent_run(req: StartAgentRequest):
 def get_opportunities(asset_class: str | None = None):
     _ensure_db()
     if asset_class:
-        return repo.list_opportunities_by_asset_class(asset_class)
-    return repo.list_opportunities()
+        return repo.list_opportunities_by_asset_class(asset_class, limit=25)
+    return repo.list_opportunities(limit=25)
 
 
 class SerenityThemeCreate(BaseModel):
@@ -731,10 +741,13 @@ def get_serenity_pipeline():
     return {"runs": runs, "active_opportunity_count": active_count}
 
 
+_PROPOSAL_SKIP = frozenset({"attribution_snapshot"})
+
 @router.get("/proposals")
 def get_proposals():
     _ensure_db()
-    return repo.list_trade_proposals()
+    rows = repo.list_trade_proposals(limit=25)
+    return [{k: v for k, v in row.items() if k not in _PROPOSAL_SKIP} for row in rows]
 
 
 @router.get("/proposals/{proposal_id}")
@@ -964,8 +977,17 @@ def get_positions():
 @router.get("/portfolio")
 def get_portfolio():
     _ensure_db()
-    from aletheia.portfolio.pnl import compute_portfolio
-    return compute_portfolio(execution_mode=None)
+    global _portfolio_cache
+    now = time.monotonic()
+    with _portfolio_cache_lock:
+        if _portfolio_cache is not None:
+            ts, cached = _portfolio_cache
+            if now - ts < 30.0:
+                return cached
+    result = compute_portfolio(execution_mode=None)
+    with _portfolio_cache_lock:
+        _portfolio_cache = (now, result)
+    return result
 
 
 @router.get("/exchange/account")
@@ -1247,10 +1269,16 @@ def get_account_equity_history(limit: int = 500, days: int | None = None):
     recorded position notional rather than cash-account equity.
     """
     _ensure_db()
-    from aletheia.config.loader import load_config
-
     local_paper = load_config().exchange.paper_execution_mode == "paper_internal"
     execution_mode = "paper_internal" if local_paper else "exchange_account"
+    cache_key = (days, execution_mode)
+    now = time.monotonic()
+    with _equity_history_cache_lock:
+        entry = _equity_history_cache.get(cache_key)
+        if entry is not None:
+            ts, cached = entry
+            if now - ts < 60.0:
+                return cached
     rows = repo.list_account_equity_snapshots(
         execution_mode=execution_mode,
         limit=limit,
@@ -1260,12 +1288,15 @@ def get_account_equity_history(limit: int = 500, days: int | None = None):
         {"time": row["snapshot_at"], "equity_usdt": row["account_equity_usdt"]}
         for row in rows
     ]
-    return {
+    result = {
         "source": "local_paper_ledger" if local_paper else "exchange_account_snapshot",
         "state": "available" if points else "unavailable",
         "points": points,
         "as_of": points[-1]["time"] if points else None,
     }
+    with _equity_history_cache_lock:
+        _equity_history_cache[cache_key] = (now, result)
+    return result
 
 
 @router.get("/market/macro")

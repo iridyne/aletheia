@@ -641,8 +641,8 @@ function AgentModelsTab({ status, settings, qc }: any) {
                   />
                   <span>{option.label}</span>
                   <code>{option.path_id}</code>
-                  <span style={{ color: option.supported ? 'var(--green)' : 'var(--muted)' }}>
-                    {option.supported ? 'Supported' : 'Not connected'}
+                  <span style={{ color: option.status === 'supported' ? 'var(--green)' : 'var(--muted)' }}>
+                    {option.status === 'supported' ? 'Supported' : option.status === 'consumer_unwired' ? 'Consumer unwired' : 'Authority unwired'}
                   </span>
                 </label>
               ))}

@@ -25,14 +25,22 @@ from aletheia.storage.sqlite import get_db
 SUPPORTED_PATH_ID = "universe_family_calibration"
 # Consumer wiring is not causal measurement support. A path enters this set only
 # after its exact outcome and statistical-unit contracts are executable.
+#
 # Outcome contract families:
 #   A — universe_forward_outcomes (universe-keyed, {learning_key}:{horizon}):
 #       universe_family_calibration, observer_advisory_bundle, ranker_factor_filter
 #   B — filter_candidate_outcomes + universe_forward_outcomes mirror (family-keyed,
 #       resolved via _filter_base_key strip of :{horizon}):
 #       operator_learning_bundle, ranker_case_score, ranker_memo_score
+#
 # observer_advisory_bundle: candidate_key = observer-run key; outcome_candidate_key
 #   = u_member.learning_candidate_key:4h — resolves via universe_forward_outcomes.
+# operator_learning_bundle: uses the fixed_horizon_candidate outcome contract
+#   (opportunity:{id}:{horizon}) and the boolean-treatment exposure path (same as
+#   universe_family_calibration), so the existing cohort builder handles it without
+#   modification. Known measurement bias: serenity_opportunities appears in both
+#   arms (GAP-02, Phase 4); this produces a conservative underestimate of the
+#   bundle effect rather than a false positive.
 # ranker_case_score/memo_score: outcome_candidate_key = {learning_candidate_key}:4h
 #   (family-anchored, only truthy after opportunity metadata carries the key — see
 #   market_observer._analyze_symbol) — resolves via filter_candidate_outcomes (with
@@ -157,6 +165,7 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
     )
     seen_duplicate_outcomes: set[tuple[CohortKey, str]] = set()
     seen_mirrored_outcomes: set[tuple[CohortKey, str]] = set()
+    seen_wrong_horizon_outcomes: set[tuple[CohortKey, str]] = set()
     expected_unit_members: dict[CohortKey, dict[str, set[str]]] = defaultdict(
         lambda: defaultdict(set)
     )
@@ -218,8 +227,9 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
         )
         if evidence_fingerprint:
             cohort.evidence_conflict_fingerprints.add(evidence_fingerprint)
-        if wrong_horizon_n:
+        if wrong_horizon_n and (key, outcome_key) not in seen_wrong_horizon_outcomes:
             cohort.exclusion_reasons["wrong_horizon"] += wrong_horizon_n
+            seen_wrong_horizon_outcomes.add((key, outcome_key))
         if duplicate_outcomes and (key, outcome_key) not in seen_duplicate_outcomes:
             cohort.duplicate_outcome_n += duplicate_outcomes
             seen_duplicate_outcomes.add((key, outcome_key))
