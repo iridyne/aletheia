@@ -1,13 +1,15 @@
-"""Tests for Phase A defer→reopen acceleration.
+"""Tests for defer→reopen acceleration and defer-loop prevention.
 
-Covers two coupled changes shipped together:
+Covers:
 
 * ``universe/features.py::_wake_pi_daemon_for_refreshed_defers`` — wakes
-  ``pi_daemon`` when a feature snapshot batch touches a symbol whose carrier
-  is currently deferred.
-* ``agent_shell/trading_context.py::_build_pending_signal_queue`` — refreshed
-  defers keep their oldest-first position instead of being demoted with stale
-  defers.
+  ``pi_daemon`` only when a candidate-specific (data-availability) defer exists
+  for a symbol whose feature batch was just committed. Market-quiet defers
+  (direct_skip_not_confirmed, operator_low_conviction, debate_not_confirmed)
+  do not trigger a wake, preventing the tight re-evaluation loop.
+* ``agent_shell/trading_context.py::_build_pending_signal_queue`` — all active
+  defers (defer_until > now) are demoted to the queue tail so non-deferred
+  candidates are processed first.
 
 Neither test hits a real daemon; the ``notify_pi_daemon`` symbol is
 monkeypatched so we can assert on its call arguments.
@@ -45,6 +47,7 @@ def _seed_deferred_carrier(
     asset_id: str,
     defer_until_iso: str,
     deferred_at_iso: str,
+    defer_reason: str = "candidate_technical_snapshot_unavailable",
 ) -> None:
     conn.execute(
         "INSERT INTO universe_registry "
@@ -71,7 +74,7 @@ def _seed_deferred_carrier(
         "(id, dedup_key, event_kind, trigger, pending_unresolved_total, "
         " pending_visible_count, pending_oldest_created_at, queue_snapshot_json, "
         " data_health_json, policy_epoch_id, created_at) "
-        "VALUES (?, ?, 'operator_decision_deferred_low_conviction', 'signal', "
+        "VALUES (?, ?, 'operator_decision_deferred_unchanged_context', 'signal', "
         "        1, 1, ?, ?, '{}', 'epoch-a', ?)",
         (
             f"ev-{opportunity_id}",
@@ -79,7 +82,7 @@ def _seed_deferred_carrier(
             deferred_at_iso,
             json.dumps({
                 "opportunity_id": opportunity_id,
-                "defer_reason": "operator_low_conviction",
+                "defer_reason": defer_reason,
                 "defer_until": defer_until_iso,
             }),
             deferred_at_iso,
@@ -209,18 +212,105 @@ class TestFeatureSnapshotWake:
 
         assert calls == []
 
+    def test_no_wake_for_market_quiet_defer_direct_skip(self, tmp_path, monkeypatch):
+        """direct_skip_not_confirmed is a market-judgment defer — no wake on feature refresh."""
+        conn = _setup_db(tmp_path, monkeypatch)
+        now = datetime.now(timezone.utc)
+        _seed_deferred_carrier(
+            conn,
+            opportunity_id="opp-btc",
+            symbol="BTC/USDT",
+            asset_id="asset-btc",
+            defer_until_iso=(now + timedelta(minutes=90)).isoformat(),
+            deferred_at_iso=(now - timedelta(minutes=5)).isoformat(),
+            defer_reason="direct_skip_not_confirmed:neutral_or_missing_skip_kind",
+        )
+
+        calls: list[str] = []
+        import aletheia.agent_runtime.pi_daemon as pi_daemon
+
+        monkeypatch.setattr(
+            pi_daemon,
+            "notify_pi_daemon",
+            lambda source=None, event=None: calls.append(str(source)) or True,
+        )
+
+        from aletheia.universe.features import _wake_pi_daemon_for_refreshed_defers
+
+        _wake_pi_daemon_for_refreshed_defers({"asset-btc"})
+
+        assert calls == [], "market-quiet defer must not trigger feature-refresh wake"
+
+    def test_no_wake_for_market_quiet_defer_low_conviction(self, tmp_path, monkeypatch):
+        """operator_low_conviction is a market-judgment defer — no wake on feature refresh."""
+        conn = _setup_db(tmp_path, monkeypatch)
+        now = datetime.now(timezone.utc)
+        _seed_deferred_carrier(
+            conn,
+            opportunity_id="opp-btc",
+            symbol="BTC/USDT",
+            asset_id="asset-btc",
+            defer_until_iso=(now + timedelta(minutes=90)).isoformat(),
+            deferred_at_iso=(now - timedelta(minutes=5)).isoformat(),
+            defer_reason="operator_low_conviction",
+        )
+
+        calls: list[str] = []
+        import aletheia.agent_runtime.pi_daemon as pi_daemon
+
+        monkeypatch.setattr(
+            pi_daemon,
+            "notify_pi_daemon",
+            lambda source=None, event=None: calls.append(str(source)) or True,
+        )
+
+        from aletheia.universe.features import _wake_pi_daemon_for_refreshed_defers
+
+        _wake_pi_daemon_for_refreshed_defers({"asset-btc"})
+
+        assert calls == [], "market-quiet defer must not trigger feature-refresh wake"
+
+    def test_wakes_for_candidate_specific_defer_incomplete(self, tmp_path, monkeypatch):
+        """candidate_technical_snapshot_incomplete is data-availability — should wake."""
+        conn = _setup_db(tmp_path, monkeypatch)
+        now = datetime.now(timezone.utc)
+        _seed_deferred_carrier(
+            conn,
+            opportunity_id="opp-btc",
+            symbol="BTC/USDT",
+            asset_id="asset-btc",
+            defer_until_iso=(now + timedelta(minutes=90)).isoformat(),
+            deferred_at_iso=(now - timedelta(minutes=5)).isoformat(),
+            defer_reason="candidate_technical_snapshot_incomplete",
+        )
+
+        calls: list[str] = []
+        import aletheia.agent_runtime.pi_daemon as pi_daemon
+
+        monkeypatch.setattr(
+            pi_daemon,
+            "notify_pi_daemon",
+            lambda source=None, event=None: calls.append(str(source)) or True,
+        )
+
+        from aletheia.universe.features import _wake_pi_daemon_for_refreshed_defers
+
+        _wake_pi_daemon_for_refreshed_defers({"asset-btc"})
+
+        assert calls == ["feature_snapshot_committed"]
+
 
 class TestPendingQueueSort:
-    """`_build_pending_signal_queue` demotes stale defers but not refreshed defers."""
+    """`_build_pending_signal_queue` demotes all active defers to the queue tail."""
 
-    def test_refreshed_defer_keeps_position_stale_defer_moves_to_tail(
+    def test_all_active_defers_demoted_non_deferred_at_head(
         self, tmp_path, monkeypatch
     ):
         conn = _setup_db(tmp_path, monkeypatch)
         now = datetime.now(timezone.utc)
-        # Insert 3 carriers, oldest-first: btc (refreshed defer), eth (fresh),
-        # sol (stale defer). Post-sort we expect btc, eth to keep head positions
-        # and sol to move to tail.
+        # Insert 3 carriers oldest-first: btc (deferred, feature refreshed since defer),
+        # eth (not deferred), sol (deferred, no feature snapshot).
+        # After sort: eth (non-deferred) first; btc and sol both demoted to tail.
         for opp_id, symbol, asset_id, offset_min in (
             ("opp-btc", "BTC/USDT", "asset-btc", 20),   # oldest
             ("opp-eth", "ETH/USDT", "asset-eth", 15),
@@ -272,14 +362,16 @@ class TestPendingQueueSort:
             )
             conn.commit()
 
-        # BTC has a NEWER feature snapshot than its defer → refreshed.
+        # BTC has a NEWER feature snapshot than its defer (was "refreshed defer" under
+        # the old logic). Under the new logic this still gets demoted to tail.
         _seed_feature_snapshot(
             conn,
             snapshot_id="snap-btc-fresh",
             asset_id="asset-btc",
             ts_iso=(now - timedelta(minutes=5)).isoformat(),
         )
-        # SOL has an OLDER feature snapshot than its defer → stale.
+        # SOL has an OLDER feature snapshot than its defer (was "stale defer"). Also
+        # demoted to tail.
         _seed_feature_snapshot(
             conn,
             snapshot_id="snap-sol-old",
@@ -291,12 +383,9 @@ class TestPendingQueueSort:
 
         visible, _queue = _build_pending_signal_queue(limit=5)
         ordered_symbols = [row["symbol"] for row in visible]
-        # Refreshed BTC keeps position 0 (oldest-first), ETH fresh keeps 1,
-        # stale SOL demoted to tail.
-        assert ordered_symbols == ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
-        # Verify SOL is BEHIND ETH despite being NEWER (which without the fix
-        # would put SOL earlier if it weren't demoted). ETH is fresh, SOL is
-        # stale defer — SOL must be after every non-stale row.
+        # Non-deferred ETH is at head; both deferred BTC and SOL are at tail.
+        assert ordered_symbols[0] == "ETH/USDT"
+        assert ordered_symbols.index("BTC/USDT") > ordered_symbols.index("ETH/USDT")
         assert ordered_symbols.index("SOL/USDT") > ordered_symbols.index("ETH/USDT")
 
     def test_stale_defer_still_demoted_when_no_feature_snapshot_ever_committed(
@@ -326,3 +415,112 @@ class TestPendingQueueSort:
 
         visible, _queue = _build_pending_signal_queue(limit=5)
         assert [row["symbol"] for row in visible] == ["BTC/USDT"]
+
+
+class TestRegistryFallbackHydration:
+    """Feature snapshot resolves via universe_registry when opportunity has no member link."""
+
+    def test_feature_found_via_registry_when_no_universe_member_id(self, tmp_path, monkeypatch):
+        """No universe_member_id → fallback to registry by symbol+market_type."""
+        conn = _setup_db(tmp_path, monkeypatch)
+        now = datetime.now(timezone.utc)
+
+        # Opportunity produced by observer before universe was enabled — no member link.
+        conn.execute(
+            "INSERT INTO opportunities "
+            "(id, symbol, market, status, created_at, valid_until) "
+            "VALUES (?, 'BTC/USDT', 'spot', 'queued', ?, ?)",
+            ("opp-btc-nomember", now.isoformat(), (now + timedelta(hours=4)).isoformat()),
+        )
+        conn.execute(
+            "INSERT INTO pi_decisions "
+            "(id, symbol, direction, market_type, action, opportunity_id, "
+            " signal_source, created_at) "
+            "VALUES ('pi-btc-nomember', 'BTC/USDT', 'long', 'spot', 'signal_pending', "
+            "        'opp-btc-nomember', 'market_observer', ?)",
+            (now.isoformat(),),
+        )
+        # universe_registry has this symbol — added by the universe scanner independently.
+        conn.execute(
+            "INSERT INTO universe_registry "
+            "(id, venue, market_type, symbol, base_asset, quote_asset, status) "
+            "VALUES ('asset-btc-spot', 'binance', 'spot', 'BTC/USDT', 'BTC', 'USDT', 'active')",
+        )
+        conn.execute(
+            "INSERT INTO universe_feature_snapshots "
+            "(id, asset_id, ts, rsi_14, return_1h, return_4h, return_24h, data_freshness_sec) "
+            "VALUES ('snap-btc', 'asset-btc-spot', ?, 58.0, 0.5, 1.2, 2.8, 60)",
+            (now.isoformat(),),
+        )
+        conn.commit()
+
+        from aletheia.agent_shell.decision_facts import candidate_context_unavailable_reason
+        from aletheia.agent_shell.trading_context import _hydrate_pending_candidate_context
+
+        candidate = {
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "market_type": "spot",
+            "opportunity_id": "opp-btc-nomember",
+            "signal_source": "market_observer",
+            "universe_member_id": None,
+            "asset_id": None,
+        }
+        layer1: dict = {"feature_index": {}, "features": [], "opportunities": []}
+        layer2: dict = {"pending_signals": [candidate], "executable_candidates": []}
+
+        _hydrate_pending_candidate_context(layer1, layer2)
+
+        assert candidate.get("asset_id") == "asset-btc-spot", (
+            f"fallback should populate asset_id from registry, got: {candidate.get('asset_id')}"
+        )
+        assert layer1["feature_index"], "feature_index must be populated via fallback"
+
+        ctx = {"layer1": layer1, "layer2": layer2}
+        reason = candidate_context_unavailable_reason(ctx, opportunity_id="opp-btc-nomember")
+        assert reason is None, (
+            f"unavailable reason should be None after fallback resolves feature, got: {reason}"
+        )
+
+    def test_no_registry_entry_still_unavailable(self, tmp_path, monkeypatch):
+        """When symbol is also absent from registry, unavailable reason is preserved."""
+        conn = _setup_db(tmp_path, monkeypatch)
+        now = datetime.now(timezone.utc)
+
+        conn.execute(
+            "INSERT INTO opportunities "
+            "(id, symbol, market, status, created_at, valid_until) "
+            "VALUES (?, 'XYZ/USDT', 'spot', 'queued', ?, ?)",
+            ("opp-xyz", now.isoformat(), (now + timedelta(hours=4)).isoformat()),
+        )
+        conn.execute(
+            "INSERT INTO pi_decisions "
+            "(id, symbol, direction, market_type, action, opportunity_id, "
+            " signal_source, created_at) "
+            "VALUES ('pi-xyz', 'XYZ/USDT', 'long', 'spot', 'signal_pending', "
+            "        'opp-xyz', 'market_observer', ?)",
+            (now.isoformat(),),
+        )
+        conn.commit()
+
+        from aletheia.agent_shell.decision_facts import candidate_context_unavailable_reason
+        from aletheia.agent_shell.trading_context import _hydrate_pending_candidate_context
+
+        candidate = {
+            "symbol": "XYZ/USDT",
+            "direction": "long",
+            "market_type": "spot",
+            "opportunity_id": "opp-xyz",
+            "signal_source": "market_observer",
+            "universe_member_id": None,
+            "asset_id": None,
+        }
+        layer1: dict = {"feature_index": {}, "features": [], "opportunities": []}
+        layer2: dict = {"pending_signals": [candidate], "executable_candidates": []}
+
+        _hydrate_pending_candidate_context(layer1, layer2)
+
+        assert candidate.get("asset_id") is None, "no registry row → asset_id stays None"
+        ctx = {"layer1": layer1, "layer2": layer2}
+        reason = candidate_context_unavailable_reason(ctx, opportunity_id="opp-xyz")
+        assert reason == "candidate_technical_snapshot_unavailable"
