@@ -899,6 +899,12 @@ def _wake_pi_daemon_for_refreshed_defers(asset_ids: set[str]) -> None:
     guard the daemon wakes on every universe_refresh even when nothing is
     deferred — that is safe (2 s debounce + 45 s cooldown absorb noise) but
     it defeats the whole point of the wake, which is to notice defers.
+
+    Only candidate-specific (data-availability) defer reasons trigger a wake.
+    Market-quiet defers — ``direct_skip_not_confirmed``, ``operator_low_conviction``,
+    ``debate_not_confirmed`` — reflect the operator's judgment, not missing data.
+    Feature refreshes do not resolve the confirmation issue, so waking on them
+    creates a tight re-evaluation loop with no change in outcome.
     """
     from aletheia.storage.sqlite import get_db
 
@@ -915,6 +921,10 @@ def _wake_pi_daemon_for_refreshed_defers(asset_ids: set[str]) -> None:
         "WHERE e.event_kind LIKE 'operator_decision_deferred_%' "
         "AND json_extract(e.queue_snapshot_json, '$.defer_until') > ? "
         "AND p.action = 'signal_pending' "
+        "AND json_extract(e.queue_snapshot_json, '$.defer_reason') IN ("
+        "    'candidate_technical_snapshot_unavailable',"
+        "    'candidate_technical_snapshot_incomplete',"
+        "    'candidate_technical_snapshot_stale') "
         f"AND r.id IN ({placeholders}) "
         "LIMIT 1",
         (now_iso, *asset_ids),
