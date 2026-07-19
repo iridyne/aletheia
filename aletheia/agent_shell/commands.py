@@ -1764,8 +1764,33 @@ def _existing_deferred_context_observation(
     every kind gets its own key and we query without filtering by dedup_key alone.
     We look up any defer event tied to this (fingerprint, opportunity, epoch) tuple
     inside the window by recomputing every plausible key.
+
+    Market-quiet fast-path: for market-judgment defer reasons
+    (``direct_skip_not_confirmed``, ``operator_low_conviction``,
+    ``debate_not_confirmed``), the operator's decision does not improve when
+    features refresh — the context_fingerprint changes with each feature snapshot
+    but the underlying judgment is the same. We therefore bypass the fingerprint
+    check and suppress re-evaluation by opportunity_id + defer_until alone.
+    This prevents the tight re-evaluation loop that fires on every feature refresh.
     """
     from aletheia.storage.sqlite import get_db
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    # Market-quiet fast-path: check by opportunity_id regardless of fingerprint.
+    market_quiet_row = get_db().execute(
+        "SELECT * FROM operator_evaluation_events "
+        "WHERE json_extract(queue_snapshot_json, '$.opportunity_id') = ? "
+        "AND event_kind LIKE 'operator_decision_deferred_%' "
+        "AND json_extract(queue_snapshot_json, '$.defer_until') > ? "
+        "AND (json_extract(queue_snapshot_json, '$.defer_reason') IN "
+        "         ('operator_low_conviction', 'debate_not_confirmed') "
+        "     OR json_extract(queue_snapshot_json, '$.defer_reason') LIKE "
+        "         'direct_skip_not_confirmed%') "
+        "ORDER BY created_at DESC LIMIT 1",
+        (opportunity_id, now_iso),
+    ).fetchone()
+    if market_quiet_row is not None:
+        return dict(market_quiet_row)
 
     known_kinds = (
         "operator_decision_deferred_unchanged_context",
@@ -1788,7 +1813,7 @@ def _existing_deferred_context_observation(
         f"AND event_kind LIKE 'operator_decision_deferred_%' "
         "AND json_extract(queue_snapshot_json, '$.defer_until')>? "
         "ORDER BY created_at DESC LIMIT 1",
-        (*keys, datetime.now(timezone.utc).isoformat()),
+        (*keys, now_iso),
     ).fetchone()
     return dict(row) if row is not None else None
 
@@ -2018,7 +2043,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             "context_fingerprint": deferred_candidates[0]["context_fingerprint"],
             "model_invoked": False,
             "deferred_opportunity_ids": [row["opportunity_id"] for row in deferred_candidates],
-            "pending_queue_remaining": int((queue or {}).get("unresolved_total") or 0),
+            # All visible candidates are within their defer window — nothing actionable.
+            # Return 0 so pi_daemon does not immediately re-arm; it will retry on the
+            # next heartbeat (300 s) or when a new signal arrives from paper_trader.
+            "pending_queue_remaining": 0,
             "pending_queue": queue,
         }
 
@@ -2061,6 +2089,8 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     from aletheia.learning.prompt_bundles import authorize_operator_learning_context
 
     ctx = authorize_operator_learning_context(ctx)
+    if context_fingerprint is not None:
+        context_fingerprint = operator_decision_context_fingerprint(ctx)
 
     # Run System Operator decision loop.
     # ``DecisionUnavailable`` from selected stages is a non-terminal defer, not a

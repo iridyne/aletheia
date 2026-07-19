@@ -244,4 +244,4 @@ def test_disabled_learning_removes_operator_bundle_only():
     assert gated["layer2"]["outcome_stats"] == {"total_trades": 1}
     assert gated["layer2"]["reflection"] is None
     assert gated["layer3"]["lessons"] == []
-    assert gated["layer3"]["serenity_opportunities"] == [{"id": "s"}]
+    assert gated["layer3"]["serenity_opportunities"] == []

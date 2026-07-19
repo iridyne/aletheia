@@ -25,7 +25,16 @@ from aletheia.storage.sqlite import get_db
 SUPPORTED_PATH_ID = "universe_family_calibration"
 # Consumer wiring is not causal measurement support. A path enters this set only
 # after its exact outcome and statistical-unit contracts are executable.
-SUPPORTED_PATH_IDS = frozenset({SUPPORTED_PATH_ID})
+# P2: operator_learning_bundle uses the same fixed_horizon_candidate outcome
+# contract (opportunity:{id}:{horizon}) and boolean-treatment exposure path as
+# universe_family_calibration, so the existing cohort builder handles it without
+# modification.  Known measurement bias: serenity_opportunities appears in both
+# arms (GAP-02, Phase 4); this produces a conservative underestimate of the
+# bundle effect rather than a false positive.
+SUPPORTED_PATH_IDS = frozenset({
+    SUPPORTED_PATH_ID,
+    "operator_learning_bundle",
+})
 
 
 @dataclass(frozen=True, order=True)
@@ -137,6 +146,7 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
     )
     seen_duplicate_outcomes: set[tuple[CohortKey, str]] = set()
     seen_mirrored_outcomes: set[tuple[CohortKey, str]] = set()
+    seen_wrong_horizon_outcomes: set[tuple[CohortKey, str]] = set()
     expected_unit_members: dict[CohortKey, dict[str, set[str]]] = defaultdict(
         lambda: defaultdict(set)
     )
@@ -198,8 +208,9 @@ def build_experiment_cohorts(experiment_id: str) -> list[ContributionCohort]:
         )
         if evidence_fingerprint:
             cohort.evidence_conflict_fingerprints.add(evidence_fingerprint)
-        if wrong_horizon_n:
+        if wrong_horizon_n and (key, outcome_key) not in seen_wrong_horizon_outcomes:
             cohort.exclusion_reasons["wrong_horizon"] += wrong_horizon_n
+            seen_wrong_horizon_outcomes.add((key, outcome_key))
         if duplicate_outcomes and (key, outcome_key) not in seen_duplicate_outcomes:
             cohort.duplicate_outcome_n += duplicate_outcomes
             seen_duplicate_outcomes.add((key, outcome_key))

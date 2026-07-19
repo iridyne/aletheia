@@ -112,6 +112,9 @@ def _curated_learning_context() -> dict:
     for lesson in LessonStore().list_all(status="applied", limit=30):
         if not _lesson_is_current(getattr(lesson, "expires_at", None), now):
             continue
+        dry_run_until = getattr(lesson, "dry_run_until", None)
+        if dry_run_until and _lesson_is_current(dry_run_until, now):
+            continue
         lessons.append({
             "lesson_id": lesson.lesson_id,
             "category": lesson.category,

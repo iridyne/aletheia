@@ -199,13 +199,15 @@ export default function PnLZone() {
     queryKey: ['portfolio'],
     queryFn: api.getPortfolio,
     refetchInterval: OVERVIEW_PNL_REFRESH_MS,
+    staleTime: OVERVIEW_PNL_REFRESH_MS - 2000,
   })
   const { data: status } = useQuery({
     queryKey: ['status'],
     queryFn: api.getStatus,
     refetchInterval: OVERVIEW_PNL_REFRESH_MS,
+    staleTime: 8000,
   })
-  const { data: utaState } = useQuery({ queryKey: ['utaState'], queryFn: api.getUtaState, refetchInterval: 30000 })
+  const { data: utaState } = useQuery({ queryKey: ['utaState'], queryFn: api.getUtaState, refetchInterval: 30000, staleTime: 28000 })
   const [hovered, setHovered] = useState(false)
   const [rangeDays, setRangeDays] = useState<number | undefined>(30)
 

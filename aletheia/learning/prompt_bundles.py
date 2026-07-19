@@ -228,6 +228,6 @@ def gate_operator_learning_context(ctx: dict[str, Any], *, enabled: bool) -> dic
     for key in _LAYER2_COMPONENTS.values():
         layer2[key] = None
     layer3 = gated.setdefault("layer3", {})
-    for key in (*_LAYER3_COMPONENTS.values(), "guard_candidates"):
+    for key in (*_LAYER3_COMPONENTS.values(), "guard_candidates", "serenity_opportunities"):
         layer3[key] = []
     return gated

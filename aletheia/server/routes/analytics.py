@@ -1613,3 +1613,121 @@ def get_learning_funnel():
             "note": "Conservative support-vs-block detector; findings require human review.",
         },
     }
+
+
+@router.get("/learning-contribution")
+def get_learning_contribution():
+    """Read-only A/B pipeline observability: exposure counts, verdict distribution, job health.
+
+    Does not affect AI decisions. Surfaces the data needed to assess whether the
+    Learning contribution measurement pipeline is healthy end-to-end.
+    """
+    from aletheia.storage.sqlite import get_db
+    from aletheia.learning.control import get_learning_job_health
+
+    db = get_db()
+
+    # Exposure counts by path_id
+    exposures_by_path: list[dict] = []
+    try:
+        for r in db.execute(
+            "SELECT path_id, COUNT(*) n, "
+            "COUNT(DISTINCT experiment_id) experiment_count, "
+            "MAX(exposed_at) latest_exposed_at "
+            "FROM learning_exposures GROUP BY path_id ORDER BY n DESC"
+        ):
+            exposures_by_path.append({
+                "path_id": r["path_id"],
+                "exposure_n": int(r["n"]),
+                "experiment_count": int(r["experiment_count"]),
+                "latest_exposed_at": r["latest_exposed_at"],
+            })
+    except Exception:
+        pass
+
+    # Verdict distribution
+    verdicts_by_classification: list[dict] = []
+    total_verdicts = 0
+    try:
+        for r in db.execute(
+            "SELECT classification, COUNT(*) n, MAX(created_at) latest_at "
+            "FROM learning_contribution_verdicts "
+            "GROUP BY classification ORDER BY n DESC"
+        ):
+            verdicts_by_classification.append({
+                "classification": r["classification"],
+                "n": int(r["n"]),
+                "latest_at": r["latest_at"],
+            })
+            total_verdicts += int(r["n"])
+    except Exception:
+        pass
+
+    # Experiment stage distribution
+    experiments_by_stage: list[dict] = []
+    try:
+        for r in db.execute(
+            "SELECT stage, status, COUNT(*) n "
+            "FROM learning_experiments GROUP BY stage, status ORDER BY n DESC"
+        ):
+            experiments_by_stage.append({
+                "stage": r["stage"],
+                "status": r["status"],
+                "n": int(r["n"]),
+            })
+    except Exception:
+        pass
+
+    # Lifecycle events written (non-zero = lifecycle controller is active)
+    lifecycle_event_n = 0
+    try:
+        lifecycle_event_n = int(
+            db.execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0]
+        )
+    except Exception:
+        pass
+
+    # authority_applied rate (treatment applied vs total treatment exposures)
+    authority_applied_n = 0
+    total_treatment_n = 0
+    try:
+        r = db.execute(
+            "SELECT COUNT(*) total, "
+            "SUM(CASE WHEN json_extract(manifest_json,'$.authority_applied')=1 THEN 1 ELSE 0 END) applied "
+            "FROM learning_exposures WHERE assignment='treatment'"
+        ).fetchone()
+        if r:
+            total_treatment_n = int(r["total"] or 0)
+            authority_applied_n = int(r["applied"] or 0)
+    except Exception:
+        pass
+
+    # Job health for the four key learning jobs
+    job_health: dict[str, dict] = {}
+    for job_id in (
+        "learning_contribution_evaluator",
+        "learning_lifecycle_controller",
+        "lesson_reviewer",
+        "dreaming_daily",
+    ):
+        try:
+            h = get_learning_job_health(job_id)
+            job_health[job_id] = h.model_dump()
+        except Exception:
+            job_health[job_id] = {"status": "unknown"}
+
+    return {
+        "exposures_by_path": exposures_by_path,
+        "verdicts": {
+            "total": total_verdicts,
+            "by_classification": verdicts_by_classification,
+        },
+        "experiments_by_stage": experiments_by_stage,
+        "lifecycle_event_n": lifecycle_event_n,
+        "authority_applied": {
+            "treatment_n": total_treatment_n,
+            "applied_n": authority_applied_n,
+            "applied_rate": round(authority_applied_n / total_treatment_n, 4) if total_treatment_n else None,
+        },
+        "job_health": job_health,
+    }
