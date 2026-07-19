@@ -245,3 +245,222 @@ def test_insufficient_data_when_no_stats(monkeypatch):
     assert all(r.verdict == "insufficient_data" for r in recs), (
         "with no stats, every recommendation must be insufficient_data"
     )
+
+
+# ─── Cross-run stability signal ──────────────────────────────────────────────
+
+import sqlite3
+
+
+def _fake_recommendations_db(monkeypatch, rows: list[dict]):
+    """Inject an in-memory controller_recommendations table populated with rows.
+
+    Each row must contain at minimum:
+      run_id, created_at, filter_name, scanner_family, evidence_verdict.
+    Optional: direction, market_type, horizon, filter_version, error_signal, reasoning.
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE controller_recommendations ("
+        " id TEXT PRIMARY KEY, run_id TEXT, created_at TEXT, "
+        " filter_name TEXT, scanner_family TEXT, direction TEXT, "
+        " market_type TEXT, horizon TEXT, filter_version TEXT, "
+        " evidence_verdict TEXT, verdict TEXT, error_signal REAL, reasoning TEXT)"
+    )
+    for i, row in enumerate(rows):
+        conn.execute(
+            "INSERT INTO controller_recommendations "
+            "(id, run_id, created_at, filter_name, scanner_family, direction, "
+            " market_type, horizon, filter_version, evidence_verdict, verdict, "
+            " error_signal, reasoning) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                row.get("id") or f"row-{i}",
+                row["run_id"], row["created_at"], row["filter_name"],
+                row["scanner_family"], row.get("direction"), row.get("market_type"),
+                row.get("horizon"), row.get("filter_version"),
+                row.get("evidence_verdict"),
+                # verdict is CHECK-constrained in production; the legacy coercion
+                # never emits overrestrictive_suspect. Default to insufficient_data
+                # so the COALESCE fallback still yields a valid Verdict literal.
+                row.get("verdict") or "insufficient_data",
+                row.get("error_signal"), row.get("reasoning") or "",
+            ),
+        )
+    conn.commit()
+    monkeypatch.setattr("aletheia.storage.sqlite.get_db", lambda: conn)
+    return conn
+
+
+def _mk_row(*, run_id, created_at, cell="momentum", filter_name="family_ttl",
+            verdict="overrestrictive_suspect", error=0.12, reasoning=""):
+    return {
+        "run_id": run_id, "created_at": created_at,
+        "filter_name": filter_name, "scanner_family": cell,
+        "direction": "long", "market_type": "perp", "horizon": "4h",
+        "filter_version": "v1", "evidence_verdict": verdict,
+        "error_signal": error, "reasoning": reasoning,
+    }
+
+
+def test_persistent_empty_db(monkeypatch):
+    _fake_recommendations_db(monkeypatch, [])
+    assert fc.compute_persistent_recommendations() == []
+
+
+def test_persistent_fewer_runs_than_minimum(monkeypatch):
+    # Only 2 runs exist; min_consecutive_runs default is 3 → no output.
+    _fake_recommendations_db(monkeypatch, [
+        _mk_row(run_id="run-a", created_at="2026-07-19T00:00:00+00:00"),
+        _mk_row(run_id="run-b", created_at="2026-07-19T06:00:00+00:00"),
+    ])
+    assert fc.compute_persistent_recommendations(min_consecutive_runs=3) == []
+
+
+def test_persistent_full_streak(monkeypatch):
+    _fake_recommendations_db(monkeypatch, [
+        _mk_row(run_id="run-a", created_at="2026-07-19T00:00:00+00:00", error=0.10),
+        _mk_row(run_id="run-b", created_at="2026-07-19T06:00:00+00:00", error=0.11),
+        _mk_row(run_id="run-c", created_at="2026-07-19T12:00:00+00:00", error=0.13,
+                reasoning="rejected mean +0.30% vs passed +0.15%"),
+    ])
+    persistent = fc.compute_persistent_recommendations(min_consecutive_runs=3)
+    assert len(persistent) == 1
+    p = persistent[0]
+    assert p.filter_name == "family_ttl"
+    assert p.scanner_family == "momentum"
+    assert p.consecutive_suspect_runs == 3
+    assert p.runs_analyzed == 3
+    assert p.last_suspect_at == "2026-07-19T12:00:00+00:00"
+    assert p.first_suspect_at == "2026-07-19T00:00:00+00:00"
+    assert p.latest_error_signal == 0.13
+    assert p.latest_run_id == "run-c"
+    assert "rejected mean" in p.latest_reasoning
+
+
+def test_persistent_broken_streak_by_hold_verdict(monkeypatch):
+    # Newest run has suspect, but the run before it flipped to hold → streak = 1.
+    _fake_recommendations_db(monkeypatch, [
+        _mk_row(run_id="run-a", created_at="2026-07-19T00:00:00+00:00"),
+        _mk_row(run_id="run-b", created_at="2026-07-19T06:00:00+00:00", verdict="hold"),
+        _mk_row(run_id="run-c", created_at="2026-07-19T12:00:00+00:00"),
+    ])
+    persistent = fc.compute_persistent_recommendations(min_consecutive_runs=2)
+    assert persistent == [], (
+        "hold in the middle of the recent-run window must break the streak"
+    )
+
+
+def test_persistent_absence_in_run_breaks_streak(monkeypatch):
+    # Cell only appears in the newest and oldest of 3 runs; middle run has no row.
+    # Streak (newest → oldest) walks: run-c present, run-b absent → break at 1.
+    _fake_recommendations_db(monkeypatch, [
+        _mk_row(run_id="run-a", created_at="2026-07-19T00:00:00+00:00"),
+        # run-b has a row for a DIFFERENT cell — the target cell is absent from run-b
+        _mk_row(run_id="run-b", created_at="2026-07-19T06:00:00+00:00", cell="mean_reversion"),
+        _mk_row(run_id="run-c", created_at="2026-07-19T12:00:00+00:00"),
+    ])
+    persistent = fc.compute_persistent_recommendations(min_consecutive_runs=2)
+    # The 'momentum' cell had a streak of only 1 (newest run), then absent.
+    # The 'mean_reversion' cell had a streak of only 1 (middle run), then absent from newest.
+    assert persistent == []
+
+
+def test_persistent_skips_insufficient_summary_marker_rows(monkeypatch):
+    # (insufficient_summary) rows are per-run aggregate markers, not real cells.
+    _fake_recommendations_db(monkeypatch, [
+        _mk_row(run_id="run-a", created_at="2026-07-19T00:00:00+00:00",
+                filter_name="(insufficient_summary)"),
+        _mk_row(run_id="run-b", created_at="2026-07-19T06:00:00+00:00",
+                filter_name="(insufficient_summary)"),
+        _mk_row(run_id="run-c", created_at="2026-07-19T12:00:00+00:00",
+                filter_name="(insufficient_summary)"),
+    ])
+    assert fc.compute_persistent_recommendations(min_consecutive_runs=3) == []
+
+
+def test_persistent_ordering_by_streak_then_signal(monkeypatch):
+    # Two cells both hit min streak; cell with longer streak comes first.
+    rows = []
+    # cell-A: 3 consecutive suspects, small signal
+    for i, ts in enumerate([
+        "2026-07-19T00:00:00+00:00",
+        "2026-07-19T06:00:00+00:00",
+        "2026-07-19T12:00:00+00:00",
+    ]):
+        rows.append(_mk_row(run_id=f"run-{i}", created_at=ts, cell="cell-A", error=0.05))
+    # cell-B: 2 consecutive suspects, huge signal — should come SECOND (streak wins).
+    for i, ts in enumerate([
+        "2026-07-19T06:00:00+00:00",
+        "2026-07-19T12:00:00+00:00",
+    ]):
+        rows.append(_mk_row(run_id=f"run-{i+1}", created_at=ts, cell="cell-B", error=0.99))
+    _fake_recommendations_db(monkeypatch, rows)
+    persistent = fc.compute_persistent_recommendations(min_consecutive_runs=2)
+    assert [p.scanner_family for p in persistent] == ["cell-A", "cell-B"]
+
+
+def test_build_report_includes_persistent_field(monkeypatch):
+    monkeypatch.setattr(fc, "compute_filter_feedback", lambda **kwargs: [])
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_evidence.filter_feedback_trajectory_summary",
+        lambda **kwargs: {
+            "assignment_policy": "first_exposure",
+            "candidate_trajectories": 0,
+            "excluded_later_rows": 0,
+            "decision_transition_candidates": 0,
+        },
+    )
+    monkeypatch.setattr(fc, "compute_persistent_recommendations", lambda **kwargs: [
+        fc.PersistentRecommendation(
+            filter_name="family_ttl", scanner_family="momentum",
+            direction="long", market_type="perp", horizon="4h", filter_version="v1",
+            consecutive_suspect_runs=4, runs_analyzed=6,
+            first_suspect_at="2026-07-18T00:00:00+00:00",
+            last_suspect_at="2026-07-19T12:00:00+00:00",
+            latest_error_signal=0.18, latest_reasoning="held for 4 runs",
+            latest_run_id="run-c",
+        )
+    ])
+    report = fc.build_filter_controller_report()
+    assert "persistent_recommendations" in report
+    assert len(report["persistent_recommendations"]) == 1
+    entry = report["persistent_recommendations"][0]
+    assert entry["consecutive_suspect_runs"] == 4
+    assert entry["scanner_family"] == "momentum"
+    assert "persistent_config" in report
+    assert report["persistent_config"]["min_consecutive_runs"] >= 1
+
+
+def test_render_report_shows_persistent_section(monkeypatch):
+    monkeypatch.setattr(fc, "compute_filter_feedback", lambda **kwargs: [])
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_evidence.filter_feedback_trajectory_summary",
+        lambda **kwargs: {
+            "assignment_policy": "first_exposure",
+            "candidate_trajectories": 0,
+            "excluded_later_rows": 0,
+            "decision_transition_candidates": 0,
+        },
+    )
+    monkeypatch.setattr(fc, "compute_persistent_recommendations", lambda **kwargs: [
+        fc.PersistentRecommendation(
+            filter_name="family_ttl", scanner_family="momentum",
+            direction="long", market_type="perp", horizon="4h", filter_version="v1",
+            consecutive_suspect_runs=4, runs_analyzed=6,
+            first_suspect_at="2026-07-18T00:00:00+00:00",
+            last_suspect_at="2026-07-19T12:00:00+00:00",
+            latest_error_signal=0.1875, latest_reasoning="rejected mean +0.30% vs passed +0.10%",
+            latest_run_id="run-c",
+        )
+    ])
+    report = fc.build_filter_controller_report()
+    rendered = fc.render_filter_controller_report(report)
+    assert "Persistent (>= " in rendered  # summary line
+    assert "1 cell(s) — human review" in rendered
+    assert "Persistent overrestrictive suspects" in rendered  # detail heading
+    assert "family_ttl · momentum" in rendered
+    assert "streak=4/6" in rendered
+    assert "signal=+0.1875" in rendered
+    assert "rejected mean" in rendered

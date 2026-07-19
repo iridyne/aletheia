@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
@@ -67,6 +68,38 @@ class FilterRecommendation:
     passed_shrunk_avg_net: float | None = None
     rejected_shrunk_avg_net: float | None = None
     outcome_coverage: float | None = None
+
+
+@dataclass
+class PersistentRecommendation:
+    """A (filter × cell) key whose overrestrictive_suspect verdict has held across
+    multiple consecutive controller runs.
+
+    Purpose: single-run suspects are noise-prone; repeated flags on the SAME cell
+    over N+ runs are what warrants operator attention. This dataclass surfaces
+    that stability signal for human review — it is NOT a Learning hypothesis
+    proposal. The ranker_factor_filter path cannot mutate filter parameters
+    (allowed_effects=('candidate_filter','score_adjustment') per registry), and
+    filter_ttl_shadow is declared read_only (is_learning_treatment=False), so any
+    config change here is a change-controlled operator decision, not an A/B experiment.
+
+    See docs/design/subsystems/causal_counterfactual_research_guidance.md L2 for
+    the observational-diagnostic vs prospective-experiment boundary this respects.
+    """
+
+    filter_name: str
+    scanner_family: str
+    direction: str | None
+    market_type: str | None
+    horizon: str | None
+    filter_version: str | None
+    consecutive_suspect_runs: int
+    runs_analyzed: int
+    first_suspect_at: str  # ISO — the OLDEST end of the current streak
+    last_suspect_at: str   # ISO — the NEWEST (most recent) suspect
+    latest_error_signal: float | None
+    latest_reasoning: str
+    latest_run_id: str
 
 
 def _now_iso() -> str:
@@ -392,6 +425,134 @@ def compute_filter_feedback(
     return recs
 
 
+def compute_persistent_recommendations(
+    *,
+    min_consecutive_runs: int = 3,
+    max_runs_lookback: int = 10,
+) -> list[PersistentRecommendation]:
+    """Detect (filter × cell) keys stably flagged overrestrictive_suspect across runs.
+
+    Reads the persisted controller_recommendations table and, for each
+    (filter_name, scanner_family, direction, market_type, horizon, filter_version)
+    cell, counts consecutive most-recent runs whose row for that cell has
+    evidence_verdict='overrestrictive_suspect'. Cells with a streak of at least
+    ``min_consecutive_runs`` are returned, sorted by streak length descending.
+
+    A cell that does NOT appear in a run (implicit absence — e.g. dropped back to
+    insufficient_data or the batch never emitted a row for that cell) breaks the
+    streak. This keeps false-positives lower: the underlying pass/reject cohort
+    must sustain enough evidence to trigger the suspect verdict every single run.
+
+    Observe-only: never mutates any table. The result is bubbled through
+    ``build_filter_controller_report`` to HTTP / CLI for operator review only.
+    Not consumed by any A/B path — see PersistentRecommendation docstring.
+    """
+    from aletheia.storage.sqlite import get_db
+
+    min_streak = max(1, int(min_consecutive_runs or 1))
+    max_lookback = max(min_streak, int(max_runs_lookback or min_streak))
+
+    db = get_db()
+
+    # 1) The last N distinct run_ids, newest-first.
+    run_rows = db.execute(
+        "SELECT run_id, MAX(created_at) AS run_ts "
+        "FROM controller_recommendations "
+        "WHERE run_id IS NOT NULL "
+        "GROUP BY run_id "
+        "ORDER BY datetime(run_ts) DESC "
+        "LIMIT ?",
+        (max_lookback,),
+    ).fetchall()
+    if len(run_rows) < min_streak:
+        return []
+    ordered_run_ids: list[str] = [str(r["run_id"]) for r in run_rows]
+
+    # 2) All rows for these runs, excluding the summary marker (which is not a cell).
+    placeholders = ",".join("?" for _ in ordered_run_ids)
+    rows = db.execute(
+        f"SELECT id, run_id, created_at, filter_name, scanner_family, "
+        f"direction, market_type, horizon, filter_version, "
+        f"COALESCE(evidence_verdict, verdict) AS effective_verdict, "
+        f"error_signal, reasoning "
+        f"FROM controller_recommendations "
+        f"WHERE run_id IN ({placeholders}) "
+        f"AND filter_name <> '(insufficient_summary)'",
+        tuple(ordered_run_ids),
+    ).fetchall()
+
+    # 3) Group by cell key; dedup within run defensively (keep newest by created_at).
+    by_cell: dict[tuple, dict[str, dict]] = defaultdict(dict)
+    for row in rows:
+        cell_key = (
+            str(row["filter_name"]),
+            str(row["scanner_family"] or ""),
+            row["direction"],
+            row["market_type"],
+            row["horizon"],
+            row["filter_version"],
+        )
+        run_id = str(row["run_id"])
+        existing = by_cell[cell_key].get(run_id)
+        if existing is None or str(row["created_at"]) > str(existing["created_at"]):
+            by_cell[cell_key][run_id] = dict(row)
+
+    # 4) For each cell, walk newest-run → oldest and count consecutive suspects.
+    persistent: list[PersistentRecommendation] = []
+    for cell_key, rows_by_run in by_cell.items():
+        consecutive = 0
+        oldest_in_streak_run: str | None = None
+        for run_id in ordered_run_ids:
+            row = rows_by_run.get(run_id)
+            if row is None:
+                break
+            if str(row.get("effective_verdict") or "") != "overrestrictive_suspect":
+                break
+            consecutive += 1
+            oldest_in_streak_run = run_id
+        if consecutive < min_streak:
+            continue
+        newest = rows_by_run[ordered_run_ids[0]]
+        oldest = (
+            rows_by_run[oldest_in_streak_run]
+            if oldest_in_streak_run is not None
+            else newest
+        )
+        error_signal = newest.get("error_signal")
+        try:
+            latest_error_signal: float | None = (
+                float(error_signal) if error_signal is not None else None
+            )
+        except (TypeError, ValueError):
+            latest_error_signal = None
+        persistent.append(PersistentRecommendation(
+            filter_name=cell_key[0],
+            scanner_family=cell_key[1],
+            direction=cell_key[2],
+            market_type=cell_key[3],
+            horizon=cell_key[4],
+            filter_version=cell_key[5],
+            consecutive_suspect_runs=consecutive,
+            runs_analyzed=len(ordered_run_ids),
+            first_suspect_at=str(oldest["created_at"]),
+            last_suspect_at=str(newest["created_at"]),
+            latest_error_signal=latest_error_signal,
+            latest_reasoning=str(newest.get("reasoning") or ""),
+            latest_run_id=str(newest["run_id"]),
+        ))
+
+    # Deterministic ordering: longest streak first, then largest |signal|, then key.
+    persistent.sort(
+        key=lambda p: (
+            -p.consecutive_suspect_runs,
+            -(abs(p.latest_error_signal) if p.latest_error_signal is not None else 0.0),
+            p.filter_name,
+            p.scanner_family,
+        )
+    )
+    return persistent
+
+
 def _is_fresh_prior_run(interval_hours: int) -> bool:
     """Return True when the most recent observe row is younger than half the cadence.
 
@@ -677,6 +838,24 @@ def build_filter_controller_report(
     counts: dict[str, int] = {}
     for r in recs:
         counts[r.verdict] = counts.get(r.verdict, 0) + 1
+    # Cross-run stability signal (observe-only). Read config knobs from
+    # ControllerConfig with defensive defaults for offline / test environments.
+    try:
+        from aletheia.config.loader import load_config
+        _cfg = load_config().controller
+        _min_streak = int(getattr(_cfg, "persistent_min_consecutive_runs", 3))
+        _max_lookback = int(getattr(_cfg, "persistent_max_runs_lookback", 10))
+    except Exception:
+        _min_streak = 3
+        _max_lookback = 10
+    try:
+        persistent = compute_persistent_recommendations(
+            min_consecutive_runs=_min_streak,
+            max_runs_lookback=_max_lookback,
+        )
+    except Exception as exc:
+        logger.warning("filter_controller: persistent stability signal unavailable: %s", exc)
+        persistent = []
     return {
         "generated_at": _now_iso(),
         "window": {"hours": hours_i, "evaluated_since": evaluated_since},
@@ -694,6 +873,11 @@ def build_filter_controller_report(
         "shadow_experiments": shadow_experiments,
         "verdict_counts": counts,
         "recommendations": [asdict(r) for r in recs],
+        "persistent_recommendations": [asdict(p) for p in persistent],
+        "persistent_config": {
+            "min_consecutive_runs": _min_streak,
+            "max_runs_lookback": _max_lookback,
+        },
         "report_only_filters": [
             {"name": s.name, "stage": s.stage, "reason": s.note}
             for s in report_only_filters()
@@ -733,6 +917,14 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
         f"Verdicts: overrestrictive_suspect={vc.get('overrestrictive_suspect',0)} "
         f"hold={vc.get('hold',0)} insufficient_data={vc.get('insufficient_data',0)}"
     )
+    persistent = report.get("persistent_recommendations") or []
+    persistent_cfg = report.get("persistent_config") or {}
+    _min_streak = int(persistent_cfg.get("min_consecutive_runs", 3) or 3)
+    _max_lookback = int(persistent_cfg.get("max_runs_lookback", 10) or 10)
+    lines.append(
+        f"Persistent (>= {_min_streak} of last {_max_lookback} consecutive runs): "
+        f"{len(persistent)} cell(s) — human review"
+    )
     replay_summary = report.get("replay_summary") or {}
     lines.append(
         f"Replay disposition: experiment_ready={replay_summary.get('experiment_ready', 0)} "
@@ -755,6 +947,37 @@ def render_filter_controller_report(report: dict[str, Any]) -> str:
     else:
         lines.append("No overrestrictive suspects — all cells hold or insufficient_data.")
     lines.append("")
+
+    if persistent:
+        lines.append(
+            f"Persistent overrestrictive suspects "
+            f"(>= {_min_streak} consecutive runs — priority for human review):"
+        )
+        for p in persistent:
+            cell_parts = [
+                str(p.get("direction") or "-"),
+                str(p.get("market_type") or "-"),
+                str(p.get("horizon") or "-"),
+            ]
+            signal_text = (
+                f" signal={p['latest_error_signal']:+.4f}"
+                if p.get("latest_error_signal") is not None
+                else ""
+            )
+            version_text = (
+                f" v={p['filter_version']}"
+                if p.get("filter_version") else ""
+            )
+            lines.append(
+                f"  {p['filter_name']} · {p['scanner_family']} "
+                f"[{', '.join(cell_parts)}]{version_text} "
+                f"streak={p['consecutive_suspect_runs']}/{p['runs_analyzed']}"
+                f"{signal_text}"
+            )
+            reasoning = str(p.get("latest_reasoning") or "").strip()
+            if reasoning:
+                lines.append(f"      {reasoning}")
+        lines.append("")
 
     replays = report.get("bounded_replays") or []
     if replays:

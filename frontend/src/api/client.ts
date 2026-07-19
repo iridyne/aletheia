@@ -1191,6 +1191,18 @@ export const api = {
       verdict: string; suggested_direction: string; error_signal: number | null
       n_samples: number; reasoning: string
     }>
+    // Cells whose overrestrictive_suspect verdict has held across N+ consecutive
+    // controller runs — the human-review signal. Not a Learning hypothesis.
+    persistent_recommendations: Array<{
+      filter_name: string; scanner_family: string
+      direction: string | null; market_type: string | null
+      horizon: string | null; filter_version: string | null
+      consecutive_suspect_runs: number; runs_analyzed: number
+      first_suspect_at: string; last_suspect_at: string
+      latest_error_signal: number | null; latest_reasoning: string
+      latest_run_id: string
+    }>
+    persistent_config: { min_consecutive_runs: number; max_runs_lookback: number }
     report_only_filters: Array<{ name: string; stage: string; reason: string }>
     tunable_filter_count: number
     total_filter_count: number
