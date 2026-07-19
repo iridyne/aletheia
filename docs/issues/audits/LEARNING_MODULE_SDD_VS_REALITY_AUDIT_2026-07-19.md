@@ -674,6 +674,42 @@ Lesson链:  GAP-04 → GAP-02 → GAP-11 → GAP-12
 
 ---
 
+## §8.1 实际修复进展（2026-07-19 会话补录）
+
+**PR 状态**：以下修复以独立分支 + PR 方式提交至 origin，等待 review/merge。
+
+| GAP / 主题 | 状态 | 分支 / PR | 备注 |
+|---|---|---|---|
+| GAP-07 `_safety_action_gate_reason` | ✅ 修复 | fix/learning-sdd-gaps-phase1-6 | 独立安全门；负 verdict refreeze 不受 lifecycle_automation_disabled 影响 |
+| GAP-14 harm gate 只能收紧 | ✅ 修复 | 同上 | authority ceiling 只允许下调不允许上调 |
+| GAP-03 `_parse_time` UTC | ✅ 修复 | 同上 | naive datetime 强制 UTC |
+| GAP-05 `path_in_allowlist` | ✅ 修复 | 同上 | policy epoch 中路径名 in-allowlist 计算修正 |
+| GAP-08 UTC min | ✅ 修复 | 同上 | datetime.min 全部 tz-aware |
+| GAP-09 except-all 日志 | ✅ 修复 | 同上 | 无声捕获全部改为 warning+分类 |
+| GAP-10 `SUPPORTED_PATH_IDS` 扩展 operator | ✅ 修复 | 同上 | 首次进入 operator_learning_bundle |
+| GAP-01 `_execute_trial_admission` + admit API | ✅ 修复 | 同上 | admit-trial POST 端点存在（实际 authenticated owner 路由仍待建） |
+| GAP-04 lesson_reviewer 逐条+重试 | ✅ 修复 | 同上 | stuck retry + 单事务 |
+| GAP-02 serenity_opportunities 清除 | ✅ 修复 | 同上 | control 臂不再被 serenity 数据污染 |
+| GAP-11 dry_run_until 注入检查 | ✅ 修复 | 同上 | 干跑窗口内强制 baseline |
+| GAP-12 fingerprint 授权后重算 | ✅ 修复 | 同上 | fingerprint 在 apply 后而非 assign 前计算 |
+| GAP-15 `_curated_learning_context` dry_run | ✅ 修复 | 同上 | 第四条注入通道同样受 dry_run_until 保护 |
+| GAP-16 zombie health migration | ✅ 修复 | 同上 | DELETE 明确 zombie schedule 记录 |
+| GAP-17 `wrong_horizon_n` per-outcome dedup | ✅ 修复 | 同上 | `seen_wrong_horizon_outcomes` set |
+| GAP-18 GET /learning/experiments + /learning-contribution | ✅ 修复 | 同上 | 两个观测端点 |
+| GAP-19 Settings UI 三值状态 | ✅ 修复 | 同上 | supported / consumer_unwired / authority_unwired |
+| GAP-20 orphaned hypothesis null guard | ✅ 修复 | 同上 | inspect_learning_experiment 不再抛 TypeError |
+| GAP-13 contribution.py 零消费者 | ⏸️ 架构决策延期 | — | 需与 contribution measurement pipeline 一并重设计 |
+| **P1** market_observer.learning_candidate_key 写入 opportunity metadata | ✅ 修复 | fix/ranker-learning-wiring (PR #143) | Ranker 曝光通路解锁 |
+| **P2** `SUPPORTED_PATH_IDS` 1→6 | ✅ 修复 | PR #143 | observer_advisory_bundle + 3 条 ranker 路径 verdict 可评估 |
+| **持续 controller 信号观测** | ✅ 修复 | feat/filter-controller-to-learning-hypotheses (PR #145) | `compute_persistent_recommendations` + HTTP/CLI |
+| **持续 controller 信号 UI** | ✅ 修复 | feat/filter-controller-persistent-ui (PR #146，stacked) | Learning → Reports card |
+| **shadow_trades 成本模型丰富** | ✅ 修复 | fix/shadow-trades-cost-model-enrichment (PR #147) | Path 1 + Path 2 populate cost fields |
+| **`filter_parameter_tune` skeleton** | ✅ 声明 | feat/filter-parameter-tune-learning-path (PR #148) | 路径 declared，wiring 分 8 阶段后续 PR |
+
+**决策记录**：原"filter_controller → learning_hypotheses 自动生成"因动作空间不匹配（filter 参数 mutation vs 单候选 block/score）**架构不可行**。替代方案见 §8.1 上表的持续信号观测（PR #145/146）+ 未来的 `filter_parameter_tune` 完整实现（PR #148 blueprint）。详见 PR #145 描述和 `docs/plans/learning/filter_parameter_tune_design.md`。
+
+---
+
 ## §9 参考文档
 
 ### 现有审计报告
