@@ -9,6 +9,7 @@ No LLM. Deterministic. Read-only except for case study / guard candidate creatio
 from __future__ import annotations
 
 import logging
+import json
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -226,11 +227,23 @@ def _build_case_from_row(row: dict) -> dict | None:
         "confidence": row.get("confidence"),
         "scanner_family": row.get("scanner_family"),
         "universe_rank": row.get("universe_rank"),
+        "decision_context_status": row.get("decision_context_status") or "not recorded",
+        "pi_decision_reasoning": row.get("pi_decision_reasoning") or "not recorded",
+        "pi_decision_bear_case": row.get("pi_decision_bear_case") or "not recorded",
+        "pi_decision_assumptions": row.get("pi_decision_assumptions") or "not recorded",
+        "proposal_agent_rationale": row.get("proposal_agent_rationale") or "not recorded",
+        "decision_evidence_manifest": row.get("decision_evidence_manifest") or "not recorded",
+        "decision_learning_manifest": row.get("decision_learning_manifest") or "not recorded",
     }
 
 
 def _render_case_body(case: dict) -> str:
     """Render structured case study content as markdown."""
+    def render(value) -> str:
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, sort_keys=True)
+        return str(value)
+
     lines = [
         "## Metrics",
         f"- Outcome: **{case['outcome']}**",
@@ -250,6 +263,15 @@ def _render_case_body(case: dict) -> str:
         "## Price",
         f"- Entry: {case['entry_price']}",
         f"- Exit: {case['exit_price']}",
+        "",
+        "## Persisted Decision Context",
+        f"- Context status: {render(case['decision_context_status'])}",
+        f"- PiDecision reasoning: {render(case['pi_decision_reasoning'])}",
+        f"- Bear case: {render(case['pi_decision_bear_case'])}",
+        f"- Assumptions: {render(case['pi_decision_assumptions'])}",
+        f"- Proposal agent rationale: {render(case['proposal_agent_rationale'])}",
+        f"- Evidence manifest: {render(case['decision_evidence_manifest'])}",
+        f"- Learning manifest: {render(case['decision_learning_manifest'])}",
     ]
     return "\n".join(lines)
 

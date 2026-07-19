@@ -50,11 +50,11 @@ def test_signal_score_atr_pct():
     assert abs(score - 1.6 / _PREFILTER_ATR_PCT) < 1e-9
 
 
-def test_signal_score_keyword_only():
+def test_signal_score_does_not_accept_keyword_only():
     from aletheia.agents.market_observer import _signal_score
 
     pf = {"passed": True, "rsi": None, "atr_pct": None, "keyword_hits": ["breakout"], "matched_rules": ["keyword"]}
-    assert _signal_score(pf) == 1.0
+    assert _signal_score(pf) == 0.0
 
 
 def test_signal_score_takes_max_of_dimensions():
@@ -76,6 +76,26 @@ def test_signal_score_below_threshold():
     # RSI close to 50 → no deviation rule fires; keyword also absent → score < 1.0
     pf = {"passed": False, "rsi": 52.0, "atr_pct": 0.3, "keyword_hits": [], "matched_rules": []}
     assert _signal_score(pf) < 1.0
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_pre_filter_rejects_nonfinite_structured_values(value):
+    from aletheia.agents.market_observer import _evaluate_pre_filter, _signal_score
+
+    result = _evaluate_pre_filter({
+        "symbols": {
+            "BTC/USDT": {"1h": {"rsi_14": value, "atr_pct": value}},
+        },
+    })
+
+    assert result == {
+        "passed": False,
+        "rsi": None,
+        "atr_pct": None,
+        "keyword_hits": [],
+        "matched_rules": [],
+    }
+    assert _signal_score(result) == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +439,62 @@ async def test_prefetch_failure_isolates_to_single_symbol(tmp_path, monkeypatch)
 
     # All three symbols were attempted (no short-circuit)
     assert call_count["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_spot_prefetch_omits_hl_and_position_x(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agents.market_observer import _DbCache, _prefetch_symbol
+
+    cache = _DbCache(
+        perp_structures={"BTC/USDT": {"id": "px", "source": "position_x"}},
+        funding_hl={"BTC/USDT": {"id": "hl-fr", "funding_rate_annualized": 0.5}},
+        funding_hl_pred={},
+        news={},
+        onchain_rows=[],
+        open_interest_hl={"BTC/USDT": {"id": "hl-oi", "open_interest_usd": 1e9}},
+    )
+    captured = {}
+
+    async def fake_market_context(*args, **kwargs):
+        return "spot technical context", {
+            "fallback": False,
+            "errors": [],
+            "symbols": {"BTC/USDT": {"1h": {"rsi_14": 50.0, "atr_pct": 0.2}}},
+        }
+
+    def fake_render(*args, **kwargs):
+        captured.update(kwargs)
+        return ""
+
+    instrument = SimpleNamespace(symbol="BTC/USDT", market_type="spot")
+    snapshot = SimpleNamespace(tradability={}, leverage={}, macro={})
+    with patch(
+        "aletheia.trading.market_context.build_market_context",
+        side_effect=fake_market_context,
+    ), patch(
+        "aletheia.data.context_builder.build_market_context_from_db",
+        return_value=snapshot,
+    ), patch(
+        "aletheia.data.context_builder.render_enriched_context_md",
+        side_effect=fake_render,
+    ):
+        result = await _prefetch_symbol(
+            instrument,
+            venue="okx",
+            provider=None,
+            prediction_context_enabled=False,
+            prediction_context_cutoff=None,
+            db_cache=cache,
+        )
+
+    assert result.funding_rate_val is None
+    assert result.open_interest_val is None
+    assert captured["xvenue_funding"] == {}
+    assert captured["perp_structure"] == {}
 
 
 @pytest.mark.asyncio

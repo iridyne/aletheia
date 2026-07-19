@@ -7,12 +7,12 @@
 
 ---
 
-## 1. Scheduler Job Overview (38 recurring jobs with optional jobs enabled + 3 startup one-shots)
+## 1. Scheduler Job Overview (39 recurring jobs with optional jobs enabled + 3 startup one-shots)
 
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
 | 1 | market_data | 5min | io | Collect market snapshots (price, volume, OHLCV) |
-| 2 | market_observer | 15min | observer | Scan for trading opportunities |
+| 2 | market_observer | 10min | observer | Scan structured, exact-instrument facts for trading opportunities |
 | 3 | equity_observer | cron 工作日 14-21UTC /30min | agents | xStocks/equity market scan (replaces stock_observer) |
 | 4 | prediction_observer | 30min | agents | Prediction market scan |
 | 5 | paper_trader | 3min + on-demand | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a). `scheduler.notify_paper_trader(source)` coalesces committed Opportunity, eligibility-config, Guard-set, Universe refresh/TTL-slide, and Operator queue-slot-release events into an immediate run. The source list is persisted in `AgentRun.trigger_type`; 3min remains the safety fallback. |
@@ -47,6 +47,7 @@
 | 33 | shadow_resolver | 6h | io | Resolve shadow trades against realised outcomes |
 | 34 | outcome_hook_replay | 1min | io | Replay durable eligible-close feedback jobs; revalidate the closed Position and retry incomplete shadow/Serenity delivery |
 | 35 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
+| 35a | news_analyze | 5min | agents | Independently analyze at most 3 news rows; each item and the whole job are bounded, and failures remain retry/failed rather than fabricated analyzed facts |
 | 36 | outcome_settler | 10min | io | Settle outstanding prediction / universe forward outcomes |
 | 37 | learning_contribution_evaluator | interval `learning.evaluation_interval_minutes` (default 60) | io | Sole scheduled contribution evaluator. Measure only: append deterministic cluster-based contribution verdicts and evaluator health even when autonomous Learning is off or runtime is paused |
 | 38 | learning_lifecycle_controller | interval `learning.evaluation_interval_minutes` (default 60) | io | Apply at most one default-closed paper lifecycle action per current experiment; requires autonomous Learning, no pause/integrity incident, lifecycle automation, paper influence, and path allowlist |
@@ -89,8 +90,10 @@ After recovery, `status` may be healthy and `last_error` clears, while `last_fai
 
 #### market_observer
 
-- **Trigger**: scheduler every 15min + event-driven wake
-- **Inputs**: market_snapshots (recent), config.market_data.observed_symbols, universe features
+- **Trigger**: scheduler every 10min + event-driven wake
+- **Inputs**: exact-instrument market snapshots, structured 1h RSI/ATR pre-filter facts,
+  freshness-qualified derivatives/macro/on-chain data, and successfully analyzed,
+  relevance-qualified, exact-entity news
 - **LLM**: Yes (analysis of market conditions)
 - **Outputs**: opportunities table (symbol, direction, confidence, key_observations JSON)
 - **Side effects**: Writes to `opportunities` table and requests an on-demand Ranker
@@ -109,6 +112,10 @@ After recovery, `status` may be healthy and `last_error` clears, while `last_fai
 - **Downstream contract** (spec UP-06): `key_observations` (the LLM's numeric citations) IS surfaced to the System Operator's layer1 snapshot; previously only a truncated thesis reached the decision.
 - **Bounded-loop fairness contract** (spec GS-S03): the 200-second safety budget remains below the scheduler timeout, but the next cycle begins at the durable successor of the last completed exact instrument. A cancellation or budget break never skips an in-flight or unprocessed instrument.
 - **Pre-filter status contract** (spec OBS-PRE-FILTER-STATUS): `no_sufficient_signal` is a normal rejection recorded in filter evidence, not an agent execution error. It skips the LLM without changing the run to `completed_with_errors`; provider failures, unexpected exceptions, and loop-budget exhaustion remain errors.
+- **Information provenance**: Opportunity metadata preserves the original T0 scanner
+  identity and only the exact T1 source rows actually rendered to the Observer. It
+  never infers historical news, macro, on-chain, prediction, Hyperliquid, or Position X
+  evidence from whichever row is latest later.
 
 #### equity_observer (replaces stock_observer)
 
@@ -127,7 +134,7 @@ After recovery, `status` may be healthy and `last_error` clears, while `last_fai
 
 - **Trigger**: scheduler every 30min
 - **Inputs**: prediction market APIs (Polymarket/Kalshi), existing prediction_markets table
-- **LLM**: No (structured data parsing)
+- **LLM**: Yes (structured event interpretation; the chained divergence scanner is deterministic)
 - **Outputs**: prediction_runs, prediction_markets, prediction_probability_snapshots,
   and observation-only prediction Opportunities
 - **Side effects**: Chains divergence_scanner on completion and wakes Ranker after
@@ -140,6 +147,9 @@ After recovery, `status` may be healthy and `last_error` clears, while `last_fai
 - **LLM**: No
 - **Outputs**: divergence alerts → opportunities table
 - **Side effects**: A newly committed tradeable divergence Opportunity wakes Ranker.
+- **Direction contract**: YES probability change is combined with deterministic
+  bullish/bearish question polarity. Unknown, negated, or mixed polarity fails closed;
+  probability direction alone never decides crypto direction.
 
 #### paper_trader_ranker (internal to paper_trader)
 
@@ -172,7 +182,8 @@ After recovery, `status` may be healthy and `last_error` clears, while `last_fai
 #### research_agent / research_worker
 
 - **Trigger**: enqueued by dreaming_agent or manual
-- **Inputs**: topic query + knowledge context
+- **Inputs**: topic query + knowledge context; Serenity promotion hydrates the exact
+  pending opportunity by id rather than relying on the global active top-five display
 - **LLM**: Yes (research_worker makes LLM calls)
 - **Outputs**: knowledge_items(research_note), serenity_profile_snapshots
 - **Side effects**: FTS index update
@@ -225,7 +236,7 @@ After recovery, `status` may be healthy and `last_error` clears, while `last_fai
     + the independently `assessed_tier` (D2), annotated as long-horizon analyst input —
     NOT a same-day setup and NOT to be rubber-stamped (PI remains sole decision maker).
 - **LLM**: Yes (structured decision with Bull/Bear debate)
-- **Outputs**: an exact-candidate PiDecision (action, symbol, conviction, reasoning JSON, opportunity_id, signal_source) with `evidence_manifest_json` naming the actual technical snapshot, Hyperliquid rows, and Position X availability; a zero-pending wake instead writes one non-trading `operator_evaluation_event` and does not call the LLM
+- **Outputs**: an exact-candidate PiDecision (action, symbol, conviction, reasoning JSON, opportunity_id, signal_source) with `evidence_manifest_json` preserving Opportunity T0, Observer T1 and System Operator T1 identities under `operator-candidate-v3`. Operator T1 direct identities are limited to the exact technical snapshot and Position X block rendered in its prompt; Observer news/macro/on-chain/prediction/Hyperliquid identities remain only in upstream `opportunity_t1` and are labelled as summary-mediated, never copied as direct Operator evidence. Serenity resolves its separate id namespace and records only the exact Layer 3 evidence ids that belong to its persisted theme. A zero-pending wake instead writes one non-trading `operator_evaluation_event` and does not call the LLM
 - **Side effects**: Candidate path writes `pi_decisions`; zero-pending path appends only an observation event; neither path bypasses paper_trader queue authority
 - **Attribution**: `_attach_opportunity_context` backfills `opportunity_id` + `signal_source`
   (`market_observer` Layer 1 wins on tie; `serenity` Layer 3 is the fallback). `signal_source`
@@ -242,6 +253,10 @@ After recovery, `status` may be healthy and `last_error` clears, while `last_fai
 - **Actions**: active entry decision only `trade` / `skip`. The separate portfolio review exposes only `hold` / `close_one` for an explicit Position.
 - **Unsupported legacy outputs**: `close` / `reduce` / `watch` / `scale_in` / `flip` on the entry surface are normalized to an evidenced `skip` and never execute. `reduce_exposure` on portfolio review is treated as `hold`, never as a silent full close.
 - **Availability semantics**: missing/incomplete/stale exact candidate technical context is detected before model inference; missing assessment, a required debate side, a fresh exact local-paper mark, or complete entry reasons is also retryable unavailability. No final PiDecision is written and no pending signal is consumed. A newly persisted exact feature snapshot changes the candidate fingerprint and Universe refresh immediately nudges the daemon to retry.
+- **Serenity availability semantics**: an exact Serenity carrier whose source row is
+  missing or whose research hydration fails receives a typed unavailable reason and
+  defers before model inference. Full thesis/evidence remain persisted and fingerprinted;
+  only their prompt display is bounded.
 - **Position X authority**: owner aggregate imports and their 1h/4h/24h outcomes are observation-only. No automatic source is claimed; a minimum 14-day shadow window is required before human review and the evidence never changes Risk/Execution authority.
 - **Safety**: Never executes orders directly. A complete `trade` prepares one immutable Proposal for the Gateway; `close_one` uses the central close router with an exact fresh mark.
 
@@ -278,6 +293,9 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 - **LLM**: Yes (analysis of trade quality)
 - **Outputs**: knowledge_items (item_type=post_trade_review)
 - **Side effects**: Writes reviews (the review→strategy_designer event chain was removed with the rules engine, Position C)
+- **Input budget**: consumes complete proposal-linked decision records only. It may
+  reduce the number of whole Positions to stay within the total prompt budget and
+  reports the omitted count; it never truncates a selected Position's rationale.
 
 #### risk_critic
 

@@ -28,6 +28,7 @@ Governance red lines:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 
 from aletheia.trading.indicators import (
@@ -48,7 +49,7 @@ _TIMEFRAMES = [
 
 @dataclass
 class _IndicatorSnap:
-    last_close: float
+    last_close: float | None
     sma_20: float | None
     sma_50: float | None
     rsi_14: float | None
@@ -65,8 +66,10 @@ class _IndicatorSnap:
 def _compute_snap(closes: list[float], highs: list[float], lows: list[float],
                   volumes: list[float], timeframe: str) -> _IndicatorSnap:
     """Single-timeframe indicator pack. All inputs in oldest→newest order."""
-    last = closes[-1] if closes else 0.0
-    bb = bollinger(closes, period=20, k=2.0)
+    finite_closes = bool(closes) and all(math.isfinite(value) for value in closes)
+    finite_volumes = bool(volumes) and all(math.isfinite(value) for value in volumes)
+    last = closes[-1] if finite_closes else None
+    bb = bollinger(closes, period=20, k=2.0) if finite_closes else None
     if bb:
         bb_lower, bb_mid, bb_upper = bb
         # %B = (price - lower) / (upper - lower); 0=lower band, 1=upper band.
@@ -76,17 +79,24 @@ def _compute_snap(closes: list[float], highs: list[float], lows: list[float],
             pct_b = 0.5
     else:
         bb_lower = bb_upper = pct_b = None
+    finite_atr_inputs = finite_closes and all(
+        math.isfinite(value) for value in [*highs, *lows]
+    )
+    rsi_14 = rsi(closes, 14) if finite_closes else None
+    atr_14 = atr(highs, lows, closes, 14) if finite_atr_inputs else None
+    rsi_14 = rsi_14 if rsi_14 is not None and math.isfinite(rsi_14) else None
+    atr_14 = atr_14 if atr_14 is not None and math.isfinite(atr_14) else None
     return _IndicatorSnap(
         last_close=last,
-        sma_20=sma(closes, 20),
-        sma_50=sma(closes, 50),
-        rsi_14=rsi(closes, 14),
-        atr_14=atr(highs, lows, closes, 14),
+        sma_20=sma(closes, 20) if finite_closes else None,
+        sma_50=sma(closes, 50) if finite_closes else None,
+        rsi_14=rsi_14,
+        atr_14=atr_14,
         bb_lower=bb_lower,
         bb_upper=bb_upper,
         bb_pct_b=pct_b,
-        momentum_10=momentum_pct(closes, 10),
-        volume_zscore_20=zscore_last(volumes, 20),
+        momentum_10=momentum_pct(closes, 10) if finite_closes else None,
+        volume_zscore_20=zscore_last(volumes, 20) if finite_volumes else None,
         timeframe=timeframe,
         bars_used=len(closes),
     )
@@ -256,11 +266,22 @@ async def build_market_context(
                 sym_debug[tf] = {
                     "bars": len(candles), "last_close": snap.last_close,
                     "rsi_14": snap.rsi_14, "sma_50": snap.sma_50,
+                    "atr_14": snap.atr_14,
+                    "atr_pct": (
+                        snap.atr_14 / snap.last_close * 100
+                        if snap.atr_14 is not None
+                        and snap.last_close is not None
+                        and math.isfinite(snap.last_close)
+                        and snap.last_close > 0
+                        else None
+                    ),
                     "momentum_10": snap.momentum_10,
                 }
                 if tf == "1h":
                     closes_1h = closes
-                    if len(closes) >= 25:
+                    if len(closes) >= 25 and all(
+                        math.isfinite(close) for close in closes
+                    ):
                         past = closes[-25]
                         last = closes[-1]
                         if past:

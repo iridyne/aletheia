@@ -266,6 +266,18 @@ def test_async_timeout_worker_rejects_when_capacity_is_exhausted(monkeypatch):
         worker.close()
 
 
+def test_async_timeout_worker_rejects_submissions_once_stopping():
+    from aletheia.agent_runtime import scheduler
+
+    worker = scheduler._PersistentAsyncTimeoutWorker("stopping-worker")
+    worker._stopping = True
+    coroutine = asyncio.sleep(0)
+
+    with pytest.raises(RuntimeError, match="stopping"):
+        worker.submit(coroutine)
+    assert coroutine.cr_frame is None
+
+
 def test_sync_timeout_worker_reuses_one_daemon_thread():
     from aletheia.agent_runtime import scheduler
 

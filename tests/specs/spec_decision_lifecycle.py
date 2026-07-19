@@ -4171,12 +4171,13 @@ def test_bounded_rotation_query_plan_is_indexed(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "DL-S30", "decision_lifecycle_contract", "§2.3 Serenity claim state", "L2b",
-        "A new Serenity Proposal claim requires an active pi_evaluate opportunity whose "
-        "linked theme is promoted; an already-durable final claim remains recovery authority.",
+        "A new Serenity Proposal claim requires an active pi_evaluate opportunity with an "
+        "exact pending carrier; its theme may remain active during partial promotion, while an "
+        "already-durable final claim remains recovery authority.",
         status="implemented",
     ),
 )
-def test_serenity_claim_requires_promoted_active_pi_handoff(tmp_path, monkeypatch):
+def test_serenity_claim_requires_exact_active_pi_handoff(tmp_path, monkeypatch):
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -4197,7 +4198,6 @@ def test_serenity_claim_requires_promoted_active_pi_handoff(tmp_path, monkeypatc
     cases = (
         ("inactive", "promoted", "dismissed", "pi_evaluate", "pending_source_not_active"),
         ("intent", "promoted", "active", "watch", "pending_source_intent_invalid"),
-        ("theme", "active", "active", "pi_evaluate", "pending_theme_not_promoted"),
     )
     failures = []
     for name, theme_status, source_status, action_intent, expected in cases:

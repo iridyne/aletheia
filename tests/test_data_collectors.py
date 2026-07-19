@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime, timezone
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +86,244 @@ def test_parse_oi_basic():
     assert snap is not None
     assert snap.open_interest_usd == 1_000_000_000.0
     assert snap.open_interest_coin == 20000.0
+
+
+def test_hyperliquid_oi_delta_uses_same_source_hour_baseline(monkeypatch):
+    from aletheia.data.collectors.hyperliquid import _parse_oi
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(
+        repo,
+        "open_interest_near",
+        lambda symbol, exchange, **kwargs: {
+            "exchange": "hyperliquid",
+            "open_interest_usd": 100.0,
+        },
+    )
+    monkeypatch.setattr(
+        repo,
+        "latest_open_interest",
+        lambda *args, **kwargs: {"open_interest_usd": 199.0},
+    )
+
+    snap = _parse_oi(
+        "BTC/USDT",
+        {"openInterest": "11", "markPx": "10"},
+        datetime.now(timezone.utc).isoformat(),
+    )
+
+    assert snap is not None
+    assert snap.oi_change_1h_pct == 10.0
+
+
+def test_hyperliquid_oi_delta_over_300_percent_is_unavailable(monkeypatch):
+    from aletheia.data.collectors.hyperliquid import _parse_oi
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(
+        repo,
+        "open_interest_near",
+        lambda *args, **kwargs: {"open_interest_usd": 1.0},
+    )
+
+    snap = _parse_oi(
+        "BTC/USDT",
+        {"openInterest": "40.1", "markPx": "10"},
+        datetime.now(timezone.utc).isoformat(),
+    )
+
+    assert snap is not None
+    assert snap.oi_change_1h_pct is None
+
+
+@pytest.mark.parametrize(
+    "ctx",
+    [
+        {"openInterest": "nan", "markPx": "10"},
+        {"openInterest": "10", "markPx": "inf"},
+        {"openInterest": "-1", "markPx": "10"},
+    ],
+)
+def test_hyperliquid_oi_rejects_nonfinite_or_nonpositive_values(ctx):
+    from aletheia.data.collectors.hyperliquid import _parse_oi
+
+    assert _parse_oi(
+        "BTC/USDT", ctx, datetime.now(timezone.utc).isoformat()
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "ctx",
+    [
+        {"funding": "nan", "markPx": "10"},
+        {"funding": "0.001", "markPx": "inf"},
+        {"funding": "0.001", "markPx": "0"},
+    ],
+)
+def test_hyperliquid_funding_rejects_nonfinite_or_nonpositive_mark(ctx):
+    from aletheia.data.collectors.hyperliquid import _parse_funding
+
+    assert _parse_funding(
+        "BTC/USDT", ctx, datetime.now(timezone.utc).isoformat()
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_hyperliquid_predicted_funding_isolates_invalid_rows(monkeypatch):
+    import aletheia.data.collectors.hyperliquid as mod
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        @staticmethod
+        def json():
+            return [
+                ["BTC", [["HlPerp", {"fundingRate": "nan", "fundingIntervalHours": 1}]]],
+                ["ETH", [["HlPerp", {"fundingRate": "0.001", "fundingIntervalHours": 0}]]],
+                ["SOL", [["HlPerp", {"fundingRate": "0.002", "fundingIntervalHours": 2}]]],
+            ]
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
+
+    rows = await mod._fetch_predicted_fundings(
+        None, datetime.now(timezone.utc).isoformat()
+    )
+
+    assert [row.symbol for row in rows] == ["SOL/USDT"]
+    assert rows[0].funding_rate_annualized == pytest.approx(0.002 * 12 * 365)
+
+
+@pytest.mark.asyncio
+async def test_coinalyze_oi_delta_uses_hour_baseline_and_sanity_cap(monkeypatch):
+    import aletheia.data.collectors.coinalyze as mod
+    from aletheia.storage import repositories as repo
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return [
+                {"symbol": "BTCUSDT_PERP.A", "open_interest_usd": 110.0},
+                {"symbol": "ETHUSDT_PERP.A", "open_interest_usd": 401.0},
+            ]
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
+    monkeypatch.setattr(
+        repo,
+        "open_interest_near",
+        lambda symbol, exchange, **kwargs: {
+            "open_interest_usd": 100.0 if symbol.startswith("BTC") else 1.0,
+        },
+    )
+
+    rows = await mod._fetch_open_interest(
+        "unused",
+        ["BTC/USDT", "ETH/USDT"],
+        ["BTCUSDT_PERP.A", "ETHUSDT_PERP.A"],
+    )
+
+    assert rows[0].oi_change_1h_pct == 10.0
+    assert rows[1].oi_change_1h_pct is None
+
+
+@pytest.mark.asyncio
+async def test_coinalyze_skips_coin_only_and_nonfinite_oi(monkeypatch):
+    import aletheia.data.collectors.coinalyze as mod
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return [
+                {"symbol": "BTCUSDT_PERP.A", "open_interest": 123.0},
+                {"symbol": "ETHUSDT_PERP.A", "open_interest_usd": "nan"},
+                {"symbol": "SOLUSDT_PERP.A", "open_interest_usd": "inf"},
+            ]
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
+
+    rows = await mod._fetch_open_interest(
+        "unused",
+        ["BTC/USDT", "ETH/USDT", "SOL/USDT"],
+        ["BTCUSDT_PERP.A", "ETHUSDT_PERP.A", "SOLUSDT_PERP.A"],
+    )
+
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_coinalyze_liquidations_isolate_invalid_rows(monkeypatch):
+    import aletheia.data.collectors.coinalyze as mod
+
+    now = datetime.now(timezone.utc)
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return [
+                {"t": now.timestamp() * 1000, "lsl": "nan", "ssl": 0},
+                {"t": now.timestamp() * 1000, "lsl": -1, "ssl": 0},
+                {"t": (now.timestamp() + 3600) * 1000, "lsl": 1, "ssl": 0},
+                {"t": now.timestamp() * 1000, "lsl": 25.0, "ssl": 10.0},
+            ]
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
+
+    rows = await mod._fetch_liquidations(
+        "unused", ["BTC/USDT"], ["BTCUSDT_PERP.A"]
+    )
+
+    assert [(row.side, row.quantity_usd) for row in rows] == [
+        ("long", 25.0),
+        ("short", 10.0),
+    ]
 
 
 # ---------------------------------------------------------------------------

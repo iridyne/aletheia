@@ -56,6 +56,20 @@ def test_atr_returns_positive_volatility():
     assert a is not None and a > 0
 
 
+def test_indicator_snapshot_rejects_nonfinite_rsi_and_atr():
+    from aletheia.trading.market_context import _compute_snap
+
+    closes = [100.0] * 20
+    highs = [101.0] * 19 + [float("inf")]
+    lows = [99.0] * 20
+    closes[-1] = float("nan")
+
+    snapshot = _compute_snap(closes, highs, lows, [1.0] * 20, "1h")
+
+    assert snapshot.rsi_14 is None
+    assert snapshot.atr_14 is None
+
+
 def test_bollinger_centers_on_sma():
     closes = [10.0] * 20
     band = indicators.bollinger(closes, 20, 2.0)
@@ -195,6 +209,48 @@ def test_build_context_includes_indicators_in_debug():
     # RSI on a pure uptrend should be high (>70).
     assert btc["1h"]["rsi_14"] is not None
     assert btc["1h"]["rsi_14"] > 60
+    assert btc["1h"]["atr_pct"] is not None
+    assert btc["1h"]["atr_pct"] > 0
+
+
+def test_observer_pre_filter_uses_structured_1h_debug_only():
+    from aletheia.agents.market_observer import _evaluate_pre_filter
+
+    debug = {
+        "symbols": {
+            "BTC/USDT": {
+                "1h": {"rsi_14": 71.0, "atr_pct": 1.25},
+                "4h": {"rsi_14": 50.0, "atr_pct": 0.1},
+            },
+        },
+    }
+
+    result = _evaluate_pre_filter(debug)
+
+    assert result["passed"] is True
+    assert result["rsi"] == 71.0
+    assert result["atr_pct"] == 1.25
+    assert result["matched_rules"] == ["rsi_deviation", "atr_pct"]
+
+
+def test_observer_pre_filter_does_not_promote_markdown_or_news_keywords():
+    from aletheia.agents.market_observer import _evaluate_pre_filter
+
+    debug = {
+        "symbols": {
+            "BTC/USDT": {
+                "1h": {"rsi_14": 51.0, "atr_pct": 0.2},
+            },
+        },
+        "rendered_markdown": "BREAKOUT spike in recent news; RSI 99; ATR 12%",
+    }
+
+    result = _evaluate_pre_filter(debug)
+
+    assert result["passed"] is False
+    assert result["rsi"] == 51.0
+    assert result["atr_pct"] == 0.2
+    assert result["keyword_hits"] == []
 
 
 def test_build_context_preserves_instrument_identity_and_cache_scope():

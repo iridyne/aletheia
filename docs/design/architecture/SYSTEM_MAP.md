@@ -34,6 +34,8 @@
 | `cleanup` | cron 03:17 | 删除超保留期的分析/遥测行；filter batch 30d、decision/outcome 90d | SQLite 稳定性 + `data_pruned` audit | ✅，不触碰交易因果表 |
 | `ohlcv_nightly_backfill` | cron(可配) | market_ohlcv | (历史 OHLCV 存储;backtest 消费者随引擎删除 Position C) | ✅ |
 | `ohlcv_active_backfill` | 5–60min(可配，默认10min) | market_ohlcv + ohlcv_backfill_state | 活动 Universe 指标、结果结算、doctor；单轮1–10个精确 instrument/timeframe，失败退避 | ✅，不阻塞 universe_refresh |
+| `news_fetch` | 15min(可配) | `news_items(status=new)` | news_analyze | ✅ RSS I/O 与 LLM 分离 |
+| `news_analyze` | 5min | 更新 `news_items` sentiment/relevance/status | Market Observer + Research Worker | ✅ 单批3条；失败退避/终止，不伪造 analyzed；独立 timeout worker 不阻塞 RSS |
 | owner Position X aggregate import | explicit CLI only | whitelisted `perp_structure_snapshots` + source ref/hash + audit; seeds `perp_structure_shadow_outcomes` | Market Observer/System Operator advisory context + 1h/4h/24h shadow settlement | 🟡 no automatic endpoint; 14d minimum window; decision influence disabled |
 | `okx_demo_symbols` | 4h | (内存 set 缓存) | okx_broker(filter) | ✅ |
 
@@ -43,7 +45,7 @@
 
 | Job ID | 频率 | 输入数据 | 输出数据 | 下游 | 管道 |
 |--------|------|---------|---------|------|------|
-| `market_observer` | 15min | market_snapshots + context_builder(微结构) + advisory bundle | opportunities（metadata 含 observer Learning manifest）, knowledge_items(research) | paper_trader_ranker | ✅ observer bundle 与下游 Operator bundle 分开归因 |
+| `market_observer` | 10min | exact-instrument snapshots + structured RSI/ATR + quality-gated news/context | opportunities（metadata 含 T0/T1 source manifest + observer Learning manifest）, knowledge_items(research) | paper_trader_ranker | ✅ source identities 只记录实际渲染行；spot 不消费 perp context |
 | `paper_trader` | 3min fallback + on-demand | open Opportunity generations + PiDecision + guards | 每轮最多 3 个新 `signal_pending`，全局最多 5 个 unresolved queued carriers；随后由 System Operator 决定是否形成 Proposal | ✅ 新 Opportunity/config/Guard/queue-slot/Universe 事实提交后合并唤醒；active carrier 与 30min cooldown 分开；队列满时 generation 保持 open 重试 |
 | `pi_trading_decision` | ~15min | market context + one Learning bundle（reflection/memo/reasoning/calibration/cases/lessons） | PiDecision（含 opportunity/proposal 因果 id + learning_manifest_json） | paper_trader(消费 decision) | ✅ |
 | `position_manager` | 5min | open positions + market prices + exit_rules | close proposals / TP-SL updates | ✅ |

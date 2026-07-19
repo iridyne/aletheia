@@ -52,8 +52,8 @@ class TestKeywordMapping:
     def test_solana_maps_to_sol(self):
         assert _map_question_to_symbol("Will Solana reach $500?") == "SOL/USDT"
 
-    def test_broad_crypto_maps_to_btc(self):
-        assert _map_question_to_symbol("Will crypto market cap exceed $5T?") == "BTC/USDT"
+    def test_broad_crypto_does_not_invent_btc_proxy(self):
+        assert _map_question_to_symbol("Will crypto market cap exceed $5T?") is None
 
     def test_no_match_returns_none(self):
         assert _map_question_to_symbol("Will it rain tomorrow?") is None
@@ -64,6 +64,43 @@ class TestKeywordMapping:
     def test_specific_over_broad(self):
         # "ethereum" is more specific than "crypto"
         assert _map_question_to_symbol("ethereum crypto market") == "ETH/USDT"
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "Will BitcoinCash exceed $1,000?",
+            "Will Bitcoin or Ethereum exceed $100k?",
+            "Will the crypto market exceed $5T?",
+        ],
+    )
+    def test_asset_mapping_requires_one_exact_asset(self, question):
+        assert _map_question_to_symbol(question) is None
+
+
+class TestPredictionPolarity:
+    @pytest.mark.parametrize(
+        ("question", "expected"),
+        [
+            ("Will Bitcoin rise above $150k?", 1),
+            ("Will Ethereum exceed $5,000?", 1),
+            ("Will Bitcoin fall below $70k?", -1),
+            ("Will Solana drop under $80?", -1),
+            ("Will Bitcoin fail to reach $150k?", None),
+            ("Will Bitcoin avoid falling below $70k?", None),
+            ("Will Bitcoin not fall below $70k?", None),
+            ("Will Bitcoin never exceed $150k?", None),
+            ("Will Bitcoin be legal tender in another country?", None),
+            ("Will Bitcoin rise above $150k or fall below $70k?", None),
+            ("Will Bitcoin rise this year?", None),
+            ("Will Bitcoin fall after the election?", None),
+        ],
+    )
+    def test_question_polarity_is_deterministic_and_ambiguous_fails_closed(
+        self, question, expected,
+    ):
+        from aletheia.agents.divergence_scanner import _prediction_polarity
+
+        assert _prediction_polarity(question) == expected
 
 
 class TestDivergenceScore:
@@ -94,6 +131,11 @@ class TestDivergenceScore:
             volume_usd=50_000, liquidity=10_000,
         )
         assert score >= 40
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_score_rejects_nonfinite_evidence(self, bad):
+        with pytest.raises(ValueError, match="finite"):
+            _compute_divergence_score(bad, 1.0, 100_000.0, 100_000.0)
 
 
 # --- Integration test ---
@@ -163,11 +205,26 @@ async def test_divergence_scanner_creates_opportunity(tmp_path, monkeypatch):
     assert meta["prediction_external_market_id"] == "ext_001"
     assert meta["prediction_updated_at"] == now
     assert meta["instrument_market"] == "spot"
-    assert meta["source_version"]
+    assert meta["source_version"].startswith("prediction_divergence:polarity-v1:")
+    assert meta["prediction_polarity_version"] == "polarity-v1"
+    manifest = meta["evidence_manifest"]
+    assert manifest["version"] == "opportunity-information-integrity-v1"
+    assert manifest["policy_epoch"] == "opportunity_information_integrity/v1"
+    assert manifest["t0"]["trigger_type"] == "prediction_divergence"
+    assert manifest["t0"]["prediction_market_id"] == "pm_test_001"
+    assert manifest["t0"]["prediction_updated_at"] == now
+    assert manifest["t0"]["source_version"] == meta["source_version"]
+    assert manifest["t1"] == {"status": "unavailable"}
     assert any(
         output.startswith("skip_duplicate_source_version:")
         for output in replay["outputs"]
     )
+    evidence = repo._select_all(
+        "filter_decisions", where="filter_name = ?", params=("prediction_divergence",),
+    )
+    assert json.loads(evidence[0]["parameter_snapshot"])[
+        "prediction_polarity_version"
+    ] == "polarity-v1"
     mock_provider.get_ticker.assert_awaited_once_with("BTC/USDT")
 
 
@@ -186,7 +243,7 @@ async def test_divergence_scanner_short_requires_explicit_perp_fact(tmp_path, mo
         "question": "Will Bitcoin fall below $70k by end of 2026?",
         "yes_probability": 0.35,
         "no_probability": 0.65,
-        "probability_change_24h": -0.15,
+        "probability_change_24h": 0.15,
         "volume_24h": 120000.0,
         "liquidity": 80000.0,
         "status": "active",
@@ -213,6 +270,122 @@ async def test_divergence_scanner_short_requires_explicit_perp_fact(tmp_path, mo
         "opportunities", where="source_agent = ?", params=("divergence_scanner",)
     ) == []
     mock_provider.get_ticker.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_negative_question_probability_drop_maps_to_long(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc).isoformat()
+    from aletheia.storage.repositories import _insert
+    _insert("prediction_markets", {
+        "id": "pm_negative_inverse",
+        "event_id": "ev_negative_inverse",
+        "source": "polymarket",
+        "external_market_id": "ext_negative_inverse",
+        "question": "Will Bitcoin fall below $70k by end of 2026?",
+        "yes_probability": 0.35,
+        "no_probability": 0.65,
+        "probability_change_24h": -0.15,
+        "volume_24h": 120000.0,
+        "liquidity": 80000.0,
+        "status": "active",
+        "updated_at": now,
+    })
+    mock_provider = AsyncMock()
+    mock_provider.get_ticker = AsyncMock(return_value=Ticker(
+        symbol="BTC/USDT",
+        last_price=95000.0,
+        volume_24h=5_000_000_000.0,
+        change_pct_24h=1.0,
+    ))
+
+    with patch(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        return_value=mock_provider,
+    ):
+        result = await run_divergence_scanner(permission_mode="Paper")
+
+    assert result["errors"] == []
+    opps = repo._select_all(
+        "opportunities", where="source_agent = ?", params=("divergence_scanner",),
+    )
+    assert len(opps) == 1
+    assert opps[0]["direction_bias"] == "long"
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_prediction_question_fails_closed(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc).isoformat()
+    from aletheia.storage.repositories import _insert
+    _insert("prediction_markets", {
+        "id": "pm_ambiguous",
+        "event_id": "ev_ambiguous",
+        "source": "polymarket",
+        "external_market_id": "ext_ambiguous",
+        "question": "Will Bitcoin be legal tender in another country?",
+        "yes_probability": 0.72,
+        "no_probability": 0.28,
+        "probability_change_24h": 0.15,
+        "volume_24h": 120000.0,
+        "liquidity": 80000.0,
+        "status": "active",
+        "updated_at": now,
+    })
+    mock_provider = AsyncMock()
+
+    with patch(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        return_value=mock_provider,
+    ):
+        result = await run_divergence_scanner(permission_mode="Paper")
+
+    assert result["errors"] == []
+    assert "skip:BTC/USDT:prediction_polarity_ambiguous" in result["outputs"]
+    assert repo._select_all(
+        "opportunities", where="source_agent = ?", params=("divergence_scanner",),
+    ) == []
+    mock_provider.get_ticker.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_nonfinite_ticker_evidence_fails_closed(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc).isoformat()
+    from aletheia.storage.repositories import _insert
+    _insert("prediction_markets", {
+        "id": "pm_nonfinite",
+        "event_id": "ev_nonfinite",
+        "source": "polymarket",
+        "external_market_id": "ext_nonfinite",
+        "question": "Will Bitcoin exceed $150k?",
+        "yes_probability": 0.72,
+        "no_probability": 0.28,
+        "probability_change_24h": 0.15,
+        "volume_24h": 120000.0,
+        "liquidity": 80000.0,
+        "status": "active",
+        "updated_at": now,
+    })
+    mock_provider = AsyncMock()
+    mock_provider.get_ticker = AsyncMock(return_value=Ticker(
+        symbol="BTC/USDT",
+        last_price=float("nan"),
+        volume_24h=5_000_000_000.0,
+        change_pct_24h=float("nan"),
+    ))
+
+    with patch(
+        "aletheia.agents.divergence_scanner.get_market_data_provider",
+        return_value=mock_provider,
+    ):
+        result = await run_divergence_scanner(permission_mode="Paper")
+
+    assert "skip:BTC/USDT:invalid_numeric_evidence" in result["outputs"]
+    assert repo.list_opportunities(limit=10) == []
 
 
 @pytest.mark.asyncio
@@ -302,7 +475,7 @@ async def test_divergence_rejections_have_stable_terminal_evidence(tmp_path, mon
             "question": "Will Bitcoin fall below $70k?",
             "yes_probability": 0.3,
             "no_probability": 0.7,
-            "probability_change_24h": -0.12,
+            "probability_change_24h": 0.12,
             "volume_24h": 80_000.0,
             "liquidity": 60_000.0,
             "status": "active",

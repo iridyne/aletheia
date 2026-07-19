@@ -17,6 +17,7 @@ from time import struct_time
 import feedparser
 
 from aletheia.config.loader import load_config
+from aletheia.data.news_entities import match_crypto_entities
 from aletheia.storage.sqlite import get_db
 
 logger = logging.getLogger("aletheia.data.news_collector")
@@ -45,27 +46,27 @@ def _compute_dedup_key(entry: dict) -> str:
     return f"hash:{h}"
 
 
-def _parse_time(entry: dict) -> str:
-    """Extract publication time as ISO string."""
+def _parse_time(entry: dict, *, now: datetime | None = None) -> str:
+    """Extract a valid non-future publication time, or preserve it as unknown."""
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
     for key in ("published_parsed", "updated_parsed"):
         tp: struct_time | None = entry.get(key)
         if tp:
             try:
                 dt = datetime(*tp[:6], tzinfo=timezone.utc)
-                return dt.isoformat()
+                if dt <= current:
+                    return dt.isoformat()
             except (TypeError, ValueError):
                 pass
-    return datetime.now(timezone.utc).isoformat()
+    return ""
 
 
 def _extract_symbols(title: str, summary: str) -> list[str]:
-    """Best-effort symbol extraction from text (no LLM, just keyword match)."""
-    symbols = []
-    text = (title + " " + summary).upper()
-    for sym in ("BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "BNB", "AVAX", "DOT", "MATIC"):
-        if sym in text:
-            symbols.append(f"{sym}/USDT")
-    return symbols
+    """Extract only exact ticker or asset-name entities from article text."""
+    return match_crypto_entities(title, summary)
 
 
 def _fetch_feed_sync(url: str) -> list[dict]:
@@ -86,6 +87,11 @@ async def fetch_news_feeds() -> dict:
     The analyzer can still be called separately if needed, but it no longer blocks
     the RSS fetch pipeline.
     """
+    from aletheia.learning.opportunity_information_policy import (
+        ensure_opportunity_information_policy_epoch,
+    )
+
+    ensure_opportunity_information_policy_epoch()
     cfg = load_config()
     if not cfg.news.enabled:
         return {"fetched": 0, "new": 0}
@@ -132,13 +138,15 @@ async def fetch_news_feeds() -> dict:
             summary = _strip_html(raw_summary) if raw_summary else ""
             content = _strip_html(raw_content) if raw_content else ""
             link = entry.get("link", "")
-            published_at = _parse_time(entry)
             symbols = _extract_symbols(title, summary)
 
             news_id = secrets.token_hex(6)
-            now = datetime.now(timezone.utc).isoformat()
+            fetched_at = datetime.now(timezone.utc)
+            published_at = _parse_time(entry, now=fetched_at)
+            now = fetched_at.isoformat()
 
-            db.execute(
+            was_in_tx = db.in_transaction
+            cursor = db.execute(
                 """INSERT OR IGNORE INTO news_items
                    (id, title, source, url, summary, content, symbols_mentioned,
                     event_type, sentiment, relevance_score, published_at, fetched_at,
@@ -153,10 +161,12 @@ async def fetch_news_feeds() -> dict:
                     published_at, now, "new", dedup_key,
                 ),
             )
-            total_new += 1
+            if not was_in_tx:
+                db.commit()
+            if cursor.rowcount:
+                total_new += 1
 
     if total_new > 0:
-        db.commit()
         logger.info("news: fetched %d items from %d feeds, %d new", total_fetched, len(active_feeds), total_new)
     else:
         logger.debug("news: fetched %d items from %d feeds, 0 new", total_fetched, len(active_feeds))

@@ -144,7 +144,7 @@ def _pending_claim_authority_failure(pi_dec) -> str | None:
         theme = repo.get_serenity_theme(str(source.get("theme_id") or ""))
         if theme is None:
             return "pending_theme_missing"
-        if str(theme.get("status") or "") != "promoted":
+        if str(theme.get("status") or "") not in {"active", "promoted"}:
             return "pending_theme_not_promoted"
         # Only historical Serenity carriers may recover their missing market
         # from the exact linked source row. A complete pending value is never
@@ -279,28 +279,34 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
     where an Opportunity became reviewed while no Proposal existed.
     """
     from aletheia.storage.repositories import (
-        find_final_pi_decision_for_opportunity,
+        classify_final_pi_decision_for_opportunity,
         insert_pi_decision,
         insert_trade_proposal,
         transaction,
         transition_opportunity_to_reviewed,
+        transition_serenity_opportunity_to_reviewed,
     )
 
     pi_dec = _build_pi_decision(decision_result)
     claim_failure: str | None = None
     with transaction(immediate=True, savepoint=True):
-        existing = (
-            find_final_pi_decision_for_opportunity(
+        classification = (
+            classify_final_pi_decision_for_opportunity(
                 pi_dec.opportunity_id,
                 pi_dec.signal_source,
+                symbol=pi_dec.symbol,
+                direction=pi_dec.direction,
+                market_type=pi_dec.market_type,
                 action=(
                     pi_dec.action
                     if pi_dec.action in {"close", "reduce"}
                     else None
                 ),
             )
-            if pi_dec.opportunity_id else None
+            if pi_dec.opportunity_id
+            else {"status": "none", "decision": None}
         )
+        existing = classification.get("decision")
         if existing:
             # A submitting claim may be resumed, but only with the same immutable
             # execution identity. Terminal rows simply win and are returned below.
@@ -314,6 +320,8 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
             # The winning claim already owns its Proposal/lifecycle. Never move
             # an independently expired source back to reviewed during replay.
             return existing, False
+        if classification["status"] == "integrity_unavailable":
+            claim_failure = classification["reason"]
         if proposal is not None:
             _validate_proposal_identity(
                 proposal, pi_dec, prefix="prepared_proposal"
@@ -323,7 +331,7 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
         # skip/watch from retiring an unqueued source and closes the race where a
         # carrier disappears after context binding. Anonymous skips remain valid;
         # close/reduce inherit identity from an already-open Position instead.
-        if pi_dec.action not in _POSITION_ACTIONS and (
+        if claim_failure is None and pi_dec.action not in _POSITION_ACTIONS and (
             pi_dec.opportunity_id or pi_dec.action in _NEW_ENTRY_ACTIONS
         ):
             claim_failure = _pending_claim_authority_failure(pi_dec)
@@ -363,6 +371,12 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
                 )
             if pi_dec.opportunity_id and pi_dec.signal_source == "market_observer":
                 transition_opportunity_to_reviewed(pi_dec.opportunity_id)
+            elif (
+                pi_dec.action == "skip"
+                and pi_dec.opportunity_id
+                and pi_dec.signal_source == "serenity"
+            ):
+                transition_serenity_opportunity_to_reviewed(pi_dec.opportunity_id)
     if claim_failure is not None:
         raise PendingSourceClaimError(claim_failure)
     return pi_dec.model_dump(), True

@@ -13,6 +13,7 @@ Multi-stage pipeline with partial persistence:
 import asyncio
 import json
 import logging
+import math
 import threading
 from datetime import datetime, timezone
 
@@ -28,6 +29,8 @@ from aletheia.trading.serenity_evidence import (
 logger = logging.getLogger("aletheia.research_worker")
 
 _EXECUTOR_LOCK = threading.Lock()
+_AUTO_PROMOTE_NOTIFY_LOCK = threading.Lock()
+_AUTO_PROMOTE_NOTIFY_RETRIES: set[str] = set()
 
 # Crypto-only allowlist: the quote currency must be one of these for a serenity
 # opportunity to be persisted.  Blocks LLM hallucinations like MSTR/USD, SPY,
@@ -94,31 +97,30 @@ def _auto_promote_serenity_opportunities(
     run_id: str | None = None,
 ) -> int:
     """Atomically hand score-qualified Serenity opportunities to PI by theme."""
-    from aletheia.trading.serenity_scoring import score_serenity_opportunity
-
-    eligible_by_theme: dict[str, list[str]] = {}
+    theme_ids: set[str] = set()
     for opportunity_id in opportunity_ids:
         opp = repo.get_serenity_opportunity(opportunity_id)
         if not opp or opp.get("status") != "active":
             continue
-        evidence = repo.list_serenity_evidence(theme_id=opp["theme_id"], limit=200)
-        gates = repo.list_serenity_risk_gates(
-            opportunity_id=opportunity_id,
-            limit=200,
+        theme_ids.add(str(opp["theme_id"]))
+
+    active_ids_by_theme: dict[str, list[str]] = {}
+    for theme_id in theme_ids:
+        active_siblings = repo.list_serenity_opportunities(
+            theme_id=theme_id, status="active", limit=1000
         )
-        score_result = score_serenity_opportunity(
-            opp,
-            evidence=evidence,
-            risk_gates=gates,
-        )
-        if score_result["score"] < cfg.serenity.min_score_for_pi:
-            continue
-        eligible_by_theme.setdefault(str(opp["theme_id"]), []).append(opportunity_id)
+        active_ids_by_theme[theme_id] = [str(opp["id"]) for opp in active_siblings]
 
     promoted_count = 0
-    for theme_id, selected_ids in eligible_by_theme.items():
+    newly_queued_themes: set[str] = set()
+    for theme_id, active_ids in active_ids_by_theme.items():
         try:
-            queued_ids = repo.enqueue_serenity_theme_for_pi(theme_id, selected_ids)
+            queued_ids = repo.enqueue_serenity_theme_for_pi(
+                theme_id,
+                active_ids,
+                min_score_for_pi=cfg.serenity.min_score_for_pi,
+                new_carriers_only=True,
+            )
         except Exception as exc:
             # A theme is one atomic unit. Keep it retryable while allowing an
             # unrelated theme in the same research run to advance.
@@ -129,11 +131,25 @@ def _auto_promote_serenity_opportunities(
             )
             continue
         promoted_count += len(queued_ids)
+        if queued_ids:
+            newly_queued_themes.add(theme_id)
 
-    if promoted_count:
+    with _AUTO_PROMOTE_NOTIFY_LOCK:
+        retry_themes = set(theme_ids) & _AUTO_PROMOTE_NOTIFY_RETRIES
+    notify_themes = newly_queued_themes | retry_themes
+    if notify_themes:
         from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
 
-        notify_pi_daemon(source="serenity_auto_promote")
+        try:
+            notify_pi_daemon(source="serenity_auto_promote")
+        except Exception:
+            with _AUTO_PROMOTE_NOTIFY_LOCK:
+                _AUTO_PROMOTE_NOTIFY_RETRIES.update(notify_themes)
+            logger.warning("Serenity auto-promote wake failed; retry retained")
+        else:
+            with _AUTO_PROMOTE_NOTIFY_LOCK:
+                _AUTO_PROMOTE_NOTIFY_RETRIES.difference_update(notify_themes)
+    if promoted_count:
         if run_id is not None:
             _emit_event(
                 run_id,
@@ -150,11 +166,11 @@ _is_tradeable_crypto_symbol = _is_allowed_serenity_symbol
 def _get_recent_news_for_research() -> str:
     """Fetch recent high-relevance analyzed news for injection into research context."""
     try:
+        from aletheia.data.news_entities import match_crypto_entities
         from aletheia.storage.sqlite import get_db
-        import json as _json
         db = get_db()
         rows = db.execute(
-            "SELECT title, source, impact_summary, sentiment, symbols_mentioned "
+            "SELECT title, source, summary, content, impact_summary, sentiment "
             "FROM news_items WHERE status = 'analyzed' AND relevance_score >= 0.6 "
             "AND fetched_at >= datetime('now', '-24 hours') "
             "ORDER BY relevance_score DESC LIMIT 20"
@@ -163,15 +179,16 @@ def _get_recent_news_for_research() -> str:
             return ""
         lines = []
         for r in rows:
-            syms = ""
-            try:
-                s = _json.loads(r["symbols_mentioned"] or "[]")
-                if s:
-                    syms = f" [{', '.join(s)}]"
-            except (ValueError, TypeError):
-                pass
+            symbols = match_crypto_entities(
+                r["title"], r["summary"], r["content"]
+            )
+            if not symbols:
+                continue
+            syms = f" [{', '.join(symbols)}]"
             impact = r["impact_summary"] or ""
             lines.append(f"- [{r['source']}] {r['title']} — {impact} ({r['sentiment']}{syms})")
+        if not lines:
+            return ""
         return "\n\nRecent News Headlines (last 24h, auto-analyzed):\n" + "\n".join(lines)
     except Exception as e:
         logger.debug("news injection into research context failed: %s", e)
@@ -272,16 +289,22 @@ def _get_flow_context_block() -> str:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         oi_rows = db.execute(
-            "SELECT symbol, open_interest_usd, oi_change_1h_pct, observed_at "
-            "FROM open_interest_snapshots "
-            "WHERE observed_at > datetime('now', '-4 hours') "
-            "GROUP BY symbol HAVING MAX(observed_at) "
-            "ORDER BY open_interest_usd DESC LIMIT 10"
+            "WITH ranked AS ("
+            " SELECT symbol, open_interest_usd, oi_change_1h_pct, observed_at,"
+            "        ROW_NUMBER() OVER ("
+            "          PARTITION BY symbol ORDER BY datetime(observed_at) DESC, rowid DESC"
+            "        ) AS rn"
+            " FROM open_interest_snapshots"
+            " WHERE exchange='coinalyze'"
+            "   AND datetime(observed_at)>datetime('now', '-4 hours')"
+            ")"
+            " SELECT symbol, open_interest_usd, oi_change_1h_pct, observed_at"
+            " FROM ranked WHERE rn=1 ORDER BY open_interest_usd DESC LIMIT 10"
         ).fetchall()
         liq_rows = db.execute(
             "SELECT symbol, side, SUM(quantity_usd) as total_usd, COUNT(*) as count "
             "FROM liquidation_events "
-            "WHERE event_time > datetime('now', '-4 hours') "
+            "WHERE exchange='coinalyze' AND event_time > datetime('now', '-4 hours') "
             "GROUP BY symbol, side "
             "ORDER BY total_usd DESC LIMIT 10"
         ).fetchall()
@@ -291,9 +314,24 @@ def _get_flow_context_block() -> str:
         if oi_rows:
             lines.append("Open Interest (top by USD value):")
             for r in oi_rows:
+                try:
+                    oi_usd = float(r["open_interest_usd"])
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(oi_usd) or oi_usd <= 0:
+                    continue
+                delta = r["oi_change_1h_pct"]
+                delta_text = "unavailable"
+                if delta is not None:
+                    try:
+                        parsed_delta = float(delta)
+                    except (TypeError, ValueError):
+                        parsed_delta = None
+                    if parsed_delta is not None and math.isfinite(parsed_delta):
+                        delta_text = f"{parsed_delta:.1f}%"
                 lines.append(
-                    f"  {r['symbol']}: OI=${r['open_interest_usd'] / 1e6:.1f}M "
-                    f"Δ1h={r['oi_change_1h_pct'] or 0:.1f}%"
+                    f"  {r['symbol']}: OI=${oi_usd / 1e6:.1f}M "
+                    f"Delta1h={delta_text}"
                 )
         if liq_rows:
             lines.append("Liquidations (4h aggregated):")
@@ -526,6 +564,11 @@ def enqueue_research_run(run_id: str) -> None:
 
 async def _process_research_run(run_id: str) -> None:
     """Main execution pipeline for a research run."""
+    from aletheia.learning.opportunity_information_policy import (
+        ensure_opportunity_information_policy_epoch,
+    )
+
+    ensure_opportunity_information_policy_epoch()
     run = repo.get_serenity_research_run(run_id)
     if not run:
         logger.error("Research run %s not found", run_id)
@@ -624,6 +667,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
     # ICT methodology mode: single specialized prompt, no multi-lens.
     # Standard mode: iterate over lenses sequentially (rate-limit safe).
     persisted_evidence_ids: list[str] = []
+    promotion_retry_ids: set[str] = set()
     all_evidence_items: list[dict] = []  # all items across all lenses (for Stage 2)
     lens_summaries: dict[str, int] = {}  # lens → count (for synthesis event)
 
@@ -686,7 +730,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         )
         ev.assessed_tier, ev.assessed_by = assess_evidence_tier(ev.model_dump())
         try:
-            repo.insert_serenity_evidence(ev)
+            promotion_retry_ids.update(repo.insert_serenity_evidence(ev) or [])
             persisted_evidence_ids.append(ev.id)
         except Exception as e:
             logger.warning("Failed to persist evidence: %s", e)
@@ -892,9 +936,10 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
     try:
         from aletheia.config.loader import load_config as _load_cfg
         _cfg = _load_cfg()
-        if _cfg.serenity.auto_promote and persisted_opps:
+        promotion_ids = list(dict.fromkeys([*persisted_opps, *promotion_retry_ids]))
+        if _cfg.serenity.auto_promote and promotion_ids:
             _auto_promote_serenity_opportunities(
-                persisted_opps,
+                promotion_ids,
                 _cfg,
                 run_id=run_id,
             )

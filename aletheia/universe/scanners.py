@@ -13,6 +13,8 @@ from aletheia.universe.funding_units import (
     MILD_FUNDING_RATE,
 )
 
+_DERIVATIVES_MARKET_TYPES = frozenset({"perp", "swap", "futures", "usdt_futures"})
+
 
 def score_momentum(feat: dict) -> tuple[float, list[str], str | None]:
     """Score trend continuation: relative strength + volume confirmation.
@@ -314,6 +316,9 @@ def score_derivatives(feat: dict) -> tuple[float, list[str], str | None]:
 
     Returns (score, reasons, direction).
     """
+    if str(feat.get("market_type") or "").lower() not in _DERIVATIVES_MARKET_TYPES:
+        return 0.0, [], None
+
     score = 0.0
     reasons = []
     direction = None

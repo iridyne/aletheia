@@ -93,28 +93,53 @@ def compare_policy_epochs(
 
 
 def persist_policy_epoch(epoch: PolicyEpoch) -> str:
-    """Return the durable open epoch id, rotating when effective values change."""
-    from aletheia.learning.ledger import (
-        close_policy_epoch, get_open_policy_epoch, insert_record,
-    )
+    """Return one durable open epoch id, rotating atomically on policy changes."""
+    from aletheia.learning.ledger import insert_record
     from aletheia.learning.models import LearningPolicyEpoch
+    from aletheia.storage.repositories import transaction
+    from aletheia.storage.sqlite import get_db
 
-    current = get_open_policy_epoch(epoch.epoch_kind)
-    if current and current.get("effective_values_hash") == epoch.epoch_hash:
-        return str(current["epoch_id"])
-    now = datetime.now(timezone.utc).isoformat()
-    if current:
-        close_policy_epoch(str(current["epoch_id"]), now)
-    record = LearningPolicyEpoch(
-        epoch_kind=epoch.epoch_kind,
-        effective_values_hash=epoch.epoch_hash,
-        effective_values_json=json.dumps(epoch.effective_values, sort_keys=True, default=str),
-        affected_path_ids_json=json.dumps(epoch.affected_path_ids, sort_keys=True),
-        safety_required=epoch.safety_required,
-        started_at=now,
-    )
-    insert_record("learning_policy_epochs", record)
-    return record.epoch_id
+    with transaction(immediate=True):
+        db = get_db()
+        open_rows = db.execute(
+            "SELECT * FROM learning_policy_epochs "
+            "WHERE epoch_kind=? AND ended_at IS NULL "
+            "ORDER BY started_at DESC, rowid DESC",
+            (epoch.epoch_kind,),
+        ).fetchall()
+        matching = next(
+            (
+                row for row in open_rows
+                if row["effective_values_hash"] == epoch.epoch_hash
+            ),
+            None,
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        if matching is not None:
+            db.execute(
+                "UPDATE learning_policy_epochs SET ended_at=? "
+                "WHERE epoch_kind=? AND ended_at IS NULL AND epoch_id!=?",
+                (now, epoch.epoch_kind, matching["epoch_id"]),
+            )
+            return str(matching["epoch_id"])
+
+        db.execute(
+            "UPDATE learning_policy_epochs SET ended_at=? "
+            "WHERE epoch_kind=? AND ended_at IS NULL",
+            (now, epoch.epoch_kind),
+        )
+        record = LearningPolicyEpoch(
+            epoch_kind=epoch.epoch_kind,
+            effective_values_hash=epoch.epoch_hash,
+            effective_values_json=json.dumps(
+                epoch.effective_values, sort_keys=True, default=str
+            ),
+            affected_path_ids_json=json.dumps(epoch.affected_path_ids, sort_keys=True),
+            safety_required=epoch.safety_required,
+            started_at=now,
+        )
+        insert_record("learning_policy_epochs", record)
+        return record.epoch_id
 
 
 def _without_secrets(value: Any) -> Any:

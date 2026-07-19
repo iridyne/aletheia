@@ -17,6 +17,7 @@ exchange tag: "hyperliquid"
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Any
 
@@ -30,6 +31,7 @@ _HL_INFO_URL = "https://api.hyperliquid.xyz/info"
 # Hyperliquid uses 1-hour funding intervals → ×24×365 for annualized rate.
 _INTERVALS_PER_DAY = 24
 _DAYS_PER_YEAR = 365
+_OI_DELTA_SANITY_PCT = 300.0
 
 
 class HyperliquidCollector:
@@ -49,6 +51,11 @@ class HyperliquidCollector:
 
         Returns {"funding": [...], "open_interest": [...], "errors": [...]}.
         """
+        from aletheia.learning.opportunity_information_policy import (
+            ensure_opportunity_information_policy_epoch,
+        )
+
+        ensure_opportunity_information_policy_epoch()
         funding: list[FundingRateSnapshot] = []
         oi: list[OpenInterestSnapshot] = []
         errors: list[str] = []
@@ -69,7 +76,13 @@ class HyperliquidCollector:
 
         now = datetime.now(timezone.utc).isoformat()
 
-        if meta_ctxs and isinstance(meta_ctxs, list) and len(meta_ctxs) >= 2:
+        if (
+            meta_ctxs
+            and isinstance(meta_ctxs, list)
+            and len(meta_ctxs) >= 2
+            and isinstance(meta_ctxs[0], dict)
+            and isinstance(meta_ctxs[1], list)
+        ):
             universe = meta_ctxs[0].get("universe", [])
             ctxs = meta_ctxs[1]
 
@@ -79,6 +92,8 @@ class HyperliquidCollector:
                 symbol_filter = {s.upper() for s in symbols}
 
             for asset_meta, ctx in zip(universe, ctxs):
+                if not isinstance(asset_meta, dict) or not isinstance(ctx, dict):
+                    continue
                 asset_name = asset_meta.get("name", "")
                 if not asset_name:
                     continue
@@ -136,10 +151,16 @@ def _parse_funding(
         rate = float(rate_str)
     except (ValueError, TypeError):
         return None
-
-    annualized = round(rate * _INTERVALS_PER_DAY * _DAYS_PER_YEAR, 6)
     mark_str = ctx.get("markPx")
-    mark = float(mark_str) if mark_str else None
+    try:
+        mark = float(mark_str)
+    except (ValueError, TypeError):
+        return None
+    annualized = round(rate * _INTERVALS_PER_DAY * _DAYS_PER_YEAR, 6)
+    if not all(math.isfinite(value) for value in (rate, mark, annualized)):
+        return None
+    if mark <= 0:
+        return None
 
     return FundingRateSnapshot(
         symbol=symbol,
@@ -169,17 +190,30 @@ def _parse_oi(
         mark = float(mark_str)
     except (ValueError, TypeError):
         return None
+    if not math.isfinite(oi_coin) or not math.isfinite(mark):
+        return None
+    if oi_coin <= 0 or mark <= 0:
+        return None
 
     oi_usd = oi_coin * mark
+    if not math.isfinite(oi_usd) or oi_usd <= 0:
+        return None
 
-    # Attempt to compute 1h change from previous snapshot
+    # Compute 1h change only from a same-source 45-75 minute baseline.
     oi_change_1h_pct = None
     try:
-        from aletheia.storage.repositories import latest_open_interest
-        prev = latest_open_interest(symbol, exchange="hyperliquid")
-        if prev and prev.get("open_interest_usd") and float(prev["open_interest_usd"]) > 0:
+        from aletheia.storage.repositories import open_interest_near
+        prev = open_interest_near(
+            symbol,
+            "hyperliquid",
+            reference_at=observed_at,
+        )
+        if prev and prev.get("open_interest_usd") is not None:
             prev_usd = float(prev["open_interest_usd"])
-            oi_change_1h_pct = round((oi_usd - prev_usd) / prev_usd * 100, 2)
+            if math.isfinite(prev_usd) and prev_usd > 0:
+                delta = round((oi_usd - prev_usd) / prev_usd * 100, 2)
+                if math.isfinite(delta) and abs(delta) <= _OI_DELTA_SANITY_PCT:
+                    oi_change_1h_pct = delta
     except Exception:
         pass
 
@@ -224,7 +258,7 @@ async def _fetch_predicted_fundings(
             continue
         asset_name = item[0]
         venues = item[1]
-        if not isinstance(asset_name, str):
+        if not isinstance(asset_name, str) or not isinstance(venues, list):
             continue
 
         canonical = f"{asset_name}/USDT"
@@ -236,7 +270,7 @@ async def _fetch_predicted_fundings(
             if not isinstance(venue_entry, list) or len(venue_entry) < 2:
                 continue
             venue_name, venue_data = venue_entry[0], venue_entry[1]
-            if venue_name != "HlPerp":
+            if venue_name != "HlPerp" or not isinstance(venue_data, dict):
                 continue
             rate_str = venue_data.get("fundingRate")
             if rate_str is None:
@@ -245,20 +279,33 @@ async def _fetch_predicted_fundings(
                 rate = float(rate_str)
             except (ValueError, TypeError):
                 continue
-
-            interval_hours = venue_data.get("fundingIntervalHours", 1)
+            try:
+                interval_hours = float(venue_data.get("fundingIntervalHours", 1))
+            except (ValueError, TypeError):
+                continue
+            if (
+                not math.isfinite(rate)
+                or not math.isfinite(interval_hours)
+                or interval_hours <= 0
+            ):
+                continue
             intervals_per_year = (24 / interval_hours) * 365
             annualized = round(rate * intervals_per_year, 6)
+            if not math.isfinite(annualized):
+                continue
 
             next_ts = venue_data.get("nextFundingTime")
             next_str = None
-            if next_ts:
+            if next_ts is not None:
                 try:
+                    parsed_next_ts = float(next_ts)
+                    if not math.isfinite(parsed_next_ts) or parsed_next_ts <= 0:
+                        continue
                     next_str = datetime.fromtimestamp(
-                        next_ts / 1000, tz=timezone.utc
+                        parsed_next_ts / 1000, tz=timezone.utc
                     ).isoformat()
                 except Exception:
-                    pass
+                    continue
 
             results.append(FundingRateSnapshot(
                 symbol=canonical,

@@ -33,7 +33,7 @@ _EFFECTIVE_VALUES = {
     "candidate_specific_defer": True,
     "blind_direct_skip_counterfactual": True,
     "missing_numeric_values_are_unknown": True,
-    "decision_evidence_manifest": "operator-candidate-v2",
+    "decision_evidence_manifest": "operator-candidate-v3",
     # B1.4: exact technical delivery and Learning attribution happen at the
     # same durable carrier scope. Missing technical facts defer before inference;
     # a new exact feature snapshot changes the fingerprint and reopens the call.

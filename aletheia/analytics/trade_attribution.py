@@ -16,6 +16,116 @@ from aletheia.storage import repositories as repo
 
 logger = logging.getLogger("aletheia.analytics.trade_attribution")
 
+_NOT_RECORDED = "not recorded"
+_AMBIGUOUS = "ambiguous_integrity_error"
+_CONFLICTING = "conflicting_integrity_error"
+_DECISION_IDENTITY_FIELDS = (
+    "proposal_id",
+    "opportunity_id",
+    "symbol",
+    "direction",
+    "market_type",
+)
+
+
+def _recorded_json(raw: Any, expected_type: type) -> Any:
+    if isinstance(raw, expected_type):
+        return raw if raw else _NOT_RECORDED
+    if not isinstance(raw, str) or not raw.strip():
+        return _NOT_RECORDED
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return _NOT_RECORDED
+    return parsed if isinstance(parsed, expected_type) and parsed else _NOT_RECORDED
+
+
+def proposal_decision_context(
+    proposal_id: str | None,
+    *,
+    proposal: dict | None = None,
+) -> dict[str, Any]:
+    """Read complete decision context through one exact Proposal identity."""
+    if not proposal_id:
+        return {
+            "decision_context_status": _NOT_RECORDED,
+            "pi_decision_reasoning": _NOT_RECORDED,
+            "pi_decision_bear_case": _NOT_RECORDED,
+            "pi_decision_assumptions": _NOT_RECORDED,
+            "proposal_agent_rationale": _NOT_RECORDED,
+            "decision_evidence_manifest": _NOT_RECORDED,
+            "decision_learning_manifest": _NOT_RECORDED,
+        }
+    exact_proposal = proposal or _safe_get(repo.get_trade_proposal, proposal_id)
+    decision = _safe_get(repo.get_pi_decision_for_proposal, proposal_id)
+
+    def integrity_context(status: str) -> dict[str, Any]:
+        rationale = (exact_proposal or {}).get("agent_rationale")
+        return {
+            "decision_context_status": status,
+            "pi_decision_reasoning": status,
+            "pi_decision_bear_case": status,
+            "pi_decision_assumptions": status,
+            "proposal_agent_rationale": (
+                str(rationale) if rationale is not None and str(rationale).strip()
+                else _NOT_RECORDED
+            ),
+            "decision_evidence_manifest": status,
+            "decision_learning_manifest": status,
+        }
+
+    if (decision or {}).get("_integrity_error") == _AMBIGUOUS:
+        return integrity_context(_AMBIGUOUS)
+    if decision is None or exact_proposal is None:
+        return integrity_context(_NOT_RECORDED)
+
+    proposal_identity = {
+        "proposal_id": exact_proposal.get("id"),
+        "opportunity_id": exact_proposal.get("opportunity_id"),
+        "symbol": exact_proposal.get("symbol"),
+        "direction": exact_proposal.get("direction"),
+        "market_type": exact_proposal.get("market_type"),
+    }
+    decision_identity = {
+        field: decision.get(field) for field in _DECISION_IDENTITY_FIELDS
+    }
+    if any(
+        not proposal_identity[field] or not decision_identity[field]
+        for field in _DECISION_IDENTITY_FIELDS
+    ):
+        return integrity_context(_NOT_RECORDED)
+    if (
+        proposal_identity["proposal_id"] != proposal_id
+        or decision_identity["proposal_id"] != proposal_id
+    ):
+        return integrity_context(_CONFLICTING)
+    if any(
+        proposal_identity[field] != decision_identity[field]
+        for field in _DECISION_IDENTITY_FIELDS
+    ):
+        return integrity_context(_CONFLICTING)
+
+    def text(value: Any) -> str:
+        return str(value) if value is not None and str(value).strip() else _NOT_RECORDED
+
+    return {
+        "decision_context_status": "available",
+        "pi_decision_reasoning": text(decision.get("reasoning")),
+        "pi_decision_bear_case": text(decision.get("bear_case")),
+        "pi_decision_assumptions": _recorded_json(
+            decision.get("key_assumptions"), list
+        ),
+        "proposal_agent_rationale": text(
+            (exact_proposal or {}).get("agent_rationale")
+        ),
+        "decision_evidence_manifest": _recorded_json(
+            decision.get("evidence_manifest_json"), dict
+        ),
+        "decision_learning_manifest": _recorded_json(
+            decision.get("learning_manifest_json"), dict
+        ),
+    }
+
 
 def build_trade_attribution_rows(limit: int = 500) -> list[dict]:
     """Build attribution rows for closed paper/demo positions.
@@ -47,7 +157,15 @@ def _build_row(pos: dict) -> dict | None:
         or proposal.get("opportunity_id") != direct_opportunity_id
     ):
         return None
-    opportunity = _safe_get(repo.get_opportunity, direct_opportunity_id)
+    trade_school = pos.get("trade_school") or proposal.get("trade_school")
+    serenity_opp = None
+    opportunity = None
+    if trade_school == "serenity":
+        serenity_opp = _safe_get(
+            repo.get_serenity_opportunity, direct_opportunity_id
+        )
+    else:
+        opportunity = _safe_get(repo.get_opportunity, direct_opportunity_id)
     strategy = _safe_get(repo.get_strategy, pos.get("strategy_id"))
     risk_decision = _safe_get(
         lambda decision_id: repo._select_one("risk_decisions", decision_id),
@@ -55,14 +173,11 @@ def _build_row(pos: dict) -> dict | None:
     )
     universe_member = _lookup_universe_member(opportunity)
 
-    # Serenity fallback: when the position's opportunity_id points to
-    # serenity_opportunities (not market_observer's opportunities table),
-    # the join above returns None. Fall back to serenity attribution.
-    serenity_opp = None
-    if opportunity is None and pos.get("trade_school") == "serenity":
-        serenity_opp = _safe_get(repo.get_serenity_opportunity, direct_opportunity_id)
     if opportunity is None and serenity_opp is None:
         return None
+    decision_context = proposal_decision_context(
+        proposal.get("id"), proposal=proposal
+    )
 
     # Compute realized_pnl_pct
     entry_price = float(pos.get("entry_price") or 0)
@@ -132,6 +247,7 @@ def _build_row(pos: dict) -> dict | None:
         "holding_hours": holding_hours,
         "risk_approved": risk_decision.get("approved") if risk_decision else None,
         "risk_violations": _parse_json_list(risk_decision.get("violations")) if risk_decision else [],
+        **decision_context,
     }
 
 

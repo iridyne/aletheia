@@ -17,6 +17,7 @@ before the published regime switches (prevents flicker during transitions).
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -97,6 +98,28 @@ def detect_regime(
     Returns:
         MarketRegime with state, confidence, and directional bias.
     """
+    def finite_value(value: float | None) -> float | None:
+        if value is None:
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if math.isfinite(parsed) else None
+
+    if btc_closes_1d:
+        parsed_closes = [finite_value(value) for value in btc_closes_1d]
+        btc_closes_1d = (
+            [value for value in parsed_closes if value is not None]
+            if all(value is not None for value in parsed_closes)
+            else None
+        )
+    vix = finite_value(vix)
+    avg_funding_rate = finite_value(avg_funding_rate)
+    total_market_cap_change_7d = finite_value(total_market_cap_change_7d)
+    atr_7d = finite_value(atr_7d)
+    atr_30d = finite_value(atr_30d)
+
     vote = _RegimeVote()
     signals: dict = {}
 

@@ -1614,6 +1614,13 @@ def _build_assessment_prompt(ctx: dict) -> str:
     ) or ""
 
     serenity_opps = layer3.get("serenity_opportunities", [])
+
+    def bounded_serenity_text(value, limit: int) -> str:
+        text = str(value or "")
+        if len(text) <= limit:
+            return text
+        return text[:limit].rstrip() + " ... [display bounded; full fact persisted]"
+
     # D2: show the INDEPENDENTLY assessed tier (authoritative gate), not the self-grade.
     # Phase 2: also surface the deterministic score/bucket/evidence_count so the PI
     # weighs research picks on the same transparent scale the Serenity scorer uses.
@@ -1627,8 +1634,15 @@ def _build_assessment_prompt(ctx: dict) -> str:
             f"  {o['symbol']}{_eq_tag} {o.get('direction', '?')} "
             f"[conf={o.get('confidence_score', '?')} tier={o.get('assessed_tier') or o.get('evidence_tier', '?')} "
             f"score={o.get('score', '?')} bucket={o.get('bucket', '?')} evidence={o.get('evidence_count', 0)}]: "
-            f"{o.get('thesis', '')}"
-            + (f"\n      key evidence: {o['key_evidence']}" if o.get("key_evidence") else "")
+            f"{bounded_serenity_text(o.get('thesis_display', o.get('thesis', '')), 1300)}"
+            + (
+                "\n      key evidence: "
+                + bounded_serenity_text(
+                    o.get("key_evidence_display", o.get("key_evidence", "")), 2100
+                )
+                if o.get("key_evidence_display") or o.get("key_evidence")
+                else ""
+            )
         )
     serenity_lines = "\n".join(_serenity_lines) or ""
 

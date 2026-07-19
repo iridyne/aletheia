@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 
 NOW = datetime(2026, 7, 11, 8, 0, tzinfo=timezone.utc)
 
@@ -102,6 +104,51 @@ def test_context_builder_omits_empty_stale_derivatives(monkeypatch):
     snapshot = build_market_context_from_db(["BTC/USDT"], now=NOW)
     assert snapshot.leverage == {}
     assert "derivatives" in snapshot.stale_domains
+
+
+def test_context_builder_spot_never_reads_derivatives(monkeypatch):
+    from aletheia.data.context_builder import build_market_context_from_db
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(repo, "latest_orderbook", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repo, "latest_macro_snapshot", lambda: None)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("spot context must not query derivatives")
+
+    monkeypatch.setattr(repo, "latest_funding_rate", unexpected)
+    monkeypatch.setattr(repo, "latest_open_interest", unexpected)
+    monkeypatch.setattr(repo, "recent_liquidations", unexpected)
+
+    snapshot = build_market_context_from_db(
+        ["BTC/USDT"], exchange="okx", market_type="spot", now=NOW,
+    )
+
+    assert snapshot.leverage == {}
+
+
+@pytest.mark.parametrize("market_type", ["", "unknown", None])
+def test_context_builder_unknown_market_type_fails_closed_without_derivatives(
+    monkeypatch, market_type,
+):
+    from aletheia.data.context_builder import build_market_context_from_db
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(repo, "latest_orderbook", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repo, "latest_macro_snapshot", lambda: None)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("unknown market identity must not query derivatives")
+
+    monkeypatch.setattr(repo, "latest_funding_rate", unexpected)
+    monkeypatch.setattr(repo, "latest_open_interest", unexpected)
+    monkeypatch.setattr(repo, "recent_liquidations", unexpected)
+
+    snapshot = build_market_context_from_db(
+        ["BTC/USDT"], exchange="okx", market_type=market_type, now=NOW,
+    )
+
+    assert snapshot.leverage == {}
 
 
 def test_universe_db_fallback_uses_only_fresh_exact_venue_rows(monkeypatch):

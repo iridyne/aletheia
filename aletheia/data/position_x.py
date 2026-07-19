@@ -486,6 +486,7 @@ def build_position_x_agent_context(
         "dimension_reads": {},
         "risk_context": {},
         "caveats": [],
+        "source_identity": None,
         "rendered": "Position X (advisory only): insufficient_data",
     }
     if not row:
@@ -543,6 +544,14 @@ def build_position_x_agent_context(
         "dimension_reads": dimension_reads,
         "risk_context": risk_context,
         "caveats": caveats,
+        "source_identity": {
+            "id": row.get("id"),
+            "source": row.get("source"),
+            "source_ref": row.get("source_ref"),
+            "source_hash": row.get("source_hash"),
+            "as_of_time": row.get("as_of_time"),
+            "observed_at": row.get("observed_at"),
+        },
         "rendered": ": ".join([rendered_parts[0], "; ".join(rendered_parts[1:])]) if len(rendered_parts) > 1 else rendered_parts[0],
     }
 

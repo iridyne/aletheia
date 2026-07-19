@@ -34,6 +34,7 @@ collectors (FRED, CoinGlass guard pattern).
 from __future__ import annotations
 
 import logging
+import math
 import os
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -51,6 +52,7 @@ _AGG_SUFFIX = "_PERP.A"
 
 # How far back to fetch liquidation history per collection tick.
 _LIQUIDATION_WINDOW_HOURS = 4
+_OI_DELTA_SANITY_PCT = 300.0
 
 
 class CoinalyzeCollector:
@@ -71,6 +73,11 @@ class CoinalyzeCollector:
                 "errors": [str, ...],
             }
         """
+        from aletheia.learning.opportunity_information_policy import (
+            ensure_opportunity_information_policy_epoch,
+        )
+
+        ensure_opportunity_information_policy_epoch()
         api_key = _load_api_key()
         if not api_key:
             logger.debug("coinalyze: no API key configured — skipping collection")
@@ -155,30 +162,36 @@ async def _fetch_open_interest(
             if not canonical:
                 continue
 
-            oi_usd = item.get("open_interest_usd") or item.get("openInterestUsd")
-            if oi_usd is None:
-                # Try coin-denominated OI if USD not available
-                oi_coin = item.get("open_interest") or item.get("openInterest")
-                if oi_coin is None:
-                    continue
-                oi_usd = float(oi_coin)  # best-effort; no mark price available here
-                oi_coin_val = float(oi_coin)
-            else:
-                oi_usd = float(oi_usd)
-                oi_coin_val = None
+            raw_oi_usd = item.get("open_interest_usd")
+            if raw_oi_usd is None:
+                raw_oi_usd = item.get("openInterestUsd")
+            if raw_oi_usd is None:
+                continue
+            try:
+                oi_usd = float(raw_oi_usd)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(oi_usd) or oi_usd <= 0:
+                continue
 
-            # Compute 1h change against last stored value for the same source.
+            # Compute 1h change against a same-source 45-75 minute baseline.
             # Must pass exchange="coinalyze" so the lookup stays within Coinalyze
             # rows; without it _latest_deriv_where(None) excludes cross-venue tags
             # and returns the primary-exchange row, mixing heterogeneous OI pools.
             oi_change_1h_pct: float | None = None
             try:
-                from aletheia.storage.repositories import latest_open_interest
-                prev = latest_open_interest(canonical, exchange="coinalyze")
-                if prev and prev.get("open_interest_usd") and oi_usd:
+                from aletheia.storage.repositories import open_interest_near
+                prev = open_interest_near(
+                    canonical,
+                    "coinalyze",
+                    reference_at=now_iso,
+                )
+                if prev and prev.get("open_interest_usd") is not None:
                     prev_oi = float(prev["open_interest_usd"])
-                    if prev_oi > 0:
-                        oi_change_1h_pct = round((oi_usd - prev_oi) / prev_oi * 100, 2)
+                    if math.isfinite(prev_oi) and prev_oi > 0:
+                        delta = round((oi_usd - prev_oi) / prev_oi * 100, 2)
+                        if math.isfinite(delta) and abs(delta) <= _OI_DELTA_SANITY_PCT:
+                            oi_change_1h_pct = delta
             except Exception:
                 pass
 
@@ -186,7 +199,7 @@ async def _fetch_open_interest(
                 symbol=canonical,
                 exchange="coinalyze",
                 open_interest_usd=oi_usd,
-                open_interest_coin=oi_coin_val,
+                open_interest_coin=None,
                 oi_change_1h_pct=oi_change_1h_pct,
                 long_short_ratio=None,  # Coinalyze OI endpoint doesn't include LSR
                 observed_at=now_iso,
@@ -230,15 +243,25 @@ async def _fetch_liquidations(
                 for item in data:
                     # Coinalyze liquidation-history items contain:
                     #   t (timestamp ms), lsl (long liq USD), ssl (short liq USD)
-                    ts_ms = item.get("t")
-                    lsl = float(item.get("lsl") or 0)  # long side liquidated
-                    ssl = float(item.get("ssl") or 0)  # short side liquidated
-
-                    event_time = (
-                        datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat()
-                        if ts_ms
-                        else now.isoformat()
-                    )
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        ts_ms = float(item.get("t"))
+                        lsl = float(item.get("lsl") or 0)
+                        ssl = float(item.get("ssl") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if not all(math.isfinite(value) for value in (ts_ms, lsl, ssl)):
+                        continue
+                    if ts_ms <= 0 or lsl < 0 or ssl < 0:
+                        continue
+                    try:
+                        event_dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+                    except (OverflowError, OSError, ValueError):
+                        continue
+                    if event_dt < since or event_dt > now + timedelta(minutes=5):
+                        continue
+                    event_time = event_dt.isoformat()
 
                     # Emit two events (one per side) when non-zero
                     if lsl > 0:

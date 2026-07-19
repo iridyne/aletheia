@@ -117,3 +117,28 @@ def test_serenity_stage_index_mapping():
         }
         score = score_serenity_opportunity(opportunity, evidence=[], risk_gates=[])
         assert score["stage_index"] == expected, stage
+
+
+def test_legacy_unassessed_evidence_is_independently_assessed_before_scoring():
+    opportunity = {
+        "id": "legacy-unassessed",
+        "evidence_tier": "disclosed",
+        "assessed_tier": None,
+        "stage": "research",
+        "researchability_grade": "A",
+        "confidence_score": 50,
+    }
+    evidence = [{
+        "id": "legacy-official-filing",
+        "title": "Official filing",
+        "source": "official",
+        "tier": "disclosed",
+        "assessed_tier": None,
+        "url": "https://sec.gov/filing/legacy",
+        "supports": True,
+    }]
+
+    score = score_serenity_opportunity(opportunity, evidence=evidence, risk_gates=[])
+
+    assert score["evidence_score"] == 28
+    assert score["reasons"]["evidence_tier"] == "disclosed"

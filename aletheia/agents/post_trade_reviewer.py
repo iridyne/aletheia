@@ -5,6 +5,7 @@ from the trade_case_builder module (deterministic, no LLM).
 """
 
 import hashlib
+import json
 import logging
 
 from aletheia.agents import register_agent
@@ -16,6 +17,8 @@ from aletheia.knowledge.manager import create_post_trade_review
 logger = logging.getLogger("aletheia.agents.post_trade_reviewer")
 
 _STRATEGY_ATTEMPT_LIMIT = 20
+_REVIEW_INPUT_BUDGET_CHARS = 60_000
+_REVIEW_POSITION_LIMIT = 10
 _STRATEGY_ROUND_ROBIN_STATE_KEY = (
     "agents.post_trade_reviewer.strategy_round_robin.v1"
 )
@@ -47,6 +50,31 @@ def _review_already_written(strategy_id: str | None, window_key: str) -> bool:
         (strategy_id, f"%{tag_fragment}%"),
     ).fetchone()
     return row is not None
+
+
+def _reviewed_position_ids(strategy_id: str | None) -> set[str]:
+    """Return only Position identities actually included in prior reviews."""
+    from aletheia.storage.sqlite import get_db
+
+    rows = get_db().execute(
+        "SELECT tags FROM knowledge_items "
+        "WHERE item_type='post_trade_review' AND strategy_id IS ?",
+        (strategy_id,),
+    ).fetchall()
+    reviewed: set[str] = set()
+    for row in rows:
+        try:
+            tags = json.loads(row["tags"] or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(tags, list):
+            continue
+        reviewed.update(
+            str(tag).split(":", 1)[1]
+            for tag in tags
+            if str(tag).startswith("position:")
+        )
+    return reviewed
 
 
 def _closed_strategy_page(
@@ -126,6 +154,11 @@ def _closed_strategy_page(
 @register_agent("post_trade_reviewer")
 async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Review centrally eligible closed outcomes grouped by strategy."""
+    from aletheia.learning.opportunity_information_policy import (
+        ensure_opportunity_information_policy_epoch,
+    )
+
+    ensure_opportunity_information_policy_epoch()
     outputs: list[str] = []
     errors: list[str] = []
 
@@ -160,14 +193,101 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
                 completed_attempt = True
                 continue
             eligible_window_seen = True
+            reviewed_ids = _reviewed_position_ids(strategy_id)
+            strat_outcomes = [
+                outcome for outcome in strat_outcomes
+                if str(outcome["id"]) not in reviewed_ids
+            ]
+            if not strat_outcomes:
+                outputs.append(
+                    f"post_trade_review_skipped:already_reviewed:{strategy_id}"
+                )
+                completed_attempt = True
+                continue
 
-            # Keep the historical helper/tag contract, but fingerprint eligible
-            # Position identities rather than arbitrary fills.
-            # Prevents redundant LLM calls when the agent runs every 4h with the
-            # same static outcome pool (the historical review flood bug).
+            from aletheia.analytics.trade_attribution import proposal_decision_context
+
+            prompt_suffix = "\n\nWrite a post-trade review."
+            header = (
+                f"Strategy: {strategy_id or 'global'}. "
+                f"Eligible closed outcomes: {len(strat_outcomes)}."
+                "\n\nPosition Details:\n"
+            )
+            coverage_reserve = len(
+                f"Included complete position records: {len(strat_outcomes)}. "
+                f"Omitted complete position records: {len(strat_outcomes)} "
+                "(position limit or input budget; no selected record was truncated)."
+            ) + 1
+            detail_budget = max(
+                0,
+                _REVIEW_INPUT_BUDGET_CHARS
+                - len(header)
+                - len(prompt_suffix)
+                - coverage_reserve,
+            )
+            position_details = []
+            selected_positions: list[dict] = []
+            used_detail_chars = 0
+            for position in strat_outcomes:
+                if len(position_details) >= _REVIEW_POSITION_LIMIT:
+                    break
+
+                decision_context = proposal_decision_context(
+                    position.get("proposal_id")
+                )
+                detail = (
+                    f"id={position.get('id', '?')} "
+                    f"{position.get('symbol', '?')} {position.get('direction', '?')} "
+                    f"entry={position.get('entry_price')} "
+                    f"exit={position.get('current_price')} "
+                    f"net_pnl={position.get('realized_pnl')} "
+                    f"regime={position.get('regime_tag', '?')}"
+                )
+                entry_ctx = position.get("entry_market_summary") or ""
+                if entry_ctx:
+                    detail += f" entry_context={entry_ctx}"
+                for label, field in (
+                    ("decision_context_status", "decision_context_status"),
+                    ("pi_reasoning", "pi_decision_reasoning"),
+                    ("bear_case", "pi_decision_bear_case"),
+                    ("assumptions", "pi_decision_assumptions"),
+                    ("proposal_rationale", "proposal_agent_rationale"),
+                    ("evidence_manifest", "decision_evidence_manifest"),
+                    ("learning_manifest", "decision_learning_manifest"),
+                ):
+                    value = decision_context[field]
+                    if isinstance(value, (dict, list)):
+                        value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+                    detail += f"\n  {label}={value}"
+                separator_chars = 1 if position_details else 0
+                if len(detail) + separator_chars > detail_budget - used_detail_chars:
+                    continue
+                position_details.append(detail)
+                selected_positions.append(position)
+                used_detail_chars += len(detail) + separator_chars
+            omitted_count = len(strat_outcomes) - len(position_details)
+            coverage_line = (
+                f"Included complete position records: {len(position_details)}. "
+                f"Omitted complete position records: {omitted_count} "
+                "(position limit or input budget; no selected record was truncated)."
+            )
+            positions_block = (
+                "\n".join(position_details)
+                if position_details
+                else "No position details available."
+            )
+            ctx = f"{header}{coverage_line}\n{positions_block}"
+
+            if not selected_positions:
+                outputs.append(
+                    f"post_trade_review_skipped:no_complete_records_fit:{strategy_id}"
+                )
+                completed_attempt = True
+                continue
+
             window_items = [
-                {"id": f"position:{outcome['id']}"}
-                for outcome in strat_outcomes
+                {"id": f"position:{position['id']}"}
+                for position in selected_positions
             ]
             window_key = _fills_window_key(strategy_id, window_items)
             if _review_already_written(strategy_id, window_key):
@@ -181,30 +301,6 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
                 completed_attempt = True
                 continue
 
-            position_details = []
-            for position in strat_outcomes[:10]:
-                detail = (
-                    f"{position.get('symbol', '?')} {position.get('direction', '?')} "
-                    f"entry={position.get('entry_price')} "
-                    f"exit={position.get('current_price')} "
-                    f"net_pnl={position.get('realized_pnl')} "
-                    f"regime={position.get('regime_tag', '?')}"
-                )
-                entry_ctx = position.get("entry_market_summary") or ""
-                if entry_ctx:
-                    detail += f" entry_context={entry_ctx[:200]}"
-                position_details.append(detail)
-            positions_block = (
-                "\n".join(position_details)
-                if position_details
-                else "No position details available."
-            )
-            ctx = (
-                f"Strategy: {strategy_id or 'global'}. "
-                f"Eligible closed outcomes: {len(strat_outcomes)}."
-                f"\n\nPosition Details:\n{positions_block}"
-            )
-
             content, err = await llm_complete(
                 system=(
                     "You are a post-trade reviewer for an autonomous crypto paper-trading system. "
@@ -217,7 +313,7 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
                     "commentary. If PnL is 'open', say the trade is unresolved rather than guessing. "
                     "Under 200 words."
                 ),
-                user=f"{ctx}\n\nWrite a post-trade review.",
+                user=f"{ctx}{prompt_suffix}",
                 max_tokens=600,
             )
             log_tool(run_id, "llm_complete", "observe", True)
@@ -242,8 +338,8 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
                 tags=[
                     f"window:{window_key}",
                     *[
-                        f"position:{outcome['id']}"
-                        for outcome in strat_outcomes
+                        f"position:{position['id']}"
+                        for position in selected_positions
                     ],
                 ],
             )

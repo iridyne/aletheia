@@ -86,6 +86,21 @@
 > epochs; b1.3 and unlinked prompt-bundle observations are historical baselines and
 > must not be pooled.
 
+> **2026-07-19 Opportunity information integrity epoch**:
+> `opportunity_information_integrity/v1` closes every earlier information-input
+> window. Observer admission now uses structured 1h RSI/ATR facts; cross-venue OI
+> uses a same-source 45-75 minute baseline; spot excludes derivatives structure;
+> regime uses true seven-day market-cap and completed-daily true range; prediction
+> direction is polarity-aware; news requires exact entities plus successful bounded
+> analysis; Opportunity and PiDecision manifests preserve T0 trigger and rendered T1
+> source identities. Serenity exact-carrier context, partial-theme retry, active
+> evidence reassessment, and complete post-trade rationale consumption are part of
+> the same deployment. This combined B-class repair intentionally starts one new
+> window because the treatments cannot be independently attributed when deployed
+> together. Do not pool conversion, decision, research, review, or outcome metrics
+> with any pre-v1 data. Risk, Execution, Exchange, Live, credentials, sizing, and
+> hard limits are unchanged.
+
 ---
 
 ## 核心赌注
