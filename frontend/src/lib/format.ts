@@ -122,6 +122,100 @@ export function fmtPct(
   return `${pct.toFixed(d)}%`
 }
 
+/**
+ * Space-constrained numeric formatter for metric tiles where the display
+ * budget is a fixed ~7 character cell (roughly "6 digits + 1 decimal point"
+ * in mono at 20.8px). Uses SI unit suffixes (k / M / B / T) so a tile
+ * never overflows when the integer part grows; keeps the subscript-zero
+ * notation for very small decimals.
+ *
+ * Budget by magnitude (numeric part only; sign is separate):
+ *
+ *   0                    → "0.00"        (4 chars)
+ *   0 < |v| < 1
+ *     leading zeros < 3  → "0.234"       (3 sig figs, expanded)
+ *                        → "0.0234"
+ *                        → "0.00234"
+ *     leading zeros ≥ 3  → "0.0₃234"     (3 sig figs, subscript)
+ *   1 ≤ |v| < 10         → "1.2346"      (4 decimals)
+ *   10 ≤ |v| < 100       → "12.346"      (3 decimals)
+ *   100 ≤ |v| < 1_000    → "123.46"      (2 decimals)
+ *   1_000 ≤ |v| < 10_000 → "1.235k"      (k suffix)
+ *   ... etc for M (10^6), B (10^9), T (10^12)
+ *
+ * The precision loss versus fmtNum is deliberate — a metric tile is a
+ * glance value; the drill-down tables use fmtNum for full precision.
+ *
+ * Companion: fmtCompactSigned prepends `+` on non-negative values (the
+ * `−` sign is already baked in by JS number → string).
+ */
+const COMPACT_SI: [number, string][] = [
+  [1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'k'],
+]
+
+export function fmtCompact(
+  value: number | string | null | undefined,
+  opts?: { dash?: string },
+): string {
+  const dash = opts?.dash ?? '—'
+  if (value == null || value === '') return dash
+  const n = Number(value)
+  if (!Number.isFinite(n)) return dash
+  if (n === 0) return '0.00'
+
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '-' : ''
+
+  // Large magnitudes: SI suffix + 3 sig figs (yields 5-6 chars incl. suffix).
+  for (const [threshold, suffix] of COMPACT_SI) {
+    if (abs >= threshold) {
+      const scaled = abs / threshold
+      // 3 significant figures: 1.23 / 12.3 / 123
+      const decimals = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2
+      return `${sign}${scaled.toFixed(decimals)}${suffix}`
+    }
+  }
+
+  // 1 ≤ |v| < 1000: allocate decimals inversely to integer width so the
+  // total digit count stays at 5 (matches "6 digits + 1 point" budget).
+  if (abs >= 1) {
+    const intDigits = Math.floor(Math.log10(abs)) + 1
+    const decimals = Math.max(0, 5 - intDigits)  // 1.xxxx / 12.xxx / 123.xx
+    return `${sign}${abs.toFixed(decimals)}`
+  }
+
+  // 0 < |v| < 1 — reuse fmtNum's leading-zero rule but with 3 sig figs
+  // (fmtNum uses 4; tightening by 1 saves a character on the tile).
+  const SIG = 3
+  const [mantissaStr, expPartStr] = abs.toExponential(SIG - 1).split('e')
+  const exp = Number.parseInt(expPartStr, 10)
+  if (exp >= 0) {
+    // Rounded up to ≥1, e.g. 0.9999 → 1.00. Route via decimal-allocation.
+    const rounded = Number(mantissaStr) * 10 ** exp
+    const intDigits = Math.floor(Math.log10(rounded)) + 1
+    const decimals = Math.max(0, 5 - intDigits)
+    return `${sign}${rounded.toFixed(decimals)}`
+  }
+  const leadingZeros = -exp - 1
+  const mantissaDigits = mantissaStr.replace('.', '')
+  if (leadingZeros < SUBSCRIPT_THRESHOLD) {
+    return sign + abs.toFixed(leadingZeros + SIG)
+  }
+  return `${sign}0.0${subscriptOf(leadingZeros)}${mantissaDigits}`
+}
+
+/** fmtCompact with an explicit `+` on non-negative values (delta/PnL style). */
+export function fmtCompactSigned(
+  value: number | string | null | undefined,
+  opts?: { dash?: string },
+): string {
+  const dash = opts?.dash ?? '—'
+  if (value == null || value === '') return dash
+  const n = Number(value)
+  if (!Number.isFinite(n)) return dash
+  return `${n >= 0 ? '+' : ''}${fmtCompact(n, opts)}`
+}
+
 /** fmtSigned with ▲/▼ direction arrow prepended (WCAG 1.4.1 — not color-only). */
 export function fmtDelta(
   value: number | string | null | undefined,

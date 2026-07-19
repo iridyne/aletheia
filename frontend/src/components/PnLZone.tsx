@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import MetricTile from './MetricTile'
 import AccountEquityChart from '../charts/AccountEquityChart'
-import { fmtNum, fmtSigned, fmtSymbol } from '../lib/format'
+import { fmtNum, fmtSigned, fmtCompactSigned, fmtSymbol } from '../lib/format'
 
 // Palette for pie slices — cycles if more than 6 coins (rare)
 const SLICE_COLORS = ['#00e5ff', '#7c3aed', '#f59e0b', '#10b981', '#f43f5e', '#3b82f6']
@@ -308,33 +308,35 @@ export default function PnLZone() {
         </div>
 
         {/* Context tiles — hover shows per-symbol breakdown, click navigates.
-            fmtSigned (not fmtDelta) — the leading +/- sign is already a
-            non-color secondary channel per WCAG 1.4.1; the ▲/▼ triangle
-            on top would be redundant double-encoding on these three PnL
-            values. Colour still carries green/red for glance readers. */}
+            fmtCompactSigned enforces a fixed ~7-char budget: sub-1 values
+            get 3 sig figs (or subscript notation past 3 leading zeros),
+            4-digit-and-up integers switch to k/M/B suffix. Prevents the
+            metric-value from overflowing a narrow 4-col tile at 800px
+            viewports as the PnL magnitude grows. Full precision remains
+            available in the /trades blotter drill-down. */}
         <div className="pnl-tiles">
           <HoverTile
             label="Today PnL"
-            value={todayNum == null ? 'not available' : fmtSigned(todayNum)}
+            value={todayNum == null ? 'not available' : fmtCompactSigned(todayNum)}
             tone={toneOf(todayNum)}
             context={todayNum == null
               ? todayComplete ? 'no data' : 'funding or close economics unavailable'
               : !todayComplete
-                ? dayPct != null ? `${fmtSigned(dayPct)}% · some closes unverified` : 'some closes unverified'
-                : dayPct != null ? `${fmtSigned(dayPct)}% of managed` : undefined}
+                ? dayPct != null ? `${fmtCompactSigned(dayPct)}% · some closes unverified` : 'some closes unverified'
+                : dayPct != null ? `${fmtCompactSigned(dayPct)}% of managed` : undefined}
             onClick={() => navigate('/trades?tab=blotter')}
             tooltip={todayPnlBySymbol}
           />
           <HoverTile
             label="Unrealized"
-            value={fmtSigned(unrealNum)}
+            value={fmtCompactSigned(unrealNum)}
             tone={toneOf(unrealNum)}
             onClick={() => navigate('/trades?tab=blotter')}
             tooltip={unrealBySymbol}
           />
           <MetricTile
             label="Realized"
-            value={fmtSigned(realNum)}
+            value={fmtCompactSigned(realNum)}
             tone={toneOf(realNum)}
             context={realizedContext}
             onClick={() => navigate('/trades?tab=analytics')}
