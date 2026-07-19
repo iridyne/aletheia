@@ -337,4 +337,54 @@ async def settle_unsettled_paper_closes() -> dict:
             errors.append(f"{position_id}: {exc}")
             still_pending += 1
 
+    # Second pass: positions where realized_pnl IS already set but the cash ledger
+    # has no matching position_closed entry.  This happens when funding_cost is written
+    # to the positions table out-of-band (e.g. a DB repair) without going through the
+    # normal close path that calls settle_position_closed().  A missing ledger entry
+    # causes paper_ledger_mismatch in authoritative_account_realized_loss, which blocks
+    # every subsequent paper trade for the rest of the UTC day.
+    orphaned = [
+        dict(r) for r in db.execute(
+            """SELECT * FROM positions
+               WHERE status='closed' AND execution_mode='paper_internal'
+                 AND realized_pnl IS NOT NULL
+                 AND NOT EXISTS (
+                     SELECT 1 FROM paper_account_events pae
+                     WHERE pae.action = 'position_closed' AND pae.position_id = positions.id
+                 )
+               ORDER BY rowid ASC LIMIT 50"""
+        ).fetchall()
+    ]
+    for row in orphaned:
+        position_id = str(row.get("id") or "")
+        sym = str(row.get("symbol") or "")
+        realized_pnl = float(row["realized_pnl"])
+        try:
+            settle_position_closed(position_id, realized_pnl)
+            write_audit({
+                "actor": "system",
+                "source": "paper_funding_settler",
+                "event_type": "paper_ledger_orphan_reconciled",
+                "entity_type": "position",
+                "entity_id": position_id,
+                "before": {"paper_account_events_position_closed": False},
+                "after": {"paper_account_events_position_closed": True},
+                "message": (
+                    f"Reconciled orphaned ledger entry for {sym} paper_internal "
+                    f"position {position_id}: realized_pnl={realized_pnl}"
+                ),
+            })
+            logger.info(
+                "paper_funding_settler: reconciled orphaned ledger for %s position %s",
+                sym, position_id,
+            )
+            settled += 1
+        except Exception as exc:
+            logger.warning(
+                "paper_funding_settler: failed to reconcile orphaned ledger for %s "
+                "position %s: %s",
+                sym, position_id, exc,
+            )
+            errors.append(f"{position_id}:ledger_orphan: {exc}")
+
     return {"settled": settled, "still_pending": still_pending, "errors": errors}
