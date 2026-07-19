@@ -195,6 +195,27 @@ def _promotion_gate_reason(path_id: str) -> str | None:
     return None
 
 
+def _safety_action_gate_reason() -> str | None:
+    """Gate for safety actions (refreeze/invalidate) — narrower than the promotion gate.
+
+    lifecycle_automation_disabled and paper_influence_disabled block promotions but
+    must never block a negative-verdict refreeze or invalidation.  Only the global
+    kill switch, a runtime pause, and a reconciliation integrity incident justify
+    holding a safety action.
+    """
+    try:
+        if global_learning_refreeze_reason() is not None:
+            return "reconciliation_integrity_incident"
+        cfg = load_config()
+    except Exception:
+        return "learning_config_unavailable"
+    if not bool(cfg.agent.autonomous_learning):
+        return "autonomous_learning_disabled"
+    if bool(cfg.runtime.paused):
+        return "runtime_paused"
+    return None
+
+
 def _promote_one_stage(
     experiment: LearningExperiment,
     hypothesis: LearningHypothesis,
@@ -263,13 +284,13 @@ def _apply_safety_action(
     policy_epoch: str,
 ) -> LifecycleResult:
     try:
-        cfg = load_config()
-        gate_reason = _promotion_gate_reason(hypothesis.path_id)
+        gate_reason = _safety_action_gate_reason()
         if gate_reason is not None:
             return LifecycleResult(
                 "hold", action, gate_reason, experiment.experiment_id,
                 verdict_id=verdict["verdict_id"],
             )
+        cfg = load_config()
         if not bool(cfg.learning.auto_refreeze):
             return LifecycleResult("hold", action, "auto_refreeze_disabled", experiment.experiment_id, verdict_id=verdict["verdict_id"])
     except Exception:

@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 from uuid import uuid4
+
+_log = logging.getLogger(__name__)
 
 from aletheia.config.loader import load_config
 from aletheia.learning.hypotheses import hypothesis_fingerprint
@@ -130,8 +133,18 @@ def _policy_epoch(path_id: str) -> str:
             # provenance survives without inflating the epoch table.
             # Lifecycle and paper-influence settings change the effective
             # consumer policy, so a successor cannot inherit authority across
-            # a settings change.
-            "learning": cfg.learning.model_dump(),
+            # a settings change.  Scheduling fields (evaluation_interval_minutes,
+            # contribution_evaluation_enabled) don't affect treatment behavior and
+            # must not trigger unnecessary epoch rotation.
+            "learning": {
+                "lifecycle_automation_enabled": cfg.learning.lifecycle_automation_enabled,
+                "paper_influence_enabled": cfg.learning.paper_influence_enabled,
+                # Only whether THIS path is allowlisted matters for its epoch.
+                # Adding or removing a different path must not rotate this epoch.
+                "path_in_allowlist": path_id in (cfg.learning.paper_influence_paths or []),
+                "auto_refreeze": cfg.learning.auto_refreeze,
+                "paper_active_allocation_pct": cfg.learning.paper_active_allocation_pct,
+            },
         }
         # P1-1: universe scoring/allocation config materially changes which candidates
         # win — it is path-relevant behavior the epoch previously ignored, so a change
@@ -156,7 +169,8 @@ def _policy_epoch(path_id: str) -> str:
             from aletheia.agent_shell.skip_policy import skip_policy_context
 
             values["operator_decision_context"] = skip_policy_context()
-    except Exception:
+    except Exception as exc:
+        _log.warning("_policy_epoch config load failed for %r: %s", path_id, exc)
         values = {"config": "unavailable"}
     from aletheia.learning.policy_epochs import persist_policy_epoch
     epoch = build_policy_epoch(

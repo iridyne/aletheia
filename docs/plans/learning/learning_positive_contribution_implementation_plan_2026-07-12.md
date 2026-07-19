@@ -35,6 +35,25 @@
 > `learning_contribution_observability`, schema `lco-v1`, claims `LCO-*`. It remains read-only and
 > adds no admission control. UI completion is not claimed; paper influence and lifecycle automation
 > remain off by default.
+>
+> **Post-A1 contribution-gap audit (2026-07-19)**: 7 days after A1 truth-repair delivery, the A/B
+> main pipeline still produces zero actionable verdicts (0 positive / 0 negative / 0 neutral across
+> 2016 verdicts; 0 rows in `learning_lifecycle_events`). Four independent gaps are quantified in
+> `docs/issues/audits/LEARNING_CONTRIBUTION_GAP_AUDIT_2026-07-19.md`:
+> **G1** cohort path computes `entry_ts` as 1970-01-01 for 1191/2016 = 59% of verdicts despite the
+> upstream `universe_forward_outcomes` and `filter_candidate_outcomes` tables being 100% clean;
+> **G2** `_policy_epoch` folds the full `cfg.learning.model_dump()` into the epoch hash and rotates
+> up to 81 times/day (mean epoch lifetime 5.7 min on 2026-07-19), splitting large experiments into
+> 6–52 buckets so `min_samples_per_arm=50` is unreachable — the reverse-projection shows 15/16
+> supported experiments would clear the gate with a stable epoch;
+> **G3** `SUPPORTED_PATH_IDS = {"universe_family_calibration"}` alone; the other three declared
+> paths (`observer_advisory_bundle` 32 exp, `operator_learning_bundle` 1 exp, `ranker_learned_guard`
+> 6 exp) produce zero verdicts;
+> **G4** the `admit_shadow_trial` implementation is a permanent stub returning
+> `authenticated_owner_admission_unavailable`, so even a fully-remediated verdict pipeline can only
+> emit `insufficient_data: no_actual_intervention`. The audit does not add fixes; it registers the
+> gap set so Phase 4 planning can pick up G1 and G2 first (both are single-point, unrelated to the
+> trust-boundary G4).
 
 ## 1. Outcome And Non-Negotiable Standard
 

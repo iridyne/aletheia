@@ -520,8 +520,14 @@ def _aggregate_assignment_units(
                 0.0,
                 *(sample.mae_pct for sample in selected_members if sample.mae_pct is not None),
             ]),
-            entry_ts=min(sample.entry_ts for sample in members),
-            exposed_at=min(sample.exposed_at for sample in members),
+            entry_ts=min(
+                members,
+                key=lambda s: _parse_time(s.entry_ts) or datetime.min.replace(tzinfo=timezone.utc),
+            ).entry_ts,
+            exposed_at=min(
+                members,
+                key=lambda s: _parse_time(s.exposed_at) or datetime.min.replace(tzinfo=timezone.utc),
+            ).exposed_at,
             authority_applied=next(iter(authority_values)),
         ))
     return samples

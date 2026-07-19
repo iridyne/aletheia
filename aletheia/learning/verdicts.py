@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import math
 import random
@@ -200,17 +200,27 @@ def _harm_gates(cohort: ContributionCohort) -> dict[str, float]:
         "max_loss_rate_increase": 1.0,
         "max_mae_p95_worsening_pct": 0.25,
     }
-    for raw in (cohort.hypothesis.harm_budget_json, cohort.experiment.harm_gate_json):
-        try:
-            configured = json.loads(raw or "{}")
-        except (TypeError, ValueError):
-            configured = {}
-        if not isinstance(configured, dict):
-            continue
+    # Hypothesis sets the baseline harm budget.
+    try:
+        hypothesis_gates = json.loads(cohort.hypothesis.harm_budget_json or "{}")
+    except (TypeError, ValueError):
+        hypothesis_gates = {}
+    if isinstance(hypothesis_gates, dict):
         for key in tuple(gates):
-            value = _finite_float(configured.get(key))
+            value = _finite_float(hypothesis_gates.get(key))
             if value is not None:
                 gates[key] = value
+    # Experiment-level overrides may only tighten (smaller = more restrictive).
+    # A misconfigured experiment must not silently widen the hypothesis safety envelope.
+    try:
+        experiment_gates = json.loads(cohort.experiment.harm_gate_json or "{}")
+    except (TypeError, ValueError):
+        experiment_gates = {}
+    if isinstance(experiment_gates, dict):
+        for key in tuple(gates):
+            value = _finite_float(experiment_gates.get(key))
+            if value is not None:
+                gates[key] = min(gates[key], value)
     return gates
 
 
@@ -239,7 +249,10 @@ def _quantile(values: list[float], probability: float) -> float:
 
 def _parse_time(value: str) -> datetime | None:
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except (AttributeError, ValueError):
         return None
 
