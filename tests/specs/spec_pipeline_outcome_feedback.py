@@ -882,26 +882,33 @@ def test_replay_rereads_closed_position_and_fails_closed(tmp_path, monkeypatch):
 def test_transient_attribution_read_failure_does_not_block_verified_close(
     tmp_path, monkeypatch,
 ):
-    import sqlite3
-
     _setup_db(tmp_path, monkeypatch)
-    import aletheia.storage.sqlite as sqlite_storage
+    import aletheia.analytics.outcome_integrity as _oi_module
+    import aletheia.portfolio.outcome_hooks as _oh_module
     from aletheia.analytics import shadow_trades
-    from aletheia.analytics.outcome_integrity import assess_position_closure
+    from aletheia.analytics.outcome_integrity import (
+        AttributionReadError,
+        assess_position_closure,
+    )
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
 
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
-    real_get_db = sqlite_storage.get_db
-    monkeypatch.setattr(
-        sqlite_storage,
-        "get_db",
-        lambda: (_ for _ in ()).throw(
-            sqlite3.OperationalError("temporary close-time attribution read failure")
-        ),
-    )
+
+    # Simulate a transient attribution read failure without blocking DB writes.
+    # Patching get_db broadly would also break execute_write (run_write calls
+    # sqlite.get_db from the same module, bypassing repositories.py's local
+    # binding). Target only the attribution reader so the close transaction
+    # can still commit while outcome_write_eligibility degrades gracefully.
+    real_attribution = _oi_module.attribution_chain_complete
+
+    def _raise_attribution_error(row):
+        raise AttributionReadError("temporary close-time attribution read failure")
+
+    monkeypatch.setattr(_oi_module, "attribution_chain_complete", _raise_attribution_error)
+    monkeypatch.setattr(_oh_module, "attribution_chain_complete", _raise_attribution_error)
 
     result = outcome_closure.close_position_verified(
         position.id, _verified_result(position)
@@ -926,7 +933,9 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
     assert direct_assessment.reason == "attribution_read_failed"
 
     delivered = []
-    monkeypatch.setattr(sqlite_storage, "get_db", real_get_db)
+    # Restore attribution reads so the replay can re-evaluate and mark eligible.
+    monkeypatch.setattr(_oi_module, "attribution_chain_complete", real_attribution)
+    monkeypatch.setattr(_oh_module, "attribution_chain_complete", real_attribution)
     monkeypatch.setattr(
         shadow_trades,
         "resolve_shadow_trades_for_position",
@@ -966,11 +975,11 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
 def test_local_paper_close_recovers_transient_attribution_read_failure(
     tmp_path, monkeypatch,
 ):
-    import sqlite3
-
     _setup_db(tmp_path, monkeypatch)
-    import aletheia.storage.sqlite as sqlite_storage
+    import aletheia.analytics.outcome_integrity as _oi_module
+    import aletheia.portfolio.outcome_hooks as _oh_module
     from aletheia.analytics import shadow_trades
+    from aletheia.analytics.outcome_integrity import AttributionReadError
     from aletheia.portfolio import outcome_hooks, paper_account, pnl
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position
@@ -978,14 +987,14 @@ def test_local_paper_close_recovers_transient_attribution_read_failure(
     position = _position(execution_mode="paper_internal")
     repo.insert_position(position)
     paper_account.record_position_opened(position.id)
-    real_get_db = sqlite_storage.get_db
-    monkeypatch.setattr(
-        sqlite_storage,
-        "get_db",
-        lambda: (_ for _ in ()).throw(
-            sqlite3.OperationalError("temporary local attribution read failure")
-        ),
-    )
+
+    real_attribution = _oi_module.attribution_chain_complete
+
+    def _raise_attribution_error(row):
+        raise AttributionReadError("temporary local attribution read failure")
+
+    monkeypatch.setattr(_oi_module, "attribution_chain_complete", _raise_attribution_error)
+    monkeypatch.setattr(_oh_module, "attribution_chain_complete", _raise_attribution_error)
 
     result = pnl.close_position(
         position.id,
@@ -1005,7 +1014,8 @@ def test_local_paper_close_recovers_transient_attribution_read_failure(
     )
 
     delivered = []
-    monkeypatch.setattr(sqlite_storage, "get_db", real_get_db)
+    monkeypatch.setattr(_oi_module, "attribution_chain_complete", real_attribution)
+    monkeypatch.setattr(_oh_module, "attribution_chain_complete", real_attribution)
     monkeypatch.setattr(
         shadow_trades,
         "resolve_shadow_trades_for_position",
@@ -1043,11 +1053,10 @@ def test_local_paper_close_recovers_transient_attribution_read_failure(
     )
 )
 def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypatch):
-    import sqlite3
-
     _setup_db(tmp_path, monkeypatch)
-    import aletheia.storage.sqlite as sqlite_storage
+    import aletheia.portfolio.outcome_hooks as _oh_module
     from aletheia.analytics import shadow_trades
+    from aletheia.analytics.outcome_integrity import AttributionReadError
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
@@ -1063,12 +1072,12 @@ def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypa
         "resolve_shadow_trades_for_position",
         lambda row: hook_calls.append(row["id"]),
     )
-    real_get_db = sqlite_storage.get_db
+    real_attribution = _oh_module.attribution_chain_complete
     monkeypatch.setattr(
-        sqlite_storage,
-        "get_db",
-        lambda: (_ for _ in ()).throw(
-            sqlite3.OperationalError("temporary attribution read failure")
+        _oh_module,
+        "attribution_chain_complete",
+        lambda row: (_ for _ in ()).throw(
+            AttributionReadError("temporary attribution read failure")
         ),
     )
 
@@ -1081,7 +1090,7 @@ def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypa
     assert "temporary attribution read failure" in failed_job["last_error"]
     assert hook_calls == []
 
-    monkeypatch.setattr(sqlite_storage, "get_db", real_get_db)
+    monkeypatch.setattr(_oh_module, "attribution_chain_complete", real_attribution)
     replayed = outcome_hooks.process_outcome_hook_jobs(
         position_id=position.id,
         now="2100-01-01T00:00:00+00:00",

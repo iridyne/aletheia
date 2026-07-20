@@ -509,7 +509,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     """
     from aletheia.storage.models import TradeProposal, Order, Position
     from aletheia.storage.repositories import (
-        transaction, insert_trade_proposal, insert_order, insert_position,
+        transaction, insert_trade_proposal, insert_order, insert_position, update_position,
     )
     from aletheia.files.jsonl import write_audit
 
@@ -631,6 +631,12 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         insert_trade_proposal(proposal)
         insert_order(order)
         insert_position(position)
+        update_position(
+            position.id,
+            stop_source="adopted_default_pct",
+            exit_plan_version=1,
+            expected_horizon_hours=24.0,
+        )
 
     write_audit({
         "actor": "system",

@@ -650,8 +650,26 @@ def close_position(
             from aletheia.portfolio.paper_account import settle_position_closed
 
             settle_position_closed(position_id, realized)
-        from aletheia.storage.models import AuditEvent
+        from aletheia.storage.models import AuditEvent, new_id
 
+        # Per-close ledger (exit-intent R1): committed atomically with the Position
+        # close so a crash between COMMIT and the ledger write cannot leave a closed
+        # Position with no close event. is_partial=0 for a full close.
+        repo.insert_position_close_event({
+            "id": new_id(),
+            "position_id": position_id,
+            "symbol": row.get("symbol"),
+            "direction": row.get("direction"),
+            "execution_mode": row.get("execution_mode"),
+            "close_reason": reason,
+            "exit_price": exit_price,
+            "closed_qty": row["quantity"],
+            "realized_pnl": realized,
+            "entry_fee": round(entry_fee, 8),
+            "exit_fee": round(exit_fee, 8),
+            "is_partial": 0,
+            "closed_at": closed_at,
+        })
         repo.insert_audit_event(AuditEvent(
             actor=actor,
             source=source,
@@ -663,26 +681,6 @@ def close_position(
             message=audit_message,
         ))
     row["closed_at"] = closed_at  # so the Serenity hook computes real hold_h
-# Per-close ledger (exit-intent R1, Stage 1): one row per close EVENT so realized
-    # PnL can later be summed from close events — unifying full closes with partial
-    # reductions. Additive: nothing reads this yet (the daily-loss breaker + outcome
-    # analytics are rewired onto it in Stage 2). is_partial=0 for a full close.
-    from aletheia.storage.models import new_id
-    repo.insert_position_close_event({
-        "id": new_id(),
-        "position_id": position_id,
-        "symbol": row.get("symbol"),
-        "direction": row.get("direction"),
-        "execution_mode": row.get("execution_mode"),
-        "close_reason": reason,
-        "exit_price": exit_price,
-        "closed_qty": row["quantity"],
-        "realized_pnl": realized,
-        "entry_fee": round(entry_fee, 8),
-        "exit_fee": round(exit_fee, 8),
-        "is_partial": 0,
-        "closed_at": closed_at,
-    })
 
     audit_payload = {
         "actor": actor,
@@ -868,23 +866,25 @@ def reduce_position(
     closed_at = datetime.now(timezone.utc).isoformat()
 
     # Shrink quantity + prorate the entry fee to the remainder; entry_price (avg) frozen;
-    # position stays OPEN.
-    update_position(position_id, quantity=new_qty, entry_fee=remaining_entry_fee)
-    repo.insert_position_close_event({
-        "id": new_id(),
-        "position_id": position_id,
-        "symbol": row.get("symbol"),
-        "direction": row.get("direction"),
-        "execution_mode": row.get("execution_mode"),
-        "close_reason": reason,
-        "exit_price": exit_price,
-        "closed_qty": reduce_qty,
-        "realized_pnl": realized,
-        "entry_fee": round(entry_fee_portion, 8),
-        "exit_fee": round(exit_fee, 8),
-        "is_partial": 1,
-        "closed_at": closed_at,
-    })
+    # position stays OPEN. Both writes in one transaction so a crash cannot leave the
+    # position shrunk with no close event (or a close event with a stale quantity).
+    with repo.transaction():
+        update_position(position_id, quantity=new_qty, entry_fee=remaining_entry_fee)
+        repo.insert_position_close_event({
+            "id": new_id(),
+            "position_id": position_id,
+            "symbol": row.get("symbol"),
+            "direction": row.get("direction"),
+            "execution_mode": row.get("execution_mode"),
+            "close_reason": reason,
+            "exit_price": exit_price,
+            "closed_qty": reduce_qty,
+            "realized_pnl": realized,
+            "entry_fee": round(entry_fee_portion, 8),
+            "exit_fee": round(exit_fee, 8),
+            "is_partial": 1,
+            "closed_at": closed_at,
+        })
     write_audit({
         "actor": "system",
         "source": "position_lifecycle",

@@ -550,6 +550,7 @@ async def run_divergence_scanner(
             confidence=confidence,
             confidence_score=score,
             source_agent="divergence_scanner",
+            scanner_family="reversion",
             linked_strategy_id=linked_strategy_id,
             asset_class="crypto",
             execution_eligible=True,
