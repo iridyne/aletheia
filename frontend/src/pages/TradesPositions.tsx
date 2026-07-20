@@ -66,11 +66,19 @@ const closedColumns = [
   posCol.accessor('quantity', { header: 'Qty', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('entry_price', { header: 'Entry (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('realized_pnl', { header: 'PnL (USDT)', cell: info => pnlCell(info.getValue()) }),
-  posCol.display({ id: 'pnl_status', header: 'PnL status', cell: ({ row }) =>
-    row.original.realized_pnl_complete === false
-      ? <span className="text-muted">{humanize(row.original.realized_pnl_unavailable_reason || 'economics unavailable')}</span>
-      : <span className="text-muted">complete</span>
-  }),
+  posCol.display({ id: 'pnl_status', header: 'PnL status', cell: ({ row }) => {
+    if (row.original.realized_pnl_complete !== false) {
+      return <span className="text-muted">complete</span>
+    }
+    const reason = row.original.realized_pnl_unavailable_reason || 'economics unavailable'
+    // Terminal "gave up" state is distinct from an in-flight retry — the
+    // settler has stopped trying. Surface it in warning tone so the operator
+    // doesn't read "Incomplete Funding Economics" as "still working on it".
+    if (reason === 'funding_permanently_unrecoverable') {
+      return <span className="pnl-warning" title="paper_funding_settler exhausted retries; realized_pnl stays NULL (never fabricated)">funding lost</span>
+    }
+    return <span className="text-muted">{humanize(reason)}</span>
+  }}),
   posCol.accessor('close_reason', { header: 'Reason', cell: info => info.getValue() ? humanize(info.getValue()!) : '—' }),
   posCol.accessor('closed_at', { header: 'Closed', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
@@ -399,7 +407,11 @@ function PositionDetail({ position }: { position: Position }) {
         {position.realized_pnl_complete === false && (
           <DrawerField
             label="Realized status"
-            value={humanize(position.realized_pnl_unavailable_reason || 'economics unavailable')}
+            value={
+              position.realized_pnl_unavailable_reason === 'funding_permanently_unrecoverable'
+                ? 'funding lost — settler gave up (never fabricated)'
+                : humanize(position.realized_pnl_unavailable_reason || 'economics unavailable')
+            }
           />
         )}
       </DrawerSection>

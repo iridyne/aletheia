@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from aletheia.analytics.outcome_integrity import assess_position_closure, raw_account_events
+from aletheia.portfolio.paper_account import FUNDING_PERMANENTLY_UNRECOVERABLE
 
 logger = logging.getLogger(__name__)
 
@@ -197,13 +198,39 @@ def authoritative_account_realized_loss(execution_mode: str) -> AccountLossSnaps
             ):
                 return _unavailable(assessment.reason, event_count=len(rows))
             if row.get("realized_pnl") is None:
+                # A terminally-unrecoverable close will NEVER settle. Treating it
+                # as "pending → conservative estimate" would silently assume
+                # funding=0 for a close whose economics are architecturally
+                # unknown, understating today's account movement. Fail closed
+                # so Risk sees the day's account snapshot as incomplete rather
+                # than proceeding on an invented number. Rare in practice:
+                # give-up transitions ≥24h post-close, so a same-UTC-day close
+                # is only reached at the ≤24h edge — but the honesty matters.
+                if (
+                    str(row.get("outcome_exclusion_reason") or "")
+                    == FUNDING_PERMANENTLY_UNRECOVERABLE
+                ):
+                    return _unavailable(
+                        FUNDING_PERMANENTLY_UNRECOVERABLE, event_count=len(rows)
+                    )
                 if execution_mode == "paper_internal":
                     # Funding not yet computed: use conservative estimate, don't block.
                     pending_rows.append(row)
                     continue
                 return _unavailable(assessment.reason, event_count=len(rows))
         if row.get("realized_pnl") is None and execution_mode == "paper_internal":
-            # Eligible position still awaiting funding settlement — conservative path.
+            # Eligible + realized_pnl=NULL implies still-retrying settler; a
+            # terminal row loses `outcome_eligible=1` by design (settler sets
+            # outcome_eligible=0 when it flips the reason), so it cannot land
+            # here. Kept explicit so future refactors that change outcome_
+            # eligible semantics for terminal rows must revisit this branch.
+            if (
+                str(row.get("outcome_exclusion_reason") or "")
+                == FUNDING_PERMANENTLY_UNRECOVERABLE
+            ):
+                return _unavailable(
+                    FUNDING_PERMANENTLY_UNRECOVERABLE, event_count=len(rows)
+                )
             pending_rows.append(row)
         else:
             settled_rows.append(row)

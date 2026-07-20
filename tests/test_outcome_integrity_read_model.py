@@ -334,3 +334,81 @@ def test_close_reason_compatibility_api_delegates_to_central_registry():
     assert SYNTHETIC_CLOSE_REASONS is CENTRAL
     assert is_synthetic_close("reconciled_gone")
     assert not is_synthetic_close("take_profit")
+
+
+# ---------------------------------------------------------------------------
+# Terminal "funding_permanently_unrecoverable" state (FUND-B, Q3-3 + Q3-4)
+# ---------------------------------------------------------------------------
+# These pin the read-model behavior that the settler-give-up work relies on.
+# Regressing either one would re-freeze the Overview hero card ("— USDT") or
+# collapse the distinct terminal signal to "not_marked_eligible" — the
+# exact class of bug fixed in aa23804e / d20973d6.
+
+
+def test_position_realized_pnl_view_prefers_terminal_reason_over_incomplete():
+    """Q3-3: `outcome_exclusion_reason='funding_permanently_unrecoverable'`
+    wins over the generic `incomplete_funding_economics` fallback so the
+    frontend can render the distinct "funding lost" terminal badge instead
+    of the muted retry state. Pins pnl.py:1030-1036 elif ordering."""
+    from aletheia.portfolio.pnl import position_realized_pnl_view
+
+    terminal_row = _closed_row(
+        realized_pnl=None,
+        funding_cost=None,
+        funding_source="unavailable",
+        outcome_eligible=False,
+        outcome_exclusion_reason="funding_permanently_unrecoverable",
+    )
+    terminal_view = position_realized_pnl_view(terminal_row)
+    assert terminal_view["realized_pnl"] is None
+    assert terminal_view["realized_pnl_complete"] is False
+    assert (
+        terminal_view["realized_pnl_unavailable_reason"]
+        == "funding_permanently_unrecoverable"
+    )
+
+    # Companion negative case: an identical unsettled row WITHOUT the
+    # terminal reason still surfaces as "incomplete_funding_economics"
+    # (i.e. "still retrying"). This locks the branch order — if a refactor
+    # were to short-circuit on realized_pnl=None first, the terminal case
+    # above would collapse back to "incomplete_funding_economics" and the
+    # frontend would lose the distinct terminal signal.
+    retrying_row = _closed_row(
+        realized_pnl=None,
+        funding_cost=None,
+        funding_source="unavailable",
+        outcome_eligible=False,
+        outcome_exclusion_reason="incomplete_funding_economics",
+    )
+    retrying_view = position_realized_pnl_view(retrying_row)
+    assert (
+        retrying_view["realized_pnl_unavailable_reason"]
+        == "incomplete_funding_economics"
+    )
+
+
+def test_classify_closure_preserves_funding_permanently_unrecoverable_reason():
+    """Q3-4: the terminal reason survives `classify_closure` intact, i.e.
+    it is present in the `OUTCOME_EXCLUSION_REASONS` whitelist. If a
+    refactor drops the whitelist entry, `classify_closure` collapses the
+    reason to 'not_marked_eligible' and every downstream consumer
+    (frontend badge, settler skip, OutcomeAssessment.reason) silently loses
+    the terminal signal — a hard-to-catch regression this one-line
+    assertion prevents."""
+    from aletheia.analytics.outcome_integrity import (
+        OUTCOME_EXCLUSION_REASONS,
+        assess_position_closure,
+    )
+
+    assert "funding_permanently_unrecoverable" in OUTCOME_EXCLUSION_REASONS
+
+    terminal_row = _closed_row(
+        realized_pnl=None,
+        funding_cost=None,
+        funding_source="unavailable",
+        outcome_eligible=False,
+        outcome_exclusion_reason="funding_permanently_unrecoverable",
+    )
+    assessment = assess_position_closure(terminal_row)
+    assert assessment.eligible is False
+    assert assessment.reason == "funding_permanently_unrecoverable"

@@ -374,9 +374,26 @@ def close_paper_position(
     funding_kwargs: dict[str, Any] = {}
     if row.get("market_type") == "usdt_futures":
         try:
-            from aletheia.portfolio.local_funding import compute_local_funding
+            from aletheia.portfolio.local_funding import (
+                compute_local_funding,
+                try_seed_close_anchor_snapshot,
+            )
 
+            # Best-effort: seed a close-time funding snapshot so the
+            # `close_anchor` predicate is satisfied even when the periodic
+            # derivatives collector last observation is > 15 min stale.
+            # Silent on failure — the settler retry path still runs. The
+            # settlement-time history endpoint cannot rescue a mid-window
+            # close on its own (audit funding architecture, FUND-A).
+            # The helper returns a per-venue attempt trail; if the funding
+            # computation still comes back incomplete, we attach that trail
+            # to the evidence so the operator can see exactly which link in
+            # the audit chain broke (missing_close_anchor vs. proxy failure
+            # vs. no perp mapping, etc.) — FUND-Q2 audit-chain diagnostics.
+            seed_diagnostic = try_seed_close_anchor_snapshot(row, filled_at)
             funding = compute_local_funding(row, closed_at=filled_at)
+            if isinstance(funding.evidence, dict) and seed_diagnostic:
+                funding.evidence["seed_close_anchor"] = seed_diagnostic
             # The just-computed result is authoritative even when unavailable.
             # Passing only incomplete evidence let close_position fall back to a
             # stale value already present on the Position and publish invented

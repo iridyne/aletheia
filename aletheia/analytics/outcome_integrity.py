@@ -42,6 +42,13 @@ OUTCOME_EXCLUSION_REASONS = frozenset({
     "missing_outcome_identity",
     "incomplete_realized_economics",
     "incomplete_funding_economics",
+    # Terminal state assigned by paper_funding_settler after
+    # _FUNDING_GIVE_UP_HOURS of retries — realized economics remain NULL
+    # (never fabricated) but the operator/consumer can distinguish it from
+    # an in-flight retry. Kept in this whitelist so classify_closure()
+    # surfaces the actual reason instead of collapsing to
+    # "not_marked_eligible".
+    "funding_permanently_unrecoverable",
     "pre_clean_window",
     "incident_window",
     "missing_attribution",
