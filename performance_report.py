@@ -88,6 +88,12 @@ def _collect() -> dict:
 
             result["streaks"] = summarize_streaks(pnls)
             result["sections"].append("streaks")
+
+            # Temporal: when do wins/losses cluster (hour-of-day / weekday).
+            from aletheia.analytics.temporal import temporal_summary
+
+            result["temporal"] = temporal_summary(outcomes)
+            result["sections"].append("temporal")
         else:
             result["equity_note"] = "no eligible closed outcomes yet"
     except Exception as e:  # pragma: no cover - depends on live DB/runtime
@@ -178,6 +184,23 @@ def _render_human(rep: dict) -> str:
         out.append("  最长连胜: %s 笔 | 最长连亏: %s 笔" % (
             s.get("max_consecutive_wins"), s.get("max_consecutive_losses")))
         out.append("  当前连: %s (%s 笔)" % (cur_label, s.get("current_streak_length")))
+
+    if "temporal" in rep:
+        t = rep["temporal"]
+        out.append("")
+        out.append("[时间序列 temporal]  样本=%s 可定时=%s" % (
+            t.get("outcome_count"), t.get("bucketed_count")))
+        bh, wh = t.get("best_hour", {}), t.get("worst_hour", {})
+        if bh.get("hour") is not None:
+            out.append("  最佳时段: %02d:00 (PnL=%s) | 最差时段: %02d:00 (PnL=%s)" % (
+                bh["hour"], round(bh.get("total_pnl", 0.0), 2),
+                wh.get("hour", 0), round(wh.get("total_pnl", 0.0), 2)))
+        bd, wd = t.get("best_weekday", {}), t.get("worst_weekday", {})
+        if bd.get("weekday") is not None:
+            _wd = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+            out.append("  最佳星期: %s (PnL=%s) | 最差星期: %s (PnL=%s)" % (
+                _wd[bd["weekday"]], round(bd.get("total_pnl", 0.0), 2),
+                _wd[wd.get("weekday", 0)], round(wd.get("total_pnl", 0.0), 2)))
 
     if (
         rep.get("trade_stats_error")
