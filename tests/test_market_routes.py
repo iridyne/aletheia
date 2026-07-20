@@ -96,6 +96,7 @@ async def test_data_coverage_route_separates_persisted_data_from_job_health(clie
     resp = await client.get("/api/market/data-coverage")
 
     assert resp.status_code == 200
+    assert "total;dur=" in resp.headers["server-timing"]
     body = resp.json()
     assert body["domain_count"] == 8
     assert {row["domain"] for row in body["domains"]} >= {

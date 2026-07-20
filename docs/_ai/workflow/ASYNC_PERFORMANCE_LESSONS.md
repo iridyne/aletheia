@@ -54,11 +54,12 @@ frontdoor 的 httpx keepalive 和连接复用让热路径显示 7–93ms，
 
 "偶尔慢一次"比"每次都慢"更难被当 bug 报告。
 
-### 2d. 没有 API 延迟监控
+### 2d. API 延迟监控曾经缺失（2026-07-20 已补）
 
-系统有 doctor 但没有 HTTP 请求耗时日志（gateway logs 是空的）。
-没有 p95/p99 延迟指标，"慢"是主观感受而不是可追踪的数字。
-问题可能存在了很长时间，只是没人拿秒表测过后端直连。
+历史上系统有 doctor 但没有 HTTP 请求耗时日志，"慢"是主观感受而不是可追踪的数字。
+现在每个 `/api/*` 响应都有 `Server-Timing: app;dur=...`，默认记录超过 500 ms 的
+`http_request_slow`。仍未建设长期 p95/p99 时序存储；当前能力用于本地日志归因和浏览器
+Network 面板，不得冒充完整 APM。
 
 ### 2e. 技术债是累积的
 
@@ -178,3 +179,17 @@ Starlette 1.2 起，`starlette.testclient.TestClient` 官方使用 `httpx2`；�
 
 `StarletteDeprecationWarning` 已升级为测试失败：测试依赖缺失、回退到旧兼容层或未来再次
 发生不兼容时，必须显式处理，不能靠忽略 warning 保持“假绿”。
+
+---
+
+## 8. 有界性能诊断开关
+
+- 默认：超过 `ALETHEIA_SLOW_REQUEST_MS`（默认 `500`）的 API 请求写
+  `http_request_slow`，字段只有 method/path/status/duration；query string 和 body 不入日志。
+- 临时全量 HTTP：启动网关前设置 `ALETHEIA_HTTP_TIMING=1`。诊断结束后关闭，避免轮询噪声。
+- 临时 SQLite 写事务：设置 `ALETHEIA_SQLITE_TIMING=1`，记录 writer queue wait、进程/文件
+  permit wait 和事务持有毫秒数；默认仍只记录 queue wait ≥100 ms、持有 ≥500 ms 或 32 秒
+  queue/permit 超时。日志不记录 SQL 或绑定值。
+- `/market/data-coverage` 与 opportunity funnel 额外返回分阶段 `Server-Timing`。
+- 不提供全量 `sqlite3.set_trace_callback` 运维开关：展开后的 SQL 可能包含绑定值，既会放大
+  I/O，也可能把敏感数据写进日志。优先用上述路径级和事务级计时定位。

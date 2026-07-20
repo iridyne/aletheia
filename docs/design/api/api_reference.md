@@ -2,7 +2,7 @@
 
 > Complete endpoint index for Aletheia Trading OS backend (FastAPI on :8788, proxied via :8787).
 > All endpoints prefixed with `/api/` unless noted. Auth: none (local-only by design).
-> Last updated: 2026-07-19 (Learning Contribution Observability target contract)
+> Last updated: 2026-07-20 (HTTP and SQLite latency observability)
 
 ---
 
@@ -13,6 +13,9 @@
 - **Error format**: `{"detail": "message"}` with appropriate HTTP status
 - **Pagination**: `?limit=N&offset=M` where supported
 - **Timestamps**: ISO 8601 UTC strings in request/response bodies
+- **Timing**: API responses include `Server-Timing: app;dur=...`. Requests slower than
+  `ALETHEIA_SLOW_REQUEST_MS` (default 500 ms) are logged without query strings or bodies;
+  `ALETHEIA_HTTP_TIMING=1` logs every API request for a bounded diagnostic session.
 
 ### Status code semantics
 
@@ -144,7 +147,7 @@ the same two completeness columns; it writes an empty realized-PnL cell rather t
 | GET | `/analytics/round1-progress` | Historical Round 1 progress metrics |
 | GET | `/analytics/pipeline-funnel` | Pipeline conversion funnel counts. Rolling `hours` windows parse stored ISO/SQLite timestamps as instants rather than comparing their `T`/space text forms. Administrative `system_cascade` cleanup rows are excluded from Operator skip counts. |
 | GET | `/analytics/opportunity-funnel` | Market Observer → Operator funnel. The cumulative section is one causal cohort: Opportunities emitted inside the parsed UTC rolling window, split into open/queued/reviewed/expired, with `proposed_count` counting only linked Opportunities from that cohort. `setup_count`/`active_setup_count` deduplicate rows by `symbol + market + direction + scanner_family`; `emitted_count` remains the per-snapshot generation count. `terminal_breakdown` makes expired/reviewed exits explicit, including `snapshot_superseded`, true `ttl_expired`, Operator trade/skip/watch, deterministic review and unknown legacy remainder—raw `expired_count` is compatibility total only. The latest ranker snapshot is a separate point-in-time object with `freshness`, `age_sec`, `stale_after_sec`, executable_count and exclusions; stale/missing snapshots cannot be shown as current health. `current` is the authoritative read-only entry-status projection: it exposes the exact primary stage, stable reason/next trigger, per-candidate durable Ranker blocker, passed-filter count, run id and retry time; `ranker.last_run` exposes the persisted trigger/result and `ranker.wake` exposes bounded in-process wake telemetry. It never re-runs Ranker. Emits `Server-Timing` header with per-phase durations (cohort/snapshot/universe/build_current/total, 2026-07-18). See `/analytics/opportunity-funnel/current-snapshot` for a faster subset when only `current.*` is needed. |
-| GET | `/analytics/opportunity-funnel/current-snapshot` | Fast subset of `/opportunity-funnel` returning only `{window_hours, current, config, family_ttl_sec}` — skips the queued/reviewed/expired cohort counts, the candidate-supply snapshot payload parse, and the universe-snapshot lookup. Backed by a 5s process-local TTL cache (`_cached_current_snapshot`) so back-to-back mounts and the frontend's 30s poll share one compute. Emits `Server-Timing`: either `cache_hit;dur=0.0` on hit, or `cohort;dur=… build_current;dur=… total;dur=…` on miss. Used by the Blotter's Candidates panel + status token strip and Overview's Blotter summary strip (2026-07-18). |
+| GET | `/analytics/opportunity-funnel/current-snapshot` | Fast subset of `/opportunity-funnel` returning only `{window_hours, current, config, family_ttl_sec}` — skips the queued/reviewed/expired cohort counts, the candidate-supply snapshot payload parse, and the universe-snapshot lookup. Backed by a 5s process-local TTL cache (`_cached_current_snapshot`) so back-to-back mounts share one compute. Opportunity/filter evidence reads use dedicated status/time and opportunity/run indexes. Emits `Server-Timing`: either `cache_hit;dur=0.0` on hit, or `cohort;dur=… build_current;dur=… total;dur=…` on miss. Used by the Blotter's Candidates panel + status token strip and Overview's Blotter summary strip. |
 | GET | `/analytics/operator-decisions` | Final-stage decision log companion to the funnel. Uses parsed UTC decision/rejection timestamps for windowing and ordering, prefers the latest `proposal_rejected` audit time, and classifies only `human+dashboard` as `user_reject` and `system+execution_gateway` as `auto_reject`; missing/inconsistent attribution is `reject_unknown`. A rejected Proposal supersedes its earlier trade-intent row. Administrative `system_cascade` cleanup rows are not presented as Operator decisions. Each item has additive `attribution` for the `system_operator_skip_remediation` policy epoch and producing runtime session/commit; manifest attribution wins, while legacy decisions use the durable epoch time window. `current_context`, `current_policy_counts`, and `historical_policy_counts` prevent old-runtime decisions from being presented as current behavior. `counts` and `total_count` cover the FULL window; when the optional `outcome` (comma-separated) / `symbol` (canonicalized) filters are applied, filtered rows go into `items` while `matched_count` reports how many rows survived the filter pre-truncation. Filter never lies about totals (2026-07-18). Read-only. |
 | GET | `/analytics/opportunity-trace/{opportunity_id}` | Full lifecycle trace for a single opportunity — emit → filter_trace → pi_decision → risk_decision → proposal → order → fill → position → close. Thin route over `analytics.opportunity_flow.trace_opportunity_flow`. Powers the Blotter's per-decision drill-down drawer (`DecisionTraceDrawer`, opened from Candidate Ledger row click and Awaiting Sign-off row click). Read-only. |
 | GET | `/analytics/family-scorecard` | Scanner family performance |
@@ -231,7 +234,7 @@ or insufficient genuine data is not serialized as a zero return, zero win rate, 
 | GET | `/market/ohlcv` | OHLCV candlestick data |
 | GET | `/market/macro` | Macro economic indicators |
 | GET | `/market/collector-health` | Bounded per-domain collector status, cadence, timeout/budget-skip counters, and overdue state |
-| GET | `/market/data-coverage` | Cached persisted row/symbol/source coverage and freshness, separate from collector execution health |
+| GET | `/market/data-coverage` | Cached persisted row/symbol/source coverage and freshness, separate from collector execution health. `Server-Timing` distinguishes cache wait/hit, each domain scan, total route work, and global app wall time. |
 
 `GET /market/ohlcv` preserves its historical candle-array body. The response header
 `X-Aletheia-Data-Source` is `memory_cache`, `provider_fetch`, `database_fallback`,

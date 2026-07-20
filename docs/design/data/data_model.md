@@ -3,16 +3,18 @@
 > Complete index of Aletheia Trading OS data layer.
 > ~95 SQLite table declarations, 59 Pydantic models, WAL mode, additive-only migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
-> Last updated: 2026-07-18
+> Last updated: 2026-07-20
 
 ---
 
 ## 1. Architecture Overview
 
-- **Engine**: SQLite 3, WAL mode, `busy_timeout=30000ms` (30s, fallback only), `synchronous=NORMAL`, `wal_autocheckpoint=1000`, `isolation_level=None` (true autocommit, no implicit BEGIN) — `storage/sqlite.py:32-44`
-- **Concurrency**: one connection per thread via `threading.local`; scheduler capped at `max_workers=3`
-- **Write serialization**: `_WRITE_LOCK = threading.Lock()` in `sqlite.py` — acquired by `transaction()` before every `BEGIN`, released after `COMMIT`/`ROLLBACK`. Serializes all write transactions at the Python level; `database is locked` cannot occur in normal operation. Timeout = 32s (slightly above `busy_timeout`) to surface any transaction held open across I/O as a `write_lock_timeout` error.
-- **Transaction safety**: `was_in_tx = db.in_transaction` captured BEFORE every write; commit only `if not was_in_tx`
+- **Engine**: SQLite 3, WAL mode, `busy_timeout=30000ms` (30s, fallback only), `synchronous=NORMAL`, `wal_autocheckpoint=1000`, `isolation_level=None` (true autocommit, no implicit BEGIN)
+- **Concurrency**: one read/legacy connection per thread via `threading.local`; scheduler capped at `max_workers=3`
+- **Write serialization**: transaction-external repository DML enters a bounded 256-item writer lane backed by one dedicated connection. Accepted jobs synchronously return an exact commit/rollback result; queue admission may time out before acceptance, but an accepted authoritative write never returns an ambiguous timeout. Existing multi-statement `transaction()` closures stay on their caller connection and share the same writer permit.
+- **Cross-process safety**: the process `_WRITE_LOCK` is paired with an advisory `app.write.lock` file permit, automatically released by the OS on process death. Gateway, collector, and supervisor writers therefore contend before SQLite's writer slot; `busy_timeout` remains the last-resort fallback.
+- **Legacy guard**: production connections subclass `sqlite3.Connection` and serialize direct autocommit DML that has not yet migrated to `execute_write()`; migrated modules have a static no-direct-DML regression test.
+- **Transaction safety**: migrated writes use `run_write()`/`execute_write()`; legacy write paths still capture `was_in_tx = db.in_transaction` before writing and commit only when it was false.
 - **Migrations**: additive-only (new tables, new columns with defaults); never DROP/RENAME in production
 - **ID format**: 12-char hex string — `uuid4().hex[:12]` (48-bit), via `new_id()` in `storage/models.py:8`. NOT a full 36-char UUID4. Collision risk is negligible at this scale (P≈2e-7 at 10⁴ rows, ≈1e-3 at 10⁶); the short form keeps IDs readable in logs/audit. (CR-DM-01: doc corrected to match code 2026-06-23 — code is the convention, full-UUID4 migration deemed unjustified.)
 - **Timestamps**: ISO 8601 UTC strings (`2026-06-21T12:00:00+00:00`)
@@ -67,6 +69,12 @@ retry rows, with unused capacity borrowed by the other half. The partial express
 indexes `idx_opportunities_trade_unranked_rotation` and
 `idx_opportunities_trade_retry_rotation` provide the two ordered streams without a
 full table scan or temporary sort.
+
+The owner-facing current-entry projection uses
+`idx_opportunities_status_created`, `idx_filter_decisions_opportunity_evaluated`,
+and `idx_filter_decisions_opportunity_run`. These indexes keep the bounded candidate
+view from repeating full `opportunities` or `filter_decisions` scans for every row;
+they do not change ranker, queue, or decision semantics.
 
 Queued market-observer work is admission-bounded to 5 unresolved identities. A
 superseded parent snapshot atomically expires both open and queued children with an
@@ -511,12 +519,15 @@ at the tail. Full `VACUUM` runs only in the one-shot backfill with the gateway s
 
 ## 9. Concurrency Recovery Protocol
 
-> Four pillars (see [AGENTS.md SQLite rule](../../../AGENTS.md)). Recovery specifics:
+> The four SQLite safeguards remain in force; the writer lane adds bounded admission and
+> exact-result semantics without changing existing transaction boundaries.
 
-- **Write serialization via `_WRITE_LOCK`** (`sqlite.py`): `transaction()` acquires a process-wide `threading.Lock` before every `BEGIN` and releases it after `COMMIT`/`ROLLBACK`. All writer threads queue in Python — SQLite's `busy_timeout` is never reached under normal operation. Timeout 32s surfaces any transaction held open across I/O as a `write_lock_timeout` `OperationalError`.
-- **Transaction-leak cleanup**: scheduler calls `rollback_if_in_transaction()` before/after each job (`sqlite.py:56-69`, `scheduler.py:125-134`) — prevents a daemon thread from permanently holding the WAL writer lock.
+- **Writer lane** (`sqlite.py`): transaction-external repository writes queue to one dedicated connection. Capacity is 256; a full queue waits at most 32 seconds before rejecting the not-yet-admitted operation. Once admitted, the caller waits for a definitive commit or rollback.
+- **Write permit**: the dedicated lane, explicit `transaction()` closures, and guarded legacy autocommit statements share a re-entrant thread-owned `_WRITE_LOCK`; normal `app.db` processes additionally share the advisory `app.write.lock` permit. Both are released in `finally` blocks.
+- **Transaction-leak cleanup**: scheduler calls `rollback_if_in_transaction()` before/after each job — prevents a daemon thread from permanently holding the WAL writer lock.
 - **`isolation_level=None`** is the structural fix: no implicit BEGIN means a failed DML does not leave the thread `in_transaction=True`.
-- **Invariant**: never open a `with transaction():` block that spans an `await` or any network/I/O call — this would hold `_WRITE_LOCK` across I/O and starve all other writers.
+- **Metrics**: `writer_metrics_snapshot()` exposes capacity/depth, submitted/completed/failed counts, admission timeouts, guarded legacy writes, and maximum queue/lock/transaction times. SQL and bound values are never logged.
+- **Invariant**: never open a `with transaction():` block or `run_write()` closure that spans an `await` or any network/I/O call — this would hold the global writer permit across I/O and starve all other writers.
 
 ## 10. Outcome Integrity Additive Schema（OI-S01 implemented）
 

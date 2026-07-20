@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 from aletheia.storage import repositories as repo
@@ -68,6 +69,45 @@ def test_hot_queries_use_matching_indexes(tmp_path, monkeypatch):
         "SELECT rowid FROM market_ohlcv WHERE timeframe=? AND ts < ?",
         ("1m", 1),
     )
+    assert "idx_opportunities_status_created" in _plan(
+        db,
+        "SELECT id FROM opportunities WHERE status='open' "
+        "AND julianday(created_at)>=julianday(?) ORDER BY julianday(created_at)",
+        ("2026-01-01",),
+    )
+    assert "idx_filter_decisions_opportunity_evaluated" in _plan(
+        db,
+        "SELECT run_id,evaluated_at FROM filter_decisions WHERE opportunity_id=? "
+        "AND julianday(evaluated_at)>=julianday(?) "
+        "ORDER BY julianday(evaluated_at) DESC,rowid DESC LIMIT 1",
+        ("opportunity", "2026-01-01"),
+    )
+    assert "idx_filter_decisions_opportunity_run" in _plan(
+        db,
+        "SELECT filter_name FROM filter_decisions "
+        "WHERE opportunity_id=? AND run_id=? ORDER BY stage,sequence_no,rowid",
+        ("opportunity", "run"),
+    )
+    reset_db()
+
+
+def test_sqlite_transaction_timing_can_be_enabled_without_logging_values(
+    tmp_path, monkeypatch, caplog,
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    monkeypatch.setenv("ALETHEIA_SQLITE_TIMING", "1")
+
+    with caplog.at_level(logging.INFO, logger="aletheia.storage.sqlite"):
+        with repo.transaction():
+            db.execute(
+                "INSERT INTO market_snapshots(id,symbol,market_type,price,snapshot_at) "
+                "VALUES(?,?,?,?,?)",
+                ("timing-row", "SENSITIVE/SYMBOL", "spot", 100.0, "2026-01-01"),
+            )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("sqlite_write_transaction wait_ms=" in message for message in messages)
+    assert all("SENSITIVE/SYMBOL" not in message for message in messages)
     reset_db()
 
 

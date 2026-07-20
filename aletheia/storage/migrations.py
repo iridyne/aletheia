@@ -2548,6 +2548,12 @@ CREATE INDEX IF NOT EXISTS idx_filter_candidate_outcomes_entry
 ON filter_candidate_outcomes(entry_ts);
 CREATE INDEX IF NOT EXISTS idx_market_ohlcv_timeframe_ts
 ON market_ohlcv(timeframe, ts);
+CREATE INDEX IF NOT EXISTS idx_opportunities_status_created
+ON opportunities(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_filter_decisions_opportunity_evaluated
+ON filter_decisions(opportunity_id, evaluated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_filter_decisions_opportunity_run
+ON filter_decisions(opportunity_id, run_id, stage, sequence_no);
 """
 
 

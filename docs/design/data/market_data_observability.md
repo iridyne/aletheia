@@ -28,10 +28,12 @@ macro, on-chain, and OHLCV. OHLCV freshness is based on candle-open milliseconds
 other domains use their persisted observation timestamp.
 
 The endpoint is a synchronous FastAPI route, so SQLite work runs in the framework
-thread pool. Its exact counts scan the retained funding/OI/LSR/OHLCV indexes. On the
-July 2026 local 567 MB database the cold report measured about 150 ms and the cached
-path below 1 ms. A 30-second in-process cache prevents the Overview poll from
-repeating those scans on every request.
+thread pool. Its exact counts scan the retained funding/OI/LSR/OHLCV indexes. A
+30-second in-process cache prevents duplicate Overview scans. The response's
+`Server-Timing` header names every domain, cache hits, report total, and global app
+wall time. A refresh over 500 ms writes `data_coverage_refresh_slow` with only the
+three slowest domain durations; it never logs SQL parameters or row values. This
+separates actual scan time from cache-lock, thread-pool, or surrounding request wait.
 
 ## OHLCV response provenance
 

@@ -43,33 +43,11 @@ class _FakePosition:
         self.mark_price = 3010.0
 
 
-def test_store_retries_transient_sqlite_busy(monkeypatch):
+def test_store_routes_one_exact_upsert_through_writer_lane(monkeypatch):
     from aletheia.portfolio import exchange_sync as es
 
-    attempts = []
-
-    class _Conn:
-        def __init__(self, attempt_num):
-            self.attempt_num = attempt_num
-            self.closed = False
-
-        def execute(self, sql, *args, **kwargs):
-            attempts.append(self.attempt_num)
-            if self.attempt_num == 0:
-                raise sqlite3.OperationalError("database is locked")
-
-        def close(self):
-            self.closed = True
-
-    call_count = [0]
-
-    def fake_connect(*args, **kwargs):
-        conn = _Conn(call_count[0])
-        call_count[0] += 1
-        return conn
-
-    monkeypatch.setattr(es.sqlite3, "connect", fake_connect)
-    monkeypatch.setattr(es.time, "sleep", lambda _sec: None)
+    writes = []
+    monkeypatch.setattr(es, "execute_write", lambda sql, params: writes.append((sql, params)))
 
     es._store(es.ExchangeAccountState(
         mode="demo",
@@ -84,9 +62,9 @@ def test_store_retries_transient_sqlite_busy(monkeypatch):
         positions=[],
     ))
 
-    assert len(attempts) >= 2
-    assert attempts[0] == 0  # first attempt failed
-    assert attempts[1] == 1  # retried with new connection
+    assert len(writes) == 1
+    assert "ON CONFLICT(key) DO UPDATE" in writes[0][0]
+    assert writes[0][1][0] == "exchange_account_state.demo"
 
 
 def _patch_client(monkeypatch, *, balances=None, positions=None, orders=None,

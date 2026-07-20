@@ -21,14 +21,12 @@ Governance:
 
 import json
 import logging
-import sqlite3
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
 from aletheia.config.loader import load_config
-from aletheia.storage.sqlite import get_db
+from aletheia.storage.sqlite import execute_write, get_db
 
 logger = logging.getLogger("aletheia.exchange_sync")
 
@@ -67,14 +65,9 @@ def _settings_key(mode: str) -> str:
 def _store(state: ExchangeAccountState) -> None:
     """Persist the latest snapshot. Idempotent upsert into settings.
 
-    Uses a dedicated autocommit connection (isolation_level=None) so that the
-    INSERT is immediately committed as a single atomic statement. This prevents
-    the thread-local connection from holding an open write transaction if the
-    daemon thread is abandoned by _run_sync_with_timeout — the root cause of
-    the permanent DB lock under uvicorn.
+    The writer lane owns the connection, so an abandoned timeout worker cannot
+    leave an implicit transaction open on its thread-local connection.
     """
-    from aletheia.storage.sqlite import db_path
-
     payload = json.dumps({
         "mode": state.mode,
         "equity_usdt": state.equity_usdt,
@@ -87,24 +80,11 @@ def _store(state: ExchangeAccountState) -> None:
         "asset_breakdown": state.asset_breakdown or [],
         "positions": state.positions or [],
     })
-    for attempt in range(3):
-        conn = None
-        try:
-            conn = sqlite3.connect(str(db_path()), isolation_level=None, timeout=30)
-            conn.execute("PRAGMA busy_timeout=30000")
-            conn.execute(
-                "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-                (_settings_key(state.mode), payload),
-            )
-            return
-        except sqlite3.OperationalError as exc:
-            if "database is locked" not in str(exc).lower() or attempt >= 2:
-                raise
-            time.sleep(0.25 * (attempt + 1))
-        finally:
-            if conn:
-                conn.close()
+    execute_write(
+        "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (_settings_key(state.mode), payload),
+    )
 
 
 def _read_raw(mode: str) -> Optional[dict]:
@@ -487,29 +467,12 @@ def sync_all_exchanges() -> Optional[dict]:
 
 def _store_unified(payload: dict) -> None:
     import json
-    import sqlite3
-    import time as _time
-    from aletheia.storage.sqlite import db_path
 
     key = f"{_KEY_PREFIX}.unified"
     data = json.dumps(payload)
-    for attempt in range(3):
-        conn = None
-        try:
-            conn = sqlite3.connect(str(db_path()), isolation_level=None, timeout=30)
-            conn.execute("PRAGMA busy_timeout=30000")
-            conn.execute(
-                "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-                (key, data),
-            )
-            return
-        except sqlite3.OperationalError as exc:
-            if "database is locked" not in str(exc).lower() or attempt >= 2:
-                raise
-            _time.sleep(0.25 * (attempt + 1))
-        finally:
-            if conn:
-                conn.close()
-
+    execute_write(
+        "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (key, data),
+    )
 
