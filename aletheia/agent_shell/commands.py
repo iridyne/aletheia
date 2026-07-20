@@ -1709,6 +1709,13 @@ def _record_no_evaluable_candidate_observation(
     ))
 
 
+# Buffer added to defer_until when extending Opportunity.valid_until forward.
+# 300s covers the paper_trader 180s scan cadence + one expire_stale sweep pass,
+# so a defer window is never race-consumed by the TTL expiry pass before the
+# re-evaluation the Operator promised.
+_DEFER_VALID_UNTIL_MARGIN_SEC = 300
+
+
 def _deferred_context_dedup_key(
     context_fingerprint: str,
     *,
@@ -1834,9 +1841,20 @@ def _record_deferred_context_observation(
     ``event_kind`` selects the observation type so diagnostic aggregations can
     distinguish the several defer causes (unchanged context, low conviction,
     debate-not-confirmed, missing candidate technical facts).
+
+    Defer is the authoritative signal for "candidate remains worth another
+    Operator look at ``defer_until``". This function therefore extends the
+    underlying Opportunity's ``valid_until`` forward to at least
+    ``defer_until + _DEFER_VALID_UNTIL_MARGIN_SEC`` so the promised re-evaluation
+    is guaranteed inside the Opportunity's lifecycle. The event insert and the
+    ``valid_until`` extension commit atomically.
     """
     from aletheia.storage.models import OperatorEvaluationEvent
-    from aletheia.storage.repositories import record_operator_evaluation_event
+    from aletheia.storage.repositories import (
+        extend_opportunity_valid_until_forward_only,
+        record_operator_evaluation_event,
+        transaction,
+    )
 
     queue = (ctx.get("layer2") or {}).get("pending_queue") or {}
     dedup_key, window_start = _deferred_context_dedup_key(
@@ -1858,22 +1876,10 @@ def _record_deferred_context_observation(
         ),
         None,
     )
-    source_valid_until = (selected or {}).get("valid_until")
-    if source_valid_until:
-        try:
-            source_deadline = datetime.fromisoformat(
-                str(source_valid_until).replace("Z", "+00:00")
-            )
-            if source_deadline.tzinfo is None:
-                source_deadline = source_deadline.replace(tzinfo=timezone.utc)
-            if source_deadline < defer_deadline:
-                defer_deadline = source_deadline
-                defer_deadline_basis = "opportunity_valid_until"
-        except (TypeError, ValueError):
-            # Source-expiry validation owns malformed deadlines and fails closed;
-            # the observation remains truthful about the window it could parse.
-            pass
     defer_until = defer_deadline.isoformat()
+    extended_valid_until = (
+        defer_deadline + timedelta(seconds=_DEFER_VALID_UNTIL_MARGIN_SEC)
+    ).isoformat()
     snapshot = {
         "context_fingerprint": context_fingerprint,
         "opportunity_id": opportunity_id,
@@ -1887,19 +1893,27 @@ def _record_deferred_context_observation(
         "overflow_count": int(queue.get("overflow_count") or 0),
         "oldest_at": queue.get("oldest_at"),
     }
-    event_row = record_operator_evaluation_event(OperatorEvaluationEvent(
-        dedup_key=dedup_key,
-        event_kind=event_kind,
-        trigger=str(trigger or "manual"),
-        pending_unresolved_total=snapshot["unresolved_total"],
-        pending_visible_count=snapshot["visible_count"],
-        pending_oldest_created_at=snapshot["oldest_at"],
-        queue_snapshot_json=json.dumps(
-            snapshot, sort_keys=True, separators=(",", ":")
-        ),
-        data_health_json="{}",
-        policy_epoch_id=policy_epoch_id,
-    ))
+    # Extending valid_until FIRST inside the same transaction guarantees the
+    # event insert observes the widened lifecycle. If either write fails the
+    # whole defer record rolls back, avoiding a half-recorded state where the
+    # Opportunity's valid_until moves but no defer event exists (or vice versa).
+    with transaction(immediate=True):
+        extend_opportunity_valid_until_forward_only(
+            opportunity_id, extended_valid_until
+        )
+        event_row = record_operator_evaluation_event(OperatorEvaluationEvent(
+            dedup_key=dedup_key,
+            event_kind=event_kind,
+            trigger=str(trigger or "manual"),
+            pending_unresolved_total=snapshot["unresolved_total"],
+            pending_visible_count=snapshot["visible_count"],
+            pending_oldest_created_at=snapshot["oldest_at"],
+            queue_snapshot_json=json.dumps(
+                snapshot, sort_keys=True, separators=(",", ":")
+            ),
+            data_health_json="{}",
+            policy_epoch_id=policy_epoch_id,
+        ))
     # Layer-1 observability: the defer path was silent until this log line.
     # Payload fields are read-only and every one already exists in `snapshot`
     # or `selected`; no new state is introduced. reason_class is derived by
@@ -1923,6 +1937,7 @@ def _record_deferred_context_observation(
             "defer_until": defer_until,
             "defer_deadline_basis": defer_deadline_basis,
             "policy_epoch_id": policy_epoch_id,
+            "extended_valid_until": extended_valid_until,
         },
     )
     return event_row
