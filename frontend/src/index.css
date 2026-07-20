@@ -2060,9 +2060,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   padding: var(--space-1) var(--space-2) var(--space-1) 0; white-space: nowrap; width: 1%;
 }
 .status-board td { padding: var(--space-1) 0; }
-.status-cell { display: flex; align-items: center; gap: var(--space-2); }
+.status-cell { display: flex; align-items: center; gap: var(--space-2); overflow: hidden; }
 .status-value {
   font-family: var(--mono); font-size: 0.78rem; color: var(--text);
+  min-width: 0; flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .status-light {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--faint);
