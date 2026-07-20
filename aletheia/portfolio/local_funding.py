@@ -354,7 +354,19 @@ def _incomplete(
     reason: str,
     exchange: str | None = None,
     events: list[dict[str, Any]] | None = None,
+    diagnostic: dict[str, Any] | None = None,
 ) -> LocalFundingResult:
+    """Build an incomplete LocalFundingResult with an audit trail.
+
+    The optional ``diagnostic`` dict is merged into the evidence so the
+    operator can see WHERE the audit chain broke — e.g.
+    ``{"last_observation_at": "2026-07-19T23:31:15Z",
+       "gap_from_close_sec": 1037,
+       "max_gap_allowed_sec": 900}`` for a close_anchor failure. Fields
+    are additive; recognized keys should be prefixed unambiguously so a
+    future diagnostic addition can't collide with the schedule/event
+    fields ``events`` already occupies.
+    """
     evidence: dict[str, Any] = {
         "status": "incomplete",
         "reason": reason,
@@ -367,6 +379,9 @@ def _incomplete(
         "closed_at": _as_iso(closed_at) if closed_at is not None else None,
         "events": events or [],
     }
+    if diagnostic:
+        for key, value in diagnostic.items():
+            evidence.setdefault(key, value)
     return LocalFundingResult(
         complete=False,
         funding_cost=None,
@@ -533,6 +548,32 @@ def _compute_local_funding_with_entry_fills(
             and row.scheduled_at > current_target
         ]
         if not transition_candidates:
+            # Diagnose: what's the FIRST observation strictly after
+            # current_target? If it exists but sits outside the 15-min
+            # budget, we can quantify by how much the collector missed —
+            # e.g. a first observation 29 min after the target is a
+            # different failure signature than no observation at all.
+            later_obs = [
+                r for r in venue_rows
+                if current_target < r.observed_at <= closed
+            ]
+            first_after = min(
+                later_obs, key=lambda r: r.observed_at,
+            ) if later_obs else None
+            diagnostic = {
+                "current_target": _as_iso(current_target),
+                "next_observation_at": (
+                    _as_iso(first_after.observed_at) if first_after else None
+                ),
+                "next_observation_scheduled_at": (
+                    _as_iso(first_after.scheduled_at) if first_after else None
+                ),
+                "gap_from_current_target_sec": (
+                    (first_after.observed_at - current_target).total_seconds()
+                    if first_after else None
+                ),
+                "max_gap_allowed_sec": int(_MAX_OBSERVATION_GAP.total_seconds()),
+            }
             return _incomplete(
                 position=position,
                 opened_at=opened,
@@ -540,6 +581,7 @@ def _compute_local_funding_with_entry_fills(
                 reason="missing_schedule_transition",
                 exchange=exchange,
                 events=events,
+                diagnostic=diagnostic,
             )
         transition = min(transition_candidates, key=lambda row: row.observed_at)
         previous_event = current_target
@@ -552,6 +594,25 @@ def _compute_local_funding_with_entry_fills(
         and closed - row.observed_at <= _MAX_OBSERVATION_GAP
     ]
     if not close_anchor_candidates:
+        # Diagnose: what's the LATEST observation before close, and how far
+        # from the 15-min budget did it fall? This turns a bare
+        # "missing_close_anchor" into an actionable audit trail — the
+        # operator can see if the collector was 17 min stale or 4 hours
+        # stale, and whether the close_anchor invariant was almost met.
+        last_before_close = max(
+            (r.observed_at for r in venue_rows if r.observed_at <= closed),
+            default=None,
+        )
+        diagnostic = {
+            "last_observation_at": (
+                _as_iso(last_before_close) if last_before_close else None
+            ),
+            "gap_from_close_sec": (
+                (closed - last_before_close).total_seconds()
+                if last_before_close else None
+            ),
+            "max_gap_allowed_sec": int(_MAX_OBSERVATION_GAP.total_seconds()),
+        }
         return _incomplete(
             position=position,
             opened_at=opened,
@@ -559,6 +620,7 @@ def _compute_local_funding_with_entry_fills(
             reason="missing_close_anchor",
             exchange=exchange,
             events=events,
+            diagnostic=diagnostic,
         )
     close_anchor = max(close_anchor_candidates, key=lambda row: row.observed_at)
 
@@ -692,46 +754,100 @@ def _close_anchor_already_covered(symbol: str, closed_at: str) -> bool:
     return row is not None
 
 
+async def _fetch_funding_from(
+    ensure_fn,
+    exchange_name: str,
+    perp: str,
+    fetch_timeout_sec: float,
+):
+    """Single-exchange fetch with a bounded timeout. Returns raw dict or None.
+
+    Extracted so try_seed_close_anchor_snapshot can cascade primary → fallback
+    without duplicating the timeout/exception handling.
+    """
+    import asyncio
+    try:
+        raw = await asyncio.wait_for(
+            ensure_fn().fetch_funding_rate(perp), timeout=fetch_timeout_sec
+        )
+        return raw
+    except Exception:
+        return None
+
+
 async def _seed_close_anchor_snapshot_async(
     row: Mapping[str, Any],
     closed_at: str,
     fetch_timeout_sec: float,
-) -> bool:
+) -> dict:
+    """Attempt to seed a live close-anchor snapshot.
+
+    Returns a diagnostic dict describing every attempt so the caller can
+    surface a per-position audit trail (see the `attempts` list in
+    funding_evidence). The `inserted` key is True iff a snapshot was
+    written to `funding_rate_snapshots`.
+    """
     from aletheia.data.ccxt_provider import get_market_data_provider
     from aletheia.data.symbols import to_ccxt_perp
     from aletheia.data.collectors.derivatives import _parse_funding
     from aletheia.storage.repositories import insert_funding_rate_snapshot
     import asyncio
 
+    diagnostic: dict = {"inserted": False, "attempts": [], "skipped": None}
+
     symbol = str(row.get("symbol") or "").strip()
     if not symbol:
-        return False
+        diagnostic["skipped"] = "missing_symbol"
+        return diagnostic
     if str(row.get("market_type") or "") != "usdt_futures":
-        return False
+        diagnostic["skipped"] = "non_futures_market"
+        return diagnostic
     if str(row.get("execution_mode") or "") != "paper_internal":
-        return False
+        diagnostic["skipped"] = "non_paper_internal"
+        return diagnostic
     if _close_anchor_already_covered(symbol, closed_at):
-        return False
+        diagnostic["skipped"] = "close_anchor_already_covered"
+        return diagnostic
 
     perp = to_ccxt_perp(symbol)
     if not perp:
-        return False
+        diagnostic["skipped"] = "no_perp_symbol_mapping"
+        return diagnostic
 
     provider = get_market_data_provider(native_ccxt=True)
-    inserted = False
     try:
-        exchange = provider._ensure_primary()
-        raw = await asyncio.wait_for(
-            exchange.fetch_funding_rate(perp), timeout=fetch_timeout_sec
-        )
-        snap = _parse_funding(symbol, provider._primary_name, raw)
-        if snap is not None:
+        # Cascade primary → fallback. A proxy/venue-side outage on primary
+        # (the exact scenario that caused the underlying collector gap) is
+        # exactly when the fallback venue is most useful. Each venue gets
+        # its own bounded timeout so a stuck primary can't consume the
+        # fallback's budget.
+        venues = [
+            (provider._primary_name, provider._ensure_primary),
+            (provider._fallback_name, provider._ensure_fallback),
+        ]
+        for venue_name, ensure_fn in venues:
+            raw = await _fetch_funding_from(
+                ensure_fn, venue_name, perp, fetch_timeout_sec
+            )
+            attempt: dict = {"venue": venue_name, "outcome": None}
+            if raw is None:
+                attempt["outcome"] = "fetch_failed_or_timeout"
+                diagnostic["attempts"].append(attempt)
+                continue
+            snap = _parse_funding(symbol, venue_name, raw)
+            if snap is None:
+                attempt["outcome"] = "parse_returned_none"
+                diagnostic["attempts"].append(attempt)
+                continue
             # observed_at MUST match the actual close boundary — that's what
             # close_anchor tests against. Using the persisted close boundary
             # keeps the funding-schedule audit deterministic.
             snap = snap.model_copy(update={"observed_at": closed_at})
             insert_funding_rate_snapshot(snap.model_dump())
-            inserted = True
+            attempt["outcome"] = "inserted"
+            diagnostic["attempts"].append(attempt)
+            diagnostic["inserted"] = True
+            return diagnostic
     finally:
         # Provider owns aiohttp sessions; not closing leaks connectors and
         # trips aiohttp's "Unclosed client session" warning at loop teardown.
@@ -740,7 +856,7 @@ async def _seed_close_anchor_snapshot_async(
             await asyncio.shield(provider.close())
         except Exception:
             pass
-    return inserted
+    return diagnostic
 
 
 def try_seed_close_anchor_snapshot(
@@ -748,26 +864,36 @@ def try_seed_close_anchor_snapshot(
     closed_at: str,
     *,
     timeout_sec: float = 3.0,
-) -> bool:
+) -> dict:
     """Best-effort live snapshot at the close boundary.
 
-    Returns True iff a `funding_rate_snapshots` row was written with
-    ``observed_at == closed_at``. Any failure (missing symbol, wrong
-    market_type, network/proxy error, exchange API failure, timeout,
-    running-loop reentrancy) is swallowed silently — the caller must
-    not depend on the return value for correctness, only for observability.
+    Returns a diagnostic dict:
+        {"inserted": bool,
+         "attempts": [{"venue": ..., "outcome": ...}, ...],
+         "skipped": Optional[str]}
 
-    Sync wrapper safe to call from `close_paper_position`. If an outer
-    event loop is already running (e.g. async scheduler context), the
-    helper no-ops rather than nesting loops.
+    ``inserted`` is True iff a `funding_rate_snapshots` row was written with
+    ``observed_at == closed_at``. Callers must not depend on inserted=True for
+    correctness (network/proxy failure is possible), only for observability.
+    ``attempts`` records every venue tried (primary + fallback) with a per-
+    venue outcome so ``close_paper_position`` can persist the trail into
+    funding evidence (audit chain diagnostic; see FUND-Q2 in
+    docs/_ai/session).
+
+    Sync wrapper safe to call from `close_paper_position`. If an outer event
+    loop is already running (async scheduler context) the helper no-ops
+    rather than nesting loops, and returns ``{"inserted": False, "attempts":
+    [], "skipped": "running_loop_reentrancy"}``.
     """
     import asyncio
 
     try:
-        # A running loop means we're inside async code; running a nested
-        # asyncio.run would raise RuntimeError. Skip rather than block.
         asyncio.get_running_loop()
-        return False
+        return {
+            "inserted": False,
+            "attempts": [],
+            "skipped": "running_loop_reentrancy",
+        }
     except RuntimeError:
         pass
 
@@ -787,8 +913,12 @@ def try_seed_close_anchor_snapshot(
         except Exception:
             pass
         return result
-    except Exception:
-        return False
+    except Exception as exc:
+        return {
+            "inserted": False,
+            "attempts": [],
+            "skipped": f"loop_exception:{type(exc).__name__}",
+        }
     finally:
         try:
             loop.close()
