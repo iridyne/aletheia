@@ -282,14 +282,18 @@ GAP-1/GAP-2 的修复应当**同步补一节合同**，例如：
 
 ## 5. 修复顺序（建议）
 
-| 序 | Gap | Effort | 依赖 | 交付状态 |
-|---|---|---|---|---|
-| 1 | GAP-1 admission defer-blind | small | 无 | ✅ **实现中**（本次 PR）：`count_unresolved_signal_pending` 加第二 `NOT EXISTS` 排除活跃 defer；新加 partial 索引 `idx_operator_evaluation_events_defer_active`；新契约 `DL-S57` / `DL-S58` |
-| 2 | GAP-2 defer 时同步延长 `valid_until` | small | 与 GAP-1 同 PR | ✅ **实现中**（本次 PR）：反转 `_record_deferred_context_observation` 的 cap-down；`_DEFER_VALID_UNTIL_MARGIN_SEC = 300` + `extend_opportunity_valid_until_forward_only` helper；新契约 `DL-S59` |
-| 3 | 契约文档补 admission slot invariant | trivial | 与 GAP-1/2 同 PR | ✅ **实现中**（本次 PR）：`docs/design/contracts/decision_lifecycle_contract.md` §2.3b "Admission slot 语义" |
-| 4 | GAP-3 batch/queue cap 对齐 | trivial | 无 | ⏳ 未开始（GAP-1 修复后队列不常满，本 gap 影响面下降；单独 PR 交付） |
-| 5 | GAP-4 defer_exceeds_opportunity_ttl 观测事件 | trivial | GAP-2 到位后自动无损 | ⏳ 未开始（GAP-2 修复后 defer 不再被截短，本 gap 从"防御纵深"退化为"观测事件"；单独 PR 交付） |
-| 6 | GAP-5 cooldown 加 signal_source / already_evaluated 加时间窗 | trivial | 无 | ✅ **实现中**（本次 PR）：`_recent_signal_pairs` 加 `signal_source` 参数；`_operator_evaluated_opportunity_ids` 加 24h 时间窗；新契约 `DL-S60` / `DL-S61` |
+**Umbrella issue**: [#156](https://github.com/iridite/aletheia/issues/156)
+
+| 序 | Gap | Effort | 依赖 | 交付状态 | Issue |
+|---|---|---|---|---|---|
+| 1 | GAP-1 admission defer-blind | small | 无 | ✅ closed by PR #155 | (umbrella #156) |
+| 2 | GAP-2 defer 时同步延长 `valid_until` | small | 与 GAP-1 同 PR | ✅ closed by PR #155 | (umbrella #156) |
+| 3 | 契约文档补 admission slot invariant | trivial | 与 GAP-1/2 同 PR | ✅ closed by PR #155 (`decision_lifecycle_contract.md` §2.3b) | (umbrella #156) |
+| 4 | GAP-3 batch/queue cap 对齐 | trivial | 无 | ⏳ 未开始 | [#157](https://github.com/iridite/aletheia/issues/157) |
+| 5 | GAP-4 defer_exceeds_opportunity_ttl 观测事件 | trivial | GAP-2 到位后自动无损 | ⏳ 未开始 | [#158](https://github.com/iridite/aletheia/issues/158) |
+| 6 | GAP-5 cooldown 加 signal_source / already_evaluated 加时间窗 | trivial | 无 | ✅ closed by PR #155 | (umbrella #156) |
+| 7 | Fast-path B2 evidence blindness（PR 中新发现） | small | 无 | ✅ closed by PR #155 (第二个 commit) | (umbrella #156) |
+| 8 | Regression: `test_reviewed_opportunity_roundtrips_...` | ? | scoping | ⏳ 未开始 | [#159](https://github.com/iridite/aletheia/issues/159) |
 
 **推荐一次 PR 交付**：`fix(admission): defer-aware slot accounting + TTL follows defer` — GAP-1 + GAP-2 +
 契约补充是一个逻辑闭包，分开交付会出现"槽释放了但候选已 ttl_expired"的中间态。
