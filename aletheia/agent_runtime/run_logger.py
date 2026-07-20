@@ -31,6 +31,15 @@ def _create_run(
 
 
 def start_run(agent_name: str, trigger_type: str, permission_mode: str, model_provider: str | None = None) -> AgentRun:
+    try:
+        from aletheia.economics.tracing import initialize_runtime_tracing
+
+        initialize_runtime_tracing()
+    except Exception:
+        # Measurement initialization must never block an AgentRun. The missing
+        # economics facts will make the later audit invalid rather than altering
+        # runtime behavior.
+        pass
     return _create_run(
         agent_name,
         trigger_type,
@@ -75,15 +84,46 @@ def end_run(run: AgentRun, status: str = "completed", outputs: list[str] | None 
     except Exception:
         pass
     tools_called = _aggregate_tools_called(run.id)
+    cost_summary = _aggregate_cost(run.id)
     update_data = {
         "status": status,
         "ended_at": datetime.now(timezone.utc).isoformat(),
         "outputs_created": json.dumps(outputs if outputs is not None else []),
         "errors": json.dumps(errors if errors is not None else []),
         "tools_called": json.dumps(tools_called),
+        # AgentRun.cost_estimate is only populated when every recorded runtime
+        # cost event is complete. The known subtotal remains available from the
+        # append-only event ledger when this cache is NULL.
+        "cost_estimate": cost_summary.get("cost_estimate_usd"),
     }
+    if cost_summary.get("final_model"):
+        update_data["model_name"] = cost_summary["final_model"]
     update_agent_run(run.id, **update_data)
-    write_agent_run_log({"event": "run_ended", "run_id": run.id, "status": status})
+    write_agent_run_log({
+        "event": "run_ended",
+        "run_id": run.id,
+        "status": status,
+        "cost_estimate_usd": cost_summary.get("cost_estimate_usd"),
+        "known_cost_subtotal_usd": cost_summary.get("known_cost_subtotal_usd", 0.0),
+        "cost_complete": cost_summary.get("cost_complete", False),
+        "cost_event_count": cost_summary.get("event_count", 0),
+    })
+
+
+def _aggregate_cost(run_id: str) -> dict:
+    try:
+        from aletheia.economics.tracing import aggregate_agent_run_cost
+
+        return aggregate_agent_run_cost(run_id)
+    except Exception:
+        return {
+            "run_id": run_id,
+            "event_count": 0,
+            "known_cost_subtotal_usd": 0.0,
+            "cost_estimate_usd": None,
+            "cost_complete": False,
+            "final_model": None,
+        }
 
 
 def _aggregate_tools_called(run_id: str) -> list[str]:
