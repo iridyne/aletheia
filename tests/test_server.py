@@ -1,5 +1,7 @@
 """Integration tests for the FastAPI server."""
 
+import logging
+
 import pytest
 from httpx import AsyncClient, ASGITransport
 
@@ -51,6 +53,30 @@ async def test_status(client):
     assert data["live_state"] == "live_disabled"
     assert data["permission_mode"] == "Paper"
     assert data["exchange_mode"] == "demo"
+
+
+@pytest.mark.anyio
+async def test_http_timing_header_and_opt_in_log_exclude_query_string(
+    client, monkeypatch, caplog,
+):
+    monkeypatch.setenv("ALETHEIA_HTTP_TIMING", "1")
+
+    with caplog.at_level(logging.INFO, logger="aletheia.http"):
+        resp = await client.get("/api/health?diagnostic_token=must-not-be-logged")
+
+    assert resp.status_code == 200
+    assert "app;dur=" in resp.headers["server-timing"]
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("http_request method=GET path=/api/health" in message for message in messages)
+    assert all("diagnostic_token" not in message for message in messages)
+
+    caplog.clear()
+    monkeypatch.delenv("ALETHEIA_HTTP_TIMING")
+    monkeypatch.setenv("ALETHEIA_SLOW_REQUEST_MS", "0")
+    with caplog.at_level(logging.WARNING, logger="aletheia.http"):
+        await client.get("/api/health")
+    assert any("http_request_slow method=GET path=/api/health" in record.getMessage()
+               for record in caplog.records)
 
 
 @pytest.mark.anyio

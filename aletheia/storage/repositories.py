@@ -3,22 +3,47 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 import json
+import logging
+import os
 import threading
 import sqlite3
 import time
 import uuid
-from aletheia.storage.sqlite import get_db, _WRITE_LOCK, _WRITE_LOCK_TIMEOUT_S
+from aletheia.storage.sqlite import (
+    acquire_write_lock,
+    execute_many_write,
+    execute_write,
+    get_db,
+    release_write_lock,
+)
 from aletheia.storage.models import (
-    AuditEvent, AgentRun, Opportunity, TradeProposal,
-    RiskDecision, Order, Fill, Position, PositionDisappearanceCandidate,
-    PositionDisappearanceObservation, ReconciliationIntegrityIncident,
-    StrategyRecord, KnowledgeItem, RuntimeSession,
-    SerenityTheme, SerenityEvidence, SerenityOpportunity, SerenityRiskGate,
-    SerenityReplaySnapshot, SerenityPostMortem, SerenityClaim, OutcomeHookJob,
+    AuditEvent,
+    AgentRun,
+    Opportunity,
+    TradeProposal,
+    RiskDecision,
+    Order,
+    Fill,
+    Position,
+    PositionDisappearanceCandidate,
+    PositionDisappearanceObservation,
+    ReconciliationIntegrityIncident,
+    StrategyRecord,
+    KnowledgeItem,
+    RuntimeSession,
+    SerenityTheme,
+    SerenityEvidence,
+    SerenityOpportunity,
+    SerenityRiskGate,
+    SerenityReplaySnapshot,
+    SerenityPostMortem,
+    SerenityClaim,
+    OutcomeHookJob,
     PaperAccountEvent,
 )
 
 _PROVENANCE_FIELDS = ("runtime_session_id", "producer_commit", "behavior_fingerprint")
+_sqlite_logger = logging.getLogger("aletheia.storage.sqlite")
 _retention_metrics_lock = threading.Lock()
 _retention_metrics: dict[str, dict[str, float | int]] = {}
 
@@ -66,10 +91,12 @@ def _stamp_provenance(data: dict) -> dict:
 
 
 def _insert(table: str, data: dict) -> None:
-    db = get_db()
     cols = ", ".join(data.keys())
     placeholders = ", ".join(["?"] * len(data))
-    db.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", list(data.values()))
+    execute_write(
+        f"INSERT INTO {table} ({cols}) VALUES ({placeholders})",
+        list(data.values()),
+    )
 
 
 def _insert_many(table: str, rows: list[dict]) -> int:
@@ -81,14 +108,18 @@ def _insert_many(table: str, rows: list[dict]) -> int:
     if any(list(row) != columns for row in rows):
         raise ValueError(f"{table} batch rows must have identical ordered columns")
     placeholders = ", ".join(["?"] * len(columns))
-    get_db().executemany(
+    values = [[row[column] for column in columns] for row in rows]
+
+    execute_many_write(
         f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})",
-        [[row[column] for column in columns] for row in rows],
+        values,
     )
     return len(rows)
 
 
-def _select_all(table: str, where: str | None = None, params: tuple = (), order: str = "rowid DESC", limit: int = 100) -> list[dict]:
+def _select_all(
+    table: str, where: str | None = None, params: tuple = (), order: str = "rowid DESC", limit: int = 100
+) -> list[dict]:
     db = get_db()
     sql = f"SELECT * FROM {table}"
     if where:
@@ -105,9 +136,11 @@ def _select_one(table: str, id_val: str) -> dict | None:
 
 
 def _update(table: str, id_val: str, data: dict) -> None:
-    db = get_db()
     sets = ", ".join(f"{k} = ?" for k in data.keys())
-    db.execute(f"UPDATE {table} SET {sets} WHERE id = ?", [*data.values(), id_val])
+    execute_write(
+        f"UPDATE {table} SET {sets} WHERE id = ?",
+        [*data.values(), id_val],
+    )
 
 
 @contextmanager
@@ -132,26 +165,46 @@ def transaction(*, immediate: bool = False, savepoint: bool = False):
     # locked" OperationalErrors cannot occur during normal operation.  Any timeout
     # here means a caller is holding a write transaction open across I/O — a bug,
     # not a concurrency problem.
-    if not _WRITE_LOCK.acquire(timeout=_WRITE_LOCK_TIMEOUT_S):
-        raise sqlite3.OperationalError(
-            "write_lock_timeout: a write transaction was held open too long"
-        )
+    wait_ms = acquire_write_lock()
+    acquired_at = time.perf_counter()
+    outcome = "begin_failed"
     try:
         # BEGIN IMMEDIATE is reserved for short compare-and-write claims.  It
         # acquires SQLite's writer slot before the read so concurrent workers cannot
         # both see an absent row and then perform the same external side effect.
         db.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+        outcome = "committed"
         try:
             yield
             db.commit()
         except Exception:
+            outcome = "rolled_back"
             db.rollback()
             raise
     finally:
-        _WRITE_LOCK.release()
+        held_ms = (time.perf_counter() - acquired_at) * 1000.0
+        release_write_lock()
+        verbose = os.environ.get("ALETHEIA_SQLITE_TIMING", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        log_args = (wait_ms, held_ms, immediate, outcome)
+        if wait_ms >= 100.0 or held_ms >= 500.0:
+            _sqlite_logger.warning(
+                "sqlite_write_transaction_slow wait_ms=%.1f held_ms=%.1f immediate=%s outcome=%s",
+                *log_args,
+            )
+        elif verbose:
+            _sqlite_logger.info(
+                "sqlite_write_transaction wait_ms=%.1f held_ms=%.1f immediate=%s outcome=%s",
+                *log_args,
+            )
 
 
 # --- Runtime Sessions (one row per Gateway process lifecycle) ---
+
 
 def insert_runtime_session(session: RuntimeSession) -> None:
     _insert("runtime_sessions", session.model_dump())
@@ -160,7 +213,7 @@ def insert_runtime_session(session: RuntimeSession) -> None:
 def update_runtime_session(session_id: str, **kwargs) -> None:
     db = get_db()
     sets = ", ".join(f"{k} = ?" for k in kwargs.keys())
-    db.execute(
+    execute_write(
         f"UPDATE runtime_sessions SET {sets} WHERE session_id = ?",
         [*kwargs.values(), session_id],
     )
@@ -168,20 +221,20 @@ def update_runtime_session(session_id: str, **kwargs) -> None:
 
 def get_runtime_session(session_id: str) -> dict | None:
     db = get_db()
-    row = db.execute(
-        "SELECT * FROM runtime_sessions WHERE session_id = ?", (session_id,)
-    ).fetchone()
+    row = db.execute("SELECT * FROM runtime_sessions WHERE session_id = ?", (session_id,)).fetchone()
     return dict(row) if row else None
 
 
 def list_runtime_sessions(runtime_id: str | None = None, limit: int = 50) -> list[dict]:
     if runtime_id:
-        return _select_all("runtime_sessions", where="runtime_id = ?",
-                           params=(runtime_id,), order="started_at DESC", limit=limit)
+        return _select_all(
+            "runtime_sessions", where="runtime_id = ?", params=(runtime_id,), order="started_at DESC", limit=limit
+        )
     return _select_all("runtime_sessions", order="started_at DESC", limit=limit)
 
 
 # --- Audit Events ---
+
 
 def insert_audit_event(event: AuditEvent) -> None:
     _insert("audit_events", event.model_dump())
@@ -192,6 +245,7 @@ def list_audit_events(limit: int = 50) -> list[dict]:
 
 
 # --- Agent Runs ---
+
 
 def insert_agent_run(run: AgentRun) -> None:
     _insert("agent_runs", run.model_dump())
@@ -210,6 +264,7 @@ def get_agent_run(run_id: str) -> dict | None:
 
 
 # --- Opportunities ---
+
 
 def insert_opportunity(opp: Opportunity) -> None:
     _insert("opportunities", _stamp_provenance(opp.model_dump()))
@@ -233,9 +288,7 @@ def list_open_opportunities(limit: int = 50) -> list[dict]:
     )
 
 
-_OPEN_TRADE_ASSET_PREDICATE = (
-    "COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity')"
-)
+_OPEN_TRADE_ASSET_PREDICATE = "COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity')"
 _OPEN_TRADE_UNRANKED_SQL = f"""
     SELECT * FROM opportunities
     INDEXED BY idx_opportunities_trade_unranked_rotation
@@ -276,43 +329,48 @@ def list_open_trade_opportunities(limit: int = 50) -> list[dict]:
     def fetch(sql: str, count: int, *, offset: int = 0) -> list[dict]:
         if count <= 0:
             return []
-        return [
-            dict(row)
-            for row in db.execute(sql, (int(count), int(offset))).fetchall()
-        ]
+        return [dict(row) for row in db.execute(sql, (int(count), int(offset))).fetchall()]
 
     unranked = fetch(_OPEN_TRADE_UNRANKED_SQL, unranked_quota)
     retryable = fetch(_OPEN_TRADE_RETRY_SQL, retry_quota)
     remaining = page_size - len(unranked) - len(retryable)
     if remaining > 0 and len(unranked) < unranked_quota:
-        retryable.extend(fetch(
-            _OPEN_TRADE_RETRY_SQL,
-            remaining,
-            offset=len(retryable),
-        ))
+        retryable.extend(
+            fetch(
+                _OPEN_TRADE_RETRY_SQL,
+                remaining,
+                offset=len(retryable),
+            )
+        )
         remaining = page_size - len(unranked) - len(retryable)
     if remaining > 0 and len(retryable) < retry_quota:
-        unranked.extend(fetch(
-            _OPEN_TRADE_UNRANKED_SQL,
-            remaining,
-            offset=len(unranked),
-        ))
+        unranked.extend(
+            fetch(
+                _OPEN_TRADE_UNRANKED_SQL,
+                remaining,
+                offset=len(unranked),
+            )
+        )
         remaining = page_size - len(unranked) - len(retryable)
     # When both initial quotas were short, consume any final capacity without
     # duplicating the rows already returned from either indexed stream.
     if remaining > 0:
-        retryable.extend(fetch(
-            _OPEN_TRADE_RETRY_SQL,
-            remaining,
-            offset=len(retryable),
-        ))
+        retryable.extend(
+            fetch(
+                _OPEN_TRADE_RETRY_SQL,
+                remaining,
+                offset=len(retryable),
+            )
+        )
         remaining = page_size - len(unranked) - len(retryable)
     if remaining > 0:
-        unranked.extend(fetch(
-            _OPEN_TRADE_UNRANKED_SQL,
-            remaining,
-            offset=len(unranked),
-        ))
+        unranked.extend(
+            fetch(
+                _OPEN_TRADE_UNRANKED_SQL,
+                remaining,
+                offset=len(unranked),
+            )
+        )
     return unranked + retryable
 
 
@@ -329,14 +387,12 @@ def mark_opportunities_ranked(opportunity_ids: list[str], ranked_at: str) -> int
     db = get_db()
     was_in_tx = db.in_transaction
     placeholders = ",".join("?" for _ in ids)
-    cur = db.execute(
+    cur = execute_write(
         f"UPDATE opportunities SET last_ranked_at=? WHERE id IN ({placeholders})",
         (ranked_at, *ids),
     )
     if cur.rowcount != len(ids):
-        raise RuntimeError(
-            f"ranked_opportunity_set_changed:{cur.rowcount}/{len(ids)}"
-        )
+        raise RuntimeError(f"ranked_opportunity_set_changed:{cur.rowcount}/{len(ids)}")
     if not was_in_tx:
         db.commit()
     return cur.rowcount
@@ -352,14 +408,18 @@ def find_divergence_opportunity_by_source_version(
     """
     if not source_version:
         return None
-    row = get_db().execute(
-        "SELECT * FROM opportunities "
-        "WHERE source_agent='divergence_scanner' "
-        "AND json_valid(metadata) "
-        "AND json_extract(metadata, '$.source_version') = ? "
-        "ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 1",
-        (source_version,),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT * FROM opportunities "
+            "WHERE source_agent='divergence_scanner' "
+            "AND json_valid(metadata) "
+            "AND json_extract(metadata, '$.source_version') = ? "
+            "ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 1",
+            (source_version,),
+        )
+        .fetchone()
+    )
     return dict(row) if row else None
 
 
@@ -378,7 +438,7 @@ def update_open_opportunity(oid: str, **kwargs) -> bool:
     if "status" in kwargs:
         raise ValueError("Opportunity lifecycle status requires a transition helper")
     sets = ", ".join(f"{key} = ?" for key in kwargs)
-    cursor = get_db().execute(
+    cursor = execute_write(
         f"UPDATE opportunities SET {sets} WHERE id = ? AND status = 'open'",
         [*kwargs.values(), oid],
     )
@@ -387,7 +447,7 @@ def update_open_opportunity(oid: str, **kwargs) -> bool:
 
 def transition_open_opportunity_to_queued(oid: str) -> bool:
     """Claim one still-open Opportunity for queue insertion without state regression."""
-    cur = get_db().execute(
+    cur = execute_write(
         "UPDATE opportunities SET status='queued' WHERE id=? AND status='open'",
         (oid,),
     )
@@ -396,9 +456,8 @@ def transition_open_opportunity_to_queued(oid: str) -> bool:
 
 def transition_opportunity_to_reviewed(oid: str) -> bool:
     """Advance a produced/evaluated Opportunity to its terminal reviewed state."""
-    cur = get_db().execute(
-        "UPDATE opportunities SET status='reviewed' "
-        "WHERE id=? AND status IN ('open', 'queued')",
+    cur = execute_write(
+        "UPDATE opportunities SET status='reviewed' WHERE id=? AND status IN ('open', 'queued')",
         (oid,),
     )
     return cur.rowcount == 1
@@ -418,8 +477,7 @@ def find_open_opportunity_by_symbol_snapshot(symbol: str, snapshot_id: str, mark
     backward compatibility for callers that predate the market dimension.
     """
     db = get_db()
-    sql = ("SELECT * FROM opportunities WHERE symbol = ? AND universe_snapshot_id = ? "
-           "AND status = 'open'")
+    sql = "SELECT * FROM opportunities WHERE symbol = ? AND universe_snapshot_id = ? AND status = 'open'"
     params: list = [symbol, snapshot_id]
     if market:
         sql += " AND market = ?"
@@ -443,9 +501,7 @@ def find_opportunity_by_symbol_snapshot(
     duplicates.
     """
     db = get_db()
-    sql = (
-        "SELECT * FROM opportunities WHERE symbol = ? AND universe_snapshot_id = ?"
-    )
+    sql = "SELECT * FROM opportunities WHERE symbol = ? AND universe_snapshot_id = ?"
     params: list = [symbol, snapshot_id]
     if market:
         sql += " AND market = ?"
@@ -472,9 +528,7 @@ def insert_opportunity_once_by_snapshot(
         raise ValueError("snapshot Opportunity identity requires symbol, market, snapshot")
 
     with transaction(immediate=True):
-        existing = find_opportunity_by_symbol_snapshot(
-            symbol, snapshot_id, market=market
-        )
+        existing = find_opportunity_by_symbol_snapshot(symbol, snapshot_id, market=market)
         if existing is not None:
             return existing, False
         insert_opportunity(opportunity)
@@ -513,6 +567,7 @@ def insert_divergence_opportunity_once(
 
 # --- PI Decisions ---
 
+
 def insert_pi_decision(decision) -> None:
     """Persist a System Operator trading decision to the database."""
     data = decision.model_dump() if hasattr(decision, "model_dump") else dict(decision)
@@ -531,7 +586,7 @@ def record_operator_evaluation_event(event) -> dict:
     was_in_tx = db.in_transaction
     columns = ", ".join(data)
     placeholders = ", ".join("?" for _ in data)
-    db.execute(
+    execute_write(
         f"INSERT OR IGNORE INTO operator_evaluation_events ({columns}) VALUES ({placeholders})",
         tuple(data.values()),
     )
@@ -554,6 +609,7 @@ def update_pi_decision(decision_id: str, **kwargs) -> None:
 def latest_pi_decision(symbol: str, max_age_minutes: int = 30) -> dict | None:
     """Get the most recent PI decision for a symbol within max_age_minutes."""
     from datetime import datetime, timedelta, timezone
+
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
     db = get_db()
     row = db.execute(
@@ -571,11 +627,15 @@ def get_pi_decision_for_proposal(proposal_id: str) -> dict | None:
     """Return the unique final PiDecision linked to one exact Proposal id."""
     if not proposal_id:
         return None
-    rows = get_db().execute(
-        "SELECT * FROM pi_decisions WHERE proposal_id=? "
-        "AND action!='signal_pending' ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 2",
-        (proposal_id,),
-    ).fetchall()
+    rows = (
+        get_db()
+        .execute(
+            "SELECT * FROM pi_decisions WHERE proposal_id=? "
+            "AND action!='signal_pending' ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 2",
+            (proposal_id,),
+        )
+        .fetchall()
+    )
     if len(rows) > 1:
         return {
             "_integrity_error": "ambiguous_integrity_error",
@@ -604,13 +664,17 @@ def find_final_pi_decision_for_opportunity(
         if action
         else (opportunity_id, signal_source or "market_observer")
     )
-    row = get_db().execute(
-        "SELECT * FROM pi_decisions WHERE opportunity_id=? "
-        "AND COALESCE(signal_source, 'market_observer')=? "
-        f"{action_clause} "
-        "ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 1",
-        params,
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT * FROM pi_decisions WHERE opportunity_id=? "
+            "AND COALESCE(signal_source, 'market_observer')=? "
+            f"{action_clause} "
+            "ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 1",
+            params,
+        )
+        .fetchone()
+    )
     return dict(row) if row else None
 
 
@@ -632,12 +696,16 @@ def classify_final_pi_decision_for_opportunity(
     else:
         action_clause = "AND action NOT IN ('signal_pending', 'close', 'reduce')"
         params = (opportunity_id, signal_source or "market_observer")
-    rows = get_db().execute(
-        "SELECT * FROM pi_decisions WHERE opportunity_id=? "
-        "AND COALESCE(signal_source, 'market_observer')=? "
-        f"{action_clause} ORDER BY datetime(created_at) ASC, rowid ASC",
-        params,
-    ).fetchall()
+    rows = (
+        get_db()
+        .execute(
+            "SELECT * FROM pi_decisions WHERE opportunity_id=? "
+            "AND COALESCE(signal_source, 'market_observer')=? "
+            f"{action_clause} ORDER BY datetime(created_at) ASC, rowid ASC",
+            params,
+        )
+        .fetchall()
+    )
     if not rows:
         return {"status": "none", "decision": None}
     if len(rows) != 1:
@@ -673,9 +741,7 @@ def find_pending_pi_decision_for_opportunity(
     crash recovery must still prove that the original pending carrier existed.
     Callers remain responsible for applying the market-observer TTL.
     """
-    rows = list_pending_pi_decisions_for_opportunity(
-        opportunity_id, signal_source
-    )
+    rows = list_pending_pi_decisions_for_opportunity(opportunity_id, signal_source)
     return rows[0] if rows else None
 
 
@@ -686,13 +752,17 @@ def list_pending_pi_decisions_for_opportunity(
     """Return every pending carrier for one exact source identity, oldest first."""
     if not opportunity_id:
         return []
-    rows = get_db().execute(
-        "SELECT * FROM pi_decisions WHERE opportunity_id=? "
-        "AND action='signal_pending' "
-        "AND COALESCE(signal_source, 'market_observer')=? "
-        "ORDER BY datetime(created_at) ASC, rowid ASC",
-        (opportunity_id, signal_source or "market_observer"),
-    ).fetchall()
+    rows = (
+        get_db()
+        .execute(
+            "SELECT * FROM pi_decisions WHERE opportunity_id=? "
+            "AND action='signal_pending' "
+            "AND COALESCE(signal_source, 'market_observer')=? "
+            "ORDER BY datetime(created_at) ASC, rowid ASC",
+            (opportunity_id, signal_source or "market_observer"),
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
@@ -704,27 +774,31 @@ def count_unresolved_signal_pending(max_age_minutes: int = 30) -> int:
     did not persist a parseable source deadline.
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
-    row = get_db().execute(
-        "SELECT COUNT(DISTINCT pending.opportunity_id) "
-        "FROM pi_decisions pending "
-        "JOIN opportunities source ON source.id=pending.opportunity_id "
-        "WHERE pending.action='signal_pending' "
-        "AND COALESCE(pending.signal_source, 'market_observer')='market_observer' "
-        "AND source.status='queued' "
-        "AND ((datetime(source.valid_until) IS NOT NULL "
-        "      AND datetime(source.valid_until)>datetime('now')) "
-        " OR (datetime(source.valid_until) IS NULL "
-        "      AND datetime(pending.created_at)>=datetime(?))) "
-        "AND NOT EXISTS ("
-        " SELECT 1 FROM pi_decisions final "
-        " WHERE final.opportunity_id=pending.opportunity_id "
-        " AND COALESCE(final.signal_source, 'market_observer')="
-        "     COALESCE(pending.signal_source, 'market_observer') "
-        " AND final.action!='signal_pending' "
-        " AND COALESCE(final.proposal_status, '')!='submitting'"
-        ")",
-        (cutoff,),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT COUNT(DISTINCT pending.opportunity_id) "
+            "FROM pi_decisions pending "
+            "JOIN opportunities source ON source.id=pending.opportunity_id "
+            "WHERE pending.action='signal_pending' "
+            "AND COALESCE(pending.signal_source, 'market_observer')='market_observer' "
+            "AND source.status='queued' "
+            "AND ((datetime(source.valid_until) IS NOT NULL "
+            "      AND datetime(source.valid_until)>datetime('now')) "
+            " OR (datetime(source.valid_until) IS NULL "
+            "      AND datetime(pending.created_at)>=datetime(?))) "
+            "AND NOT EXISTS ("
+            " SELECT 1 FROM pi_decisions final "
+            " WHERE final.opportunity_id=pending.opportunity_id "
+            " AND COALESCE(final.signal_source, 'market_observer')="
+            "     COALESCE(pending.signal_source, 'market_observer') "
+            " AND final.action!='signal_pending' "
+            " AND COALESCE(final.proposal_status, '')!='submitting'"
+            ")",
+            (cutoff,),
+        )
+        .fetchone()
+    )
     return int(row[0] or 0)
 
 
@@ -751,14 +825,13 @@ def _expire_opportunity_rows_with_ttl_evidence(
             row = dict(raw)
             opportunity_id = str(row["id"])
             dedup_key = f"opportunity_ttl:{source_status}:{opportunity_id}"
-            updated = db.execute(
-                "UPDATE opportunities SET status='expired' "
-                "WHERE id=? AND status=?",
+            updated = execute_write(
+                "UPDATE opportunities SET status='expired' WHERE id=? AND status=?",
                 (opportunity_id, source_status),
             )
             if updated.rowcount != 1:
                 continue
-            db.execute(
+            execute_write(
                 "INSERT OR IGNORE INTO filter_decisions ("
                 "id, dedup_key, candidate_key, candidate_kind, parent_candidate_key, "
                 "run_id, opportunity_id, universe_snapshot_id, universe_member_id, "
@@ -807,9 +880,7 @@ def _expire_opportunity_rows_with_ttl_evidence(
                 (dedup_key,),
             ).fetchone()
             if evidence is None:
-                raise RuntimeError(
-                    f"ttl evidence unavailable for Opportunity {opportunity_id}"
-                )
+                raise RuntimeError(f"ttl evidence unavailable for Opportunity {opportunity_id}")
             expired_count += 1
         db.execute(f"RELEASE SAVEPOINT {savepoint}")
         return expired_count
@@ -835,10 +906,14 @@ def expire_queued_opportunity_with_ttl_evidence(
     """
     now_iso = evaluated_at or datetime.now(timezone.utc).isoformat()
     with transaction(immediate=True):
-        row = get_db().execute(
-            "SELECT * FROM opportunities WHERE id=? AND status='queued'",
-            (opportunity_id,),
-        ).fetchone()
+        row = (
+            get_db()
+            .execute(
+                "SELECT * FROM opportunities WHERE id=? AND status='queued'",
+                (opportunity_id,),
+            )
+            .fetchone()
+        )
         if row is None:
             return False
         return bool(
@@ -862,48 +937,47 @@ def expire_stale_queued_opportunities(max_age_minutes: int = 30) -> int:
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(minutes=max_age_minutes)).isoformat()
     with transaction(immediate=True):
-        rows = get_db().execute(
-            "SELECT opportunities.*, ("
-            "  SELECT MIN(p.created_at) FROM pi_decisions p "
-            "  WHERE p.action='signal_pending' "
-            "    AND p.opportunity_id=opportunities.id "
-            "    AND COALESCE(p.signal_source, 'market_observer')='market_observer'"
-            ") AS pending_created_at FROM opportunities WHERE status='queued' "
-            "AND EXISTS ("
-            "  SELECT 1 FROM pi_decisions p "
-            "  WHERE p.action='signal_pending' "
-            "    AND p.opportunity_id=opportunities.id "
-            "    AND COALESCE(p.signal_source, 'market_observer')='market_observer' "
-            ") AND NOT EXISTS ("
-            "  SELECT 1 FROM pi_decisions f "
-            "  WHERE f.action!='signal_pending' "
-            "    AND f.opportunity_id=opportunities.id "
-            "    AND COALESCE(f.signal_source, 'market_observer')='market_observer'"
-            ") AND ("
-            "  (datetime(valid_until) IS NOT NULL "
-            "   AND datetime(valid_until)<=datetime(?)) "
-            "  OR (datetime(valid_until) IS NULL AND EXISTS ("
-            "    SELECT 1 FROM pi_decisions legacy "
-            "    WHERE legacy.action='signal_pending' "
-            "      AND legacy.opportunity_id=opportunities.id "
-            "      AND COALESCE(legacy.signal_source, 'market_observer')="
-            "          'market_observer' "
-            "      AND datetime(legacy.created_at)<datetime(?)"
-            "  ))"
-            ")",
-            (now.isoformat(), cutoff),
-        ).fetchall()
+        rows = (
+            get_db()
+            .execute(
+                "SELECT opportunities.*, ("
+                "  SELECT MIN(p.created_at) FROM pi_decisions p "
+                "  WHERE p.action='signal_pending' "
+                "    AND p.opportunity_id=opportunities.id "
+                "    AND COALESCE(p.signal_source, 'market_observer')='market_observer'"
+                ") AS pending_created_at FROM opportunities WHERE status='queued' "
+                "AND EXISTS ("
+                "  SELECT 1 FROM pi_decisions p "
+                "  WHERE p.action='signal_pending' "
+                "    AND p.opportunity_id=opportunities.id "
+                "    AND COALESCE(p.signal_source, 'market_observer')='market_observer' "
+                ") AND NOT EXISTS ("
+                "  SELECT 1 FROM pi_decisions f "
+                "  WHERE f.action!='signal_pending' "
+                "    AND f.opportunity_id=opportunities.id "
+                "    AND COALESCE(f.signal_source, 'market_observer')='market_observer'"
+                ") AND ("
+                "  (datetime(valid_until) IS NOT NULL "
+                "   AND datetime(valid_until)<=datetime(?)) "
+                "  OR (datetime(valid_until) IS NULL AND EXISTS ("
+                "    SELECT 1 FROM pi_decisions legacy "
+                "    WHERE legacy.action='signal_pending' "
+                "      AND legacy.opportunity_id=opportunities.id "
+                "      AND COALESCE(legacy.signal_source, 'market_observer')="
+                "          'market_observer' "
+                "      AND datetime(legacy.created_at)<datetime(?)"
+                "  ))"
+                ")",
+                (now.isoformat(), cutoff),
+            )
+            .fetchall()
+        )
         expired = 0
         for raw in rows:
             row = dict(raw)
             valid_until = row.get("valid_until")
-            if valid_until and get_db().execute(
-                "SELECT datetime(?) IS NOT NULL", (valid_until,)
-            ).fetchone()[0]:
-                reason_detail = (
-                    "source Opportunity valid_until elapsed while awaiting "
-                    "System Operator evaluation"
-                )
+            if valid_until and get_db().execute("SELECT datetime(?) IS NOT NULL", (valid_until,)).fetchone()[0]:
+                reason_detail = "source Opportunity valid_until elapsed while awaiting System Operator evaluation"
                 parameters = {
                     "expiry_basis": "valid_until",
                     "valid_until": str(valid_until),
@@ -929,6 +1003,7 @@ def expire_stale_queued_opportunities(max_age_minutes: int = 30) -> int:
 
 
 # --- Capital Events ---
+
 
 def insert_capital_event(event) -> None:
     _insert("capital_events", event.model_dump() if hasattr(event, "model_dump") else event)
@@ -962,6 +1037,7 @@ def get_first_capital_event_time() -> str | None:
 
 # --- Local paper account events ---
 
+
 def insert_paper_account_event(event: PaperAccountEvent) -> None:
     _insert("paper_account_events", event.model_dump())
 
@@ -983,30 +1059,44 @@ def has_paper_account_event() -> bool:
 
 def has_paper_account_position_event(action: str, position_id: str) -> bool:
     db = get_db()
-    return db.execute(
-        "SELECT 1 FROM paper_account_events WHERE action = ? AND position_id = ? LIMIT 1",
-        (action, position_id),
-    ).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM paper_account_events WHERE action = ? AND position_id = ? LIMIT 1",
+            (action, position_id),
+        ).fetchone()
+        is not None
+    )
 
 
 # --- Prediction Observer Runs ---
 
+
 def insert_prediction_run(run_id: str, categories: list) -> None:
     import json as _json
     from aletheia.storage.models import _utcnow
-    _insert("prediction_observer_runs", {
-        "id": run_id,
-        "started_at": _utcnow(),
-        "status": "running",
-        "categories": _json.dumps(categories),
-    })
+
+    _insert(
+        "prediction_observer_runs",
+        {
+            "id": run_id,
+            "started_at": _utcnow(),
+            "status": "running",
+            "categories": _json.dumps(categories),
+        },
+    )
 
 
-def update_prediction_run(run_id: str, *, status: str = "completed",
-                          markets_scanned: int = 0, opportunities_created: int = 0,
-                          errors: list | None = None) -> None:
+def update_prediction_run(
+    run_id: str,
+    *,
+    status: str = "completed",
+    markets_scanned: int = 0,
+    opportunities_created: int = 0,
+    errors: list | None = None,
+) -> None:
     import json as _json
     from aletheia.storage.models import _utcnow
+
     data: dict = {
         "status": status,
         "completed_at": _utcnow(),
@@ -1029,9 +1119,11 @@ def get_latest_prediction_run() -> dict | None:
 
 # --- Prediction Normalized Tables ---
 
+
 def upsert_prediction_event(data: dict) -> str:
     """Insert or update a prediction event by external_event_id."""
     from aletheia.storage.models import new_id, _utcnow
+
     db = get_db()
     ext_id = data["external_event_id"]
     existing = db.execute(
@@ -1044,7 +1136,7 @@ def upsert_prediction_event(data: dict) -> str:
         data.pop("id", None)
         data.pop("created_at", None)
         sets = ", ".join(f"{k} = ?" for k in data.keys())
-        db.execute(f"UPDATE prediction_events SET {sets} WHERE id = ?", [*data.values(), row_id])
+        execute_write(f"UPDATE prediction_events SET {sets} WHERE id = ?", [*data.values(), row_id])
     else:
         row_id = data.get("id") or new_id()
         data["id"] = row_id
@@ -1052,13 +1144,14 @@ def upsert_prediction_event(data: dict) -> str:
         data.setdefault("updated_at", _utcnow())
         cols = ", ".join(data.keys())
         placeholders = ", ".join("?" * len(data))
-        db.execute(f"INSERT INTO prediction_events ({cols}) VALUES ({placeholders})", list(data.values()))
+        execute_write(f"INSERT INTO prediction_events ({cols}) VALUES ({placeholders})", list(data.values()))
     return row_id
 
 
 def upsert_prediction_market(data: dict) -> str:
     """Insert or update a prediction market by external_market_id."""
     from aletheia.storage.models import new_id, _utcnow
+
     db = get_db()
     ext_id = data["external_market_id"]
     existing = db.execute(
@@ -1070,19 +1163,20 @@ def upsert_prediction_market(data: dict) -> str:
         data["updated_at"] = _utcnow()
         data.pop("id", None)
         sets = ", ".join(f"{k} = ?" for k in data.keys())
-        db.execute(f"UPDATE prediction_markets SET {sets} WHERE id = ?", [*data.values(), row_id])
+        execute_write(f"UPDATE prediction_markets SET {sets} WHERE id = ?", [*data.values(), row_id])
     else:
         row_id = data.get("id") or new_id()
         data["id"] = row_id
         data.setdefault("updated_at", _utcnow())
         cols = ", ".join(data.keys())
         placeholders = ", ".join("?" * len(data))
-        db.execute(f"INSERT INTO prediction_markets ({cols}) VALUES ({placeholders})", list(data.values()))
+        execute_write(f"INSERT INTO prediction_markets ({cols}) VALUES ({placeholders})", list(data.values()))
     return row_id
 
 
 def insert_probability_snapshot(snapshot: dict) -> None:
     from aletheia.storage.models import new_id, _utcnow
+
     snapshot.setdefault("id", new_id())
     snapshot.setdefault("created_at", _utcnow())
     _insert("prediction_probability_snapshots", snapshot)
@@ -1120,11 +1214,14 @@ def list_probability_snapshots(market_id: str, since: str | None = None, limit: 
         parts.append("ts >= ?")
         params.append(since)
     where = " AND ".join(parts)
-    return _select_all("prediction_probability_snapshots", where=where, params=tuple(params), order="ts ASC", limit=limit)
+    return _select_all(
+        "prediction_probability_snapshots", where=where, params=tuple(params), order="ts ASC", limit=limit
+    )
 
 
 def insert_prediction_claim(data: dict) -> None:
     from aletheia.storage.models import new_id, _utcnow
+
     data.setdefault("id", new_id())
     data.setdefault("created_at", _utcnow())
     _insert("prediction_market_claims", data)
@@ -1148,7 +1245,9 @@ def list_prediction_claims(
         parts.append("datetime(created_at) >= datetime(?)")
         params.append(since)
     where = " AND ".join(parts) if parts else None
-    return _select_all("prediction_market_claims", where=where, params=tuple(params), order="created_at DESC", limit=limit)
+    return _select_all(
+        "prediction_market_claims", where=where, params=tuple(params), order="created_at DESC", limit=limit
+    )
 
 
 # --- Trade Proposals ---
@@ -1168,12 +1267,10 @@ _PROPOSAL_HASH_EXCLUDES = {"status", "commit_hash"}
 _RISK_PROPOSAL_PREFIX = "risk_proposal__"
 _RISK_DECISION_PREFIX = "risk_decision__"
 _RISK_PROPOSAL_PROJECTION = ", ".join(
-    f"tp.{field} AS {_RISK_PROPOSAL_PREFIX}{field}"
-    for field in TradeProposal.model_fields
+    f"tp.{field} AS {_RISK_PROPOSAL_PREFIX}{field}" for field in TradeProposal.model_fields
 )
 _RISK_DECISION_PROJECTION = ", ".join(
-    f"rd.{field} AS {_RISK_DECISION_PREFIX}{field}"
-    for field in RiskDecision.model_fields
+    f"rd.{field} AS {_RISK_DECISION_PREFIX}{field}" for field in RiskDecision.model_fields
 )
 
 
@@ -1214,9 +1311,7 @@ def insert_trade_proposal(p: TradeProposal) -> None:
     with transaction(immediate=True):
         db = get_db()
         row = db.execute(
-            "SELECT commit_hash FROM trade_proposals "
-            "WHERE commit_hash IS NOT NULL "
-            "ORDER BY rowid DESC LIMIT 1"
+            "SELECT commit_hash FROM trade_proposals WHERE commit_hash IS NOT NULL ORDER BY rowid DESC LIMIT 1"
         ).fetchone()
         current_tip = row[0] if row else None
         if p.commit_hash is None:
@@ -1248,19 +1343,27 @@ def get_trade_proposal(pid: str) -> dict | None:
 
 def get_proposal_execution_claim(proposal_id: str) -> dict | None:
     """Return the durable execution owner/lease for one Proposal."""
-    row = get_db().execute(
-        "SELECT * FROM proposal_execution_claims WHERE proposal_id=?",
-        (proposal_id,),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT * FROM proposal_execution_claims WHERE proposal_id=?",
+            (proposal_id,),
+        )
+        .fetchone()
+    )
     return dict(row) if row else None
 
 
 def get_entry_risk_reservation(proposal_id: str) -> dict | None:
     """Return one durable pre-Order Risk allowance, if present."""
-    row = get_db().execute(
-        "SELECT * FROM entry_risk_reservations WHERE proposal_id=?",
-        (proposal_id,),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT * FROM entry_risk_reservations WHERE proposal_id=?",
+            (proposal_id,),
+        )
+        .fetchone()
+    )
     return dict(row) if row else None
 
 
@@ -1284,28 +1387,18 @@ def acquire_entry_risk_reservation(
     if market_type is None or leverage is None:
         proposal = get_trade_proposal(proposal_id)
         if proposal is None:
-            raise ValueError(
-                "entry Risk reservation requires a stored Proposal identity"
-            )
+            raise ValueError("entry Risk reservation requires a stored Proposal identity")
         if market_type is None:
             market_type = str(proposal.get("market_type") or "")
         if leverage is None:
             leverage = float(proposal.get("leverage") or 1.0)
-    if (
-        not proposal_id
-        or not proposal_commit_hash
-        or not symbol
-        or not market_type
-        or not execution_mode
-    ):
+    if not proposal_id or not proposal_commit_hash or not symbol or not market_type or not execution_mode:
         raise ValueError("entry Risk reservation requires complete Proposal identity")
     quantity = float(quantity)
     price = float(price)
     leverage = float(leverage)
     if quantity <= 0 or price <= 0 or leverage <= 0:
-        raise ValueError(
-            "entry Risk reservation requires positive quantity, price, and leverage"
-        )
+        raise ValueError("entry Risk reservation requires positive quantity, price, and leverage")
 
     existing = get_entry_risk_reservation(proposal_id)
     expected = {
@@ -1318,20 +1411,16 @@ def acquire_entry_risk_reservation(
         "leverage": leverage,
     }
     if existing is not None:
-        conflicts = [
-            key for key, value in expected.items()
-            if existing.get(key) != value
-        ]
+        conflicts = [key for key, value in expected.items() if existing.get(key) != value]
         if conflicts:
             raise ValueError(
-                "entry Risk reservation conflicts with immutable Proposal snapshot: "
-                + ",".join(conflicts)
+                "entry Risk reservation conflicts with immutable Proposal snapshot: " + ",".join(conflicts)
             )
         return False
 
     db = get_db()
     was_in_tx = db.in_transaction
-    db.execute(
+    execute_write(
         "INSERT INTO entry_risk_reservations "
         "(proposal_id,proposal_commit_hash,symbol,market_type,execution_mode,"
         "quantity,price,leverage) VALUES (?,?,?,?,?,?,?,?)",
@@ -1355,7 +1444,7 @@ def release_entry_risk_reservation(proposal_id: str) -> bool:
     """Release a pre-Order allowance after durable handoff or terminal failure."""
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
+    cur = execute_write(
         "DELETE FROM entry_risk_reservations WHERE proposal_id=?",
         (proposal_id,),
     )
@@ -1414,7 +1503,7 @@ def insert_proposal_execution_claim(
     """Acquire an absent Proposal execution claim without replacing an owner."""
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
+    cur = execute_write(
         "INSERT OR IGNORE INTO proposal_execution_claims "
         "(proposal_id, owner_token, claimed_at, lease_expires_at) VALUES (?, ?, ?, ?)",
         (proposal_id, owner_token, claimed_at, lease_expires_at),
@@ -1436,7 +1525,7 @@ def replace_proposal_execution_claim(
     """CAS-replace one observed expired execution claim."""
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
+    cur = execute_write(
         "UPDATE proposal_execution_claims "
         "SET owner_token=?, claimed_at=?, lease_expires_at=? "
         "WHERE proposal_id=? AND owner_token=? AND lease_expires_at=?",
@@ -1458,7 +1547,7 @@ def release_proposal_execution_claim(proposal_id: str, owner_token: str) -> bool
     """CAS-release only the caller's own execution claim."""
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
+    cur = execute_write(
         "DELETE FROM proposal_execution_claims WHERE proposal_id=? AND owner_token=?",
         (proposal_id, owner_token),
     )
@@ -1469,22 +1558,32 @@ def release_proposal_execution_claim(proposal_id: str, owner_token: str) -> bool
 
 def proposal_execution_claim_owned(proposal_id: str, owner_token: str) -> bool:
     """Return whether the exact owner token still controls the Proposal."""
-    return get_db().execute(
-        "SELECT 1 FROM proposal_execution_claims "
-        "WHERE proposal_id=? AND owner_token=? LIMIT 1",
-        (proposal_id, owner_token),
-    ).fetchone() is not None
+    return (
+        get_db()
+        .execute(
+            "SELECT 1 FROM proposal_execution_claims WHERE proposal_id=? AND owner_token=? LIMIT 1",
+            (proposal_id, owner_token),
+        )
+        .fetchone()
+        is not None
+    )
 
 
 def has_order_for_proposal(proposal_id: str) -> bool:
     """Return whether any durable Order already represents this Proposal."""
-    return get_db().execute(
-        "SELECT 1 FROM orders WHERE proposal_id=? LIMIT 1",
-        (proposal_id,),
-    ).fetchone() is not None
+    return (
+        get_db()
+        .execute(
+            "SELECT 1 FROM orders WHERE proposal_id=? LIMIT 1",
+            (proposal_id,),
+        )
+        .fetchone()
+        is not None
+    )
 
 
 # --- Risk Decisions ---
+
 
 def insert_risk_decision(d: RiskDecision) -> None:
     _insert("risk_decisions", _stamp_provenance(d.model_dump()))
@@ -1496,8 +1595,10 @@ def get_authoritative_risk_decision(
     evaluated_quantity: float | None,
 ) -> dict | None:
     """Return the authoritative decision for one immutable evaluated snapshot."""
-    row = get_db().execute(
-        """
+    row = (
+        get_db()
+        .execute(
+            """
         SELECT *
         FROM risk_decisions
         WHERE proposal_id = ?
@@ -1507,8 +1608,10 @@ def get_authoritative_risk_decision(
         ORDER BY rowid ASC
         LIMIT 1
         """,
-        (proposal_id, proposal_commit_hash, evaluated_quantity),
-    ).fetchone()
+            (proposal_id, proposal_commit_hash, evaluated_quantity),
+        )
+        .fetchone()
+    )
     return dict(row) if row else None
 
 
@@ -1559,6 +1662,7 @@ def list_strategy_risk_decisions(strategy_id: str, limit: int = 1000) -> list[di
 
 # --- Orders ---
 
+
 def get_order(oid: str) -> dict | None:
     return _select_one("orders", oid)
 
@@ -1572,18 +1676,12 @@ def _validate_native_entry_order_snapshot(
     proposal_id = data.get("proposal_id")
     risk_decision_id = data.get("risk_decision_id")
     if not proposal_id or not risk_decision_id:
-        raise ValueError(
-            "native entry Order requires Proposal and authoritative RiskDecision"
-        )
+        raise ValueError("native entry Order requires Proposal and authoritative RiskDecision")
     if proposal is None or proposal.get("source") != "native":
         raise ValueError("native entry Order requires a native Proposal")
     if proposal.get("id") != proposal_id:
         raise ValueError("native entry Order Proposal identity does not match")
-    if (
-        decision is None
-        or decision.get("id") != risk_decision_id
-        or decision.get("proposal_id") != proposal_id
-    ):
+    if decision is None or decision.get("id") != risk_decision_id or decision.get("proposal_id") != proposal_id:
         raise ValueError("native entry Order RiskDecision does not match Proposal")
     if not bool(decision.get("approved")):
         raise ValueError("native entry Order requires an approved RiskDecision")
@@ -1608,11 +1706,7 @@ def _validate_native_entry_order_snapshot(
         order_quantity = float(data.get("quantity"))
     except (TypeError, ValueError):
         raise ValueError("native entry Order lacks evaluated quantity authority") from None
-    if (
-        evaluated_quantity <= 0
-        or order_quantity <= 0
-        or order_quantity != evaluated_quantity
-    ):
+    if evaluated_quantity <= 0 or order_quantity <= 0 or order_quantity != evaluated_quantity:
         raise ValueError("native entry Order quantity does not match RiskDecision")
 
     execution_mode = data.get("execution_mode")
@@ -1633,8 +1727,10 @@ def _validate_native_entry_order_snapshot(
     # Exchange Orders persist the exact submitted plan price. Local paper keeps
     # the deterministic slipped fill price on its Order and the original price
     # on the Proposal, so positivity (not equality) is the honest invariant there.
-    if proposal_price <= 0 or order_price <= 0 or (
-        execution_mode != "paper_internal" and order_price != proposal_price
+    if (
+        proposal_price <= 0
+        or order_price <= 0
+        or (execution_mode != "paper_internal" and order_price != proposal_price)
     ):
         raise ValueError("native entry Order price does not match Proposal")
     if execution_mode != "paper_internal" and data.get("client_order_id") != proposal_id:
@@ -1655,10 +1751,7 @@ def validate_native_order_authority(order: Order | dict) -> None:
 
     position_id = data.get("position_id")
     position = _select_one("positions", position_id) if position_id else None
-    pending_owner = bool(
-        position
-        and position.get("pending_close_order_id") == data.get("id")
-    )
+    pending_owner = bool(position and position.get("pending_close_order_id") == data.get("id"))
     is_close = bool(data.get("close_reason")) or pending_owner
     if is_close:
         if position is None:
@@ -1722,8 +1815,10 @@ def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
         "materialization_missing",
     )
     placeholders = ",".join("?" for _ in unresolved_states)
-    rows = get_db().execute(
-        f"""
+    rows = (
+        get_db()
+        .execute(
+            f"""
         SELECT
             o.*,
             {_RISK_PROPOSAL_PROJECTION},
@@ -1834,8 +1929,10 @@ def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
         GROUP BY o.id
         ORDER BY o.created_at ASC, o.rowid ASC
         """,
-        unresolved_states,
-    ).fetchall()
+            unresolved_states,
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
@@ -1866,6 +1963,7 @@ def list_strategy_orders(
 
 
 # --- Fills ---
+
 
 def insert_fill(f: Fill) -> None:
     _insert("fills", _stamp_provenance(f.model_dump()))
@@ -1904,6 +2002,7 @@ def list_strategy_fills(
 
 # --- Positions ---
 
+
 def insert_position(p: Position) -> None:
     _insert("positions", _stamp_provenance(p.model_dump()))
 
@@ -1925,9 +2024,7 @@ def list_positions(status: str | None = None, limit: int = 50) -> list[dict]:
 
 def list_all_open_positions() -> list[dict]:
     """Return the complete open-position working set for state/safety loops."""
-    rows = get_db().execute(
-        "SELECT * FROM positions WHERE status='open' ORDER BY rowid DESC"
-    ).fetchall()
+    rows = get_db().execute("SELECT * FROM positions WHERE status='open' ORDER BY rowid DESC").fetchall()
     return [dict(row) for row in rows]
 
 
@@ -2052,8 +2149,7 @@ def insert_position_disappearance_candidate(
 def get_active_position_disappearance_candidate(identity_key: str) -> dict | None:
     db = get_db()
     row = db.execute(
-        "SELECT * FROM position_disappearance_candidates "
-        "WHERE identity_key=? AND status='pending' LIMIT 1",
+        "SELECT * FROM position_disappearance_candidates WHERE identity_key=? AND status='pending' LIMIT 1",
         (identity_key,),
     ).fetchone()
     return dict(row) if row else None
@@ -2075,9 +2171,7 @@ def update_position_disappearance_candidate(candidate_id: str, **kwargs) -> None
     _update("position_disappearance_candidates", candidate_id, kwargs)
 
 
-def list_position_disappearance_candidates(
-    *, status: str | None = None, limit: int = 100
-) -> list[dict]:
+def list_position_disappearance_candidates(*, status: str | None = None, limit: int = 100) -> list[dict]:
     if status:
         return _select_all(
             "position_disappearance_candidates",
@@ -2086,9 +2180,7 @@ def list_position_disappearance_candidates(
             order="updated_at DESC",
             limit=limit,
         )
-    return _select_all(
-        "position_disappearance_candidates", order="updated_at DESC", limit=limit
-    )
+    return _select_all("position_disappearance_candidates", order="updated_at DESC", limit=limit)
 
 
 def insert_position_disappearance_observation(
@@ -2100,9 +2192,8 @@ def insert_position_disappearance_observation(
     data = observation.model_dump()
     cols = ", ".join(data.keys())
     placeholders = ", ".join("?" for _ in data)
-    cur = db.execute(
-        "INSERT OR IGNORE INTO position_disappearance_observations "
-        f"({cols}) VALUES ({placeholders})",
+    cur = execute_write(
+        f"INSERT OR IGNORE INTO position_disappearance_observations ({cols}) VALUES ({placeholders})",
         list(data.values()),
     )
     if not was_in_tx:
@@ -2110,9 +2201,7 @@ def insert_position_disappearance_observation(
     return cur.rowcount == 1
 
 
-def list_position_disappearance_observations(
-    candidate_id: str, *, limit: int = 100
-) -> list[dict]:
+def list_position_disappearance_observations(candidate_id: str, *, limit: int = 100) -> list[dict]:
     return _select_all(
         "position_disappearance_observations",
         where="candidate_id = ?",
@@ -2131,9 +2220,8 @@ def insert_reconciliation_integrity_incident(
     data = incident.model_dump()
     columns = ", ".join(data)
     placeholders = ", ".join("?" for _ in data)
-    db.execute(
-        f"INSERT INTO reconciliation_integrity_incidents ({columns}) "
-        f"VALUES ({placeholders})",
+    execute_write(
+        f"INSERT INTO reconciliation_integrity_incidents ({columns}) VALUES ({placeholders})",
         list(data.values()),
     )
     if not was_in_tx:
@@ -2161,7 +2249,7 @@ def update_reconciliation_integrity_incident(incident_id: str, **kwargs) -> None
     db = get_db()
     was_in_tx = db.in_transaction
     sets = ", ".join(f"{key} = ?" for key in kwargs)
-    db.execute(
+    execute_write(
         f"UPDATE reconciliation_integrity_incidents SET {sets} WHERE id = ?",
         [*kwargs.values(), incident_id],
     )
@@ -2170,6 +2258,7 @@ def update_reconciliation_integrity_incident(incident_id: str, **kwargs) -> None
 
 
 # --- Strategy Records ---
+
 
 def insert_strategy(s: StrategyRecord) -> None:
     _insert("strategy_records", s.model_dump())
@@ -2189,6 +2278,7 @@ def list_strategies(limit: int = 50) -> list[dict]:
 
 # --- Knowledge Items ---
 
+
 def insert_knowledge_item(k: KnowledgeItem) -> None:
     _insert("knowledge_items", k.model_dump())
 
@@ -2197,7 +2287,9 @@ def update_knowledge_item(kid: str, **kwargs) -> None:
     _update("knowledge_items", kid, kwargs)
 
 
-def list_knowledge_items(item_type: str | None = None, limit: int = 50, strategy_id: str | None = None, status: str = "active") -> list[dict]:
+def list_knowledge_items(
+    item_type: str | None = None, limit: int = 50, strategy_id: str | None = None, status: str = "active"
+) -> list[dict]:
     conditions = []
     params_list: list = []
     if item_type:
@@ -2227,17 +2319,17 @@ def knowledge_hash_exists(item_type: str, content_hash: str) -> bool:
 def knowledge_title_exists_within(item_type: str, title: str, hours: int = 6) -> bool:
     """Check if a knowledge item with same type+title was created within N hours."""
     from aletheia.storage.sqlite import get_db
+
     db = get_db()
     row = db.execute(
-        "SELECT 1 FROM knowledge_items "
-        "WHERE item_type = ? AND title = ? AND created_at > datetime('now', ?)"
-        " LIMIT 1",
+        "SELECT 1 FROM knowledge_items WHERE item_type = ? AND title = ? AND created_at > datetime('now', ?) LIMIT 1",
         (item_type, title, f"-{hours} hours"),
     ).fetchone()
     return row is not None
 
 
 # --- Serenity Lens ---
+
 
 def insert_serenity_theme(t: SerenityTheme) -> None:
     _insert("serenity_themes", t.model_dump())
@@ -2290,9 +2382,7 @@ def enqueue_serenity_theme_for_pi(
         if pending is None:
             return None
         mismatched = [
-            field
-            for field in ("symbol", "direction", "market_type")
-            if pending.get(field) != opportunity.get(field)
+            field for field in ("symbol", "direction", "market_type") if pending.get(field) != opportunity.get(field)
         ]
         if mismatched:
             raise ValueError(
@@ -2314,8 +2404,7 @@ def enqueue_serenity_theme_for_pi(
         )
         if classification["status"] == "integrity_unavailable":
             raise ValueError(
-                "Serenity final decision integrity unavailable: "
-                f"{opportunity_id}:{classification['reason']}"
+                f"Serenity final decision integrity unavailable: {opportunity_id}:{classification['reason']}"
             )
         final = classification.get("decision")
         if final is None:
@@ -2330,28 +2419,24 @@ def enqueue_serenity_theme_for_pi(
             raise ValueError(f"Serenity theme not found: {theme_id}")
 
         placeholders = ",".join("?" for _ in ordered_ids)
-        rows = get_db().execute(
-            f"SELECT * FROM serenity_opportunities WHERE id IN ({placeholders}) "
-            "AND theme_id=? AND status='active'",
-            (*ordered_ids, theme_id),
-        ).fetchall()
+        rows = (
+            get_db()
+            .execute(
+                f"SELECT * FROM serenity_opportunities WHERE id IN ({placeholders}) AND theme_id=? AND status='active'",
+                (*ordered_ids, theme_id),
+            )
+            .fetchall()
+        )
         by_id = {row["id"]: dict(row) for row in rows}
-        missing = [
-            opportunity_id
-            for opportunity_id in ordered_ids
-            if opportunity_id not in by_id
-        ]
+        missing = [opportunity_id for opportunity_id in ordered_ids if opportunity_id not in by_id]
         if missing:
             raise ValueError(
-                "Serenity PI handoff requires active opportunities from the same theme: "
-                + ",".join(missing)
+                "Serenity PI handoff requires active opportunities from the same theme: " + ",".join(missing)
             )
 
         theme_status = str(theme.get("status") or "")
         if theme_status not in {"active", "promoted"}:
-            raise ValueError(
-                f"Serenity theme status does not allow PI handoff: {theme_status}"
-            )
+            raise ValueError(f"Serenity theme status does not allow PI handoff: {theme_status}")
 
         if min_score_for_pi is not None:
             from aletheia.trading.serenity_scoring import score_serenity_opportunity
@@ -2359,12 +2444,8 @@ def enqueue_serenity_theme_for_pi(
             qualified_ids = []
             for opportunity_id in ordered_ids:
                 opportunity = by_id[opportunity_id]
-                evidence = list_serenity_evidence(
-                    theme_id=opportunity["theme_id"], limit=200
-                )
-                gates = list_serenity_risk_gates(
-                    opportunity_id=opportunity_id, limit=200
-                )
+                evidence = list_serenity_evidence(theme_id=opportunity["theme_id"], limit=200)
+                gates = list_serenity_risk_gates(opportunity_id=opportunity_id, limit=200)
                 score = score_serenity_opportunity(
                     opportunity,
                     evidence=evidence,
@@ -2381,20 +2462,19 @@ def enqueue_serenity_theme_for_pi(
             pending = exact_pending_carrier(opportunity_id, opportunity)
             final = exact_final_decision(opportunity_id, opportunity)
             if pending is None and final is None:
-                insert_pi_decision(PiDecision(
-                    symbol=opportunity.get("symbol"),
-                    direction=opportunity.get("direction"),
-                    market_type=opportunity.get("market_type"),
-                    action="signal_pending",
-                    conviction=0,
-                    reasoning=(
-                        f"Serenity promote: theme={theme_id[:8]} "
-                        f"opp={opportunity_id[:8]}"
-                    ),
-                    opportunity_id=opportunity_id,
-                    signal_source="serenity",
-                    debate_ran=False,
-                ))
+                insert_pi_decision(
+                    PiDecision(
+                        symbol=opportunity.get("symbol"),
+                        direction=opportunity.get("direction"),
+                        market_type=opportunity.get("market_type"),
+                        action="signal_pending",
+                        conviction=0,
+                        reasoning=(f"Serenity promote: theme={theme_id[:8]} opp={opportunity_id[:8]}"),
+                        opportunity_id=opportunity_id,
+                        signal_source="serenity",
+                        debate_ran=False,
+                    )
+                )
                 new_carrier_ids.append(opportunity_id)
             update_serenity_opportunity(
                 opportunity_id,
@@ -2413,10 +2493,14 @@ def enqueue_serenity_theme_for_pi(
         if durable_ids != ordered_ids:
             raise RuntimeError("Serenity PI handoff is missing a durable pending carrier")
 
-        active_rows = get_db().execute(
-            "SELECT * FROM serenity_opportunities WHERE theme_id=? AND status='active'",
-            (theme_id,),
-        ).fetchall()
+        active_rows = (
+            get_db()
+            .execute(
+                "SELECT * FROM serenity_opportunities WHERE theme_id=? AND status='active'",
+                (theme_id,),
+            )
+            .fetchall()
+        )
         all_active_have_carriers = all(
             (
                 exact_pending_carrier(row["id"], dict(row)) is not None
@@ -2445,7 +2529,7 @@ def insert_serenity_evidence(e: SerenityEvidence) -> list[str]:
         assessed_tier, assessed_by = assess_opportunity_tier({}, evidence)
         researchability_grade, _ = assess_researchability(evidence)
         now = datetime.now(timezone.utc).isoformat()
-        get_db().execute(
+        execute_write(
             "UPDATE serenity_opportunities SET assessed_tier=?, assessed_by=?, "
             "researchability_grade=?, updated_at=? "
             "WHERE theme_id=? AND status='active'",
@@ -2459,11 +2543,12 @@ def insert_serenity_evidence(e: SerenityEvidence) -> list[str]:
         )
         active_ids = [
             str(row["id"])
-            for row in get_db().execute(
-                "SELECT id FROM serenity_opportunities "
-                "WHERE theme_id=? AND status='active' ORDER BY rowid ASC",
+            for row in get_db()
+            .execute(
+                "SELECT id FROM serenity_opportunities WHERE theme_id=? AND status='active' ORDER BY rowid ASC",
                 (e.theme_id,),
-            ).fetchall()
+            )
+            .fetchall()
         ]
     return active_ids
 
@@ -2482,6 +2567,7 @@ def insert_serenity_opportunity(o: SerenityOpportunity) -> None:
     _insert("serenity_opportunities", data)
     try:
         from aletheia.analytics.causal_controls import record_serenity_control_cohort
+
         record_serenity_control_cohort(data)
     except Exception:
         pass
@@ -2518,9 +2604,8 @@ def update_serenity_opportunity(opp_id: str, **kwargs) -> None:
 
 def transition_serenity_opportunity_to_reviewed(opportunity_id: str) -> bool:
     """Terminalize one exact active Serenity source without touching trade state."""
-    result = get_db().execute(
-        "UPDATE serenity_opportunities SET status='reviewed', updated_at=? "
-        "WHERE id=? AND status='active'",
+    result = execute_write(
+        "UPDATE serenity_opportunities SET status='reviewed', updated_at=? WHERE id=? AND status='active'",
         (datetime.now(timezone.utc).isoformat(), opportunity_id),
     )
     return result.rowcount == 1
@@ -2539,7 +2624,13 @@ def insert_serenity_replay_snapshot(s: SerenityReplaySnapshot) -> None:
 
 
 def list_serenity_replay_snapshots(opportunity_id: str, limit: int = 200) -> list[dict]:
-    return _select_all("serenity_replay_snapshots", where="opportunity_id = ?", params=(opportunity_id,), order="created_at DESC", limit=limit)
+    return _select_all(
+        "serenity_replay_snapshots",
+        where="opportunity_id = ?",
+        params=(opportunity_id,),
+        order="created_at DESC",
+        limit=limit,
+    )
 
 
 def insert_serenity_post_mortem(p: SerenityPostMortem) -> bool:
@@ -2550,17 +2641,20 @@ def insert_serenity_post_mortem(p: SerenityPostMortem) -> bool:
 
     cols = ", ".join(data.keys())
     placeholders = ", ".join(["?"] * len(data))
-    cursor = get_db().execute(
-        f"INSERT INTO serenity_post_mortems ({cols}) VALUES ({placeholders}) "
-        "ON CONFLICT(position_id) DO NOTHING",
+    cursor = execute_write(
+        f"INSERT INTO serenity_post_mortems ({cols}) VALUES ({placeholders}) ON CONFLICT(position_id) DO NOTHING",
         list(data.values()),
     )
     if cursor.rowcount == 1:
         return True
-    existing = get_db().execute(
-        "SELECT opportunity_id FROM serenity_post_mortems WHERE position_id = ?",
-        (p.position_id,),
-    ).fetchone()
+    existing = (
+        get_db()
+        .execute(
+            "SELECT opportunity_id FROM serenity_post_mortems WHERE position_id = ?",
+            (p.position_id,),
+        )
+        .fetchone()
+    )
     if existing is None or existing["opportunity_id"] != p.opportunity_id:
         raise ValueError("Serenity post-mortem Position identity conflict")
     return False
@@ -2577,21 +2671,26 @@ def list_serenity_post_mortems(opportunity_id: str | None = None, limit: int = 1
 
 # --- Durable Outcome hook outbox ---
 
+
 def enqueue_outcome_hook_job(position_id: str, hook_type: str) -> dict:
     """Insert one durable hook intent, preserving an existing retry/completion row."""
     job = OutcomeHookJob(position_id=position_id, hook_type=hook_type)
     data = job.model_dump()
     cols = ", ".join(data.keys())
     placeholders = ", ".join(["?"] * len(data))
-    get_db().execute(
+    execute_write(
         f"INSERT INTO outcome_hook_jobs ({cols}) VALUES ({placeholders}) "
         "ON CONFLICT(position_id, hook_type) DO NOTHING",
         list(data.values()),
     )
-    row = get_db().execute(
-        "SELECT * FROM outcome_hook_jobs WHERE position_id = ? AND hook_type = ?",
-        (position_id, hook_type),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT * FROM outcome_hook_jobs WHERE position_id = ? AND hook_type = ?",
+            (position_id, hook_type),
+        )
+        .fetchone()
+    )
     if row is None:
         raise RuntimeError("Outcome hook job insert did not persist")
     return dict(row)
@@ -2639,7 +2738,7 @@ def claim_outcome_hook_job(
     stale_before = (now_dt - timedelta(seconds=max(0, stale_after_seconds))).isoformat()
     with transaction(immediate=True):
         db = get_db()
-        db.execute(
+        execute_write(
             "UPDATE outcome_hook_jobs SET status = 'failed', "
             "next_attempt_at = ?, locked_at = NULL, claim_token = NULL, "
             "last_error = 'stale_processing_lease', updated_at = ? "
@@ -2668,7 +2767,7 @@ def claim_outcome_hook_job(
         if row is None:
             return None
         claim_token = new_id()
-        cursor = db.execute(
+        cursor = execute_write(
             "UPDATE outcome_hook_jobs SET status = 'processing', attempts = attempts + 1, "
             "locked_at = ?, claim_token = ?, updated_at = ? "
             "WHERE id = ? AND status IN ('pending', 'failed')",
@@ -2683,11 +2782,9 @@ def claim_outcome_hook_job(
         return dict(claimed) if claimed is not None else None
 
 
-def mark_outcome_hook_job_completed(
-    job_id: str, claim_token: str, *, now: str | None = None
-) -> bool:
+def mark_outcome_hook_job_completed(job_id: str, claim_token: str, *, now: str | None = None) -> bool:
     now_iso = _parse_outcome_hook_time(now).isoformat()
-    cursor = get_db().execute(
+    cursor = execute_write(
         "UPDATE outcome_hook_jobs SET status = 'completed', completed_at = ?, "
         "updated_at = ?, locked_at = NULL, claim_token = NULL, last_error = NULL "
         "WHERE id = ? AND status = 'processing' AND claim_token = ?",
@@ -2704,7 +2801,7 @@ def mark_outcome_hook_job_skipped(
     now: str | None = None,
 ) -> bool:
     now_iso = _parse_outcome_hook_time(now).isoformat()
-    cursor = get_db().execute(
+    cursor = execute_write(
         "UPDATE outcome_hook_jobs SET status = 'skipped', completed_at = ?, "
         "updated_at = ?, locked_at = NULL, claim_token = NULL, last_error = ? "
         "WHERE id = ? AND status = 'processing' AND claim_token = ?",
@@ -2723,10 +2820,8 @@ def mark_outcome_hook_job_failed(
 ) -> bool:
     now_dt = _parse_outcome_hook_time(now)
     now_iso = now_dt.isoformat()
-    retry_at = (
-        now_dt + timedelta(seconds=max(1, retry_delay_seconds))
-    ).isoformat()
-    cursor = get_db().execute(
+    retry_at = (now_dt + timedelta(seconds=max(1, retry_delay_seconds))).isoformat()
+    cursor = execute_write(
         "UPDATE outcome_hook_jobs SET status = 'failed', next_attempt_at = ?, "
         "updated_at = ?, locked_at = NULL, claim_token = NULL, last_error = ? "
         "WHERE id = ? AND status = 'processing' AND claim_token = ?",
@@ -2745,6 +2840,7 @@ def _parse_outcome_hook_time(value: str | None) -> datetime:
 
 
 # --- Serenity Research Runs ---
+
 
 def insert_serenity_research_run(r) -> None:
     _insert("serenity_research_runs", r.model_dump())
@@ -2768,8 +2864,9 @@ def list_serenity_research_runs(
         conditions.append("trigger_type = ?")
         params.append(trigger_type)
     where = " AND ".join(conditions) if conditions else None
-    return _select_all("serenity_research_runs", where=where, params=tuple(params),
-                       order="created_at DESC", limit=limit)
+    return _select_all(
+        "serenity_research_runs", where=where, params=tuple(params), order="created_at DESC", limit=limit
+    )
 
 
 def update_serenity_research_run(run_id: str, **kwargs) -> None:
@@ -2803,24 +2900,23 @@ def get_latest_successful_serenity_research_run() -> dict | None:
 
 def get_serenity_research_run_by_idempotency_key(key: str) -> dict | None:
     db = get_db()
-    row = db.execute(
-        "SELECT * FROM serenity_research_runs WHERE idempotency_key = ?", (key,)
-    ).fetchone()
+    row = db.execute("SELECT * FROM serenity_research_runs WHERE idempotency_key = ?", (key,)).fetchone()
     return dict(row) if row else None
 
 
 # --- Serenity Run Events ---
+
 
 def insert_serenity_run_event(e) -> None:
     _insert("serenity_run_events", e.model_dump())
 
 
 def list_serenity_run_events(run_id: str, limit: int = 200) -> list[dict]:
-    return _select_all("serenity_run_events", where="run_id = ?", params=(run_id,),
-                       order="created_at ASC", limit=limit)
+    return _select_all("serenity_run_events", where="run_id = ?", params=(run_id,), order="created_at ASC", limit=limit)
 
 
 # --- Serenity User Profiles ---
+
 
 def get_serenity_user_profile() -> dict | None:
     rows = _select_all("serenity_user_profiles", order="updated_at DESC", limit=1)
@@ -2841,6 +2937,7 @@ def update_serenity_user_profile_fields(profile_id: str, **kwargs) -> None:
 
 # --- Serenity Profile Snapshots ---
 
+
 def insert_serenity_profile_snapshot(snap) -> None:
     _insert("serenity_profile_snapshots", snap.model_dump())
 
@@ -2851,17 +2948,22 @@ def get_serenity_profile_snapshot(snapshot_id: str) -> dict | None:
 
 # --- Serenity Feedback Events ---
 
+
 def insert_serenity_feedback_event(e) -> None:
     _insert("serenity_feedback_events", e.model_dump())
 
 
 def list_serenity_feedback_events(target_type: str, target_id: str, limit: int = 50) -> list[dict]:
-    return _select_all("serenity_feedback_events",
-                       where="target_type = ? AND target_id = ?",
-                       params=(target_type, target_id), limit=limit)
+    return _select_all(
+        "serenity_feedback_events",
+        where="target_type = ? AND target_id = ?",
+        params=(target_type, target_id),
+        limit=limit,
+    )
 
 
 # --- Serenity Claims ---
+
 
 def insert_serenity_claim(c) -> None:
     data = c.model_dump()
@@ -2883,7 +2985,7 @@ def insert_serenity_claims_bulk(claims: list) -> None:
             data["price_relevant"] = int(data.get("price_relevant", False))
             cols = ", ".join(data.keys())
             placeholders = ", ".join(["?"] * len(data))
-            db.execute(f"INSERT INTO serenity_claims ({cols}) VALUES ({placeholders})", list(data.values()))
+            execute_write(f"INSERT INTO serenity_claims ({cols}) VALUES ({placeholders})", list(data.values()))
 
 
 def list_serenity_claims(run_id: str | None = None, price_relevant: bool | None = None, limit: int = 200) -> list[dict]:
@@ -2901,10 +3003,11 @@ def list_serenity_claims(run_id: str | None = None, price_relevant: bool | None 
 
 # --- Serenity Theme-Claims Link ---
 
+
 def insert_serenity_theme_claim(theme_id: str, claim_id: str, relevance_score: float | None = None) -> None:
     db = get_db()
     was_in_tx = db.in_transaction
-    db.execute(
+    execute_write(
         "INSERT OR IGNORE INTO serenity_theme_claims (theme_id, claim_id, relevance_score) VALUES (?, ?, ?)",
         (theme_id, claim_id, relevance_score),
     )
@@ -2916,7 +3019,7 @@ def insert_serenity_theme_claims_bulk(links: list[tuple[str, str, float | None]]
     db = get_db()
     was_in_tx = db.in_transaction
     for theme_id, claim_id, relevance_score in links:
-        db.execute(
+        execute_write(
             "INSERT OR IGNORE INTO serenity_theme_claims (theme_id, claim_id, relevance_score) VALUES (?, ?, ?)",
             (theme_id, claim_id, relevance_score),
         )
@@ -2937,31 +3040,30 @@ def list_serenity_claims_for_theme(theme_id: str, limit: int = 200) -> list[dict
 
 # --- Serenity Agent Locks ---
 
+
 def acquire_serenity_lock(lock_key: str, owner_run_id: str, ttl_seconds: int = 600) -> bool:
     from datetime import datetime, timezone, timedelta
-    db = get_db()
+
     now = datetime.now(timezone.utc)
     expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
 
     # Atomic acquire: purge expired, then INSERT OR IGNORE (PK = lock_key).
     # Two concurrent threads both DELETE expired + INSERT OR IGNORE: only one
     # INSERT succeeds (the other is a no-op due to PK constraint). No TOCTOU.
-    db.execute(
+    execute_write(
         "DELETE FROM serenity_agent_locks WHERE lock_key = ? AND expires_at < ?",
         (lock_key, now.isoformat()),
     )
-    db.execute(
+    inserted = execute_write(
         "INSERT OR IGNORE INTO serenity_agent_locks "
         "(lock_key, owner_run_id, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
         (lock_key, owner_run_id, now.isoformat(), expires_at),
     )
-    acquired = db.execute("SELECT changes()").fetchone()[0] > 0
-    return acquired
+    return inserted.rowcount > 0
 
 
 def release_serenity_lock(lock_key: str, owner_run_id: str) -> bool:
-    db = get_db()
-    result = db.execute(
+    result = execute_write(
         "DELETE FROM serenity_agent_locks WHERE lock_key = ? AND owner_run_id = ?",
         (lock_key, owner_run_id),
     )
@@ -2969,6 +3071,7 @@ def release_serenity_lock(lock_key: str, owner_run_id: str) -> bool:
 
 
 # --- Market Snapshots ---
+
 
 def insert_market_snapshot(snap) -> None:
     _insert("market_snapshots", snap.model_dump())
@@ -3009,6 +3112,7 @@ def list_market_snapshots(
 
 
 # --- Portfolio Snapshots ---
+
 
 def insert_portfolio_snapshot(snap) -> None:
     _insert("portfolio_snapshots", snap.model_dump())
@@ -3096,6 +3200,7 @@ def get_latest_portfolio_snapshot() -> dict | None:
 
 # --- Agent Tool Calls ---
 
+
 def _step_timestamp() -> str:
     """UTC timestamp with microsecond precision for step/tool-call ordering.
 
@@ -3113,19 +3218,29 @@ def _step_timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
-def insert_tool_call(run_id: str, tool_name: str, tool_class: str, permitted: bool,
-                     input_data: str | None = None, output_data: str | None = None) -> None:
+def insert_tool_call(
+    run_id: str,
+    tool_name: str,
+    tool_class: str,
+    permitted: bool,
+    input_data: str | None = None,
+    output_data: str | None = None,
+) -> None:
     from aletheia.storage.models import new_id
-    _insert("agent_tool_calls", {
-        "id": new_id(),
-        "run_id": run_id,
-        "tool_name": tool_name,
-        "tool_class": tool_class,
-        "input_data": input_data,
-        "output_data": output_data,
-        "permitted": 1 if permitted else 0,
-        "created_at": _step_timestamp(),
-    })
+
+    _insert(
+        "agent_tool_calls",
+        {
+            "id": new_id(),
+            "run_id": run_id,
+            "tool_name": tool_name,
+            "tool_class": tool_class,
+            "input_data": input_data,
+            "output_data": output_data,
+            "permitted": 1 if permitted else 0,
+            "created_at": _step_timestamp(),
+        },
+    )
 
 
 def list_tool_calls(run_id: str | None = None, limit: int = 100) -> list[dict]:
@@ -3146,8 +3261,9 @@ def list_tool_calls(run_id: str | None = None, limit: int = 100) -> list[dict]:
     return _select_all("agent_tool_calls", limit=limit)
 
 
-def insert_run_step(run_id: str, step_number: int, action: str,
-                    input_data: str | None = None, output_data: str | None = None) -> None:
+def insert_run_step(
+    run_id: str, step_number: int, action: str, input_data: str | None = None, output_data: str | None = None
+) -> None:
     """Record one reasoning/action step of an agent run (ordered by insertion time).
 
     `step_number` is preserved on the row for compatibility, but callers that read
@@ -3155,15 +3271,19 @@ def insert_run_step(run_id: str, step_number: int, action: str,
     (see `list_run_steps`).
     """
     from aletheia.storage.models import new_id
-    _insert("agent_run_steps", {
-        "id": new_id(),
-        "run_id": run_id,
-        "step_number": step_number,
-        "action": action,
-        "input_data": input_data,
-        "output_data": output_data,
-        "created_at": _step_timestamp(),
-    })
+
+    _insert(
+        "agent_run_steps",
+        {
+            "id": new_id(),
+            "run_id": run_id,
+            "step_number": step_number,
+            "action": action,
+            "input_data": input_data,
+            "output_data": output_data,
+            "created_at": _step_timestamp(),
+        },
+    )
 
 
 def insert_agent_telemetry_batch(events: list[dict]) -> int:
@@ -3176,26 +3296,30 @@ def insert_agent_telemetry_batch(events: list[dict]) -> int:
     for event in events:
         created_at = event.get("created_at") or _step_timestamp()
         if event.get("kind") == "tool":
-            tool_rows.append({
-                "id": new_id(),
-                "run_id": event["run_id"],
-                "tool_name": event["tool_name"],
-                "tool_class": event["tool_class"],
-                "input_data": event.get("input_data"),
-                "output_data": event.get("output_data"),
-                "permitted": 1 if event.get("permitted") else 0,
-                "created_at": created_at,
-            })
+            tool_rows.append(
+                {
+                    "id": new_id(),
+                    "run_id": event["run_id"],
+                    "tool_name": event["tool_name"],
+                    "tool_class": event["tool_class"],
+                    "input_data": event.get("input_data"),
+                    "output_data": event.get("output_data"),
+                    "permitted": 1 if event.get("permitted") else 0,
+                    "created_at": created_at,
+                }
+            )
         elif event.get("kind") == "step":
-            step_rows.append({
-                "id": new_id(),
-                "run_id": event["run_id"],
-                "step_number": event["step_number"],
-                "action": event["action"],
-                "input_data": event.get("input_data"),
-                "output_data": event.get("output_data"),
-                "created_at": created_at,
-            })
+            step_rows.append(
+                {
+                    "id": new_id(),
+                    "run_id": event["run_id"],
+                    "step_number": event["step_number"],
+                    "action": event["action"],
+                    "input_data": event.get("input_data"),
+                    "output_data": event.get("output_data"),
+                    "created_at": created_at,
+                }
+            )
     with transaction():
         _insert_many("agent_tool_calls", tool_rows)
         _insert_many("agent_run_steps", step_rows)
@@ -3248,11 +3372,13 @@ def list_run_steps(run_id: str, limit: int = 500) -> list[dict]:
         row["action"] = f"tool:{tool_name}" + ("" if permitted else " (denied)")
         row["source"] = "tool_call"
         merged.append(row)
-    merged.sort(key=lambda r: (
-        r.get("created_at") or "",
-        0 if r.get("source") == "step" else 1,
-        r.get("_rowid") or 0,
-    ))
+    merged.sort(
+        key=lambda r: (
+            r.get("created_at") or "",
+            0 if r.get("source") == "step" else 1,
+            r.get("_rowid") or 0,
+        )
+    )
     merged = merged[:limit]
     for idx, row in enumerate(merged, start=1):
         row["step_number"] = idx
@@ -3327,6 +3453,7 @@ _CONDITIONALLY_PRUNABLE = {
     "knowledge_items": "created_at",
 }
 
+
 def _delete_old_rows(
     table: str,
     days: int,
@@ -3374,7 +3501,7 @@ def _delete_by_rowid_batches(
         placeholders = ",".join("?" for _ in rowids)
         started = time.monotonic()
         with transaction():
-            cur = db.execute(
+            cur = execute_write(
                 f"DELETE FROM {table} WHERE rowid IN ({placeholders})",
                 rowids,
             )
@@ -3394,24 +3521,27 @@ def prune_agent_runs(days: int = 30) -> int:
     db = get_db()
     total = 0
     while True:
-        run_ids = [row[0] for row in db.execute(
-            "SELECT id FROM agent_runs WHERE started_at < ? ORDER BY started_at LIMIT 1000",
-            (cutoff,),
-        ).fetchall()]
+        run_ids = [
+            row[0]
+            for row in db.execute(
+                "SELECT id FROM agent_runs WHERE started_at < ? ORDER BY started_at LIMIT 1000",
+                (cutoff,),
+            ).fetchall()
+        ]
         if not run_ids:
             break
         placeholders = ",".join("?" * len(run_ids))
         started = time.monotonic()
         with transaction():
-            db.execute(
+            execute_write(
                 f"DELETE FROM agent_run_steps WHERE run_id IN ({placeholders})",
                 run_ids,
             )
-            db.execute(
+            execute_write(
                 f"DELETE FROM agent_tool_calls WHERE run_id IN ({placeholders})",
                 run_ids,
             )
-            cur = db.execute(
+            cur = execute_write(
                 f"DELETE FROM agent_runs WHERE id IN ({placeholders})",
                 run_ids,
             )
@@ -3453,15 +3583,15 @@ def prune_serenity_claims(days: int = 90) -> int:
     # serenity_theme_claims has FK → serenity_claims with no ON DELETE CASCADE.
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
-    claim_ids = [row[0] for row in db.execute(
-        "SELECT id FROM serenity_claims WHERE created_at < ?", (cutoff,)
-    ).fetchall()]
+    claim_ids = [
+        row[0] for row in db.execute("SELECT id FROM serenity_claims WHERE created_at < ?", (cutoff,)).fetchall()
+    ]
     if not claim_ids:
         return 0
     placeholders = ",".join("?" * len(claim_ids))
     with transaction():
-        db.execute(f"DELETE FROM serenity_theme_claims WHERE claim_id IN ({placeholders})", claim_ids)
-        db.execute("DELETE FROM serenity_claims WHERE created_at < ?", (cutoff,))
+        execute_write(f"DELETE FROM serenity_theme_claims WHERE claim_id IN ({placeholders})", claim_ids)
+        execute_write("DELETE FROM serenity_claims WHERE created_at < ?", (cutoff,))
     return len(claim_ids)
 
 
@@ -3500,9 +3630,7 @@ def _effective_cutoff(
     if not min_experiment_started_at:
         return default
     try:
-        experiment = datetime.fromisoformat(
-            min_experiment_started_at.replace("Z", "+00:00")
-        )
+        experiment = datetime.fromisoformat(min_experiment_started_at.replace("Z", "+00:00"))
         if experiment.tzinfo is None:
             experiment = experiment.replace(tzinfo=timezone.utc)
         return min(
@@ -3542,9 +3670,7 @@ def prune_filter_candidate_outcomes(
     if min_experiment_started_at is None:
         min_experiment_started_at = min_open_experiment_exposure_at()
     cutoff = _effective_cutoff(days, min_experiment_started_at)
-    return _delete_by_rowid_batches(
-        "filter_candidate_outcomes", "entry_ts < ?", (cutoff,)
-    )
+    return _delete_by_rowid_batches("filter_candidate_outcomes", "entry_ts < ?", (cutoff,))
 
 
 def prune_operator_evaluation_events(days: int = 30) -> int:
@@ -3600,7 +3726,7 @@ def prune_signal_pending_stale(minutes: int = 30) -> int:
     have a different age contract and are intentionally excluded.
     """
     db = get_db()
-    cur = db.execute(
+    cur = execute_write(
         "DELETE FROM pi_decisions WHERE action='signal_pending' "
         "AND COALESCE(signal_source, 'market_observer')='market_observer' "
         "AND datetime(created_at) < datetime('now', ? || ' minutes') "
@@ -3646,21 +3772,24 @@ def prune_system_actions(days: int = 7) -> int:
     if deleted > 0:
         try:
             from aletheia.files.jsonl import write_audit
-            write_audit({
-                "actor": "system",
-                "source": "retention",
-                "event_type": "knowledge_items_pruned",
-                "entity_type": "knowledge_items",
-                "message": (
-                    f"prune_system_actions: hard-deleted {deleted} system_action rows "
-                    f"older than {days} days (documented exception to no-hard-delete)"
-                ),
-                "after": {
-                    "deleted_count": deleted,
-                    "cutoff_days": days,
-                    "item_type": "system_action",
-                },
-            })
+
+            write_audit(
+                {
+                    "actor": "system",
+                    "source": "retention",
+                    "event_type": "knowledge_items_pruned",
+                    "entity_type": "knowledge_items",
+                    "message": (
+                        f"prune_system_actions: hard-deleted {deleted} system_action rows "
+                        f"older than {days} days (documented exception to no-hard-delete)"
+                    ),
+                    "after": {
+                        "deleted_count": deleted,
+                        "cutoff_days": days,
+                        "item_type": "system_action",
+                    },
+                }
+            )
         except Exception:
             # Retention MUST NOT crash if the audit write fails — the point of
             # the audit hook is best-effort observability, not the retention
@@ -3681,6 +3810,7 @@ def _ohlcv_window() -> int:
     """Read max_bars_per_pair from config, fallback to default."""
     try:
         from aletheia.config.loader import load_config
+
         return load_config().historical_data.max_bars_per_pair
     except Exception:
         return _OHLCV_WINDOW_DEFAULT
@@ -3708,20 +3838,30 @@ def upsert_ohlcv_candles(
     effective_window = max(1, int(window if window is not None else _ohlcv_window()))
     db = get_db()
     was_in_tx = db.in_transaction
-    db.executemany(
+    execute_many_write(
         "INSERT OR REPLACE INTO market_ohlcv "
         "(exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume, provider) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            (effective_exchange, symbol, effective_market_type, timeframe, c.timestamp,
-             c.open, c.high, c.low, c.close, c.volume, provider)
+            (
+                effective_exchange,
+                symbol,
+                effective_market_type,
+                timeframe,
+                c.timestamp,
+                c.open,
+                c.high,
+                c.low,
+                c.close,
+                c.volume,
+                provider,
+            )
             for c in candles
         ],
     )
     scope = (effective_exchange, symbol, effective_market_type, timeframe)
     row_count = db.execute(
-        "SELECT COUNT(*) FROM market_ohlcv "
-        "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=?",
+        "SELECT COUNT(*) FROM market_ohlcv WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=?",
         scope,
     ).fetchone()[0]
     if row_count > effective_window + _OHLCV_PRUNE_MARGIN:
@@ -3732,19 +3872,15 @@ def upsert_ohlcv_candles(
             (*scope, effective_window - 1),
         ).fetchone()
         if cutoff_row is not None:
-            db.execute(
-                "DELETE FROM market_ohlcv "
-                "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? "
-                "AND ts < ?",
+            execute_write(
+                "DELETE FROM market_ohlcv WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? AND ts < ?",
                 (*scope, cutoff_row[0]),
             )
     if not was_in_tx:
         db.commit()
 
 
-def _resolve_ohlcv_scope(
-    db, symbol: str, timeframe: str, exchange: str, market_type: str
-) -> tuple[str, str] | None:
+def _resolve_ohlcv_scope(db, symbol: str, timeframe: str, exchange: str, market_type: str) -> tuple[str, str] | None:
     """Choose one coherent instrument for legacy partially-scoped readers."""
     if exchange and market_type:
         return exchange.lower(), market_type
@@ -3760,15 +3896,13 @@ def _resolve_ohlcv_scope(
         "SELECT exchange,market_type,MAX(ts) newest FROM market_ohlcv WHERE "
         + " AND ".join(where)
         + " GROUP BY exchange,market_type "
-          "ORDER BY CASE WHEN exchange='legacy_unknown' THEN 1 ELSE 0 END, newest DESC LIMIT 1",
+        "ORDER BY CASE WHEN exchange='legacy_unknown' THEN 1 ELSE 0 END, newest DESC LIMIT 1",
         params,
     ).fetchone()
     return (row["exchange"], row["market_type"]) if row else None
 
 
-def get_ohlcv_coverage(
-    symbol: str, timeframe: str, exchange: str = "", market_type: str = ""
-) -> dict:
+def get_ohlcv_coverage(symbol: str, timeframe: str, exchange: str = "", market_type: str = "") -> dict:
     """Return coverage stats for a symbol+timeframe pair."""
     db = get_db()
     scope = _resolve_ohlcv_scope(db, symbol, timeframe, exchange, market_type)
@@ -3787,9 +3921,7 @@ def get_ohlcv_coverage(
     }
 
 
-def get_ohlcv_newest_ts(
-    symbol: str, timeframe: str, exchange: str = "", market_type: str = ""
-) -> int | None:
+def get_ohlcv_newest_ts(symbol: str, timeframe: str, exchange: str = "", market_type: str = "") -> int | None:
     """Return the newest timestamp stored for a symbol+timeframe, or None."""
     db = get_db()
     scope = _resolve_ohlcv_scope(db, symbol, timeframe, exchange, market_type)
@@ -3797,21 +3929,17 @@ def get_ohlcv_newest_ts(
         return None
     scoped_exchange, scoped_market_type = scope
     row = db.execute(
-        "SELECT MAX(ts) FROM market_ohlcv "
-        "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=?",
+        "SELECT MAX(ts) FROM market_ohlcv WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=?",
         (scoped_exchange, symbol, scoped_market_type, timeframe),
     ).fetchone()
     return row[0] if row else None
 
 
-def get_ohlcv_backfill_state(
-    exchange: str, symbol: str, market_type: str, timeframe: str
-) -> dict | None:
+def get_ohlcv_backfill_state(exchange: str, symbol: str, market_type: str, timeframe: str) -> dict | None:
     """Return durable retry state for one exact OHLCV instrument/timeframe."""
     db = get_db()
     row = db.execute(
-        "SELECT * FROM ohlcv_backfill_state "
-        "WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=?",
+        "SELECT * FROM ohlcv_backfill_state WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=?",
         (exchange.lower(), symbol, market_type, timeframe),
     ).fetchone()
     return dict(row) if row else None
@@ -3833,7 +3961,7 @@ def upsert_ohlcv_backfill_state(
     """Persist one exact catch-up state without leaking a caller transaction."""
     db = get_db()
     was_in_tx = db.in_transaction
-    db.execute(
+    execute_write(
         "INSERT INTO ohlcv_backfill_state "
         "(exchange,symbol,market_type,timeframe,status,bar_count,consecutive_failures,"
         " last_attempt_at,next_attempt_at,last_error,updated_at) "
@@ -3844,8 +3972,16 @@ def upsert_ohlcv_backfill_state(
         "last_attempt_at=excluded.last_attempt_at, next_attempt_at=excluded.next_attempt_at, "
         "last_error=excluded.last_error, updated_at=datetime('now')",
         (
-            exchange.lower(), symbol, market_type, timeframe, status, int(bar_count),
-            int(consecutive_failures), last_attempt_at, next_attempt_at, last_error,
+            exchange.lower(),
+            symbol,
+            market_type,
+            timeframe,
+            status,
+            int(bar_count),
+            int(consecutive_failures),
+            last_attempt_at,
+            next_attempt_at,
+            last_error,
         ),
     )
     if not was_in_tx:
@@ -3855,36 +3991,44 @@ def upsert_ohlcv_backfill_state(
 def get_collector_health_state(domain: str) -> dict | None:
     """Return the latest bounded operational state for one collector domain."""
     db = get_db()
-    row = db.execute(
-        "SELECT * FROM collector_health_state WHERE domain=?", (domain,)
-    ).fetchone()
+    row = db.execute("SELECT * FROM collector_health_state WHERE domain=?", (domain,)).fetchone()
     return dict(row) if row else None
 
 
 def list_collector_health_states() -> list[dict]:
     """Return one latest-state row per collector domain."""
     db = get_db()
-    rows = db.execute(
-        "SELECT * FROM collector_health_state ORDER BY domain"
-    ).fetchall()
+    rows = db.execute("SELECT * FROM collector_health_state ORDER BY domain").fetchall()
     return [dict(row) for row in rows]
 
 
 def upsert_collector_health_state(state: dict) -> None:
     """Persist one bounded collector state using the canonical transaction pattern."""
     columns = (
-        "domain", "cadence_sec", "last_status", "last_tick", "last_scheduled_at",
-        "last_attempt_at", "last_finished_at", "last_success_at", "duration_ms",
-        "consecutive_problems", "attempts", "successes", "partial_results",
-        "empty_results", "timeouts", "budget_skips", "failures", "last_error_code",
+        "domain",
+        "cadence_sec",
+        "last_status",
+        "last_tick",
+        "last_scheduled_at",
+        "last_attempt_at",
+        "last_finished_at",
+        "last_success_at",
+        "duration_ms",
+        "consecutive_problems",
+        "attempts",
+        "successes",
+        "partial_results",
+        "empty_results",
+        "timeouts",
+        "budget_skips",
+        "failures",
+        "last_error_code",
     )
     values = tuple(state.get(column) for column in columns)
-    updates = ", ".join(
-        f"{column}=excluded.{column}" for column in columns if column != "domain"
-    )
+    updates = ", ".join(f"{column}=excluded.{column}" for column in columns if column != "domain")
     db = get_db()
     was_in_tx = db.in_transaction
-    db.execute(
+    execute_write(
         f"INSERT INTO collector_health_state ({','.join(columns)},updated_at) "
         f"VALUES ({','.join('?' for _ in columns)},datetime('now')) "
         f"ON CONFLICT(domain) DO UPDATE SET {updates},updated_at=datetime('now')",
@@ -3919,7 +4063,8 @@ def get_ohlcv_candles(
     rows = db.execute(
         "SELECT ts, open, high, low, close, volume, provider, exchange, market_type "
         "FROM market_ohlcv WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? "
-        + before_clause + " ORDER BY ts DESC LIMIT ?",
+        + before_clause
+        + " ORDER BY ts DESC LIMIT ?",
         (*params, limit),
     ).fetchall()
     # Reverse so callers get oldest→newest
@@ -3929,8 +4074,12 @@ def get_ohlcv_candles(
 # --- Universe Generator ---
 
 from aletheia.storage.models import (
-    UniverseAsset, UniverseFeatureSnapshot, UniverseScannerRun,
-    UniverseSnapshot, UniverseMember, UniversePolicy,
+    UniverseAsset,
+    UniverseFeatureSnapshot,
+    UniverseScannerRun,
+    UniverseSnapshot,
+    UniverseMember,
+    UniversePolicy,
 )
 
 
@@ -3946,18 +4095,25 @@ def upsert_universe_asset(asset: UniverseAsset) -> None:
         (asset.venue, asset.symbol, asset.market_type),
     ).fetchone()
     if row:
-        db.execute(
+        execute_write(
             "UPDATE universe_registry SET status = ?, last_seen_at = ?, "
             "min_notional = ?, price_precision = ?, amount_precision = ?, metadata = ? "
             "WHERE id = ?",
-            (asset.status, asset.last_seen_at, asset.min_notional,
-             asset.price_precision, asset.amount_precision, asset.metadata, row["id"]),
+            (
+                asset.status,
+                asset.last_seen_at,
+                asset.min_notional,
+                asset.price_precision,
+                asset.amount_precision,
+                asset.metadata,
+                row["id"],
+            ),
         )
     else:
         data = asset.model_dump()
         cols = ", ".join(data.keys())
         placeholders = ", ".join(["?"] * len(data))
-        db.execute(f"INSERT INTO universe_registry ({cols}) VALUES ({placeholders})", list(data.values()))
+        execute_write(f"INSERT INTO universe_registry ({cols}) VALUES ({placeholders})", list(data.values()))
     if not was_in_tx:
         db.commit()
 
@@ -3983,27 +4139,23 @@ def sync_universe_assets(
         "blacklist_reason",
         "metadata",
     ]
-    update_sql = ", ".join(
-        f"{column}=excluded.{column}" for column in update_columns
-    )
+    update_sql = ", ".join(f"{column}=excluded.{column}" for column in update_columns)
     db = get_db()
     with transaction():
         if rows:
-            db.executemany(
+            execute_many_write(
                 f"INSERT INTO universe_registry ({', '.join(columns)}) "
                 f"VALUES ({placeholders}) "
                 "ON CONFLICT(venue, symbol, market_type) DO UPDATE SET "
                 f"{update_sql}",
                 [[row[column] for column in columns] for row in rows],
             )
-        other = db.execute(
-            "UPDATE universe_registry SET status='inactive' "
-            "WHERE venue != ? AND status='active'",
+        other = execute_write(
+            "UPDATE universe_registry SET status='inactive' WHERE venue != ? AND status='active'",
             (active_venue,),
         ).rowcount
-        stale = db.execute(
-            "UPDATE universe_registry SET status='inactive' "
-            "WHERE venue = ? AND status='active' AND last_seen_at < ?",
+        stale = execute_write(
+            "UPDATE universe_registry SET status='inactive' WHERE venue = ? AND status='active' AND last_seen_at < ?",
             (active_venue, stale_cutoff_iso),
         ).rowcount
     return len(rows), other, stale
@@ -4013,7 +4165,7 @@ def deactivate_universe_assets_not_in_venue(active_venue: str) -> int:
     """Mark all registry rows from other venues as inactive."""
     db = get_db()
     was_in_tx = db.in_transaction
-    result = db.execute(
+    result = execute_write(
         "UPDATE universe_registry SET status='inactive' WHERE venue != ? AND status='active'",
         (active_venue,),
     )
@@ -4026,9 +4178,8 @@ def deactivate_stale_universe_assets(venue: str, cutoff_iso: str) -> int:
     """Mark registry rows for this venue not seen since cutoff as inactive."""
     db = get_db()
     was_in_tx = db.in_transaction
-    result = db.execute(
-        "UPDATE universe_registry SET status='inactive' "
-        "WHERE venue = ? AND status='active' AND last_seen_at < ?",
+    result = execute_write(
+        "UPDATE universe_registry SET status='inactive' WHERE venue = ? AND status='active' AND last_seen_at < ?",
         (venue, cutoff_iso),
     )
     if not was_in_tx:
@@ -4099,8 +4250,7 @@ def insert_universe_snapshot(snap: UniverseSnapshot) -> None:
 def get_active_universe_snapshot(market_type: str = "crypto") -> dict | None:
     db = get_db()
     row = db.execute(
-        "SELECT * FROM universe_snapshots WHERE status = 'active' AND market_type = ? "
-        "ORDER BY created_at DESC LIMIT 1",
+        "SELECT * FROM universe_snapshots WHERE status = 'active' AND market_type = ? ORDER BY created_at DESC LIMIT 1",
         (market_type,),
     ).fetchone()
     return dict(row) if row else None
@@ -4135,18 +4285,14 @@ def expire_opportunities_from_superseded_snapshots(market_type: str = "crypto") 
                 row = dict(raw)
                 opportunity_id = str(row["id"])
                 source_status = str(row["status"])
-                dedup_key = (
-                    f"universe_snapshot_status:{row.get('universe_snapshot_id')}:"
-                    f"{opportunity_id}"
-                )
-                updated = db.execute(
-                    "UPDATE opportunities SET status='expired' "
-                    "WHERE id=? AND status=?",
+                dedup_key = f"universe_snapshot_status:{row.get('universe_snapshot_id')}:{opportunity_id}"
+                updated = execute_write(
+                    "UPDATE opportunities SET status='expired' WHERE id=? AND status=?",
                     (opportunity_id, source_status),
                 )
                 if updated.rowcount != 1:
                     continue
-                db.execute(
+                execute_write(
                     "INSERT OR IGNORE INTO filter_decisions ("
                     "id,dedup_key,candidate_key,candidate_kind,parent_candidate_key,"
                     "run_id,opportunity_id,universe_snapshot_id,universe_member_id,"
@@ -4156,26 +4302,38 @@ def expire_opportunities_from_superseded_snapshots(market_type: str = "crypto") 
                     "code_commit,outcome_candidate_key,evaluated_at"
                     ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
-                        dedup_key, dedup_key, f"opportunity:{opportunity_id}",
-                        "opportunity", None, None, opportunity_id,
-                        row.get("universe_snapshot_id"), row.get("universe_member_id"),
-                        None, None, str(row.get("symbol") or "unknown"),
-                        str(row.get("market") or "spot"), row.get("direction_bias"),
-                        row.get("scanner_family"), row.get("regime_tag"),
-                        "universe_snapshot_status", "opportunity_lifecycle", 0,
-                        "rejected", "universe_snapshot_superseded",
+                        dedup_key,
+                        dedup_key,
+                        f"opportunity:{opportunity_id}",
+                        "opportunity",
+                        None,
+                        None,
+                        opportunity_id,
+                        row.get("universe_snapshot_id"),
+                        row.get("universe_member_id"),
+                        None,
+                        None,
+                        str(row.get("symbol") or "unknown"),
+                        str(row.get("market") or "spot"),
+                        row.get("direction_bias"),
+                        row.get("scanner_family"),
+                        row.get("regime_tag"),
+                        "universe_snapshot_status",
+                        "opportunity_lifecycle",
+                        0,
+                        "rejected",
+                        "universe_snapshot_superseded",
                         "parent Universe snapshot is no longer active",
                         json.dumps({"source_status": source_status}, sort_keys=True),
                         json.dumps({"required_snapshot_status": "active"}, sort_keys=True),
-                        "universe_snapshot_status:v1", None, None, evaluated_at,
+                        "universe_snapshot_status:v1",
+                        None,
+                        None,
+                        evaluated_at,
                     ),
                 )
-                if db.execute(
-                    "SELECT 1 FROM filter_decisions WHERE dedup_key=?", (dedup_key,)
-                ).fetchone() is None:
-                    raise RuntimeError(
-                        f"snapshot expiry evidence unavailable for Opportunity {opportunity_id}"
-                    )
+                if db.execute("SELECT 1 FROM filter_decisions WHERE dedup_key=?", (dedup_key,)).fetchone() is None:
+                    raise RuntimeError(f"snapshot expiry evidence unavailable for Opportunity {opportunity_id}")
                 expired += 1
             db.execute(f"RELEASE SAVEPOINT {savepoint}")
             return expired
@@ -4189,15 +4347,14 @@ def expire_universe_snapshots(market_type: str = "crypto", except_id: str | None
     db = get_db()
     was_in_tx = db.in_transaction
     if except_id:
-        db.execute(
+        execute_write(
             "UPDATE universe_snapshots SET status = 'superseded' "
             "WHERE status = 'active' AND market_type = ? AND id != ?",
             (market_type, except_id),
         )
     else:
-        db.execute(
-            "UPDATE universe_snapshots SET status = 'superseded' "
-            "WHERE status = 'active' AND market_type = ?",
+        execute_write(
+            "UPDATE universe_snapshots SET status = 'superseded' WHERE status = 'active' AND market_type = ?",
             (market_type,),
         )
     if not was_in_tx:
@@ -4264,14 +4421,13 @@ def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> tuple[int, 
             if ttl_sec <= 0:
                 continue
             new_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
-            cur_m = db.execute(
-                "UPDATE universe_members SET expires_at = ? "
-                "WHERE id = ? AND (expires_at IS NULL OR expires_at < ?)",
+            cur_m = execute_write(
+                "UPDATE universe_members SET expires_at = ? WHERE id = ? AND (expires_at IS NULL OR expires_at < ?)",
                 (new_expires, m["id"], new_expires),
             )
             if cur_m.rowcount and cur_m.rowcount > 0:
                 n_members += cur_m.rowcount
-            cur_o = db.execute(
+            cur_o = execute_write(
                 "UPDATE opportunities SET valid_until = ? "
                 "WHERE universe_member_id = ? AND status IN ('open','queued') "
                 "AND (valid_until IS NULL OR valid_until < ?)",
@@ -4327,8 +4483,7 @@ def insert_universe_policy(policy: UniversePolicy) -> None:
 def get_active_universe_policy(market_type: str = "crypto") -> dict | None:
     db = get_db()
     row = db.execute(
-        "SELECT * FROM universe_policies WHERE active = 1 AND market_type = ? "
-        "ORDER BY created_at DESC LIMIT 1",
+        "SELECT * FROM universe_policies WHERE active = 1 AND market_type = ? ORDER BY created_at DESC LIMIT 1",
         (market_type,),
     ).fetchone()
     return dict(row) if row else None
@@ -4352,6 +4507,7 @@ _OUTCOME_MARKET_SQL = (
     "CASE WHEN market_type IN ('perp','futures','swap','usdt_futures') "
     "THEN 'perp' ELSE COALESCE(market_type, 'spot') END"
 )
+
 
 def insert_forward_outcome(outcome) -> None:
     _insert("universe_forward_outcomes", outcome.model_dump())
@@ -4403,17 +4559,21 @@ def settle_forward_outcome(
 
 
 def fail_forward_outcome(outcome_id: str, settled_at: str) -> None:
-    _update("universe_forward_outcomes", outcome_id, {
-        "settled_at": settled_at,
-        "status": "failed",
-    })
+    _update(
+        "universe_forward_outcomes",
+        outcome_id,
+        {
+            "settled_at": settled_at,
+            "status": "failed",
+        },
+    )
 
 
 def cancel_all_pending_forward_outcomes() -> int:
     """Batch-cancel all pending forward outcomes (used on venue/strategy switch)."""
     db = get_db()
     was_in_tx = db.in_transaction
-    result = db.execute(
+    result = execute_write(
         "UPDATE universe_forward_outcomes SET status = 'cancelled' WHERE status = 'pending'",
     )
     if not was_in_tx:
@@ -4434,6 +4594,7 @@ def list_forward_outcomes_by_member(member_id: str) -> list[dict]:
 # Opportunity filter evidence
 # ---------------------------------------------------------------------------
 
+
 def insert_filter_decision(decision) -> bool:
     """Insert one immutable filter fact; duplicate dedup keys are ignored."""
     data = decision.model_dump()
@@ -4441,7 +4602,7 @@ def insert_filter_decision(decision) -> bool:
     was_in_tx = db.in_transaction
     cols = ", ".join(data.keys())
     placeholders = ", ".join("?" for _ in data)
-    cur = db.execute(
+    cur = execute_write(
         f"INSERT OR IGNORE INTO filter_decisions ({cols}) VALUES ({placeholders})",
         list(data.values()),
     )
@@ -4457,7 +4618,7 @@ def insert_filter_decision_batch(batch) -> bool:
     was_in_tx = db.in_transaction
     cols = ", ".join(data.keys())
     placeholders = ", ".join("?" for _ in data)
-    cur = db.execute(
+    cur = execute_write(
         f"INSERT OR IGNORE INTO filter_decision_batches ({cols}) VALUES ({placeholders})",
         list(data.values()),
     )
@@ -4476,9 +4637,8 @@ def insert_filter_candidate_outcomes_batch(outcomes: list) -> int:
     db = get_db()
     before = db.total_changes
     with transaction():
-        db.executemany(
-            f"INSERT OR IGNORE INTO filter_candidate_outcomes "
-            f"({', '.join(columns)}) VALUES ({placeholders})",
+        execute_many_write(
+            f"INSERT OR IGNORE INTO filter_candidate_outcomes ({', '.join(columns)}) VALUES ({placeholders})",
             [[row[column] for column in columns] for row in rows],
         )
     return db.total_changes - before
@@ -4520,10 +4680,14 @@ def settle_filter_candidate_outcome(
 
 
 def fail_filter_candidate_outcome(outcome_id: str, settled_at: str) -> None:
-    _update("filter_candidate_outcomes", outcome_id, {
-        "settled_at": settled_at,
-        "status": "failed",
-    })
+    _update(
+        "filter_candidate_outcomes",
+        outcome_id,
+        {
+            "settled_at": settled_at,
+            "status": "failed",
+        },
+    )
 
 
 def settle_linked_shadow_outcomes(
@@ -4538,7 +4702,7 @@ def settle_linked_shadow_outcomes(
     """Project a settled shared 24h result onto linked shadow rows."""
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
+    cur = execute_write(
         "UPDATE shadow_trades SET exit_price=?, pnl_pct=?, gross_return_pct=?, "
         "net_pnl_pct=?, estimated_fee_pct=?, estimated_spread_slippage_pct=?, "
         "estimated_funding_pct=?, min_tradable_edge_pct=?, "
@@ -4573,7 +4737,7 @@ def mark_outlier_outcomes_failed(max_abs_return_pct: float = 1_000_000) -> int:
     every refresh; after the first pass it finds 0 rows and returns immediately.
     """
     db = get_db()
-    result = db.execute(
+    result = execute_write(
         "UPDATE universe_forward_outcomes "
         "SET status = 'failed' "
         "WHERE status = 'settled' "
@@ -4585,6 +4749,7 @@ def mark_outlier_outcomes_failed(max_abs_return_pct: float = 1_000_000) -> int:
 
 # --- Filter feedback controller (shadow recommendations) ---
 
+
 def insert_controller_recommendation(rec: dict) -> None:
     """Append one shadow recommendation row. Never updates existing rows."""
     _insert("controller_recommendations", rec)
@@ -4595,8 +4760,10 @@ def list_controller_recommendations(limit: int = 200, run_id: str | None = None)
     if run_id:
         return _select_all(
             "controller_recommendations",
-            where="run_id = ?", params=(run_id,),
-            order="created_at DESC", limit=limit,
+            where="run_id = ?",
+            params=(run_id,),
+            order="created_at DESC",
+            limit=limit,
         )
     return _select_all("controller_recommendations", order="created_at DESC", limit=limit)
 
@@ -4605,8 +4772,7 @@ def latest_controller_run_id() -> str | None:
     """run_id of the most recent observe cycle, or None if the table is empty."""
     db = get_db()
     row = db.execute(
-        "SELECT run_id FROM controller_recommendations "
-        "WHERE run_id IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+        "SELECT run_id FROM controller_recommendations WHERE run_id IS NOT NULL ORDER BY created_at DESC LIMIT 1"
     ).fetchone()
     return row["run_id"] if row else None
 
@@ -4617,7 +4783,7 @@ def insert_filter_shadow_experiment(experiment: dict) -> bool:
     was_in_tx = db.in_transaction
     cols = ", ".join(experiment.keys())
     placeholders = ", ".join(["?"] * len(experiment))
-    cursor = db.execute(
+    cursor = execute_write(
         f"INSERT OR IGNORE INTO filter_shadow_experiments ({cols}) VALUES ({placeholders})",
         list(experiment.values()),
     )
@@ -4626,9 +4792,7 @@ def insert_filter_shadow_experiment(experiment: dict) -> bool:
     return bool(cursor.rowcount)
 
 
-def list_filter_shadow_experiments(
-    *, status: str | None = None, limit: int = 100
-) -> list[dict]:
+def list_filter_shadow_experiments(*, status: str | None = None, limit: int = 100) -> list[dict]:
     if status:
         return _select_all(
             "filter_shadow_experiments",
@@ -4637,16 +4801,14 @@ def list_filter_shadow_experiments(
             order="started_at DESC",
             limit=limit,
         )
-    return _select_all(
-        "filter_shadow_experiments", order="started_at DESC", limit=limit
-    )
+    return _select_all("filter_shadow_experiments", order="started_at DESC", limit=limit)
 
 
 def update_filter_shadow_experiment(experiment_id: str, **values) -> None:
     db = get_db()
     was_in_tx = db.in_transaction
     sets = ", ".join(f"{key} = ?" for key in values)
-    db.execute(
+    execute_write(
         f"UPDATE filter_shadow_experiments SET {sets} WHERE id = ?",
         [*values.values(), experiment_id],
     )
@@ -4663,11 +4825,14 @@ def insert_filter_shadow_evaluation(evaluation: dict) -> None:
 
 
 def latest_filter_shadow_evaluation(experiment_id: str) -> dict | None:
-    row = get_db().execute(
-        "SELECT * FROM filter_shadow_evaluations WHERE experiment_id=? "
-        "ORDER BY created_at DESC LIMIT 1",
-        (experiment_id,),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT * FROM filter_shadow_evaluations WHERE experiment_id=? ORDER BY created_at DESC LIMIT 1",
+            (experiment_id,),
+        )
+        .fetchone()
+    )
     return dict(row) if row else None
 
 
@@ -4848,16 +5013,16 @@ def guard_candidate_exists_recent(
 # Data Collectors (market data)
 # ---------------------------------------------------------------------------
 
+
 def insert_orderbook_snapshot(data: dict) -> None:
     from aletheia.storage.models import new_id
+
     if "id" not in data:
         data["id"] = new_id()
     _insert("orderbook_snapshots", data)
 
 
-def latest_orderbook(
-    symbol: str, exchange: str = "", market_type: str = ""
-) -> dict | None:
+def latest_orderbook(symbol: str, exchange: str = "", market_type: str = "") -> dict | None:
     where = ["symbol = ?"]
     params: list = [symbol]
     if exchange:
@@ -4910,6 +5075,7 @@ def insert_funding_rate_snapshot(data: dict) -> None:
     even when the funding rate has been stable for an extended period.
     """
     from aletheia.storage.models import new_id
+
     if "id" not in data:
         data["id"] = new_id()
     symbol = data.get("symbol")
@@ -4942,10 +5108,7 @@ def insert_funding_rate_snapshot(data: dict) -> None:
             ).fetchone()
             if row is not None:
                 latest = dict(row)
-                same = all(
-                    data.get(field) == latest.get(field)
-                    for field in _FUNDING_DEDUP_FIELDS
-                )
+                same = all(data.get(field) == latest.get(field) for field in _FUNDING_DEDUP_FIELDS)
                 if same and latest.get("observed_at"):
                     try:
                         prev_ts = datetime.fromisoformat(latest["observed_at"])
@@ -4996,6 +5159,7 @@ def latest_funding_rate(symbol: str, exchange: str | None = None) -> dict | None
 
 def insert_open_interest_snapshot(data: dict) -> None:
     from aletheia.storage.models import new_id
+
     if "id" not in data:
         data["id"] = new_id()
     _insert("open_interest_snapshots", data)
@@ -5132,6 +5296,7 @@ def open_interest_near(
 
 def insert_liquidation_event(data: dict) -> None:
     from aletheia.storage.models import new_id
+
     if "id" not in data:
         data["id"] = new_id()
     _insert("liquidation_events", data)
@@ -5151,6 +5316,7 @@ def recent_liquidations(symbol: str, hours: int = 1) -> list[dict]:
 def insert_perp_structure_snapshot(data: dict) -> None:
     """Persist one observation-only perp structure snapshot."""
     from aletheia.storage.models import new_id
+
     if "id" not in data:
         data["id"] = new_id()
     if "raw_json" not in data:
@@ -5164,7 +5330,8 @@ def insert_perp_structure_shadow_outcome(data: dict) -> None:
 
 
 def list_due_perp_structure_shadow_outcomes(
-    before_ts: str, limit: int = 100,
+    before_ts: str,
+    limit: int = 100,
 ) -> list[dict]:
     return _select_all(
         "perp_structure_shadow_outcomes",
@@ -5176,24 +5343,37 @@ def list_due_perp_structure_shadow_outcomes(
 
 
 def settle_perp_structure_shadow_outcome(
-    outcome_id: str, *, exit_price: float, directional_return_pct: float,
-    settled_at: str, price_source: str | None, settlement_lag_sec: float | None,
+    outcome_id: str,
+    *,
+    exit_price: float,
+    directional_return_pct: float,
+    settled_at: str,
+    price_source: str | None,
+    settlement_lag_sec: float | None,
 ) -> None:
-    _update("perp_structure_shadow_outcomes", outcome_id, {
-        "exit_price_usd": exit_price,
-        "directional_return_pct": directional_return_pct,
-        "settled_at": settled_at,
-        "settlement_price_source": price_source,
-        "settlement_lag_sec": settlement_lag_sec,
-        "status": "settled",
-    })
+    _update(
+        "perp_structure_shadow_outcomes",
+        outcome_id,
+        {
+            "exit_price_usd": exit_price,
+            "directional_return_pct": directional_return_pct,
+            "settled_at": settled_at,
+            "settlement_price_source": price_source,
+            "settlement_lag_sec": settlement_lag_sec,
+            "status": "settled",
+        },
+    )
 
 
 def fail_perp_structure_shadow_outcome(outcome_id: str, settled_at: str) -> None:
-    _update("perp_structure_shadow_outcomes", outcome_id, {
-        "settled_at": settled_at,
-        "status": "failed",
-    })
+    _update(
+        "perp_structure_shadow_outcomes",
+        outcome_id,
+        {
+            "settled_at": settled_at,
+            "status": "failed",
+        },
+    )
 
 
 def latest_perp_structure(symbol: str, source: str | None = None) -> dict | None:
@@ -5264,8 +5444,10 @@ def batch_open_interest(symbols: list[str], exchange: str) -> dict[str, dict]:
     if not symbols:
         return {}
     placeholders = ",".join("?" * len(symbols))
-    rows = get_db().execute(
-        f"""
+    rows = (
+        get_db()
+        .execute(
+            f"""
         SELECT * FROM (
             SELECT *, ROW_NUMBER() OVER (
                 PARTITION BY symbol ORDER BY observed_at DESC
@@ -5274,8 +5456,10 @@ def batch_open_interest(symbols: list[str], exchange: str) -> dict[str, dict]:
             WHERE symbol IN ({placeholders}) AND exchange = ?
         ) WHERE _rn = 1
         """,
-        (*symbols, exchange),
-    ).fetchall()
+            (*symbols, exchange),
+        )
+        .fetchall()
+    )
     return {dict(row)["symbol"]: dict(row) for row in rows}
 
 
@@ -5311,15 +5495,14 @@ def batch_news(
         for sym in symbols:
             if len(result[sym]) >= limit_per_symbol:
                 continue
-            if news_matches_symbol(
-                sym, item.get("title"), item.get("summary"), item.get("content")
-            ):
+            if news_matches_symbol(sym, item.get("title"), item.get("summary"), item.get("content")):
                 result[sym].append(item)
     return result
 
 
 def insert_macro_snapshot(data: dict) -> None:
     from aletheia.storage.models import new_id
+
     if "id" not in data:
         data["id"] = new_id()
     _insert("macro_snapshots", data)
@@ -5341,9 +5524,7 @@ def macro_snapshot_near(
         reference = reference_at
     else:
         try:
-            reference = datetime.fromisoformat(
-                str(reference_at).replace("Z", "+00:00")
-            )
+            reference = datetime.fromisoformat(str(reference_at).replace("Z", "+00:00"))
         except (TypeError, ValueError):
             return None
     if reference.tzinfo is None:
@@ -5354,10 +5535,7 @@ def macro_snapshot_near(
     newest = (target + timedelta(hours=tolerance_hours)).isoformat()
     rows = _select_all(
         "macro_snapshots",
-        where=(
-            "total_market_cap_usd IS NOT NULL AND total_market_cap_usd > 0 "
-            "AND observed_at BETWEEN ? AND ?"
-        ),
+        where=("total_market_cap_usd IS NOT NULL AND total_market_cap_usd > 0 AND observed_at BETWEEN ? AND ?"),
         params=(oldest, newest),
         order="observed_at DESC",
         limit=64,
@@ -5367,9 +5545,7 @@ def macro_snapshot_near(
 
     def _gap(row: dict) -> float:
         try:
-            observed = datetime.fromisoformat(
-                str(row.get("observed_at")).replace("Z", "+00:00")
-            )
+            observed = datetime.fromisoformat(str(row.get("observed_at")).replace("Z", "+00:00"))
         except (TypeError, ValueError):
             return float("inf")
         if observed.tzinfo is None:
@@ -5386,10 +5562,12 @@ def macro_snapshot_near(
 # isolation_level=None (autocommit), so a per-row loop becomes an N-commit storm.
 # ---------------------------------------------------------------------------
 
+
 def insert_coingecko_top_rows(rows: list[dict]) -> int:
     if not rows:
         return 0
     from aletheia.storage.models import new_id
+
     prepared = [dict(row) for row in rows]
     for row in prepared:
         row.setdefault("id", new_id())
@@ -5404,9 +5582,7 @@ def latest_coingecko_top(top_n: int = 50) -> list[dict]:
     could mix two adjacent batches if 100 rows landed in one tick (per spec MS-C04).
     """
     db = get_db()
-    latest_row = db.execute(
-        "SELECT MAX(observed_at) AS m FROM coingecko_top_snapshots"
-    ).fetchone()
+    latest_row = db.execute("SELECT MAX(observed_at) AS m FROM coingecko_top_snapshots").fetchone()
     if not latest_row or not latest_row["m"]:
         return []
     return _select_all(
@@ -5422,32 +5598,24 @@ def prune_coingecko_top_snapshots(days: int = 3) -> int:
     """~14k rows/day; default lowered 14d→3d (Phase 3). Freshness doctor probe
     reads MAX(observed_at) which is unaffected by shorter history."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    return _delete_by_rowid_batches(
-        "coingecko_top_snapshots", "observed_at < ?", (cutoff,)
-    )
+    return _delete_by_rowid_batches("coingecko_top_snapshots", "observed_at < ?", (cutoff,))
 
 
 def prune_orderbook_snapshots(days: int = 7) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    return _delete_by_rowid_batches(
-        "orderbook_snapshots", "observed_at < ?", (cutoff,)
-    )
+    return _delete_by_rowid_batches("orderbook_snapshots", "observed_at < ?", (cutoff,))
 
 
 def prune_perp_structure_snapshots(days: int = 30) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    return _delete_by_rowid_batches(
-        "perp_structure_snapshots", "observed_at < ?", (cutoff,)
-    )
+    return _delete_by_rowid_batches("perp_structure_snapshots", "observed_at < ?", (cutoff,))
 
 
 def prune_perp_structure_shadow_outcomes(days: int = 30) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
-        "DELETE FROM perp_structure_shadow_outcomes WHERE entry_ts < ?", (cutoff,)
-    )
+    cur = execute_write("DELETE FROM perp_structure_shadow_outcomes WHERE entry_ts < ?", (cutoff,))
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0
@@ -5457,6 +5625,7 @@ def prune_perp_structure_shadow_outcomes(days: int = 30) -> int:
 # Round 2 — Step 5: DefiLlama on-chain snapshots
 # ---------------------------------------------------------------------------
 
+
 def insert_onchain_snapshot(data: dict) -> None:
     """Insert one onchain_snapshots row (stablecoin_mcap | chain_tvl | dex_volume).
 
@@ -5465,6 +5634,7 @@ def insert_onchain_snapshot(data: dict) -> None:
     only when NOT already inside a transaction started by the caller.
     """
     from aletheia.storage.models import new_id
+
     if "id" not in data:
         data["id"] = new_id()
     _insert("onchain_snapshots", data)
@@ -5518,9 +5688,7 @@ def prune_onchain_snapshots(days: int = 30) -> int:
     ≈ 8640 rows/day — capped at 30d default (≈ 259k rows max).
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    return _delete_by_rowid_batches(
-        "onchain_snapshots", "observed_at < ?", (cutoff,)
-    )
+    return _delete_by_rowid_batches("onchain_snapshots", "observed_at < ?", (cutoff,))
 
 
 def prune_prediction_probability_snapshots(days: int = 90) -> int:
@@ -5528,16 +5696,12 @@ def prune_prediction_probability_snapshots(days: int = 90) -> int:
     telemetry (prediction_observer, 30-min cadence, gated on prediction_enabled) that
     previously had no retention path."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    return _delete_by_rowid_batches(
-        "prediction_probability_snapshots", "ts < ?", (cutoff,)
-    )
+    return _delete_by_rowid_batches("prediction_probability_snapshots", "ts < ?", (cutoff,))
 
 
 def prune_liquidation_events(days: int = 7) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    return _delete_by_rowid_batches(
-        "liquidation_events", "observed_at < ?", (cutoff,)
-    )
+    return _delete_by_rowid_batches("liquidation_events", "observed_at < ?", (cutoff,))
 
 
 def _max_open_position_hold_hours() -> int:
@@ -5609,6 +5773,7 @@ def prune_universe_forward_outcomes(
         (cutoff,),
     )
 
+
 def prune_macro_snapshots(days: int = 90) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     return _delete_by_rowid_batches("macro_snapshots", "observed_at < ?", (cutoff,))
@@ -5616,15 +5781,16 @@ def prune_macro_snapshots(days: int = 90) -> int:
 
 def save_volume_ranking_snapshot(symbols: list, observed_at: str) -> None:
     import json
+
     db = get_db()
     was_in_tx = db.in_transaction
-    db.execute(
+    execute_write(
         "INSERT INTO volume_ranking_snapshots (symbols_json, observed_at) VALUES (?, ?)",
         (json.dumps(symbols), observed_at),
     )
     if not was_in_tx:
         db.commit()
-    db.execute(
+    execute_write(
         "DELETE FROM volume_ranking_snapshots WHERE id NOT IN ("
         "  SELECT id FROM volume_ranking_snapshots ORDER BY observed_at DESC LIMIT 5"
         ")"
@@ -5635,10 +5801,10 @@ def save_volume_ranking_snapshot(symbols: list, observed_at: str) -> None:
 
 def get_volume_ranking_snapshot() -> dict:
     import json
+
     db = get_db()
     row = db.execute(
-        "SELECT symbols_json, observed_at FROM volume_ranking_snapshots"
-        " ORDER BY observed_at DESC LIMIT 1"
+        "SELECT symbols_json, observed_at FROM volume_ranking_snapshots ORDER BY observed_at DESC LIMIT 1"
     ).fetchone()
     if not row:
         return {}
@@ -5654,17 +5820,13 @@ def get_volume_ranking_snapshot() -> dict:
 def prune_agent_shell_heartbeats(days: int = 2) -> int:
     """Prune old agent_shell_heartbeats rows (latest-row-only liveness telemetry)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    return _delete_by_rowid_batches(
-        "agent_shell_heartbeats", "created_at < ?", (cutoff,)
-    )
+    return _delete_by_rowid_batches("agent_shell_heartbeats", "created_at < ?", (cutoff,))
 
 
 def prune_agent_shell_events(days: int = 14) -> int:
     """Prune old agent_shell_events rows (telemetry, no causal-chain value)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    return _delete_by_rowid_batches(
-        "agent_shell_events", "created_at < ?", (cutoff,)
-    )
+    return _delete_by_rowid_batches("agent_shell_events", "created_at < ?", (cutoff,))
 
 
 def prune_agent_shell_messages(
@@ -5682,15 +5844,13 @@ def prune_agent_shell_messages(
     db = get_db()
     was_in_tx = db.in_transaction
     deleted = 0
-    ctx_cur = db.execute(
-        "DELETE FROM agent_shell_messages "
-        "WHERE message_type = 'context' AND created_at < ?",
+    ctx_cur = execute_write(
+        "DELETE FROM agent_shell_messages WHERE message_type = 'context' AND created_at < ?",
         (ctx_cutoff,),
     )
     deleted += ctx_cur.rowcount or 0
-    other_cur = db.execute(
-        "DELETE FROM agent_shell_messages "
-        "WHERE (message_type IS NULL OR message_type != 'context') AND created_at < ?",
+    other_cur = execute_write(
+        "DELETE FROM agent_shell_messages WHERE (message_type IS NULL OR message_type != 'context') AND created_at < ?",
         (other_cutoff,),
     )
     deleted += other_cur.rowcount or 0
@@ -5727,19 +5887,17 @@ def prune_agent_shell_artifacts(
     db = get_db()
     was_in_tx = db.in_transaction
     deleted = 0
-    strat_cur = db.execute(
-        f"DELETE FROM agent_shell_artifacts "
-        f"WHERE artifact_type IN ({strat_placeholders}) AND created_at < ?",
+    strat_cur = execute_write(
+        f"DELETE FROM agent_shell_artifacts WHERE artifact_type IN ({strat_placeholders}) AND created_at < ?",
         (*_ARTIFACT_TYPES_STRATEGY, strat_cutoff),
     )
     deleted += strat_cur.rowcount or 0
-    prop_cur = db.execute(
-        f"DELETE FROM agent_shell_artifacts "
-        f"WHERE artifact_type IN ({prop_placeholders}) AND created_at < ?",
+    prop_cur = execute_write(
+        f"DELETE FROM agent_shell_artifacts WHERE artifact_type IN ({prop_placeholders}) AND created_at < ?",
         (*_ARTIFACT_TYPES_PROPOSAL, prop_cutoff),
     )
     deleted += prop_cur.rowcount or 0
-    other_cur = db.execute(
+    other_cur = execute_write(
         f"DELETE FROM agent_shell_artifacts "
         f"WHERE (artifact_type IS NULL OR artifact_type NOT IN ({combined_placeholders})) "
         f"AND created_at < ?",
@@ -5789,9 +5947,7 @@ def prune_serenity_evidence(days: int = 60) -> int:
 def prune_serenity_run_events(days: int = 60) -> int:
     """Prune serenity_run_events older than ``days`` (by created_at)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    return _delete_by_rowid_batches(
-        "serenity_run_events", "created_at < ?", (cutoff,)
-    )
+    return _delete_by_rowid_batches("serenity_run_events", "created_at < ?", (cutoff,))
 
 
 def prune_runtime_sessions(days: int = 30) -> int:
@@ -5805,9 +5961,8 @@ def prune_runtime_sessions(days: int = 30) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
-        "DELETE FROM runtime_sessions "
-        "WHERE ended_at IS NOT NULL AND started_at < ?",
+    cur = execute_write(
+        "DELETE FROM runtime_sessions WHERE ended_at IS NOT NULL AND started_at < ?",
         (cutoff,),
     )
     if not was_in_tx:
@@ -5824,10 +5979,8 @@ def prune_backtest_trades(days: int = 60) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
-        "DELETE FROM backtest_trades WHERE run_id IN ("
-        "  SELECT id FROM backtest_runs WHERE created_at < ?"
-        ")",
+    cur = execute_write(
+        "DELETE FROM backtest_trades WHERE run_id IN (  SELECT id FROM backtest_runs WHERE created_at < ?)",
         (cutoff,),
     )
     if not was_in_tx:
@@ -5843,21 +5996,16 @@ def prune_backtest_runs(days: int = 60) -> int:
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
-    run_ids = [
-        row[0]
-        for row in db.execute(
-            "SELECT id FROM backtest_runs WHERE created_at < ?", (cutoff,)
-        ).fetchall()
-    ]
+    run_ids = [row[0] for row in db.execute("SELECT id FROM backtest_runs WHERE created_at < ?", (cutoff,)).fetchall()]
     if not run_ids:
         return 0
     placeholders = ",".join("?" * len(run_ids))
     with transaction():
-        db.execute(
+        execute_write(
             f"DELETE FROM backtest_trades WHERE run_id IN ({placeholders})",
             run_ids,
         )
-        db.execute("DELETE FROM backtest_runs WHERE created_at < ?", (cutoff,))
+        execute_write("DELETE FROM backtest_runs WHERE created_at < ?", (cutoff,))
     return len(run_ids)
 
 
@@ -5870,9 +6018,7 @@ def prune_filter_shadow_evaluations(days: int = 90) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
-        "DELETE FROM filter_shadow_evaluations WHERE created_at < ?", (cutoff,)
-    )
+    cur = execute_write("DELETE FROM filter_shadow_evaluations WHERE created_at < ?", (cutoff,))
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0
@@ -5890,8 +6036,7 @@ def prune_filter_shadow_experiments(days: int = 90) -> int:
     exp_ids = [
         row[0]
         for row in db.execute(
-            "SELECT id FROM filter_shadow_experiments "
-            "WHERE status != 'collecting' AND started_at < ?",
+            "SELECT id FROM filter_shadow_experiments WHERE status != 'collecting' AND started_at < ?",
             (cutoff,),
         ).fetchall()
     ]
@@ -5899,11 +6044,11 @@ def prune_filter_shadow_experiments(days: int = 90) -> int:
         return 0
     placeholders = ",".join("?" * len(exp_ids))
     with transaction():
-        db.execute(
+        execute_write(
             f"DELETE FROM filter_shadow_evaluations WHERE experiment_id IN ({placeholders})",
             exp_ids,
         )
-        db.execute(
+        execute_write(
             f"DELETE FROM filter_shadow_experiments WHERE id IN ({placeholders})",
             exp_ids,
         )
@@ -5925,7 +6070,7 @@ def prune_universe_members(
     outcome_cutoff = _effective_cutoff(days, min_experiment_started_at)
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
+    cur = execute_write(
         "DELETE FROM universe_members WHERE snapshot_id IN ("
         "  SELECT id FROM universe_snapshots WHERE created_at < ?"
         ") AND NOT EXISTS ("
@@ -5973,17 +6118,17 @@ def prune_universe_snapshots(
     with transaction():
         # universe_forward_outcomes references universe_members. Delete those
         # forward-outcome rows first to avoid FK IntegrityError.
-        db.execute(
+        execute_write(
             f"DELETE FROM universe_forward_outcomes WHERE member_id IN ("
             f"  SELECT id FROM universe_members WHERE snapshot_id IN ({placeholders})"
             f")",
             snap_ids,
         )
-        db.execute(
+        execute_write(
             f"DELETE FROM universe_members WHERE snapshot_id IN ({placeholders})",
             snap_ids,
         )
-        db.execute(
+        execute_write(
             f"DELETE FROM universe_snapshots WHERE id IN ({placeholders})",
             snap_ids,
         )
@@ -5995,9 +6140,7 @@ def prune_universe_scanner_runs(days: int = 30) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
-        "DELETE FROM universe_scanner_runs WHERE started_at < ?", (cutoff,)
-    )
+    cur = execute_write("DELETE FROM universe_scanner_runs WHERE started_at < ?", (cutoff,))
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0
@@ -6008,9 +6151,7 @@ def prune_agent_shell_commands(days: int = 14) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     was_in_tx = db.in_transaction
-    cur = db.execute(
-        "DELETE FROM agent_shell_commands WHERE created_at < ?", (cutoff,)
-    )
+    cur = execute_write("DELETE FROM agent_shell_commands WHERE created_at < ?", (cutoff,))
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0
@@ -6048,15 +6189,15 @@ def prune_agent_shell_tasks(
         return 0
     placeholders = ",".join("?" * len(task_ids))
     with transaction():
-        db.execute(
+        execute_write(
             f"DELETE FROM agent_shell_events WHERE task_id IN ({placeholders})",
             task_ids,
         )
-        db.execute(
+        execute_write(
             f"DELETE FROM agent_shell_artifacts WHERE task_id IN ({placeholders})",
             task_ids,
         )
-        db.execute(
+        execute_write(
             f"DELETE FROM agent_shell_tasks WHERE id IN ({placeholders})",
             task_ids,
         )
@@ -6090,26 +6231,26 @@ def prune_agent_shell_sessions(days: int = 14) -> int:
         return 0
     placeholders = ",".join("?" * len(session_ids))
     with transaction():
-        db.execute(
+        execute_write(
             f"DELETE FROM agent_shell_messages WHERE session_id IN ({placeholders})",
             session_ids,
         )
-        db.execute(
+        execute_write(
             f"DELETE FROM agent_shell_events WHERE session_id IN ({placeholders})",
             session_ids,
         )
-        db.execute(
+        execute_write(
             f"DELETE FROM agent_shell_artifacts WHERE session_id IN ({placeholders})",
             session_ids,
         )
-        db.execute(
+        execute_write(
             f"DELETE FROM agent_shell_commands WHERE session_id IN ({placeholders})",
             session_ids,
         )
         # agent_shell_tasks has no session_id column; it references tasks via
         # events/artifacts task_id which we already cleared above. Nothing
         # further to do for tasks here.
-        db.execute(
+        execute_write(
             f"DELETE FROM agent_shell_sessions WHERE id IN ({placeholders})",
             session_ids,
         )
@@ -6147,9 +6288,7 @@ def prune_market_ohlcv(
     now = datetime.now(timezone.utc)
     total = 0
     for timeframe, days in ttl.items():
-        cutoff_ms = int(
-            (now - timedelta(days=days)).timestamp() * 1000
-        )
+        cutoff_ms = int((now - timedelta(days=days)).timestamp() * 1000)
         total += _delete_by_rowid_batches(
             "market_ohlcv",
             "timeframe = ? AND ts < ?",
@@ -6176,11 +6315,14 @@ def expire_stale_opportunities(ttl_hours: int = 48) -> int:
     now_iso = now.isoformat()
     cutoff = (now - timedelta(hours=ttl_hours)).isoformat()
     with transaction(immediate=True):
-        rows = get_db().execute(
-            "SELECT * FROM opportunities WHERE status='open' "
-            "AND datetime(created_at)<datetime(?)",
-            (cutoff,),
-        ).fetchall()
+        rows = (
+            get_db()
+            .execute(
+                "SELECT * FROM opportunities WHERE status='open' AND datetime(created_at)<datetime(?)",
+                (cutoff,),
+            )
+            .fetchall()
+        )
         return _expire_opportunity_rows_with_ttl_evidence(
             rows,
             source_status="open",
@@ -6195,8 +6337,10 @@ def expire_stale_opportunities(ttl_hours: int = 48) -> int:
 
 # ── Edge Lab: Shadow Trades ──────────────────────────────────────────────────
 
+
 def insert_shadow_trade(shadow) -> None:
     from aletheia.storage.models import ShadowTrade
+
     data = shadow.model_dump() if hasattr(shadow, "model_dump") else dict(shadow)
     _insert("shadow_trades", data)
 
@@ -6213,9 +6357,8 @@ def anchor_shadow_trade_exit_price_if_pending(
     """Persist the first close-event price without marking the row resolved."""
     db = get_db()
     was_in_tx = db.in_transaction
-    cursor = db.execute(
-        "UPDATE shadow_trades SET exit_price = ? "
-        "WHERE id = ? AND resolved_at IS NULL AND exit_price IS NULL",
+    cursor = execute_write(
+        "UPDATE shadow_trades SET exit_price = ? WHERE id = ? AND resolved_at IS NULL AND exit_price IS NULL",
         (exit_price, shadow_id),
     )
     if not was_in_tx:
@@ -6244,13 +6387,13 @@ def resolve_shadow_trade_if_pending(
     db = get_db()
     was_in_tx = db.in_transaction
     if not economics:
-        cursor = db.execute(
+        cursor = execute_write(
             "UPDATE shadow_trades SET exit_price = ?, pnl_pct = ?, resolved_at = ? "
             "WHERE id = ? AND resolved_at IS NULL",
             (exit_price, pnl_pct, resolved_at, shadow_id),
         )
     else:
-        cursor = db.execute(
+        cursor = execute_write(
             "UPDATE shadow_trades SET "
             " exit_price = ?, pnl_pct = ?, "
             " gross_return_pct = ?, net_pnl_pct = ?, "
@@ -6336,10 +6479,7 @@ def insert_market_regime(record) -> None:
     ).fetchone()
     if row is not None:
         latest = dict(row)
-        same = all(
-            data.get(field) == latest.get(field)
-            for field in _MARKET_REGIME_DEDUP_FIELDS
-        )
+        same = all(data.get(field) == latest.get(field) for field in _MARKET_REGIME_DEDUP_FIELDS)
         if same and latest.get("detected_at"):
             try:
                 prev_ts = datetime.fromisoformat(latest["detected_at"])
@@ -6378,6 +6518,7 @@ def list_market_regimes(limit: int = 50) -> list[dict]:
 
 
 # ── Universe Feature Snapshots (batch read) ───────────────────────────────────
+
 
 def list_universe_feature_snapshots(limit: int = 50) -> list[dict]:
     """Return recent feature snapshots with their registry instrument identity.

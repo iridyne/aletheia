@@ -4,6 +4,7 @@ import logging
 import asyncio
 import os
 import sys
+import time
 
 # Windows: enforce SelectorEventLoop process-wide BEFORE uvicorn imports this
 # module and creates its server loop, and before any broker asyncio.run() in
@@ -670,6 +671,54 @@ async def _tunnel_auth_guard(request, call_next):
                     status_code=401,
                 )
     return await call_next(request)
+
+
+def _diagnostic_env_enabled(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _slow_request_threshold_ms() -> float:
+    try:
+        return max(float(os.environ.get("ALETHEIA_SLOW_REQUEST_MS", "500")), 0.0)
+    except ValueError:
+        return 500.0
+
+
+@app.middleware("http")
+async def _request_timing(request, call_next):
+    """Expose API wall time and log slow requests without logging user input."""
+    path = request.url.path
+    if not path.startswith(("/api/", "/_infra/")):
+        return await call_next(request)
+
+    started = time.perf_counter()
+    response = None
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        if response is not None:
+            app_timing = f"app;dur={duration_ms:.1f}"
+            existing = response.headers.get("Server-Timing")
+            response.headers["Server-Timing"] = (
+                f"{existing}, {app_timing}" if existing else app_timing
+            )
+
+        http_logger = logging.getLogger("aletheia.http")
+        log_args = (request.method, path, status_code, duration_ms)
+        if duration_ms >= _slow_request_threshold_ms():
+            http_logger.warning(
+                "http_request_slow method=%s path=%s status=%d duration_ms=%.1f",
+                *log_args,
+            )
+        elif _diagnostic_env_enabled("ALETHEIA_HTTP_TIMING"):
+            http_logger.info(
+                "http_request method=%s path=%s status=%d duration_ms=%.1f",
+                *log_args,
+            )
 
 app.include_router(health_router)
 app.include_router(infra_router)

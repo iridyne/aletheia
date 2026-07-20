@@ -1319,12 +1319,17 @@ def get_market_collector_health():
 
 
 @router.get("/market/data-coverage")
-def get_market_data_coverage():
+def get_market_data_coverage(response: Response):
     """Cached table coverage and freshness; separate from collector execution health."""
     _ensure_db()
     from aletheia.data.data_coverage import get_data_coverage_report
 
-    return get_data_coverage_report()
+    timings: dict[str, float] = {}
+    report = get_data_coverage_report(timings=timings)
+    response.headers["Server-Timing"] = ", ".join(
+        f"{name};dur={duration_ms:.1f}" for name, duration_ms in timings.items()
+    )
+    return report
 
 
 @router.get("/knowledge")

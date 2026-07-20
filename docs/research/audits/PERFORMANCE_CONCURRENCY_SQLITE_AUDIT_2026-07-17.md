@@ -308,10 +308,31 @@ SQLite 在线 backup 从 `~/.aletheia/app.db` 创建 `/tmp` 一致性副本，�
 | Filter batch retention：`evaluated_at < cutoff` | 复合索引 skip-scan（首列不匹配） | `idx_filter_decision_batches_evaluated` covering range search |
 | Candidate outcome retention：`entry_ts < cutoff` | 全表 `SCAN` | `idx_filter_candidate_outcomes_entry` covering range search |
 | OHLCV retention：`timeframe + ts < cutoff` | 五列索引 skip-scan前三列 | `idx_market_ohlcv_timeframe_ts` covering range search |
+| Current-entry open candidates | status/time read repeatedly narrowed poorly | `idx_opportunities_status_created` narrows the bounded open workset |
+| Current-entry filter trace/pass reads | repeated `filter_decisions` scans per Opportunity | opportunity/evaluated and opportunity/run indexes serve both lookups |
 
 副本创建 8 个索引和执行 `ANALYZE` 合计约 0.45 秒；最大单索引为 42.7 万行 OHLCV，创建
 约 0.136 秒。该结果证明查询计划方向已对齐，但不等同于生产负载 P95；真实 writer wait、
 WAL/checkpoint 和 inference queue P95 仍应在合并后的观察窗口持续采样。
+
+2026-07-20 在约 1 GB 的在线 backup 副本补测 owner-facing current-entry projection：未改
+返回语义时，`_compute_current_snapshot_payload()` 冷读从约 0.769 秒降到 0.037 秒，
+`build_current` phase 从约 709 ms 降到 30 ms。三条新增索引创建并 `ANALYZE` 约 1.49 秒；
+该结果是本机副本证据，不替代长期运行 P95。
+
+### 8.1 2026-07-20 SQLite writer 收敛
+
+- 新增有界 256-item writer lane：事务外 repository DML 由一个专用 thread/connection
+  执行，调用方同步取得明确 commit/rollback 结果；只允许在入队前因队列持续满载而超时。
+- 已有多语句 `transaction()` 不跨线程，继续保持原有原子边界，并与 writer lane 共用同一
+  writer permit。生产连接对尚未迁移的直接 autocommit DML 增加运行时串行化 guard。
+- `_WRITE_LOCK` 之外增加 OS advisory `app.write.lock`，将 gateway、collector 与 supervisor
+  的竞争提前到 SQLite writer slot 之前；进程崩溃时 OS 自动释放，不依赖 stale lease 清理。
+- `exchange_sync` 的专用直连写入已迁移到 writer API，避免 timeout worker 遗留连接；Risk、
+  Execution、Live 与订单语义未改变。
+- 新增 queue depth/wait、lock wait、transaction time、failure、admission timeout 与 legacy
+  direct-write metrics；日志不包含 SQL 或绑定值。聚焦并发、回滚、异常传播、背压、跨进程
+  permit 和静态零绕过测试通过。长期观察仍以本节第 5 节指标为准。
 
 ## 9. 整改验证与已知基线
 

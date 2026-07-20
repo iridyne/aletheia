@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import Lock
+import logging
 import time
 
 from aletheia.storage.sqlite import get_db
 
 
+logger = logging.getLogger("aletheia.data.data_coverage")
 _CACHE_TTL_SEC = 30.0
 _cache_lock = Lock()
 _cached_at = 0.0
@@ -128,13 +130,16 @@ def _parse_newest(value: object, *, timestamp_ms: bool) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _build_report(now: datetime) -> dict:
+def _build_report(now: datetime, timings: dict[str, float] | None = None) -> dict:
     domain_rows: list[dict] = []
     critical_problem_count = 0
     problem_count = 0
 
     for definition in DOMAIN_DEFINITIONS:
+        started = time.perf_counter()
         values = _query_domain(definition)
+        if timings is not None:
+            timings[definition.domain] = (time.perf_counter() - started) * 1000.0
         newest = _parse_newest(values["newest"], timestamp_ms=definition.timestamp_ms)
         age_sec = max(0.0, (now - newest).total_seconds()) if newest else None
         if values["row_count"] == 0:
@@ -185,18 +190,45 @@ def clear_data_coverage_cache() -> None:
         _cached_report = None
 
 
-def get_data_coverage_report(*, now: datetime | None = None) -> dict:
+def get_data_coverage_report(
+    *,
+    now: datetime | None = None,
+    timings: dict[str, float] | None = None,
+) -> dict:
     """Return bounded aggregate coverage; normal runtime reads use a 30-second cache."""
     global _cached_at, _cached_report
+    started = time.perf_counter()
     if now is not None:
         current = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
-        return _build_report(current.astimezone(timezone.utc))
+        report = _build_report(current.astimezone(timezone.utc), timings=timings)
+        if timings is not None:
+            timings["total"] = (time.perf_counter() - started) * 1000.0
+        return report
 
     monotonic_now = time.monotonic()
     with _cache_lock:
         if _cached_report is not None and monotonic_now - _cached_at < _CACHE_TTL_SEC:
+            if timings is not None:
+                timings["cache_hit"] = 0.0
+                timings["total"] = (time.perf_counter() - started) * 1000.0
             return _cached_report
-        report = _build_report(datetime.now(timezone.utc))
+        report = _build_report(datetime.now(timezone.utc), timings=timings)
         _cached_report = report
         _cached_at = monotonic_now
-        return report
+    duration_ms = (time.perf_counter() - started) * 1000.0
+    if timings is not None:
+        timings["total"] = duration_ms
+    if duration_ms >= 500.0:
+        domain_timings = timings or {}
+        slowest = sorted(
+            ((name, value) for name, value in domain_timings.items() if name != "total"),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:3]
+        detail = ",".join(f"{name}:{value:.1f}" for name, value in slowest) or "unavailable"
+        logger.warning(
+            "data_coverage_refresh_slow duration_ms=%.1f slowest_ms=%s",
+            duration_ms,
+            detail,
+        )
+    return report
