@@ -613,6 +613,13 @@ def materialize_bitget_entry(
             )
             repo.insert_position(position_model)
             position_id = position_model.id
+            _exit_intent: dict = {}
+            if proposal.get("expected_horizon_hours") is not None:
+                _exit_intent["expected_horizon_hours"] = proposal["expected_horizon_hours"]
+            if proposal.get("stop_source"):
+                _exit_intent["stop_source"] = proposal["stop_source"]
+            if _exit_intent:
+                repo.update_position(position_id, **_exit_intent)
         else:
             if position.get("status") != "open":
                 raise MaterializationIntegrityError(
@@ -654,6 +661,10 @@ def materialize_bitget_entry(
                 )
                 if merged_stop is not None:
                     update_fields["stop_price"] = merged_stop
+                if not position.get("expected_horizon_hours") and proposal.get("expected_horizon_hours") is not None:
+                    update_fields["expected_horizon_hours"] = proposal["expected_horizon_hours"]
+                if not position.get("stop_source") and proposal.get("stop_source"):
+                    update_fields["stop_source"] = proposal["stop_source"]
                 position_leverage = position.get("leverage") or proposal.get("leverage")
                 if position_leverage and float(position_leverage) > 1:
                     update_fields["liquidation_price"] = liquidation_price_for(

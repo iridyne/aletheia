@@ -218,6 +218,7 @@ def test_bitget_broker_forwards_approved_proposal_protection(monkeypatch):
         execution_mode=proposal.execution_mode,
         stop_price=proposal.stop_price,
         take_profit_price=proposal.take_profit,
+        leverage=10,
     )
 
     assert len(captured) == 1
@@ -266,6 +267,7 @@ def test_bitget_broker_rejects_protection_not_in_approved_proposal(monkeypatch):
             execution_mode=proposal.execution_mode,
             stop_price=58_000.0,
             take_profit_price=proposal.take_profit,
+            leverage=10,
         )
 
     assert captured == []

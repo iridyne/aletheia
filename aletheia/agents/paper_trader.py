@@ -446,7 +446,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         recent_signal_pairs=recent_signal_pairs,
         active_signal_setups=active_signal_setups,
         operator_evaluated_opportunity_ids=_operator_evaluated_opportunity_ids(),
-        limit=3,
+        limit=_PENDING_SIGNAL_QUEUE_CAPACITY,
         available_queue_slots=available_queue_slots,
     )
 

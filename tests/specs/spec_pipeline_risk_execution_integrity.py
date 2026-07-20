@@ -1319,6 +1319,7 @@ def test_bitget_entry_client_initialization_failure_is_not_submission_unknown(
         "quantity": proposal.quantity,
         "price": proposal.price,
         "execution_mode": proposal.execution_mode,
+        "leverage": 10,
     }
 
     with pytest.raises(RuntimeError, match="private-client-initialization-detail"):
@@ -1651,6 +1652,7 @@ def test_entry_post_durable_audit_failure_preserves_order_and_suppresses_retry(
         "quantity": proposal.quantity,
         "price": proposal.price,
         "execution_mode": proposal.execution_mode,
+        "leverage": 10,
     }
 
     if exchange_outcome == "timeout":

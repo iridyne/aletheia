@@ -177,6 +177,10 @@ def execute_live_order(
         take_profit_price,
         require_existing=False,
     )
+    if market_type != "spot" and leverage is None:
+        raise ValueError(
+            f"futures order for {symbol!r} ({market_type}) requires leverage but none was provided"
+        )
     side = "buy" if direction in ("long", "buy") else "sell"
     # Exchange wants Bitget execution format (BTCUSDT); local rows keep the caller's
     # format (canonical BTC/USDT for demo) so they line up with market data + pnl.

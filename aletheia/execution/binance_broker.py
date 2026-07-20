@@ -261,6 +261,10 @@ def execute_live_order(
     execution_mode: "binance_testnet" or "binance_live_limited"
     """
     _guard_unresolved_submission(proposal_id, execution_mode)
+    if market_type != "spot" and leverage is None:
+        raise ValueError(
+            f"futures order for {symbol!r} ({market_type}) requires leverage but none was provided"
+        )
     mode = "live" if execution_mode == "binance_live_limited" else "testnet"
     client = BinanceClient(mode=mode)
     side = "buy" if direction in ("long", "buy") else "sell"

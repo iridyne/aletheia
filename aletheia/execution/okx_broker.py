@@ -348,6 +348,10 @@ def execute_live_order(
         if supported is not None and to_canonical(symbol) not in supported:
             raise RuntimeError(f"OKX demo does not support {symbol} ({market_type})")
 
+    if market_type != "spot" and leverage is None:
+        raise ValueError(
+            f"futures order for {symbol!r} ({market_type}) requires leverage but none was provided"
+        )
     mode = "demo" if execution_mode == "okx_demo" else "live"
     client = OKXClient(mode=mode)
     side = "buy" if direction in ("long", "buy") else "sell"
