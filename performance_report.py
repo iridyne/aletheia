@@ -73,6 +73,13 @@ def _collect() -> dict:
             merged["risk_adjusted"] = summarize(pnls)
             merged["outcome_count"] = len(outcomes)
             result.update(merged)
+
+            # Attribution: where does PnL come from (symbol / strategy / reason).
+            from aletheia.analytics.attribution import attribute
+
+            attr = attribute(outcomes)
+            result["attribution"] = attr
+            result["sections"].append("attribution")
         else:
             result["equity_note"] = "no eligible closed outcomes yet"
     except Exception as e:  # pragma: no cover - depends on live DB/runtime
@@ -123,13 +130,50 @@ def _render_human(rep: dict) -> str:
         out.append("  最大回撤(max drawdown): %s" % ra.get("max_drawdown"))
         out.append("  Calmar: %s" % ra.get("calmar"))
 
-    if rep.get("trade_stats_error") or rep.get("equity_error"):
+    if "attribution" in rep:
+        attr = rep["attribution"]
+        out.append("")
+        out.append("[归因 attribution]  样本数: %s" % attr.get("outcome_count"))
+        for dim, label in (
+            ("by_symbol", "按标的"),
+            ("by_strategy", "按策略"),
+            ("by_close_reason", "按平仓原因"),
+        ):
+            seg = attr.get(dim) or {}
+            if not seg:
+                continue
+            out.append("  %s:" % label)
+            for name, st in seg.items():
+                out.append(
+                    "    %s: 笔数=%s 胜率=%s%% 总PnL=%s PF=%s"
+                    % (
+                        name,
+                        st.get("trade_count"),
+                        st.get("win_rate_pct"),
+                        st.get("total_pnl"),
+                        st.get("profit_factor"),
+                    )
+                )
+        tc = attr.get("top_contributors") or {}
+        if tc.get("best"):
+            best = ", ".join(
+                "%s(%s)" % (n, round(p, 2)) for n, p in tc["best"][:3]
+            )
+            out.append("  最大贡献标的: %s" % best)
+
+    if (
+        rep.get("trade_stats_error")
+        or rep.get("equity_error")
+        or rep.get("attribution_error")
+    ):
         out.append("")
         out.append("[注意] 部分数据不可用:")
         if rep.get("trade_stats_error"):
             out.append("  trade_stats: %s" % rep["trade_stats_error"])
         if rep.get("equity_error"):
             out.append("  equity: %s" % rep["equity_error"])
+        if rep.get("attribution_error"):
+            out.append("  attribution: %s" % rep["attribution_error"])
 
     out.append("=" * 64)
     return "\n".join(out)
