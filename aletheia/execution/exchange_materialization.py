@@ -301,6 +301,7 @@ def _linked_open_position(order: dict, proposal: dict) -> dict | None:
         ),
     ).fetchall()
     strategy_id = proposal.get("strategy_id")
+    proposal_school = proposal.get("trade_school") or "short_term"
     for row in rows:
         candidate = dict(row)
         if strategy_id is not None and candidate.get("strategy_id") not in (
@@ -308,6 +309,8 @@ def _linked_open_position(order: dict, proposal: dict) -> dict | None:
             "",
             strategy_id,
         ):
+            continue
+        if (candidate.get("trade_school") or "short_term") != proposal_school:
             continue
         return candidate
     return None
@@ -619,6 +622,7 @@ def materialize_bitget_entry(
             if proposal.get("stop_source"):
                 _exit_intent["stop_source"] = proposal["stop_source"]
             if _exit_intent:
+                _exit_intent["exit_plan_version"] = 1
                 repo.update_position(position_id, **_exit_intent)
         else:
             if position.get("status") != "open":
@@ -661,10 +665,14 @@ def materialize_bitget_entry(
                 )
                 if merged_stop is not None:
                     update_fields["stop_price"] = merged_stop
-                if not position.get("expected_horizon_hours") and proposal.get("expected_horizon_hours") is not None:
+                if proposal.get("expected_horizon_hours") is not None:
                     update_fields["expected_horizon_hours"] = proposal["expected_horizon_hours"]
-                if not position.get("stop_source") and proposal.get("stop_source"):
+                    update_fields["exit_plan_version"] = 1
+                if proposal.get("stop_source"):
                     update_fields["stop_source"] = proposal["stop_source"]
+                    update_fields["exit_plan_version"] = 1
+                if proposal.get("trade_school"):
+                    update_fields["trade_school"] = proposal["trade_school"]
                 position_leverage = position.get("leverage") or proposal.get("leverage")
                 if position_leverage and float(position_leverage) > 1:
                     update_fields["liquidation_price"] = liquidation_price_for(

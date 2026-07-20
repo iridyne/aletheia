@@ -107,6 +107,9 @@ def _seed_native_chain(
     leverage: int | None = None,
     stop_price: float | None = None,
     take_profit: float | None = None,
+    expected_horizon_hours: float | None = None,
+    stop_source: str | None = None,
+    trade_school: str = "short_term",
 ):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Opportunity, Order, RiskDecision, TradeProposal
@@ -131,6 +134,9 @@ def _seed_native_chain(
         leverage=leverage,
         stop_price=stop_price,
         take_profit=take_profit,
+        expected_horizon_hours=expected_horizon_hours,
+        stop_source=stop_source,
+        trade_school=trade_school,
         status=proposal_status,
     )
     repo.insert_trade_proposal(proposal)
@@ -1221,3 +1227,147 @@ def test_entry_backlink_cannot_attach_private_fill_to_another_account_position(
     assert db.execute(
         "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
     ).fetchone()[0] == 0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-XM-14",
+        "pipeline_exchange_materialization",
+        "§14 exit-intent stamped on new exchange position",
+        "L2b",
+        "When a Proposal carries expected_horizon_hours + stop_source, the Position "
+        "created by private-fill materialization inherits both fields and exit_plan_version=1. "
+        "Fixes #171.",
+        status="implemented",
+    )
+)
+def test_exit_intent_stamped_on_new_exchange_position(tmp_path, monkeypatch):
+    """#171: exit intent (horizon, stop provenance, version) must survive the async fill path."""
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.reconciliation import reconcile
+    from aletheia.storage import repositories as repo
+
+    fill_rows = [
+        _private_fill(
+            "EX-XM-EXIT-INTENT",
+            "BG-XM-EXIT-1",
+            price=100.0,
+            quantity=0.5,
+            fee=0.03,
+            filled_at_ms=1_784_000_000_000,
+        )
+    ]
+    _patch_bitget_history(monkeypatch, fill_rows)
+    _, proposal, _, order = _seed_native_chain(
+        exchange_order_id="EX-XM-EXIT-INTENT",
+        quantity=0.5,
+        expected_horizon_hours=24.0,
+        stop_source="operator",
+    )
+    reconcile()
+
+    row = dict(
+        repo.get_db().execute(
+            "SELECT * FROM positions WHERE proposal_id=?", (proposal.id,)
+        ).fetchone()
+    )
+    assert row["expected_horizon_hours"] == pytest.approx(24.0), (
+        "expected_horizon_hours missing on exchange position"
+    )
+    assert row["stop_source"] == "operator", "stop_source missing on exchange position"
+    assert row["exit_plan_version"] == 1, "exit_plan_version not stamped on exchange position"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-XM-15",
+        "pipeline_exchange_materialization",
+        "§15 cross-school averaging rejected",
+        "L2b",
+        "A second-leg private fill from a different trade_school must NOT merge into an "
+        "existing open Position — it creates a new Position instead. Fixes #172.",
+        status="implemented",
+    )
+)
+def test_cross_school_averaging_creates_new_position(tmp_path, monkeypatch):
+    """#172: serenity leg must not silently merge into a short_term position."""
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Fill, Position
+
+    # Seed a pre-existing open short_term position from a first leg.
+    _, first_proposal, _, first_order = _seed_native_chain(
+        exchange_order_id="EX-XM-SCHOOL-FIRST",
+        quantity=0.5,
+        trade_school="short_term",
+    )
+    first_fill = Fill(
+        id="BG-XM-SCHOOL-FIRST-1",
+        order_id=first_order.id,
+        fill_price=100.0,
+        fill_quantity=0.5,
+        fee=0.03,
+        fee_source="reconciled",
+        filled_at="2026-07-20T00:00:00+00:00",
+    )
+    repo.insert_fill(first_fill)
+    short_term_position = Position(
+        proposal_id=first_proposal.id,
+        order_id=first_order.id,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.5,
+        entry_price=100.0,
+        current_price=100.0,
+        execution_mode="bitget_live_limited",
+        trade_school="short_term",
+        entry_price_source="broker_fill",
+        entry_fill_verified=True,
+        opened_at="2026-07-20T00:00:00+00:00",
+    )
+    repo.insert_position(short_term_position)
+    repo.update_order(first_order.id, position_id=short_term_position.id)
+    repo.update_trade_proposal(first_proposal.id, status="executed")
+
+    # Second leg — same symbol/direction/mode but serenity school.
+    _, second_proposal, _, second_order = _seed_native_chain(
+        exchange_order_id="EX-XM-SCHOOL-SECOND",
+        quantity=0.3,
+        trade_school="serenity",
+        expected_horizon_hours=168.0,
+    )
+    fill_rows = [
+        _private_fill(
+            "EX-XM-SCHOOL-SECOND",
+            "BG-XM-SCHOOL-SECOND-1",
+            price=102.0,
+            quantity=0.3,
+            fee=0.018,
+            filled_at_ms=1_784_100_000_000,
+        )
+    ]
+    result = materialize_bitget_entry(second_order.id, fill_rows)
+    assert result.state == "filled"
+
+    # The serenity leg must have created a NEW position, not merged.
+    positions = [
+        dict(row)
+        for row in db.execute(
+            "SELECT * FROM positions WHERE symbol='BTC/USDT' ORDER BY rowid"
+        ).fetchall()
+    ]
+    assert len(positions) == 2, (
+        f"expected 2 positions (one per school) but got {len(positions)}: "
+        f"{[p['trade_school'] for p in positions]}"
+    )
+    schools = {p["trade_school"] for p in positions}
+    assert schools == {"short_term", "serenity"}, f"unexpected schools: {schools}"
+
+    # The short_term position must not have been touched.
+    assert next(p for p in positions if p["trade_school"] == "short_term")["quantity"] == pytest.approx(0.5)
+    # The serenity position carries the operator's horizon intent.
+    serenity_pos = next(p for p in positions if p["trade_school"] == "serenity")
+    assert serenity_pos["expected_horizon_hours"] == pytest.approx(168.0)
+    assert serenity_pos["exit_plan_version"] == 1

@@ -513,6 +513,7 @@ def _stamp_exit_intent(result: dict, proposal: TradeProposal) -> None:
     if getattr(proposal, "stop_source", None):
         updates["stop_source"] = proposal.stop_source
     if updates:
+        updates["exit_plan_version"] = 1
         update_position(pid, **updates)
 
 def _exchange_order_matches_proposal(
