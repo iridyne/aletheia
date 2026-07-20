@@ -626,14 +626,23 @@ def test_adopted_audit_carries_commit_hash(tmp_path, monkeypatch):
 # ===========================================================================
 
 
-def _write_config(tmp_path, monkeypatch, paper_execution_mode: str, mode: str = "demo",
-                  exchange_tpsl_enabled: bool = False):
+def _write_config(
+    tmp_path,
+    monkeypatch,
+    paper_execution_mode: str,
+    mode: str = "demo",
+    exchange_tpsl_enabled: bool = False,
+    exchange_name: str | None = None,
+):
     """Write a config.yaml selecting the active paper broker and reset the cache."""
     import yaml
     import aletheia.config.loader as loader
     config_path = tmp_path / "config.yaml"
+    exchange = {"mode": mode, "paper_execution_mode": paper_execution_mode}
+    if exchange_name is not None:
+        exchange["name"] = exchange_name
     config_path.write_text(yaml.dump({
-        "exchange": {"mode": mode, "paper_execution_mode": paper_execution_mode},
+        "exchange": exchange,
         "trading": {"auto_adopt_enabled": True, "exchange_tpsl_enabled": exchange_tpsl_enabled},
     }), encoding="utf-8")
     monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
@@ -747,11 +756,9 @@ def test_run_reconcile_non_bitget_no_orphan_close(tmp_path, monkeypatch):
 
 
 # ===========================================================================
-# Exchange-side protective orders on adopt (P2-1, 2026-07-01).
-# adopt_position persisted DB stop/tp but placed NO native exchange bracket →
-# an adopted position was unprotected on the exchange if the gateway went down.
-# Gated by cfg.trading.exchange_tpsl_enabled (default False → dormant) + DEMO-only
-# (never an autonomous live order). See execution.stops.place_exchange_protective_orders.
+# The dispatcher remains demo-gated for execution-owned callers, but reconciliation
+# cannot invoke it: adoption records an already-existing external position and must
+# never create new exchange orders as a side effect (trust §1.3 / execution §6).
 # ===========================================================================
 
 
@@ -840,36 +847,48 @@ def test_protective_order_dispatch_gating(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "PL-ADOPT-14", "pipeline_adopted_position", "§14 adopt_places_exchange_bracket", "L2b",
-        "adopt_position(demo, okx) with exchange_tpsl_enabled=True places an exchange "
-        "protective bracket and persists exchange_tpsl_order_id — closing the "
-        "'adopted position unprotected on the exchange' gap end-to-end.",
+        "PL-ADOPT-14", "pipeline_adopted_position", "§14 adopt_never_dispatches_orders", "L2b",
+        "adopt_position() is reconciliation-only: every account mode and TPSL feature "
+        "state persists the adopted position without invoking an exchange-order dispatcher.",
     ),
 )
-def test_adopt_places_exchange_bracket(tmp_path, monkeypatch):
+@pytest.mark.parametrize("account_mode", ("demo", "live"))
+@pytest.mark.parametrize("exchange_tpsl_enabled", (False, True))
+def test_adopt_never_dispatches_exchange_orders(
+    tmp_path, monkeypatch, account_mode, exchange_tpsl_enabled
+):
     conn = _setup_db(tmp_path, monkeypatch)
     _stub_notifications(monkeypatch)
     _stub_audit(monkeypatch, tmp_path)
-    _write_config(tmp_path, monkeypatch, "okx_demo", exchange_tpsl_enabled=True)
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        "okx_demo",
+        mode=account_mode,
+        exchange_tpsl_enabled=exchange_tpsl_enabled,
+        exchange_name="okx",
+    )
 
-    from aletheia.execution import okx_broker
-    _FakeOKXClient.placed = []
-    monkeypatch.setattr(okx_broker, "OKXClient", _FakeOKXClient)
+    exchange_dispatches: list[dict] = []
+    monkeypatch.setattr(
+        "aletheia.execution.stops.place_exchange_protective_orders",
+        lambda position: exchange_dispatches.append(position) or {"sl": "forbidden"},
+    )
 
     from aletheia.portfolio.position_reconciler import adopt_position
     ids = adopt_position(_make_exchange_pos(symbol="BNB/USDT", side="short",
                                             quantity=0.03, entry_price=562.73),
-                         account_mode="demo")
+                         account_mode=account_mode)
 
-    import json
     row = conn.execute(
-        "SELECT exchange_tpsl_order_id FROM positions WHERE id=?", (ids["position_id"],)
+        "SELECT stop_price, take_profit_price, exchange_tpsl_order_id "
+        "FROM positions WHERE id=?",
+        (ids["position_id"],),
     ).fetchone()
-    assert row["exchange_tpsl_order_id"] is not None, (
-        "adopted okx_demo position must have an exchange bracket when exchange_tpsl_enabled"
-    )
-    assert json.loads(row["exchange_tpsl_order_id"]) == {"sl": "algo-sl-1", "tp": "algo-tp-1"}
-    assert _FakeOKXClient.placed, "adopt must have called the OKX protective-order path"
+    assert row["stop_price"] is not None
+    assert row["take_profit_price"] is not None
+    assert row["exchange_tpsl_order_id"] is None
+    assert exchange_dispatches == []
 
 
 # ===========================================================================
