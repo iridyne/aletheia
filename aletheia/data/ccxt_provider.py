@@ -227,14 +227,15 @@ class CCXTProvider:
         exchange: str,
         market_type: str = "spot",
     ) -> None:
-        """Best-effort persist to market_ohlcv; never raise into the fetch path."""
-        if not candles:
+        """Best-effort persist confirmed bars; never raise into the fetch path."""
+        closed_candles = [candle for candle in candles if candle.is_closed]
+        if not closed_candles:
             return
         try:
             from aletheia.storage.repositories import upsert_ohlcv_candles
 
             upsert_ohlcv_candles(
-                symbol=canon, timeframe=timeframe, candles=candles,
+                symbol=canon, timeframe=timeframe, candles=closed_candles,
                 provider="ccxt", exchange=exchange, market_type=market_type,
             )
         except Exception as e:  # noqa: BLE001

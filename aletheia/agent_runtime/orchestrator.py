@@ -71,15 +71,16 @@ async def run_agent(
             "message": f"Agent {agent_name} failed: {type(e).__name__}",
         })
 
-        status = "completed" if not errors else "completed_with_errors"
-        end_run(run, status=status, outputs=outputs, errors=errors)
-        # Release the per-run step counter (helpers.log_tool / record_step keep one
-        # per run_id to assign monotonic step_numbers without SELECT-MAX).
-        try:
-            from aletheia.agents.helpers import _release_run_counter
-            _release_run_counter(run.id)
-        except Exception:
-            pass
-        return {"run_id": run.id, "status": status, "outputs": outputs, "errors": errors}
     finally:
         reset_current_agent_run_id(run_token)
+
+    status = "completed" if not errors else "completed_with_errors"
+    end_run(run, status=status, outputs=outputs, errors=errors)
+    # Release the per-run step counter (helpers.log_tool / record_step keep one
+    # per run_id to assign monotonic step_numbers without SELECT-MAX).
+    try:
+        from aletheia.agents.helpers import _release_run_counter
+        _release_run_counter(run.id)
+    except Exception:
+        pass
+    return {"run_id": run.id, "status": status, "outputs": outputs, "errors": errors}

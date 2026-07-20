@@ -143,13 +143,12 @@ def record_filter_decision(
     timestamp = evaluated_at or _utcnow()
     outcome_entry_ts = entry_ts or timestamp
 
-    learnable = (
-        side in _VALID_DIRECTIONS
-        and bool(venue)
+    outcome_ready = (
+        bool(venue)
         and entry_price_usd is not None
         and float(entry_price_usd) > 0
     )
-    result_key = outcome_candidate_key or candidate_key if learnable else None
+    result_key = outcome_candidate_key or candidate_key if outcome_ready else None
     fact = FilterDecision(
         id=decision_id,
         dedup_key=dedup_key,
@@ -188,7 +187,7 @@ def record_filter_decision(
                 venue=str(venue),
                 symbol=symbol,
                 market_type=market,
-                direction=str(side),
+                direction=side if side in _VALID_DIRECTIONS else "unknown",
                 scanner_family=scanner_family,
                 regime_tag=regime_tag,
                 entry_price_usd=float(entry_price_usd),
@@ -334,7 +333,14 @@ def filter_feedback_stats(
         "SUM(CASE WHEN fo.status='settled' AND fo.net_return_pct > 0 "
         "  THEN fo.net_return_pct ELSE 0 END) AS gains, "
         "SUM(CASE WHEN fo.status='settled' AND fo.net_return_pct < 0 "
-        "  THEN -fo.net_return_pct ELSE 0 END) AS losses "
+        "  THEN -fo.net_return_pct ELSE 0 END) AS losses, "
+        "SUM(CASE WHEN fd.decision='rejected' AND fo.status='settled' "
+        "  AND fo.net_return_pct < 0 THEN 1 ELSE 0 END) AS blocked_avoided_loss_count, "
+        "SUM(CASE WHEN fd.decision='rejected' AND fo.status='settled' "
+        "  AND fo.net_return_pct > COALESCE(fo.min_tradable_edge_pct, 0.05) "
+        "  THEN 1 ELSE 0 END) AS blocked_missed_alpha_count, "
+        "SUM(CASE WHEN fd.decision='rejected' AND fo.status='settled' "
+        "  THEN fo.net_return_pct ELSE 0 END) AS blocked_net_sum "
         "FROM ranked_filter_decisions fd "
         "JOIN filter_candidate_outcomes fo "
         "  ON fo.outcome_candidate_key = fd.outcome_candidate_key "
@@ -364,6 +370,13 @@ def filter_feedback_stats(
         sample = float(row.get("avg_net") or 0.0)
         gains = float(row.pop("gains") or 0.0)
         losses = float(row.pop("losses") or 0.0)
+        row["blocked_avoided_loss_count"] = int(
+            row.get("blocked_avoided_loss_count") or 0
+        )
+        row["blocked_missed_alpha_count"] = int(
+            row.get("blocked_missed_alpha_count") or 0
+        )
+        row["blocked_net_sum"] = round(float(row.get("blocked_net_sum") or 0.0), 6)
         row["n"] = n
         row["n_total"] = n_total
         row["n_net"] = n

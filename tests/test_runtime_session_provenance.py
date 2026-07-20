@@ -104,6 +104,7 @@ def test_start_session_persists_row_and_sets_current(tmp_path, monkeypatch):
     assert session["session_id"]
     assert session["runtime_id"]
     assert session["execution_mode"] == "paper_internal"
+    assert session["active_scope_id"] == "crypto-paper-mainline-v1"
     assert session["config_hash"]
     assert session["schema_version"]
 

@@ -256,3 +256,44 @@ def test_derivative_ohlcv_persists_with_market_identity(monkeypatch):
     CCXTProvider._persist("BTC/USDT", "1h", candles, "okx", market_type="spot")
     assert len(calls) == 2
     assert calls[1]["market_type"] == "spot"
+
+
+def test_forming_ohlcv_is_not_visible_to_db_consumers_and_closed_bar_is_persisted():
+    from aletheia.data.ccxt_provider import CCXTProvider
+    from aletheia.data.providers import Candle
+    from aletheia.storage.repositories import get_ohlcv_candles
+
+    closed = Candle(1_000, 100, 101, 99, 100.5, 10)
+    forming = Candle(2_000, 100.5, 102, 100, 101.5, 8, is_closed=False)
+
+    CCXTProvider._persist(
+        "BTC/USDT", "1h", [closed, forming], "okx", market_type="perp"
+    )
+
+    assert get_ohlcv_candles(
+        "BTC/USDT", "1h", exchange="okx", market_type="perp"
+    ) == [
+        {
+            "ts": 1_000,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.5,
+            "volume": 10.0,
+            "provider": "ccxt",
+            "exchange": "okx",
+            "market_type": "perp",
+        }
+    ]
+    assert get_ohlcv_candles(
+        "BTC/USDT", "1h", exchange="okx", market_type="spot"
+    ) == []
+
+    forming.is_closed = True
+    CCXTProvider._persist(
+        "BTC/USDT", "1h", [forming], "okx", market_type="perp"
+    )
+
+    assert [row["ts"] for row in get_ohlcv_candles(
+        "BTC/USDT", "1h", exchange="okx", market_type="perp"
+    )] == [1_000, 2_000]
