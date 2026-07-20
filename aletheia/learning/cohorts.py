@@ -512,6 +512,17 @@ def _aggregate_assignment_units(
         if any(sample.assignment != assignment for sample in members):
             cohort.invalid_reasons["conflicting_assignment_unit"] += 1
             continue
+        # Guard the min() keys below from an unparseable timestamp silently
+        # collapsing to datetime.min ("earliest") and biasing span reasoning.
+        # Members already survived a _parse_time check in build_experiment_cohorts,
+        # but stringified round-trips downstream can still drift — surface any
+        # residual dirt explicitly instead of masking it (audit GAP-08 tail).
+        if any(
+            _parse_time(sample.entry_ts) is None or _parse_time(sample.exposed_at) is None
+            for sample in members
+        ):
+            cohort.invalid_reasons["unparseable_assignment_unit_ts"] += 1
+            continue
         selected_members = [sample for sample in members if sample.allocation_selected]
         member_keys = tuple(sorted(actual_members))
         member_sources = tuple(

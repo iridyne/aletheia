@@ -10,6 +10,12 @@ from uuid import uuid4
 
 _log = logging.getLogger(__name__)
 
+# Process-scoped last-good `_policy_epoch` inputs, keyed by path_id.
+# On transient `load_config` failures, we reuse the last successful `values`
+# for the same path so a flaky read doesn't rotate the epoch twice (once
+# to the sentinel, once back on recovery) and shred the sample pool.
+_LAST_SUCCESS_POLICY_VALUES: dict[str, dict] = {}
+
 from aletheia.config.loader import load_config
 from aletheia.learning.hypotheses import hypothesis_fingerprint
 from aletheia.learning.ledger import (
@@ -122,8 +128,16 @@ def _policy_epoch(path_id: str) -> str:
             "permission_mode": cfg.agent.permission_mode,
             "scanner_weights": cfg.universe.scanner_weights,
             "scanner_regime_scoring": cfg.universe.scanner_regime_scoring,
-            "risk": cfg.risk.model_dump(),
-            "trading": cfg.trading.model_dump(),
+            # cfg.risk and cfg.trading are deliberately NOT folded into the
+            # epoch hash. They contain scheduler/exchange-plumbing knobs
+            # (max_open_positions, min_notional, throttle windows, etc.) whose
+            # changes don't alter this path's *learning* behavior — but every
+            # tweak used to rotate the epoch and shred the sample pool
+            # (audit: LEARNING_MODULE_SDD_VS_REALITY §5 GAP-05, C-DF-10:
+            # "policy epoch is rotated only on effective behavior changes").
+            # Any path-relevant policy signal already reaches the hash via
+            # scanner_weights / scanner_regime_scoring / universe_behavior /
+            # operator_decision_context below.
             # Note: the running build fingerprint is intentionally NOT folded
             # into the epoch hash — a rebuild with an unchanged effective
             # policy must not rotate the epoch (retention: it churned
@@ -169,9 +183,24 @@ def _policy_epoch(path_id: str) -> str:
             from aletheia.agent_shell.skip_policy import skip_policy_context
 
             values["operator_decision_context"] = skip_policy_context()
+        _LAST_SUCCESS_POLICY_VALUES[path_id] = values
     except Exception as exc:
-        _log.warning("_policy_epoch config load failed for %r: %s", path_id, exc)
-        values = {"config": "unavailable"}
+        cached = _LAST_SUCCESS_POLICY_VALUES.get(path_id)
+        if cached is not None:
+            _log.warning(
+                "_policy_epoch config load failed for %r: %s — reusing last-good values",
+                path_id, exc,
+            )
+            values = cached
+        else:
+            # No prior success — fall back to a path-stable sentinel so a
+            # cold-start transient failure still yields a deterministic epoch
+            # (rather than rotating on every retry).
+            _log.warning(
+                "_policy_epoch config load failed for %r: %s — no cached values; using sentinel",
+                path_id, exc,
+            )
+            values = {"config": "unavailable", "path_id": path_id}
     from aletheia.learning.policy_epochs import persist_policy_epoch
     epoch = build_policy_epoch(
         f"decision_policy:{path_id}", values, affected_path_ids=(path_id,)
