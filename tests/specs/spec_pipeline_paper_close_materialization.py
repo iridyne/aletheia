@@ -1295,3 +1295,214 @@ async def test_positions_api_and_export_mask_legacy_unknown_funding_pnl(
     assert csv_row["realized_pnl_unavailable_reason"] == (
         "incomplete_funding_economics"
     )
+
+
+# ---------------------------------------------------------------------------
+# Terminal `funding_permanently_unrecoverable` state
+# (FUND-B commits aa23804e + d20973d6; audit Q3-1 + Q3-2)
+# ---------------------------------------------------------------------------
+
+
+def _seed_stuck_paper_close(
+    *,
+    position_id: str,
+    symbol: str,
+    closed_at,
+    outcome_exclusion_reason: str = "incomplete_funding_economics",
+) -> None:
+    """Insert a closed paper_internal usdt_futures row whose funding
+    economics never settled — the exact shape a settler retry loop
+    or a give-up transition operates on."""
+    from datetime import timedelta
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    if isinstance(closed_at, str):
+        parsed_closed_at = datetime.fromisoformat(closed_at.replace("Z", "+00:00"))
+    else:
+        parsed_closed_at = closed_at
+    opened_at = parsed_closed_at - timedelta(hours=1)
+    repo.insert_position(Position(
+        id=position_id,
+        symbol=symbol,
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=100.5,
+        unrealized_pnl=0.0,
+        realized_pnl=None,
+        execution_mode="paper_internal",
+        status="closed",
+        close_reason="max_hold",
+        close_category="strategy",
+        entry_price_source="local_fill",
+        entry_fill_verified=True,
+        exit_price_source="local_fill",
+        exit_fill_verified=True,
+        outcome_eligible=False,
+        outcome_exclusion_reason=outcome_exclusion_reason,
+        entry_fee=0.06,
+        exit_fee=0.06,
+        funding_cost=None,
+        funding_source="unavailable",
+        opened_at=opened_at.isoformat(),
+        closed_at=parsed_closed_at.isoformat(),
+    ))
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-16",
+        "pipeline_paper_close_materialization",
+        "§4 settler give-up transition",
+        "L2c",
+        "paper_funding_settler transitions unsettled paper_internal futures "
+        "closes to `outcome_exclusion_reason=funding_permanently_unrecoverable` "
+        "after the age threshold, writes an audit event, and NEVER "
+        "fabricates a realized_pnl number.  Second-run idempotency: a "
+        "row already terminal is not rewritten.",
+        status="implemented",
+    )
+)
+def test_paper_funding_settler_transitions_to_terminal_after_giveup_window(
+    tmp_path, monkeypatch,
+):
+    """Q3-1: age-based give-up + audit event + idempotency."""
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    import asyncio
+    from datetime import timedelta
+    from aletheia.portfolio import paper_account as pa
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    # A close 25h old — one hour past the 24h give-up threshold — with
+    # unavailable funding is the classic "collector had a gap and the
+    # history endpoint cannot rescue close_anchor" scenario.
+    close_time = datetime.now(timezone.utc) - timedelta(hours=25)
+    _seed_stuck_paper_close(
+        position_id="pos-terminal-1",
+        symbol="FIL/USDT",
+        closed_at=close_time,
+    )
+
+    result = asyncio.run(pa.settle_unsettled_paper_closes())
+
+    assert result["settled"] == 0
+    assert result["still_pending"] == 0
+    assert result.get("gave_up", 0) == 1
+    assert result["errors"] == []
+
+    stored = repo._select_one("positions", "pos-terminal-1")
+    assert stored["outcome_exclusion_reason"] == "funding_permanently_unrecoverable"
+    # CRITICAL: realized_pnl remains NULL — the settler MUST NOT fabricate
+    # a number for a close whose economics are architecturally unknown.
+    assert stored["realized_pnl"] is None
+    assert stored["outcome_eligible"] == 0
+    assert stored["funding_source"] == "unavailable"
+    assert stored["funding_cost"] is None
+
+    # Audit trail: exactly one `paper_position_funding_gave_up` event.
+    events = get_db().execute(
+        "SELECT event_type FROM audit_events "
+        "WHERE entity_type='position' AND entity_id=? AND source='paper_funding_settler'",
+        ("pos-terminal-1",),
+    ).fetchall()
+    give_up_events = [e for e in events if e["event_type"] == "paper_position_funding_gave_up"]
+    assert len(give_up_events) == 1
+
+    # Idempotency: second settler run must NOT rewrite the row or emit
+    # another audit event (the query excludes terminal rows so it never
+    # even reaches them).
+    result2 = asyncio.run(pa.settle_unsettled_paper_closes())
+    assert result2["settled"] == 0
+    assert result2.get("gave_up", 0) == 0
+    assert result2["still_pending"] == 0
+
+    events_after = get_db().execute(
+        "SELECT event_type FROM audit_events "
+        "WHERE entity_type='position' AND entity_id=? AND event_type='paper_position_funding_gave_up'",
+        ("pos-terminal-1",),
+    ).fetchall()
+    assert len(events_after) == 1
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PCM-17",
+        "pipeline_paper_close_materialization",
+        "§4 hero unblocks once all unsettled are terminal",
+        "L2c",
+        "Once every unsettled paper_internal futures close has reached the "
+        "terminal `funding_permanently_unrecoverable` state, the paper "
+        "account view reports `economics_complete=True` and "
+        "`compute_portfolio` publishes a numeric `total_value_usdt`, "
+        "without fabricating any realized PnL number.  A single row "
+        "regressing to the retrying state re-blocks the hero.",
+        status="implemented",
+    )
+)
+def test_overview_hero_unblocks_when_all_unsettled_closes_are_terminal(
+    tmp_path, monkeypatch,
+):
+    """Q3-2: the exact user-reported symptom regression — hero '— USDT'."""
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from datetime import timedelta
+    from aletheia.portfolio.paper_account import (
+        FUNDING_PERMANENTLY_UNRECOVERABLE,
+        get_paper_account,
+    )
+    from aletheia.portfolio.pnl import compute_portfolio
+    from aletheia.storage import repositories as repo
+
+    # Seed three closes already in the terminal state — mirroring the
+    # ALLO/CL/FIL production incident.
+    close_time = datetime.now(timezone.utc) - timedelta(hours=30)
+    for i, symbol in enumerate(("FIL/USDT", "CL/USDT", "ALLO/USDT")):
+        _seed_stuck_paper_close(
+            position_id=f"pos-terminal-{i}",
+            symbol=symbol,
+            closed_at=close_time,
+            outcome_exclusion_reason=FUNDING_PERMANENTLY_UNRECOVERABLE,
+        )
+
+    account = get_paper_account(event_limit=0)
+    # Terminal rows must NOT count as in-flight — this is the fix that
+    # d20973d6 pinned. If a future refactor makes `_unsettled_local_closes`
+    # naive again, `economics_complete` becomes False and hero freezes.
+    assert account["economics_complete"] is True
+    assert account["unsettled_closed_positions_count"] == 0
+    assert account["equity_usdt"] is not None
+    assert account["available_balance_usdt"] > 0.0
+
+    portfolio = compute_portfolio(execution_mode="paper_internal")
+    # The user-reported symptom: total_value_usdt must NOT be None.
+    assert portfolio["total_value_usdt"] is not None
+    assert portfolio["total_value_usdt"] > 0.0
+    assert portfolio["account_equity_usdt"] is not None
+
+    # Honest partial reporting: the Realized tile still shows the three
+    # rows as unverifiable. `funding_permanently_unrecoverable` is a
+    # terminal *classification* — not a fabricated number.
+    assert portfolio["all_realized_pnl_unavailable_count"] == 3
+    assert portfolio["all_realized_pnl_complete"] is False
+
+    # Negative case: swap ONE terminal row back to the in-flight retry
+    # state. `economics_complete` must return False and the hero must
+    # re-freeze. This pins the direction of the fix — if the guard were
+    # inverted, the negative case would also unblock and mask the bug.
+    repo.update_position(
+        "pos-terminal-1",
+        outcome_exclusion_reason="incomplete_funding_economics",
+    )
+    account_after = get_paper_account(event_limit=0)
+    assert account_after["economics_complete"] is False
+    assert account_after["unsettled_closed_positions_count"] == 1
+    assert account_after["equity_usdt"] is None
+
+    portfolio_after = compute_portfolio(execution_mode="paper_internal")
+    assert portfolio_after["total_value_usdt"] is None
