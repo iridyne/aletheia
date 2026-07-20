@@ -34,6 +34,9 @@ LoosenDir = Literal["up", "down", "n/a"]
 #   "closed_pnl"     — realized PnL from closed positions (family_scorecard)
 #   "none"           — no measurable signal (e.g. drops before a row is persisted)
 FeedbackSource = Literal["forward_return", "closed_pnl", "none"]
+AuthorityClass = Literal[
+    "fact_or_execution", "risk_or_safety", "attention_ranking", "strategy_judgment"
+]
 
 
 @dataclass(frozen=True)
@@ -73,6 +76,7 @@ class FilterSpec:
     # False for intentional hard rules and change-controlled params — the controller
     # may still REPORT on them but must never recommend auto-actuation.
     auto_tunable: bool
+    authority_class: AuthorityClass = "strategy_judgment"
     # True only after the pipeline persists this filter's own passed/dropped cohort.
     # Aggregate family returns are useful context, but cannot prove a filter is too
     # loose or too tight.
@@ -92,6 +96,7 @@ def _report_only_gate(
     note: str,
     feedback_source: FeedbackSource = "none",
     feedback_ready: bool = False,
+    authority_class: AuthorityClass = "fact_or_execution",
 ) -> FilterSpec:
     """Declare a persisted hard/capability gate that must never auto-actuate."""
     return FilterSpec(
@@ -108,6 +113,7 @@ def _report_only_gate(
         feedback_source=feedback_source,
         family_keyed=False,
         auto_tunable=False,
+        authority_class=authority_class,
         feedback_ready=feedback_ready,
         note=note,
     )
@@ -171,11 +177,23 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_ready=True,
     ),
     _report_only_gate(
+        name="symbol_filter",
+        stage="paper_ranker",
+        reason_codes=("symbol_not_allowed",),
+        current_value="configured symbol allow/deny policy",
+        note="Operator market scope is an execution boundary and is never auto-relaxed.",
+        feedback_source="forward_return",
+        feedback_ready=True,
+    ),
+    _report_only_gate(
         name="direction_present",
         stage="paper_ranker",
         reason_codes=("neutral_or_missing_direction",),
         current_value="long or short direction required",
-        note="Directionless candidates cannot produce a causal net-alpha counterfactual.",
+        note="Directionless candidates retain gross-only outcomes; no side or net alpha is invented.",
+        feedback_source="forward_return",
+        feedback_ready=True,
+        authority_class="strategy_judgment",
     ),
     _report_only_gate(
         name="universe_execution_eligibility",
@@ -185,6 +203,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         note="Market-data/capability boundary inherited from the selected instrument.",
         feedback_source="forward_return",
         feedback_ready=True,
+        authority_class="fact_or_execution",
     ),
     _report_only_gate(
         name="venue_symbol_capability",
@@ -194,6 +213,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         note="Exchange capability is report-only and cannot be loosened by alpha evidence.",
         feedback_source="forward_return",
         feedback_ready=True,
+        authority_class="fact_or_execution",
     ),
     _report_only_gate(
         name="factor_hard_block",
@@ -203,6 +223,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         note="Factor governance owns this hard rule; unified outcomes are diagnostic only.",
         feedback_source="forward_return",
         feedback_ready=True,
+        authority_class="strategy_judgment",
     ),
     _report_only_gate(
         name="guard_candidate_block",
@@ -212,6 +233,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         note="Guard lifecycle owns promotion and rollback; filter evidence is report-only.",
         feedback_source="forward_return",
         feedback_ready=True,
+        authority_class="risk_or_safety",
     ),
     FilterSpec(
         name="debate_downgrade",
@@ -305,6 +327,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="forward_return",
         family_keyed=False,
         auto_tunable=True,
+        authority_class="attention_ranking",
         feedback_ready=True,
         drop_share_hint=0.0,
         note="Batch pass/reject facts now settle with fixed-horizon net economics; "
@@ -332,6 +355,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         current_value="at most 5 unresolved market-observer candidates",
         note="Admission backpressure keeps overflow Opportunities open and retryable instead "
              "of queueing work that cannot fit the Operator's visible recovery window.",
+        authority_class="attention_ranking",
     ),
     _report_only_gate(
         name="active_operator_carrier",
@@ -340,6 +364,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         current_value="one unresolved carrier per symbol/direction/scanner-family setup",
         note="A newer snapshot generation remains analysis evidence but cannot create a "
              "second queue carrier while the same setup is already awaiting Operator.",
+        authority_class="attention_ranking",
     ),
     _report_only_gate(
         name="proposal_identity",
@@ -364,6 +389,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         note="In-cycle deduplication boundary; the next distinct symbol backfills the slot.",
         feedback_source="forward_return",
         feedback_ready=True,
+        authority_class="attention_ranking",
     ),
     _report_only_gate(
         name="open_position_duplicate",
@@ -373,6 +399,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         note="Portfolio-state conflict, not a quality threshold. Lower ranks backfill the slot.",
         feedback_source="forward_return",
         feedback_ready=True,
+        authority_class="risk_or_safety",
     ),
     FilterSpec(
         name="signal_cooldown",
@@ -386,6 +413,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="forward_return",
         family_keyed=False,
         auto_tunable=True,
+        authority_class="attention_ranking",
         feedback_ready=True,
         drop_share_hint=0.0,
         note="Cooldown pass/reject is persisted before the batch cap so a cooling "
@@ -400,13 +428,17 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
             "score_below_minimum",
             "feature_missing",
             "direction_missing",
+            "funding_crowding_conflict",
             "factor_blocked",
             "regime_filtered",
             "opportunity_insert_error",
         ),
         current_value="one terminal emission fact per selected universe member",
-        note="Coverage and lifecycle-integrity evidence only. It does not create outcome "
-             "rows, tune thresholds, or alter opportunity eligibility.",
+        note="Exact-instrument strategy rejects receive fixed-horizon outcomes without "
+             "creating Opportunities or altering eligibility.",
+        feedback_source="forward_return",
+        feedback_ready=True,
+        authority_class="strategy_judgment",
     ),
     FilterSpec(
         name="observer_pre_filter",
@@ -438,6 +470,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="none",
         family_keyed=False,
         auto_tunable=False,
+        authority_class="fact_or_execution",
         note="Directionless capability evidence. Missing venue data is observable but "
              "must never become an automatic threshold change.",
     ),
@@ -453,6 +486,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="none",
         family_keyed=False,
         auto_tunable=False,
+        authority_class="fact_or_execution",
         note="No ex-ante direction exists yet. Report supply coverage only; do not infer "
              "missed net alpha or auto-lower the liquidity floor.",
     ),
@@ -468,6 +502,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="none",
         family_keyed=False,
         auto_tunable=False,
+        authority_class="risk_or_safety",
         note="Asset-class classification rule, not an alpha threshold.",
     ),
     FilterSpec(
@@ -482,6 +517,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="none",
         family_keyed=False,
         auto_tunable=False,
+        authority_class="risk_or_safety",
         note="Intentional operator exclusion. Never auto-remove an asset from the blacklist.",
     ),
     FilterSpec(
@@ -496,6 +532,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="none",
         family_keyed=False,
         auto_tunable=False,
+        authority_class="fact_or_execution",
         note="Directionless execution-quality check. Keep report-only until a valid "
              "ex-ante strategy direction exists before this gate.",
     ),
@@ -511,6 +548,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="none",
         family_keyed=False,
         auto_tunable=False,
+        authority_class="fact_or_execution",
         note="Execution-cost gate without an ex-ante direction. Never relax from gross "
              "price movement alone.",
     ),
@@ -526,6 +564,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="none",
         family_keyed=False,
         auto_tunable=False,
+        authority_class="fact_or_execution",
         note="Data-integrity gate. Stale quotes are report-only and never auto-approved.",
     ),
     FilterSpec(
@@ -560,6 +599,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="forward_return",
         family_keyed=True,
         auto_tunable=False,
+        authority_class="risk_or_safety",
         feedback_ready=True,
         note="RiskDecision remains authoritative. Unified evidence is report-only "
              "and must never loosen risk, live, credential or execution gates.",
@@ -576,6 +616,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_source="closed_pnl",
         family_keyed=True,
         auto_tunable=False,  # CHANGE-CONTROLLED (risk/ engine) — human-gated only
+        authority_class="risk_or_safety",
         drop_share_hint=0.0,
         note="Change-controlled risk gate. Report only; never auto-actuate.",
     ),

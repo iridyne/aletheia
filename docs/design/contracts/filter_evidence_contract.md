@@ -196,12 +196,12 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 
 `filter_candidate_outcomes` 以 `outcome_candidate_key + horizon` 唯一，固定周期为 `15m / 1h / 4h / 24h`。经济公式、时点行情质量和现货/合约隔离完全复用 `opportunity_outcome_contract.md`。
 
-只有同时满足以下条件才创建可学习结果：
+只要 `venue + symbol + market_type` 完整且入场价为决策时点可见的正数，就创建
+固定周期观察结果。结果分两级：
 
-1. 事前已有 `long` 或 `short`，禁止事后选更赚的方向。
-2. `venue + symbol + market_type` 完整。
-3. 入场价大于 0，且是该市场在决策时点可见的价格。
-4. 永续合约缺入场资金费时可保存 gross/directional，但 net 必须为 NULL。
+1. 事前已有 `long` 或 `short` 时，保存 gross、directional 和成本后 net；禁止事后选更赚的方向。
+2. 事前确实无方向时，以 `direction=unknown` 保存 gross-only 价格移动，directional/net 必须为 NULL，且不得标记 missed alpha。
+3. 永续合约缺入场资金费时可保存 gross/directional，但 net 必须为 NULL。
 
 同一候选经过多个关卡时只结算一份结果，避免把同一个价格路径当成多个独立样本。
 
@@ -214,7 +214,7 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 | tradability（稳定币/黑名单/volume/spread/freshness） | 否 | 按顺序记每关放行到首个拒绝 | 否，黑名单永不自动调参 |
 | scanner 假设 | 是 | family、direction、各 family score | 是 |
 | quota/explore-exploit | 是 | selected/control、rank、quota、regime | 是，但必须同池比较 |
-| Universe 机会生成 | 可能否 | 每个已选成员最终是已生成、复用、拒绝或写入错误 | 否，只衡量覆盖和身份完整性 |
+| Universe 机会生成 | 可能否 | 每个已选成员最终是已生成、复用、拒绝或写入错误；regime/funding crowding 保留事前方向与精确 instrument outcome | 有事前方向时可评价；无方向只报 gross coverage |
 | Observer 前置判断 | Universe 路径是；其他路径可能否 | RSI/ATR/keyword 实际值和命中原因 | 仅有事前方向的行 |
 | Observer 机会生成 | 是 | 新 Opportunity 的精确 id、方向、市场与 `opportunity_emitted`；和 Opportunity 原子提交 | 否，只衡量生产链完整性 |
 | LLM neutral/无效输出 | 可能否 | schema 结果、方向、置信度，不写 prompt | 仅有事前方向的行 |
@@ -224,6 +224,12 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 | Proposal submission 方向/取价 | 是 | 方向集中度，最终 market_type，目标市场价格是否可用 | 是；用于解释 trade 意图为何没有 proposal，不自动放宽 |
 | Risk | 是 | `RiskDecision` 为权威，filter 记录只做统一索引 | 报告用，永不自动放宽 |
 | Execution adapter | 是 | order/error/venue reason | 用于成交率/实现率，不是方向 alpha |
+
+每个 registry 项必须声明唯一 `authority_class`：`fact_or_execution`、
+`risk_or_safety`、`attention_ranking` 或 `strategy_judgment`。前两类可以继续硬阻断且
+不得因收益证据自动放宽；attention 只控制有界供给；strategy 必须保留 baseline 与固定周期
+outcome。Ranker 的 `symbol_filter`、neutral/direction、confidence、factor 和 Guard 都必须在
+registry 中，禁止新增未登记的永久 inline gate。
 
 `XAUT/PAXG` 是价格会波动的黄金 RWA，不是美元稳定币，因此不得在
 `tradability_stablecoin` 中提前排除。它们仍必须通过交易所 ticker、成交额、

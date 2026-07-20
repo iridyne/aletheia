@@ -120,11 +120,11 @@ def test_filter_decision_stage_is_part_of_dedup_identity():
 @spec_claim(
     SpecClaim(
         "FE-B02", _CONTRACT, "§4 ex-ante direction", "L2b",
-        "A directionless filter candidate records the decision but creates no learnable outcome rows.",
+        "A directionless filter candidate records gross-only outcomes without inventing directional alpha.",
         status="implemented",
     )
 )
-def test_directionless_filter_candidate_does_not_create_outcomes():
+def test_directionless_filter_candidate_creates_gross_only_outcomes():
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.sqlite import get_db
 
@@ -143,10 +143,13 @@ def test_directionless_filter_candidate_does_not_create_outcomes():
         entry_price_usd=100.0,
     )
 
-    assert get_db().execute(
-        "SELECT COUNT(*) FROM filter_candidate_outcomes WHERE outcome_candidate_key=?",
+    rows = get_db().execute(
+        "SELECT direction, horizon FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key=?",
         (key,),
-    ).fetchone()[0] == 0
+    ).fetchall()
+    assert {row["horizon"] for row in rows} == {"15m", "1h", "4h", "24h"}
+    assert {row["direction"] for row in rows} == {"unknown"}
 
 
 @spec_claim(
@@ -907,7 +910,9 @@ def test_persisted_ranker_and_selection_gates_are_registered():
     names = {
         "execution_capability",
         "execution_eligibility",
+        "symbol_filter",
         "direction_present",
+        "ranker_confidence_gate",
         "universe_execution_eligibility",
         "family_ttl",
         "venue_symbol_capability",
@@ -924,7 +929,13 @@ def test_persisted_ranker_and_selection_gates_are_registered():
     assert all(specs.values())
     assert specs["family_ttl"].feedback_source == "forward_return"
     assert specs["family_ttl"].feedback_ready is True
-    for name in names - {"family_ttl", "signal_cooldown", "signal_batch_limit"}:
+    assert specs["ranker_confidence_gate"].authority_class == "strategy_judgment"
+    assert specs["direction_present"].authority_class == "strategy_judgment"
+    assert specs["execution_eligibility"].authority_class == "fact_or_execution"
+    assert specs["signal_batch_limit"].authority_class == "attention_ranking"
+    for name in names - {
+        "family_ttl", "ranker_confidence_gate", "signal_cooldown", "signal_batch_limit"
+    }:
         assert specs[name].auto_tunable is False
 
 

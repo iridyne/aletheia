@@ -96,8 +96,8 @@ def _record_emission_decision(
 ) -> None:
     """Persist one terminal fact for a selected universe member or fail retryably.
 
-    This is coverage evidence only: no venue or entry price is supplied, so the
-    fact cannot create a learnable outcome or influence trading behavior.
+    Exact instrument and entry facts seed fixed-horizon evidence when available.
+    This does not create an Opportunity or alter the emission decision.
     """
     try:
         from aletheia.analytics.filter_evidence import record_filter_decision
@@ -131,6 +131,11 @@ def _record_emission_decision(
             opportunity_id=opportunity_id,
             universe_snapshot_id=snapshot_id,
             universe_member_id=member_id or None,
+            venue=member.get("venue"),
+            entry_price_usd=member.get("entry_price_usd"),
+            entry_spread_bps=member.get("spread_bps"),
+            funding_rate_at_entry=member.get("funding_rate"),
+            outcome_candidate_key=candidate_key,
             inputs=input_snapshot,
             parameters={
                 "min_score": _MIN_SCORE,
@@ -267,6 +272,12 @@ def emit_deterministic_opportunities(
         # Prefer scanner-intrinsic direction; fallback to _infer_direction
         direction = feat.get("scanner_direction") or _infer_direction(family, feat)
         if direction is None:
+            counterfactual_direction = _funding_conflict_direction(family, feat)
+            reason_code = (
+                "funding_crowding_conflict"
+                if counterfactual_direction
+                else "direction_missing"
+            )
             logger.warning(
                 "no direction for %s family=%s score=%.0f — skipped",
                 symbol, family, total_score,
@@ -280,7 +291,8 @@ def emit_deterministic_opportunities(
                 total_score=total_score,
                 short_enabled=short_enabled,
                 decision="rejected",
-                reason_code="direction_missing",
+                reason_code=reason_code,
+                direction=counterfactual_direction,
                 inputs={"scanner_direction": feat.get("scanner_direction")},
             )
             continue
@@ -540,6 +552,30 @@ def _funding_conflicts(direction: str, funding: float | None) -> bool:
     if direction == "short" and funding < -CROWDED_FUNDING_RATE:
         return True
     return False
+
+
+def _funding_conflict_direction(family: str | None, feat: dict) -> str | None:
+    """Return an ex-ante side suppressed only by the funding crowding gate."""
+    ret_1h = feat.get("return_1h")
+    ret_4h = feat.get("return_4h")
+    ret_24h = feat.get("return_24h")
+    rsi = feat.get("rsi_14")
+    funding = feat.get("funding_rate")
+
+    direction = None
+    if family == "momentum":
+        if ret_24h is not None and abs(ret_24h) > 10.0:
+            return None
+        if ret_1h is not None and ret_4h is not None and ret_1h * ret_4h < 0:
+            return None
+        if ret_4h is not None and ret_4h > 0 and rsi is not None and rsi > 50:
+            direction = "long"
+        elif ret_4h is not None and ret_4h < 0 and rsi is not None and rsi < 50:
+            direction = "short"
+    elif family == "volatility" and ret_4h is not None and abs(ret_4h) > 1.0:
+        direction = "long" if ret_4h > 0 else "short"
+
+    return direction if direction and _funding_conflicts(direction, funding) else None
 
 
 def _infer_direction(family: str | None, feat: dict) -> str | None:

@@ -194,6 +194,91 @@ class TestEmitDeterministicOpportunities:
         count, _ = self._run(members, feats)
         assert count == 0
 
+    def test_regime_rejection_seeds_exact_instrument_outcomes(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
+        from tests.test_entry_logic import setup_env
+
+        setup_env(tmp_path, monkeypatch)
+        member = {
+            **_make_member("BTC/USDT", "momentum", 55, member_id="member-regime"),
+            "venue": "okx",
+            "market_type": "perp",
+            "entry_price_usd": 100.0,
+            "spread_bps": 7.0,
+            "funding_rate": 0.0005,
+        }
+        regime = SimpleNamespace(state="bear", long_bias=0.1, short_bias=0.9)
+
+        with patch(
+            "aletheia.universe.signal_emitter.lookup_factor_signal",
+            return_value={"status": "watch"},
+        ):
+            assert emit_deterministic_opportunities(
+                [member], "snap-1", [{**_make_feat("BTC/USDT"), "market_type": "perp"}],
+                regime=regime,
+            ) == 0
+
+        from aletheia.storage.sqlite import get_db
+
+        decision = get_db().execute(
+            "SELECT reason_code, outcome_candidate_key FROM filter_decisions "
+            "WHERE universe_member_id='member-regime'"
+        ).fetchone()
+        outcomes = get_db().execute(
+            "SELECT venue, market_type, direction, horizon "
+            "FROM filter_candidate_outcomes WHERE outcome_candidate_key=?",
+            (decision["outcome_candidate_key"],),
+        ).fetchall()
+        assert decision["reason_code"] == "regime_filtered"
+        assert {row["horizon"] for row in outcomes} == {"15m", "1h", "4h", "24h"}
+        assert {(row["venue"], row["market_type"], row["direction"]) for row in outcomes} == {
+            ("okx", "perp", "long")
+        }
+
+    def test_funding_crowding_rejection_preserves_counterfactual_side(
+        self, tmp_path, monkeypatch
+    ):
+        from tests.test_entry_logic import setup_env
+
+        setup_env(tmp_path, monkeypatch)
+        member = {
+            **_make_member("BTC/USDT", "momentum", 60, member_id="member-crowded"),
+            "venue": "okx",
+            "market_type": "perp",
+            "entry_price_usd": 100.0,
+            "spread_bps": 5.0,
+            "funding_rate": 0.02,
+        }
+
+        assert emit_deterministic_opportunities(
+            [member],
+            "snap-1",
+            [{
+                **_make_feat(
+                    "BTC/USDT", return_4h=3.0, rsi_14=60, funding_rate=0.02
+                ),
+                "market_type": "perp",
+            }],
+        ) == 0
+
+        from aletheia.storage.sqlite import get_db
+
+        decision = get_db().execute(
+            "SELECT reason_code, direction, outcome_candidate_key FROM filter_decisions "
+            "WHERE universe_member_id='member-crowded'"
+        ).fetchone()
+        outcomes = get_db().execute(
+            "SELECT DISTINCT direction FROM filter_candidate_outcomes "
+            "WHERE outcome_candidate_key=?",
+            (decision["outcome_candidate_key"],),
+        ).fetchall()
+        assert (decision["reason_code"], decision["direction"]) == (
+            "funding_crowding_conflict",
+            "long",
+        )
+        assert [row["direction"] for row in outcomes] == ["long"]
+
     def test_dedup_skips_existing_opportunity(self):
         members = [_make_member("BTC/USDT", "momentum", 75)]
         feats = [_make_feat("BTC/USDT")]

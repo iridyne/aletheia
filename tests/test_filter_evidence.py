@@ -112,6 +112,51 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
     assert shadow_row["resolved_at"]
 
 
+def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
+    from aletheia.analytics.filter_evidence import (
+        filter_feedback_stats,
+        record_filter_decision,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    common = {
+        "candidate_kind": "opportunity",
+        "filter_name": "ranker_confidence_gate",
+        "stage": "paper_ranker",
+        "reason_code": "confidence_below",
+        "symbol": "BTC/USDT",
+        "venue": "okx",
+        "market_type": "spot",
+        "direction": "long",
+        "scanner_family": "momentum",
+        "entry_price_usd": 100.0,
+        "parameters": {"minimum": "medium"},
+    }
+    for suffix, decision, net in (
+        ("pass", "passed", 0.4),
+        ("avoided", "rejected", -0.6),
+        ("missed", "rejected", 0.8),
+    ):
+        key = f"opportunity:confidence-{suffix}"
+        record_filter_decision(candidate_key=key, decision=decision, **common)
+        get_db().execute(
+            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "net_return_pct=?, min_tradable_edge_pct=0.05 WHERE outcome_candidate_key=?",
+            (net, key),
+        )
+    get_db().commit()
+
+    rejected = next(
+        row for row in filter_feedback_stats()
+        if row["filter_name"] == "ranker_confidence_gate"
+        and row["decision"] == "rejected"
+        and row["horizon"] == "4h"
+    )
+    assert rejected["blocked_avoided_loss_count"] == 1
+    assert rejected["blocked_missed_alpha_count"] == 1
+    assert rejected["blocked_net_sum"] == pytest.approx(0.2)
+
+
 def test_filter_snapshot_drops_sensitive_keys_and_truncates_text():
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.sqlite import get_db
