@@ -920,6 +920,20 @@ def _realized_economics_value(row: dict) -> float | None:
     numeric ``realized_pnl`` is complete. Older releases wrote futures PnL
     after treating missing funding as zero, so NULL-only detection would keep
     publishing those historical false numbers.
+
+    IMPORTANT — this predicate does NOT distinguish "still retrying" from
+    "terminally given up". A row with
+    ``outcome_exclusion_reason == funding_permanently_unrecoverable`` also
+    returns None here, because the audit chain remains genuinely
+    unreconstructible; that is the honest answer for count-style tiles like
+    the Realized "N closes unverified" caveat. For "is this close still
+    in flight?" callers (Overview hero card, Risk affordability, paper
+    ledger completeness), see the canonical recipe
+    ``aletheia.portfolio.paper_account._unsettled_local_closes`` which
+    additionally excludes the terminal state. Do NOT use
+    ``_realized_economics_value(row) is None`` as an "in-flight" signal —
+    that pattern was the root cause of the 2026-07-20 "— USDT" hero-card
+    outage (fixed in d20973d6). Prefer the canonical helper.
     """
     pnl = _finite_number(row.get("realized_pnl"))
     entry = _finite_number(row.get("entry_price"))
