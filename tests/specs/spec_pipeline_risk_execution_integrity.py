@@ -461,6 +461,11 @@ INVALID_NATIVE_PROPOSALS = (
         {"price": -100.0}, "invalid_price", id="negative-price"
     ),
     pytest.param(
+        {"market_type": "usdt_futures", "leverage": None},
+        "invalid_leverage",
+        id="futures-missing-leverage",
+    ),
+    pytest.param(
         {"execution_mode": "mystery"},
         "invalid_execution_mode",
         id="unknown-execution-mode",
@@ -475,8 +480,8 @@ INVALID_NATIVE_PROPOSALS = (
         "pipeline_risk_execution_integrity",
         "§5 fail-closed input boundary",
         "L2b",
-        "Non-canonical symbols, unknown native enums, and non-positive quantity/price are "
-        "rejected before Risk/Order/Fill/Position side effects.",
+        "Non-canonical symbols, unknown native enums, non-positive quantity/price, and "
+        "missing futures leverage are rejected before Order/Fill/Position side effects.",
         status="implemented",
     )
 )
