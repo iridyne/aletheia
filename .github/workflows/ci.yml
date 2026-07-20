@@ -267,7 +267,7 @@ jobs:
 
   windows-runtime-smoke:
     name: Windows runtime smoke
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 15
 
     steps:

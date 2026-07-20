@@ -35,8 +35,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - { os: ubuntu-latest, runner: '["ubuntu-latest"]' }
+          - { os: macos-latest,  runner: '["macos-latest"]' }
+          - { os: windows,       runner: '["self-hosted","Windows","X64"]' }
+    runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: 10
 
     steps:
@@ -58,7 +61,7 @@ jobs:
 
   build-bundle:
     name: Portable modular-monolith bundle
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 25
     outputs:
       artifact_name: ${{ steps.source.outputs.artifact_name }}
