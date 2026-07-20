@@ -4821,3 +4821,83 @@ def test_operator_already_evaluated_bounded_by_24h(tmp_path, monkeypatch):
     ids = _operator_evaluated_opportunity_ids()
     assert "opp-new-evaluated" in ids
     assert "opp-old-evaluated" not in ids
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S62", "decision_lifecycle_contract", "§2.3 defer ttl guard", "L2b",
+        "When defer_deadline exceeds an opportunity's valid_until and the forward-only "
+        "extend is a no-op (opportunity already terminal), a defer_exceeds_opportunity_ttl "
+        "warning is emitted and a FilterDecision is appended for auditability.",
+        status="implemented",
+    ),
+)
+def test_defer_ttl_guard_emits_warning_when_extend_is_noop(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import close_db, get_db
+    close_db()
+    run_migrations()
+
+    now = datetime.now(timezone.utc)
+    # Opportunity that expired 30 minutes ago — valid_until is in the past.
+    expired_valid_until = (now - timedelta(minutes=30)).isoformat()
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO opportunities "
+        "(id, symbol, market, direction_bias, status, asset_class, valid_until) "
+        "VALUES ('opp-expired-defer', 'BTC/USDT', 'spot', 'long', 'expired', 'crypto', ?)",
+        (expired_valid_until,),
+    )
+    db.commit()
+
+    # Seed the minimal context _record_deferred_context_observation needs.
+    ctx = {
+        "layer2": {
+            "pending_queue": {"unresolved_total": 1, "visible_count": 1, "overflow_count": 0, "oldest_at": None},
+            "pending_signals": [
+                {"opportunity_id": "opp-expired-defer", "symbol": "BTC/USDT",
+                 "direction": "long", "market_type": "spot"},
+            ],
+        },
+    }
+
+    import logging
+    warnings: list[dict] = []
+
+    class _CapturingHandler(logging.Handler):
+        def emit(self, record):
+            if record.getMessage() == "defer_exceeds_opportunity_ttl":
+                warnings.append(vars(record))
+
+    handler = _CapturingHandler()
+    logging.getLogger("aletheia.agent_shell.commands").addHandler(handler)
+    try:
+        from aletheia.agent_shell.commands import _record_deferred_context_observation
+
+        _record_deferred_context_observation(
+            ctx,
+            context_fingerprint="fp-test",
+            opportunity_id="opp-expired-defer",
+            policy_epoch_id="epoch-test",
+            trigger="test",
+            reason="unchanged_context",
+            window_minutes=120,
+        )
+    finally:
+        logging.getLogger("aletheia.agent_shell.commands").removeHandler(handler)
+
+    assert len(warnings) == 1, "Expected one defer_exceeds_opportunity_ttl warning"
+
+    rows = db.execute(
+        "SELECT filter_name, reason_code FROM filter_decisions "
+        "WHERE opportunity_id = ? AND reason_code = 'defer_exceeds_opportunity_ttl'",
+        ("opp-expired-defer",),
+    ).fetchall()
+    assert len(rows) == 1, "Expected one filter_decision with reason_code=defer_exceeds_opportunity_ttl"
+    assert rows[0]["filter_name"] == "defer_ttl_guard"

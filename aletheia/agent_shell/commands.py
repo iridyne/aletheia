@@ -1898,7 +1898,7 @@ def _record_deferred_context_observation(
     # whole defer record rolls back, avoiding a half-recorded state where the
     # Opportunity's valid_until moves but no defer event exists (or vice versa).
     with transaction(immediate=True):
-        extend_opportunity_valid_until_forward_only(
+        extend_rows_updated = extend_opportunity_valid_until_forward_only(
             opportunity_id, extended_valid_until
         )
         event_row = record_operator_evaluation_event(OperatorEvaluationEvent(
@@ -1914,6 +1914,53 @@ def _record_deferred_context_observation(
             data_health_json="{}",
             policy_epoch_id=policy_epoch_id,
         ))
+    # GAP-4 defense-in-depth: if extend was a no-op AND defer_deadline still
+    # exceeds the opportunity's valid_until, the Opportunity is likely terminal
+    # (expired between context build and this write). Emit a WARN and a
+    # filter_decision so the failure mode is auditable without being silent.
+    if extend_rows_updated == 0:
+        from aletheia.storage.sqlite import get_db as _get_db
+
+        opp_row = _get_db().execute(
+            "SELECT valid_until, status FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone()
+        if opp_row is not None:
+            opp_valid_until = opp_row["valid_until"] or ""
+            if defer_deadline.isoformat() > opp_valid_until:
+                from aletheia.storage.models import FilterDecision
+                from aletheia.storage.repositories import insert_filter_decision as _ins_fd
+
+                logger.warning(
+                    "defer_exceeds_opportunity_ttl",
+                    extra={
+                        "opportunity_id": opportunity_id,
+                        "defer_deadline": defer_deadline.isoformat(),
+                        "opportunity_valid_until": opp_valid_until,
+                        "opportunity_status": opp_row["status"],
+                        "defer_reason": reason,
+                        "event_kind": event_kind,
+                    },
+                )
+                _ins_fd(FilterDecision(
+                    dedup_key=f"defer_exceeds_ttl:{opportunity_id}:{defer_until}",
+                    candidate_key=f"opportunity:{opportunity_id}",
+                    candidate_kind="opportunity",
+                    opportunity_id=opportunity_id,
+                    symbol=str((selected or {}).get("symbol") or "unknown"),
+                    market_type=str((selected or {}).get("market_type") or "spot"),
+                    direction=(selected or {}).get("direction"),
+                    filter_name="defer_ttl_guard",
+                    stage="operator_defer",
+                    decision="warning",
+                    reason_code="defer_exceeds_opportunity_ttl",
+                    reason_detail=json.dumps({
+                        "defer_deadline": defer_deadline.isoformat(),
+                        "opportunity_valid_until": opp_valid_until,
+                        "opportunity_status": opp_row["status"],
+                    }, sort_keys=True, separators=(",", ":")),
+                    filter_version="defer_ttl_guard:v1",
+                ))
     # Layer-1 observability: the defer path was silent until this log line.
     # Payload fields are read-only and every one already exists in `snapshot`
     # or `selected`; no new state is introduced. reason_class is derived by
