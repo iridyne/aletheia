@@ -650,3 +650,147 @@ def compute_local_funding(
     return _compute_local_funding_with_entry_fills(
         position, opened=opened, closed=closed, entry_fills=entry_fills,
     )
+
+
+# ---------------------------------------------------------------------------
+# Live close-anchor seeding
+# ---------------------------------------------------------------------------
+#
+# `_MAX_OBSERVATION_GAP = 15 min` is intentionally tight so a stale collector
+# cannot masquerade as fresh coverage. Exchange history endpoints
+# (`fetch_funding_rate_history`) only return timestamps AT the settlement
+# instants (4h or 8h grid), so a mid-window paper close (e.g. 23:48 UTC with
+# the next settlement at 24:00 UTC) can never be satisfied by history
+# backfill alone — the closest historical anchor is hours away.
+#
+# The only architectural closure is to write a snapshot at the close boundary
+# itself. `try_seed_close_anchor_snapshot` performs that best-effort write
+# just before ``compute_local_funding`` runs. Silent on failure — the
+# existing settler retry chain still runs, and callers must not depend on
+# it succeeding (network/proxy/timeout failure is expected in the same
+# environment that produced the collector gap in the first place).
+
+
+def _close_anchor_already_covered(symbol: str, closed_at: str) -> bool:
+    """DB-only: does `funding_rate_snapshots` already satisfy close_anchor?
+
+    Cheap early-exit for the seed helper — in the happy path (collector fresh),
+    the periodic collector has already written a snapshot inside the 15-min
+    window and there's no reason to hit the exchange at close time.
+    """
+    parsed = _parse_utc(closed_at)
+    if parsed is None:
+        return False
+    window_start = (parsed - _MAX_OBSERVATION_GAP).isoformat()
+    upper = parsed.isoformat()
+    from aletheia.storage.sqlite import get_db
+    row = get_db().execute(
+        "SELECT 1 FROM funding_rate_snapshots "
+        "WHERE symbol=? AND observed_at>=? AND observed_at<=? LIMIT 1",
+        (symbol, window_start, upper),
+    ).fetchone()
+    return row is not None
+
+
+async def _seed_close_anchor_snapshot_async(
+    row: Mapping[str, Any],
+    closed_at: str,
+    fetch_timeout_sec: float,
+) -> bool:
+    from aletheia.data.ccxt_provider import get_market_data_provider
+    from aletheia.data.symbols import to_ccxt_perp
+    from aletheia.data.collectors.derivatives import _parse_funding
+    from aletheia.storage.repositories import insert_funding_rate_snapshot
+    import asyncio
+
+    symbol = str(row.get("symbol") or "").strip()
+    if not symbol:
+        return False
+    if str(row.get("market_type") or "") != "usdt_futures":
+        return False
+    if str(row.get("execution_mode") or "") != "paper_internal":
+        return False
+    if _close_anchor_already_covered(symbol, closed_at):
+        return False
+
+    perp = to_ccxt_perp(symbol)
+    if not perp:
+        return False
+
+    provider = get_market_data_provider(native_ccxt=True)
+    inserted = False
+    try:
+        exchange = provider._ensure_primary()
+        raw = await asyncio.wait_for(
+            exchange.fetch_funding_rate(perp), timeout=fetch_timeout_sec
+        )
+        snap = _parse_funding(symbol, provider._primary_name, raw)
+        if snap is not None:
+            # observed_at MUST match the actual close boundary — that's what
+            # close_anchor tests against. Using the persisted close boundary
+            # keeps the funding-schedule audit deterministic.
+            snap = snap.model_copy(update={"observed_at": closed_at})
+            insert_funding_rate_snapshot(snap.model_dump())
+            inserted = True
+    finally:
+        # Provider owns aiohttp sessions; not closing leaks connectors and
+        # trips aiohttp's "Unclosed client session" warning at loop teardown.
+        # Shield so a Timeout/Cancellation from fetch above doesn't skip it.
+        try:
+            await asyncio.shield(provider.close())
+        except Exception:
+            pass
+    return inserted
+
+
+def try_seed_close_anchor_snapshot(
+    row: Mapping[str, Any],
+    closed_at: str,
+    *,
+    timeout_sec: float = 3.0,
+) -> bool:
+    """Best-effort live snapshot at the close boundary.
+
+    Returns True iff a `funding_rate_snapshots` row was written with
+    ``observed_at == closed_at``. Any failure (missing symbol, wrong
+    market_type, network/proxy error, exchange API failure, timeout,
+    running-loop reentrancy) is swallowed silently — the caller must
+    not depend on the return value for correctness, only for observability.
+
+    Sync wrapper safe to call from `close_paper_position`. If an outer
+    event loop is already running (e.g. async scheduler context), the
+    helper no-ops rather than nesting loops.
+    """
+    import asyncio
+
+    try:
+        # A running loop means we're inside async code; running a nested
+        # asyncio.run would raise RuntimeError. Skip rather than block.
+        asyncio.get_running_loop()
+        return False
+    except RuntimeError:
+        pass
+
+    # Manage the loop by hand so aiohttp's internal connector-close
+    # background tasks get one extra tick to finish before we close the
+    # loop. asyncio.run tears down eagerly and provokes aiohttp's
+    # "Unclosed client session" / "Unclosed connector" warnings.
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(
+            _seed_close_anchor_snapshot_async(
+                row, closed_at, fetch_timeout_sec=timeout_sec,
+            )
+        )
+        try:
+            loop.run_until_complete(asyncio.sleep(0.05))
+        except Exception:
+            pass
+        return result
+    except Exception:
+        return False
+    finally:
+        try:
+            loop.close()
+        except Exception:
+            pass

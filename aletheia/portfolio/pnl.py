@@ -1024,13 +1024,16 @@ def position_realized_pnl_view(row: dict) -> dict:
         funding_cost=row.get("funding_cost"),
         funding_source=row.get("funding_source"),
     )
-    if market_type in {"spot", "usdt_futures"} and funding_cost is None:
+    # A terminal "gave up" reason must win over the generic
+    # "incomplete_funding_economics" — the settler has stopped retrying and
+    # the UI needs to distinguish that from an in-flight retry (FUND-B).
+    stored_reason = str(row.get("outcome_exclusion_reason") or "")
+    if stored_reason == "funding_permanently_unrecoverable":
+        reason = stored_reason
+    elif market_type in {"spot", "usdt_futures"} and funding_cost is None:
         reason = "incomplete_funding_economics"
     else:
-        reason = str(
-            row.get("outcome_exclusion_reason")
-            or "incomplete_realized_economics"
-        )
+        reason = stored_reason or "incomplete_realized_economics"
     view["realized_pnl_unavailable_reason"] = reason
     return view
 

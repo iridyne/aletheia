@@ -1,5 +1,6 @@
 """Cash ledger and affordability view for the local ``paper_internal`` account."""
 
+from datetime import datetime, timezone
 import logging
 import math
 
@@ -17,6 +18,21 @@ _BACKFILLABLE_REASONS = frozenset({
     "missing_open_anchor",
     "stale_open_anchor",
 })
+
+# After this age past `closed_at`, an unsettled paper_internal futures position
+# whose funding economics still cannot be reconstructed transitions to a
+# terminal "gave up" state. Rationale: paper_funding_settler runs every 15
+# minutes, so 24h is ~96 retry attempts — enough to survive any transient
+# collector/proxy outage. Longer waits only stall the UI without new evidence.
+# The number stays NULL (funding_cost is NEVER fabricated as 0 — see the
+# outcome_integrity contract); only the reason we surface changes.
+_FUNDING_GIVE_UP_HOURS = 24.0
+
+# Terminal reason surfaced by paper_funding_settler when a position has been
+# unsettled past _FUNDING_GIVE_UP_HOURS. Distinct from "incomplete_funding_
+# economics" (which reads as "still trying"). Not a whitelist for
+# validated_funding_economics — that layer still returns (None, "unavailable").
+FUNDING_PERMANENTLY_UNRECOVERABLE = "funding_permanently_unrecoverable"
 
 INITIAL_PAPER_CASH_USDT = 200.0
 
@@ -250,12 +266,18 @@ async def settle_unsettled_paper_closes() -> dict:
     from aletheia.files.jsonl import write_audit
 
     db = get_db()
+    # Exclude already-terminal ("gave up") rows so the settler stops touching
+    # them on every tick. They stay realized_pnl=NULL forever — only the
+    # surfaced reason distinguishes "still trying" from "gave up".
     rows = [
         dict(r) for r in db.execute(
             """SELECT * FROM positions
                WHERE status='closed' AND execution_mode='paper_internal'
                  AND market_type='usdt_futures' AND realized_pnl IS NULL
-               ORDER BY rowid ASC LIMIT 50"""
+                 AND (outcome_exclusion_reason IS NULL
+                      OR outcome_exclusion_reason != ?)
+               ORDER BY rowid ASC LIMIT 50""",
+            (FUNDING_PERMANENTLY_UNRECOVERABLE,),
         ).fetchall()
     ]
     if not rows:
@@ -263,7 +285,9 @@ async def settle_unsettled_paper_closes() -> dict:
 
     settled = 0
     still_pending = 0
+    gave_up = 0
     errors: list[str] = []
+    now_utc = datetime.now(timezone.utc)
 
     for row in rows:
         position_id = str(row.get("id") or "")
@@ -276,6 +300,57 @@ async def settle_unsettled_paper_closes() -> dict:
                     result = compute_local_funding(row, closed_at=row["closed_at"])
 
             if not result.complete:
+                # Age-based give-up: past _FUNDING_GIVE_UP_HOURS since close,
+                # the funding gap is structurally unrecoverable (see
+                # local_funding.py docstring on close_anchor). Surface a
+                # distinct terminal reason so UI/consumers stop reading it
+                # as "still retrying". realized_pnl stays NULL — we do NOT
+                # fabricate a number.
+                closed_at_str = str(row.get("closed_at") or "").strip()
+                age_hours: float | None = None
+                if closed_at_str:
+                    try:
+                        parsed = datetime.fromisoformat(
+                            closed_at_str.replace("Z", "+00:00")
+                        )
+                        if parsed.tzinfo is not None:
+                            age_hours = (now_utc - parsed).total_seconds() / 3600.0
+                    except ValueError:
+                        age_hours = None
+                if age_hours is not None and age_hours >= _FUNDING_GIVE_UP_HOURS:
+                    reason_before = str(row.get("outcome_exclusion_reason") or "")
+                    with repo.transaction(immediate=True):
+                        get_db().execute(
+                            "UPDATE positions SET outcome_exclusion_reason=?, "
+                            "outcome_eligible=0 WHERE id=?",
+                            (FUNDING_PERMANENTLY_UNRECOVERABLE, position_id),
+                        )
+                    write_audit({
+                        "actor": "system",
+                        "source": "paper_funding_settler",
+                        "event_type": "paper_position_funding_gave_up",
+                        "entity_type": "position",
+                        "entity_id": position_id,
+                        "before": {"outcome_exclusion_reason": reason_before},
+                        "after": {
+                            "outcome_exclusion_reason": (
+                                FUNDING_PERMANENTLY_UNRECOVERABLE
+                            ),
+                        },
+                        "message": (
+                            f"Funding economics unrecoverable for {sym} "
+                            f"position {position_id} after {age_hours:.1f}h; "
+                            "realized_pnl stays NULL, outcome ineligible"
+                        ),
+                    })
+                    logger.warning(
+                        "paper_funding_settler: gave up on %s position %s "
+                        "after %.1fh (reason=%s)",
+                        sym, position_id, age_hours,
+                        result.evidence.get("reason"),
+                    )
+                    gave_up += 1
+                    continue
                 still_pending += 1
                 continue
 
@@ -387,4 +462,9 @@ async def settle_unsettled_paper_closes() -> dict:
             )
             errors.append(f"{position_id}:ledger_orphan: {exc}")
 
-    return {"settled": settled, "still_pending": still_pending, "errors": errors}
+    return {
+        "settled": settled,
+        "still_pending": still_pending,
+        "gave_up": gave_up,
+        "errors": errors,
+    }
