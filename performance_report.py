@@ -22,6 +22,8 @@ import os
 import sys
 from datetime import datetime, timezone
 
+from aletheia.analytics.streaks import FLAT, LOSS, WIN
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -80,6 +82,12 @@ def _collect() -> dict:
             attr = attribute(outcomes)
             result["attribution"] = attr
             result["sections"].append("attribution")
+
+            # Streaks: longest / current consecutive win & loss runs.
+            from aletheia.analytics.streaks import summarize_streaks
+
+            result["streaks"] = summarize_streaks(pnls)
+            result["sections"].append("streaks")
         else:
             result["equity_note"] = "no eligible closed outcomes yet"
     except Exception as e:  # pragma: no cover - depends on live DB/runtime
@@ -160,6 +168,16 @@ def _render_human(rep: dict) -> str:
                 "%s(%s)" % (n, round(p, 2)) for n, p in tc["best"][:3]
             )
             out.append("  最大贡献标的: %s" % best)
+
+    if "streaks" in rep:
+        s = rep["streaks"]
+        cur_sign = s.get("current_streak_sign")
+        cur_label = {WIN: "连胜", LOSS: "连亏", FLAT: "持平", None: "无"}.get(cur_sign, str(cur_sign))
+        out.append("")
+        out.append("[连胜连败 streaks]")
+        out.append("  最长连胜: %s 笔 | 最长连亏: %s 笔" % (
+            s.get("max_consecutive_wins"), s.get("max_consecutive_losses")))
+        out.append("  当前连: %s (%s 笔)" % (cur_label, s.get("current_streak_length")))
 
     if (
         rep.get("trade_stats_error")
