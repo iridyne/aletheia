@@ -553,8 +553,13 @@ class ControlLoopHarness:
     def run_operator_cycle(self, *, trigger: str = "dcls") -> dict[str, Any]:
         import aletheia.agent_shell.operator_loop as operator_loop
         import aletheia.agent_shell.trading_context as trading_context
+        import aletheia.agents.market_observer as _market_observer
         with ExitStack() as stack:
             stack.enter_context(patch.object(operator_loop, "datetime", self._clocked_datetime()))
+            # market_observer uses its own module-level datetime for news cutoff
+            # queries — patch it alongside operator_loop so simulation runs stay
+            # within the virtual clock's time horizon.
+            stack.enter_context(patch.object(_market_observer, "datetime", self._clocked_datetime()))
             stack.enter_context(patch.object(
                 trading_context, "_get_data_health_summary",
                 return_value=dict(self.signal_health),

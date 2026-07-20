@@ -1011,12 +1011,13 @@ async def _analyze_symbol(
 
         # Append recent news headlines for this symbol
         try:
-            from datetime import datetime as _dt, timedelta as _td, timezone as _tz
             from aletheia.storage import repositories as repo
 
             # MO-12: only headlines from the last 48h. Without this, week-old news
             # surfaced as the "latest 3" and the LLM treated it as current context.
-            news_cutoff = (_dt.now(_tz.utc) - _td(hours=48)).isoformat()
+            # Use module-level datetime (not a local re-import) so simulation
+            # harnesses can patch it via patch.object and enforce virtual clock time.
+            news_cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
             news_rows = repo.batch_news([symbol], news_cutoff).get(symbol, [])
             if news_rows:
                 news_lines = [

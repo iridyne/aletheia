@@ -250,3 +250,51 @@ def test_batch_news_returns_exact_ids_in_newest_first_order(tmp_path, monkeypatc
     assert [row["id"] for row in batch_result["SOL"]] == [
         "n-sol-4", "n-sol-3", "n-sol-2",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Datetime patchability — simulation clock regression guard
+# ---------------------------------------------------------------------------
+
+def test_batch_prefetch_db_news_cutoff_respects_patched_datetime(monkeypatch):
+    """_batch_prefetch_db must derive its news cutoff from the module-level
+    datetime so simulation harnesses can override it via patch.object.
+
+    A local ``from datetime import datetime as _dt`` inside the function would
+    bypass any patch applied to ``aletheia.agents.market_observer.datetime``
+    and silently inject future news into historical simulations (lookahead bias).
+    This test fails immediately if the local re-import is re-introduced.
+    """
+    from datetime import datetime, timedelta, timezone
+    import aletheia.agents.market_observer as mo
+    import aletheia.storage.repositories as repo_mod
+    import aletheia.data.freshness as freshness_mod
+
+    fixed_now = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    expected_cutoff = (fixed_now - timedelta(hours=48)).isoformat()
+    captured: dict = {}
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now.astimezone(tz) if tz else fixed_now.replace(tzinfo=None)
+
+    def fake_batch_news(symbols, since):
+        captured["since"] = since
+        return {s: [] for s in symbols}
+
+    monkeypatch.setattr(mo, "datetime", FixedDatetime)
+    monkeypatch.setattr(repo_mod, "batch_perp_structures", lambda syms: {})
+    monkeypatch.setattr(repo_mod, "batch_funding_rates", lambda syms, exch: {})
+    monkeypatch.setattr(repo_mod, "batch_news", fake_batch_news)
+    monkeypatch.setattr(repo_mod, "latest_onchain_snapshots", lambda **kw: [])
+    monkeypatch.setattr(repo_mod, "batch_open_interest", lambda syms, exch: {})
+    monkeypatch.setattr(freshness_mod, "fresh_rows", lambda rows, kind: rows)
+
+    mo._batch_prefetch_db(["BTC/USDT"])
+
+    assert captured.get("since") == expected_cutoff, (
+        f"news cutoff should derive from patched clock ({expected_cutoff!r}), "
+        f"got {captured.get('since')!r} — a local datetime re-import bypasses "
+        "patch.object and causes lookahead bias in simulation runs"
+    )
