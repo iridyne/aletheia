@@ -446,7 +446,7 @@ function StatusRow({
       <th>{label}</th>
       <td className="status-cell">
         <span className={`status-light light-${light}`} />
-        <span className="status-value" title={title}>{value}</span>
+        <span className="status-value" title={title ?? value}>{value}</span>
         {onClick && (
           <span className="status-row-chevron" aria-hidden="true">
             {/* Large triangles (U+25B6 / U+25BC) instead of the "small
