@@ -43,7 +43,7 @@ concurrency:
 jobs:
   contracts:
     name: Packaged runtime contracts
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && fromJSON('["self-hosted","macOS","ARM64","aletheia-release"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && fromJSON('["self-hosted","macOS","ARM64","aletheia-release"]') || fromJSON('["self-hosted","Linux","X64","ubuntu-24.04"]') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

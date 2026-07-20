@@ -28,7 +28,7 @@ concurrency:
 jobs:
   secrets-scan:
     name: Secrets scan
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 5
 
     steps:
@@ -44,7 +44,7 @@ jobs:
 
   backend:
     name: Python safety and contract gate
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 15
 
     steps:
@@ -99,7 +99,7 @@ jobs:
 
   fast-tests:
     name: Fast regression suite
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 20
 
     steps:
@@ -133,7 +133,7 @@ jobs:
 
   integration-tests:
     name: Integration test suite
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 20
 
     steps:
@@ -167,7 +167,7 @@ jobs:
 
   active-paper-chain:
     name: Active paper trading chain
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 20
 
     steps:
@@ -211,7 +211,7 @@ jobs:
 
   frontend:
     name: Dashboard build
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 10
 
     steps:
@@ -239,7 +239,7 @@ jobs:
 
   operator-shell:
     name: Operator Shell test and build
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 10
 
     steps:
@@ -316,7 +316,7 @@ jobs:
       - frontend
       - operator-shell
       - windows-runtime-smoke
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 5
 
     steps:
@@ -344,7 +344,7 @@ jobs:
       - frontend
       - operator-shell
       - windows-runtime-smoke
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 5
 
     steps:
@@ -363,7 +363,7 @@ jobs:
   full-regression:
     name: Full Python regression audit
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_regression }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 45
 
     steps:
