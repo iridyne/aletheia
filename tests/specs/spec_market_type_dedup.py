@@ -18,8 +18,72 @@ offlined (don't need LLM); e2e claims mock the LLM like test_entry_logic does.
 """
 
 import inspect
+from datetime import datetime, timezone
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
+
+
+@spec_claim(
+    SpecClaim(
+        "OD-S06",
+        "data_layer_contract",
+        "§3 observer opportunity expiry",
+        "L2b",
+        "Market Observer Opportunities preserve an exact Universe member expiry and "
+        "derive a future family deadline when no member owns the instrument.",
+        status="implemented",
+    ),
+)
+async def test_observer_opportunity_expiry_preserves_member_authority(
+    tmp_path, monkeypatch
+):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.orchestrator import run_agent
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot
+
+    member_expiry = "2099-01-02T03:04:05+00:00"
+    monkeypatch.setattr(
+        "aletheia.universe.service.UniverseService.get_current_universe",
+        lambda _self, limit: [{
+            "snapshot_id": "observer-expiry-snapshot",
+            "id": "observer-expiry-member",
+            "symbol": "BTC/USDT",
+            "market_type": "spot",
+            "scanner_family": "momentum",
+            "scanner_direction": "long",
+            "expires_at": member_expiry,
+            "entry_price_usd": 60_000.0,
+            "spread_bps": 1.0,
+        }],
+    )
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT", market_type="spot", price=60_000.0,
+    ))
+
+    async def fake_structured(*_args, **_kwargs):
+        return {
+            "direction_bias": "long",
+            "confidence": "high",
+            "confidence_score": 90,
+            "rationale": "momentum uptrend",
+        }, None
+
+    monkeypatch.setattr(
+        "aletheia.agents.market_observer.llm_structured", fake_structured,
+    )
+    monkeypatch.setattr(
+        "aletheia.agents.market_observer._has_sufficient_signal", lambda _ctx: True,
+    )
+
+    result = await run_agent("market_observer", trigger_type="manual")
+
+    assert result["errors"] == []
+    opportunities = repo.list_opportunities(limit=10)
+    assert len(opportunities) == 1
+    assert opportunities[0]["valid_until"] == member_expiry
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +317,12 @@ async def test_e2e_observer_dedups(tmp_path, monkeypatch):
     repo.insert_market_snapshot(MarketSnapshot(symbol="ETH/USDT", market_type="spot", price=3000))
 
     async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
-        return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
+        return {
+            "direction_bias": "long",
+            "confidence": "high",
+            "confidence_score": 90,
+            "rationale": "momentum uptrend",
+        }, None
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
     monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
@@ -274,6 +343,9 @@ async def test_e2e_observer_dedups(tmp_path, monkeypatch):
     assert all(o["market"] == "usdt_futures" for o in opps), (
         f"expected all perp (auto), got markets={[o['market'] for o in opps]}"
     )
+    now = datetime.now(timezone.utc)
+    assert all(o["valid_until"] for o in opps)
+    assert all(datetime.fromisoformat(o["valid_until"]) > now for o in opps)
 
 
 @spec_claim(

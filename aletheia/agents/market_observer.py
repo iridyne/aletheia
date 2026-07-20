@@ -278,6 +278,20 @@ def _infer_scanner_family(rationale: str, observations: list[str]) -> str | None
     return None
 
 
+def _resolve_opportunity_valid_until(
+    scanner_family: str | None,
+    member_valid_until: str | None = None,
+) -> str:
+    """Preserve Universe expiry or derive the existing family deadline."""
+    if member_valid_until:
+        return member_valid_until
+
+    from aletheia.universe.allocator import _FAMILY_TTL
+
+    ttl_sec = int(_FAMILY_TTL.get(str(scanner_family or ""), 3600))
+    return (datetime.now(timezone.utc) + timedelta(seconds=ttl_sec)).isoformat()
+
+
 _PREFILTER_RSI_DEVIATION = 12.0
 _PREFILTER_ATR_PCT = 0.8
 
@@ -782,6 +796,7 @@ async def _analyze_symbol(
     universe_snapshot_id: str | None = None,
     universe_member_id: str | None = None,
     scanner_family: str | None = None,
+    member_valid_until: str | None = None,
     scanner_direction: str | None = None,
     member_entry_price_usd: float | None = None,
     member_spread_bps: float | None = None,
@@ -1264,6 +1279,11 @@ async def _analyze_symbol(
             )
             return existing["id"], llm_error
         updates: dict = {"thesis": thesis}
+        if not existing.get("valid_until"):
+            updates["valid_until"] = _resolve_opportunity_valid_until(
+                scanner_family or existing.get("scanner_family"),
+                member_valid_until,
+            )
         try:
             existing_meta = json.loads(existing.get("metadata") or "{}")
             if not isinstance(existing_meta, dict):
@@ -1366,6 +1386,10 @@ async def _analyze_symbol(
         universe_snapshot_id=universe_snapshot_id,
         universe_member_id=universe_member_id,
         scanner_family=effective_scanner_family,
+        valid_until=_resolve_opportunity_valid_until(
+            effective_scanner_family,
+            member_valid_until,
+        ),
         key_observations=json.dumps(observations) if observations else "",
         funding_rate=funding_rate_val,
         open_interest=open_interest_val,
@@ -1702,6 +1726,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 universe_snapshot_id=universe_snapshot_id,
                 universe_member_id=u_member.get("id") if u_member else None,
                 scanner_family=u_member.get("scanner_family") if u_member else None,
+                member_valid_until=u_member.get("expires_at") if u_member else None,
                 scanner_direction=u_member.get("scanner_direction") if u_member else None,
                 member_entry_price_usd=u_member.get("entry_price_usd") if u_member else None,
                 member_spread_bps=u_member.get("spread_bps") if u_member else None,
