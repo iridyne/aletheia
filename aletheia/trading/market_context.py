@@ -257,14 +257,21 @@ async def build_market_context(
                     continue
                 # Sort oldest→newest (providers should guarantee this, but be defensive)
                 candles = sorted(candles, key=lambda c: c.timestamp)
-                closes = [c.close for c in candles]
-                highs = [c.high for c in candles]
-                lows = [c.low for c in candles]
-                volumes = [c.volume for c in candles]
+                # Exclude the trailing open bar from indicator calculations.
+                # CCXT returns the currently-forming bar as the last element;
+                # using its partial close/high/low as confirmed data skews RSI,
+                # ATR, and momentum, especially for daily candles.
+                closed_candles = [c for c in candles if c.is_closed]
+                if not closed_candles:
+                    continue
+                closes = [c.close for c in closed_candles]
+                highs = [c.high for c in closed_candles]
+                lows = [c.low for c in closed_candles]
+                volumes = [c.volume for c in closed_candles]
                 snap = _compute_snap(closes, highs, lows, volumes, tf)
                 snaps.append(snap)
                 sym_debug[tf] = {
-                    "bars": len(candles), "last_close": snap.last_close,
+                    "bars": len(closed_candles), "last_close": snap.last_close,
                     "rsi_14": snap.rsi_14, "sma_50": snap.sma_50,
                     "atr_14": snap.atr_14,
                     "atr_pct": (

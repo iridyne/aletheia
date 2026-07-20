@@ -32,7 +32,12 @@ class Ticker:
 
 @dataclass
 class Candle:
-    """A single OHLCV bar. ``timestamp`` is unix milliseconds (CCXT convention)."""
+    """A single OHLCV bar. ``timestamp`` is unix milliseconds (CCXT convention).
+
+    ``is_closed`` is False only for the trailing bar that is still forming on the
+    exchange — set by the fetch layer when ``candle.timestamp + timeframe_ms > now``.
+    Historical candles and candles read back from the DB default to True.
+    """
 
     timestamp: int
     open: float
@@ -40,6 +45,7 @@ class Candle:
     low: float
     close: float
     volume: float
+    is_closed: bool = True
 
 
 @runtime_checkable

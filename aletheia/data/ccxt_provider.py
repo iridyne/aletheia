@@ -31,6 +31,7 @@ when a later fetch fails; persistence failures never propagate.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from aletheia.data.providers import Candle, Ticker
@@ -198,6 +199,14 @@ class CCXTProvider:
                     )
                     for row in raw
                 ]
+                # Mark the trailing bar as open when its close time is still in
+                # the future. CCXT always returns the currently-forming bar as
+                # the last element; treat it as unconfirmed so callers can
+                # exclude it from indicator calculations.
+                if candles:
+                    tf_ms = _TF_MS.get(timeframe, 0)
+                    if tf_ms > 0 and candles[-1].timestamp + tf_ms > int(time.time() * 1000):
+                        candles[-1].is_closed = False
                 self._persist(canon, timeframe, candles, name, market_type=mkt)
                 if since is None and candles:
                     cache.set(
