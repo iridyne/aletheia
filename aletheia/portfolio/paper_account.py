@@ -45,7 +45,18 @@ def _open_local_positions() -> list[dict]:
 
 
 def _unsettled_local_closes() -> list[dict]:
-    """Closed local positions whose net account result is still unknown."""
+    """Closed local positions whose net account result is still in flight.
+
+    A row that the settler has terminally given up on
+    (outcome_exclusion_reason=FUNDING_PERMANENTLY_UNRECOVERABLE) is NOT
+    in flight — it is a durable, distinct outcome. Excluding it here lets
+    `get_paper_account().economics_complete` return True once every
+    remaining unsettled row is either settled or terminally excluded,
+    which in turn unblocks `total_value_usdt` / `available_balance_usdt` /
+    `equity_usdt` in `compute_portfolio` (Overview hero card previously
+    stuck at "— USDT" whenever any historical close remained NULL after
+    the settler retry budget ran out).
+    """
     from aletheia.portfolio.pnl import _realized_economics_value
     from aletheia.storage.sqlite import get_db
 
@@ -58,6 +69,8 @@ def _unsettled_local_closes() -> list[dict]:
         )
         for position in [dict(row)]
         if _realized_economics_value(position) is None
+        and str(position.get("outcome_exclusion_reason") or "")
+            != FUNDING_PERMANENTLY_UNRECOVERABLE
     ]
 
 
