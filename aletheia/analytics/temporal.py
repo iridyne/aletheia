@@ -20,8 +20,6 @@ from typing import Sequence
 
 from aletheia.analytics.attribution import segment_stats
 
-_WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-
 
 def _parse_closed_at(value) -> datetime | None:
     """Parse an ISO ``closed_at`` string into a tz-aware datetime, or None."""
