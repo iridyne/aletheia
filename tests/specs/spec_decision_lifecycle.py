@@ -4467,3 +4467,357 @@ def test_claim_rejects_pending_conflict_inserted_after_context(
     assert get_opportunity(opportunity.id)["status"] == "queued"
     assert result["proposal_reason"] == "pending_identity_ambiguous"
     assert result["operator_decision_persisted"] is False
+
+
+# ---------------------------------------------------------------------------
+# Admission slot semantics — a candidate in an active defer window does NOT
+# consume an admission slot (audit CANDIDATES_ADMISSION_GAP 2026-07-20).
+# ---------------------------------------------------------------------------
+
+
+def _seed_deferred_signal_pending(
+    *,
+    opportunity_id: str,
+    symbol: str,
+    defer_until_iso: str,
+    defer_reason: str = "operator_low_conviction",
+    event_kind: str = "operator_decision_deferred_low_conviction",
+) -> None:
+    """Insert one queued Opportunity + its signal_pending carrier + an active
+    defer event in a shape identical to production writes."""
+    from datetime import datetime, timedelta, timezone
+    import json as _json
+
+    from aletheia.storage.models import (
+        OperatorEvaluationEvent,
+        Opportunity,
+        PiDecision,
+    )
+    from aletheia.storage.repositories import (
+        insert_opportunity,
+        insert_pi_decision,
+        record_operator_evaluation_event,
+        update_opportunity,
+    )
+
+    now = datetime.now(timezone.utc)
+    insert_opportunity(Opportunity(
+        id=opportunity_id,
+        symbol=symbol,
+        market="usdt_futures",
+        direction_bias="long",
+        status="queued",
+        scanner_family="momentum",
+    ))
+    update_opportunity(
+        opportunity_id,
+        valid_until=(now + timedelta(hours=4)).isoformat(),
+    )
+    insert_pi_decision(PiDecision(
+        id=f"pending-{opportunity_id}",
+        action="signal_pending",
+        opportunity_id=opportunity_id,
+        signal_source="market_observer",
+        symbol=symbol,
+        direction="long",
+        market_type="usdt_futures",
+    ))
+    record_operator_evaluation_event(OperatorEvaluationEvent(
+        dedup_key=f"dedup-{opportunity_id}",
+        event_kind=event_kind,
+        trigger="signal",
+        pending_unresolved_total=1,
+        pending_visible_count=1,
+        pending_oldest_created_at=now.isoformat(),
+        queue_snapshot_json=_json.dumps({
+            "opportunity_id": opportunity_id,
+            "defer_reason": defer_reason,
+            "defer_until": defer_until_iso,
+            "event_kind": event_kind,
+        }, sort_keys=True, separators=(",", ":")),
+        data_health_json="{}",
+        policy_epoch_id="test-epoch",
+    ))
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S57", "decision_lifecycle_contract", "§2.3 admission slot semantics", "L2b",
+        "A signal_pending carrier whose most recent Operator observation is an "
+        "active defer (defer_until > now) does NOT consume an admission slot — "
+        "Operator has already judged it and is awaiting the re-evaluation window. "
+        "count_unresolved_signal_pending must exclude every such carrier.",
+        status="implemented",
+    ),
+)
+def test_admission_slot_freed_by_active_defer(tmp_path, monkeypatch):
+    """5 market-quiet defer carriers exist; admission counter reports 0."""
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import close_db
+    close_db()
+    run_migrations()
+
+    from aletheia.storage.repositories import count_unresolved_signal_pending
+
+    future_defer = (datetime.now(timezone.utc) + timedelta(minutes=90)).isoformat()
+    for idx, symbol in enumerate(
+        ("BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "MATIC/USDT")
+    ):
+        _seed_deferred_signal_pending(
+            opportunity_id=f"opp-defer-{idx}",
+            symbol=symbol,
+            defer_until_iso=future_defer,
+        )
+
+    # 5 signal_pending physical rows, but all 5 are in an active defer window.
+    # Admission accounting must free every slot for higher-ranked new candidates.
+    assert count_unresolved_signal_pending() == 0
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S58", "decision_lifecycle_contract", "§2.3 admission slot re-occupation", "L2b",
+        "Once defer_until falls into the past, the carrier is once again owed a "
+        "fresh Operator judgment and consumes an admission slot again.",
+        status="implemented",
+    ),
+)
+def test_admission_slot_reoccupied_after_defer_expires(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import close_db
+    close_db()
+    run_migrations()
+
+    from aletheia.storage.repositories import count_unresolved_signal_pending
+
+    past_defer = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    _seed_deferred_signal_pending(
+        opportunity_id="opp-defer-expired",
+        symbol="BTC/USDT",
+        defer_until_iso=past_defer,
+    )
+
+    # defer_until is in the past → carrier once again consumes a slot.
+    assert count_unresolved_signal_pending() == 1
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S59", "decision_lifecycle_contract", "§2.3 defer widens carrier lifecycle", "L2b",
+        "When _record_deferred_context_observation persists a defer event, the "
+        "underlying Opportunity's valid_until is CAS'd forward to at least "
+        "defer_until + margin so the promised second Operator look is inside the "
+        "Opportunity's lifecycle. Never shortens an existing later deadline.",
+        status="implemented",
+    ),
+)
+def test_defer_extends_valid_until_forward_only(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import close_db
+    close_db()
+    run_migrations()
+
+    from aletheia.agent_shell import commands
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import (
+        get_opportunity,
+        insert_opportunity,
+        insert_pi_decision,
+        update_opportunity,
+    )
+
+    now = datetime.now(timezone.utc)
+    short_valid_until = (now + timedelta(minutes=20)).isoformat()
+    insert_opportunity(Opportunity(
+        id="opp-widen",
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        status="queued",
+        scanner_family="momentum",
+    ))
+    update_opportunity("opp-widen", valid_until=short_valid_until)
+    insert_pi_decision(PiDecision(
+        id="pending-widen",
+        action="signal_pending",
+        opportunity_id="opp-widen",
+        signal_source="market_observer",
+        symbol="BTC/USDT",
+        direction="long",
+        market_type="spot",
+    ))
+
+    monkeypatch.setattr(
+        commands,
+        "_deferred_context_dedup_key",
+        lambda *_args, **_kwargs: ("fixed-dedup-widen", now.isoformat()),
+    )
+    commands._record_deferred_context_observation(
+        {
+            "layer2": {
+                "pending_queue": {
+                    "unresolved_total": 1,
+                    "visible_count": 1,
+                    "overflow_count": 0,
+                    "oldest_at": now.isoformat(),
+                },
+                "pending_signals": [
+                    {"opportunity_id": "opp-widen", "valid_until": short_valid_until}
+                ],
+            }
+        },
+        context_fingerprint="fp-widen",
+        opportunity_id="opp-widen",
+        policy_epoch_id="test-epoch",
+        trigger="signal",
+        reason="operator_low_conviction",
+        window_minutes=120,
+    )
+
+    # valid_until now covers the full defer window + 300s margin.
+    expected_min = now + timedelta(minutes=120, seconds=300)
+    row = get_opportunity("opp-widen")
+    actual = datetime.fromisoformat(row["valid_until"])
+    assert actual >= expected_min - timedelta(seconds=1), (
+        f"valid_until must extend past defer_deadline + 300s; got {actual!r}"
+    )
+
+    # A second defer with a LATER window must not roll valid_until backward
+    # if the carrier already has a longer horizon.
+    later_now = now + timedelta(minutes=30)
+    monkeypatch.setattr(
+        commands,
+        "_deferred_context_dedup_key",
+        lambda *_args, **_kwargs: ("fixed-dedup-widen-2", later_now.isoformat()),
+    )
+    commands._record_deferred_context_observation(
+        {
+            "layer2": {
+                "pending_queue": {
+                    "unresolved_total": 1,
+                    "visible_count": 1,
+                    "overflow_count": 0,
+                    "oldest_at": later_now.isoformat(),
+                },
+                "pending_signals": [
+                    {"opportunity_id": "opp-widen", "valid_until": short_valid_until}
+                ],
+            }
+        },
+        context_fingerprint="fp-widen-2",
+        opportunity_id="opp-widen",
+        policy_epoch_id="test-epoch",
+        trigger="signal",
+        reason="operator_low_conviction",
+        window_minutes=120,
+    )
+    # New defer_deadline is later_now + 120min, so valid_until slides further forward.
+    second_expected_min = later_now + timedelta(minutes=120, seconds=300)
+    second_row = get_opportunity("opp-widen")
+    assert datetime.fromisoformat(second_row["valid_until"]) >= second_expected_min - timedelta(seconds=1)
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S60", "decision_lifecycle_contract", "§2.3 cooldown scoped by producer", "L2b",
+        "The 30-minute signal cooldown is scoped to one signal_source namespace. "
+        "A Serenity signal_pending row does not pollute the market_observer "
+        "cooldown for the same (symbol, direction).",
+        status="implemented",
+    ),
+)
+def test_signal_cooldown_scoped_by_signal_source(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import close_db, get_db
+    close_db()
+    run_migrations()
+
+    now = datetime.now(timezone.utc).isoformat()
+    # A Serenity signal on (BTC/USDT, long) landed recently.
+    get_db().execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, market_type, action, opportunity_id, "
+        " signal_source, created_at) "
+        "VALUES ('pi-ser-1', 'BTC/USDT', 'long', 'spot', 'signal_pending', "
+        "        'opp-ser-1', 'serenity', ?)",
+        (now,),
+    )
+    get_db().commit()
+
+    from aletheia.agents.paper_trader import _recent_signal_pairs
+
+    # Default caller (market_observer) must NOT see Serenity's pair.
+    assert _recent_signal_pairs() == set()
+    # Serenity's own producer view still sees it.
+    assert _recent_signal_pairs(signal_source="serenity") == {("BTC/USDT", "long")}
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-S61", "decision_lifecycle_contract", "§2.3 evaluated set bounded", "L2b",
+        "operator_already_evaluated block is bounded to a 24-hour lookback so the "
+        "stealth-block set cannot grow without bound as the DB ages.",
+        status="implemented",
+    ),
+)
+def test_operator_already_evaluated_bounded_by_24h(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import close_db, get_db
+    close_db()
+    run_migrations()
+
+    now = datetime.now(timezone.utc)
+    long_ago = (now - timedelta(hours=48)).isoformat()
+    recent = (now - timedelta(hours=1)).isoformat()
+
+    db = get_db()
+    # A final decision older than the 24h window — must NOT block new opportunities.
+    db.execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, market_type, action, opportunity_id, "
+        " signal_source, created_at) "
+        "VALUES ('pi-old', 'BTC/USDT', 'long', 'spot', 'trade', "
+        "        'opp-old-evaluated', 'market_observer', ?)",
+        (long_ago,),
+    )
+    # A recent final decision — must still block.
+    db.execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, market_type, action, opportunity_id, "
+        " signal_source, created_at) "
+        "VALUES ('pi-new', 'ETH/USDT', 'long', 'spot', 'skip', "
+        "        'opp-new-evaluated', 'market_observer', ?)",
+        (recent,),
+    )
+    db.commit()
+
+    from aletheia.agents.paper_trader import _operator_evaluated_opportunity_ids
+
+    ids = _operator_evaluated_opportunity_ids()
+    assert "opp-new-evaluated" in ids
+    assert "opp-old-evaluated" not in ids

@@ -767,11 +767,17 @@ def list_pending_pi_decisions_for_opportunity(
 
 
 def count_unresolved_signal_pending(max_age_minutes: int = 30) -> int:
-    """Count queued market candidates that remain inside their source lifetime.
+    """Count queued market candidates that consume an Operator admission slot.
 
     ``Opportunity.valid_until`` is authoritative for current rows. The fixed
     queue age remains only as a compatibility fallback for historical rows that
     did not persist a parseable source deadline.
+
+    A candidate whose most recent Operator observation is an active defer
+    (``event_kind LIKE 'operator_decision_deferred_%'`` and
+    ``defer_until > now()``) does NOT consume an admission slot — Operator has
+    already judged it and it is awaiting its next re-evaluation window. Only
+    candidates still owed a fresh Operator judgment count here.
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
     row = (
@@ -794,12 +800,63 @@ def count_unresolved_signal_pending(max_age_minutes: int = 30) -> int:
             "     COALESCE(pending.signal_source, 'market_observer') "
             " AND final.action!='signal_pending' "
             " AND COALESCE(final.proposal_status, '')!='submitting'"
+            ") "
+            "AND NOT EXISTS ("
+            " SELECT 1 FROM operator_evaluation_events e "
+            " WHERE json_extract(e.queue_snapshot_json,'$.opportunity_id')"
+            "       = pending.opportunity_id "
+            " AND e.event_kind LIKE 'operator_decision_deferred_%' "
+            " AND datetime(json_extract(e.queue_snapshot_json,'$.defer_until'))"
+            "     > datetime('now')"
             ")",
             (cutoff,),
         )
         .fetchone()
     )
     return int(row[0] or 0)
+
+
+def active_defer_opportunity_ids(now_iso: str | None = None) -> set[str]:
+    """opportunity_id set whose most recent Operator observation is an active defer.
+
+    An "active defer" means: the ``operator_evaluation_events`` row has
+    ``event_kind LIKE 'operator_decision_deferred_%'`` and its
+    ``queue_snapshot_json.defer_until`` is still in the future.
+
+    Used by admission accounting (``count_unresolved_signal_pending``) and
+    display-layer ordering (``_build_pending_signal_queue``) so both share
+    one source of truth for "Operator has already judged, awaiting reopen".
+    """
+    if now_iso is None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+    rows = get_db().execute(
+        "SELECT json_extract(queue_snapshot_json,'$.opportunity_id') AS opportunity_id "
+        "FROM operator_evaluation_events "
+        "WHERE event_kind LIKE 'operator_decision_deferred_%' "
+        "AND json_extract(queue_snapshot_json,'$.defer_until') > ? "
+        "GROUP BY json_extract(queue_snapshot_json,'$.opportunity_id')",
+        (now_iso,),
+    ).fetchall()
+    return {str(row["opportunity_id"]) for row in rows if row["opportunity_id"]}
+
+
+def extend_opportunity_valid_until_forward_only(
+    opportunity_id: str, new_valid_until_iso: str
+) -> int:
+    """Slide an Opportunity's valid_until forward if the new deadline is later.
+
+    Idempotent-forward: never shortens an existing later deadline. Only touches
+    ``status IN ('open','queued')`` — expired/reviewed rows stay terminal.
+
+    Returns the number of rows updated (0 if the new deadline is not later).
+    """
+    result = execute_write(
+        "UPDATE opportunities SET valid_until = ? "
+        "WHERE id = ? AND status IN ('open','queued') "
+        "AND (valid_until IS NULL OR valid_until < ?)",
+        (new_valid_until_iso, opportunity_id, new_valid_until_iso),
+    )
+    return int(result.rowcount or 0)
 
 
 def _expire_opportunity_rows_with_ttl_evidence(

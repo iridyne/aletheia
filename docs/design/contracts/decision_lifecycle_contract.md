@@ -149,8 +149,11 @@ Direct skip 在 `system_operator_skip_remediation/b1.5` 下必须经过一次有
 rank ordering、账户权益或单笔近期亏损都没有 adverse authority。两次输出仍是信息不足或无效时，
 写 `operator_evaluation_events(event_kind=operator_decision_deferred_unchanged_context)` 并保持 pending；
 同一 policy epoch、同一候选的物质上下文 fingerprint 在 120 分钟窗口内未变化时不再调用模型；
-每条 defer 的显示/调度截止时间取该窗口与 Opportunity `valid_until` 的较早者，
-但不得阻塞同批下一候选。每次模型调用只能暴露一个 pending carrier 及其技术/Opportunity/B2 证据，
+每条 defer 的 `defer_until` 就是完整的 120 分钟窗口本身，Operator 判 defer 即隐式断言
+"候选在窗口末仍值得再看一次"——因此 defer 事件同一事务中把 Opportunity 的 `valid_until`
+CAS 前向延长到 `defer_until + 300s`（`extend_opportunity_valid_until_forward_only`），
+保证承诺的第二次评估落在 Opportunity 生命周期内。已延长的 `valid_until` 不得被后续 defer 缩短，
+也不得被 `expire_stale_queued_opportunities` 静默 `ttl_expired`。defer 不阻塞同批下一候选。每次模型调用只能暴露一个 pending carrier 及其技术/Opportunity/B2 证据，
 不得暴露 analysis-only preview 或另一 pending 候选作为判词依据。fingerprint 排除
 Opportunity id/时间戳等载体 churn，但包含 instrument、方向、scanner thesis、rank priority、B2 状态、
 实际 B2 `n_total/n_net/coverage/avg/shrunk/verdict`、候选技术特征与 market regime；这些字段变化会重新开放评估。
@@ -162,6 +165,21 @@ Opportunity id/时间戳等载体 churn，但包含 instrument、方向、scanne
 `market_observer` 载体,队列中的精确编号优先于仅靠相同 symbol/direction 匹配到的另一条开放机会;
 Opportunity 最终动作只认 pending 权限，因此精确 Serenity pending 与仅用于分析的 Layer1 同时匹配时，
 由前者提供身份。portfolio review 只按明确 `position_id` 使用独立持仓权限。
+
+### 2.3b Admission slot 语义
+
+`paper_trader._plan_signal_batch` 用 `_PENDING_SIGNAL_QUEUE_CAPACITY=5` 限制同时暴露给
+Operator 的 signal_pending 载体数量。一个 admission slot 代表 **Operator 尚未做出判断** 的
+signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一权威计数器。
+
+**已判等**的载体（`operator_evaluation_events` 中最新事件是
+`operator_decision_deferred_*` 且 `defer_until > now()`）不占 admission slot——Operator 已经
+判断了它，只是在等重评窗口到达。该规则同时被 `pi_daemon._has_pending_signal_work`（决定
+是否要 startup 评估）与 `paper_trader.admission`（决定是否接纳更高分新候选）复用；两个消费者
+必须共享同一份"活跃 defer opportunity_id 集合"（`active_defer_opportunity_ids()`）。
+
+`_build_pending_signal_queue` 的显示排序层继续把活跃 defer 载体 demote 到队尾，与本 slot
+语义相互独立：admission slot 决定"是否允许新候选入场"，display order 决定"入场后先看谁"。
 
 ### 2.4 Filter Evidence（评估旁路）
 

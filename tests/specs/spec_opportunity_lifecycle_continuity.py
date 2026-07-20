@@ -82,17 +82,22 @@ def test_active_carrier_remains_distinct_from_signal_cooldown(tmp_path, monkeypa
     SpecClaim(
         "DL-S55",
         _DL,
-        "§2.3 bounded Operator defer",
+        "§2.3 defer authoritatively extends Opportunity lifecycle",
         "L2b",
-        "New and legacy Operator defer projections use the earlier of the context "
-        "window and carrier valid_until, so scheduling and UI never promise a retry "
-        "after source expiry.",
+        "Operator defer is the authoritative signal that a candidate remains worth a "
+        "second look at defer_until; the underlying Opportunity's valid_until is "
+        "extended forward-only (never shortened) so the promised re-evaluation is "
+        "guaranteed inside the Opportunity's lifecycle. Defer never silently loses "
+        "its window to a shorter emission-time TTL.",
         status="implemented",
     )
 )
-def test_operator_defer_never_outlives_carrier(tmp_path, monkeypatch):
-    lifecycle_regressions.test_operator_defer_deadline_is_capped_by_carrier_valid_until(
-        _case_dir(tmp_path, "write"), monkeypatch
+def test_operator_defer_extends_carrier_lifecycle(tmp_path, monkeypatch):
+    lifecycle_regressions.test_defer_extends_opportunity_valid_until_forward_only(
+        _case_dir(tmp_path, "extend"), monkeypatch
+    )
+    lifecycle_regressions.test_defer_valid_until_extension_is_monotonic_forward_only(
+        _case_dir(tmp_path, "monotonic"), monkeypatch
     )
     lifecycle_regressions.test_opportunity_funnel_explains_current_operator_defer(
         _case_dir(tmp_path, "read"), monkeypatch

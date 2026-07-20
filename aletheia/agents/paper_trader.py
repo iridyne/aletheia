@@ -139,16 +139,26 @@ def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
         return 0
 
 
-def _recent_signal_pairs(window_minutes: int = _RECENT_SIGNAL_COOLDOWN_MINUTES) -> set[tuple[str, str]]:
-    """Pairs handed to the System Operator inside the fixed cooldown window."""
+def _recent_signal_pairs(
+    window_minutes: int = _RECENT_SIGNAL_COOLDOWN_MINUTES,
+    signal_source: str = "market_observer",
+) -> set[tuple[str, str]]:
+    """Pairs handed to the System Operator inside the fixed cooldown window.
+
+    Scoped to a single producer namespace (default ``market_observer``) so a
+    Serenity signal_pending row does not pollute market_observer's cooldown for
+    the same (symbol, direction). ``_active_signal_setups`` already uses this
+    scoping; the earlier signal_source-blind cooldown was a historical mismatch.
+    """
     try:
         from aletheia.storage.sqlite import get_db
         cutoff = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).isoformat()
         rows = get_db().execute(
             "SELECT symbol, direction FROM pi_decisions "
             "WHERE action='signal_pending' AND datetime(created_at)>=datetime(?) "
-            "AND symbol IS NOT NULL AND direction IS NOT NULL",
-            (cutoff,),
+            "AND symbol IS NOT NULL AND direction IS NOT NULL "
+            "AND COALESCE(signal_source, 'market_observer')=?",
+            (cutoff, signal_source or "market_observer"),
         ).fetchall()
         return {(r["symbol"], r["direction"]) for r in rows}
     except Exception:
@@ -188,16 +198,28 @@ def _active_signal_setups() -> set[tuple[str, str, str]]:
 
 def _operator_evaluated_opportunity_ids(
     signal_source: str = "market_observer",
+    max_age_hours: int = 24,
 ) -> set[str]:
-    """Opportunity ids finalized by the same producer namespace."""
+    """Opportunity ids finalized by the same producer namespace within the
+    lookback window.
+
+    The 24-hour window prevents the set from growing without bound as the DB
+    ages. Genuine lifecycle races that resurface an ``open`` opportunity older
+    than 24h are caught by ``transition_open_opportunity_to_queued``'s CAS at
+    write time (paper_trader.py:~516).
+    """
     try:
         from aletheia.storage.sqlite import get_db
 
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(hours=max(int(max_age_hours), 1))
+        ).isoformat()
         rows = get_db().execute(
             "SELECT DISTINCT opportunity_id FROM pi_decisions "
             "WHERE action != 'signal_pending' AND opportunity_id IS NOT NULL "
-            "AND COALESCE(signal_source, 'market_observer')=?",
-            (signal_source or "market_observer",),
+            "AND COALESCE(signal_source, 'market_observer')=? "
+            "AND datetime(created_at) >= datetime(?)",
+            (signal_source or "market_observer", cutoff),
         ).fetchall()
         return {str(row[0]) for row in rows if row[0]}
     except Exception:

@@ -447,21 +447,9 @@ def _build_pending_signal_queue(
     # market-quiet fast-path (_existing_deferred_context_observation) is the
     # authoritative guard against re-invoking the LLM within the defer window.
     try:
-        now_iso = datetime.now(timezone.utc).isoformat()
-        deferred_rows = db.execute(
-            "SELECT json_extract(queue_snapshot_json, '$.opportunity_id') "
-            "         AS opportunity_id "
-            "FROM operator_evaluation_events "
-            "WHERE event_kind LIKE 'operator_decision_deferred_%' "
-            "AND json_extract(queue_snapshot_json, '$.defer_until') > ? "
-            "GROUP BY json_extract(queue_snapshot_json, '$.opportunity_id')",
-            (now_iso,),
-        ).fetchall()
-        deferred_ids: set[str] = {
-            str(row["opportunity_id"])
-            for row in deferred_rows
-            if row["opportunity_id"]
-        }
+        from aletheia.storage.repositories import active_defer_opportunity_ids
+
+        deferred_ids = active_defer_opportunity_ids()
 
         def _is_deferred(row: dict[str, Any]) -> bool:
             return str(row.get("opportunity_id") or "") in deferred_ids

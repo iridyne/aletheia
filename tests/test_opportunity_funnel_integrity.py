@@ -404,12 +404,30 @@ def test_old_carrier_with_future_valid_until_passes_preflight_and_atomic_claim(
     assert _pending_claim_authority_failure(decision) is None
 
 
-def test_operator_defer_deadline_is_capped_by_carrier_valid_until(
-    tmp_path, monkeypatch
-):
+def test_defer_extends_opportunity_valid_until_forward_only(tmp_path, monkeypatch):
+    """Operator defer authoritatively widens Opportunity.valid_until forward.
+
+    Before: ``_record_deferred_context_observation`` truncated ``defer_deadline``
+    down to a shorter ``Opportunity.valid_until`` (``defer_deadline_basis`` set
+    to ``opportunity_valid_until``). That silently converted "defer 120min" into
+    "expire at valid_until"; the promised second Operator look never happened.
+
+    After: ``defer_deadline`` is ``window_start + window_minutes`` unconditionally,
+    and the underlying Opportunity's ``valid_until`` is CAS'd forward to
+    ``defer_deadline + _DEFER_VALID_UNTIL_MARGIN_SEC`` (300s) so the promised
+    re-evaluation is guaranteed to happen inside the Opportunity's lifecycle.
+    See ``docs/issues/audits/CANDIDATES_ADMISSION_GAP_AUDIT_2026-07-20.md``.
+    """
     conn = _setup_db(tmp_path, monkeypatch)
     now = datetime.now(timezone.utc)
-    valid_until = (now + timedelta(minutes=20)).isoformat()
+    short_valid_until = (now + timedelta(minutes=20)).isoformat()
+    _insert_opportunity(
+        conn,
+        "defer-extend",
+        status="queued",
+        valid_until=short_valid_until,
+    )
+    conn.commit()
 
     from aletheia.agent_shell import commands
 
@@ -429,12 +447,12 @@ def test_operator_defer_deadline_is_capped_by_carrier_valid_until(
                     "oldest_at": datetime.now(timezone.utc).isoformat(),
                 },
                 "pending_signals": [
-                    {"opportunity_id": "defer-capped", "valid_until": valid_until}
+                    {"opportunity_id": "defer-extend", "valid_until": short_valid_until}
                 ],
             }
         },
         context_fingerprint="fingerprint",
-        opportunity_id="defer-capped",
+        opportunity_id="defer-extend",
         policy_epoch_id="test-epoch",
         trigger="signal",
         reason="candidate_technical_snapshot_unavailable",
@@ -442,11 +460,75 @@ def test_operator_defer_deadline_is_capped_by_carrier_valid_until(
     )
 
     snapshot = json.loads(event["queue_snapshot_json"])
-    assert snapshot["defer_until"] == valid_until
-    assert snapshot["defer_deadline_basis"] == "opportunity_valid_until"
+    expected_defer_deadline = now + timedelta(minutes=120)
+    # defer_until is now the full 120-min window, no longer capped by valid_until.
+    assert snapshot["defer_deadline_basis"] == "unchanged_context_window"
+    assert datetime.fromisoformat(snapshot["defer_until"]) == expected_defer_deadline
+    # Opportunity.valid_until CAS'd forward to defer_deadline + 300s margin.
+    expected_valid_until = expected_defer_deadline + timedelta(seconds=300)
+    row = conn.execute(
+        "SELECT valid_until FROM opportunities WHERE id=?", ("defer-extend",)
+    ).fetchone()
+    assert datetime.fromisoformat(row["valid_until"]) == expected_valid_until
+    # Event insert and valid_until extension committed atomically.
     assert conn.execute(
         "SELECT COUNT(*) FROM operator_evaluation_events WHERE id=?", (event["id"],)
     ).fetchone()[0] == 1
+
+
+def test_defer_valid_until_extension_is_monotonic_forward_only(tmp_path, monkeypatch):
+    """A defer never shortens an Opportunity's existing later ``valid_until``.
+
+    If a downstream mechanism (e.g. universe reuse via ``refresh_active_snapshot_ttls``)
+    has already pushed ``valid_until`` past ``defer_deadline + margin``, the
+    defer must leave it alone.
+    """
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    long_valid_until = (now + timedelta(hours=6)).isoformat()
+    _insert_opportunity(
+        conn,
+        "defer-monotonic",
+        status="queued",
+        valid_until=long_valid_until,
+    )
+    conn.commit()
+
+    from aletheia.agent_shell import commands
+
+    monkeypatch.setattr(
+        commands,
+        "_deferred_context_dedup_key",
+        lambda *_args, **_kwargs: ("fixed-dedup-m", now.isoformat()),
+    )
+
+    commands._record_deferred_context_observation(
+        {
+            "layer2": {
+                "pending_queue": {
+                    "unresolved_total": 1,
+                    "visible_count": 1,
+                    "overflow_count": 0,
+                    "oldest_at": now.isoformat(),
+                },
+                "pending_signals": [
+                    {"opportunity_id": "defer-monotonic", "valid_until": long_valid_until}
+                ],
+            }
+        },
+        context_fingerprint="fingerprint",
+        opportunity_id="defer-monotonic",
+        policy_epoch_id="test-epoch",
+        trigger="signal",
+        reason="operator_low_conviction",
+        window_minutes=120,
+    )
+
+    row = conn.execute(
+        "SELECT valid_until FROM opportunities WHERE id=?", ("defer-monotonic",)
+    ).fetchone()
+    # The existing 6h valid_until must be preserved — defer only slides forward.
+    assert row["valid_until"] == long_valid_until
 
 
 def test_expired_opportunity_cannot_transition_to_reviewed(tmp_path, monkeypatch):

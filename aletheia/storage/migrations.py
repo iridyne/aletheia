@@ -2669,6 +2669,9 @@ CREATE INDEX IF NOT EXISTS idx_operator_evaluation_events_created
     ON operator_evaluation_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_operator_evaluation_events_kind
     ON operator_evaluation_events(event_kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_operator_evaluation_events_defer_active
+    ON operator_evaluation_events(event_kind, created_at DESC)
+    WHERE event_kind LIKE 'operator_decision_deferred_%';
 """
 
 _CAPITAL_EVENTS_DDL = """
