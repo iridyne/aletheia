@@ -288,3 +288,56 @@ def test_serenity_pending_signal_carries_exact_market_type(monkeypatch):
     assert dec.market_type == "usdt_futures", (
         "pending-signal branch dropped the carrier's exact market_type"
     )
+
+
+def test_spot_short_claim_survives_usdt_futures_coercion():
+    """#175: spot-short signal_pending must not be rejected by pending_source_identity_mismatch.
+
+    paper_trader emits a signal_pending with market_type='spot' for a spot short
+    opportunity. prepare_decision_as_proposal coerces the decision's market_type to
+    'usdt_futures' (trading_decision.py:718-721) and commands.py overwrites
+    decision.market_type with the proposal's. _pending_claim_authority_failure then
+    compared source.market='spot' vs pi_dec.market_type='usdt_futures' and raised
+    pending_source_identity_mismatch, rolling back the claim and leaving the carrier
+    stuck in retry.
+    """
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import (
+        insert_opportunity, insert_pi_decision,
+        transition_open_opportunity_to_queued,
+    )
+    from aletheia.agent_shell.reflection import _pending_claim_authority_failure
+
+    opp = Opportunity(
+        id="opp-spot-short",
+        symbol="ETH/USDT",
+        market="spot",
+        direction_bias="short",
+        status="open",
+        asset_class="crypto",
+    )
+    insert_opportunity(opp)
+    assert transition_open_opportunity_to_queued(opp.id)
+
+    pending = PiDecision(
+        symbol="ETH/USDT",
+        direction="short",
+        market_type="spot",
+        action="signal_pending",
+        opportunity_id=opp.id,
+        signal_source="market_observer",
+    )
+    insert_pi_decision(pending)
+
+    # Simulate the final PiDecision after spot→usdt_futures coercion.
+    final = PiDecision(
+        symbol="ETH/USDT",
+        direction="short",
+        market_type="usdt_futures",
+        action="trade",
+        opportunity_id=opp.id,
+        signal_source="market_observer",
+    )
+
+    result = _pending_claim_authority_failure(final)
+    assert result is None, f"claim blocked with '{result}' — spot→usdt_futures coercion must be allowed"

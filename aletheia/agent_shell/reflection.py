@@ -58,6 +58,25 @@ def _normalized_direction(value: Any) -> str:
     return {"bullish": "long", "bearish": "short"}.get(direction, direction)
 
 
+def _market_types_compatible(m1: str | None, m2: str | None, direction: str | None) -> bool:
+    """Return True when two market type values are identity-compatible.
+
+    Spot-short decisions are coerced to usdt_futures at proposal preparation
+    (prepare_decision_as_proposal:718-721). Allow this known migration so the
+    source Opportunity and original signal_pending (both stored as 'spot') are
+    still treated as matching the final PiDecision and Proposal (stored as
+    'usdt_futures').
+    """
+    if m1 == m2:
+        return True
+    if _normalized_direction(direction) == "short":
+        spot = {"spot"}
+        perp = {"usdt_futures", "perp"}
+        if (m1 in spot and m2 in perp) or (m1 in perp and m2 in spot):
+            return True
+    return False
+
+
 def _pending_claim_authority_failure(pi_dec) -> str | None:
     """Recheck queue and source identity inside the caller's writer lock."""
     from aletheia.storage import repositories as repo
@@ -87,7 +106,9 @@ def _pending_claim_authority_failure(pi_dec) -> str | None:
             or source.get("symbol") != pi_dec.symbol
             or _normalized_direction(source.get("direction_bias"))
             != _normalized_direction(pi_dec.direction)
-            or source.get("market") != pi_dec.market_type
+            or not _market_types_compatible(
+                source.get("market"), pi_dec.market_type, pi_dec.direction
+            )
         ):
             return "pending_source_identity_mismatch"
         source_status = str(source.get("status") or "")
@@ -157,7 +178,7 @@ def _pending_claim_authority_failure(pi_dec) -> str | None:
         or pending.get("symbol") != pi_dec.symbol
         or _normalized_direction(pending.get("direction"))
         != _normalized_direction(pi_dec.direction)
-        or pending_market != pi_dec.market_type
+        or not _market_types_compatible(pending_market, pi_dec.market_type, pi_dec.direction)
     ):
         return "pending_identity_mismatch"
 
