@@ -252,7 +252,10 @@ def _parse_time(value: str) -> datetime | None:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt
+        # Normalize offset to UTC so downstream comparisons, hashes and log
+        # rendering are consistent with the cohorts._parse_time contract
+        # (audit LEARNING_MODULE_SDD_VS_REALITY §5 GAP-03 tail).
+        return dt.astimezone(timezone.utc)
     except (AttributeError, ValueError):
         return None
 
