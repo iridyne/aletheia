@@ -250,6 +250,74 @@ async def test_one_pair_timeout_does_not_starve_later_target(monkeypatch):
     assert any(row["symbol"] == "FAST/USDT" and row["status"] == "ready" for row in writes)
 
 
+@pytest.mark.asyncio
+async def test_pair_timeout_does_not_wait_for_cancellation_resistant_download(
+    monkeypatch,
+):
+    from aletheia.data import active_ohlcv_backfill as backfill
+
+    now = datetime(2026, 7, 11, tzinfo=timezone.utc)
+    target = backfill.CoverageTarget(
+        "okx", "STUCK/USDT", "perp", "1h", 1, 0
+    )
+    monkeypatch.setattr(
+        backfill, "plan_active_ohlcv_backfill", lambda **kwargs: [target]
+    )
+
+    cancel_seen = backfill.asyncio.Event()
+    release = backfill.asyncio.Event()
+    finished = backfill.asyncio.Event()
+
+    async def cancellation_resistant_download(*args, **kwargs):
+        try:
+            await backfill.asyncio.Future()
+        except backfill.asyncio.CancelledError:
+            cancel_seen.set()
+            await release.wait()
+            raise
+        finally:
+            finished.set()
+
+    async def release_cleanup():
+        await backfill.asyncio.sleep(0.25)
+        release.set()
+
+    monkeypatch.setattr(
+        backfill, "download_symbol_history", cancellation_resistant_download
+    )
+    monkeypatch.setattr(
+        backfill.repo,
+        "get_ohlcv_coverage",
+        lambda *args, **kwargs: {"bar_count": 0},
+    )
+    writes: list[dict] = []
+    monkeypatch.setattr(
+        backfill.repo,
+        "upsert_ohlcv_backfill_state",
+        lambda **kwargs: writes.append(kwargs),
+    )
+
+    cleanup = backfill.asyncio.create_task(release_cleanup())
+    started = backfill.asyncio.get_running_loop().time()
+    result = await backfill.run_active_ohlcv_backfill(
+        min_bars=200,
+        max_pairs=1,
+        months=1,
+        now=now,
+        pair_timeout_sec=0.01,
+        run_budget_sec=1,
+    )
+    elapsed = backfill.asyncio.get_running_loop().time() - started
+    await cleanup
+    await backfill.asyncio.wait_for(finished.wait(), timeout=0.1)
+
+    assert cancel_seen.is_set()
+    assert elapsed < 0.15
+    assert result.attempted == 1
+    assert result.failed == 1
+    assert writes[-1]["last_error"] == "download_timeout"
+
+
 def test_historical_data_config_exposes_bounded_active_backfill_controls():
     from aletheia.config.schema import HistoricalDataConfig
 

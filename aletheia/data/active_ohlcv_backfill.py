@@ -31,6 +31,25 @@ _PAIR_TIMEOUT_SEC = 60.0
 _RUN_BUDGET_SEC = 240.0
 
 
+def _consume_detached_task(task: asyncio.Task) -> None:
+    """Retrieve a timed-out task's terminal state once cleanup finishes."""
+    try:
+        task.exception()
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+async def _wait_without_cancel_drain(awaitable, *, timeout: float):
+    """Enforce a wall-clock timeout without awaiting cancellation cleanup."""
+    task = asyncio.ensure_future(awaitable)
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        task.add_done_callback(_consume_detached_task)
+        task.cancel()
+        raise
+
+
 @dataclass(frozen=True)
 class CoverageTarget:
     exchange: str
@@ -242,7 +261,7 @@ async def run_active_ohlcv_backfill(
         error_code: str | None = None
         bars_fetched = 0
         try:
-            download = await asyncio.wait_for(
+            download = await _wait_without_cancel_drain(
                 download_symbol_history(
                     target.symbol,
                     target.timeframe,

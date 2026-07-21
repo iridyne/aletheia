@@ -25,8 +25,12 @@ ranking, filters, risk limits, sizing, execution, credentials, or live state.
    one hour; failures use 15-minute exponential backoff capped at six hours.
 
 Each pair has a 60-second timeout and the cycle has a 240-second internal
-budget, both below the scheduler's 300-second outer guard. A slow venue request
-therefore cannot starve every later pair or abandon the scheduler worker.
+budget, both below the scheduler's 300-second outer guard. The pair timeout
+shields the download task, requests cancellation at the deadline, and consumes
+its terminal state when provider cleanup eventually finishes without awaiting
+that cleanup on the scheduler lane. A cancellation-resistant venue request
+therefore cannot extend the wall-clock pair budget, starve every later pair, or
+abandon the scheduler worker.
 
 The nightly job remains the bulk completeness fallback. The active job is a
 bounded freshness repair, not a second unlimited downloader.
