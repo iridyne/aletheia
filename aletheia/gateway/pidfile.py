@@ -344,7 +344,7 @@ def find_port_holders(port: int) -> list[int]:
         if platform.system() == "Windows":
             out = subprocess.run(
                 ["netstat", "-ano"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, errors="replace", timeout=10,
                 **_no_window_kwargs(),
             ).stdout
             for line in out.splitlines():

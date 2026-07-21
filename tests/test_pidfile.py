@@ -124,6 +124,30 @@ def test_find_port_holders_posix_queries_listeners_only(monkeypatch):
     ]
 
 
+def test_find_port_holders_windows_tolerates_localized_output(monkeypatch):
+    """Netstat decoding must not discard otherwise parseable listener rows."""
+    from types import SimpleNamespace
+    from aletheia.gateway import pidfile
+
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return SimpleNamespace(
+            stdout="  TCP    0.0.0.0:8787    0.0.0.0:0    LISTENING    4242\n"
+        )
+
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(pidfile.subprocess, "run", fake_run)
+    monkeypatch.setattr(pidfile.os, "getpid", lambda: 9999)
+
+    assert pidfile.find_port_holders(8787) == [4242]
+    assert seen["command"] == ["netstat", "-ano"]
+    assert seen["kwargs"]["text"] is True
+    assert seen["kwargs"]["errors"] == "replace"
+
+
 def test_kill_pid_tree_windows_uses_ctypes_not_subprocess(monkeypatch):
     """On Windows, kill_pid_tree uses pure ctypes (no taskkill spawn), so no
     console window flash during orphan cleanup or gateway stop."""
