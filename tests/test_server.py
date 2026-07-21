@@ -52,7 +52,7 @@ async def test_status(client):
     data = resp.json()
     assert data["live_state"] == "live_disabled"
     assert data["permission_mode"] == "Paper"
-    assert data["exchange_mode"] == "demo"
+    assert data["exchange_mode"] == "paper"
 
 
 @pytest.mark.anyio
