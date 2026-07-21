@@ -1042,10 +1042,24 @@ def test_complete_private_close_fill_closes_linked_position_once(
         )
     ]
     _patch_bitget_history(monkeypatch, fill_rows)
-    _, _, position, close_order = _seed_pending_close(
+    proposal, _, position, close_order = _seed_pending_close(
         exchange_order_id="EX-XM-CLOSE",
         trade_school="serenity",
     )
+    from aletheia.storage.models import SerenityOpportunity, SerenityTheme
+
+    repo.insert_serenity_theme(SerenityTheme(
+        id="theme-xm-close",
+        name="Private fill materialization",
+    ))
+    repo.insert_serenity_opportunity(SerenityOpportunity(
+        id=proposal.opportunity_id,
+        theme_id="theme-xm-close",
+        symbol=proposal.symbol,
+        direction=proposal.direction,
+        thesis="mocked private-fill materialization",
+        market_type=proposal.market_type,
+    ))
     feedback: dict[str, object] = {}
     from aletheia.portfolio import pnl
 

@@ -129,15 +129,18 @@ def test_stable_launcher_requires_manifest_and_absolute_data_override(tmp_path: 
 
 
 def test_workflow_runs_exact_artifact_as_clean_macos_runtime() -> None:
-    workflow = Path(".github/workflows/build-dogfood-release.yml").read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/build-packaged-runtime.yml").read_text(
+        encoding="utf-8"
+    )
 
-    assert "macos-release-runtime:" in workflow
-    assert "needs: build-bundle" in workflow
+    assert "macos-package:" in workflow
     assert "runs-on: [self-hosted, macOS, ARM64, aletheia-release]" in workflow
-    assert "actions/download-artifact@v4" in workflow
-    assert "install-release.sh" in workflow
-    assert "start-release.sh" in workflow
-    assert "health-check.sh" in workflow
-    assert "aletheia gateway stop" in workflow
-    assert "com.aletheia.trading-os.gateway.plist" in workflow
+    assert "Build installable browser-first macOS app" in workflow
+    assert "cargo build --locked --release --bins" in workflow
+    assert "dist/macos-app/Aletheia.app" in workflow
+    assert "--smoke-test" in workflow
+    assert "/_infra/readyz" in workflow
+    assert "/api/health" in workflow
+    assert '"$app/Contents/MacOS/aletheia" gateway stop' in workflow
+    assert "actions/upload-artifact@v4" in workflow
     assert "ALETHEIA_DATA_DIR" in workflow
