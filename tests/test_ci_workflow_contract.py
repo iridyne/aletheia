@@ -210,3 +210,13 @@ def test_uv_cache_is_scoped_to_the_runner_workspace():
         Path(__file__).parents[1] / ".github" / "workflows" / "ci.yml"
     ).read_text(encoding="utf-8")
     assert "UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache" in workflow
+
+
+def test_secret_scan_keeps_detection_but_disables_broken_artifact_upload():
+    from pathlib import Path
+
+    workflow = (
+        Path(__file__).parents[1] / ".github" / "workflows" / "ci.yml"
+    ).read_text(encoding="utf-8")
+    assert "uses: gitleaks/gitleaks-action@v2" in workflow
+    assert "GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false" in workflow
