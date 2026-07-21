@@ -47,6 +47,43 @@ def reconcile_local_paper_accounting(
     ))
 
 
+@data_app.command("reconcile-paper-funding")
+def reconcile_paper_funding(
+    position_ids: list[str] = typer.Option([], "--position-id"),
+    apply: bool = typer.Option(False, "--apply"),
+    expected_fingerprint: str | None = typer.Option(
+        None, "--expected-fingerprint",
+    ),
+):
+    """Inspect or apply fingerprint-guarded paper funding reconciliation."""
+    from aletheia.maintenance.paper_funding_reconciliation import (
+        apply_paper_funding_reconciliation,
+        inspect_paper_funding_reconciliation,
+    )
+    from aletheia.storage.migrations import run_migrations
+
+    run_migrations()
+    try:
+        if apply:
+            if not position_ids:
+                raise typer.BadParameter("--apply requires at least one --position-id")
+            if not expected_fingerprint:
+                raise typer.BadParameter("--apply requires --expected-fingerprint")
+            result = apply_paper_funding_reconciliation(
+                position_ids=position_ids,
+                expected_fingerprint=expected_fingerprint,
+            )
+        else:
+            if expected_fingerprint:
+                raise typer.BadParameter(
+                    "--expected-fingerprint is valid only with --apply",
+                )
+            result = inspect_paper_funding_reconciliation(position_ids=position_ids)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
+
+
 @data_app.command("download")
 def download(
     symbol: str = typer.Argument(..., help="Canonical symbol, e.g. BTC/USDT"),

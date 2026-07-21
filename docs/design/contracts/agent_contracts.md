@@ -3,11 +3,11 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-07-19 (Learning Contribution Observability target handoff)
+> Last updated: 2026-07-21 (paper funding accounting convergence)
 
 ---
 
-## 1. Scheduler Job Overview (39 recurring jobs with optional jobs enabled + 3 startup one-shots)
+## 1. Scheduler Job Overview (40 recurring jobs with optional jobs enabled + 3 startup one-shots)
 
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
@@ -49,6 +49,7 @@
 | 35 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
 | 35a | news_analyze | 5min | agents | Independently analyze at most 3 news rows; each item and the whole job are bounded, and failures remain retry/failed rather than fabricated analyzed facts |
 | 36 | outcome_settler | 10min | io | Settle outstanding prediction / universe forward outcomes |
+| 36a | paper_funding_settler | 30min | io | Recover complete local-paper futures funding from persisted live/history evidence and atomically converge Position, close event, cash, eligibility, audit, and durable outcome hooks; read source I/O never spans the SQLite writer transaction |
 | 37 | learning_contribution_evaluator | interval `learning.evaluation_interval_minutes` (default 60) | io | Sole scheduled contribution evaluator. Measure only: append deterministic cluster-based contribution verdicts and evaluator health even when autonomous Learning is off or runtime is paused |
 | 38 | learning_lifecycle_controller | interval `learning.evaluation_interval_minutes` (default 60) | io | Apply at most one default-closed paper lifecycle action per current experiment; requires autonomous Learning, no pause/integrity incident, lifecycle automation, paper influence, and path allowlist |
 | 39 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
@@ -58,7 +59,7 @@
 Learning behavior jobs (rows 10–15, 26, 30–31, 38 and the Learning behavior catch-up) share
 `agent.autonomous_learning` as one backend gate. When disabled, no automatic producer,
 reviewer, promoter, controller, or learned rollout runs. Measurement-only
-`outcome_settler`, `outcome_hook_replay`, `shadow_resolver`, and
+`outcome_settler`, `paper_funding_settler`, `outcome_hook_replay`, `shadow_resolver`, and
 `learning_contribution_evaluator` continue so disabling
 Learning does not erase or delay outcome truth. The evaluator never changes stages or authority;
 the lifecycle controller is a separate gated consumer. Successful/failed/skipped runs and reviewer
@@ -66,6 +67,12 @@ backlog health are persisted in `learning_job_health`. There is no scheduled
 `learning_verdict_runner`; any historical health row under that id remains audit history only.
 After recovery, `status` may be healthy and `last_error` clears, while `last_failed_at` and
 `last_failure_reason` preserve the most recent failure.
+
+`paper_funding_settler` is accounting maintenance, not an agent decision or exchange-account
+collector. It runs during layered pause, keeps incomplete facts `NULL`, and may use public historical
+settlements only as `local_simulation` evidence. It never labels age alone as structural failure.
+When evidence becomes complete it calls the single atomic materializer; downstream feedback is
+durably queued and independently retried by `outcome_hook_replay`.
 
 ### OS Session-service Contract
 

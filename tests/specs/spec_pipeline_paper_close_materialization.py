@@ -1351,6 +1351,299 @@ def _seed_stuck_paper_close(
     ))
 
 
+def _seed_null_close_event(position_id: str, closed_at: str) -> None:
+    from aletheia.storage import repositories as repo
+
+    repo.insert_position_close_event({
+        "id": f"close-event-{position_id}",
+        "position_id": position_id,
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "execution_mode": "paper_internal",
+        "close_reason": "max_hold",
+        "exit_price": 100.5,
+        "closed_qty": 1.0,
+        "realized_pnl": None,
+        "entry_fee": 0.06,
+        "exit_fee": 0.06,
+        "is_partial": 0,
+        "closed_at": closed_at,
+    })
+
+
+def _complete_recovered_funding(position_id: str, cost: float = 0.0) -> dict:
+    return {
+        "status": "complete",
+        "source": "local_simulation",
+        "method": "active_entry_fill_notional_x_scheduled_rate",
+        "accounting_version": "local-paper-funding-v2",
+        "coverage_mode": "historical_ledger",
+        "position_id": position_id,
+        "symbol": "BTC/USDT",
+        "events": [{
+            "scheduled_at": "2026-07-14T04:00:00+00:00",
+            "funding_rate": cost / 100.0,
+            "active_notional": 100.0,
+            "funding_cost": cost,
+        }],
+    }
+
+
+@spec_claim(
+    SpecClaim(
+        "PFA-MAT-01",
+        "pipeline_paper_close_materialization",
+        "atomic delayed economics materialization",
+        "L2c",
+        "Delayed funding recovery atomically converges Position, close-event, cash, "
+        "reconciliation evidence, audit, and outcome-hook intent exactly once.",
+        status="implemented",
+    )
+)
+def test_delayed_funding_materialization_converges_every_projection_once(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from datetime import timedelta
+    from aletheia.portfolio.paper_account import materialize_position_economics
+    from aletheia.storage import repositories as repo
+
+    closed_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    position_id = "delayed-funding-complete"
+    _seed_stuck_paper_close(
+        position_id=position_id,
+        symbol="BTC/USDT",
+        closed_at=closed_at,
+    )
+    _seed_null_close_event(position_id, closed_at.isoformat())
+    evidence = _complete_recovered_funding(position_id, cost=0.02)
+
+    result = materialize_position_economics(
+        position_id,
+        realized_pnl=0.36,
+        funding_cost=0.02,
+        funding_evidence=evidence,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+    )
+    conn.execute(
+        "UPDATE position_close_events SET realized_pnl=NULL WHERE position_id=?",
+        (position_id,),
+    )
+    conn.execute("DELETE FROM outcome_hook_jobs WHERE position_id=?", (position_id,))
+    conn.commit()
+    repaired = materialize_position_economics(
+        position_id,
+        realized_pnl=0.36,
+        funding_cost=0.02,
+        funding_evidence=evidence,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+    )
+    repeated = materialize_position_economics(
+        position_id,
+        realized_pnl=0.36,
+        funding_cost=0.02,
+        funding_evidence=evidence,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+    )
+
+    stored = repo._select_one("positions", position_id)
+    close_event = conn.execute(
+        "SELECT * FROM position_close_events WHERE position_id=?",
+        (position_id,),
+    ).fetchone()
+    cash_events = conn.execute(
+        "SELECT * FROM paper_account_events WHERE position_id=? "
+        "AND action='position_closed'",
+        (position_id,),
+    ).fetchall()
+    reconciliation = json.loads(stored["reconciliation_evidence"])
+
+    assert result["status"] == "settled"
+    assert repaired["status"] == "repaired"
+    assert repeated["status"] == "already_current"
+    assert stored["realized_pnl"] == pytest.approx(0.36)
+    assert stored["funding_cost"] == pytest.approx(0.02)
+    assert stored["outcome_eligible"] == 1
+    assert close_event["realized_pnl"] == pytest.approx(0.36)
+    assert len(cash_events) == 1
+    assert cash_events[0]["amount_usdt"] == pytest.approx(0.36)
+    assert reconciliation["funding"]["status"] == "complete"
+    assert reconciliation["funding_economics_fingerprint"].startswith("sha256:")
+    assert len(repo.list_outcome_hook_jobs(position_id=position_id)) == 1
+    audits = conn.execute(
+        "SELECT * FROM audit_events WHERE entity_id=? "
+        "AND event_type='paper_position_funding_settled'",
+        (position_id,),
+    ).fetchall()
+    assert len(audits) == 1
+    repairs = conn.execute(
+        "SELECT * FROM audit_events WHERE entity_id=? "
+        "AND event_type='paper_position_economics_repaired'",
+        (position_id,),
+    ).fetchall()
+    assert len(repairs) == 1
+
+
+@spec_claim(
+    SpecClaim(
+        "PFA-MAT-02",
+        "pipeline_paper_close_materialization",
+        "delayed materialization rollback",
+        "L2c",
+        "A failure in delayed outcome-hook persistence rolls back Position, close "
+        "event, and cash settlement together.",
+        status="implemented",
+    )
+)
+def test_delayed_funding_materialization_rolls_back_every_projection(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from datetime import timedelta
+    from aletheia.portfolio.paper_account import materialize_position_economics
+    from aletheia.storage import repositories as repo
+
+    closed_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    position_id = "delayed-funding-rollback"
+    _seed_stuck_paper_close(
+        position_id=position_id,
+        symbol="BTC/USDT",
+        closed_at=closed_at,
+    )
+    _seed_null_close_event(position_id, closed_at.isoformat())
+
+    monkeypatch.setattr(
+        repo,
+        "enqueue_outcome_hook_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("hook failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="hook failed"):
+        materialize_position_economics(
+            position_id,
+            realized_pnl=0.38,
+            funding_cost=0.0,
+            funding_evidence=_complete_recovered_funding(position_id),
+            outcome_eligible=True,
+            outcome_exclusion_reason="eligible",
+        )
+
+    stored = repo._select_one("positions", position_id)
+    close_event = conn.execute(
+        "SELECT realized_pnl FROM position_close_events WHERE position_id=?",
+        (position_id,),
+    ).fetchone()
+    assert stored["realized_pnl"] is None
+    assert stored["funding_cost"] is None
+    assert close_event["realized_pnl"] is None
+    assert not repo.has_paper_account_position_event("position_closed", position_id)
+
+
+@spec_claim(
+    SpecClaim(
+        "PFA-MAT-04",
+        "pipeline_paper_close_materialization",
+        "audited cash compensation",
+        "L2c",
+        "An explicitly approved numeric correction updates economic projections and "
+        "appends one compensating cash event without rewriting prior cash history.",
+        status="implemented",
+    )
+)
+def test_numeric_funding_correction_appends_one_cash_compensation(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from datetime import timedelta
+    from aletheia.portfolio.paper_account import materialize_position_economics
+
+    closed_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    position_id = "delayed-funding-correction"
+    _seed_stuck_paper_close(
+        position_id=position_id,
+        symbol="BTC/USDT",
+        closed_at=closed_at,
+    )
+    _seed_null_close_event(position_id, closed_at.isoformat())
+    materialize_position_economics(
+        position_id,
+        realized_pnl=0.38,
+        funding_cost=0.0,
+        funding_evidence=_complete_recovered_funding(position_id),
+        outcome_eligible=False,
+        outcome_exclusion_reason="missing_attribution_identity",
+    )
+    with pytest.raises(ValueError, match="same funding fingerprint"):
+        materialize_position_economics(
+            position_id,
+            realized_pnl=0.37,
+            funding_cost=0.01,
+            funding_evidence=_complete_recovered_funding(position_id),
+            outcome_eligible=False,
+            outcome_exclusion_reason="missing_attribution_identity",
+            actor="human",
+            source="paper_funding_reconciliation",
+            allow_correction=True,
+        )
+    corrected_evidence = _complete_recovered_funding(position_id, cost=0.08)
+    corrected = materialize_position_economics(
+        position_id,
+        realized_pnl=0.30,
+        funding_cost=0.08,
+        funding_evidence=corrected_evidence,
+        outcome_eligible=False,
+        outcome_exclusion_reason="missing_attribution_identity",
+        actor="human",
+        source="paper_funding_reconciliation",
+        allow_correction=True,
+    )
+    repeated = materialize_position_economics(
+        position_id,
+        realized_pnl=0.30,
+        funding_cost=0.08,
+        funding_evidence=corrected_evidence,
+        outcome_eligible=False,
+        outcome_exclusion_reason="missing_attribution_identity",
+        actor="human",
+        source="paper_funding_reconciliation",
+        allow_correction=True,
+    )
+    with pytest.raises(ValueError, match="compensation already exists"):
+        materialize_position_economics(
+            position_id,
+            realized_pnl=0.40,
+            funding_cost=-0.02,
+            funding_evidence=_complete_recovered_funding(position_id, cost=-0.02),
+            outcome_eligible=False,
+            outcome_exclusion_reason="missing_attribution_identity",
+            actor="human",
+            source="paper_funding_reconciliation",
+            allow_correction=True,
+        )
+
+    events = conn.execute(
+        "SELECT action,amount_usdt FROM paper_account_events "
+        "WHERE position_id=? ORDER BY rowid",
+        (position_id,),
+    ).fetchall()
+    assert corrected["status"] == "corrected"
+    assert corrected["cash_compensation"] == pytest.approx(-0.08)
+    assert repeated["status"] == "already_current"
+    assert [(row["action"], row["amount_usdt"]) for row in events] == [
+        ("position_closed", pytest.approx(0.38)),
+        ("manual_debit", pytest.approx(-0.08)),
+    ]
+
+
 @spec_claim(
     SpecClaim(
         "PL-PCM-16",
@@ -1506,3 +1799,88 @@ def test_overview_hero_unblocks_when_all_unsettled_closes_are_terminal(
 
     portfolio_after = compute_portfolio(execution_mode="paper_internal")
     assert portfolio_after["total_value_usdt"] is None
+
+
+@spec_claim(
+    SpecClaim(
+        "PFA-MAT-09",
+        "pipeline_paper_close_materialization",
+        "settler database lifecycle",
+        "L2c",
+        "The async funding settler reacquires its thread-local SQLite connection "
+        "after network awaits before running its ledger-orphan pass.",
+        status="implemented",
+    )
+)
+def test_paper_funding_settler_reacquires_db_after_async_backfill_cleanup(
+    tmp_path, monkeypatch,
+):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    import asyncio
+    from datetime import timedelta
+
+    from aletheia.portfolio import paper_account as pa
+    from aletheia.portfolio.local_funding import LocalFundingResult
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+    from aletheia.storage.sqlite import close_db
+
+    close_time = datetime.now(timezone.utc) - timedelta(hours=1)
+    _seed_stuck_paper_close(
+        position_id="pending-after-await",
+        symbol="BTC/USDT",
+        closed_at=close_time,
+    )
+    orphan = Position(
+        id="numeric-ledger-orphan",
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=101.0,
+        realized_pnl=1.0,
+        execution_mode="paper_internal",
+        status="closed",
+        entry_fee=0.0,
+        exit_fee=0.0,
+        funding_cost=0.0,
+        funding_source="not_applicable",
+        opened_at=(close_time - timedelta(hours=1)).isoformat(),
+        closed_at=close_time.isoformat(),
+    )
+    repo.insert_position(orphan)
+
+    monkeypatch.setattr(
+        "aletheia.portfolio.local_funding.compute_local_funding",
+        lambda *_args, **_kwargs: LocalFundingResult(
+            complete=False,
+            funding_cost=None,
+            funding_source="unavailable",
+            evidence={"reason": "missing_event_observation"},
+        ),
+    )
+
+    async def close_connection_during_await(_row):
+        close_db()
+        await asyncio.sleep(0)
+        return 0
+
+    monkeypatch.setattr(
+        pa,
+        "_backfill_historical_funding_for_position",
+        close_connection_during_await,
+    )
+
+    result = asyncio.run(pa.settle_unsettled_paper_closes())
+
+    assert result["still_pending"] == 1
+    assert result["errors"] == []
+    assert result["settled"] == 1
+    assert repo.has_paper_account_position_event(
+        "position_closed", orphan.id,
+    )
+    from aletheia.storage.sqlite import get_db
+    assert get_db().execute("SELECT 1").fetchone() is not None

@@ -1880,6 +1880,46 @@ def _probe_outcome_history_integrity(report: Report) -> None:
         report.add("loop.outcome_history", "info", f"probe error: {e}")
 
 
+def _probe_paper_funding_accounting(report: Report) -> None:
+    """Read-only convergence check for local futures funding economics."""
+    try:
+        from aletheia.maintenance.paper_funding_reconciliation import (
+            paper_funding_diagnostic_summary,
+        )
+
+        result = paper_funding_diagnostic_summary(limit=100)
+        summary = result["summary"]
+        numeric = int(summary["duplicate_settlement_numeric_mismatch"])
+        ledgers = int(summary["close_event_projection_mismatch"]) + int(
+            summary["paper_cash_ledger_mismatch"]
+        )
+        recoverable = int(summary["recoverable_null_pnl"]) + int(
+            summary["terminal_now_recoverable"]
+        )
+        missing_hooks = int(summary["missing_outcome_hooks"])
+        incomplete = int(summary["still_incomplete"])
+        detail = (
+            f"version={result['accounting_version']}; scanned={result['scanned']}; "
+            f"numeric_mismatch={numeric}; ledger_mismatch={ledgers}; "
+            f"recoverable={recoverable}; incomplete={incomplete}; "
+            f"missing_hooks={missing_hooks}"
+        )
+        if numeric or ledgers:
+            report.add(
+                "accounting.paper_funding", "blocker", detail,
+                "run `aletheia data reconcile-paper-funding` and review the dry run",
+            )
+        elif recoverable or incomplete or missing_hooks:
+            report.add(
+                "accounting.paper_funding", "warn", detail,
+                "review the dry run; apply requires explicit position IDs and fingerprint",
+            )
+        else:
+            report.add("accounting.paper_funding", "ok", detail)
+    except Exception as e:
+        report.add("accounting.paper_funding", "info", f"probe error: {e}")
+
+
 def _probe_sizing_policy(report: Report) -> None:
     """Persona-learning (P3) health: is the sizing learner active, and is any active
     regime bucket bleeding (negative clean reward while nudging appetite)? Dormant by
@@ -3277,6 +3317,7 @@ def build_report() -> Report:
         _probe_knowledge_flood,
         _probe_learning_retrieval,
         _probe_outcome_history_integrity,
+        _probe_paper_funding_accounting,
         _probe_reconciled_ratio,
         _probe_reconcile_thrash,
         _probe_sizing_policy,

@@ -33,6 +33,8 @@ _MAX_OBSERVATION_GAP = timedelta(minutes=15)
 # harmless write-order skew while still rejecting economically meaningful gaps.
 _ENTRY_TIME_TOLERANCE = timedelta(seconds=1)
 _METHOD = "active_entry_fill_notional_x_scheduled_rate"
+_ACCOUNTING_VERSION = "local-paper-funding-v2"
+_SETTLEMENT_SKEW = timedelta(seconds=1)
 
 
 @dataclass(frozen=True)
@@ -131,6 +133,41 @@ def _snapshot_evidence(row: _ScheduledSnapshot) -> dict[str, Any]:
         "scheduled_at": _as_iso(row.scheduled_at),
         "observed_at": _as_iso(row.observed_at),
     }
+
+
+def _canonical_settlement(value: datetime) -> datetime:
+    """Remove sub-second exchange serialization noise from event identity."""
+    return value.astimezone(timezone.utc).replace(microsecond=0)
+
+
+def _is_settled_event(row: _ScheduledSnapshot) -> bool:
+    return (
+        _canonical_settlement(row.observed_at)
+        == _canonical_settlement(row.scheduled_at)
+        and abs(row.observed_at - row.scheduled_at) < _SETTLEMENT_SKEW
+    )
+
+
+def _conflicting_rates(rows: list[_ScheduledSnapshot]) -> bool:
+    if not rows:
+        return False
+    first = rows[0].funding_rate
+    return any(
+        not math.isclose(row.funding_rate, first, rel_tol=0.0, abs_tol=1e-15)
+        for row in rows[1:]
+    )
+
+
+def _event_evidence(
+    row: _ScheduledSnapshot,
+    *,
+    canonical_at: datetime,
+) -> dict[str, Any]:
+    evidence = _snapshot_evidence(row)
+    evidence["raw_scheduled_at"] = evidence["scheduled_at"]
+    evidence["raw_observed_at"] = evidence["observed_at"]
+    evidence["scheduled_at"] = _as_iso(canonical_at)
+    return evidence
 
 
 def _load_exact_entry_fills(
@@ -448,7 +485,7 @@ def _compute_local_funding_with_entry_fills(
     opening_candidates = [
         row
         for row in rows
-        if row.observed_at <= opened < row.scheduled_at
+        if row.observed_at <= opened < _canonical_settlement(row.scheduled_at)
     ]
     if not opening_candidates:
         return _incomplete(
@@ -469,7 +506,7 @@ def _compute_local_funding_with_entry_fills(
 
     exchange = opening.exchange
     venue_rows = [row for row in rows if row.exchange == exchange]
-    current_target = opening.scheduled_at
+    current_target = _canonical_settlement(opening.scheduled_at)
     previous_event = opened
     events: list[dict[str, Any]] = []
     total_cost = 0.0
@@ -490,10 +527,31 @@ def _compute_local_funding_with_entry_fills(
         event_candidates = [
             row
             for row in venue_rows
-            if row.scheduled_at == current_target
+            if _canonical_settlement(row.scheduled_at) == current_target
             and previous_event <= row.observed_at <= current_target
             and current_target - row.observed_at <= _MAX_OBSERVATION_GAP
         ]
+        settled_candidates = [
+            row for row in venue_rows
+            if _canonical_settlement(row.scheduled_at) == current_target
+            and _is_settled_event(row)
+            and previous_event <= row.observed_at < current_target + _SETTLEMENT_SKEW
+        ]
+        if _conflicting_rates(settled_candidates):
+            return _incomplete(
+                position=position,
+                opened_at=opened,
+                closed_at=closed,
+                reason="conflicting_settlement_rates",
+                exchange=exchange,
+                events=events,
+                diagnostic={
+                    "canonical_settlement_at": _as_iso(current_target),
+                    "snapshot_ids": [row.id for row in settled_candidates],
+                },
+            )
+        if settled_candidates:
+            event_candidates = settled_candidates
         if not event_candidates:
             return _incomplete(
                 position=position,
@@ -504,7 +562,10 @@ def _compute_local_funding_with_entry_fills(
                 events=events,
             )
         event_snapshot = max(event_candidates, key=lambda row: row.observed_at)
-        if any(fill.filled_at == current_target for fill in entry_fills):
+        if any(
+            _canonical_settlement(fill.filled_at) == current_target
+            for fill in entry_fills
+        ):
             return _incomplete(
                 position=position,
                 opened_at=opened,
@@ -529,7 +590,10 @@ def _compute_local_funding_with_entry_fills(
                 events=events,
             )
         event_cost = active_notional * event_snapshot.funding_rate * direction_sign
-        event_evidence = _snapshot_evidence(event_snapshot)
+        event_evidence = _event_evidence(
+            event_snapshot,
+            canonical_at=current_target,
+        )
         event_evidence["active_notional"] = active_notional
         event_evidence["active_quantity"] = sum(
             fill.fill_quantity for fill in active_fills
@@ -543,9 +607,14 @@ def _compute_local_funding_with_entry_fills(
         transition_candidates = [
             row
             for row in venue_rows
+            if current_target <= row.observed_at < current_target + _SETTLEMENT_SKEW
+            and _canonical_settlement(row.scheduled_at) > current_target
+        ] or [
+            row
+            for row in venue_rows
             if current_target <= row.observed_at <= closed
             and row.observed_at - current_target <= _MAX_OBSERVATION_GAP
-            and row.scheduled_at > current_target
+            and _canonical_settlement(row.scheduled_at) > current_target
         ]
         if not transition_candidates:
             # Diagnose: what's the FIRST observation strictly after
@@ -585,12 +654,12 @@ def _compute_local_funding_with_entry_fills(
             )
         transition = min(transition_candidates, key=lambda row: row.observed_at)
         previous_event = current_target
-        current_target = transition.scheduled_at
+        current_target = _canonical_settlement(transition.scheduled_at)
 
     close_anchor_candidates = [
         row
         for row in venue_rows
-        if row.observed_at <= closed < row.scheduled_at
+        if row.observed_at <= closed < _canonical_settlement(row.scheduled_at)
         and closed - row.observed_at <= _MAX_OBSERVATION_GAP
     ]
     if not close_anchor_candidates:
@@ -628,6 +697,8 @@ def _compute_local_funding_with_entry_fills(
         "status": "complete",
         "source": "local_simulation",
         "method": _METHOD,
+        "accounting_version": _ACCOUNTING_VERSION,
+        "coverage_mode": "live_coverage",
         "position_id": position.get("id"),
         "symbol": position.get("symbol"),
         "exchange": exchange,
@@ -639,13 +710,172 @@ def _compute_local_funding_with_entry_fills(
         "direction": direction,
         "direction_sign": int(direction_sign),
         "events": events,
-        "next_settlement_anchor": _snapshot_evidence(close_anchor),
+        "next_settlement_anchor": _event_evidence(
+            close_anchor,
+            canonical_at=_canonical_settlement(close_anchor.scheduled_at),
+        ),
     }
     return LocalFundingResult(
         complete=True,
         funding_cost=total_cost,
         funding_source="local_simulation",
         evidence=evidence,
+    )
+
+
+def _compute_historical_funding_with_entry_fills(
+    position: Mapping[str, Any],
+    *,
+    opened: datetime,
+    closed: datetime,
+    through: datetime,
+    entry_fills: list[_EntryFill],
+) -> LocalFundingResult:
+    direction = str(position.get("direction") or "").lower()
+    if direction in {"long", "buy"}:
+        direction_sign = 1.0
+    elif direction in {"short", "sell"}:
+        direction_sign = -1.0
+    else:
+        return _incomplete(
+            position=position, opened_at=opened, closed_at=closed,
+            reason="invalid_direction",
+        )
+
+    rows = _load_scheduled_snapshots(
+        str(position.get("symbol") or ""), through=through,
+    )
+    venues = sorted({row.exchange for row in rows})
+    complete_venues: list[tuple[str, list[tuple[datetime, _ScheduledSnapshot]]]] = []
+    conflict: dict[str, list[str]] | None = None
+
+    for exchange in venues:
+        venue_rows = [row for row in rows if row.exchange == exchange]
+        buckets: dict[datetime, list[_ScheduledSnapshot]] = {}
+        for row in venue_rows:
+            if _is_settled_event(row):
+                buckets.setdefault(
+                    _canonical_settlement(row.scheduled_at), [],
+                ).append(row)
+        selected: list[tuple[datetime, _ScheduledSnapshot]] = []
+        venue_conflict = False
+        for settled_at in sorted(buckets):
+            candidates = buckets[settled_at]
+            if _conflicting_rates(candidates):
+                conflict = {
+                    "exchange": exchange,
+                    "snapshot_ids": [row.id for row in candidates],
+                }
+                venue_conflict = True
+                break
+            selected.append((settled_at, max(candidates, key=lambda row: row.observed_at)))
+        if venue_conflict:
+            continue
+
+        before = [item for item in selected if item[0] <= opened]
+        after = [item for item in selected if item[0] > closed]
+        if not before or not after:
+            continue
+        start_index = selected.index(before[-1])
+        end_index = selected.index(after[0])
+        bracket = selected[start_index:end_index + 1]
+        contiguous = True
+        for (current_at, _), (next_at, _) in zip(bracket, bracket[1:]):
+            if not any(
+                _canonical_settlement(row.observed_at) == current_at
+                and _canonical_settlement(row.scheduled_at) == next_at
+                and row.observed_at < current_at + _SETTLEMENT_SKEW
+                for row in venue_rows
+            ):
+                contiguous = False
+                break
+        if contiguous:
+            complete_venues.append((exchange, bracket))
+
+    if conflict is not None:
+        return _incomplete(
+            position=position, opened_at=opened, closed_at=closed,
+            reason="conflicting_settlement_rates",
+            exchange=str(conflict["exchange"]),
+            diagnostic={"snapshot_ids": conflict["snapshot_ids"]},
+        )
+    if len(complete_venues) != 1:
+        return _incomplete(
+            position=position, opened_at=opened, closed_at=closed,
+            reason=(
+                "ambiguous_historical_funding_venues"
+                if len(complete_venues) > 1
+                else "incomplete_historical_funding_ledger"
+            ),
+            diagnostic={
+                "complete_exchanges": [exchange for exchange, _ in complete_venues],
+                "through": _as_iso(through),
+            },
+        )
+
+    exchange, bracket = complete_venues[0]
+    events: list[dict[str, Any]] = []
+    total_cost = 0.0
+    for settled_at, snapshot in bracket:
+        if not (opened < settled_at <= closed):
+            continue
+        if any(
+            _canonical_settlement(fill.filled_at) == settled_at
+            for fill in entry_fills
+        ):
+            return _incomplete(
+                position=position, opened_at=opened, closed_at=closed,
+                reason="entry_fill_on_settlement_boundary", exchange=exchange,
+                events=events,
+            )
+        active_fills = [fill for fill in entry_fills if fill.filled_at < settled_at]
+        active_notional = sum(
+            fill.fill_price * fill.fill_quantity for fill in active_fills
+        )
+        if not math.isfinite(active_notional) or active_notional <= 0:
+            return _incomplete(
+                position=position, opened_at=opened, closed_at=closed,
+                reason="missing_active_entry_notional", exchange=exchange,
+                events=events,
+            )
+        event_cost = active_notional * snapshot.funding_rate * direction_sign
+        evidence = _event_evidence(snapshot, canonical_at=settled_at)
+        evidence.update({
+            "active_notional": active_notional,
+            "active_quantity": sum(fill.fill_quantity for fill in active_fills),
+            "active_fill_ids": [fill.fill_id for fill in active_fills],
+            "direction_sign": int(direction_sign),
+            "funding_cost": event_cost,
+        })
+        events.append(evidence)
+        total_cost += event_cost
+
+    next_settlement = next(item for item in bracket if item[0] > closed)
+    return LocalFundingResult(
+        complete=True,
+        funding_cost=total_cost,
+        funding_source="local_simulation",
+        evidence={
+            "status": "complete",
+            "source": "local_simulation",
+            "method": _METHOD,
+            "accounting_version": _ACCOUNTING_VERSION,
+            "coverage_mode": "historical_ledger",
+            "position_id": position.get("id"),
+            "symbol": position.get("symbol"),
+            "exchange": exchange,
+            "opened_at": _as_iso(opened),
+            "closed_at": _as_iso(closed),
+            "entry_order_count": len({fill.order_id for fill in entry_fills}),
+            "entry_fill_count": len(entry_fills),
+            "entry_fill_ids": [fill.fill_id for fill in entry_fills],
+            "direction": direction,
+            "direction_sign": int(direction_sign),
+            "events": events,
+            "next_settlement_anchor": _event_evidence(
+                next_settlement[1], canonical_at=next_settlement[0],
+            ),
+        },
     )
 
 
@@ -685,6 +915,8 @@ def compute_local_funding(
     position: Mapping[str, Any],
     *,
     closed_at: str | datetime,
+    allow_historical_ledger: bool = False,
+    as_of: str | datetime | None = None,
 ) -> LocalFundingResult:
     """Aggregate complete local-paper funding over one Position lifetime.
 
@@ -709,8 +941,28 @@ def compute_local_funding(
     if entry_fills is None:
         return _incomplete(position=position, opened_at=opened, closed_at=closed,
                            reason=lineage_error or "incomplete_entry_lineage")
-    return _compute_local_funding_with_entry_fills(
+    live_result = _compute_local_funding_with_entry_fills(
         position, opened=opened, closed=closed, entry_fills=entry_fills,
+    )
+    if live_result.complete or not allow_historical_ledger:
+        return live_result
+    if as_of is None:
+        through = datetime.now(timezone.utc)
+    elif isinstance(as_of, datetime):
+        through = as_of.astimezone(timezone.utc) if as_of.tzinfo else None
+    else:
+        through = _parse_utc(as_of)
+    if through is None or through < closed:
+        return _incomplete(
+            position=position, opened_at=opened, closed_at=closed,
+            reason="invalid_historical_funding_horizon",
+        )
+    return _compute_historical_funding_with_entry_fills(
+        position,
+        opened=opened,
+        closed=closed,
+        through=through,
+        entry_fills=entry_fills,
     )
 
 

@@ -1,6 +1,8 @@
 """Cash ledger and affordability view for the local ``paper_internal`` account."""
 
 from datetime import datetime, timezone
+import hashlib
+import json
 import logging
 import math
 
@@ -19,13 +21,26 @@ _BACKFILLABLE_REASONS = frozenset({
     "stale_open_anchor",
 })
 
-# After this age past `closed_at`, an unsettled paper_internal futures position
-# whose funding economics still cannot be reconstructed transitions to a
-# terminal "gave up" state. Rationale: paper_funding_settler runs every 15
-# minutes, so 24h is ~96 retry attempts — enough to survive any transient
-# collector/proxy outage. Longer waits only stall the UI without new evidence.
-# The number stays NULL (funding_cost is NEVER fabricated as 0 — see the
-# outcome_integrity contract); only the reason we surface changes.
+_STRUCTURALLY_UNRECOVERABLE_REASONS = frozenset({
+    "invalid_direction",
+    "invalid_window",
+    "unsupported_position",
+    "missing_entry_identity",
+    "missing_entry_orders",
+    "missing_primary_entry_order",
+    "entry_identity_mismatch",
+    "entry_quantity_mismatch",
+    "entry_price_mismatch",
+    "entry_fill_before_open",
+    "primary_entry_time_mismatch",
+    "entry_fill_on_settlement_boundary",
+})
+
+# After this age past `closed_at`, only an explicit structural lineage failure
+# may transition to terminal "gave up". The 30-minute settler therefore gets up
+# to ~48 observations before surfacing a stable structural reason. Missing
+# source history or elapsed time alone never proves permanent loss. The number
+# stays NULL (funding_cost is NEVER fabricated as 0); only the reason changes.
 _FUNDING_GIVE_UP_HOURS = 24.0
 
 # Terminal reason surfaced by paper_funding_settler when a position has been
@@ -190,6 +205,272 @@ def settle_position_closed(position_id: str, realized_pnl: float) -> None:
                          note="Local paper position realized PnL")
 
 
+def _economics_fingerprint(funding_evidence: dict) -> str:
+    payload = json.dumps(
+        funding_evidence, sort_keys=True, separators=(",", ":"), default=str,
+    )
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def materialize_position_economics(
+    position_id: str,
+    *,
+    realized_pnl: float,
+    funding_cost: float,
+    funding_evidence: dict,
+    outcome_eligible: bool,
+    outcome_exclusion_reason: str,
+    actor: str = "system",
+    source: str = "paper_funding_settler",
+    allow_correction: bool = False,
+) -> dict:
+    """Atomically converge every durable projection of one paper close."""
+    from aletheia.files.jsonl import write_audit
+    from aletheia.portfolio.outcome_hooks import (
+        SERENITY_POST_MORTEM_HOOK,
+        SHADOW_TRADES_HOOK,
+        enqueue_outcome_hook_jobs,
+    )
+    from aletheia.storage.models import AuditEvent
+    from aletheia.storage.sqlite import get_db
+
+    if not isinstance(funding_evidence, dict) or funding_evidence.get("status") != "complete":
+        raise ValueError("complete funding evidence is required")
+    realized = round(float(realized_pnl), 8)
+    funding = float(funding_cost)
+    if not math.isfinite(realized) or not math.isfinite(funding):
+        raise ValueError("position economics must be finite")
+
+    ensure_paper_account()
+    fingerprint = _economics_fingerprint(funding_evidence)
+    audit_payload: dict | None = None
+    status = "settled"
+    compensation = 0.0
+
+    with repo.transaction(immediate=True):
+        db = get_db()
+        current = repo._select_one("positions", position_id)
+        if current is None:
+            raise ValueError(f"position not found: {position_id}")
+        if (
+            current.get("status") != "closed"
+            or current.get("execution_mode") != "paper_internal"
+            or current.get("market_type") != "usdt_futures"
+        ):
+            raise ValueError("economics materialization requires a closed paper future")
+
+        evidence_root: dict = {}
+        raw_evidence = current.get("reconciliation_evidence")
+        if raw_evidence:
+            try:
+                parsed = json.loads(str(raw_evidence))
+                if isinstance(parsed, dict):
+                    evidence_root = parsed
+            except (TypeError, ValueError, json.JSONDecodeError):
+                evidence_root = {}
+        previous_fingerprint = evidence_root.get("funding_economics_fingerprint")
+        previous_realized = current.get("realized_pnl")
+        close_events = [
+            dict(row) for row in db.execute(
+                "SELECT * FROM position_close_events WHERE position_id=? "
+                "AND is_partial=0 ORDER BY rowid",
+                (position_id,),
+            ).fetchall()
+        ]
+        if len(close_events) != 1:
+            raise ValueError("exactly one full close event is required")
+
+        cash_events = [dict(row) for row in db.execute(
+            "SELECT * FROM paper_account_events WHERE position_id=? AND action IN "
+            "('position_closed','manual_credit','manual_debit') ORDER BY rowid",
+            (position_id,),
+        ).fetchall()]
+        cash_total = round(
+            sum(float(event["amount_usdt"]) for event in cash_events), 8,
+        )
+        expected_hooks: set[str] = set()
+        if outcome_eligible:
+            expected_hooks.add(SHADOW_TRADES_HOOK)
+            if current.get("trade_school") == "serenity" and current.get("opportunity_id"):
+                expected_hooks.add(SERENITY_POST_MORTEM_HOOK)
+        existing_hooks = {
+            str(item["hook_type"])
+            for item in repo.list_outcome_hook_jobs(position_id=position_id, limit=20)
+        }
+        same_realized = previous_realized is not None and math.isclose(
+            float(previous_realized), realized, rel_tol=0.0, abs_tol=1e-8,
+        )
+        same_funding = current.get("funding_cost") is not None and math.isclose(
+            float(current["funding_cost"]), funding, rel_tol=0.0, abs_tol=1e-12,
+        )
+        same_fingerprint = previous_fingerprint == fingerprint
+        if same_fingerprint and previous_realized is not None and not (
+            same_realized and same_funding
+        ):
+            raise ValueError("same funding fingerprint produced different economics")
+        close_projection_current = (
+            same_fingerprint
+            and same_realized
+            and same_funding
+            and math.isclose(
+                float(close_events[0]["realized_pnl"]), realized,
+                rel_tol=0.0, abs_tol=1e-8,
+            ) if close_events[0].get("realized_pnl") is not None else False
+        )
+        projections_current = (
+            close_projection_current
+            and any(event["action"] == "position_closed" for event in cash_events)
+            and math.isclose(cash_total, realized, rel_tol=0.0, abs_tol=1e-8)
+            and bool(current.get("outcome_eligible")) == bool(outcome_eligible)
+            and current.get("outcome_exclusion_reason") == outcome_exclusion_reason
+            and expected_hooks.issubset(existing_hooks)
+        )
+        if projections_current:
+            return {
+                "position_id": position_id,
+                "status": "already_current",
+                "realized_pnl": realized,
+                "funding_cost": funding,
+                "fingerprint": fingerprint,
+                "cash_compensation": 0.0,
+            }
+        if same_fingerprint and same_realized and same_funding:
+            status = "repaired"
+        if previous_realized is not None and not same_realized and not allow_correction:
+            raise ValueError("numeric economics correction requires explicit approval")
+
+        evidence_root.update({
+            "funding": funding_evidence,
+            "funding_economics_fingerprint": fingerprint,
+            "funding_accounting_version": funding_evidence.get(
+                "accounting_version", "local-paper-funding-v2",
+            ),
+        })
+        repo.update_position(
+            position_id,
+            realized_pnl=realized,
+            funding_cost=funding,
+            funding_source="local_simulation",
+            outcome_eligible=outcome_eligible,
+            outcome_exclusion_reason=outcome_exclusion_reason,
+            reconciliation_evidence=json.dumps(
+                evidence_root, sort_keys=True, separators=(",", ":"), default=str,
+            ),
+        )
+        db.execute(
+            "UPDATE position_close_events SET realized_pnl=? WHERE id=?",
+            (realized, close_events[0]["id"]),
+        )
+
+        cash_event = next(
+            (event for event in cash_events if event["action"] == "position_closed"),
+            None,
+        )
+        if cash_event is None:
+            if cash_events:
+                raise ValueError("paper cash adjustments exist without initial settlement")
+            _write_event(
+                action="position_closed",
+                amount_usdt=realized,
+                actor=actor,
+                source=source,
+                position_id=position_id,
+                note="Local paper position realized PnL after funding finalization",
+            )
+        else:
+            compensation = round(realized - cash_total, 8)
+            if abs(compensation) > 1e-8:
+                action = "manual_credit" if compensation > 0 else "manual_debit"
+                existing_adjustment = next(
+                    (
+                        event for event in cash_events
+                        if event["action"] in {"manual_credit", "manual_debit"}
+                    ),
+                    None,
+                )
+                if existing_adjustment is not None:
+                    raise ValueError("position economics compensation already exists")
+                _write_event(
+                    action=action,
+                    amount_usdt=compensation,
+                    actor=actor,
+                    source=source,
+                    position_id=position_id,
+                    note=(
+                        "Owner-approved position economics compensation "
+                        f"{fingerprint}"
+                    ),
+                )
+                status = "corrected"
+
+        if outcome_eligible:
+            enqueue_outcome_hook_jobs({**current, **{
+                "realized_pnl": realized,
+                "funding_cost": funding,
+                "funding_source": "local_simulation",
+                "outcome_eligible": True,
+                "outcome_exclusion_reason": outcome_exclusion_reason,
+            }})
+
+        before = {
+            "realized_pnl": previous_realized,
+            "funding_cost": current.get("funding_cost"),
+            "outcome_eligible": bool(current.get("outcome_eligible")),
+            "funding_economics_fingerprint": previous_fingerprint,
+        }
+        after = {
+            "realized_pnl": realized,
+            "funding_cost": funding,
+            "outcome_eligible": bool(outcome_eligible),
+            "outcome_exclusion_reason": outcome_exclusion_reason,
+            "funding_economics_fingerprint": fingerprint,
+            "cash_compensation": compensation,
+        }
+        event_type = {
+            "corrected": "paper_position_economics_corrected",
+            "repaired": "paper_position_economics_repaired",
+        }.get(status, "paper_position_funding_settled")
+        repo.insert_audit_event(AuditEvent(
+            actor=actor,
+            source=source,
+            event_type=event_type,
+            entity_type="position",
+            entity_id=position_id,
+            before_state=json.dumps(before, sort_keys=True),
+            after_state=json.dumps(after, sort_keys=True),
+            message=(
+                f"Materialized paper funding economics for {position_id}; "
+                f"realized_pnl={realized}; compensation={compensation}"
+            ),
+        ))
+        audit_payload = {
+            "actor": actor,
+            "source": source,
+            "event_type": event_type,
+            "entity_type": "position",
+            "entity_id": position_id,
+            "before": before,
+            "after": after,
+            "message": f"Materialized paper funding economics for {position_id}",
+        }
+
+    if audit_payload is not None:
+        try:
+            write_audit(audit_payload, mirror_db=False)
+        except Exception as exc:
+            logger.error(
+                "paper economics JSONL audit sink failed (%s)", type(exc).__name__,
+            )
+    return {
+        "position_id": position_id,
+        "status": status,
+        "realized_pnl": realized,
+        "funding_cost": funding,
+        "fingerprint": fingerprint,
+        "cash_compensation": compensation,
+    }
+
+
 def _update_position_economics(
     position_id: str,
     realized_pnl: float,
@@ -278,12 +559,11 @@ async def settle_unsettled_paper_closes() -> dict:
     from aletheia.analytics.outcome_integrity import outcome_write_eligibility
     from aletheia.files.jsonl import write_audit
 
-    db = get_db()
     # Exclude already-terminal ("gave up") rows so the settler stops touching
     # them on every tick. They stay realized_pnl=NULL forever — only the
     # surfaced reason distinguishes "still trying" from "gave up".
     rows = [
-        dict(r) for r in db.execute(
+        dict(r) for r in get_db().execute(
             """SELECT * FROM positions
                WHERE status='closed' AND execution_mode='paper_internal'
                  AND market_type='usdt_futures' AND realized_pnl IS NULL
@@ -308,17 +588,17 @@ async def settle_unsettled_paper_closes() -> dict:
         try:
             result = compute_local_funding(row, closed_at=row["closed_at"])
             if not result.complete and result.evidence.get("reason") in _BACKFILLABLE_REASONS:
-                inserted = await _backfill_historical_funding_for_position(row)
-                if inserted:
-                    result = compute_local_funding(row, closed_at=row["closed_at"])
+                await _backfill_historical_funding_for_position(row)
+                result = compute_local_funding(
+                    row,
+                    closed_at=row["closed_at"],
+                    allow_historical_ledger=True,
+                )
 
             if not result.complete:
-                # Age-based give-up: past _FUNDING_GIVE_UP_HOURS since close,
-                # the funding gap is structurally unrecoverable (see
-                # local_funding.py docstring on close_anchor). Surface a
-                # distinct terminal reason so UI/consumers stop reading it
-                # as "still retrying". realized_pnl stays NULL — we do NOT
-                # fabricate a number.
+                # A known structural lineage failure can be terminalized after
+                # the retry window. Age or unavailable source history alone is
+                # never sufficient. realized_pnl stays NULL.
                 closed_at_str = str(row.get("closed_at") or "").strip()
                 age_hours: float | None = None
                 if closed_at_str:
@@ -330,7 +610,12 @@ async def settle_unsettled_paper_closes() -> dict:
                             age_hours = (now_utc - parsed).total_seconds() / 3600.0
                     except ValueError:
                         age_hours = None
-                if age_hours is not None and age_hours >= _FUNDING_GIVE_UP_HOURS:
+                structural_reason = str(result.evidence.get("reason") or "")
+                if (
+                    structural_reason in _STRUCTURALLY_UNRECOVERABLE_REASONS
+                    and age_hours is not None
+                    and age_hours >= _FUNDING_GIVE_UP_HOURS
+                ):
                     reason_before = str(row.get("outcome_exclusion_reason") or "")
                     with repo.transaction(immediate=True):
                         get_db().execute(
@@ -395,22 +680,14 @@ async def settle_unsettled_paper_closes() -> dict:
             outcome_eligible, outcome_reason = outcome_write_eligibility(
                 check_row, exit_fill_verified=True,
             )
-            _update_position_economics(position_id, realized_pnl, funding_cost,
-                                       outcome_eligible, outcome_reason)
-            settle_position_closed(position_id, realized_pnl)
-            write_audit({
-                "actor": "system",
-                "source": "paper_funding_settler",
-                "event_type": "paper_position_funding_settled",
-                "entity_type": "position",
-                "entity_id": position_id,
-                "before": {"realized_pnl": None, "funding_source": "unavailable"},
-                "after": {"realized_pnl": realized_pnl, "funding_source": "local_simulation"},
-                "message": (
-                    f"Auto-settled {sym} paper_internal position {position_id}: "
-                    f"realized_pnl={realized_pnl}"
-                ),
-            })
+            materialize_position_economics(
+                position_id,
+                realized_pnl=realized_pnl,
+                funding_cost=funding_cost,
+                funding_evidence=result.evidence,
+                outcome_eligible=outcome_eligible,
+                outcome_exclusion_reason=outcome_reason,
+            )
             logger.info(
                 "paper_funding_settler: settled %s position %s realized_pnl=%s",
                 sym, position_id, realized_pnl,
@@ -432,7 +709,7 @@ async def settle_unsettled_paper_closes() -> dict:
     # causes paper_ledger_mismatch in authoritative_account_realized_loss, which blocks
     # every subsequent paper trade for the rest of the UTC day.
     orphaned = [
-        dict(r) for r in db.execute(
+        dict(r) for r in get_db().execute(
             """SELECT * FROM positions
                WHERE status='closed' AND execution_mode='paper_internal'
                  AND realized_pnl IS NOT NULL
