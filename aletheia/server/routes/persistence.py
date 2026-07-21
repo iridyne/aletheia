@@ -163,9 +163,13 @@ async def list_positions(mode: str = "paper", status: str | None = None):
 
 # --- Backups ---
 
+# These archive endpoints intentionally use synchronous handlers. FastAPI runs
+# `def` endpoints in its worker threadpool, keeping filesystem walks, SQLite
+# backups, checksum verification, and archive compression off the event loop.
+
 
 @router.get("/backups")
-async def list_backups():
+def list_backups():
     """List available backups."""
     from aletheia.backup.service import BackupService
 
@@ -178,7 +182,7 @@ class BackupRequest(BaseModel):
 
 
 @router.post("/backups")
-async def create_backup(req: BackupRequest):
+def create_backup(req: BackupRequest):
     """Create a new backup."""
     from aletheia.backup.service import BackupService
 
@@ -188,7 +192,7 @@ async def create_backup(req: BackupRequest):
 
 
 @router.post("/backups/verify")
-async def verify_backup_endpoint(path: str):
+def verify_backup_endpoint(path: str):
     """Verify a backup archive.
 
     Only accepts paths inside the managed archive roots (data_dir/backups or
@@ -211,7 +215,7 @@ class ExportRequest(BaseModel):
 
 
 @router.post("/export")
-async def create_export(req: ExportRequest):
+def create_export(req: ExportRequest):
     """Create an export bundle."""
     from aletheia.sync.exporter import ExportService
 
@@ -226,7 +230,7 @@ class ImportRequest(BaseModel):
 
 
 @router.post("/import")
-async def import_bundle(req: ImportRequest):
+def import_bundle(req: ImportRequest):
     """Import an export bundle. Set dry_run=false to actually merge.
 
     Only accepts paths inside the managed archive roots (data_dir/backups or
