@@ -657,15 +657,22 @@ async def test_trading_decision_records_debate_trace(tmp_path, monkeypatch):
         )),
     )
 
-    decision = await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
+    with pytest.raises(td.DecisionUnavailable, match="debate_not_confirmed") as exc_info:
+        await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
 
-    assert decision.action == "skip"
-    assert decision.conviction == 48
-    assert decision.debate_ran is True
-    assert decision.debate_initial_conviction == 60
-    assert decision.debate_bull_confidence == 40
-    assert decision.debate_bear_confidence == 80
-    assert decision.debate_adjustment == -12
+    error = exc_info.value
+    assert error.reason == "debate_not_confirmed"
+    assert error.stage == "operator_debate_gate"
+    debate_trace = error.filter_trace[-1]
+    assert debate_trace["filter_name"] == "debate_downgrade"
+    assert debate_trace["decision"] == "rejected"
+    assert debate_trace["reason_code"] == "debate_not_confirmed"
+    assert debate_trace["inputs"] == {
+        "initial_conviction": 60,
+        "final_conviction": 48,
+        "bull_confidence": 40,
+        "bear_confidence": 80,
+    }
 
 
 @pytest.mark.asyncio
