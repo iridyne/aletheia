@@ -345,12 +345,19 @@ def test_lesson_constraint_category_gate_is_risk_only():
         mock_create.return_value = type("Item", (), {"id": "g-1"})()
         result = route_automatic_block_recommendation(
             {"action": "block_symbol", "symbol": "BTC/USDT"},
-            evidence={}, source_id="test-src",
+            evidence={
+                "factor_keys": ["momentum:BTC/USDT:long:high:on_time"],
+                "scanner_families": ["momentum"],
+            },
+            source_id="test-src",
         )
     assert result is not None and result.get("action") == "guard_shadow_candidate", (
         "block_symbol routed by dreaming_agent must become guard_shadow_candidate, not block_symbol"
     )
     assert result.get("original_action") == "block_symbol"
+    metadata = mock_create.call_args.kwargs["metadata"]
+    assert metadata["applies_to"]["symbol"] == ["BTC/USDT"]
+    assert metadata["applies_to"]["scanner_family"] == ["momentum"]
 
 
 @spec_claim(

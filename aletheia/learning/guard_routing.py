@@ -20,8 +20,17 @@ def route_automatic_block_recommendation(
     field, value = _predicate(action, recommendation)
     if not field or not value:
         return {"action": "guard_shadow_unavailable", "reason": "invalid_block_scope"}
+    applies_to = _evidence_scope(action, str(value), evidence)
+    if applies_to is None:
+        return {"action": "guard_shadow_unavailable", "reason": "invalid_block_scope"}
     identity = json.dumps(
-        {"action": action, "field": field, "value": value, "source_id": source_id},
+        {
+            "action": action,
+            "field": field,
+            "value": value,
+            "source_id": source_id,
+            "applies_to": applies_to,
+        },
         sort_keys=True,
     )
     guard_id = f"auto_shadow_{hashlib.sha256(identity.encode()).hexdigest()[:16]}"
@@ -33,7 +42,7 @@ def route_automatic_block_recommendation(
         "shadow_only": True,
         "source_type": "automatic_lesson_recommendation", "source_id": source_id,
         "predicates": [{"field": field, "op": "eq", "value": value}],
-        "applies_to": {"asset_class": ["crypto"]}, "evidence_summary": evidence,
+        "applies_to": applies_to, "evidence_summary": evidence,
         "tags": ["auto-generated", "shadow-only", action],
     }
     try:
@@ -52,6 +61,60 @@ def route_automatic_block_recommendation(
         "action": "guard_shadow_candidate", "guard_id": guard_id,
         "guard_candidate_id": getattr(item, "id", None), "original_action": action,
     }
+
+
+def _evidence_scope(action: str, value: str, evidence: dict) -> dict | None:
+    """Build an exact source scope; never turn partial evidence into a global Guard."""
+    factor_rows: list[tuple[str, str, str]] = []
+    for raw in evidence.get("factor_keys") or []:
+        parts = str(raw).split(":")
+        if len(parts) < 3:
+            continue
+        scanner, symbol, direction = parts[:3]
+        if scanner and "/" in symbol and direction in {"long", "short"}:
+            factor_rows.append((scanner, symbol, direction))
+
+    if action == "block_scanner":
+        factor_rows = [row for row in factor_rows if row[0] == value]
+    elif action == "block_symbol":
+        factor_rows = [row for row in factor_rows if row[1] == value]
+    elif action == "block_direction":
+        factor_rows = [row for row in factor_rows if row[2] == value]
+
+    symbols = {row[1] for row in factor_rows}
+    families = {row[0] for row in factor_rows}
+    directions = {row[2] for row in factor_rows}
+    if not factor_rows:
+        symbols.update(_evidence_values(evidence, "symbol", "symbols"))
+        families.update(_evidence_values(evidence, "scanner_family", "scanner_families"))
+        directions.update(_evidence_values(evidence, "direction", "directions"))
+        if action == "block_scanner":
+            families.add(value)
+        elif action == "block_symbol":
+            symbols.add(value)
+        elif action == "block_direction":
+            directions.add(value)
+
+    if not symbols or not families:
+        return None
+    scope = {
+        "asset_class": ["crypto"],
+        "symbol": sorted(symbols),
+        "scanner_family": sorted(families),
+    }
+    if directions:
+        scope["direction"] = sorted(directions)
+    return scope
+
+
+def _evidence_values(evidence: dict, singular: str, plural: str) -> set[str]:
+    raw = evidence.get(plural)
+    if raw is None:
+        raw = evidence.get(singular)
+    if raw in (None, ""):
+        return set()
+    values = raw if isinstance(raw, (list, tuple, set)) else [raw]
+    return {str(item) for item in values if item not in (None, "")}
 
 
 def _predicate(action: str, recommendation: dict) -> tuple[str | None, str | None]:

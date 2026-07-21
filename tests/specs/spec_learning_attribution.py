@@ -177,7 +177,12 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     monkeypatch.setattr(guard_routing, "create_guard_candidate", fake_create)
     routed = guard_routing.route_automatic_block_recommendation(
         {"action": "block_scanner", "scanner": "momentum"},
-        evidence={"case_count": 12, "outcome_counts": {"loss": 9}},
+        evidence={
+            "case_count": 12,
+            "outcome_counts": {"loss": 9},
+            "factor_keys": ["momentum:BTC/USDT:long:high:on_time"],
+            "scanner_families": ["momentum"],
+        },
         source_id="case-1",
     )
 
@@ -190,6 +195,24 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     assert captured["proposed_block_candidate"] is True
     assert captured["proposed_score_penalty"] == 0
     assert "shadow-only" in captured["tags"]
+    assert captured["applies_to"] == {
+        "asset_class": ["crypto"],
+        "symbol": ["BTC/USDT"],
+        "scanner_family": ["momentum"],
+        "direction": ["long"],
+    }
+
+    captured.clear()
+    unavailable = guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence={"case_count": 12, "outcome_counts": {"loss": 9}},
+        source_id="case-unscoped",
+    )
+    assert unavailable == {
+        "action": "guard_shadow_unavailable",
+        "reason": "invalid_block_scope",
+    }
+    assert captured == {}
     from pathlib import Path
     dreaming_source = Path("aletheia/agents/dreaming_agent.py").read_text(encoding="utf-8")
     assert "route_automatic_block_recommendation" in dreaming_source

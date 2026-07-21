@@ -557,7 +557,7 @@ These claims are target SDD. Each implementation batch must first add its claims
 | LE-B16 | L2b | all paths share versioned cost-aware outcome eligibility and source precedence | implemented — behavior consumers use the central eligible cohort and stale derived reports fail closed |
 | LE-B17 | L2b | narrative/LLM artifacts cannot independently increase samples or promotion confidence | implemented |
 | LE-B18 | L2b | exit-policy advisor remains read-only with no settings or position-management consumer | implemented |
-| LE-B19 | L2b | automatic `block_*` recommendations enter guard shadow evaluation, not Risk Engine via category coercion | implemented |
+| LE-B19 | L2b | automatic `block_*` recommendations enter exact symbol/family-scoped guard shadow evaluation, fail closed when scope evidence is incomplete, and never enter Risk Engine via category coercion | implemented |
 | LE-B20 | L2b | universe family calibration records clean prospective neutral/treatment exposures before score influence | implemented |
 | LE-B21 | L2b | concurrent policy/config changes version, stratify, pause, or invalidate affected experiments | partial — deterministic policy epochs now persist and stratify universe, factor, ranker, sizing, and Operator prompt-bundle exposures; other prompt-content policy changes remain |
 | LE-B22 | L2b | factor producer, Operator context, ranker trace, and exposure use the same stable `factor_key` identity | implemented |
