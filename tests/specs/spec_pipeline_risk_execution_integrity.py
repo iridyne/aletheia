@@ -279,6 +279,73 @@ def test_risk_decision_roles_snapshot_and_authoritative_idempotency(tmp_path, mo
     ).fetchone()[0]
     assert stored_quantity == pytest.approx(0.0011)
 
+@spec_claim(
+    SpecClaim(
+        "PL-RX-03A",
+        "pipeline_risk_execution_integrity",
+        "§2 authoritative risk rejection",
+        "L2c",
+        "An authoritative rejected RiskDecision and its Proposal rejected state commit in "
+        "the same writer transaction, including recovery of a legacy pending Proposal.",
+        status="implemented",
+    )
+)
+def test_authoritative_risk_rejection_terminalizes_proposal_atomically(
+    tmp_path, monkeypatch
+):
+    db = _setup_db(tmp_path, monkeypatch)
+
+    import aletheia.risk.engine as engine
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60_000.0,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(proposal)
+
+    update_transaction_states: list[bool] = []
+    original_update = repo.update_trade_proposal
+
+    def _recording_update(proposal_id, **updates):
+        update_transaction_states.append(db.in_transaction)
+        return original_update(proposal_id, **updates)
+
+    monkeypatch.setattr(engine, "update_trade_proposal", _recording_update)
+    monkeypatch.setattr(
+        engine,
+        "_evaluate_proposal_locked",
+        lambda candidate: engine._persist_risk_result(
+            candidate,
+            ["forced_risk_rejection"],
+            decision_role="authoritative",
+        ),
+    )
+
+    rejected = engine.evaluate_proposal(proposal, decision_role="authoritative")
+    first_status = repo.get_trade_proposal(proposal.id)["status"]
+
+    # Recreate the exact durable contradiction left by the old crash window.
+    original_update(proposal.id, status="pending")
+    retry = engine.evaluate_proposal(proposal, decision_role="authoritative")
+    recovered_status = repo.get_trade_proposal(proposal.id)["status"]
+    authoritative_count = db.execute(
+        "SELECT COUNT(*) FROM risk_decisions "
+        "WHERE proposal_id=? AND decision_role='authoritative'",
+        (proposal.id,),
+    ).fetchone()[0]
+
+    assert not rejected.approved
+    assert retry.decision_id == rejected.decision_id
+    assert first_status == recovered_status == "rejected"
+    assert authoritative_count == 1
+    assert update_transaction_states == [True, True]
+
 
 @spec_claim(
     SpecClaim(
