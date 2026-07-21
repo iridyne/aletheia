@@ -82,6 +82,28 @@ async def test_client_session_trusts_env():
     await client.close()
 
 
+async def test_global_network_guard_preserves_provider_cleanup():
+    class FakeResource:
+        def __init__(self):
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    provider = CCXTProvider(exchange="binance", fallback_exchange="bybit")
+    client = FakeResource()
+    session = FakeResource()
+    provider._primary = client
+    provider._sessions.append(session)
+
+    await provider.close()
+
+    assert client.closed is True
+    assert session.closed is True
+    assert provider._primary is None
+    assert provider._sessions == []
+
+
 def test_market_id_guard_drops_malformed_ccxt_rows():
     class _FakeExchange:
         def __init__(self):
