@@ -25,6 +25,7 @@ def test_macos_job_is_on_demand_and_runs_runner_in_foreground(tmp_path, monkeypa
 def test_macos_start_and_stop_register_only_for_the_running_session(tmp_path, monkeypatch):
     from aletheia.gateway import managed_service as service
 
+    monkeypatch.setattr(service, "_macos_domain", lambda: "gui/501")
     monkeypatch.setattr(service, "get_data_dir", lambda: tmp_path)
     monkeypatch.setattr(service, "_runner_command", lambda **_kwargs: ["/venv/bin/python", "/app/_gateway_runner.py"])
     calls: list[list[str]] = []
