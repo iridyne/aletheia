@@ -8,8 +8,8 @@ The invariant being protected (LEARNING_LOOP_AUDIT §R0 + CR-EX-03):
 
 A trade that opened from a real, attributable opportunity becomes a high_confidence
 case study and enters the retrieval pool the PI/ranker learn from. A trade missing
-the opportunity link is excluded before case creation — so the learning loop cannot
-be fed by un-attributable (hallucination-prone) outcomes.
+the opportunity link is rejected before execution — so the learning loop cannot be
+fed by un-attributable (hallucination-prone) outcomes.
 
 No module-to-module mocking: the proposal goes through the real Execution Gateway,
 risk engine, paper broker, PnL close, case builder, and FTS retrieval. Only the DB is
@@ -18,21 +18,43 @@ the e2e in-process SQLite (network/LLM are never touched on the paper path).
 
 from datetime import datetime, timezone
 
-from aletheia.storage.models import Opportunity, StrategyRecord
+from aletheia.storage.models import MarketSnapshot, Opportunity, StrategyRecord
 from aletheia.storage import repositories as repo
+
+
+def _submit_paper_trade(symbol, entry, *, opportunity_id, strategy_id):
+    from aletheia.execution.gateway import submit_proposal
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    repo.insert_market_snapshot(MarketSnapshot(
+        id=f"e2e-market-{symbol.replace('/', '-').lower()}",
+        symbol=symbol,
+        market_type="spot",
+        exchange=cfg.market_data.ccxt_exchange,
+        price=entry,
+        snapshot_at=datetime.now(timezone.utc).isoformat(),
+    ))
+    return submit_proposal(
+        symbol=symbol, market_type="spot", direction="long",
+        quantity=round(60.0 / entry, 6), price=entry,
+        stop_price=entry * 0.98, take_profit=entry * 1.04,
+        risk_reward=2.0,
+        execution_mode="paper_internal",
+        strategy_id=strategy_id, opportunity_id=opportunity_id,
+    )
 
 
 def _run_paper_trade(symbol, entry, exit_price, *, opportunity_id, strategy_id):
     """Open a paper position through the real gateway, then close it. Returns position id."""
-    from aletheia.execution.gateway import submit_proposal
     from aletheia.execution.verified_exit import VerifiedExitFill, VerifiedExitResult
     from aletheia.portfolio.outcome_closure import close_position_verified
 
-    res = submit_proposal(
-        symbol=symbol, market_type="spot", direction="long",
-        quantity=round(60.0 / entry, 6), price=entry,
-        execution_mode="paper_internal",
-        strategy_id=strategy_id, opportunity_id=opportunity_id,
+    res = _submit_paper_trade(
+        symbol,
+        entry,
+        opportunity_id=opportunity_id,
+        strategy_id=strategy_id,
     )
     assert res["status"] == "executed", f"paper proposal should execute, got {res}"
     pos_id = res["position_id"]
@@ -87,22 +109,28 @@ class TestAntiHallucinationChain:
         assert pos_row["proposal_id"]
         assert pos_row["strategy_id"] == strat.id
 
-        # ── Broken chain: a trade with NO opportunity link (un-attributable) ──
-        eth_pos = _run_paper_trade(
-            "ETH/USDT", 3000.0, 3300.0,
+        # ── Broken chain: no Opportunity link is rejected before execution ──
+        order_ids_before = {row["id"] for row in repo.list_orders(limit=20)}
+        position_ids_before = {
+            row["id"] for row in repo.list_positions(limit=20)
+        }
+        broken = _submit_paper_trade(
+            "ETH/USDT", 3000.0,
             opportunity_id=None, strategy_id=None,
         )
-        eth_row = repo._select_one("positions", eth_pos)
-        assert eth_row["opportunity_id"] is None
-        assert eth_row["outcome_eligible"] == 0
-        assert eth_row["outcome_exclusion_reason"] == "missing_attribution"
+        assert broken["status"] == "rejected"
+        assert "proposal_opportunity_required" in broken["risk_violations"]
+        assert {row["id"] for row in repo.list_orders(limit=20)} == order_ids_before
+        assert {
+            row["id"] for row in repo.list_positions(limit=20)
+        } == position_ids_before
 
         # ── Build case studies from the real closed positions ──
         from aletheia.analytics.trade_case_builder import build_case_studies
         created = build_case_studies()
         by_pos = {c["position_id"]: c["case_study_id"] for c in created}
         assert btc_pos in by_pos, "full-chain closed trade must produce a case study"
-        assert eth_pos not in by_pos, "broken-chain trade must not enter the learning corpus"
+        assert len(by_pos) == 1, "rejected broken intent must not enter the learning corpus"
 
         # ── The gate: only the fully attributed chain becomes a case study ──
         btc_item = repo._select_one("knowledge_items", by_pos[btc_pos])
