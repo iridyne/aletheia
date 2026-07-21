@@ -28,16 +28,13 @@ def _policy_paths() -> set[str]:
 
 def _agents_md_paths() -> set[str]:
     text = (_ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    match = re.search(
-        r"- Trust boundaries[^\n]*\n((?:  [^\n]+\n){0,4})",
-        text,
-    )
-    assert match, "AGENTS.md Trust boundaries bullet not found"
+    marker = "- Trust boundaries"
+    assert marker in text
+    section = text.split(marker, 1)[1].split("\n\n", 1)[0]
     return {
-        token.strip("/").strip()
-        for token in re.findall(r"`([^`]+)`", match.group(1))
+        path.rstrip("/")
+        for path in re.findall(r"`(aletheia/[^`]+)`", section)
     }
-
 
 def _governance_paths() -> set[str]:
     text = (
@@ -152,7 +149,7 @@ def test_governance_matches_policy():
 def test_ci_runs_specs_without_repository_work_gate():
     workflow = (_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     obsolete_test_name = "test_agent_" + "workflow"
-    assert "uv run pytest tests/specs/" in workflow
+    assert "uv run pytest -m tier_spec" in workflow
     assert "agent workflow" not in workflow.lower()
     assert obsolete_test_name not in workflow
     assert ".agent/" not in workflow

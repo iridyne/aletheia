@@ -25,6 +25,9 @@ concurrency:
   group: ${{ github.event_name == 'pull_request' && format('ci-{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('ci-{0}-{1}-{2}', github.workflow, github.event_name, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
+
 jobs:
   # ── Secrets ──────────────────────────────────────────────────────────────
   secrets-scan:
@@ -42,6 +45,7 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
 
   # ── Static analysis ───────────────────────────────────────────────────────
   # Covers: ruff lint  +  AST/import-graph architecture invariants.
@@ -69,6 +73,8 @@ jobs:
         run: uv run ruff check aletheia/ tests/
 
       - name: Verify architecture invariants
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: uv run pytest tests/test_architecture_fitness.py -q --tb=short
 
   # ── Executable specifications (SDD contracts) ────────────────────────────
@@ -98,6 +104,8 @@ jobs:
         run: mkdir -p test-results
 
       - name: Run executable specifications
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: uv run pytest -m tier_spec -n auto -q --tb=short --junitxml=test-results/specs.xml
 
       - name: Upload test reports
@@ -137,6 +145,8 @@ jobs:
         run: mkdir -p test-results
 
       - name: Run unit tests
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: >-
           uv run pytest tests/
           -m tier_unit
@@ -181,6 +191,8 @@ jobs:
         run: mkdir -p test-results
 
       - name: Run integration tests
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: uv run pytest -m integration -n auto -q --tb=short --junitxml=test-results/integration.xml
 
       - name: Upload test reports
@@ -224,6 +236,8 @@ jobs:
         run: mkdir -p test-results
 
       - name: Run control-loop simulation
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: uv run pytest tests/simulation/ -q --tb=short --junitxml=test-results/simulation.xml
 
       - name: Upload test reports
@@ -262,6 +276,8 @@ jobs:
         run: mkdir -p test-results
 
       - name: Run end-to-end pipeline tests
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: uv run pytest tests/e2e/ -n auto -q --tb=short --junitxml=test-results/e2e.xml
 
       - name: Upload test reports
@@ -411,6 +427,8 @@ jobs:
         run: mkdir -p test-results
 
       - name: Run full regression audit
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: uv run pytest tests/ -q --tb=line --junitxml=test-results/full.xml
 
       - name: Upload test reports
