@@ -154,6 +154,9 @@ requires the current shared checkout, re-check branch and status before every
 commit/push/merge/checkout, stage only named files, preserve unrelated changes,
 and do not use destructive Git commands or amend commits without approval.
 The gateway is global: do not restart it casually or from competing worktrees.
+Every GitHub Actions job must target a repository self-hosted runner. Do not add
+a GitHub-hosted `runs-on` target; `tests/test_ci_workflow_contract.py` enforces
+this across every workflow file.
 If a GitHub Actions workflow is broken, disable that workflow to stop alerts; do
 not archive the repository.
 

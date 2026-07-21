@@ -133,7 +133,7 @@ def test_workflow_runs_exact_artifact_as_clean_macos_runtime() -> None:
 
     assert "macos-release-runtime:" in workflow
     assert "needs: build-bundle" in workflow
-    assert "runs-on: macos-latest" in workflow
+    assert "runs-on: [self-hosted, macOS, ARM64, aletheia-release]" in workflow
     assert "actions/download-artifact@v4" in workflow
     assert "install-release.sh" in workflow
     assert "start-release.sh" in workflow
