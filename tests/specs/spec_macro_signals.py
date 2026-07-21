@@ -379,8 +379,8 @@ def test_coingecko_top_repo_helpers_exist():
 @spec_claim(
     SpecClaim(
         "MS-S12", _CONTRACT, "§3.3 bulk pattern", "L2a",
-        "insert_coingecko_top_rows uses canonical BEGIN/COMMIT bulk pattern "
-        "(not per-row autocommit storm under sqlite.py isolation_level=None)",
+        "insert_coingecko_top_rows uses canonical transaction() bulk pattern "
+        "(not a per-row autocommit storm under sqlite.py isolation_level=None)",
     ),
 )
 def test_coingecko_top_bulk_uses_begin_commit():
@@ -390,10 +390,11 @@ def test_coingecko_top_bulk_uses_begin_commit():
     assert idx > 0, "insert_coingecko_top_rows not found"
     next_def = src.find("\ndef ", idx + 1)
     body = src[idx : next_def if next_def > 0 else len(src)]
-    # Must contain an explicit BEGIN; otherwise it's a per-row commit storm under autocommit.
-    assert 'db.execute("BEGIN")' in body or "db.execute('BEGIN')" in body, (
-        "insert_coingecko_top_rows must use explicit db.execute(\"BEGIN\") for bulk "
-        "atomicity. Per-row _insert() under isolation_level=None is an N-commit storm."
+    assert "with transaction():" in body, (
+        "insert_coingecko_top_rows must acquire the canonical process-wide write lock"
+    )
+    assert "_insert_many(" in body, (
+        "insert_coingecko_top_rows must keep the rows in one bulk insert"
     )
 
 
