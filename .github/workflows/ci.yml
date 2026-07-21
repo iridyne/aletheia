@@ -71,6 +71,9 @@ jobs:
       - name: Verify architecture invariants
         run: uv run pytest tests/test_architecture_fitness.py -q --tb=short
 
+      - name: Verify CI workflow contract
+        run: uv run pytest tests/test_ci_workflow_contract.py -q --tb=short
+
   # ── Executable specifications (SDD contracts) ────────────────────────────
   # Covers: all tier_spec tests — tests/specs/ (101 files, ~1135 tests)
   #         + tests/test_spec_conformance.py (gets tier_spec via conftest).

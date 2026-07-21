@@ -9,13 +9,15 @@ _WORKFLOW_DIR = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 _WORKFLOW_PATH = _WORKFLOW_DIR / "ci.yml"
 _REQUIRED_GATE_NEEDS = {
     "secrets-scan",
-    "backend",
-    "fast-tests",
-    "integration-tests",
-    "active-paper-chain",
+    "static-checks",
+    "specs",
+    "unit",
+    "integration",
+    "simulation",
+    "e2e",
+    "native",
     "frontend",
     "operator-shell",
-    "windows-runtime-smoke",
 }
 
 
@@ -119,51 +121,23 @@ def test_operator_shell_has_an_independent_test_and_build_gate() -> None:
     assert "npm run build" in commands
 
 
-def test_active_paper_chain_is_an_independent_required_surface() -> None:
-    job = _workflow()["jobs"]["active-paper-chain"]
+def test_e2e_job_covers_the_full_pipeline_directory() -> None:
+    job = _workflow()["jobs"]["e2e"]
     commands = _run_commands(job)
 
-    assert "test_active_mainline_golden_path.py" in commands
-    assert "test_pipeline_real_paper_roundtrip.py" in commands
-    assert "test_pipeline_futures_leverage.py" in commands
-    assert "test_pipeline_feedback_loop.py" in commands
-    assert "test_ci_execution_contracts.py" in commands
+    assert "tests/e2e/" in commands
     assert "continue-on-error" not in str(job)
 
 
-def test_windows_runtime_smoke_runs_platform_specific_contracts() -> None:
-    job = _workflow()["jobs"]["windows-runtime-smoke"]
-    commands = _run_commands(job)
-
-    assert job["runs-on"] == ["self-hosted", "Windows", "X64"]
-    assert "test_event_loop_policy.py" in commands
-    assert "test_pidfile.py" in commands
-    assert "continue-on-error" not in str(job)
-
-
-def test_pr_ci_gate_aggregates_the_exact_required_matrix() -> None:
-    job = _workflow()["jobs"]["pr-ci-gate"]
+def test_ci_gate_aggregates_the_exact_required_matrix() -> None:
+    job = _workflow()["jobs"]["ci-gate"]
     commands = _run_commands(job)
     condition = str(job["if"])
 
-    assert job["name"] == "PR CI gate"
+    assert job["name"] == "CI gate"
     assert set(job["needs"]) == _REQUIRED_GATE_NEEDS
     assert "always()" in condition
     assert "github.event_name == 'pull_request'" in condition
-    for dependency in _REQUIRED_GATE_NEEDS:
-        assert f"needs.{dependency}.result" in commands
-    assert "continue-on-error" not in str(job)
-
-
-def test_master_verification_gate_aggregates_the_exact_required_matrix() -> None:
-    job = _workflow()["jobs"]["master-verification-gate"]
-    commands = _run_commands(job)
-    condition = str(job["if"])
-
-    assert job["name"] == "Master verification gate"
-    assert set(job["needs"]) == _REQUIRED_GATE_NEEDS
-    assert "always()" in condition
-    assert "github.event_name == 'push'" in condition
     assert "refs/heads/master" in condition
     for dependency in _REQUIRED_GATE_NEEDS:
         assert f"needs.{dependency}.result" in commands
@@ -173,10 +147,8 @@ def test_master_verification_gate_aggregates_the_exact_required_matrix() -> None
 def test_full_regression_is_a_separate_manual_job_with_realistic_timeout() -> None:
     workflow = _workflow()
     jobs = workflow["jobs"]
-    backend_commands = _run_commands(jobs["backend"])
     full = jobs["full-regression"]
 
-    assert "uv run pytest tests/ -q" not in backend_commands
     assert int(full["timeout-minutes"]) >= 45
     assert "workflow_dispatch" in str(full["if"])
     assert "inputs.full_regression" in str(full["if"])
