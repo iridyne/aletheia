@@ -4,6 +4,7 @@ import logging
 import re
 import shutil
 import tarfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -113,9 +114,10 @@ class BackupService:
         """Create a full backup of the workspace. Returns archive path."""
         label = self._validate_label(label)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        backup_id = f"backup_{timestamp}"
+        nonce = uuid.uuid4().hex[:12]
+        backup_id = f"backup_{timestamp}_{nonce}"
         if label is not None:
-            backup_id = f"backup_{label}_{timestamp}"
+            backup_id = f"backup_{label}_{timestamp}_{nonce}"
 
         staging = self._contained_backup_path(f"_{backup_id}_staging")
         archive_path = self._contained_backup_path(f"{backup_id}.tar.gz")

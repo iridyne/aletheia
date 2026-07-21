@@ -213,6 +213,23 @@ def test_backup_label_and_output_path_are_bounded():
     assert validation_pos < staging_pos
 
 
+@spec_claim(
+    SpecClaim(
+        "PR-S11", "persistence_recovery_contract", "§5 backup invocation identity", "L2b",
+        "Every backup ID contains a per-invocation nonce before staging and archive paths "
+        "are derived, independent of timestamp and label collisions",
+    ),
+)
+def test_backup_identity_is_not_timestamp_only():
+    src = (_ROOT / "aletheia" / "backup" / "service.py").read_text(encoding="utf-8")
+    nonce_pos = src.index("nonce = uuid.uuid4().hex")
+    staging_pos = src.index("staging = self._contained_backup_path", nonce_pos)
+
+    assert "{timestamp}_{nonce}" in src
+    assert "{label}_{timestamp}_{nonce}" in src
+    assert nonce_pos < staging_pos
+
+
 # ---------------------------------------------------------------------------
 # L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)
 # ---------------------------------------------------------------------------

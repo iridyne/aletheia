@@ -1,9 +1,11 @@
 """Focused BackupService path and naming safety regressions."""
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
+import aletheia.backup.service as backup_service_module
 from aletheia.backup.service import BackupService
 from aletheia.backup.verify import verify_backup
 
@@ -55,3 +57,40 @@ def test_unlabelled_backup_remains_supported_and_contained(tmp_path: Path):
     assert archive.parent.resolve() == (data_dir / "backups").resolve()
     assert archive.name.startswith("backup_")
     assert verify_backup(archive).valid is True
+
+
+def test_same_timestamp_and_label_get_unique_staging_and_archive_paths(
+    tmp_path: Path, monkeypatch
+):
+    """#283: timestamp resolution cannot merge two backup invocations."""
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 21, 12, 0, 0, tzinfo=timezone.utc)
+            return value if tz is not None else value.replace(tzinfo=None)
+
+    data_dir = tmp_path / "runtime"
+    backup_dir = data_dir / "backups"
+    cleaned_staging_paths: list[Path] = []
+    original_rmtree = backup_service_module.shutil.rmtree
+
+    def record_staging_cleanup(path, *args, **kwargs):
+        candidate = Path(path)
+        if candidate.parent == backup_dir:
+            cleaned_staging_paths.append(candidate)
+        return original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(backup_service_module, "datetime", FrozenDateTime)
+    monkeypatch.setattr(backup_service_module.shutil, "rmtree", record_staging_cleanup)
+
+    service = BackupService(data_dir=data_dir)
+    first = service.create_backup(label="same")
+    second = service.create_backup(label="same")
+
+    assert first != second
+    assert first.exists() and second.exists()
+    assert verify_backup(first).valid is True
+    assert verify_backup(second).valid is True
+    assert len(cleaned_staging_paths) == 2
+    assert cleaned_staging_paths[0] != cleaned_staging_paths[1]
