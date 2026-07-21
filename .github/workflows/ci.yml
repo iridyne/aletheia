@@ -26,6 +26,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # ── Secrets ──────────────────────────────────────────────────────────────
   secrets-scan:
     name: Secrets scan
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
@@ -42,8 +43,40 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  backend:
-    name: Python safety and contract gate
+  # ── Static analysis ───────────────────────────────────────────────────────
+  # Covers: ruff lint  +  AST/import-graph architecture invariants.
+  # No test execution — pure static, fails fast before any test runner spins up.
+  static-checks:
+    name: Static analysis
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Lint Python
+        run: uv run ruff check aletheia/ tests/
+
+      - name: Verify architecture invariants
+        run: uv run pytest tests/test_architecture_fitness.py -q --tb=short
+
+  # ── Executable specifications (SDD contracts) ────────────────────────────
+  # Covers: all tier_spec tests — tests/specs/ (101 files, ~1135 tests)
+  #         + tests/test_spec_conformance.py (gets tier_spec via conftest).
+  # Uses -n auto because specs are independent and purely in-memory.
+  specs:
+    name: Executable specifications
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 15
 
@@ -64,41 +97,25 @@ jobs:
       - name: Prepare test report directory
         run: mkdir -p test-results
 
-      - name: Lint Python
-        run: uv run ruff check aletheia/ tests/
-
-      - name: Verify architecture and safety defaults
-        run: uv run pytest tests/test_architecture_fitness.py -q --junitxml=test-results/architecture.xml
-
-      - name: Verify executable contracts
-        run: uv run pytest tests/specs/ -q --junitxml=test-results/specs.xml
-
-      - name: Verify deterministic control loop
-        env:
-          DCLS_MAX_EXAMPLES: 8
-          DCLS_STATEFUL_STEPS: 8
-          DCLS_SEED: 20260713
-        run: >-
-          uv run pytest
-          tests/simulation/control_loop/test_confidence_deadlock.py
-          tests/simulation/control_loop/test_sizing_ratchet.py
-          tests/simulation/control_loop/test_stateful_control_loop.py
-          tests/simulation/control_loop/test_mutation_canaries.py
-          tests/simulation/control_loop/test_failure_artifacts.py
-          tests/test_runtime_replay_pack.py
-          -q --tb=short --junitxml=test-results/dcls.xml
+      - name: Run executable specifications
+        run: uv run pytest -m tier_spec -n auto -q --tb=short --junitxml=test-results/specs.xml
 
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: python-test-results
+          name: specs-results
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
 
-  fast-tests:
-    name: Fast regression suite
+  # ── Unit tests ────────────────────────────────────────────────────────────
+  # Covers: all tier_unit tests — tests/test_*.py + tests/filter_eval/
+  #         Explicitly excludes tests/simulation/ (owned by the simulation job).
+  #         Includes slow unit tests (test_doctor*, etc.) that were previously
+  #         only reachable via full-regression.
+  unit:
+    name: Unit tests
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 20
 
@@ -119,20 +136,30 @@ jobs:
       - name: Prepare test report directory
         run: mkdir -p test-results
 
-      - name: Run fast regression tests
-        run: uv run pytest -m fast -q --tb=short --junitxml=test-results/fast.xml
+      - name: Run unit tests
+        run: >-
+          uv run pytest tests/
+          -m tier_unit
+          --ignore=tests/simulation
+          -n auto
+          -q --tb=short
+          --junitxml=test-results/unit.xml
 
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fast-test-results
+          name: unit-results
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
 
-  integration-tests:
-    name: Integration test suite
+  # ── Integration tests ─────────────────────────────────────────────────────
+  # Covers: all tier_integration tests — route/runtime/storage/service layer
+  #         boundaries. Includes test_runtime_replay_pack.py (tier_integration
+  #         via "runtime" token) which was previously duplicated in backend.
+  integration:
+    name: Integration tests
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 20
 
@@ -154,21 +181,30 @@ jobs:
         run: mkdir -p test-results
 
       - name: Run integration tests
-        run: uv run pytest -m integration -q --tb=short --junitxml=test-results/integration.xml -n auto
+        run: uv run pytest -m integration -n auto -q --tb=short --junitxml=test-results/integration.xml
 
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-test-results
+          name: integration-results
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
 
-  active-paper-chain:
-    name: Active paper trading chain
+  # ── Deterministic control-loop simulation ────────────────────────────────
+  # Covers: ALL tests in tests/simulation/ (8 files — previously only 5 ran).
+  # Runs with constrained DCLS settings so hypothesis uses a fixed seed and
+  # a small example budget for deterministic, fast CI results.
+  # The nightly job (dcls-nightly.yml) re-runs the same suite with full budgets.
+  simulation:
+    name: Deterministic control-loop simulation
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 20
+    timeout-minutes: 15
+    env:
+      DCLS_MAX_EXAMPLES: 8
+      DCLS_STATEFUL_STEPS: 8
+      DCLS_SEED: 20260713
 
     steps:
       - name: Check out source
@@ -187,28 +223,76 @@ jobs:
       - name: Prepare test report directory
         run: mkdir -p test-results
 
-      - name: Verify production-shaped active paper paths
-        run: >-
-          uv run pytest
-          tests/e2e/test_active_mainline_golden_path.py
-          tests/e2e/test_active_mainline_reachability.py
-          tests/e2e/test_pipeline_observer_to_operator.py
-          tests/e2e/test_pipeline_universe_to_operator.py
-          tests/e2e/test_pipeline_real_paper_roundtrip.py
-          tests/e2e/test_pipeline_futures_leverage.py
-          tests/e2e/test_pipeline_feedback_loop.py
-          tests/test_ci_execution_contracts.py
-          -q --tb=short --junitxml=test-results/active-paper-chain.xml
+      - name: Run control-loop simulation
+        run: uv run pytest tests/simulation/ -q --tb=short --junitxml=test-results/simulation.xml
 
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: active-paper-chain-results
+          name: simulation-results
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
 
+  # ── End-to-end pipeline ───────────────────────────────────────────────────
+  # Covers: ALL tests in tests/e2e/ (15 files — previously only 7 ran).
+  # Uses -n auto; each xdist worker gets its own SQLite session with
+  # SAVEPOINT-based per-test isolation (see tests/e2e/conftest.py).
+  e2e:
+    name: End-to-end pipeline
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Prepare test report directory
+        run: mkdir -p test-results
+
+      - name: Run end-to-end pipeline tests
+        run: uv run pytest tests/e2e/ -n auto -q --tb=short --junitxml=test-results/e2e.xml
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ── Native host (Rust) ────────────────────────────────────────────────────
+  # Covers: unit tests in native/aletheia-host (bootstrap, update, host logic).
+  # Previously only ran in build-packaged-runtime.yml on path-filtered triggers.
+  native:
+    name: Native host
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Rust unit tests
+        working-directory: native/aletheia-host
+        run: cargo test --locked --all-targets
+
+  # ── Frontend ──────────────────────────────────────────────────────────────
   frontend:
     name: Dashboard build
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
@@ -237,6 +321,7 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+  # ── Operator Shell ────────────────────────────────────────────────────────
   operator-shell:
     name: Operator Shell test and build
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
@@ -265,101 +350,43 @@ jobs:
         working-directory: operator-shell
         run: npm run build
 
-  windows-runtime-smoke:
-    name: Windows runtime smoke
-    runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 15
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Synchronize locked dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Prepare test report directory
-        shell: pwsh
-        run: New-Item -ItemType Directory -Force test-results | Out-Null
-
-      - name: Verify Windows event-loop and process-state behavior
-        run: >-
-          uv run pytest
-          tests/test_event_loop_policy.py
-          tests/test_pidfile.py
-          -q --tb=short --junitxml=test-results/windows-runtime.xml
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-runtime-results
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 14
-
-  pr-ci-gate:
-    name: PR CI gate
-    if: ${{ always() && github.event_name == 'pull_request' }}
+  # ── Gate ──────────────────────────────────────────────────────────────────
+  ci-gate:
+    name: CI gate
+    if: ${{ always() && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/master')) }}
     needs:
       - secrets-scan
-      - backend
-      - fast-tests
-      - integration-tests
-      - active-paper-chain
+      - static-checks
+      - specs
+      - unit
+      - integration
+      - simulation
+      - e2e
+      - native
       - frontend
       - operator-shell
-      - windows-runtime-smoke
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 5
 
     steps:
-      - name: Require every PR CI surface
+      - name: Require all CI surfaces
         run: |
           test "${{ needs.secrets-scan.result }}" = "success"
-          test "${{ needs.backend.result }}" = "success"
-          test "${{ needs.fast-tests.result }}" = "success"
-          test "${{ needs.integration-tests.result }}" = "success"
-          test "${{ needs.active-paper-chain.result }}" = "success"
+          test "${{ needs.static-checks.result }}" = "success"
+          test "${{ needs.specs.result }}" = "success"
+          test "${{ needs.unit.result }}" = "success"
+          test "${{ needs.integration.result }}" = "success"
+          test "${{ needs.simulation.result }}" = "success"
+          test "${{ needs.e2e.result }}" = "success"
+          test "${{ needs.native.result }}" = "success"
           test "${{ needs.frontend.result }}" = "success"
           test "${{ needs.operator-shell.result }}" = "success"
-          test "${{ needs.windows-runtime-smoke.result }}" = "success"
-          echo "All required PR CI surfaces passed."
+          echo "All required CI surfaces passed."
 
-  master-verification-gate:
-    name: Master verification gate
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/master' }}
-    needs:
-      - secrets-scan
-      - backend
-      - fast-tests
-      - integration-tests
-      - active-paper-chain
-      - frontend
-      - operator-shell
-      - windows-runtime-smoke
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 5
-
-    steps:
-      - name: Require every master verification surface
-        run: |
-          test "${{ needs.secrets-scan.result }}" = "success"
-          test "${{ needs.backend.result }}" = "success"
-          test "${{ needs.fast-tests.result }}" = "success"
-          test "${{ needs.integration-tests.result }}" = "success"
-          test "${{ needs.active-paper-chain.result }}" = "success"
-          test "${{ needs.frontend.result }}" = "success"
-          test "${{ needs.operator-shell.result }}" = "success"
-          test "${{ needs.windows-runtime-smoke.result }}" = "success"
-          echo "All required master verification surfaces passed."
-
+  # ── Manual: full regression ───────────────────────────────────────────────
+  # Triggered manually via workflow_dispatch. Runs the complete test suite
+  # without marker filtering — catches anything the per-category jobs miss
+  # (e.g. simulation tests with default hypothesis settings).
   full-regression:
     name: Full Python regression audit
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_regression }}

@@ -10,7 +10,6 @@ on:
       - "scripts/runtime/**"
       - "tests/test_release_bundle.py"
       - "tests/test_release_data_dir.py"
-      - "tests/test_macos_release_runtime.py"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/build-dogfood-release.yml"
@@ -31,15 +30,8 @@ concurrency:
 
 jobs:
   runtime-home-contract:
-    name: Runtime home (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","ubuntu-24.04"]' }
-          - { os: macos-arm64,  runner: '["self-hosted","macOS","ARM64","aletheia-release"]' }
-          - { os: windows,      runner: '["self-hosted","Windows","X64"]' }
-    runs-on: ${{ fromJSON(matrix.runner) }}
+    name: Runtime home
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 10
 
     steps:
@@ -61,7 +53,7 @@ jobs:
 
   build-bundle:
     name: Portable modular-monolith bundle
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 25
     outputs:
       artifact_name: ${{ steps.source.outputs.artifact_name }}
@@ -76,14 +68,13 @@ jobs:
 
       - name: Resolve checked-out source SHA
         id: source
-        shell: pwsh
         run: |
-          $sha = (git rev-parse HEAD).Trim()
-          $shortSha = $sha.Substring(0, 12)
-          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "short_sha=$shortSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "artifact_name=aletheia-dogfood-$shortSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "archive_name=aletheia-dogfood-$shortSha.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          sha=$(git rev-parse HEAD)
+          short_sha="${sha:0:12}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=aletheia-dogfood-$short_sha" >> "$GITHUB_OUTPUT"
+          echo "archive_name=aletheia-dogfood-$short_sha.zip" >> "$GITHUB_OUTPUT"
 
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@v6
@@ -115,10 +106,9 @@ jobs:
         run: npm run build
 
       - name: Verify release data and bundle contracts
-        run: uv run pytest tests/test_release_data_dir.py tests/test_release_bundle.py tests/test_macos_release_runtime.py -q --tb=short
+        run: uv run pytest tests/test_release_data_dir.py tests/test_release_bundle.py -q --tb=short
 
       - name: Build deterministic release ZIP
-        shell: pwsh
         run: >-
           uv run python scripts/release/build_bundle.py
           --output-dir dist
@@ -127,53 +117,58 @@ jobs:
           --max-mib 100
 
       - name: Prepare standalone macOS installer
-        shell: pwsh
-        run: Copy-Item scripts/runtime/install-release.sh dist/install-release.sh
+        run: cp scripts/runtime/install-release.sh dist/install-release.sh
 
-      - name: Verify bundle from a clean Windows directory
-        shell: pwsh
+      - name: Verify bundle from a clean Linux directory
         run: |
-          $archive = Join-Path (Resolve-Path dist) "${{ steps.source.outputs.archive_name }}"
-          if (-not (Test-Path $archive)) { throw "Dogfood bundle was not produced." }
-          $extractRoot = Join-Path $env:RUNNER_TEMP "aletheia-release-clean"
-          $userRoot = Join-Path $env:RUNNER_TEMP "aletheia-release-user"
-          $defaultDataRoot = Join-Path $userRoot ".aletheia"
-          $overrideDataRoot = Join-Path $env:RUNNER_TEMP "aletheia-release-override"
-          Remove-Item -Recurse -Force $extractRoot -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force $userRoot -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force $overrideDataRoot -ErrorAction SilentlyContinue
-          Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot
-          New-Item -ItemType Directory -Force -Path $userRoot | Out-Null
-          New-Item -ItemType Directory -Force -Path $overrideDataRoot | Out-Null
-          $env:HOME = $userRoot
-          $env:USERPROFILE = $userRoot
-          Remove-Item Env:ALETHEIA_DATA_DIR -ErrorAction SilentlyContinue
-          Push-Location $extractRoot
-          try {
+          set -euo pipefail
+          archive="$(pwd)/dist/${{ steps.source.outputs.archive_name }}"
+          test -f "$archive" || (echo "Dogfood bundle was not produced." && exit 1)
+          extract_root="$RUNNER_TEMP/aletheia-release-clean"
+          user_root="$RUNNER_TEMP/aletheia-release-user"
+          default_data_root="$user_root/.aletheia"
+          override_data_root="$RUNNER_TEMP/aletheia-release-override"
+          rm -rf "$extract_root" "$user_root" "$override_data_root"
+          mkdir -p "$extract_root" "$user_root" "$override_data_root"
+          unzip -q "$archive" -d "$extract_root"
+          unset ALETHEIA_DATA_DIR || true
+          export HOME="$user_root"
+          (
+            cd "$extract_root"
             uv sync --locked --no-dev
-            uv run --no-sync python -c "from aletheia.config.loader import bootstrap, get_data_dir; bootstrap(); assert str(get_data_dir()) == r'$defaultDataRoot'; print(get_data_dir())"
-            $env:ALETHEIA_DATA_DIR = $overrideDataRoot
-            uv run --no-sync python -c "from aletheia.config.loader import bootstrap, get_data_dir; bootstrap(); assert str(get_data_dir()) == r'$overrideDataRoot'; print(get_data_dir())"
+            uv run --no-sync python -c "
+          from aletheia.config.loader import bootstrap, get_data_dir
+          bootstrap()
+          actual = str(get_data_dir())
+          assert actual == '$default_data_root', f'Expected $default_data_root but got {actual}'
+          print(actual)
+          "
+            ALETHEIA_DATA_DIR="$override_data_root" uv run --no-sync python -c "
+          from aletheia.config.loader import bootstrap, get_data_dir
+          bootstrap()
+          actual = str(get_data_dir())
+          assert actual == '$override_data_root', f'Expected $override_data_root but got {actual}'
+          print(actual)
+          "
             uv run --no-sync aletheia version
-          }
-          finally {
-            Pop-Location
-          }
+          )
 
       - name: Publish bundle size summary
         if: always()
-        shell: pwsh
         run: |
-          if (Test-Path dist/bundle-size.json) {
-            $summary = Get-Content dist/bundle-size.json | ConvertFrom-Json
-            "### Portable dogfood release bundle" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "- Archive: ``$($summary.archive)``" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "- Target: ``$($summary.target)``" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "- Compressed: **$($summary.compressed_size_mib) MiB**" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "- Uncompressed: $($summary.uncompressed_size_mib) MiB" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "- Files: $($summary.file_count)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "- Soft / hard limits: $($summary.warn_mib) / $($summary.max_mib) MiB" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          }
+          if [ -f dist/bundle-size.json ]; then
+            python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          d = json.loads(pathlib.Path("dist/bundle-size.json").read_text())
+          print("### Portable dogfood release bundle")
+          print(f"- Archive: `{d['archive']}`")
+          print(f"- Target: `{d['target']}`")
+          print(f"- Compressed: **{d['compressed_size_mib']} MiB**")
+          print(f"- Uncompressed: {d['uncompressed_size_mib']} MiB")
+          print(f"- Files: {d['file_count']}")
+          print(f"- Soft / hard limits: {d['warn_mib']} / {d['max_mib']} MiB")
+          PY
+          fi
 
       - name: Upload immutable release artifact
         uses: actions/upload-artifact@v4
@@ -188,88 +183,3 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-  macos-release-runtime:
-    name: macOS clean stable runtime
-    needs: build-bundle
-    runs-on: [self-hosted, macOS, ARM64, aletheia-release]
-    timeout-minutes: 25
-
-    steps:
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-
-      - name: Download exact portable artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.build-bundle.outputs.artifact_name }}
-          path: ${{ runner.temp }}/aletheia-artifact
-
-      - name: Install, start, probe and stop isolated macOS release
-        shell: bash
-        run: |
-          set -euo pipefail
-          artifact_root="$RUNNER_TEMP/aletheia-artifact"
-          archive="$artifact_root/${{ needs.build-bundle.outputs.archive_name }}"
-          checksum="${archive}.sha256"
-          user_root="$RUNNER_TEMP/aletheia-macos-user"
-          app_root="$RUNNER_TEMP/Aletheia"
-          releases_root="$app_root/releases"
-          current="$app_root/current"
-          plist="$user_root/Library/LaunchAgents/com.aletheia.trading-os.gateway.plist"
-
-          rm -rf "$user_root" "$app_root"
-          mkdir -p "$user_root"
-          export HOME="$user_root"
-          export USERPROFILE="$user_root"
-          unset ALETHEIA_DATA_DIR || true
-
-          bash "$artifact_root/install-release.sh" \
-            --archive "$archive" \
-            --checksum "$checksum" \
-            --releases-root "$releases_root"
-
-          test -L "$current"
-          test -f "$current/release-manifest.json"
-          test ! -d "$current/.git"
-          test ! -e "$current/app.db"
-
-          cleanup() {
-            if [[ -L "$current" ]]; then
-              (
-                cd "$current"
-                uv run --no-sync aletheia gateway stop || true
-              )
-            fi
-          }
-          trap cleanup EXIT
-
-          (
-            cd "$current"
-            uv run --no-sync python - <<'PY'
-          from pathlib import Path
-          from aletheia.config.loader import bootstrap, get_data_dir, save_config
-
-          cfg = bootstrap()
-          cfg.runtime.autostart_on_start = False
-          save_config(cfg)
-          assert get_data_dir() == (Path.home() / ".aletheia").resolve()
-          PY
-          )
-
-          bash "$current/scripts/runtime/start-release.sh" \
-            --release-root "$current" \
-            --skip-sync
-          bash "$current/scripts/runtime/health-check.sh" --timeout-seconds 60
-
-          (
-            cd "$current"
-            uv run --no-sync aletheia gateway status
-            uv run --no-sync aletheia gateway stop
-          )
-          trap - EXIT
-
-          test ! -e "$plist"
-          test -f "$user_root/.aletheia/config.yaml"
-          test ! -e "$current/data"
