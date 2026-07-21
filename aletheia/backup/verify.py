@@ -1,10 +1,14 @@
 """Backup verification — checks integrity of backup archives."""
 
+import re
 import tarfile
 import tempfile
 from pathlib import Path
 
 from aletheia.storage.hashing import sha256_file
+
+
+_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 class VerifyResult:
@@ -61,29 +65,80 @@ def verify_backup(archive_path: Path) -> VerifyResult:
             result.errors.append("Missing checksums.txt")
             return result
 
-        # Count files
-        for f in bundle_dir.rglob("*"):
-            if f.is_file() and f.name not in ("checksums.txt", "manifest.yaml"):
-                result.file_count += 1
+        actual_paths = {
+            path.relative_to(bundle_dir).as_posix()
+            for path in bundle_dir.rglob("*")
+            if path.is_file()
+            and path.relative_to(bundle_dir).as_posix()
+            not in {"checksums.txt", "manifest.yaml"}
+        }
+        result.file_count = len(actual_paths)
+        declared_paths: set[str] = set()
+        bundle_root = bundle_dir.resolve()
 
         # Verify each checksum
-        for line in checksums_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
+        for line_number, line in enumerate(
+            checksums_file.read_text(encoding="utf-8").splitlines(), start=1
+        ):
             if not line:
                 continue
             parts = line.split("  ", 1)
             if len(parts) != 2:
+                result.errors.append(
+                    f"Malformed checksum entry on line {line_number}: "
+                    "expected '<sha256>  <path>'"
+                )
+                result.valid = False
                 continue
-            expected_hash, rel_path = parts
-            file_path = bundle_dir / rel_path
-            if not file_path.exists():
-                result.mismatches.append(f"Missing: {rel_path}")
+
+            expected_hash, raw_path = parts
+            normalized_path = raw_path.replace("\\", "/")
+            path_parts = normalized_path.split("/")
+            if not _SHA256_RE.fullmatch(expected_hash):
+                result.errors.append(f"Malformed SHA-256 on checksum line {line_number}")
+                result.valid = False
+                continue
+            if (
+                normalized_path.startswith("/")
+                or not normalized_path
+                or any(part in {"", ".", ".."} for part in path_parts)
+                or ":" in path_parts[0]
+            ):
+                result.errors.append(
+                    f"Unsafe checksum path on line {line_number}: {raw_path}"
+                )
+                result.valid = False
+                continue
+
+            canonical_path = "/".join(path_parts)
+            if canonical_path in declared_paths:
+                result.errors.append(f"Duplicate checksum path: {canonical_path}")
+                result.valid = False
+                continue
+            declared_paths.add(canonical_path)
+
+            file_path = bundle_dir.joinpath(*path_parts)
+            try:
+                file_path.resolve().relative_to(bundle_root)
+            except ValueError:
+                result.errors.append(
+                    f"Unsafe checksum path on line {line_number}: {raw_path}"
+                )
+                result.valid = False
+                continue
+
+            if not file_path.is_file() or file_path.is_symlink():
+                result.mismatches.append(f"Missing: {canonical_path}")
                 result.valid = False
                 continue
             actual = sha256_file(file_path)
             result.checked_count += 1
-            if actual != expected_hash:
-                result.mismatches.append(f"Mismatch: {rel_path}")
+            if actual.lower() != expected_hash.lower():
+                result.mismatches.append(f"Mismatch: {canonical_path}")
                 result.valid = False
+
+        for unlisted_path in sorted(actual_paths - declared_paths):
+            result.mismatches.append(f"Unlisted: {unlisted_path}")
+            result.valid = False
 
     return result

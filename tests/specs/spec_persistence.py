@@ -181,6 +181,21 @@ def test_import_staging_is_unique_per_invocation():
     assert '"import_staging"' not in src
 
 
+@spec_claim(
+    SpecClaim(
+        "PR-S09", "persistence_recovery_contract", "§5 backup integrity", "L2b",
+        "Backup verification strictly parses checksum entries and rejects payload files "
+        "outside the declared manifest before restore",
+    ),
+)
+def test_backup_verification_requires_manifest_completeness():
+    src = (_ROOT / "aletheia" / "backup" / "verify.py").read_text(encoding="utf-8")
+    assert "_SHA256_RE.fullmatch" in src
+    assert "Duplicate checksum path" in src
+    assert "Unsafe checksum path" in src
+    assert "actual_paths - declared_paths" in src
+
+
 # ---------------------------------------------------------------------------
 # L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)
 # ---------------------------------------------------------------------------
