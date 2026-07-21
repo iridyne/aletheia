@@ -37,8 +37,8 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","ubuntu-24.04"]' }
-          - { os: macos-latest,  runner: '["macos-latest"]' }
-          - { os: windows,       runner: '["self-hosted","Windows","X64"]' }
+          - { os: macos-arm64,  runner: '["self-hosted","macOS","ARM64","aletheia-release"]' }
+          - { os: windows,      runner: '["self-hosted","Windows","X64"]' }
     runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: 10
 
@@ -191,7 +191,7 @@ jobs:
   macos-release-runtime:
     name: macOS clean stable runtime
     needs: build-bundle
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64, aletheia-release]
     timeout-minutes: 25
 
     steps:
