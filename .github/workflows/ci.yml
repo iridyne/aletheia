@@ -80,8 +80,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
 
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
@@ -119,8 +118,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
 
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
@@ -163,8 +161,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
 
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
@@ -206,8 +203,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
 
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
@@ -244,8 +240,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
 
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
@@ -366,8 +361,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
 
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
@@ -463,8 +457,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
 
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
