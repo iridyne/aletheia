@@ -428,6 +428,22 @@ demo auto-adopt/orphan-close 之前运行；active 事故写入 `reconciliation_
 核对证据的 source、Position、symbol、持有时间窗和逐事件合计；不完整/异常结果必须显式覆盖旧
 funding 为 `NULL/unavailable`。这只是可复现的本地模拟，不冒充交易所账户扣款。
 
+资金费会计身份使用
+`(exchange, canonical_symbol, canonical_settlement_at)`；解析后的时间统一为 UTC，并只把严格小于
+一秒的序列化偏差归一到同一整秒边界。原始 snapshot ID 和时间戳继续保留在 evidence 中；同一
+canonical bucket 的明确历史结算值优先于结算前 live observation，两个不同历史费率则
+`conflicting_settlement_rates` fail closed，绝不静默选值或重复计费。
+
+正常关闭使用 `live_coverage` 证明开仓锚点、逐次 schedule transition 和关闭锚点。延迟恢复可使用
+`historical_ledger`：只有精确 entry Fill lineage 和持仓窗内完整、单调、被关闭后首个实际结算
+bracket 的历史序列才可完成；公开历史费率在这里仍是本地模拟证据，不是 `broker_ledger`。
+恢复成功后 `materialize_position_economics()` 在一个 SQLite writer transaction 中同步 Position、
+唯一 full close event、paper cash、reconciliation fingerprint/version、eligibility、outcome-hook outbox
+和权威 audit。相同 fingerprint/result 为 no-op；已有数字的 owner-approved 修正保留原 cash 事实，
+以带 position/source/fingerprint 的 `manual_credit` 或 `manual_debit` 追加差额，不删除旧事件。
+`aletheia data reconcile-paper-funding` 默认只读；apply 必须显式列出 Position IDs 并匹配当次 report
+fingerprint。
+
 exchange-backed futures 仍只接受对应账户私有账单的 `broker_ledger`；公开费率不得替代真实扣款。
 
 真实 close Order/Fill 可以结束执行生命周期，但它不能证明持仓期间的 funding。期货没有可信账户

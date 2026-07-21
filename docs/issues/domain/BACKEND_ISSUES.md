@@ -13,9 +13,21 @@
 > - 🟠 让数据失真或学习失效（promotion gate 错算 / KB 类型混淆 / PnL 不可信）
 > - 🟡 dead code / cosmetic / future-violation tripwire
 >
-> **最后更新**：2026-07-19 · 维护者：Aletheia Dev
+> **最后更新**：2026-07-21 · 维护者：Aletheia Dev
 > **来源**：6 个并行 subagent 审计（agents+runtime / risk+execution / storage+knowledge /
 > server+config / lifecycle+gateway / model+telegram+update+cli）+ 早期对照表
+
+---
+
+## 0f. Paper Funding Accounting Integrity（2026-07-21）
+
+| ID | 状态 | 问题 | 当前安全边界 / 下一步 |
+|---|---|---|---|
+| PFA-01 | 🔴 open | `paper_internal` 永续 funding 用原始时间戳完全相等作为结算身份；交易所历史时间常带 `1-4ms` 偏移，既会让已存在的历史 funding 无法接回，也会把同一结算点重复计费。至少一笔已完成仓位因此持久化了错误 PnL | 保持未知 funding 为 `NULL`，不得按 0 猜测或直接修库。完整证据、影响面、原子修复与防复发验收见 [`PAPER_FUNDING_ACCOUNTING_INTEGRITY_2026-07-21.md`](../audits/PAPER_FUNDING_ACCOUNTING_INTEGRITY_2026-07-21.md) 和 [`paper_funding_accounting_integrity_repair_2026-07-21.md`](../../plans/trading-pipeline/paper_funding_accounting_integrity_repair_2026-07-21.md) |
+
+该问题按 `BUG_TRIAGE_PROTOCOL.md` 归类为 A 类 accounting/outcome
+integrity repair，不改变策略、Risk、Execution Gateway、Live、凭据或硬限额。
+施工必须 test-first，并通过 dry-run + fingerprint 审批后才可修复历史账本。
 
 ---
 

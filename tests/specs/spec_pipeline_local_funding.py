@@ -6,7 +6,7 @@ their separate broker-ledger requirement and are deliberately out of scope.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import sqlite3
 
 import pytest
@@ -41,6 +41,13 @@ def _iso(hour: int, minute: int = 0) -> str:
     return datetime(2026, 7, 14, hour, minute, tzinfo=timezone.utc).isoformat()
 
 
+def _iso_ms(hour: int, minute: int = 0, millisecond: int = 0) -> str:
+    return datetime(
+        2026, 7, 14, hour, minute, tzinfo=timezone.utc,
+        microsecond=millisecond * 1000,
+    ).isoformat()
+
+
 def _snapshot(*, rate: float, target_hour: int, observed_hour: int, observed_minute: int):
     from aletheia.storage import repositories as repo
 
@@ -51,6 +58,19 @@ def _snapshot(*, rate: float, target_hour: int, observed_hour: int, observed_min
         "funding_rate_annualized": rate * 3 * 365,
         "next_funding_time": _iso(target_hour),
         "observed_at": _iso(observed_hour, observed_minute),
+    })
+
+
+def _snapshot_at(*, rate: float, target: str, observed: str):
+    from aletheia.storage import repositories as repo
+
+    repo.insert_funding_rate_snapshot({
+        "symbol": "BTC/USDT",
+        "exchange": "okx",
+        "funding_rate": rate,
+        "funding_rate_annualized": rate * 3 * 365,
+        "next_funding_time": target,
+        "observed_at": observed,
     })
 
 
@@ -206,6 +226,210 @@ def test_local_funding_aggregates_scheduled_events_with_directional_sign(
         pytest.approx(200.0),
         pytest.approx(200.0),
     ]
+
+
+@spec_claim(
+    SpecClaim(
+        "PFA-LF-01",
+        "pipeline_local_funding",
+        "canonical settlement identity",
+        "L2c",
+        "Sub-second exchange timestamp skew cannot split one funding settlement; "
+        "one settled-history rate supersedes the pre-settlement observation.",
+        status="implemented",
+    )
+)
+def test_local_funding_canonicalizes_subsecond_settlement_identity(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    position = _position()
+    _insert_entry_lineage(position)
+
+    # Live observations identify 04:00.000 and 08:00.000. Historical settlement
+    # rows preserve venue timestamps a few milliseconds after those boundaries.
+    _snapshot_at(rate=0.0008, target=_iso_ms(4), observed=_iso(0, 20))
+    _snapshot_at(rate=0.0010, target=_iso_ms(4), observed=_iso(3, 59))
+    _snapshot_at(rate=0.0009, target=_iso_ms(4, millisecond=4),
+                 observed=_iso_ms(4, millisecond=4))
+    _snapshot_at(rate=0.0009, target=_iso_ms(8, millisecond=2),
+                 observed=_iso_ms(4, millisecond=4))
+    _snapshot_at(rate=-0.0004, target=_iso_ms(8, millisecond=2),
+                 observed=_iso_ms(8, millisecond=2))
+    _snapshot_at(rate=-0.0004, target=_iso_ms(12),
+                 observed=_iso_ms(8, millisecond=2))
+    _snapshot_at(rate=0.0002, target=_iso_ms(12), observed=_iso(8, 55))
+
+    from aletheia.portfolio.local_funding import compute_local_funding
+
+    result = compute_local_funding(position, closed_at=_iso(9))
+
+    assert result.complete is True
+    assert result.funding_cost == pytest.approx(0.1)
+    assert len(result.evidence["events"]) == 2
+    assert [event["funding_rate"] for event in result.evidence["events"]] == [
+        pytest.approx(0.0009),
+        pytest.approx(-0.0004),
+    ]
+    assert result.evidence["accounting_version"] == "local-paper-funding-v2"
+    assert result.evidence["coverage_mode"] == "live_coverage"
+    assert result.evidence["events"][0]["raw_scheduled_at"].endswith(
+        "04:00:00.004000+00:00"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "PFA-LF-04",
+        "pipeline_local_funding",
+        "conflicting settlement containment",
+        "L2c",
+        "Conflicting settled rates inside one canonical settlement bucket remain "
+        "unavailable instead of selecting a convenient value.",
+        status="implemented",
+    )
+)
+def test_local_funding_rejects_conflicting_canonical_settlement_rates(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    position = _position()
+    _insert_entry_lineage(position)
+    _snapshot_at(rate=0.0010, target=_iso_ms(4), observed=_iso(0, 20))
+    _snapshot_at(rate=0.0010, target=_iso_ms(4, millisecond=1),
+                 observed=_iso_ms(4, millisecond=1))
+    _snapshot_at(rate=0.0020, target=_iso_ms(4, millisecond=4),
+                 observed=_iso_ms(4, millisecond=4))
+    _snapshot_at(rate=0.0010, target=_iso_ms(8),
+                 observed=_iso_ms(4, millisecond=1))
+    _snapshot_at(rate=0.0002, target=_iso_ms(8), observed=_iso(7, 59))
+    _snapshot_at(rate=0.0002, target=_iso_ms(12), observed=_iso(8, 1))
+    _snapshot_at(rate=0.0002, target=_iso_ms(12), observed=_iso(8, 55))
+
+    from aletheia.portfolio.local_funding import compute_local_funding
+
+    result = compute_local_funding(position, closed_at=_iso(9))
+
+    assert result.complete is False
+    assert result.funding_cost is None
+    assert result.evidence["reason"] == "conflicting_settlement_rates"
+
+
+@spec_claim(
+    SpecClaim(
+        "PFA-LF-05",
+        "pipeline_local_funding",
+        "distinct settlement boundaries",
+        "L2c",
+        "Funding events at least one second apart retain distinct canonical "
+        "settlement identities.",
+        status="implemented",
+    )
+)
+def test_local_funding_keeps_one_second_settlements_distinct():
+    from aletheia.portfolio.local_funding import _canonical_settlement
+
+    first = datetime(2026, 7, 14, 4, 0, 0, 4000, tzinfo=timezone.utc)
+    second = first + timedelta(seconds=1)
+
+    assert _canonical_settlement(first) != _canonical_settlement(second)
+
+
+@spec_claim(
+    SpecClaim(
+        "PFA-LF-07",
+        "pipeline_local_funding",
+        "historical settlement coverage",
+        "L2c",
+        "A contiguous settled-history sequence that brackets the complete holding "
+        "window can recover funding without pretending to be live coverage.",
+        status="implemented",
+    )
+)
+def test_local_funding_accepts_complete_historical_settlement_bracket(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    position = _position()
+    _insert_entry_lineage(position)
+
+    # Settled events before entry, through the holding window, and after close.
+    historical = [
+        (_iso_ms(0, millisecond=1), 0.0002),
+        (_iso_ms(4, millisecond=4), 0.0009),
+        (_iso_ms(8, millisecond=2), -0.0004),
+        (_iso_ms(12, millisecond=1), 0.0003),
+    ]
+    for index, (settled_at, rate) in enumerate(historical):
+        _snapshot_at(rate=rate, target=settled_at, observed=settled_at)
+        if index + 1 < len(historical):
+            _snapshot_at(
+                rate=rate,
+                target=historical[index + 1][0],
+                observed=settled_at,
+            )
+
+    from aletheia.portfolio.local_funding import compute_local_funding
+
+    result = compute_local_funding(
+        position,
+        closed_at=_iso(9),
+        allow_historical_ledger=True,
+        as_of=datetime(2026, 7, 14, 12, 1, tzinfo=timezone.utc),
+    )
+
+    assert result.complete is True
+    assert result.funding_cost == pytest.approx(0.1)
+    assert result.evidence["coverage_mode"] == "historical_ledger"
+    assert [event["scheduled_at"] for event in result.evidence["events"]] == [
+        _iso(4),
+        _iso(8),
+    ]
+
+
+@spec_claim(
+    SpecClaim(
+        "PFA-LF-08",
+        "pipeline_local_funding",
+        "truncated historical coverage",
+        "L2c",
+        "Historical funding without a settlement at or before entry cannot claim "
+        "complete holding-window coverage.",
+        status="implemented",
+    )
+)
+def test_local_funding_rejects_truncated_historical_settlement_window(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    position = _position()
+    _insert_entry_lineage(position)
+    historical = [
+        (_iso_ms(4, millisecond=4), 0.0009),
+        (_iso_ms(8, millisecond=2), -0.0004),
+        (_iso_ms(12, millisecond=1), 0.0003),
+    ]
+    for index, (settled_at, rate) in enumerate(historical):
+        _snapshot_at(rate=rate, target=settled_at, observed=settled_at)
+        if index + 1 < len(historical):
+            _snapshot_at(
+                rate=rate,
+                target=historical[index + 1][0],
+                observed=settled_at,
+            )
+
+    from aletheia.portfolio.local_funding import compute_local_funding
+
+    result = compute_local_funding(
+        position,
+        closed_at=_iso(9),
+        allow_historical_ledger=True,
+        as_of=datetime(2026, 7, 14, 12, 1, tzinfo=timezone.utc),
+    )
+
+    assert result.complete is False
+    assert result.funding_cost is None
+    assert result.evidence["reason"] == "incomplete_historical_funding_ledger"
 
 
 @spec_claim(

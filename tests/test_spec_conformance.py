@@ -61,6 +61,9 @@ def _import_all_specs():
         # market_type propagation, composite feature keying.
         spec_universe_pipeline,
         spec_pipeline_paper_trade,
+        spec_pipeline_local_funding,
+        spec_pipeline_paper_close_materialization,
+        spec_paper_funding_reconciliation,
         spec_filter_evidence,
         spec_pipeline_position_manager,
         spec_pipeline_operator_loop,

@@ -28,6 +28,8 @@ _ROOT = Path(__file__).parent.parent.parent
 _MARKET_OBS = _ROOT / "aletheia" / "agents" / "market_observer.py"
 _CONTEXT_BUILDER = _ROOT / "aletheia" / "data" / "context_builder.py"
 _DOCTOR = _ROOT / "aletheia" / "diagnostics" / "doctor.py"
+_LOCAL_FUNDING = _ROOT / "aletheia" / "portfolio" / "local_funding.py"
+_PAPER_ACCOUNT = _ROOT / "aletheia" / "portfolio" / "paper_account.py"
 _VERGEX_STRUCTURE = _ROOT / "aletheia" / "data" / "collectors" / "vergex_structure.py"
 _POSITION_X = _ROOT / "aletheia" / "data" / "position_x.py"
 _MARKET_DATA = _ROOT / "aletheia" / "trading" / "market_data.py"
@@ -35,6 +37,25 @@ _DATA_UTILIZATION_DOC = _ROOT / "docs" / "design" / "data" / "data_utilization.m
 _API_REFERENCE_DOC = _ROOT / "docs" / "design" / "api" / "api_reference.md"
 
 _CONTRACT = "data_utilization_contract"
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S23", _CONTRACT, "§3 primary funding delayed recovery", "L2c",
+        "Persisted primary-venue funding history is explicitly consumed by the "
+        "local-paper historical-ledger settler without being represented as a "
+        "broker account ledger.",
+        status="implemented",
+    ),
+)
+def test_primary_funding_history_is_registered_for_local_paper_recovery():
+    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
+    funding = _LOCAL_FUNDING.read_text(encoding="utf-8")
+    account = _PAPER_ACCOUNT.read_text(encoding="utf-8")
+    assert "historical_ledger" in doc
+    assert "不冒充 broker ledger" in doc
+    assert "allow_historical_ledger" in funding
+    assert "allow_historical_ledger=True" in account
 
 
 @spec_claim(

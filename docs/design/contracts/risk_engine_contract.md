@@ -93,6 +93,12 @@
 > `max_daily_loss_exceeded` 或自动触发 kill switch。无 closed account event 的完整空集为已知 0。
 > spec: RE-B20 / OI-C03。
 
+> 延迟 funding 恢复必须通过统一原子物化入口同时收敛 `positions.realized_pnl`、唯一 full
+> `position_close_events.realized_pnl` 和 paper cash。Owner-approved numeric correction 不改写旧 cash
+> event，而追加带 causal evidence 的 `manual_credit`/`manual_debit` 差额；authoritative loss 按该
+> Position 的 settlement 加补偿净额核对。任一投影不一致继续返回 `paper_ledger_mismatch`，不得在
+> 尚未收敛的中间状态释放新 Risk 容量。
+
 > **唯一硬门 & guard 澄清(2026-06-30)**:订单通路(`submit_proposal`→执行)上,**`evaluate_proposal()` 是唯一硬门**。另有两套也叫 "guard" 的东西**不在执行通路上裁决**:
 > (1) `trading_decision` 守卫链 → 仅写 `decision_meta['guards']`,advisory(spec PI-S02 守);
 > (2) `trust/guard_chain.py:run_guards()` → **gateway 从不 import/调用**(spec `EX-C03` 锁),其 `block` 裁决无执行力,属观测性基础设施。
