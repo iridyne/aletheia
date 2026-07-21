@@ -6,6 +6,7 @@ No LLM, no arbitrary code execution, no live/risk modification.
 """
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -63,6 +64,8 @@ class TradingGuard(BaseModel):
     # experiment grants authority. Previously dropped on load → enforcement layer was
     # blind to shadow status.
     shadow_only: bool = False
+    created_at: str | None = None
+    expires_at: str | None = None
     applies_to: GuardAppliesTo = Field(default_factory=GuardAppliesTo)
     predicates: list[GuardPredicate] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
@@ -144,6 +147,36 @@ def _applies_to_from_meta(meta: dict) -> dict:
     return applies_to
 
 
+def guard_is_expired(
+    guard: "TradingGuard | dict",
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Return whether a Guard's explicit deadline is no longer valid.
+
+    Seed/manual Guards without a deadline remain persistent owner controls. An
+    invalid explicit deadline is not silently treated as permanent.
+    """
+    raw = guard.get("expires_at") if isinstance(guard, dict) else guard.expires_at
+    if raw in (None, ""):
+        return False
+    try:
+        expires_at = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Guard %s has invalid expires_at=%r; excluding it",
+            guard.get("guard_id") if isinstance(guard, dict) else guard.guard_id,
+            raw,
+        )
+        return True
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return expires_at <= current.astimezone(timezone.utc)
+
+
 def load_trading_guards(
     scope: str | None = None,
     status: str = "active",
@@ -167,6 +200,8 @@ def load_trading_guards(
                 if meta.get("status") != status:
                     continue
                 if scope and meta.get("scope") != scope:
+                    continue
+                if guard_is_expired(meta):
                     continue
 
                 applies_to = _applies_to_from_meta(meta)
@@ -200,6 +235,8 @@ def load_trading_guards(
                         if meta.get("pre_shadow_block_candidate") is not None else None
                     ),
                     shadow_only=bool(meta.get("shadow_only", False)),
+                    created_at=(str(meta["created_at"]) if meta.get("created_at") else None),
+                    expires_at=(str(meta["expires_at"]) if meta.get("expires_at") else None),
                     applies_to=GuardAppliesTo(**applies_to) if isinstance(applies_to, dict) else GuardAppliesTo(),
                     predicates=predicates,
                     evidence_refs=meta.get("evidence_refs") or [],

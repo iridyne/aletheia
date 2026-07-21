@@ -11,11 +11,13 @@ human review before promotion". These claims lock the corrected invariants:
   - at enforcement, learned/shadow guards observe only (no block, no penalty) until
     an experiment (ranker_learned_guard, AT-01 + AT-02) grants authority — fail-closed;
   - seed/manual safety guards are a separate class and keep full authority;
+  - learned guards have bounded lifetimes and expire by soft deprecation;
   - a read-only audit surfaces learned guards the old chain already activated.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -44,6 +46,9 @@ def test_auto_candidates_forced_shadow_only():
     assert auto["block_candidate"] is False
     assert auto["proposed_block_candidate"] is True
     assert "shadow-only" in auto["tags"]
+    created_at = datetime.fromisoformat(auto["created_at"])
+    expires_at = datetime.fromisoformat(auto["expires_at"])
+    assert expires_at - created_at == timedelta(days=30)
 
     # auto_generated flag alone (no auto_ id) also triggers it
     flagged = _force_shadow_only_if_auto({"guard_id": "x", "auto_generated": True})
@@ -53,6 +58,99 @@ def test_auto_candidates_forced_shadow_only():
     manual = _force_shadow_only_if_auto({"guard_id": "manual-btc-guard", "block_candidate": True})
     assert not manual.get("shadow_only")
     assert manual["block_candidate"] is True
+    assert not manual.get("expires_at")
+
+
+@spec_claim(SpecClaim(
+    "GA-S09", "guard_authority", "§bounded learned lifetime", "L2b",
+    "Expired learned Guards are excluded immediately; the daily lifecycle pass assigns legacy deadlines and soft-deprecates stale items."))
+def test_learned_guard_expiry_is_fail_closed_and_soft_deprecated(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.analytics import guard_promotion as gp
+    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+    from aletheia.knowledge.guards import load_trading_guards
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(gp, "_record_guard_lifecycle_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gp, "_notify_ranker_guard_change", lambda: None)
+    guards_dir = tmp_path / "knowledge" / "guards"
+    candidates_dir = tmp_path / "knowledge" / "guard_candidates"
+    guards_dir.mkdir(parents=True)
+    candidates_dir.mkdir(parents=True)
+
+    expired_active = {
+        "guard_id": "auto_expired_active", "title": "expired active",
+        "status": "active", "auto_generated": True,
+        "expires_at": "2026-07-20T00:00:00+00:00",
+        "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}],
+    }
+    future_active = {
+        "guard_id": "auto_future_active", "title": "future active",
+        "status": "active", "auto_generated": True,
+        "expires_at": "2026-08-20T00:00:00+00:00",
+        "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}],
+    }
+    seed_active = {
+        "guard_id": "late_entry_chase_v1", "title": "seed",
+        "status": "active",
+        "predicates": [{"field": "late_entry_penalty", "op": "gte", "value": 20}],
+    }
+    legacy_candidate = {
+        "guard_id": "auto_legacy_candidate", "title": "legacy",
+        "status": "candidate", "auto_generated": True,
+        "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}],
+    }
+    (guards_dir / "expired.md").write_text(
+        render_frontmatter(expired_active, "body"), encoding="utf-8"
+    )
+    (guards_dir / "future.md").write_text(
+        render_frontmatter(future_active, "body"), encoding="utf-8"
+    )
+    (guards_dir / "seed.md").write_text(
+        render_frontmatter(seed_active, "body"), encoding="utf-8"
+    )
+    legacy_path = candidates_dir / "20260101-000000-legacy.md"
+    legacy_path.write_text(render_frontmatter(legacy_candidate, "body"), encoding="utf-8")
+
+    loaded_ids = {guard.guard_id for guard in load_trading_guards(status="active")}
+    assert loaded_ids == {"auto_future_active", "late_entry_chase_v1"}
+
+    result = gp.expire_stale_learned_guards(
+        now=datetime(2026, 7, 21, tzinfo=timezone.utc)
+    )
+    assert result == {
+        "scanned_learned": 3,
+        "deadlines_assigned": 1,
+        "expired": 2,
+        "expired_active": 1,
+        "guard_ids": ["auto_expired_active", "auto_legacy_candidate"],
+    }
+    assert parse_frontmatter(guards_dir / "expired.md")[0]["status"] == "deprecated"
+    assert parse_frontmatter(guards_dir / "future.md")[0]["status"] == "active"
+    assert parse_frontmatter(guards_dir / "seed.md")[0]["status"] == "active"
+    legacy_meta = parse_frontmatter(legacy_path)[0]
+    assert legacy_meta["status"] == "deprecated"
+    assert legacy_meta["expires_at"] == "2026-01-31T00:00:00+00:00"
+
+
+def test_direct_promotion_refuses_expired_candidate(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
+    from aletheia.knowledge.frontmatter import render_frontmatter
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    candidates_dir = tmp_path / "knowledge" / "guard_candidates"
+    candidates_dir.mkdir(parents=True)
+    path = candidates_dir / "expired.md"
+    path.write_text(render_frontmatter({
+        "guard_id": "auto_expired_candidate", "title": "expired",
+        "status": "candidate", "auto_generated": True,
+        "expires_at": "2020-01-01T00:00:00+00:00",
+        "predicates": [{"field": "scanner_family", "op": "eq", "value": "momentum"}],
+    }, "body"), encoding="utf-8")
+
+    assert promote_guard_candidate_to_active("auto_expired_candidate") is False
+    assert not (tmp_path / "knowledge" / "guards").exists()
 
 
 @spec_claim(SpecClaim(

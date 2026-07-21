@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+from datetime import datetime, timedelta, timezone
 
 from aletheia.storage.models import KnowledgeItem
 from aletheia.storage.repositories import (
@@ -10,6 +11,8 @@ from aletheia.storage.repositories import (
 )
 
 logger = logging.getLogger("aletheia.knowledge.manager")
+
+LEARNED_GUARD_TTL_DAYS = 30
 
 _MIN_CONTENT_LENGTH = 80
 _PLACEHOLDER_PATTERNS = [
@@ -293,6 +296,13 @@ def _force_shadow_only_if_auto(metadata: dict | None) -> dict | None:
     if not auto:
         return metadata
     meta = dict(metadata)
+    now = datetime.now(timezone.utc)
+    if not meta.get("created_at"):
+        meta["created_at"] = now.isoformat()
+    if not meta.get("expires_at"):
+        meta["expires_at"] = (
+            now + timedelta(days=LEARNED_GUARD_TTL_DAYS)
+        ).isoformat()
     if meta.get("proposed_block_candidate") is None:
         meta["proposed_block_candidate"] = bool(
             meta.get("block_candidate") or meta.get("pre_shadow_block_candidate")

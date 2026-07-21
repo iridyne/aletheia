@@ -366,6 +366,9 @@ Adding a new item type requires 5 synchronised updates:
 
 - Source: Guard promotion flow; requires human confirmation or explicit seeding.
 - Purpose: active behavioral constraints retrieved at AI decision time.
+- Lifetime: seeded and owner-authored guards are persistent controls; learned guards
+  carry a finite `expires_at`, are excluded after that deadline, and are soft-deprecated
+  by the daily Guard lifecycle job.
 - Storage directory: `data/knowledge/trading_guards/`.
 - Dashboard: Guards panel.
 
@@ -374,6 +377,8 @@ Adding a new item type requires 5 synchronised updates:
 - Source: Dreaming Agent or operator review.
 - Purpose: provisional guard pattern; `medium_confidence`; not retrieved by the
   active recall path until promoted to `trading_guard`.
+- Lifetime: automatically learned candidates receive a 30-day default TTL. Expiry is
+  soft and audited; the Markdown and knowledge row remain available as history.
 - Storage directory: `data/knowledge/guard_candidates/`.
 - Dashboard: Guards panel (pending section).
 

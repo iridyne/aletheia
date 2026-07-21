@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 
 from aletheia.config.loader import load_config, get_data_dir
 from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
-from aletheia.knowledge.guards import load_trading_guards, guard_origin
+from aletheia.knowledge.guards import guard_is_expired, guard_origin, load_trading_guards
 
 logger = logging.getLogger("aletheia.analytics.guard_promotion")
 
@@ -34,15 +35,25 @@ def run_promotion_check() -> dict:
     Returns summary of promotions and deprecations applied.
     Requires config.guard.auto_promote_enabled = True.
     """
+    expiry = expire_stale_learned_guards()
     cfg = load_config()
     guard_cfg = getattr(cfg, "guard", None)
     if not guard_cfg or not guard_cfg.auto_promote_enabled:
-        return {"skipped": True, "reason": "auto_promote_enabled is False"}
+        return {
+            "skipped": True,
+            "reason": "auto_promote_enabled is False",
+            "expiry": expiry,
+        }
 
     min_trades = guard_cfg.min_matching_trades
     candidates = load_trading_guards(status="candidate")
     if not candidates:
-        return {"promotions": 0, "deprecations": 0, "candidates_checked": 0}
+        return {
+            "promotions": 0,
+            "deprecations": 0,
+            "candidates_checked": 0,
+            "expiry": expiry,
+        }
 
     # Automatic promotion is fail-closed when the shared Learning reviewer has
     # stopped or accumulated a stale/oversized backlog. Existing active guards
@@ -50,7 +61,12 @@ def run_promotion_check() -> dict:
     from aletheia.learning.control import promotion_refreeze_reason
     refreeze_reason = promotion_refreeze_reason()
     if refreeze_reason is not None:
-        return {"skipped": True, "refrozen": True, "reason": refreeze_reason}
+        return {
+            "skipped": True,
+            "refrozen": True,
+            "reason": refreeze_reason,
+            "expiry": expiry,
+        }
 
     from aletheia.analytics.guard_effectiveness import _rows_matching_guard, _clean_rows
     from aletheia.analytics.trade_attribution import build_trade_attribution_rows
@@ -113,6 +129,7 @@ def run_promotion_check() -> dict:
         "candidates_checked": len(candidates),
         "skipped_non_learned": skipped_non_learned,
         "skipped_unauthorized": skipped_unauthorized,
+        "expiry": expiry,
     }
 
 
@@ -141,6 +158,9 @@ def promote_guard_candidate_to_active(
                 meta, body = parse_frontmatter(path)
                 if not meta or meta.get("guard_id") != guard_id:
                     continue
+                if guard_is_expired(meta):
+                    logger.info("Refusing to promote expired guard %s", guard_id)
+                    return False
 
                 source_meta = dict(meta)
                 active_meta = dict(meta)
@@ -274,6 +294,158 @@ def _update_guard_status(guard_id: str, new_status: str) -> bool:
                 continue
 
     return False
+
+
+def _as_utc_datetime(value) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _legacy_guard_created_at(path) -> datetime:
+    try:
+        return datetime.strptime(path.name[:15], "%Y%m%d-%H%M%S").replace(
+            tzinfo=timezone.utc
+        )
+    except (ValueError, OSError):
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+
+
+def _update_expired_guard_row_status(path) -> None:
+    try:
+        from aletheia.storage import repositories as repo
+
+        rows = repo._select_all(
+            "knowledge_items",
+            where="file_path = ?",
+            params=(str(path),),
+            limit=10,
+        )
+        for row in rows:
+            repo.update_knowledge_item(
+                row["id"], status="deprecated", confidence="deprecated"
+            )
+    except Exception:
+        logger.debug("Failed to update expired Guard DB row", exc_info=True)
+
+
+def _record_guard_lifecycle_event(
+    event_type: str,
+    guard_id: str,
+    payload: dict,
+) -> None:
+    try:
+        from aletheia.storage.event_store import get_event_store
+        from aletheia.storage.models import PSEvent
+
+        get_event_store().append(PSEvent(
+            event_type=event_type,
+            aggregate_type="trading_guard",
+            aggregate_id=guard_id,
+            actor_type="system",
+            actor_id="guard_expiry",
+            payload_json=json.dumps(payload, sort_keys=True),
+        ))
+    except Exception:
+        logger.debug("Failed to record Guard lifecycle event", exc_info=True)
+
+
+def expire_stale_learned_guards(*, now: datetime | None = None) -> dict:
+    """Assign bounded legacy deadlines and soft-deprecate expired learned Guards.
+
+    This is called by the existing daily promotion job before its opt-in gate, so
+    expiry continues even while automatic promotion remains disabled. Seed/manual
+    owner controls are never changed.
+    """
+    from aletheia.knowledge.manager import LEARNED_GUARD_TTL_DAYS
+
+    current = _as_utc_datetime(now) or datetime.now(timezone.utc)
+    guards_dir = get_data_dir() / "knowledge" / "guards"
+    candidates_dir = get_data_dir() / "knowledge" / "guard_candidates"
+    assigned: list[str] = []
+    expired: list[str] = []
+    expired_active = 0
+    scanned = 0
+
+    for search_dir in (guards_dir, candidates_dir):
+        if not search_dir.exists():
+            continue
+        for path in sorted(search_dir.glob("*.md")):
+            try:
+                meta, body = parse_frontmatter(path)
+                if not meta or meta.get("status") not in {"active", "candidate"}:
+                    continue
+                if guard_origin(meta) != "learned":
+                    continue
+                scanned += 1
+                guard_id = str(meta.get("guard_id") or path.stem)
+                deadline_assigned = False
+                if not meta.get("expires_at"):
+                    created_at = _as_utc_datetime(meta.get("created_at"))
+                    if created_at is None:
+                        created_at = _legacy_guard_created_at(path)
+                    meta["created_at"] = created_at.isoformat()
+                    meta["expires_at"] = (
+                        created_at + timedelta(days=LEARNED_GUARD_TTL_DAYS)
+                    ).isoformat()
+                    assigned.append(guard_id)
+                    deadline_assigned = True
+
+                if not guard_is_expired(meta, now=current):
+                    if deadline_assigned:
+                        path.write_text(render_frontmatter(meta, body), encoding="utf-8")
+                        _record_guard_lifecycle_event(
+                            "LEARNED_GUARD_EXPIRY_ASSIGNED",
+                            guard_id,
+                            {
+                                "guard_id": guard_id,
+                                "expires_at": str(meta["expires_at"]),
+                                "source_path": str(path),
+                                "reason": "legacy_default_ttl",
+                            },
+                        )
+                    continue
+
+                previous_status = str(meta.get("status"))
+                meta["status"] = "deprecated"
+                meta["deprecated_reason"] = "learned_guard_expired"
+                meta["expired_at"] = current.isoformat()
+                path.write_text(render_frontmatter(meta, body), encoding="utf-8")
+                _update_expired_guard_row_status(path)
+                _record_guard_lifecycle_event(
+                    "LEARNED_GUARD_EXPIRED",
+                    guard_id,
+                    {
+                        "guard_id": guard_id,
+                        "previous_status": previous_status,
+                        "expires_at": str(meta["expires_at"]),
+                        "source_path": str(path),
+                        "reason": "learned_guard_ttl_elapsed",
+                    },
+                )
+                expired.append(guard_id)
+                if previous_status == "active":
+                    expired_active += 1
+            except Exception as e:
+                logger.warning("Failed to expire learned Guard at %s: %s", path, e)
+
+    if expired_active:
+        _notify_ranker_guard_change()
+    return {
+        "scanned_learned": scanned,
+        "deadlines_assigned": len(assigned),
+        "expired": len(expired),
+        "expired_active": expired_active,
+        "guard_ids": expired,
+    }
 
 
 # ---------------------------------------------------------------------------
