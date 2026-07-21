@@ -201,3 +201,12 @@ def test_repository_task_subsystem_is_absent_from_ci() -> None:
     assert obsolete_test_name not in workflow_text
     assert ".agent/" not in workflow_text
     assert "--changed-since" not in workflow_text
+
+
+def test_uv_cache_is_scoped_to_the_runner_workspace():
+    from pathlib import Path
+
+    workflow = (
+        Path(__file__).parents[1] / ".github" / "workflows" / "ci.yml"
+    ).read_text(encoding="utf-8")
+    assert "UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache" in workflow
