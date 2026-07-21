@@ -133,6 +133,7 @@ jobs:
           --ignore=tests/simulation
           -n auto
           -q --tb=short
+          --timeout=120
           --junitxml=test-results/unit.xml
 
       - name: Upload test reports
