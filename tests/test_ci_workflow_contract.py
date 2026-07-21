@@ -7,18 +7,30 @@ import yaml
 
 _WORKFLOW_DIR = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 _WORKFLOW_PATH = _WORKFLOW_DIR / "ci.yml"
+
+# All jobs that ci-gate lists in its `needs` array
 _REQUIRED_GATE_NEEDS = {
-    "secrets-scan",
-    "static-checks",
-    "specs",
+    "changes",
+    "e2e",
     "unit",
     "integration",
     "simulation",
-    "e2e",
+    "specs",
+    "operator-shell",
     "native",
     "frontend",
-    "operator-shell",
+    "static-checks",
+    "secrets-scan",
 }
+
+# Python + static surfaces: must succeed (no skip tolerance)
+_STRICT_SURFACES = frozenset({
+    "e2e", "unit", "integration", "simulation", "specs",
+    "static-checks", "secrets-scan",
+})
+
+# Path-gated surfaces: success or skipped both accepted by the gate
+_SKIP_OK_SURFACES = frozenset({"operator-shell", "native", "frontend"})
 
 
 def _load_workflow(path: Path) -> dict:
@@ -109,6 +121,27 @@ def test_manual_dispatch_does_not_share_a_pending_group_with_same_sha_push() -> 
     assert "github.workflow, github.event_name, github.sha" in group
 
 
+def test_changes_job_detects_path_areas_for_pull_requests() -> None:
+    job = _workflow()["jobs"]["changes"]
+    commands = _run_commands(job)
+    outputs = job.get("outputs", {})
+
+    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+    assert "native" in outputs
+    assert "frontend" in outputs
+    assert "operator_shell" in outputs
+    assert "pull_request" in commands
+    assert "GITHUB_OUTPUT" in commands
+
+
+def test_native_frontend_operator_shell_are_gated_on_path_changes() -> None:
+    jobs = _workflow()["jobs"]
+    for surface in ("native", "frontend", "operator-shell"):
+        job = jobs[surface]
+        assert "changes" in job.get("needs", []), f"{surface} must need the changes job"
+        assert "changes.outputs" in str(job.get("if", "")), f"{surface} must have a path-change if condition"
+
+
 def test_operator_shell_has_an_independent_test_and_build_gate() -> None:
     job = _workflow()["jobs"]["operator-shell"]
     commands = _run_commands(job)
@@ -139,8 +172,13 @@ def test_ci_gate_aggregates_the_exact_required_matrix() -> None:
     assert "always()" in condition
     assert "github.event_name == 'pull_request'" in condition
     assert "refs/heads/master" in condition
-    for dependency in _REQUIRED_GATE_NEEDS:
-        assert f"needs.{dependency}.result" in commands
+    # Strict surfaces must require success
+    for surface in _STRICT_SURFACES:
+        assert f"needs.{surface}.result" in commands, f"gate missing strict check for {surface}"
+    # Path-gated surfaces must be checked but allow skipped
+    for surface in _SKIP_OK_SURFACES:
+        assert f"needs.{surface}.result" in commands, f"gate missing check for {surface}"
+    assert "skipped" in commands, "gate must tolerate skipped for path-gated surfaces"
     assert "continue-on-error" not in str(job)
 
 

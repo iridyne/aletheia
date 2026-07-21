@@ -26,11 +26,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # ── Secrets ──────────────────────────────────────────────────────────────
-  secrets-scan:
-    name: Secrets scan
+  # ── Path change detection ─────────────────────────────────────────────────
+  # Detects which surface areas changed so downstream jobs can skip themselves
+  # when unrelated. Python jobs always run. Non-Python surfaces (native,
+  # frontend, operator-shell) only run when their paths appear in the diff.
+  # On master push and workflow_dispatch every surface is forced to true.
+  changes:
+    name: Detect path changes
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 5
+    timeout-minutes: 2
+    outputs:
+      native: ${{ steps.detect.outputs.native }}
+      frontend: ${{ steps.detect.outputs.frontend }}
+      operator_shell: ${{ steps.detect.outputs.operator_shell }}
 
     steps:
       - name: Check out source
@@ -38,50 +46,31 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Scan for leaked secrets
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Detect changed path areas
+        id: detect
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            # Master push and manual dispatch: run every surface
+            echo "native=true"          >> "$GITHUB_OUTPUT"
+            echo "frontend=true"        >> "$GITHUB_OUTPUT"
+            echo "operator_shell=true"  >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BASE="${{ github.event.pull_request.base.sha }}"
+          CHANGED=$(git diff --name-only "$BASE" HEAD)
+          echo "native=$(echo "$CHANGED"        | grep -qE '^native/'          && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "frontend=$(echo "$CHANGED"      | grep -qE '^frontend/'        && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "operator_shell=$(echo "$CHANGED"| grep -qE '^operator-shell/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
-  # ── Static analysis ───────────────────────────────────────────────────────
-  # Covers: ruff lint  +  AST/import-graph architecture invariants.
-  # No test execution — pure static, fails fast before any test runner spins up.
-  static-checks:
-    name: Static analysis
+  # ── End-to-end pipeline ───────────────────────────────────────────────────
+  # Listed first so it gets a runner slot on the first dispatch wave.
+  # Covers: ALL tests in tests/e2e/ (15 files — previously only 7 ran).
+  # Uses -n auto; each xdist worker gets its own SQLite session with
+  # SAVEPOINT-based per-test isolation (see tests/e2e/conftest.py).
+  e2e:
+    name: End-to-end pipeline
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 5
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Synchronize locked dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Lint Python
-        run: uv run ruff check aletheia/ tests/
-
-      - name: Verify architecture invariants
-        run: uv run pytest tests/test_architecture_fitness.py -q --tb=short
-
-      - name: Verify CI workflow contract
-        run: uv run pytest tests/test_ci_workflow_contract.py -q --tb=short
-
-  # ── Executable specifications (SDD contracts) ────────────────────────────
-  # Covers: all tier_spec tests — tests/specs/ (101 files, ~1135 tests)
-  #         + tests/test_spec_conformance.py (gets tier_spec via conftest).
-  # Uses -n auto because specs are independent and purely in-memory.
-  specs:
-    name: Executable specifications
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
       - name: Check out source
@@ -100,14 +89,14 @@ jobs:
       - name: Prepare test report directory
         run: mkdir -p test-results
 
-      - name: Run executable specifications
-        run: uv run pytest -m tier_spec -n auto -q --tb=short --junitxml=test-results/specs.xml
+      - name: Run end-to-end pipeline tests
+        run: uv run pytest tests/e2e/ -n auto -q --tb=short --junitxml=test-results/e2e.xml
 
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: specs-results
+          name: e2e-results
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
@@ -238,14 +227,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # ── End-to-end pipeline ───────────────────────────────────────────────────
-  # Covers: ALL tests in tests/e2e/ (15 files — previously only 7 ran).
-  # Uses -n auto; each xdist worker gets its own SQLite session with
-  # SAVEPOINT-based per-test isolation (see tests/e2e/conftest.py).
-  e2e:
-    name: End-to-end pipeline
+  # ── Executable specifications (SDD contracts) ────────────────────────────
+  # Covers: all tier_spec tests — tests/specs/ (101 files, ~1135 tests)
+  #         + tests/test_spec_conformance.py (gets tier_spec via conftest).
+  # Uses -n auto because specs are independent and purely in-memory.
+  specs:
+    name: Executable specifications
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 25
+    timeout-minutes: 15
 
     steps:
       - name: Check out source
@@ -264,69 +253,24 @@ jobs:
       - name: Prepare test report directory
         run: mkdir -p test-results
 
-      - name: Run end-to-end pipeline tests
-        run: uv run pytest tests/e2e/ -n auto -q --tb=short --junitxml=test-results/e2e.xml
+      - name: Run executable specifications
+        run: uv run pytest -m tier_spec -n auto -q --tb=short --junitxml=test-results/specs.xml
 
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-results
+          name: specs-results
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
 
-  # ── Native host (Rust) ────────────────────────────────────────────────────
-  # Covers: unit tests in native/aletheia-host (bootstrap, update, host logic).
-  # Previously only ran in build-packaged-runtime.yml on path-filtered triggers.
-  native:
-    name: Native host
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 10
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Run Rust unit tests
-        working-directory: native/aletheia-host
-        run: cargo test --locked --all-targets
-
-  # ── Frontend ──────────────────────────────────────────────────────────────
-  frontend:
-    name: Dashboard build
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 10
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install locked dashboard dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Lint dashboard
-        working-directory: frontend
-        run: npm run lint
-
-      - name: Type-check and build dashboard
-        working-directory: frontend
-        run: npm run build
-
   # ── Operator Shell ────────────────────────────────────────────────────────
+  # Path-gated: only runs when operator-shell/ changes (or on master / manual).
   operator-shell:
     name: Operator Shell test and build
+    needs: [changes]
+    if: ${{ needs.changes.outputs.operator_shell == 'true' }}
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 10
 
@@ -353,37 +297,144 @@ jobs:
         working-directory: operator-shell
         run: npm run build
 
+  # ── Native host (Rust) ────────────────────────────────────────────────────
+  # Path-gated: only runs when native/ changes (or on master / manual).
+  # Covers: unit tests in native/aletheia-host (bootstrap, update, host logic).
+  native:
+    name: Native host
+    needs: [changes]
+    if: ${{ needs.changes.outputs.native == 'true' }}
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Rust unit tests
+        working-directory: native/aletheia-host
+        run: cargo test --locked --all-targets
+
+  # ── Frontend ──────────────────────────────────────────────────────────────
+  # Path-gated: only runs when frontend/ changes (or on master / manual).
+  frontend:
+    name: Dashboard build
+    needs: [changes]
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked dashboard dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint dashboard
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Type-check and build dashboard
+        working-directory: frontend
+        run: npm run build
+
+  # ── Static analysis ───────────────────────────────────────────────────────
+  # Covers: ruff lint  +  AST/import-graph architecture invariants.
+  # No test execution — pure static, fails fast before any test runner spins up.
+  static-checks:
+    name: Static analysis
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Lint Python
+        run: uv run ruff check aletheia/ tests/
+
+      - name: Verify architecture invariants
+        run: uv run pytest tests/test_architecture_fitness.py -q --tb=short
+
+      - name: Verify CI workflow contract
+        run: uv run pytest tests/test_ci_workflow_contract.py -q --tb=short
+
+  # ── Secrets ──────────────────────────────────────────────────────────────
+  secrets-scan:
+    name: Secrets scan
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for leaked secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # ── Gate ──────────────────────────────────────────────────────────────────
   ci-gate:
     name: CI gate
     if: ${{ always() && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/master')) }}
     needs:
-      - secrets-scan
-      - static-checks
-      - specs
+      - changes
+      - e2e
       - unit
       - integration
       - simulation
-      - e2e
+      - specs
+      - operator-shell
       - native
       - frontend
-      - operator-shell
+      - static-checks
+      - secrets-scan
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 5
 
     steps:
       - name: Require all CI surfaces
         run: |
-          test "${{ needs.secrets-scan.result }}" = "success"
-          test "${{ needs.static-checks.result }}" = "success"
-          test "${{ needs.specs.result }}" = "success"
+          # Python surfaces always required
+          test "${{ needs.e2e.result }}" = "success"
           test "${{ needs.unit.result }}" = "success"
           test "${{ needs.integration.result }}" = "success"
           test "${{ needs.simulation.result }}" = "success"
-          test "${{ needs.e2e.result }}" = "success"
-          test "${{ needs.native.result }}" = "success"
-          test "${{ needs.frontend.result }}" = "success"
-          test "${{ needs.operator-shell.result }}" = "success"
+          test "${{ needs.specs.result }}" = "success"
+          test "${{ needs.static-checks.result }}" = "success"
+          test "${{ needs.secrets-scan.result }}" = "success"
+          # Path-gated surfaces: skipped is acceptable when path filter excluded them
+          r="${{ needs.operator-shell.result }}"
+          [ "$r" = "success" ] || [ "$r" = "skipped" ] || (echo "operator-shell: $r" && false)
+          r="${{ needs.native.result }}"
+          [ "$r" = "success" ] || [ "$r" = "skipped" ] || (echo "native: $r" && false)
+          r="${{ needs.frontend.result }}"
+          [ "$r" = "success" ] || [ "$r" = "skipped" ] || (echo "frontend: $r" && false)
           echo "All required CI surfaces passed."
 
   # ── Manual: full regression ───────────────────────────────────────────────
