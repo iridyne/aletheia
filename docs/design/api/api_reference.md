@@ -256,7 +256,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | GET | `/knowledge/guards/stats` | Guard activation statistics |
 | GET | `/knowledge/case-studies` | Case study analyses |
 | GET | `/knowledge/{item_id}/content` | Full content of knowledge item |
-| GET | `/dreaming/summary` | Dreaming session summary |
+| GET | `/dreaming/summary` | Dreaming session summary; recent knowledge collections contain active items only, while archived/deprecated memories are returned separately |
 | GET | `/reviews/summary` | Post-trade review summary |
 
 ---
