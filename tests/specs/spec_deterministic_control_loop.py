@@ -51,7 +51,6 @@ def test_dcls_seed_is_wired_into_hypothesis_generation():
 def test_dcls_ci_gate_is_registered():
     ci = (ROOT / ".github/workflows/ci.yml").read_text()
     nightly = (ROOT / ".github/workflows/dcls-nightly.yml").read_text()
-    assert "test_mutation_canaries.py" in ci
-    assert "test_failure_artifacts.py" in ci
-    assert "test_active_mainline_golden_path.py" in ci
+    assert "uv run pytest tests/simulation/" in ci
+    assert "uv run pytest tests/e2e/" in ci
     assert "DCLS_MAX_EXAMPLES: 100" in nightly
