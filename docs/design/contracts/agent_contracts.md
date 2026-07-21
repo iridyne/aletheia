@@ -311,6 +311,10 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 - **Inputs**: All knowledge_items from past 24h, closed positions, agent run summaries
 - **LLM**: Yes (synthesis)
 - **Outputs**: knowledge_items (item_type=dreaming_log), serenity research runs/themes/evidence/opportunities
+- **Daily-review honesty**: every scheduled `daily_review` starts with a deterministic
+  trailing-24h performance block from verified outcome-eligible closed trades. Missing
+  evidence is `NOT_AVAILABLE`; LLM text is labelled non-authoritative operational narrative
+  and cannot turn agent-run success into a positive trading-performance claim.
 - **Side effects**: The Serenity portion uses `serenity:scheduled:YYYY-MM-DD` idempotency and successful-run freshness. Restart-interrupted queued/running rows are marked failed before a catch-up is considered; lesson extraction uses `learning_job_health.input_watermark` to catch up one missed date-window without duplicate restart runs
 
 #### insight_synthesizer

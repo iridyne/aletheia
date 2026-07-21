@@ -22,6 +22,66 @@ _LEDGER_STATES = [
 _LEDGER_KNOWLEDGE = ["research_note", "strategy_memory", "post_trade_review", "dreaming_log"]
 
 
+def _build_trading_performance_summary(*, hours: int = 24, now=None) -> str:
+    """Render authoritative recent trading results for owner-facing reviews."""
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    cutoff = current.astimezone(timezone.utc) - timedelta(hours=hours)
+    pnls: list[float] = []
+    for row in eligible_strategy_outcomes():
+        raw_closed_at = row.get("closed_at")
+        if not raw_closed_at or row.get("realized_pnl") is None:
+            continue
+        try:
+            closed_at = datetime.fromisoformat(
+                str(raw_closed_at).replace("Z", "+00:00")
+            )
+            if closed_at.tzinfo is None:
+                closed_at = closed_at.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        if closed_at.astimezone(timezone.utc) >= cutoff:
+            pnls.append(float(row["realized_pnl"]))
+
+    heading = f"## Verified Trading Performance (authoritative, trailing {hours}h)"
+    if not pnls:
+        return (
+            f"{heading}\n"
+            "- Assessment: NOT_AVAILABLE\n"
+            "- Eligible closed trades: 0\n"
+            "- Net realized PnL: not available\n"
+            "- Evidence rule: only verified outcome-eligible closed trades are counted."
+        )
+
+    net_pnl = sum(pnls)
+    assessment = "PROFIT_DAY" if net_pnl > 0 else "LOSS_DAY" if net_pnl < 0 else "FLAT_DAY"
+    wins = sum(value > 0 for value in pnls)
+    losses = sum(value < 0 for value in pnls)
+    flats = len(pnls) - wins - losses
+    gross_profit = sum(value for value in pnls if value > 0)
+    gross_loss = sum(abs(value) for value in pnls if value < 0)
+    if gross_loss > 0:
+        profit_factor = f"{gross_profit / gross_loss:.3f}"
+    elif gross_profit > 0:
+        profit_factor = "infinite (no eligible losses)"
+    else:
+        profit_factor = "not available"
+    return (
+        f"{heading}\n"
+        f"- Assessment: {assessment}\n"
+        f"- Eligible closed trades: {len(pnls)}\n"
+        f"- Net realized PnL: {net_pnl:+.2f} USDT\n"
+        f"- Wins / losses / flat: {wins} / {losses} / {flats}\n"
+        f"- Profit factor: {profit_factor}\n"
+        "- Evidence rule: only verified outcome-eligible closed trades are counted."
+    )
+
+
 def _build_learning_ledger() -> str:
     """A real snapshot of where the self-evolution pipeline stands.
 
@@ -352,6 +412,16 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
     summary_lines = [f"- {r['agent_name']}: {r['status']} ({r.get('started_at', '')[:16]})" for r in recent_runs]
     activity = "\n".join(summary_lines) if summary_lines else "No recent agent activity."
 
+    try:
+        performance_block = _build_trading_performance_summary()
+    except Exception as e:
+        errors.append(f"trading_performance_summary_failed: {e}")
+        performance_block = (
+            "## Verified Trading Performance (authoritative, trailing 24h)\n"
+            "- Assessment: NOT_AVAILABLE\n"
+            "- Net realized PnL: not available because the eligible-outcome read failed."
+        )
+
     # Enrich context: recent post-trade post-mortems (serenity_post_mortems)
     post_mortem_ctx = ""
     try:
@@ -370,8 +440,13 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
     content, err = await llm_complete(
         system="You are the system's nightly consolidation process. Given recent agent activity, "
                "produce a short markdown 'dreaming log': (1) what happened, (2) one insight or pattern, "
-               "(3) one suggested focus for tomorrow. Keep it brief.",
-        user=f"Recent agent activity:\n{activity}{post_mortem_ctx}\n\nWrite the dreaming log.",
+               "(3) one suggested focus for tomorrow. Keep it brief. The verified trading-performance "
+               "block is authoritative: never describe trading as improving or healthy when it says "
+               "LOSS_DAY or NOT_AVAILABLE.",
+        user=(
+            f"{performance_block}\n\nRecent agent activity:\n"
+            f"{activity}{post_mortem_ctx}\n\nWrite the dreaming log."
+        ),
         max_tokens=700,
         provider=get_provider_for_tier("deep"),
     )
@@ -381,14 +456,15 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
         errors.append(err)
         logger.info("dreaming_agent: LLM unavailable, skipping dreaming_log write")
     else:
+        dreaming_body = f"{content.rstrip()}\n\n{performance_block}"
         # Append a real learning-progress snapshot. Never let it break the run.
         try:
-            content += _build_learning_ledger()
+            dreaming_body += _build_learning_ledger()
             log_tool(run_id, "build_learning_ledger", "observe", True)
         except Exception as e:
             errors.append(f"learning_ledger_failed: {e}")
 
-        item = create_dreaming_log("Daily Consolidation", content)
+        item = create_dreaming_log("Daily Consolidation", dreaming_body)
         if item:
             log_tool(run_id, "write_dreaming_log", "observe", True, output=item.id)
             outputs.append(f"dreaming_log:{item.id}")
@@ -407,7 +483,12 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
             if r.get("created_at", "") >= today_start.isoformat()
         ]
         if not existing_reviews:
-            review_body = content or ""
+            review_body = performance_block
+            if content:
+                review_body += (
+                    "\n\n## Operational Narrative (LLM-generated, non-authoritative)\n"
+                    + content.strip()
+                )
             try:
                 review_body += _build_learning_ledger()
             except Exception as e:

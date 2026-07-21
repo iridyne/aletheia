@@ -8,6 +8,7 @@ must never break the dreaming run if its queries fail.
 """
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -39,6 +40,68 @@ def _mock_llm_unavailable(monkeypatch):
     async def _fail(*a, **k):
         return None, "llm_unavailable: test"
     monkeypatch.setattr(dreaming_agent, "llm_complete", _fail)
+
+
+def test_trading_performance_summary_uses_verified_recent_pnl(monkeypatch):
+    from aletheia.agents.dreaming_agent import _build_trading_performance_summary
+    from aletheia.analytics import outcome_integrity
+
+    now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(outcome_integrity, "eligible_strategy_outcomes", lambda: [
+        {
+            "closed_at": (now - timedelta(hours=2)).isoformat(),
+            "realized_pnl": -12.5,
+        },
+        {
+            "closed_at": (now - timedelta(hours=30)).isoformat(),
+            "realized_pnl": 100.0,
+        },
+    ])
+
+    summary = _build_trading_performance_summary(now=now)
+
+    assert "Assessment: LOSS_DAY" in summary
+    assert "Eligible closed trades: 1" in summary
+    assert "Net realized PnL: -12.50 USDT" in summary
+
+
+async def test_daily_review_leads_with_loss_fact_not_agent_success(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agents import dreaming_agent
+    from aletheia.analytics import outcome_integrity
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(outcome_integrity, "eligible_strategy_outcomes", lambda: [{
+        "closed_at": (now - timedelta(hours=1)).isoformat(),
+        "realized_pnl": -8.25,
+    }])
+    prompt = {}
+
+    async def cheerful_llm(*, system, user, **kwargs):
+        prompt["system"] = system
+        prompt["user"] = user
+        return "All agents completed successfully; operations were stable.", None
+
+    monkeypatch.setattr(dreaming_agent, "llm_complete", cheerful_llm)
+    captured = {}
+    original = dreaming_agent.create_daily_review
+
+    def capture(title, content):
+        captured["content"] = content
+        return original(title, content)
+
+    monkeypatch.setattr(dreaming_agent, "create_daily_review", capture)
+
+    result = await dreaming_agent.run_dreaming_agent(
+        permission_mode="Observe", trigger_type="cron"
+    )
+
+    assert any(item.startswith("daily_review:") for item in result["outputs"])
+    assert "Assessment: LOSS_DAY" in prompt["user"]
+    assert "LOSS_DAY" in prompt["system"]
+    assert captured["content"].startswith("## Verified Trading Performance")
+    assert "Net realized PnL: -8.25 USDT" in captured["content"]
+    assert "Operational Narrative (LLM-generated, non-authoritative)" in captured["content"]
 
 
 async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):
