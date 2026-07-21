@@ -1,6 +1,7 @@
 """Settings API routes."""
 
 import asyncio
+import math
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -205,6 +206,8 @@ async def get_paper_account():
 
 @router.post("/paper-account/credit")
 async def credit_paper_account(req: PaperAccountAdjustmentRequest):
+    if not math.isfinite(req.amount_usdt):
+        raise HTTPException(400, "amount_usdt must be finite")
     if req.amount_usdt <= 0:
         raise HTTPException(400, "amount_usdt must be positive")
 
@@ -220,6 +223,8 @@ async def credit_paper_account(req: PaperAccountAdjustmentRequest):
 
 @router.post("/paper-account/debit")
 async def debit_paper_account(req: PaperAccountAdjustmentRequest):
+    if not math.isfinite(req.amount_usdt):
+        raise HTTPException(400, "amount_usdt must be finite")
     if req.amount_usdt <= 0:
         raise HTTPException(400, "amount_usdt must be positive")
 
@@ -238,6 +243,8 @@ async def debit_paper_account(req: PaperAccountAdjustmentRequest):
 
 @router.post("/paper-account/set-balance")
 async def set_paper_account_balance(req: PaperAccountSetBalanceRequest):
+    if not math.isfinite(req.cash_balance_usdt):
+        raise HTTPException(400, "cash_balance_usdt must be finite")
     if req.cash_balance_usdt < 0:
         raise HTTPException(400, "cash_balance_usdt must be non-negative")
 

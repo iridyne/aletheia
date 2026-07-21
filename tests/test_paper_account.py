@@ -46,6 +46,41 @@ def test_first_local_account_read_seeds_once_and_manual_zero_is_preserved(tmp_pa
     ]
 
 
+@pytest.mark.parametrize(
+    "amount",
+    [float("nan"), float("inf"), float("-inf")],
+    ids=["nan", "positive-infinity", "negative-infinity"],
+)
+def test_non_finite_values_never_append_paper_cash_events(
+    tmp_path, monkeypatch, amount,
+):
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.paper_account import (
+        adjust_cash,
+        get_paper_account,
+        set_cash_balance,
+        settle_position_closed,
+    )
+
+    get_paper_account()
+    before = repo.get_db().execute(
+        "SELECT COUNT(*) FROM paper_account_events"
+    ).fetchone()[0]
+
+    for write in (
+        lambda: adjust_cash(amount),
+        lambda: set_cash_balance(amount),
+        lambda: settle_position_closed("non-finite-close", amount),
+    ):
+        with pytest.raises(ValueError, match="finite"):
+            write()
+
+    after = repo.get_db().execute(
+        "SELECT COUNT(*) FROM paper_account_events"
+    ).fetchone()[0]
+    assert after == before == 1
+
+
 def test_available_balance_reserves_open_position_collateral(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio.paper_account import get_paper_account
@@ -218,3 +253,48 @@ async def test_local_account_routes_are_human_audited_and_reject_external_mode(t
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         blocked = await client.get("/api/settings/paper-account")
     assert blocked.status_code == 409
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("path", "field", "token"),
+    [
+        ("/api/settings/paper-account/credit", "amount_usdt", "NaN"),
+        ("/api/settings/paper-account/credit", "amount_usdt", "Infinity"),
+        ("/api/settings/paper-account/credit", "amount_usdt", "-Infinity"),
+        (
+            "/api/settings/paper-account/set-balance",
+            "cash_balance_usdt",
+            "NaN",
+        ),
+        (
+            "/api/settings/paper-account/set-balance",
+            "cash_balance_usdt",
+            "Infinity",
+        ),
+        (
+            "/api/settings/paper-account/set-balance",
+            "cash_balance_usdt",
+            "-Infinity",
+        ),
+    ],
+)
+async def test_local_account_routes_reject_non_finite_json_numbers(
+    tmp_path, monkeypatch, path, field, token,
+):
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.server.app import app
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    save_config(cfg)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            path,
+            content=f'{{"{field}": {token}}}',
+            headers={"content-type": "application/json"},
+        )
+    assert response.status_code == 400
+    assert repo.get_paper_account_cash_balance() == pytest.approx(0.0)
+    assert repo.has_paper_account_event() is False
